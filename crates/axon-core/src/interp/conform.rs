@@ -1251,6 +1251,21 @@ impl<'p> Interp<'p> {
         self.cast(v, &tf.ty, &cx)
     }
 
+    /// The declared type of parameter `i` at every layer of the contract chain
+    /// (outermost first). A closed one pins the argument's runtime type: the
+    /// arguments were cast to it (amendment 102, the runtime taint's pin).
+    pub(crate) fn param_types(contract: &Option<Rc<Contract>>, i: usize) -> Vec<T> {
+        let mut out = Vec::new();
+        let mut c = contract.as_ref();
+        while let Some(k) = c {
+            if let Some(t) = k.params.get(i) {
+                out.push(t.clone());
+            }
+            c = k.next.as_ref();
+        }
+        out
+    }
+
     /// The contract a lambda's own parameter annotations state.
     pub(crate) fn lambda_contract(params: &[crate::ast::LambdaParam]) -> Option<Rc<Contract>> {
         if params.iter().all(|p| p.ty.is_none()) {

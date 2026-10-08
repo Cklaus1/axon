@@ -477,6 +477,13 @@ struct Seal {
 #[cfg(test)]
 pub(crate) static DISPATCH_RULE_OFF: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
+/// Test-only: the runtime taint rules (amendment 102) apply. Off by default in a
+/// unit test, so each older test judges one STATIC layer by its own attack and
+/// the taint cannot refuse the same attack first and hide a removed guard; the
+/// taint's own tests (`interp/taint_tests.rs`) and the sweep turn it on.
+#[cfg(test)]
+pub(crate) static TAINT_FORCE_ON: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// Capture-cell key marking a closure created in a SEALED frame. Starts with
 /// NUL, so no source identifier can name or shadow it.
@@ -522,7 +529,9 @@ fn ai_policy_err<T>(msg: impl Into<String>) -> Result<T, Flow> {
 /// the CURRENT scope (so a loop re-binding a name does not grow the stack) and
 /// shadows outer ones; lookups see the innermost binding first.
 struct Env {
-    vars: Vec<(String, Value)>,
+    /// Every visible binding: its name, its value and its TAINT (C9 round 11,
+    /// amendment 102, `interp/taint.rs`; always zero outside a sealed run).
+    vars: Vec<(String, Value, u8)>,
     marks: Vec<usize>,
 }
 
@@ -540,25 +549,48 @@ impl Env {
         let start = self.marks.pop().unwrap_or(0);
         self.vars.truncate(start);
     }
-    fn define(&mut self, name: String, val: Value) {
+    /// Bind `name` to `val` carrying taint `t`. The taint is a REQUIRED
+    /// argument: a binding site that does not say what it carries does not
+    /// compile, so no site can drop it by omission.
+    fn define(&mut self, name: String, val: Value, t: u8) {
         let start = self.marks.last().copied().unwrap_or(0);
-        match self.vars[start..].iter_mut().find(|(k, _)| *k == name) {
-            Some(slot) => slot.1 = val,
-            None => self.vars.push((name, val)),
+        match self.vars[start..].iter_mut().find(|(k, _, _)| *k == name) {
+            Some(slot) => {
+                slot.1 = val;
+                slot.2 = t;
+            }
+            None => self.vars.push((name, val, t)),
         }
     }
     fn get(&self, name: &str) -> Option<&Value> {
         self.vars
             .iter()
             .rev()
-            .find(|(k, _)| k == name)
-            .map(|(_, v)| v)
+            .find(|(k, _, _)| k == name)
+            .map(|(_, v, _)| v)
     }
-    /// Update the nearest existing binding; returns false if none exists.
-    fn assign(&mut self, name: &str, val: Value) -> bool {
-        match self.get_mut(name) {
+    /// The taint of the nearest binding of `name` (0 if unbound).
+    fn taint_of(&self, name: &str) -> u8 {
+        self.vars
+            .iter()
+            .rev()
+            .find(|(k, _, _)| k == name)
+            .map_or(0, |(_, _, t)| *t)
+    }
+    /// OR `t` into the nearest binding of `name` (a write into a container the
+    /// binding holds makes the whole binding carry it).
+    fn taint_or(&mut self, name: &str, t: u8) {
+        if let Some(slot) = self.vars.iter_mut().rev().find(|(k, _, _)| k == name) {
+            slot.2 |= t;
+        }
+    }
+    /// Update the nearest existing binding; returns false if none exists. The
+    /// binding takes the taint `t` of the value now in it.
+    fn assign(&mut self, name: &str, val: Value, t: u8) -> bool {
+        match self.vars.iter_mut().rev().find(|(k, _, _)| k == name) {
             Some(slot) => {
-                *slot = val;
+                slot.1 = val;
+                slot.2 = t;
                 true
             }
             None => false,
@@ -569,35 +601,71 @@ impl Env {
         self.vars
             .iter_mut()
             .rev()
-            .find(|(k, _)| k == name)
-            .map(|(_, v)| v)
+            .find(|(k, _, _)| k == name)
+            .map(|(_, v, _)| v)
     }
     /// Flatten all visible bindings into one map (inner shadows outer).
-    /// Used to snapshot the environment a closure captures.
+    /// Used to snapshot the environment a closure captures. A binding that
+    /// carries taint is recorded under a companion key (`taint::CAP_T`).
     fn snapshot(&self) -> HashMap<String, Value> {
         let mut out = HashMap::with_capacity(self.vars.len());
-        for (k, v) in &self.vars {
+        // Outside a sealed run no binding is tainted: the plain copy.
+        let tainted = self.vars.iter().any(|(_, _, t)| *t != 0);
+        for (k, v, t) in &self.vars {
             out.insert(k.clone(), v.clone());
+            if tainted {
+                let ck = format!("{}{k}", taint::CAP_T);
+                if *t != 0 {
+                    out.insert(ck, Value::Int(i64::from(*t)));
+                } else {
+                    out.remove(&ck);
+                }
+            }
         }
         out
+    }
+    /// Load captured bindings (a capture cell's entries, companions included)
+    /// into the base scope of an empty env.
+    fn load_captured(&mut self, cells: impl Iterator<Item = (String, Value)>) {
+        // Companion entries are rare (a sealed run only): collect them lazily.
+        let mut comp: Vec<(String, u8)> = Vec::new();
+        for (k, v) in cells {
+            if let Some(name) = k.strip_prefix(taint::CAP_T) {
+                if let Value::Int(t) = v {
+                    comp.push((name.to_string(), t as u8));
+                }
+            } else {
+                self.vars.push((k, v, 0));
+            }
+        }
+        for (name, t) in comp {
+            if let Some(slot) = self.vars.iter_mut().find(|(k, _, _)| *k == name) {
+                slot.2 = t;
+            }
+        }
     }
     /// Build an env whose single base scope is a captured snapshot — used to
     /// run a closure/handler-arm body in its defining environment.
     fn from_snapshot(captured: HashMap<String, Value>) -> Self {
-        Env {
-            vars: captured.into_iter().collect(),
-            marks: Vec::new(),
-        }
+        let mut env = Env::new();
+        env.load_captured(captured.into_iter());
+        env
     }
-    /// The bindings of the base (outermost) scope.
-    fn base_scope(&self) -> &[(String, Value)] {
+    /// The bindings of the base (outermost) scope, with their taints.
+    fn base_scope(&self) -> &[(String, Value, u8)] {
         let end = self.marks.first().copied().unwrap_or(self.vars.len());
         &self.vars[..end]
     }
-    /// Move the base scope's bindings out (see [`Env::base_scope`]).
-    fn drain_base_scope(&mut self) -> std::vec::Drain<'_, (String, Value)> {
+    /// Move the base scope's bindings into a capture cell (taint companions
+    /// included; see [`Env::base_scope`]).
+    fn drain_base_scope_into(&mut self, cell: &mut HashMap<String, Value>) {
         let end = self.marks.first().copied().unwrap_or(self.vars.len());
-        self.vars.drain(..end)
+        for (k, v, t) in self.vars.drain(..end) {
+            if t != 0 {
+                cell.insert(format!("{}{k}", taint::CAP_T), Value::Int(i64::from(t)));
+            }
+            cell.insert(k, v);
+        }
     }
 }
 
@@ -966,6 +1034,9 @@ pub struct Interp<'p> {
     /// identical to the mock (same packing), so I-2 parity holds.
     #[cfg(feature = "gfx-wgpu")]
     gfx_real: RefCell<axon_gfx::GfxReal>,
+    /// The runtime taint (C9 round 11, amendment 102, `interp/taint.rs`). Last,
+    /// so the hot fields above keep the offsets they had.
+    taint: taint::Taint,
 }
 
 /// One active effect-handler frame: the inline-handler arms in scope for the
@@ -3186,6 +3257,7 @@ impl<'p> Interp<'p> {
             domain: axon_domain::Registry::new(),
             #[cfg(feature = "gfx-wgpu")]
             gfx_real: RefCell::new(axon_gfx::GfxReal::new()),
+            taint: taint::Taint::default(),
         }
     }
 
@@ -3215,6 +3287,9 @@ impl<'p> Interp<'p> {
             let sealed = self.seal.active && self.seal.globals.contains(name);
             let mut env = Env::new();
             let v = self.with_frame(sealed, || self.eval(expr, &mut env))?;
+            if self.seal.active {
+                self.t_set_global(name, self.taint.last.get());
+            }
             self.globals.insert(name.clone(), v);
         }
         Ok(())
@@ -3407,7 +3482,7 @@ impl<'p> Interp<'p> {
     /// index, the param's final value (`Unit` for non-`&mut` params) for the
     /// caller to move back — on every outcome, including `return` / `?` /
     /// error unwinds, so the caller's binding is never left hollow.
-    pub(super) fn call_fn_mut(&self, f: &FnDef, args: Vec<Value>) -> (R, Vec<Value>) {
+    pub(super) fn call_fn_mut(&self, f: &FnDef, args: Vec<Value>) -> (R, Vec<Value>, Vec<u8>) {
         let mut env = Env::new();
         // A candidate fn writing through `&mut` returns control to operator
         // code with the parameter's FINAL value, which is moved into the
@@ -3436,6 +3511,18 @@ impl<'p> Interp<'p> {
                     std::mem::replace(slot, Value::Unit)
                 }
                 _ => Value::Unit,
+            })
+            .collect();
+        // What each `&mut` parameter holds when the call ends is a second return
+        // channel for taint, as it is for the value: the callee's own binding for
+        // an operator fn, everything for a candidate's (amendment 102).
+        let out_ts: Vec<u8> = f
+            .params
+            .iter()
+            .map(|p| match (&p.ty, self.seal.active) {
+                (crate::ast::AxonType::RefMut(_), true) if crossing => taint::ALL,
+                (crate::ast::AxonType::RefMut(_), true) => env.taint_of(&p.name),
+                _ => 0,
             })
             .collect();
         if crossing {
@@ -3476,7 +3563,7 @@ impl<'p> Interp<'p> {
                 }
             }
         }
-        (result, outs)
+        (result, outs, out_ts)
     }
 
     fn call_fn_sealed(&self, f: &FnDef, args: Vec<Value>, env: &mut Env) -> R {
@@ -3489,6 +3576,11 @@ impl<'p> Interp<'p> {
         // A candidate fn returning to operator code: the seal crossing where
         // a value at an undetermined type parameter is refused (amendment 53).
         let crossing = self.seal.active && callee && !self.frame_sealed.get();
+        // What an early exit inside the frame raises on the control taints is the
+        // frame's own business: restored below, whatever the outcome (amendment 102).
+        // The fn's frame is compiled twice (`call_fn_frame::<true>` with the taint hooks,
+        // `::<false>` without them: amendment 102).
+        let (ctl_pc, ctl_sticky) = (self.taint.pc.get(), self.taint.sticky.get());
         // The operator hands the candidate its arguments: every dict in them
         // is snapshotted; at the return every dict sealed code mutated is
         // checked against it (amendment 72 part 2).
@@ -3499,10 +3591,16 @@ impl<'p> Interp<'p> {
         }
         let r = self.with_frame(callee, || {
             contain_frame(
-                self.call_fn_frame(f, args, crossing, env),
+                if self.seal.active {
+                    self.call_fn_frame::<true>(f, args, crossing, env)
+                } else {
+                    self.call_fn_frame::<false>(f, args, crossing, env)
+                },
                 &format!("`{}`", f.name),
             )
         });
+        self.taint.pc.set(ctl_pc);
+        self.taint.sticky.set(ctl_sticky);
         if crossing && r.is_ok() {
             self.dict_edge_out()?;
         }
@@ -3868,7 +3966,13 @@ impl<'p> Interp<'p> {
         out
     }
 
-    fn call_fn_frame(&self, f: &FnDef, args: Vec<Value>, crossing: bool, env: &mut Env) -> R {
+    fn call_fn_frame<const T: bool>(
+        &self,
+        f: &FnDef,
+        args: Vec<Value>,
+        crossing: bool,
+        env: &mut Env,
+    ) -> R {
         // Bound recursion: a graceful panic instead of a process-aborting stack
         // overflow on runaway/infinite recursion. `_guard` restores the depth on
         // any return path (including `?`).
@@ -3892,6 +3996,12 @@ impl<'p> Interp<'p> {
             cell: &self.pin_fn,
             prev: self.pin_fn.replace(f as *const FnDef as usize),
         };
+        // The taint the arguments arrived with (their union, in `acc`), and the
+        // frame's own program-counter taint, which an early exit out of a tainted
+        // branch may raise and the caller never sees (amendment 102).
+        let entry_t = if T { self.taint.acc.get() } else { 0 };
+        // (The control taints are saved and restored around the whole frame by
+        // `call_fn_sealed`, which is the only caller.)
         // R4/I-13: if THIS fn is an `@[agent]`, it becomes the enclosing agent for
         // everything it transitively calls; otherwise the caller's enclosing agent
         // is inherited unchanged. Restored on return so sibling calls aren't
@@ -3995,7 +4105,16 @@ impl<'p> Interp<'p> {
                     value::display(&a)
                 ));
             }
-            env.define(p.name.clone(), a);
+            // An operator fn's typed parameter is a pin: the cast above verified the
+            // argument against a closed type the operator wrote.
+            let mut pt = 0;
+            if T {
+                pt = entry_t | self.taint.pc.get();
+                if pt & taint::TYP != 0 && !self.frame_sealed.get() && self.t_pins(&p.ty) {
+                    pt &= !taint::TYP;
+                }
+            }
+            env.define(p.name.clone(), a, pt);
         }
         // Phase 5: refinement-type PRECONDITIONS. A parameter `p: T where P`
         // desugars to a synthetic named refinement; the checker discharges P
@@ -4015,12 +4134,12 @@ impl<'p> Interp<'p> {
                         self.seal_refine(rname)?;
                         let val = env.get(&p.name).cloned().unwrap_or(Value::Unit);
                         let mut pred_env = Env::new();
-                        pred_env.define("_".into(), val.clone());
+                        pred_env.define("_".into(), val.clone(), entry_t);
                         // Also bind the parameter name (for inline refinements
                         // `p: T where E[p] > k` that use the param name directly).
-                        pred_env.define(p.name.clone(), val.clone());
+                        pred_env.define(p.name.clone(), val.clone(), entry_t);
                         if let Value::Bool(false) =
-                            contain_frame(self.eval(pred, &mut pred_env), "a predicate")?
+                            contain_frame(self.eval_t::<T>(pred, &mut pred_env), "a predicate")?
                         {
                             return Err(Flow::RefineViolation(format!(
                                 "parameter `{}` of `{}` (= {}) violates the refinement `{}` — \
@@ -4042,7 +4161,9 @@ impl<'p> Interp<'p> {
         // overfitting one point. With no held-out set, fall back to the best
         // observed training score.
         let mut goal_met: i64 = 0;
+        let mut goal_ran = false;
         if let Some(spec) = self.goal_spec_of(f) {
+            goal_ran = true;
             // Dispatch on the selected strategy (PRD L889-899). All run the
             // metric and accumulate provenance the same way; they differ only in
             // HOW they explore. The held-out gate below is strategy-agnostic.
@@ -4107,7 +4228,12 @@ impl<'p> Interp<'p> {
             };
             goal_met = if s >= spec.target { 1i64 } else { 0i64 };
         }
-        env.define("goal_met".into(), Value::Int(goal_met));
+        env.define(
+            "goal_met".into(),
+            Value::Int(goal_met),
+            // The goal search ran the (possibly sealed) metric.
+            if goal_ran { taint::ALL } else { 0 },
+        );
         // PROTOTYPE (RLM session option 2): when dumping bindings, run main's
         // top-level statements WITHOUT the extra block scope (eval_block pops
         // its scope before returning, discarding the locals), then capture the
@@ -4121,7 +4247,7 @@ impl<'p> Interp<'p> {
             if let Expr::Block(stmts) = &f.body {
                 let mut last = Ok(Value::Unit);
                 for stmt in &stmts[..] {
-                    match self.eval(&stmt.expr, env) {
+                    match self.eval_t::<T>(&stmt.expr, env) {
                         Ok(v) => last = Ok(v),
                         Err(e) => {
                             last = Err(e);
@@ -4131,10 +4257,21 @@ impl<'p> Interp<'p> {
                 }
                 last
             } else {
-                self.eval(&f.body, env)
+                self.eval_t::<T>(&f.body, env)
             }
         } else {
-            self.eval(&f.body, env)
+            self.eval_t::<T>(&f.body, env)
+        };
+        // The taint of the value the body produced (a `return` carries its own),
+        // before anything else is evaluated.
+        let mut body_t = if T {
+            if matches!(body_result, Err(Flow::Return(_))) {
+                self.taint.ret.get()
+            } else {
+                self.taint.last.get()
+            }
+        } else {
+            0
         };
         if capture && !matches!(body_result, Err(ref e) if !matches!(e, Flow::Return(_))) {
             let mut snap = env.snapshot();
@@ -4199,6 +4336,14 @@ impl<'p> Interp<'p> {
                     mismatch.unwrap_or_default()
                 ));
             }
+            // A declared return of an OPERATOR fn is a pin: the cast above
+            // verified the result against a closed type the operator wrote.
+            if body_t & taint::TYP != 0
+                && !self.frame_sealed.get()
+                && f.return_type.as_ref().is_some_and(|rt| self.t_pins(rt))
+            {
+                body_t &= !taint::TYP;
+            }
         }
         // Soft typing at the RETURN boundary: a fn declared `-> T` (a plain
         // scalar) whose body produces an `Uncertain<T>`/`Temporal<T>` unwraps to
@@ -4243,8 +4388,9 @@ impl<'p> Interp<'p> {
                     // `-> (i64 where _ <= parent_rem)`) can reference parameters.
                     // `env` already holds the param bindings from the body; add
                     // `_` and evaluate against it instead of a bare env.
-                    env.define("_".into(), result.clone());
-                    if let Value::Bool(false) = contain_frame(self.eval(pred, env), "a predicate")?
+                    env.define("_".into(), result.clone(), body_t);
+                    if let Value::Bool(false) =
+                        contain_frame(self.eval_t::<T>(pred, env), "a predicate")?
                     {
                         return Err(Flow::RefineViolation(format!(
                             "the return value of `{}` (= {}) violates the refinement return \
@@ -4410,16 +4556,16 @@ impl<'p> Interp<'p> {
                         // `&&`, `||`, comparisons, function calls, you name it.
                         let mut pred_env = Env::new();
                         if let Some(v) = fields.get("value") {
-                            pred_env.define("value".into(), v.clone());
+                            pred_env.define("value".into(), v.clone(), body_t);
                         }
                         if let Some(c) = fields.get("confidence") {
-                            pred_env.define("confidence".into(), c.clone());
+                            pred_env.define("confidence".into(), c.clone(), body_t);
                         }
                         if let Some(s) = fields.get("source_tag") {
-                            pred_env.define("source_tag".into(), s.clone());
+                            pred_env.define("source_tag".into(), s.clone(), body_t);
                         }
                         let outcome = contain_frame(
-                            self.eval(&spec.predicate, &mut pred_env),
+                            self.eval_t::<T>(&spec.predicate, &mut pred_env),
                             "a predicate",
                         )?;
                         if let Value::Bool(false) = outcome {
@@ -4471,9 +4617,11 @@ impl<'p> Interp<'p> {
                 } else {
                     // Composite predicate: bind `value` to the scalar and evaluate.
                     let mut pred_env = Env::new();
-                    pred_env.define("value".into(), result.clone());
-                    let outcome =
-                        contain_frame(self.eval(&spec.predicate, &mut pred_env), "a predicate")?;
+                    pred_env.define("value".into(), result.clone(), body_t);
+                    let outcome = contain_frame(
+                        self.eval_t::<T>(&spec.predicate, &mut pred_env),
+                        "a predicate",
+                    )?;
                     if let Value::Bool(false) = outcome {
                         return Err(Flow::VerifyFailed(format!(
                             "verify failed in {}: composite predicate did not hold (value {}{})",
@@ -4486,18 +4634,33 @@ impl<'p> Interp<'p> {
             }
         }
 
+        // The call's value carries what the arguments arrived with and what the
+        // body produced.
+        if T {
+            // The result also carries an early exit's condition (`sticky`).
+            body_t |= self.taint.sticky.get() & taint::VAL;
+            self.taint.acc.set(entry_t | body_t);
+        }
         Ok(result)
     }
 
     fn call_closure(&self, c: Value, args: Vec<Value>) -> R {
-        self.call_closure_owned_by(c, args, 1)
+        if self.seal.active {
+            self.call_closure_owned_by::<true>(c, args, 1)
+        } else {
+            self.call_closure_owned_by::<false>(c, args, 1)
+        }
     }
 
     /// `f(..)` where `f` names a closure in the caller's env, `c` being a clone
     /// of that binding: the binding is the one reference to the capture cell
     /// besides `c` that the body can never reach (see `call_closure_owned_by`).
     fn call_local_closure(&self, c: Value, args: Vec<Value>) -> R {
-        self.call_closure_owned_by(c, args, 2)
+        if self.seal.active {
+            self.call_closure_owned_by::<true>(c, args, 2)
+        } else {
+            self.call_closure_owned_by::<false>(c, args, 2)
+        }
     }
 
     /// Run closure `c`. `private_refs` counts the references to its capture
@@ -4505,7 +4668,12 @@ impl<'p> Interp<'p> {
     /// caller's binding for a call by local name — an `Env` is only ever
     /// visible to the frame evaluating it, since closures, fns, handler arms
     /// and continuation replays all run on their own (snapshot) envs.
-    fn call_closure_owned_by(&self, c: Value, args: Vec<Value>, private_refs: usize) -> R {
+    fn call_closure_owned_by<const T: bool>(
+        &self,
+        c: Value,
+        args: Vec<Value>,
+        private_refs: usize,
+    ) -> R {
         let Value::Closure {
             params,
             body,
@@ -4523,6 +4691,20 @@ impl<'p> Interp<'p> {
             ));
         }
         let mut args = args;
+        // Operator code does not run an operator closure the candidate picked
+        // (amendment 102): the selection primitive of a table of closures.
+        if T {
+            self.t_check_call_picked(&captured)?;
+        }
+        // The taint the arguments arrived with; from a sealed caller, everything.
+        let entry_t = self.taint.acc.get();
+        let in_t = if !T {
+            0
+        } else if self.frame_sealed.get() {
+            taint::ALL
+        } else {
+            entry_t | self.taint.pc.get()
+        };
         // A closure runs under the provenance of the frame that CREATED it.
         let origin = self.seal.active && captured.borrow().contains_key(SEALED_CLOSURE_MARK);
         // The arguments are cast to every `fn` type this reference crossed. A
@@ -4544,6 +4726,17 @@ impl<'p> Interp<'p> {
             self.dict_edge_out()?;
         }
         self.closure_args_check(&contract, &mut args, entering)?;
+        // Operator code a sealed frame runs is control-dependent on the
+        // candidate (whether, and how often, it is called).
+        // The control taints are restored right after the body ran (below).
+        let ctl = if T {
+            Some((self.taint.pc.get(), self.taint.sticky.get()))
+        } else {
+            None
+        };
+        if entering {
+            self.taint.pc.set(self.taint.pc.get() | taint::ALL);
+        }
         let _pin_guard = if self.seal.active {
             let owner = match captured.borrow().get(PIN_FN_MARK) {
                 Some(Value::Int(n)) => *n as usize,
@@ -4572,9 +4765,9 @@ impl<'p> Interp<'p> {
         let lend = Rc::strong_count(&captured) == private_refs;
         let mut env = Env::new();
         if lend {
-            env.vars.extend(captured.borrow_mut().drain());
+            env.load_captured(captured.borrow_mut().drain());
         } else {
-            env.vars.extend(
+            env.load_captured(
                 captured
                     .borrow()
                     .iter()
@@ -4582,22 +4775,49 @@ impl<'p> Interp<'p> {
             );
         }
         env.push();
-        for (p, a) in params.iter().zip(args) {
-            env.define(p.clone(), a);
+        for (i, (p, a)) in params.iter().zip(args).enumerate() {
+            // A parameter whose declared type is closed is a pin: the argument was
+            // cast to it (strictly, from a sealed caller), so its runtime type is
+            // the operator's. The value is not (amendment 102).
+            let mut t = in_t;
+            if t & taint::TYP != 0
+                && Self::param_types(&contract, i)
+                    .iter()
+                    .any(|ty| self.t_pins(ty))
+            {
+                t &= !taint::TYP;
+            }
+            env.define(p.clone(), a, t);
         }
         // A closure's own `return` ends the closure; every other transfer is
         // refused at its edge, as for a named fn (`contain_frame`).
         // A candidate closure returning to operator code is a seal crossing.
         let crossing = origin && !self.frame_sealed.get();
+        let mut ret_t = 0u8;
         let out = self.with_frame(origin, || {
             contain_frame(
-                match self.eval(&body, &mut env) {
-                    Err(Flow::Return(v)) => Ok(v),
-                    other => other,
+                match self.eval_t::<T>(&body, &mut env) {
+                    Err(Flow::Return(v)) => {
+                        if T {
+                            ret_t = self.taint.ret.get();
+                        }
+                        Ok(v)
+                    }
+                    other => {
+                        if T {
+                            ret_t = self.taint.last.get();
+                        }
+                        other
+                    }
                 },
                 "a closure",
             )
         });
+        ret_t |= self.taint.sticky.get() & taint::VAL;
+        if let Some((pc, sticky)) = ctl {
+            self.taint.pc.set(pc);
+            self.taint.sticky.set(sticky);
+        }
         // Write back only names the closure actually captured. A `let` introduced
         // inside the body lives in a pushed scope and must not leak into the
         // capture; a parameter shadowing a captured name must not overwrite it
@@ -4606,11 +4826,22 @@ impl<'p> Interp<'p> {
             let mut cell = captured.borrow_mut();
             if lend {
                 // The cell is empty and the base scope holds exactly its keys.
-                cell.extend(env.drain_base_scope());
+                env.drain_base_scope_into(&mut cell);
             } else {
-                for (k, v) in env.base_scope() {
+                for (k, v, t) in env.base_scope() {
                     if let Some(slot) = cell.get_mut(k) {
                         *slot = v.clone();
+                    } else {
+                        continue;
+                    }
+                    // What the name holds now carries what the body gave it.
+                    if T {
+                        let ck = format!("{}{k}", taint::CAP_T);
+                        if *t != 0 {
+                            cell.insert(ck, Value::Int(i64::from(*t)));
+                        } else {
+                            cell.remove(&ck);
+                        }
                     }
                 }
             }
@@ -4624,6 +4855,9 @@ impl<'p> Interp<'p> {
             self.dict_edge_out()?;
         } else if entering {
             self.dict_edge_in(&v)?;
+        }
+        if T {
+            self.taint.acc.set(entry_t | ret_t);
         }
         Ok(v)
     }
@@ -4819,6 +5053,7 @@ pub mod conform;
 // The dispatch rule: an operator impl is never selected by a type nothing on
 // the operator side determined (C9 round 6, amendment 83).
 mod pin;
+mod taint;
 // Core tree-walking evaluator (eval/eval_block/eval_call/eval_binop/
 // match_pattern) extracted to interp/eval.rs (R0 slice 5). Its methods live in a
 // second `impl Interp` block there; inherent methods resolve across split impl
@@ -5319,7 +5554,7 @@ mod tests {
 
     /// Serialises the interpreter tests that set the process-global sealed
     /// directory set (`resolver::set_sealed_module_dirs`).
-    static SEALED_DIRS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    pub(super) static SEALED_DIRS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// A second `impl J for E` must never replace the first's methods. The
     /// interpreter keys methods by (type, name) and keeps the LAST, so a
@@ -5461,9 +5696,15 @@ mod tests {
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         crate::resolver::set_sealed_module_dirs(&[std::path::PathBuf::from(&sdir)]);
-        DISPATCH_RULE_OFF.store(!rule, std::sync::atomic::Ordering::SeqCst);
+        // `PSV1T_TAINT_ONLY=1` (a sweep of the whole suite, amendment 102)
+        // runs every rule-on test with the STATIC pin analysis off and only the
+        // runtime taint rules on: a verdict that changes is a hole in one of the two.
+        let taint_only = rule && std::env::var_os("PSV1T_TAINT_ONLY").is_some();
+        DISPATCH_RULE_OFF.store(!rule || taint_only, std::sync::atomic::Ordering::SeqCst);
+        TAINT_FORCE_ON.store(taint_only, std::sync::atomic::Ordering::SeqCst);
         let out = run_test_fn_outcome(&prog, test);
         DISPATCH_RULE_OFF.store(false, std::sync::atomic::Ordering::SeqCst);
+        TAINT_FORCE_ON.store(false, std::sync::atomic::Ordering::SeqCst);
         crate::resolver::set_sealed_module_dirs(&[]);
         out
     }
@@ -8120,8 +8361,8 @@ fn main() { }
     // runtime type there — and with it the operator's impl. The operator's
     // `u8` impl is the lenient one, so a laundered `u8` is a keyed pass.
 
-    const JUDGE8: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
-    const LAUNDER8: &str = "fn narrow(n: i64) -> u8 { n as u8 }\nfn stash(v: u8) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}\n";
+    pub(super) const JUDGE8: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
+    pub(super) const LAUNDER8: &str = "fn narrow(n: i64) -> u8 { n as u8 }\nfn stash(v: u8) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}\n";
 
     /// `match dict_get(stash(narrow(4)), "k") { Some(v) => {some}  None => {none} }`
     fn u8_or(some: &str, none: &str) -> String {
@@ -9267,7 +9508,7 @@ fn main() { }
     }
 
     /// The interpreter's source files, with each file's own test module cut off.
-    fn interp_sources() -> Vec<(&'static str, String)> {
+    pub(super) fn interp_sources() -> Vec<(&'static str, String)> {
         let cut = |s: &str| {
             let end = s.find("\n#[cfg(test)]\nmod tests").unwrap_or(s.len());
             s[..end].to_string()
@@ -9282,6 +9523,7 @@ fn main() { }
             ("interp/eval.rs", cut(include_str!("interp/eval.rs"))),
             ("interp/goal.rs", cut(include_str!("interp/goal.rs"))),
             ("interp/pin.rs", cut(include_str!("interp/pin.rs"))),
+            ("interp/taint.rs", cut(include_str!("interp/taint.rs"))),
             (
                 "interp/proptest.rs",
                 cut(include_str!("interp/proptest.rs")),
@@ -9291,6 +9533,7 @@ fn main() { }
                 cut(include_str!("interp/provenance.rs")),
             ),
             ("interp/value.rs", cut(include_str!("interp/value.rs"))),
+            ("interp/regex.rs", cut(include_str!("interp/regex.rs"))),
         ]
     }
 
@@ -11047,6 +11290,10 @@ fn main() { }
         }
     }
 }
+
+// The runtime taint's own tests (C9 round 11, amendment 102).
+#[cfg(test)]
+mod taint_tests;
 
 #[cfg(test)]
 mod literal_escape_tests {

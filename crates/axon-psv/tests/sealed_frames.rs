@@ -1453,3 +1453,176 @@ fn goal_eval_runs_no_function_name_the_candidate_chose() {
     );
     name_attack("goal_eval", geval, "pub fn name() -> str { \"easy\" }\n");
 }
+
+// ---- C9 round 11, PSV1T (amendment 102): the runtime taint ------------------------
+//
+// Through the real runner and the real interpreter. A VALUE sealed code produced
+// carries a taint every operation propagates; the primitives that select operator
+// code (a name given to a name-resolving builtin, an operator closure called after
+// a candidate-chosen key or index, an impl dispatched on a candidate-chosen type,
+// fixed-width arithmetic on a candidate-chosen width) refuse a tainted selector.
+// Each attack is paired with an honest control that runs to a keyed pass, and a
+// wrong answer that fails keyed.
+
+/// The attack was refused BY THE TAINT RULE (its own message is on stdout), not by
+/// some other check, and earned no keyed pass.
+fn taint_attack(what: &str, suite: &str, cand: &str) -> Option<String> {
+    selection_attack(what, suite, cand, true)
+}
+
+/// `by_taint`: the refusal must be the taint rule's own message. Where the
+/// static pin analysis also refuses the shape (a name in a name-resolving
+/// builtin), the runner leg is corroboration and either layer's message counts;
+/// the interpreter unit tests judge the taint rule alone (static layer off).
+/// Returns the failure, so a test can list EVERY attack that got through.
+fn selection_attack(what: &str, suite: &str, cand: &str, by_taint: bool) -> Option<String> {
+    let s = check(suite, &[], cand, "accept");
+    if !refused_unkeyed(&s) {
+        return Some(format!(
+            "ATTACK: sealed code selected operator code ({what}): {:?} {:?} {}",
+            s.status, s.host, s.stdout
+        ));
+    }
+    let taint = s.stdout.contains("(runtime taint)") || s.stdout.contains("the candidate picked");
+    let stat = s.stdout.contains("nothing on the operator side determined");
+    if taint || (!by_taint && stat) {
+        None
+    } else {
+        Some(format!(
+            "{what}: refused, but not by the {}: {}",
+            if by_taint {
+                "taint rule"
+            } else {
+                "selection rules"
+            },
+            s.stdout
+        ))
+    }
+}
+
+fn all_refused(fails: Vec<String>) {
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}
+
+const REF11: &str = "fn reference(x: i64) -> i64 { x * 2 }\n";
+const HTAB11: &str = "  let h = dict_new()\n  dict_set(h, \"double\", |x| 0)\n  dict_set(h, \"reference\", |x| x * 2)\n";
+const OPS11: &str = "  let ops = [|x| 0, |x| x * 2]\n";
+
+/// The open finding of amendment 100: an operator-built TABLE of closures
+/// selected by a key or index the candidate chose. Every spelling of the choice is
+/// refused; the operator naming its own row is not.
+#[test]
+fn an_operator_closure_the_candidate_picked_is_never_called() {
+    let suite = |uses: &str, body: &str| {
+        format!("mod sol\nuse sol.{{{uses}}}\n{REF11}@[test]\nfn accept() {{\n{body}\n}}\n")
+    };
+    // Honest controls: the operator's own row passes a right candidate and
+    // fails a wrong one, keyed; a branch ON the candidate's data that runs
+    // closures the operator listed is free.
+    let lit = suite(
+        "solve",
+        &format!("{OPS11}  let f = ops[1]\n  assert(f(solve(21)) == reference(21))"),
+    );
+    passed(
+        &check(&lit, &[], "pub fn solve(x: i64) -> i64 { x }\n", "accept"),
+        "literal row",
+    );
+    let wrong = check(&lit, &[], "pub fn solve(x: i64) -> i64 { 0 }\n", "accept");
+    assert_eq!(
+        (wrong.status, wrong.host),
+        (GuestStatus::Failed, Some(false)),
+        "wrong: {}",
+        wrong.stdout
+    );
+    let branch = suite("idx", &format!("{OPS11}  if idx() == 1 {{ assert(ops[1](21) == reference(21)) }} else {{ assert(false) }}"));
+    passed(
+        &check(&branch, &[], "pub fn idx() -> i64 { 1 }\n", "accept"),
+        "statement branch",
+    );
+    // Attacks.
+    let mut fails = Vec::new();
+    for (what, uses, body, cand) in [
+        ("dict_get(h, entry())", "entry", format!("{HTAB11}  match dict_get(h, entry()) {{ Some(f) => assert(f(21) == reference(21))  None => assert(false) }}"), "pub fn entry() -> str { \"reference\" }\n"),
+        ("the wrong key, refused as well", "entry", format!("{HTAB11}  match dict_get(h, entry()) {{ Some(f) => assert(f(21) == reference(21))  None => assert(false) }}"), "pub fn entry() -> str { \"double\" }\n"),
+        ("ops[idx()]", "idx", format!("{OPS11}  let f = ops[idx()]\n  assert(f(21) == reference(21))"), "pub fn idx() -> i64 { 1 }\n"),
+        ("the index spelled as a comparison", "idx", format!("{OPS11}  let f = ops[if idx() == 1 {{ 1 }} else {{ 0 }}]\n  assert(f(21) == reference(21))"), "pub fn idx() -> i64 { 1 }\n"),
+        ("the index assigned under the candidate's branch", "idx", format!("{OPS11}  let k = 0\n  if idx() == 1 {{ k = 1 }}\n  let f = ops[k]\n  assert(f(21) == reference(21))"), "pub fn idx() -> i64 { 1 }\n"),
+        ("the closure chosen by an if expression", "idx", format!("{OPS11}  let f = if idx() == 1 {{ ops[1] }} else {{ ops[0] }}\n  assert(f(21) == reference(21))"), "pub fn idx() -> i64 { 1 }\n"),
+        ("the closure assigned under the candidate's branch", "idx", format!("{OPS11}  let f = ops[0]\n  if idx() == 1 {{ f = ops[1] }}\n  assert(f(21) == reference(21))"), "pub fn idx() -> i64 { 1 }\n"),
+        ("a closure the candidate was handed and handed back", "choose", format!("{OPS11}  let g = choose(ops[0], ops[1])\n  assert(g(21) == reference(21))"), "pub fn choose(a: fn(i64) -> i64, b: fn(i64) -> i64) -> fn(i64) -> i64 { b }\n"),
+        ("a closure the candidate stored in the operator's dict", "reg", format!("{OPS11}  let d = dict_new()\n  reg(d, ops[1])\n  match dict_get(d, \"f\") {{ Some(f) => assert(f(21) == reference(21))  None => assert(false) }}"), "pub fn reg(d: Dict, f: fn(i64) -> i64) { dict_set(d, \"f\", f) }\n"),
+    ] {
+        fails.extend(taint_attack(what, &suite(uses, &body), cand));
+    }
+    all_refused(fails);
+}
+
+/// A name built from the candidate's bit is the candidate's name, however the bit
+/// is spelled into it: a branch value, an assignment under the branch, a return
+/// out of it, a literal computed after it, a match, a table indexed by it.
+#[test]
+fn a_name_built_out_of_the_candidates_bit_never_selects_an_operator_fn() {
+    let dbl = "pub fn idx() -> i64 { 1 }\npub fn double(x: i64) -> i64 { 0 }\n";
+    let suite = |pre: &str, body: &str| {
+        format!("mod sol\nuse sol.{{idx}}\n{REF11}{pre}@[test]\nfn accept() {{\n{SB10}{body}\n}}\n")
+    };
+    let run = |n: &str| {
+        format!("    let got = sandbox_run(sb, {n}, 21)\n    assert(got == reference(21))")
+    };
+    // Honest: a branch whose arms are the operator's own statements.
+    let stmt = suite("", "    if idx() == 1 {\n        let got = sandbox_run(sb, \"double\", 21)\n        assert(got == 0)\n    }");
+    passed(&check(&stmt, &[], dbl, "accept"), "statement-level branch");
+    let mut fails = Vec::new();
+    for (what, pre, body) in [
+        ("an if expression", "", run("if idx() == 1 { \"reference\" } else { \"double\" }")),
+        ("an assignment under the branch", "", "    let nm = \"double\"\n    if idx() == 1 { nm = \"reference\" }\n    let got = sandbox_run(sb, nm, 21)\n    assert(got == reference(21))".to_string()),
+        ("a return out of the branch", "fn pick() -> str {\n    if idx() == 1 { return \"reference\" }\n    \"double\"\n}\n", run("pick()")),
+        ("a match on its value", "", run("match idx() { 1 => \"reference\"  _ => \"double\" }")),
+        ("a table indexed by it", "", run("[\"double\", \"reference\"][idx()]")),
+        ("a literal computed after an early exit on it", "fn pick() -> str {\n    if idx() == 0 { return \"x\" }\n    \"reference\"\n}\n", run("pick()")),
+    ] {
+        fails.extend(selection_attack(what, &suite(pre, &body), dbl, false));
+    }
+    all_refused(fails);
+}
+
+/// The taint travels by every carrier a value can: a dict or channel the
+/// candidate wrote, a closure's captured state, a sealed `&mut`, the scheduler,
+/// a goal. A READ by the candidate of an operator dict taints nothing.
+#[test]
+fn taint_survives_every_carrier_a_value_can_travel_by() {
+    let dbl = "pub fn double(x: i64) -> i64 { 0 }\n";
+    let suite = |uses: &str, pre: &str, body: &str| {
+        format!(
+            "mod sol\nuse sol.{{{uses}}}\n{REF11}{pre}@[test]\nfn accept() {{\n{SB10}{body}\n}}\n"
+        )
+    };
+    let named = |n: &str| {
+        format!("    let got = sandbox_run(sb, {n}, 21)\n    assert(got == reference(21))")
+    };
+    // Honest: the candidate only READS the operator's dict, then the operator
+    // names a literal.
+    let peek = suite("peek", "", "    let d = dict_new()\n    dict_set(d, \"n\", 1)\n    let k = peek(d)\n    let got = sandbox_run(sb, \"double\", 21)\n    assert(got == 0)");
+    passed(
+        &check(
+            &peek,
+            &[],
+            &format!("pub fn peek(d: Dict) -> i64 {{ dict_len(d) }}\n{dbl}"),
+            "accept",
+        ),
+        "a sealed read",
+    );
+    let mut fails = Vec::new();
+    for (what, uses, body, cand) in [
+        ("a dict the candidate wrote", "put", "    let d = dict_new()\n    put(d)\n    let nm = match dict_get(d, \"n\") { Some(s) => s  None => \"\" }\n".to_string() + &named("nm"), "pub fn put(d: Dict) { dict_set(d, \"n\", \"reference\") }\n"),
+        ("a channel the candidate wrote", "push", "    let c = chan<str>()\n    push(c)\n".to_string() + &named("c.recv()"), "pub fn push(c: Chan<str>) { c.send(\"reference\") }\n"),
+        ("a &mut array the candidate wrote", "fill", "    let xs = [\"double\"]\n    fill(&mut xs)\n".to_string() + &named("xs[0]"), "pub fn fill(xs: &mut [str]) { xs[0] = \"reference\" }\n"),
+        ("a closure's captured state the candidate set", "run_cb", "    let n = 0\n    let cb = |v| { if v > 0 { n = v }\n        n }\n    let r = run_cb(cb)\n    let names = [\"double\", \"reference\"]\n".to_string() + &named("names[cb(0)]"), "pub fn run_cb(f: fn(i64) -> i64) -> i64 { f(1) }\n"),
+        ("the scheduler", "idx1", "    let id = scheduler_spawn(\"idx1\", 0)\n    let n = scheduler_run()\n    let names = [\"double\", \"reference\"]\n".to_string() + &named("names[scheduler_result(id)]"), "pub fn idx1(x: i64) -> i64 { 1 }\n"),
+        ("sandbox_run's result", "idx1", "    let names = [\"double\", \"reference\"]\n".to_string() + &named("names[sandbox_run(sb, \"idx1\", 0)]"), "pub fn idx1(x: i64) -> i64 { 1 }\n"),
+    ] {
+        let cand = format!("{cand}{dbl}");
+        fails.extend(selection_attack(what, &suite(uses, "", &body), &cand, false));
+    }
+    all_refused(fails);
+}
