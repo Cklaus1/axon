@@ -2572,3 +2572,12 @@ ATTACK_MARKERS.update({
     'M2938': 'DRIFT: a channel method was added or removed',
     'M2939': 'DRIFT: a builtin renders a value with display\\(\\)',
 })
+ATTACK_MARKERS.update({
+    'M2940': 'ATTACK: sealed code selected operator code \\(an\\ if\\ expression\\)',
+    'M2941': 'ATTACK: sealed code selected operator code \\(a\\ match\\ on\\ its\\ value\\)',
+    'M2942': 'ATTACK: sealed code selected operator code \\(len\\ after\\ a\\ sealed\\ send\\ picks\\ a\\ closure\\)',
+    'M2943': 'ATTACK: sealed code selected operator code \\(len\\ after\\ a\\ sealed\\ send\\ picks\\ the\\ name\\)',
+    'M2944': 'ATTACK: sealed code selected operator code \\(len\\ after\\ a\\ sealed\\ drain\\ picks\\ a\\ closure\\)',
+    'M2945': 'ATTACK: sealed code selected operator code \\(the\\ arm\\ select\\ skips\\ because\\ the\\ candidate\\ drained\\ its\\ channel\\)',
+    'M2946': 'goal_run\\(.*\\[nonadapt\\]',
+})

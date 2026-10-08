@@ -9925,5 +9925,17 @@ MUTATIONS += [
 ]
 
 
+# PSV1U (amendment 106), the runner legs: the same edits as their unit twins, killed through axon_psv::runner::run on attacks the static layer lets through.
+MUTATIONS += [
+    ('M2940', 'TAINT (am106, runner): the name argument of a name-resolving builtin is judged by the taint at the call site', 'crates/axon-core/src/interp/eval.rs', '                    self.t_check_names(name, &ats)?;\n', '', 'axon-psv', '--test sealed_frames', 'the_taint_name_rule_refuses_what_the_static_name_analysis_lets_through'),
+    ('M2941', 'TAINT (am106, runner): a name that carries VAL is refused', 'crates/axon-core/src/interp/taint.rs', '            if ats.get(i).copied().unwrap_or(0) & VAL != 0 {', '            if false && ats.get(i).copied().unwrap_or(0) & VAL != 0 {', 'axon-psv', '--test sealed_frames', 'the_taint_name_rule_refuses_what_the_static_name_analysis_lets_through'),
+    ('M2942', 'TAINT (am106, runner): a channel access takes the channel taint into the result', 'crates/axon-core/src/interp/taint.rs', '        self.t_touch(self.t_obj(chan));\n        if self.frame_sealed.get() &&', '        let _ = chan;\n        if self.frame_sealed.get() &&', 'axon-psv', '--test sealed_frames', 'a_channel_the_candidate_touched_never_selects_operator_code'),
+    ('M2943', 'TAINT (am106, runner): a sealed send marks the channel', 'crates/axon-core/src/interp/taint.rs', 'matches!(method, "send" | "recv" | "try_recv")', 'matches!(method, "recv" | "try_recv")', 'axon-psv', '--test sealed_frames', 'a_channel_the_candidate_touched_never_selects_operator_code'),
+    ('M2944', 'TAINT (am106, runner): a sealed recv marks the channel', 'crates/axon-core/src/interp/taint.rs', 'matches!(method, "send" | "recv" | "try_recv")', 'matches!(method, "send" | "try_recv")', 'axon-psv', '--test sealed_frames', 'a_channel_the_candidate_touched_never_selects_operator_code'),
+    ('M2945', 'TAINT (am106, runner): a select reads the readiness of every channel it examines', 'crates/axon-core/src/interp/eval.rs', '                    if T {\n                        self.t_chan_access(&Value::Chan(q.clone()), "recv");\n                    }\n', '', 'axon-psv', '--test sealed_frames', 'a_channel_the_candidate_touched_never_selects_operator_code'),
+    ('M2946', 'TAINT (am106, runner): a sealed goal_run sees only its own fns', 'crates/axon-core/src/interp.rs', '            Some(f) => !(self.seal.active && self.frame_sealed.get()) || self.fn_is_sealed(f),', '            Some(_) => true,', 'axon-psv', '--test sealed_frames', 'a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one'),
+]
+
+
 if __name__ == "__main__":
     main()
