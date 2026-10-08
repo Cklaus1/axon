@@ -446,7 +446,8 @@ Replacing the binary without re-certifying fails closed at two independent point
 
 `scripts/v022_refusal_coverage.py` derives the guard sites from the code of every in-scope file. The claim is
 exactly this: **every GATE-VISIBLE refusal site (what is NOT visible is listed under "What the gate still cannot see") has a mutation row, a CHECKABLE exemption (a fact a reviewer can re-execute:
-dominated, unreachable, not on the protected route), or an entry on a counted, greppable REMAINDER list of guards no
+dominated, unreachable, not on the protected route), a recorded OBSERVED measurement (a survey saw a named test fail; re-measured
+over a sample at the freeze, amendment 107), or an entry on a counted, greppable REMAINDER list of guards no
 test observes alone.** REMAINDER is **not claimed covered**: it is the list of guards for which no test is known to
 fail when the guard is removed. The gate prints the counts by category on every run and
 `python3 scripts/v022_refusal_coverage.py --remainder` lists each site (`grep REMAINDER`). An earlier wording
@@ -476,6 +477,23 @@ STILL cannot see is printed in its last lines (`STILL BLIND:`) and is, concretel
 - Python other than `scripts/guest_build_env.py`, the shell scripts, and any decision that is not Rust or that file.
 
 A reader must therefore not take "every refusal site" as "every guard".
+
+### Amendment 107 (C9 round 11, eqgate7): values are now followed to their sinks, and what remains
+
+The list above was extended by instance three rounds running. The gate now follows a literal, a const, a collection of
+them and a one-level local to a SINK: the arguments of an exec wrapper (`sealed_exec::command`, an explicit table checked
+against every `Command::new` of the scope in both directions), every call of a fn with an `Option<u32>` expected-owner
+parameter (a field, a local, `None` all count), a field named `owner`, and a const named at one (its definition is a site).
+Counts: value sites of the older forms 228; flow sites 59 (16 rowed, 43 OBSERVED); 46 sink arguments COMPUTED and counted but
+not sites; 2 bare const uses not followed. The claim has a fourth disposition, **a recorded OBSERVED measurement**, which the
+freeze re-measures over a sample (`scripts/v022_resurvey.py`, record `governance/status/v022-resurvey.json`) instead of every
+run re-checking it. What is still blind is the list printed by the gate (`STILL BLIND:`) and in amendment 107.
+
+**Withdrawn runner rows, stated plainly.** M2603, M2604, M2605 and M2607 (amendment 100) survive only because the production
+route refuses those attacks by TAINT; their unit twins M2600, M2601, M2602 and M2606 kill only with the taint rules OFF
+(`TAINT_FORCE_ON=false`, a `#[cfg(test)]` switch in `interp.rs` and `taint.rs`): they judge a layer in a mode the shipped
+binary never runs. This is defence in depth, not a gap in the claim as written, but no production-route test guards the static
+layer alone for the `stricter(..)` programs of `taint_tests.rs`.
 
 ## Mutation record for the readiness authority
 
