@@ -66,6 +66,22 @@ def mutate(label, frag, before):
         if frag.strip() == "0":
             return "1"
         return "0"
+    if label in ("flow_argv", "flow_env", "flow_const"):
+        # Amendment 107 flow sites: a string is spelled differently, a bare const name is replaced by
+        # a different string, a number is moved by one.
+        m = STR.search(frag)
+        if m:
+            return frag[:m.start(1)] + m.group(1) + "x" + frag[m.end(1):]
+        if re.fullmatch(r"(?:\w+::)*[A-Z][A-Z0-9_]{2,}", frag):
+            return '"/tmp"'
+        n = re.search(r"\d+", frag)
+        if n:
+            return frag[:n.start()] + str(int(n.group()) + 1) + frag[n.end():]
+        return None
+    if label in ("flow_owner", "flow_owner_field"):
+        if frag.strip() == "None":
+            return "Some(1)"
+        return "None" if label == "flow_owner" else f"({frag}.wrapping_add(1))"
     if label == "val_owner":
         return "None"
     if label == "val_field":
