@@ -1,4 +1,4 @@
-//! The native build cache (AX-34).
+//! The native build cache (AX-34) and the build success line (AX-39).
 //!
 //! A cache entry is the hosted program's relocatable object AFTER the
 //! opt-level IR pipeline and the backend, so a hit only links. It used to be
@@ -225,5 +225,72 @@ fn a_corrupt_or_old_format_entry_is_rebuilt_not_linked() {
         let again = build(&src, &bin, &cache, &[]);
         assert!(!all_output(&again).contains("E0906"), "{label}: now a hit");
     }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// AX-39: the success line names the artifact actually written. `--emit-llvm`
+/// used to print `Binary: ./app` for IR sent to stdout, with no binary built.
+#[test]
+fn the_build_success_line_names_the_artifact_written() {
+    let dir = scratch("labels");
+    let src = hello(&dir, "app", "hi");
+    let cmd = |args: &[&str]| -> Output {
+        axon()
+            .current_dir(&dir)
+            .arg("build")
+            .arg(&src)
+            .arg("--no-cache")
+            .args(args)
+            .output()
+            .expect("spawn axon build")
+    };
+    let stderr = |o: &Output| String::from_utf8_lossy(&o.stderr).into_owned();
+
+    // --emit-llvm, no -o: IR on stdout, nothing at the default ./app.
+    let ir = cmd(&["--emit-llvm"]);
+    if codegen_absent(&ir) {
+        return;
+    }
+    assert_eq!(ir.status.code(), Some(0), "{}", all_output(&ir));
+    assert!(String::from_utf8_lossy(&ir.stdout).contains("define"));
+    assert!(
+        stderr(&ir).contains("LLVM IR: <stdout> ("),
+        "{}",
+        stderr(&ir)
+    );
+    assert!(!stderr(&ir).contains("Binary:"), "{}", stderr(&ir));
+    assert!(!dir.join("app").exists(), "no binary was built");
+
+    // --emit-llvm -o f.ll: one line, naming the IR file.
+    let ll = dir.join("f.ll");
+    let irf = cmd(&["--release", "--emit-llvm", "-o", ll.to_str().unwrap()]);
+    assert_eq!(irf.status.code(), Some(0), "{}", all_output(&irf));
+    assert!(std::fs::read_to_string(&ll).unwrap().contains("define"));
+    assert!(
+        stderr(&irf).contains(&format!("LLVM IR: {} (", ll.display())),
+        "{}",
+        stderr(&irf)
+    );
+    assert!(!stderr(&irf).contains("Binary:"), "{}", stderr(&irf));
+    assert_eq!(
+        stderr(&irf).matches("LLVM IR:").count(),
+        1,
+        "{}",
+        stderr(&irf)
+    );
+
+    // --emit-obj: an object, not a binary.
+    let o = dir.join("f.o");
+    let obj = cmd(&["--emit-obj", "-o", o.to_str().unwrap()]);
+    assert_eq!(obj.status.code(), Some(0), "{}", all_output(&obj));
+    assert!(stderr(&obj).contains(&format!("Object: {} (", o.display())));
+    assert!(!stderr(&obj).contains("Binary:"), "{}", stderr(&obj));
+
+    // A linked executable is the one thing called a binary.
+    let b = dir.join("bin");
+    let exe = cmd(&["-o", b.to_str().unwrap()]);
+    assert_eq!(exe.status.code(), Some(0), "{}", all_output(&exe));
+    assert!(stderr(&exe).contains(&format!("Binary: {} (", b.display())));
+    assert_eq!(run(&b), "hi\n");
     let _ = std::fs::remove_dir_all(&dir);
 }

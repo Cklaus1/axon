@@ -166,8 +166,9 @@ enum Command {
         #[arg(long, help = "Emit .o only, skip link step")]
         emit_obj: bool,
 
-        /// Emit the LLVM IR as text to the --out path (or stdout) and stop.
-        /// Used for golden-IR inspection of layout/atomic lowering (R17 Slice 2/3).
+        /// Emit the LLVM IR as text and stop: to the --out path when it names a
+        /// `.ll` file, otherwise to stdout. Used for golden-IR inspection of
+        /// layout/atomic lowering (R17 Slice 2/3).
         #[arg(long, help = "Emit LLVM IR text and stop (R17 golden-IR tests)")]
         emit_llvm: bool,
 
@@ -3405,11 +3406,19 @@ fn cmd_build(
         }
     }
 
+    let artifact = BuildArtifact::of(&opts, &output);
     match run_build_pipeline(&mut program, first, &output, &opts) {
         Ok(()) => {
             let elapsed = start.elapsed().as_millis();
-            let artifact = if emit_obj { "Object" } else { "Binary" };
-            eprintln!("{artifact}: {} ({elapsed}ms)", output.display());
+            // AX-39: name what was actually written. `--emit-llvm` used to
+            // report `Binary: ./main` for IR that went to stdout, with no
+            // `./main` anywhere.
+            let written = if artifact == BuildArtifact::LlvmIrStdout {
+                "<stdout>".to_string()
+            } else {
+                output.display().to_string()
+            };
+            eprintln!("{}: {written} ({elapsed}ms)", artifact.label());
             // R14: --host mobile also emits the deterministic Kotlin wrapper next
             // to the jniLibs/ tree (out/android/Axon.kt).
             if mobile {
@@ -3509,6 +3518,58 @@ struct BuildOptions {
     /// R14: link a shared library (`.so`) instead of an executable
     /// (`--host mobile` → Android jniLibs).
     shared: bool,
+}
+
+/// What `axon build` writes, named on the success line (AX-39). Only a linked
+/// executable is a `Binary`.
+#[cfg(feature = "codegen")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BuildArtifact {
+    /// A linked executable (hosted or freestanding).
+    Binary,
+    /// A linked shared library (`--host mobile`).
+    SharedLib,
+    /// A relocatable object, not linked (`--emit-obj`).
+    Object,
+    /// LLVM IR text written to the `--out` file (`--emit-llvm -o f.ll`).
+    LlvmIrFile,
+    /// LLVM IR text written to stdout (`--emit-llvm` without a `.ll` out).
+    LlvmIrStdout,
+}
+
+#[cfg(feature = "codegen")]
+impl BuildArtifact {
+    fn of(opts: &BuildOptions, output: &Path) -> Self {
+        if opts.emit_llvm {
+            if emit_llvm_writes_file(output) {
+                Self::LlvmIrFile
+            } else {
+                Self::LlvmIrStdout
+            }
+        } else if opts.emit_obj {
+            Self::Object
+        } else if opts.shared {
+            Self::SharedLib
+        } else {
+            Self::Binary
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Binary => "Binary",
+            Self::SharedLib => "Shared library",
+            Self::Object => "Object",
+            Self::LlvmIrFile | Self::LlvmIrStdout => "LLVM IR",
+        }
+    }
+}
+
+/// `--emit-llvm` writes the IR to `--out` only when it names a `.ll` file;
+/// any other out path, including the default `./<stem>`, means stdout.
+#[cfg(feature = "codegen")]
+fn emit_llvm_writes_file(output: &Path) -> bool {
+    output.to_string_lossy().ends_with(".ll")
 }
 
 /// R25: expand friendly `--target` aliases to full LLVM triples.
@@ -6971,12 +7032,8 @@ fn build_ir_and_link(
     // backend would compile.
     if emit_llvm {
         let ir = cg.emit_optimized_llvm_ir(opt, target_triple, freestanding, shared)?;
-        // Heuristic: if --out names a real file path (not the default ./stem),
-        // write there; otherwise print to stdout.
-        let out_str = output.to_string_lossy();
-        if out_str.ends_with(".ll") {
+        if emit_llvm_writes_file(output) {
             std::fs::write(output, &ir).map_err(|e| format!("writing IR: {e}"))?;
-            eprintln!("LLVM IR: {}", output.display());
         } else {
             print!("{ir}");
         }
