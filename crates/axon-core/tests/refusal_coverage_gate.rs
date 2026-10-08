@@ -2081,7 +2081,7 @@ fn a_value_is_credited_only_by_an_edit_of_that_value() {
     refuses(
         &r,
         &[],
-        "names the fragment \"vs_val_x\", which is not the value's text",
+        "names the fragment 'vs_val_x', which is not the value's text",
         "a value exemption naming a fragment that is not the site's text was accepted",
     );
     let _ = std::fs::remove_dir_all(&r);
