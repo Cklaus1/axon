@@ -10,7 +10,7 @@ KILL (the value is observed: the survey records the test names, which is an
 OBSERVED entry, not a row). A green suite is a SURVIVOR: it needs a test and a row.
 A build that breaks, or a value the survey cannot edit by rule, is reported MANUAL.
 
-    python3 scripts/v022_value_survey.py OUT.json PKG [--shard I/N] [--only SUBSTR] [--lines A-B] [--survivors-of PREV.json] [--skip-done A.json,B.json] [--tier1 CMD]
+    python3 scripts/v022_value_survey.py OUT.json PKG [--shard I/N] [--only SUBSTR] [--lines A-B] [--survivors-of PREV.json] [--skip-done A.json,B.json] [--tier1 CMD] [--again]
         [--cmd "cargo test -p axon-fabric --test cortex_via_fabric"] -- cargo-test-args
 
 --cmd replaces the default `cargo test -p PKG --no-fail-fast` (a value of one crate that another crate's
@@ -88,7 +88,7 @@ def mutate(label, frag, before):
     return None
 
 
-def candidates(pkg, only):
+def candidates(pkg, only, again=False):
     rows = rc.load_rows()
     out = []
     for f in rc.in_scope_files():
@@ -96,7 +96,8 @@ def candidates(pkg, only):
             continue
         text = open(os.path.join(rc.ROOT, f)).read()
         rs = [(r[0], rc.edit_ranges(text, r[3], r[4])) for r in rows if r[2] == f and text.count(r[3]) == 1]
-        ex = {(e[1], e[2]) for e in rc.VALUE_EXEMPT if e[0] == f}
+        # `again`: re-measure what an OBSERVED entry already claims (a survey is a measurement, and goes stale)
+        ex = {(e[1], e[2]) for e in rc.VALUE_EXEMPT if e[0] == f and not (again and e[4] == "OBSERVED")}
         for a, b, label, fn, n in rc.value_sites(text, rc.scope_regions(f, rc.code_lines(text), text, [])):
             if any(rc._ranges_hit(rg, a, b) for _, rg in rs) or (fn, n) in ex:
                 continue
@@ -110,6 +111,7 @@ def main():
     split = argv.index("--")
     opts, cargo = argv[2:split], argv[split + 1:]
     shard, only, lines, cmd, surv, tier1, done = (0, 1), None, None, None, None, None, set()
+    again = "--again" in opts
     for i, o in enumerate(opts):
         if o == "--lines":
             a, b = opts[i + 1].split("-")
@@ -155,7 +157,7 @@ def main():
     if tier1:
         r1, tail1, base_failing1 = run(tier1 + cargo)
         print("tier-1 baseline rc", r1.returncode, "failing", sorted(base_failing1), flush=True)
-    for idx, (f, a, b, label, fn, n) in enumerate(candidates(pkg, only)):
+    for idx, (f, a, b, label, fn, n) in enumerate(candidates(pkg, only, again)):
         if idx % shard[1] != shard[0] or (surv is not None and (f, fn, n) not in surv) or (f, fn, n) in done:
             continue
         path = os.path.join(rc.ROOT, f)
