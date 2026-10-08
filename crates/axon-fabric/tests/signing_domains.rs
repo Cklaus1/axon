@@ -175,6 +175,30 @@ fn a_signature_for_one_domain_never_verifies_under_another() {
     }
 }
 
+#[test]
+fn fabric_signs_an_execution_attestation_in_the_execution_domain_and_no_other() {
+    let k = fixed_key();
+    let pk = public_hex(&k);
+    let att = axon_fabric::signing::sign_execution_attestation(&k, &issuer(), &req(), &rc()).expect("sign");
+    let doc = execution_document(&req(), &rc()).expect("execution document");
+    verify_document(&att, EXECUTION_DOMAIN, &issuer(), &doc, &pk)
+        .expect("control: Fabric's execution attestation verifies in the execution domain");
+    for (name, domain, _) in domains() {
+        if domain == EXECUTION_DOMAIN {
+            continue;
+        }
+        assert!(
+            verify_document(&att, domain, &issuer(), &doc, &pk).is_err(),
+            "cross-protocol replay: Fabric's execution attestation verified as {name}"
+        );
+    }
+    assert_eq!(
+        att,
+        sign_document(&k, EXECUTION_DOMAIN, &issuer(), &doc).expect("sign"),
+        "the execution attestation is the execution document signed in the execution domain, nothing else"
+    );
+}
+
 // ── known answers ────────────────────────────────────────────────────────────
 
 fn signature_of(v: &Value) -> String {

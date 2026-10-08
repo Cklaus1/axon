@@ -1049,7 +1049,6 @@ EXEMPT += [
     (FC, '            .unwrap_or_else(|e| refuse("unregistered", &e, 4)),',
      "NOTHING TO ADMIT: the protected host's authority store is unusable; the store rule is "
      "protected_host.rs's"),
-    (FC, '                    .unwrap_or_else(|e| refuse("io", &e.to_string(), 2));', _IO + " (output)"),
     (FC, '                    .unwrap_or_else(|e| refuse("io", &e, 2)),', _IO + " (output)"),
     (FC, '                            .unwrap_or_else(|e| refuse("malformed", &e.to_string(), 3));',
      "NO OUTCOME: the same parse function on the same bytes submit() parsed successfully a few "
@@ -2104,9 +2103,6 @@ EXEMPT += [
      "NOTHING TO ADMIT: a number that is no integer has no integer value; its caller number_rules "
      "refuses it (`non-integer number`) and the schema bounds read through it are compiled in"),
     # ── loop ──
-    (LA, "fn clearance_verifies(",
-     "PREDICATE OF NAMED ROWS: its one caller is the clearance condition at admission (M264 replaces "
-     "the call with `signature_ref.is_some() | true`, ACTIVE; M245 the rooted-key leg)"),
     (EV, "fn is_d12(ep: &LoopEpisode) -> bool {",
      "SELECTS ONLY WHICH REFUSAL: its one caller (evaluate) routes a D12 episode (MiCode's not-produced "
      "markers) to the D12 branch, which refuses delivered execution documents (M129) and is never "
@@ -3455,8 +3451,6 @@ EXEMPT += [
      _A95['const_tag']),
     ('crates/axon-fabric/src/readiness.rs', 'pub const CERT_SCHEMA: &str = "axon-v022-protected-certification/2";',
      _A95['const_tag']),
-    ('crates/axon-fabric/src/readiness.rs', 'pub const PROTECTED_PROFILE: &str = "linux-microvm-protected";',
-     _A95['const_text']),
     ('crates/axon-fabric/src/readiness.rs', 'const PSV_SPEC: &str = "governance/specs/v022-protected-suite-verdict.md";',
      _A95['const_path']),
     ('crates/axon-fabric/src/readiness.rs', 'const REGISTRY: &str = "governance/cortex_gate_execution_registry.json";',
@@ -3501,16 +3495,8 @@ EXEMPT += [
      _A95['const_path']),
     ('crates/axon-guest-init/src/main.rs', 'const POLICY_SCHEMA: &str = "axon-vm-mmds/1";',
      _A95['const_tag']),
-    ('crates/axon-loop-contracts/src/attestation.rs', 'pub const ATTESTATION_SCHEMA: &str = "acf-receipt-attestation/2";',
-     _A95['const_tag']),
-    ('crates/axon-loop-contracts/src/attestation.rs', 'pub const EXECUTION_DOMAIN: &str = "axon.fabric-execution/1";',
-     _A95['const_tag']),
-    ('crates/axon-loop-contracts/src/lib.rs', 'pub const PROTECTED_PROFILES: &[&str] = &["linux-microvm-protected"];',
-     _observed('protected_profiles_is_the_one_profile_the_launch_manifest_pins (a second profile added)')),
     ('crates/axon-loop-contracts/src/operator_trust.rs', '    pub const ALL: [TrustAuthority; 5] = [',
      _A95['const_table']),
-    ('crates/axon-loop-contracts/src/operator_trust.rs', 'pub const EVIDENCE_SIGNATURE_SCHEMA: &str = "axon-evidence-signature/2";',
-     _A95['const_tag']),
     ('crates/axon-loop-contracts/src/protected_evidence.rs', 'pub const PSV_EVIDENCE_SCHEMA: &str = "axon-psv-evidence/2";',
      _A95['const_tag']),
     ('crates/axon-loop-contracts/src/schema.rs', 'const ANNOTATIONS: &[&str] = &["$schema", "$id", "title", "description"];',
@@ -3523,8 +3509,6 @@ EXEMPT += [
      _unjudged('`unwrap_or_default()`')),
     ('crates/axon-loop/src/candidates.rs', '        .ok_or_else(|| LoopError::Io(format!("store corrupt: candidate set {r} missing")))?;',
      _dominated('an empty text is not a record: `strict_record("")` is an error, and it is the next statement')),
-    ('crates/axon-loop/src/evl.rs', 'pub const CONTEXT_DOMAIN: &str = "axon.closed-loop.context/1";',
-     _A95['const_tag']),
     ('crates/axon-loop/src/intake.rs', 'pub const ACK_SCHEMA: &str = "micode.closed-loop.policy-ack/1";',
      _A95['const_tag']),
     ('crates/axon-loop/src/plan.rs', '        .ok_or_else(|| LoopError::Io(format!("store corrupt: plan {r} missing")))?;',
@@ -3533,8 +3517,6 @@ EXEMPT += [
      _A95['const_tag']),
     ('crates/axon-loop/src/rules.rs', 'pub const PPM: u64 = 1_000_000;',
      _A95['const_bound']),
-    ('crates/axon-loop/src/safety.rs', 'pub const CLEARANCE_DOMAIN: &str = "axon.loop.trial-safety/1";',
-     _A95['const_tag']),
     ('crates/axon-loop/src/store.rs', '            .ok_or_else(|| format!("{who} has no registered {} key", a.dir_name()))?;',
      _nodefault()),
     ('crates/axon-loop/src/store.rs', '        fs::create_dir_all(&root)?;',
@@ -3579,10 +3561,6 @@ EXEMPT += [
      _A95['const_tag']),
     ('crates/axon-psv/src/lib.rs', 'pub const GUEST_POLICY_SCHEMA: &str = "axon-vm-mmds/1";',
      _A95['const_tag']),
-    ('crates/axon-psv/src/lib.rs', 'pub const COMPLETION_SCHEME: &str = "axon-guest-completion/1";',
-     _A95['const_tag']),
-    ('crates/axon-psv/src/lib.rs', 'pub const PROTECTED_PROFILE: &str = "linux-microvm-protected";',
-     _A95['const_text']),
     ('crates/axon-psv/src/lib.rs', 'const MKFS_LOST_FOUND: &str = "lost+found";',
      _A95['const_text']),
     ('crates/axon-psv/src/lib.rs', 'pub const PREFLIGHT_OBSERVATION_SCHEMA: &str = "axon-preflight-observation/1";',
@@ -5133,7 +5111,16 @@ STILL_BLIND = [
     "inner call (its callers' literals are not), and the bytes of a script or file handed to a child",
     "a struct literal whose type name is not Config/Cfg/Authority/Policy/Manifest/Trust (except a field NAMED owner, "
     "which is a site anywhere), and a literal inside a nested literal",
-    "a default read as a value (unwrap_or / map_or / Default::default) and an absent field's neutral value",
+    "a default read as a value OUTSIDE the protected crates' files (axon-core, axon-os, axon-cortex, axon-vm ... are "
+    "scanned for refusals, not defaults), a default whose argument is COMPUTED at the site (`unwrap_or(x.len())`; "
+    "printed as `DEFAULTS NOT FOLLOWED`), the TYPE behind an `unwrap_or_default()` (a neutral empty string and a "
+    "fail-open enum look the same to a text rule; the survey's panic edit tells them apart only where a test takes "
+    "the default), and an absent field's neutral value that is not spelled as one of the forms (`as_str() == "
+    "Some(..)`, `!= Some(0)`, `.get(..).is_some_and(..)`)",
+    "a signing / verification / MAC input that reaches its primitive through a PARAMETER or a fn not in SIGN_SINKS "
+    "or SIGN_BUILDERS (a new message builder is a blind sink until it is listed; the sinks are NOT checked against "
+    "every `.sign(` of the scope in both directions the way EXEC_CONSTRUCTORS is), a context spelled inside a format "
+    "string by a variable rather than a const, and a peer implementation outside this repository",
     "a uid or mode that is the operand of a COMPARISON (only the per-term rule and the constant rule see those), and a "
     "literal compared inside a refusal",
     "a const used at a sink in a file OTHER than the one defining it, written bare through a `use` (its initialiser is "
@@ -6427,6 +6414,8 @@ def check(without=(), freeze=False, out=print):
     out(f"VALUE FLOWS NOT FOLLOWED: {len(_FLOW_STATS['computed'])} argument(s) of a sink were computed (not a literal, a const, "
         "a local resolvable to one, or a collection of them; each argument counted ONCE) and "
         f"{len(_CROSS_FILE)} const use(s) at a sink are bare names defined in another file: COUNTED, NOT sites")
+    out(f"DEFAULTS NOT FOLLOWED: {len(_DFL_STATS['computed'])} default argument(s) in the protected crates were computed at "
+        "the site (not a literal, a const, a variant or `None`): COUNTED, NOT sites")
     n, cats = remainder_summary(REMAINDER_SITES)
     out(f"OBSERVED-NOT-ROWED: {len(OBSERVED_SITES)} guards a survey removed with a named test failing and no row of "
         "their own (a measurement, not a row)")

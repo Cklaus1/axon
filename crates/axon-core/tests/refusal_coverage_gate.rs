@@ -2321,3 +2321,98 @@ fn the_gate_prints_what_it_still_cannot_see() {
     );
     let _ = std::fs::remove_dir_all(&r);
 }
+
+// ── C9 round 12, eqgate8 (amendment 110): SIGNING INPUTS and DEFAULTS are sites ──────────────────
+
+/// A fn whose message goes to a MAC and whose domain goes to a verifier: the literal context, the const
+/// domain and the const's definition are sites; a const nothing signs and a computed buffer are not.
+const SIGN_PROBE: &str = "pub fn sg_sign(sg_k: &[u8], sg_d: &[u8]) -> [u8; 32] {\n    let mut sg_msg = b\"sg-context/1\\0\".to_vec();\n    sg_msg.extend_from_slice(sg_d);\n    let _ = verify_document(&sg_sig, SG_DOMAIN, &sg_who, &sg_doc, sg_key);\n    hmac_sha256(sg_k, &sg_msg)\n}\n\nconst SG_DOMAIN: &str = \"sg.domain/1\";\nconst SG_UNUSED: &str = \"sg.never-signed/1\";\n";
+
+#[test]
+fn an_input_to_a_signing_or_mac_primitive_is_a_site_of_its_own() {
+    let r = tree("sign-sites");
+    add_code(&r, SCANNED, SIGN_PROBE);
+    for (label, frag) in [
+        ("flow_sign", "b\"sg-context/1\\0\".to_vec()"),
+        ("flow_sign", "SG_DOMAIN"),
+        ("flow_const", "\"sg.domain/1\""),
+    ] {
+        names_value(
+            &r,
+            label,
+            frag,
+            &format!("{frag} handed to a signing primitive was not a site"),
+        );
+    }
+    not_names_value(&r, "\"sg.never-signed/1\"", "a const nothing signs was read as a site");
+    not_names_value(&r, "sg_d", "a computed buffer was read as a signing literal");
+    // the gate PRINTS them: a reader sees which constants are signing inputs, not only a count
+    let t = text(&gate(&r, &[]));
+    assert!(
+        t.lines().any(|l| l.starts_with("VALUE SITES (amendment 110 INPUTS TO A SIGNING / VERIFICATION / MAC PRIMITIVE)"))
+            && t.lines().any(|l| l.starts_with("SIGNING INPUT crates/axon-loop/src/tasks.rs:") && l.contains("fn sg_sign")),
+        "ATTACK: the gate does not list the signing inputs it found: {t}"
+    );
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// A default read as a value in a protected crate: the variant, the literal, the bool, `unwrap_or_default()`,
+/// `Default::default()` and `.or(Some(..))` are sites; a default computed at the site and a `#[cfg(test)]`
+/// item are not.
+const DEFAULT_PROBE: &str = "pub fn df_run(df_mode: Option<Mode>, df_n: Option<u64>, df_c: Option<i64>, df_y: Option<u64>, df_w: &str, df_z: Option<usize>) {\n    let _a = df_mode.unwrap_or(Mode::DfDev);\n    let _b = df_w.parse::<u8>().ok().unwrap_or_default();\n    let _c = df_n.unwrap_or(7701);\n    let _d = df_c.map_or(true, |c| c > 3);\n    let _e = df_y.or(Some(7702));\n    let _f: DfCfg = Default::default();\n    let _g = df_z.unwrap_or(df_w.len());\n}\n\n#[cfg(test)]\nfn df_test_only(df_t: Option<u64>) {\n    let _ = df_t.unwrap_or(7799);\n}\n";
+
+#[test]
+fn a_default_read_as_a_value_in_a_protected_crate_is_a_site() {
+    let r = tree("default-sites");
+    add_code(&r, SCANNED, DEFAULT_PROBE);
+    for frag in ["Mode::DfDev", ".unwrap_or_default()", "7701", "true", "7702", "Default::default()"] {
+        names_value(
+            &r,
+            "val_default",
+            frag,
+            &format!("the default {frag} was not a site"),
+        );
+    }
+    not_names_value(&r, "df_w.len()", "a default computed at the site was read as a literal");
+    not_names_value(&r, "7799", "a default inside #[cfg(test)] was read as a site");
+    let t = text(&gate(&r, &[]));
+    assert!(
+        t.lines().any(|l| l.starts_with("VALUE SITES (amendment 110 DEFAULTS read as a value, protected crates)")),
+        "ATTACK: the gate does not count the defaults it found: {t}"
+    );
+    // outside the protected crates the form is not applied (axon-os is scanned for refusals, not defaults)
+    let r2 = tree("default-sites-out");
+    add_code(&r2, "crates/axon-os/src/approval.rs", DEFAULT_PROBE);
+    not_names_value(&r2, "Mode::DfDev", "a default outside the protected crates was read as a site");
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(&r2);
+}
+
+/// The count of arguments the gate could not follow is of DISTINCT arguments: round 12 found 46 where the
+/// true number was 23, because two passes over the same files incremented one counter.
+#[test]
+fn a_computed_sink_argument_is_counted_once() {
+    let count = |t: &str| -> usize {
+        t.lines()
+            .find_map(|l| l.strip_prefix("VALUE FLOWS NOT FOLLOWED: "))
+            .and_then(|l| l.split_whitespace().next())
+            .and_then(|n| n.parse().ok())
+            .expect("the count line")
+    };
+    let rb = tree("computed-base");
+    let base = count(&text(&gate(&rb, &[])));
+    let _ = std::fs::remove_dir_all(&rb);
+    let r = tree("computed-one");
+    add_code(
+        &r,
+        SCANNED,
+        "pub fn cc_run(cc_k: &[u8], cc_d: &[u8]) -> [u8; 32] {\n    hmac_sha256(cc_k, cc_d)\n}\n",
+    );
+    let one = count(&text(&gate(&r, &[])));
+    assert_eq!(
+        one,
+        base + 1,
+        "ATTACK: one computed signing argument moved the count from {base} to {one}"
+    );
+    let _ = std::fs::remove_dir_all(&r);
+}

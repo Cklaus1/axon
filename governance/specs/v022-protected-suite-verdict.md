@@ -509,7 +509,7 @@ The list above was extended by instance three rounds running. The gate now follo
 them and a one-level local to a SINK: the arguments of an exec wrapper (`sealed_exec::command`, an explicit table checked
 against every `Command::new` of the scope in both directions), every call of a fn with an `Option<u32>` expected-owner
 parameter (a field, a local, `None` all count), a field named `owner`, and a const named at one (its definition is a site).
-Counts: value sites of the older forms 228; flow sites 59 (16 rowed, 43 OBSERVED); 46 sink arguments COMPUTED and counted but
+Counts: value sites of the older forms 228; flow sites 59 (16 rowed, 43 OBSERVED); 23 sink arguments COMPUTED (printed as 46: a double count, amendment 110) and counted but
 not sites; 2 bare const uses not followed. The claim has a fourth disposition, **a recorded OBSERVED measurement**, which the
 freeze re-measures over a sample (`scripts/v022_resurvey.py`, record `governance/status/v022-resurvey.json`) instead of every
 run re-checking it. What is still blind is the list printed by the gate (`STILL BLIND:`) and in amendment 107.

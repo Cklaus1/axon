@@ -6744,7 +6744,7 @@ row), and the `_text_ids` / `_unit_ids` / `_regular_text` guards beyond those th
       static layer, and the `stricter(..)` programs of `taint_tests.rs` have no production-route row.
     - **Counts, before -> after** (`python3 scripts/v022_refusal_coverage.py`): amendment-103 value sites 228 -> 228 (94 rowed, 96 OBSERVED,
       22 NOTROUTE, 11 DOMINATED, 5 REMAINDER); amendment-107 flow sites 0 -> 59 (16 rowed, 43 OBSERVED, 0 uncovered); OBSERVED-NOT-ROWED
-      167 -> 210; computed sink arguments counted, not sites: 46; bare const uses defined in several files, not followed: 2.
+      167 -> 210; computed sink arguments counted, not sites: 23 (printed as 46 at the time: two gate passes incremented one counter, corrected by amendment 110); bare const uses defined in several files, not followed: 2.
     - **Survey table** (`scripts/v022_value_survey.py`, 2 shards on gpumaster, tier-1 = psv_dispatch/privileged_launcher/observer_service +
       lib, survivors to the full suite): 47 flow sites, **42 KILLED**, **5 SURVIVED -> a test and a row each**: `read_regular`'s `256 << 20`
       (M2974), the direct launcher's `div_ceil(1000)` (M2975), the root helper's manifest owner (M2976), the loaded host's helper-route owner
@@ -6752,7 +6752,7 @@ row), and the `_text_ids` / `_unit_ids` / `_regular_text` guards beyond those th
       `observer_service` (OBSERVED). Before the tests above, the review's seven executed survivors survived; with them each is KILLED by its own
       attack (`python3 scripts/v022_g01_mutations.py --scope=all --only=M2960-M2977`: 18/18 killed, 0 REFUSED_ELSEWHERE).
     - **WHAT THE GATE STILL CANNOT SEE** (printed by the gate, and in `v022-protected-suite-verdict.md`). (1) A COMPUTED sink argument
-      (46 counted, listed by the count only): a path joined at run time, `s(&c.firecracker)`, a value through two locals or a
+      (23 counted, listed by the count only; "46" was a double count, amendment 110): a path joined at run time, `s(&c.firecracker)`, a value through two locals or a
       parameter other than an expected-owner `Option<u32>`. Their VALUES are observed here by the exact-argv tests, not by the gate.
       (2) A wrapper that forwards its parameters to `sealed_exec::command` is followed at the inner call only. (3) A struct literal of a type
       not named Config/Cfg/Authority/Policy/Manifest/Trust (except a field named owner) and a literal in a nested literal. (4) A default read

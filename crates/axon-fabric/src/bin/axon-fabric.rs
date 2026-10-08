@@ -951,16 +951,9 @@ fn submit(a: &Args) {
                     s.ran_under.as_ref(),
                 )
                 .ok()?;
-                let doc = axon_loop_contracts::attestation::execution_document(&req, &s.receipt)
-                    .unwrap_or_else(|e| refuse("io", &e.to_string(), 2));
                 Some(
-                    axon_loop_contracts::attestation::sign_document(
-                        key,
-                        axon_loop_contracts::attestation::EXECUTION_DOMAIN,
-                        id,
-                        &doc,
-                    )
-                    .unwrap_or_else(|e| refuse("io", &e, 2)),
+                    axon_fabric::signing::sign_execution_attestation(key, id, &req, &s.receipt)
+                        .unwrap_or_else(|e| refuse("io", &e, 2)),
                 )
             });
             let (attestation, withheld) = match issuer {

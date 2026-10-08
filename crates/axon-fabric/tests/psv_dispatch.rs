@@ -1960,6 +1960,7 @@ fn fabric_runs_its_direct_launcher_and_its_observer_with_exactly_their_flags_and
             "#!/bin/sh\nN=launch; [ \"$1\" = --verify-result ] && N=verify\n\
              tr '\\0' '\\n' < /proc/$$/environ > \"{rec}/environ-$N\"\n\
              printf '%s\\n' \"$@\" > \"{rec}/argv-$N\"\n\
+             P=; for A in \"$@\"; do [ \"$P\" = --psv-job ] && sha256sum \"$A/launch-manifest.json\" | cut -d' ' -f1 > \"{rec}/jobsha-$N\"; P=$A; done\n\
              exec {fab} __psv-host-guest --axon {axon} --tamper '' \"$@\"\n",
             rec = rec.display(),
             fab = env!("CARGO_BIN_EXE_axon-fabric"),
@@ -2011,6 +2012,28 @@ fn fabric_runs_its_direct_launcher_and_its_observer_with_exactly_their_flags_and
         ("--manifest", lx.manifest.display().to_string()),
         ("--timeout-s", "60".to_string()),
         ("--id", axon_fabric::backend::jail_id("op-direct-dump")),
+    ] {
+        let got = value(flag);
+        assert!(
+            got == want,
+            "ATTACK: Fabric handed the direct launcher {flag} {got:?}, not {want:?}"
+        );
+    }
+    // Amendment 110: the VALUES of the four input flags, not only their names (a swapped candidate and
+    // suite, or a secret job drive handed as the candidate, kept the name check green). The inputs sit in
+    // one Fabric-private directory <out_root>/<jail id>.psv-inputs, and the manifest digest is the sha256
+    // of the launch manifest the job drive holds.
+    let inputs = lx
+        .out_root
+        .join(format!("{}.psv-inputs", axon_fabric::backend::jail_id("op-direct-dump")));
+    let manifest_sha = read(&rec.join("jobsha-launch")).trim().to_string();
+    assert_eq!(manifest_sha.len(), 64, "setup: the recording launcher saw the job drive's manifest");
+    for (flag, want) in [
+        ("--psv-candidate", inputs.join("candidate").display().to_string()),
+        ("--psv-suite", inputs.join("check").display().to_string()),
+        ("--psv-job", inputs.join("job").display().to_string()),
+        ("--psv-manifest-sha", manifest_sha.clone()),
+        ("--policy", inputs.join("policy.json").display().to_string()),
     ] {
         let got = value(flag);
         assert!(
