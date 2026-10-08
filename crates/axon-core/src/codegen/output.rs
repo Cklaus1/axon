@@ -110,11 +110,10 @@ impl<'ctx> super::Codegen<'ctx> {
         // helpers is the prerequisite for linking. Natively only the uncalled
         // AI wrappers are pruned, so a program that makes no AI call links the
         // AI-free runtime (`link::Runtime`, AX-11).
-        super::link::prune_unreachable_ai_callers(&self.ir.module);
-        self.ir
-            .module
-            .verify()
-            .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
+        crate::time_passes::time("ir_opt", || {
+            super::link::prune_unreachable_ai_callers(&self.ir.module)
+        });
+        self.verify_ir()?;
         emit_object_and_link(&self.ir.module, output_path, opt, target_triple)
     }
 
@@ -127,10 +126,7 @@ impl<'ctx> super::Codegen<'ctx> {
         opt: OptLevel,
         target_triple: Option<&str>,
     ) -> Result<(), String> {
-        self.ir
-            .module
-            .verify()
-            .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
+        self.verify_ir()?;
         super::link::emit_hosted_object(&self.ir.module, output_path, opt, target_triple)
     }
 
@@ -146,10 +142,7 @@ impl<'ctx> super::Codegen<'ctx> {
         opt: OptLevel,
         target_triple: Option<&str>,
     ) -> Result<(), String> {
-        self.ir
-            .module
-            .verify()
-            .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
+        self.verify_ir()?;
         super::link::emit_shared_lib(&self.ir.module, output_path, opt, target_triple)
     }
 
@@ -163,10 +156,7 @@ impl<'ctx> super::Codegen<'ctx> {
         opt: OptLevel,
         triple: &str,
     ) -> Result<(), String> {
-        self.ir
-            .module
-            .verify()
-            .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
+        self.verify_ir()?;
         super::link::emit_object_for_triple(&self.ir.module, output_path, opt, triple)
     }
 
@@ -184,17 +174,16 @@ impl<'ctx> super::Codegen<'ctx> {
         target_triple: Option<&str>,
         entry_fn: Option<&str>,
     ) -> Result<(), String> {
-        self.prune_dead_functions_keep(
-            &["main", "on_panic", "__axon_kernel_panic"]
-                .iter()
-                .copied()
-                .chain(entry_fn)
-                .collect::<Vec<_>>(),
-        );
-        self.ir
-            .module
-            .verify()
-            .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
+        crate::time_passes::time("ir_opt", || {
+            self.prune_dead_functions_keep(
+                &["main", "on_panic", "__axon_kernel_panic"]
+                    .iter()
+                    .copied()
+                    .chain(entry_fn)
+                    .collect::<Vec<_>>(),
+            )
+        });
+        self.verify_ir()?;
         super::link::emit_freestanding_obj(&self.ir.module, output_path, opt, target_triple)
     }
 
@@ -209,17 +198,16 @@ impl<'ctx> super::Codegen<'ctx> {
         // Prune unused builtins (println, assert, str ops, ...) before linking.
         // For freestanding we preserve the @[entry] fn and any @[panic_handler]
         // fn in addition to `main` (which won't exist in a kernel image).
-        self.prune_dead_functions_keep(
-            &["main", "on_panic", "__axon_kernel_panic"]
-                .iter()
-                .copied()
-                .chain(entry_fn)
-                .collect::<Vec<_>>(),
-        );
-        self.ir
-            .module
-            .verify()
-            .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
+        crate::time_passes::time("ir_opt", || {
+            self.prune_dead_functions_keep(
+                &["main", "on_panic", "__axon_kernel_panic"]
+                    .iter()
+                    .copied()
+                    .chain(entry_fn)
+                    .collect::<Vec<_>>(),
+            )
+        });
+        self.verify_ir()?;
         super::link::emit_freestanding_binary(
             &self.ir.module,
             output_path,
@@ -228,6 +216,13 @@ impl<'ctx> super::Codegen<'ctx> {
             entry_fn,
             linker_script,
         )
+    }
+
+    /// Verify the emitted module before handing it to LLVM (the `ir_verify`
+    /// phase of `--time-passes`, AX-36).
+    fn verify_ir(&self) -> Result<(), String> {
+        crate::time_passes::time("ir_verify", || self.ir.module.verify())
+            .map_err(|e| format!("IR verification failed: {}", e.to_string()))
     }
 
     /// Like `prune_dead_functions` but preserves a set of named roots.
@@ -281,10 +276,7 @@ impl<'ctx> super::Codegen<'ctx> {
         freestanding: bool,
         shared: bool,
     ) -> Result<String, String> {
-        self.ir
-            .module
-            .verify()
-            .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
+        self.verify_ir()?;
         super::link::optimize_for_ir_dump(
             &self.ir.module,
             opt,
@@ -292,7 +284,7 @@ impl<'ctx> super::Codegen<'ctx> {
             freestanding,
             shared,
         )?;
-        Ok(self.emit_llvm_ir())
+        Ok(crate::time_passes::time("emit_ir", || self.emit_llvm_ir()))
     }
 
     /// R7 Slice B (AOT wasm, object half): verify the IR and emit a WebAssembly

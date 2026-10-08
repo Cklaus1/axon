@@ -87,6 +87,21 @@ enum Command {
                     Does NOT cover functions dispatched by name at runtime."
         )]
         require_contained: bool,
+
+        /// AX-36 — print each front-end phase's wall time and the total.
+        ///
+        /// One `time: <phase> <ms>` line per phase on stderr, after the
+        /// diagnostics, in the order the phases ran (read, parse, imports,
+        /// resolve, fill_captures, infer, checker, borrow, capabilities,
+        /// effects, verify, lint, ...), then `time: total <ms>`. Phases do not
+        /// nest, so they sum to the total less driver glue. With `--json` the
+        /// same data is one `axon-time-passes/1` JSON object. Without the flag
+        /// nothing is printed.
+        #[arg(
+            long,
+            help = "Print per-phase timings to stderr (`time: <phase> <ms>`)"
+        )]
+        time_passes: bool,
     },
 
     /// Write `axon.lock` pinning each `use`d module to its content hash (R6).
@@ -189,6 +204,21 @@ enum Command {
             help = "Emit <binary>.axmeta capability manifest (axon-manifest/1)"
         )]
         emit_manifest: bool,
+
+        /// AX-36 — print the wall time of every compiler phase and the total.
+        ///
+        /// One `time: <phase> <ms>` line per phase on stderr, in the order the
+        /// phases ran: the front-end phases of `axon check --time-passes`, then
+        /// the build stages — cache_key / cache_read, mono, ir_gen, ir_verify,
+        /// target_init, ir_opt (the LLVM pass pipeline, above O0), backend
+        /// (object emission), runtime (locating or building the runtime
+        /// staticlib), link — then `time: total <ms>`. Without the flag
+        /// nothing is printed.
+        #[arg(
+            long,
+            help = "Print per-phase timings to stderr (`time: <phase> <ms>`)"
+        )]
+        time_passes: bool,
     },
 
     /// Start the Axon language server (JSON-RPC 2.0 on stdin/stdout).
@@ -860,8 +890,12 @@ fn dispatch(command: Command) {
             locked,
             effects_strict,
             require_contained,
+            time_passes,
         } => {
             axon_core::capabilities::set_require_contained(require_contained);
+            if time_passes {
+                axon_core::time_passes::enable();
+            }
             cmd_check(file, json, locked, effects_strict)
         }
         Command::Lock { file } => cmd_lock(file),
@@ -880,21 +914,27 @@ fn dispatch(command: Command) {
             emit_llvm,
             host,
             emit_manifest,
-        } => cmd_build(
-            files,
-            out,
-            release,
-            opt_level,
-            target,
-            no_cache,
-            cache_dir,
-            freestanding,
-            linker_script,
-            emit_obj,
-            emit_llvm,
-            host,
-            emit_manifest,
-        ),
+            time_passes,
+        } => {
+            if time_passes {
+                axon_core::time_passes::enable();
+            }
+            cmd_build(
+                files,
+                out,
+                release,
+                opt_level,
+                target,
+                no_cache,
+                cache_dir,
+                freestanding,
+                linker_script,
+                emit_obj,
+                emit_llvm,
+                host,
+                emit_manifest,
+            )
+        }
         Command::Goal {
             file,
             emit,
@@ -1110,16 +1150,27 @@ fn cmd_complexity(file: PathBuf, json: bool) {
 // ── check ─────────────────────────────────────────────────────────────────────
 
 fn cmd_check(file: PathBuf, json_flag: bool, locked: bool, effects_strict: bool) {
+    use axon_core::time_passes;
+    // AX-36: `--time-passes` reports after the diagnostics, on every exit path.
+    // JSON only on an explicit `--json` — the pipe auto-detection below is for
+    // diagnostics, and a harness reading `time:` lines must not see the format
+    // change because it captured stderr.
+    let exit = |code: i32| -> ! {
+        time_passes::emit("check", json_flag);
+        process::exit(code)
+    };
+
     // Fix 5: validate .ax extension.
     validate_ax_extension(&file);
 
-    let src = read_source(&file);
+    let src = time_passes::time("read", || read_source(&file));
 
     // Parse first. R8: use the LOCATED parse so a parse error resolves to a
     // line:col (previously span-less). The byte offset → (line,col) via the
     // SourceMap, emitted as a structured PipelineDiagnostic JSON.
     let use_json_early = json_flag || !std::io::stderr().is_terminal();
-    let mut program = match parse_source_located_cli(&src, &file) {
+    let parsed = time_passes::time("parse", || parse_source_located_cli(&src, &file));
+    let mut program = match parsed {
         Ok(p) => p,
         Err(diag) => {
             // `--json` forces JSON even on a tty; otherwise this is exactly
@@ -1129,7 +1180,7 @@ fn cmd_check(file: PathBuf, json_flag: bool, locked: bool, effects_strict: bool)
             } else {
                 eprintln!("error: {}", diag.display());
             }
-            process::exit(2);
+            exit(2);
         }
     };
 
@@ -1142,30 +1193,34 @@ fn cmd_check(file: PathBuf, json_flag: bool, locked: bool, effects_strict: bool)
     // program that imports a module exercising a capability it doesn't grant is
     // rejected (the import-edge extension of I-11). Uncontained importers have
     // no ceiling, so this is a no-op for them (back-compat).
-    let search_dirs = axon_core::axon_search_dirs(std::env::current_exe().ok().as_deref());
     // Transitive: the import-edge cap check + --locked verification cover the
     // whole `use` closure, so a deeply-nested import can't slip a capability or
     // a tampered byte past the gate (R6).
-    let (resolved_imports, _unresolved) =
-        axon_core::resolve_use_files_transitive(&program, &search_dirs);
-    let mut import_cap_errors: Vec<String> = Vec::new();
-    for m in &resolved_imports {
-        if let Ok(src) = std::str::from_utf8(&m.bytes) {
-            if let Ok(imported) = parse_source(src) {
-                for e in
-                    axon_core::capabilities::check_import_capabilities(&program, &m.name, &imported)
-                {
-                    import_cap_errors.push(format!("[{}] {}", e.code, e.message));
+    let (import_cap_errors, lock_errors) = time_passes::time("imports", || {
+        let search_dirs = axon_core::axon_search_dirs(std::env::current_exe().ok().as_deref());
+        let (resolved_imports, _unresolved) =
+            axon_core::resolve_use_files_transitive(&program, &search_dirs);
+        let mut import_cap_errors: Vec<String> = Vec::new();
+        for m in &resolved_imports {
+            if let Ok(src) = std::str::from_utf8(&m.bytes) {
+                if let Ok(imported) = parse_source(src) {
+                    for e in axon_core::capabilities::check_import_capabilities(
+                        &program, &m.name, &imported,
+                    ) {
+                        import_cap_errors.push(format!("[{}] {}", e.code, e.message));
+                    }
                 }
             }
         }
-    }
 
-    // R6 §4.2 — `--locked`: every import must match `axon.lock`. In --locked mode
-    // a missing entry (E1202) or a hash mismatch (E1201) is FATAL. In dev mode a
-    // missing lock entry is only W1210 (a warning — bytes unverified/unaudited),
-    // so existing programs without a lockfile keep working until a user opts in.
-    let lock_errors = check_locked_imports(&file, &resolved_imports, locked, use_json, false);
+        // R6 §4.2 — `--locked`: every import must match `axon.lock`. In --locked
+        // mode a missing entry (E1202) or a hash mismatch (E1201) is FATAL. In
+        // dev mode a missing lock entry is only W1210 (a warning — bytes
+        // unverified/unaudited), so existing programs without a lockfile keep
+        // working until a user opts in.
+        let lock_errors = check_locked_imports(&file, &resolved_imports, locked, use_json, false);
+        (import_cap_errors, lock_errors)
+    });
 
     // Type-check pipeline. R8 typed end-to-end: use the LOCATED form so the
     // JSON a tool/agent consumes carries file/line/col (resolved from each
@@ -1174,12 +1229,14 @@ fn cmd_check(file: PathBuf, json_flag: bool, locked: bool, effects_strict: bool)
     // M5: accepted-`mut` notes ride on the same channel and schema as every
     // other diagnostic, so a host parsing axon-diag/1 sees them without a
     // special case.
-    let located: Vec<_> = located
-        .into_iter()
-        .chain(mut_notes(&src, &file))
-        .chain(floor_division_warnings(&src, &file))
-        .chain(empty_block_warnings(&src, &file))
-        .collect();
+    let located: Vec<_> = time_passes::time("lint", || {
+        located
+            .into_iter()
+            .chain(mut_notes(&src, &file))
+            .chain(floor_division_warnings(&src, &file))
+            .chain(empty_block_warnings(&src, &file))
+            .collect()
+    });
     // Import-cap (E1203) and lock (E1201/E1202/W1210) errors are file-level
     // strings with no span — they keep the string emit path.
     let mut string_errors = import_cap_errors;
@@ -1190,7 +1247,10 @@ fn cmd_check(file: PathBuf, json_flag: bool, locked: bool, effects_strict: bool)
     // a non-zero exit code unless paired with other errors. The notice points
     // users toward the Phase-6 `| {…}` effect-row syntax.
     if effects_strict {
-        for warn in axon_core::effects::check_contained_strict(&program) {
+        let strict = time_passes::time("effects", || {
+            axon_core::effects::check_contained_strict(&program)
+        });
+        for warn in strict {
             if use_json {
                 let d = axon_core::PipelineDiagnostic {
                     code: warn.code.to_string(),
@@ -1215,21 +1275,23 @@ fn cmd_check(file: PathBuf, json_flag: bool, locked: bool, effects_strict: bool)
 
     if located.is_empty() && string_errors.is_empty() {
         // Print nothing on success (Unix convention).
-        process::exit(0);
+        exit(0);
     }
 
-    for d in &located {
-        if use_json {
-            eprintln!("{}", d.json());
-        } else {
-            eprintln!("error: {}", d.display());
+    time_passes::time("emit", || {
+        for d in &located {
+            if use_json {
+                eprintln!("{}", d.json());
+            } else {
+                eprintln!("error: {}", d.display());
+            }
         }
-    }
-    for err in &string_errors {
-        emit_error(err, use_json);
-    }
+        for err in &string_errors {
+            emit_error(err, use_json);
+        }
+    });
     // Fix 8: exit 2 for compile errors.
-    process::exit(2);
+    exit(2);
 }
 
 // ── lock / verify-lock (R6) ─────────────────────────────────────────────────────
@@ -3320,31 +3382,37 @@ fn cmd_build(
     let start = Instant::now();
 
     // Parse all files (in parallel when multiple).
-    let file_programs = match axon_core::parse_source_files(&files) {
+    let parsed = axon_core::time_passes::time("parse", || axon_core::parse_source_files(&files));
+    let file_programs = match parsed {
         Ok(ps) => ps,
         Err(errs) => {
             for e in &errs {
                 eprintln!("error: {e}");
             }
+            axon_core::time_passes::emit("build", false);
             process::exit(2);
         }
     };
 
     // Merge into a single program, detect duplicate top-level names.
-    let (mut program, merge_errors) = axon_core::merge_programs(file_programs);
+    let (mut program, merge_errors) =
+        axon_core::time_passes::time("merge", || axon_core::merge_programs(file_programs));
     if !merge_errors.is_empty() {
         for e in &merge_errors {
             eprintln!("error[{}]: {}", e.code, e.message);
         }
+        axon_core::time_passes::emit("build", false);
         process::exit(2);
     }
 
     // Of every verb, this is the one that emits an artifact which outlives the
     // command — so a module that no longer matches the lockfile gets said out
     // loud before it is compiled in (warning; see `verify_lock_tamper`).
-    let lock_json = !std::io::stderr().is_terminal();
-    let lock_errors = verify_lock_tamper(first, &program, false, lock_json);
-    report_lock_errors(&lock_errors, lock_json);
+    axon_core::time_passes::time("imports", || {
+        let lock_json = !std::io::stderr().is_terminal();
+        let lock_errors = verify_lock_tamper(first, &program, false, lock_json);
+        report_lock_errors(&lock_errors, lock_json);
+    });
 
     // R23 eBPF: `--target bpf` (or `bpfel`/`bpfeb`) takes a dedicated, focused
     // path — the hosted IR pipeline (provenance hooks, main wrapper, host
@@ -3357,10 +3425,12 @@ fn cmd_build(
                     "BPF object: {} (section `{section}`) ({elapsed}ms)",
                     output.display()
                 );
+                axon_core::time_passes::emit("build", false);
                 return;
             }
             Err(e) => {
                 eprintln!("{e}");
+                axon_core::time_passes::emit("build", false);
                 process::exit(1);
             }
         }
@@ -3464,15 +3534,19 @@ fn cmd_build(
                 // The manifest describes the PROGRAM, so it belongs beside the
                 // program, which is also the path the consumer already uses.
                 let manifest_path = first.with_extension("axmeta");
-                let json = build_axmeta_manifest(&program, first, &output);
+                let json = axon_core::time_passes::time("manifest", || {
+                    build_axmeta_manifest(&program, first, &output)
+                });
                 match std::fs::write(&manifest_path, json) {
                     Ok(()) => eprintln!("Manifest: {}", manifest_path.display()),
                     Err(e) => eprintln!("warning: could not write manifest: {e}"),
                 }
             }
+            axon_core::time_passes::emit("build", false);
         }
         Err(e) => {
             eprintln!("error: {e}");
+            axon_core::time_passes::emit("build", false);
             process::exit(1);
         }
     }
@@ -3507,7 +3581,10 @@ fn cmd_build_bpf(
             "error: `--target bpf` requires a `@[bpf(kind: …)]`-annotated function".to_string(),
         );
     }
-    axon_core::codegen::bpf::emit_bpf_object(program, &output.to_string_lossy())
+    // The focused BPF backend lowers and emits in one step.
+    axon_core::time_passes::time("bpf_codegen", || {
+        axon_core::codegen::bpf::emit_bpf_object(program, &output.to_string_lossy())
+    })
 }
 
 #[cfg(feature = "codegen")]
@@ -6271,8 +6348,11 @@ fn run_check_pipeline_located(
     axon_core::infer::InferCtx,
 ) {
     use axon_core::PipelineDiagnostic;
+    // AX-36: consecutive laps, so the phases below tile this function.
+    let mut laps = axon_core::time_passes::Laps::start();
     let file = source_path.display().to_string();
     let source_map = axon_core::span::SourceMap::new(src.to_string());
+    laps.lap("source_map");
     let mut diags: Vec<PipelineDiagnostic> = Vec::new();
 
     // Resolve a span → (line, col, FILE). Dummy spans yield 0 and the entry
@@ -6377,6 +6457,7 @@ fn run_check_pipeline_located(
             0,
         );
     }
+    laps.lap("modules");
 
     // Step 1: name resolution
     let resolve_result = axon_core::resolver::resolve_program(program, &file);
@@ -6437,9 +6518,11 @@ fn run_check_pipeline_located(
             eprintln!("warning: {}", d.display());
         }
     }
+    laps.lap("resolve");
 
     // Step 1b: fill lambda capture lists (post-resolution pass)
     axon_core::resolver::fill_captures(program);
+    laps.lap("fill_captures");
 
     // Step 2: type inference
     let mut infer_ctx = axon_core::infer::InferCtx::new(&file);
@@ -6469,6 +6552,7 @@ fn run_check_pipeline_located(
             err.help.clone(),
         );
     }
+    laps.lap("infer");
 
     // Step 3: type checking (uses infer results)
     let fn_sigs: std::collections::HashMap<String, axon_core::checker::FnSig> = infer_ctx
@@ -6554,6 +6638,7 @@ fn run_check_pipeline_located(
             err.fix.clone(),
         );
     }
+    laps.lap("checker");
 
     // Step 4: borrow checking — enforce move semantics within function bodies.
     for item in &program.items {
@@ -6641,6 +6726,7 @@ fn run_check_pipeline_located(
             _ => {}
         }
     }
+    laps.lap("borrow");
 
     // Step 5: capability checking — enforce `@[contained(...)]` I/O sandboxing
     // (E1001). Previously only run by the library check path, so the CLI did not
@@ -6657,6 +6743,7 @@ fn run_check_pipeline_located(
             col,
         );
     }
+    laps.lap("capabilities");
 
     // Step 5b: Phase 6 effect-row subsumption (E1310) — a call performs an
     // effect outside the enclosing fn's declared row. `main` without a clause is
@@ -6673,6 +6760,7 @@ fn run_check_pipeline_located(
             col,
         );
     }
+    laps.lap("effects");
 
     // Step 6: static `@[verify(...)]` checking — E1101 when a verify postcondition
     // is provably unsatisfiable by the function's computed confidence bound.
@@ -6690,6 +6778,7 @@ fn run_check_pipeline_located(
             col,
         );
     }
+    laps.lap("verify");
 
     // Collapse byte-identical diagnostics. Some checks fire per-operand: `"a" +
     // "b"` runs check_numeric_operand on BOTH operands, each producing an E0102
@@ -6733,6 +6822,7 @@ fn run_check_pipeline_located(
     // keyed on the span alone.
     axon_core::collapse_refined_type_errors(&mut diags);
     axon_core::collapse_unresolved_duplicates(&mut diags);
+    laps.lap("collapse");
 
     (diags, infer_ctx)
 }
@@ -6766,6 +6856,8 @@ fn run_build_pipeline(
     // digest of the compiler executable's bytes (`compiler_digest`). If the
     // executable cannot be read no key can tell this compiler apart from
     // another, so the cache is not used at all rather than guessed at.
+    // AX-36: the compiler digest and the source/import hashing are `cache_key`.
+    let mut laps = axon_core::time_passes::Laps::start();
     let cache_dir = opts
         .cache_dir
         .clone()
@@ -6834,12 +6926,16 @@ fn run_build_pipeline(
 
         let key = axon_core::cache_key(&hasher_input, compiler_version);
         let cache_path = axon_core::cache_path(&key, &cache_dir);
+        laps.lap("cache_key");
 
         // Freestanding and shared (`--host mobile`) builds bypass the cache:
         // their linker args differ from the hosted-binary path. A hit links a
         // binary, so `--emit-obj` / `--emit-llvm` (which must not) skip it too.
         if !opts.freestanding && !opts.shared && !opts.emit_obj && !opts.emit_llvm {
-            if let Some(bitcode) = axon_core::read_axc(&cache_path, compiler_version) {
+            let cached = axon_core::time_passes::time("cache_read", || {
+                axon_core::read_axc(&cache_path, compiler_version)
+            });
+            if let Some(bitcode) = cached {
                 // Cache hit — skip IR emission, link from stored bitcode.
                 match axon_core::compile_bitcode_to_binary(
                     &bitcode,
@@ -6927,6 +7023,9 @@ fn build_ir_and_link(
     infer_ctx: &mut axon_core::infer::InferCtx,
     cache_write: Option<(&str, &std::path::Path, &str)>, // (key, path, version)
 ) -> Result<(), String> {
+    // AX-36: consecutive laps up to the end of IR generation; the stages after
+    // that time themselves (in `codegen/`), so they are not lapped here.
+    let mut laps = axon_core::time_passes::Laps::start();
     // Collect generic instantiations recorded during inference.
     let instantiations = infer_ctx.drain_instantiations();
 
@@ -6939,6 +7038,7 @@ fn build_ir_and_link(
             .chain(mono.fns.into_iter().map(axon_core::ast::Item::FnDef))
             .collect(),
     };
+    laps.lap("mono");
 
     let ctx = inkwell::context::Context::create();
     let module_name = source_path
@@ -6956,13 +7056,16 @@ fn build_ir_and_link(
     // assembly) needs the resolved triple BEFORE emit_program, not just at
     // object-write time. `None` = the historical x86_64 default.
     cg.set_target_triple(target_triple.unwrap_or_default());
+    laps.lap("ir_gen");
     // R23: solver-free mint cert gate before emitting a native binary, too.
     axon_core::cert_gate::enforce_or_exit();
+    laps.lap("cert_gate");
     // Phase 5 §4: elide the runtime refinement-return / scalar-`@[verify]` checks
     // the SMT prover discharged ∀-inputs (empty set without the `smt` feature, so
     // native output is unchanged). Run on the monomorphized program so the proven
     // fn names match the names codegen emits.
     let discharged = compute_discharged(&concrete_program);
+    laps.lap("discharge");
     if discharged.total() > 0 {
         eprintln!(
             "axon: SMT discharged {} runtime obligation(s) statically (native checks elided)",
@@ -6972,6 +7075,7 @@ fn build_ir_and_link(
     cg.set_discharged(discharged);
     cg.declare_functions(&concrete_program);
     cg.emit_program(&concrete_program);
+    laps.lap("ir_gen");
 
     // Abort before linking if emission recorded hard errors (e.g. a known
     // builtin with no native lowering — E0910). Shipping the binary would
@@ -6995,10 +7099,11 @@ fn build_ir_and_link(
         // write there; otherwise print to stdout.
         let out_str = output.to_string_lossy();
         if out_str.ends_with(".ll") {
-            std::fs::write(output, &ir).map_err(|e| format!("writing IR: {e}"))?;
+            axon_core::time_passes::time("emit_ir", || std::fs::write(output, &ir))
+                .map_err(|e| format!("writing IR: {e}"))?;
             eprintln!("LLVM IR: {}", output.display());
         } else {
-            print!("{ir}");
+            axon_core::time_passes::time("emit_ir", || print!("{ir}"));
         }
         return Ok(());
     }
@@ -7006,8 +7111,10 @@ fn build_ir_and_link(
     // Write bitcode to cache before linking (so a link failure doesn't
     // prevent future cache hits for successfully compiled IR).
     if let Some((_key, cache_path, compiler_version)) = cache_write {
-        let bitcode = cg.emit_bitcode();
-        let _ = axon_core::write_axc(cache_path, &bitcode, compiler_version);
+        axon_core::time_passes::time("cache_write", || {
+            let bitcode = cg.emit_bitcode();
+            let _ = axon_core::write_axc(cache_path, &bitcode, compiler_version);
+        });
     }
 
     let out = output.to_string_lossy();
@@ -7098,7 +7205,9 @@ fn check_program_located(
     Vec<axon_core::PipelineDiagnostic>,
     axon_core::infer::InferCtx,
 ) {
-    let src = std::fs::read_to_string(source_path).unwrap_or_default();
+    let src = axon_core::time_passes::time("read", || {
+        std::fs::read_to_string(source_path).unwrap_or_default()
+    });
     run_check_pipeline_located(program, &src, source_path)
 }
 

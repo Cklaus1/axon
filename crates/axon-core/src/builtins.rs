@@ -2416,13 +2416,25 @@ pub struct BuiltinSig {
     pub ret: String,
 }
 
-/// Build a `HashMap` keyed by function name for O(1) lookup during inference.
-///
 /// True if `name` is a known builtin (appears in [`BUILTINS`]). Used by the
 /// purity checker to distinguish a builtin call from a user-function call.
 pub fn is_known_builtin(name: &str) -> bool {
-    BUILTINS.iter().any(|b| b.name == name)
+    BUILTIN_INDEX.contains_key(name)
 }
+
+/// `BUILTINS` keyed by name (the first entry wins, as a linear `find` would).
+///
+/// The front end asks "is this identifier a builtin?" for every identifier it
+/// walks, several times over; a scan of the ~340-row table per question was a
+/// measurable share of `axon check` on a large program (AX-36).
+static BUILTIN_INDEX: std::sync::LazyLock<HashMap<&'static str, &'static BuiltinFn>> =
+    std::sync::LazyLock::new(|| {
+        let mut m = HashMap::with_capacity(BUILTINS.len());
+        for b in BUILTINS {
+            m.entry(b.name).or_insert(b);
+        }
+        m
+    });
 
 /// Phase 13 Slice 2: true if `name` is one of the probabilistic predicate
 /// pseudo-builtins (`E`, `Var`, `P`). These are handled specially in infer.rs
@@ -2437,7 +2449,7 @@ pub fn is_prob_pred_ident(name: &str) -> bool {
 /// result is consumed as i64 or discarded (`()`); anything else (e.g.
 /// `ai_complete -> Result<str,str>`) must stay E0910-refused.
 pub fn builtin_ret(name: &str) -> Option<&'static str> {
-    BUILTINS.iter().find(|b| b.name == name).map(|b| b.ret)
+    BUILTIN_INDEX.get(name).map(|b| b.ret)
 }
 
 /// R17 Slice 3 (§4 / E1704): true if calling `name` may allocate on the heap.

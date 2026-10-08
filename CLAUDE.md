@@ -113,6 +113,10 @@ cargo test                          # run all unit + integration tests
 axon run   examples/hello.ax              # type-check + interpret (tree-walking, no codegen)
 axon goal  examples/goals/hello-goal.md   # compile prose goal → .ax → check → run
 axon check examples/hello.ax              # type-check only
+axon check f.ax --time-passes             # per-phase wall time on stderr: `time: <phase> <ms>` lines (parse, resolve, infer,
+                                          #   checker, effects, lint, ...), `time: total <ms>` last; with --json one
+                                          #   `axon-time-passes/1` object. Also on `axon build` (+ mono, ir_gen, ir_opt,
+                                          #   ir_verify, backend, runtime, link, cache stages). Off = no output.
 axon test  examples/tests.ax              # run @[test] functions (in-process interpreter)
 axon parse examples/hello.ax              # print AST as JSON   (needs --features serde-json)
 axon complexity examples/hello.ax         # MDL description-length metric over the AST (per-fn + total; --json → axon-complexity/1)
