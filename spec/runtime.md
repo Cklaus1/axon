@@ -532,6 +532,47 @@ inverted bounds) exits **101** on both engines, a clean program exits **0**, and
 `i64` return becomes the exit code on both. The interp↔native exit-code contract is guarded
 by `scripts/exit_code_parity.sh` (run by `parity_all.sh` in the gate).
 
+### The runtime staticlib a native binary links
+
+Every hosted binary links exactly one Rust staticlib: `libaxon_rt.a` (crate `axon-rt`), or
+`libaxon_rt_ai.a` (crate `axon-rt-ai`) when an AI builtin is reachable. `--release` (any
+optimised `--opt-level`) links the release-profile lib, otherwise the debug one. `axon build`
+looks for it in this order (`codegen/link.rs`, `RuntimeLookup::resolve`), independent of the
+current directory, of `PATH` and of the caller's Rust toolchain:
+
+1. **`$AXON_RUNTIME_DIR/<lib>`** (`<dir>/<triple>/<lib>` for `--target`). When set, it is the
+   only place searched.
+2. **The install layout beside the compiler**, produced by `scripts/install.sh [--prefix DIR]`:
+
+   ```
+   DIR/bin/axon
+   DIR/lib/axon/runtime/release/{libaxon_rt.a,libaxon_rt_ai.a}
+   DIR/lib/axon/runtime/debug/{libaxon_rt.a,libaxon_rt_ai.a}
+   DIR/lib/axon/runtime/<profile>/<triple>/…        (cross runtimes, placed by hand)
+   ```
+
+   The libs are built from the same checkout and pinned toolchain as the compiler and linked
+   as they are; an installed compiler needs neither cargo nor the workspace.
+3. **The Axon workspace the compiler was built from**, in the cargo target dir the compiler
+   itself was built into (`<root>/target` for a compiler that lives elsewhere). A lib that is
+   *current* is linked with no cargo run. Current means: the last pinned cargo build of the
+   runtime stamped this very file (`<lib>.axon-stamp`: device, inode, size, mtime), and no
+   input is newer than it — the sources in cargo's dep-info `<lib>.d`, their crates'
+   `Cargo.toml`, and the workspace's `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml` and
+   `.cargo/config.toml`. Otherwise `axon build` runs `cargo build -p <crate> --target-dir
+   <that dir>` from the workspace root with the pinned toolchain: it removes `RUSTUP_TOOLCHAIN`,
+   `RUSTC`, the `RUSTC_*WRAPPER`s, the rustflags variables, `CARGO_PROFILE_*`,
+   `CARGO_BUILD_TARGET` and `CARGO_BUILD_DEP_INFO_BASEDIR` from cargo's environment, and prefers
+   rustup's `cargo` proxy over `$CARGO`. Editing a runtime source therefore rebuilds the runtime
+   on the next `axon build`, and a runtime some other cargo run replaced (another toolchain, other
+   flags) is rebuilt with the pinned toolchain before it is linked.
+4. **Fallbacks** when step 3 cannot produce the lib (no workspace, no cargo, or the build
+   failed): the installed lib of the other profile, then the workspace lib of either profile —
+   with a warning saying why when it is not current, so a stale runtime is never linked
+   silently.
+
+If none exists, the build fails with one error naming every place searched.
+
 ---
 
 ## 6. Enum Layout

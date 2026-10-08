@@ -28309,6 +28309,164 @@ fn native_build_links_from_any_directory_without_cargo_on_path() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A `cargo` that records each run in the returned marker file and fails:
+/// `(dir to prepend to PATH and use as CARGO_HOME/bin, marker)`.
+fn recording_cargo(dir: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = dir.join("fake-cargo-home").join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let marker = dir.join("cargo-ran");
+    let cargo = bin.join("cargo");
+    std::fs::write(
+        &cargo,
+        format!("#!/bin/sh\necho \"$@\" >> '{}'\nexit 1\n", marker.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
+    (bin, marker)
+}
+
+/// AX-35. Every native link used to run `cargo build -p axon-rt` (~40 ms of a
+/// ~66 ms warm build), and that cargo honoured the CALLER's `RUSTUP_TOOLCHAIN`,
+/// so the runtime a binary linked was whatever toolchain last rebuilt it. With
+/// the runtime already built, a build must run no cargo at all — every cargo
+/// the compiler could find here records that it ran and fails — and the
+/// caller's toolchain variables, pointing at toolchains that do not exist,
+/// must not change a byte of the binary.
+#[test]
+fn native_build_with_a_built_runtime_runs_no_cargo_and_ignores_the_callers_toolchain() {
+    let dir = std::env::temp_dir().join(format!("axon_rt_no_cargo_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("hello.ax"), "fn main() { println(\"hello\") }\n").unwrap();
+    let build = |cmd: &mut Command| {
+        cmd.current_dir(&dir)
+            .args(["build", "hello.ax", "-o", "hello", "--no-cache"])
+            .output()
+            .unwrap()
+    };
+
+    // Bring the workspace runtime up to date the normal way first.
+    let o = build(&mut axon());
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    if codegen_absent(&log) {
+        eprintln!("SKIP native_build_with_a_built_runtime_runs_no_cargo_and_ignores_the_callers_toolchain: no codegen");
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+    assert!(o.status.success(), "{log}");
+    let first = std::fs::read(dir.join("hello")).unwrap();
+
+    let (bin, marker) = recording_cargo(&dir);
+    let o = build(
+        axon()
+            .env("CARGO_HOME", bin.parent().unwrap())
+            .env("CARGO", bin.join("cargo"))
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .env("RUSTUP_TOOLCHAIN", "axon-no-such-toolchain")
+            .env("RUSTC", "/nonexistent/rustc")
+            .env("RUSTFLAGS", "-C opt-level=0"),
+    );
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(o.status.success(), "{err}");
+    assert!(
+        !marker.exists(),
+        "a build with a current runtime ran cargo: {}",
+        std::fs::read_to_string(&marker).unwrap_or_default()
+    );
+    assert!(!err.contains("warning"), "{err}");
+    assert!(
+        std::fs::read(dir.join("hello")).unwrap() == first,
+        "the caller's Rust toolchain environment changed the binary"
+    );
+    let r = Command::new(dir.join("hello")).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&r.stdout).trim(), "hello");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// AX-35. A compiler installed outside the workspace finds its runtime in the
+/// documented install layout (`scripts/install.sh`): `<prefix>/bin/axon` and
+/// `<prefix>/lib/axon/runtime/<profile>/libaxon_rt.a`, with no cargo, and
+/// prefers it to the workspace's runtime — so once the installed lib is
+/// replaced by junk, that junk is what the linker rejects.
+#[test]
+fn an_installed_compiler_links_the_runtime_installed_beside_it_without_cargo() {
+    // Under cargo's target tmp dir, on the compiler's filesystem, so the
+    // "installed" compiler can be a hard link: a fresh copy is a file open for
+    // writing, which a concurrent test's fork can inherit and turn this test's
+    // exec into ETXTBSY.
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("axon_rt_installed_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("hello.ax"), "fn main() { println(\"hello\") }\n").unwrap();
+
+    // The runtime to install: the debug one the workspace compiler links,
+    // brought up to date by one ordinary build.
+    let o = axon()
+        .current_dir(&dir)
+        .args(["build", "hello.ax", "-o", "ws-hello", "--no-cache"])
+        .output()
+        .unwrap();
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    if codegen_absent(&log) {
+        eprintln!("SKIP an_installed_compiler_links_the_runtime_installed_beside_it_without_cargo: no codegen");
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+    assert!(o.status.success(), "{log}");
+    let workspace_exe = std::path::Path::new(env!("CARGO_BIN_EXE_axon"));
+    let built = workspace_exe.parent().unwrap().join("libaxon_rt.a");
+
+    let prefix = dir.join("prefix");
+    let runtime_dir = prefix.join("lib/axon/runtime/debug");
+    std::fs::create_dir_all(prefix.join("bin")).unwrap();
+    std::fs::create_dir_all(&runtime_dir).unwrap();
+    let installed_exe = prefix.join("bin/axon");
+    if std::fs::hard_link(workspace_exe, &installed_exe).is_err() {
+        std::fs::copy(workspace_exe, &installed_exe).unwrap();
+    }
+    std::fs::copy(&built, runtime_dir.join("libaxon_rt.a")).unwrap();
+
+    let (bin, marker) = recording_cargo(&dir);
+    let installed_build = |out: &str| {
+        Command::new(prefix.join("bin/axon"))
+            .current_dir(&dir)
+            .env("CARGO_HOME", bin.parent().unwrap())
+            .env("CARGO", bin.join("cargo"))
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .args(["build", "hello.ax", "-o", out, "--no-cache"])
+            .output()
+            .unwrap()
+    };
+    let o = installed_build("hello");
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(o.status.success(), "{err}");
+    assert!(!marker.exists(), "the installed compiler ran cargo");
+    let r = Command::new(dir.join("hello")).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&r.stdout).trim(), "hello");
+
+    std::fs::write(runtime_dir.join("libaxon_rt.a"), "not an archive\n").unwrap();
+    let o = installed_build("hello2");
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success());
+    assert!(
+        err.contains(&prefix.display().to_string())
+            && err.contains("lib/axon/runtime/debug/libaxon_rt.a"),
+        "the installed runtime must be the one linked, before the workspace's:\n{err}"
+    );
+    assert!(!marker.exists(), "the installed compiler ran cargo");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn trace_replay_refuses_a_source_that_changed_since_the_run() {
     // `trace --replay` re-executes the file at the recorded PATH. A path is not
