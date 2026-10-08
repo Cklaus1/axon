@@ -133,7 +133,8 @@ fn build_env_only(repo: &Path, out: &Path, env: &[(&str, String)]) -> Output {
     c.arg("--build-env-only")
         .arg(out)
         .current_dir(repo)
-        .env("AXON_GUEST_BUILD_PARENT", test_parent());
+        .env("AXON_GUEST_BUILD_PARENT", test_parent())
+        .env("AXON_GUEST_BUILD_UID", test_uid().to_string());
     for (k, v) in env {
         c.env(k, v);
     }
@@ -222,7 +223,8 @@ fn gbe_raw(repo: &Path) -> Command {
         Bins::BuildsItsOwn,
     );
     c.current_dir(repo)
-        .env("AXON_GUEST_BUILD_PARENT", test_parent());
+        .env("AXON_GUEST_BUILD_PARENT", test_parent())
+        .env("AXON_GUEST_BUILD_UID", test_uid().to_string());
     c
 }
 
@@ -326,6 +328,92 @@ fn reachable_marker(name: &str) -> PathBuf {
     }
     m.push(std::ffi::CString::new(p.to_str().unwrap()).unwrap());
     p
+}
+
+/// The build uid THIS test uses. Every test owns a distinct, unused uid, claimed for the life of the
+/// test thread, so the per-uid lock, the "already owns running processes" refusal (amendment 101) and the
+/// post-step reaper (which SIGKILLs every process of the build uid) can never cross from one test to
+/// another. They used to share 65534 (`nobody`): a host-namespace `begin` of one test saw (and refused)
+/// the transient or detached build-uid processes of another test's step, which is visible from the host
+/// /proc even from inside that test's PID namespace, so the suite failed a DIFFERENT 1..7 tests per run.
+/// The claim is an exclusive flock on a root-owned file per candidate uid, so concurrent test binaries
+/// (and other agents' runs) cannot pick the same uid either.
+struct UidClaim {
+    uid: u32,
+    _lock: std::fs::File,
+}
+
+const UID_CLAIM_DIR: &str = "/var/lib/axon-gbe-test-uids";
+
+fn owns_a_process(uid: u32) -> bool {
+    let Ok(rd) = std::fs::read_dir("/proc") else {
+        return true;
+    };
+    for e in rd.flatten() {
+        if !e
+            .file_name()
+            .to_string_lossy()
+            .bytes()
+            .all(|b| b.is_ascii_digit())
+        {
+            continue;
+        }
+        let Ok(tasks) = std::fs::read_dir(e.path().join("task")) else {
+            continue;
+        };
+        for t in tasks.flatten() {
+            if let Ok(st) = std::fs::read_to_string(t.path().join("status")) {
+                if st.lines().find(|l| l.starts_with("Uid:")).is_some_and(|l| {
+                    l.split_whitespace()
+                        .skip(1)
+                        .take(4)
+                        .any(|x| x == uid.to_string())
+                }) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+impl UidClaim {
+    fn new() -> UidClaim {
+        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::io::AsRawFd;
+        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        std::fs::create_dir_all(UID_CLAIM_DIR).unwrap();
+        std::fs::set_permissions(UID_CLAIM_DIR, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let span = 20_000u32;
+        let start = std::process::id().wrapping_mul(2_654_435_761) % span;
+        for _ in 0..span {
+            let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let uid = 40_000 + (start + n) % span;
+            let f = std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(format!("{UID_CLAIM_DIR}/uid-{uid}"))
+                .unwrap();
+            if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+                continue;
+            }
+            if owns_a_process(uid) {
+                continue;
+            }
+            return UidClaim { uid, _lock: f };
+        }
+        panic!("setup: no unclaimed test build uid in 40000..60000");
+    }
+}
+
+thread_local! {
+    static TEST_UID: UidClaim = UidClaim::new();
+}
+
+/// This test's build uid (see `UidClaim`).
+fn test_uid() -> u32 {
+    TEST_UID.with(|c| c.uid)
 }
 
 /// A begun controlled build of a fresh checkout under `d`: (repo, record path, record).
@@ -921,12 +1009,12 @@ fn a_callers_kcflags_cc_or_path_do_not_reach_the_kernel_build() {
         "ATTACK: a caller's KCFLAGS/CC/CROSS_COMPILE/PATH reached the kernel build: {vml}"
     );
     assert!(
-        vml.contains("uid=[65534]"),
+        vml.contains(&format!("uid=[{}]", test_uid())),
         "ATTACK: the kernel build's make ran as another uid than the unprivileged build uid: {vml}"
     );
     let k: Value =
         serde_json::from_slice(&std::fs::read(dist.join("kernel-build.json")).unwrap()).unwrap();
-    assert_eq!(k["build_uid"], 65534);
+    assert_eq!(k["build_uid"], test_uid());
     assert_eq!(k["tools"]["make"]["path"], "/usr/bin/make");
     assert!(k["tools"]["gcc"]["sha256"]
         .as_str()
@@ -1009,6 +1097,7 @@ fn gpy(repo: &Path, code: &str, args: &[&str]) -> Output {
         ))
         .arg(repo.join("scripts"))
         .args(args)
+        .env("AXON_GUEST_BUILD_UID", test_uid().to_string())
         .output()
         .unwrap()
 }
@@ -2000,7 +2089,7 @@ fn assert_probe_contained(report: &Path, what: &str) {
         .unwrap_or_else(|e| panic!("setup: the probe wrote no report: {e}"));
     let uid_line = r.lines().next().unwrap_or("");
     assert!(
-        !uid_line.contains("\t0\t") && uid_line.contains("65534"),
+        !uid_line.contains("\t0\t") && uid_line.contains(&test_uid().to_string()),
         "ATTACK: {what}: build code ran as root or an unexpected uid: {r}"
     );
     assert!(
@@ -2056,7 +2145,7 @@ fn a_build_script_cannot_plant_a_linker_or_read_the_proof_key() {
         rec["env"]["PATH"], "/usr/bin:/bin",
         "ATTACK: the build's PATH is not the fixed system directories (the toolchain's own directory is on it)"
     );
-    assert_eq!(rec["build_uid"], 65534);
+    assert_eq!(rec["build_uid"], test_uid());
     // The guest build's cargo step.
     let r = checkout(d.path());
     write(&r.join("guest/build.rs"), &probe_build_rs(&greport));
@@ -2253,13 +2342,14 @@ fn a_partial_or_malformed_builder_flag_set_is_refused() {
             .output()
             .unwrap()
     };
+    let bu = test_uid().to_string();
     let all = [
         "--builder-uid",
         "0",
         "--builder-parent",
         parent.as_str(),
         "--build-uid",
-        "65534",
+        bu.as_str(),
     ];
     let good = run(&all);
     let cases: Vec<(&str, Vec<&str>)> = vec![
@@ -2277,7 +2367,7 @@ fn a_partial_or_malformed_builder_flag_set_is_refused() {
                 "--builder-parent",
                 parent.as_str(),
                 "--build-uid",
-                "65534",
+                bu.as_str(),
             ],
         ),
         (
@@ -2288,7 +2378,7 @@ fn a_partial_or_malformed_builder_flag_set_is_refused() {
                 "--builder-parent",
                 parent.as_str(),
                 "--build-uid",
-                "65534",
+                bu.as_str(),
             ],
         ),
         (
@@ -2299,7 +2389,7 @@ fn a_partial_or_malformed_builder_flag_set_is_refused() {
                 "--builder-parent",
                 "parent",
                 "--build-uid",
-                "65534",
+                bu.as_str(),
             ],
         ),
     ];
@@ -2438,7 +2528,7 @@ fn main() {{
     assert!(b.status.success(), "control: the step builds: {}", text(&b));
     let got = std::fs::read_to_string(&report).expect("setup: the probe wrote no report");
     assert!(
-        got.contains("65534") && !got.contains("\t0\t"),
+        got.contains(&test_uid().to_string()) && !got.contains("\t0\t"),
         "ATTACK: the build processes ran as the runner's own uid (root): {got}"
     );
     assert!(
@@ -2465,13 +2555,15 @@ fn isolated_cargo(repo: &Path, rec: &Path, art: &Path, writer: &Path) -> String 
 echo "ART0=$(sha256sum "$ART" | cut -d' ' -f1)"
 echo "WSRC0=$(cat "$WSRC" 2>/dev/null | head -c 20)"
 sleep 2
-n=0; for s in /proc/[0-9]*/status; do u=$(awk '/^Uid:/{print $2}' "$s" 2>/dev/null); [ "$u" = 65534 ] && n=$((n+1)); done
+n=0; for s in /proc/[0-9]*/status; do u=$(awk '/^Uid:/{print $2}' "$s" 2>/dev/null); [ "$u" = "$BUID" ] && n=$((n+1)); done
 echo "SURVIVORS=$n"
 echo "ART1=$(sha256sum "$ART" | cut -d' ' -f1)"
 echo "WSRC1=$(cat "$WSRC" 2>/dev/null | head -c 20)"
 "#;
     let mut c = in_pid_ns(&inner, Some(script));
-    c.env("ART", art).env("WSRC", writer);
+    c.env("ART", art)
+        .env("WSRC", writer)
+        .env("BUID", test_uid().to_string());
     text(&c.output().unwrap())
 }
 
@@ -2719,13 +2811,14 @@ echo "HELD0=$(head -c 20 "$HELD")"
 echo "WSRC0=$(head -c 20 "$WSRC")"
 echo "PIDNS_IN_STEP=$(cat "$PIDNS")"
 sleep 2
-n=0; for s in /proc/[0-9]*/task/*/status; do u=$(awk '/^Uid:/{print $2}' "$s" 2>/dev/null); st=$(awk '/^State:/{print $2}' "$s" 2>/dev/null); [ "$u" = 65534 ] && [ "$st" != Z ] && n=$((n+1)); done
+n=0; for s in /proc/[0-9]*/task/*/status; do u=$(awk '/^Uid:/{print $2}' "$s" 2>/dev/null); st=$(awk '/^State:/{print $2}' "$s" 2>/dev/null); [ "$u" = "$BUID" ] && [ "$st" != Z ] && n=$((n+1)); done
 echo "LIVE_THREADS=$n"
 echo "HELD1=$(head -c 20 "$HELD")"
 echo "WSRC1=$(head -c 20 "$WSRC")"
 "#;
     let mut c = in_pid_ns(&inner, Some(script));
     c.env("HELD", base.join("target/held.bin"))
+        .env("BUID", test_uid().to_string())
         .env("PIDNS", base.join("target/pidns.txt"))
         .env(
             "WSRC",
@@ -2804,7 +2897,7 @@ fn the_reaper_lists_a_process_whose_main_thread_has_exited() {
     let r = checkout(d.path());
     let inner = Command::new("/bin/true");
     let script = r#"
-setpriv --reuid=65534 --regid=65534 --clear-groups --no-new-privs python3 -c '
+setpriv --reuid=$BUID --regid=$BUID --clear-groups --no-new-privs python3 -c '
 import ctypes, os, threading, time
 threading.Thread(target=lambda: time.sleep(30)).start()
 time.sleep(0.3)
@@ -2816,11 +2909,12 @@ python3 -B -c '
 import importlib.util, os, sys
 sys.dont_write_bytecode = True
 sp = importlib.util.spec_from_file_location("g", sys.argv[2]); g = importlib.util.module_from_spec(sp); sp.loader.exec_module(g)
-print("LISTED=" + ("yes" if int(sys.argv[1]) in g.build_uid_pids(65534) else "no"))' "$pid" "$GBE"
+print("LISTED=" + ("yes" if int(sys.argv[1]) in g.build_uid_pids(int(sys.argv[3])) else "no"))' "$pid" "$GBE" "$BUID"
 kill -9 "$pid"
 "#;
     let mut c = in_pid_ns(&inner, Some(script));
-    c.env("GBE", r.join("scripts/guest_build_env.py"));
+    c.env("GBE", r.join("scripts/guest_build_env.py"))
+        .env("BUID", test_uid().to_string());
     let res = text(&c.output().unwrap());
     assert_eq!(
         kv(&res, "LEADER_STATE="),
