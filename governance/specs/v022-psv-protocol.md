@@ -6213,7 +6213,7 @@ guards of the helper have no cargo row (`TMPDIR=/tmp`, the `/tmp` tmpfs); the ki
       check and was not attempted again by another route. The entry's text now says exactly that and it stays on the REMAINDER.
     - **Finding 6 (git's redundant pairs).** Decided per pair, by making each value observable by READING it: `git_cmd`'s
       environment and arguments are read back from the `Command` and its stdin/stderr from the descriptors git's child
-      holds (a `SCHED`-free test binary of its own, because it points this process's fds 0 and 2 at pipes). The pairs
+      holds (a test binary of its own, because it points this process's fds 0 and 2 at pipes). The pairs
       `GIT_NO_LAZY_FETCH` + `protocol.allow=never` and `GIT_NO_REPLACE_OBJECTS` + `--no-replace-objects` are redundant by
       construction (git needs neither alone while the other holds), so no behavioural test can tell one member from the
       other; each member's VALUE is now a row of its own (M2846-M2849), together with `core.hooksPath` (M2850), the PATH
@@ -6223,7 +6223,27 @@ guards of the helper have no cargo row (`TMPDIR=/tmp`, the `/tmp` tmpfs); the ki
       named file, so its seven values are DOMINATED (git-config(1)).
     - **Production constructors' values (A232).** `QualificationTrust::operator()` and `ObserverTrust::operator()`: the 30-day
       evidence age, the clock, the host signer left `None` until the host config loads, `operator_owned` (M2804-M2807).
-    - **Evidence.** See the list under "Evidence" in this amendment's last item.
+    - **Evidence.** Source commit `0baa931b` (docs-only commits follow); gpumaster from clean clones (host recorded in each job's header),
+      the pure-Python gates and the local legs on this host. (1) **Rows M2800-M2853: 54/54 KILLED by their own attack**, baseline passed
+      for each, 0 REFUSED_ELSEWHERE at the end, 0 stale: M2800-M2803 + M2821-M2826 (10/10), M2804-M2820 + M2827-M2830 (21/21), M2846-M2853
+      (8/8), M2831-M2845 (15/15; three of them, M2832, M2843, M2844, first failed their BASELINE because the new gate test counted the
+      REMAINDER of a tree that was not yet clean, and M2843's marker did not match its panic: both fixed and re-run, the last run being
+      the evidence). (2) `cargo test -p axon-core --no-default-features --test refusal_coverage_gate --test harness_integrity --test
+      harness_binaries`: exit 0, 46/46, 43/43, 10/10 (the first run found two of my own mistakes, fixed before this: a probe whose
+      variable named a "script" to `harness_binaries`, and four old tests whose `not_named` probes now hold a literal). (3)
+      `cargo test -p axon-fabric` (every binary, `a_callers_scheduling_state_never_reaches_the_root_launch` skipped on gpumaster
+      because its `SCHED_IDLE` python child starves under that host's load; it PASSES locally in 1.05 s): 845 passed, 2 failed, both
+      in `guest_build_env`, which fails an environment-dependent SET of its tests on every run on both hosts (gpumaster at the BASE
+      commit `5e16d8b4`: 3 others; here, this run: 2; locally: 2 more) and exercises nothing this amendment changed.
+      `cargo test -p axon-psv`, `-p axon-loop`, `-p axon-loop-contracts`, `-p axon-cortex`: exit 0. (4) `cargo clippy -p axon-fabric
+      -p axon-psv -p axon-cortex --all-targets -- -D warnings` and `cargo clippy -p axon-core --no-default-features --tests -- -D
+      warnings`: exit 0 both (it first found one `let mut` in my psv_dispatch test). (5) `python3 scripts/v022_refusal_coverage.py` exit
+      0 and `--freeze` exit 0; `scripts/psv_matrix_check.py`: PASS, 236 rows, with temporary placeholders for A219-A229 (not
+      committed). (6) The 96 `OBSERVED` entries were RE-MEASURED at the final source with `scripts/v022_value_survey.py --again`: 10/10
+      axon-psv, the Cortex, axon-loop and axon-os sites, and 56/56 axon-fabric, all killed again; the Cortex client's submit
+      arguments (13) were killed by `cortex_via_fabric` (axon-fabric), and the loop-contracts, recipe and workspace sites by axon-fabric.
+      (7) Honest controls: each new test has a control (the same helper owned by its configured owner launches; the same host
+      loads; the unedited gate copy holds).
     - **WHAT THE GATE STILL CANNOT SEE** (printed by the gate, and in `v022-protected-suite-verdict.md`). (1) A value built by
       computation, or handed through a local binding (`let m = 0o700; mkdir(m)` is seen at the literal, not at the use), a `format!`
       of variables, a path joined at run time, a flag set read from a table; and a LITERAL passed to a user function as a uid
