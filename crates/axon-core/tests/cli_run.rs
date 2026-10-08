@@ -27967,7 +27967,11 @@ fn native_place_assignment_examples_match_the_interpreter() {
             note_harness_skip("axon build (no codegen feature)");
             return;
         };
-        assert_eq!(got, interp_stdout(name, &src), "`{name}`: native != interpreter");
+        assert_eq!(
+            got,
+            interp_stdout(name, &src),
+            "`{name}`: native != interpreter"
+        );
     }
 }
 
@@ -28009,7 +28013,11 @@ fn native_closures_capture_any_enclosing_scope_like_the_interpreter() {
             note_harness_skip("axon build (no codegen feature)");
             return;
         };
-        assert_eq!(got, interp_stdout(tag, src), "[{tag}] native != interpreter");
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
     }
 }
 
@@ -28059,7 +28067,11 @@ fn native_array_concat_and_sum_type_slot_writes_match_the_interpreter() {
             note_harness_skip("axon build (no codegen feature)");
             return;
         };
-        assert_eq!(got, interp_stdout(tag, src), "[{tag}] native != interpreter");
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
     }
 }
 
@@ -28101,10 +28113,15 @@ fn native_assign_of_unlowered_value_is_refused_not_dropped() {
         }
         if build.status.code() != Some(0) {
             assert!(msg.contains("E0910"), "[{tag}] must refuse as E0910: {msg}");
-            assert!(!bin.exists(), "[{tag}] a refused build must leave no binary");
+            assert!(
+                !bin.exists(),
+                "[{tag}] a refused build must leave no binary"
+            );
             continue;
         }
-        let run = std::process::Command::new(&bin).output().expect("run native");
+        let run = std::process::Command::new(&bin)
+            .output()
+            .expect("run native");
         let _ = std::fs::remove_file(&bin);
         assert_eq!(
             String::from_utf8_lossy(&run.stdout).trim(),
@@ -28130,7 +28147,11 @@ fn native_and_or_short_circuit_like_the_interpreter() {
             note_harness_skip("axon build (no codegen feature)");
             return;
         };
-        assert_eq!(got, interp_stdout(tag, src), "[{tag}] native != interpreter");
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
     }
 }
 
@@ -28149,7 +28170,11 @@ fn native_match_guards_see_pattern_bindings_like_the_interpreter() {
             note_harness_skip("axon build (no codegen feature)");
             return;
         };
-        assert_eq!(got, interp_stdout(tag, src), "[{tag}] native != interpreter");
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
     }
 }
 
@@ -28178,10 +28203,17 @@ fn native_parse_family_and_arm_binding_concat_match_the_interpreter() {
             note_harness_skip("axon build (no codegen feature)");
             return;
         };
-        assert_eq!(got, interp_stdout(tag, src), "[{tag}] native != interpreter");
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
     }
     let (code, out) = run_verb(&["check"], "fn main() -> i64 {\n    match parse_int(\"x\") { Ok(w) => println(\"ok\"), Err(e) => println(to_str(e + 1)) }\n    0\n}\n");
-    assert_ne!(code, 0, "`str + i64` on an arm binding must stay refused:\n{out}");
+    assert_ne!(
+        code, 0,
+        "`str + i64` on an arm binding must stay refused:\n{out}"
+    );
     assert!(out.contains("E0102"), "expected infer's E0102:\n{out}");
 }
 
@@ -32848,7 +32880,11 @@ fn native_lowers_string_concat_index_write_and_field_write_like_the_interpreter(
         let Some(got) = native_stdout(tag, src) else {
             return;
         };
-        assert_eq!(got, interp_stdout(tag, src), "[{tag}] native != interpreter");
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
     }
 }
 
@@ -32883,7 +32919,11 @@ fn native_arrays_have_value_semantics_like_the_interpreter() {
         let Some(got) = native_stdout(tag, src) else {
             return;
         };
-        assert_eq!(got, interp_stdout(tag, src), "[{tag}] native != interpreter");
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
     }
 }
 
@@ -33342,7 +33382,8 @@ fn main() -> i64 {
 
 #[test]
 fn native_array_index_write_traps_out_of_bounds_like_the_interpreter() {
-    let src = "fn main() -> i64 {\n let a = [1, 2, 3]\n a[3] = 7\n println(\"unreachable\")\n 0\n}\n";
+    let src =
+        "fn main() -> i64 {\n let a = [1, 2, 3]\n a[3] = 7\n println(\"unreachable\")\n 0\n}\n";
     let f = tmp_ax("oob_write", src);
     let bin = std::env::temp_dir().join(format!("axon_native_oobw_{}", std::process::id()));
     let build = axon()
@@ -33356,7 +33397,11 @@ fn native_array_index_write_traps_out_of_bounds_like_the_interpreter() {
     let interp = axon().arg("run").arg(&f).output().unwrap();
     let _ = std::fs::remove_file(&f);
     let msg = String::from_utf8_lossy(&build.stderr).to_string();
-    if codegen_absent(&format!("{}{}", String::from_utf8_lossy(&build.stdout), msg)) {
+    if codegen_absent(&format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        msg
+    )) {
         return;
     }
     assert_eq!(build.status.code(), Some(0), "build must succeed:\n{msg}");
@@ -33436,7 +33481,11 @@ fn arr_sort_by_is_stable_in_both_engines() {
         .collect();
     want.sort_by_key(|r| r / 10000); // std's sort_by_key is stable
     let want = expected_sorted(want);
-    assert_eq!(interp_stdout("sort_stable", &src), want, "interpreter not stable");
+    assert_eq!(
+        interp_stdout("sort_stable", &src),
+        want,
+        "interpreter not stable"
+    );
     if let Some(got) = native_stdout("sort_stable", &src) {
         assert_eq!(got, want, "native not stable");
     }
@@ -33447,7 +33496,10 @@ fn arr_sort_by_matches_a_reference_sort_in_both_engines() {
     // AX-07: correctness of the merge sort on random data, ascending and
     // descending comparators, against Rust's sort.
     let n = 777;
-    for (tag, cmp, desc) in [("sort_asc", "|a, b| a - b", false), ("sort_desc", "|a, b| b - a", true)] {
+    for (tag, cmp, desc) in [
+        ("sort_asc", "|a, b| a - b", false),
+        ("sort_desc", "|a, b| b - a", true),
+    ] {
         let src = sort_program(n, "s", cmp);
         let mut want = minstd(7, n);
         want.sort();
@@ -33511,7 +33563,11 @@ fn interp_arr_repeat_unallocatable_size_is_a_runtime_error_naming_n() {
     let run = axon().arg("run").arg(&f).output().expect("spawn run");
     let _ = std::fs::remove_file(&f);
     let stderr = String::from_utf8_lossy(&run.stderr);
-    assert_eq!(run.status.code(), Some(101), "runtime panic exit; stderr:\n{stderr}");
+    assert_eq!(
+        run.status.code(),
+        Some(101),
+        "runtime panic exit; stderr:\n{stderr}"
+    );
     assert!(
         stderr.contains("arr_repeat: cannot allocate an array of 9223372036854775807 elements"),
         "error must name arr_repeat and n: {stderr}"
@@ -33869,7 +33925,11 @@ fn native_array_literals_in_hot_loops_run_in_bounded_memory() {
         let Some(native_small) = native_stdout(&format!("{tag}_small"), &small) else {
             return;
         };
-        assert_eq!(native_small, interp_stdout(&format!("{tag}_small"), &small), "[{tag}] parity");
+        assert_eq!(
+            native_small,
+            interp_stdout(&format!("{tag}_small"), &small),
+            "[{tag}] parity"
+        );
         let Some(bin) = native_bin(tag, src) else {
             return;
         };
@@ -34031,7 +34091,10 @@ fn main() {
         return;
     };
     let interp = interp_stdout("lit_escape", src);
-    assert!(interp.contains("returned: 4,40,400, 3,30,300, 2,20,200,"), "{interp}");
+    assert!(
+        interp.contains("returned: 4,40,400, 3,30,300, 2,20,200,"),
+        "{interp}"
+    );
     assert_eq!(native, interp);
 }
 
@@ -34091,18 +34154,18 @@ fn main() -> i64 {\n\
 #[test]
 fn mut_slice_params_write_through_in_both_engines() {
     let want = [
-        "55 1",       // write-through; `let b = a` before the call keeps its own copy
-        "10 20 21",   // nested reborrow two call levels deep
-        "1 3 0",      // early `return`: the write before it is written back
-        "0 0 99",     // normal return
+        "55 1",         // write-through; `let b = a` before the call keeps its own copy
+        "10 20 21",     // nested reborrow two call levels deep
+        "1 3 0",        // early `return`: the write before it is written back
+        "0 0 99",       // normal return
         "err boom 7 0", // `?` unwinding: the write before it is written back
         "ok 5 7 5",
-        "54 11",      // writes + passing the `&mut` param on as `&`
-        "4 7",        // wholesale reassignment `xs = [..]` reaches the caller
-        "1000 4",     // `let c = xs` in the callee is a copy
-        "5 77",       // a returned `&mut` param is a copy, not an alias
-        "42 3",       // element field write `ps[0].x = v`
-        "155",        // lending `&mut a` does not reach an earlier `let b = a`
+        "54 11",  // writes + passing the `&mut` param on as `&`
+        "4 7",    // wholesale reassignment `xs = [..]` reaches the caller
+        "1000 4", // `let c = xs` in the callee is a copy
+        "5 77",   // a returned `&mut` param is a copy, not an alias
+        "42 3",   // element field write `ps[0].x = v`
+        "155",    // lending `&mut a` does not reach an earlier `let b = a`
     ];
     let Some((interp, native)) = native_stdout_lines("mutslice", MUT_SLICE_SRC, &[]) else {
         let f = tmp_ax("mutslice_interp", MUT_SLICE_SRC);
@@ -34187,7 +34250,11 @@ fn misuses_of_mut_slice_params_are_compile_errors() {
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(2), "{label}: must fail check: {msg}");
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{label}: must fail check: {msg}"
+        );
         assert!(
             msg.contains(code) && msg.contains(needle),
             "{label}: expected {code} mentioning {needle:?}: {msg}"

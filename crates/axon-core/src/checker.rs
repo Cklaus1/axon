@@ -962,7 +962,8 @@ impl CheckCtx {
             self.check_item(item);
         }
         // AX-08: `&mut [T]` parameter mode + no writes through a shared `&`.
-        self.errors.extend(crate::mut_borrow::check_program(program));
+        self.errors
+            .extend(crate::mut_borrow::check_program(program));
 
         std::mem::take(&mut self.errors)
     }

@@ -628,7 +628,10 @@ mod tests {
         assert!(a >= 0 && b >= a, "now_ns went backwards: {a} then {b}");
         std::thread::sleep(std::time::Duration::from_millis(2));
         let c = h.now_ns();
-        assert!(c - b >= 2_000_000, "a 2ms sleep must advance now_ns by >=2e6 ns: {b} -> {c}");
+        assert!(
+            c - b >= 2_000_000,
+            "a 2ms sleep must advance now_ns by >=2e6 ns: {b} -> {c}"
+        );
 
         let _ = std::fs::remove_file(&tmp);
     }

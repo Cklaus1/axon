@@ -55,7 +55,10 @@ pub fn check_program(program: &Program) -> Vec<CheckError> {
         if let Item::FnDef(f) = item {
             modes.insert(
                 f.name.clone(),
-                f.params.iter().map(|p| matches!(p.ty, AxonType::RefMut(_))).collect(),
+                f.params
+                    .iter()
+                    .map(|p| matches!(p.ty, AxonType::RefMut(_)))
+                    .collect(),
             );
         }
     }
@@ -82,7 +85,11 @@ pub fn check_program(program: &Program) -> Vec<CheckError> {
             Item::EnumDef(e) => {
                 for v in &e.variants {
                     for fld in &v.fields {
-                        w.no_ref_mut(&fld.ty, &format!("variant `{}::{}`", e.name, v.name), e.span);
+                        w.no_ref_mut(
+                            &fld.ty,
+                            &format!("variant `{}::{}`", e.name, v.name),
+                            e.span,
+                        );
                     }
                 }
             }
@@ -100,7 +107,9 @@ pub fn check_program(program: &Program) -> Vec<CheckError> {
                 w.span = *span;
                 w.visit(value);
             }
-            Item::RefineDef(r) => w.no_ref_mut(&r.base, &format!("refinement `{}`", r.name), r.span),
+            Item::RefineDef(r) => {
+                w.no_ref_mut(&r.base, &format!("refinement `{}`", r.name), r.span)
+            }
             Item::ModDecl(_) | Item::UseDecl(_) => {}
         }
     }
@@ -155,7 +164,9 @@ fn contains_ref_mut(ty: &AxonType) -> bool {
         | AxonType::RawPtr(i) => contains_ref_mut(i),
         AxonType::Result { ok, err } => contains_ref_mut(ok) || contains_ref_mut(err),
         AxonType::Generic { args, .. } => args.iter().any(contains_ref_mut),
-        AxonType::Fn { params, ret } => params.iter().any(contains_ref_mut) || contains_ref_mut(ret),
+        AxonType::Fn { params, ret } => {
+            params.iter().any(contains_ref_mut) || contains_ref_mut(ret)
+        }
         AxonType::Tuple(es) => es.iter().any(contains_ref_mut),
         _ => false,
     }
@@ -340,7 +351,11 @@ impl Walker<'_> {
         }
         let mut borrowed: Vec<(usize, &str)> = Vec::new();
         for (i, a) in args.iter().enumerate() {
-            let param_mut = modes.as_ref().and_then(|m| m.get(i)).copied().unwrap_or(false);
+            let param_mut = modes
+                .as_ref()
+                .and_then(|m| m.get(i))
+                .copied()
+                .unwrap_or(false);
             match a {
                 Expr::UnaryOp {
                     op: UnaryOp::RefMut,
@@ -399,7 +414,15 @@ impl Walker<'_> {
                 continue;
             }
             let mentioned = args.iter().enumerate().any(|(j, a)| {
-                if j == *i || matches!(a, Expr::UnaryOp { op: UnaryOp::RefMut, .. }) {
+                if j == *i
+                    || matches!(
+                        a,
+                        Expr::UnaryOp {
+                            op: UnaryOp::RefMut,
+                            ..
+                        }
+                    )
+                {
                     return false;
                 }
                 let mut hit = false;
@@ -480,10 +503,15 @@ impl Walker<'_> {
             }
             Expr::Spawn(b) => {
                 if let Expr::Call { args, .. } = b.as_ref() {
-                    if args
-                        .iter()
-                        .any(|a| matches!(a, Expr::UnaryOp { op: UnaryOp::RefMut, .. }))
-                    {
+                    if args.iter().any(|a| {
+                        matches!(
+                            a,
+                            Expr::UnaryOp {
+                                op: UnaryOp::RefMut,
+                                ..
+                            }
+                        )
+                    }) {
                         self.err(
                             E0605,
                             "a spawned call cannot take a `&mut` argument".to_string(),

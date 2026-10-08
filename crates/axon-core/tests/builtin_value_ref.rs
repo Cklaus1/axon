@@ -90,7 +90,10 @@ fn a_fully_granted_alias_draws_no_capability_error() {
                fn f() -> i64 {\n    let g = file_copy\n    let _ = g(\"./a.txt\", \"./out/b.txt\")\n    0\n}\n\
                fn main() { let _ = f() }\n";
     let (code, out) = check(src);
-    assert_eq!(code, 2, "a builtin is not a first-class value (E0306):\n{out}");
+    assert_eq!(
+        code, 2,
+        "a builtin is not a first-class value (E0306):\n{out}"
+    );
     assert_refused_only_as_a_non_value(&out);
 }
 
@@ -209,6 +212,9 @@ fn a_path_scoped_never_clause_adds_no_capability_error_to_an_alias() {
         "@[contained(fs: [read(\"./\")], net: [], exec: none, never: [read(\"/etc/\")])]\n\
          fn f() -> i64 {\n    let g = read_file\n    0\n}\nfn main() { let _ = f() }\n",
     );
-    assert_eq!(code, 2, "a builtin is not a first-class value (E0306):\n{out}");
+    assert_eq!(
+        code, 2,
+        "a builtin is not a first-class value (E0306):\n{out}"
+    );
     assert_refused_only_as_a_non_value(&out);
 }

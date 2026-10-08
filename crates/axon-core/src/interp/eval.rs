@@ -830,7 +830,9 @@ impl<'p> Interp<'p> {
             .map(|idx| {
                 let mut v = vec![Value::Unit; idx + 1];
                 v[idx] = match args.get(idx) {
-                    Some(Expr::Literal(crate::ast::Literal::Str(sl))) => Value::Str(Rc::new(sl.clone())),
+                    Some(Expr::Literal(crate::ast::Literal::Str(sl))) => {
+                        Value::Str(Rc::new(sl.clone()))
+                    }
                     _ => Value::Str(Rc::new(String::from("<dynamic>"))),
                 };
                 v
@@ -1031,9 +1033,9 @@ impl<'p> Interp<'p> {
             Ok(DomainValue::Unit) => Ok(Value::Unit),
             Ok(DomainValue::Int(n)) => Ok(Value::Int(n)),
             Ok(DomainValue::Str(s)) => Ok(Value::Str(Rc::new(s))),
-            Ok(DomainValue::IntArray(ns)) => {
-                Ok(Value::Array(Rc::new(ns.into_iter().map(Value::Int).collect())))
-            }
+            Ok(DomainValue::IntArray(ns)) => Ok(Value::Array(Rc::new(
+                ns.into_iter().map(Value::Int).collect(),
+            ))),
             Ok(DomainValue::Handle { name, payload }) => Ok(Value::Handle(Rc::new(HandleVal {
                 module: module.name.to_string(),
                 name: name.to_string(),
@@ -1069,10 +1071,15 @@ impl<'p> Interp<'p> {
 
         // AX-08: a call passing `&mut a` moves each borrowed value out of the
         // caller's binding into the callee and back on return (O(1), no copy).
-        if args
-            .iter()
-            .any(|a| matches!(a, Expr::UnaryOp { op: UnaryOp::RefMut, .. }))
-        {
+        if args.iter().any(|a| {
+            matches!(
+                a,
+                Expr::UnaryOp {
+                    op: UnaryOp::RefMut,
+                    ..
+                }
+            )
+        }) {
             return self.eval_call_mut(callee, args, tier, env);
         }
 
@@ -1164,13 +1171,7 @@ impl<'p> Interp<'p> {
     /// AX-08: `f(.., &mut a, ..)`. The checker (E0605/E0606) guarantees the
     /// callee is a free fn whose matching params are `&mut [T]`, every `&mut`
     /// operand is a whole local, and no other argument mentions it.
-    fn eval_call_mut(
-        &self,
-        callee: &Expr,
-        args: &[Expr],
-        tier: Option<&str>,
-        env: &mut Env,
-    ) -> R {
+    fn eval_call_mut(&self, callee: &Expr, args: &[Expr], tier: Option<&str>, env: &mut Env) -> R {
         let f = match callee {
             Expr::Ident(name) => match self.fn_of_sym.get(&self.res.sym(callee, name)) {
                 Some(&i) => self.fn_table[i as usize].def,

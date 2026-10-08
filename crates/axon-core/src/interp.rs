@@ -658,7 +658,11 @@ impl Env {
         }
     }
     fn get(&self, name: Sym) -> Option<&Value> {
-        self.vars.iter().rev().find(|(k, _)| *k == name).map(|(_, v)| v)
+        self.vars
+            .iter()
+            .rev()
+            .find(|(k, _)| *k == name)
+            .map(|(_, v)| v)
     }
     /// Update the nearest existing binding; returns false if none exists.
     fn assign(&mut self, name: Sym, val: Value) -> bool {
@@ -672,7 +676,11 @@ impl Env {
     }
     /// Mutable reference to the nearest existing binding (for place assignment).
     fn get_mut(&mut self, name: Sym) -> Option<&mut Value> {
-        self.vars.iter_mut().rev().find(|(k, _)| *k == name).map(|(_, v)| v)
+        self.vars
+            .iter_mut()
+            .rev()
+            .find(|(k, _)| *k == name)
+            .map(|(_, v)| v)
     }
     /// All visible bindings, each name once (inner shadows outer). Used to
     /// snapshot the environment a handler arm or continuation replay runs in.
@@ -1786,7 +1794,11 @@ impl SendValue {
                     })
                     .collect();
                 SendValue::Closure {
-                    params: code.params.iter().map(|p| sym_name(*p).to_string()).collect(),
+                    params: code
+                        .params
+                        .iter()
+                        .map(|p| sym_name(*p).to_string())
+                        .collect(),
                     body: Box::new(code.body.clone()),
                     captured: cap?,
                 }
@@ -1840,9 +1852,9 @@ impl SendValue {
             SendValue::Bool(b) => Value::Bool(b),
             SendValue::Str(s) => Value::Str(Rc::new(s)),
             SendValue::Unit => Value::Unit,
-            SendValue::Array(xs) => Value::Array(Rc::new(
-                xs.into_iter().map(Self::into_value).collect(),
-            )),
+            SendValue::Array(xs) => {
+                Value::Array(Rc::new(xs.into_iter().map(Self::into_value).collect()))
+            }
             SendValue::Struct { name, fields } => Value::record(
                 intern(&name),
                 Fields::from_pairs(
@@ -2965,7 +2977,9 @@ impl<'p> Interp<'p> {
             for f in defs {
                 let idx = u32::try_from(fn_table.len()).expect("fewer than 2^32 fns");
                 if matches!(item, Item::FnDef(_))
-                    && fns.get(&f.name).is_some_and(|g: &&FnDef| std::ptr::eq(*g, f))
+                    && fns
+                        .get(&f.name)
+                        .is_some_and(|g: &&FnDef| std::ptr::eq(*g, f))
                 {
                     fn_of_sym.insert(intern(&f.name), idx);
                 }
@@ -5698,7 +5712,10 @@ mod literal_escape_tests {
                 .unwrap_or_else(|e| panic!("dumped literal must re-parse ({original:?}): {e}"));
             let mut interp = Interp::build(&prog);
             interp.init_globals().expect("globals initialise");
-            let got = interp.globals.get(&intern("x")).expect("let x must be bound");
+            let got = interp
+                .globals
+                .get(&intern("x"))
+                .expect("let x must be bound");
             // Value has no PartialEq; compare the rendered form, which is what
             // the session actually round-trips anyway.
             let got_s = match got {

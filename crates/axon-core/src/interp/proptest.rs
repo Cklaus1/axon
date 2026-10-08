@@ -243,7 +243,9 @@ impl PropGen {
             (PropGen::Bool, Value::Bool(true)) => Some(Value::Bool(false)),
             (PropGen::Bool, Value::Bool(false)) => None,
             (PropGen::Str, Value::Str(s)) if s.is_empty() => None,
-            (PropGen::Str, Value::Str(s)) => Some(Value::Str(Rc::new(s[..s.len() - 1].to_string()))),
+            (PropGen::Str, Value::Str(s)) => {
+                Some(Value::Str(Rc::new(s[..s.len() - 1].to_string())))
+            }
             _ => None,
         }
     }

@@ -62,7 +62,9 @@ pub(super) fn fits_stack_slot(elem: BasicTypeEnum<'_>, n: u32) -> bool {
                 .into_iter()
                 .map(|f| upper(f).saturating_add(8))
                 .fold(0, u64::saturating_add),
-            BasicTypeEnum::ArrayType(a) => u64::from(a.len()).saturating_mul(upper(a.get_element_type())),
+            BasicTypeEnum::ArrayType(a) => {
+                u64::from(a.len()).saturating_mul(upper(a.get_element_type()))
+            }
             BasicTypeEnum::VectorType(v) => u64::from(v.get_size()).saturating_mul(16),
         }
     }
@@ -245,9 +247,7 @@ impl Scanner<'_> {
                 _ => self.expr(value, opaque),
             },
             Expr::Assign { name, value } => match strip_ref(value) {
-                Expr::Array(elems) => {
-                    self.site(elems, SiteCond::Reassigned(name.clone()), opaque)
-                }
+                Expr::Array(elems) => self.site(elems, SiteCond::Reassigned(name.clone()), opaque),
                 _ => self.expr(value, opaque),
             },
             Expr::AssignTo { place, value } => {
@@ -325,9 +325,7 @@ impl Scanner<'_> {
                 self.expr(right, opaque);
             }
             Expr::UnaryOp { operand, .. } => self.expr(operand, opaque),
-            Expr::Question(b) | Expr::Ok(b) | Expr::Err(b) | Expr::Some(b) => {
-                self.expr(b, opaque)
-            }
+            Expr::Question(b) | Expr::Ok(b) | Expr::Err(b) | Expr::Some(b) => self.expr(b, opaque),
             Expr::Match { subject, arms } => {
                 self.expr(subject, opaque);
                 for a in arms {
