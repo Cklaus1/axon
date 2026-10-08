@@ -101,10 +101,14 @@ pub enum Value {
     /// scope — note `outer n=0` on both engines: the outer binding is not
     /// aliased. Cloning a closure value shares the same cell, which is what
     /// makes `let b = bump` observe the same counter.
+    ///
+    /// AX-40: the cell holds only the lambda's free variables that were bound
+    /// where it was created, not the whole defining environment, and `code`
+    /// (params + body) is shared by every closure made from the same lambda,
+    /// so making, cloning or calling a closure never copies its body.
     Closure {
-        params: Vec<String>,
-        body: Box<Expr>,
-        captured: Rc<RefCell<HashMap<String, Value>>>,
+        code: Rc<ClosureCode>,
+        captured: Rc<RefCell<Vec<(Sym, Value)>>>,
     },
     /// A channel — a shared FIFO queue. Cloning shares the same channel (Rc), so
     /// a `spawn`ed body and the main flow see the same queue. The interpreter is
@@ -398,8 +402,12 @@ fn ai_policy_err<T>(msg: impl Into<String>) -> Result<T, Flow> {
 /// the per-scope-map ones exactly — `define` replaces a same-named binding in
 /// the CURRENT scope (so a loop re-binding a name does not grow the stack) and
 /// shadows outer ones; lookups see the innermost binding first.
+///
+/// Bindings are keyed by interned [`Sym`] (AX-18), so the scan compares
+/// integers; the evaluator gets a node's sym from [`Resolution`] without
+/// hashing or comparing the name.
 struct Env {
-    vars: Vec<(String, Value)>,
+    vars: Vec<(Sym, Value)>,
     marks: Vec<usize>,
 }
 
@@ -417,18 +425,18 @@ impl Env {
         let start = self.marks.pop().unwrap_or(0);
         self.vars.truncate(start);
     }
-    fn define(&mut self, name: String, val: Value) {
+    fn define(&mut self, name: Sym, val: Value) {
         let start = self.marks.last().copied().unwrap_or(0);
         match self.vars[start..].iter_mut().find(|(k, _)| *k == name) {
             Some(slot) => slot.1 = val,
             None => self.vars.push((name, val)),
         }
     }
-    fn get(&self, name: &str) -> Option<&Value> {
-        self.vars.iter().rev().find(|(k, _)| k == name).map(|(_, v)| v)
+    fn get(&self, name: Sym) -> Option<&Value> {
+        self.vars.iter().rev().find(|(k, _)| *k == name).map(|(_, v)| v)
     }
     /// Update the nearest existing binding; returns false if none exists.
-    fn assign(&mut self, name: &str, val: Value) -> bool {
+    fn assign(&mut self, name: Sym, val: Value) -> bool {
         match self.get_mut(name) {
             Some(slot) => {
                 *slot = val;
@@ -438,35 +446,34 @@ impl Env {
         }
     }
     /// Mutable reference to the nearest existing binding (for place assignment).
-    fn get_mut(&mut self, name: &str) -> Option<&mut Value> {
-        self.vars.iter_mut().rev().find(|(k, _)| k == name).map(|(_, v)| v)
+    fn get_mut(&mut self, name: Sym) -> Option<&mut Value> {
+        self.vars.iter_mut().rev().find(|(k, _)| *k == name).map(|(_, v)| v)
     }
-    /// Flatten all visible bindings into one map (inner shadows outer).
-    /// Used to snapshot the environment a closure captures.
-    fn snapshot(&self) -> HashMap<String, Value> {
-        let mut out = HashMap::with_capacity(self.vars.len());
-        for (k, v) in &self.vars {
-            out.insert(k.clone(), v.clone());
+    /// All visible bindings, each name once (inner shadows outer). Used to
+    /// snapshot the environment a handler arm or continuation replay runs in.
+    fn snapshot(&self) -> Vec<(Sym, Value)> {
+        let mut out = Vec::with_capacity(self.vars.len());
+        for (i, (k, v)) in self.vars.iter().enumerate() {
+            if !self.vars[i + 1..].iter().any(|(inner, _)| inner == k) {
+                out.push((*k, v.clone()));
+            }
         }
         out
     }
     /// Build an env whose single base scope is a captured snapshot — used to
-    /// run a closure/handler-arm body in its defining environment.
-    fn from_snapshot(captured: HashMap<String, Value>) -> Self {
+    /// run a closure/handler-arm body in its defining environment. The
+    /// snapshot must bind each name at most once (as [`Env::snapshot`] and a
+    /// closure's capture cell do).
+    fn from_snapshot(captured: Vec<(Sym, Value)>) -> Self {
         Env {
-            vars: captured.into_iter().collect(),
+            vars: captured,
             marks: Vec::new(),
         }
     }
     /// The bindings of the base (outermost) scope.
-    fn base_scope(&self) -> &[(String, Value)] {
+    fn base_scope(&self) -> &[(Sym, Value)] {
         let end = self.marks.first().copied().unwrap_or(self.vars.len());
         &self.vars[..end]
-    }
-    /// Move the base scope's bindings out (see [`Env::base_scope`]).
-    fn drain_base_scope(&mut self) -> std::vec::Drain<'_, (String, Value)> {
-        let end = self.marks.first().copied().unwrap_or(self.vars.len());
-        self.vars.drain(..end)
     }
 }
 
@@ -516,7 +523,18 @@ pub struct Interp<'p> {
     /// Module-level `let NAME = …` constant definitions, in source order.
     global_defs: Vec<(String, &'p Expr)>,
     /// Evaluated module-level constants (populated by [`Interp::init_globals`]).
-    globals: HashMap<String, Value>,
+    globals: FxHashMap<Sym, Value>,
+    /// AX-18: the sym of every name-bearing AST node of the program, and each
+    /// lambda's shared code — the evaluator's name lookups go through this
+    /// instead of hashing or comparing names.
+    res: Resolution,
+    /// AX-18: every top-level fn and impl method with its parameter syms, so a
+    /// call binds parameters without interning. Indexed by `fn_of_sym` (fns,
+    /// by name) and `fn_of_def` (fns and methods, by `FnDef` address — stable
+    /// for `'p`).
+    fn_table: Vec<FnEntry<'p>>,
+    fn_of_sym: FxHashMap<Sym, u32>,
+    fn_of_def: FxHashMap<usize, u32>,
     /// In-memory provenance store: `@[adaptive]` fn name → recorded return
     /// scores, in call order. Read by `goal_run` (mirrors `axon-rt`'s store).
     provenance: RefCell<HashMap<String, Vec<f64>>>,
@@ -580,13 +598,15 @@ pub struct Interp<'p> {
     /// the duration of a single builtin dispatch. `ai_complete`'s tier
     /// resolution reads this first (step 1: per-call > policy > default).
     current_call_tier: RefCell<Option<String>>,
-    /// Callee names already proven NOT to be builtins, mapped to the user fn
-    /// they name (if any). Filled by `eval_call` when `call_builtin` answered
-    /// `Ok(None)` for a name whose pre-dispatch steps are provably inert
-    /// (`builtin_dispatch_is_inert`), so later calls skip the ~600-arm builtin
-    /// dispatch and the `fns` lookup — the dominant per-call costs of a
-    /// recursive user fn.
-    resolved_callees: RefCell<HashMap<String, Option<&'p FnDef>>>,
+    /// Per callee sym: what a call by that name resolved to, once proven NOT
+    /// to be a builtin — [`CALLEE_UNKNOWN`], [`CALLEE_NOT_FN`] (no user fn
+    /// either), or `CALLEE_FN + i` for `fn_table[i]`. Filled by `eval_call` when
+    /// `call_builtin` answered `Ok(None)` for a name whose pre-dispatch steps
+    /// are provably inert (`builtin_dispatch_is_inert`), so later calls skip
+    /// the ~600-arm builtin dispatch and every name lookup — the dominant
+    /// per-call costs of a recursive user fn. A vector indexed by sym, so the
+    /// lookup hashes nothing (AX-18).
+    callees: RefCell<Vec<u32>>,
     /// R3c: count of `ai_complete` calls made by the current fn activation, used
     /// to enforce `@[ai(policy(budget: N))]`. Reset on entry to `call_fn`,
     /// restored on exit (so the budget is per-activation, not global).
@@ -733,7 +753,7 @@ struct HandlerFrame {
     /// REPLAY the continuation (re-run the body, feeding the resume value at the
     /// intercepted op). Unused by the bare-tail-resume fast path.
     body: crate::ast::Expr,
-    env_snapshot: HashMap<String, Value>,
+    env_snapshot: Vec<(Sym, Value)>,
 }
 
 /// A runtime handler arm: the payload binding, the arm body, and a snapshot of
@@ -742,7 +762,7 @@ struct HandlerArmRt {
     effect: String,
     binding: crate::ast::Pattern,
     body: crate::ast::Expr,
-    captured: HashMap<String, Value>,
+    captured: Vec<(Sym, Value)>,
 }
 
 /// Phase 6 (multi-shot resume): state for one in-flight continuation replay. A
@@ -782,7 +802,7 @@ struct ResumeCtx {
     /// The `with`-block body to replay on each resume.
     body: crate::ast::Expr,
     /// The environment snapshot the body originally evaluated in.
-    env_snapshot: HashMap<String, Value>,
+    env_snapshot: Vec<(Sym, Value)>,
 }
 
 /// Default max interpreter call depth before a graceful "recursion limit"
@@ -1538,26 +1558,23 @@ impl SendValue {
             Value::Err(b) => {
                 SendValue::Err(Box::new(Self::from_value_at(b, format!("{path}.Err"))?))
             }
-            Value::Closure {
-                params,
-                body,
-                captured,
-            } => {
+            Value::Closure { code, captured } => {
                 let snapshot = captured.borrow();
-                let mut keys: Vec<&String> = snapshot.keys().collect();
-                keys.sort();
-                let cap: Result<Vec<_>, _> = keys
+                let mut named: Vec<(Rc<str>, &Value)> =
+                    snapshot.iter().map(|(k, v)| (sym_name(*k), v)).collect();
+                named.sort_by(|a, b| a.0.cmp(&b.0));
+                let cap: Result<Vec<_>, _> = named
                     .into_iter()
-                    .map(|k| {
+                    .map(|(k, v)| {
                         Ok((
-                            k.clone(),
-                            Self::from_value_at(&snapshot[k], format!("{path}.capture[{k}]"))?,
+                            k.to_string(),
+                            Self::from_value_at(v, format!("{path}.capture[{k}]"))?,
                         ))
                     })
                     .collect();
                 SendValue::Closure {
-                    params: params.clone(),
-                    body: body.clone(),
+                    params: code.params.iter().map(|p| sym_name(*p).to_string()).collect(),
+                    body: Box::new(code.body.clone()),
                     captured: cap?,
                 }
             }
@@ -1638,8 +1655,10 @@ impl SendValue {
                 body,
                 captured,
             } => Value::Closure {
-                params,
-                body,
+                code: Rc::new(ClosureCode {
+                    params: params.iter().map(|p| intern(p)).collect(),
+                    body: *body,
+                }),
                 // A closure that crossed the host boundary gets a FRESH capture
                 // cell: the SendValue path is a deep clone by construction (a
                 // shared cell is exactly what it cannot carry), so the two sides
@@ -1647,7 +1666,7 @@ impl SendValue {
                 captured: Rc::new(RefCell::new(
                     captured
                         .into_iter()
-                        .map(|(k, v)| (k, v.into_value()))
+                        .map(|(k, v)| (intern(&k), v.into_value()))
                         .collect(),
                 )),
             },
@@ -2330,18 +2349,28 @@ pub fn take_session_result() -> Option<(String, String)> {
 /// be described, and a name the model can see but not reuse is the case it most
 /// needs told about (R44 §4 S10).
 fn describe_bindings(interp: &Interp) -> String {
-    let locals = interp.main_locals.borrow();
-    let mut merged: HashMap<&String, &Value> = interp.globals.iter().collect();
-    for (k, v) in locals.iter() {
-        merged.insert(k, v);
-    }
-    let mut names: Vec<&&String> = merged.keys().collect();
+    let merged = merged_bindings(interp);
+    let mut names: Vec<&String> = merged.keys().collect();
     names.sort();
     let mut out = String::new();
     for name in names {
-        out.push_str(&format!("{name}: {}\n", value_shape(merged[*name])));
+        out.push_str(&format!("{name}: {}\n", value_shape(&merged[name])));
     }
     out
+}
+
+/// Globals and `main`'s final top-level locals by name, locals overriding
+/// globals of the same name.
+fn merged_bindings(interp: &Interp) -> HashMap<String, Value> {
+    let mut merged: HashMap<String, Value> = interp
+        .globals
+        .iter()
+        .map(|(k, v)| (sym_name(*k).to_string(), v.clone()))
+        .collect();
+    for (k, v) in interp.main_locals.borrow().iter() {
+        merged.insert(k.clone(), v.clone());
+    }
+    merged
 }
 
 /// The session's bindings as Axon source literals, for the next cell's prelude.
@@ -2349,12 +2378,8 @@ fn describe_bindings(interp: &Interp) -> String {
 /// `main`'s final top-level locals override globals of the same name — a cell
 /// that mutated a binding persists the mutated value.
 fn materialise_bindings(interp: &Interp) -> String {
-    let locals = interp.main_locals.borrow();
-    let mut merged: HashMap<&String, &Value> = interp.globals.iter().collect();
-    for (k, v) in locals.iter() {
-        merged.insert(k, v);
-    }
-    let mut names: Vec<&&String> = merged.keys().collect();
+    let merged = merged_bindings(interp);
+    let mut names: Vec<&String> = merged.keys().collect();
     names.sort();
 
     // A `Dict` is `Rc<RefCell<..>>` — SHARED MUTABLE state. Writing two aliasing
@@ -2402,7 +2427,7 @@ fn materialise_bindings(interp: &Interp) -> String {
         }
     }
     for name in &names {
-        count_dicts(merged[**name], &mut seen);
+        count_dicts(&merged[*name], &mut seen);
     }
     let is_aliased = |v: &Value| -> bool {
         matches!(v, Value::Dict(d) if seen.get(&(Rc::as_ptr(d) as *const ())).copied().unwrap_or(0) > 1)
@@ -2428,14 +2453,14 @@ fn materialise_bindings(interp: &Interp) -> String {
             ));
             continue;
         }
-        if is_aliased(merged[*name]) {
+        if is_aliased(&merged[name]) {
             lines.push_str(&format!(
                 "// SKIPPED {name}: dict is shared with another binding; writing it out \
                  would split it into independent copies\n"
             ));
             continue;
         }
-        match value_as_literal(merged[*name]) {
+        match value_as_literal(&merged[name]) {
             Ok(lit) => lines.push_str(&format!("let {name} = {lit}\n")),
             Err(why) => lines.push_str(&format!("// SKIPPED {name}: {why}\n")),
         }
@@ -2703,16 +2728,43 @@ impl<'p> Interp<'p> {
             }
         }
 
+        // AX-18: fns and methods with their parameter syms, indexed by name
+        // sym (fns only — a method is never called by bare name) and by def.
+        let mut fn_table = Vec::new();
+        let mut fn_of_sym = FxHashMap::default();
+        let mut fn_of_def = FxHashMap::default();
+        for item in &program.items {
+            let defs: &[FnDef] = match item {
+                Item::FnDef(f) => std::slice::from_ref(f),
+                Item::ImplBlock(blk) => &blk.methods,
+                _ => continue,
+            };
+            for f in defs {
+                let idx = u32::try_from(fn_table.len()).expect("fewer than 2^32 fns");
+                if matches!(item, Item::FnDef(_))
+                    && fns.get(&f.name).is_some_and(|g: &&FnDef| std::ptr::eq(*g, f))
+                {
+                    fn_of_sym.insert(intern(&f.name), idx);
+                }
+                fn_of_def.insert(f as *const FnDef as usize, idx);
+                fn_table.push(FnEntry::new(f));
+            }
+        }
+
         // Read the ambient effect ceiling once; both the sandbox registry
         // and the active-handle field below are derived from it.
         let ambient = ambient_sandbox();
         Interp {
+            res: Resolution::build(program),
+            fn_table,
+            fn_of_sym,
+            fn_of_def,
             fns,
             structs,
             enums,
             methods,
             global_defs,
-            globals: HashMap::new(),
+            globals: FxHashMap::default(),
             provenance: RefCell::new(HashMap::new()),
             provenance_inputs: RefCell::new(HashMap::new()),
             provenance_inputs_f64: RefCell::new(HashMap::new()),
@@ -2730,7 +2782,7 @@ impl<'p> Interp<'p> {
             goal_constraint: RefCell::new(None),
             current_fn: RefCell::new(String::new()),
             current_call_tier: RefCell::new(None),
-            resolved_callees: RefCell::new(HashMap::new()),
+            callees: RefCell::new(Vec::new()),
             ai_calls_this_fn: Cell::new(0),
             ai_cost_micro: Cell::new(0),
             w1310_warned: RefCell::new(std::collections::HashSet::new()),
@@ -2780,9 +2832,9 @@ impl<'p> Interp<'p> {
         let mut env = Env::new();
         for (name, expr) in &defs {
             let v = self.eval(expr, &mut env)?;
-            env.define(name.clone(), v);
+            env.define(intern(name), v);
         }
-        self.globals = env.snapshot();
+        self.globals = env.snapshot().into_iter().collect();
         Ok(())
     }
 
@@ -2952,17 +3004,38 @@ impl<'p> Interp<'p> {
     }
 
     fn call_fn(&self, f: &FnDef, args: Vec<Value>) -> R {
+        match self.fn_of_def.get(&(f as *const FnDef as usize)) {
+            Some(&i) => self.call_fn_entry(&self.fn_table[i as usize], args),
+            None => {
+                let entry = FnEntry::new(f);
+                self.call_fn_entry(&entry, args)
+            }
+        }
+    }
+
+    /// [`Interp::call_fn`] with the callee already resolved (AX-18: a call
+    /// by name reaches its `fn_table` entry without hashing).
+    fn call_fn_entry(&self, f: &FnEntry<'_>, args: Vec<Value>) -> R {
         // A `&mut` param must be moved back to the caller (`call_fn_mut`); a
         // path that cannot do that (a fn reached by name string, a method)
         // would silently drop the callee's writes — refuse instead.
-        if f.params.iter().any(|p| matches!(p.ty, crate::ast::AxonType::RefMut(_))) {
+        if f.has_ref_mut {
             return panic(format!(
                 "`{}` takes `&mut` parameters and can only be called directly as `{}(&mut a, ...)`",
-                f.name, f.name
+                f.def.name, f.def.name
             ));
         }
         let mut env = Env::new();
-        self.call_fn_in(f, args, &mut env)
+        self.call_fn_in(f.def, &f.params, args, &mut env)
+    }
+
+    /// The parameter syms of `f`: resolved once in `fn_table` for every fn
+    /// and method of the program, interned here for any other `FnDef`.
+    fn param_syms(&self, f: &FnDef) -> std::borrow::Cow<'_, [Sym]> {
+        match self.fn_of_def.get(&(f as *const FnDef as usize)) {
+            Some(&i) => std::borrow::Cow::Borrowed(&self.fn_table[i as usize].params),
+            None => std::borrow::Cow::Owned(f.params.iter().map(|p| intern(&p.name)).collect()),
+        }
     }
 
     /// AX-08: call `f` with its `&mut` arguments already MOVED out of the
@@ -2972,13 +3045,15 @@ impl<'p> Interp<'p> {
     /// error unwinds, so the caller's binding is never left hollow.
     pub(super) fn call_fn_mut(&self, f: &FnDef, args: Vec<Value>) -> (R, Vec<Value>) {
         let mut env = Env::new();
-        let result = self.call_fn_in(f, args, &mut env);
+        let params = self.param_syms(f);
+        let result = self.call_fn_in(f, &params, args, &mut env);
         // The body's block scopes are popped by now (on `return`/`?` too), so
         // each name resolves to the parameter binding itself.
         let outs = f
             .params
             .iter()
-            .map(|p| match (&p.ty, env.get_mut(&p.name)) {
+            .zip(params.iter())
+            .map(|(p, s)| match (&p.ty, env.get_mut(*s)) {
                 (crate::ast::AxonType::RefMut(_), Some(slot)) => {
                     std::mem::replace(slot, Value::Unit)
                 }
@@ -2988,7 +3063,8 @@ impl<'p> Interp<'p> {
         (result, outs)
     }
 
-    fn call_fn_in(&self, f: &FnDef, args: Vec<Value>, env: &mut Env) -> R {
+    /// `params` are `f`'s parameter syms (see [`Interp::param_syms`]).
+    fn call_fn_in(&self, f: &FnDef, params: &[Sym], args: Vec<Value>, env: &mut Env) -> R {
         // Bound recursion: a graceful panic instead of a process-aborting stack
         // overflow on runaway/infinite recursion. `_guard` restores the depth on
         // any return path (including `?`).
@@ -3077,7 +3153,7 @@ impl<'p> Interp<'p> {
             Some(Value::Int(n)) => Some(*n),
             _ => None,
         };
-        for (p, a) in f.params.iter().zip(args) {
+        for ((p, a), s) in f.params.iter().zip(args).zip(params.iter()) {
             // Soft typing: `Uncertain<T>` is compatible with a plain-`T` parameter
             // (the checker allows it). If the declared param type is NOT itself a
             // soft wrapper but the argument IS one, unwrap to the inner value so
@@ -3100,7 +3176,7 @@ impl<'p> Interp<'p> {
             } else {
                 a
             };
-            env.define(p.name.clone(), a);
+            env.define(*s, a);
         }
         // Phase 5: refinement-type PRECONDITIONS. A parameter `p: T where P`
         // desugars to a synthetic named refinement; the checker discharges P
@@ -3114,15 +3190,15 @@ impl<'p> Interp<'p> {
         // E1209-rejected), so it cannot re-enter this fn's body; any pure-helper
         // recursion is bounded by the same `max_depth` guard above.
         if !self.refine_preds.is_empty() {
-            for p in &f.params {
+            for (p, s) in f.params.iter().zip(params.iter()) {
                 if let crate::ast::AxonType::Named(rname) = &p.ty {
                     if let Some(pred) = self.refine_preds.get(rname.as_str()).copied() {
-                        let val = env.get(&p.name).cloned().unwrap_or(Value::Unit);
+                        let val = env.get(*s).cloned().unwrap_or(Value::Unit);
                         let mut pred_env = Env::new();
-                        pred_env.define("_".into(), val.clone());
+                        pred_env.define(SYM_UNDERSCORE, val.clone());
                         // Also bind the parameter name (for inline refinements
                         // `p: T where E[p] > k` that use the param name directly).
-                        pred_env.define(p.name.clone(), val.clone());
+                        pred_env.define(*s, val.clone());
                         if let Value::Bool(false) = self.eval(pred, &mut pred_env)? {
                             return Err(Flow::RefineViolation(format!(
                                 "parameter `{}` of `{}` (= {}) violates the refinement `{}` — \
@@ -3209,7 +3285,7 @@ impl<'p> Interp<'p> {
             };
             goal_met = if s >= spec.target { 1i64 } else { 0i64 };
         }
-        env.define("goal_met".into(), Value::Int(goal_met));
+        env.define(SYM_GOAL_MET, Value::Int(goal_met));
         // PROTOTYPE (RLM session option 2): when dumping bindings, run main's
         // top-level statements WITHOUT the extra block scope (eval_block pops
         // its scope before returning, discarding the locals), then capture the
@@ -3239,8 +3315,13 @@ impl<'p> Interp<'p> {
             self.eval(&f.body, env)
         };
         if capture && !matches!(body_result, Err(ref e) if !matches!(e, Flow::Return(_))) {
-            let mut snap = env.snapshot();
-            snap.remove("goal_met"); // injected by call_fn, not a user binding
+            // `goal_met` is injected by call_fn, not a user binding.
+            let snap = env
+                .snapshot()
+                .into_iter()
+                .filter(|(k, _)| *k != SYM_GOAL_MET)
+                .map(|(k, v)| (sym_name(k).to_string(), v))
+                .collect();
             *self.main_locals.borrow_mut() = snap;
         }
         let mut result = match body_result {
@@ -3290,7 +3371,7 @@ impl<'p> Interp<'p> {
                     // `-> (i64 where _ <= parent_rem)`) can reference parameters.
                     // `env` already holds the param bindings from the body; add
                     // `_` and evaluate against it instead of a bare env.
-                    env.define("_".into(), result.clone());
+                    env.define(SYM_UNDERSCORE, result.clone());
                     if let Value::Bool(false) = self.eval(pred, env)? {
                         return Err(Flow::RefineViolation(format!(
                             "the return value of `{}` (= {}) violates the refinement return \
@@ -3453,13 +3534,13 @@ impl<'p> Interp<'p> {
                         // `&&`, `||`, comparisons, function calls, you name it.
                         let mut pred_env = Env::new();
                         if let Some(v) = fields.get("value") {
-                            pred_env.define("value".into(), v.clone());
+                            pred_env.define(SYM_VALUE, v.clone());
                         }
                         if let Some(c) = fields.get("confidence") {
-                            pred_env.define("confidence".into(), c.clone());
+                            pred_env.define(SYM_CONFIDENCE, c.clone());
                         }
                         if let Some(s) = fields.get("source_tag") {
-                            pred_env.define("source_tag".into(), s.clone());
+                            pred_env.define(SYM_SOURCE_TAG, s.clone());
                         }
                         let outcome = self.eval(&spec.predicate, &mut pred_env)?;
                         if let Value::Bool(false) = outcome {
@@ -3511,7 +3592,7 @@ impl<'p> Interp<'p> {
                 } else {
                     // Composite predicate: bind `value` to the scalar and evaluate.
                     let mut pred_env = Env::new();
-                    pred_env.define("value".into(), result.clone());
+                    pred_env.define(SYM_VALUE, result.clone());
                     let outcome = self.eval(&spec.predicate, &mut pred_env)?;
                     if let Value::Bool(false) = outcome {
                         return Err(Flow::VerifyFailed(format!(
@@ -3529,14 +3610,23 @@ impl<'p> Interp<'p> {
     }
 
     fn call_closure(&self, c: Value, args: Vec<Value>) -> R {
-        self.call_closure_owned_by(c, args, 1)
+        self.call_closure_owned_by(&c, args, 1)
     }
 
     /// `f(..)` where `f` names a closure in the caller's env, `c` being a clone
     /// of that binding: the binding is the one reference to the capture cell
     /// besides `c` that the body can never reach (see `call_closure_owned_by`).
     fn call_local_closure(&self, c: Value, args: Vec<Value>) -> R {
-        self.call_closure_owned_by(c, args, 2)
+        self.call_closure_owned_by(&c, args, 2)
+    }
+
+    /// A builtin calling the closure it was passed: `c` is borrowed from the
+    /// builtin's argument slice, which nothing the body runs can reach, so a
+    /// closure that only that slot holds (a lambda written at the call) lends
+    /// its capture cell on every call (AX-40). Builtins must call through the
+    /// borrowed argument, not a clone of it, or the clone defeats the lend.
+    pub(super) fn call_closure_arg(&self, c: &Value, args: Vec<Value>) -> R {
+        self.call_closure_owned_by(c, args, 1)
     }
 
     /// Run closure `c`. `private_refs` counts the references to its capture
@@ -3544,19 +3634,14 @@ impl<'p> Interp<'p> {
     /// caller's binding for a call by local name — an `Env` is only ever
     /// visible to the frame evaluating it, since closures, fns, handler arms
     /// and continuation replays all run on their own (snapshot) envs.
-    fn call_closure_owned_by(&self, c: Value, args: Vec<Value>, private_refs: usize) -> R {
-        let Value::Closure {
-            params,
-            body,
-            captured,
-        } = c
-        else {
+    fn call_closure_owned_by(&self, c: &Value, args: Vec<Value>, private_refs: usize) -> R {
+        let Value::Closure { code, captured } = c else {
             return panic(format!("value of type {} is not callable", c.type_name()));
         };
-        if params.len() != args.len() {
+        if code.params.len() != args.len() {
             return panic(format!(
                 "lambda: expected {} args, got {}",
-                params.len(),
+                code.params.len(),
                 args.len()
             ));
         }
@@ -3573,36 +3658,44 @@ impl<'p> Interp<'p> {
         // argument, stored in an array, dict or capture, or currently running):
         // a re-entrant call must see the cell as it stood before this call, and
         // this call's in-place writes would otherwise destroy that state.
-        let lend = Rc::strong_count(&captured) == private_refs;
-        let mut env = Env::new();
-        if lend {
-            env.vars.extend(captured.borrow_mut().drain());
+        let lend = Rc::strong_count(captured) == private_refs;
+        // Lent, the cell's vector itself becomes the env (it comes back below
+        // with its capacity, so steady-state calls allocate nothing); copied,
+        // the env is sized for the params up front.
+        let mut env = Env::from_snapshot(if lend {
+            std::mem::take(&mut *captured.borrow_mut())
         } else {
-            env.vars.extend(captured.borrow().iter().map(|(k, v)| (k.clone(), v.clone())));
-        }
+            let cell = captured.borrow();
+            let mut vars = Vec::with_capacity(cell.len() + code.params.len());
+            vars.extend_from_slice(&cell);
+            vars
+        });
         env.push();
-        for (p, a) in params.iter().zip(args) {
-            env.define(p.clone(), a);
+        for (p, a) in code.params.iter().zip(args) {
+            env.define(*p, a);
         }
-        let out = match self.eval(&body, &mut env) {
+        let out = match self.eval(&code.body, &mut env) {
             Ok(v) => Ok(v),
             Err(Flow::Return(v)) => Ok(v),
             Err(other) => Err(other),
         };
-        // Write back only names the closure actually captured. A `let` introduced
-        // inside the body lives in a pushed scope and must not leak into the
-        // capture; a parameter shadowing a captured name must not overwrite it
-        // either, which is why the params live in their own pushed scope above.
+        // The base scope holds exactly the cell's bindings, in the cell's
+        // order: a `let` introduced inside the body lives in a pushed scope and
+        // must not leak into the capture, and a parameter shadowing a captured
+        // name must not overwrite it either, which is why the params live in
+        // their own pushed scope above.
         {
             let mut cell = captured.borrow_mut();
             if lend {
-                // The cell is empty and the base scope holds exactly its keys.
-                cell.extend(env.drain_base_scope());
+                // The cell is empty; move the bindings back.
+                let base = env.base_scope().len();
+                env.vars.truncate(base);
+                *cell = std::mem::take(&mut env.vars);
             } else {
-                for (k, v) in env.base_scope() {
-                    if let Some(slot) = cell.get_mut(k) {
-                        *slot = v.clone();
-                    }
+                // A re-entrant call may have written the cell meanwhile; this
+                // call's write-back wins, as it always has.
+                for ((_, slot), (_, v)) in cell.iter_mut().zip(env.base_scope()) {
+                    *slot = v.clone();
                 }
             }
         }
@@ -3639,17 +3732,21 @@ impl<'p> Interp<'p> {
         ))
     }
 
-    /// Flatten a place expression (`base.f[i].g …`) into the root variable name
-    /// and a base-to-leaf list of steps, evaluating any index expressions now
-    /// (so the later mutable walk holds no other borrow of `env`).
-    fn flatten_place(&self, place: &Expr, env: &mut Env) -> Result<(String, Vec<PlaceStep>), Flow> {
+    /// Flatten a place expression (`base.f[i].g …`) into the root variable's
+    /// sym and a base-to-leaf list of steps, evaluating any index expressions
+    /// now (so the later mutable walk holds no other borrow of `env`).
+    fn flatten_place<'e>(
+        &self,
+        place: &'e Expr,
+        env: &mut Env,
+    ) -> Result<(Sym, Vec<PlaceStep<'e>>), Flow> {
         let mut steps = Vec::new();
         let mut cur = place;
         let base = loop {
             match cur {
-                Expr::Ident(name) => break name.clone(),
+                Expr::Ident(name) => break self.res.sym(cur, name),
                 Expr::FieldAccess { receiver, field } => {
-                    steps.push(PlaceStep::Field(field.clone()));
+                    steps.push(PlaceStep::Field(field));
                     cur = receiver.as_ref();
                 }
                 Expr::Index { receiver, index } => {
@@ -3704,8 +3801,8 @@ fn type_name_of(ty: &crate::ast::AxonType) -> String {
 }
 
 /// One step of a flattened place expression (for nested place assignment).
-enum PlaceStep {
-    Field(String),
+enum PlaceStep<'e> {
+    Field(&'e str),
     Index(usize),
 }
 
@@ -3791,6 +3888,10 @@ fn now_ms() -> i64 {
 // there; inherent methods resolve across split impl blocks, so call sites in
 // this file are unchanged. (A `mod` must be at module scope, not inside `impl`.)
 mod goal;
+// Interned names, the per-node name-resolution table and the fn table
+// (AX-18), in interp/sym.rs.
+mod sym;
+use sym::*;
 // Core tree-walking evaluator (eval/eval_block/eval_call/eval_binop/
 // match_pattern) extracted to interp/eval.rs (R0 slice 5). Its methods live in a
 // second `impl Interp` block there; inherent methods resolve across split impl
@@ -5357,7 +5458,7 @@ mod literal_escape_tests {
                 .unwrap_or_else(|e| panic!("dumped literal must re-parse ({original:?}): {e}"));
             let mut interp = Interp::build(&prog);
             interp.init_globals().expect("globals initialise");
-            let got = interp.globals.get("x").expect("let x must be bound");
+            let got = interp.globals.get(&intern("x")).expect("let x must be bound");
             // Value has no PartialEq; compare the rendered form, which is what
             // the session actually round-trips anyway.
             let got_s = match got {

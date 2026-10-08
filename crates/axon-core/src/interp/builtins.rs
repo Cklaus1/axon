@@ -1307,7 +1307,7 @@ impl<'p> Interp<'p> {
                 want(3)?;
                 let url = as_str(&args[0])?.to_string();
                 let headers = as_str(&args[1])?.to_string();
-                let callback = args[2].clone();
+                let callback = &args[2];
                 let events = match crate::host::with_host(|h| h.http_sse(&url, &headers)) {
                     Ok(v) => v,
                     Err(e) => {
@@ -1316,7 +1316,7 @@ impl<'p> Interp<'p> {
                 };
                 let count = events.len() as i64;
                 for event in events {
-                    self.call_closure(callback.clone(), vec![Value::Str(Rc::new(event))])?;
+                    self.call_closure_arg(callback, vec![Value::Str(Rc::new(event))])?;
                 }
                 ok!(Value::Ok(Box::new(Value::Int(count))))
             }
@@ -1325,7 +1325,7 @@ impl<'p> Interp<'p> {
                 let url = as_str(&args[0])?.to_string();
                 let headers = as_str(&args[1])?.to_string();
                 let body = as_str(&args[2])?.to_string();
-                let callback = args[3].clone();
+                let callback = &args[3];
                 let events =
                     match crate::host::with_host(|h| h.http_sse_post(&url, &headers, &body)) {
                         Ok(v) => v,
@@ -1335,7 +1335,7 @@ impl<'p> Interp<'p> {
                     };
                 let count = events.len() as i64;
                 for event in events {
-                    self.call_closure(callback.clone(), vec![Value::Str(Rc::new(event))])?;
+                    self.call_closure_arg(callback, vec![Value::Str(Rc::new(event))])?;
                 }
                 ok!(Value::Ok(Box::new(Value::Int(count))))
             }
@@ -1807,10 +1807,10 @@ impl<'p> Interp<'p> {
                         ))
                     }
                 };
-                let f = args[1].clone();
+                let f = &args[1];
                 let mut out = Vec::with_capacity(xs.len());
                 for x in xs.iter() {
-                    let mapped = self.call_closure(f.clone(), vec![x.clone()])?;
+                    let mapped = self.call_closure_arg(f, vec![x.clone()])?;
                     out.push(mapped);
                 }
                 ok!(Value::Array(out.into()));
@@ -1830,9 +1830,9 @@ impl<'p> Interp<'p> {
                     }
                 };
                 let mut acc = args[1].clone();
-                let f = args[2].clone();
+                let f = &args[2];
                 for x in xs.iter() {
-                    acc = self.call_closure(f.clone(), vec![acc, x.clone()])?;
+                    acc = self.call_closure_arg(f, vec![acc, x.clone()])?;
                 }
                 ok!(acc);
             }
@@ -1851,7 +1851,7 @@ impl<'p> Interp<'p> {
                         ))
                     }
                 };
-                let cmp = args[1].clone();
+                let cmp = &args[1];
                 // Runs of width 1, 2, 4, … in `a` are merged into `b`, then the
                 // buffers swap. The right head `r` precedes the left head `l`
                 // only when cmp(r, l) < 0, so equal elements keep input order.
@@ -1868,7 +1868,7 @@ impl<'p> Interp<'p> {
                         let hi = (mid + width).min(n);
                         let (mut i, mut j) = (lo, mid);
                         while i < mid && j < hi {
-                            let r = self.call_closure(cmp.clone(), vec![a[j].clone(), a[i].clone()])?;
+                            let r = self.call_closure_arg(cmp, vec![a[j].clone(), a[i].clone()])?;
                             let r = match r {
                                 Value::Int(n) => n,
                                 other => {
@@ -2501,10 +2501,10 @@ impl<'p> Interp<'p> {
                         ))
                     }
                 };
-                let pred = args[1].clone();
+                let pred = &args[1];
                 let mut hit = false;
                 for x in xs.iter().cloned() {
-                    let r = self.call_closure(pred.clone(), vec![x])?;
+                    let r = self.call_closure_arg(pred, vec![x])?;
                     match r {
                         Value::Bool(true) => {
                             hit = true;
@@ -2535,10 +2535,10 @@ impl<'p> Interp<'p> {
                         ))
                     }
                 };
-                let pred = args[1].clone();
+                let pred = &args[1];
                 let mut all = true;
                 for x in xs.iter().cloned() {
-                    let r = self.call_closure(pred.clone(), vec![x])?;
+                    let r = self.call_closure_arg(pred, vec![x])?;
                     match r {
                         Value::Bool(true) => {}
                         Value::Bool(false) => {
@@ -2575,12 +2575,12 @@ impl<'p> Interp<'p> {
                         ))
                     }
                 };
-                let key_fn = args[1].clone();
+                let key_fn = &args[1];
                 let want_f64 = name == "arr_sum_by_f64";
                 let mut acc_i: i64 = 0;
                 let mut acc_f: f64 = 0.0;
                 for x in xs.iter().cloned() {
-                    let r = self.call_closure(key_fn.clone(), vec![x])?;
+                    let r = self.call_closure_arg(key_fn, vec![x])?;
                     match r {
                         // Accept an Int for the f64 form: a projection like
                         // `|r| r.amount` over an i64 field is the overwhelmingly
@@ -2631,10 +2631,10 @@ impl<'p> Interp<'p> {
                         ))
                     }
                 };
-                let pred = args[1].clone();
+                let pred = &args[1];
                 let mut n: i64 = 0;
                 for x in xs.iter().cloned() {
-                    let r = self.call_closure(pred.clone(), vec![x])?;
+                    let r = self.call_closure_arg(pred, vec![x])?;
                     match r {
                         Value::Bool(true) => {
                             n += 1;
@@ -2675,11 +2675,11 @@ impl<'p> Interp<'p> {
                         ))
                     }
                 };
-                let f = args[2].clone();
+                let f = &args[2];
                 let n = xs.len().min(ys.len());
                 let mut out = Vec::with_capacity(n);
                 for i in 0..n {
-                    let z = self.call_closure(f.clone(), vec![xs[i].clone(), ys[i].clone()])?;
+                    let z = self.call_closure_arg(f, vec![xs[i].clone(), ys[i].clone()])?;
                     out.push(z);
                 }
                 ok!(Value::Array(out.into()));
@@ -2699,10 +2699,10 @@ impl<'p> Interp<'p> {
                         ))
                     }
                 };
-                let pred = args[1].clone();
+                let pred = &args[1];
                 let mut hit: Option<Value> = None;
                 for x in xs.iter().cloned() {
-                    let keep = self.call_closure(pred.clone(), vec![x.clone()])?;
+                    let keep = self.call_closure_arg(pred, vec![x.clone()])?;
                     match keep {
                         Value::Bool(true) => {
                             hit = Some(x);
@@ -2760,10 +2760,10 @@ impl<'p> Interp<'p> {
                         ))
                     }
                 };
-                let f = args[1].clone();
+                let f = &args[1];
                 let mut out = Vec::with_capacity(xs.len());
                 for x in xs.iter().cloned() {
-                    let keep = self.call_closure(f.clone(), vec![x.clone()])?;
+                    let keep = self.call_closure_arg(f, vec![x.clone()])?;
                     match keep {
                         Value::Bool(true) => out.push(x),
                         Value::Bool(false) => {}
@@ -5258,7 +5258,7 @@ impl<'p> Interp<'p> {
                         ))
                     }
                 };
-                let f = args[1].clone();
+                let f = &args[1];
                 let mut out = std::collections::BTreeMap::new();
                 let pairs: Vec<(String, Value)> = d
                     .borrow()
@@ -5266,7 +5266,7 @@ impl<'p> Interp<'p> {
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
                 for (k, v) in pairs {
-                    let nv = self.call_closure(f.clone(), vec![v])?;
+                    let nv = self.call_closure_arg(f, vec![v])?;
                     out.insert(k, nv);
                 }
                 ok!(Value::Dict(Rc::new(RefCell::new(out))));
@@ -5307,11 +5307,11 @@ impl<'p> Interp<'p> {
                         ))
                     }
                 };
-                let pred = args[1].clone();
+                let pred = &args[1];
                 let mut yes = Vec::new();
                 let mut no = Vec::new();
                 for x in xs.iter().cloned() {
-                    let r = self.call_closure(pred.clone(), vec![x.clone()])?;
+                    let r = self.call_closure_arg(pred, vec![x.clone()])?;
                     match r {
                         Value::Bool(true) => yes.push(x),
                         Value::Bool(false) => no.push(x),
@@ -5389,7 +5389,7 @@ impl<'p> Interp<'p> {
                         ))
                     }
                 };
-                let pred = args[1].clone();
+                let pred = &args[1];
                 let pairs: Vec<(String, Value)> = d
                     .borrow()
                     .iter()
@@ -5399,7 +5399,7 @@ impl<'p> Interp<'p> {
                     std::collections::BTreeMap::new();
                 for (k, v) in pairs {
                     let keep =
-                        self.call_closure(pred.clone(), vec![Value::Str(Rc::new(k.clone())), v.clone()])?;
+                        self.call_closure_arg(pred, vec![Value::Str(Rc::new(k.clone())), v.clone()])?;
                     match keep {
                         Value::Bool(true) => {
                             out.insert(k, v);
@@ -5615,7 +5615,7 @@ impl<'p> Interp<'p> {
                 if xs.is_empty() {
                     return panic(format!("{name}: array is empty"));
                 }
-                let key_fn = args[1].clone();
+                let key_fn = &args[1];
                 let pick_max = name == "arr_max_by";
                 let to_f = |v: Value| -> Result<f64, Flow> {
                     match v {
@@ -5628,9 +5628,9 @@ impl<'p> Interp<'p> {
                     }
                 };
                 let mut best_idx = 0;
-                let mut best_key = to_f(self.call_closure(key_fn.clone(), vec![xs[0].clone()])?)?;
+                let mut best_key = to_f(self.call_closure_arg(key_fn, vec![xs[0].clone()])?)?;
                 for (i, x) in xs.iter().enumerate().skip(1) {
-                    let k = to_f(self.call_closure(key_fn.clone(), vec![x.clone()])?)?;
+                    let k = to_f(self.call_closure_arg(key_fn, vec![x.clone()])?)?;
                     if (pick_max && k > best_key) || (!pick_max && k < best_key) {
                         best_key = k;
                         best_idx = i;
@@ -5652,10 +5652,10 @@ impl<'p> Interp<'p> {
                         ))
                     }
                 };
-                let pred = args[1].clone();
+                let pred = &args[1];
                 let mut out = Vec::new();
                 for x in xs.iter().cloned() {
-                    let r = self.call_closure(pred.clone(), vec![x.clone()])?;
+                    let r = self.call_closure_arg(pred, vec![x.clone()])?;
                     match r {
                         Value::Bool(true) => out.push(x),
                         Value::Bool(false) => break,
@@ -5682,12 +5682,12 @@ impl<'p> Interp<'p> {
                         ))
                     }
                 };
-                let pred = args[1].clone();
+                let pred = &args[1];
                 let mut still_dropping = true;
                 let mut out = Vec::new();
                 for x in xs.iter().cloned() {
                     if still_dropping {
-                        let r = self.call_closure(pred.clone(), vec![x.clone()])?;
+                        let r = self.call_closure_arg(pred, vec![x.clone()])?;
                         match r {
                             Value::Bool(true) => continue,
                             Value::Bool(false) => still_dropping = false,
@@ -5719,14 +5719,14 @@ impl<'p> Interp<'p> {
                         ))
                     }
                 };
-                let f = args[1].clone();
+                let f = &args[1];
                 let pairs: Vec<(String, Value)> = d
                     .borrow()
                     .iter()
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
                 for (k, v) in pairs {
-                    let _ = self.call_closure(f.clone(), vec![Value::Str(Rc::new(k)), v])?;
+                    let _ = self.call_closure_arg(f, vec![Value::Str(Rc::new(k)), v])?;
                 }
                 ok!(Value::Unit);
             }
@@ -5747,11 +5747,11 @@ impl<'p> Interp<'p> {
                         ))
                     }
                 };
-                let key_fn = args[1].clone();
+                let key_fn = &args[1];
                 let mut out: std::collections::BTreeMap<String, Vec<Value>> =
                     std::collections::BTreeMap::new();
                 for x in xs.iter().cloned() {
-                    let k = self.call_closure(key_fn.clone(), vec![x.clone()])?;
+                    let k = self.call_closure_arg(key_fn, vec![x.clone()])?;
                     let key = match k {
                         Value::Str(s) => Rc::unwrap_or_clone(s),
                         other => {
