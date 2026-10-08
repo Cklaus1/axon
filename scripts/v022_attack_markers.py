@@ -2418,4 +2418,8 @@ ATTACK_MARKERS.update({
 
 ATTACK_MARKERS.update({
     'M2624': r"ATTACK: a handler arm borrowed the performer's pin verdict \(colliding site, closure made in an arm\)",
+    'M2800': 'ATTACK: .*(is not check-suite:)',
+    'M2801': 'ATTACK: .*(names no version)',
+    'M2802': 'ATTACK: .*(names no entry)',
+    'M2803': 'ATTACK: .*(no `executors` array)',
 })

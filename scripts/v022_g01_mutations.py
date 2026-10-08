@@ -1686,7 +1686,8 @@ MUTATIONS += [
 # NO row: the round-3 review removed each and the whole axon-fabric suite
 # stayed green. Each row's test attacks the route where that guard is the ONLY
 # one. scripts/v022_refusal_coverage.py now fails when a refusal site in the
-# protected helper files has neither a row nor a reasoned exemption.
+# protected helper files has neither a row, a checkable exemption nor a counted
+# REMAINDER entry.
 # M594/M595 and M596/M597 are retired as mutual PAIRS (EQUIV_RECORD).
 _HPL = 'crates/axon-fabric/src/privileged_launcher.rs'
 _HSE = 'crates/axon-fabric/src/sealed_exec.rs'
@@ -9612,6 +9613,22 @@ MUTATIONS += [
      "PIN OWNER (psv1h): a closure made inside a general handler arm remembers the installing fn's owner", 'crates/axon-core/src/interp/eval.rs',
      '        self.handler_edge_into(arm_sealed, &payload)?;\n        let _pin_guard = crate::interp::PinGuard {\n            cell: &self.pin_fn,\n            prev: self.pin_fn.replace(pin_owner),\n        };', '        self.handler_edge_into(arm_sealed, &payload)?;\n        let _pin_guard = crate::interp::PinGuard {\n            cell: &self.pin_fn,\n            prev: self.pin_fn.replace(self.pin_fn.get()),\n        };',
      'axon-core', '--lib', 'interp::tests::a_closure_made_in_a_handler_arm_is_judged_by_the_installing_fn'),
+    ('M2800',
+     'PARSE (eqgate6): a suite reference lacking the check-suite: prefix is refused as such', 'crates/axon-cortex/src/runner.rs',
+     '        .ok_or_else(|| bad("is not check-suite:<id>@<version>#<entry>"))?;', '        .unwrap_or(r);',
+     'axon-cortex', '--test check_executor', 'a_suite_reference_or_registry_missing_a_part_is_refused_by_that_part'),
+    ('M2801',
+     'PARSE (eqgate6): a suite reference naming no version is refused as such', 'crates/axon-cortex/src/runner.rs',
+     '        .ok_or_else(|| bad("names no version"))?;', '        .unwrap_or((rest, "x#y"));',
+     'axon-cortex', '--test check_executor', 'a_suite_reference_or_registry_missing_a_part_is_refused_by_that_part'),
+    ('M2802',
+     'PARSE (eqgate6): a suite reference naming no entry is refused as such', 'crates/axon-cortex/src/runner.rs',
+     '    let (version, entry) = rest.split_once(\'#\').ok_or_else(|| bad("names no entry"))?;', '    let (version, entry) = rest.split_once(\'#\').unwrap_or((rest, ""));',
+     'axon-cortex', '--test check_executor', 'a_suite_reference_or_registry_missing_a_part_is_refused_by_that_part'),
+    ('M2803',
+     'REGISTRY (eqgate6): a check registry naming no executors array is refused', 'crates/axon-cortex/src/runner.rs',
+     '            .ok_or("check registry has no `executors` array")?', '            .unwrap_or(&Vec::new())',
+     'axon-cortex', '--test check_executor', 'a_suite_reference_or_registry_missing_a_part_is_refused_by_that_part'),
 ]
 
 

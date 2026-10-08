@@ -408,6 +408,43 @@ fn a_check_suite_reference_parses_one_way_or_not_at_all() {
     }
 }
 
+/// Amendment 103: each part a suite reference lacks is refused BY NAME (the
+/// round-10 review found the three `ok_or_else(bad(..))` of the parser labelled
+/// "not a protected-route site", though the loop's intake and Fabric's manifest
+/// parse call it). The edit that replaces one with a default would otherwise be
+/// refused by a LATER term under another message, with every `is_err()` green.
+/// And a registry file that names no `executors` array is refused as such.
+#[test]
+fn a_suite_reference_or_registry_missing_a_part_is_refused_by_that_part() {
+    use axon_cortex::runner::{parse_check_suite_ref, CheckRegistry};
+    let v = format!("acf1:{}", "5".repeat(64));
+    for (r, why) in [
+        (format!("acceptance@{v}#accept.ax"), "is not check-suite:"),
+        (format!("check-suite:acceptance#{v}"), "names no version"),
+        (format!("check-suite:acceptance@{v}"), "names no entry"),
+    ] {
+        let e = parse_check_suite_ref(&r).err().unwrap_or_else(|| {
+            panic!("ATTACK: {r:?} (a reference that {why}) parsed as a suite reference")
+        });
+        assert!(
+            e.contains(why),
+            "ATTACK: {r:?} was refused, but not as `{why}` (its own part was not the guard): {e}"
+        );
+    }
+    let d = tmpdir("registry-parts");
+    let f = d.join("registry.json");
+    std::fs::write(&f, r#"{"schema":"cortex-check-registry/1"}"#).unwrap();
+    let e = CheckRegistry::load(&f).err().unwrap_or_else(|| {
+        panic!("ATTACK: a check registry with no `executors` array loaded as an empty registry")
+    });
+    assert!(
+        e.contains("no `executors` array"),
+        "ATTACK: a registry with no `executors` array was refused, but not as such: {e}"
+    );
+    std::fs::write(&f, r#"{"schema":"cortex-check-registry/1","executors":[]}"#).unwrap();
+    CheckRegistry::load(&f).expect("control: an empty executors array is a registry");
+}
+
 // ── C9 round 3, loop workstream (PSV-5, A81): a reference is written only if
 // it reads back as the suite it was written for ──────────────────────────────
 

@@ -56,7 +56,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 #   whose name matches its pattern (the interpreter's seal edges);
 #
 # and each in-scope file is exactly one of: SCANNED (every refusal site has a
-# row or a reasoned exemption, BAD otherwise), OUT_OF_SCOPE (named with a
+# row, a checkable exemption or a counted REMAINDER entry, BAD otherwise), OUT_OF_SCOPE (named with a
 # reason a reviewer can check), or NOT_YET_SCANNED (named with the number of
 # its sites that have neither a row nor an exemption, which the gate
 # re-measures and refuses if it differs). An in-scope file in none of these is
@@ -347,6 +347,7 @@ PL = "crates/axon-fabric/src/privileged_launcher.rs"
 SE = "crates/axon-fabric/src/sealed_exec.rs"
 BIN = "crates/axon-fabric/src/bin/axon-protected-launcher.rs"
 TERM_EXEMPT = []  # amendment 95: (file, a substring of the term, a fact)
+VALUE_EXEMPT = []   # amendment 103: (file, function, n-th value site of it, a fragment of the value, kind, reason)
 EXEMPT = [
     (PL, "    if unsafe { libc::fstat(fd, &mut st) } != 0 {",
      "OS error from fstat on an open descriptor: fails closed, no input chooses success"),
@@ -3270,14 +3271,6 @@ EXEMPT += [
      _CTX),
     ('crates/axon-cortex/src/runner.rs', '            .ok_or_else(|| unresolvable("not found on PATH".into()))?',
      _offroute('Cortex, the local repair loop, which is not a route of the protected profile; not surveyed')),
-    ('crates/axon-cortex/src/runner.rs', '        .ok_or_else(|| bad("is not check-suite:<id>@<version>#<entry>"))?;',
-     _offroute('Cortex, the local repair loop, which is not a route of the protected profile; not surveyed')),
-    ('crates/axon-cortex/src/runner.rs', '        .ok_or_else(|| bad("names no version"))?;',
-     _offroute('Cortex, the local repair loop, which is not a route of the protected profile; not surveyed')),
-    ('crates/axon-cortex/src/runner.rs', '    let (version, entry) = rest.split_once(\'#\').ok_or_else(|| bad("names no entry"))?;',
-     _offroute('Cortex, the local repair loop, which is not a route of the protected profile; not surveyed')),
-    ('crates/axon-cortex/src/runner.rs', '            .ok_or("check registry has no `executors` array")?',
-     _offroute('Cortex, the local repair loop, which is not a route of the protected profile; not surveyed')),
     ('crates/axon-cortex/src/runner.rs', 'const POLICY_FILES: &[&str] = &["axon.lock", ".axon-policy", "gate.sh", "profile.rs"];',
      _CTX),
     ('crates/axon-cortex/src/runner.rs', 'const POLICY_PREFIXES: &[&str] = &["scripts/", "governance/", ".github/"];',
@@ -3323,7 +3316,7 @@ EXEMPT += [
     ('crates/axon-fabric/src/branches.rs', '    std::fs::create_dir_all(dir)?;',
      _A95['ensure_store']),
     ('crates/axon-fabric/src/branches.rs', '            best.ok_or_else(|| BranchError::Unknown(format!("branch {exp}/{arm} has no head")))?;',
-     _closed('an absent head becomes sequence 0, whose file `head-0.json` the branch never writes: the read that follows fails')),
+     _closed('an absent head becomes sequence 0 and the read of `head-0.json` that follows fails: registration writes head-0.json together with the branch (branches.rs, `create_once(.. "head-0.json")`), so a branch with NO head file at all (`best == None`) has nothing at sequence 0 to read')),
     ('crates/axon-fabric/src/branches.rs', 'pub const EXPERIMENT_SCHEMA: &str = "axon-fabric-experiment/1";',
      _A95['const_tag']),
     ('crates/axon-fabric/src/branches.rs', 'pub const HEAD_SCHEMA: &str = "axon-fabric-branch-head/1";',
@@ -4967,16 +4960,20 @@ OBSERVED_SITES = []
 # FAILCLOSED (a checkable fact), REMAINDER (no test observes it: COUNTED by
 # category `val_*`, NEVER claimed covered). (d) a literal compared inside a
 # refusal is judged by the existing per-TERM rule, not by this form.
-STILL_BLIND = (
-    "a value built by computation (a `format!` whose pieces are all variables, a path joined at run time, "
-    "a flag set read from a table), a value handed through a LOCAL BINDING (`let m = 0o700; mkdir(m)` is seen at "
-    "the literal, not at the use), the spawn forms of a builder not named `.env/.arg/.args/.current_dir/.stdin/"
-    ".stdout/.stderr/.uid/.gid` (a wrapper fn that builds the Command), a struct whose type name is not "
-    "Config/Cfg/Authority/Policy/Manifest/Trust, a default (`unwrap_or`/`map_or`/`Default`) read as a value, "
-    "a uid or mode that is a COMPARISON operand (the per-term rule judges that), whether a REMAINDER guard is "
-    "really unobserved (nothing re-checks it), the shell scripts, and every guard that is not Rust or the one "
-    "Python file"
-)
+STILL_BLIND = [
+    "a value built by computation, or handed through a local binding (`let m = 0o700; mkdir(m)` is seen at the literal, "
+    "not at the use; a `format!` of variables, a path joined at run time, a flag set read from a table)",
+    "a spawn through a wrapper fn or a builder not named .env/.arg/.args/.current_dir/.stdin/.stdout/.stderr/.uid/.gid, "
+    "and the bytes of a script or file handed to a child",
+    "a struct literal whose type name is not Config/Cfg/Authority/Policy/Manifest/Trust, and a literal inside a nested literal",
+    "a default read as a value (unwrap_or / map_or / Default::default) and an absent field's neutral value",
+    "a uid or mode that is the operand of a COMPARISON (only the per-term rule and the constant rule see those), and a "
+    "literal compared inside a refusal",
+    "whether a REMAINDER or OBSERVED entry is true (nothing re-runs the survey that wrote it), and that a row which "
+    "deletes a REDUNDANT PAIR (git_cmd's GIT_NO_LAZY_FETCH + protocol.allow) credits each member though only the pair "
+    "is shown to be observed",
+    "Python other than scripts/guest_build_env.py, the shell scripts, and any decision that is not Rust or that file",
+]
 _VALUE_CALLS = re.compile(
     r"\.(env|env_remove|envs|arg|args|current_dir|stdin|stdout|stderr|uid|gid|groups)\(")
 _PRIV_CALLS = re.compile(
@@ -5201,9 +5198,6 @@ def _ranges_hit(ranges, a, b):
     return False
 
 
-VALUE_EXEMPT = []   # (file, function, n, fragment, kind, reason): amendment 103
-
-
 def judge_values(f, text, rows, bad):
     """(covered, exempt, uncovered) of the value sites of `f`."""
     vs = value_sites(text)
@@ -5241,7 +5235,7 @@ def judge_values(f, text, rows, bad):
                 OBSERVED_SITES.append((f, line_of(text, a) + 1, "observed"))
         else:
             ln = line_of(text, a)
-            uncovered.append(f"{f}:{ln + 1}: value site ({label}) with no row and no exemption: "
+            uncovered.append(f"{f}:{ln + 1}: refusal site with no row and no exemption: value ({label}) "
                              f"{' '.join(frag.split())[:90]}  [fn {fn or '-'} #{n}]  in: {lines[ln].strip()[:100]}")
     for key, (e, hits, cov) in ex.items():
         if hits == 0:
@@ -5493,7 +5487,7 @@ PY_EXEMPT += [
     ("scripts/guest_build_env.py", 'kernel', 4, 'fail(f"{\' \'.join(argv)} failed ({r.returncode})")', 'OBSERVED',
      "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'kernel a make step that fails' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
     ("scripts/guest_build_env.py", 'kernel', 5, 'fail("vmlinux not built")', 'OBSERVED',
-     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'line 529' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
+     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py): removing this guard fails the case(s) 'kernel a make that builds no vmlinux' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
     ("scripts/guest_build_env.py", '_id_fields', 1, 'raise DiscoveryRefused(f"{where}: {k} holds {x!r}', 'OBSERVED',
      "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py, amendment 101): removing this guard fails the case(s) 'service ids a uid field that is not a number refuses' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
     ("scripts/guest_build_env.py", '_read_small', 1, 'raise DiscoveryRefused(f"{path} cannot be read', 'OBSERVED',
@@ -5740,13 +5734,16 @@ def main():
         for f, line, cat in sorted(REMAINDER_SITES):
             print(f"REMAINDER {f}:{line} {cat}")
     if NOT_YET_SCANNED:
-        print(f"refusal coverage: every refusal site in the scanned files has a row or a reasoned "
-              f"exemption; {len(NOT_YET_SCANNED)} in-scope file(s) NOT YET SCANNED (a freeze "
+        print(f"refusal coverage: every refusal site in the scanned files has a row, a checkable "
+              f"exemption or a counted REMAINDER entry; {len(NOT_YET_SCANNED)} in-scope file(s) NOT YET SCANNED (a freeze "
               f"refuses until none is)")
     else:
         print("refusal coverage: every refusal site in every in-scope file has a row, a checkable "
               "exemption, or is on the counted REMAINDER list (guards no test observes alone; REMAINDER "
               "is NOT claimed covered: `python3 scripts/v022_refusal_coverage.py --remainder`)")
+    print("STILL BLIND (amendment 103): the count above is of gate-visible sites; the gate cannot see:")
+    for item in STILL_BLIND:
+        print("STILL BLIND: " + item)
 
 
 if __name__ == "__main__":
