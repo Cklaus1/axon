@@ -510,9 +510,129 @@ fn decimal_result(r: Result<i128, String>) -> R {
     r.map(Value::decimal).map_err(|m| Flow::Panic(m.into()))
 }
 
+/// `a op b` on two `i64`s; `None` for an operator `i64` does not have (it
+/// falls through to `eval_binop_vals`' error arm). AX-46: the evaluator calls
+/// this before handing both operands to `eval_binop_vals`, so the hot integer
+/// case skips the general dispatch; both paths share these semantics.
+#[inline]
+pub(super) fn int_binop(op: &BinOp, a: i64, b: i64) -> Option<R> {
+    use BinOp::*;
+    use Value::{Bool, Int};
+    Some(match op {
+        // Integer arithmetic — checked by default. Overflow is a *graceful
+        // panic* (catchable, exits non-zero at the CLI), never a silent
+        // wrap: a wrapped value masquerading as success is the worst class
+        // of bug for an autonomous consumer (BUG_HUNT #6, ARCHITECTURE
+        // INVARIANTS I-9).
+        //
+        // This used to say "use the `wrapping_*` builtins for intentional
+        // modular arithmetic". There are NO such builtins — `axon reference`
+        // lists none and `builtins.rs` defines none — so the comment named an
+        // escape hatch that was never built. Intentional modular arithmetic has
+        // no expression in the language today; logged in tasks/opportunities.md
+        // rather than left as a promise in a comment.
+        Add => match a.checked_add(b) {
+            Some(v) => Ok(Int(v)),
+            None => int_overflow(a, "+", b),
+        },
+        Sub => match a.checked_sub(b) {
+            Some(v) => Ok(Int(v)),
+            None => int_overflow(a, "-", b),
+        },
+        Mul => match a.checked_mul(b) {
+            Some(v) => Ok(Int(v)),
+            None => int_overflow(a, "*", b),
+        },
+        Div => {
+            if b == 0 {
+                return Some(Err(Flow::Panic("integer division by zero".into())));
+            }
+            // `i64::MIN / -1` is the one division that OVERFLOWS: the true
+            // answer is 2^63, which i64 cannot hold. `wrapping_div` returned
+            // `i64::MIN` — a silent wrong answer, in the same function whose
+            // comment says arithmetic must never silently wrap and directly
+            // below three arms that use `checked_*`. Native agreed with it, so
+            // no parity harness could ever have found this: the reference
+            // oracle shared the bug.
+            match a.checked_div(b) {
+                Some(v) => Ok(Int(v)),
+                None => int_overflow(a, "/", b),
+            }
+        }
+        Rem => {
+            if b == 0 {
+                return Some(Err(Flow::Panic("integer remainder by zero".into())));
+            }
+            // NOT `checked_rem`: `i64::MIN % -1` is mathematically 0, which
+            // i64 holds perfectly well. Rust's `checked_rem` returns `None`
+            // there only because the x86 `idiv` instruction traps on the pair,
+            // which is a fact about the hardware and not about the answer.
+            // Panicking would replace a correct result with a crash, so the
+            // wrapping form stays — and native agrees, measured.
+            Ok(Int(a.wrapping_rem(b)))
+        }
+        Eq => Ok(Bool(a == b)),
+        NotEq => Ok(Bool(a != b)),
+        Lt => Ok(Bool(a < b)),
+        Gt => Ok(Bool(a > b)),
+        LtEq => Ok(Bool(a <= b)),
+        GtEq => Ok(Bool(a >= b)),
+        BitAnd => Ok(Int(a & b)),
+        BitOr => Ok(Int(a | b)),
+        BitXor => Ok(Int(a ^ b)),
+        Shl => Ok(Int(a.wrapping_shl(b as u32))),
+        Shr => Ok(Int(a.wrapping_shr(b as u32))),
+        And | Or => return None,
+    })
+}
+
+/// The overflow panic of `a op b` on `i64`s; out of line, it is the cold path.
+#[cold]
+fn int_overflow(a: i64, op: &str, b: i64) -> R {
+    Err(Flow::Panic(
+        format!("integer overflow: {a} {op} {b} exceeds i64").into(),
+    ))
+}
+
+/// `a op b` on two `f64`s; `None` for an operator `f64` does not have. The
+/// float half of [`int_binop`].
+#[inline]
+pub(super) fn float_binop(op: &BinOp, a: f64, b: f64) -> Option<R> {
+    use BinOp::*;
+    use Value::{Bool, Float};
+    Some(Ok(match op {
+        Add => Float(a + b),
+        Sub => Float(a - b),
+        Mul => Float(a * b),
+        Div => Float(a / b),
+        Rem => Float(a % b),
+        Eq => Bool(a == b),
+        NotEq => Bool(a != b),
+        Lt => Bool(a < b),
+        Gt => Bool(a > b),
+        LtEq => Bool(a <= b),
+        GtEq => Bool(a >= b),
+        And | Or | BitAnd | BitOr | BitXor | Shl | Shr => return None,
+    }))
+}
+
 pub(super) fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
     use BinOp::*;
     use Value::{Bool, Float, Int, Str};
+
+    match (&l, &r) {
+        (Int(a), Int(b)) => {
+            if let Some(res) = int_binop(op, *a, *b) {
+                return res;
+            }
+        }
+        (Float(a), Float(b)) => {
+            if let Some(res) = float_binop(op, *a, *b) {
+                return res;
+            }
+        }
+        _ => {}
+    }
 
     // ── ASI: Uncertain<T> binary-op propagation ─────────────────────────────
     // If EITHER side is `Uncertain`, operate on the underlying values and carry
@@ -558,63 +678,6 @@ pub(super) fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
     }
 
     match (op, l, r) {
-        // Integer arithmetic — checked by default. Overflow is a *graceful
-        // panic* (catchable, exits non-zero at the CLI), never a silent
-        // wrap: a wrapped value masquerading as success is the worst class
-        // of bug for an autonomous consumer (BUG_HUNT #6, ARCHITECTURE
-        // INVARIANTS I-9).
-        //
-        // This used to say "use the `wrapping_*` builtins for intentional
-        // modular arithmetic". There are NO such builtins — `axon reference`
-        // lists none and `builtins.rs` defines none — so the comment named an
-        // escape hatch that was never built. Intentional modular arithmetic has
-        // no expression in the language today; logged in tasks/opportunities.md
-        // rather than left as a promise in a comment.
-        (Add, Int(a), Int(b)) => a
-            .checked_add(b)
-            .map(Int)
-            .ok_or_else(|| Flow::Panic(format!("integer overflow: {a} + {b} exceeds i64").into())),
-        (Sub, Int(a), Int(b)) => a
-            .checked_sub(b)
-            .map(Int)
-            .ok_or_else(|| Flow::Panic(format!("integer overflow: {a} - {b} exceeds i64").into())),
-        (Mul, Int(a), Int(b)) => a
-            .checked_mul(b)
-            .map(Int)
-            .ok_or_else(|| Flow::Panic(format!("integer overflow: {a} * {b} exceeds i64").into())),
-        (Div, Int(a), Int(b)) => {
-            if b == 0 {
-                return Err(Flow::Panic("integer division by zero".into()));
-            }
-            // `i64::MIN / -1` is the one division that OVERFLOWS: the true
-            // answer is 2^63, which i64 cannot hold. `wrapping_div` returned
-            // `i64::MIN` — a silent wrong answer, in the same function whose
-            // comment says arithmetic must never silently wrap and directly
-            // below three arms that use `checked_*`. Native agreed with it, so
-            // no parity harness could ever have found this: the reference
-            // oracle shared the bug.
-            a.checked_div(b).map(Int).ok_or_else(|| {
-                Flow::Panic(format!("integer overflow: {a} / {b} exceeds i64").into())
-            })
-        }
-        (Rem, Int(a), Int(b)) => {
-            if b == 0 {
-                return Err(Flow::Panic("integer remainder by zero".into()));
-            }
-            // NOT `checked_rem`: `i64::MIN % -1` is mathematically 0, which
-            // i64 holds perfectly well. Rust's `checked_rem` returns `None`
-            // there only because the x86 `idiv` instruction traps on the pair,
-            // which is a fact about the hardware and not about the answer.
-            // Panicking would replace a correct result with a crash, so the
-            // wrapping form stays — and native agrees, measured.
-            Ok(Int(a.wrapping_rem(b)))
-        }
-        // Float arithmetic
-        (Add, Float(a), Float(b)) => Ok(Float(a + b)),
-        (Sub, Float(a), Float(b)) => Ok(Float(a - b)),
-        (Mul, Float(a), Float(b)) => Ok(Float(a * b)),
-        (Div, Float(a), Float(b)) => Ok(Float(a / b)),
-        (Rem, Float(a), Float(b)) => Ok(Float(a % b)),
         // ── R21 — exact fixed-point Decimal arithmetic ────────────────────────
         // Same-scale i128 ops. Checked: overflow / div-by-zero → graceful panic,
         // never a silent wrap (money math must never lie). Division uses the
@@ -652,31 +715,11 @@ pub(super) fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
             Rc::make_mut(&mut out).extend(b.iter().cloned());
             Ok(Value::Array(out))
         }
-        // Integer comparisons
-        (Eq, Int(a), Int(b)) => Ok(Bool(a == b)),
-        (NotEq, Int(a), Int(b)) => Ok(Bool(a != b)),
-        (Lt, Int(a), Int(b)) => Ok(Bool(a < b)),
-        (Gt, Int(a), Int(b)) => Ok(Bool(a > b)),
-        (LtEq, Int(a), Int(b)) => Ok(Bool(a <= b)),
-        (GtEq, Int(a), Int(b)) => Ok(Bool(a >= b)),
-        // Float comparisons
-        (Eq, Float(a), Float(b)) => Ok(Bool(a == b)),
-        (NotEq, Float(a), Float(b)) => Ok(Bool(a != b)),
-        (Lt, Float(a), Float(b)) => Ok(Bool(a < b)),
-        (Gt, Float(a), Float(b)) => Ok(Bool(a > b)),
-        (LtEq, Float(a), Float(b)) => Ok(Bool(a <= b)),
-        (GtEq, Float(a), Float(b)) => Ok(Bool(a >= b)),
         // Bool / string equality
         (Eq, Bool(a), Bool(b)) => Ok(Bool(a == b)),
         (NotEq, Bool(a), Bool(b)) => Ok(Bool(a != b)),
         (Eq, Str(a), Str(b)) => Ok(Bool(a == b)),
         (NotEq, Str(a), Str(b)) => Ok(Bool(a != b)),
-        // Integer bitwise
-        (BitAnd, Int(a), Int(b)) => Ok(Int(a & b)),
-        (BitOr, Int(a), Int(b)) => Ok(Int(a | b)),
-        (BitXor, Int(a), Int(b)) => Ok(Int(a ^ b)),
-        (Shl, Int(a), Int(b)) => Ok(Int(a.wrapping_shl(b as u32))),
-        (Shr, Int(a), Int(b)) => Ok(Int(a.wrapping_shr(b as u32))),
         // Logical and/or on already-evaluated bools. `eval_binop` short-circuits
         // these for the common case; this value-level arm is reached when an
         // `Uncertain<bool>` operand routed both sides through here (no

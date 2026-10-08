@@ -1450,7 +1450,17 @@ impl<'p> Interp<'p> {
 
         let l = self.eval(left, env)?;
         let r = self.eval(right, env)?;
-        eval_binop_vals(op, l, r)
+        // AX-46: two plain ints or floats (the hot case) skip the general
+        // dispatch; same helpers, so the same semantics, as `eval_binop_vals`.
+        let fast = match (&l, &r) {
+            (Value::Int(a), Value::Int(b)) => int_binop(op, *a, *b),
+            (Value::Float(a), Value::Float(b)) => float_binop(op, *a, *b),
+            _ => None,
+        };
+        match fast {
+            Some(res) => res,
+            None => eval_binop_vals(op, l, r),
+        }
     }
 
     /// AX-31: `x = arr_push(x, v)`, `x = arr_concat(x, ys)` and `x = x + y` on a
