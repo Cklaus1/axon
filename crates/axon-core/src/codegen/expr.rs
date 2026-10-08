@@ -151,10 +151,7 @@ impl<'ctx> super::Codegen<'ctx> {
                      builtin is lowered; this one is outside that subset. Run it under the \
                      interpreter (`axon run`)."
                         .to_string();
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    eprintln!("{msg}");
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
                 self.emit_expr(body, fn_val)
             }
 
@@ -202,6 +199,19 @@ impl<'ctx> super::Codegen<'ctx> {
                     let val = self.ir.builder.build_load(i64_ty, field_ptr, name).unwrap();
                     return Some(val);
                 }
+                // A binding that was never created because its value or type
+                // could not be lowered (AX-45). Its refusal is the real
+                // diagnostic; E0701 here would call a valid name unknown.
+                if let Some(deferred) = self.poisoned.get(name).cloned() {
+                    match deferred {
+                        Some(msg) => self.record_error(msg),
+                        // Already explained by a recorded refusal: count the
+                        // read as that refusal, so a caller checking "did this
+                        // sub-expression refuse?" does not add a follow-on.
+                        None => self.errors_reported += 1,
+                    }
+                    return None;
+                }
                 // Genuinely unknown identifier. Record it in `codegen_errors`,
                 // not just on stderr: the build pipeline decides whether to
                 // abort by consulting that list, so a printed-but-unrecorded
@@ -210,16 +220,11 @@ impl<'ctx> super::Codegen<'ctx> {
                 // builtin is not a first-class value) is diagnosed by both
                 // engines, yet the interpreter panics while the binary this
                 // produced exited 0 in silence -- a divergence on a program the
-                // compiler had already rejected. Every other codegen-error site
-                // in the backend records; this was the one that only printed.
-                // The pipeline prints the whole list before aborting, so this
-                // records WITHOUT printing -- an eprintln! here would double it.
+                // compiler had already rejected.
                 let msg = format!(
                     "codegen error [E0701]: identifier '{name}' not found in current scope"
                 );
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
                 None
             }
 
@@ -264,26 +269,35 @@ impl<'ctx> super::Codegen<'ctx> {
                 if let Some(Type::Option(inner)) = &target {
                     self.current_option_inner = Some(*inner.clone());
                 }
-                let errors_before = self.codegen_errors.len();
+                let errors_before = self.errors_reported;
                 let val = self.emit_expr_owned(value, fn_val, CopySink::Local(name.as_str()));
                 self.current_result_types = saved_rt;
                 self.current_option_inner = saved_oi;
-                // A Unit value binds nothing, and a later use of a never-bound
-                // name is refused (E0701). But if `name` SHADOWS an existing
+                // A Unit value binds nothing. If `name` SHADOWS an existing
                 // local, later reads would silently see the OLD value (AX-24):
                 // refuse that unless the value already reported its own error.
+                // Otherwise the name is poisoned (AX-45), so a later read
+                // reports the real cause instead of E0701 on a valid name.
                 let Some(val) = val else {
-                    if self.locals.contains_key(name) && self.codegen_errors.len() == errors_before {
+                    if self.errors_reported != errors_before {
+                        // The value's own refusal is already recorded.
+                        self.poison_binding(name, None);
+                    } else if self.locals.contains_key(name) {
                         let msg = format!(
                             "codegen error [E0910]: native codegen could not lower the value \
                              bound to `{name}`, which shadows an earlier `{name}`. The \
                              interpreter supports it; run under `axon run`. Emitting nothing \
                              would leave later reads seeing the old value."
                         );
-                        if !self.codegen_errors.iter().any(|e| e == &msg) {
-                            eprintln!("{msg}");
-                            self.codegen_errors.push(msg);
-                        }
+                        self.record_error(msg);
+                    } else {
+                        // Harmless while unread; a read is refused then.
+                        let msg = format!(
+                            "codegen error [E0910]: `{name}` is read, but native codegen \
+                             produced no value for its binding. The interpreter supports it; \
+                             run under `axon run`."
+                        );
+                        self.poison_binding(name, Some(msg));
                     }
                     return None;
                 };
@@ -419,10 +433,7 @@ impl<'ctx> super::Codegen<'ctx> {
                         let msg = format!(
                             "codegen error [E0910]: native codegen cannot compare `{n}` values: a payload field of `{n}` has a type whose equality it does not lower, and the variants' tags alone cannot decide equality between two values of the same variant. The interpreter compares the fields too; run under `axon run`, or match on the variants and compare the fields explicitly."
                         );
-                        if !self.codegen_errors.iter().any(|e| e == &msg) {
-                            eprintln!("{msg}");
-                            self.codegen_errors.push(msg);
-                        }
+                        self.record_error(msg);
                         return Some(self.ir.context.bool_type().const_int(0, false).into());
                     }
                 }
@@ -530,10 +541,7 @@ impl<'ctx> super::Codegen<'ctx> {
                         let msg = "codegen error [E0910]: `&mut` outside the argument of a \
                                    `&mut [T]` parameter cannot be lowered natively."
                             .to_string();
-                        if !self.codegen_errors.iter().any(|e| e == &msg) {
-                            eprintln!("{msg}");
-                            self.codegen_errors.push(msg);
-                        }
+                        self.record_error(msg);
                         None
                     }
                     ast::UnaryOp::BitNot => match val {
@@ -750,7 +758,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     }
                     _ => {}
                 }
-                let errors_before = self.codegen_errors.len();
+                let errors_before = self.errors_reported;
                 let emitted = self.emit_expr_owned(value, fn_val, CopySink::Local(name.as_str()));
                 self.current_result_types = saved_rt;
                 self.current_option_inner = saved_oi;
@@ -779,9 +787,9 @@ impl<'ctx> super::Codegen<'ctx> {
                         None
                     }
                     // A Unit value rebinding a Unit binding: nothing to store.
-                    (None, None) if self.codegen_errors.len() == errors_before => None,
+                    (None, None) if self.errors_reported == errors_before => None,
                     (Some(_), None) => Some("a binding with no native storage"),
-                    (None, _) if self.codegen_errors.len() == errors_before => {
+                    (None, _) if self.errors_reported == errors_before => {
                         Some("a value that produced no result")
                     }
                     (None, _) => None,
@@ -792,10 +800,7 @@ impl<'ctx> super::Codegen<'ctx> {
                          {reason} to `{name}`. The interpreter supports it; run under `axon \
                          run`. Emitting nothing would silently discard the write."
                     );
-                    if !self.codegen_errors.iter().any(|e| e == &msg) {
-                        eprintln!("{msg}");
-                        self.codegen_errors.push(msg);
-                    }
+                    self.record_error(msg);
                 }
                 None
             }
@@ -811,10 +816,7 @@ impl<'ctx> super::Codegen<'ctx> {
                          {reason}. The interpreter supports it; run under `axon run`. Emitting \
                          nothing would silently discard the write."
                     );
-                    if !self.codegen_errors.iter().any(|e| e == &msg) {
-                        eprintln!("{msg}");
-                        self.codegen_errors.push(msg);
-                    }
+                    self.record_error(msg);
                 }
                 None
             }
@@ -865,10 +867,7 @@ impl<'ctx> super::Codegen<'ctx> {
             ),
             _ => {
                 let msg = "codegen error [E0910]: native codegen does not lower `&&`/`||` with a non-boolean right operand. The interpreter supports it; run under `axon run`.".to_string();
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    eprintln!("{msg}");
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
                 return None;
             }
         };
@@ -897,10 +896,7 @@ impl<'ctx> super::Codegen<'ctx> {
             "codegen error [E0910]: native codegen could not lower {what}. The interpreter \
              supports it; run under `axon run`. Skipping it would silently compute a wrong answer."
         );
-        if !self.codegen_errors.iter().any(|e| e == &msg) {
-            eprintln!("{msg}");
-            self.codegen_errors.push(msg);
-        }
+        self.record_error(msg);
     }
 
     /// Emit an `asm(template : outputs : inputs : clobbers)` expression as an
@@ -1077,10 +1073,7 @@ impl<'ctx> super::Codegen<'ctx> {
                         "codegen error [E1706]: `{builtin}` ordering argument {n} is out of range \
                          — must be 0=relaxed, 1=acquire, 2=release, 3=acq_rel, or 4=seq_cst"
                     );
-                    if !self.codegen_errors.iter().any(|e| e == &msg) {
-                        eprintln!("{msg}");
-                        self.codegen_errors.push(msg);
-                    }
+                    self.record_error(msg);
                     return None;
                 }
             };
@@ -1091,10 +1084,7 @@ impl<'ctx> super::Codegen<'ctx> {
                  integer literal (0=relaxed,1=acquire,2=release,3=acq_rel,4=seq_cst), not a \
                  runtime expression — the memory order is fixed in the emitted instruction"
             );
-            if !self.codegen_errors.iter().any(|e| e == &msg) {
-                eprintln!("{msg}");
-                self.codegen_errors.push(msg);
-            }
+            self.record_error(msg);
             None
         }
     }
@@ -1115,10 +1105,7 @@ impl<'ctx> super::Codegen<'ctx> {
                            string literal naming a function defined in this program, not a \
                            runtime expression — the address is resolved once at compile time"
                     .to_string();
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    eprintln!("{msg}");
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
                 return None;
             }
         };
@@ -1129,10 +1116,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     "codegen error [E1707]: `fn_addr(\"{name}\")` names no function defined in \
                      this program"
                 );
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    eprintln!("{msg}");
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
                 None
             }
         }
@@ -2153,10 +2137,7 @@ impl<'ctx> super::Codegen<'ctx> {
         }
         if matches!(op, ast::BinOp::Add) && matches!(ty, Type::Slice(_)) {
             let msg = "codegen error [E0910]: native codegen does not lower array concatenation (`+`) for this element type (it has no native layout). The interpreter supports it; run under `axon run`.".to_string();
-            if !self.codegen_errors.iter().any(|e| e == &msg) {
-                eprintln!("{msg}");
-                self.codegen_errors.push(msg);
-            }
+            self.record_error(msg);
             return lhs;
         }
 
@@ -2534,10 +2515,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 let msg = format!(
                     "codegen error [E0910]: native codegen does not lower {what} equality (`==`/`!=`). The interpreter compares them structurally; run under `axon run`."
                 );
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    eprintln!("{msg}");
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
                 self.ir.context.bool_type().const_int(0, false).into()
             }
 
@@ -2576,10 +2554,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 let msg = format!(
                     "codegen error [E0910]: native codegen does not lower the binary operator `{op:?}` on operands of type `{ty:?}`. The interpreter supports it; run under `axon run`. Returning the left operand would silently produce a wrong answer."
                 );
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    eprintln!("{msg}");
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
                 l
             }
         }
@@ -2801,10 +2776,7 @@ impl<'ctx> super::Codegen<'ctx> {
                                     Result/Option (or non-str struct) value in a string — its inner \
                                     type is erased here. Match it and interpolate the inner value, or \
                                     use `axon run` (the interpreter prints `Ok(…)`/`Some(…)`).".to_string();
-                                if !self.codegen_errors.iter().any(|m| m == &msg) {
-                                    eprintln!("{msg}");
-                                    self.codegen_errors.push(msg);
-                                }
+                                self.record_error(msg);
                                 // Placeholder str so emission continues; the build
                                 // aborts afterward on codegen_errors (never runs).
                                 str_ty.const_zero().into()
@@ -3011,7 +2983,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 // becomes reachable, a refusal is correct where a silent hang is
                 // catastrophic. The infinite branch is still emitted so the IR
                 // stays well-formed, exactly as the zero placeholder is.
-                self.codegen_errors.push(format!(
+                self.record_error(format!(
                     "codegen error [E0910]: native codegen could not lower the subject of a `while let` in `{}` to a value. Refusing to emit a loop that would never terminate. Run it under the interpreter (`axon run`).",
                     fn_val.get_name().to_str().unwrap_or("<fn>")
                 ));
@@ -3031,6 +3003,7 @@ impl<'ctx> super::Codegen<'ctx> {
         // Bind pattern variables and emit body.
         self.ir.builder.position_at_end(body_bb);
         let subject_sem_ty = self.infer_expr_sem_type(expr);
+        let scope = self.begin_pattern_scope(pattern);
         self.emit_pattern_bindings(pattern, subject, subject_sem_ty.as_ref());
         for stmt in body {
             self.emit_expr(&stmt.expr, fn_val);
@@ -3045,6 +3018,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 break;
             }
         }
+        self.end_pattern_scope(scope);
         if self
             .ir
             .builder
@@ -3377,10 +3351,7 @@ impl<'ctx> super::Codegen<'ctx> {
                  a value: it has {why}. Wrap the use in a lambda that returns a supported type, or \
                  run under the interpreter (`axon run`)."
             );
-            if !self.codegen_errors.iter().any(|e| e == &msg) {
-                eprintln!("{msg}");
-                self.codegen_errors.push(msg);
-            }
+            self.record_error(msg);
             return None;
         }
 
@@ -3494,10 +3465,7 @@ impl<'ctx> super::Codegen<'ctx> {
                      interpreter supports it; run under `axon run`.",
                     i + 1
                 );
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    eprintln!("{msg}");
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
                 return None;
             };
             let v = match declared {
@@ -3690,10 +3658,7 @@ impl<'ctx> super::Codegen<'ctx> {
                      carries no return-type tag, so a str/slice/tuple result can't round-trip). \
                      This program runs under the interpreter (`axon run`)."
                 );
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    eprintln!("{msg}");
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
             }
         }
 
@@ -3710,6 +3675,9 @@ impl<'ctx> super::Codegen<'ctx> {
         let saved_ip = self.ir.builder.get_insert_block();
         let saved_locals = std::mem::take(&mut self.locals);
         let saved_local_types = std::mem::take(&mut self.local_types);
+        // The body still sees the enclosing poisons (a capture of one is not an
+        // unknown name); the poisons it adds end with it.
+        let saved_poisoned = self.poisoned.clone();
         // A capture keeps the semantic type it has in the enclosing scope, so a
         // captured dispatch table `t` still indexes and calls as a
         // `[fn(i64) -> i64]` inside the body (`|x| t[0](x)`, AX-25).
@@ -3867,7 +3835,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     // stays as the placeholder that keeps the IR well-formed,
                     // but only behind a recorded error that aborts the build.
                     if body_should_have_a_value {
-                        self.codegen_errors.push(format!(
+                        self.record_error(format!(
                             "codegen error [E0910]: native codegen could not lower the body of `{lambda_name}` (a closure) to a value. Refusing to return a fabricated zero. Run it under the interpreter (`axon run`)."
                         ));
                     }
@@ -3879,6 +3847,7 @@ impl<'ctx> super::Codegen<'ctx> {
         // Restore caller's state.
         self.locals = saved_locals;
         self.local_types = saved_local_types;
+        self.poisoned = saved_poisoned;
         self.current_lambda_env = saved_lambda_env;
         if let Some(b) = saved_ip {
             self.ir.builder.position_at_end(b);
@@ -3934,9 +3903,7 @@ impl<'ctx> super::Codegen<'ctx> {
                         "codegen error [E0701]: identifier '{cap_name}' captured by \
                          `{lambda_name}` not found in current scope"
                     );
-                    if !self.codegen_errors.iter().any(|e| e == &msg) {
-                        self.codegen_errors.push(msg);
-                    }
+                    self.record_error(msg);
                     continue;
                 };
                 let mut cap_val = build_wrappers::w_load(&self.ir.builder, ty, alloca, cap_name);
@@ -4028,7 +3995,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 Some(sv.into())
             }
             Err(e) => {
-                eprintln!("comptime evaluation error: {e}");
+                self.record_comptime_error(&e, "this `comptime` block");
                 None
             }
         }
@@ -4439,12 +4406,12 @@ impl<'ctx> super::Codegen<'ctx> {
             Some(Type::Option(inner)) => self.current_option_inner = Some(*inner),
             _ => {}
         }
-        let errors_before = self.codegen_errors.len();
+        let errors_before = self.errors_reported;
         let emitted = self.emit_expr_owned(value, fn_val, CopySink::Always);
         self.current_result_types = saved_rt;
         self.current_option_inner = saved_oi;
         let Some(val) = emitted else {
-            return if self.codegen_errors.len() == errors_before {
+            return if self.errors_reported == errors_before {
                 Err(Some("a value that produced no result"))
             } else {
                 Err(None)
@@ -5414,10 +5381,7 @@ impl<'ctx> super::Codegen<'ctx> {
              (`{what}`) — the native dict is a tagged union of i64/f64/str. The interpreter \
              supports it; run under `axon run`, or key a parallel array by index."
         );
-        if !self.codegen_errors.iter().any(|e| e == &msg) {
-            eprintln!("{msg}");
-            self.codegen_errors.push(msg);
-        }
+        self.record_error(msg);
     }
 
     /// E0910 for an `arr_*` builtin whose native lowering does not cover this
@@ -5434,9 +5398,7 @@ impl<'ctx> super::Codegen<'ctx> {
             "codegen error [E0910]: native codegen cannot lower `{builtin}` on {arr}: {why}. \
              The interpreter supports it - use `axon run`."
         );
-        if !self.codegen_errors.iter().any(|e| e == &msg) {
-            self.codegen_errors.push(msg);
-        }
+        self.record_error(msg);
     }
 
     /// The element type of an `arr_*` builtin's array argument, when it is
@@ -5484,10 +5446,7 @@ impl<'ctx> super::Codegen<'ctx> {
                    so an f64 or str value would be misread. The interpreter supports it; run \
                    under `axon run`."
             .to_string();
-        if !self.codegen_errors.iter().any(|e| e == &msg) {
-            eprintln!("{msg}");
-            self.codegen_errors.push(msg);
-        }
+        self.record_error(msg);
     }
 
     /// `as_*` refusal: these convert SCALARS. A struct/str/array argument used to
@@ -5502,10 +5461,7 @@ impl<'ctx> super::Codegen<'ctx> {
              a struct, str, or array argument cannot be converted. The interpreter raises this \
              as a runtime panic; native refuses at build time."
         );
-        if !self.codegen_errors.iter().any(|e| e == &msg) {
-            eprintln!("{msg}");
-            self.codegen_errors.push(msg);
-        }
+        self.record_error(msg);
     }
 
     /// Is this call argument statically an array OF ARRAYS of i64?
@@ -9144,10 +9100,7 @@ impl<'ctx> super::Codegen<'ctx> {
                          native codegen can lay out (an earlier E0910 on this struct explains \
                          why). The interpreter supports it; run under `axon run`."
                     );
-                    if !self.codegen_errors.iter().any(|e| e == &msg) {
-                        eprintln!("{msg}");
-                        self.codegen_errors.push(msg);
-                    }
+                    self.record_error(msg);
                     return None;
                 };
                 // Set the Option/Result context from the field's DECLARED type so
@@ -9628,10 +9581,7 @@ impl<'ctx> super::Codegen<'ctx> {
              native codegen — this should have been refused at check time (E1801). Run it under \
              the interpreter (`axon run`)."
         );
-        if !self.codegen_errors.iter().any(|e| e == &msg) {
-            eprintln!("{msg}");
-            self.codegen_errors.push(msg);
-        }
+        self.record_error(msg);
         self.ir.context.i64_type().const_zero().into()
     }
 
@@ -9752,7 +9702,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 }
             } else if !matches!(callee, ast::Expr::StructLit { .. }) {
                 let sig = self.closure_call_sig(callee);
-                let errors_before = self.codegen_errors.len();
+                let errors_before = self.errors_reported;
                 let closure = match self.emit_expr(callee, fn_val) {
                     Some(BasicValueEnum::StructValue(sv))
                         if sv.get_type().count_fields() == 2
@@ -9770,16 +9720,13 @@ impl<'ctx> super::Codegen<'ctx> {
                     // The checker typed this callee as a function, so a callee
                     // that did not lower to a closure is a codegen gap — refuse
                     // rather than drop the call (the AX-24 silent-assign class).
-                    if self.codegen_errors.len() == errors_before {
+                    if self.errors_reported == errors_before {
                         let msg = "codegen error [E0910]: native codegen could not lower this \
                                    call's callee expression to a closure value, so the call \
                                    cannot be emitted. The interpreter supports it; run under \
                                    `axon run`."
                             .to_string();
-                        if !self.codegen_errors.iter().any(|e| e == &msg) {
-                            eprintln!("{msg}");
-                            self.codegen_errors.push(msg);
-                        }
+                        self.record_error(msg);
                     }
                     return None;
                 };
@@ -11949,10 +11896,7 @@ impl<'ctx> super::Codegen<'ctx> {
                          native codegen backend (it runs under the interpreter — use `axon run`). \
                          Building it would silently compute a wrong value."
                     );
-                    if !self.codegen_errors.iter().any(|e| e == &msg) {
-                        eprintln!("{msg}");
-                        self.codegen_errors.push(msg);
-                    }
+                    self.record_error(msg);
                     // Return a zero of a best-effort type so emission continues
                     // (the build aborts afterward on codegen_errors); this avoids
                     // a cascade of confusing secondary diagnostics.
@@ -12080,10 +12024,7 @@ impl<'ctx> super::Codegen<'ctx> {
                             i + 1,
                             fn_v.get_name().to_string_lossy()
                         );
-                        if !self.codegen_errors.iter().any(|e| e == &msg) {
-                            eprintln!("{msg}");
-                            self.codegen_errors.push(msg);
-                        }
+                        self.record_error(msg);
                         return None;
                     }
                 }
@@ -12110,10 +12051,7 @@ impl<'ctx> super::Codegen<'ctx> {
                         i + 1,
                         fn_v.get_name().to_string_lossy()
                     );
-                    if !self.codegen_errors.iter().any(|e| e == &msg) {
-                        eprintln!("{msg}");
-                        self.codegen_errors.push(msg);
-                    }
+                    self.record_error(msg);
                     return None;
                 };
                 arg_vals.push(slot.into());
@@ -12141,10 +12079,7 @@ impl<'ctx> super::Codegen<'ctx> {
                         i + 1,
                         fn_v.get_name().to_string_lossy()
                     );
-                    if !self.codegen_errors.iter().any(|e| e == &msg) {
-                        eprintln!("{msg}");
-                        self.codegen_errors.push(msg);
-                    }
+                    self.record_error(msg);
                     return None;
                 }
             };

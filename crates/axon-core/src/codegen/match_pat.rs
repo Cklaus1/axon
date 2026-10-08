@@ -21,34 +21,6 @@ use crate::types::Type;
 use super::build_wrappers;
 use super::enum_layout::EnumField;
 
-/// A name's `locals` slot and `local_types` entry, either possibly absent.
-type ShadowedLocal<'ctx> = (
-    String,
-    Option<(PointerValue<'ctx>, BasicTypeEnum<'ctx>)>,
-    Option<Type>,
-);
-
-/// The identifiers `pattern` binds.
-fn pattern_binders<'p>(pattern: &'p ast::Pattern, out: &mut Vec<&'p str>) {
-    match pattern {
-        ast::Pattern::Ident(n) => out.push(n),
-        ast::Pattern::Some(p) | ast::Pattern::Ok(p) | ast::Pattern::Err(p) => {
-            pattern_binders(p, out)
-        }
-        ast::Pattern::Struct { fields, .. } => {
-            for (_, p) in fields {
-                pattern_binders(p, out);
-            }
-        }
-        ast::Pattern::Tuple(ps) => {
-            for p in ps {
-                pattern_binders(p, out);
-            }
-        }
-        ast::Pattern::Wildcard | ast::Pattern::Literal(_) | ast::Pattern::None => {}
-    }
-}
-
 impl<'ctx> super::Codegen<'ctx> {
     // ── Match emission ────────────────────────────────────────────────────────
 
@@ -103,11 +75,8 @@ impl<'ctx> super::Codegen<'ctx> {
                 miss_preds.push(self.ir.builder.get_insert_block().unwrap());
             }
 
-            // The arm's bindings are scoped to the arm. They used to stay in
-            // `locals` after it, so a LATER arm naming the same identifier
-            // (`A::Neg { v } => v * 10  _ => v`, with `v` a parameter) read the
-            // earlier arm's never-written slot instead of the outer `v`.
-            let outer = self.shadowed_by(&arm.pattern);
+            // The arm's bindings are scoped to the arm (see `end_pattern_scope`).
+            let scope = self.begin_pattern_scope(&arm.pattern);
             if let Some(guard_expr) = &arm.guard {
                 // The guard sees the arm's bindings (`Some(v) if v > 2`), so it
                 // runs in its own block once the pattern has matched. It used
@@ -139,7 +108,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 self.emit_pattern_bindings(&arm.pattern, subject, subject_sem_ty);
             }
             let body_val = self.emit_expr(&arm.body, fn_val);
-            self.restore_shadowed(outer);
+            self.end_pattern_scope(scope);
 
             let current_bb = self.ir.builder.get_insert_block().unwrap();
             if current_bb.get_terminator().is_none() {
@@ -185,10 +154,7 @@ impl<'ctx> super::Codegen<'ctx> {
                            the default arm is not. The interpreter supports it; run under \
                            `axon run`."
                     .to_string();
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    eprintln!("{msg}");
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
                 return None;
             }
             let phi = build_wrappers::w_phi(&self.ir.builder, val_ty, "match_val");
@@ -524,36 +490,6 @@ impl<'ctx> super::Codegen<'ctx> {
         all.into()
     }
 
-    /// The current `locals`/`local_types` entries of every name `pattern`
-    /// binds, for `restore_shadowed` once the arm is done.
-    fn shadowed_by(&self, pattern: &ast::Pattern) -> Vec<ShadowedLocal<'ctx>> {
-        let mut names = Vec::new();
-        pattern_binders(pattern, &mut names);
-        names
-            .into_iter()
-            .map(|n| {
-                let slot = self.locals.get(n).copied();
-                let ty = self.local_types.get(n).cloned();
-                (n.to_string(), slot, ty)
-            })
-            .collect()
-    }
-
-    /// Put back the entries `shadowed_by` saved: an outer binding again, or
-    /// no binding at all.
-    fn restore_shadowed(&mut self, saved: Vec<ShadowedLocal<'ctx>>) {
-        for (name, slot, ty) in saved {
-            match slot {
-                Some(s) => self.locals.insert(name.clone(), s),
-                None => self.locals.remove(&name),
-            };
-            match ty {
-                Some(t) => self.local_types.insert(name, t),
-                None => self.local_types.remove(&name),
-            };
-        }
-    }
-
     /// Bind pattern variables in the current locals map.
     ///
     /// `subject_sem_ty` is the SEMANTIC type of `subject` (the scrutinee at this
@@ -610,6 +546,11 @@ impl<'ctx> super::Codegen<'ctx> {
                         _ => None,
                     };
                     self.emit_pattern_bindings(inner, inner_val, inner_ty.as_ref());
+                } else {
+                    self.poison_pattern_bindings(
+                        inner,
+                        "the `Some` payload has no native layout here",
+                    );
                 }
             }
             ast::Pattern::Ok(inner) => {
@@ -627,9 +568,18 @@ impl<'ctx> super::Codegen<'ctx> {
                     } else {
                         Some(payload)
                     };
-                    if let Some(v) = typed {
-                        self.emit_pattern_bindings(inner, v, ok_sem.as_ref());
+                    match typed {
+                        Some(v) => self.emit_pattern_bindings(inner, v, ok_sem.as_ref()),
+                        None => self.poison_pattern_bindings(
+                            inner,
+                            "the `Ok` payload has no native layout here",
+                        ),
                     }
+                } else {
+                    self.poison_pattern_bindings(
+                        inner,
+                        "the `Ok` payload has no native layout here",
+                    );
                 }
             }
             ast::Pattern::Err(inner) => {
@@ -645,9 +595,18 @@ impl<'ctx> super::Codegen<'ctx> {
                     } else {
                         Some(payload)
                     };
-                    if let Some(v) = typed {
-                        self.emit_pattern_bindings(inner, v, err_sem.as_ref());
+                    match typed {
+                        Some(v) => self.emit_pattern_bindings(inner, v, err_sem.as_ref()),
+                        None => self.poison_pattern_bindings(
+                            inner,
+                            "the `Err` payload has no native layout here",
+                        ),
                     }
+                } else {
+                    self.poison_pattern_bindings(
+                        inner,
+                        "the `Err` payload has no native layout here",
+                    );
                 }
             }
             ast::Pattern::Struct { name, fields } if name.contains("::") => {
@@ -667,13 +626,16 @@ impl<'ctx> super::Codegen<'ctx> {
                     .and_then(|vs| vs.iter().find(|(vn, _, _)| vn == &variant_name))
                     .map(|(_, _, fs)| fs.clone());
 
-                let field_layout = match field_layout {
-                    Some(fl) => fl,
-                    None => return,
+                let Some(field_layout) = field_layout else {
+                    let why = format!("the variant `{name}` has no native field layout");
+                    self.poison_pattern_bindings(pattern, &why);
+                    return;
                 };
 
                 if let BasicValueEnum::StructValue(sv) = subject {
                     let Some(pay_ptr) = self.enum_payload_ptr(sv, &enum_name) else {
+                        let why = format!("the enum `{enum_name}` has no native layout");
+                        self.poison_pattern_bindings(pattern, &why);
                         return;
                     };
                     // Each bound field is found by NAME. Indexing the declared
@@ -682,12 +644,24 @@ impl<'ctx> super::Codegen<'ctx> {
                     // subset (`P::Pt { s }`) at the first field's.
                     for (fname, pat) in fields {
                         let Some(slot) = field_layout.iter().find(|f| &f.name == fname) else {
+                            let why = format!("the variant `{name}` has no field `{fname}`");
+                            self.poison_pattern_bindings(pat, &why);
                             continue;
                         };
                         if let Some(field_val) = self.load_enum_field(pay_ptr, slot) {
                             self.emit_pattern_bindings(pat, field_val, Some(&slot.ty));
+                        } else {
+                            let why = format!(
+                                "field `{fname}` of `{name}` has type {}, which native codegen \
+                                 cannot lower",
+                                slot.ty.display()
+                            );
+                            self.poison_pattern_bindings(pat, &why);
                         }
                     }
+                } else {
+                    let why = format!("the matched `{name}` value has no native layout here");
+                    self.poison_pattern_bindings(pattern, &why);
                 }
             }
             ast::Pattern::Struct { fields, .. } => {
@@ -722,6 +696,11 @@ impl<'ctx> super::Codegen<'ctx> {
                         let fty = field_sem.as_ref().and_then(|v| v.get(i));
                         self.emit_pattern_bindings(pat, field_val, fty);
                     }
+                } else {
+                    self.poison_pattern_bindings(
+                        pattern,
+                        "the matched value has no native layout here",
+                    );
                 }
             }
             ast::Pattern::Tuple(pats) => {
@@ -740,9 +719,119 @@ impl<'ctx> super::Codegen<'ctx> {
                         let ety = elt_sem.and_then(|v| v.get(i));
                         self.emit_pattern_bindings(pat, elem_val, ety);
                     }
+                } else {
+                    self.poison_pattern_bindings(
+                        pattern,
+                        "the matched tuple has no native layout here",
+                    );
                 }
             }
             _ => {} // Wildcard, Literal, None — no bindings
         }
+    }
+
+    /// The bindings of `pattern` could not be created; `why` says what was
+    /// missing. Each bound name is poisoned with a deferred E0910 naming that
+    /// cause (AX-45): a read reports it, where it used to report the name as
+    /// unknown (E0701) — or, when it shadowed an outer local, silently read the
+    /// OUTER value, which is why that local is dropped here (and put back by
+    /// `end_pattern_scope`). A binding nobody reads stays harmless, as before.
+    fn poison_pattern_bindings(&mut self, pattern: &ast::Pattern, why: &str) {
+        match pattern {
+            ast::Pattern::Ident(name) => {
+                self.locals.remove(name);
+                self.local_types.remove(name);
+                let msg = format!(
+                    "codegen error [E0910]: native codegen could not bind `{name}`: {why}. The \
+                     interpreter supports it; run under `axon run`."
+                );
+                self.poison_binding(name, Some(msg));
+            }
+            ast::Pattern::Some(p) | ast::Pattern::Ok(p) | ast::Pattern::Err(p) => {
+                self.poison_pattern_bindings(p, why);
+            }
+            ast::Pattern::Struct { fields, .. } => {
+                for (_, p) in fields {
+                    self.poison_pattern_bindings(p, why);
+                }
+            }
+            ast::Pattern::Tuple(pats) => {
+                for p in pats {
+                    self.poison_pattern_bindings(p, why);
+                }
+            }
+            ast::Pattern::Wildcard | ast::Pattern::Literal(_) | ast::Pattern::None => {}
+        }
+    }
+
+    /// What each name `pattern` binds meant before the bindings were emitted,
+    /// so `end_pattern_scope` can put it back once the arm or loop body that
+    /// could see the bindings is done.
+    pub(super) fn begin_pattern_scope(&self, pattern: &ast::Pattern) -> PatternScope<'ctx> {
+        let mut names = Vec::new();
+        collect_pattern_names(pattern, &mut names);
+        names
+            .into_iter()
+            .map(|name| PriorBinding {
+                local: self.locals.get(&name).copied(),
+                ty: self.local_types.get(&name).cloned(),
+                poison: self.poisoned.get(&name).cloned(),
+                name,
+            })
+            .collect()
+    }
+
+    /// A pattern's bindings are visible only inside the arm or loop body it
+    /// scopes, as in the interpreter: past it, each name means what it meant
+    /// before — an outer local again, or nothing (AX-42). Left in `locals`, a
+    /// LATER arm naming the same identifier (`A::Neg { v } => v * 10 _ => v`,
+    /// with `v` a parameter) read the earlier arm's never-written slot; and an
+    /// unread failed binding that shadowed an outer local left the outer local
+    /// refused after the `match` (AX-45).
+    pub(super) fn end_pattern_scope(&mut self, scope: PatternScope<'ctx>) {
+        for prior in scope {
+            match prior.local {
+                Some(l) => self.locals.insert(prior.name.clone(), l),
+                None => self.locals.remove(&prior.name),
+            };
+            match prior.ty {
+                Some(t) => self.local_types.insert(prior.name.clone(), t),
+                None => self.local_types.remove(&prior.name),
+            };
+            match prior.poison {
+                Some(p) => self.poisoned.insert(prior.name, p),
+                None => self.poisoned.remove(&prior.name),
+            };
+        }
+    }
+}
+
+/// One name a pattern binds, with what it meant before the pattern.
+pub(super) struct PriorBinding<'ctx> {
+    name: String,
+    local: Option<(PointerValue<'ctx>, BasicTypeEnum<'ctx>)>,
+    ty: Option<Type>,
+    poison: Option<Option<String>>,
+}
+
+pub(super) type PatternScope<'ctx> = Vec<PriorBinding<'ctx>>;
+
+fn collect_pattern_names(pattern: &ast::Pattern, out: &mut Vec<String>) {
+    match pattern {
+        ast::Pattern::Ident(name) => out.push(name.clone()),
+        ast::Pattern::Some(p) | ast::Pattern::Ok(p) | ast::Pattern::Err(p) => {
+            collect_pattern_names(p, out)
+        }
+        ast::Pattern::Struct { fields, .. } => {
+            for (_, p) in fields {
+                collect_pattern_names(p, out);
+            }
+        }
+        ast::Pattern::Tuple(pats) => {
+            for p in pats {
+                collect_pattern_names(p, out);
+            }
+        }
+        ast::Pattern::Wildcard | ast::Pattern::Literal(_) | ast::Pattern::None => {}
     }
 }

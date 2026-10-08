@@ -225,10 +225,7 @@ impl<'ctx> super::Codegen<'ctx> {
             }
         }
         for msg in refusals {
-            if !self.codegen_errors.iter().any(|e| e == &msg) {
-                eprintln!("{msg}");
-                self.codegen_errors.push(msg);
-            }
+            self.record_error(msg);
         }
         // A refused struct is sized as unknown from here on, so no size
         // computation can follow its cycle.
