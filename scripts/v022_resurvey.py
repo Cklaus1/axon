@@ -104,6 +104,7 @@ def plan(rc, sample, salt):
 # ── the three families ───────────────────────────────────────────────────────
 
 _BASE = {}
+_LAST = {}
 
 
 def run_tests(cmd):
@@ -112,6 +113,8 @@ def run_tests(cmd):
     except subprocess.TimeoutExpired:
         return {"<hung>"}, "hung", 124
     out = r.stdout + r.stderr
+    _LAST["tail"] = out[-600:]
+    _LAST["rc"] = r.returncode
     failing = set(re.findall(r"^---- (\S+) stdout ----$", out, re.M))
     failing |= {"<binary> " + t for t in re.findall(r"^\s+`(-p [^`]+)`$", out, re.M)}
     if r.returncode not in (0, 101) and not failing:
@@ -177,7 +180,7 @@ def value_family(rc, vs, chosen):
                 rec["result"] = "INCONCLUSIVE (hung)"
                 break
             killed += sorted(failing - base)
-            rec.setdefault("ran", []).append({"cmd": " ".join(cmd[:8]), "failing": sorted(failing)[:3], "base": sorted(base)[:3]})
+            rec.setdefault("ran", []).append({"cmd": " ".join(cmd[:8]), "failing": sorted(failing)[:3], "base": sorted(base)[:3], "rc": _LAST.get("rc"), "tail": _LAST.get("tail", "")[-300:]})
             if killed:
                 break
         else:
