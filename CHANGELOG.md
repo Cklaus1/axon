@@ -1,5 +1,23 @@
 # Axon Changelog
 
+## Recursive enums natively, tuples holding enums, one message per refusal, 16-byte interpreter values (compilebench AX-41…AX-47)
+
+Fixes for the third batch of defects compilebench recorded in its `AXON_FINDINGS.md`, found by writing a small lexer, parser and evaluator (the shape of a self-hosted compiler) in Axon.
+
+**Checker**
+- **A tuple holding an enum type-checks** (AX-41). `fn f(n: i64) -> (A, i64)` with `A` an enum failed E0307 `expected (A, i64), found (A, i64)` in `check`, `run` and `build`: the declared type's enum names were resolved everywhere except inside tuples and function types. Refinements inside tuples had the same gap.
+
+**Native build**
+- **Recursive enums compile** (AX-42). `type A = Lit { v: i64 } | Add { l: A, r: A }` was refused with E0910; a self-referential payload field is now boxed.
+- **Struct fields of enum type compile, and enum payload fields are placed by name** (AX-43). Struct bodies were laid out before enum names were known, so a field `a: A` had no layout. A variant pattern naming fields in another order, or only some of them, read the wrong offsets. Payload enum `==` now compares fields instead of being refused.
+- **`arr_push`, `arr_reverse`, `arr_take` and `arr_drop` work for any element type** (AX-44). They were lowered only for `[i64]`; `[str]`, `[f64]` and arrays of enums were refused.
+- **Each refusal is printed once and counted once, with no follow-on errors** (AX-45). A refusal could print twice and the `N codegen error(s)` count disagreed with the lines shown. A binding that could not be created then gave E0701 "not found"; now a read of it repeats the original cause. `match` arm and `while let` bindings no longer stay visible after their arm or body.
+
+**Interpreter**
+- **`Value` is 16 bytes, down from 96** (AX-46). Records, closures, handles, decimals and tuples sit behind one `Rc`, and error messages are `Box<str>`, so `Result<Value, Flow>` fell from 112 bytes to 24. A compile-time assertion keeps it that size. Int/Int and Float/Float operators take an inline path before the generic dispatch.
+- **Building a struct or enum, or evaluating a string literal, no longer allocates names** (AX-47). Field and variant names are interned and resolved once per literal, fields are stored in declaration order, and a string literal's value is made once per node. An enum construction costs 860 instructions instead of 2,370. Printing and equality do not depend on the order fields were written in.
+- On the compilebench programs, these two changes cut interpreter instructions by 20–36 %. `axon run` is still far slower than `axon build`; AX-18 stays open.
+
 ## Monotonic clock, quiet stderr, object cache, phase timings, smaller debug builds, cheaper closures (compilebench AX-32…AX-40)
 
 Fixes for the second batch of defects compilebench recorded in its `AXON_FINDINGS.md`. AX-18 (interpreter speed) is only partly addressed and stays open.
