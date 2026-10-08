@@ -43,8 +43,9 @@ use inkwell::OptimizationLevel;
 /// emission (`default<On>`: mem2reg/SROA, inlining, GVN, LICM, loop passes, …)
 /// and the `TargetMachine` backend level (instruction selection, scheduling,
 /// register allocation). The size levels pair their `default<Os>`/`default<Oz>`
-/// pipelines with the `Default` backend level, as clang does. `O0` runs no IR
-/// passes at all.
+/// pipelines with the `Default` backend level, as clang does. `O0` runs only
+/// `globaldce`, which deletes the builtin helpers nothing calls and transforms
+/// no surviving function (AX-37).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OptLevel {
     O0,
@@ -108,14 +109,19 @@ impl OptLevel {
         }
     }
 
-    fn pipeline(self) -> Option<&'static str> {
+    /// The new-pass-manager pipeline for this level.
+    fn pipeline(self) -> &'static str {
         match self {
-            Self::O0 => None,
-            Self::O1 => Some("default<O1>"),
-            Self::O2 => Some("default<O2>"),
-            Self::O3 => Some("default<O3>"),
-            Self::Os => Some("default<Os>"),
-            Self::Oz => Some("default<Oz>"),
+            // Dead internal definitions only: the unoptimised code that remains
+            // is exactly what codegen emitted, so a debug build stays
+            // debuggable without carrying ~70 unused builtin wrappers and the
+            // runtime code they reference (AX-37).
+            Self::O0 => "globaldce",
+            Self::O1 => "default<O1>",
+            Self::O2 => "default<O2>",
+            Self::O3 => "default<O3>",
+            Self::Os => "default<Os>",
+            Self::Oz => "default<Oz>",
         }
     }
 }
@@ -124,7 +130,11 @@ impl OptLevel {
 /// before and after. The pipeline is target-aware, so the caller sets the
 /// module triple first; the data layout is taken from `machine` here (codegen
 /// emits none, and the passes would otherwise lay out types with LLVM's
-/// target-neutral default, e.g. 4-byte-aligned i64). No-op at `O0`.
+/// target-neutral default, e.g. 4-byte-aligned i64). At `O0` the pipeline is
+/// `globaldce` alone (AX-37), unverified: the module was verified when codegen
+/// finished it (cached bitcode is such a module), a pass that only deletes
+/// unreferenced functions cannot make it invalid, and two more verifier walks
+/// would only slow every debug build.
 ///
 /// Every definition is marked `"disable-tail-calls"="true"` first, so each
 /// Axon call keeps its stack frame. Unbounded recursion must stay a graceful
@@ -138,26 +148,30 @@ fn optimize_module(
     machine: &TargetMachine,
     opt: OptLevel,
 ) -> Result<(), String> {
-    let Some(pipeline) = opt.pipeline() else {
-        return Ok(());
-    };
+    let pipeline = opt.pipeline();
     mark_definitions(module, "disable-tail-calls", "true");
     module.set_data_layout(&machine.get_target_data().get_data_layout());
-    module.verify().map_err(|e| {
-        format!(
-            "IR verification failed before `{pipeline}`: {}",
-            e.to_string()
-        )
-    })?;
+    let verify = opt.is_optimized();
+    if verify {
+        module.verify().map_err(|e| {
+            format!(
+                "IR verification failed before `{pipeline}`: {}",
+                e.to_string()
+            )
+        })?;
+    }
     module
         .run_passes(pipeline, machine, PassBuilderOptions::create())
         .map_err(|e| format!("LLVM pass pipeline `{pipeline}` failed: {}", e.to_string()))?;
-    module.verify().map_err(|e| {
-        format!(
-            "IR verification failed after `{pipeline}`: {}",
-            e.to_string()
-        )
-    })
+    if verify {
+        module.verify().map_err(|e| {
+            format!(
+                "IR verification failed after `{pipeline}`: {}",
+                e.to_string()
+            )
+        })?;
+    }
+    Ok(())
 }
 
 /// Freestanding output links no libc, so the optimiser must not synthesise
@@ -474,7 +488,8 @@ pub(super) fn emit_hosted_object(
 /// path for this build would apply before code generation (target triple and
 /// data layout, internalisation for a hosted program, the `opt` IR pipeline),
 /// so the dumped IR is the IR that gets compiled. `O0` leaves the module as
-/// emitted.
+/// emitted (codegen's raw IR, every builtin helper included), which the golden
+/// IR tests read; the `O0` object additionally drops the dead helpers.
 pub(super) fn optimize_for_ir_dump(
     module: &inkwell::module::Module<'_>,
     opt: OptLevel,

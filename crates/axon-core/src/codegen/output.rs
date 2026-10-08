@@ -105,11 +105,12 @@ impl<'ctx> super::Codegen<'ctx> {
         opt: OptLevel,
         target_triple: Option<&str>,
     ) -> Result<(), String> {
-        // NOTE: full dead-function pruning is applied on the WASM object path
-        // (`compile_to_wasm_object`), where dropping the unused i64-ABI `__axon_*`
-        // helpers is the prerequisite for linking. Natively only the uncalled
-        // AI wrappers are pruned, so a program that makes no AI call links the
-        // AI-free runtime (`link::Runtime`, AX-11).
+        // Dead builtin helpers are dropped by `globaldce` once
+        // `link::emit_hosted_object` has internalised them, at every level
+        // including `O0` (AX-37). The uncalled AI wrappers are also deleted up
+        // front, so the module `link::Runtime` inspects is AI-free whatever
+        // pipeline runs: a program that makes no AI call links the AI-free
+        // runtime (AX-11).
         super::link::prune_unreachable_ai_callers(&self.ir.module);
         self.ir
             .module
@@ -120,13 +121,17 @@ impl<'ctx> super::Codegen<'ctx> {
 
     /// AX-23: compile the hosted program to its relocatable object file at
     /// `output_path` WITHOUT linking (`axon build --emit-obj`). The object is
-    /// the one `compile_to_binary_target` would link against axon-rt.
+    /// the one `compile_to_binary_target` would link against axon-rt: the
+    /// uncalled AI wrappers are pruned the same way, so an object from a
+    /// program that makes no AI call references no `__axon_ai_*` symbol and
+    /// links against `libaxon_rt.a` (AX-37).
     pub fn compile_to_object(
         &self,
         output_path: &str,
         opt: OptLevel,
         target_triple: Option<&str>,
     ) -> Result<(), String> {
+        super::link::prune_unreachable_ai_callers(&self.ir.module);
         self.ir
             .module
             .verify()

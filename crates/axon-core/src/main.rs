@@ -124,8 +124,9 @@ enum Command {
         #[arg(long, help = "Optimized release build (= --opt-level 2)")]
         release: bool,
 
-        /// Optimisation level: runs LLVM's `default<O0|O1|O2|O3|Os|Oz>` IR
-        /// pipeline and sets the matching backend level. Overrides `--release`.
+        /// Optimisation level: runs LLVM's `default<O1|O2|O3|Os|Oz>` IR
+        /// pipeline (`0`: only `globaldce`, dropping unused builtin helpers)
+        /// and sets the matching backend level. Overrides `--release`.
         #[arg(
             long,
             value_name = "LEVEL",
