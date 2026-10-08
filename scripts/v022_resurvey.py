@@ -177,6 +177,7 @@ def value_family(rc, vs, chosen):
                 rec["result"] = "INCONCLUSIVE (hung)"
                 break
             killed += sorted(failing - base)
+            rec.setdefault("ran", []).append({"cmd": " ".join(cmd[:8]), "failing": sorted(failing)[:3], "base": sorted(base)[:3]})
             if killed:
                 break
         else:
@@ -269,7 +270,7 @@ def guard_family(rc, chosen):
 # ── the record ────────────────────────────────────────────────────────────────
 
 def run(args):
-    sample, salt, out = "auto", None, STATUS
+    sample, salt, out, only = "auto", None, STATUS, None
     fams = ["value", "py", "guard"]
     it = iter(args)
     for a in it:
@@ -281,11 +282,15 @@ def run(args):
             out = next(it)
         elif a == "--families":
             fams = next(it).split(",")
+        elif a == "--only":      # debugging: keys containing this text (the record is then NOT a freeze record)
+            only = next(it)
     if sh(["git", "status", "--porcelain", "--untracked-files=no"]).stdout.strip():
         sys.exit("refused: the tree is not clean; the survey edits sources in place and a record is evidence about a commit")
     rc, vs = load("v022_refusal_coverage"), load("v022_value_survey")
     salt = salt or head()
     ents, chosen, pct, total, est = plan(rc, sample, salt)
+    if only:
+        chosen = {k: [(key, p) for key, p in v if only in key] for k, v in ents.items()}
     t0 = time.time()
     results = []
     if "value" in fams:
