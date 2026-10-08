@@ -805,8 +805,9 @@ fn ai_replay_reproduces_a_recorded_run_without_the_live_model_f2() {
 
 #[test]
 fn phase9_run_id_stamped_and_trace_replay_reproduces_run() {
-    // Phase 9 / F2 CLI wrapper: every `axon run` emits a run-id to stderr and
-    // stamps it (+ the effective seed) to the provenance log.
+    // Phase 9 / F2 CLI wrapper: every `axon run` stamps a run-id (+ the
+    // effective seed) to the provenance log, and prints it on stderr under
+    // `--verbose` (AX-33: never by default — the program owns its stderr).
     // `axon trace --replay <run-id>` re-runs the source with the same seed,
     // producing byte-identical output for deterministic programs.
     let prog = "fn main() -> i64 { let x = random_i64(1, 1000)  println(to_str(x))  0 }\n";
@@ -815,7 +816,7 @@ fn phase9_run_id_stamped_and_trace_replay_reproduces_run() {
 
     // 1. First run: capture the run-id from stderr and the output from stdout.
     let run1 = axon()
-        .args(["run", f.to_str().unwrap()])
+        .args(["run", "--verbose", f.to_str().unwrap()])
         .env_remove("AXON_AI_MOCK")
         .output()
         .unwrap();
@@ -856,6 +857,94 @@ fn phase9_run_id_stamped_and_trace_replay_reproduces_run() {
     );
 
     let _ = std::fs::remove_file(&f);
+}
+
+/// AX-33: `axon run` used to print `axon: run-id <id>` on the program's stderr
+/// unconditionally, so a program run under the interpreter could not own its
+/// stderr (compilebench's `warmup <i> <ns>` protocol had to be parsed by prefix
+/// for `axon-interp` only, since a native build prints no such line). The id
+/// must still reach everything that needs it: the provenance log (always), the
+/// terminal under `--verbose`, and a recording run (`AXON_RECORD`).
+#[test]
+fn run_leaves_stderr_to_the_program_and_still_stamps_the_run_id() {
+    let dir = std::env::temp_dir().join(format!("axon_ax33_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let cache = dir.join("cache");
+    std::fs::create_dir_all(&cache).unwrap();
+    let src = dir.join("hello.ax");
+    std::fs::write(&src, "fn main() -> i64 {\n  println(\"hi\")\n  0\n}\n").unwrap();
+
+    // 1. Default: nothing on stderr for a program that writes nothing there.
+    let out = axon()
+        .args(["run", src.to_str().unwrap()])
+        .env("XDG_CACHE_HOME", &cache)
+        .env_remove("AXON_RECORD")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "hi\n");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        "",
+        "`axon run` must leave stderr to the program"
+    );
+
+    // 2. ...but the run is still stamped, so `axon trace --replay` finds it.
+    let log = std::fs::read_to_string(cache.join("axon").join("provenance.jsonl"))
+        .expect("the run_start record must still be written");
+    let rec = log
+        .lines()
+        .rev()
+        .find(|l| l.contains("\"event\":\"run_start\"") && l.contains(src.to_str().unwrap()))
+        .expect("a run_start record for this source");
+    let rid = rec
+        .split("\"run_id\":\"")
+        .nth(1)
+        .and_then(|s| s.split('"').next())
+        .unwrap()
+        .to_string();
+    let replay = axon()
+        .args(["trace", "--replay", &rid])
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
+    assert_eq!(replay.status.code(), Some(0), "{replay:?}");
+    assert_eq!(String::from_utf8_lossy(&replay.stdout), "hi\n");
+
+    // 3. `--verbose` prints exactly the run-id line, and it names a logged run.
+    let v = axon()
+        .args(["run", "--verbose", src.to_str().unwrap()])
+        .env("XDG_CACHE_HOME", &cache)
+        .env_remove("AXON_RECORD")
+        .output()
+        .unwrap();
+    let verr = String::from_utf8_lossy(&v.stderr).to_string();
+    let vrid = verr
+        .strip_prefix("axon: run-id ")
+        .and_then(|s| s.strip_suffix('\n'))
+        .unwrap_or_else(|| panic!("--verbose must print one run-id line, got {verr:?}"));
+    let log = std::fs::read_to_string(cache.join("axon").join("provenance.jsonl")).unwrap();
+    assert!(
+        log.contains(&format!("\"run_id\":\"{vrid}\"")),
+        "the printed run-id must be the one stamped to the log"
+    );
+
+    // 4. Recording prints it unasked: a journal needs the id that pairs it with
+    //    its provenance record.
+    let journal = dir.join("j.journal");
+    let r = axon()
+        .args(["run", src.to_str().unwrap()])
+        .env("XDG_CACHE_HOME", &cache)
+        .env("AXON_RECORD", &journal)
+        .output()
+        .unwrap();
+    assert_eq!(r.status.code(), Some(0), "{r:?}");
+    assert!(
+        String::from_utf8_lossy(&r.stderr).starts_with("axon: run-id "),
+        "AXON_RECORD must print the run-id: {:?}",
+        String::from_utf8_lossy(&r.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -20195,8 +20284,8 @@ fn run_and_check_agree_on_the_parse_diagnostic() {
     let check = axon().arg("check").arg(&f).output().expect("spawn check");
     let _ = std::fs::remove_file(&f);
 
-    // `run` stamps `axon: run-id …` on stderr before anything else; that line is
-    // the replay handle and is not a diagnostic. Compare the diagnostic lines.
+    // Compare the diagnostic lines only: stderr may also carry non-diagnostic
+    // notes, and the JSON diagnostics are what the two paths must agree on.
     let diag_lines = |s: &str| -> Vec<String> {
         s.lines()
             .filter(|l| l.starts_with('{'))
@@ -21270,9 +21359,8 @@ fn min_divided_by_negative_one_overflows_in_both_engines() {
     );
     let _ = std::fs::remove_file(&out_bin);
     // I-2: not merely "also panics" — the same exit code AND the same text.
-    // Compare the PANIC LINE, not the whole stream: `axon run` also writes an
-    // `axon: run-id …` provenance line that a native binary has no reason to
-    // emit, so a whole-output comparison fails on a difference that is correct.
+    // Compare the PANIC LINE, not the whole stream: the two runtimes word their
+    // surrounding output independently, and the panic line is the contract.
     let panic_line = |s: &str| {
         s.lines()
             .find(|l| l.contains("axon: panic:"))
@@ -28326,7 +28414,7 @@ fn trace_replay_refuses_a_source_that_changed_since_the_run() {
     std::fs::write(&src, "fn main() { println(\"ORIGINAL\") }\n").unwrap();
 
     let out = axon()
-        .args(["run", src.to_str().unwrap()])
+        .args(["run", "--verbose", src.to_str().unwrap()])
         .env("XDG_CACHE_HOME", &cache)
         .env("AXON_SEED", "7")
         .output()
@@ -28341,7 +28429,7 @@ fn trace_replay_refuses_a_source_that_changed_since_the_run() {
         .to_string();
     assert!(
         !rid.is_empty(),
-        "precondition: `axon run` must print a run-id: {err}"
+        "precondition: `axon run --verbose` must print a run-id: {err}"
     );
 
     // Unchanged source: the replay must still work.
@@ -30496,9 +30584,7 @@ fn octal_literals_lex_like_hex_and_binary() {
         let f = tmp_ax("octal", src);
         let out = axon().arg("run").arg(&f).output().expect("spawn");
         let _ = std::fs::remove_file(&f);
-        // STDOUT only. `axon run` writes `axon: run-id …` to STDERR, so a
-        // combined read takes THAT as the last line and every value comparison
-        // fails for a reason that has nothing to do with the literal.
+        // STDOUT only: the value under test is printed there.
         (
             out.status.code().unwrap_or(-1),
             String::from_utf8_lossy(&out.stdout).to_string(),
@@ -31605,19 +31691,16 @@ fn eprint_writes_to_stderr_without_a_newline() {
     assert_eq!(out.status.code(), Some(0), "program must run");
 
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-    // `axon run` writes its run-id banner to stderr; drop it before comparing.
-    let stderr: String = String::from_utf8_lossy(&out.stderr)
-        .lines()
-        .filter(|l| !l.starts_with("axon: run-id"))
-        .collect::<Vec<_>>()
-        .join("\n");
+    // The whole stream, byte for byte: `axon run` adds nothing to the
+    // program's stderr (AX-33), so no filtering is needed or allowed.
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
 
     assert_eq!(stdout, "out-a", "print goes to stdout and adds no newline");
     // err-a and err-b land on the SAME line: `eprint` emitted no separator, so
     // `eprintln`'s text is concatenated directly onto it. If eprint ever grew a
     // newline this becomes two lines and the assertion fails.
     assert_eq!(
-        stderr, "err-aerr-b",
+        stderr, "err-aerr-b\n",
         "eprint must write to STDERR with no trailing newline — if these appear \
          on separate lines, eprint added one; if they are missing from stderr, \
          it wrote to stdout"

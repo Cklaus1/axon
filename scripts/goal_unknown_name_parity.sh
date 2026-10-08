@@ -54,13 +54,9 @@ if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
 fi
 AXON="${AXON:-target/debug/axon}"
 
-# Run the interpreter, preserving its exit code, then strip the Phase-9
-# `axon: run-id` stderr stamp (the native binary emits no such line, so leaving
-# it in would be a false divergence). A bare pipe would clobber $? with grep's.
+# Run the interpreter with the deterministic AI stub and a fixed seed.
 run_interp() {
-  local out; out="$(AXON_AI_MOCK=1 AXON_SEED=42 "$AXON" run "$1" 2>&1)"; local code=$?
-  printf '%s\n' "$out" | grep -v '^axon: run-id '
-  return $code
+  AXON_AI_MOCK=1 AXON_SEED=42 "$AXON" run "$1" 2>&1
 }
 
 # Captures stderr so a FAILED build can be told apart from an unavailable one.

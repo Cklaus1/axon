@@ -134,10 +134,8 @@ check_msg() {
 
   AXON_AI_MOCK=1 "$AXON" run "$prog" >/dev/null 2>"$WORK/$name.ierr"
   local i_exit=$?
-  # The interpreter stamps `axon: run-id …` on stderr at startup; the native
-  # binary has no such line, so it is not part of the comparison.
   local i_msg
-  i_msg="$(grep -v 'axon: run-id' "$WORK/$name.ierr")"
+  i_msg="$(cat "$WORK/$name.ierr")"
 
   local bin="$WORK/${name}_bin"
   if ! AXON_AI_MOCK=1 "$AXON" build "$prog" -o "$bin" --no-cache >/dev/null 2>&1; then

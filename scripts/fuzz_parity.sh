@@ -249,10 +249,7 @@ expect_overflow() {
   printf 'fn main() -> i64 {\n    println(to_str(%s))\n    0\n}\n' "$expr" > "$src"
   local i_out i_exit n_out n_exit
   # Capture stderr (the panic message lands there) + exit code, both engines.
-  # Strip the Phase-9 `axon: run-id` stamp the interpreter prints to stderr at
-  # startup — the native binary emits no such line (would be a false divergence).
   i_out="$("$AXON" run "$src" 2>&1)"; i_exit=$?
-  i_out="$(printf '%s\n' "$i_out" | grep -v '^axon: run-id ')"
   if ! nbuild "$src" "$WORK/$name.bin"; then
     echo "  FAIL $name: native build failed after 3 attempts:"
     echo "$NBUILD_ERR" | sed 's/^/       /' | head -5; fail=1; return
@@ -284,7 +281,6 @@ expect_equal() {
   printf 'fn main() {\n    %s\n    println(to_str(%s))\n}\n' "$setup" "$expr" > "$src"
   local i_out i_exit n_out n_exit
   i_out="$("$AXON" run "$src" 2>&1)"; i_exit=$?
-  i_out="$(printf '%s\n' "$i_out" | grep -v '^axon: run-id ')"  # strip Phase-9 run-id stamp (native emits none)
   if ! nbuild "$src" "$WORK/$name.bin"; then
     echo "  FAIL $name: native build failed after 3 attempts:"
     echo "$NBUILD_ERR" | sed 's/^/       /' | head -5; fail=1; return
@@ -306,7 +302,6 @@ expect_runtime_panic() {
   printf 'fn main() {\n%b\n}\n' "$body" > "$src"
   local i_out i_exit n_out n_exit
   i_out="$("$AXON" run "$src" 2>&1)"; i_exit=$?
-  i_out="$(printf '%s\n' "$i_out" | grep -v '^axon: run-id ')"  # strip Phase-9 run-id stamp (native emits none)
   if ! nbuild "$src" "$WORK/$name.bin"; then
     echo "  FAIL $name: native build failed after 3 attempts:"
     echo "$NBUILD_ERR" | sed 's/^/       /' | head -5; fail=1; return

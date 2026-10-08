@@ -53,7 +53,7 @@ AX
   # different wrong answers in the band compare EQUAL and print a false PASS.
   # Today's optima (100, 100, 51) happen to sit outside the band; that is luck
   # about the objective, not a property of the check.
-  iout="$(AXON_SEED=42 "$AXON" run "$PROG" 2>/dev/null | grep -v '^axon: run-id ')"
+  iout="$(AXON_SEED=42 "$AXON" run "$PROG" 2>/dev/null)"
 
   # Native.
   BIN="$WORK/g_bin_$tgt"

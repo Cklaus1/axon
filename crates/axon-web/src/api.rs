@@ -78,7 +78,8 @@ pub fn goal_improve(body: &str, axon_bin: &str) -> String {
     } else {
         vec![]
     };
-    // Filter run stderr: skip warnings/run-id, keep meaningful output.
+    // Filter run stderr: skip warnings and the run-id line (`axon run` prints it
+    // only under `--verbose` or when the server's env sets AXON_RECORD).
     let run_message: String = run_stderr
         .lines()
         .filter(|l| !l.starts_with("warning:") && !l.contains("run-id "))

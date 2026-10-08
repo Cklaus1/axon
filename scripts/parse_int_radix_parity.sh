@@ -48,7 +48,6 @@ fi
 AXON="${AXON:-target/debug/axon}"
 
 I_OUT="$(AXON_AI_MOCK=1 "$AXON" run "$PROG" 2>&1)"; I_EXIT=$?
-I_OUT="$(printf '%s\n' "$I_OUT" | grep -v '^axon: run-id ')"  # strip Phase-9 run-id stamp (native emits none)
 BIN="$WORK/pir_bin"
 if ! berr="$(AXON_AI_MOCK=1 "$AXON" build "$PROG" -o "$BIN" --no-cache 2>&1)"; then
   # A build that FAILED is a RESULT, not an absence. This used to discard
