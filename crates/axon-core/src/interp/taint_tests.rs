@@ -1388,11 +1388,12 @@ fn a_sealed_caller_cannot_tell_an_operator_name_from_a_missing_one_on_any_path()
         );
         let c = case("oracle", su, body, &cand, Expect::Ok);
         let out = run(&suite_of(&c), &format!("{LAUNDER8}{}", c.cand), Rules::Both);
-        match out {
-            Ok(e) => format!("Ok({e:?})"),
-            Err(m) => format!("Err({})", m.lines().next().unwrap_or("")),
-        }
-        .replace(name, "@")
+        // The first line of the verdict, Debug-formatted (an `Err(String)` keeps its text).
+        format!("{out:?}")
+            .split("\\n")
+            .next()
+            .unwrap_or("")
+            .replace(name, "@")
     };
     let mut diffs: Vec<String> = Vec::new();
     let mut n = 0;
