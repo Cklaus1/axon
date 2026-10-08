@@ -1805,7 +1805,11 @@ fn a_pinned_program_another_uid_owns_is_refused_at_every_consumer_of_the_owner()
         let r = s.reason.clone().unwrap_or_default();
         (
             !launched(&w, op) && class(s) != "protected" && r.contains("is owned by uid"),
-            format!("{what}: launched={} class={} reason={r}", launched(&w, op), class(s)),
+            format!(
+                "{what}: launched={} class={} reason={r}",
+                launched(&w, op),
+                class(s)
+            ),
         )
     };
     // The direct launcher (run_direct, `lx.exec_owner`).
@@ -1821,7 +1825,12 @@ fn a_pinned_program_another_uid_owns_is_refused_at_every_consumer_of_the_owner()
         s
     };
     let c = direct("op-own-launcher", true);
-    assert_eq!(c.receipt.verification, ReceiptVerification::Passed, "control: {:?}", c.reason);
+    assert_eq!(
+        c.receipt.verification,
+        ReceiptVerification::Passed,
+        "control: {:?}",
+        c.reason
+    );
     let s = direct("op-stranger-launcher", false);
     let (ok, why) = refused(&s, "op-stranger-launcher", "direct launcher");
     assert!(
@@ -1848,7 +1857,12 @@ fn a_pinned_program_another_uid_owns_is_refused_at_every_consumer_of_the_owner()
         w.submit_with(lx, op, "t_psv_ok")
     };
     let c = direct_interp("op-own-interp", true);
-    assert_eq!(c.receipt.verification, ReceiptVerification::Passed, "control: {:?}", c.reason);
+    assert_eq!(
+        c.receipt.verification,
+        ReceiptVerification::Passed,
+        "control: {:?}",
+        c.reason
+    );
     let s = direct_interp("op-stranger-interp", false);
     let (ok, why) = refused(&s, "op-stranger-interp", "direct interpreter");
     assert!(
@@ -1907,7 +1921,12 @@ fn fabric_hands_the_privileged_helper_exactly_its_flag_and_its_path() {
     let mut cfg = w.protected_cfg();
     cfg.linux = Some(lx);
     cfg.observer = Some(w.observer("", &key, "observer"));
-    let _ = submit(&w.request("op-helper-dump", "check:acc", "t_psv_ok").to_string(), &cfg).unwrap();
+    let _ = submit(
+        &w.request("op-helper-dump", "check:acc", "t_psv_ok")
+            .to_string(),
+        &cfg,
+    )
+    .unwrap();
     let (args, env) = read_dump(&dump);
     let want_path = "PATH=/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/bin".to_string();
     assert!(
@@ -1950,7 +1969,12 @@ fn fabric_runs_its_direct_launcher_and_its_observer_with_exactly_their_flags_and
     );
     set_launcher(&mut lx, script);
     let s = w.submit_with(lx.clone(), "op-direct-dump", "t_psv_ok");
-    assert_eq!(s.receipt.verification, ReceiptVerification::Passed, "control: {:?}", s.reason);
+    assert_eq!(
+        s.receipt.verification,
+        ReceiptVerification::Passed,
+        "control: {:?}",
+        s.reason
+    );
     let read = |p: &Path| std::fs::read_to_string(p).unwrap();
     let want_launch_path = "PATH=/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/bin\n";
     for n in ["environ-launch", "environ-verify"] {

@@ -10059,6 +10059,8 @@ MUTATIONS += [
     ('M2944', 'TAINT (am106, runner): a sealed recv marks the channel', 'crates/axon-core/src/interp/taint.rs', 'matches!(method, "send" | "recv" | "try_recv")', 'matches!(method, "send" | "try_recv")', 'axon-psv', '--test sealed_frames', 'a_channel_the_candidate_touched_never_selects_operator_code'),
     ('M2945', 'TAINT (am106, runner): a select reads the readiness of every channel it examines', 'crates/axon-core/src/interp/eval.rs', '                    if T {\n                        self.t_chan_access(&Value::Chan(q.clone()), "recv");\n                    }\n', '', 'axon-psv', '--test sealed_frames', 'a_channel_the_candidate_touched_never_selects_operator_code'),
     ('M2946', 'TAINT (am106, runner): a sealed goal_run sees only its own fns', 'crates/axon-core/src/interp.rs', '            Some(f) => !(self.seal.active && self.frame_sealed.get()) || self.fn_is_sealed(f),', '            Some(_) => true,', 'axon-psv', '--test sealed_frames', 'a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one'),
+]
+
 # ── Amendment 107 (C9 round 11, eqgate7): the child's argv/environ, the owner at every consumer ──
 MUTATIONS += [
     ('M2960',

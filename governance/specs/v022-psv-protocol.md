@@ -6451,7 +6451,7 @@ guards of the helper have no cargo row (`TMPDIR=/tmp`, the `/tmp` tmpfs); the ki
 ## Amendment 106: shared state keeps its taint, a write carries the control it ran under, rendered text carries what it shows, the existence oracle is one text on every path, and the residual is worded to include omission and verdict tables (C9 round 11, PSV1U)
 
 106. **Source: the round-11 SENTINEL, PSV-1 and PSV-3 reviewers** (`/var/tmp/c9r11-findings-SENTINEL.json`, `-PSV-1.json`, `-PSV-3.json`).
-     Mutation ids M2910-M2946 (M2929 is not issued: see "Equivalent arm"; M2940-M2946 are runner legs), matrix rows A240-A245 (the integrator renumbers). Base `c9r11/integrate10`
+     Mutation ids M2910-M2946 (M2929 is not issued: see "Equivalent arm"; M2940-M2946 are runner legs), matrix rows A239-A244 (the integrator renumbers). Base `c9r11/integrate10`
      (`3776884c`). `crates/axon-core/src/interp*` changed; classified in `scripts/pci_delta.py` as narrowing. Amendment 102's class ("a path on which
      taint is dropped") is the one this closes further; its claim is unchanged apart from the wording below.
 
@@ -6570,7 +6570,7 @@ guards of the helper have no cargo row (`TMPDIR=/tmp`, the `/tmp` tmpfs); the ki
      `cargo fmt --all -- --check` exit 0. At `40481f10` (the final commit): `harness_integrity` (10), `harness_binaries` (43), `refusal_coverage_gate` (2) and
      `pci_delta_note` (46) exit 0, `v022_pci_gates.sh` PASS 67 rows, `v022_refusal_coverage.py` exit 0 and `--freeze` exit 0, `scripts/pci_delta.py --check` PASS,
      `cargo fmt --all -- --check` exit 0.
-     (4) `scripts/psv_matrix_check.py`: PASS (245 rows, 841 citations, all resolve) WITH eight temporary placeholder rows A232-A239; the committed matrix has A240-A245
+     (4) `scripts/psv_matrix_check.py`: PASS (245 rows, 841 citations, all resolve) WITH eight temporary placeholder rows A232-A239; the committed matrix has A239-A244
      and the gap A232-A239 (the brief's numbering; the integrator renumbers), so the committed matrix FAILS the check on the gap alone, and nothing else.
      (5) New tests: 10 in `taint_tests.rs` (channel cases, 13+3 dict rows, kernel and array rows, the 38-program hunt, the 120-pair oracle, four drift tests, the channel-method drift test,
      the text-renderer drift test) and 3 runner tests in `sealed_frames.rs`. (6) Honest-program cost: measured, item 8.
@@ -6692,7 +6692,7 @@ row), and the `_text_ids` / `_unit_ids` / `_regular_text` guards beyond those th
     with `/tmp:`, the `--timeout-s` flag renamed in the root launcher's argv, `--fc-bin`/`--jailer-bin` values swapped, and the OWNER
     argument carried in a field (`lx.exec_owner`, `cfg.exec_owner`) or a local (`owner`) replaced by `None` at four consumers. Cause: the
     gate saw values handed to `.env/.arg/.args(..)` and `Some(<x>.owner)`; everything protected goes through `sealed_exec::command`, which
-    takes `vec![..]`, a local and a `[("PATH", CONST)]` array. Mutation ids M2960-M2977 (18 of 70), matrix rows A250-A253 (the integrator
+    takes `vec![..]`, a local and a `[("PATH", CONST)]` array. Mutation ids M2960-M2977 (18 of 70), matrix rows A245-A248 (the integrator
     renumbers; the matrix check was run with temporary placeholders for A232-A249, not committed). Base `c9r11/integrate10` (`3776884c`).
     **No production code of any crate changed.** Tests, the gate, two survey/record scripts, the registry and this text. Nothing under
     `crates/axon-core/src`, `scripts/guest_build_env.py`, `scripts/lib/opkit_*.sh`, `opkit_ns_drift.py` or the kit was touched.
@@ -6760,3 +6760,5 @@ row), and the `_text_ids` / `_unit_ids` / `_regular_text` guards beyond those th
       the name is defined in several files (2 today). (7) The re-survey covers a sample, and the 3 Rust OBSERVED guards whose edit is not an
       `.ok_or` replacement are counted NOT RE-MEASURED. (8) Python other than `guest_build_env.py`, the shell scripts, and any decision
       that is not Rust or that file.
+
+**Renumbering at integration (round 12, integrate11).** Four branches built in parallel numbered their matrix rows apart (amendment 105 A232-A238; amendment 106 A240-A245; amendment 107 A250-A253); the integration made the matrix contiguous: amendment 106's rows are now A239-A244 and amendment 107's are A245-A248. The text of those amendments was rewritten to the new ids.

@@ -830,8 +830,12 @@ pub fn dump_helper(dir: &Path) -> axon_fabric::sealed_exec::Pinned {
 
 /// What a [`dump_helper`] wrote: (its arguments, its environment lines).
 pub fn read_dump(path: &Path) -> (Vec<String>, Vec<String>) {
-    let text = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("setup: the stand-in program left no dump {}: {e}", path.display()));
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| {
+        panic!(
+            "setup: the stand-in program left no dump {}: {e}",
+            path.display()
+        )
+    });
     let pick = |tag: &str| {
         text.lines()
             .filter_map(|l| l.strip_prefix(tag))

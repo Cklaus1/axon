@@ -1946,7 +1946,9 @@ fn add_spawn_probe(r: &Path) {
         r,
         GATE,
         "\nEXEC_CONSTRUCTORS = {\n",
-        &format!("\nEXEC_CONSTRUCTORS = {{\n    ({SCANNED:?}, \"vs_spawn\"): \"builder: probe\",\n"),
+        &format!(
+            "\nEXEC_CONSTRUCTORS = {{\n    ({SCANNED:?}, \"vs_spawn\"): \"builder: probe\",\n"
+        ),
     );
 }
 

@@ -1884,7 +1884,11 @@ mod tests {
         // data a profile LISTING reports, so its truth is asserted here.
         // Looked up in the registry, not read as a const (a constant assertion is a compile-time
         // check and cannot carry an ATTACK message).
-        let isolated = |id: &str| ALL.iter().find(|p| p.id == id).map(|p| p.hardware_isolation);
+        let isolated = |id: &str| {
+            ALL.iter()
+                .find(|p| p.id == id)
+                .map(|p| p.hardware_isolation)
+        };
         assert_eq!(
             isolated(LINUX_MICROVM_PROTECTED.id),
             Some(true),

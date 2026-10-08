@@ -1510,7 +1510,8 @@ fn a_freeze_needs_the_resurvey_record_for_its_head() {
     git(&r, &["commit", "-q", "-m", "a stale re-survey record"]);
     let got = freeze(&r);
     assert!(
-        got.clone().is_err_and(|e| e.contains("it is 40.0 days old")),
+        got.clone()
+            .is_err_and(|e| e.contains("it is 40.0 days old")),
         "ATTACK: the freeze bound a re-survey record the validator refused: {got:?}"
     );
 }

@@ -409,7 +409,11 @@ fn fabric_asks_the_helper_for_an_observation_with_exactly_its_flags_and_its_path
     let m = o.manifest(&o.nonce(), |_| {});
     let _ = o.fabric_observe_cfg(&cfg, &m, "w-dump");
     let (args, env) = read_dump(&dump);
-    let want = vec!["--observe".to_string(), "--test-config".to_string(), cfg_file.display().to_string()];
+    let want = vec![
+        "--observe".to_string(),
+        "--test-config".to_string(),
+        cfg_file.display().to_string(),
+    ];
     assert!(
         args == want,
         "ATTACK: Fabric asked the helper for an observation with {args:?}, not exactly {want:?}"
