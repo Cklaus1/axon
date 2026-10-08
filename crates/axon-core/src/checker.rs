@@ -1929,27 +1929,18 @@ impl CheckCtx {
         }
     }
 
-    /// Phase 5: replace any named-refinement type with its erased base,
-    /// recursively (a refinement resolves to `Struct(name)` via
+    /// Phase 5: replace any named-refinement type with its erased base, at
+    /// every nesting depth (a refinement resolves to `Struct(name)` via
     /// `axon_type_to_type`; swap it for the registered base). Idempotent for
     /// non-refinement types.
     fn resolve_refinements(&self, ty: Type) -> Type {
-        match ty {
-            Type::Struct(ref n) | Type::Deferred(ref n) => {
-                if let Some(base) = self.refinement_base.get(n) {
-                    base.clone()
-                } else {
-                    ty
-                }
-            }
-            Type::Option(i) => Type::Option(Box::new(self.resolve_refinements(*i))),
-            Type::Slice(i) => Type::Slice(Box::new(self.resolve_refinements(*i))),
-            Type::Result(a, b) => Type::Result(
-                Box::new(self.resolve_refinements(*a)),
-                Box::new(self.resolve_refinements(*b)),
-            ),
-            other => other,
-        }
+        ty.map_leaves(&mut |leaf| {
+            let base = match &leaf {
+                Type::Struct(n) | Type::Deferred(n) => self.refinement_base.get(n),
+                _ => None,
+            };
+            base.cloned().unwrap_or(leaf)
+        })
     }
 
     /// Phase 5 §2 — enforce `@[pure]` (P01/P02/P04). Walks the body of a
@@ -5663,8 +5654,15 @@ impl CheckCtx {
                     // The expected/found pair is carried by the structured
                     // `.expected()/.found()` fields below; every renderer
                     // (CLI JSON, `display()`, LSP) re-appends it, so keep it
-                    // out of the message itself to avoid printing it twice.
-                    "return type mismatch".to_string(),
+                    // out of the message itself to avoid printing it twice. When
+                    // both sides PRINT the same, the pair alone explains nothing,
+                    // so the message names the hidden difference.
+                    match hidden_type_difference(&ret_ty, val_ty) {
+                        Some(diff) => {
+                            format!("return type mismatch: the two types print alike, but {diff}")
+                        }
+                        None => "return type mismatch".to_string(),
+                    },
                 )
                 .node(node_path)
                 .at(&file, 0, 0)
@@ -6677,6 +6675,88 @@ impl CheckCtx {
     }
 }
 
+/// When `expected` and `found` differ but `Type::display` renders them the same
+/// (a struct, an enum, an unresolved name and a type parameter all print as the
+/// bare name), describe the first position where they part: `"at tuple element
+/// 0 the declared type is enum `A` and the body's is struct `A`"`. `None` when
+/// the types are equal or already print differently — the expected/found pair
+/// then says it all.
+fn hidden_type_difference(expected: &Type, found: &Type) -> Option<String> {
+    if expected == found || expected.display() != found.display() {
+        return None;
+    }
+    let mut path = Vec::new();
+    let (e, f) = first_type_difference(expected, found, &mut path);
+    let at = if path.is_empty() {
+        String::new()
+    } else {
+        format!("at {} ", path.join(" → "))
+    };
+    Some(format!(
+        "{at}the declared type is {} and the body's is {}",
+        describe_type_kind(e),
+        describe_type_kind(f)
+    ))
+}
+
+/// Descend through the containers `a` and `b` share and return the first pair
+/// of nodes that differ, recording the route in `path`.
+fn first_type_difference<'t>(
+    a: &'t Type,
+    b: &'t Type,
+    path: &mut Vec<String>,
+) -> (&'t Type, &'t Type) {
+    let children: Vec<(String, &Type, &Type)> = match (a, b) {
+        (Type::Option(x), Type::Option(y)) => vec![("the Option payload".into(), &**x, &**y)],
+        (Type::Slice(x), Type::Slice(y)) => vec![("the array element".into(), &**x, &**y)],
+        (Type::Chan(x), Type::Chan(y)) => vec![("the chan element".into(), &**x, &**y)],
+        (Type::Uncertain(x), Type::Uncertain(y)) => {
+            vec![("the Uncertain payload".into(), &**x, &**y)]
+        }
+        (Type::Temporal(x), Type::Temporal(y)) => {
+            vec![("the Temporal payload".into(), &**x, &**y)]
+        }
+        (Type::RawPtr(x), Type::RawPtr(y)) => vec![("the pointee".into(), &**x, &**y)],
+        (Type::Result(xo, xe), Type::Result(yo, ye)) => vec![
+            ("the Ok type".into(), &**xo, &**yo),
+            ("the Err type".into(), &**xe, &**ye),
+        ],
+        (Type::Tuple(xs), Type::Tuple(ys)) if xs.len() == ys.len() => xs
+            .iter()
+            .zip(ys)
+            .enumerate()
+            .map(|(i, (x, y))| (format!("tuple element {i}"), x, y))
+            .collect(),
+        (Type::Fn(xp, xr), Type::Fn(yp, yr)) if xp.len() == yp.len() => xp
+            .iter()
+            .zip(yp)
+            .enumerate()
+            .map(|(i, (x, y))| (format!("fn parameter {i}"), x, y))
+            .chain(std::iter::once(("the fn return type".into(), &**xr, &**yr)))
+            .collect(),
+        _ => return (a, b),
+    };
+    match children.into_iter().find(|(_, x, y)| x != y) {
+        Some((label, x, y)) => {
+            path.push(label);
+            first_type_difference(x, y, path)
+        }
+        None => (a, b),
+    }
+}
+
+/// What kind of type a node is, for a diagnostic where the bare name is
+/// ambiguous.
+fn describe_type_kind(t: &Type) -> String {
+    match t {
+        Type::Struct(n) => format!("struct `{n}`"),
+        Type::Enum(n) => format!("enum `{n}`"),
+        Type::Deferred(n) => format!("unresolved named type `{n}`"),
+        Type::TypeParam(n) => format!("type parameter `{n}`"),
+        other => format!("`{}`", other.display()),
+    }
+}
+
 // ── AxonType → Type conversion ────────────────────────────────────────────────
 
 /// Convert an AST type annotation to a resolved `Type`.
@@ -6684,21 +6764,16 @@ impl CheckCtx {
 /// This is a best-effort conversion: named types that the checker does not
 /// know about become `Type::Struct(name)` so the R08 pass can flag them
 /// independently.
-/// Rewrite `Type::Struct(n)` → `Type::Enum(n)` (recursively, through the common
-/// type containers) when `n` is a known enum. `axon_type_to_type` is context-free
-/// and defaults unknown named types to `Struct`; enum and struct names don't
-/// overlap, so this is a safe normalization for declared annotations.
+/// Rewrite `Type::Struct(n)` → `Type::Enum(n)` at every nesting depth (tuples,
+/// fn types and every other container, via `Type::map_leaves`) when `n` is a
+/// known enum. `axon_type_to_type` is context-free and defaults unknown named
+/// types to `Struct`; enum and struct names don't overlap, so this is a safe
+/// normalization for declared annotations.
 fn enumify(t: Type, enums: &[String]) -> Type {
-    match t {
+    t.map_leaves(&mut |leaf| match leaf {
         Type::Struct(n) if enums.iter().any(|e| e == &n) => Type::Enum(n),
-        Type::Option(i) => Type::Option(Box::new(enumify(*i, enums))),
-        Type::Slice(i) => Type::Slice(Box::new(enumify(*i, enums))),
-        Type::Chan(i) => Type::Chan(Box::new(enumify(*i, enums))),
-        Type::Result(o, e) => {
-            Type::Result(Box::new(enumify(*o, enums)), Box::new(enumify(*e, enums)))
-        }
         other => other,
-    }
+    })
 }
 
 pub fn axon_type_to_type(ty: &AxonType) -> Type {
@@ -8855,6 +8930,101 @@ mod tests {
         assert!(
             fix.contains("unwrap_or") || fix.contains("match"),
             "E0301 fix should suggest unwrap or match: {fix}"
+        );
+    }
+
+    /// AX-41: `enumify` listed containers by hand and skipped `Tuple` (and
+    /// `Fn`), so a declared `-> (A, i64)` kept `Struct("A")` while the body's
+    /// inferred type had `Enum("A")`. Every depth must be rewritten.
+    #[test]
+    fn enumify_reaches_enums_at_every_nesting_depth() {
+        let enums = vec!["A".to_string()];
+        let s = || Type::Struct("A".into());
+        let e = || Type::Enum("A".into());
+        let cases = [
+            (
+                Type::Tuple(vec![s(), Type::I64]),
+                Type::Tuple(vec![e(), Type::I64]),
+            ),
+            (
+                Type::Tuple(vec![s(), Type::Tuple(vec![s(), Type::I64])]),
+                Type::Tuple(vec![e(), Type::Tuple(vec![e(), Type::I64])]),
+            ),
+            (
+                Type::Option(Box::new(Type::Tuple(vec![s(), Type::I64]))),
+                Type::Option(Box::new(Type::Tuple(vec![e(), Type::I64]))),
+            ),
+            (
+                Type::Slice(Box::new(Type::Tuple(vec![s(), Type::I64]))),
+                Type::Slice(Box::new(Type::Tuple(vec![e(), Type::I64]))),
+            ),
+            (
+                Type::Fn(vec![s()], Box::new(Type::Tuple(vec![s()]))),
+                Type::Fn(vec![e()], Box::new(Type::Tuple(vec![e()]))),
+            ),
+            (
+                Type::Tuple(vec![Type::Struct("P".into()), Type::I64]),
+                Type::Tuple(vec![Type::Struct("P".into()), Type::I64]),
+            ),
+        ];
+        for (input, want) in cases {
+            assert_eq!(enumify(input.clone(), &enums), want, "enumify({input:?})");
+        }
+    }
+
+    /// AX-41: E0307 printed `expected (A, i64), found (A, i64)`. When the two
+    /// types differ but print alike, the message must say where and how.
+    #[test]
+    fn e0307_names_the_difference_when_both_types_print_alike() {
+        let mut ctx = mk_ctx(HashMap::new());
+        // `A` is not declared, so the annotation stays `Struct("A")`; the body
+        // is stamped `Enum("A")` — the exact pair the AX-41 repro produced.
+        let program = make_program(vec![simple_fn(
+            "f",
+            vec![],
+            Option::Some(AxonType::Tuple(vec![
+                AxonType::Named("A".into()),
+                AxonType::Named("i64".into()),
+            ])),
+            block(vec![lit_int(0)]),
+        )]);
+        let mut expr_types = HashMap::new();
+        expr_types.insert(
+            "#fn_f.body.stmt_0".to_string(),
+            Type::Tuple(vec![Type::Enum("A".into()), Type::I64]),
+        );
+        let errors = run_with_types(&mut ctx, &program, expr_types);
+        let e0307 = errors
+            .iter()
+            .find(|e| e.code == E0307)
+            .expect("expected E0307");
+        assert_eq!(
+            e0307.message,
+            "return type mismatch: the two types print alike, but at tuple element 0 \
+             the declared type is struct `A` and the body's is enum `A`"
+        );
+    }
+
+    #[test]
+    fn hidden_type_difference_is_silent_when_the_printed_types_differ() {
+        let a = Type::Tuple(vec![Type::Enum("A".into()), Type::I64]);
+        let b = Type::Tuple(vec![Type::I64, Type::I64]);
+        assert_eq!(hidden_type_difference(&a, &b), None);
+        assert_eq!(hidden_type_difference(&a, &a), None);
+        let nested_a = Type::Option(Box::new(Type::Tuple(vec![
+            Type::I64,
+            Type::Slice(Box::new(Type::TypeParam("T".into()))),
+        ])));
+        let nested_b = Type::Option(Box::new(Type::Tuple(vec![
+            Type::I64,
+            Type::Slice(Box::new(Type::Struct("T".into()))),
+        ])));
+        assert_eq!(
+            hidden_type_difference(&nested_a, &nested_b).as_deref(),
+            Some(
+                "at the Option payload → tuple element 1 → the array element the declared \
+                 type is type parameter `T` and the body's is struct `T`"
+            )
         );
     }
 

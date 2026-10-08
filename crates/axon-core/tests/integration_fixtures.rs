@@ -2262,3 +2262,127 @@ fn e0308_rejects_an_unknown_type_in_a_let_annotation() {
          E0102, not the new unknown-type error: {text}"
     );
 }
+
+// ── AX-41: named types nested inside tuples and other containers ────────────
+
+/// `[code] message` of every error the full check pipeline reports for an
+/// inline program.
+fn inline_codes(name: &str, src: &str) -> Vec<String> {
+    axon_core::check_pipeline(src, name)
+        .into_iter()
+        .filter(|d| d.severity == "error")
+        .map(|d| format!("[{}] {}", d.code, d.message))
+        .collect()
+}
+
+const AX41_TYPES: &str = "type A = Lit { v: i64 } | Two { x: i64 }\n\
+                          type P = { x: i64 }\n\
+                          type G<T> = GS { v: T } | GN { x: i64 }\n\
+                          type Pos = i64 where self > 0\n";
+
+/// AX-41: a declared return type with an enum inside a tuple stayed
+/// `Struct("A")` while the body inferred `Enum("A")`, so every return failed
+/// E0307 `expected (A, i64), found (A, i64)`. Each shape here is well-typed and
+/// must check clean: the enum directly in a tuple, nested tuples, a tuple inside
+/// `Option` and an array, tuples in match arms, tuple params and annotated
+/// `let`s, a struct or generic enum or refinement in a tuple, and fn types.
+#[test]
+fn ax41_enums_inside_tuples_and_other_containers_check_clean() {
+    let cases = [
+        (
+            "tup",
+            "fn f(n: i64) -> (A, i64) { (A::Lit { v: n }, n) }\n\
+             fn main() -> i64 { let (a, k) = f(3) println(to_str(k)) 0 }",
+        ),
+        (
+            "nested",
+            "fn f(n: i64) -> (A, (A, i64)) { (A::Lit { v: n }, (A::Two { x: n }, n)) }\n\
+             fn main() -> i64 { let (a, t) = f(3) let (b, k) = t println(to_str(k)) 0 }",
+        ),
+        (
+            "option",
+            "fn f(n: i64) -> Option<(A, i64)> { Some((A::Lit { v: n }, n)) }\n\
+             fn main() -> i64 { match f(3) { Some((a, k)) => println(to_str(k)) None => println(\"n\") } 0 }",
+        ),
+        (
+            "array",
+            "fn f(n: i64) -> [(A, i64)] { [(A::Lit { v: n }, n)] }\n\
+             fn main() -> i64 { let xs = f(3) let (a, k) = xs[0] println(to_str(k)) 0 }",
+        ),
+        (
+            "match_arms",
+            "fn f(n: i64) -> (A, i64) { match n { 0 => (A::Two { x: 0 }, 0) _ => (A::Lit { v: n }, n) } }\n\
+             fn main() -> i64 { let (a, k) = f(3) println(to_str(k)) 0 }",
+        ),
+        (
+            "param",
+            "fn g(t: (A, i64)) -> (A, i64) { t }\n\
+             fn main() -> i64 { let (a, k) = g((A::Lit { v: 3 }, 3)) println(to_str(k)) 0 }",
+        ),
+        (
+            "let_annotation",
+            "fn main() -> i64 { let t: (A, i64) = (A::Lit { v: 3 }, 3) let (a, k) = t println(to_str(k)) 0 }",
+        ),
+        (
+            "struct",
+            "fn f(n: i64) -> (P, i64) { (P { x: n }, n) }\n\
+             fn main() -> i64 { let (a, k) = f(3) println(to_str(k)) 0 }",
+        ),
+        (
+            "generic_enum",
+            "fn f(n: i64) -> (G<i64>, i64) { (G::GS { v: n }, n) }\n\
+             fn main() -> i64 { let (a, k) = f(3) println(to_str(k)) 0 }",
+        ),
+        (
+            "refinement",
+            "fn f(n: i64) -> (Pos, i64) { (5, n) }\n\
+             fn main() -> i64 { let (a, k) = f(3) println(to_str(k)) 0 }",
+        ),
+        (
+            "fn_type",
+            "fn mk(n: i64) -> A { A::Lit { v: n } }\n\
+             fn f() -> fn(i64) -> A { mk }\n\
+             fn main() -> i64 { let h = f() let a = h(3) println(\"3\") 0 }",
+        ),
+    ];
+    for (name, body) in cases {
+        let codes = inline_codes(&format!("{name}.ax"), &format!("{AX41_TYPES}{body}\n"));
+        assert!(
+            codes.is_empty(),
+            "[{name}] must check clean, got: {codes:?}"
+        );
+    }
+}
+
+/// AX-41: a tuple return that genuinely differs is still E0307, and its message
+/// does not claim the two types print alike.
+#[test]
+fn ax41_genuinely_different_tuple_returns_are_still_e0307() {
+    let cases = [
+        (
+            "int_for_enum",
+            "fn f(n: i64) -> (A, i64) { (n, n) }",
+            "(i64, i64)",
+        ),
+        (
+            "struct_for_enum",
+            "fn f(n: i64) -> (A, i64) { (P { x: n }, n) }",
+            "(P, i64)",
+        ),
+        (
+            "nested_int_for_enum",
+            "fn f(n: i64) -> Option<(A, i64)> { Some((n, n)) }",
+            "Option<(i64, i64)>",
+        ),
+    ];
+    for (name, f, found) in cases {
+        let src = format!("{AX41_TYPES}{f}\nfn main() -> i64 {{ println(\"x\") 0 }}\n");
+        let diags = axon_core::check_pipeline(&src, &format!("{name}.ax"));
+        let e0307 = diags
+            .iter()
+            .find(|d| d.code == "E0307")
+            .unwrap_or_else(|| panic!("[{name}] expected E0307, got: {diags:?}"));
+        assert_eq!(e0307.found.as_deref(), Some(found), "[{name}]");
+        assert_eq!(e0307.message, "return type mismatch", "[{name}]");
+    }
+}
