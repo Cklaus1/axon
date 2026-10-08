@@ -45,8 +45,12 @@ use inkwell::OptimizationLevel;
 /// emission (`default<On>`: mem2reg/SROA, inlining, GVN, LICM, loop passes, …)
 /// and the `TargetMachine` backend level (instruction selection, scheduling,
 /// register allocation). The size levels pair their `default<Os>`/`default<Oz>`
-/// pipelines with the `Default` backend level, as clang does. `O0` runs no IR
-/// passes at all.
+/// pipelines with the `Default` backend level and mark every definition
+/// `optsize` (`Os`) or `optsize minsize` (`Oz`), as clang does: LLVM's size
+/// heuristics (inline cost, loop unrolling, block placement, instruction
+/// selection) key on those attributes, not on the pipeline name (AX-38). `O0`
+/// runs only `globaldce`, which deletes the builtin helpers nothing calls and
+/// transforms no surviving function (AX-37).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OptLevel {
     O0,
@@ -110,14 +114,29 @@ impl OptLevel {
         }
     }
 
-    fn pipeline(self) -> Option<&'static str> {
+    /// The new-pass-manager pipeline for this level.
+    fn pipeline(self) -> &'static str {
         match self {
-            Self::O0 => None,
-            Self::O1 => Some("default<O1>"),
-            Self::O2 => Some("default<O2>"),
-            Self::O3 => Some("default<O3>"),
-            Self::Os => Some("default<Os>"),
-            Self::Oz => Some("default<Oz>"),
+            // Dead internal definitions only: the unoptimised code that remains
+            // is exactly what codegen emitted, so a debug build stays
+            // debuggable without carrying ~70 unused builtin wrappers and the
+            // runtime code they reference (AX-37).
+            Self::O0 => "globaldce",
+            Self::O1 => "default<O1>",
+            Self::O2 => "default<O2>",
+            Self::O3 => "default<O3>",
+            Self::Os => "default<Os>",
+            Self::Oz => "default<Oz>",
+        }
+    }
+
+    /// The enum function attributes clang puts on every definition at this
+    /// level (`-Os` → `optsize`, `-Oz` → `optsize minsize`).
+    fn size_attributes(self) -> &'static [&'static str] {
+        match self {
+            Self::Os => &["optsize"],
+            Self::Oz => &["optsize", "minsize"],
+            Self::O0 | Self::O1 | Self::O2 | Self::O3 => &[],
         }
     }
 }
@@ -126,7 +145,11 @@ impl OptLevel {
 /// before and after. The pipeline is target-aware, so the caller sets the
 /// module triple first; the data layout is taken from `machine` here (codegen
 /// emits none, and the passes would otherwise lay out types with LLVM's
-/// target-neutral default, e.g. 4-byte-aligned i64). No-op at `O0`.
+/// target-neutral default, e.g. 4-byte-aligned i64). At `O0` the pipeline is
+/// `globaldce` alone (AX-37), unverified: the module was verified when codegen
+/// finished it (cached bitcode is such a module), a pass that only deletes
+/// unreferenced functions cannot make it invalid, and two more verifier walks
+/// would only slow every debug build.
 ///
 /// Every definition is marked `"disable-tail-calls"="true"` first, so each
 /// Axon call keeps its stack frame. Unbounded recursion must stay a graceful
@@ -134,33 +157,47 @@ impl OptLevel {
 /// interpreter's recursion-limit panic; tail-recursion elimination would turn
 /// `fn rec(n: i64) -> i64 { rec(n + 1) }` into a loop spinning ~2^63 times,
 /// and backend sibling calls would do the same to mutual recursion. The
-/// attribute switches off both.
+/// attribute switches off both. The size levels also get their
+/// `optsize`/`minsize` attributes here (AX-38).
 fn optimize_module(
     module: &Module<'_>,
     machine: &TargetMachine,
     opt: OptLevel,
 ) -> Result<(), String> {
-    let Some(pipeline) = opt.pipeline() else {
-        return Ok(());
-    };
+    let pipeline = opt.pipeline();
     time_passes::time("ir_opt", || {
-        mark_definitions(module, "disable-tail-calls", "true");
+        let context = module.get_context();
+        mark_definitions(
+            module,
+            context.create_string_attribute("disable-tail-calls", "true"),
+        );
+        for name in opt.size_attributes() {
+            let kind = Attribute::get_named_enum_kind_id(name);
+            debug_assert_ne!(kind, 0, "LLVM has no `{name}` attribute");
+            mark_definitions(module, context.create_enum_attribute(kind, 0));
+        }
         module.set_data_layout(&machine.get_target_data().get_data_layout());
-        module.verify().map_err(|e| {
-            format!(
-                "IR verification failed before `{pipeline}`: {}",
-                e.to_string()
-            )
-        })?;
+        let verify = opt.is_optimized();
+        if verify {
+            module.verify().map_err(|e| {
+                format!(
+                    "IR verification failed before `{pipeline}`: {}",
+                    e.to_string()
+                )
+            })?;
+        }
         module
             .run_passes(pipeline, machine, PassBuilderOptions::create())
             .map_err(|e| format!("LLVM pass pipeline `{pipeline}` failed: {}", e.to_string()))?;
-        module.verify().map_err(|e| {
-            format!(
-                "IR verification failed after `{pipeline}`: {}",
-                e.to_string()
-            )
-        })
+        if verify {
+            module.verify().map_err(|e| {
+                format!(
+                    "IR verification failed after `{pipeline}`: {}",
+                    e.to_string()
+                )
+            })?;
+        }
+        Ok(())
     })
 }
 
@@ -186,13 +223,17 @@ fn run_linker(cmd: &mut Command) -> std::io::Result<ExitStatus> {
 /// `memset`/`memcpy`, printf→puts, …). `"no-builtins"` on every definition is
 /// what clang's `-ffreestanding` emits for the same reason.
 fn mark_no_builtins(module: &Module<'_>) {
-    mark_definitions(module, "no-builtins", "");
+    mark_definitions(
+        module,
+        module
+            .get_context()
+            .create_string_attribute("no-builtins", ""),
+    );
 }
 
-/// Add the string function attribute `key`=`value` to every function
-/// definition in `module` (declarations are left alone).
-fn mark_definitions(module: &Module<'_>, key: &str, value: &str) {
-    let attr = module.get_context().create_string_attribute(key, value);
+/// Add the function attribute `attr` to every function definition in `module`
+/// (declarations are left alone).
+fn mark_definitions(module: &Module<'_>, attr: Attribute) {
     let mut next = module.get_first_function();
     while let Some(func) = next {
         next = func.get_next_function();
@@ -500,7 +541,8 @@ pub(super) fn emit_hosted_object(
 /// path for this build would apply before code generation (target triple and
 /// data layout, internalisation for a hosted program, the `opt` IR pipeline),
 /// so the dumped IR is the IR that gets compiled. `O0` leaves the module as
-/// emitted.
+/// emitted (codegen's raw IR, every builtin helper included), which the golden
+/// IR tests read; the `O0` object additionally drops the dead helpers.
 pub(super) fn optimize_for_ir_dump(
     module: &inkwell::module::Module<'_>,
     opt: OptLevel,
