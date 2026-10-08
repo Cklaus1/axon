@@ -5931,7 +5931,9 @@ are untouched. The inventory below is the same one the reviewer read; every clai
    Limit, stated: this is isolation against a mistaken or regressed guard and against unprivileged build code, NOT a
    boundary against root code that means to escape (root in this namespace keeps CAP_SYS_ADMIN of the initial user
    namespace: it can mount a block device from `/dev`, load a module or ptrace). The incident the helper answers was a
-   guard-removal experiment that became a real apply.
+   guard-removal experiment that became a real apply. **Corrected by amendment 105:** the read-only root is a mount flag; the routes
+   out of it (`/dev/kmsg`, a block device, `umount /proc`, `mount -o remount,rw /`) were longer than this list and are now closed for a
+   command with the default capability set; "a write by ANY verb ... fails with EROFS" holds for that command and for unprivileged code only.
 3. **`opkit_ns_drift.py` denies by mention.** At least nine shapes beyond its seventeen were accepted: `eval "bash $KIT
    --apply"`; `c='bash "$KIT" --apply'` then `eval "$c"`; `K=$KIT; bash "$K"`; `ionice`, `stdbuf`; `python3 -c` calling
    `g.begin`; `mkdir` through a variable under `/var/lib`; `echo > /etc/..`; python `open('/etc/..','w')`. Every simple
@@ -5945,7 +5947,7 @@ are untouched. The inventory below is the same one the reviewer read; every clai
    command exec nohup xargs su systemd-run`, `bash -c`, chained aliases, an alias of the file name) and 13 controls
    (wrapped aliases, read-only mentions, wrapped redirects to scratch). Rows M2637-M2644, each killed by its own named shape.
    Known false positive, conservative: a quoted kit command spread over several physical lines is judged line by line
-   and refused (the new kit-test case is one physical line for that reason).
+   and refused (the new kit-test case is one physical line for that reason). (Gone in amendment 105: a quoted multi-line string is one argument.)
 4. **Service-account discovery fails closed.** `service_ids` (new; `service_uids` wraps it) reads: plural `uids`/`*_uids`
    lists, decimal-string values, any letter case, every file under `/etc/axon` recursively (a `.json` MUST parse and be at
    most 64 KiB; any other file is read if it parses), `User=`/`Group=` quoted or not in every `axon-*.service`, in every
@@ -6576,3 +6578,110 @@ guards of the helper have no cargo row (`TMPDIR=/tmp`, the `/tmp` tmpfs); the ki
      fast path's arm has no row (unreachable). `dstore_*` and `to_str` of a container are not driven by a test. The dispatch and width taint rules have no runner
      leg (item 9). The matrix numbering is for the integrator.
 
+## Amendment 105: a read-only root is a mount flag, not a boundary; the drift gate denies by default; service-account discovery reads every shape (C9 round 11, buildenv7)
+
+The round-11 FIELD-ORIGIN reviewer (`/var/tmp/c9r11-findings-FIELD-ORIGIN.json`; probes in `/var/tmp/c9r11-FO-logs/`) executed
+four routes out of amendment 101's read-only root and ten more shapes past its drift gate, and found three descriptor gaps and
+six service-account shapes outside the shipped deployment; the PSV-2 reviewer found one assertion that pinned less than it
+claimed. Mutation ids M2880-M2909, matrix rows A232-A238 (renumbered at integration). Base `3776884c` (integrate10).
+`crates/axon-core/src` is untouched.
+
+1. **The root was read-only by a mount FLAG.** Executed by the reviewer inside the real `ns_run`: root writing `/dev/kmsg`
+   (a line in the HOST's dmesg), `dd` to a block device (opened read-write; no mount involved), `umount /proc` (which
+   removed the namespace's `/proc` and revealed the HOST's, `/proc/1/root/opt` writable), `mount -o remount,rw /`. What
+   changed, and what each part is for:
+   - **A private minimal `/dev`** (`opkit_ns_private_dev`): a tmpfs holding only `null zero full random urandom tty` (bind
+     mounts of the host's nodes, taken while it is still visible), a private `devpts`, a private `/dev/shm`, the `fd/stdin/
+     stdout/stderr/ptmx` links; mounted read-only; the host's `/dev` is DETACHED (`umount -l -R`) before it is moved into
+     place. There is no `kmsg`, no block device, no memory device to open. Beneath it is the root filesystem's own static
+     `/dev` directory (on this host `console fd full null ptmx pts random shm stderr stdin stdout tty urandom zero`, dated
+     April); the test allows exactly those names beneath it and no other.
+   - **A private `/proc`** (`opkit_ns_fresh_proc`): the host's `/proc` that `unshare --mount-proc` only COVERS is detached, then
+     `/proc` is mounted fresh with `hidepid=2`, and `/proc/sys`, `/proc/sysrq-trigger`, `irq`, `bus`, `fs` are read-only bind
+     mounts and `kcore keys latency_stats timer_list timer_stats sched_debug kmsg` are masked (`/proc/sysrq-trigger` and
+     `/proc/sys` are writable by root with NO capability, so the read-only flag alone had been the only thing). The proof now
+     refuses any namespace where `/proc` or `/dev` has more than one mount (the covered one a `umount` would reveal), where
+     `/dev` is not a tmpfs, or where `/proc/sys` or `/proc/sysrq-trigger` is not a read-only mount. A single `umount -l
+     /proc` in the namespace leaves an EMPTY directory (it used to leave the host's `/proc`).
+   - **A reduced capability bounding set** (`OPKIT_DROP_CAPS`, applied by `setpriv --bounding-set` at the command's `exec`, after
+     the isolation that needs the capabilities): no `CAP_SYS_ADMIN` (no mount, umount, remount, pivot_root, new mount
+     namespace), `CAP_MKNOD`, `CAP_SYS_MODULE`, `CAP_SYS_RAWIO`, `CAP_SYSLOG`, `CAP_SYS_PTRACE`, `CAP_DAC_READ_SEARCH`
+     (`open_by_handle_at` reaches any inode of a filesystem whatever the mount namespace), `CAP_NET_ADMIN/NET_RAW`,
+     `CAP_SYS_BOOT/TIME/CHROOT`, `CAP_BPF/PERFMON`, `CAP_MAC_*`, `CAP_AUDIT_CONTROL`, `CAP_LINUX_IMMUTABLE`,
+     `CAP_CHECKPOINT_RESTORE` ... The kit's own need (chown, setuid/setgid, dac_override, fowner, kill, setpcap, setfcap) is kept
+     and a setuid-root program inside gets nothing more than the set. `OPKIT_CAPS_KEEP` may name only `sys_admin`; the drift
+     gate allows it on the controlled-build fixture's line alone. The fixture needs it (`guest_build_env.py` creates a PID
+     namespace for every build step); the kit's own `--guest-cmd` probe, which mounted a tmpfs over `/etc/axon` in a nested
+     `unshare`, now uses a USER namespace (`unshare --user --map-root-user --mount`), which needs no capability.
+   - **`nodev`** on every tmpfs the helper makes and on the `OPKIT_RW` binds (a node made by `mknod` cannot be opened). Read, not
+     rowed (below).
+   **What is NOT closed, stated.** A step that is handed `CAP_SYS_ADMIN` (the fixture) is not contained against a root that
+   means to escape: it can remount the root read-write, unmount the masks and write the host; the same holds of any root
+   against the host kernel (a module, a kernel bug). A user namespace for the whole run was considered and is not used: the kit
+   tests chown to arbitrary uids, create accounts and run a setuid launcher, which a one-uid mapping cannot represent. The
+   claim that stands, and that the tests execute: UNPRIVILEGED build code, and the kit AS WRITTEN (which does none of these
+   things), cannot reach the host through a mount, a device node or `/proc`, and a command with the DEFAULT capability set cannot
+   do so even as root. amendment 101's sentence "a write by ANY verb to a place nobody listed fails with EROFS" is replaced
+   by that statement (the `opkit_ns.sh` header is corrected); its stated limit ("root can mount a block device from `/dev`,
+   load a module or ptrace") under-listed the routes and is superseded by the list above.
+2. **Descriptors.** fds 0-2 were exempt from the directory check, so `ns_run ... < /` ran with a host-root handle on stdin; a
+   pre-opened WRITABLE regular file stayed writable from inside (a write reached the host file). `opkit_ns_sanitize_fds`
+   (before the command starts): fds 0-2 are refused (97, the command never runs) if a directory, a block device, a character
+   device other than null/zero/full/random/urandom/tty/console/ptmx/vt/serial/pts, or a WRITABLE regular file outside the
+   caller's named scratch (`OPKIT_RW`, `OPKIT_SCRATCH`); every other inherited descriptor is closed (`OPKIT_KEEP_FDS` names
+   those kept, each held to the same check). A caller that redirects the whole run to a LOG FILE therefore pipes it
+   (`... | tee log`) or puts the log under `OPKIT_RW`. (Found while doing this: a check written as `$(readlink /proc/self/fd/N)`
+   looks at the READLINK process's descriptors; the helper uses `$BASHPID`.) `OPKIT_RW` was accepted unvalidated (`OPKIT_RW=/opt`
+   gave the command the host's `/opt`): `opkit_rw_validate`, called by `ns_run` before anything is mounted, refuses an entry that
+   is not an existing directory, is not canonical (a symlink, `..`, a double slash), is a system path, is not strictly below a
+   temp root (`/tmp`, `/var/tmp`, `$TMPDIR`), is not owned by the caller or is group- or other-writable (a shared `/var/tmp`
+   is 1777).
+3. **The drift gate denies by default.** The round-10 gate listed shapes; the reviewer ran ten more past it (each against a stub
+   kit, which printed `STUB-RAN --apply`). `check_text` now refuses, for a command that is not `ns_run`/`kit`/`inns`: `python3 -`
+   reading the kit (no first-word exemption any more), a kit named by a glob, a copy of the kit (`cp/mv/ln/install` of a
+   mention records the destination as the kit), `--apply` anywhere in the command text or carried in a variable, `trap`,
+   `export`, `declare`, `local` of a command string, a shell that reads its program from stdin (a pipe, a heredoc, a
+   here-string, a process substitution: `bash`, `sh -s`, `source <(..)`), a heredoc that names the kit, `--apply` or the build API fed
+   to an unwrapped command (the body of a file written then run), an interpreter (python, perl, ruby, node, awk ...) whose
+   text executes something or names a real destination (not a chosen list of functions), the host verbs `mount umount
+   mknod useradd groupadd systemctl (not status) dd of= modprobe sysctl ...`, `cd` into a real path, `git -C` a non-scratch
+   path, any state-changing command (mkdir touch rm cp mv install chown chmod tee ln truncate mktemp) whose operand is not
+   provably scratch (below `/tmp`, `/var/tmp` or a scratch variable assigned from `mktemp`/`$TMPDIR`/`$WORK`), and a redirection
+   whose target is not provably scratch. A shell given a program with `-c` has that program judged command by command. Quoted multi-line strings are now ONE argument of one command (the round-10 note
+   "a quoted kit command spread over several physical lines is judged line by line and refused" is gone) and a heredoc is
+   recognised anywhere on its line (it had to END the line, so `<<'PY' || fail ..` hid its body); a heredoc script is in-namespace
+   when it sources the helper and calls `opkit_ns_assert` BEFORE its first kit line (the old test read the FIRST line, so the
+   kit test's own `ns.sh` body, which begins with an assignment, was treated as data and never judged). `OPKIT_CAPS_KEEP`
+   outside the fixture's line, `OPKIT_RW` naming a non-scratch path and the helper's internal knobs are refused in any test
+   script but `test_opkit_ns.sh`; the self-test's own `--child` block is the one exempt region. Real changes to the tests the
+   gate now forces: `ns_run python3 - "$KIT"` (the drift test of amendment 90), the `.sig` fixture written by the python that
+   writes the record, no `rm` of a canary in `/opt`. `--selftest`: 48 + 40 must-flag shapes (every shape of the finding plus the
+   others above), 13 + 9 controls.
+4. **Service-account discovery, outside the shipped deployment.** Fail-closed additions: TOML, YAML, env and `key value` files
+   under `/etc/axon` (every `key = value`, `key: value`, `KEY=value` and `- item` line is read with the same key classes; a text
+   file that mentions `uid`/`gid` and yields no identity REFUSES); JSON keys `user owner run_as principal id group` ... (soft keys:
+   a number, a decimal string or an account name, resolved) and `euid egid`; a symlinked sub-directory (followed, each real
+   directory once, so a loop terminates); a FIFO or device under `/etc/axon` refuses (it would block or is no config);
+   `SupplementaryGroups=`, `SocketUser=`, `SocketGroup=` in `.socket` units; `User=%U`, `User=$X` and a value that is not an
+   account name or id refuse; line continuation and ` # ` inline comments in units; the key in any letter case; and EVERY
+   `.service`/`.socket` unit and `*.d` drop-in of `/etc/systemd/system`, `/run/systemd/system` and
+   `/usr/local/lib/systemd/system` (not only axon-named ones or ones that run an axon binary: a unit that names an account
+   names one the deployment may share), the distribution's own directories only for an axon-named or axon-running unit (a
+   stock `capsule@.service` has `User=c-%i`). Not done and stated: the build uid's membership in a service's group in
+   `/etc/group` is not read (the build runs with `--clear-groups`), and a first install with `--only binaries` before the
+   users exist is judged only by the pre-users check (amendment 101 item 4's re-check is after the users step).
+5. **PSV-2.** `the_check_child_runs_in_the_suite_with_only_its_own_environment_and_stdio` now asserts the value of
+   `AXON_ALLOWED_EFFECTS` equals the guest policy's ceiling minus `Exec`, exactly, as well as that `Exec` is absent.
+
+**Rows.** M2880-M2895 (namespace), M2896-M2904 (drift), M2905-M2909 (build uid); M2503, M2504, M2513, M2637, M2639, M2641-M2644,
+M2650, M2654-M2656 re-anchored to the moved code or to a shape only their own guard catches (the deny-by-default rules subsumed the
+round-10 guards of M2639, M2641, M2642 and M2643, so their selftest shapes were rewritten to ones the new rules accept: a command
+string WITHOUT `--apply`, `WORK` reassigned to a real path, a python program naming a real path; M2643 now mutates the interpreter
+rule's real-path term and the old `DEST_LITERAL` branch it guarded is gone; M2656 judges the distribution-directory rule). Each is killed by its own
+attack: the namespace and drift rows run through `operator_examples` (the shell test and the gate's `--selftest` print an
+`ATTACK:` / `selftest:` line), the build-uid rows through `guest_build_env_guards`. The namespace tests need root and unshare:
+see the evidence in the report for where each ran. Unrowed, stated: `nodev` (the tests read the mount flags; no
+capability is left to make a node), `CAP_DAC_READ_SEARCH`, `CAP_SYS_PTRACE` and the other dropped capabilities beyond the
+three rowed, the block/character-device and `fd`-closing refusals beyond the rowed ones, the `OPKIT_RW` owner rule and the
+canonical-path rule, the drift gate's `cd`, `git -C`, redirect-deny-by-default and knob rules (selftest shapes only, no
+row), and the `_text_ids` / `_unit_ids` / `_regular_text` guards beyond those the survey observes.

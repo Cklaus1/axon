@@ -90,7 +90,7 @@ fi
 HOSTOUT=$WORK/hostbuild
 BUILDER_UID=$(id -u)
 # The fixture needs the network (the host build downloads its crates): OPKIT_NET=host, the one namespace it shares.
-OPKIT_NET=host ns_run bash "$HERE/lib/opkit_fixture.sh" "$CLONE" "$DIST" "$KEYPARENT" "$BUILD_UID" "$HOSTOUT" "$KEYSTASH" "$WORK/commit.txt" \
+OPKIT_CAPS_KEEP=sys_admin OPKIT_NET=host ns_run bash "$HERE/lib/opkit_fixture.sh" "$CLONE" "$DIST" "$KEYPARENT" "$BUILD_UID" "$HOSTOUT" "$KEYSTASH" "$WORK/commit.txt" \
   || { echo "the synthetic image / controlled host build failed in the namespace"; exit 2; }
 COMMIT=$(cat "$WORK/commit.txt")
 export OPKIT_RESTORE="$KEYSTASH=$KEYPARENT"
@@ -363,7 +363,7 @@ refused "ATTACK: a host build directory with a file the build did not make" "fil
 # WORKING TREE (the builder owns it and ran every build script): every
 # `$CLONE/scripts`, `$CLONE/profiles` and `$CLONE/dist` read is the copy-aside
 # itself or the cleanliness check. A drift test on the script's own text.
-python3 - "$KIT" <<'PY' || fail "ATTACK: the kit reads the clone's working tree after the copy-aside"
+ns_run python3 - "$KIT" <<'PY' || fail "ATTACK: the kit reads the clone's working tree after the copy-aside"
 import re, sys
 bad = []
 for n, line in enumerate(open(sys.argv[1]), 1):
@@ -480,8 +480,8 @@ json.dump({"schema": "axon-b263-evidence/1", "issuer_key_id": "ed25519:000000000
            "profile": {"manifest_sha256": hashlib.sha256(open(man, "rb").read()).hexdigest()},
            "source": {"tree_dirty": False, "host_identity_sha256": "a" * 64}, "fixture": "never signed"},
           open(out, "w"))
+open(out + ".sig", "w").write('{"fixture":"not a signature"}\n')
 PY
-  echo '{"fixture":"not a signature"}' >"$1.sig"
 }
 b263_fixture "$WORK/b263-other.json" 0123456789abcdef0123456789abcdef opkit-host
 o=$(ns_run bash "$KIT" "${ARGS[@]}" --only data --b263-record "$WORK/b263-other.json" 2>&1)
@@ -594,7 +594,8 @@ setpriv --reuid="$FU" --regid="$FG" --clear-groups -- sleep 3600 & FPID=$!
 setpriv --reuid="$FU" --regid="$FG" --clear-groups --no-new-privs -- sleep 3600 & NNP_PID=$!
 trap 'kill $FPID $NNP_PID $OSPID 2>/dev/null' EXIT
 ARGS+=(--fabric-unit "$W/fabric.service")
-GUEST="unshare --mount --propagation private sh -c 'mount -t tmpfs none /etc/axon && sh $CLONE/scripts/trust_root_guest_probe.sh /etc/axon/trust'"
+# Amendment 105: the command has no CAP_SYS_ADMIN, so the guest view (an empty /etc/axon) is a USER namespace's own mount
+GUEST="unshare --user --map-root-user --mount --propagation private sh -c 'mount -t tmpfs none /etc/axon && sh $CLONE/scripts/trust_root_guest_probe.sh /etc/axon/trust'"
 kit "${ARGS[@]}" --fabric-pid "$FPID" --b263-record "$W/b263.json" --agent 40003 --agent 40004 --guest-cmd "$GUEST" --apply >"$W/apply2.out" 2>&1
 r=$?; cat "$W/apply2.out" >&2
 [ $r = 0 ] || fail "the full apply exited $r"

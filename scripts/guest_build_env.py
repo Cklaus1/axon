@@ -261,6 +261,11 @@ def builder_home():
 SERVICE_USERS = ("axon-fabric", "axon-custodian", "axon-observer", "axon-verifier", "axonb263")
 SERVICE_ETC = "/etc/axon"
 SERVICE_UNITS = "/etc/systemd/system"
+# amendment 105: the other directories systemd reads units from (a service installed there names an account too)
+# Operator-controlled directories are read in full; the distribution's own (a stock `capsule@.service` has User=c-%i)
+# only for a unit that is named axon-* or runs an axon binary.
+SERVICE_UNIT_EXTRA_DIRS = ("/run/systemd/system", "/usr/local/lib/systemd/system")
+SERVICE_UNIT_VENDOR_DIRS = ("/usr/lib/systemd/system", "/lib/systemd/system")
 
 
 MAX_SERVICE_FILE = 1 << 16
@@ -281,32 +286,118 @@ def _id_value(v):
     return None
 
 
+# Amendment 105: which keys name an identity. STRICT keys hold a number or a decimal string (anything else refuses);
+# SOFT keys (`user`, `owner`, `run_as`, `id` ...) may hold a number, a decimal string OR an account name, which is
+# resolved (an unknown name names no account yet: the kit re-checks after it creates the users).
+_STRICT_UID = re.compile(r"^(?:uid|uids|euid|suid|fsuid|ruid|.*_uids?|.*_euid)$")
+_STRICT_GID = re.compile(r"^(?:gid|gids|egid|sgid|fsgid|rgid|.*_gids?|.*_egid)$")
+_SOFT_UID = re.compile(r"^(?:id|ids|user|users|owner|owners|run_as|runas|run_as_user|principal|principals|account|accounts|login|"
+                       r".*_user|.*_users|.*_owner|.*_account|.*_principal|.*_login)$")
+_SOFT_GID = re.compile(r"^(?:group|groups|run_as_group|supplementary_groups|supplementarygroups|"
+                       r".*_group|.*_groups)$")
+
+
+def _soft_value(x, soft_gid):
+    """int for a number / decimal string / `uid:gid` half / known account name; None for an unknown name or a non-id."""
+    if isinstance(x, bool):
+        return None
+    iv = _id_value(x)
+    if iv is not None:
+        return iv
+    if isinstance(x, str):
+        t = x.strip()
+        if re.fullmatch(r"[0-9]{1,9}:[0-9]{1,9}", t):
+            return int(t.split(":")[1 if soft_gid else 0])
+        try:
+            return grp.getgrnam(t).gr_gid if soft_gid else pwd.getpwnam(t).pw_uid
+        except KeyError:
+            return None
+    return None
+
+
 def _id_fields(node, where, uids, gids):
-    """uid / gid fields of a config, any depth: `uid`, `*_uid`, plural `uids` / `*_uids` (lists), the same
-    for gids, any letter case, a number or a decimal string. (`build_uid`, the thing being judged, is excluded.)"""
+    """Identity fields of a config, any depth, any letter case: STRICT (`uid`, `*_uid`, `euid`, `gid`, `*_gid`, plural
+    lists) and SOFT (`user`, `owner`, `run_as`, `principal`, `id`, `group` ...; a number, a decimal string or an
+    account name). (`build_uid`, the thing being judged, is excluded.)"""
     if isinstance(node, dict):
         for k, v in node.items():
             kl = k.lower() if isinstance(k, str) else ""
-            kind = None
+            kind, strict, soft_gid = None, False, False
             if kl in ("build_uid", "build_gid"):
                 continue
-            if kl in ("uid", "uids") or kl.endswith("_uid") or kl.endswith("_uids"):
+            if _STRICT_UID.match(kl):
+                kind, strict = uids, True
+            elif _STRICT_GID.match(kl):
+                kind, strict, soft_gid = gids, True, True
+            elif _SOFT_UID.match(kl) and not isinstance(v, (dict, list)) or _SOFT_UID.match(kl) and isinstance(v, list) and not any(isinstance(e, (dict, list)) for e in v):
                 kind = uids
-            elif kl in ("gid", "gids") or kl.endswith("_gid") or kl.endswith("_gids"):
-                kind = gids
+            elif _SOFT_GID.match(kl) and not isinstance(v, dict) and not (isinstance(v, list) and any(isinstance(e, (dict, list)) for e in v)):
+                kind, soft_gid = gids, True
             if kind is None:
                 _id_fields(v, where, uids, gids)
                 continue
             if v is None:
                 continue
             for x in (v if isinstance(v, list) else [v]):
-                iv = _id_value(x)
-                if iv is None:
-                    raise DiscoveryRefused(f"{where}: {k} holds {x!r}, which is not a uid or gid")
+                if strict:
+                    iv = _id_value(x)
+                    if iv is None:
+                        raise DiscoveryRefused(f"{where}: {k} holds {x!r}, which is not a uid or gid")
+                else:
+                    iv = _soft_value(x, soft_gid)
+                    if iv is None:
+                        continue
                 kind.setdefault(iv, f"{where}:{k}")
     elif isinstance(node, list):
         for v in node:
             _id_fields(v, where, uids, gids)
+
+
+_TEXT_KV = re.compile(r"^\s*(?:export\s+)?[\"']?([A-Za-z_][\w.\-]*)[\"']?\s*[:=]\s*(.*?)\s*$")
+
+
+def _text_ids(text, where, uids, gids):
+    """A config that is not JSON (TOML, YAML, an env file, `key value` lines): every `key = value`, `key: value` and
+    `KEY=value` line is read with the same key classes as the JSON fields, a YAML list item (`- 1000`) under such a key
+    too. FAIL CLOSED: a file that mentions `uid`/`gid` and yields no identity it could read refuses."""
+    found, mentions, last = 0, bool(re.search(r"(?i)\b\w*(?:uid|gid)\w*\b", text)), None
+    for ln in text.replace("\\\n", " ").splitlines():
+        t = ln.strip()
+        if not t or t.startswith(("#", ";", "[", "//")):
+            continue
+        if last is not None and t.startswith("- "):
+            vals, (kind, strict, soft_gid, key) = [t[2:].strip()], last
+        else:
+            m = _TEXT_KV.match(t)
+            if not m:
+                last = None
+                continue
+            key, raw = m.group(1), m.group(2)
+            kl = key.lower().rsplit(".", 1)[-1]
+            raw = re.sub(r"\s+[#;].*$", "", raw).strip().rstrip(",")
+            if _STRICT_UID.match(kl) and kl not in ("build_uid",):
+                kind, strict, soft_gid = uids, True, False
+            elif _STRICT_GID.match(kl) and kl not in ("build_gid",):
+                kind, strict, soft_gid = gids, True, True
+            elif _SOFT_UID.match(kl):
+                kind, strict, soft_gid = uids, False, False
+            elif _SOFT_GID.match(kl):
+                kind, strict, soft_gid = gids, False, True
+            else:
+                last = None
+                continue
+            last = (kind, strict, soft_gid, key)
+            vals = [v for v in re.split(r"[\s,\[\]]+", raw.strip("[]")) if v]
+        for v in vals:
+            v = v.strip("\"'")
+            iv = _id_value(v) if strict else _soft_value(v, soft_gid)
+            if strict and iv is None:
+                raise DiscoveryRefused(f"{where}: {key} holds {v!r}, which is not a uid or gid")
+            if iv is not None:
+                kind.setdefault(iv, f"{where}:{key}")
+                found += 1
+    if mentions and not found:
+        raise DiscoveryRefused(f"{where} mentions a uid or gid in a form that cannot be read: it may name a service account")
 
 
 def _read_small(path):
@@ -320,20 +411,85 @@ def _read_small(path):
     return data
 
 
-def _unit_ids(text, where, uids, gids):
-    for m in re.finditer(r"^\s*(User|Group)\s*=\s*(.*?)\s*$", text, re.M):
-        key, u = m.group(1), m.group(2).strip().strip("\"'").strip()
-        if not u:
+_UNIT_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.@\-]*$")
+
+
+def _unit_lines(text):
+    """A unit file's logical lines: backslash continuations joined, comment lines (`#`, `;`) dropped, an inline
+    ` # ...` / ` ; ...` comment cut (systemd keeps it as part of the value -- cutting it reads MORE identities)."""
+    out, cur = [], ""
+    for ln in text.splitlines():
+        if not cur and ln.lstrip().startswith(("#", ";")):
             continue
-        iv = int(u) if u.isdigit() else None
-        if iv is None:
-            try:
-                iv = pwd.getpwnam(u).pw_uid if key == "User" else grp.getgrnam(u).gr_gid
-            except KeyError:
-                continue                  # an account that does not exist yet: the kit re-checks after it creates the users
-        (uids if key == "User" else gids).setdefault(iv, f"{where}: {key}={u}")
+        if ln.rstrip().endswith("\\"):
+            cur += ln.rstrip()[:-1] + " "
+            continue
+        out.append(re.sub(r"\s+[#;].*$", "", cur + ln))
+        cur = ""
+    if cur:
+        out.append(cur)
+    return out
+
+
+def _unit_ids(text, where, uids, gids):
+    for ln in _unit_lines(text):
+        m = re.match(r"^\s*(User|Group|SupplementaryGroups|SocketUser|SocketGroup)\s*=\s*(.*?)\s*$", ln, re.I)
+        if not m:
+            continue
+        key = m.group(1).lower()
+        values = m.group(2).split() if key == "supplementarygroups" else [m.group(2).strip().strip("\"'").strip()]
+        for u in values:
+            u = u.lstrip("-")
+            if not u:
+                continue
+            if "%" in u or "$" in u:
+                raise DiscoveryRefused(f"{where}: {m.group(1)}={u} uses a specifier or variable, so the account it names cannot be determined")
+            iv = int(u) if u.isdigit() else None
+            if iv is None:
+                if not _UNIT_NAME.match(u):
+                    raise DiscoveryRefused(f"{where}: {m.group(1)}={u!r} is not an account name or id that can be read")
+                try:
+                    iv = pwd.getpwnam(u).pw_uid if key in ("user", "socketuser") else grp.getgrnam(u).gr_gid
+                except KeyError:
+                    continue                  # an account that does not exist yet: the kit re-checks after it creates the users
+            (uids if key in ("user", "socketuser") else gids).setdefault(iv, f"{where}: {m.group(1)}={u}")
     if re.search(r"^\s*DynamicUser\s*=\s*(yes|true|1|on)\b", text, re.M | re.I):
         raise DiscoveryRefused(f"{where}: DynamicUser=yes allocates the service's uid at start, so no uid can be proven to be dedicated")
+
+
+def _walk_etc(etc, errs):
+    """Every (dir, files) under `etc`, FOLLOWING symlinked directories (each real directory once): a service config
+    behind a symlink is still a config."""
+    seen, stack = set(), [etc]
+    while stack:
+        d = stack.pop()
+        try:
+            real = os.path.realpath(d)
+            if real in seen:
+                continue
+            seen.add(real)
+            entries = sorted(os.listdir(d))
+        except OSError as e:
+            errs.append(e)
+            continue
+        files = []
+        for n in entries:
+            if os.path.isdir(os.path.join(d, n)):
+                stack.append(os.path.join(d, n))
+            else:
+                files.append(n)
+        yield d, files
+
+
+def _regular_text(path):
+    """A config's bytes, refused unless it is a regular file small enough to read (a FIFO would block, a device is no config)."""
+    try:
+        st = os.stat(path)
+    except OSError as e:
+        raise DiscoveryRefused(f"{path} cannot be read ({e.strerror}): it may name a service account")
+    if not stat.S_ISREG(st.st_mode):
+        raise DiscoveryRefused(f"{path} is not a regular file: it cannot be read for the service accounts it names")
+    return _read_small(path)
 
 
 def service_ids(users=None, etc=None, units=None):
@@ -354,54 +510,53 @@ def service_ids(users=None, etc=None, units=None):
     etc = SERVICE_ETC if etc is None else etc
     if os.path.lexists(etc):
         errs = []
-        walked = list(os.walk(etc, followlinks=False, onerror=errs.append))
+        walked = list(_walk_etc(etc, errs))
         if errs:
             raise DiscoveryRefused(f"{etc} cannot be listed ({errs[0].strerror}): it may name a service account")
-        for d, _, files in sorted(walked):
+        for d, files in sorted(walked):
             for n in sorted(files):
                 path = os.path.join(d, n)
-                if os.path.isdir(path):
-                    continue
+                data = _regular_text(path)
                 if n.endswith(".json"):
                     try:
-                        _id_fields(json.loads(_read_small(path)), path, uids, gids)
+                        _id_fields(json.loads(data), path, uids, gids)
                     except ValueError:
                         raise DiscoveryRefused(f"{path} is not valid JSON: it may name a service account")
                 else:
                     try:
-                        doc = json.loads(_read_small(path))
-                    except (DiscoveryRefused, ValueError, UnicodeDecodeError):
-                        continue          # not a config of ours (a key, an allowlist); only *.json must parse
+                        doc = json.loads(data)
+                    except (ValueError, UnicodeDecodeError):
+                        _text_ids(data.decode(errors="replace"), path, uids, gids)    # TOML / YAML / env / key-value lines
+                        continue
                     _id_fields(doc, path, uids, gids)
-    units = SERVICE_UNITS if units is None else units
-    if os.path.lexists(units):
+    # every unit directory systemd reads from; `units` (a test fixture) replaces them all
+    udirs = [SERVICE_UNITS if units is None else units]
+    if units is None:
+        udirs += [d for d in SERVICE_UNIT_EXTRA_DIRS if os.path.realpath(d) != os.path.realpath(SERVICE_UNITS)]
+        udirs += list(SERVICE_UNIT_VENDOR_DIRS)
+    seen_dirs = set()
+    for units in udirs:
+        vendor = units in SERVICE_UNIT_VENDOR_DIRS
+        if not os.path.lexists(units) or os.path.realpath(units) in seen_dirs:
+            continue
+        seen_dirs.add(os.path.realpath(units))
         try:
             names = sorted(os.listdir(units))
         except OSError as e:
             raise DiscoveryRefused(f"{units} cannot be listed ({e.strerror}): it may hold a service unit")
-        relevant = {}
         for n in names:
-            if n.endswith(".service") and os.path.isfile(os.path.join(units, n)):
-                try:
-                    text = _read_small(os.path.join(units, n)).decode(errors="replace")
-                except DiscoveryRefused:
-                    if n.startswith("axon-"):
-                        raise
-                    continue              # an unrelated unit we cannot read names no axon binary we can see
-                if n.startswith("axon-") or re.search(r"^\s*Exec\w*\s*=.*axon", text, re.M):
-                    relevant[n] = text
-        for n in names:
-            if n.endswith(".service.d") and os.path.isdir(os.path.join(units, n)):
-                unit = n[:-2]
-                if unit in relevant or unit.startswith("axon-"):
-                    relevant.setdefault(unit, "")
-        for unit, text in sorted(relevant.items()):
-            _unit_ids(text, os.path.join(units, unit), uids, gids)
-            dd = os.path.join(units, unit + ".d")
-            if os.path.isdir(dd):
-                for c in sorted(os.listdir(dd)):
-                    if c.endswith(".conf"):
-                        _unit_ids(_read_small(os.path.join(dd, c)).decode(errors="replace"), os.path.join(dd, c), uids, gids)
+            full = os.path.join(units, n)
+            # ANY service or socket unit: a User= is an account the deployment may share, whatever the unit is named or runs
+            if n.endswith((".service", ".socket")) and os.path.isfile(full):
+                text = _regular_text(full).decode(errors="replace")
+                if not vendor or n.startswith("axon-") or re.search(r"^\s*Exec\w*\s*=.*axon", text, re.M):
+                    _unit_ids(text, full, uids, gids)
+            # drop-ins, of a unit that exists in this directory or not (`axon-x.service.d`, `service.d`)
+            if (n.endswith((".service.d", ".socket.d")) or n in ("service.d", "socket.d")) and (not vendor or n.startswith("axon-")):
+                if os.path.isdir(full):
+                    for c in sorted(os.listdir(full)):
+                        if c.endswith(".conf"):
+                            _unit_ids(_regular_text(os.path.join(full, c)).decode(errors="replace"), os.path.join(full, c), uids, gids)
     return uids, gids
 
 

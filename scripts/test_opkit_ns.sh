@@ -14,6 +14,31 @@ LIB=$HERE/lib/opkit_ns.sh
 # ── child mode: this script re-executed INSIDE a fresh mount namespace, so the helper sees its caller ──
 if [ "${1:-}" = --child ]; then
   mode=$2 W=$3
+  # amendment 105: the mechanisms on their own, in a throw-away mount namespace and with no proof in the way
+  case "$mode" in
+    nsrun) . "$LIB"; shift 3; ns_run "$@"; exit $? ;;       # ns_run with this script as the outermost one (the *_FOR_TEST overrides are honoured)
+    devpriv)
+      . "$LIB"; mkdir -p "$W/devmp" && opkit_ns_private_dev "$W/devmp" || exit 93
+      echo "DEVLIST $(ls /dev | tr '\n' ' ')"
+      { : >/dev/opkit-new-node; } 2>/dev/null && echo CREATED-IN-DEV
+      umount -l /dev
+      echo "AFTER-UMOUNT [$(ls /dev 2>&1 | tr '\n' ' ')]"
+      exit 0 ;;
+    procpriv)
+      . "$LIB"
+      mount -t proc proc /proc || exit 93          # a cover over the host's /proc, as unshare --mount-proc lays one
+      opkit_ns_fresh_proc || exit 93
+      python3 -c '
+import os
+for p in ("/proc/sysrq-trigger", "/proc/sys/kernel/hostname"):
+    try:
+        os.close(os.open(p, os.O_WRONLY)); print("OPENED-FOR-WRITE", p)
+    except OSError as e:
+        print("refused", p, e.errno)'
+      umount -l /proc
+      echo "AFTER-UMOUNT [$(ls /proc 2>&1 | tr '\n' ' ')]"
+      exit 0 ;;
+  esac
   # RO=1: the root is made read-only first, as ns_run does, and the tmpfs shadows are laid over it afterwards
   if [ "${RO:-0}" = 1 ]; then . "$LIB"; opkit_ns_make_ro || exit 92; export OPKIT_REQUIRE_RO=1; fi
   mount -t tmpfs tmpfs "$W/a" || exit 90
@@ -48,6 +73,22 @@ trap 'rm -rf "$W"' EXIT
 mkdir -p "$W/a" "$W/b" "$W/scratch"
 fail() { echo "FAIL: $*"; exit 1; }
 
+# the mechanisms, judged on their own (a throw-away mount namespace, no proof, no ns_run): a regression in one cannot hide behind the proof
+o=$(unshare -m --propagation private bash "$SELF" --child devpriv "$W" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q '^AFTER-UMOUNT' <<<"$o" || fail "setup: the private /dev mechanism did not run (rc $rc): $o"
+dl=$(sed -n 's/^DEVLIST //p' <<<"$o")
+[ "$(tr ' ' '\n' <<<"$dl" | grep -v '^$' | sort | tr '\n' ' ')" = "fd full null ptmx pts random shm stderr stdin stdout tty urandom zero " ] \
+  || fail "ATTACK: the private /dev holds a node nobody listed (or lacks one): $dl"
+! grep -q CREATED-IN-DEV <<<"$o" || fail "ATTACK: a file could be created in the private /dev (it is not read-only): $o"
+# beneath the private /dev is the root filesystem's own (static) /dev directory; the host's DEVTMPFS must not be beneath it
+for w in $(sed -n 's/^AFTER-UMOUNT \[\(.*\)\]$/\1/p' <<<"$o"); do
+  case " console fd full null ptmx pts random shm stderr stdin stdout tty urandom zero " in *" $w "*) ;; *) fail "ATTACK: after umount /dev the host's devices show through ($w): $o" ;; esac
+done
+o=$(unshare -m --propagation private bash "$SELF" --child procpriv "$W" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q '^AFTER-UMOUNT' <<<"$o" || fail "setup: the private /proc mechanism did not run (rc $rc): $o"
+! grep -q OPENED-FOR-WRITE <<<"$o" || fail "ATTACK: a /proc file that reaches the host could be opened for writing (mechanism): $o"
+grep -q '^AFTER-UMOUNT \[\]$' <<<"$o" || fail "ATTACK: after umount /proc the host's /proc shows through (mechanism): $o"
+echo "ok: the private /dev (exactly the listed nodes, read-only, nothing beneath) and the private /proc (sysrq-trigger and sys read-only, nothing beneath) work on their own"
 # Runs the assertion in a fresh private namespace with $W/a (and $W/b when TMPFS_B=1) a tmpfs.
 assert_in_ns() { # VIEW NSPID -> prints stderr, exits with the assertion's rc
   VIEW=$1 NSPID=$2 TMPFS_B=${TMPFS_B:-1} unshare -m --propagation private bash "$SELF" --child assert "$W" 2>&1
@@ -199,4 +240,181 @@ grep -q '^done$' <<<"$o" || fail "setup: the forged-stamp commands did not run: 
 ! grep -q ACCEPTED-STAMP-OF-ANOTHER-NAMESPACE <<<"$o" || fail "ATTACK: a stamp recording another namespace's ids was accepted: $o"
 ! grep -q ACCEPTED-STAMP-NAMING-THE-HOST <<<"$o" || fail "ATTACK: a stamp whose host namespace is this namespace was accepted: $o"
 echo "ok: a forged stamp (another namespace's ids; the host recorded as this namespace) is refused"
+# ── amendment 105 ───────────────────────────────────────────────────────────────────────────────────
+# The read-only root is a mount flag; what makes it a boundary is what the command CANNOT do. Every attack the
+# round-11 reviewer executed is executed here, inside ns_run, with canaries only: nothing below writes a byte
+# to a real place if a guard regresses (a marker line in the host's kernel log, a refused open of a node,
+# a file under $W). KEEP=1 hands the step CAP_SYS_ADMIN (the one capability the fixture is allowed to keep).
+nsrun() { # [VAR=val ...] -- CMD...   (ns_run with the standard scratch)
+  OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run "$@"' bash "$@"
+}
+# (1) /dev: a private minimal tmpfs. There is no kmsg to write, no block device to open, nothing but the listed nodes.
+MARK="OPKIT-NS-TEST-MARKER-$$-$RANDOM"
+for keep in "" sys_admin; do
+  o=$(OPKIT_CAPS_KEEP=$keep nsrun bash -c '
+    echo "DEVLIST $(ls /dev | tr "\n" " ")"
+    { echo "'"$MARK"'" >/dev/kmsg; } 2>/dev/null && echo KMSG-WRITTEN || echo kmsg-refused
+    [ -e /dev/kmsg ] && echo KMSG-EXISTS
+    ls /dev/sd* /dev/nvme* /dev/vd* /dev/loop* /dev/mem /dev/kmem /dev/port 2>/dev/null | sed "s/^/HOSTDEV /"
+    echo done' 2>&1); rc=$?
+  grep -q '^done$' <<<"$o" || fail "setup: the /dev probe did not run (keep='$keep', rc $rc): $o"
+  ! grep -q KMSG-WRITTEN <<<"$o" || fail "ATTACK: the command wrote /dev/kmsg (keep='$keep'): $o"
+  ! grep -q KMSG-EXISTS <<<"$o" || fail "ATTACK: /dev/kmsg exists inside ns_run (keep='$keep'): $o"
+  ! grep -q '^HOSTDEV' <<<"$o" || fail "ATTACK: a host device node is visible inside ns_run (keep='$keep'): $o"
+  for n in null zero full random urandom tty pts shm; do grep -q "^DEVLIST.* $n " <<<"$o" || fail "setup: /dev lacks $n (keep='$keep'): $o"; done
+  ! (dmesg 2>/dev/null | grep -q "$MARK") || fail "ATTACK: the marker reached the host's kernel log (keep='$keep')"
+done
+echo "ok: /dev is private and minimal: no kmsg (the marker never reached the host's log), no block or memory device"
+# a node made by mknod (the capability is gone, and the tmpfs is nodev): the host's root device cannot be opened
+rootdev=$(stat -c '%d' / ); maj=$(( (rootdev >> 8) & 0xfff )); min=$(( rootdev & 0xff ))
+for keep in "" sys_admin; do
+  o=$(OPKIT_CAPS_KEEP=$keep nsrun python3 -c '
+import os, sys
+for d in ("/tmp", "/run", "/dev/shm", "/var/lib"):
+    p = d + "/.opkit-node"
+    try:
+        os.mknod(p, 0o600 | 0o060000, os.makedev(int(sys.argv[1]), int(sys.argv[2])))
+    except OSError as e:
+        print("mknod-refused", d, e.errno); continue
+    try:
+        fd = os.open(p, os.O_RDONLY); print("NODE-OPENED", d); os.close(fd)
+    except OSError as e:
+        print("node-open-refused", d, e.errno)
+print("done")' "$maj" "$min" 2>&1); rc=$?
+  grep -q '^done$' <<<"$o" || fail "setup: the mknod probe did not run (keep='$keep'): $o"
+  ! grep -q 'NODE-OPENED' <<<"$o" || fail "ATTACK: a block device node made inside ns_run could be opened (keep='$keep'): $o"
+done
+echo "ok: mknod of a block device is refused (no CAP_MKNOD), and a node could not be opened (nodev) -- opened read-only, never written"
+# (2) /proc: a private one. `umount /proc` reveals nothing of the host.
+o=$(nsrun bash -c 'umount -l /proc 2>&1; echo "UMOUNT-RC $?"; echo "NSPID $(readlink /proc/self/ns/pid)"; echo "INIT $(cat /proc/1/comm)"; echo "PIDS $(ls /proc | grep -c "^[0-9]")"; echo done' 2>&1)
+grep -q '^done$' <<<"$o" || fail "setup: the umount probe did not run: $o"
+! grep -q '^UMOUNT-RC 0$' <<<"$o" || fail "ATTACK: the command (default capabilities) could umount /proc: $o"
+echo "ok: with the default capability set the command cannot umount /proc"
+HOSTPIDS=$(ls /proc | grep -c '^[0-9]')
+mkdir -p "$W/notrw"      # a SCRATCH directory the namespace holds read-only: the canary for "reached the host" (never a real place)
+o=$(OPKIT_CAPS_KEEP=sys_admin nsrun env CAN="$W/notrw/.opkit-umount-canary" bash -c '
+  umount -l /proc 2>/dev/null; echo "UMOUNTS $?"
+  echo "PROCLIST [$(ls /proc 2>&1 | tr "\n" " ")]"
+  [ -e /proc/1 ] && echo "PROC1-EXISTS $(readlink /proc/1/root) $(cat /proc/1/comm 2>/dev/null)"
+  { : >"/proc/1/root$CAN"; } 2>/dev/null && echo CANARY-WRITTEN
+  echo done' 2>&1)
+grep -q '^done$' <<<"$o" || fail "setup: the umount-then-look probe did not run: $o"
+grep -q '^UMOUNTS 0$' <<<"$o" || fail "setup: the umount did not run, so nothing was tested (CAP_SYS_ADMIN was kept): $o"
+grep -q '^PROCLIST \[\]$' <<<"$o" || fail "ATTACK: after umount /proc something is visible under /proc (the host's proc?): $o"
+! grep -q 'PROC1-EXISTS\|CANARY-WRITTEN' <<<"$o" || fail "ATTACK: after umount /proc the host's /proc (and /proc/1/root) was revealed: $o"
+[ ! -e "$W/notrw/.opkit-umount-canary" ] || fail "ATTACK: umount /proc then /proc/1/root wrote the host (a read-only scratch directory)"
+echo "ok: even with CAP_SYS_ADMIN, umount /proc reveals nothing of the host (the host's /proc was detached; there is no /proc/1/root)"
+# the proof refuses a second mount at /proc (the covered mount a umount would reveal)
+o=$(OPKIT_CAPS_KEEP=sys_admin OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"
+  ns_run bash -c '"'"'. "$OPKIT_LIB"; mount -t proc -o ro proc /proc; opkit_ns_assert && echo ACCEPTED-COVERED-PROC; echo done'"'"'' 2>&1)
+grep -q '^done$' <<<"$o" || fail "setup: the covered-proc probe did not run: $o"
+! grep -q ACCEPTED-COVERED-PROC <<<"$o" || fail "ATTACK: the proof accepted a /proc with a covered mount beneath it: $o"
+grep -q 'has 2 mounts' <<<"$o" || fail "refused for another reason: $o"
+echo "ok: the proof refuses a /proc that covers another mount"
+# (3) the root cannot be remounted writable, and nothing unlisted can be written, by a command with the default capabilities
+o=$(nsrun env CAN="$W/notrw/.opkit-remount-canary" bash -c '
+  mount -o remount,rw / 2>/dev/null && echo REMOUNTED-RW
+  { : >"$CAN"; } 2>/dev/null && echo CANARY-WRITTEN
+  mount --bind /tmp /mnt 2>/dev/null && echo BIND-MOUNTED
+  unshare -m true 2>/dev/null && echo NEW-MOUNT-NAMESPACE
+  echo done' 2>&1)
+grep -q '^done$' <<<"$o" || fail "setup: the remount probe did not run: $o"
+! grep -q 'REMOUNTED-RW\|CANARY-WRITTEN\|BIND-MOUNTED\|NEW-MOUNT-NAMESPACE' <<<"$o" || fail "ATTACK: a command with the default capabilities remounted or mounted: $o"
+[ ! -e "$W/notrw/.opkit-remount-canary" ] || fail "ATTACK: remount rw / then a write reached the host (a read-only scratch directory)"
+echo "ok: remount rw /, a bind mount and a new mount namespace are refused with the default capability set"
+# /proc: the paths a root WITHOUT any capability can write (sysrq-trigger, sys) are read-only mounts; opened, never written
+o=$(nsrun python3 -c '
+import os
+for p in ("/proc/sysrq-trigger", "/proc/sys/kernel/hostname", "/proc/sys/vm/drop_caches"):
+    try:
+        fd = os.open(p, os.O_WRONLY); print("OPENED-FOR-WRITE", p); os.close(fd)
+    except OSError as e:
+        print("refused", p, e.errno)
+print("done")' 2>&1)
+grep -q '^done$' <<<"$o" || fail "setup: the /proc probe did not run: $o"
+! grep -q OPENED-FOR-WRITE <<<"$o" || fail "ATTACK: a /proc file that reaches the host could be opened for writing: $o"
+echo "ok: /proc/sysrq-trigger and /proc/sys cannot be opened for writing"
+# (4) the bounding set
+for keep in "" sys_admin; do
+  o=$(OPKIT_CAPS_KEEP=$keep nsrun bash -c 'capsh --decode=$(sed -n "s/^CapBnd:[[:space:]]*//p" /proc/self/status)' 2>&1)
+  for c in sys_module sys_rawio syslog mknod dac_read_search net_admin net_raw sys_ptrace sys_boot sys_time; do
+    ! grep -qi "cap_$c\b" <<<"$o" || fail "ATTACK: cap_$c is in the command's bounding set (keep='$keep'): $o"
+  done
+  if [ -n "$keep" ]; then grep -qi 'cap_sys_admin' <<<"$o" || fail "setup: OPKIT_CAPS_KEEP=sys_admin kept no CAP_SYS_ADMIN: $o"
+  else ! grep -qi 'cap_sys_admin' <<<"$o" || fail "ATTACK: cap_sys_admin is in the default bounding set: $o"; fi
+  grep -qi 'cap_chown' <<<"$o" && grep -qi 'cap_setuid' <<<"$o" || fail "setup: the kit's own capabilities (chown, setuid) were dropped (keep='$keep'): $o"
+done
+echo "ok: the bounding set has no sys_admin (unless handed), mknod, sys_rawio, sys_module, syslog, dac_read_search, net_admin, ptrace; chown/setuid stay"
+M3=$W/scratch/ran3
+o=$(OPKIT_CAPS_KEEP=mknod nsrun touch "$M3" 2>&1); rc=$?
+{ [ ! -e "$M3" ] && [ $rc = 97 ]; } || fail "ATTACK: OPKIT_CAPS_KEEP=mknod was honoured (rc $rc): $o"
+echo "ok: only sys_admin may be kept (anything else refuses, 97)"
+# a setuid-root program does not get back what the bounding set took
+o=$(nsrun bash -c 'cp /usr/bin/capsh /tmp/capsh-suid && chmod u+s /tmp/capsh-suid && setpriv --reuid=65534 --regid=65534 --clear-groups /tmp/capsh-suid --print 2>&1 | grep -i "^Bounding"; echo done' 2>&1)
+! grep -qi 'cap_sys_admin' <<<"$o" || fail "ATTACK: a setuid-root program regained cap_sys_admin: $o"
+echo "ok: a setuid-root program inside the namespace gets no capability the bounding set took"
+# (5) descriptors: fds 0-2, a pre-opened writable file, and every inherited descriptor above stderr
+M4=$W/scratch/ran4; : >"$W/hostfile"; mkdir -p "$W/rw2"
+o=$(OPKIT_RW=$W/scratch OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$M4" </ 2>&1); rc=$?
+{ [ ! -e "$M4" ] && [ $rc = 97 ]; } || fail "ATTACK: stdin set to / (a host-root handle on fd 0) was accepted (rc $rc): $o"
+grep -q 'descriptor 0 is a directory' <<<"$o" || fail "refused for another reason: $o"
+o=$(OPKIT_RW=$W/scratch OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$M4" 2>&1 >/dev/null </dev/null); rc=$?
+[ -e "$M4" ] && [ $rc = 0 ] || fail "control: stdin from /dev/null was refused (rc $rc): $o"
+rm -f "$M4"
+# a writable regular file on fd 1 outside the caller's scratch is refused; inside OPKIT_RW it is accepted
+HOSTLOG=$W/notscratch.log
+o=$(OPKIT_RW=$W/scratch OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$M4" >"$HOSTLOG" 2>&1 </dev/null); rc=$?
+{ [ ! -e "$M4" ] && [ $rc = 97 ]; } || fail "ATTACK: a writable file outside the named scratch on fd 1 was accepted (rc $rc)"
+grep -q 'WRITABLE regular file' "$HOSTLOG" || fail "refused for another reason: $(cat "$HOSTLOG")"
+o=$(OPKIT_RW="$W/rw2" OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$W/rw2/ran4" >"$W/rw2/log" 2>&1 </dev/null); rc=$?
+{ [ -e "$W/rw2/ran4" ] && [ $rc = 0 ]; } || fail "control: a log file under OPKIT_RW on fd 1 was refused (rc $rc): $(cat "$W/rw2/log")"
+rm -f "$M4" "$W/rw2/ran4"
+# a block device, or a character device that is not a null/zero/tty/random one, on stdin (opened read-only, never read)
+BLK=""; for cand in "$(findmnt -no SOURCE / 2>/dev/null)" /dev/sda /dev/sdb /dev/vda /dev/nvme0n1 /dev/loop0; do [ -b "$cand" ] && { BLK=$cand; break; }; done
+if [ -n "$BLK" ]; then
+  o=$(OPKIT_RW=$W/scratch OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$M4" <"$BLK" 2>&1); rc=$?
+  { [ ! -e "$M4" ] && [ $rc = 97 ]; } || fail "ATTACK: a block device on stdin was accepted (rc $rc): $o"
+  grep -q 'block device' <<<"$o" || fail "refused for another reason: $o"
+else echo "SKIP: no block device to hand over on stdin"; fi
+if [ -c /dev/kmsg ]; then
+  o=$(OPKIT_RW=$W/scratch OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$M4" </dev/kmsg 2>&1); rc=$?
+  { [ ! -e "$M4" ] && [ $rc = 97 ]; } || fail "ATTACK: /dev/kmsg (a character device nobody listed) on stdin was accepted (rc $rc): $o"
+  grep -q 'character device' <<<"$o" || fail "refused for another reason: $o"
+else echo "SKIP: no /dev/kmsg to hand over on stdin"; fi
+# a pre-opened writable regular file above stderr is closed: the command's write fails, the file stays empty
+o=$(OPKIT_RW=$W/scratch OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch HF=$W/hostfile bash -c '. "$OPKIT_LIB"; exec 7>>"$HF"; ns_run bash -c '"'"'{ echo leaked >&7; } 2>/dev/null && echo WROTE-THROUGH-FD7; ls /proc/self/fd | tr "\n" " "; echo; echo done'"'"'' 2>&1 </dev/null)
+grep -q '^done$' <<<"$o" || fail "setup: the pre-opened file probe did not run: $o"
+! grep -q WROTE-THROUGH-FD7 <<<"$o" || fail "ATTACK: a pre-opened writable file was still writable inside ns_run: $o"
+[ ! -s "$W/hostfile" ] || fail "ATTACK: the host file was written through an inherited descriptor"
+echo "ok: fd 0-2 may not be a directory or a writable file outside the named scratch; an inherited writable file above stderr is closed"
+# (6) OPKIT_RW is validated
+mkdir -p "$W/sub"; M5=$W/sub/ran5
+rwref() { # DIR... -> the command did not run, rc 97
+  o=$(OPKIT_RW="$*" OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$M5" 2>&1 </dev/null); rc=$?
+  { [ ! -e "$M5" ] && [ $rc = 97 ]; } || { rm -f "$M5"; fail "ATTACK: OPKIT_RW='$*' was accepted (rc $rc): $o"; }
+}
+mkdir -p "$W/open777" "$W/sub" "$W/owned" "$W/real"; chmod 0777 "$W/open777"; chown 65534 "$W/owned"; ln -s /opt "$W/optlink"; ln -s "$W/real" "$W/reallink"
+for bad in / /opt /home /root /usr /etc /var /var/tmp /tmp /boot /dev /var/lib relative/dir "$W/open777" "$W/optlink" "$W/reallink" "$W/owned" "$W/does-not-exist" "$W/rw $W/../" ; do rwref $bad; done
+# each guard on its own: a directory only ONE of them refuses
+for cand in /mnt /media; do [ -d "$cand" ] && [ ! -L "$cand" ] && [ "$(stat -c %u "$cand")" = "$(id -u)" ] && [ $(( 8#$(stat -c %a "$cand") & 8#022 )) = 0 ] && { MNT=$cand; break; }; done
+if [ -n "${MNT:-}" ]; then
+  o=$(OPKIT_RW="$MNT" OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$M5" 2>&1 </dev/null); rc=$?
+  { [ ! -e "$M5" ] && [ $rc = 97 ]; } || fail "ATTACK: OPKIT_RW=$MNT (a host directory outside every temp root) was accepted (rc $rc): $o"
+  grep -q 'not below a temp root' <<<"$o" || fail "refused for another reason: $o"
+else echo "SKIP: no /mnt or /media to try as a directory outside every temp root"; fi
+for cand in /usr/share/zoneinfo /usr/share/doc /usr/lib/systemd /usr/share/misc; do [ -d "$cand" ] && [ ! -L "$cand" ] && { SYS=$cand; break; }; done
+if [ -n "${SYS:-}" ]; then
+  o=$(OPKIT_RW_ROOTS_FOR_TEST=$(dirname "$SYS") OPKIT_RW="$SYS" OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash "$SELF" --child nsrun "$W" touch "$M5" 2>&1 </dev/null); rc=$?
+  { [ ! -e "$M5" ] && [ $rc = 97 ]; } || fail "ATTACK: OPKIT_RW=$SYS (a system path, below a temp root by the test's own override) was accepted (rc $rc): $o"
+  grep -q 'is a system path' <<<"$o" || fail "refused for another reason (the system-path guard alone was to refuse it): $o"
+  o=$(OPKIT_RW_ROOTS_FOR_TEST=/nonexistent OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash "$SELF" --child nsrun "$W" true 2>&1 </dev/null); rc=$?
+  [ $rc = 0 ] || fail "control: an extra temp root with nothing under it refused the run (rc $rc): $o"
+else echo "SKIP: no system directory to try"; fi
+# the override is the self-test's alone
+o=$(OPKIT_RW_ROOTS_FOR_TEST=/usr/share OPKIT_RW="/usr/share/doc" OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run true' bash 2>&1 </dev/null); rc=$?
+[ $rc = 97 ] || fail "ATTACK: an OPKIT_RW_ROOTS_FOR_TEST override from another script was honoured (rc $rc): $o"
+echo "ok: OPKIT_RW refuses /, /opt, /home, /root, /usr, /etc, /var, a shared temp root, a relative path, a symlink, a group/other-writable directory, a missing one"
+o=$(OPKIT_RW="$W/rw $W/sub" OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$M5" 2>&1 </dev/null); rc=$?
+{ [ -e "$M5" ] && [ $rc = 0 ]; } || fail "control: scratch directories under a temp root were refused (rc $rc): $o"
+echo "ok: control: OPKIT_RW entries that are scratch below a temp root are accepted"
 echo "PASS: opkit namespace helper"

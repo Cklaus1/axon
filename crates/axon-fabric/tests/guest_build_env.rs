@@ -2943,6 +2943,7 @@ fn the_build_uid_may_not_be_a_service_uid() {
 import json, os, sys
 etc, units = {etc:?}, {units:?}
 g.SERVICE_ETC, g.SERVICE_UNITS, g.SERVICE_USERS = etc, units, ()
+g.SERVICE_UNIT_EXTRA_DIRS = g.SERVICE_UNIT_VENDOR_DIRS = ()
 def ids(uid):
     os.environ["AXON_GUEST_BUILD_UID"] = str(uid)
     try:
