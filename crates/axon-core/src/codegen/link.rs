@@ -24,7 +24,9 @@
 //!   * `read_cross_linker`    — parse `~/.config/axon/cross.toml`
 
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, ExitStatus};
+
+use crate::time_passes;
 
 use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::module::{Linkage, Module};
@@ -141,23 +143,42 @@ fn optimize_module(
     let Some(pipeline) = opt.pipeline() else {
         return Ok(());
     };
-    mark_definitions(module, "disable-tail-calls", "true");
-    module.set_data_layout(&machine.get_target_data().get_data_layout());
-    module.verify().map_err(|e| {
-        format!(
-            "IR verification failed before `{pipeline}`: {}",
-            e.to_string()
-        )
-    })?;
-    module
-        .run_passes(pipeline, machine, PassBuilderOptions::create())
-        .map_err(|e| format!("LLVM pass pipeline `{pipeline}` failed: {}", e.to_string()))?;
-    module.verify().map_err(|e| {
-        format!(
-            "IR verification failed after `{pipeline}`: {}",
-            e.to_string()
-        )
+    time_passes::time("ir_opt", || {
+        mark_definitions(module, "disable-tail-calls", "true");
+        module.set_data_layout(&machine.get_target_data().get_data_layout());
+        module.verify().map_err(|e| {
+            format!(
+                "IR verification failed before `{pipeline}`: {}",
+                e.to_string()
+            )
+        })?;
+        module
+            .run_passes(pipeline, machine, PassBuilderOptions::create())
+            .map_err(|e| format!("LLVM pass pipeline `{pipeline}` failed: {}", e.to_string()))?;
+        module.verify().map_err(|e| {
+            format!(
+                "IR verification failed after `{pipeline}`: {}",
+                e.to_string()
+            )
+        })
     })
+}
+
+/// AX-36: writing the object file (instruction selection, register
+/// allocation, encoding) is the `backend` phase of `--time-passes`.
+fn write_object(
+    machine: &TargetMachine,
+    module: &Module<'_>,
+    path: &Path,
+) -> Result<(), inkwell::support::LLVMString> {
+    time_passes::time("backend", || {
+        machine.write_to_file(module, FileType::Object, path)
+    })
+}
+
+/// AX-36: a linker invocation is the `link` phase of `--time-passes`.
+fn run_linker(cmd: &mut Command) -> std::io::Result<ExitStatus> {
+    time_passes::time("link", || cmd.status())
 }
 
 /// Freestanding output links no libc, so the optimiser must not synthesise
@@ -197,22 +218,24 @@ fn mark_definitions(module: &Module<'_>, key: &str, value: &str) {
 /// consumers (boot stubs, linker scripts, JNI, wasm exports) reach functions by
 /// name.
 fn internalize_program_functions(module: &Module<'_>) {
-    let naked = Attribute::get_named_enum_kind_id("naked");
-    let mut next = module.get_first_function();
-    while let Some(func) = next {
-        next = func.get_next_function();
-        let is_definition = func.count_basic_blocks() > 0;
-        if !is_definition
-            || func.get_linkage() != Linkage::External
-            || func.get_name().to_bytes() == b"main"
-            || func
-                .get_enum_attribute(AttributeLoc::Function, naked)
-                .is_some()
-        {
-            continue;
+    time_passes::time("ir_opt", || {
+        let naked = Attribute::get_named_enum_kind_id("naked");
+        let mut next = module.get_first_function();
+        while let Some(func) = next {
+            next = func.get_next_function();
+            let is_definition = func.count_basic_blocks() > 0;
+            if !is_definition
+                || func.get_linkage() != Linkage::External
+                || func.get_name().to_bytes() == b"main"
+                || func
+                    .get_enum_attribute(AttributeLoc::Function, naked)
+                    .is_some()
+            {
+                continue;
+            }
+            func.set_linkage(Linkage::Internal);
         }
-        func.set_linkage(Linkage::Internal);
-    }
+    })
 }
 
 // ── R14 Android cross-link support ────────────────────────────────────────────
@@ -337,14 +360,17 @@ pub fn compile_bitcode_to_binary(
 ) -> Result<(), String> {
     use inkwell::memory_buffer::MemoryBuffer;
     let ctx = inkwell::context::Context::create();
-    let buf = MemoryBuffer::create_from_memory_range(bitcode, "cached_bitcode");
-    let module = ctx.create_module_from_ir(buf).map_err(|e| {
+    let module = time_passes::time("bitcode_load", || {
+        let buf = MemoryBuffer::create_from_memory_range(bitcode, "cached_bitcode");
+        ctx.create_module_from_ir(buf)
+    })
+    .map_err(|e| {
         format!(
             "[E0906] cached bitcode could not be loaded: {}",
             e.to_string()
         )
     })?;
-    prune_unreachable_ai_callers(&module);
+    time_passes::time("ir_opt", || prune_unreachable_ai_callers(&module));
     emit_object_and_link(&module, output_path, opt, target_triple)
 }
 
@@ -366,8 +392,7 @@ pub fn emit_wasm_object(
     let (triple, machine) = pic_target_machine(target_triple, opt)?;
     module.set_triple(&triple);
     optimize_module(module, &machine, opt)?;
-    machine
-        .write_to_file(module, FileType::Object, Path::new(output_path))
+    write_object(&machine, module, Path::new(output_path))
         .map_err(|e| format!("wasm object emit: {e}"))?;
     Ok(())
 }
@@ -388,8 +413,7 @@ pub fn emit_object_for_triple(
     let (triple, machine) = pic_target_machine(target_triple, opt)?;
     module.set_triple(&triple);
     optimize_module(module, &machine, opt)?;
-    machine
-        .write_to_file(module, FileType::Object, Path::new(output_path))
+    write_object(&machine, module, Path::new(output_path))
         .map_err(|e| format!("mobile object emit: {e}"))
 }
 
@@ -399,22 +423,24 @@ fn pic_target_machine(
     triple_str: &str,
     opt: OptLevel,
 ) -> Result<(TargetTriple, TargetMachine), String> {
-    Target::initialize_all(&InitializationConfig::default());
-    let triple = TargetTriple::create(triple_str);
-    let target = Target::from_triple(&triple).map_err(|e| {
-        format!("[E0904] target '{triple_str}' not supported by this LLVM build: {e}")
-    })?;
-    let machine = target
-        .create_target_machine(
-            &triple,
-            "generic",
-            "",
-            opt.backend(),
-            RelocMode::PIC,
-            CodeModel::Default,
-        )
-        .ok_or_else(|| format!("[E0904] could not create target machine for '{triple_str}'"))?;
-    Ok((triple, machine))
+    time_passes::time("target_init", || {
+        Target::initialize_all(&InitializationConfig::default());
+        let triple = TargetTriple::create(triple_str);
+        let target = Target::from_triple(&triple).map_err(|e| {
+            format!("[E0904] target '{triple_str}' not supported by this LLVM build: {e}")
+        })?;
+        let machine = target
+            .create_target_machine(
+                &triple,
+                "generic",
+                "",
+                opt.backend(),
+                RelocMode::PIC,
+                CodeModel::Default,
+            )
+            .ok_or_else(|| format!("[E0904] could not create target machine for '{triple_str}'"))?;
+        Ok((triple, machine))
+    })
 }
 
 /// `TargetMachine` for a hosted program: the native host when `target_triple`
@@ -426,21 +452,23 @@ fn hosted_target_machine(
     if let Some(triple_str) = target_triple {
         return pic_target_machine(triple_str, opt);
     }
-    Target::initialize_native(&InitializationConfig::default())
-        .map_err(|e| format!("LLVM native target init: {e}"))?;
-    let triple = TargetMachine::get_default_triple();
-    let target = Target::from_triple(&triple).map_err(|e| format!("get native target: {e}"))?;
-    let machine = target
-        .create_target_machine(
-            &triple,
-            "generic",
-            "",
-            opt.backend(),
-            RelocMode::Default,
-            CodeModel::Default,
-        )
-        .ok_or_else(|| "failed to create native target machine".to_string())?;
-    Ok((triple, machine))
+    time_passes::time("target_init", || {
+        Target::initialize_native(&InitializationConfig::default())
+            .map_err(|e| format!("LLVM native target init: {e}"))?;
+        let triple = TargetMachine::get_default_triple();
+        let target = Target::from_triple(&triple).map_err(|e| format!("get native target: {e}"))?;
+        let machine = target
+            .create_target_machine(
+                &triple,
+                "generic",
+                "",
+                opt.backend(),
+                RelocMode::Default,
+                CodeModel::Default,
+            )
+            .ok_or_else(|| "failed to create native target machine".to_string())?;
+        Ok((triple, machine))
+    })
 }
 
 // ── Crate-private surface (callable from super::Codegen) ─────────────────────
@@ -465,9 +493,7 @@ pub(super) fn emit_hosted_object(
     module.set_triple(&triple);
     internalize_program_functions(module);
     optimize_module(module, &machine, opt)?;
-    machine
-        .write_to_file(module, FileType::Object, Path::new(obj_path))
-        .map_err(|e| format!("object emit: {e}"))
+    write_object(&machine, module, Path::new(obj_path)).map_err(|e| format!("object emit: {e}"))
 }
 
 /// `--emit-llvm`: apply to `module` the transformations the object-emitting
@@ -538,7 +564,9 @@ pub(super) fn emit_object_and_link(
     // program calls an AI builtin (`Runtime`). Resolved before the linker runs
     // so a missing runtime is one clear error naming where it was looked for,
     // not a page of `undefined reference to __axon_*` (AX-09).
-    let rt_lib = match runtime_staticlib(Runtime::for_module(module), release, None) {
+    let rt_lib = match time_passes::time("runtime", || {
+        runtime_staticlib(Runtime::for_module(module), release, None)
+    }) {
         Ok(lib) => lib,
         Err(e) => {
             let _ = std::fs::remove_file(&obj_path);
@@ -583,9 +611,7 @@ pub(super) fn emit_object_and_link(
         link_args.push("-Wl,--strip-debug");
     }
 
-    let status = Command::new(&linker)
-        .args(&link_args)
-        .status()
+    let status = run_linker(Command::new(&linker).args(&link_args))
         .map_err(|e| format!("linker spawn: {e}"))?;
 
     let _ = std::fs::remove_file(&obj_path);
@@ -628,8 +654,7 @@ pub(super) fn emit_shared_lib(
     optimize_module(module, &machine, opt)?;
 
     let obj_path = format!("{output_path}.o");
-    machine
-        .write_to_file(module, FileType::Object, Path::new(&obj_path))
+    write_object(&machine, module, Path::new(&obj_path))
         .map_err(|e| format!("object emit: {e}"))?;
 
     // A shared library's entry points are called from outside the module, so
@@ -655,8 +680,7 @@ pub(super) fn emit_freestanding_obj(
     module.set_triple(&triple);
     mark_no_builtins(module);
     optimize_module(module, &machine, opt)?;
-    machine
-        .write_to_file(module, FileType::Object, Path::new(output_path))
+    write_object(&machine, module, Path::new(output_path))
         .map_err(|e| format!("freestanding object emit: {e}"))
 }
 
@@ -665,20 +689,22 @@ fn freestanding_target_machine(
     triple_str: &str,
     opt: OptLevel,
 ) -> Result<(TargetTriple, TargetMachine), String> {
-    Target::initialize_all(&InitializationConfig::default());
-    let triple = TargetTriple::create(triple_str);
-    let target = Target::from_triple(&triple).map_err(|e| {
-        format!("[E0904] target '{triple_str}' not supported by this LLVM build: {e}")
-    })?;
-    // R25 (Zephyr/ARM): the `Kernel` code model is x86-64-specific and is
-    // rejected by the ARM/thumb backend. A bare-metal ARM Cortex-M object that
-    // links into a Zephyr app uses the default (small) code model. Select the
-    // code model by target architecture.
-    let (reloc, code_model) = freestanding_reloc_codemodel(triple_str);
-    let machine = target
-        .create_target_machine(&triple, "generic", "", opt.backend(), reloc, code_model)
-        .ok_or_else(|| format!("[E0904] could not create target machine for '{triple_str}'"))?;
-    Ok((triple, machine))
+    time_passes::time("target_init", || {
+        Target::initialize_all(&InitializationConfig::default());
+        let triple = TargetTriple::create(triple_str);
+        let target = Target::from_triple(&triple).map_err(|e| {
+            format!("[E0904] target '{triple_str}' not supported by this LLVM build: {e}")
+        })?;
+        // R25 (Zephyr/ARM): the `Kernel` code model is x86-64-specific and is
+        // rejected by the ARM/thumb backend. A bare-metal ARM Cortex-M object that
+        // links into a Zephyr app uses the default (small) code model. Select the
+        // code model by target architecture.
+        let (reloc, code_model) = freestanding_reloc_codemodel(triple_str);
+        let machine = target
+            .create_target_machine(&triple, "generic", "", opt.backend(), reloc, code_model)
+            .ok_or_else(|| format!("[E0904] could not create target machine for '{triple_str}'"))?;
+        Ok((triple, machine))
+    })
 }
 
 /// R25: select `(RelocMode, CodeModel)` for a freestanding target by its triple.
@@ -722,8 +748,7 @@ pub(super) fn emit_freestanding_binary(
     optimize_module(module, &machine, opt)?;
 
     let obj_path = format!("{output_path}.o");
-    machine
-        .write_to_file(module, FileType::Object, Path::new(&obj_path))
+    write_object(&machine, module, Path::new(&obj_path))
         .map_err(|e| format!("freestanding object emit: {e}"))?;
 
     // Prefer a bare-metal ld; fall back to cc with -nostdlib flags.
@@ -747,9 +772,7 @@ pub(super) fn emit_freestanding_binary(
             args.push("-T".into());
             args.push(script.into());
         }
-        Command::new(&ld)
-            .args(&args)
-            .status()
+        run_linker(Command::new(&ld).args(&args))
             .map_err(|e| format!("freestanding ld spawn: {e}"))?
     } else {
         // Fallback: cc with -nostdlib/-static (works on most Linux hosts for x86-64).
@@ -773,9 +796,7 @@ pub(super) fn emit_freestanding_binary(
         if let Some(script) = linker_script {
             args.push(format!("-Wl,-T,{script}"));
         }
-        Command::new(&cc)
-            .args(&args)
-            .status()
+        run_linker(Command::new(&cc).args(&args))
             .map_err(|e| format!("freestanding cc spawn: {e}"))?
     };
 
@@ -1269,7 +1290,7 @@ fn android_link(
     // The Android-triple cross-build of the runtime. Channel/spawn/gfx-mock
     // builtins resolve to axon-rt; ai_complete/ai_extract_* to the axon-ai half
     // of `Runtime::WithAi`.
-    let rt_lib = runtime_staticlib(rt, release, Some(triple))
+    let rt_lib = time_passes::time("runtime", || runtime_staticlib(rt, release, Some(triple)))
         .map_err(|e| format!("[E1712] mobile link failed for '{triple}': {e}"))?;
 
     // The NDK clang already knows the bionic sysroot, PIE, and libm. We do NOT
@@ -1290,9 +1311,7 @@ fn android_link(
     args.push(rt_lib);
     args.push("-lm".to_string());
 
-    let status = Command::new(&linker)
-        .args(&args)
-        .status()
+    let status = run_linker(Command::new(&linker).args(&args))
         .map_err(|e| format!("[E1712] mobile link failed for '{triple}': linker spawn: {e}"))?;
 
     if status.success() {

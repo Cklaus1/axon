@@ -47,6 +47,8 @@ pub mod rewrite_dsl;
 #[cfg(feature = "smt")]
 pub mod smt;
 pub mod span;
+/// `axon check|build --time-passes`: per-phase wall-time recorder (AX-36).
+pub mod time_passes;
 pub mod token;
 pub mod types;
 // Phase 3
