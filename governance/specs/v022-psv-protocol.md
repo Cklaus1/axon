@@ -6486,9 +6486,10 @@ guards of the helper have no cargo row (`TMPDIR=/tmp`, the `/tmp` tmpfs); the ki
      operator's definition outright, and `undefined identifier`) are gone for a sealed caller. Test: `a_sealed_caller_cannot_tell_an_operator_name_from_a_missing_one_on_any_path`,
      20 forms x 6 kinds of definition (an fn, an `@[adaptive]` fn, a non-adaptive fn, a table, a record, a closure constant) = 120 pairs, all identical modulo the
      name; a runner twin. **Equivalent arm:** the array-index fast path's `None => no_such_fn(..)` (`Expr::Index` on a name that `is_global`) is
-     unreachable, because `global_ref` returns `None` only for a name `is_global` already denied; it is kept as the same helper and has no row. The
-     `Some(f) => visible only if sealed` half of `goal_run_constrained`'s check is redundant with the later `goal_*` call edge (the same
-     text), so it has no row either; the missing-constraint half has M2930.
+     unreachable, because `global_ref` returns `None` only for a name `is_global` already denied; it is kept as the same helper and has no row. The two
+     halves of `goal_run_constrained`'s check (an operator constraint is not visible to a sealed caller; a missing one answers in the sealed text) are
+     redundant with each other for THIS property (alone, either one removed leaves the pair indistinguishable: the other half, or the later `goal_*` call
+     edge, gives the same words), so M2930 removes both together (the pre-amendment check) and each half alone is an equivalent mutant.
 
      **5. Routing, not just class (MINOR, PSV-3).** `every_builtin_has_a_taint_class` proves a builtin is classified, not that its taint is ROUTED. New:
      `a_dict_reader_is_tainted_after_a_sealed_write_and_clean_after_the_operators` (all 13 dict readers, attack and control, plus the three writers
