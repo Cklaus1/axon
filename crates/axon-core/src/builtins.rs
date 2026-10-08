@@ -449,6 +449,12 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "i64",
         doc: "Return the current wall-clock time as milliseconds since the Unix epoch.",
     },
+    BuiltinFn {
+        name: "now_ns",
+        params: &[],
+        ret: "i64",
+        doc: "Return a monotonic clock reading in nanoseconds, for timing. Never decreases and never jumps with the wall clock; the origin is unspecified (not the Unix epoch), so only the difference of two reads is meaningful. Under `AXON_CLOCK` it reads the shared virtual timeline as ns since the configured start ((virtual ms − start) × 1000000) and advances it by one tick, like `now_ms`.",
+    },
     // ── Phase 5: String builtins ──────────────────────────────────────────────
     BuiltinFn {
         name: "str_eq",
@@ -2410,13 +2416,25 @@ pub struct BuiltinSig {
     pub ret: String,
 }
 
-/// Build a `HashMap` keyed by function name for O(1) lookup during inference.
-///
 /// True if `name` is a known builtin (appears in [`BUILTINS`]). Used by the
 /// purity checker to distinguish a builtin call from a user-function call.
 pub fn is_known_builtin(name: &str) -> bool {
-    BUILTINS.iter().any(|b| b.name == name)
+    BUILTIN_INDEX.contains_key(name)
 }
+
+/// `BUILTINS` keyed by name (the first entry wins, as a linear `find` would).
+///
+/// The front end asks "is this identifier a builtin?" for every identifier it
+/// walks, several times over; a scan of the ~340-row table per question was a
+/// measurable share of `axon check` on a large program (AX-36).
+static BUILTIN_INDEX: std::sync::LazyLock<HashMap<&'static str, &'static BuiltinFn>> =
+    std::sync::LazyLock::new(|| {
+        let mut m = HashMap::with_capacity(BUILTINS.len());
+        for b in BUILTINS {
+            m.entry(b.name).or_insert(b);
+        }
+        m
+    });
 
 /// Phase 13 Slice 2: true if `name` is one of the probabilistic predicate
 /// pseudo-builtins (`E`, `Var`, `P`). These are handled specially in infer.rs
@@ -2431,7 +2449,7 @@ pub fn is_prob_pred_ident(name: &str) -> bool {
 /// result is consumed as i64 or discarded (`()`); anything else (e.g.
 /// `ai_complete -> Result<str,str>`) must stay E0910-refused.
 pub fn builtin_ret(name: &str) -> Option<&'static str> {
-    BUILTINS.iter().find(|b| b.name == name).map(|b| b.ret)
+    BUILTIN_INDEX.get(name).map(|b| b.ret)
 }
 
 /// R17 Slice 3 (§4 / E1704): true if calling `name` may allocate on the heap.
@@ -2530,7 +2548,7 @@ pub fn is_impure_builtin(name: &str) -> bool {
             // network — raw HTTP
             | "http_get" | "http_post" | "http_sse" | "http_sse_post"
             // time / scheduling / randomness — non-deterministic
-            | "now_ms" | "sleep_ms" | "random_i64" | "random_f64"
+            | "now_ms" | "now_ns" | "sleep_ms" | "random_i64" | "random_f64"
             // environment / process control
             | "env_var" | "exit"
             // durable store — reads, appends to and deletes a log file. Absent
@@ -2644,7 +2662,7 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
         "host_await" | "host_await_opt" | "host_await_val" | "host_await_val_opt" => &["IO"],
 
         // Time / scheduling.
-        "now_ms" | "sleep_ms" => &["Time"],
+        "now_ms" | "now_ns" | "sleep_ms" => &["Time"],
 
         // Randomness / nondeterminism.
         "random_i64" | "random_f64" => &["Random"],
@@ -3115,6 +3133,8 @@ mod tests {
         assert_eq!(builtin_effect_row("ai_complete"), &["AI", "Net"]);
         assert_eq!(builtin_effect_row("random_i64"), &["Random"]);
         assert_eq!(builtin_effect_row("now_ms"), &["Time"]);
+        assert_eq!(builtin_effect_row("now_ns"), &["Time"]);
+        assert!(is_impure_builtin("now_ns"), "a clock read is not pure");
         assert_eq!(builtin_effect_row("chan_send"), &["Chan"]);
         assert_eq!(builtin_effect_row("goal_run"), &["AI", "Net", "IO"]);
         assert!(builtin_effect_row("to_str").is_empty(), "to_str is pure");
@@ -3154,6 +3174,7 @@ mod tests {
             "file_size",
             "env_var",
             "now_ms",
+            "now_ns",
             "sleep_ms",
             "println",
             "to_str",

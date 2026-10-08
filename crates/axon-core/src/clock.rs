@@ -40,15 +40,15 @@
 //!
 //! # What is NOT virtualized
 //!
-//! Only the `now_ms`/`sleep_ms` BUILTINS — the program's view of time. The
+//! Only the `now_ms`/`now_ns`/`sleep_ms` BUILTINS — the program's view of time. The
 //! provenance log's own `ts_ms` timestamps and the RNG's entropy fallback use a
 //! separate private helper on the real clock, because a log that lies about when
 //! it was written is useless for an audit.
 //!
 //! # Native parity
 //!
-//! `now_ms`/`sleep_ms` are also native externs (`__axon_now_ms`,
-//! `__axon_sleep_ms` in `axon-rt`), and `axon-core` does not depend on `axon-rt`,
+//! `now_ms`/`now_ns`/`sleep_ms` are also native externs (`__axon_now_ms`,
+//! `__axon_now_ns`, `__axon_sleep_ms` in `axon-rt`), and `axon-core` does not depend on `axon-rt`,
 //! so this logic is implemented twice. That is a divergence risk by
 //! construction, which is what `scripts/clock_parity.sh` is for — the same
 //! arrangement as `AXON_AI_MOCK`, which native had to learn to honour after it
@@ -65,6 +65,8 @@ static ENABLED: AtomicBool = AtomicBool::new(false);
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
 static CURRENT: AtomicI64 = AtomicI64::new(0);
 static TICK: AtomicI64 = AtomicI64::new(1);
+/// The configured start (`set`/`AXON_CLOCK`): the origin of the virtual `now_ns`.
+static START: AtomicI64 = AtomicI64::new(0);
 
 /// Environment variable: `AXON_CLOCK=<start_ms>` or `AXON_CLOCK=<start_ms>:<tick_ms>`.
 ///
@@ -78,6 +80,7 @@ pub const ENV_VAR: &str = "AXON_CLOCK";
 /// the wall-clock time of the run it is reproducing, not of the replay.
 pub fn set(start_ms: i64, tick_ms: i64) {
     CURRENT.store(start_ms, Ordering::SeqCst);
+    START.store(start_ms, Ordering::SeqCst);
     TICK.store(tick_ms.max(0), Ordering::SeqCst);
     ENABLED.store(true, Ordering::SeqCst);
     INITIALIZED.store(true, Ordering::SeqCst);
@@ -90,6 +93,7 @@ pub fn reset_for_tests() {
     ENABLED.store(false, Ordering::SeqCst);
     INITIALIZED.store(false, Ordering::SeqCst);
     CURRENT.store(0, Ordering::SeqCst);
+    START.store(0, Ordering::SeqCst);
     TICK.store(1, Ordering::SeqCst);
 }
 
@@ -113,6 +117,7 @@ fn init_from_env() {
     // whose timeline nobody chose, which is worse than ignoring it.
     if let Ok(start) = start {
         CURRENT.store(start, Ordering::SeqCst);
+        START.store(start, Ordering::SeqCst);
         TICK.store(tick.unwrap_or(1).max(0), Ordering::SeqCst);
         ENABLED.store(true, Ordering::SeqCst);
     }
@@ -133,6 +138,31 @@ pub fn now_ms() -> Option<i64> {
     // fetch_add returns the PREVIOUS value, which is what this call should see —
     // so the first read is exactly the configured start.
     Some(CURRENT.fetch_add(TICK.load(Ordering::SeqCst), Ordering::SeqCst))
+}
+
+/// Nanoseconds per virtual millisecond. `now_ns` has no finer virtual unit: the
+/// timeline is one counter in ms, shared with `now_ms`/`sleep_ms`.
+pub const NS_PER_MS: i64 = 1_000_000;
+
+/// The virtual clock as the monotonic `now_ns` builtin sees it: the SAME
+/// timeline as [`now_ms`], read as nanoseconds SINCE THE CONFIGURED START —
+/// `(virtual_ms - start_ms) * 1_000_000` — and advanced by `tick` exactly like a
+/// `now_ms` read. One timeline, not two: a program mixing `now_ms()` and
+/// `now_ns()` under `AXON_CLOCK` sees every ms delta as exactly 1e6 ns.
+///
+/// Why relative to the start rather than `virtual_ms * 1e6`: the usual start is
+/// an epoch in ms (`AXON_CLOCK=1700000000000`), and 1.7e12 ms is 1.7e21 ns, past
+/// `i64::MAX` (9.2e18) — the absolute scheme would pin every read at the top and
+/// FREEZE the clock. `now_ns` has no defined origin anyway (the real clock is
+/// relative to a process-local anchor), so "ns since the run's start" is the
+/// virtual mirror of the real behaviour. Saturating, so a timeline sleeping past
+/// ~292 years pins at `i64::MAX` instead of wrapping. `None` → real clock.
+pub fn now_ns() -> Option<i64> {
+    now_ms().map(|ms| {
+        ms.saturating_sub(START.load(Ordering::SeqCst))
+            .max(0)
+            .saturating_mul(NS_PER_MS)
+    })
 }
 
 /// Advance the virtual clock by `ms` (a `sleep`). Returns `false` when no virtual
@@ -190,6 +220,31 @@ mod tests {
         set(0, 0);
         assert_eq!(now_ms(), Some(0));
         assert!(enabled());
+
+        // `now_ns` is the SAME timeline in ns since the configured start, and a
+        // read advances it by `tick` like a `now_ms` read — so interleaved reads
+        // agree and keep increasing.
+        set(1_000, 1);
+        assert_eq!(now_ns(), Some(0));
+        assert_eq!(now_ms(), Some(1_001));
+        assert_eq!(now_ns(), Some(2 * NS_PER_MS));
+        assert!(advance(10));
+        assert_eq!(now_ns(), Some(13 * NS_PER_MS));
+
+        // An epoch-scale start (the usual AXON_CLOCK) must not overflow: an
+        // absolute `ms * 1e6` would be 1.7e21 and freeze at i64::MAX.
+        set(1_700_000_000_000, 1);
+        let a = now_ns().unwrap();
+        assert!(advance(250));
+        let b = now_ns().unwrap();
+        assert_eq!((a, b), (0, 251 * NS_PER_MS));
+
+        // Saturating, never wrapping: a timeline slept past i64::MAX ns pins at
+        // the top instead of going negative — the clock never runs backwards.
+        set(0, 0);
+        assert!(advance(i64::MAX / NS_PER_MS + 1));
+        assert_eq!(now_ns(), Some(i64::MAX));
+        assert_eq!(now_ns(), Some(i64::MAX));
 
         reset_for_tests();
         assert!(!enabled());

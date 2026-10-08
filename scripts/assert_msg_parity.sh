@@ -31,7 +31,7 @@ run_case() {
   local prog="$WORK/$label.ax" bin="$WORK/$label.bin"
   printf '%s\n' "$prog_src" > "$prog"
   local io ie ic no ne nc
-  io="$("$AXON" run "$prog" 2>"$WORK/ie")"; ic=$?; ie="$(grep -v '^axon: run-id ' "$WORK/ie")"  # strip Phase-9 run-id stamp (native emits none)
+  io="$("$AXON" run "$prog" 2>"$WORK/ie")"; ic=$?; ie="$(cat "$WORK/ie")"
   if ! berr="$("$AXON" build "$prog" -o "$bin" --no-cache 2>&1)"; then
     # A build that FAILED is a RESULT, not an absence. This used to discard
     # stderr and report a codegen regression in the feature under test as

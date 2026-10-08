@@ -288,6 +288,7 @@ let m = max_i32(3, 7)   // 7
 | `write_file` | 4 | I/O | Write string to file → `Result<(), str>` |
 | `sleep_ms` | 4 | Time | Sleep current thread for N milliseconds |
 | `now_ms` | 4 | Time | Wall-clock time as ms since Unix epoch |
+| `now_ns` | 4 | Time | Monotonic clock in ns (unspecified origin; for timing) |
 | `str_eq` | 5 | String | Content equality for two `str` values |
 | `str_cmp` | 5 | String | Lexicographic byte-order compare: -1 / 0 / 1; usable directly as an `arr_sort_by` comparator |
 | `str_contains` | 5 | String | Check if string contains a substring |
@@ -554,10 +555,31 @@ sleep_ms(ms: i64) -> ()
 
 now_ms() -> i64
     // Return the current wall-clock time as milliseconds since the Unix epoch.
-    // Backed by clock_gettime(CLOCK_REALTIME) or equivalent.
+    // Backed by clock_gettime(CLOCK_REALTIME) or equivalent. Wall-clock: it can
+    // jump (NTP, `date -s`), so do not use it to time code — use `now_ns`.
+
+now_ns() -> i64
+    // Return a MONOTONIC clock reading in nanoseconds, for timing. Never
+    // decreases and never follows wall-clock jumps. The origin is unspecified
+    // (it is NOT the Unix epoch): only the difference of two reads means
+    // anything. Both engines read `std::time::Instant` (CLOCK_MONOTONIC on
+    // Linux) relative to a process-local anchor taken at the first read, so
+    // the first read is ~0. Resolution is whatever the OS clock gives
+    // (nanoseconds on Linux), not quantised to milliseconds.
 ```
 
-`now_ms` is not comptime-evaluable (it reads the system clock at runtime).
+`now_ms` and `now_ns` are not comptime-evaluable (they read the system clock at
+runtime). Both carry the `{Time}` effect and are impure (refused in `@[pure]`).
+
+Under `AXON_CLOCK=<start_ms>[:<tick_ms>]` both read ONE virtual timeline:
+`now_ms()` returns the virtual ms, `now_ns()` returns
+`(virtual_ms - start_ms) * 1_000_000` (ns since the configured start), and each
+read advances the timeline by `tick`. `now_ns` is relative to the start because
+an epoch-scale start (`1700000000000` ms) is `1.7e21` ns, past `i64::MAX`. So
+under a virtual clock `now_ns` has millisecond granularity, and a `now_ms` delta
+of `d` is a `now_ns` delta of exactly `d * 1_000_000`. Both reads are journaled
+by `AXON_RECORD` (as `now_ms` / `now_ns` events) and served by `AXON_REPLAY`
+when no virtual clock is set; a virtual clock takes precedence over both.
 
 ---
 

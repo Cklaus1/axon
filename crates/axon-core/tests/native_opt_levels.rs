@@ -1,10 +1,12 @@
-//! Native optimisation levels and `--emit-obj` (AX-17, AX-21, AX-22, AX-23).
+//! Native optimisation levels and `--emit-obj` (AX-17, AX-21, AX-22, AX-23,
+//! AX-37, AX-38).
 //!
 //! `axon build` runs LLVM's `default<On>` IR pipeline for the selected level
-//! (`--opt-level 0|1|2|3|s|z`, `--release` = 2), gives every program function
-//! except `main` internal linkage, and `--emit-obj` writes the program object
-//! without linking. Optimisation must never change what a program prints: the
-//! interpreter is the reference.
+//! (`--opt-level 0|1|2|3|s|z`, `--release` = 2; `0` runs only `globaldce`),
+//! marks every definition `optsize` (`s`) / `optsize minsize` (`z`), gives
+//! every program function except `main` internal linkage, and `--emit-obj`
+//! writes the program object without linking. Optimisation must never change
+//! what a program prints: the interpreter is the reference.
 //!
 //! Every test returns early when the binary was built without the `codegen`
 //! feature (the gate's `--no-default-features` stage), like the native tests in
@@ -64,6 +66,37 @@ fn elf_type(path: &Path) -> u16 {
         path.display()
     );
     u16::from_le_bytes([bytes[16], bytes[17]])
+}
+
+/// One ELF64 little-endian symbol: (name, is a function, is defined here).
+fn elf_symbols(path: &Path) -> Vec<(String, bool, bool)> {
+    let b = std::fs::read(path).expect("read object");
+    let u16_at = |o: usize| u16::from_le_bytes(b[o..o + 2].try_into().unwrap()) as usize;
+    let u32_at = |o: usize| u32::from_le_bytes(b[o..o + 4].try_into().unwrap()) as usize;
+    let u64_at = |o: usize| u64::from_le_bytes(b[o..o + 8].try_into().unwrap()) as usize;
+    assert_eq!(b[4], 2, "{} is not ELF64", path.display());
+    let (shoff, shentsize, shnum) = (u64_at(0x28), u16_at(0x3a), u16_at(0x3c));
+    let section = |i: usize| shoff + i * shentsize;
+    let symtab = (0..shnum)
+        .map(section)
+        .find(|&s| u32_at(s + 4) == 2) // SHT_SYMTAB
+        .unwrap_or_else(|| panic!("{} has no symbol table", path.display()));
+    let strtab = u64_at(section(u32_at(symtab + 0x28)) + 0x18);
+    let (off, size, entsize) = (
+        u64_at(symtab + 0x18),
+        u64_at(symtab + 0x20),
+        u64_at(symtab + 0x38),
+    );
+    (off..off + size)
+        .step_by(entsize)
+        .skip(1) // the null symbol
+        .map(|e| {
+            let name_at = strtab + u32_at(e);
+            let len = b[name_at..].iter().position(|&c| c == 0).unwrap();
+            let name = String::from_utf8_lossy(&b[name_at..name_at + len]).into_owned();
+            (name, b[e + 4] & 0xf == 2, u16_at(e + 6) != 0) // STT_FUNC, !SHN_UNDEF
+        })
+        .collect()
 }
 
 const FIB: &str = "fn fib(n: i64) -> i64 { if n < 2 { n } else { fib(n - 1) + fib(n - 2) } }\n\nfn main() -> i64 {\n    println(to_str(fib(20)))\n    0\n}\n";
@@ -176,7 +209,7 @@ fn optimised_unbounded_recursion_still_overflows_gracefully() {
     let interp = axon().arg("run").arg(&src).output().expect("spawn run");
     assert_eq!(interp.status.code(), Some(101), "{}", stderr_of(&interp));
 
-    for level in ["2", "3", "s", "z"] {
+    for level in ["0", "1", "2", "3", "s", "z"] {
         let bin = tmp(&format!("rec_bin_{level}"));
         let _ = std::fs::remove_file(&bin);
         let b = build(&["--no-cache", "--opt-level", level], &src, &bin);
@@ -354,5 +387,140 @@ fn hosted_emit_obj_writes_a_relocatable_object_not_a_binary() {
     assert!(text.contains("define"), "not LLVM IR:\n{text}");
     let _ = std::fs::remove_file(&ll);
     let _ = std::fs::remove_dir_all(&cache);
+    let _ = std::fs::remove_file(&src);
+}
+
+/// AX-37: an `O0` object holds only what `main` reaches. `declare_builtins`
+/// emits ~70 builtin wrappers into every module; with no `globaldce` at `O0`
+/// all of them were compiled, each pulling its `__axon_*` runtime code into the
+/// binary, and `--emit-obj` (which skipped the AI-wrapper pruning) referenced
+/// `__axon_ai_*`, so a debug object did not link against `libaxon_rt.a`.
+#[test]
+fn o0_object_keeps_only_reachable_functions_and_links_against_the_base_runtime() {
+    let src = write_src("o0dce", "fn main() {\n    println(\"hi\")\n}\n");
+    let obj = tmp("o0dce.o");
+    let bin = tmp("o0dce_bin");
+    let _ = std::fs::remove_file(&obj);
+    let b = build(&["--no-cache", "--emit-obj"], &src, &obj);
+    if codegen_absent(&b) {
+        let _ = std::fs::remove_file(&src);
+        return;
+    }
+    assert_eq!(b.status.code(), Some(0), "{}", stderr_of(&b));
+    let syms = elf_symbols(&obj);
+    let mut defined: Vec<&str> = syms
+        .iter()
+        .filter(|(_, func, def)| *func && *def)
+        .map(|(n, _, _)| n.as_str())
+        .collect();
+    defined.sort_unstable();
+    assert_eq!(
+        defined,
+        ["main", "println"],
+        "the O0 object must define only the functions main reaches"
+    );
+    let ai: Vec<&str> = syms
+        .iter()
+        .map(|(n, _, _)| n.as_str())
+        .filter(|n| n.starts_with("__axon_ai_"))
+        .collect();
+    assert!(ai.is_empty(), "O0 --emit-obj references {ai:?}");
+
+    // The object a normal O0 build links: it must link against the debug
+    // `libaxon_rt.a` alone. The normal build makes sure that library is built.
+    let _ = std::fs::remove_file(&bin);
+    let normal = build(&["--no-cache"], &src, &bin);
+    assert_eq!(normal.status.code(), Some(0), "{}", stderr_of(&normal));
+    let exe_target = Path::new(env!("CARGO_BIN_EXE_axon"))
+        .parent()
+        .and_then(Path::parent)
+        .map(Path::to_path_buf);
+    let rt = std::env::var_os("AXON_RUNTIME_DIR")
+        .map(|d| PathBuf::from(d).join("libaxon_rt.a"))
+        .into_iter()
+        .chain(
+            std::env::var_os("CARGO_TARGET_DIR")
+                .map(|d| PathBuf::from(d).join("debug/libaxon_rt.a")),
+        )
+        .chain(exe_target.map(|t| t.join("debug/libaxon_rt.a")))
+        .find(|p| p.is_file())
+        .expect("the O0 build above links libaxon_rt.a from the target dir");
+    let _ = std::fs::remove_file(&bin);
+    let link = Command::new("cc")
+        .arg(&obj)
+        .arg(&rt)
+        .arg("-o")
+        .arg(&bin)
+        .args(["-no-pie", "-Wl,--gc-sections", "-lpthread", "-lm"])
+        .output()
+        .expect("spawn cc");
+    let _ = std::fs::remove_file(&obj);
+    let _ = std::fs::remove_file(&src);
+    assert!(
+        link.status.success(),
+        "O0 object + {} must link:\n{}",
+        rt.display(),
+        stderr_of(&link)
+    );
+    let run = Command::new(&bin).output().expect("run linked O0 object");
+    let _ = std::fs::remove_file(&bin);
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "hi\n");
+}
+
+/// AX-38: `--opt-level s|z` mark every function definition `optsize` /
+/// `optsize minsize`, as clang's `-Os`/`-Oz` do. LLVM's size heuristics read
+/// those attributes, not the pipeline name: without them `s` emitted IR and a
+/// binary byte-identical to `--release`. `O2` must carry neither.
+#[test]
+fn size_levels_mark_every_definition_optsize_and_o2_does_not() {
+    let src = write_src("sizeattr", MIXED);
+    // Attribute group number → its attribute text.
+    let groups = |ir: &str| -> std::collections::HashMap<String, String> {
+        ir.lines()
+            .filter_map(|l| l.strip_prefix("attributes "))
+            .filter_map(|l| l.split_once(" = "))
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    for (level, want) in [
+        ("2", &[][..]),
+        ("s", &["optsize"][..]),
+        ("z", &["optsize", "minsize"][..]),
+    ] {
+        let ll = tmp(&format!("sizeattr_{level}.ll"));
+        let b = build(
+            &["--no-cache", "--opt-level", level, "--emit-llvm"],
+            &src,
+            &ll,
+        );
+        if codegen_absent(&b) {
+            let _ = std::fs::remove_file(&src);
+            return;
+        }
+        assert_eq!(b.status.code(), Some(0), "O{level}: {}", stderr_of(&b));
+        let ir = std::fs::read_to_string(&ll).expect("IR text");
+        let _ = std::fs::remove_file(&ll);
+        let groups = groups(&ir);
+        let defines: Vec<&str> = ir.lines().filter(|l| l.starts_with("define ")).collect();
+        assert!(!defines.is_empty(), "O{level}: no definitions:\n{ir}");
+        for def in defines {
+            let attrs = def
+                .split_whitespace()
+                .filter(|t| t.starts_with('#'))
+                .map(|g| groups.get(g).map(String::as_str).unwrap_or(""))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let words: Vec<&str> = attrs
+                .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                .collect();
+            for attr in ["optsize", "minsize"] {
+                assert_eq!(
+                    words.contains(&attr),
+                    want.contains(&attr),
+                    "O{level}: `{attr}` on `{def}` (attributes: {attrs})"
+                );
+            }
+        }
+    }
     let _ = std::fs::remove_file(&src);
 }

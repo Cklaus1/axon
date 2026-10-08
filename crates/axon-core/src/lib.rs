@@ -47,6 +47,8 @@ pub mod rewrite_dsl;
 #[cfg(feature = "smt")]
 pub mod smt;
 pub mod span;
+/// `axon check|build --time-passes`: per-phase wall-time recorder (AX-36).
+pub mod time_passes;
 pub mod token;
 pub mod types;
 // Phase 3
@@ -417,16 +419,6 @@ pub fn generate_docs(program: &ast::Program, source: &str, filename: &str) -> St
     doc::generate_docs(program, source, filename)
 }
 
-#[cfg(feature = "codegen")]
-pub fn compile_bitcode_to_binary(
-    bitcode: &[u8],
-    output_path: &str,
-    opt: codegen::OptLevel,
-    target_triple: Option<&str>,
-) -> Result<(), String> {
-    codegen::compile_bitcode_to_binary(bitcode, output_path, opt, target_triple)
-}
-
 /// Result of running the full analysis pipeline on a source text.
 /// Used by the LSP server.
 #[cfg(feature = "serde-json")]
@@ -509,6 +501,7 @@ pub fn parse_source_files(paths: &[std::path::PathBuf]) -> Result<Vec<NamedProgr
 
 pub use cache::{
     cache_key, cache_path, clean_cache, compiler_digest, default_cache_dir, read_axc, write_axc,
+    CacheLookup,
 };
 
 // ── AXON_PATH module loading (Phase 4 §6) ────────────────────────────────────

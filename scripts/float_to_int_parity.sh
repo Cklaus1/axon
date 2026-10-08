@@ -54,7 +54,6 @@ for label in "${!CASES[@]}"; do
   { echo "fn main() {"; echo "    ${CASES[$label]}"; echo "}"; } > "$PROG"
 
   iout="$("$AXON" run "$PROG" 2>&1)"; iexit=$?
-  iout="$(printf '%s\n' "$iout" | grep -v '^axon: run-id ')"  # strip Phase-9 run-id stamp (native emits none)
   BIN="$WORK/${label}_bin"
   if ! berr="$("$AXON" build "$PROG" -o "$BIN" --no-cache 2>&1)"; then
     # A build that FAILED is a RESULT, not an absence. This used to discard

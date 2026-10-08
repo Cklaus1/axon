@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 25 CLI verbs, 343 builtins, 24 attributes, 145 diagnostic codes (132 live, 13 reserved), 55 environment variables.
+The complete surface of this build — 25 CLI verbs, 344 builtins, 24 attributes, 145 diagnostic codes (132 live, 13 reserved), 55 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -79,7 +79,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_CLOCK` | deterministic virtual clock `<start_ms>[:<tick_ms>]`; `sleep_ms` advances it without really sleeping |
 | `AXON_PATH` | colon-separated module search path for `mod`/`use` imports |
 | `AXON_STRICT` | promote advisory hazard diagnostics to errors (today E0302, an unused Result); `axon deploy` sets it itself |
-| `AXON_RUNTIME_DIR` | `axon build`: directory holding the prebuilt native runtime staticlibs (`libaxon_rt.a`, `libaxon_rt_ai.a`; `<dir>/<triple>/` for `--target`). When set it is the ONLY place searched; unset, the compiler builds the runtime in the Axon workspace it was compiled from, else uses one prebuilt beside the compiler, independent of the current directory and PATH |
+| `AXON_RUNTIME_DIR` | `axon build`: directory holding the prebuilt native runtime staticlibs (`libaxon_rt.a`, `libaxon_rt_ai.a`; `<dir>/<triple>/` for `--target`). When set it is the ONLY place searched; unset, the compiler uses the install layout beside it (`<bin>/../lib/axon/runtime/<profile>/`, see scripts/install.sh), else the runtime in the cargo target dir it was built into, which it rebuilds with the workspace's pinned toolchain only when that runtime is out of date; independent of the current directory, PATH and the caller's Rust toolchain |
 | `AXON_RECORD` | path to write a host journal: every call through the AxonHost seam, performed for real and appended with its outcome. As sensitive as the run it records |
 | `AXON_REPLAY` | serve a run from a host journal instead of the world; nothing is performed, and any miss is a divergence (exit 11). Mutually exclusive with AXON_RECORD |
 | `AXON_AI_REPLAY` | path to an LLM-call replay cache; memoizes `ai_complete` by (prompt, model) so an AI run reproduces with no live call |
@@ -187,7 +187,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `E0903` | duplicate top-level name across files |
 | `E0904` | --target triple not supported by this LLVM build |
 | `E0905` | cross-compilation needs sysroot (cross.toml missing) |
-| `E0906` | cache entry corrupt or wrong compiler version |
+| `E0906` | build-cache entry unusable (corrupt, old format, or another compiler's) — warning; ignored and rebuilt |
 | `E0907` | AOT wasm build needs the native codegen backend (R7) |
 | `E0908` | RESERVED — the condition is reported as E0904 (target not supported by this LLVM build); never emitted under this code |
 | `E0910` | builtin / construct has no native codegen lowering — honest abort, runs under the interpreter |
@@ -282,7 +282,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `I0001` | deferred attribute (AI annotations) |
 | `I0002` | a foreign keyword was accepted as a no-op (`let mut x`) |
 
-## Builtins (343)
+## Builtins (344)
 
 | Signature | Purpose |
 |---|---|
@@ -512,6 +512,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `min_i32(a: i64, b: i64) -> i32` | Return the lesser of two integers (truncated to i32 range). |
 | `min_i64(a: i64, b: i64) -> i64` | Return the lesser of two i64 values. |
 | `now_ms() -> i64` | Return the current wall-clock time as milliseconds since the Unix epoch. |
+| `now_ns() -> i64` | Return a monotonic clock reading in nanoseconds, for timing. Never decreases and never jumps with the wall clock; the origin is unspecified (not the Unix epoch), so only the difference of two reads is meaningful. Under `AXON_CLOCK` it reads the shared virtual timeline as ns since the configured start ((virtual ms − start) × 1000000) and advances it by one tick, like `now_ms`. |
 | `parse_bool(s: str) -> Result<bool, str>` | Parse `"true"` or `"false"`. Returns `Ok(true/false)` or `Err("invalid bool")`. |
 | `parse_bool_or(s: str, default: bool) -> bool` | Parse `s` as bool (`"true"` / `"false"`); fall back to `default` if neither. |
 | `parse_float(s: str) -> Result<f64, str>` | Parse `s` as a 64-bit float. Returns Ok(n) or Err(message). |

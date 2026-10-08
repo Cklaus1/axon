@@ -671,10 +671,10 @@ pub enum UnaryOp {
 /// through nested closures, and a generic callback would re-wrap its own type at
 /// every level — an infinite monomorphization that segfaults rustc rather than
 /// producing a diagnostic. Learned the hard way.)
-pub fn walk_expr(e: &Expr, f: &mut dyn FnMut(&Expr)) {
+pub fn walk_expr<'a>(e: &'a Expr, f: &mut dyn FnMut(&'a Expr)) {
     use Expr;
     f(e);
-    fn walk_stmts(ss: &[Stmt], f: &mut dyn FnMut(&Expr)) {
+    fn walk_stmts<'a>(ss: &'a [Stmt], f: &mut dyn FnMut(&'a Expr)) {
         for s in ss {
             walk_expr(&s.expr, f);
         }

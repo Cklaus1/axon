@@ -231,7 +231,7 @@ Future phases extend this list: `effect Store` (Phase 7), `effect Audit` (Phase 
 | `add`, `mul`, `to_str`, `parse_int`, `str_*`, `i64_to_f64`, `f64_to_i64`, `abs_*`, `min_*`, `max_*`, `confidence`, `value`, `validity` | `{}` |
 | `println`, `eprint`, `eprintln`, `print` | `{IO}` |
 | `read_line`, `read_file`, `write_file` | `{IO}` |
-| `now_ms`, `sleep_ms` | `{Time}` |
+| `now_ms`, `now_ns`, `sleep_ms` | `{Time}` |
 | `random_i64`, `random_f64` | `{Random}` |
 | `env_var`, `exit` | `{IO}` |
 | `ai_complete`, `ai_extract*` | `{AI, Net}` |

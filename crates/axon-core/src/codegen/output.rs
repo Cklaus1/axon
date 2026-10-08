@@ -1,8 +1,8 @@
 //! Output / driver methods on `Codegen<'ctx>` plus the `TestResult` type.
 //!
 //! Phase 2.6 of the §7.5 module split: extracts the user-facing entry
-//! points that finalise compilation (write IR, compile to binary, emit
-//! bitcode for the cache) and the JIT test runner.
+//! points that finalise compilation (write IR, compile to an object or a
+//! binary) and the JIT test runner.
 //!
 //! All Codegen methods declared `pub` because they are part of the
 //! external API consumed by `lib.rs` and `main.rs`.  TestResult is also
@@ -14,7 +14,7 @@ use std::path::Path;
 use inkwell::values::BasicValue;
 use inkwell::OptimizationLevel;
 
-use super::link::{emit_object_and_link, OptLevel};
+use super::link::{link_hosted_object, HostedObject, OptLevel};
 
 // Public test-result type used by `run_tests` callers.
 #[derive(Debug)]
@@ -91,46 +91,64 @@ impl<'ctx> super::Codegen<'ctx> {
         total
     }
 
-    /// Compile the module to a binary for an optional target triple.
-    ///
-    /// Steps:
-    /// 1. Verify the LLVM IR.
-    /// 2. Initialize the appropriate LLVM backend (native or all targets for cross).
-    /// 3. Create the `TargetMachine`.
-    /// 4. Emit an object file to a temp path.
-    /// 5. Link with the system linker (or cross-linker from `~/.config/axon/cross.toml`).
+    /// Compile the module to a binary for an optional target triple: the
+    /// hosted object ([`Self::compile_to_hosted_object`]) linked with the
+    /// system linker (or cross-linker from `~/.config/axon/cross.toml`).
     pub fn compile_to_binary_target(
         &self,
         output_path: &str,
         opt: OptLevel,
         target_triple: Option<&str>,
     ) -> Result<(), String> {
-        // NOTE: full dead-function pruning is applied on the WASM object path
-        // (`compile_to_wasm_object`), where dropping the unused i64-ABI `__axon_*`
-        // helpers is the prerequisite for linking. Natively only the uncalled
-        // AI wrappers are pruned, so a program that makes no AI call links the
-        // AI-free runtime (`link::Runtime`, AX-11).
-        super::link::prune_unreachable_ai_callers(&self.ir.module);
-        self.ir
-            .module
-            .verify()
-            .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
-        emit_object_and_link(&self.ir.module, output_path, opt, target_triple)
+        let obj = self.compile_to_hosted_object(opt, target_triple)?;
+        link_hosted_object(&obj, output_path, opt, target_triple)
+    }
+
+    /// Compile the module to the hosted program object a binary links,
+    /// in memory, without linking. This is what the build cache stores
+    /// (AX-34): everything up to and including the backend.
+    ///
+    /// Steps:
+    /// 1. Prune the uncalled AI wrappers (below).
+    /// 2. Verify the LLVM IR.
+    /// 3. Initialize the appropriate LLVM backend (native or all targets for cross)
+    ///    and create the `TargetMachine`.
+    /// 4. Internalise program functions, run the `opt` IR pipeline and emit
+    ///    the object.
+    pub fn compile_to_hosted_object(
+        &self,
+        opt: OptLevel,
+        target_triple: Option<&str>,
+    ) -> Result<HostedObject, String> {
+        // Dead builtin helpers are dropped by `globaldce` once
+        // `link::emit_hosted_object_bytes` has internalised them, at every
+        // level including `O0` (AX-37). The uncalled AI wrappers are also
+        // deleted up front, so the module `link::Runtime` inspects is AI-free
+        // whatever pipeline runs: a program that makes no AI call links the
+        // AI-free runtime (AX-11).
+        crate::time_passes::time("ir_opt", || {
+            super::link::prune_unreachable_ai_callers(&self.ir.module)
+        });
+        self.verify_ir()?;
+        super::link::emit_hosted_object_bytes(&self.ir.module, opt, target_triple)
     }
 
     /// AX-23: compile the hosted program to its relocatable object file at
     /// `output_path` WITHOUT linking (`axon build --emit-obj`). The object is
-    /// the one `compile_to_binary_target` would link against axon-rt.
+    /// the one `compile_to_binary_target` would link against axon-rt: the
+    /// uncalled AI wrappers are pruned the same way, so an object from a
+    /// program that makes no AI call references no `__axon_ai_*` symbol and
+    /// links against `libaxon_rt.a` (AX-37).
     pub fn compile_to_object(
         &self,
         output_path: &str,
         opt: OptLevel,
         target_triple: Option<&str>,
     ) -> Result<(), String> {
-        self.ir
-            .module
-            .verify()
-            .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
+        crate::time_passes::time("ir_opt", || {
+            super::link::prune_unreachable_ai_callers(&self.ir.module)
+        });
+        self.verify_ir()?;
         super::link::emit_hosted_object(&self.ir.module, output_path, opt, target_triple)
     }
 
@@ -146,10 +164,7 @@ impl<'ctx> super::Codegen<'ctx> {
         opt: OptLevel,
         target_triple: Option<&str>,
     ) -> Result<(), String> {
-        self.ir
-            .module
-            .verify()
-            .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
+        self.verify_ir()?;
         super::link::emit_shared_lib(&self.ir.module, output_path, opt, target_triple)
     }
 
@@ -163,10 +178,7 @@ impl<'ctx> super::Codegen<'ctx> {
         opt: OptLevel,
         triple: &str,
     ) -> Result<(), String> {
-        self.ir
-            .module
-            .verify()
-            .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
+        self.verify_ir()?;
         super::link::emit_object_for_triple(&self.ir.module, output_path, opt, triple)
     }
 
@@ -184,17 +196,16 @@ impl<'ctx> super::Codegen<'ctx> {
         target_triple: Option<&str>,
         entry_fn: Option<&str>,
     ) -> Result<(), String> {
-        self.prune_dead_functions_keep(
-            &["main", "on_panic", "__axon_kernel_panic"]
-                .iter()
-                .copied()
-                .chain(entry_fn)
-                .collect::<Vec<_>>(),
-        );
-        self.ir
-            .module
-            .verify()
-            .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
+        crate::time_passes::time("ir_opt", || {
+            self.prune_dead_functions_keep(
+                &["main", "on_panic", "__axon_kernel_panic"]
+                    .iter()
+                    .copied()
+                    .chain(entry_fn)
+                    .collect::<Vec<_>>(),
+            )
+        });
+        self.verify_ir()?;
         super::link::emit_freestanding_obj(&self.ir.module, output_path, opt, target_triple)
     }
 
@@ -209,17 +220,16 @@ impl<'ctx> super::Codegen<'ctx> {
         // Prune unused builtins (println, assert, str ops, ...) before linking.
         // For freestanding we preserve the @[entry] fn and any @[panic_handler]
         // fn in addition to `main` (which won't exist in a kernel image).
-        self.prune_dead_functions_keep(
-            &["main", "on_panic", "__axon_kernel_panic"]
-                .iter()
-                .copied()
-                .chain(entry_fn)
-                .collect::<Vec<_>>(),
-        );
-        self.ir
-            .module
-            .verify()
-            .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
+        crate::time_passes::time("ir_opt", || {
+            self.prune_dead_functions_keep(
+                &["main", "on_panic", "__axon_kernel_panic"]
+                    .iter()
+                    .copied()
+                    .chain(entry_fn)
+                    .collect::<Vec<_>>(),
+            )
+        });
+        self.verify_ir()?;
         super::link::emit_freestanding_binary(
             &self.ir.module,
             output_path,
@@ -228,6 +238,13 @@ impl<'ctx> super::Codegen<'ctx> {
             entry_fn,
             linker_script,
         )
+    }
+
+    /// Verify the emitted module before handing it to LLVM (the `ir_verify`
+    /// phase of `--time-passes`, AX-36).
+    fn verify_ir(&self) -> Result<(), String> {
+        crate::time_passes::time("ir_verify", || self.ir.module.verify())
+            .map_err(|e| format!("IR verification failed: {}", e.to_string()))
     }
 
     /// Like `prune_dead_functions` but preserves a set of named roots.
@@ -259,11 +276,6 @@ impl<'ctx> super::Codegen<'ctx> {
         total
     }
 
-    /// Serialize the compiled LLVM IR as bitcode bytes (for the incremental cache).
-    pub fn emit_bitcode(&self) -> Vec<u8> {
-        self.ir.module.write_bitcode_to_memory().as_slice().to_vec()
-    }
-
     /// R17 Slice 2/3: serialize the compiled LLVM IR as human-readable text
     /// (the `.ll` form). Used by `axon build --emit-llvm` for golden-IR tests
     /// of atomic memory orders and `@[repr(C)]`/`@[packed]`/`@[align]` layout.
@@ -281,10 +293,7 @@ impl<'ctx> super::Codegen<'ctx> {
         freestanding: bool,
         shared: bool,
     ) -> Result<String, String> {
-        self.ir
-            .module
-            .verify()
-            .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
+        self.verify_ir()?;
         super::link::optimize_for_ir_dump(
             &self.ir.module,
             opt,
@@ -292,7 +301,7 @@ impl<'ctx> super::Codegen<'ctx> {
             freestanding,
             shared,
         )?;
-        Ok(self.emit_llvm_ir())
+        Ok(crate::time_passes::time("emit_ir", || self.emit_llvm_ir()))
     }
 
     /// R7 Slice B (AOT wasm, object half): verify the IR and emit a WebAssembly

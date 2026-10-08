@@ -217,18 +217,17 @@ pub fn check_contained_strict(program: &Program) -> Vec<EffectError> {
 
 /// Compute each function's inferred (transitive) effect set to a fixpoint. A
 /// fn's effects are the builtin effects of every call in its body plus the
-/// inferred effects of every user-fn it calls. Iterated until no set grows, so
-/// effects propagate up the call graph through arbitrarily long helper chains
+/// inferred effects of every user-fn it calls, propagated until no set grows,
+/// so effects travel up the call graph through arbitrarily long helper chains
 /// (recursion converges because sets only grow and the effect universe is
 /// finite). This is what subsumption is checked against — not the declared row —
 /// so an effect cannot be laundered through an un-annotated intermediary.
 fn infer_effects(program: &Program) -> HashMap<String, HashSet<String>> {
-    // Pre-collect each fn's body so we can re-walk cheaply each iteration.
     let fns: Vec<&crate::ast::FnDef> = all_fn_defs(program);
     // Seed each fn with its DECLARED concrete effects: a declared row is a
     // promise the fn may perform those effects (e.g. a `| {Net}` stub whose body
     // is still `{ 0 }`), so callers must honour them even before the body does.
-    let mut inferred: HashMap<String, HashSet<String>> = fns
+    let seed: HashMap<String, HashSet<String>> = fns
         .iter()
         .map(|f| {
             let mut seed: HashSet<String> = f
@@ -248,53 +247,8 @@ fn infer_effects(program: &Program) -> HashMap<String, HashSet<String>> {
             (f.name.clone(), seed)
         })
         .collect();
-
-    loop {
-        let mut changed = false;
-        for f in &fns {
-            // Gather the names this fn calls, each paired with the set of effects
-            // discharged by handlers wrapping that call site (E04). An effect a
-            // call performs that is in its `handled` context is dropped — it does
-            // NOT propagate to this fn's transitive set, so a fn that fully
-            // handles an effect internally is pure to its callers (and a `| {}`
-            // caller of it is not falsely flagged).
-            let mut calls: Vec<(String, HashSet<String>)> = Vec::new();
-            collect_called_names_ctx(&f.body, &HashSet::new(), &mut calls);
-            let mut acc: HashSet<String> = HashSet::new();
-            for (name, handled) in &calls {
-                for eff in crate::builtins::builtin_effect_row(name) {
-                    if !handled.contains(*eff) {
-                        acc.insert((*eff).to_string());
-                    }
-                }
-                // R13: native `M::fn` calls contribute module `M`'s effects.
-                if let Some((m, _f)) = crate::native::resolve_call(name) {
-                    for eff in m.effects {
-                        if !handled.contains(*eff) {
-                            acc.insert((*eff).to_string());
-                        }
-                    }
-                }
-                if let Some(callee_set) = inferred.get(name) {
-                    for eff in callee_set {
-                        if !handled.contains(eff) {
-                            acc.insert(eff.clone());
-                        }
-                    }
-                }
-            }
-            let cur = inferred.get_mut(&f.name).expect("seeded");
-            let before = cur.len();
-            cur.extend(acc);
-            if cur.len() != before {
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-    inferred
+    // R13: native `M::fn` calls contribute module `M`'s effects.
+    propagate_effects(&fns, seed, true)
 }
 
 /// Per-fn set of builtin effects each function ACTUALLY performs, directly or
@@ -316,44 +270,124 @@ pub fn transitive_builtin_effects(program: &Program) -> HashMap<String, HashSet<
         })
         .collect();
     // Start empty (NO declared-row / contained seed) — only real operations.
-    let mut eff: HashMap<String, HashSet<String>> = fns
+    let seed = fns
         .iter()
         .map(|f| (f.name.clone(), HashSet::new()))
         .collect();
-    loop {
-        let mut changed = false;
-        for f in &fns {
-            let mut calls: Vec<(String, HashSet<String>)> = Vec::new();
-            collect_called_names_ctx(&f.body, &HashSet::new(), &mut calls);
-            let mut acc: HashSet<String> = HashSet::new();
-            for (name, handled) in &calls {
-                // Direct builtin operations performed by this call.
-                for e in crate::builtins::builtin_effect_row(name) {
-                    if !handled.contains(*e) {
-                        acc.insert((*e).to_string());
+    propagate_effects(&fns, seed, false)
+}
+
+/// The effect-propagation fixpoint shared by [`infer_effects`] and
+/// [`transitive_builtin_effects`].
+///
+/// `sets` maps every fn name to its seed; the result maps the same names to
+/// the least superset of the seeds closed under "a fn performs every effect of
+/// every call in its body that no enclosing handler discharges": a builtin's
+/// row, a native module's effects (when `native`), and the current set of any
+/// called name that is a key of `sets`. Fns sharing a name (a method and a free
+/// fn) share one set, which over-approximates.
+///
+/// Each body is walked ONCE, into the deduplicated `(callee, handled)` edges
+/// of [`collect_calls`]; the fixpoint then runs over those edges with a
+/// worklist that revisits a fn only when a callee's set grew. It used to
+/// re-walk every body — allocating a `(String, HashSet)` per identifier and
+/// scanning `BUILTINS` linearly for each — once per round of a round-robin
+/// loop, which made this the costliest front-end pass on a large program
+/// (AX-36). The result is the same least fixpoint.
+fn propagate_effects(
+    fns: &[&crate::ast::FnDef],
+    sets: HashMap<String, HashSet<String>>,
+    native: bool,
+) -> HashMap<String, HashSet<String>> {
+    let (names, mut sets): (Vec<String>, Vec<HashSet<String>>) = sets.into_iter().unzip();
+    let slot_of: HashMap<&str, usize> = names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.as_str(), i))
+        .collect();
+
+    struct Summary {
+        /// The slot this fn's effects accumulate into.
+        slot: usize,
+        /// Effects performed by builtin / native calls, minus handled ones.
+        direct: HashSet<String>,
+        /// `(callee slot, handled-context index)`, deduplicated.
+        edges: Vec<(usize, usize)>,
+        /// Effects discharged by enclosing handlers, per context (0 = none).
+        handled: Vec<HashSet<String>>,
+    }
+
+    let mut callers: Vec<Vec<usize>> = vec![Vec::new(); names.len()];
+    let summaries: Vec<Summary> = fns
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            let mut handled = vec![HashSet::new()];
+            let mut calls: Vec<(&str, usize)> = Vec::new();
+            collect_calls(&f.body, 0, &mut handled, &mut calls);
+            calls.sort_unstable();
+            calls.dedup();
+            let mut direct = HashSet::new();
+            let mut edges = Vec::new();
+            for &(name, ctx) in &calls {
+                let h = &handled[ctx];
+                for eff in crate::builtins::builtin_effect_row(name) {
+                    if !h.contains(*eff) {
+                        direct.insert((*eff).to_string());
                     }
                 }
-                // Effects a called USER fn actually performs (transitive).
-                if let Some(set) = eff.get(name) {
-                    for e in set {
-                        if !handled.contains(e) {
-                            acc.insert(e.clone());
+                if native {
+                    if let Some((m, _f)) = crate::native::resolve_call(name) {
+                        for eff in m.effects {
+                            if !h.contains(*eff) {
+                                direct.insert((*eff).to_string());
+                            }
                         }
                     }
                 }
+                if let Some(&s) = slot_of.get(name) {
+                    edges.push((s, ctx));
+                    if callers[s].last() != Some(&i) {
+                        callers[s].push(i);
+                    }
+                }
             }
-            let cur = eff.get_mut(&f.name).expect("init");
-            let before = cur.len();
-            cur.extend(acc);
-            if cur.len() != before {
-                changed = true;
+            Summary {
+                slot: slot_of[f.name.as_str()],
+                direct,
+                edges,
+                handled,
+            }
+        })
+        .collect();
+
+    let mut queued = vec![true; summaries.len()];
+    let mut work: std::collections::VecDeque<usize> = (0..summaries.len()).collect();
+    while let Some(i) = work.pop_front() {
+        queued[i] = false;
+        let s = &summaries[i];
+        let mut acc = s.direct.clone();
+        for &(callee, ctx) in &s.edges {
+            let h = &s.handled[ctx];
+            for eff in &sets[callee] {
+                if !h.contains(eff) {
+                    acc.insert(eff.clone());
+                }
             }
         }
-        if !changed {
-            break;
+        let cur = &mut sets[s.slot];
+        let before = cur.len();
+        cur.extend(acc);
+        if cur.len() != before {
+            for &c in &callers[s.slot] {
+                if !queued[c] {
+                    queued[c] = true;
+                    work.push_back(c);
+                }
+            }
         }
     }
-    eff
+    names.into_iter().zip(sets).collect()
 }
 
 /// §4: derive the effect row a `@[contained(...)]` spec declares. The granted
@@ -648,20 +682,23 @@ fn body_has_nonbuiltin_call(body: &Expr, _discharged: &HashSet<String>) -> bool 
     walk(body)
 }
 
-/// Collect the names of every directly-called function/builtin in `e` whose
-/// effects are NOT discharged by an enclosing inline handler. `handled` is the
-/// set of effects discharged by handlers wrapping `e`. When a called name's
-/// effects are fully covered by `handled`, the call is dropped from the result
-/// so the transitive `infer_effects` fixpoint does not propagate a handled
-/// effect up to callers (E04). A call performing a mix of handled and
-/// un-handled effects is kept (the un-handled ones still leak); the per-effect
-/// filtering against `handled` happens in `infer_effects` itself, which has the
-/// catalog/inferred sets — here we only manage the `handled` context so handler
-/// bodies vs arms are scoped correctly.
-fn collect_called_names_ctx(
-    e: &Expr,
-    handled: &HashSet<String>,
-    out: &mut Vec<(String, HashSet<String>)>,
+/// Collect every name `e` calls, each paired with the index (into `handled`)
+/// of the set of effects discharged by the inline handlers wrapping that call
+/// site. `ctx` is the context of `e` itself; `handled[0]` is the empty set.
+/// Entering a `with handler { body }` pushes a new context (the enclosing one
+/// plus the handler's discharged effects) for the body; the handler's ARMS keep
+/// the enclosing context. The per-effect filtering against the context happens
+/// in [`propagate_effects`], which has the builtin rows and inferred sets — a
+/// call performing a mix of handled and un-handled effects still leaks the
+/// un-handled ones (E04).
+///
+/// Names are borrowed from the AST, so a walk allocates only the output vector
+/// and one set per handler (AX-36).
+fn collect_calls<'a>(
+    e: &'a Expr,
+    ctx: usize,
+    handled: &mut Vec<HashSet<String>>,
+    out: &mut Vec<(&'a str, usize)>,
 ) {
     // AX-25: a user fn named as a VALUE (`let g = f`, `[f, h]`, `mk(f)`) can be
     // called later through that value, out of sight of this syntactic walk, so
@@ -673,20 +710,20 @@ fn collect_called_names_ctx(
     // builtin's name here is a local shadowing it, not the builtin.
     if let Expr::Ident(name) = e {
         if !crate::builtins::is_known_builtin(name) {
-            out.push((name.clone(), handled.clone()));
+            out.push((name, ctx));
         }
         return;
     }
     if let Expr::Call { callee, .. } = e {
         match callee.as_ref() {
-            Expr::Ident(name) => out.push((name.clone(), handled.clone())),
+            Expr::Ident(name) => out.push((name, ctx)),
             // R13: a native `M::fn(...)` call — record the qualified name so the
             // effect-inference fixpoint attributes module `M`'s effects to the
             // caller (resolved by `callee_effects` / `infer_effects`).
             Expr::StructLit { name, fields }
                 if fields.is_empty() && crate::native::is_native_call(name) =>
             {
-                out.push((name.clone(), handled.clone()))
+                out.push((name, ctx))
             }
             _ => {}
         }
@@ -699,31 +736,29 @@ fn collect_called_names_ctx(
     // a method sharing a free fn's name merges their effects; merging
     // OVER-approximates, which errs toward flagging rather than toward silence.
     if let Expr::MethodCall { method, .. } = e {
-        out.push((method.clone(), handled.clone()));
+        out.push((method, ctx));
     }
     if let Expr::WithHandler { handler, body } = e {
         // Body sees the handler's discharged effects added to the context.
-        let mut inner = handled.clone();
-        for eff in handler_discharges(handler) {
-            inner.insert(eff);
-        }
-        collect_called_names_ctx(body, &inner, out);
+        let mut inner = handled[ctx].clone();
+        inner.extend(handler_discharges(handler));
+        handled.push(inner);
+        let inner_ctx = handled.len() - 1;
+        collect_calls(body, inner_ctx, handled, out);
         // Handler ARM bodies are checked with the ORIGINAL context — an arm does
         // not discharge its own effects (an `on Net` arm that logs via IO still
         // performs IO against the enclosing row).
         if let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
             for arm in arms {
-                collect_called_names_ctx(&arm.body, handled, out);
+                collect_calls(&arm.body, ctx, handled, out);
             }
             if let Some(ra) = return_arm {
-                collect_called_names_ctx(&ra.body, handled, out);
+                collect_calls(&ra.body, ctx, handled, out);
             }
         }
         return;
     }
-    for_each_child(e, &mut |child| {
-        collect_called_names_ctx(child, handled, out)
-    });
+    for_each_child(e, &mut |child| collect_calls(child, ctx, handled, out));
 }
 
 /// R7c §6 — collect every directly-called *builtin* name reachable in the
@@ -738,11 +773,12 @@ fn collect_called_names_ctx(
 pub fn collect_called_builtin_names(program: &Program) -> std::collections::BTreeSet<String> {
     let mut out = std::collections::BTreeSet::new();
     let mut walk = |e: &Expr| {
-        let mut names: Vec<(String, HashSet<String>)> = Vec::new();
-        collect_called_names_ctx(e, &HashSet::new(), &mut names);
+        let mut handled = vec![HashSet::new()];
+        let mut names: Vec<(&str, usize)> = Vec::new();
+        collect_calls(e, 0, &mut handled, &mut names);
         for (name, _) in names {
-            if crate::builtins::is_known_builtin(&name) {
-                out.insert(name);
+            if crate::builtins::is_known_builtin(name) {
+                out.insert(name.to_string());
             }
         }
     };
@@ -967,7 +1003,7 @@ fn check_expr(
     }
     // AX-25: a user fn named as a VALUE (`let g = f`, `[f, h]`) may be called
     // through that value anywhere, so referencing it counts as calling it — the
-    // same rule `collect_called_names_ctx` applies for inference. Builtins cannot
+    // same rule `collect_calls` applies for inference. Builtins cannot
     // be values (resolver E0306), so a builtin-named `Ident` is a local.
     if let Expr::Ident(name) = e {
         if !crate::builtins::is_known_builtin(name) && inferred.contains_key(name) {
@@ -1019,7 +1055,7 @@ fn check_expr(
 
 /// Apply `f` to each direct child expression of `e`. Mirrors the shape of the
 /// checker's own expression walker so every call site is reached.
-fn for_each_child(e: &Expr, f: &mut dyn FnMut(&Expr)) {
+fn for_each_child<'a>(e: &'a Expr, f: &mut dyn FnMut(&'a Expr)) {
     match e {
         Expr::Call { callee, args, .. } => {
             f(callee);
@@ -1616,5 +1652,101 @@ mod tests {
                 .any(|n| crate::builtins::is_browser_incompatible_builtin(n)),
             "pure program reaches no browser-incompatible builtin, got {c2:?}"
         );
+    }
+
+    /// `h0` prints; `h{i}` calls `h{i-1}`; `top` declares `| {}` and calls the
+    /// last hop. `reversed` declares the chain callers-first, the order in
+    /// which effects need the most propagation steps to reach `top`.
+    fn chain_src(len: usize, reversed: bool) -> String {
+        let mut fns: Vec<String> = (1..len)
+            .map(|i| format!("fn h{i}(x: i64) -> i64 {{ h{}(x) }}", i - 1))
+            .collect();
+        fns.insert(0, "fn h0(x: i64) -> i64 { println(\"x\") x }".to_string());
+        if reversed {
+            fns.reverse();
+        }
+        fns.push(format!(
+            "fn top(x: i64) -> i64 | {{}} {{ h{}(x) }}",
+            len - 1
+        ));
+        fns.join("\n")
+    }
+
+    #[test]
+    fn transitive_effect_through_a_long_chain_in_either_order() {
+        // AX-36: the fixpoint walks each body once and then propagates over
+        // call edges with a worklist. A 60-hop helper chain must carry IO to
+        // the `| {}` caller whatever order the helpers are declared in.
+        for reversed in [false, true] {
+            let errs = check(&chain_src(60, reversed));
+            assert_eq!(
+                errs.len(),
+                1,
+                "reversed={reversed}: expected one E1310 on top, got {errs:?}"
+            );
+            assert!(
+                errs[0].message.contains("top") && errs[0].message.contains("IO"),
+                "reversed={reversed}: {}",
+                errs[0].message
+            );
+        }
+    }
+
+    #[test]
+    fn transitive_effect_through_mutual_recursion() {
+        // A cycle converges and still delivers the effect to the caller.
+        let errs = check(
+            "fn a(n: i64) -> i64 { if n > 0 { b(n - 1) } else { println(\"x\") 0 } }\n\
+             fn b(n: i64) -> i64 { a(n) }\n\
+             fn top() -> i64 | {} { b(3) }",
+        );
+        assert!(
+            errs.iter()
+                .any(|e| e.message.contains("top") && e.message.contains("IO")),
+            "IO through the a<->b cycle must be flagged on top, got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn handler_discharge_is_per_call_site_through_the_fixpoint() {
+        // `both` performs IO and Net; `mid` calls it inside a handler that
+        // discharges Net, so only IO reaches `mid`'s callers. `top`'s `| {Net}`
+        // row then leaks IO, and Net (handled below it) is not reported.
+        let errs = check(
+            "fn both() -> i64 | {IO, Net} { println(\"x\") 0 }\n\
+             fn mid() -> i64 { with handler { on Net(e) => 0 } { both() } }\n\
+             fn top() -> i64 | {Net} { mid() }",
+        );
+        assert_eq!(errs.len(), 1, "expected one E1310 on top, got {errs:?}");
+        assert!(
+            errs[0].message.contains("top") && errs[0].message.contains("IO"),
+            "{}",
+            errs[0].message
+        );
+        assert!(
+            !errs[0].message.contains("`Net`"),
+            "Net is discharged in mid and must not leak: {}",
+            errs[0].message
+        );
+    }
+
+    #[test]
+    fn transitive_builtin_effects_follow_chains_and_ignore_declared_rows() {
+        let p = parse_source(&format!(
+            "{}\nfn stub() -> i64 | {{Net}} {{ 0 }}\nfn uses_stub() -> i64 {{ stub() }}",
+            chain_src(40, true)
+        ))
+        .expect("parse");
+        let eff = transitive_builtin_effects(&p);
+        for f in ["h0", "h39", "top"] {
+            assert!(
+                eff[f].contains("IO"),
+                "{f} reaches println, got {:?}",
+                eff[f]
+            );
+        }
+        // A declared row performs nothing; only real builtin operations count.
+        assert!(eff["stub"].is_empty(), "got {:?}", eff["stub"]);
+        assert!(eff["uses_stub"].is_empty(), "got {:?}", eff["uses_stub"]);
     }
 }

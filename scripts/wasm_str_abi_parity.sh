@@ -94,7 +94,7 @@ fn main() { println(to_str(probe())) }
 AX
 
 # 1) interpreter oracle (printed, so the full i64 survives)
-I_EXIT="$("$INTERP" "$SRC" 2>/dev/null | grep -v '^axon: run-id ' | tail -1)"
+I_EXIT="$("$INTERP" "$SRC" 2>/dev/null | tail -1)"
 [ -n "$I_EXIT" ] || { echo "wasm_str_abi_parity: FAIL — interp printed nothing"; exit 1; }
 echo "wasm_str_abi_parity: interp = $I_EXIT"
 
@@ -152,7 +152,7 @@ fn main() {
     println(to_str(str_cmp("abc", "abd")))
 }
 AX
-C_INTERP="$("$INTERP" "$CMP" 2>/dev/null | grep -v '^axon: run-id ' | tr '\n' ' ')"
+C_INTERP="$("$INTERP" "$CMP" 2>/dev/null | tr '\n' ' ')"
 echo "wasm_str_abi_parity: str_cmp interp = [$C_INTERP]"
 if [ -z "$C_INTERP" ]; then
   echo "wasm_str_abi_parity: FAIL — str_cmp produced no interpreter output"; exit 1

@@ -41,7 +41,6 @@ check() {
   printf '%s\n' "${src/fn main() -> i64/fn probe() -> i64}" > "$WORK/$name.ax"
   printf 'fn main() { println(to_str(probe())) }\n' >> "$WORK/$name.ax"
   local io; io="$("$INTERP" "$WORK/$name.ax" 2>&1)"; local i=$?
-  io="$(printf '%s\n' "$io" | grep -v '^axon: run-id ')"
   local berr; berr="$("$AXON" build "$WORK/$name.ax" -o "$WORK/$name" 2>&1)"
   if [ -f "$WORK/$name" ]; then
     local no; no="$("$WORK/$name" 2>&1)"; local n=$?

@@ -54,9 +54,9 @@ pub mod types;
 // `axon_core::codegen::TestResult` keeps working.
 pub use output::TestResult;
 
-// Re-export the public path that lib.rs / main.rs expect: callers reach
-// `compile_bitcode_to_binary` via `axon_core::codegen::compile_bitcode_to_binary`.
-pub use link::{compile_bitcode_to_binary, OptLevel};
+// Re-export the public path that main.rs expects: the build cache stores a
+// `HostedObject` and a cache hit calls `link_hosted_object` (AX-34).
+pub use link::{link_hosted_object, HostedObject, OptLevel};
 
 /// Phase 4 `@[adaptive]`: returns true if the attribute list contains an
 /// `adaptive` annotation (regardless of its argument list).  Used by

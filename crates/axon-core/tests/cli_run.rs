@@ -805,8 +805,9 @@ fn ai_replay_reproduces_a_recorded_run_without_the_live_model_f2() {
 
 #[test]
 fn phase9_run_id_stamped_and_trace_replay_reproduces_run() {
-    // Phase 9 / F2 CLI wrapper: every `axon run` emits a run-id to stderr and
-    // stamps it (+ the effective seed) to the provenance log.
+    // Phase 9 / F2 CLI wrapper: every `axon run` stamps a run-id (+ the
+    // effective seed) to the provenance log, and prints it on stderr under
+    // `--verbose` (AX-33: never by default — the program owns its stderr).
     // `axon trace --replay <run-id>` re-runs the source with the same seed,
     // producing byte-identical output for deterministic programs.
     let prog = "fn main() -> i64 { let x = random_i64(1, 1000)  println(to_str(x))  0 }\n";
@@ -815,7 +816,7 @@ fn phase9_run_id_stamped_and_trace_replay_reproduces_run() {
 
     // 1. First run: capture the run-id from stderr and the output from stdout.
     let run1 = axon()
-        .args(["run", f.to_str().unwrap()])
+        .args(["run", "--verbose", f.to_str().unwrap()])
         .env_remove("AXON_AI_MOCK")
         .output()
         .unwrap();
@@ -856,6 +857,94 @@ fn phase9_run_id_stamped_and_trace_replay_reproduces_run() {
     );
 
     let _ = std::fs::remove_file(&f);
+}
+
+/// AX-33: `axon run` used to print `axon: run-id <id>` on the program's stderr
+/// unconditionally, so a program run under the interpreter could not own its
+/// stderr (compilebench's `warmup <i> <ns>` protocol had to be parsed by prefix
+/// for `axon-interp` only, since a native build prints no such line). The id
+/// must still reach everything that needs it: the provenance log (always), the
+/// terminal under `--verbose`, and a recording run (`AXON_RECORD`).
+#[test]
+fn run_leaves_stderr_to_the_program_and_still_stamps_the_run_id() {
+    let dir = std::env::temp_dir().join(format!("axon_ax33_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let cache = dir.join("cache");
+    std::fs::create_dir_all(&cache).unwrap();
+    let src = dir.join("hello.ax");
+    std::fs::write(&src, "fn main() -> i64 {\n  println(\"hi\")\n  0\n}\n").unwrap();
+
+    // 1. Default: nothing on stderr for a program that writes nothing there.
+    let out = axon()
+        .args(["run", src.to_str().unwrap()])
+        .env("XDG_CACHE_HOME", &cache)
+        .env_remove("AXON_RECORD")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "hi\n");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        "",
+        "`axon run` must leave stderr to the program"
+    );
+
+    // 2. ...but the run is still stamped, so `axon trace --replay` finds it.
+    let log = std::fs::read_to_string(cache.join("axon").join("provenance.jsonl"))
+        .expect("the run_start record must still be written");
+    let rec = log
+        .lines()
+        .rev()
+        .find(|l| l.contains("\"event\":\"run_start\"") && l.contains(src.to_str().unwrap()))
+        .expect("a run_start record for this source");
+    let rid = rec
+        .split("\"run_id\":\"")
+        .nth(1)
+        .and_then(|s| s.split('"').next())
+        .unwrap()
+        .to_string();
+    let replay = axon()
+        .args(["trace", "--replay", &rid])
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
+    assert_eq!(replay.status.code(), Some(0), "{replay:?}");
+    assert_eq!(String::from_utf8_lossy(&replay.stdout), "hi\n");
+
+    // 3. `--verbose` prints exactly the run-id line, and it names a logged run.
+    let v = axon()
+        .args(["run", "--verbose", src.to_str().unwrap()])
+        .env("XDG_CACHE_HOME", &cache)
+        .env_remove("AXON_RECORD")
+        .output()
+        .unwrap();
+    let verr = String::from_utf8_lossy(&v.stderr).to_string();
+    let vrid = verr
+        .strip_prefix("axon: run-id ")
+        .and_then(|s| s.strip_suffix('\n'))
+        .unwrap_or_else(|| panic!("--verbose must print one run-id line, got {verr:?}"));
+    let log = std::fs::read_to_string(cache.join("axon").join("provenance.jsonl")).unwrap();
+    assert!(
+        log.contains(&format!("\"run_id\":\"{vrid}\"")),
+        "the printed run-id must be the one stamped to the log"
+    );
+
+    // 4. Recording prints it unasked: a journal needs the id that pairs it with
+    //    its provenance record.
+    let journal = dir.join("j.journal");
+    let r = axon()
+        .args(["run", src.to_str().unwrap()])
+        .env("XDG_CACHE_HOME", &cache)
+        .env("AXON_RECORD", &journal)
+        .output()
+        .unwrap();
+    assert_eq!(r.status.code(), Some(0), "{r:?}");
+    assert!(
+        String::from_utf8_lossy(&r.stderr).starts_with("axon: run-id "),
+        "AXON_RECORD must print the run-id: {:?}",
+        String::from_utf8_lossy(&r.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -20195,8 +20284,8 @@ fn run_and_check_agree_on_the_parse_diagnostic() {
     let check = axon().arg("check").arg(&f).output().expect("spawn check");
     let _ = std::fs::remove_file(&f);
 
-    // `run` stamps `axon: run-id …` on stderr before anything else; that line is
-    // the replay handle and is not a diagnostic. Compare the diagnostic lines.
+    // Compare the diagnostic lines only: stderr may also carry non-diagnostic
+    // notes, and the JSON diagnostics are what the two paths must agree on.
     let diag_lines = |s: &str| -> Vec<String> {
         s.lines()
             .filter(|l| l.starts_with('{'))
@@ -21270,9 +21359,8 @@ fn min_divided_by_negative_one_overflows_in_both_engines() {
     );
     let _ = std::fs::remove_file(&out_bin);
     // I-2: not merely "also panics" — the same exit code AND the same text.
-    // Compare the PANIC LINE, not the whole stream: `axon run` also writes an
-    // `axon: run-id …` provenance line that a native binary has no reason to
-    // emit, so a whole-output comparison fails on a difference that is correct.
+    // Compare the PANIC LINE, not the whole stream: the two runtimes word their
+    // surrounding output independently, and the panic line is the contract.
     let panic_line = |s: &str| {
         s.lines()
             .find(|l| l.contains("axon: panic:"))
@@ -28309,6 +28397,164 @@ fn native_build_links_from_any_directory_without_cargo_on_path() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A `cargo` that records each run in the returned marker file and fails:
+/// `(dir to prepend to PATH and use as CARGO_HOME/bin, marker)`.
+fn recording_cargo(dir: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = dir.join("fake-cargo-home").join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let marker = dir.join("cargo-ran");
+    let cargo = bin.join("cargo");
+    std::fs::write(
+        &cargo,
+        format!("#!/bin/sh\necho \"$@\" >> '{}'\nexit 1\n", marker.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
+    (bin, marker)
+}
+
+/// AX-35. Every native link used to run `cargo build -p axon-rt` (~40 ms of a
+/// ~66 ms warm build), and that cargo honoured the CALLER's `RUSTUP_TOOLCHAIN`,
+/// so the runtime a binary linked was whatever toolchain last rebuilt it. With
+/// the runtime already built, a build must run no cargo at all — every cargo
+/// the compiler could find here records that it ran and fails — and the
+/// caller's toolchain variables, pointing at toolchains that do not exist,
+/// must not change a byte of the binary.
+#[test]
+fn native_build_with_a_built_runtime_runs_no_cargo_and_ignores_the_callers_toolchain() {
+    let dir = std::env::temp_dir().join(format!("axon_rt_no_cargo_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("hello.ax"), "fn main() { println(\"hello\") }\n").unwrap();
+    let build = |cmd: &mut Command| {
+        cmd.current_dir(&dir)
+            .args(["build", "hello.ax", "-o", "hello", "--no-cache"])
+            .output()
+            .unwrap()
+    };
+
+    // Bring the workspace runtime up to date the normal way first.
+    let o = build(&mut axon());
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    if codegen_absent(&log) {
+        eprintln!("SKIP native_build_with_a_built_runtime_runs_no_cargo_and_ignores_the_callers_toolchain: no codegen");
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+    assert!(o.status.success(), "{log}");
+    let first = std::fs::read(dir.join("hello")).unwrap();
+
+    let (bin, marker) = recording_cargo(&dir);
+    let o = build(
+        axon()
+            .env("CARGO_HOME", bin.parent().unwrap())
+            .env("CARGO", bin.join("cargo"))
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .env("RUSTUP_TOOLCHAIN", "axon-no-such-toolchain")
+            .env("RUSTC", "/nonexistent/rustc")
+            .env("RUSTFLAGS", "-C opt-level=0"),
+    );
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(o.status.success(), "{err}");
+    assert!(
+        !marker.exists(),
+        "a build with a current runtime ran cargo: {}",
+        std::fs::read_to_string(&marker).unwrap_or_default()
+    );
+    assert!(!err.contains("warning"), "{err}");
+    assert!(
+        std::fs::read(dir.join("hello")).unwrap() == first,
+        "the caller's Rust toolchain environment changed the binary"
+    );
+    let r = Command::new(dir.join("hello")).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&r.stdout).trim(), "hello");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// AX-35. A compiler installed outside the workspace finds its runtime in the
+/// documented install layout (`scripts/install.sh`): `<prefix>/bin/axon` and
+/// `<prefix>/lib/axon/runtime/<profile>/libaxon_rt.a`, with no cargo, and
+/// prefers it to the workspace's runtime — so once the installed lib is
+/// replaced by junk, that junk is what the linker rejects.
+#[test]
+fn an_installed_compiler_links_the_runtime_installed_beside_it_without_cargo() {
+    // Under cargo's target tmp dir, on the compiler's filesystem, so the
+    // "installed" compiler can be a hard link: a fresh copy is a file open for
+    // writing, which a concurrent test's fork can inherit and turn this test's
+    // exec into ETXTBSY.
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("axon_rt_installed_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("hello.ax"), "fn main() { println(\"hello\") }\n").unwrap();
+
+    // The runtime to install: the debug one the workspace compiler links,
+    // brought up to date by one ordinary build.
+    let o = axon()
+        .current_dir(&dir)
+        .args(["build", "hello.ax", "-o", "ws-hello", "--no-cache"])
+        .output()
+        .unwrap();
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    if codegen_absent(&log) {
+        eprintln!("SKIP an_installed_compiler_links_the_runtime_installed_beside_it_without_cargo: no codegen");
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+    assert!(o.status.success(), "{log}");
+    let workspace_exe = std::path::Path::new(env!("CARGO_BIN_EXE_axon"));
+    let built = workspace_exe.parent().unwrap().join("libaxon_rt.a");
+
+    let prefix = dir.join("prefix");
+    let runtime_dir = prefix.join("lib/axon/runtime/debug");
+    std::fs::create_dir_all(prefix.join("bin")).unwrap();
+    std::fs::create_dir_all(&runtime_dir).unwrap();
+    let installed_exe = prefix.join("bin/axon");
+    if std::fs::hard_link(workspace_exe, &installed_exe).is_err() {
+        std::fs::copy(workspace_exe, &installed_exe).unwrap();
+    }
+    std::fs::copy(&built, runtime_dir.join("libaxon_rt.a")).unwrap();
+
+    let (bin, marker) = recording_cargo(&dir);
+    let installed_build = |out: &str| {
+        Command::new(prefix.join("bin/axon"))
+            .current_dir(&dir)
+            .env("CARGO_HOME", bin.parent().unwrap())
+            .env("CARGO", bin.join("cargo"))
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .args(["build", "hello.ax", "-o", out, "--no-cache"])
+            .output()
+            .unwrap()
+    };
+    let o = installed_build("hello");
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(o.status.success(), "{err}");
+    assert!(!marker.exists(), "the installed compiler ran cargo");
+    let r = Command::new(dir.join("hello")).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&r.stdout).trim(), "hello");
+
+    std::fs::write(runtime_dir.join("libaxon_rt.a"), "not an archive\n").unwrap();
+    let o = installed_build("hello2");
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success());
+    assert!(
+        err.contains(&prefix.display().to_string())
+            && err.contains("lib/axon/runtime/debug/libaxon_rt.a"),
+        "the installed runtime must be the one linked, before the workspace's:\n{err}"
+    );
+    assert!(!marker.exists(), "the installed compiler ran cargo");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn trace_replay_refuses_a_source_that_changed_since_the_run() {
     // `trace --replay` re-executes the file at the recorded PATH. A path is not
@@ -28326,7 +28572,7 @@ fn trace_replay_refuses_a_source_that_changed_since_the_run() {
     std::fs::write(&src, "fn main() { println(\"ORIGINAL\") }\n").unwrap();
 
     let out = axon()
-        .args(["run", src.to_str().unwrap()])
+        .args(["run", "--verbose", src.to_str().unwrap()])
         .env("XDG_CACHE_HOME", &cache)
         .env("AXON_SEED", "7")
         .output()
@@ -28341,7 +28587,7 @@ fn trace_replay_refuses_a_source_that_changed_since_the_run() {
         .to_string();
     assert!(
         !rid.is_empty(),
-        "precondition: `axon run` must print a run-id: {err}"
+        "precondition: `axon run --verbose` must print a run-id: {err}"
     );
 
     // Unchanged source: the replay must still work.
@@ -30496,9 +30742,7 @@ fn octal_literals_lex_like_hex_and_binary() {
         let f = tmp_ax("octal", src);
         let out = axon().arg("run").arg(&f).output().expect("spawn");
         let _ = std::fs::remove_file(&f);
-        // STDOUT only. `axon run` writes `axon: run-id …` to STDERR, so a
-        // combined read takes THAT as the last line and every value comparison
-        // fails for a reason that has nothing to do with the literal.
+        // STDOUT only: the value under test is printed there.
         (
             out.status.code().unwrap_or(-1),
             String::from_utf8_lossy(&out.stdout).to_string(),
@@ -31605,19 +31849,16 @@ fn eprint_writes_to_stderr_without_a_newline() {
     assert_eq!(out.status.code(), Some(0), "program must run");
 
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-    // `axon run` writes its run-id banner to stderr; drop it before comparing.
-    let stderr: String = String::from_utf8_lossy(&out.stderr)
-        .lines()
-        .filter(|l| !l.starts_with("axon: run-id"))
-        .collect::<Vec<_>>()
-        .join("\n");
+    // The whole stream, byte for byte: `axon run` adds nothing to the
+    // program's stderr (AX-33), so no filtering is needed or allowed.
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
 
     assert_eq!(stdout, "out-a", "print goes to stdout and adds no newline");
     // err-a and err-b land on the SAME line: `eprint` emitted no separator, so
     // `eprintln`'s text is concatenated directly onto it. If eprint ever grew a
     // newline this becomes two lines and the assertion fails.
     assert_eq!(
-        stderr, "err-aerr-b",
+        stderr, "err-aerr-b\n",
         "eprint must write to STDERR with no trailing newline — if these appear \
          on separate lines, eprint added one; if they are missing from stderr, \
          it wrote to stdout"
@@ -32761,6 +33002,140 @@ fn interp_string_and_array_builder_loops_are_linear() {
         interp_stdout("ax31_builders", src),
         "40000000000 200000 199999 199999 30000200000 0"
     );
+}
+
+#[test]
+fn interp_closures_capture_only_their_free_variables_with_unchanged_semantics() {
+    // AX-40: a lambda captures only the bindings its body names (not the
+    // whole defining environment), and builtins that call a closure
+    // repeatedly lend its capture cell instead of copying it per call. Neither
+    // may change what a program observes: shadowing in blocks and loops,
+    // globals vs shadowing locals, per-closure persistent capture writes,
+    // nested closures, recursion, closures in arrays and structs, a name read
+    // only in a match guard, and closures called by `arr_fold`/`arr_map`/
+    // `arr_filter`/`arr_sort_by` all behave as before.
+    let src = r#"type Holder = { f: (i64) -> i64, n: i64 }
+
+let base = 100
+
+fn apply(f: (i64) -> i64, x: i64) -> i64 {
+    f(x)
+}
+
+fn make_counter(start: i64) -> () -> i64 {
+    let unused_a = 1
+    let unused_b = [1, 2, 3]
+    let n = start
+    || {
+        n = n + 1
+        n
+    }
+}
+
+fn fact(n: i64) -> i64 {
+    if n < 2 { 1 } else { n * fact(n - 1) }
+}
+
+fn main() -> i64 {
+    // Shadowing in nested blocks: the lambda sees the binding in scope where
+    // it is written, not a later or outer one.
+    let x = 1
+    let inner = if true {
+        let x = 2
+        |k: i64| x + k
+    } else {
+        |k: i64| k
+    }
+    let x = 3
+    println(to_str(inner(10)) + " " + to_str(x))
+
+    // Loop: each iteration's closure captures that iteration's binding.
+    let fs = []
+    for i in 0..3 {
+        let sq = i * i
+        fs = arr_push(fs, |k: i64| k + sq + i)
+    }
+    println(to_str(fs[0](100)) + " " + to_str(fs[1](100)) + " " + to_str(fs[2](100)))
+
+    // A global, and a local shadowing it.
+    let g = |k: i64| k + base
+    println(to_str(g(1)))
+    let base = 7
+    let h = |k: i64| k + base
+    println(to_str(h(1)) + " " + to_str(g(1)))
+
+    // Writes to captures persist per closure; the defining binding is a copy.
+    let c1 = make_counter(10)
+    let c2 = make_counter(20)
+    c1()
+    println(to_str(c1()) + " " + to_str(c2()) + " " + to_str(c1()))
+
+    // Nested closures: the inner one's free names are captured by the outer.
+    let m = 5
+    let outer = |a: i64| {
+        let mk = |b: i64| a * m + b
+        mk(1)
+    }
+    println(to_str(outer(2)))
+
+    // Recursion through a fn from inside a closure, and closures in a struct.
+    let hold = Holder { f: |k: i64| fact(k) + m, n: 1 }
+    let hf = hold.f
+    println(to_str(hf(5)) + " " + to_str(apply(hold.f, 3)))
+
+    // Closures called repeatedly by builtins, writing their captures: the
+    // writes persist across the builtin's calls, the outer binding is a copy.
+    let seen = 0
+    let total = arr_fold(arr_range(0, 5), 0, |acc: i64, v: i64| {
+        seen = seen + 1
+        acc + v * seen
+    })
+    let tick = 0
+    let bump = |v: i64| {
+        tick = tick + v
+        tick
+    }
+    let run = arr_map([1, 2, 3], bump)
+    println(to_str(total) + " " + to_str(seen) + " " + to_str(run[2]) + " " + to_str(bump(10)) + " " + to_str(tick))
+    let evens = arr_filter(arr_range(0, 10), |v: i64| v % 2 == 0 && v > m)
+    let sorted = arr_sort_by([3, 1, 2], |a: i64, b: i64| b - a)
+    println(to_str(len(evens)) + " " + to_str(sorted[0]))
+
+    // A name used only in a match guard is captured.
+    let limit = 4
+    let classify = |v: i64| match v {
+        n if n > limit => 1
+        _ => 0
+    }
+    println(to_str(classify(3)) + " " + to_str(classify(9)))
+
+    // A closure reachable while it runs (stored in an array it is passed
+    // alongside) still sees its own writes.
+    let cnt = 0
+    let step = |v: i64| {
+        cnt = cnt + v
+        cnt
+    }
+    let both = [step, step]
+    println(to_str(both[0](1)) + " " + to_str(both[1](2)) + " " + to_str(step(3)))
+    0
+}
+"#;
+    assert_eq!(
+        interp_stdout("ax40_closures", src),
+        "12 3\n100 102 106\n101\n8 101\n12 21 13\n11\n125 11\n40 0 6 16 0\n2 3\n0 1\n1 3 6"
+    );
+}
+
+#[test]
+fn interp_builtin_closure_writing_a_captured_array_is_linear() {
+    // AX-40: `arr_fold` lends a lambda literal's capture cell, so a captured
+    // array written by the lambda is uniquely owned and written in place. A
+    // per-call copy of the captures made each write copy the whole array
+    // (quadratic: minutes at n = 200k). Many unrelated bindings are in scope
+    // and must not be captured or copied either.
+    let src = "fn main() -> i64 {\n let n = 200000\n let p1 = [1, 2, 3]\n let p2 = \"pad\"\n let p3 = arr_repeat(1, 1000)\n let zs = arr_repeat(0, n)\n let k = arr_fold(arr_range(0, n), 0, |acc: i64, i: i64| {\n  zs[i] = i + 1\n  acc + zs[i] + zs[i / 2]\n })\n println(to_str(k) + \" \" + to_str(zs[n - 1]) + \" \" + to_str(len(p1) + len(p2) + len(p3)))\n 0\n}\n";
+    assert_eq!(interp_stdout("ax40_fold_lend", src), "30000200000 0 1006");
 }
 
 #[test]
