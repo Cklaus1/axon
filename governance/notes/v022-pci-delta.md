@@ -303,6 +303,9 @@ unit rows, and are labelled so in the gate script. The same holds for amendment 
 (M3033, M3035, M3038): the production route refuses those attacks by the taint first (M3038 by the checker's
 E0403), so each unit row is the evidence and the runner row is a second witness.
 
+Round 12 (c9r12/psv1v, `9a95c9ce`, gpumaster, `--only=<ids>`, two shards): all 316 active rows whose target is `crates/axon-core/src` were re-run, 316/316 KILLED by their own
+attack, 0 REFUSED_ELSEWHERE, 0 stale. Still a sample run (`--only`), not the scope run the freeze requires.
+
 ## (c) Surfaces 18 and 19, and what the protected profile does with a non-empty ceiling
 
 Outside the certification, unchanged: surface 18 (a non-empty effect grant) and surface 19 (the
