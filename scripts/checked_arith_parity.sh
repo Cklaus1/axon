@@ -18,18 +18,12 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 . "$ROOT/scripts/lib/harness_skip.sh"
+. "$ROOT/scripts/lib/axon_bin.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-echo "checked_arith_parity: building codegen axon binary…"
-if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-  echo "checked_arith_parity: codegen build unavailable (LLVM absent) — skipping"
-  exit 0
-fi
-# axon-rt carries the __axon_arith_panic helper; make sure it's current.
-cargo build -q -p axon-rt 2>/dev/null || true
-AXON="${AXON:-target/debug/axon}"
+need_codegen_axon checked_arith_parity
 
 # (label, body) — each body is a `fn main()` body. The interesting cases are the
 # faults (must panic exit 101 with a matching message) and the boundary cases

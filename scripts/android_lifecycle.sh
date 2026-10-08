@@ -33,6 +33,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+. "$ROOT/scripts/lib/axon_bin.sh"
 
 skip() { echo "android_lifecycle: SKIP — $1"; exit 0; }
 fail() { echo "android_lifecycle: FAIL — $1"; exit 1; }
@@ -55,12 +56,7 @@ NDKBIN="$(ndk_bin)" || skip "Android NDK not found"
 ADB="${ADB:-adb}"
 command -v "$ADB" >/dev/null 2>&1 || ADB="${ANDROID_HOME:-}/platform-tools/adb"
 
-cargo build -q -p axon-core --bin axon 2>/dev/null || skip "codegen build unavailable"
-AXON="${AXON:-target/debug/axon}"
-printf 'fn main() -> i64 { 0 }\n' > /tmp/axon_lc_probe.ax
-"$AXON" build /tmp/axon_lc_probe.ax -o /tmp/axon_lc_probe.bin --no-cache >/dev/null 2>&1 \
-  || skip "this axon binary cannot emit native builds"
-rm -f /tmp/axon_lc_probe.ax /tmp/axon_lc_probe.bin
+need_codegen_axon android_lifecycle
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"; "$ADB" shell rm -rf /data/local/tmp/axon_lc 2>/dev/null' EXIT

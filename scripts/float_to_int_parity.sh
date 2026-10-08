@@ -14,16 +14,12 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 . "$ROOT/scripts/lib/harness_skip.sh"
+. "$ROOT/scripts/lib/axon_bin.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-echo "float_to_int_parity: building codegen axon binary…"
-if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-  echo "float_to_int_parity: codegen build unavailable (LLVM absent) — skipping"
-  exit 0
-fi
-AXON="${AXON:-target/debug/axon}"
+need_codegen_axon float_to_int_parity
 
 # (label, body of fn main) — each prints f64_to_i64 of an edge value. Values are
 # built through arithmetic so nothing folds to a constant at compile time.

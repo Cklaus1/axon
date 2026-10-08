@@ -15,6 +15,7 @@ set -u
 # shellcheck source=lib/harness_skip.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/harness_skip.sh"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
+. "$ROOT/scripts/lib/axon_bin.sh"
 # Serialize the wasm parity scripts under one shared lock: each builds its
 # wasm artifacts next to the source (examples/$base.*.wasm), so concurrent runs
 # (cargo's parallel test threads invoke several of these at once) clobber each
@@ -28,10 +29,7 @@ FLOOR=28   # actual is 29/29; headroom for minor churn, catches mass regression
 command -v node >/dev/null 2>&1 || { echo "wasm_browser_examples_parity: no node — skipping"; exit 0; }
 HOSTJS="scripts/wasm_browser_host.js"
 [ -f "$HOSTJS" ] || { echo "wasm_browser_examples_parity: host harness missing — skipping"; exit 0; }
-AXON="${AXON:-target/debug/axon}"
-if [ ! -x "$AXON" ]; then
-  cargo build -q -p axon-core --bin axon 2>/dev/null || { echo "wasm_browser_examples_parity: codegen unavailable — skipping"; exit 0; }
-fi
+need_axon wasm_browser_examples_parity
 # Distinguish an ABSENT target from a BROKEN build. The probe used to be
 # `if ! cargo build ... 2>/dev/null` reporting "unavailable - skipping", which
 # said the same thing for both and threw away the compiler error naming which.
@@ -54,8 +52,14 @@ if ! _rt_err="$(cargo build -q -p axon-rt --target wasm32-unknown-unknown 2>&1)"
   exit 1
 fi
 PROBE="$(mktemp -d)/p.ax"; printf 'fn main() { println("ok") }\n' > "$PROBE"
-"$AXON" target build "$PROBE" --target wasm32-unknown-unknown >/dev/null 2>&1
-[ -f "${PROBE%.ax}.linked.wasm" ] || { echo "wasm_browser_examples_parity: browser link unavailable — skipping"; exit 0; }
+_probe_err="$("$AXON" target build "$PROBE" --target wasm32-unknown-unknown 2>&1)"
+if [ ! -f "${PROBE%.ax}.linked.wasm" ]; then
+  # E0907: this `axon` has no codegen backend (see axon_has_no_codegen).
+  if echo "$_probe_err" | grep -q E0907; then
+    axon_has_no_codegen wasm_browser_examples_parity
+  fi
+  echo "wasm_browser_examples_parity: browser link unavailable — skipping"; exit 0
+fi
 
 pass=0; diff=0; objonly=0; total=0
 fails=""; objs=""

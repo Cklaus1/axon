@@ -16,6 +16,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 . "$ROOT/scripts/lib/harness_skip.sh"
+. "$ROOT/scripts/lib/axon_bin.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -32,12 +33,7 @@ fn main() -> i64 {
 }
 AX
 
-echo "goal_input_parity: building codegen axon binary…"
-if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-  echo "goal_input_parity: codegen build unavailable (LLVM absent) — skipping"
-  exit 0
-fi
-AXON="${AXON:-target/debug/axon}"
+need_codegen_axon goal_input_parity
 
 # Interpreter provenance (the oracle — already logs input).
 IPROV="$WORK/icache"; mkdir -p "$IPROV"

@@ -12,6 +12,7 @@
 # Skips (exit 0) when codegen / the wasm toolchain is absent.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
+. "$ROOT/scripts/lib/axon_bin.sh"
 # Serialize the wasm parity scripts under one shared lock: each builds its
 # wasm artifacts next to the source (examples/$base.*.wasm), so concurrent runs
 # (cargo's parallel test threads invoke several of these at once) clobber each
@@ -26,14 +27,8 @@ for rt in wasmtime "$HOME/.wasmtime/bin/wasmtime"; do
 done
 [ -n "$WASMRT" ] || { echo "wasm_aot_run_parity: no wasm runtime — skipping"; exit 0; }
 
-if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-  echo "wasm_aot_run_parity: codegen build unavailable — skipping"; exit 0
-fi
-if ! cargo build -q -p axon-core --no-default-features --bin axon-run 2>/dev/null; then
-  echo "wasm_aot_run_parity: interp build unavailable — skipping"; exit 0
-fi
-AXON="${AXON:-target/debug/axon}"
-INTERP="target/debug/axon-run"
+need_codegen_axon wasm_aot_run_parity
+need_axon_run wasm_aot_run_parity
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
 # AUDIT O013: give this harness its OWN cargo target directory for the wasm

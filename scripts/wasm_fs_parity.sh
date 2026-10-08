@@ -45,10 +45,16 @@ elif [ "$_rt" -ne 0 ]; then
 fi
 
 echo "wasm_fs_parity: building axon-run (native + wasm32-wasip1)…"
-cargo build -q -p axon-core --no-default-features --bin axon-run || { echo "native build failed"; exit 1; }
+# Native side: the caller's AXON_RUN (the binary under test) when given, so
+# nothing rebuilds target/debug/axon-run under harnesses executing it.
+if [ -n "${AXON_RUN:-}" ]; then
+  NATIVE="$AXON_RUN"
+else
+  cargo build -q -p axon-core --no-default-features --bin axon-run || { echo "native build failed"; exit 1; }
+  NATIVE="$ROOT/target/debug/axon-run"
+fi
 cargo build -q -p axon-core --no-default-features --bin axon-run --target wasm32-wasip1 || { echo "wasm build failed"; exit 1; }
 
-NATIVE="target/debug/axon-run"
 WASM="target/wasm32-wasip1/debug/axon-run.wasm"
 
 PROG="examples/file_roundtrip.ax"
@@ -59,7 +65,7 @@ PROG="examples/file_roundtrip.ax"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-n_out="$(cd "$WORK" && "$ROOT/$NATIVE" "$ROOT/$PROG" 2>/dev/null)"; n_code=$?
+n_out="$(cd "$WORK" && "$NATIVE" "$ROOT/$PROG" 2>/dev/null)"; n_code=$?
 # wasmtime needs the file path and a dir grant for both the program's reads and
 # its /tmp writes.
 w_out="$("$WASMRT" --dir / --dir /tmp "$WASM" "$ROOT/$PROG" 2>/dev/null)"; w_code=$?
@@ -89,7 +95,7 @@ fn main() -> i64 {
   }
 }
 AX
-en_out="$(AXON_WASM_PARITY=wasiworks "$ROOT/$NATIVE" "$ENVPROG" 2>/dev/null)"; en_code=$?
+en_out="$(AXON_WASM_PARITY=wasiworks "$NATIVE" "$ENVPROG" 2>/dev/null)"; en_code=$?
 ew_out="$("$WASMRT" --dir / --env AXON_WASM_PARITY=wasiworks "$WASM" "$ENVPROG" 2>/dev/null)"; ew_code=$?
 echo "  native env: [$en_out] (exit $en_code)"
 echo "  wasm   env: [$ew_out] (exit $ew_code)"

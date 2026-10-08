@@ -80,7 +80,12 @@ else
   for v in $claimed; do
     # `axon --version` / `--help` are flags, not verbs.
     case "$v" in -*) continue ;; esac
-    echo "$HELP" | grep -qE "^  $v( |$)" || missing="$missing $v"
+    # A here-string, not `echo "$HELP" | grep -q`: bash's echo writes the help
+    # text in several write(2)s, `grep -q` exits at its first match, and the
+    # rest of the echo then dies of SIGPIPE - which `pipefail` turns into a
+    # failed pipeline. Verbs listed late in --help (`deploy`) were reported
+    # missing whenever grep won that race, i.e. under parallel `cargo test`.
+    grep -qE "^  $v( |$)" <<<"$HELP" || missing="$missing $v"
   done
   if [ "$n_claimed" -lt 8 ]; then
     bad verb_extraction "only $n_claimed verbs extracted from $DOC — if the extraction broke, \

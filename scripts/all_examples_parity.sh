@@ -18,63 +18,21 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 . "$ROOT/scripts/lib/harness_skip.sh"
-
-# Build the codegen binary up front. When this harness is invoked from INSIDE a
-# `cargo test` run (the cli_run wrapper), the parent cargo holds the build lock
-# on target/, so a nested `cargo build` here would block/fail — detect that and
-# skip cleanly rather than report a false divergence. Prefer an already-built
-# binary if present (the gate builds it before running tests).
-echo "all_examples_parity: locating codegen axon binary…"
-AXON="${AXON:-target/debug/axon}"
-if [ ! -x "$AXON" ]; then
-  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-    echo "all_examples_parity: codegen build unavailable (LLVM absent or build lock) — skipping"
-    exit 0
-  fi
-fi
+. "$ROOT/scripts/lib/axon_bin.sh"
 
 # The located binary EXISTING is not the same as it being able to codegen, and
-# this harness reports the difference as findings. `target/debug/axon` is shared
-# with every other build of this workspace, and a concurrent
-# `--no-default-features` build leaves an INTERP-ONLY binary sitting at exactly
-# that path. Every `axon build` then fails, and the report says "29 BUILD-FAIL"
-# -- which reads as a compiler regression and is really two builds sharing one
-# output path.
-#
-# That is not hypothetical: it failed this way twice, and both times the failure
-# was investigated as an interp<->native divergence before the cause was found.
-# `exit_code_parity.sh` and `smt_discharge_parity.sh` already avoid it by
-# building into a private CARGO_TARGET_DIR; this harness prefers a prebuilt
-# binary instead, so it has to VERIFY the one it found.
-#
-# Probe with a trivial program rather than trusting the path. Skipping is
-# correct here: an interp-only binary means codegen is not under test in this
-# invocation, and a skip says so where 29 BUILD-FAILs actively mislead.
-_probe="$(mktemp -d)"; printf 'fn main() -> i64 { 0 }\n' > "$_probe/p.ax"
-if ! berr="$("$AXON" build "$_probe/p.ax" -o "$_probe/p" 2>&1)"; then
-  rm -rf "$_probe"
-  # "cannot codegen (interp-only build, or LLVM absent)" was ASSERTED for every
-  # build failure — including a compiler that is simply broken. Prove it.
-  if native_build_unavailable "$berr"; then
-    echo "all_examples_parity: this is a SKIP, not a pass: set AXON=<codegen binary> to actually run it."
-    harness_skip all_examples_parity "\`$AXON\` cannot codegen (interp-only build, or LLVM absent)"
-  fi
-  echo "all_examples_parity: FAIL — \`$AXON\` cannot build a trivial program (a build error is not a skip):"
-  printf '%s\n' "$berr" | head -5 | sed 's/^/        /'
-  exit 1
-fi
-rm -rf "$_probe"
+# this harness reports the difference as findings: an interp-only `axon` makes
+# every `axon build` fail, and the report then says "29 BUILD-FAIL" -- which
+# reads as a compiler regression. That happened twice when this harness
+# preferred whatever sat at the shared `target/debug/axon`, a path concurrent
+# `--no-default-features` builds overwrite (AX-51). So the binary is either the
+# caller's AXON or one built here, and it is ASKED whether it can codegen: an
+# interp-only binary is a skip (codegen is not under test in this invocation),
+# a compiler that cannot build `fn main() -> i64 { 0 }` is a FAIL.
+need_codegen_axon all_examples_parity
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-
-# Probe: can this binary actually emit a native build? (The gate's
-# `--no-default-features` test run may have left a codegen-less `axon` in place.)
-# If a trivial build fails, codegen is unavailable here — skip cleanly.
-printf 'fn main() -> i64 { 0 }\n' > "$WORK/probe.ax"
-if ! berr="$(AXON_AI_MOCK=1 "$AXON" build "$WORK/probe.ax" -o "$WORK/probe.bin" --no-cache 2>&1)"; then
-  native_build_failed all_examples_parity "trivial probe program" "$berr" || exit 1
-fi
 
 pass=0; diff=0; failbuild=0; refused=0; total=0
 fails=""; refuses=""
