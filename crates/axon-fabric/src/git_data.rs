@@ -1150,8 +1150,11 @@ pub(crate) mod tests {
         git(&r, &["init", "-q", "-b", "main"]);
         std::fs::write(r.join("a"), "a\n").unwrap();
         std::fs::write(r.join("x"), "#!/bin/sh\n").unwrap();
-        std::fs::set_permissions(r.join("x"), std::os::unix::fs::PermissionsExt::from_mode(0o755))
-            .unwrap();
+        std::fs::set_permissions(
+            r.join("x"),
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
         symlink("a", r.join("l")).unwrap();
         git(&r, &["add", "-A"]);
         git(&r, &["commit", "-q", "-m", "c"]);

@@ -2004,7 +2004,11 @@ fn a_value_is_credited_only_by_an_edit_of_that_value() {
         ".env(\"VS_KEY_B\", \"vs_val_b\")",
         ".env(\"VS_KEY_B\", \"vs_val_b0\")",
     );
-    not_names_value(&r, "\"vs_val_b\"", "a row that changed the value did not credit it");
+    not_names_value(
+        &r,
+        "\"vs_val_b\"",
+        "a row that changed the value did not credit it",
+    );
     names_value(
         &r,
         "val_env",
@@ -2034,7 +2038,15 @@ fn a_value_is_credited_only_by_an_edit_of_that_value() {
         (7, "Stdio::piped()", "val_stdio"),
     ] {
         let _ = label;
-        value_exempt(&r, SCANNED, "vs_spawn", n, frag, "REMAINDER", "REMAINDER (probe)");
+        value_exempt(
+            &r,
+            SCANNED,
+            "vs_spawn",
+            n,
+            frag,
+            "REMAINDER",
+            "REMAINDER (probe)",
+        );
     }
     // The probe's `.env(..)` and `.current_dir(..)` lines are LINE sites of their own (amendment 91's
     // child-build form); a value exemption credits only the value.
@@ -2044,7 +2056,12 @@ fn a_value_is_credited_only_by_an_edit_of_that_value() {
         ".env(\"VS_DYN\", vs_x)",
         ".current_dir(\"/vs/cwd\")",
     ] {
-        exempt(&r, SCANNED, anchor, "DOMINATED (probe): a line site, not a value");
+        exempt(
+            &r,
+            SCANNED,
+            anchor,
+            "DOMINATED (probe): a line site, not a value",
+        );
     }
     let t = text(&gate(&r, &["--remainder"]));
     assert!(
@@ -2059,8 +2076,10 @@ fn a_value_is_credited_only_by_an_edit_of_that_value() {
         "ATTACK: value exemptions of kind REMAINDER were not counted: {t}"
     );
     assert!(
-        t.lines().any(|l| l.starts_with("REMAINDER ") && l.ends_with(" val_env"))
-            && t.lines().any(|l| l.starts_with("REMAINDER ") && l.ends_with(" val_stdio")),
+        t.lines()
+            .any(|l| l.starts_with("REMAINDER ") && l.ends_with(" val_env"))
+            && t.lines()
+                .any(|l| l.starts_with("REMAINDER ") && l.ends_with(" val_stdio")),
         "ATTACK: the REMAINDER list has no val_* category: {t}"
     );
     let _ = std::fs::remove_dir_all(&r);
@@ -2076,7 +2095,15 @@ fn a_value_is_credited_only_by_an_edit_of_that_value() {
         (7, "Stdio::piped()"),
     ] {
         let wrong = if n == 2 { "vs_val_x" } else { frag };
-        value_exempt(&r, SCANNED, "vs_spawn", n, wrong, "REMAINDER", "REMAINDER (probe)");
+        value_exempt(
+            &r,
+            SCANNED,
+            "vs_spawn",
+            n,
+            wrong,
+            "REMAINDER",
+            "REMAINDER (probe)",
+        );
     }
     refuses(
         &r,

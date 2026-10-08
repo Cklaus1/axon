@@ -1153,13 +1153,17 @@ fn the_check_child_runs_in_the_suite_with_only_its_own_environment_and_stdio() {
             && cand_dir.ends_with("/candidate")
             && std::fs::canonicalize(suite_dir).ok() == std::fs::canonicalize(cwd).ok()
             && std::fs::canonicalize(cand_dir).ok()
-                == std::fs::canonicalize(std::path::Path::new(suite_dir).with_file_name("candidate"))
-                    .ok(),
+                == std::fs::canonicalize(
+                    std::path::Path::new(suite_dir).with_file_name("candidate")
+                )
+                .ok(),
         "ATTACK: AXON_PATH is not the suite directory THEN the candidate (order and members): \
          {suite_dir:?} {cand_dir:?} (cwd {cwd:?})"
     );
     assert!(
-        !vars["AXON_ALLOWED_EFFECTS"].split(',').any(|e| e.trim() == "Exec"),
+        !vars["AXON_ALLOWED_EFFECTS"]
+            .split(',')
+            .any(|e| e.trim() == "Exec"),
         "ATTACK: the check child's effect ceiling still grants Exec: {vars:?}"
     );
     assert_eq!(

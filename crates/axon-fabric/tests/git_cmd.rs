@@ -96,7 +96,11 @@ fn git_is_run_with_exactly_these_arguments() {
     .into_iter()
     .map(OsString::from)
     .collect();
-    assert_eq!(args.len(), want.len(), "ATTACK: git_cmd's argument count changed: {args:?}");
+    assert_eq!(
+        args.len(),
+        want.len(),
+        "ATTACK: git_cmd's argument count changed: {args:?}"
+    );
     for (i, (got, want)) in args.iter().zip(&want).enumerate() {
         assert_eq!(
             got, want,
@@ -130,7 +134,11 @@ fn git_inherits_neither_stdin_nor_stderr() {
         libc::dup2(fds[1], 2);
     }
     let out = git_cmd(&repo.canonicalize().unwrap())
-        .args(["-c", "alias.fds=!ls -l /proc/self/fd/0 /proc/self/fd/2", "fds"])
+        .args([
+            "-c",
+            "alias.fds=!ls -l /proc/self/fd/0 /proc/self/fd/2",
+            "fds",
+        ])
         .output();
     unsafe {
         libc::dup2(saved_in, 0);
@@ -142,7 +150,11 @@ fn git_inherits_neither_stdin_nor_stderr() {
     }
     let out = out.expect("setup: git runs the alias");
     let text = String::from_utf8_lossy(&out.stdout).to_string();
-    assert!(out.status.success(), "setup: the alias ran: {text} / {:?}", out.status);
+    assert!(
+        out.status.success(),
+        "setup: the alias ran: {text} / {:?}",
+        out.status
+    );
     let line = |n: u32| {
         text.lines()
             .find(|l| l.contains(&format!("/proc/self/fd/{n} ->")))
