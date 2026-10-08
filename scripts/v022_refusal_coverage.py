@@ -5284,6 +5284,7 @@ _OPEN_SINKS = re.compile(r"(?<![\w.])(?:libc::)?(openat|open)\(|\.custom_flags\(
 _CONST_DEF = re.compile(
     r"^[ \t]*(?:pub(?:\([a-z]+\))?\s+)?(?:const|static)\s+([A-Z][A-Z0-9_]+)\s*:[^=;{]*=\s*", re.M)
 _FLOW_STATS = {"computed": 0}
+_CUR_FILE = [None]   # the file _flow_values is working on (SIGN_BUILDERS is keyed by it)
 _OWNER_PRIMS = None
 
 
@@ -5353,6 +5354,103 @@ def exec_constructor_drift(bad):
     return bad
 
 
+# ── Amendment 110 (C9 round 12, eqgate8): SIGNING INPUTS and DEFAULTS are sites ───────────────
+# Two classes the round-12 equivalence reviewer named as "not class-level":
+#  (1) a CONST or literal that is INPUT TO a signing, verification or MAC primitive: a signature
+#      domain, a schema tag, a HMAC context. Collapsing two of them lets a signature minted for one
+#      protocol verify as another, and no suite failed (CLEARANCE_DOMAIN := CONTEXT_DOMAIN kept axon-fabric,
+#      axon-loop and axon-loop-contracts green). They were filed as const_tag REMAINDER ("compared with
+#      the value a document or peer carries"), which names the wrong mechanism: they are not compared,
+#      they are SIGNED OVER. SIGN_SINKS lists the primitives and the argument that is the signed
+#      message/domain; SIGN_BUILDERS the fns whose body BUILDS a signed message (the primitive is
+#      called elsewhere, with the result). Sites are numbered under `<fn>~sign` so no earlier
+#      exemption is renumbered, and the gate PRINTS them (`SIGNING INPUTS`).
+SIGN_SINKS = [
+    # (callee regex, argument index of the message / domain)
+    (r"(?<![\w])(?:\w+::)*hmac_sha256\(", 1),
+    (r"(?<![\w])(?:\w+::)*sign_document\(", 1),
+    (r"(?<![\w])(?:\w+::)*verify_document\(", 1),
+    (r"\.sign\(", 0),
+    (r"\.verify\(", 0),
+]
+SIGN_BUILDERS = {
+    ("crates/axon-loop-contracts/src/attestation.rs", "binding"),
+    ("crates/axon-loop-contracts/src/attestation.rs", "document_binding"),
+    ("crates/axon-loop-contracts/src/attestation.rs", "execution_document"),
+    ("crates/axon-loop-contracts/src/operator_trust.rs", "evidence_signing_message"),
+    ("crates/axon-psv/src/lib.rs", "completion_binding"),
+}
+# (2) a DEFAULT read as a value: `unwrap_or(<lit|variant|None>)`, `unwrap_or_default()`, `map_or(<lit>, ..)`,
+#     `.or(Some(<lit>))`, `Default::default()`, `unwrap_or_else(|| <lit>)`, in the files of the protected
+#     crates. A mode, an evidence class or a count that an ABSENT field decides is a verdict
+#     (round 12: `Mode::parse(..).unwrap_or(Mode::Dev)` -> Protected survived the full axon-fabric suite
+#     at three sites). Sites are numbered under `<fn>~dflt`.
+DEFAULT_SCOPE = ("crates/axon-fabric/", "crates/axon-loop/", "crates/axon-loop-contracts/", "crates/axon-psv/",
+                 "crates/axon-guest-init/", "crates/axon-workspace-recipe/", "crates/axon-guest-kernel/")
+_DFL_CALL = re.compile(r"\.(unwrap_or|map_or|unwrap_or_else)\(|\.or\(\s*Some\(|\.unwrap_or_default\(\)|(?<![\w])Default::default\(\)")
+_NOT_VARIANT_HEADS = {"Path", "PathBuf", "String", "Vec", "Value", "Duration", "HashMap", "BTreeMap", "HashSet",
+                      "BTreeSet", "OsString", "Some", "Ok", "Err", "Box", "Rc", "Arc", "Instant", "SystemTime"}
+_DFL_STATS = {"computed": 0}
+_RAW = [None]
+
+
+def _default_arg_is_value(s):
+    """Whether the default ARGUMENT text (strings blanked, quotes kept) is a literal, a const, a bool,
+    `None`, an enum variant path or a literal collection, as opposed to a value COMPUTED at the site."""
+    st = s.strip()
+    if not st:
+        return False
+    if st in ("None", "true", "false", "&[]", "&[ ]", "[]", "vec![]"):
+        return True
+    if re.fullmatch(r'&?"[^"]*"', st) or re.fullmatch(r"-?\d[\w.]*(?:\s*[-/*+]\s*\d+)?", st):
+        return True
+    if re.fullmatch(r"(?:\w+::)*(?:i64|u64|u32|i32|usize|u8|i8)::(?:MIN|MAX)(?:\s*[/*+-]\s*\d+)?", st):
+        return True
+    if re.fullmatch(r"&?(?:\w+::)*[A-Z][A-Z0-9_]{2,}", st):
+        return True
+    m = re.fullmatch(r"((?:\w+::)*?)(\w+)::([A-Z]\w*)(?:\s*\{[^{}]*\}|\([^()]*\))?", st)
+    if m and m.group(2) not in _NOT_VARIANT_HEADS and m.group(2)[:1].isupper():
+        return True
+    m = re.fullmatch(r"(?:\w+::)*(?:Path|PathBuf|String)::(?:new|from)\(\s*(?:\"[^\"]*\")?\s*\)", st)
+    return bool(m)
+
+
+def _default_sites(clean):
+    """{(begin, end): 'val_default'} over the blanked text: the default VALUE of each form above."""
+    out = {}
+    for m in _DFL_CALL.finditer(clean):
+        g = m.group(0)
+        if g.startswith(".unwrap_or_default") or g.startswith("Default::default"):
+            out[(m.start(), m.end())] = "val_default"
+            continue
+        if g.startswith(".or("):
+            op = m.end() - 1                      # the `(` of Some(
+            parts = _split_group(clean, op)
+            if parts and _default_arg_is_value(clean[parts[0][0]:parts[0][1]]):
+                out[parts[0]] = "val_default"
+            else:
+                _DFL_STATS["computed"] += 1
+            continue
+        parts = _split_group(clean, m.end() - 1)
+        if not parts:
+            continue
+        which = parts[0]
+        name = m.group(1)
+        arg = clean[which[0]:which[1]]
+        if name == "unwrap_or_else":
+            cm = re.match(r"\|[^|]*\|\s*(.*)$", arg, re.S)
+            if not cm:
+                _DFL_STATS["computed"] += 1
+                continue
+            which = (which[0] + cm.start(1), which[1])
+            arg = cm.group(1)
+        if _default_arg_is_value(arg):
+            out[which] = "val_default"
+        else:
+            _DFL_STATS["computed"] += 1
+    return out
+
+
 def _line_offsets(clean):
     offs, n = [0], 0
     for l in clean.split("\n"):
@@ -5406,7 +5504,7 @@ def _flow_values(clean, cl, fspans, found, sink_consts_out=None):
                 break
             j += 1
         expr(a, j, label, depth + 1, at)
-        for g in re.finditer(r"(?<![\w.])" + re.escape(name) + r"\s*\.\s*(push|extend|insert|push_str)\(", clean[j:at]):
+        for g in re.finditer(r"(?<![\w.])" + re.escape(name) + r"\s*\.\s*(push|extend|extend_from_slice|insert|push_str)\(", clean[j:at]):
             op = j + g.end() - 1
             for x, y in _split_group(clean, op):
                 expr(x, y, label, depth + 1, at)
@@ -5425,11 +5523,28 @@ def _flow_values(clean, cl, fspans, found, sink_consts_out=None):
             for x, y in _split_group(clean, k):
                 expr(x, y, label, depth, at)
             return
+        if label == "flow_sign" and re.match(r"(?:\w+::)*(?:Vec|String)::(?:with_capacity|new)\(", st):
+            return   # an empty buffer a message is then built in: the pushes are the sites
         mc = _FLOW_CONST.match(st)
         if mc:
             consts.add((mc.group(2), bool(mc.group(1))))
             add(a, b, label)
             return
+        if label == "flow_sign" and re.match(r"if\b", body) and depth < 3:
+            # `if c { A } else { B }`: each branch is a signed message of its own
+            base = a + s.index(body)
+            k, found_any = base, False
+            while True:
+                o = clean.find("{", k, b)
+                if o < 0:
+                    break
+                c = _match_close(clean, o)
+                if re.match(r"\s*(?:if\b[^{]*)?$", clean[k:o]) or found_any:
+                    expr(o + 1, c - 1, label, depth + 1, at)
+                    found_any = True
+                k = c
+            if found_any:
+                return
         ml = _FLOW_LOCAL.match(st)
         if ml and depth < 2:
             if not resolve(ml.group(1), at, label, depth):
@@ -5438,6 +5553,10 @@ def _flow_values(clean, cl, fspans, found, sink_consts_out=None):
         if _has_literal(st):
             for q, c in re.findall(r"(?<![\w])((?:\w+::)*)([A-Z][A-Z0-9_]{2,})\b", st):
                 consts.add((c, bool(q)))
+            if label == "flow_sign" and _RAW[0] is not None and len(_RAW[0]) == len(clean):
+                # a `{CONST}` inside a format string is blanked in `clean`: read it from the raw text
+                for c in re.findall(r"\{([A-Z][A-Z0-9_]{2,})\}", _RAW[0][a:b]):
+                    consts.add((c, False))
             add(a, b, label)
             return
         _FLOW_STATS["computed"] += 1
@@ -5498,6 +5617,27 @@ def _flow_values(clean, cl, fspans, found, sink_consts_out=None):
             for q, c in re.findall(r"(?<![\w])((?:\w+::)*)([A-Z][A-Z0-9_]{2,})\b", clean[a:b]):
                 if not c.startswith(("O_", "AT_", "S_")):
                     consts.add((c, bool(q)))
+    # (5) amendment 110: the message / domain handed to a signing, verification or MAC primitive
+    for pat, idx in SIGN_SINKS:
+        for m in re.finditer(pat, clean):
+            before = clean[max(0, m.start() - 12):m.start()]
+            if re.search(r"\bfn\s*$", before):
+                continue
+            parts = _split_group(clean, m.end() - 1)
+            if idx < len(parts):
+                expr(parts[idx][0], parts[idx][1], "flow_sign", 0, m.start())
+    # (6) fns that BUILD a signed message: their `let` initialisers, their json! values and their consts
+    for head, last, name, _ in fspans:
+        if (_CUR_FILE[0], name) not in SIGN_BUILDERS:
+            continue
+        lo, hi = offs[head], offs[min(last + 1, len(offs) - 1)]
+        body = clean[lo:hi]
+        for m in re.finditer(r"\bformat!\(|\bb\"", body):
+            if m.group(0).startswith("format!"):
+                op = lo + m.end() - 1
+                expr(lo + m.start(), _match_close(clean, op), "flow_sign", 3, lo + m.start())
+        for m in re.finditer(r'"[^"\n]*"\s*:\s*("[^"\n]*"|(?:\w+::)*[A-Z][A-Z0-9_]{2,}\b)', body):
+            expr(lo + m.start(1), lo + m.end(1), "flow_sign", 3, lo + m.start(1))
     return out
 
 
@@ -5519,6 +5659,7 @@ def sink_consts():
             cl = clean.split("\n")
             found, _ = _old_value_sites(clean)
             names = set()
+            _CUR_FILE[0], _RAW[0] = f, text
             _flow_values(clean, cl, _fn_spans(cl), found, names)
             for (a, b) in found:
                 for q, c in re.findall(r"(?<![\w])((?:\w+::)*)([A-Z][A-Z0-9_]{2,})\b", clean[a:b]):
@@ -5673,16 +5814,24 @@ def value_sites(text, regions=None, flow=True, file=None):
     cl = clean.split("\n")
     fspans = _fn_spans(cl)
     flowed = {}
+    dflt = {}
+    if flow and file is not None and file.startswith(DEFAULT_SCOPE):
+        dflt = _default_sites(clean)
     if flow:
+        _CUR_FILE[0], _RAW[0] = file, text
         flowed = _flow_values(clean, cl, fspans, found)
         local, qual = sink_consts()
         flowed.update(const_def_sites(clean, {**found, **flowed}, local.get(file, set()) | qual))
     per, out = {}, []
-    for (a, b), label in sorted({**found, **flowed}.items()):
+    for (a, b), label in sorted({**dflt, **found, **flowed}.items()):
         if regions is not None and not any(x <= line_of(clean, a) <= y for x, y in regions):
             continue
         fn = _fn_of(cl, fspans, line_of(clean, a))
-        if (a, b) in flowed and (a, b) not in found:
+        if label == "val_default" and (a, b) not in found and (a, b) not in flowed:
+            fn += "~dflt"
+        elif label == "flow_sign" and (a, b) in flowed and (a, b) not in found:
+            fn += "~sign"
+        elif (a, b) in flowed and (a, b) not in found:
             fn += "~flow"
         per[fn] = per.get(fn, 0) + 1
         out.append((a, b, label, fn, per[fn]))
@@ -5757,7 +5906,8 @@ def judge_values(f, text, rows, bad):
             if hit[0][3] not in " ".join(frag.split()) and hit[0][3] not in frag:
                 bad.append(f"{f}:{line_of(text, a) + 1}: value exemption ({fn}, {n}) names the fragment "
                            f"{hit[0][3]!r}, which is not the value's text {frag!r}: a site was added or moved, re-judge it")
-        flowk = "flow" if fn.endswith("~flow") else "form"
+        flowk = ("flow" if fn.endswith("~flow") else "sign" if fn.endswith("~sign")
+                 else "dflt" if fn.endswith("~dflt") else "form")
         if by:
             covered += 1
             VALUE_STATS[(flowk, "row")] = VALUE_STATS.get((flowk, "row"), 0) + 1
