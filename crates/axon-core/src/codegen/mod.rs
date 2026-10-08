@@ -41,6 +41,7 @@ pub mod bpf;
 pub mod build_wrappers;
 pub mod builtin_externs;
 pub mod builtins;
+pub mod display;
 pub mod enum_layout;
 pub mod escape;
 pub mod expr;
@@ -230,6 +231,10 @@ pub struct Codegen<'ctx> {
     /// Every user enum name, registered before any type body is laid out so
     /// `axon_type_to_semantic` resolves an enum-typed field as an enum.
     enum_names: std::collections::HashSet<String>,
+    /// The `__axon_display_N(T) -> str` helper built for each compound type
+    /// a string interpolation renders (`display.rs`), one per type, so a
+    /// recursive type calls its own helper instead of expanding forever.
+    display_fns: HashMap<Type, FunctionValue<'ctx>>,
     /// All top-level FnDefs by name, populated during emit_program for comptime evaluation.
     fndefs: HashMap<String, ast::FnDef>,
     /// Generic function type-parameter names (fn_name → [type param names]).
@@ -488,6 +493,7 @@ impl<'ctx> Codegen<'ctx> {
             fmtstr_counter: 0,
             enum_variants: HashMap::new(),
             enum_names: std::collections::HashSet::new(),
+            display_fns: HashMap::new(),
             fndefs: HashMap::new(),
             generic_fn_params: HashMap::new(),
             trait_defs: HashMap::new(),

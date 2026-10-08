@@ -9723,19 +9723,26 @@ fn build_refuses_ai_call_budget_e0910_f141() {
 }
 
 #[test]
-fn build_aborts_with_e0910_on_result_interpolation_not_ir_crash() {
-    // Interpolating a Result/Option in a string (e.g. `println("r={r}")` where
-    // r = parse_int(...)) used to pass the `{i1,…}` tag-struct straight to
-    // axon_concat (which wants a str `{i64,ptr}`), producing a raw "IR
-    // verification failed" dump with no source context. Native can't format the
-    // erased inner value (the interpreter prints `Ok(…)`); it must now refuse
-    // with a clean, actionable E0910 — NOT crash. Scalars/str still interpolate.
-    let f = std::env::temp_dir().join(format!("axon_rinterp_{}.ax", std::process::id()));
-    std::fs::write(
-        &f,
-        "fn main() {\n  let r = parse_int(\"42\")\n  println(\"r={r}\")\n}\n",
-    )
-    .unwrap();
+fn build_aborts_with_e0910_on_an_unrenderable_interpolation_not_ir_crash() {
+    // Interpolating a value whose LLVM shape is not a str (a parse_int Result,
+    // here) used to pass the struct straight to axon_concat (which wants a str
+    // `{i64,ptr}`), producing a raw "IR verification failed" dump with no
+    // source context. It was then refused with E0910 instead. Since AX-49 a
+    // Result renders by its static type, as the interpreter's `Ok(42)`; a type
+    // with no native rendering (a closure) is still refused with E0910 — NOT
+    // a crash.
+    let src = "fn main() {\n  let r = parse_int(\"42\")\n  println(\"r={r}\")\n}\n";
+    let Some(got) = native_stdout("rinterp_ok", src) else {
+        eprintln!("codegen feature absent — interpolation E0910 test skipped");
+        return;
+    };
+    assert_eq!(got, "r=Ok(42)");
+    assert_eq!(got, interp_stdout("rinterp_ok", src));
+
+    let f = tmp_ax(
+        "rinterp_fn",
+        "fn main() {\n  let f = |x: i64| x + 1\n  println(\"f={f}\")\n}\n",
+    );
     let out = axon()
         .args(["build", f.to_str().unwrap(), "-o"])
         .arg(std::env::temp_dir().join(format!("axon_rinterp_{}.bin", std::process::id())))
@@ -9747,17 +9754,13 @@ fn build_aborts_with_e0910_on_result_interpolation_not_ir_crash() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    if msg.contains("requires building axon with the `codegen` feature") {
-        eprintln!("codegen feature absent — Result-interpolation E0910 test skipped");
-        return;
-    }
     assert!(
         !out.status.success(),
-        "interpolating a Result must FAIL the build:\n{msg}"
+        "interpolating a closure must FAIL the build:\n{msg}"
     );
     assert!(
-        msg.contains("E0910") && msg.contains("interpolate"),
-        "must abort with a clear E0910 about interpolating a Result/Option, got:\n{msg}"
+        msg.contains("E0910") && msg.contains("interpolate") && msg.contains("fn(i64) -> i64"),
+        "must abort with a clear E0910 naming the type it cannot render, got:\n{msg}"
     );
     assert!(
         !msg.contains("IR verification") && !msg.contains("axon_concat"),
@@ -34620,4 +34623,190 @@ fn an_unread_unbindable_match_field_leaves_the_outer_binding_intact_ax45() {
         .expect("run native");
     let _ = std::fs::remove_file(&bin);
     assert_eq!(String::from_utf8_lossy(&nat.stdout).trim(), want);
+}
+
+#[test]
+fn native_interpolation_renders_structs_and_enums_like_the_interpreter() {
+    // AX-49: native codegen refused to interpolate any struct or enum value
+    // (E0910, "its inner type is erased here") while the interpreter printed
+    // it. Interpolation now renders by the static type, through one helper per
+    // type, and must print exactly what `axon run` prints: the interpreter's
+    // field order (sorted by `name:`, so `a1` before `a`, never declaration
+    // order), raw str contents, `%.6g` floats, nested and recursive values.
+    const REPRO: &str = "type P = { x: i64, y: i64 }\ntype A = Lit { v: i64 } | Nil\nfn main() -> i64 { let p = P { x: 1, y: 2 } let a = A::Lit { v: 4 } println(\"{p} {a} {A::Nil}\") 0 }\n";
+    let progs: [(&str, &str); 9] = [
+        ("ax49_repro", REPRO),
+        (
+            "ax49_flat",
+            r#"type P = { y: i64, x: i64 }
+type O = { b: i64, a1: i64, a: i64, ab: i64 }
+fn main() -> i64 {
+ let p = P { y: -2, x: 1 }
+ println("p={p}")
+ println("{O { a: 1, ab: 2, a1: 3, b: 4 }}")
+ 0
+}
+"#,
+        ),
+        (
+            "ax49_nested",
+            r#"type P = { x: i64, y: i64 }
+type Line = { to: P, from: P }
+type Box = { line: Line, id: i64 }
+fn mk(a: i64) -> P { P { x: a, y: a * 2 } }
+fn main() -> i64 {
+ let l = Line { from: mk(1), to: mk(3) }
+ println("{l} {Box { line: l, id: 7 }}")
+ println("{mk(4)} {l.to}")
+ 0
+}
+"#,
+        ),
+        (
+            "ax49_scalars",
+            r#"type S = { s: str, t: str, f: f64, g: f64, h: f64, yes: bool, no: bool }
+type N = { a: i32, b: u8, c: u64, d: i16 }
+fn main() -> i64 {
+ let s = S { s: "say \"hi\"\tnow\nnext", t: "", f: 0.1, g: -2.5, h: 12345678.0, yes: true, no: false }
+ println("{s}")
+ println("{N { a: as_i32(-7), b: as_u8(200), c: as_u64(-1), d: as_i16(-300) }}")
+ let x: i32 = as_i32(-5)
+ let u: u64 = as_u64(-1)
+ println("{x} {u}")
+ 0
+}
+"#,
+        ),
+        (
+            "ax49_enums",
+            r#"type Shape = Circle { r: f64 } | Rect { w: f64, h: f64, label: str } | Empty
+type Sh = Wrap { s: Shape } | Pt { at: (i64, i64) }
+fn main() -> i64 {
+ let c = Shape::Circle { r: 1.5 }
+ let shapes = [c, Shape::Rect { w: 2.0, h: 1e7, label: "big" }, Shape::Empty]
+ let i = 0
+ while i < len(shapes) { println("{shapes[i]}") i = i + 1 }
+ println("{Shape::Empty} {Sh::Wrap { s: c }} {Sh::Pt { at: (3, -4) }}")
+ 0
+}
+"#,
+        ),
+        (
+            "ax49_recursive",
+            r#"type Expr = Num { n: i64 } | Add { l: Expr, r: Expr } | Neg { e: Expr }
+type Tree = Leaf | Node { l: Tree, v: str, r: Tree }
+fn main() -> i64 {
+ let e = Expr::Add { l: Expr::Num { n: 1 }, r: Expr::Neg { e: Expr::Add { l: Expr::Num { n: 2 }, r: Expr::Num { n: 3 } } } }
+ println("{e}")
+ let t = Tree::Node { l: Tree::Leaf, v: "root", r: Tree::Node { l: Tree::Leaf, v: "kid", r: Tree::Leaf } }
+ println("{t}")
+ 0
+}
+"#,
+        ),
+        (
+            "ax49_struct_holds_enum",
+            r#"type Tok = Num { v: i64 } | Op { c: str } | Eof
+type T = { kind: Tok, pos: i64 }
+type Q = { r: Result<Tok, str>, o: Option<T>, none: Option<i64>, bad: Result<i64, str> }
+type W = Boxed { t: T } | Nothing
+fn main() -> i64 {
+ let t = T { kind: Tok::Op { c: "+" }, pos: 3 }
+ println("{t}")
+ let q = Q { r: Ok(Tok::Eof), o: Some(t), none: None, bad: Err("no") }
+ println("{q}")
+ println("{W::Boxed { t: T { kind: Tok::Num { v: 9 }, pos: 0 } }} {W::Nothing}")
+ 0
+}
+"#,
+        ),
+        (
+            "ax49_arrays",
+            r#"type P = { x: i64, y: i64 }
+type Poly = { pts: [P], tag: str, names: [str], flags: [bool], grid: [[i64]] }
+fn main() -> i64 {
+ let empty: [P] = []
+ let pg = Poly { pts: [P { x: 1, y: 2 }, P { x: 3, y: 4 }], tag: "t", names: ["a", "b c"], flags: [true, false], grid: [[1, 2], [3]] }
+ println("{pg}")
+ let bare = Poly { pts: empty, tag: "", names: [], flags: [], grid: [] }
+ println("{bare}")
+ println("{pg.pts} {pg.grid} {[1.5, 0.1]}")
+ 0
+}
+"#,
+        ),
+        (
+            "ax49_option_result",
+            r#"type P = { x: i64 }
+fn half(n: i64) -> Result<P, str> { if n % 2 == 0 { Ok(P { x: n / 2 }) } else { Err("odd") } }
+fn main() -> i64 {
+ println("{half(4)} {half(3)}")
+ let so: Option<P> = Some(P { x: 5 })
+ let no: Option<P> = None
+ let pi = parse_int("12")
+ let pz = parse_int("zz")
+ println("{so} {no} {pi} {pz}")
+ let tup = (1, "x", true)
+ println("{tup}")
+ 0
+}
+"#,
+        ),
+    ];
+    // Pin the interpreter's text for the register's repro, so a change to
+    // either engine's display format cannot pass by changing both.
+    assert_eq!(
+        interp_stdout("ax49_repro_interp", REPRO),
+        "P { x: 1, y: 2 } A::Lit { v: 4 } A::Nil"
+    );
+    for (tag, src) in progs {
+        let Some(got) = native_stdout(tag, src) else {
+            return;
+        };
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
+    }
+    // The register's exact command: `axon build --release`.
+    if let Some(got) = native_release_stdout("ax49_release", REPRO) {
+        assert_eq!(got, "P { x: 1, y: 2 } A::Lit { v: 4 } A::Nil");
+    }
+}
+
+#[test]
+fn native_interpolation_refuses_a_type_it_cannot_render_with_e0910() {
+    // AX-49 keeps E0910 for what still has no native rendering, and the message
+    // names the type rather than claiming the type is erased.
+    let src = "fn main() -> i64 {\n let d = dict_new()\n println(\"{d}\")\n 0\n}\n";
+    let f = tmp_ax("ax49_refuse", src);
+    let bin = std::env::temp_dir().join(format!("axon_ax49_refuse_{}", std::process::id()));
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .output()
+        .expect("spawn build");
+    let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_file(&bin);
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    if codegen_absent(&log) {
+        return;
+    }
+    assert_ne!(build.status.code(), Some(0), "must refuse:\n{log}");
+    assert!(
+        log.contains("E0910") && log.contains("cannot interpolate a value of type `Dict`"),
+        "must name the type it cannot render:\n{log}"
+    );
+    assert!(
+        !log.contains("erased") && !log.contains("IR verification"),
+        "must not blame type erasure or crash in LLVM:\n{log}"
+    );
 }
