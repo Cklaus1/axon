@@ -484,7 +484,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 continue;
             };
             if let BasicValueEnum::IntValue(ok) = self.emit_pattern_test(pat, field_val) {
-                all = self.ir.builder.build_and(all, ok, "fieldsok").unwrap();
+                all = build_wrappers::w_and(&self.ir.builder, all, ok, "fieldsok");
             }
         }
         all.into()
