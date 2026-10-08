@@ -237,11 +237,13 @@ fn main() -> i64 { let a = [C { s: 3 }, C { s: 9 }, C { s: 1 }]  println(to_str_
 # picked the wrong element).
 W2='type C = { s: i64, t: i64 }
 fn main() -> i64 { let a = [C { s: 3, t: 30 }, C { s: 9, t: 90 }, C { s: 1, t: 10 }]'
-check_refused rev_st      "$W2  println(to_str(arr_reverse(&a)[0].t))  0 }"
-check_refused take_st     "$W2  println(to_str(arr_take(&a, 2)[1].t))  0 }"
-check_refused drop_st     "$W2  println(to_str(arr_drop(&a, 1)[0].t))  0 }"
-# arr_concat copies whole elements at their real layout (AX-13), so it is a
-# parity row, not a refusal: element 3 is the second copy's first `C`.
+# arr_reverse/take/drop/push and arr_concat copy whole elements at their real
+# layout (AX-13, AX-44), so they are parity rows, not refusals: each reads `t`,
+# the field an i64-stride copy would get wrong.
+check rev_st              "$W2  arr_reverse(&a)[0].t }"
+check take_st             "$W2  arr_take(&a, 2)[1].t }"
+check drop_st             "$W2  arr_drop(&a, 1)[0].t }"
+check push_st             "$W2  arr_push(&a, C { s: 4, t: 40 })[3].t }"
 check concat_st           "$W2  arr_concat(&a, &a)[3].t }"
 check_refused unique_st   "$W2  println(to_str(len(&arr_unique(&a))))  0 }"
 check_refused enum_st     "$W2  println(to_str(len(&arr_enumerate(&a))))  0 }"
@@ -256,6 +258,10 @@ check_refused zipwith_st  "$W2  let b = [1, 2, 3]  println(to_str(arr_zip_with(&
 check_refused zip_st      "$W2  let b = [1, 2, 3]  println(to_str(len(&arr_zip(&a, &b))))  0 }"
 check_refused flatten_st 'type C = { s: i64, t: i64 }
 fn main() -> i64 { let a = [[C { s: 3, t: 30 }], [C { s: 9, t: 90 }]]  println(to_str(arr_flatten(&a)[1].t))  0 }'
+# arr_contains/arr_index_of compare elements as i64: a `[bool]` or `[i32]`
+# array failed IR verification. They are refused by element type now.
+check_refused contains_b  'fn main() -> i64 { let a = [false, true]  println(to_str_bool(arr_contains(&a, true)))  0 }'
+check_refused indexof_i32 'fn main() -> i64 { let a = [as_i32(1), as_i32(2)]  let k = match arr_index_of(&a, as_i32(2)) { Some(i) => i, None => 0 }  println(to_str(k))  0 }'
 
 [ "$fail" -eq 0 ] || { echo "arr_reduce_parity: FAIL"; exit 1; }
 echo "arr_reduce_parity: PASS — arr reductions + reverse/take/drop/map/filter/fold/zip_with/sort_by + count_if/all/any/argmax/argmin + f64 reductions + range/repeat/concat/unique/find/std/enumerate/zip/flatten/chunk/partition match the interpreter ✓"

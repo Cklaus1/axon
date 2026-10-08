@@ -13383,8 +13383,9 @@ fn whole_arr_family_is_correct_over_wide_struct_arrays() {
     // needs an element whose size is NOT the one being assumed.
     //
     // This pins the interpreter's answers; `arr_reduce_parity.sh` separately
-    // asserts native REFUSES these (E0910), which is the half a unit test
-    // cannot express.
+    // asserts native either matches them (reverse/take/drop/concat copy whole
+    // elements at their real layout, AX-13/AX-44) or REFUSES (E0910), the half
+    // a unit test cannot express.
     let src = "type C = { s: i64, t: i64 }\n\
         fn main() -> i64 {\n  \
             let a = [C { s: 3, t: 30 }, C { s: 9, t: 90 }, C { s: 1, t: 10 }]\n  \
@@ -20781,61 +20782,310 @@ fn arr_push_refuses_a_mixed_element_type() {
     );
 }
 
-/// I-2: native codegen lowers only the `[i64]` element case of `arr_push`
-/// (8-byte stride, i64 slots). Making the builtin generic must NOT open an
-/// interp/native divergence — a struct or bool element has to abort the build
-/// with E0910, never silently compute a wrong value.
+/// AX-44: native `arr_push` used to lower only the `[i64]` element case and
+/// refused every other element type with E0910 ("builtin `arr_push` is not
+/// yet supported"), so growing a `[str]`/`[f64]`/`[Tok]` was interpreter-only.
+/// It now copies whole elements at their real layout. Every program below must
+/// BUILD and print exactly what `axon run` prints; the interpreter's output is
+/// pinned too so a shared regression can't pass as parity.
 ///
-/// The bool case is the sharp one: a `bool` is an *i1* IntValue, so it matched
-/// the old i64 lowering's pattern and was stored into (and read back from) an
-/// i64 slot — it built cleanly and returned the wrong element.
+/// The bool row is the historically sharp one: a `bool` is an *i1* IntValue,
+/// so it once matched the i64 lowering and was stored into an i64 slot.
 #[test]
-fn arr_push_non_i64_elements_are_e0910_refused_natively() {
-    let pid = std::process::id();
-    for (label, src) in [
+fn native_arr_push_over_every_element_type_matches_the_interpreter() {
+    let progs: [(&str, &str, &str); 6] = [
+        // The register's three repros, verbatim in shape.
         (
-            "struct",
-            "type Rec = { id: i64 }\n\
-             fn main() -> i64 { let rows = []\n let r = arr_push(rows, Rec { id: 1 })\n len(r) }\n",
+            "ax44_pushs",
+            "fn main() -> i64 { let xs = [\"a\", \"b\"] xs = arr_push(xs, \"c\") println(xs[2]) 0 }\n",
+            "c",
         ),
         (
-            "bool",
-            "fn main() -> i64 { let a = [true, false]\n let b = arr_push(&a, true)\n \
-             if b[2] { 1 } else { 0 } }\n",
+            "ax44_pushf",
+            "fn main() -> i64 { let xs = [1.5] xs = arr_push(xs, 2.5) println(to_str(len(xs))) 0 }\n",
+            "2",
         ),
         (
-            "f64",
-            "fn main() -> i64 { let a = [1.5]\n let b = arr_push(&a, 2.5)\n len(b) }\n",
+            "ax44_pushe",
+            "type A = Lit { v: i64 } | Neg { v: i64 }\n\
+             fn main() -> i64 { let xs = [A::Lit { v: 1 }] xs = arr_push(xs, A::Neg { v: 2 }) println(to_str(len(xs))) 0 }\n",
+            "2",
         ),
-    ] {
-        let f = std::env::temp_dir().join(format!("axon_pushgen_{label}_{pid}.ax"));
-        std::fs::write(&f, src).unwrap();
-        let bin = std::env::temp_dir().join(format!("axon_pushgen_{label}_{pid}.bin"));
-        let out = axon()
-            .args(["build", f.to_str().unwrap(), "-o"])
-            .arg(&bin)
-            .output()
-            .unwrap();
-        let _ = std::fs::remove_file(&f);
-        let _ = std::fs::remove_file(&bin);
-        let msg = format!(
-            "{}{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
-        if msg.contains("requires building axon with the `codegen` feature") {
-            eprintln!("codegen feature absent — arr_push E0910 case `{label}` skipped");
-            continue;
-        }
-        assert!(
-            msg.contains("E0910") && msg.contains("arr_push"),
-            "a {label}-element arr_push must abort the native build with E0910, got:\n{msg}"
-        );
-        assert!(
-            !out.status.success(),
-            "build must FAIL (not exit 0) on the {label} case:\n{msg}"
-        );
+        // One row per element layout: str, f64, bool (1 byte), u8, i16,
+        // struct, enum with payloads of different shapes, tuple, nested
+        // array, Option, and a `[]` literal whose element type only the push
+        // reveals (also through a borrowed `&b` argument).
+        (
+            "ax44_elems",
+            r#"type P = { x: i64, name: str }
+type Shape = Circle { r: f64 } | Rect { w: i64, h: i64 } | Empty
+fn show(s: Shape) -> str {
+    match s {
+        Shape::Circle { r } => "C" + to_str_f64(r),
+        Shape::Rect { w, h } => "R" + to_str(w * h),
+        Shape::Empty => "E",
     }
+}
+fn main() -> i64 {
+    let s = ["a", "b"]
+    s = arr_push(s, "c")
+    println(s[0] + s[1] + s[2] + " " + to_str(len(s)))
+    let f = [1.5]
+    f = arr_push(f, 2.25)
+    println(to_str_f64(f[0] + f[1]))
+    let b = [true]
+    b = arr_push(b, false)
+    b = arr_push(&b, true)
+    println(to_str_bool(b[0]) + to_str_bool(b[1]) + to_str_bool(b[2]))
+    let u = [as_u8(250)]
+    u = arr_push(u, as_u8(7))
+    println(to_str(u[0]) + " " + to_str(u[1]))
+    let w = [as_i16(-3)]
+    w = arr_push(w, as_i16(9))
+    println(to_str(w[0]) + " " + to_str(w[1]))
+    let ps = [P { x: 1, name: "one" }]
+    ps = arr_push(ps, P { x: 2, name: "two" })
+    println(ps[1].name + to_str(ps[0].x + ps[1].x))
+    let sh = [Shape::Circle { r: 1.5 }]
+    sh = arr_push(sh, Shape::Rect { w: 2, h: 3 })
+    sh = arr_push(sh, Shape::Empty)
+    println(show(sh[0]) + show(sh[1]) + show(sh[2]))
+    let t = [(1, "x")]
+    t = arr_push(t, (2, "y"))
+    println(to_str(t[1].0) + t[1].1)
+    let g = [[1, 2]]
+    g = arr_push(g, [3, 4, 5])
+    println(to_str(len(g)) + " " + to_str(g[1][2]))
+    let o = [Some(1)]
+    o = arr_push(o, None)
+    println(to_str(len(o)))
+    let rows = []
+    rows = arr_push(rows, P { x: 5, name: "r" })
+    println(rows[0].name + to_str(len(rows)))
+    0
+}
+"#,
+            "abc 3\n3.75\ntruefalsetrue\n250 7\n-3 9\ntwo3\nC1.5R6E\n2y\n2 5\n2\nr1",
+        ),
+        // Copy semantics: `let ys = arr_push(xs, v)` leaves `xs` untouched,
+        // and neither side's later writes are visible through the other --
+        // including writes into nested arrays and struct-held arrays, which
+        // the push must deep-copy. Then a `[str]` grown to 10k elements.
+        (
+            "ax44_alias",
+            r#"type Q = { v: [i64] }
+fn main() -> i64 {
+    let xs = ["a", "b"]
+    let ys = arr_push(xs, "c")
+    xs[0] = "z"
+    println(to_str(len(xs)) + " " + to_str(len(ys)) + " " + xs[0] + ys[0] + ys[2])
+    let a1 = arr_push(ys, "p")
+    let a2 = arr_push(ys, "q")
+    let p1 = a1[3]
+    let p2 = a2[3]
+    println(p1 + p2)
+    println(to_str(len(ys)))
+    let g = [[1, 2]]
+    let h = arr_push(g, [3])
+    h[0][0] = 99
+    println(to_str(g[0][0]) + " " + to_str(h[0][0]))
+    let row = [7, 8]
+    let rows = arr_push(g, row)
+    row[0] = 0
+    rows[0][1] = 42
+    println(to_str(rows[1][0]) + " " + to_str(g[0][1]) + " " + to_str(row[0]))
+    let qs = [Q { v: [1] }]
+    let qs2 = arr_push(qs, Q { v: [2] })
+    qs2[0].v[0] = 50
+    println(to_str(qs[0].v[0]) + " " + to_str(qs2[0].v[0]) + " " + to_str(qs2[1].v[0]))
+    let fs = [1.0]
+    let fs2 = arr_push(fs, 2.0)
+    fs[0] = 9.0
+    println(to_str_f64(fs2[0]))
+    let ws: [str] = []
+    let i = 0
+    while i < 10000 {
+        ws = arr_push(ws, "w" + to_str(i))
+        i = i + 1
+    }
+    println(to_str(len(ws)) + " " + ws[0] + " " + ws[9999])
+    let e = arr_push([], "only")
+    println(e[0])
+    0
+}
+"#,
+            "2 3 zac\npq\n3\n1 99\n7 2 0\n1 50 2\n1\n10000 w0 w9999\nonly",
+        ),
+        // Sum-type and closure elements, and an unsigned 64-bit one.
+        (
+            "ax44_edge",
+            r#"fn main() -> i64 {
+    let o: [Option<str>] = [Some("a")]
+    o = arr_push(o, None)
+    o = arr_push(o, Some("z"))
+    let k = match o[2] { Some(s) => s, None => "-" }
+    let m = match o[1] { Some(s) => s, None => "-" }
+    println(k)
+    println(m)
+    let r: [Result<i64, str>] = [Ok(1)]
+    r = arr_push(r, Err("bad"))
+    let e = match r[1] { Ok(v) => to_str(v), Err(s) => s }
+    println(e)
+    let fs = [|x: i64| x + 1]
+    fs = arr_push(fs, |x: i64| x * 2)
+    println(to_str(len(fs)))
+    let u: [u64] = []
+    u = arr_push(u, as_u64(5))
+    println(to_str(u[0]))
+    0
+}
+"#,
+            "z\n-\nbad\n2\n5",
+        ),
+    ];
+    for (tag, src, expect) in progs {
+        let interp = interp_stdout(tag, src);
+        assert_eq!(interp, expect, "[{tag}] interpreter output changed");
+        let Some(native) = native_stdout(tag, src) else {
+            return;
+        };
+        assert_eq!(native, interp, "[{tag}] native != interpreter");
+    }
+}
+
+/// AX-44: arr_reverse/take/drop share the generic element copy with
+/// `arr_push` (they were `[i64]`-only and E0910-refused otherwise): str, f64,
+/// bool, struct, enum, nested (deep-copied) and u8 elements, plus the
+/// clamping edges of take/drop and an empty input.
+#[test]
+fn native_arr_reverse_take_drop_over_any_element_type_match_the_interpreter() {
+    let src = r#"type P = { x: i64, name: str }
+type Shape = Circle { r: f64 } | Rect { w: i64, h: i64 } | Empty
+fn main() -> i64 {
+    let s = ["a", "b", "c", "d"]
+    let r = arr_reverse(s)
+    println(r[0] + r[1] + r[2] + r[3])
+    let t = arr_take(s, 2)
+    let d = arr_drop(s, 3)
+    println(to_str(len(t)) + t[1] + to_str(len(d)) + d[0])
+    println(to_str(len(arr_take(s, -1))) + to_str(len(arr_drop(s, -1))) + to_str(len(arr_take(s, 99))) + to_str(len(arr_drop(s, 99))))
+    let f = arr_reverse([1.5, 2.5, 4.0])
+    println(to_str_f64(f[0]) + " " + to_str_f64(f[2]))
+    let b = arr_drop([true, false, true], 1)
+    println(to_str_bool(b[0]) + to_str_bool(b[1]))
+    let ps = [P { x: 1, name: "one" }, P { x: 2, name: "two" }, P { x: 3, name: "three" }]
+    let pr = arr_reverse(ps)
+    println(pr[0].name + to_str(pr[2].x) + arr_take(ps, 2)[1].name)
+    let g = [[1], [2, 3], [4, 5, 6]]
+    let gr = arr_reverse(g)
+    gr[0][0] = 77
+    println(to_str(g[2][0]) + " " + to_str(gr[0][0]) + " " + to_str(len(arr_drop(g, 1)[0])))
+    let sh = [Shape::Circle { r: 1.5 }, Shape::Rect { w: 2, h: 3 }, Shape::Empty]
+    let shv = arr_reverse(sh)
+    let n = match shv[1] { Shape::Rect { w, h } => w * h, _ => 0 }
+    println(to_str(n) + " " + to_str(len(arr_take(sh, 1))))
+    let u = arr_reverse([as_u8(1), as_u8(200)])
+    println(to_str(u[0]))
+    let e: [str] = []
+    println(to_str(len(arr_reverse(e))))
+    0
+}
+"#;
+    let interp = interp_stdout("ax44_slice", src);
+    assert_eq!(
+        interp,
+        "dcba\n2b1d\n0440\n4 1.5\nfalsetrue\nthree1two\n4 77 2\n6 1\n200\n0"
+    );
+    let Some(native) = native_stdout("ax44_slice", src) else {
+        return;
+    };
+    assert_eq!(native, interp, "native != interpreter");
+}
+
+/// The finding's measured case: a lexer that grows a `[Tok]` from an empty
+/// `[]` literal (whose element type only the first push reveals), inside a fn
+/// returning `[Tok]`, then a final push of a payload-less variant.
+#[test]
+fn native_lexer_growing_a_token_array_matches_the_interpreter() {
+    let src = r#"type Tok = Num { v: i64 } | Op { c: str } | End
+fn lex(s: str) -> [Tok] {
+    let toks = []
+    let i = 0
+    while i < str_len(s) {
+        let c = str_slice(s, i, i + 1)
+        if str_contains("0123456789", c) {
+            let v = 0
+            while i < str_len(s) && str_contains("0123456789", str_slice(s, i, i + 1)) {
+                let d = match parse_int(str_slice(s, i, i + 1)) { Ok(n) => n, Err(_) => 0 }
+                v = v * 10 + d
+                i = i + 1
+            }
+            toks = arr_push(toks, Tok::Num { v: v })
+        } else {
+            toks = arr_push(toks, Tok::Op { c: c })
+            i = i + 1
+        }
+    }
+    arr_push(toks, Tok::End)
+}
+fn main() -> i64 {
+    let toks = lex("12+345*(6-7)")
+    let sum = 0
+    let ops = ""
+    for t in toks {
+        match t {
+            Tok::Num { v } => { sum = sum + v }
+            Tok::Op { c } => { ops = ops + c }
+            Tok::End => { ops = ops + "$" }
+        }
+    }
+    println(to_str(len(toks)) + " " + to_str(sum) + " " + ops)
+    0
+}
+"#;
+    let interp = interp_stdout("ax44_lexer", src);
+    assert_eq!(interp, "10 370 +*(-)$");
+    let Some(native) = native_stdout("ax44_lexer", src) else {
+        return;
+    };
+    assert_eq!(native, interp, "native != interpreter");
+}
+
+/// What native still cannot lower is refused by ELEMENT TYPE, not reported
+/// as an unsupported builtin: `arr_contains`/`arr_index_of` compare elements
+/// as i64 and failed IR verification on a `[bool]`/`[i32]` array.
+#[test]
+fn native_arr_builtins_refuse_by_element_type() {
+    let src = "fn main() -> i64 {\n let b = [false, true]\n println(to_str_bool(arr_contains(&b, true)))\n 0\n}\n";
+    let f = tmp_ax("ax44_refuse", src);
+    let bin = std::env::temp_dir().join(format!("axon_ax44_refuse_{}", std::process::id()));
+    let out = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .output()
+        .expect("spawn build");
+    let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_file(&bin);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    if codegen_absent(&msg) {
+        return;
+    }
+    assert!(!out.status.success(), "build must fail:\n{msg}");
+    assert!(
+        msg.contains("E0910") && msg.contains("`arr_contains` on `[bool]`"),
+        "refusal must name the element type:\n{msg}"
+    );
+    assert!(
+        !msg.contains("IR verification") && !msg.contains("not yet supported"),
+        "no IR-verifier crash and no 'builtin unsupported' claim:\n{msg}"
+    );
 }
 
 #[test]
@@ -32637,6 +32887,459 @@ fn native_arrays_have_value_semantics_like_the_interpreter() {
     }
 }
 
+/// `native_stdout`, built with `--release` (the register's repro command).
+fn native_release_stdout(tag: &str, src: &str) -> Option<String> {
+    let f = tmp_ax(tag, src);
+    let bin = std::env::temp_dir().join(format!("axon_native_rel_{tag}_{}", std::process::id()));
+    let _ = std::fs::remove_file(&bin);
+    let build = axon()
+        .args(["build", "--release", "--no-cache"])
+        .arg(&f)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("spawn build");
+    let _ = std::fs::remove_file(&f);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    if codegen_absent(&msg) {
+        return None;
+    }
+    assert_eq!(
+        build.status.code(),
+        Some(0),
+        "[{tag}] --release build:\n{msg}"
+    );
+    let run = Command::new(&bin).output().expect("run native");
+    let _ = std::fs::remove_file(&bin);
+    assert_eq!(run.status.code(), Some(0), "[{tag}] native exit status");
+    Some(String::from_utf8_lossy(&run.stdout).trim().to_string())
+}
+
+#[test]
+fn native_struct_fields_of_enum_type_match_the_interpreter() {
+    // AX-43: a struct field of enum type had no layout, because enum names
+    // were registered only after every struct body was set, so `a: A`
+    // resolved to a struct named `A` and the struct was refused (E0910).
+    const TOK: &str = "type Tok = Num { v: i64 } | Op { c: str } | Eof\n\
+                       type T = { kind: Tok, pos: i64 }\n\
+                       fn show(t: Tok) -> str {\n match t { Tok::Num { v } => \"num \" + to_str(v)  Tok::Op { c } => \"op \" + c  Tok::Eof => \"eof\" }\n}\n\
+                       fn mk(v: i64, p: i64) -> T { T { kind: Tok::Num { v: v }, pos: p } }\n";
+    let progs: [(&str, String); 6] = [
+        (
+            "ax43_repro",
+            "type A = Lit { v: i64 } | Neg { v: i64 }\ntype R = { a: A, k: i64 }\nfn main() -> i64 { let r = R { a: A::Lit { v: 4 }, k: 1 } match r.a { A::Lit { v } => println(to_str(v))  _ => println(\"x\") } 0 }\n".to_string(),
+        ),
+        (
+            "ax43_field_rw",
+            format!("{TOK}fn main() -> i64 {{\n let a = mk(4, 0)\n println(show(a.kind))\n a.kind = Tok::Op {{ c: \"+\" }}\n println(show(a.kind))\n println(to_str(a.pos))\n 0\n}}\n"),
+        ),
+        (
+            "ax43_fn_param_ret",
+            format!("{TOK}fn bump(t: T) -> T {{ match t.kind {{ Tok::Num {{ v }} => T {{ kind: Tok::Num {{ v: v + 100 }}, pos: t.pos }}  _ => t }} }}\nfn main() -> i64 {{\n let b = bump(mk(7, 3))\n println(show(b.kind) + \" @\" + to_str(b.pos))\n let c = bump(T {{ kind: Tok::Eof, pos: 5 }})\n println(show(c.kind) + \" @\" + to_str(c.pos))\n 0\n}}\n"),
+        ),
+        (
+            "ax43_in_array",
+            format!("{TOK}type P = {{ toks: [T], last: Tok }}\nfn main() -> i64 {{\n let ts = [mk(1, 0), T {{ kind: Tok::Op {{ c: \"*\" }}, pos: 1 }}, T {{ kind: Tok::Eof, pos: 2 }}]\n let i = 0\n while i < len(ts) {{ println(show(ts[i].kind)) i = i + 1 }}\n ts[1].kind = Tok::Num {{ v: 55 }}\n println(show(ts[1].kind))\n let p = P {{ toks: ts, last: Tok::Eof }}\n p.last = p.toks[0].kind\n println(show(p.last))\n match p.toks[2].kind {{ Tok::Eof => println(\"end\")  _ => println(\"not end\") }}\n 0\n}}\n"),
+        ),
+        (
+            // An enum holding a struct that holds an enum, and a struct whose
+            // Result/Option fields are sized by an enum; the structs and enums
+            // are declared in the "wrong" order on purpose.
+            "ax43_nested_order",
+            format!("type W = Box {{ t: T }} | Empty\ntype Q = {{ r: Result<Tok, str>, o: Option<Tok> }}\n{TOK}fn main() -> i64 {{\n let w = W::Box {{ t: mk(9, 9) }}\n match w {{ W::Box {{ t }} => println(show(t.kind) + \" in box\")  W::Empty => println(\"empty\") }}\n let q = Q {{ r: Ok(Tok::Op {{ c: \"-\" }}), o: Some(Tok::Num {{ v: 12 }}) }}\n match q.r {{ Ok(t) => println(show(t))  Err(e) => println(e) }}\n match q.o {{ Some(t) => println(show(t))  None => println(\"none\") }}\n 0\n}}\n"),
+        ),
+        (
+            // Payload fields are found by NAME, not by the position a literal
+            // or a pattern lists them in.
+            "ax43_field_order",
+            "type P = Pt { x: i64, s: str } | No\nfn main() -> i64 {\n let p = P::Pt { s: \"hi\", x: 7 }\n match p { P::Pt { s, x } => println(s + \" \" + to_str(x))  P::No => println(\"no\") }\n match p { P::Pt { s } => println(s)  _ => println(\"no\") }\n 0\n}\n".to_string(),
+        ),
+    ];
+    for (tag, src) in &progs {
+        let Some(got) = native_stdout(tag, src) else {
+            return;
+        };
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
+    }
+    // The register's exact command: `axon build --release field.ax` prints 4.
+    if let Some(got) = native_release_stdout("ax43_release", &progs[0].1) {
+        assert_eq!(got, "4");
+    }
+}
+
+#[test]
+fn a_struct_holding_itself_by_value_is_refused_natively_not_a_compiler_crash() {
+    // `type Node = { next: Option<Node> }` has no finite layout. Sizing it
+    // recursed in `llvm_sizeof` until the compiler's own stack overflowed;
+    // it is refused with E0910 now, while the interpreter runs it.
+    let src = "type Node = { v: i64, next: Option<Node> }\nfn main() -> i64 {\n let n = Node { v: 1, next: Some(Node { v: 2, next: None }) }\n match n.next { Some(m) => println(to_str(m.v))  None => println(\"none\") }\n 0\n}\n";
+    assert_eq!(interp_stdout("struct_cycle", src), "2");
+    let f = tmp_ax("struct_cycle_build", src);
+    let bin = std::env::temp_dir().join(format!("axon_native_scyc_{}", std::process::id()));
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .output()
+        .expect("spawn build");
+    let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_file(&bin);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    if codegen_absent(&msg) {
+        return;
+    }
+    assert_ne!(build.status.code(), Some(0), "must not build:\n{msg}");
+    assert!(
+        msg.contains("E0910") && msg.contains("struct `Node` holds itself by value"),
+        "refused in the E0910 class, naming the struct:\n{msg}"
+    );
+    assert!(!msg.contains("overflowed its stack"), "{msg}");
+}
+
+/// AX-42 parity programs: recursive enums, interp vs native.
+const AX42_PROGS: [(&str, &str); 8] = [
+    (
+        "ax42_repro",
+        r#"type A = Lit { v: i64 } | Add { l: A, r: A }
+fn ev(a: A) -> i64 { match a { A::Lit { v } => v A::Add { l, r } => ev(l) + ev(r) } }
+fn main() -> i64 { println(to_str(ev(A::Add { l: A::Lit { v: 2 }, r: A::Lit { v: 3 } }))) 0 }
+"#,
+    ),
+    (
+        // A small expression-tree evaluator: build, evaluate, print, rewrite
+        // with nested refutable patterns, and keep trees in an array.
+        "ax42_expr_eval",
+        r#"type Ex = Lit { v: i64 } | Add { l: Ex, r: Ex } | Mul { l: Ex, r: Ex } | Neg { e: Ex }
+fn ev(t: Ex) -> i64 {
+  match t {
+    Ex::Lit { v } => v
+    Ex::Add { l, r } => ev(l) + ev(r)
+    Ex::Mul { l, r } => ev(l) * ev(r)
+    Ex::Neg { e } => 0 - ev(e)
+  }
+}
+fn show(t: Ex) -> str {
+  match t {
+    Ex::Lit { v } => to_str(v)
+    Ex::Add { l, r } => "(" + show(l) + " + " + show(r) + ")"
+    Ex::Mul { l, r } => show(l) + " * " + show(r)
+    Ex::Neg { e } => "-" + show(e)
+  }
+}
+fn simplify(t: Ex) -> Ex {
+  match t {
+    Ex::Add { l: Ex::Lit { v: 0 }, r } => simplify(r)
+    Ex::Mul { l: Ex::Lit { v: 1 }, r } => simplify(r)
+    Ex::Add { l, r } => Ex::Add { l: simplify(l), r: simplify(r) }
+    Ex::Mul { l, r } => Ex::Mul { l: simplify(l), r: simplify(r) }
+    Ex::Neg { e: Ex::Neg { e } } => simplify(e)
+    Ex::Neg { e } => Ex::Neg { e: simplify(e) }
+    _ => t
+  }
+}
+fn lit(v: i64) -> Ex { Ex::Lit { v: v } }
+fn main() -> i64 {
+  let t = Ex::Add { l: Ex::Mul { l: lit(2), r: lit(3) }, r: Ex::Neg { e: Ex::Add { l: lit(0), r: lit(4) } } }
+  println(show(t))
+  println(to_str(ev(t)))
+  let s = simplify(Ex::Mul { l: lit(1), r: Ex::Neg { e: Ex::Neg { e: t } } })
+  println(show(s))
+  println(to_str(ev(s)))
+  let o: Option<Ex> = None
+  match o { Some(Ex::Add { l: Ex::Lit { v: 0 }, r }) => println("zero-add")  Some(_) => println("some")  None => println("none") }
+  let p = Some(Ex::Add { l: lit(0), r: lit(9) })
+  match p { Some(Ex::Add { l: Ex::Lit { v: 0 }, r }) => println("zero-add " + show(r))  Some(_) => println("some")  None => println("none") }
+  let xs = [t, s, lit(7)]
+  let i = 0
+  let tot = 0
+  while i < len(xs) { tot = tot + ev(xs[i]) i = i + 1 }
+  println(to_str(tot))
+  0
+}
+"#,
+    ),
+    (
+        // A refutable field sub-pattern is tested, not skipped: `A::Lit { v: 0 }`
+        // matched every `Lit`.
+        "ax42_field_subpattern",
+        r#"type A = Lit { v: i64 } | Neg { v: i64 }
+fn f(a: A) -> str { match a { A::Lit { v: 0 } => "zero"  A::Lit { v } => "lit"  A::Neg { v } => "neg" } }
+fn main() -> i64 {
+  println(f(A::Lit { v: 0 }))
+  println(f(A::Lit { v: 5 }))
+  println(f(A::Neg { v: 0 }))
+  0
+}
+"#,
+    ),
+    (
+        // Mutual recursion through two enums, and through a struct field.
+        "ax42_mutual",
+        r#"type E = Num { v: i64 } | Blk { s: S }
+type S = Empty | Seq { e: E, rest: S }
+type T = Leaf | Br { n: N }
+type N = { v: i64, l: T, r: T }
+type W = { tag: str, t: T }
+fn sum_e(e: E) -> i64 { match e { E::Num { v } => v  E::Blk { s } => sum_s(s) } }
+fn sum_s(s: S) -> i64 { match s { S::Empty => 0  S::Seq { e, rest } => sum_e(e) + sum_s(rest) } }
+fn sum_t(t: T) -> i64 { match t { T::Leaf => 0  T::Br { n } => n.v + sum_t(n.l) + sum_t(n.r) } }
+fn depth(t: T) -> i64 { match t { T::Leaf => 0  T::Br { n } => { let a = depth(n.l) let b = depth(n.r) if a > b { a + 1 } else { b + 1 } } } }
+fn leaf() -> T { T::Leaf }
+fn node(v: i64, l: T, r: T) -> T { T::Br { n: N { v: v, l: l, r: r } } }
+fn insert(t: T, v: i64) -> T {
+  match t {
+    T::Leaf => node(v, leaf(), leaf())
+    T::Br { n } => if v < n.v { node(n.v, insert(n.l, v), n.r) } else { node(n.v, n.l, insert(n.r, v)) }
+  }
+}
+fn main() -> i64 {
+  let s = S::Seq { e: E::Num { v: 1 }, rest: S::Seq { e: E::Blk { s: S::Seq { e: E::Num { v: 2 }, rest: S::Empty } }, rest: S::Empty } }
+  println(to_str(sum_s(s)))
+  let t = leaf()
+  let xs = [5, 3, 8, 1, 4, 7, 9, 2, 6]
+  let i = 0
+  while i < len(xs) { t = insert(t, xs[i]) i = i + 1 }
+  println(to_str(sum_t(t)) + " " + to_str(depth(t)))
+  let w = W { tag: "tree", t: t }
+  match w.t { T::Br { n } => println(w.tag + " root " + to_str(n.v))  T::Leaf => println("empty") }
+  let ws = [W { tag: "a", t: node(1, leaf(), leaf()) }, W { tag: "b", t: leaf() }]
+  println(to_str(sum_t(ws[0].t) + sum_t(ws[1].t)))
+  0
+}
+"#,
+    ),
+    (
+        // Recursion through an array, an Option and a tuple payload field.
+        "ax42_array_option_tuple",
+        r#"type T = Leaf { v: i64 } | Node { kids: [T] }
+type W = Val { v: i64 } | Wrap { o: Option<W> } | Pair { p: (W, i64) }
+fn sum(t: T) -> i64 {
+  match t {
+    T::Leaf { v } => v
+    T::Node { kids } => {
+      let s = 0
+      let i = 0
+      while i < len(kids) { s = s + sum(kids[i]) i = i + 1 }
+      s
+    }
+  }
+}
+fn wsum(w: W) -> i64 {
+  match w {
+    W::Val { v } => v
+    W::Wrap { o } => match o { Some(x) => wsum(x) None => 100 }
+    W::Pair { p } => wsum(p.0) + p.1
+  }
+}
+fn main() -> i64 {
+  let t = T::Node { kids: [T::Leaf { v: 1 }, T::Node { kids: [T::Leaf { v: 2 }, T::Leaf { v: 3 }] }, T::Node { kids: [] }] }
+  println(to_str(sum(t)))
+  println(to_str(wsum(W::Wrap { o: Some(W::Pair { p: (W::Wrap { o: None }, 7) }) })))
+  println(to_str(wsum(W::Wrap { o: Some(W::Val { v: 5 }) })))
+  match t { T::Node { kids } => println(to_str(len(kids))) _ => println("leaf") }
+  0
+}
+"#,
+    ),
+    (
+        // A left-leaning chain built in a loop, summed recursively and
+        // iteratively. (Kept small: `axon run` builds it in quadratic time.)
+        "ax42_chain",
+        r#"type A = Lit { v: i64 } | Add { l: A, r: A }
+fn build(n: i64) -> A {
+  let t = A::Lit { v: 1 }
+  let i = 1
+  while i < n { t = A::Add { l: t, r: A::Lit { v: i + 1 } } i = i + 1 }
+  t
+}
+fn ev(a: A) -> i64 { match a { A::Lit { v } => v  A::Add { l, r } => ev(l) + ev(r) } }
+fn sum_iter(a: A) -> i64 {
+  let s = 0
+  let cur = a
+  let go = true
+  while go {
+    match cur {
+      A::Lit { v } => { s = s + v go = false }
+      A::Add { l, r } => { s = s + ev(r) cur = l }
+    }
+  }
+  s
+}
+fn main() -> i64 {
+  let t = build(400)
+  println(to_str(ev(t)))
+  println(to_str(sum_iter(t)))
+  0
+}
+"#,
+    ),
+    (
+        // `==`/`!=` compare payloads, recursively, through struct fields and
+        // mutually recursive types.
+        "ax42_equality",
+        r#"type A = Lit { v: i64 } | Add { l: A, r: A } | Name { s: str } | Nil
+type P = { a: A, k: i64 }
+type B = Leaf | Node { c: C }
+type C = { b: B, w: f64 }
+fn mk(n: i64) -> A {
+  if n == 0 { return A::Lit { v: 0 } }
+  A::Add { l: mk(n - 1), r: A::Lit { v: n } }
+}
+fn main() -> i64 {
+  let a = A::Add { l: A::Lit { v: 1 }, r: A::Lit { v: 2 } }
+  let b = A::Add { l: A::Lit { v: 1 }, r: A::Lit { v: 3 } }
+  let c = A::Add { l: A::Lit { v: 1 }, r: A::Lit { v: 2 } }
+  println(to_str(a == b))
+  println(to_str(a == c))
+  println(to_str(a != b))
+  println(to_str(a != c))
+  println(to_str(a == A::Lit { v: 1 }))
+  println(to_str(A::Name { s: "x" } == A::Name { s: "x" }))
+  println(to_str(A::Name { s: "x" } == A::Name { s: "y" }))
+  println(to_str(A::Nil == A::Nil))
+  println(to_str(mk(50) == mk(50)))
+  println(to_str(mk(50) == mk(49)))
+  println(to_str(P { a: a, k: 1 } == P { a: c, k: 1 }))
+  println(to_str(P { a: a, k: 1 } == P { a: b, k: 1 }))
+  let x = B::Node { c: C { b: B::Leaf, w: 1.5 } }
+  let y = B::Node { c: C { b: B::Node { c: C { b: B::Leaf, w: 0.0 } }, w: 1.5 } }
+  println(to_str(x == x))
+  println(to_str(x == y))
+  0
+}
+"#,
+    ),
+    (
+        // Built in a loop, returned from functions, passed through `Result`.
+        "ax42_return_result",
+        r#"type L = Nil | Cons { h: i64, t: L }
+fn range(n: i64) -> L { let l = L::Nil let i = n while i > 0 { l = L::Cons { h: i, t: l } i = i - 1 } l }
+fn rev(l: L) -> L { let out = L::Nil let cur = l let go = true while go { match cur { L::Nil => go = false  L::Cons { h, t } => { out = L::Cons { h: h, t: out } cur = t } } } out }
+fn show(l: L) -> str { match l { L::Nil => "."  L::Cons { h, t } => to_str(h) + " " + show(t) } }
+fn head(l: L) -> Result<i64, str> { match l { L::Nil => Err("empty")  L::Cons { h, t } => Ok(h) } }
+fn main() -> i64 {
+  let l = range(5)
+  println(show(l))
+  println(show(rev(l)))
+  match head(rev(l)) { Ok(h) => println(to_str(h))  Err(e) => println(e) }
+  match head(L::Nil) { Ok(h) => println(to_str(h))  Err(e) => println(e) }
+  0
+}
+"#,
+    ),
+];
+
+#[test]
+fn native_recursive_enums_match_the_interpreter() {
+    // AX-42: an enum holding itself by value (`Add { l: A, r: A }`) was
+    // refused (E0910). Such a field is now boxed: its payload slot holds a
+    // pointer to a heap copy.
+    for (tag, src) in AX42_PROGS {
+        let Some(got) = native_stdout(tag, src) else {
+            return;
+        };
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
+    }
+    // The register's exact command: `axon build --release rec.ax` prints 5.
+    if let Some(got) = native_release_stdout("ax42_release", AX42_PROGS[0].1) {
+        assert_eq!(got, "5");
+    }
+}
+
+#[test]
+fn native_recursive_enum_chain_of_100k_nodes() {
+    // A 100k-node left-leaning chain, built in a loop and summed iteratively
+    // (recursing 100k deep overflows the native stack, which panics cleanly).
+    // Native only: `axon run` builds the chain in quadratic time; the
+    // `ax42_chain` parity row runs the same program at 400 nodes.
+    let src = AX42_PROGS[5].1.replace(
+        "let t = build(400)\n  println(to_str(ev(t)))\n",
+        "let t = build(100000)\n",
+    );
+    assert!(
+        src.contains("build(100000)"),
+        "the chain program changed shape"
+    );
+    if let Some(got) = native_release_stdout("ax42_chain_100k", &src) {
+        assert_eq!(got, "5000050000");
+    }
+}
+
+#[test]
+fn enum_equality_on_an_uncomparable_payload_field_is_still_refused() {
+    // Payload equality lowers field by field; a field whose equality native
+    // codegen does not lower (`[str]`) keeps the whole comparison refused,
+    // rather than answered from the tags.
+    let src = "type A = Lit { v: i64 } | Many { xs: [str] }\nfn main() -> i64 {\n let a = A::Many { xs: [\"a\"] }\n println(to_str(a == A::Many { xs: [\"a\"] }))\n 0\n}\n";
+    assert_eq!(interp_stdout("enum_eq_strs", src), "true");
+    let f = tmp_ax("enum_eq_strs_build", src);
+    let bin = std::env::temp_dir().join(format!("axon_native_eqstrs_{}", std::process::id()));
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .output()
+        .expect("spawn build");
+    let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_file(&bin);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    if codegen_absent(&msg) {
+        return;
+    }
+    assert_ne!(build.status.code(), Some(0), "must not build:\n{msg}");
+    assert!(
+        msg.contains("E0910") && msg.contains("cannot compare `A` values"),
+        "refused in the E0910 class:\n{msg}"
+    );
+}
+
+#[test]
+fn native_match_arm_bindings_are_scoped_to_their_arm() {
+    // An arm's binding stayed in scope for the LATER arms, which then read
+    // its never-written slot instead of the outer variable of the same name:
+    // native printed 0 and a garbage number where the interpreter prints 5.
+    let src = r#"type A = Lit { v: i64 } | Neg { v: i64 }
+fn f(v: i64, a: A) -> i64 { match a { A::Neg { v } => v * 10  _ => v } }
+fn g(x: i64, o: Option<i64>) -> i64 { match o { Some(x) => x * 10  None => x } }
+fn main() -> i64 {
+  println(to_str(f(5, A::Lit { v: 9 })))
+  println(to_str(f(5, A::Neg { v: 9 })))
+  println(to_str(g(5, None)))
+  println(to_str(g(5, Some(2))))
+  0
+}
+"#;
+    let Some(got) = native_stdout("arm_scope", src) else {
+        return;
+    };
+    assert_eq!(got, interp_stdout("arm_scope", src));
+    assert_eq!(got, "5\n90\n5\n20");
+}
+
 #[test]
 fn native_array_index_write_traps_out_of_bounds_like_the_interpreter() {
     let src = "fn main() -> i64 {\n let a = [1, 2, 3]\n a[3] = 7\n println(\"unreachable\")\n 0\n}\n";
@@ -33650,4 +34353,204 @@ fn effects_flow_through_a_fn_value() {
             "[{tag}] expected {code} containing {needle:?}: {msg}"
         );
     }
+}
+
+/// AX-41: returning a tuple that contains an enum failed E0307 `expected
+/// (A, i64), found (A, i64)` in `check`, `run` and `build` alike. The register's
+/// repro and the Option/array/match-arm shapes must now run under both engines
+/// and print the same thing.
+#[test]
+fn ax41_tuple_with_an_enum_returns_under_both_engines() {
+    let ty = "type A = Lit { v: i64 } | Two { x: i64 }\n";
+    let progs: [(&str, &str); 4] = [
+        (
+            "ax41_tup",
+            "fn f(n: i64) -> (A, i64) { (A::Lit { v: n }, n) }\n\
+             fn main() -> i64 { let (a, k) = f(3) println(to_str(k)) 0 }\n",
+        ),
+        (
+            "ax41_option",
+            "fn f(n: i64) -> Option<(A, i64)> { Some((A::Lit { v: n }, n)) }\n\
+             fn main() -> i64 { match f(3) { Some((a, k)) => println(to_str(k)) None => println(\"n\") } 0 }\n",
+        ),
+        (
+            "ax41_array",
+            "fn f(n: i64) -> [(A, i64)] { [(A::Lit { v: n }, n)] }\n\
+             fn main() -> i64 { let xs = f(3) let (a, k) = xs[0] println(to_str(k)) 0 }\n",
+        ),
+        (
+            "ax41_arms",
+            "fn f(n: i64) -> (A, i64) { match n { 0 => (A::Two { x: 0 }, 0) _ => (A::Lit { v: n }, n) } }\n\
+             fn main() -> i64 { let (a, k) = f(3) println(to_str(k)) 0 }\n",
+        ),
+    ];
+    for (tag, body) in progs {
+        let src = format!("{ty}{body}");
+        assert_eq!(interp_stdout(tag, &src), "3", "[{tag}] interpreter");
+        let Some(got) = native_stdout(tag, &src) else {
+            note_harness_skip("axon build (no codegen feature)");
+            return;
+        };
+        assert_eq!(got, "3", "[{tag}] native != interpreter");
+    }
+}
+
+/// AX-45: build `src` natively and return the `codegen error [...]` lines and
+/// the final `N codegen error(s)` line, or `None` on an interpreter-only axon.
+/// Asserts the invariant every caller relies on: the build failed, and the
+/// count it states equals the number of codegen errors it printed.
+fn native_refusal_report(tag: &str, src: &str) -> Option<Vec<String>> {
+    let f = tmp_ax(&format!("ax45_{tag}"), src);
+    let bin = std::env::temp_dir().join(format!("axon_ax45_{tag}_{}", std::process::id()));
+    let out = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .output()
+        .expect("spawn build");
+    let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_file(&bin);
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    if codegen_absent(&all) {
+        return None;
+    }
+    assert_ne!(
+        out.status.code(),
+        Some(0),
+        "[{tag}] build must refuse:\n{all}"
+    );
+    let errors: Vec<String> = all
+        .lines()
+        .filter(|l| l.starts_with("codegen error ["))
+        .map(str::to_string)
+        .collect();
+    let count_line = format!("{} codegen error(s); build aborted", errors.len());
+    assert!(
+        all.lines().any(|l| l.ends_with(&count_line)),
+        "[{tag}] the stated error count must equal the {} codegen errors printed:\n{all}",
+        errors.len()
+    );
+    assert!(
+        !all.contains("not found in current scope"),
+        "[{tag}] a refusal cascaded into an unknown-identifier error on a valid name:\n{all}"
+    );
+    Some(errors)
+}
+
+#[test]
+fn a_native_refusal_prints_once_and_is_counted_once_ax45() {
+    // `sandbox_create` is interpreter-only by design. Its refusal was printed
+    // at the call site AND by the build pipeline: two lines, `1 codegen
+    // error(s)`. Two calls with the identical refusal are still one error.
+    let src = "fn main() -> i64 {\n    let a = sandbox_create(1, \"IO\")\n    let b = sandbox_create(2, \"IO\")\n    println(to_str(a + b))\n    0\n}\n";
+    let Some(errors) = native_refusal_report("once", src) else {
+        return;
+    };
+    assert_eq!(errors.len(), 1, "one refusal, printed once: {errors:#?}");
+    assert!(
+        errors[0].starts_with("codegen error [E0910]: builtin `sandbox_create`"),
+        "{errors:#?}"
+    );
+}
+
+#[test]
+fn a_refused_let_value_does_not_cascade_into_unknown_identifiers_ax45() {
+    // Native codegen folds `comptime` at build time, so an impure `comptime`
+    // block is refused by design. Its failure went to stderr only (uncounted),
+    // and every later read of the binding it left uncreated - `x`, then `y`,
+    // which depends on it - was reported as an unknown identifier (E0701).
+    let local = "fn main() -> i64 {\n    let x = comptime { println(\"side\") 1 }\n    let y = x + 1\n    let _z = y * 2\n    0\n}\n";
+    let Some(errors) = native_refusal_report("let", local) else {
+        return;
+    };
+    assert_eq!(errors.len(), 1, "{errors:#?}");
+    assert!(
+        errors[0].starts_with("codegen error [E0701]: this `comptime` block cannot be evaluated"),
+        "{errors:#?}"
+    );
+
+    // A module-level `let` has no runtime lowering at all: it is folded or
+    // nothing. Its failure was printed, not counted, and a program that never
+    // read it BUILT, dropping the value's side effects; `H`, defined from it,
+    // and the read of `H` in `main` are not further errors.
+    let module = "fn side() -> i64 { println(\"side\") 5 }\nlet G = side()\nlet H = G + 1\nfn main() -> i64 {\n    let _y = H * 2\n    0\n}\n";
+    let Some(errors) = native_refusal_report("module_let", module) else {
+        return;
+    };
+    assert_eq!(errors.len(), 1, "{errors:#?}");
+    assert!(
+        errors[0]
+            .starts_with("codegen error [E0701]: the module-level `let G` cannot be evaluated"),
+        "{errors:#?}"
+    );
+}
+
+#[test]
+fn an_unbindable_match_field_is_refused_where_it_is_bound_ax45() {
+    // Decimal is interpreter-only (R21), so a `Decimal` variant field has no
+    // native layout and the pattern binding `d` was silently not created; the
+    // only error was `identifier 'd' not found` on a valid name.
+    let src = "type E = W { d: Decimal, n: i64 } | N { n: i64 }\nfn h(e: E) -> i64 {\n    match e {\n        E::W { d, n } => {\n            let _q = d\n            n\n        }\n        E::N { n } => n\n    }\n}\nfn main() -> i64 {\n    println(to_str(h(E::N { n: 3 })))\n    0\n}\n";
+    let Some(errors) = native_refusal_report("bind", src) else {
+        return;
+    };
+    assert_eq!(errors.len(), 1, "{errors:#?}");
+    assert!(
+        errors[0].starts_with(
+            "codegen error [E0910]: native codegen could not bind `d`: field `d` of `E::W` has type Decimal"
+        ),
+        "{errors:#?}"
+    );
+}
+
+#[test]
+fn an_unread_unbindable_match_field_leaves_the_outer_binding_intact_ax45() {
+    // The arm binding `d` shadows the parameter `d` and cannot be created, but
+    // nothing reads it: no error, and past the arm `d` is the parameter again
+    // in both engines (the poisoning is scoped to the arm).
+    let src = "type E = W { d: Decimal, n: i64 } | N { n: i64 }\nfn h(e: E, d: i64) -> i64 {\n    let k = match e {\n        E::W { d: _d, n } => n\n        E::N { n } => n\n    }\n    let j = match e {\n        E::W { d, n } => n\n        E::N { n } => n\n    }\n    k + j + d\n}\nfn main() -> i64 {\n    println(to_str(h(E::N { n: 3 }, 36)))\n    0\n}\n";
+    let f = tmp_ax("ax45_scope", src);
+    let run = axon().arg("run").arg(&f).output().expect("spawn run");
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let want = String::from_utf8_lossy(&run.stdout).trim().to_string();
+    assert_eq!(want, "42");
+    let bin = std::env::temp_dir().join(format!("axon_ax45_scope_{}", std::process::id()));
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .output()
+        .expect("spawn build");
+    let _ = std::fs::remove_file(&f);
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    if codegen_absent(&log) {
+        return;
+    }
+    assert_eq!(
+        build.status.code(),
+        Some(0),
+        "native build must succeed:\n{log}"
+    );
+    let nat = std::process::Command::new(&bin)
+        .output()
+        .expect("run native");
+    let _ = std::fs::remove_file(&bin);
+    assert_eq!(String::from_utf8_lossy(&nat.stdout).trim(), want);
 }

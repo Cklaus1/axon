@@ -247,6 +247,34 @@ impl Type {
             Type::Never => "never".into(),
         }
     }
+
+    /// Rebuild the type with `f` applied to every non-container node.
+    ///
+    /// Containers (`Option`, `Result`, `Slice`, `Tuple`, `Fn`, `Chan`,
+    /// `Uncertain`, `Temporal`, `RawPtr`) are rebuilt around their mapped
+    /// children, so a rewrite of named types reaches every nesting depth. A
+    /// rewrite that lists the containers by hand misses whichever one it forgot:
+    /// a named enum inside a tuple stayed `Struct` and failed E0307 against an
+    /// inferred `Enum` that printed identically (AX-41).
+    pub fn map_leaves(self, f: &mut impl FnMut(Type) -> Type) -> Type {
+        match self {
+            Type::Option(i) => Type::Option(Box::new(i.map_leaves(f))),
+            Type::Result(o, e) => {
+                Type::Result(Box::new(o.map_leaves(f)), Box::new(e.map_leaves(f)))
+            }
+            Type::Slice(i) => Type::Slice(Box::new(i.map_leaves(f))),
+            Type::Tuple(ts) => Type::Tuple(ts.into_iter().map(|t| t.map_leaves(f)).collect()),
+            Type::Fn(ps, r) => Type::Fn(
+                ps.into_iter().map(|p| p.map_leaves(f)).collect(),
+                Box::new(r.map_leaves(f)),
+            ),
+            Type::Chan(i) => Type::Chan(Box::new(i.map_leaves(f))),
+            Type::Uncertain(i) => Type::Uncertain(Box::new(i.map_leaves(f))),
+            Type::Temporal(i) => Type::Temporal(Box::new(i.map_leaves(f))),
+            Type::RawPtr(i) => Type::RawPtr(Box::new(i.map_leaves(f))),
+            leaf => f(leaf),
+        }
+    }
 }
 
 // ── Constraint ────────────────────────────────────────────────────────────────

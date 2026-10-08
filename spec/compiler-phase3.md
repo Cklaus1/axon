@@ -796,6 +796,12 @@ Rules:
 Successful evaluation stores the result in a module-level comptime table keyed by binding name.
 Any later `Ident` reference to a comptime binding resolves directly from this table.
 
+In a native build (`axon build`) a failed evaluation is a codegen error under the evaluator's code
+(E0701/E0702/E0703) that aborts the build, for a `comptime { }` block and for a module-level `let`
+alike: native codegen has no runtime lowering for either. The binding is poisoned, so reads of it,
+and of module-level `let`s computed from it, add no further errors (AX-45). The interpreter does
+not fold `comptime`; it runs the block as ordinary code.
+
 ### LLVM IR Lowering
 
 A `comptime` expression that evaluates to an integer lowers to an LLVM integer constant:

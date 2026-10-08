@@ -9,10 +9,10 @@
 use super::*;
 
 pub(super) fn uncertain_parts(v: &Value) -> Option<(Value, f64)> {
-    if let Value::Struct { name, fields } = v {
-        if name == "Uncertain" {
-            let inner = fields.get("value").cloned().unwrap_or(Value::Int(0));
-            let conf = match fields.get("confidence") {
+    if let Value::Struct(s) = v {
+        if s.name == SYM_UNCERTAIN {
+            let inner = s.fields.get(SYM_VALUE).cloned().unwrap_or(Value::Int(0));
+            let conf = match s.fields.get(SYM_CONFIDENCE) {
                 Some(Value::Float(c)) => *c,
                 _ => 1.0,
             };
@@ -25,9 +25,9 @@ pub(super) fn uncertain_parts(v: &Value) -> Option<(Value, f64)> {
 /// The inner present `value` of a `Temporal<T>`, or `None` otherwise. Used by the
 /// Temporal binary-op soft-typing path.
 fn soft_temporal_inner(v: &Value) -> Option<Value> {
-    if let Value::Struct { name, fields } = v {
-        if name == "Temporal" {
-            return Some(fields.get("value").cloned().unwrap_or(Value::Int(0)));
+    if let Value::Struct(s) = v {
+        if s.name == SYM_TEMPORAL {
+            return Some(s.fields.get(SYM_VALUE).cloned().unwrap_or(Value::Int(0)));
         }
     }
     None
@@ -39,9 +39,9 @@ fn soft_temporal_inner(v: &Value) -> Option<Value> {
 /// return). `None` for any other value. Confidence/horizon are dropped at the
 /// T-typed boundary.
 pub(super) fn soft_inner(v: &Value) -> Option<Value> {
-    if let Value::Struct { name, fields } = v {
-        if name == "Uncertain" || name == "Temporal" {
-            return Some(fields.get("value").cloned().unwrap_or(Value::Int(0)));
+    if let Value::Struct(s) = v {
+        if s.name == SYM_UNCERTAIN || s.name == SYM_TEMPORAL {
+            return Some(s.fields.get(SYM_VALUE).cloned().unwrap_or(Value::Int(0)));
         }
     }
     None
@@ -51,372 +51,336 @@ pub(super) fn soft_inner(v: &Value) -> Option<Value> {
 
 /// Interpret the stored i64 bit-pattern as the unsigned value for the type.
 /// For unsigned types, mask to the type's range. For signed types, sign-extend.
-fn to_display_val(val: i64, ty: &crate::types::Type) -> i64 {
+fn to_display_val(val: i64, ty: IntWidth) -> i64 {
     match ty {
-        crate::types::Type::U8 => (val as u8) as i64,
-        crate::types::Type::U16 => (val as u16) as i64,
-        crate::types::Type::U32 => (val as u32) as i64,
-        crate::types::Type::U64 => val, // stored as i64 bits; display as unsigned below
-        crate::types::Type::I8 => (val as i8) as i64,
-        crate::types::Type::I16 => (val as i16) as i64,
-        crate::types::Type::I32 => (val as i32) as i64,
-        _ => val,
+        IntWidth::U8 => (val as u8) as i64,
+        IntWidth::U16 => (val as u16) as i64,
+        IntWidth::U32 => (val as u32) as i64,
+        IntWidth::U64 => val, // stored as i64 bits; display as unsigned below
+        IntWidth::I8 => (val as i8) as i64,
+        IntWidth::I16 => (val as i16) as i64,
+        IntWidth::I32 => (val as i32) as i64,
     }
 }
 
 /// Display value for SizedInt. Unsigned types show as unsigned decimal.
-pub(super) fn display_sized(val: i64, ty: &crate::types::Type) -> String {
+pub(super) fn display_sized(val: i64, ty: IntWidth) -> String {
     match ty {
-        crate::types::Type::U8 => (val as u8).to_string(),
-        crate::types::Type::U16 => (val as u16).to_string(),
-        crate::types::Type::U32 => (val as u32).to_string(),
-        crate::types::Type::U64 => (val as u64).to_string(),
-        crate::types::Type::I8 => (val as i8).to_string(),
-        crate::types::Type::I16 => (val as i16).to_string(),
-        crate::types::Type::I32 => (val as i32).to_string(),
-        _ => val.to_string(),
+        IntWidth::U8 => (val as u8).to_string(),
+        IntWidth::U16 => (val as u16).to_string(),
+        IntWidth::U32 => (val as u32).to_string(),
+        IntWidth::U64 => (val as u64).to_string(),
+        IntWidth::I8 => (val as i8).to_string(),
+        IntWidth::I16 => (val as i16).to_string(),
+        IntWidth::I32 => (val as i32).to_string(),
     }
 }
 
 /// Width-correct checked arithmetic for SizedInt. Returns the result
 /// masked/clamped to the width boundary, panicking on overflow (I-9).
-fn sized_checked_add(a: i64, b: i64, ty: &crate::types::Type) -> super::R {
+fn sized_checked_add(a: i64, b: i64, ty: IntWidth) -> super::R {
     match ty {
-        crate::types::Type::U8 => (a as u8)
+        IntWidth::U8 => (a as u8)
             .checked_add(b as u8)
-            .map(|v| Value::SizedInt {
-                val: v as i64,
-                ty: ty.clone(),
-            })
+            .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!(
-                    "integer overflow: u8 {} + {} exceeds 255",
-                    a as u8, b as u8
-                ))
+                super::Flow::Panic(
+                    format!("integer overflow: u8 {} + {} exceeds 255", a as u8, b as u8).into(),
+                )
             }),
-        crate::types::Type::U16 => (a as u16)
+        IntWidth::U16 => (a as u16)
             .checked_add(b as u16)
-            .map(|v| Value::SizedInt {
-                val: v as i64,
-                ty: ty.clone(),
-            })
+            .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!(
-                    "integer overflow: u16 {} + {} exceeds 65535",
-                    a as u16, b as u16
-                ))
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: u16 {} + {} exceeds 65535",
+                        a as u16, b as u16
+                    )
+                    .into(),
+                )
             }),
-        crate::types::Type::U32 => (a as u32)
+        IntWidth::U32 => (a as u32)
             .checked_add(b as u32)
-            .map(|v| Value::SizedInt {
-                val: v as i64,
-                ty: ty.clone(),
-            })
+            .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!(
-                    "integer overflow: u32 {} + {} exceeds {}",
-                    a as u32,
-                    b as u32,
-                    u32::MAX
-                ))
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: u32 {} + {} exceeds {}",
+                        a as u32,
+                        b as u32,
+                        u32::MAX
+                    )
+                    .into(),
+                )
             }),
-        crate::types::Type::U64 => (a as u64)
+        IntWidth::U64 => (a as u64)
             .checked_add(b as u64)
-            .map(|v| Value::SizedInt {
-                val: v as i64,
-                ty: ty.clone(),
-            })
+            .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!(
-                    "integer overflow: u64 {} + {} exceeds {}",
-                    a as u64,
-                    b as u64,
-                    u64::MAX
-                ))
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: u64 {} + {} exceeds {}",
+                        a as u64,
+                        b as u64,
+                        u64::MAX
+                    )
+                    .into(),
+                )
             }),
-        crate::types::Type::I8 => (a as i8)
+        IntWidth::I8 => (a as i8)
             .checked_add(b as i8)
-            .map(|v| Value::SizedInt {
-                val: v as i64,
-                ty: ty.clone(),
-            })
+            .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!(
-                    "integer overflow: i8 {} + {} out of range",
-                    a as i8, b as i8
-                ))
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: i8 {} + {} out of range",
+                        a as i8, b as i8
+                    )
+                    .into(),
+                )
             }),
-        crate::types::Type::I16 => (a as i16)
+        IntWidth::I16 => (a as i16)
             .checked_add(b as i16)
-            .map(|v| Value::SizedInt {
-                val: v as i64,
-                ty: ty.clone(),
-            })
+            .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!(
-                    "integer overflow: i16 {} + {} out of range",
-                    a as i16, b as i16
-                ))
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: i16 {} + {} out of range",
+                        a as i16, b as i16
+                    )
+                    .into(),
+                )
             }),
-        crate::types::Type::I32 => (a as i32)
+        IntWidth::I32 => (a as i32)
             .checked_add(b as i32)
-            .map(|v| Value::SizedInt {
-                val: v as i64,
-                ty: ty.clone(),
-            })
+            .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!(
-                    "integer overflow: i32 {} + {} out of range",
-                    a as i32, b as i32
-                ))
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: i32 {} + {} out of range",
+                        a as i32, b as i32
+                    )
+                    .into(),
+                )
             }),
-        _ => Ok(Value::SizedInt {
-            val: a.wrapping_add(b),
-            ty: ty.clone(),
-        }),
     }
 }
 
-fn sized_checked_sub(a: i64, b: i64, ty: &crate::types::Type) -> super::R {
+fn sized_checked_sub(a: i64, b: i64, ty: IntWidth) -> super::R {
     match ty {
-        crate::types::Type::U8 => (a as u8)
+        IntWidth::U8 => (a as u8)
             .checked_sub(b as u8)
-            .map(|v| Value::SizedInt {
-                val: v as i64,
-                ty: ty.clone(),
-            })
+            .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!(
-                    "integer overflow: u8 {} - {} underflows",
-                    a as u8, b as u8
-                ))
+                super::Flow::Panic(
+                    format!("integer overflow: u8 {} - {} underflows", a as u8, b as u8).into(),
+                )
             }),
-        crate::types::Type::U16 => (a as u16)
+        IntWidth::U16 => (a as u16)
             .checked_sub(b as u16)
-            .map(|v| Value::SizedInt {
-                val: v as i64,
-                ty: ty.clone(),
-            })
+            .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!(
-                    "integer overflow: u16 {} - {} underflows",
-                    a as u16, b as u16
-                ))
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: u16 {} - {} underflows",
+                        a as u16, b as u16
+                    )
+                    .into(),
+                )
             }),
-        crate::types::Type::U32 => (a as u32)
+        IntWidth::U32 => (a as u32)
             .checked_sub(b as u32)
-            .map(|v| Value::SizedInt {
-                val: v as i64,
-                ty: ty.clone(),
-            })
+            .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!(
-                    "integer overflow: u32 {} - {} underflows",
-                    a as u32, b as u32
-                ))
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: u32 {} - {} underflows",
+                        a as u32, b as u32
+                    )
+                    .into(),
+                )
             }),
-        crate::types::Type::U64 => (a as u64)
+        IntWidth::U64 => (a as u64)
             .checked_sub(b as u64)
-            .map(|v| Value::SizedInt {
-                val: v as i64,
-                ty: ty.clone(),
-            })
+            .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!(
-                    "integer overflow: u64 {} - {} underflows",
-                    a as u64, b as u64
-                ))
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: u64 {} - {} underflows",
+                        a as u64, b as u64
+                    )
+                    .into(),
+                )
             }),
-        crate::types::Type::I8 => (a as i8)
+        IntWidth::I8 => (a as i8)
             .checked_sub(b as i8)
-            .map(|v| Value::SizedInt {
-                val: v as i64,
-                ty: ty.clone(),
-            })
+            .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!(
-                    "integer overflow: i8 {} - {} out of range",
-                    a as i8, b as i8
-                ))
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: i8 {} - {} out of range",
+                        a as i8, b as i8
+                    )
+                    .into(),
+                )
             }),
-        crate::types::Type::I16 => (a as i16)
+        IntWidth::I16 => (a as i16)
             .checked_sub(b as i16)
-            .map(|v| Value::SizedInt {
-                val: v as i64,
-                ty: ty.clone(),
-            })
+            .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!(
-                    "integer overflow: i16 {} - {} out of range",
-                    a as i16, b as i16
-                ))
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: i16 {} - {} out of range",
+                        a as i16, b as i16
+                    )
+                    .into(),
+                )
             }),
-        crate::types::Type::I32 => (a as i32)
+        IntWidth::I32 => (a as i32)
             .checked_sub(b as i32)
-            .map(|v| Value::SizedInt {
-                val: v as i64,
-                ty: ty.clone(),
-            })
+            .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!(
-                    "integer overflow: i32 {} - {} out of range",
-                    a as i32, b as i32
-                ))
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: i32 {} - {} out of range",
+                        a as i32, b as i32
+                    )
+                    .into(),
+                )
             }),
-        _ => Ok(Value::SizedInt {
-            val: a.wrapping_sub(b),
-            ty: ty.clone(),
-        }),
     }
 }
 
-fn sized_checked_mul(a: i64, b: i64, ty: &crate::types::Type) -> super::R {
+fn sized_checked_mul(a: i64, b: i64, ty: IntWidth) -> super::R {
     match ty {
-        crate::types::Type::U8 => (a as u8)
+        IntWidth::U8 => (a as u8)
             .checked_mul(b as u8)
-            .map(|v| Value::SizedInt {
-                val: v as i64,
-                ty: ty.clone(),
-            })
+            .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!(
-                    "integer overflow: u8 {} * {} exceeds 255",
-                    a as u8, b as u8
-                ))
+                super::Flow::Panic(
+                    format!("integer overflow: u8 {} * {} exceeds 255", a as u8, b as u8).into(),
+                )
             }),
-        crate::types::Type::U16 => (a as u16)
+        IntWidth::U16 => (a as u16)
             .checked_mul(b as u16)
-            .map(|v| Value::SizedInt {
-                val: v as i64,
-                ty: ty.clone(),
-            })
+            .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!(
-                    "integer overflow: u16 {} * {} exceeds 65535",
-                    a as u16, b as u16
-                ))
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: u16 {} * {} exceeds 65535",
+                        a as u16, b as u16
+                    )
+                    .into(),
+                )
             }),
-        crate::types::Type::U32 => (a as u32)
+        IntWidth::U32 => (a as u32)
             .checked_mul(b as u32)
-            .map(|v| Value::SizedInt {
-                val: v as i64,
-                ty: ty.clone(),
-            })
+            .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!(
-                    "integer overflow: u32 {} * {} exceeds {}",
-                    a as u32,
-                    b as u32,
-                    u32::MAX
-                ))
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: u32 {} * {} exceeds {}",
+                        a as u32,
+                        b as u32,
+                        u32::MAX
+                    )
+                    .into(),
+                )
             }),
-        crate::types::Type::U64 => (a as u64)
+        IntWidth::U64 => (a as u64)
             .checked_mul(b as u64)
-            .map(|v| Value::SizedInt {
-                val: v as i64,
-                ty: ty.clone(),
-            })
+            .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!(
-                    "integer overflow: u64 {} * {} exceeds {}",
-                    a as u64,
-                    b as u64,
-                    u64::MAX
-                ))
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: u64 {} * {} exceeds {}",
+                        a as u64,
+                        b as u64,
+                        u64::MAX
+                    )
+                    .into(),
+                )
             }),
-        crate::types::Type::I8 => (a as i8)
+        IntWidth::I8 => (a as i8)
             .checked_mul(b as i8)
-            .map(|v| Value::SizedInt {
-                val: v as i64,
-                ty: ty.clone(),
-            })
+            .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!(
-                    "integer overflow: i8 {} * {} out of range",
-                    a as i8, b as i8
-                ))
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: i8 {} * {} out of range",
+                        a as i8, b as i8
+                    )
+                    .into(),
+                )
             }),
-        crate::types::Type::I16 => (a as i16)
+        IntWidth::I16 => (a as i16)
             .checked_mul(b as i16)
-            .map(|v| Value::SizedInt {
-                val: v as i64,
-                ty: ty.clone(),
-            })
+            .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!(
-                    "integer overflow: i16 {} * {} out of range",
-                    a as i16, b as i16
-                ))
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: i16 {} * {} out of range",
+                        a as i16, b as i16
+                    )
+                    .into(),
+                )
             }),
-        crate::types::Type::I32 => (a as i32)
+        IntWidth::I32 => (a as i32)
             .checked_mul(b as i32)
-            .map(|v| Value::SizedInt {
-                val: v as i64,
-                ty: ty.clone(),
-            })
+            .map(|v| Value::SizedInt { val: v as i64, ty })
             .ok_or_else(|| {
-                super::Flow::Panic(format!(
-                    "integer overflow: i32 {} * {} out of range",
-                    a as i32, b as i32
-                ))
+                super::Flow::Panic(
+                    format!(
+                        "integer overflow: i32 {} * {} out of range",
+                        a as i32, b as i32
+                    )
+                    .into(),
+                )
             }),
-        _ => Ok(Value::SizedInt {
-            val: a.wrapping_mul(b),
-            ty: ty.clone(),
-        }),
     }
 }
 
-fn sized_div(a: i64, b: i64, ty: &crate::types::Type) -> super::R {
+fn sized_div(a: i64, b: i64, ty: IntWidth) -> super::R {
     if b == 0 {
-        return Err(super::Flow::Panic(format!(
-            "integer division by zero ({} / 0)",
-            ty.display()
-        )));
+        return Err(super::Flow::Panic(
+            format!("integer division by zero ({} / 0)", ty.name()).into(),
+        ));
     }
     let v = match ty {
-        crate::types::Type::U8 => ((a as u8) / (b as u8)) as i64,
-        crate::types::Type::U16 => ((a as u16) / (b as u16)) as i64,
-        crate::types::Type::U32 => ((a as u32) / (b as u32)) as i64,
-        crate::types::Type::U64 => ((a as u64) / (b as u64)) as i64,
-        crate::types::Type::I8 => ((a as i8) / (b as i8)) as i64,
-        crate::types::Type::I16 => ((a as i16) / (b as i16)) as i64,
-        crate::types::Type::I32 => ((a as i32) / (b as i32)) as i64,
-        _ => a / b,
+        IntWidth::U8 => ((a as u8) / (b as u8)) as i64,
+        IntWidth::U16 => ((a as u16) / (b as u16)) as i64,
+        IntWidth::U32 => ((a as u32) / (b as u32)) as i64,
+        IntWidth::U64 => ((a as u64) / (b as u64)) as i64,
+        IntWidth::I8 => ((a as i8) / (b as i8)) as i64,
+        IntWidth::I16 => ((a as i16) / (b as i16)) as i64,
+        IntWidth::I32 => ((a as i32) / (b as i32)) as i64,
     };
-    Ok(Value::SizedInt {
-        val: v,
-        ty: ty.clone(),
-    })
+    Ok(Value::SizedInt { val: v, ty })
 }
 
-fn sized_rem(a: i64, b: i64, ty: &crate::types::Type) -> super::R {
+fn sized_rem(a: i64, b: i64, ty: IntWidth) -> super::R {
     if b == 0 {
-        return Err(super::Flow::Panic(format!(
-            "integer remainder by zero ({} % 0)",
-            ty.display()
-        )));
+        return Err(super::Flow::Panic(
+            format!("integer remainder by zero ({} % 0)", ty.name()).into(),
+        ));
     }
     let v = match ty {
-        crate::types::Type::U8 => ((a as u8) % (b as u8)) as i64,
-        crate::types::Type::U16 => ((a as u16) % (b as u16)) as i64,
-        crate::types::Type::U32 => ((a as u32) % (b as u32)) as i64,
-        crate::types::Type::U64 => ((a as u64) % (b as u64)) as i64,
-        crate::types::Type::I8 => ((a as i8) % (b as i8)) as i64,
-        crate::types::Type::I16 => ((a as i16) % (b as i16)) as i64,
-        crate::types::Type::I32 => ((a as i32) % (b as i32)) as i64,
-        _ => a % b,
+        IntWidth::U8 => ((a as u8) % (b as u8)) as i64,
+        IntWidth::U16 => ((a as u16) % (b as u16)) as i64,
+        IntWidth::U32 => ((a as u32) % (b as u32)) as i64,
+        IntWidth::U64 => ((a as u64) % (b as u64)) as i64,
+        IntWidth::I8 => ((a as i8) % (b as i8)) as i64,
+        IntWidth::I16 => ((a as i16) % (b as i16)) as i64,
+        IntWidth::I32 => ((a as i32) % (b as i32)) as i64,
     };
-    Ok(Value::SizedInt {
-        val: v,
-        ty: ty.clone(),
-    })
+    Ok(Value::SizedInt { val: v, ty })
 }
 
-fn sized_cmp(op: &BinOp, a: i64, b: i64, ty: &crate::types::Type) -> bool {
+fn sized_cmp(op: &BinOp, a: i64, b: i64, ty: IntWidth) -> bool {
     // Unsigned types: compare as unsigned values; signed: compare as signed.
     match ty {
-        crate::types::Type::U8 => {
+        IntWidth::U8 => {
             let (au, bu) = (a as u8, b as u8);
             match op {
                 BinOp::Eq => au == bu,
@@ -428,7 +392,7 @@ fn sized_cmp(op: &BinOp, a: i64, b: i64, ty: &crate::types::Type) -> bool {
                 _ => false,
             }
         }
-        crate::types::Type::U16 => {
+        IntWidth::U16 => {
             let (au, bu) = (a as u16, b as u16);
             match op {
                 BinOp::Eq => au == bu,
@@ -440,7 +404,7 @@ fn sized_cmp(op: &BinOp, a: i64, b: i64, ty: &crate::types::Type) -> bool {
                 _ => false,
             }
         }
-        crate::types::Type::U32 => {
+        IntWidth::U32 => {
             let (au, bu) = (a as u32, b as u32);
             match op {
                 BinOp::Eq => au == bu,
@@ -452,7 +416,7 @@ fn sized_cmp(op: &BinOp, a: i64, b: i64, ty: &crate::types::Type) -> bool {
                 _ => false,
             }
         }
-        crate::types::Type::U64 => {
+        IntWidth::U64 => {
             let (au, bu) = (a as u64, b as u64);
             match op {
                 BinOp::Eq => au == bu,
@@ -465,7 +429,7 @@ fn sized_cmp(op: &BinOp, a: i64, b: i64, ty: &crate::types::Type) -> bool {
             }
         }
         // Signed narrow types — compare as their native type for sign-correctness.
-        crate::types::Type::I8 => {
+        IntWidth::I8 => {
             let (ai, bi) = (a as i8, b as i8);
             match op {
                 BinOp::Eq => ai == bi,
@@ -477,7 +441,7 @@ fn sized_cmp(op: &BinOp, a: i64, b: i64, ty: &crate::types::Type) -> bool {
                 _ => false,
             }
         }
-        crate::types::Type::I16 => {
+        IntWidth::I16 => {
             let (ai, bi) = (a as i16, b as i16);
             match op {
                 BinOp::Eq => ai == bi,
@@ -489,7 +453,7 @@ fn sized_cmp(op: &BinOp, a: i64, b: i64, ty: &crate::types::Type) -> bool {
                 _ => false,
             }
         }
-        crate::types::Type::I32 => {
+        IntWidth::I32 => {
             let (ai, bi) = (a as i32, b as i32);
             match op {
                 BinOp::Eq => ai == bi,
@@ -501,75 +465,174 @@ fn sized_cmp(op: &BinOp, a: i64, b: i64, ty: &crate::types::Type) -> bool {
                 _ => false,
             }
         }
-        _ => match op {
-            BinOp::Eq => a == b,
-            BinOp::NotEq => a != b,
-            BinOp::Lt => a < b,
-            BinOp::Gt => a > b,
-            BinOp::LtEq => a <= b,
-            BinOp::GtEq => a >= b,
-            _ => false,
-        },
     }
 }
 
-fn sized_shl(a: i64, shift: u32, ty: &crate::types::Type) -> super::R {
+fn sized_shl(a: i64, shift: u32, ty: IntWidth) -> super::R {
     let v = match ty {
-        crate::types::Type::U8 => ((a as u8).wrapping_shl(shift)) as i64,
-        crate::types::Type::U16 => ((a as u16).wrapping_shl(shift)) as i64,
-        crate::types::Type::U32 => ((a as u32).wrapping_shl(shift)) as i64,
-        crate::types::Type::U64 => ((a as u64).wrapping_shl(shift)) as i64,
-        crate::types::Type::I8 => ((a as i8).wrapping_shl(shift)) as i64,
-        crate::types::Type::I16 => ((a as i16).wrapping_shl(shift)) as i64,
-        crate::types::Type::I32 => ((a as i32).wrapping_shl(shift)) as i64,
-        _ => a.wrapping_shl(shift),
+        IntWidth::U8 => ((a as u8).wrapping_shl(shift)) as i64,
+        IntWidth::U16 => ((a as u16).wrapping_shl(shift)) as i64,
+        IntWidth::U32 => ((a as u32).wrapping_shl(shift)) as i64,
+        IntWidth::U64 => ((a as u64).wrapping_shl(shift)) as i64,
+        IntWidth::I8 => ((a as i8).wrapping_shl(shift)) as i64,
+        IntWidth::I16 => ((a as i16).wrapping_shl(shift)) as i64,
+        IntWidth::I32 => ((a as i32).wrapping_shl(shift)) as i64,
     };
-    Ok(Value::SizedInt {
-        val: v,
-        ty: ty.clone(),
-    })
+    Ok(Value::SizedInt { val: v, ty })
 }
 
-fn sized_shr(a: i64, shift: u32, ty: &crate::types::Type) -> super::R {
+fn sized_shr(a: i64, shift: u32, ty: IntWidth) -> super::R {
     // Unsigned types: logical right-shift (>>); signed: arithmetic right-shift.
     let v = match ty {
-        crate::types::Type::U8 => ((a as u8).wrapping_shr(shift)) as i64,
-        crate::types::Type::U16 => ((a as u16).wrapping_shr(shift)) as i64,
-        crate::types::Type::U32 => ((a as u32).wrapping_shr(shift)) as i64,
-        crate::types::Type::U64 => ((a as u64).wrapping_shr(shift)) as i64,
-        crate::types::Type::I8 => ((a as i8).wrapping_shr(shift)) as i64,
-        crate::types::Type::I16 => ((a as i16).wrapping_shr(shift)) as i64,
-        crate::types::Type::I32 => ((a as i32).wrapping_shr(shift)) as i64,
-        _ => a.wrapping_shr(shift),
+        IntWidth::U8 => ((a as u8).wrapping_shr(shift)) as i64,
+        IntWidth::U16 => ((a as u16).wrapping_shr(shift)) as i64,
+        IntWidth::U32 => ((a as u32).wrapping_shr(shift)) as i64,
+        IntWidth::U64 => ((a as u64).wrapping_shr(shift)) as i64,
+        IntWidth::I8 => ((a as i8).wrapping_shr(shift)) as i64,
+        IntWidth::I16 => ((a as i16).wrapping_shr(shift)) as i64,
+        IntWidth::I32 => ((a as i32).wrapping_shr(shift)) as i64,
     };
-    Ok(Value::SizedInt {
-        val: v,
-        ty: ty.clone(),
+    Ok(Value::SizedInt { val: v, ty })
+}
+
+fn sized_bitand(a: i64, b: i64, ty: IntWidth) -> Value {
+    Value::SizedInt { val: a & b, ty }
+}
+fn sized_bitor(a: i64, b: i64, ty: IntWidth) -> Value {
+    Value::SizedInt { val: a | b, ty }
+}
+fn sized_bitxor(a: i64, b: i64, ty: IntWidth) -> Value {
+    Value::SizedInt { val: a ^ b, ty }
+}
+
+/// A checked `Decimal` operation's result as a value; its error a panic.
+fn decimal_result(r: Result<i128, String>) -> R {
+    r.map(Value::decimal).map_err(|m| Flow::Panic(m.into()))
+}
+
+/// `a op b` on two `i64`s; `None` for an operator `i64` does not have (it
+/// falls through to `eval_binop_vals`' error arm). AX-46: the evaluator calls
+/// this before handing both operands to `eval_binop_vals`, so the hot integer
+/// case skips the general dispatch; both paths share these semantics.
+#[inline]
+pub(super) fn int_binop(op: &BinOp, a: i64, b: i64) -> Option<R> {
+    use BinOp::*;
+    use Value::{Bool, Int};
+    Some(match op {
+        // Integer arithmetic — checked by default. Overflow is a *graceful
+        // panic* (catchable, exits non-zero at the CLI), never a silent
+        // wrap: a wrapped value masquerading as success is the worst class
+        // of bug for an autonomous consumer (BUG_HUNT #6, ARCHITECTURE
+        // INVARIANTS I-9).
+        //
+        // This used to say "use the `wrapping_*` builtins for intentional
+        // modular arithmetic". There are NO such builtins — `axon reference`
+        // lists none and `builtins.rs` defines none — so the comment named an
+        // escape hatch that was never built. Intentional modular arithmetic has
+        // no expression in the language today; logged in tasks/opportunities.md
+        // rather than left as a promise in a comment.
+        Add => match a.checked_add(b) {
+            Some(v) => Ok(Int(v)),
+            None => int_overflow(a, "+", b),
+        },
+        Sub => match a.checked_sub(b) {
+            Some(v) => Ok(Int(v)),
+            None => int_overflow(a, "-", b),
+        },
+        Mul => match a.checked_mul(b) {
+            Some(v) => Ok(Int(v)),
+            None => int_overflow(a, "*", b),
+        },
+        Div => {
+            if b == 0 {
+                return Some(Err(Flow::Panic("integer division by zero".into())));
+            }
+            // `i64::MIN / -1` is the one division that OVERFLOWS: the true
+            // answer is 2^63, which i64 cannot hold. `wrapping_div` returned
+            // `i64::MIN` — a silent wrong answer, in the same function whose
+            // comment says arithmetic must never silently wrap and directly
+            // below three arms that use `checked_*`. Native agreed with it, so
+            // no parity harness could ever have found this: the reference
+            // oracle shared the bug.
+            match a.checked_div(b) {
+                Some(v) => Ok(Int(v)),
+                None => int_overflow(a, "/", b),
+            }
+        }
+        Rem => {
+            if b == 0 {
+                return Some(Err(Flow::Panic("integer remainder by zero".into())));
+            }
+            // NOT `checked_rem`: `i64::MIN % -1` is mathematically 0, which
+            // i64 holds perfectly well. Rust's `checked_rem` returns `None`
+            // there only because the x86 `idiv` instruction traps on the pair,
+            // which is a fact about the hardware and not about the answer.
+            // Panicking would replace a correct result with a crash, so the
+            // wrapping form stays — and native agrees, measured.
+            Ok(Int(a.wrapping_rem(b)))
+        }
+        Eq => Ok(Bool(a == b)),
+        NotEq => Ok(Bool(a != b)),
+        Lt => Ok(Bool(a < b)),
+        Gt => Ok(Bool(a > b)),
+        LtEq => Ok(Bool(a <= b)),
+        GtEq => Ok(Bool(a >= b)),
+        BitAnd => Ok(Int(a & b)),
+        BitOr => Ok(Int(a | b)),
+        BitXor => Ok(Int(a ^ b)),
+        Shl => Ok(Int(a.wrapping_shl(b as u32))),
+        Shr => Ok(Int(a.wrapping_shr(b as u32))),
+        And | Or => return None,
     })
 }
 
-fn sized_bitand(a: i64, b: i64, ty: &crate::types::Type) -> Value {
-    Value::SizedInt {
-        val: a & b,
-        ty: ty.clone(),
-    }
+/// The overflow panic of `a op b` on `i64`s; out of line, it is the cold path.
+#[cold]
+fn int_overflow(a: i64, op: &str, b: i64) -> R {
+    Err(Flow::Panic(
+        format!("integer overflow: {a} {op} {b} exceeds i64").into(),
+    ))
 }
-fn sized_bitor(a: i64, b: i64, ty: &crate::types::Type) -> Value {
-    Value::SizedInt {
-        val: a | b,
-        ty: ty.clone(),
-    }
-}
-fn sized_bitxor(a: i64, b: i64, ty: &crate::types::Type) -> Value {
-    Value::SizedInt {
-        val: a ^ b,
-        ty: ty.clone(),
-    }
+
+/// `a op b` on two `f64`s; `None` for an operator `f64` does not have. The
+/// float half of [`int_binop`].
+#[inline]
+pub(super) fn float_binop(op: &BinOp, a: f64, b: f64) -> Option<R> {
+    use BinOp::*;
+    use Value::{Bool, Float};
+    Some(Ok(match op {
+        Add => Float(a + b),
+        Sub => Float(a - b),
+        Mul => Float(a * b),
+        Div => Float(a / b),
+        Rem => Float(a % b),
+        Eq => Bool(a == b),
+        NotEq => Bool(a != b),
+        Lt => Bool(a < b),
+        Gt => Bool(a > b),
+        LtEq => Bool(a <= b),
+        GtEq => Bool(a >= b),
+        And | Or | BitAnd | BitOr | BitXor | Shl | Shr => return None,
+    }))
 }
 
 pub(super) fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
     use BinOp::*;
     use Value::{Bool, Float, Int, Str};
+
+    match (&l, &r) {
+        (Int(a), Int(b)) => {
+            if let Some(res) = int_binop(op, *a, *b) {
+                return res;
+            }
+        }
+        (Float(a), Float(b)) => {
+            if let Some(res) = float_binop(op, *a, *b) {
+                return res;
+            }
+        }
+        _ => {}
+    }
 
     // ── ASI: Uncertain<T> binary-op propagation ─────────────────────────────
     // If EITHER side is `Uncertain`, operate on the underlying values and carry
@@ -583,7 +646,7 @@ pub(super) fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
     // propagating code could be compiled but not interpreted (PRD gap).
     // Both soft wrappers are structs, so scalar operands (the hot case) skip
     // the probing entirely.
-    let soft_operand = matches!(l, Value::Struct { .. }) || matches!(r, Value::Struct { .. });
+    let soft_operand = matches!(l, Value::Struct(_)) || matches!(r, Value::Struct(_));
     if soft_operand {
         let lu = uncertain_parts(&l);
         let ru = uncertain_parts(&r);
@@ -615,91 +678,26 @@ pub(super) fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
     }
 
     match (op, l, r) {
-        // Integer arithmetic — checked by default. Overflow is a *graceful
-        // panic* (catchable, exits non-zero at the CLI), never a silent
-        // wrap: a wrapped value masquerading as success is the worst class
-        // of bug for an autonomous consumer (BUG_HUNT #6, ARCHITECTURE
-        // INVARIANTS I-9).
-        //
-        // This used to say "use the `wrapping_*` builtins for intentional
-        // modular arithmetic". There are NO such builtins — `axon reference`
-        // lists none and `builtins.rs` defines none — so the comment named an
-        // escape hatch that was never built. Intentional modular arithmetic has
-        // no expression in the language today; logged in tasks/opportunities.md
-        // rather than left as a promise in a comment.
-        (Add, Int(a), Int(b)) => a
-            .checked_add(b)
-            .map(Int)
-            .ok_or_else(|| Flow::Panic(format!("integer overflow: {a} + {b} exceeds i64"))),
-        (Sub, Int(a), Int(b)) => a
-            .checked_sub(b)
-            .map(Int)
-            .ok_or_else(|| Flow::Panic(format!("integer overflow: {a} - {b} exceeds i64"))),
-        (Mul, Int(a), Int(b)) => a
-            .checked_mul(b)
-            .map(Int)
-            .ok_or_else(|| Flow::Panic(format!("integer overflow: {a} * {b} exceeds i64"))),
-        (Div, Int(a), Int(b)) => {
-            if b == 0 {
-                return Err(Flow::Panic("integer division by zero".into()));
-            }
-            // `i64::MIN / -1` is the one division that OVERFLOWS: the true
-            // answer is 2^63, which i64 cannot hold. `wrapping_div` returned
-            // `i64::MIN` — a silent wrong answer, in the same function whose
-            // comment says arithmetic must never silently wrap and directly
-            // below three arms that use `checked_*`. Native agreed with it, so
-            // no parity harness could ever have found this: the reference
-            // oracle shared the bug.
-            a.checked_div(b)
-                .map(Int)
-                .ok_or_else(|| Flow::Panic(format!("integer overflow: {a} / {b} exceeds i64")))
-        }
-        (Rem, Int(a), Int(b)) => {
-            if b == 0 {
-                return Err(Flow::Panic("integer remainder by zero".into()));
-            }
-            // NOT `checked_rem`: `i64::MIN % -1` is mathematically 0, which
-            // i64 holds perfectly well. Rust's `checked_rem` returns `None`
-            // there only because the x86 `idiv` instruction traps on the pair,
-            // which is a fact about the hardware and not about the answer.
-            // Panicking would replace a correct result with a crash, so the
-            // wrapping form stays — and native agrees, measured.
-            Ok(Int(a.wrapping_rem(b)))
-        }
-        // Float arithmetic
-        (Add, Float(a), Float(b)) => Ok(Float(a + b)),
-        (Sub, Float(a), Float(b)) => Ok(Float(a - b)),
-        (Mul, Float(a), Float(b)) => Ok(Float(a * b)),
-        (Div, Float(a), Float(b)) => Ok(Float(a / b)),
-        (Rem, Float(a), Float(b)) => Ok(Float(a % b)),
         // ── R21 — exact fixed-point Decimal arithmetic ────────────────────────
         // Same-scale i128 ops. Checked: overflow / div-by-zero → graceful panic,
         // never a silent wrap (money math must never lie). Division uses the
         // banker's-rounding (HalfEven) default; an explicit mode is available via
         // the `decimal_div` builtin.
-        (Add, Value::Decimal(a), Value::Decimal(b)) => crate::decimal::add(a, b)
-            .map(Value::Decimal)
-            .map_err(Flow::Panic),
-        (Sub, Value::Decimal(a), Value::Decimal(b)) => crate::decimal::sub(a, b)
-            .map(Value::Decimal)
-            .map_err(Flow::Panic),
-        (Mul, Value::Decimal(a), Value::Decimal(b)) => crate::decimal::mul(a, b)
-            .map(Value::Decimal)
-            .map_err(Flow::Panic),
-        (Div, Value::Decimal(a), Value::Decimal(b)) => {
-            crate::decimal::div(a, b, crate::decimal::RoundMode::HalfEven)
-                .map(Value::Decimal)
-                .map_err(Flow::Panic)
-        }
-        (Rem, Value::Decimal(a), Value::Decimal(b)) => crate::decimal::rem(a, b)
-            .map(Value::Decimal)
-            .map_err(Flow::Panic),
-        (Eq, Value::Decimal(a), Value::Decimal(b)) => Ok(Bool(a == b)),
-        (NotEq, Value::Decimal(a), Value::Decimal(b)) => Ok(Bool(a != b)),
-        (Lt, Value::Decimal(a), Value::Decimal(b)) => Ok(Bool(a < b)),
-        (Gt, Value::Decimal(a), Value::Decimal(b)) => Ok(Bool(a > b)),
-        (LtEq, Value::Decimal(a), Value::Decimal(b)) => Ok(Bool(a <= b)),
-        (GtEq, Value::Decimal(a), Value::Decimal(b)) => Ok(Bool(a >= b)),
+        (Add, Value::Decimal(a), Value::Decimal(b)) => decimal_result(crate::decimal::add(*a, *b)),
+        (Sub, Value::Decimal(a), Value::Decimal(b)) => decimal_result(crate::decimal::sub(*a, *b)),
+        (Mul, Value::Decimal(a), Value::Decimal(b)) => decimal_result(crate::decimal::mul(*a, *b)),
+        (Div, Value::Decimal(a), Value::Decimal(b)) => decimal_result(crate::decimal::div(
+            *a,
+            *b,
+            crate::decimal::RoundMode::HalfEven,
+        )),
+        (Rem, Value::Decimal(a), Value::Decimal(b)) => decimal_result(crate::decimal::rem(*a, *b)),
+        (Eq, Value::Decimal(a), Value::Decimal(b)) => Ok(Bool(*a == *b)),
+        (NotEq, Value::Decimal(a), Value::Decimal(b)) => Ok(Bool(*a != *b)),
+        (Lt, Value::Decimal(a), Value::Decimal(b)) => Ok(Bool(*a < *b)),
+        (Gt, Value::Decimal(a), Value::Decimal(b)) => Ok(Bool(*a > *b)),
+        (LtEq, Value::Decimal(a), Value::Decimal(b)) => Ok(Bool(*a <= *b)),
+        (GtEq, Value::Decimal(a), Value::Decimal(b)) => Ok(Bool(*a >= *b)),
 
         // String concat. Appends in place when `a` is the only reference (a
         // temporary, as in `s + t + u`); a shared `a` is copied first, so no
@@ -717,31 +715,11 @@ pub(super) fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
             Rc::make_mut(&mut out).extend(b.iter().cloned());
             Ok(Value::Array(out))
         }
-        // Integer comparisons
-        (Eq, Int(a), Int(b)) => Ok(Bool(a == b)),
-        (NotEq, Int(a), Int(b)) => Ok(Bool(a != b)),
-        (Lt, Int(a), Int(b)) => Ok(Bool(a < b)),
-        (Gt, Int(a), Int(b)) => Ok(Bool(a > b)),
-        (LtEq, Int(a), Int(b)) => Ok(Bool(a <= b)),
-        (GtEq, Int(a), Int(b)) => Ok(Bool(a >= b)),
-        // Float comparisons
-        (Eq, Float(a), Float(b)) => Ok(Bool(a == b)),
-        (NotEq, Float(a), Float(b)) => Ok(Bool(a != b)),
-        (Lt, Float(a), Float(b)) => Ok(Bool(a < b)),
-        (Gt, Float(a), Float(b)) => Ok(Bool(a > b)),
-        (LtEq, Float(a), Float(b)) => Ok(Bool(a <= b)),
-        (GtEq, Float(a), Float(b)) => Ok(Bool(a >= b)),
         // Bool / string equality
         (Eq, Bool(a), Bool(b)) => Ok(Bool(a == b)),
         (NotEq, Bool(a), Bool(b)) => Ok(Bool(a != b)),
         (Eq, Str(a), Str(b)) => Ok(Bool(a == b)),
         (NotEq, Str(a), Str(b)) => Ok(Bool(a != b)),
-        // Integer bitwise
-        (BitAnd, Int(a), Int(b)) => Ok(Int(a & b)),
-        (BitOr, Int(a), Int(b)) => Ok(Int(a | b)),
-        (BitXor, Int(a), Int(b)) => Ok(Int(a ^ b)),
-        (Shl, Int(a), Int(b)) => Ok(Int(a.wrapping_shl(b as u32))),
-        (Shr, Int(a), Int(b)) => Ok(Int(a.wrapping_shr(b as u32))),
         // Logical and/or on already-evaluated bools. `eval_binop` short-circuits
         // these for the common case; this value-level arm is reached when an
         // `Uncertain<bool>` operand routed both sides through here (no
@@ -753,65 +731,65 @@ pub(super) fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
         // SizedInt op SizedInt: arithmetic uses the left operand's type (both
         // types must agree; the infer/checker gate ensures this at compile time).
         (Add, Value::SizedInt { val: a, ty }, Value::SizedInt { val: b, .. }) => {
-            sized_checked_add(a, b, &ty)
+            sized_checked_add(a, b, ty)
         }
         (Sub, Value::SizedInt { val: a, ty }, Value::SizedInt { val: b, .. }) => {
-            sized_checked_sub(a, b, &ty)
+            sized_checked_sub(a, b, ty)
         }
         (Mul, Value::SizedInt { val: a, ty }, Value::SizedInt { val: b, .. }) => {
-            sized_checked_mul(a, b, &ty)
+            sized_checked_mul(a, b, ty)
         }
         (Div, Value::SizedInt { val: a, ty }, Value::SizedInt { val: b, .. }) => {
-            sized_div(a, b, &ty)
+            sized_div(a, b, ty)
         }
         (Rem, Value::SizedInt { val: a, ty }, Value::SizedInt { val: b, .. }) => {
-            sized_rem(a, b, &ty)
+            sized_rem(a, b, ty)
         }
         // Comparisons → bool (unsigned or signed per type).
         (
             Eq | NotEq | Lt | Gt | LtEq | GtEq,
             Value::SizedInt { val: a, ty },
             Value::SizedInt { val: b, .. },
-        ) => Ok(Bool(sized_cmp(op, a, b, &ty))),
+        ) => Ok(Bool(sized_cmp(op, a, b, ty))),
         // Bitwise ops.
         (BitAnd, Value::SizedInt { val: a, ty }, Value::SizedInt { val: b, .. }) => {
-            Ok(sized_bitand(a, b, &ty))
+            Ok(sized_bitand(a, b, ty))
         }
         (BitOr, Value::SizedInt { val: a, ty }, Value::SizedInt { val: b, .. }) => {
-            Ok(sized_bitor(a, b, &ty))
+            Ok(sized_bitor(a, b, ty))
         }
         (BitXor, Value::SizedInt { val: a, ty }, Value::SizedInt { val: b, .. }) => {
-            Ok(sized_bitxor(a, b, &ty))
+            Ok(sized_bitxor(a, b, ty))
         }
         (Shl, Value::SizedInt { val: a, ty }, Value::SizedInt { val: b, .. }) => {
-            sized_shl(a, b as u32, &ty)
+            sized_shl(a, b as u32, ty)
         }
         (Shr, Value::SizedInt { val: a, ty }, Value::SizedInt { val: b, .. }) => {
-            sized_shr(a, b as u32, &ty)
+            sized_shr(a, b as u32, ty)
         }
         // Mixed: bare Int literal op SizedInt — coerce the literal to the SizedInt's width.
         // This handles patterns like `255u8 + 1` where the 1 is a bare Int.
-        (Add, Value::SizedInt { val: a, ty }, Int(b)) => sized_checked_add(a, b, &ty),
-        (Sub, Value::SizedInt { val: a, ty }, Int(b)) => sized_checked_sub(a, b, &ty),
-        (Mul, Value::SizedInt { val: a, ty }, Int(b)) => sized_checked_mul(a, b, &ty),
-        (Div, Value::SizedInt { val: a, ty }, Int(b)) => sized_div(a, b, &ty),
-        (Rem, Value::SizedInt { val: a, ty }, Int(b)) => sized_rem(a, b, &ty),
-        (Add, Int(a), Value::SizedInt { val: b, ty }) => sized_checked_add(a, b, &ty),
-        (Sub, Int(a), Value::SizedInt { val: b, ty }) => sized_checked_sub(a, b, &ty),
-        (Mul, Int(a), Value::SizedInt { val: b, ty }) => sized_checked_mul(a, b, &ty),
-        (Div, Int(a), Value::SizedInt { val: b, ty }) => sized_div(a, b, &ty),
-        (Rem, Int(a), Value::SizedInt { val: b, ty }) => sized_rem(a, b, &ty),
+        (Add, Value::SizedInt { val: a, ty }, Int(b)) => sized_checked_add(a, b, ty),
+        (Sub, Value::SizedInt { val: a, ty }, Int(b)) => sized_checked_sub(a, b, ty),
+        (Mul, Value::SizedInt { val: a, ty }, Int(b)) => sized_checked_mul(a, b, ty),
+        (Div, Value::SizedInt { val: a, ty }, Int(b)) => sized_div(a, b, ty),
+        (Rem, Value::SizedInt { val: a, ty }, Int(b)) => sized_rem(a, b, ty),
+        (Add, Int(a), Value::SizedInt { val: b, ty }) => sized_checked_add(a, b, ty),
+        (Sub, Int(a), Value::SizedInt { val: b, ty }) => sized_checked_sub(a, b, ty),
+        (Mul, Int(a), Value::SizedInt { val: b, ty }) => sized_checked_mul(a, b, ty),
+        (Div, Int(a), Value::SizedInt { val: b, ty }) => sized_div(a, b, ty),
+        (Rem, Int(a), Value::SizedInt { val: b, ty }) => sized_rem(a, b, ty),
         (Eq | NotEq | Lt | Gt | LtEq | GtEq, Value::SizedInt { val: a, ty }, Int(b)) => {
-            Ok(Bool(sized_cmp(op, a, b, &ty)))
+            Ok(Bool(sized_cmp(op, a, b, ty)))
         }
         (Eq | NotEq | Lt | Gt | LtEq | GtEq, Int(a), Value::SizedInt { val: b, ty }) => {
-            Ok(Bool(sized_cmp(op, a, b, &ty)))
+            Ok(Bool(sized_cmp(op, a, b, ty)))
         }
-        (Shl, Value::SizedInt { val: a, ty }, Int(b)) => sized_shl(a, b as u32, &ty),
-        (Shr, Value::SizedInt { val: a, ty }, Int(b)) => sized_shr(a, b as u32, &ty),
-        (BitAnd, Value::SizedInt { val: a, ty }, Int(b)) => Ok(sized_bitand(a, b, &ty)),
-        (BitOr, Value::SizedInt { val: a, ty }, Int(b)) => Ok(sized_bitor(a, b, &ty)),
-        (BitXor, Value::SizedInt { val: a, ty }, Int(b)) => Ok(sized_bitxor(a, b, &ty)),
+        (Shl, Value::SizedInt { val: a, ty }, Int(b)) => sized_shl(a, b as u32, ty),
+        (Shr, Value::SizedInt { val: a, ty }, Int(b)) => sized_shr(a, b as u32, ty),
+        (BitAnd, Value::SizedInt { val: a, ty }, Int(b)) => Ok(sized_bitand(a, b, ty)),
+        (BitOr, Value::SizedInt { val: a, ty }, Int(b)) => Ok(sized_bitor(a, b, ty)),
+        (BitXor, Value::SizedInt { val: a, ty }, Int(b)) => Ok(sized_bitxor(a, b, ty)),
 
         // Structural equality for composite values (structs, enums, arrays,
         // Option/Result). Primitives are handled above; this catches the rest,
@@ -833,10 +811,10 @@ pub(super) fn values_equal(a: &Value, b: &Value) -> bool {
         (Int(x), Int(y)) => x == y,
         // SizedInt equality: compare by value within the width's representable range.
         (SizedInt { val: x, ty: tx }, SizedInt { val: y, .. }) => {
-            to_display_val(*x, tx) == to_display_val(*y, tx)
+            to_display_val(*x, *tx) == to_display_val(*y, *tx)
         }
-        (SizedInt { val: x, ty }, Int(y)) => to_display_val(*x, ty) == *y,
-        (Int(x), SizedInt { val: y, ty }) => *x == to_display_val(*y, ty),
+        (SizedInt { val: x, ty }, Int(y)) => to_display_val(*x, *ty) == *y,
+        (Int(x), SizedInt { val: y, ty }) => *x == to_display_val(*y, *ty),
         (Float(x), Float(y)) => x == y,
         (Decimal(x), Decimal(y)) => x == y,
         (Bool(x), Bool(y)) => x == y,
@@ -847,30 +825,12 @@ pub(super) fn values_equal(a: &Value, b: &Value) -> bool {
         (Array(x), Array(y)) => {
             x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| values_equal(p, q))
         }
-        (
-            Struct {
-                name: n1,
-                fields: f1,
-            },
-            Struct {
-                name: n2,
-                fields: f2,
-            },
-        ) => n1 == n2 && fields_equal(f1, f2),
-        (
-            Enum {
-                enum_name: e1,
-                variant: v1,
-                fields: f1,
-            },
-            Enum {
-                enum_name: e2,
-                variant: v2,
-                fields: f2,
-            },
-        ) => e1 == e2 && v1 == v2 && fields_equal(f1, f2),
+        (Struct(x), Struct(y)) => x.name == y.name && x.fields.equal(&y.fields),
+        (Enum(x), Enum(y)) => {
+            x.enum_name == y.enum_name && x.variant == y.variant && x.fields.equal(&y.fields)
+        }
         (Tuple(x), Tuple(y)) => {
-            x.len() == y.len() && x.iter().zip(y).all(|(p, q)| values_equal(p, q))
+            x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| values_equal(p, q))
         }
         (Dict(d1), Dict(d2)) => {
             // Two dicts are equal iff they have the same key set and the
@@ -888,21 +848,15 @@ pub(super) fn values_equal(a: &Value, b: &Value) -> bool {
     }
 }
 
-pub(super) fn fields_equal(a: &HashMap<String, Value>, b: &HashMap<String, Value>) -> bool {
-    a.len() == b.len()
-        && a.iter()
-            .all(|(k, v)| b.get(k).map(|w| values_equal(v, w)).unwrap_or(false))
-}
-
 /// Render a value for `print`/`println`/string interpolation. A `str` renders
 /// as its raw contents (no quotes); everything else gets a reasonable form.
 pub(super) fn display(v: &Value) -> String {
     match v {
         Value::Str(s) => String::clone(s),
         Value::Int(n) => n.to_string(),
-        Value::SizedInt { val, ty } => display_sized(*val, ty),
+        Value::SizedInt { val, ty } => display_sized(*val, *ty),
         Value::Float(f) => fmt_g(*f),
-        Value::Decimal(m) => crate::decimal::format_decimal(*m),
+        Value::Decimal(m) => crate::decimal::format_decimal(**m),
         Value::Bool(b) => b.to_string(),
         Value::Unit => "()".into(),
         Value::None => "None".into(),
@@ -913,16 +867,17 @@ pub(super) fn display(v: &Value) -> String {
             let inner: Vec<String> = items.iter().map(display).collect();
             format!("[{}]", inner.join(", "))
         }
-        Value::Struct { name, fields } => format!("{name} {{ {} }}", fields_display(fields)),
-        Value::Enum {
-            enum_name,
-            variant,
-            fields,
-        } => {
-            if fields.is_empty() {
-                format!("{enum_name}::{variant}")
+        Value::Struct(s) => format!("{} {{ {} }}", sym_name(s.name), fields_display(&s.fields)),
+        Value::Enum(e) => {
+            if e.fields.is_empty() {
+                format!("{}::{}", sym_name(e.enum_name), sym_name(e.variant))
             } else {
-                format!("{enum_name}::{variant} {{ {} }}", fields_display(fields))
+                format!(
+                    "{}::{} {{ {} }}",
+                    sym_name(e.enum_name),
+                    sym_name(e.variant),
+                    fields_display(&e.fields)
+                )
             }
         }
         Value::Closure { .. } => "<fn>".into(),
@@ -941,14 +896,16 @@ pub(super) fn display(v: &Value) -> String {
         }
         // R13: a handle is opaque — render its nominal identity, never its
         // payload index (which is an internal slab slot, not user-meaningful).
-        Value::Handle { module, name, .. } => format!("<native {module}::{name}>"),
+        Value::Handle(h) => format!("<native {}::{}>", h.module, h.name),
     }
 }
 
-pub(super) fn fields_display(fields: &HashMap<String, Value>) -> String {
+/// `name: value` per field, sorted as rendered text (so `a1: …` sorts
+/// before `a: …`, as it always has).
+pub(super) fn fields_display(fields: &Fields) -> String {
     let mut parts: Vec<String> = fields
         .iter()
-        .map(|(k, v)| format!("{k}: {}", display(v)))
+        .map(|(k, v)| format!("{}: {}", sym_name(k), display(v)))
         .collect();
     parts.sort();
     parts.join(", ")

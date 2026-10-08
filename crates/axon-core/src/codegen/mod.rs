@@ -41,6 +41,7 @@ pub mod bpf;
 pub mod build_wrappers;
 pub mod builtin_externs;
 pub mod builtins;
+pub mod enum_layout;
 pub mod escape;
 pub mod expr;
 pub mod ir_inkwell;
@@ -222,9 +223,13 @@ pub struct Codegen<'ctx> {
     lambda_counter: u32,
     /// Counter for generating unique global names in format strings.
     fmtstr_counter: u32,
-    /// Maps enum name → list of (variant_name, tag_int, field_types).
-    /// Used by StructLit and Pattern::Struct for enum variant codegen.
-    enum_variants: HashMap<String, Vec<(String, usize, Vec<Type>)>>,
+    /// Maps enum name → its variants' native layout (name, tag, payload
+    /// fields with offsets). Used by StructLit and Pattern::Struct for enum
+    /// variant codegen; filled by `enum_layout::declare_enum_types`.
+    enum_variants: HashMap<String, Vec<enum_layout::EnumVariantLayout>>,
+    /// Every user enum name, registered before any type body is laid out so
+    /// `axon_type_to_semantic` resolves an enum-typed field as an enum.
+    enum_names: std::collections::HashSet<String>,
     /// All top-level FnDefs by name, populated during emit_program for comptime evaluation.
     fndefs: HashMap<String, ast::FnDef>,
     /// Generic function type-parameter names (fn_name → [type param names]).
@@ -355,7 +360,27 @@ pub struct Codegen<'ctx> {
     /// accumulate here; the build pipeline checks `codegen_errors()` after
     /// emission and aborts rather than shipping a binary that silently computes
     /// a wrong value (the arr_*/dict_* "returns 0 natively" class).
+    ///
+    /// Written ONLY through `record_error`, and never printed by codegen: the
+    /// pipeline prints this list once, so the lines a build shows and the
+    /// `N codegen error(s)` it counts are the same list (AX-45).
     pub(super) codegen_errors: Vec<String>,
+    /// Every `record_error` call, duplicates included, plus every read of a
+    /// binding poisoned by an already-recorded refusal (that read IS the
+    /// earlier refusal). A site that asks "did lowering this sub-expression
+    /// refuse?" compares this before and after: `codegen_errors.len()` does not
+    /// grow when the refusal repeats a message already recorded, which read as
+    /// "no error" and let a second identical refusal fall through to a
+    /// follow-on diagnostic.
+    pub(super) errors_reported: usize,
+    /// Names whose binding was never created because its value or type could
+    /// not be lowered (AX-45). A later read of such a name is not an unknown
+    /// identifier — reporting E0701 there blamed valid code for a refusal.
+    /// `None`: the refusal that prevented the binding is already recorded, so
+    /// the read reports nothing more. `Some(msg)`: the binding was skipped
+    /// without a refusal (harmless while unread); the read records `msg`.
+    /// Saved and restored around each fn and lambda body, like `locals`.
+    pub(super) poisoned: HashMap<String, Option<String>>,
     /// Phase 6: per-fn set of builtin effects each function ACTUALLY performs
     /// (directly or transitively). Computed once at the start of `emit_program`
     /// from `effects::transitive_builtin_effects`. The `WithHandler` lowering
@@ -462,6 +487,7 @@ impl<'ctx> Codegen<'ctx> {
             lambda_counter: 0,
             fmtstr_counter: 0,
             enum_variants: HashMap::new(),
+            enum_names: std::collections::HashSet::new(),
             fndefs: HashMap::new(),
             generic_fn_params: HashMap::new(),
             trait_defs: HashMap::new(),
@@ -485,6 +511,8 @@ impl<'ctx> Codegen<'ctx> {
             freestanding: false,
             target_triple: String::new(),
             codegen_errors: Vec::new(),
+            errors_reported: 0,
+            poisoned: HashMap::new(),
             transitive_effects: HashMap::new(),
             handler_ctx: Vec::new(),
         }
@@ -494,6 +522,50 @@ impl<'ctx> Codegen<'ctx> {
     /// build pipeline calls this after `emit_program` and aborts if non-empty.
     pub fn codegen_errors(&self) -> &[String] {
         &self.codegen_errors
+    }
+
+    /// Record a hard codegen error. The one write path into `codegen_errors`:
+    /// an identical message is kept once, and nothing is printed here — the
+    /// build pipeline prints the collected list, so a site that also printed
+    /// showed its refusal twice while the count said once (AX-45).
+    pub(super) fn record_error(&mut self, msg: String) {
+        self.errors_reported += 1;
+        if !self.codegen_errors.contains(&msg) {
+            self.codegen_errors.push(msg);
+        }
+    }
+
+    /// Mark `name` as a binding that was not created (see `poisoned`).
+    pub(super) fn poison_binding(&mut self, name: &str, deferred: Option<String>) {
+        self.poisoned.insert(name.to_string(), deferred);
+    }
+
+    /// Record a failed `comptime` evaluation under the evaluator's own code
+    /// (E0701/E0702/E0703). `what` names the construct. It used to go to stderr
+    /// only, outside `codegen_errors`, so the build's error count omitted it
+    /// (AX-45). A failure that is only a read of a poisoned name is the earlier
+    /// refusal again and adds no line.
+    pub(super) fn record_comptime_error(&mut self, e: &crate::comptime::ComptimeError, what: &str) {
+        use crate::comptime::ComptimeError as CE;
+        let (code, detail) = match e {
+            CE::NotEvaluable { reason, .. } => {
+                ("E0701", format!("not comptime-evaluable: {reason}"))
+            }
+            CE::DivByZero { .. } => ("E0702", "integer division by zero".to_string()),
+            CE::Overflow { .. } => ("E0703", "integer overflow".to_string()),
+            CE::UndefinedIdent { name, .. } => {
+                if self.poisoned.contains_key(name) {
+                    self.errors_reported += 1;
+                    return;
+                }
+                ("E0701", format!("undefined identifier '{name}'"))
+            }
+        };
+        self.record_error(format!(
+            "codegen error [{code}]: {what} cannot be evaluated at build time ({detail}). \
+             Native codegen folds `comptime` while compiling; the interpreter runs it as \
+             ordinary code (`axon run`)."
+        ));
     }
 
     /// Phase 5 §4: install the SMT-discharged obligation set. Call BEFORE
@@ -676,7 +748,6 @@ impl<'ctx> Codegen<'ctx> {
             }
         }
         self.declare_types(program);
-        self.declare_enum_types(program);
 
         // Collect trait definitions first (needed for vtable thunk declaration).
         for item in &program.items {
@@ -796,9 +867,31 @@ impl<'ctx> Codegen<'ctx> {
             }
         }
 
+        // Enum names (and their opaque LLVM types) next, so a field of enum
+        // type resolves as one; then every struct's SEMANTIC field types, which
+        // enum layout needs for sizes; then the enum layouts; and only then
+        // the struct bodies, which may hold an enum or a `Result` sized by one.
+        self.declare_enum_names(program);
+        for item in &program.items {
+            if let ast::Item::TypeDef(td) = item {
+                let field_sem_types: Vec<Type> = td
+                    .fields
+                    .iter()
+                    .map(|f| self.axon_type_to_semantic(&f.ty))
+                    .collect();
+                self.struct_field_sem_types
+                    .insert(td.name.clone(), field_sem_types);
+            }
+        }
+        let cyclic = self.declare_enum_types(program);
+
         // PASS 2: fill each body, now that every name resolves.
         for item in &program.items {
             if let ast::Item::TypeDef(td) = item {
+                // Already refused (E0910) by `declare_enum_types`.
+                if cyclic.contains(&td.name) {
+                    continue;
+                }
                 // `filter_map` used to DROP any field whose type has no LLVM
                 // lowering (`Dict`, today), while `struct_fields` /
                 // `struct_field_sem_types` below kept every field. The two then
@@ -827,16 +920,14 @@ impl<'ctx> Codegen<'ctx> {
                     }
                 }
                 if let Some((fname, fty)) = unlowerable {
+                    self.struct_field_sem_types.remove(&td.name);
                     let msg = format!(
                         "codegen error [E0910]: struct `{}` has field `{}` of type {} which native \
                          codegen cannot lower, so the struct has no layout. The interpreter \
                          supports it; run under `axon run`.",
                         td.name, fname, fty
                     );
-                    if !self.codegen_errors.iter().any(|e| e == &msg) {
-                        eprintln!("{msg}");
-                        self.codegen_errors.push(msg);
-                    }
+                    self.record_error(msg);
                     continue;
                 }
                 // R17 Slice 3: `@[packed]` lays the struct out with NO inter-field
@@ -856,58 +947,6 @@ impl<'ctx> Codegen<'ctx> {
                 named_struct.set_body(&field_types, packed);
                 let field_names: Vec<String> = td.fields.iter().map(|f| f.name.clone()).collect();
                 self.struct_fields.insert(td.name.clone(), field_names);
-                let field_sem_types: Vec<Type> = td
-                    .fields
-                    .iter()
-                    .map(|f| self.axon_type_to_semantic(&f.ty))
-                    .collect();
-                self.struct_field_sem_types
-                    .insert(td.name.clone(), field_sem_types);
-            }
-        }
-    }
-
-    /// Declare LLVM struct types for enums.
-    ///
-    /// Layout: `{ i32 tag, [max_payload_size x i8] payload }`
-    /// where `max_payload_size` is the maximum byte size of any variant's fields.
-    fn declare_enum_types(&mut self, program: &ast::Program) {
-        for item in &program.items {
-            if let ast::Item::EnumDef(ed) = item {
-                let i32_ty = self.ir.context.i32_type();
-                let i8_ty = self.ir.context.i8_type();
-
-                // Compute field semantic types and payload size for each variant.
-                let mut variants_info: Vec<(String, usize, Vec<Type>)> = Vec::new();
-                let mut max_size: u64 = 0;
-
-                for (tag_int, variant) in ed.variants.iter().enumerate() {
-                    let field_types: Vec<Type> = variant
-                        .fields
-                        .iter()
-                        .map(|f| self.axon_type_to_semantic(&f.ty))
-                        .collect();
-                    let payload_size: u64 = field_types
-                        .iter()
-                        .map(|t| self.llvm_sizeof(t).unwrap_or(8))
-                        .sum();
-                    if payload_size > max_size {
-                        max_size = payload_size;
-                    }
-                    variants_info.push((variant.name.clone(), tag_int, field_types));
-                }
-
-                // Ensure at least 1 byte payload so LLVM doesn't complain.
-                let payload_size = max_size.max(1) as u32;
-
-                let struct_name = format!("{}_enum", ed.name);
-                let named_struct = self.ir.context.opaque_struct_type(&struct_name);
-                named_struct.set_body(
-                    &[i32_ty.into(), i8_ty.array_type(payload_size).into()],
-                    false,
-                );
-
-                self.enum_variants.insert(ed.name.clone(), variants_info);
             }
         }
     }
@@ -947,10 +986,7 @@ impl<'ctx> Codegen<'ctx> {
                         p.name,
                         crate::doc::render_type(&p.ty)
                     );
-                    if !self.codegen_errors.iter().any(|e| e == &msg) {
-                        eprintln!("{msg}");
-                        self.codegen_errors.push(msg);
-                    }
+                    self.record_error(msg);
                 }
             }
         }
@@ -1010,10 +1046,7 @@ impl<'ctx> Codegen<'ctx> {
                                 .map(crate::doc::render_type)
                                 .unwrap_or_else(|| "()".to_string())
                         );
-                        if !self.codegen_errors.iter().any(|e| e == &msg) {
-                            eprintln!("{msg}");
-                            self.codegen_errors.push(msg);
-                        }
+                        self.record_error(msg);
                     }
                     let fn_ty = self.ir.context.void_type().fn_type(&param_tys, false);
                     self.ir.module.add_function(name, fn_ty, None)
@@ -1147,9 +1180,7 @@ impl<'ctx> Codegen<'ctx> {
                      would silently call the wrong model. Run this program under the interpreter \
                      (`axon run`), which routes the tier correctly, or use the `balanced` tier."
                 );
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
             }
 
             // ── R3c/F141: native AI *budget* refusal (I-2, sound-by-refusal). ─
@@ -1204,9 +1235,7 @@ impl<'ctx> Codegen<'ctx> {
                 }
             });
             for msg in refusals {
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
             }
             //
             // `Some(Err(_))` — a MALFORMED budget — deliberately does not match:
@@ -1222,9 +1251,7 @@ impl<'ctx> Codegen<'ctx> {
                      this program under the interpreter (`axon run`), which meters the \
                      calls, or remove the `budget:` field."
                 );
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
             }
         }
 
@@ -1240,7 +1267,15 @@ impl<'ctx> Codegen<'ctx> {
                     Ok(cv) => {
                         self.comptime_env.insert(name.clone(), cv);
                     }
-                    Err(e) => eprintln!("comptime[E0701]: {e}"),
+                    Err(e) => {
+                        // Native has no other lowering for a module-level
+                        // binding: it is the comptime value or nothing. This
+                        // used to be printed and not recorded, so a program
+                        // that never read the name built and silently dropped
+                        // the value's side effects (AX-45).
+                        self.record_comptime_error(&e, &format!("the module-level `let {name}`"));
+                        self.poison_binding(name, None);
+                    }
                 }
             }
         }
@@ -1433,9 +1468,7 @@ impl<'ctx> Codegen<'ctx> {
                  exact Decimal arithmetic is interp-only in this slice (R21)",
                 f.name
             );
-            if !self.codegen_errors.iter().any(|e| e == &msg) {
-                self.codegen_errors.push(msg);
-            }
+            self.record_error(msg);
             // Emit a trivial body so IR generation doesn't crash before the
             // pipeline checks codegen_errors() and aborts. Route through the w_*
             // wrapper (R1e: one IR path — no raw builder calls in mod.rs).
@@ -1446,6 +1479,8 @@ impl<'ctx> Codegen<'ctx> {
         // Save outer locals/types; reset for this function scope.
         let saved_locals = std::mem::take(&mut self.locals);
         let saved_local_types = std::mem::take(&mut self.local_types);
+        // A fn body sees the module-level poisons but its own leave with it.
+        let saved_poisoned = self.poisoned.clone();
         let saved_result_types = self.current_result_types.take();
         let saved_written_roots = std::mem::replace(
             &mut self.cur_written_roots,
@@ -1553,9 +1588,7 @@ impl<'ctx> Codegen<'ctx> {
                              runtime-checkable subset. Run it under the interpreter (`axon run`).",
                             f.name
                         );
-                        if !self.codegen_errors.iter().any(|e| e == &msg) {
-                            self.codegen_errors.push(msg);
-                        }
+                        self.record_error(msg);
                     }
                 }
             }
@@ -1728,22 +1761,26 @@ impl<'ctx> Codegen<'ctx> {
                         // return value solely because codegen failed to produce
                         // one. Deliberately independent of WHY the body produced
                         // nothing — any such cause is a refusal, never a guess.
+                        // `f.name` is the UNMANGLED name, so two impl methods of
+                        // the same name and return type on different types would
+                        // produce the identical string, and `record_error` keeps
+                        // one copy of a message. Name the emitted symbol too when
+                        // it differs, so each fn's refusal stays its own line: an
+                        // admission gate must never under-report.
+                        let symbol = llvm_fn.get_name().to_string_lossy();
+                        let shown = if symbol == f.name.as_str() {
+                            format!("`{}`", f.name)
+                        } else {
+                            format!("`{}` (`{symbol}`)", f.name)
+                        };
                         let msg = format!(
                             "codegen error [E0910]: native codegen could not lower the body of \
-                             `{}` to a value, but it is declared to return `{}`. Refusing to \
+                             {shown} to a value, but it is declared to return `{}`. Refusing to \
                              return a fabricated zero. Run it under the interpreter \
                              (`axon run`).",
-                            f.name,
                             ret_sem.display()
                         );
-                        // No de-duplication here, unlike the neighbouring E0910
-                        // sites: `f.name` is the UNMANGLED name, so two impl
-                        // methods of the same name and return type on different
-                        // types produce the identical string. Collapsing them
-                        // would silently drop one function's refusal, and an
-                        // admission gate must never under-report. A repeated
-                        // line is noise; a missing one is the bug this closes.
-                        self.codegen_errors.push(msg);
+                        self.record_error(msg);
                         if let Some(ret_llvm_ty) = self.llvm_type(&ret_sem) {
                             let zero_val = ret_llvm_ty.const_zero();
                             self.log_return_if_adaptive_val(zero_val);
@@ -1766,6 +1803,7 @@ impl<'ctx> Codegen<'ctx> {
         // Restore outer scope.
         self.locals = saved_locals;
         self.local_types = saved_local_types;
+        self.poisoned = saved_poisoned;
         self.current_result_types = saved_result_types;
         self.cur_written_roots = saved_written_roots;
         self.stack_array_sites = saved_stack_sites;
@@ -1805,7 +1843,7 @@ impl<'ctx> Codegen<'ctx> {
                     }
                     // If this name is a known enum, use Type::Enum so llvm_type
                     // can look up the "{name}_enum" struct in the module.
-                    if self.enum_variants.contains_key(other) {
+                    if self.enum_names.contains(other) {
                         Type::Enum(other.to_string())
                     } else {
                         Type::Struct(other.to_string())
@@ -2201,7 +2239,20 @@ impl<'ctx> Codegen<'ctx> {
                                 } => operand.as_ref(),
                                 other => other,
                             };
-                            return self.infer_expr_sem_type(inner);
+                            let arr_ty = self.infer_expr_sem_type(inner);
+                            // `arr_push([], "a")`: the empty literal says nothing
+                            // about T; the pushed value does.
+                            if name == "arr_push" {
+                                let unknown = arr_ty.as_ref().is_none_or(Self::type_has_unknown);
+                                if let (true, Some(v)) = (unknown, args.get(1)) {
+                                    if let Some(t) = self.infer_expr_sem_type(v) {
+                                        if !Self::type_has_unknown(&t) {
+                                            return Some(Type::Slice(Box::new(t)));
+                                        }
+                                    }
+                                }
+                            }
+                            return arr_ty;
                         }
                     }
                     // Resolve a generic return (`first<T>(..) -> Option<T>`) to

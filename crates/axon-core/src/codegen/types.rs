@@ -318,11 +318,12 @@ impl<'ctx> super::Codegen<'ctx> {
                 };
                 let mut widest: u64 = 0;
                 let mut max_align: u64 = 8;
-                for (_, _, field_tys) in variants {
+                for (_, _, fields) in variants {
                     let mut off: u64 = 0;
-                    for f in field_tys {
-                        let a = self.llvm_align_of(f);
-                        let sz = self.llvm_sizeof(f).unwrap_or(8);
+                    for f in fields {
+                        // A boxed (recursive) field is one pointer: sizing
+                        // its value would recurse into this very enum.
+                        let (sz, a) = self.enum_slot_size_align(f);
                         max_align = max_align.max(a);
                         off = off.div_ceil(a) * a;
                         off += sz;

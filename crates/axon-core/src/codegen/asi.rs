@@ -388,9 +388,7 @@ impl<'ctx> super::Codegen<'ctx> {
                      functions). Run it under the interpreter (`axon run`).",
                     param.name, f.name
                 );
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
                 continue;
             }
 
@@ -440,9 +438,7 @@ impl<'ctx> super::Codegen<'ctx> {
                          `{}` of `{}` did not lower to a boolean. Run it under the interpreter.",
                         param.name, f.name
                     );
-                    if !self.codegen_errors.iter().any(|e| e == &msg) {
-                        self.codegen_errors.push(msg);
-                    }
+                    self.record_error(msg);
                     continue;
                 }
             };
@@ -552,9 +548,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     "codegen error [E0910]: refinement return predicate of `{rname}` did not \
                      lower to a boolean. Run it under the interpreter."
                 );
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
                 return;
             }
         };
@@ -706,9 +700,7 @@ impl<'ctx> super::Codegen<'ctx> {
                  `{rname}` on the let-binding `{binding}` — it is outside the runtime-checkable \
                  subset. Run it under the interpreter (`axon run`)."
             );
-            if !self.codegen_errors.iter().any(|e| e == &msg) {
-                self.codegen_errors.push(msg);
-            }
+            self.record_error(msg);
             return;
         }
         if self.block_terminated() {
@@ -766,9 +758,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     "codegen error [E0910]: refinement predicate for {label} did not lower to a \
                      boolean. Run it under the interpreter."
                 );
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
                 None
             }
         }
@@ -825,9 +815,7 @@ impl<'ctx> super::Codegen<'ctx> {
              `{rname}` on `{slot}` of struct `{sname}` — it is outside the runtime-checkable \
              subset. Run it under the interpreter (`axon run`)."
         );
-        if !self.codegen_errors.iter().any(|e| e == &msg) {
-            self.codegen_errors.push(msg);
-        }
+        self.record_error(msg);
     }
 
     /// True if the current insert block already has a terminator.

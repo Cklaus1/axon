@@ -10,8 +10,8 @@
 //! All `pub(super)` so the parent `codegen::mod` can call `emit_match`
 //! from inside `emit_expr`'s `Expr::Match` arm.
 
-use inkwell::values::{BasicValueEnum, FunctionValue};
-use inkwell::AddressSpace;
+use inkwell::types::BasicTypeEnum;
+use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue, StructValue};
 use inkwell::FloatPredicate;
 use inkwell::IntPredicate;
 
@@ -19,6 +19,7 @@ use crate::ast;
 use crate::types::Type;
 
 use super::build_wrappers;
+use super::enum_layout::EnumField;
 
 impl<'ctx> super::Codegen<'ctx> {
     // ── Match emission ────────────────────────────────────────────────────────
@@ -74,6 +75,8 @@ impl<'ctx> super::Codegen<'ctx> {
                 miss_preds.push(self.ir.builder.get_insert_block().unwrap());
             }
 
+            // The arm's bindings are scoped to the arm (see `end_pattern_scope`).
+            let scope = self.begin_pattern_scope(&arm.pattern);
             if let Some(guard_expr) = &arm.guard {
                 // The guard sees the arm's bindings (`Some(v) if v > 2`), so it
                 // runs in its own block once the pattern has matched. It used
@@ -105,6 +108,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 self.emit_pattern_bindings(&arm.pattern, subject, subject_sem_ty);
             }
             let body_val = self.emit_expr(&arm.body, fn_val);
+            self.end_pattern_scope(scope);
 
             let current_bb = self.ir.builder.get_insert_block().unwrap();
             if current_bb.get_terminator().is_none() {
@@ -150,10 +154,7 @@ impl<'ctx> super::Codegen<'ctx> {
                            the default arm is not. The interpreter supports it; run under \
                            `axon run`."
                     .to_string();
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    eprintln!("{msg}");
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
                 return None;
             }
             let phi = build_wrappers::w_phi(&self.ir.builder, val_ty, "match_val");
@@ -290,22 +291,18 @@ impl<'ctx> super::Codegen<'ctx> {
                             )
                             .unwrap();
 
-                        // Also recurse on the inner value.
+                        // Also recurse on the inner value, once the tag says
+                        // there is one.
                         let inner_val = self
                             .ir
                             .builder
                             .build_extract_value(sv, 1, "optval")
                             .unwrap();
-                        let inner_match = self.emit_pattern_test(inner_pat, inner_val);
-                        if let BasicValueEnum::IntValue(im) = inner_match {
-                            return self
-                                .ir
-                                .builder
-                                .build_and(is_some, im, "somematch")
-                                .unwrap()
-                                .into();
-                        }
-                        return is_some.into();
+                        return self
+                            .emit_test_when(is_some, inner_pat, |s| {
+                                s.emit_pattern_test(inner_pat, inner_val)
+                            })
+                            .into();
                     }
                 }
                 false_val.into()
@@ -331,16 +328,11 @@ impl<'ctx> super::Codegen<'ctx> {
                             .builder
                             .build_extract_value(sv, 1, "resval")
                             .unwrap();
-                        let inner_match = self.emit_pattern_test(inner_pat, inner);
-                        if let BasicValueEnum::IntValue(im) = inner_match {
-                            return self
-                                .ir
-                                .builder
-                                .build_and(is_ok, im, "okmatch")
-                                .unwrap()
-                                .into();
-                        }
-                        return is_ok.into();
+                        return self
+                            .emit_test_when(is_ok, inner_pat, |s| {
+                                s.emit_pattern_test(inner_pat, inner)
+                            })
+                            .into();
                     }
                 }
                 false_val.into()
@@ -366,46 +358,57 @@ impl<'ctx> super::Codegen<'ctx> {
                             .builder
                             .build_extract_value(sv, 1, "resval")
                             .unwrap();
-                        let inner_match = self.emit_pattern_test(inner_pat, inner);
-                        if let BasicValueEnum::IntValue(im) = inner_match {
-                            return self
-                                .ir
-                                .builder
-                                .build_and(is_err, im, "errmatch")
-                                .unwrap()
-                                .into();
-                        }
-                        return is_err.into();
+                        return self
+                            .emit_test_when(is_err, inner_pat, |s| {
+                                s.emit_pattern_test(inner_pat, inner)
+                            })
+                            .into();
                     }
                 }
                 false_val.into()
             }
 
-            // Enum variant struct pattern: "EnumName::Variant { ... }" — check tag.
-            ast::Pattern::Struct { name, .. } if name.contains("::") => {
+            // Enum variant struct pattern: "EnumName::Variant { ... }" — check
+            // the tag, then each refutable field sub-pattern (`A::Lit { v: 0 }`).
+            // The field tests used to be skipped, so `A::Lit { v: 0 }` matched
+            // every `Lit`.
+            ast::Pattern::Struct { name, fields } if name.contains("::") => {
                 let (enum_name, variant_name) = name.split_once("::").unwrap();
 
-                // Find the tag for this variant.
-                let tag_int = self
+                // Find the tag and layout for this variant.
+                let variant = self
                     .enum_variants
                     .get(enum_name)
                     .and_then(|vs| vs.iter().find(|(vn, _, _)| vn == variant_name))
-                    .map(|(_, tag, _)| *tag);
+                    .map(|(_, tag, layout)| (*tag, layout.clone()));
 
-                if let Some(tag_int) = tag_int {
+                if let Some((tag_int, layout)) = variant {
                     // Subject is the enum struct { i32, [N x i8] }.
-                    // We need to alloca it to GEP field 0.
                     if let BasicValueEnum::StructValue(sv) = subject {
                         // Extract tag (field 0) — it's an i32.
                         if let BasicValueEnum::IntValue(tag_val) =
                             build_wrappers::w_extract_value(&self.ir.builder, sv, 0, "enumtag")
                         {
                             let expected = tag_val.get_type().const_int(tag_int as u64, false);
-                            return self
+                            let tag_ok = self
                                 .ir
                                 .builder
                                 .build_int_compare(IntPredicate::EQ, tag_val, expected, "tagcmp")
-                                .unwrap()
+                                .unwrap();
+                            let refutable: Vec<&(String, ast::Pattern)> = fields
+                                .iter()
+                                .filter(|(_, p)| !Self::pattern_is_irrefutable(p))
+                                .collect();
+                            if refutable.is_empty() {
+                                return tag_ok.into();
+                            }
+                            // The payload is only meaningful for this variant
+                            // (a boxed field of another is not a pointer), so
+                            // read it only once the tag matched.
+                            return self
+                                .emit_test_when(tag_ok, pattern, |s| {
+                                    s.emit_enum_field_tests(sv, enum_name, &layout, &refutable)
+                                })
                                 .into();
                         }
                     }
@@ -416,6 +419,75 @@ impl<'ctx> super::Codegen<'ctx> {
             // Plain struct / tuple patterns: phase 1 — always match (wildcard semantics).
             ast::Pattern::Struct { .. } | ast::Pattern::Tuple(_) => true_val.into(),
         }
+    }
+
+    /// A sub-pattern that matches every value of its type.
+    fn pattern_is_irrefutable(pattern: &ast::Pattern) -> bool {
+        matches!(pattern, ast::Pattern::Wildcard | ast::Pattern::Ident(_))
+    }
+
+    /// `cond && test(self)`, where the code `test` emits runs only once `cond`
+    /// holds; `cond` alone when `inner` is irrefutable.
+    ///
+    /// A sub-pattern reads the payload the outer tag guards. Evaluating it
+    /// unconditionally (`cond & test`) read a `None`'s or another variant's
+    /// payload, which for a boxed enum field is not a valid pointer.
+    fn emit_test_when(
+        &mut self,
+        cond: IntValue<'ctx>,
+        inner: &ast::Pattern,
+        test: impl FnOnce(&mut Self) -> BasicValueEnum<'ctx>,
+    ) -> IntValue<'ctx> {
+        if Self::pattern_is_irrefutable(inner) {
+            return cond;
+        }
+        let entry_bb = self.ir.builder.get_insert_block().unwrap();
+        let fn_val = entry_bb.get_parent().unwrap();
+        let then_bb = self.ir.context.append_basic_block(fn_val, "pat_inner");
+        let join_bb = self.ir.context.append_basic_block(fn_val, "pat_join");
+        build_wrappers::w_cond_br(&self.ir.builder, cond, then_bb, join_bb);
+        self.ir.builder.position_at_end(then_bb);
+        let bool_ty = self.ir.context.bool_type();
+        let inner_ok = match test(self) {
+            BasicValueEnum::IntValue(i) => i,
+            _ => bool_ty.const_int(1, false),
+        };
+        let then_end = self.ir.builder.get_insert_block().unwrap();
+        build_wrappers::w_br(&self.ir.builder, join_bb);
+        self.ir.builder.position_at_end(join_bb);
+        let phi = build_wrappers::w_phi(&self.ir.builder, bool_ty.into(), "pat_ok");
+        phi.add_incoming(&[(&bool_ty.const_zero(), entry_bb), (&inner_ok, then_end)]);
+        phi.as_basic_value().into_int_value()
+    }
+
+    /// AND of the sub-pattern tests of an enum variant's payload `fields`
+    /// (already known to be this variant's), each found in `layout` by name.
+    fn emit_enum_field_tests(
+        &mut self,
+        sv: StructValue<'ctx>,
+        enum_name: &str,
+        layout: &[EnumField],
+        fields: &[&(String, ast::Pattern)],
+    ) -> BasicValueEnum<'ctx> {
+        let bool_ty = self.ir.context.bool_type();
+        let Some(pay_ptr) = self.enum_payload_ptr(sv, enum_name) else {
+            return bool_ty.const_zero().into();
+        };
+        let mut all = bool_ty.const_int(1, false);
+        for (fname, pat) in fields {
+            let field_val = layout
+                .iter()
+                .find(|f| &f.name == fname)
+                .and_then(|slot| self.load_enum_field(pay_ptr, slot));
+            let Some(field_val) = field_val else {
+                self.refuse_unlowered(&format!("the pattern for field `{fname}` of `{enum_name}`"));
+                continue;
+            };
+            if let BasicValueEnum::IntValue(ok) = self.emit_pattern_test(pat, field_val) {
+                all = build_wrappers::w_and(&self.ir.builder, all, ok, "fieldsok");
+            }
+        }
+        all.into()
     }
 
     /// Bind pattern variables in the current locals map.
@@ -474,6 +546,11 @@ impl<'ctx> super::Codegen<'ctx> {
                         _ => None,
                     };
                     self.emit_pattern_bindings(inner, inner_val, inner_ty.as_ref());
+                } else {
+                    self.poison_pattern_bindings(
+                        inner,
+                        "the `Some` payload has no native layout here",
+                    );
                 }
             }
             ast::Pattern::Ok(inner) => {
@@ -491,9 +568,18 @@ impl<'ctx> super::Codegen<'ctx> {
                     } else {
                         Some(payload)
                     };
-                    if let Some(v) = typed {
-                        self.emit_pattern_bindings(inner, v, ok_sem.as_ref());
+                    match typed {
+                        Some(v) => self.emit_pattern_bindings(inner, v, ok_sem.as_ref()),
+                        None => self.poison_pattern_bindings(
+                            inner,
+                            "the `Ok` payload has no native layout here",
+                        ),
                     }
+                } else {
+                    self.poison_pattern_bindings(
+                        inner,
+                        "the `Ok` payload has no native layout here",
+                    );
                 }
             }
             ast::Pattern::Err(inner) => {
@@ -509,9 +595,18 @@ impl<'ctx> super::Codegen<'ctx> {
                     } else {
                         Some(payload)
                     };
-                    if let Some(v) = typed {
-                        self.emit_pattern_bindings(inner, v, err_sem.as_ref());
+                    match typed {
+                        Some(v) => self.emit_pattern_bindings(inner, v, err_sem.as_ref()),
+                        None => self.poison_pattern_bindings(
+                            inner,
+                            "the `Err` payload has no native layout here",
+                        ),
                     }
+                } else {
+                    self.poison_pattern_bindings(
+                        inner,
+                        "the `Err` payload has no native layout here",
+                    );
                 }
             }
             ast::Pattern::Struct { name, fields } if name.contains("::") => {
@@ -525,77 +620,48 @@ impl<'ctx> super::Codegen<'ctx> {
                 let enum_name = parts.next().unwrap().to_string();
                 let variant_name = parts.next().unwrap().to_string();
 
-                let field_types = self
+                let field_layout = self
                     .enum_variants
                     .get(&enum_name)
                     .and_then(|vs| vs.iter().find(|(vn, _, _)| vn == &variant_name))
-                    .map(|(_, _, fts)| fts.clone());
+                    .map(|(_, _, fs)| fs.clone());
 
-                let field_types = match field_types {
-                    Some(ft) => ft,
-                    None => return,
+                let Some(field_layout) = field_layout else {
+                    let why = format!("the variant `{name}` has no native field layout");
+                    self.poison_pattern_bindings(pattern, &why);
+                    return;
                 };
 
                 if let BasicValueEnum::StructValue(sv) = subject {
-                    // Alloca the enum struct so we can GEP into it.
-                    let struct_name = format!("{enum_name}_enum");
-                    let enum_struct_ty = match self.ir.module.get_struct_type(&struct_name) {
-                        Some(ty) => ty,
-                        None => return,
+                    let Some(pay_ptr) = self.enum_payload_ptr(sv, &enum_name) else {
+                        let why = format!("the enum `{enum_name}` has no native layout");
+                        self.poison_pattern_bindings(pattern, &why);
+                        return;
                     };
-                    let alloca = build_wrappers::w_alloca(
-                        &self.ir.builder,
-                        enum_struct_ty.into(),
-                        "enumtmp",
-                    );
-                    build_wrappers::w_store(&self.ir.builder, alloca, sv.into());
-
-                    // GEP to payload field (index 1).
-                    let pay_ptr = self
-                        .ir
-                        .builder
-                        .build_struct_gep(enum_struct_ty, alloca, 1, "pay")
-                        .unwrap();
-
-                    let i8_ty = self.ir.context.i8_type();
-                    let i32_ty = self.ir.context.i32_type();
-                    let ptr_ty = i8_ty.ptr_type(AddressSpace::default());
-
-                    let pay_i8ptr = self
-                        .ir
-                        .builder
-                        .build_pointer_cast(pay_ptr, ptr_ty, "payi8ptr")
-                        .unwrap();
-
-                    // For each bound field, compute byte offset in payload.
-                    let mut byte_offset: u64 = 0;
-                    for (fi, (_fname, pat)) in fields.iter().enumerate() {
-                        let fty = field_types.get(fi).cloned().unwrap_or(Type::Unknown);
-                        let fsize = self.llvm_sizeof(&fty).unwrap_or(8);
-
-                        if let Some(llvm_fty) = self.llvm_type(&fty) {
-                            let offset_val = i32_ty.const_int(byte_offset, false);
-                            let field_ptr = unsafe {
-                                self.ir
-                                    .builder
-                                    .build_gep(i8_ty, pay_i8ptr, &[offset_val], "fieldptr")
-                                    .unwrap()
-                            };
-                            let typed_ptr = self
-                                .ir
-                                .builder
-                                .build_pointer_cast(field_ptr, ptr_ty, "tfptr")
-                                .unwrap();
-                            let field_val = self
-                                .ir
-                                .builder
-                                .build_load(llvm_fty, typed_ptr, "fieldval")
-                                .unwrap();
-                            self.emit_pattern_bindings(pat, field_val, Some(&fty));
+                    // Each bound field is found by NAME. Indexing the declared
+                    // layout by the pattern's position bound `P::Pt { s, x }`
+                    // with `s` at `x`'s offset and type, and a pattern naming a
+                    // subset (`P::Pt { s }`) at the first field's.
+                    for (fname, pat) in fields {
+                        let Some(slot) = field_layout.iter().find(|f| &f.name == fname) else {
+                            let why = format!("the variant `{name}` has no field `{fname}`");
+                            self.poison_pattern_bindings(pat, &why);
+                            continue;
+                        };
+                        if let Some(field_val) = self.load_enum_field(pay_ptr, slot) {
+                            self.emit_pattern_bindings(pat, field_val, Some(&slot.ty));
+                        } else {
+                            let why = format!(
+                                "field `{fname}` of `{name}` has type {}, which native codegen \
+                                 cannot lower",
+                                slot.ty.display()
+                            );
+                            self.poison_pattern_bindings(pat, &why);
                         }
-
-                        byte_offset += fsize;
                     }
+                } else {
+                    let why = format!("the matched `{name}` value has no native layout here");
+                    self.poison_pattern_bindings(pattern, &why);
                 }
             }
             ast::Pattern::Struct { fields, .. } => {
@@ -630,6 +696,11 @@ impl<'ctx> super::Codegen<'ctx> {
                         let fty = field_sem.as_ref().and_then(|v| v.get(i));
                         self.emit_pattern_bindings(pat, field_val, fty);
                     }
+                } else {
+                    self.poison_pattern_bindings(
+                        pattern,
+                        "the matched value has no native layout here",
+                    );
                 }
             }
             ast::Pattern::Tuple(pats) => {
@@ -648,9 +719,119 @@ impl<'ctx> super::Codegen<'ctx> {
                         let ety = elt_sem.and_then(|v| v.get(i));
                         self.emit_pattern_bindings(pat, elem_val, ety);
                     }
+                } else {
+                    self.poison_pattern_bindings(
+                        pattern,
+                        "the matched tuple has no native layout here",
+                    );
                 }
             }
             _ => {} // Wildcard, Literal, None — no bindings
         }
+    }
+
+    /// The bindings of `pattern` could not be created; `why` says what was
+    /// missing. Each bound name is poisoned with a deferred E0910 naming that
+    /// cause (AX-45): a read reports it, where it used to report the name as
+    /// unknown (E0701) — or, when it shadowed an outer local, silently read the
+    /// OUTER value, which is why that local is dropped here (and put back by
+    /// `end_pattern_scope`). A binding nobody reads stays harmless, as before.
+    fn poison_pattern_bindings(&mut self, pattern: &ast::Pattern, why: &str) {
+        match pattern {
+            ast::Pattern::Ident(name) => {
+                self.locals.remove(name);
+                self.local_types.remove(name);
+                let msg = format!(
+                    "codegen error [E0910]: native codegen could not bind `{name}`: {why}. The \
+                     interpreter supports it; run under `axon run`."
+                );
+                self.poison_binding(name, Some(msg));
+            }
+            ast::Pattern::Some(p) | ast::Pattern::Ok(p) | ast::Pattern::Err(p) => {
+                self.poison_pattern_bindings(p, why);
+            }
+            ast::Pattern::Struct { fields, .. } => {
+                for (_, p) in fields {
+                    self.poison_pattern_bindings(p, why);
+                }
+            }
+            ast::Pattern::Tuple(pats) => {
+                for p in pats {
+                    self.poison_pattern_bindings(p, why);
+                }
+            }
+            ast::Pattern::Wildcard | ast::Pattern::Literal(_) | ast::Pattern::None => {}
+        }
+    }
+
+    /// What each name `pattern` binds meant before the bindings were emitted,
+    /// so `end_pattern_scope` can put it back once the arm or loop body that
+    /// could see the bindings is done.
+    pub(super) fn begin_pattern_scope(&self, pattern: &ast::Pattern) -> PatternScope<'ctx> {
+        let mut names = Vec::new();
+        collect_pattern_names(pattern, &mut names);
+        names
+            .into_iter()
+            .map(|name| PriorBinding {
+                local: self.locals.get(&name).copied(),
+                ty: self.local_types.get(&name).cloned(),
+                poison: self.poisoned.get(&name).cloned(),
+                name,
+            })
+            .collect()
+    }
+
+    /// A pattern's bindings are visible only inside the arm or loop body it
+    /// scopes, as in the interpreter: past it, each name means what it meant
+    /// before — an outer local again, or nothing (AX-42). Left in `locals`, a
+    /// LATER arm naming the same identifier (`A::Neg { v } => v * 10 _ => v`,
+    /// with `v` a parameter) read the earlier arm's never-written slot; and an
+    /// unread failed binding that shadowed an outer local left the outer local
+    /// refused after the `match` (AX-45).
+    pub(super) fn end_pattern_scope(&mut self, scope: PatternScope<'ctx>) {
+        for prior in scope {
+            match prior.local {
+                Some(l) => self.locals.insert(prior.name.clone(), l),
+                None => self.locals.remove(&prior.name),
+            };
+            match prior.ty {
+                Some(t) => self.local_types.insert(prior.name.clone(), t),
+                None => self.local_types.remove(&prior.name),
+            };
+            match prior.poison {
+                Some(p) => self.poisoned.insert(prior.name, p),
+                None => self.poisoned.remove(&prior.name),
+            };
+        }
+    }
+}
+
+/// One name a pattern binds, with what it meant before the pattern.
+pub(super) struct PriorBinding<'ctx> {
+    name: String,
+    local: Option<(PointerValue<'ctx>, BasicTypeEnum<'ctx>)>,
+    ty: Option<Type>,
+    poison: Option<Option<String>>,
+}
+
+pub(super) type PatternScope<'ctx> = Vec<PriorBinding<'ctx>>;
+
+fn collect_pattern_names(pattern: &ast::Pattern, out: &mut Vec<String>) {
+    match pattern {
+        ast::Pattern::Ident(name) => out.push(name.clone()),
+        ast::Pattern::Some(p) | ast::Pattern::Ok(p) | ast::Pattern::Err(p) => {
+            collect_pattern_names(p, out)
+        }
+        ast::Pattern::Struct { fields, .. } => {
+            for (_, p) in fields {
+                collect_pattern_names(p, out);
+            }
+        }
+        ast::Pattern::Tuple(pats) => {
+            for p in pats {
+                collect_pattern_names(p, out);
+            }
+        }
+        ast::Pattern::Wildcard | ast::Pattern::Literal(_) | ast::Pattern::None => {}
     }
 }

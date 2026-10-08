@@ -151,10 +151,7 @@ impl<'ctx> super::Codegen<'ctx> {
                      builtin is lowered; this one is outside that subset. Run it under the \
                      interpreter (`axon run`)."
                         .to_string();
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    eprintln!("{msg}");
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
                 self.emit_expr(body, fn_val)
             }
 
@@ -202,6 +199,19 @@ impl<'ctx> super::Codegen<'ctx> {
                     let val = self.ir.builder.build_load(i64_ty, field_ptr, name).unwrap();
                     return Some(val);
                 }
+                // A binding that was never created because its value or type
+                // could not be lowered (AX-45). Its refusal is the real
+                // diagnostic; E0701 here would call a valid name unknown.
+                if let Some(deferred) = self.poisoned.get(name).cloned() {
+                    match deferred {
+                        Some(msg) => self.record_error(msg),
+                        // Already explained by a recorded refusal: count the
+                        // read as that refusal, so a caller checking "did this
+                        // sub-expression refuse?" does not add a follow-on.
+                        None => self.errors_reported += 1,
+                    }
+                    return None;
+                }
                 // Genuinely unknown identifier. Record it in `codegen_errors`,
                 // not just on stderr: the build pipeline decides whether to
                 // abort by consulting that list, so a printed-but-unrecorded
@@ -210,16 +220,11 @@ impl<'ctx> super::Codegen<'ctx> {
                 // builtin is not a first-class value) is diagnosed by both
                 // engines, yet the interpreter panics while the binary this
                 // produced exited 0 in silence -- a divergence on a program the
-                // compiler had already rejected. Every other codegen-error site
-                // in the backend records; this was the one that only printed.
-                // The pipeline prints the whole list before aborting, so this
-                // records WITHOUT printing -- an eprintln! here would double it.
+                // compiler had already rejected.
                 let msg = format!(
                     "codegen error [E0701]: identifier '{name}' not found in current scope"
                 );
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
                 None
             }
 
@@ -264,26 +269,35 @@ impl<'ctx> super::Codegen<'ctx> {
                 if let Some(Type::Option(inner)) = &target {
                     self.current_option_inner = Some(*inner.clone());
                 }
-                let errors_before = self.codegen_errors.len();
+                let errors_before = self.errors_reported;
                 let val = self.emit_expr_owned(value, fn_val, CopySink::Local(name.as_str()));
                 self.current_result_types = saved_rt;
                 self.current_option_inner = saved_oi;
-                // A Unit value binds nothing, and a later use of a never-bound
-                // name is refused (E0701). But if `name` SHADOWS an existing
+                // A Unit value binds nothing. If `name` SHADOWS an existing
                 // local, later reads would silently see the OLD value (AX-24):
                 // refuse that unless the value already reported its own error.
+                // Otherwise the name is poisoned (AX-45), so a later read
+                // reports the real cause instead of E0701 on a valid name.
                 let Some(val) = val else {
-                    if self.locals.contains_key(name) && self.codegen_errors.len() == errors_before {
+                    if self.errors_reported != errors_before {
+                        // The value's own refusal is already recorded.
+                        self.poison_binding(name, None);
+                    } else if self.locals.contains_key(name) {
                         let msg = format!(
                             "codegen error [E0910]: native codegen could not lower the value \
                              bound to `{name}`, which shadows an earlier `{name}`. The \
                              interpreter supports it; run under `axon run`. Emitting nothing \
                              would leave later reads seeing the old value."
                         );
-                        if !self.codegen_errors.iter().any(|e| e == &msg) {
-                            eprintln!("{msg}");
-                            self.codegen_errors.push(msg);
-                        }
+                        self.record_error(msg);
+                    } else {
+                        // Harmless while unread; a read is refused then.
+                        let msg = format!(
+                            "codegen error [E0910]: `{name}` is read, but native codegen \
+                             produced no value for its binding. The interpreter supports it; \
+                             run under `axon run`."
+                        );
+                        self.poison_binding(name, Some(msg));
                     }
                     return None;
                 };
@@ -387,35 +401,40 @@ impl<'ctx> super::Codegen<'ctx> {
                     };
                     return Some(self.emit_binop(op, lhs, rhs, &inner_ty));
                 }
-                // Enum `==`/`!=` lowers to a TAG comparison, which is exact only
-                // when the question cannot be "are these two values of the same
-                // PAYLOAD-carrying variant equal?". `Op::Add{n:1} == Op::Add{n:2}`
-                // answered `true` natively and `false` in the interpreter — a
-                // silent wrong answer from a clean build. The tag arm's own
-                // comment calls payload equality "a follow-up"; until it exists,
-                // refuse the cases tag-compare cannot decide instead of answering
-                // them wrongly.
-                //
-                // Refusing the whole enum TYPE would be simpler and wrong: it
-                // would reject `Op::Zero == Op::Zero` and `Op::Add{..} != Op::Zero`,
-                // both of which tag-compare decides correctly and both of which
-                // are real code in `examples/feature_tour.ax`.
+                // Enum `==`/`!=` lowers to a TAG comparison when that is exact:
+                // the question cannot be "are these two values of the same
+                // PAYLOAD-carrying variant equal?" (`Op::Zero == Op::Zero`,
+                // `Op::Add{..} != Op::Zero`, real code in
+                // `examples/feature_tour.ax`). Otherwise it compares the
+                // payloads as the interpreter does (`emit_value_eq`), and when
+                // a payload field has a type that cannot be compared faithfully
+                // it refuses: tag-compare alone answered `Op::Add{n:1} ==
+                // Op::Add{n:2}` with `true`, a silent wrong answer.
                 if matches!(op, ast::BinOp::Eq | ast::BinOp::NotEq) {
                     let enum_name = match (&lt_sem, &rt_sem) {
                         (Some(Type::Enum(n)), _) | (_, Some(Type::Enum(n))) => Some(n.clone()),
                         _ => None,
                     };
-                    if let Some(n) = enum_name {
-                        if !self.enum_eq_is_exact(&n, left, right) {
-                            let msg = format!(
-                                "codegen error [E0910]: native codegen compares `{n}` values by TAG only, which cannot decide equality between two values of the same variant when that variant carries fields. The interpreter compares the fields too; run under `axon run`, or match on the variants and compare the fields explicitly."
-                            );
-                            if !self.codegen_errors.iter().any(|e| e == &msg) {
-                                eprintln!("{msg}");
-                                self.codegen_errors.push(msg);
+                    if let Some(n) = enum_name.filter(|n| !self.enum_eq_is_exact(n, left, right)) {
+                        let enum_ty = Type::Enum(n.clone());
+                        if self.value_eq_supported(&enum_ty, &mut std::collections::HashSet::new())
+                        {
+                            let l = self.emit_expr(left, fn_val)?;
+                            let r = self.emit_expr(right, fn_val)?;
+                            if let Some(eq) = self.emit_value_eq(l, r, &enum_ty) {
+                                let out = if matches!(op, ast::BinOp::NotEq) {
+                                    build_wrappers::w_not(&self.ir.builder, eq, "ene")
+                                } else {
+                                    eq
+                                };
+                                return Some(out.into());
                             }
-                            return Some(self.ir.context.bool_type().const_int(0, false).into());
                         }
+                        let msg = format!(
+                            "codegen error [E0910]: native codegen cannot compare `{n}` values: a payload field of `{n}` has a type whose equality it does not lower, and the variants' tags alone cannot decide equality between two values of the same variant. The interpreter compares the fields too; run under `axon run`, or match on the variants and compare the fields explicitly."
+                        );
+                        self.record_error(msg);
+                        return Some(self.ir.context.bool_type().const_int(0, false).into());
                     }
                 }
                 let lhs = self.emit_expr(left, fn_val)?;
@@ -522,10 +541,7 @@ impl<'ctx> super::Codegen<'ctx> {
                         let msg = "codegen error [E0910]: `&mut` outside the argument of a \
                                    `&mut [T]` parameter cannot be lowered natively."
                             .to_string();
-                        if !self.codegen_errors.iter().any(|e| e == &msg) {
-                            eprintln!("{msg}");
-                            self.codegen_errors.push(msg);
-                        }
+                        self.record_error(msg);
                         None
                     }
                     ast::UnaryOp::BitNot => match val {
@@ -742,7 +758,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     }
                     _ => {}
                 }
-                let errors_before = self.codegen_errors.len();
+                let errors_before = self.errors_reported;
                 let emitted = self.emit_expr_owned(value, fn_val, CopySink::Local(name.as_str()));
                 self.current_result_types = saved_rt;
                 self.current_option_inner = saved_oi;
@@ -753,12 +769,27 @@ impl<'ctx> super::Codegen<'ctx> {
                 let reason = match (emitted, self.locals.get(name).copied()) {
                     (Some(val), Some((ptr, _))) => {
                         build_wrappers::w_store(&self.ir.builder, ptr, val);
+                        // `let toks = []` records `[Unknown]`; the first
+                        // `toks = arr_push(toks, Tok { .. })` reveals the
+                        // element type (AX-44). Every slice shares one LLVM
+                        // layout and the checker allows one `T`, so filling
+                        // in the unknown element only adds information.
+                        if let Some(Type::Slice(old)) = self.local_types.get(name) {
+                            if Self::type_has_unknown(old) {
+                                if let Some(new @ Type::Slice(_)) = self.infer_expr_sem_type(value)
+                                {
+                                    if !Self::type_has_unknown(&new) {
+                                        self.local_types.insert(name.clone(), new);
+                                    }
+                                }
+                            }
+                        }
                         None
                     }
                     // A Unit value rebinding a Unit binding: nothing to store.
-                    (None, None) if self.codegen_errors.len() == errors_before => None,
+                    (None, None) if self.errors_reported == errors_before => None,
                     (Some(_), None) => Some("a binding with no native storage"),
-                    (None, _) if self.codegen_errors.len() == errors_before => {
+                    (None, _) if self.errors_reported == errors_before => {
                         Some("a value that produced no result")
                     }
                     (None, _) => None,
@@ -769,10 +800,7 @@ impl<'ctx> super::Codegen<'ctx> {
                          {reason} to `{name}`. The interpreter supports it; run under `axon \
                          run`. Emitting nothing would silently discard the write."
                     );
-                    if !self.codegen_errors.iter().any(|e| e == &msg) {
-                        eprintln!("{msg}");
-                        self.codegen_errors.push(msg);
-                    }
+                    self.record_error(msg);
                 }
                 None
             }
@@ -788,10 +816,7 @@ impl<'ctx> super::Codegen<'ctx> {
                          {reason}. The interpreter supports it; run under `axon run`. Emitting \
                          nothing would silently discard the write."
                     );
-                    if !self.codegen_errors.iter().any(|e| e == &msg) {
-                        eprintln!("{msg}");
-                        self.codegen_errors.push(msg);
-                    }
+                    self.record_error(msg);
                 }
                 None
             }
@@ -842,10 +867,7 @@ impl<'ctx> super::Codegen<'ctx> {
             ),
             _ => {
                 let msg = "codegen error [E0910]: native codegen does not lower `&&`/`||` with a non-boolean right operand. The interpreter supports it; run under `axon run`.".to_string();
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    eprintln!("{msg}");
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
                 return None;
             }
         };
@@ -874,10 +896,7 @@ impl<'ctx> super::Codegen<'ctx> {
             "codegen error [E0910]: native codegen could not lower {what}. The interpreter \
              supports it; run under `axon run`. Skipping it would silently compute a wrong answer."
         );
-        if !self.codegen_errors.iter().any(|e| e == &msg) {
-            eprintln!("{msg}");
-            self.codegen_errors.push(msg);
-        }
+        self.record_error(msg);
     }
 
     /// Emit an `asm(template : outputs : inputs : clobbers)` expression as an
@@ -1054,10 +1073,7 @@ impl<'ctx> super::Codegen<'ctx> {
                         "codegen error [E1706]: `{builtin}` ordering argument {n} is out of range \
                          — must be 0=relaxed, 1=acquire, 2=release, 3=acq_rel, or 4=seq_cst"
                     );
-                    if !self.codegen_errors.iter().any(|e| e == &msg) {
-                        eprintln!("{msg}");
-                        self.codegen_errors.push(msg);
-                    }
+                    self.record_error(msg);
                     return None;
                 }
             };
@@ -1068,10 +1084,7 @@ impl<'ctx> super::Codegen<'ctx> {
                  integer literal (0=relaxed,1=acquire,2=release,3=acq_rel,4=seq_cst), not a \
                  runtime expression — the memory order is fixed in the emitted instruction"
             );
-            if !self.codegen_errors.iter().any(|e| e == &msg) {
-                eprintln!("{msg}");
-                self.codegen_errors.push(msg);
-            }
+            self.record_error(msg);
             None
         }
     }
@@ -1092,10 +1105,7 @@ impl<'ctx> super::Codegen<'ctx> {
                            string literal naming a function defined in this program, not a \
                            runtime expression — the address is resolved once at compile time"
                     .to_string();
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    eprintln!("{msg}");
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
                 return None;
             }
         };
@@ -1106,10 +1116,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     "codegen error [E1707]: `fn_addr(\"{name}\")` names no function defined in \
                      this program"
                 );
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    eprintln!("{msg}");
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
                 None
             }
         }
@@ -1831,8 +1838,168 @@ impl<'ctx> super::Codegen<'ctx> {
                 let tys = tys.clone();
                 self.emit_fieldwise_eq(lhs, rhs, &tys)
             }
+            // Enums: same tag, then the payload fields of that variant, by the
+            // same rules - in a helper function, because a recursive variant
+            // compares its boxed fields with this very comparison.
+            Type::Enum(name) => {
+                if !self.value_eq_supported(ty, &mut std::collections::HashSet::new()) {
+                    return None;
+                }
+                let f = self.enum_eq_fn(name)?;
+                build_wrappers::w_call(&self.ir.builder, f, &[lhs.into(), rhs.into()], "feq_e")
+                    .try_as_basic_value()
+                    .left()
+                    .map(|v| v.into_int_value())
+            }
             _ => None,
         }
+    }
+
+    /// Whether `emit_value_eq` compares `ty` faithfully: the same cases, decided
+    /// from the semantic types alone. `enum_eq_fn` asks before emitting
+    /// anything, so a helper is never left half-built - one that another,
+    /// finished helper already calls. `visiting` holds the enums being decided:
+    /// reaching one again (a recursive variant) adds no new obligation.
+    fn value_eq_supported(
+        &self,
+        ty: &Type,
+        visiting: &mut std::collections::HashSet<String>,
+    ) -> bool {
+        match ty {
+            Type::I8
+            | Type::I16
+            | Type::I32
+            | Type::I64
+            | Type::U8
+            | Type::U16
+            | Type::U32
+            | Type::U64
+            | Type::Bool
+            | Type::F32
+            | Type::F64 => true,
+            Type::Str => self.ir.module.get_function("str_eq").is_some(),
+            Type::Slice(elem) => matches!(
+                **elem,
+                Type::I8
+                    | Type::I16
+                    | Type::I32
+                    | Type::I64
+                    | Type::U8
+                    | Type::U16
+                    | Type::U32
+                    | Type::U64
+                    | Type::F32
+                    | Type::F64
+                    | Type::Bool
+                    | Type::Decimal
+            ),
+            Type::Struct(name) => match self.struct_field_sem_types.get(name.as_str()) {
+                Some(tys) => tys.iter().all(|t| self.value_eq_supported(t, visiting)),
+                None => false,
+            },
+            Type::Tuple(tys) => tys.iter().all(|t| self.value_eq_supported(t, visiting)),
+            Type::Enum(name) => {
+                if !visiting.insert(name.clone()) {
+                    return true;
+                }
+                let Some(variants) = self.enum_variants.get(name) else {
+                    return false;
+                };
+                variants.iter().flat_map(|(_, _, fs)| fs).all(|f| {
+                    self.llvm_type(&f.ty).is_some() && self.value_eq_supported(&f.ty, visiting)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    /// `__axon_enum_eq_{name}(a, b) -> i1`: structural equality of two
+    /// `{name}_enum` values, built once per module (the interpreter's
+    /// `values_equal` on `Value::Enum`: same variant, fields equal).
+    ///
+    /// Tags first; on a match, a switch to the variant's block compares its
+    /// payload fields, which are only meaningful for that variant (a boxed
+    /// field of another is not a pointer). The caller has checked
+    /// `value_eq_supported`.
+    fn enum_eq_fn(&mut self, name: &str) -> Option<FunctionValue<'ctx>> {
+        let fn_name = format!("__axon_enum_eq_{name}");
+        if let Some(f) = self.ir.module.get_function(&fn_name) {
+            return Some(f);
+        }
+        let enum_ty = self.llvm_type(&Type::Enum(name.to_string()))?;
+        let variants = self.enum_variants.get(name)?.clone();
+        let bool_ty = self.ir.context.bool_type();
+        let f = self.ir.module.add_function(
+            &fn_name,
+            bool_ty.fn_type(&[enum_ty.into(), enum_ty.into()], false),
+            Some(inkwell::module::Linkage::Internal),
+        );
+        let saved_bb = self.ir.builder.get_insert_block();
+        let body = self.emit_enum_eq_body(f, name, &variants);
+        if let Some(bb) = saved_bb {
+            self.ir.builder.position_at_end(bb);
+        }
+        if body.is_none() {
+            // SAFETY: `f` was added above and nothing outside this call
+            // references it yet, except the recursive calls inside its own body.
+            unsafe { f.delete() };
+            return None;
+        }
+        Some(f)
+    }
+
+    fn emit_enum_eq_body(
+        &mut self,
+        f: FunctionValue<'ctx>,
+        name: &str,
+        variants: &[super::enum_layout::EnumVariantLayout],
+    ) -> Option<()> {
+        let ctx = self.ir.context;
+        let bool_ty = ctx.bool_type();
+        let entry = ctx.append_basic_block(f, "entry");
+        let differ = ctx.append_basic_block(f, "differ");
+        let dispatch = ctx.append_basic_block(f, "dispatch");
+        self.ir.builder.position_at_end(differ);
+        self.ir
+            .builder
+            .build_return(Some(&bool_ty.const_zero()))
+            .ok()?;
+
+        self.ir.builder.position_at_end(entry);
+        let a = f.get_nth_param(0)?.into_struct_value();
+        let b = f.get_nth_param(1)?.into_struct_value();
+        let at = build_wrappers::w_extract_value(&self.ir.builder, a, 0, "atag").into_int_value();
+        let bt = build_wrappers::w_extract_value(&self.ir.builder, b, 0, "btag").into_int_value();
+        let same = build_wrappers::w_int_compare(
+            &self.ir.builder,
+            inkwell::IntPredicate::EQ,
+            at,
+            bt,
+            "same",
+        );
+        build_wrappers::w_cond_br(&self.ir.builder, same, dispatch, differ);
+
+        let mut cases = Vec::with_capacity(variants.len());
+        for (vname, tag, fields) in variants {
+            let bb = ctx.append_basic_block(f, &format!("v_{vname}"));
+            cases.push((at.get_type().const_int(*tag as u64, false), bb));
+            self.ir.builder.position_at_end(bb);
+            let mut acc = bool_ty.const_int(1, false);
+            if !fields.is_empty() {
+                let pa = self.enum_payload_ptr(a, name)?;
+                let pb = self.enum_payload_ptr(b, name)?;
+                for field in fields {
+                    let l = self.load_enum_field(pa, field)?;
+                    let r = self.load_enum_field(pb, field)?;
+                    let eq = self.emit_value_eq(l, r, &field.ty)?;
+                    acc = build_wrappers::w_and(&self.ir.builder, acc, eq, "eq_and");
+                }
+            }
+            self.ir.builder.build_return(Some(&acc)).ok()?;
+        }
+        self.ir.builder.position_at_end(dispatch);
+        build_wrappers::w_switch(&self.ir.builder, at, differ, &cases);
+        Some(())
     }
 
     /// AND together `emit_value_eq` over each field of two aggregates.
@@ -1970,10 +2137,7 @@ impl<'ctx> super::Codegen<'ctx> {
         }
         if matches!(op, ast::BinOp::Add) && matches!(ty, Type::Slice(_)) {
             let msg = "codegen error [E0910]: native codegen does not lower array concatenation (`+`) for this element type (it has no native layout). The interpreter supports it; run under `axon run`.".to_string();
-            if !self.codegen_errors.iter().any(|e| e == &msg) {
-                eprintln!("{msg}");
-                self.codegen_errors.push(msg);
-            }
+            self.record_error(msg);
             return lhs;
         }
 
@@ -2258,7 +2422,8 @@ impl<'ctx> super::Codegen<'ctx> {
             // oracle compares (enum, variant, fields); tag-compare is exact for
             // fieldless variants and for any two DIFFERENT-tag variants (the
             // example usages: `Op::Zero == Op::Zero`, `Op::Add{..} != Op::Zero`).
-            // Payload-field equality for same-tag-different-fields is a follow-up.
+            // The other cases compare payloads in `emit_expr`'s BinOp arm
+            // (`emit_value_eq` on `Type::Enum`) and never reach this one.
             (BasicValueEnum::StructValue(l), BasicValueEnum::StructValue(r))
                 if matches!(op, ast::BinOp::Eq | ast::BinOp::NotEq)
                     && l.get_type()
@@ -2350,10 +2515,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 let msg = format!(
                     "codegen error [E0910]: native codegen does not lower {what} equality (`==`/`!=`). The interpreter compares them structurally; run under `axon run`."
                 );
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    eprintln!("{msg}");
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
                 self.ir.context.bool_type().const_int(0, false).into()
             }
 
@@ -2392,10 +2554,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 let msg = format!(
                     "codegen error [E0910]: native codegen does not lower the binary operator `{op:?}` on operands of type `{ty:?}`. The interpreter supports it; run under `axon run`. Returning the left operand would silently produce a wrong answer."
                 );
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    eprintln!("{msg}");
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
                 l
             }
         }
@@ -2617,10 +2776,7 @@ impl<'ctx> super::Codegen<'ctx> {
                                     Result/Option (or non-str struct) value in a string — its inner \
                                     type is erased here. Match it and interpolate the inner value, or \
                                     use `axon run` (the interpreter prints `Ok(…)`/`Some(…)`).".to_string();
-                                if !self.codegen_errors.iter().any(|m| m == &msg) {
-                                    eprintln!("{msg}");
-                                    self.codegen_errors.push(msg);
-                                }
+                                self.record_error(msg);
                                 // Placeholder str so emission continues; the build
                                 // aborts afterward on codegen_errors (never runs).
                                 str_ty.const_zero().into()
@@ -2827,7 +2983,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 // becomes reachable, a refusal is correct where a silent hang is
                 // catastrophic. The infinite branch is still emitted so the IR
                 // stays well-formed, exactly as the zero placeholder is.
-                self.codegen_errors.push(format!(
+                self.record_error(format!(
                     "codegen error [E0910]: native codegen could not lower the subject of a `while let` in `{}` to a value. Refusing to emit a loop that would never terminate. Run it under the interpreter (`axon run`).",
                     fn_val.get_name().to_str().unwrap_or("<fn>")
                 ));
@@ -2847,6 +3003,7 @@ impl<'ctx> super::Codegen<'ctx> {
         // Bind pattern variables and emit body.
         self.ir.builder.position_at_end(body_bb);
         let subject_sem_ty = self.infer_expr_sem_type(expr);
+        let scope = self.begin_pattern_scope(pattern);
         self.emit_pattern_bindings(pattern, subject, subject_sem_ty.as_ref());
         for stmt in body {
             self.emit_expr(&stmt.expr, fn_val);
@@ -2861,6 +3018,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 break;
             }
         }
+        self.end_pattern_scope(scope);
         if self
             .ir
             .builder
@@ -3193,10 +3351,7 @@ impl<'ctx> super::Codegen<'ctx> {
                  a value: it has {why}. Wrap the use in a lambda that returns a supported type, or \
                  run under the interpreter (`axon run`)."
             );
-            if !self.codegen_errors.iter().any(|e| e == &msg) {
-                eprintln!("{msg}");
-                self.codegen_errors.push(msg);
-            }
+            self.record_error(msg);
             return None;
         }
 
@@ -3310,10 +3465,7 @@ impl<'ctx> super::Codegen<'ctx> {
                      interpreter supports it; run under `axon run`.",
                     i + 1
                 );
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    eprintln!("{msg}");
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
                 return None;
             };
             let v = match declared {
@@ -3506,10 +3658,7 @@ impl<'ctx> super::Codegen<'ctx> {
                      carries no return-type tag, so a str/slice/tuple result can't round-trip). \
                      This program runs under the interpreter (`axon run`)."
                 );
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    eprintln!("{msg}");
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
             }
         }
 
@@ -3526,6 +3675,9 @@ impl<'ctx> super::Codegen<'ctx> {
         let saved_ip = self.ir.builder.get_insert_block();
         let saved_locals = std::mem::take(&mut self.locals);
         let saved_local_types = std::mem::take(&mut self.local_types);
+        // The body still sees the enclosing poisons (a capture of one is not an
+        // unknown name); the poisons it adds end with it.
+        let saved_poisoned = self.poisoned.clone();
         // A capture keeps the semantic type it has in the enclosing scope, so a
         // captured dispatch table `t` still indexes and calls as a
         // `[fn(i64) -> i64]` inside the body (`|x| t[0](x)`, AX-25).
@@ -3683,7 +3835,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     // stays as the placeholder that keeps the IR well-formed,
                     // but only behind a recorded error that aborts the build.
                     if body_should_have_a_value {
-                        self.codegen_errors.push(format!(
+                        self.record_error(format!(
                             "codegen error [E0910]: native codegen could not lower the body of `{lambda_name}` (a closure) to a value. Refusing to return a fabricated zero. Run it under the interpreter (`axon run`)."
                         ));
                     }
@@ -3695,6 +3847,7 @@ impl<'ctx> super::Codegen<'ctx> {
         // Restore caller's state.
         self.locals = saved_locals;
         self.local_types = saved_local_types;
+        self.poisoned = saved_poisoned;
         self.current_lambda_env = saved_lambda_env;
         if let Some(b) = saved_ip {
             self.ir.builder.position_at_end(b);
@@ -3750,9 +3903,7 @@ impl<'ctx> super::Codegen<'ctx> {
                         "codegen error [E0701]: identifier '{cap_name}' captured by \
                          `{lambda_name}` not found in current scope"
                     );
-                    if !self.codegen_errors.iter().any(|e| e == &msg) {
-                        self.codegen_errors.push(msg);
-                    }
+                    self.record_error(msg);
                     continue;
                 };
                 let mut cap_val = build_wrappers::w_load(&self.ir.builder, ty, alloca, cap_name);
@@ -3844,7 +3995,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 Some(sv.into())
             }
             Err(e) => {
-                eprintln!("comptime evaluation error: {e}");
+                self.record_comptime_error(&e, "this `comptime` block");
                 None
             }
         }
@@ -4087,51 +4238,13 @@ impl<'ctx> super::Codegen<'ctx> {
                 let Some(elem_size) = elem_ty.size_of() else {
                     return val;
                 };
-                let i64_ty = self.ir.context.i64_type();
                 let b = &self.ir.builder;
                 let len = b.build_extract_value(sv, 0, "cl_len").unwrap().into_int_value();
                 let src = b.build_extract_value(sv, 1, "cl_src").unwrap().into_pointer_value();
                 let bytes = b.build_int_mul(len, elem_size, "cl_bytes").unwrap();
                 let dst = self.emit_malloc(bytes, "cl_dst");
                 let _ = self.ir.builder.build_memcpy(dst, 1, src, 1, bytes);
-                if self.type_needs_deep_clone(inner, 0) {
-                    // for i in 0..len { dst[i] = clone(dst[i]) }
-                    let pre = self.ir.builder.get_insert_block().unwrap();
-                    let f = pre.get_parent().unwrap_or(fn_val);
-                    let hdr = self.ir.context.append_basic_block(f, "cl_hdr");
-                    let body = self.ir.context.append_basic_block(f, "cl_body");
-                    let exit = self.ir.context.append_basic_block(f, "cl_exit");
-                    self.ir.builder.build_unconditional_branch(hdr).unwrap();
-                    self.ir.builder.position_at_end(hdr);
-                    let i = self.ir.builder.build_phi(i64_ty, "cl_i").unwrap();
-                    i.add_incoming(&[(&i64_ty.const_zero(), pre)]);
-                    let iv = i.as_basic_value().into_int_value();
-                    let more = self
-                        .ir
-                        .builder
-                        .build_int_compare(IntPredicate::ULT, iv, len, "cl_more")
-                        .unwrap();
-                    self.ir
-                        .builder
-                        .build_conditional_branch(more, body, exit)
-                        .unwrap();
-                    self.ir.builder.position_at_end(body);
-                    let sp = unsafe {
-                        self.ir.builder.build_gep(elem_ty, dst, &[iv], "cl_sp").unwrap()
-                    };
-                    let elem = build_wrappers::w_load(&self.ir.builder, elem_ty, sp, "cl_elem");
-                    let cloned = self.emit_clone_value(elem, inner, fn_val);
-                    build_wrappers::w_store(&self.ir.builder, sp, cloned);
-                    let next = self
-                        .ir
-                        .builder
-                        .build_int_add(iv, i64_ty.const_int(1, false), "cl_next")
-                        .unwrap();
-                    let end = self.ir.builder.get_insert_block().unwrap();
-                    self.ir.builder.build_unconditional_branch(hdr).unwrap();
-                    i.add_incoming(&[(&next, end)]);
-                    self.ir.builder.position_at_end(exit);
-                }
+                self.emit_clone_elems_in_place(dst, len, inner, elem_ty, fn_val);
                 let b = &self.ir.builder;
                 let mut out = sv.get_type().get_undef();
                 out = b.build_insert_value(out, len, 0, "cl_o0").unwrap().into_struct_value();
@@ -4165,6 +4278,62 @@ impl<'ctx> super::Codegen<'ctx> {
             }
             _ => val,
         }
+    }
+
+    /// Replace each of the `len` elements at `dst` (stride `elem_ty`) with a
+    /// deep clone of itself, so a buffer filled by memcpy owns every level
+    /// below it. A no-op for element types holding no array buffer.
+    pub(super) fn emit_clone_elems_in_place(
+        &mut self,
+        dst: inkwell::values::PointerValue<'ctx>,
+        len: inkwell::values::IntValue<'ctx>,
+        inner: &Type,
+        elem_ty: BasicTypeEnum<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+    ) {
+        if !self.type_needs_deep_clone(inner, 0) {
+            return;
+        }
+        // for i in 0..len { dst[i] = clone(dst[i]) }
+        let i64_ty = self.ir.context.i64_type();
+        let pre = self.ir.builder.get_insert_block().unwrap();
+        let f = pre.get_parent().unwrap_or(fn_val);
+        let hdr = self.ir.context.append_basic_block(f, "cl_hdr");
+        let body = self.ir.context.append_basic_block(f, "cl_body");
+        let exit = self.ir.context.append_basic_block(f, "cl_exit");
+        self.ir.builder.build_unconditional_branch(hdr).unwrap();
+        self.ir.builder.position_at_end(hdr);
+        let i = self.ir.builder.build_phi(i64_ty, "cl_i").unwrap();
+        i.add_incoming(&[(&i64_ty.const_zero(), pre)]);
+        let iv = i.as_basic_value().into_int_value();
+        let more = self
+            .ir
+            .builder
+            .build_int_compare(IntPredicate::ULT, iv, len, "cl_more")
+            .unwrap();
+        self.ir
+            .builder
+            .build_conditional_branch(more, body, exit)
+            .unwrap();
+        self.ir.builder.position_at_end(body);
+        let sp = unsafe {
+            self.ir
+                .builder
+                .build_gep(elem_ty, dst, &[iv], "cl_sp")
+                .unwrap()
+        };
+        let elem = build_wrappers::w_load(&self.ir.builder, elem_ty, sp, "cl_elem");
+        let cloned = self.emit_clone_value(elem, inner, fn_val);
+        build_wrappers::w_store(&self.ir.builder, sp, cloned);
+        let next = self
+            .ir
+            .builder
+            .build_int_add(iv, i64_ty.const_int(1, false), "cl_next")
+            .unwrap();
+        let end = self.ir.builder.get_insert_block().unwrap();
+        self.ir.builder.build_unconditional_branch(hdr).unwrap();
+        i.add_incoming(&[(&next, end)]);
+        self.ir.builder.position_at_end(exit);
     }
 
     /// `emit_expr`, then snapshot the result when it is an array PLACE
@@ -4237,12 +4406,12 @@ impl<'ctx> super::Codegen<'ctx> {
             Some(Type::Option(inner)) => self.current_option_inner = Some(*inner),
             _ => {}
         }
-        let errors_before = self.codegen_errors.len();
+        let errors_before = self.errors_reported;
         let emitted = self.emit_expr_owned(value, fn_val, CopySink::Always);
         self.current_result_types = saved_rt;
         self.current_option_inner = saved_oi;
         let Some(val) = emitted else {
-            return if self.codegen_errors.len() == errors_before {
+            return if self.errors_reported == errors_before {
                 Err(Some("a value that produced no result"))
             } else {
                 Err(None)
@@ -5212,10 +5381,62 @@ impl<'ctx> super::Codegen<'ctx> {
              (`{what}`) — the native dict is a tagged union of i64/f64/str. The interpreter \
              supports it; run under `axon run`, or key a parallel array by index."
         );
-        if !self.codegen_errors.iter().any(|e| e == &msg) {
-            eprintln!("{msg}");
-            self.codegen_errors.push(msg);
+        self.record_error(msg);
+    }
+
+    /// E0910 for an `arr_*` builtin whose native lowering does not cover this
+    /// array's ELEMENT TYPE (AX-44). The builtin itself may lower fine for
+    /// other element types, so the generic "builtin is not yet supported"
+    /// message would be false; this one names the element type and why.
+    /// Recorded only - the build pipeline prints `codegen_errors` once.
+    fn refuse_arr_elem(&mut self, builtin: &str, elem: Option<&Type>, why: &str) {
+        let arr = match elem {
+            Some(t) => format!("`[{}]`", t.display()),
+            None => "an array whose element type is not known statically".to_string(),
+        };
+        let msg = format!(
+            "codegen error [E0910]: native codegen cannot lower `{builtin}` on {arr}: {why}. \
+             The interpreter supports it - use `axon run`."
+        );
+        self.record_error(msg);
+    }
+
+    /// The element type of an `arr_*` builtin's array argument, when it is
+    /// statically known (no `Unknown` anywhere in it).
+    fn arr_arg_elem_ty(&self, arg: &ast::Expr) -> Option<Type> {
+        let operand = match arg {
+            ast::Expr::UnaryOp {
+                op: ast::UnaryOp::Ref,
+                operand,
+            } => operand.as_ref(),
+            other => other,
+        };
+        match self
+            .sem_type_of_expr(operand)
+            .or_else(|| self.infer_expr_sem_type(operand))
+        {
+            Some(Type::Slice(e)) if !Self::type_has_unknown(&e) => Some(*e),
+            _ => None,
         }
+    }
+
+    /// Is this array argument statically known to hold something other than
+    /// i64? (Unknown → false: the caller keeps its pre-existing path.)
+    fn arr_arg_elem_is_not_i64(&self, arg: &ast::Expr) -> bool {
+        self.arr_arg_elem_ty(arg).is_some_and(|e| e != Type::I64)
+    }
+
+    /// A zero-length `{i64 len, ptr data}` slice: the value a refused
+    /// array-returning builtin yields so emission continues without a
+    /// cascade of secondary type errors (the build aborts on the E0910).
+    fn empty_slice_value(&self) -> BasicValueEnum<'ctx> {
+        let i64_ty = self.ir.context.i64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        self.ir
+            .context
+            .struct_type(&[i64_ty.into(), ptr_ty.into()], false)
+            .const_named_struct(&[i64_ty.const_zero().into(), ptr_ty.const_null().into()])
+            .into()
     }
 
     /// `dict_from_pairs` refusal: the runtime side reads `(str, i64)` only.
@@ -5225,10 +5446,7 @@ impl<'ctx> super::Codegen<'ctx> {
                    so an f64 or str value would be misread. The interpreter supports it; run \
                    under `axon run`."
             .to_string();
-        if !self.codegen_errors.iter().any(|e| e == &msg) {
-            eprintln!("{msg}");
-            self.codegen_errors.push(msg);
-        }
+        self.record_error(msg);
     }
 
     /// `as_*` refusal: these convert SCALARS. A struct/str/array argument used to
@@ -5243,10 +5461,7 @@ impl<'ctx> super::Codegen<'ctx> {
              a struct, str, or array argument cannot be converted. The interpreter raises this \
              as a runtime panic; native refuses at build time."
         );
-        if !self.codegen_errors.iter().any(|e| e == &msg) {
-            eprintln!("{msg}");
-            self.codegen_errors.push(msg);
-        }
+        self.record_error(msg);
     }
 
     /// Is this call argument statically an array OF ARRAYS of i64?
@@ -7566,6 +7781,174 @@ impl<'ctx> super::Codegen<'ctx> {
         Some(out)
     }
 
+    /// `arr_push(a, x)` on an array of any element type with a layout → a
+    /// fresh array holding `a`'s elements then `x` (interp: `arr_push` clones
+    /// the input `Vec` and pushes). One malloc of `(len+1) * sizeof(elem)`, a
+    /// memcpy of `a`'s elements, then `x` stored at index `len` with the same
+    /// stride `emit_index` reads with. `a`'s elements that own an array buffer
+    /// are deep-cloned, so a later place write through the result cannot
+    /// reach `a` (the interpreter's value semantics); the caller hands in an
+    /// `x` that already owns its buffer.
+    fn emit_arr_push_any(
+        &mut self,
+        slice_val: BasicValueEnum<'ctx>,
+        x: BasicValueEnum<'ctx>,
+        inner: &Type,
+        elem_ty: BasicTypeEnum<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let BasicValueEnum::StructValue(s) = slice_val else {
+            return None;
+        };
+        let elem_size = elem_ty.size_of()?;
+        let b = &self.ir.builder;
+        let len = b
+            .build_extract_value(s, 0, "apush_len")
+            .ok()?
+            .into_int_value();
+        let src = b
+            .build_extract_value(s, 1, "apush_src")
+            .ok()?
+            .into_pointer_value();
+        let one = self.ir.context.i64_type().const_int(1, false);
+        let new_len = b.build_int_add(len, one, "apush_nlen").ok()?;
+        let old_bytes = b.build_int_mul(len, elem_size, "apush_ob").ok()?;
+        let bytes = b.build_int_mul(new_len, elem_size, "apush_b").ok()?;
+        let dst = self.emit_malloc(bytes, "apush_dst");
+        self.ir
+            .builder
+            .build_memcpy(dst, 1, src, 1, old_bytes)
+            .ok()?;
+        self.emit_clone_elems_in_place(dst, len, inner, elem_ty, fn_val);
+        let b = &self.ir.builder;
+        let tail = unsafe { b.build_gep(elem_ty, dst, &[len], "apush_tail").ok()? };
+        build_wrappers::w_store(b, tail, x);
+        let out = b.build_insert_value(s, new_len, 0, "apush_o0").ok()?;
+        let out = b.build_insert_value(out, dst, 1, "apush_o1").ok()?;
+        Some(out.into_struct_value().into())
+    }
+
+    /// `arr_take(a, n)` / `arr_drop(a, n)` on an array of any element type
+    /// with a layout → a fresh array of the leading `min(max(n,0), len)`
+    /// elements (take) or the rest (drop), as in the interpreter. One malloc
+    /// and one memcpy; elements owning an array buffer are deep-cloned.
+    fn emit_arr_take_drop_any(
+        &mut self,
+        slice_val: BasicValueEnum<'ctx>,
+        n: inkwell::values::IntValue<'ctx>,
+        is_take: bool,
+        inner: &Type,
+        elem_ty: BasicTypeEnum<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let BasicValueEnum::StructValue(s) = slice_val else {
+            return None;
+        };
+        let elem_size = elem_ty.size_of()?;
+        let i8_ty = self.ir.context.i8_type();
+        let zero = self.ir.context.i64_type().const_zero();
+        let b = &self.ir.builder;
+        let len = b
+            .build_extract_value(s, 0, "atd_len")
+            .ok()?
+            .into_int_value();
+        let src = b
+            .build_extract_value(s, 1, "atd_src")
+            .ok()?
+            .into_pointer_value();
+        let n = b
+            .build_int_s_extend_or_bit_cast(n, zero.get_type(), "atd_n")
+            .ok()?;
+        // nc = max(0, min(n, len))
+        let lt = b
+            .build_int_compare(IntPredicate::SLT, n, len, "atd_lt")
+            .ok()?;
+        let n_min = b.build_select(lt, n, len, "atd_min").ok()?.into_int_value();
+        let pos = b
+            .build_int_compare(IntPredicate::SGT, n_min, zero, "atd_pos")
+            .ok()?;
+        let nc = b
+            .build_select(pos, n_min, zero, "atd_nc")
+            .ok()?
+            .into_int_value();
+        let (start, count) = if is_take {
+            (zero, nc)
+        } else {
+            (nc, b.build_int_sub(len, nc, "atd_rest").ok()?)
+        };
+        let bytes = b.build_int_mul(count, elem_size, "atd_b").ok()?;
+        let skip = b.build_int_mul(start, elem_size, "atd_skip").ok()?;
+        let from = unsafe { b.build_gep(i8_ty, src, &[skip], "atd_from").ok()? };
+        let dst = self.emit_malloc(bytes, "atd_dst");
+        self.ir.builder.build_memcpy(dst, 1, from, 1, bytes).ok()?;
+        self.emit_clone_elems_in_place(dst, count, inner, elem_ty, fn_val);
+        let b = &self.ir.builder;
+        let out = b.build_insert_value(s, count, 0, "atd_o0").ok()?;
+        let out = b.build_insert_value(out, dst, 1, "atd_o1").ok()?;
+        Some(out.into_struct_value().into())
+    }
+
+    /// `arr_reverse(a)` on an array of any element type with a layout → a
+    /// fresh array with `dst[i] = src[len-1-i]`, stepping by the element
+    /// layout; elements owning an array buffer are deep-cloned.
+    fn emit_arr_reverse_any(
+        &mut self,
+        slice_val: BasicValueEnum<'ctx>,
+        inner: &Type,
+        elem_ty: BasicTypeEnum<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let BasicValueEnum::StructValue(s) = slice_val else {
+            return None;
+        };
+        let elem_size = elem_ty.size_of()?;
+        let i64_ty = self.ir.context.i64_type();
+        let one = i64_ty.const_int(1, false);
+        let b = &self.ir.builder;
+        let len = b
+            .build_extract_value(s, 0, "arv_len")
+            .ok()?
+            .into_int_value();
+        let src = b
+            .build_extract_value(s, 1, "arv_src")
+            .ok()?
+            .into_pointer_value();
+        let bytes = b.build_int_mul(len, elem_size, "arv_b").ok()?;
+        let dst = self.emit_malloc(bytes, "arv_dst");
+        // for i in 0..len { dst[i] = src[len-1-i] }
+        let pre = self.ir.builder.get_insert_block()?;
+        let f = pre.get_parent().unwrap_or(fn_val);
+        let hdr = self.ir.context.append_basic_block(f, "arv_hdr");
+        let body = self.ir.context.append_basic_block(f, "arv_body");
+        let exit = self.ir.context.append_basic_block(f, "arv_exit");
+        let b = &self.ir.builder;
+        b.build_unconditional_branch(hdr).ok()?;
+        b.position_at_end(hdr);
+        let i = b.build_phi(i64_ty, "arv_i").ok()?;
+        i.add_incoming(&[(&i64_ty.const_zero(), pre)]);
+        let iv = i.as_basic_value().into_int_value();
+        let more = b
+            .build_int_compare(IntPredicate::ULT, iv, len, "arv_more")
+            .ok()?;
+        b.build_conditional_branch(more, body, exit).ok()?;
+        b.position_at_end(body);
+        let last = b.build_int_sub(len, one, "arv_last").ok()?;
+        let j = b.build_int_sub(last, iv, "arv_j").ok()?;
+        let sp = unsafe { b.build_gep(elem_ty, src, &[j], "arv_sp").ok()? };
+        let dp = unsafe { b.build_gep(elem_ty, dst, &[iv], "arv_dp").ok()? };
+        let elem = build_wrappers::w_load(b, elem_ty, sp, "arv_elem");
+        build_wrappers::w_store(b, dp, elem);
+        let next = b.build_int_add(iv, one, "arv_next").ok()?;
+        b.build_unconditional_branch(hdr).ok()?;
+        i.add_incoming(&[(&next, body)]);
+        b.position_at_end(exit);
+        self.emit_clone_elems_in_place(dst, len, inner, elem_ty, fn_val);
+        let b = &self.ir.builder;
+        let out = b.build_insert_value(s, len, 0, "arv_o0").ok()?;
+        let out = b.build_insert_value(out, dst, 1, "arv_o1").ok()?;
+        Some(out.into_struct_value().into())
+    }
+
     /// arr_std_f64(&a) → sample standard deviation. <2 elements → 0.0 (no
     /// spread). Two passes over the f64 slice: Σ → mean; Σ(x-mean)² → var/(n-1);
     /// sqrt. Pure IR + llvm.sqrt.f64 (native + wasm).
@@ -8607,10 +8990,10 @@ impl<'ctx> super::Codegen<'ctx> {
 
             // Look up variant info.
             let variants = self.enum_variants.get(&enum_name).cloned()?;
-            let (tag_int, field_types) = variants
+            let (tag_int, field_layout) = variants
                 .iter()
                 .find(|(vn, _, _)| vn == &variant_name)
-                .map(|(_, tag, fts)| (*tag, fts.clone()))?;
+                .map(|(_, tag, fs)| (*tag, fs.clone()))?;
 
             // Look up the LLVM struct type for the enum.
             let struct_name = format!("{enum_name}_enum");
@@ -8632,47 +9015,55 @@ impl<'ctx> super::Codegen<'ctx> {
                 .build_store(tag_ptr, i32_ty.const_int(tag_int as u64, false))
                 .unwrap();
 
-            // Store each field into the payload (field 1) at byte offsets.
+            // Store each field into the payload (field 1) at its laid-out
+            // offset, found by NAME: a literal may list fields in any order
+            // (`P::Pt { s: "hi", x: 7 }`), and indexing the declared layout by
+            // the literal's position stored `s` into `x`'s slot.
             if !fields.is_empty() {
-                let i8_ty = self.ir.context.i8_type();
-                let ptr_ty = i8_ty.ptr_type(AddressSpace::default());
-
-                // Get pointer to payload field.
                 let pay_ptr = self
                     .ir
                     .builder
                     .build_struct_gep(enum_struct_ty, alloca, 1, "payptr")
                     .unwrap();
-                let pay_i8ptr = self
-                    .ir
-                    .builder
-                    .build_pointer_cast(pay_ptr, ptr_ty, "payi8ptr")
-                    .unwrap();
-
-                let mut byte_offset: u64 = 0;
-                for (fi, (fname, fexpr)) in fields.iter().enumerate() {
-                    if let Some(fval) = self.emit_expr_owned(fexpr, fn_val, CopySink::Always) {
-                        let fty = field_types.get(fi).cloned().unwrap_or(Type::Unknown);
-                        let fsize = self.llvm_sizeof(&fty).unwrap_or(8);
-                        // GEP into the payload at the current byte offset.
-                        let offset_val = i32_ty.const_int(byte_offset, false);
-                        let field_ptr = unsafe {
-                            self.ir
-                                .builder
-                                .build_gep(i8_ty, pay_i8ptr, &[offset_val], fname)
-                                .unwrap()
-                        };
-                        // Cast to the appropriate typed pointer and store.
-                        let fval_ptr_ty = fval.get_type().ptr_type(AddressSpace::default());
-                        let typed_ptr = self
-                            .ir
-                            .builder
-                            .build_pointer_cast(field_ptr, fval_ptr_ty, "ftyptr")
-                            .unwrap();
-                        build_wrappers::w_store(&self.ir.builder, typed_ptr, fval);
-                        byte_offset += fsize;
-                    } else {
-                        self.refuse_unlowered(&format!("payload field `{fname}` of an enum variant"));
+                for (fname, fexpr) in fields {
+                    let Some(slot) = field_layout.iter().find(|f| &f.name == fname) else {
+                        self.refuse_unlowered(&format!("payload field `{fname}` of `{name}`"));
+                        continue;
+                    };
+                    // Same declared-type context and narrow-int coercion as a
+                    // struct-literal field (below), so the value is built in
+                    // the slot's own layout.
+                    let saved_oi = self.current_option_inner.clone();
+                    let saved_rt = self.current_result_types.clone();
+                    match &slot.ty {
+                        Type::Option(inner) => self.current_option_inner = Some((**inner).clone()),
+                        Type::Result(ok, err) => {
+                            self.current_result_types = Some(((**ok).clone(), (**err).clone()))
+                        }
+                        _ => {}
+                    }
+                    let emitted = self.emit_expr_owned(fexpr, fn_val, CopySink::Always);
+                    self.current_option_inner = saved_oi;
+                    self.current_result_types = saved_rt;
+                    let Some(fval) = emitted else {
+                        self.refuse_unlowered(&format!(
+                            "payload field `{fname}` of an enum variant"
+                        ));
+                        continue;
+                    };
+                    let fval = self.coerce_to_fixed_width(fval, &slot.ty);
+                    // The slot holds exactly `llvm_type(slot.ty)`, which is what
+                    // a match binding loads back. A value of another layout
+                    // would overrun the slot or be read back as garbage.
+                    if self.llvm_type(&slot.ty) != Some(fval.get_type()) {
+                        self.refuse_unlowered(&format!(
+                            "payload field `{fname}` of `{name}` (its value's layout differs \
+                             from the field's declared type)"
+                        ));
+                        continue;
+                    }
+                    if self.store_enum_field(pay_ptr, slot, fval).is_none() {
+                        self.refuse_unlowered(&format!("payload field `{fname}` of `{name}`"));
                     }
                 }
             }
@@ -8709,10 +9100,7 @@ impl<'ctx> super::Codegen<'ctx> {
                          native codegen can lay out (an earlier E0910 on this struct explains \
                          why). The interpreter supports it; run under `axon run`."
                     );
-                    if !self.codegen_errors.iter().any(|e| e == &msg) {
-                        eprintln!("{msg}");
-                        self.codegen_errors.push(msg);
-                    }
+                    self.record_error(msg);
                     return None;
                 };
                 // Set the Option/Result context from the field's DECLARED type so
@@ -9193,10 +9581,7 @@ impl<'ctx> super::Codegen<'ctx> {
              native codegen — this should have been refused at check time (E1801). Run it under \
              the interpreter (`axon run`)."
         );
-        if !self.codegen_errors.iter().any(|e| e == &msg) {
-            eprintln!("{msg}");
-            self.codegen_errors.push(msg);
-        }
+        self.record_error(msg);
         self.ir.context.i64_type().const_zero().into()
     }
 
@@ -9317,7 +9702,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 }
             } else if !matches!(callee, ast::Expr::StructLit { .. }) {
                 let sig = self.closure_call_sig(callee);
-                let errors_before = self.codegen_errors.len();
+                let errors_before = self.errors_reported;
                 let closure = match self.emit_expr(callee, fn_val) {
                     Some(BasicValueEnum::StructValue(sv))
                         if sv.get_type().count_fields() == 2
@@ -9335,16 +9720,13 @@ impl<'ctx> super::Codegen<'ctx> {
                     // The checker typed this callee as a function, so a callee
                     // that did not lower to a closure is a codegen gap — refuse
                     // rather than drop the call (the AX-24 silent-assign class).
-                    if self.codegen_errors.len() == errors_before {
+                    if self.errors_reported == errors_before {
                         let msg = "codegen error [E0910]: native codegen could not lower this \
                                    call's callee expression to a closure value, so the call \
                                    cannot be emitted. The interpreter supports it; run under \
                                    `axon run`."
                             .to_string();
-                        if !self.codegen_errors.iter().any(|e| e == &msg) {
-                            eprintln!("{msg}");
-                            self.codegen_errors.push(msg);
-                        }
+                        self.record_error(msg);
                     }
                     return None;
                 };
@@ -10540,7 +10922,13 @@ impl<'ctx> super::Codegen<'ctx> {
                     return self.emit_arr_i64_loop(slice_val, ArrReduce::Sum, fn_val);
                 }
             }
-            if name == "arr_contains" && args.len() == 2 {
+            // ELEMENT-TYPE GUARD (both below): the loop compares i64 elements
+            // at an 8-byte stride, so a `[bool]`/`[i32]`/`[str]` array failed IR
+            // verification. A statically non-i64 array is refused by element
+            // type at the end of this block; an unproven one keeps the old
+            // integer path.
+            if name == "arr_contains" && args.len() == 2 && !self.arr_arg_elem_is_not_i64(&args[0])
+            {
                 if let (Some(slice_val), Some(BasicValueEnum::IntValue(n))) = (
                     self.emit_expr(&args[0], fn_val),
                     self.emit_expr(&args[1], fn_val),
@@ -10552,7 +10940,8 @@ impl<'ctx> super::Codegen<'ctx> {
             // or None. The loop yields the index (or the -1 sentinel for "none");
             // wrap it in Option<i64> here (Some(idx) iff idx != -1), matching the
             // interpreter's `Some(i)`/`None` return — same shape as dict_get.
-            if name == "arr_index_of" && args.len() == 2 {
+            if name == "arr_index_of" && args.len() == 2 && !self.arr_arg_elem_is_not_i64(&args[0])
+            {
                 if let (Some(slice_val), Some(BasicValueEnum::IntValue(n))) = (
                     self.emit_expr(&args[0], fn_val),
                     self.emit_expr(&args[1], fn_val),
@@ -10633,54 +11022,160 @@ impl<'ctx> super::Codegen<'ctx> {
                     return self.emit_arr_f64_loop(slice_val, kind, fn_val);
                 }
             }
-            // arr_reverse(&a) — the first ALLOCATING arr_* lowering: malloc a new
-            // i64 buffer of the same length and copy src[len-1-i] → dst[i].
-            // Returns a fresh `{len, ptr}` slice (i64-element arrays; the common
-            // case — other element types stay E0910-gated below).
-            if name == "arr_reverse" && args.len() == 1 && self.arr_arg_elem_is_i64(&args[0]) {
-                if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
-                    if let Some(r) = self.emit_arr_i64_reverse(slice_val, fn_val) {
-                        return Some(r);
-                    }
-                }
-            }
-            // arr_take(&a, n) / arr_drop(&a, n) — copy a contiguous i64 range into
-            // a fresh slice. take = first min(n,len); drop = from min(n,len) on.
-            if (name == "arr_take" || name == "arr_drop")
-                && args.len() == 2
-                && self.arr_arg_elem_is_i64(&args[0])
+            // arr_reverse(&a) / arr_take(&a, n) / arr_drop(&a, n) — fresh arrays
+            // copied out of `a` (take = first min(n,len); drop = from min(n,len)
+            // on). `[i64]` keeps its dedicated i64-stride lowering; every other
+            // element type with a native layout copies by that layout (AX-44).
+            // Anything still unlowerable is refused by element type, never
+            // walked as if its elements were i64 (refuse, never miscompile).
+            if (name == "arr_reverse" && args.len() == 1)
+                || ((name == "arr_take" || name == "arr_drop") && args.len() == 2)
             {
-                if let (Some(slice_val), Some(BasicValueEnum::IntValue(n))) = (
-                    self.emit_expr(&args[0], fn_val),
-                    self.emit_expr(&args[1], fn_val),
-                ) {
-                    let is_take = name == "arr_take";
-                    if let Some(r) = self.emit_arr_i64_take_drop(slice_val, n, is_take, fn_val) {
-                        return Some(r);
-                    }
-                }
-            }
-            // arr_push(&a, x) → a ++ [x] (fresh array; input untouched).
-            //
-            // `arr_push` is GENERIC at the source level (`[T], T -> [T]`), but
-            // this lowering is the 8-byte-stride i64 one. Anything else — a
-            // struct/str/array element (StructValue), an f64 (FloatValue), or a
-            // BOOL (an i1 IntValue, which would be stored into an i64 slot and
-            // read back as garbage) — must fall through to the E0910 refusal
-            // below rather than miscompile (invariant I-2: native either matches
-            // the interpreter or refuses honestly). Narrow *signed* ints
-            // (i8/i16/i32) keep the pre-generic behaviour: they widened to the
-            // old `x: i64` parameter and lower correctly.
-            if name == "arr_push" && args.len() == 2 {
-                if let (Some(slice_val), Some(BasicValueEnum::IntValue(x))) = (
-                    self.emit_expr(&args[0], fn_val),
-                    self.emit_expr(&args[1], fn_val),
-                ) {
-                    if x.get_type().get_bit_width() > 1 {
-                        if let Some(r) = self.emit_arr_i64_push(slice_val, x, fn_val) {
-                            return Some(r);
+                let elem = self.arr_arg_elem_ty(&args[0]);
+                let errors_before = self.codegen_errors.len();
+                let mut why = "the array argument did not lower";
+                match &elem {
+                    Some(Type::I64) => {
+                        if name == "arr_reverse" {
+                            if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
+                                if let Some(r) = self.emit_arr_i64_reverse(slice_val, fn_val) {
+                                    return Some(r);
+                                }
+                            }
+                        } else if let (Some(slice_val), Some(BasicValueEnum::IntValue(n))) = (
+                            self.emit_expr(&args[0], fn_val),
+                            self.emit_expr(&args[1], fn_val),
+                        ) {
+                            let is_take = name == "arr_take";
+                            if let Some(r) =
+                                self.emit_arr_i64_take_drop(slice_val, n, is_take, fn_val)
+                            {
+                                return Some(r);
+                            }
                         }
                     }
+                    Some(inner) => match self.llvm_type(inner) {
+                        Some(elem_ty) => {
+                            if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
+                                let r = if name == "arr_reverse" {
+                                    self.emit_arr_reverse_any(slice_val, inner, elem_ty, fn_val)
+                                } else if let Some(BasicValueEnum::IntValue(n)) =
+                                    self.emit_expr(&args[1], fn_val)
+                                {
+                                    let is_take = name == "arr_take";
+                                    self.emit_arr_take_drop_any(
+                                        slice_val, n, is_take, inner, elem_ty, fn_val,
+                                    )
+                                } else {
+                                    why = "the count argument is not an integer";
+                                    None
+                                };
+                                if let Some(r) = r {
+                                    return Some(r);
+                                }
+                            }
+                        }
+                        None => why = "the element type has no native layout",
+                    },
+                    None => why = "the element layout is needed to copy elements",
+                }
+                if maybe_fn_v.is_none() {
+                    // A sub-expression that already reported its own error
+                    // needs no second, misleading one here.
+                    if self.codegen_errors.len() == errors_before {
+                        self.refuse_arr_elem(name, elem.as_ref(), why);
+                    }
+                    return Some(self.empty_slice_value());
+                }
+            }
+            // arr_push(&a, x) → a ++ [x] (fresh array; input untouched — the
+            // interpreter clones the input `Vec` and pushes).
+            //
+            // `[i64]` keeps its dedicated 8-byte-stride lowering. Every other
+            // element type with a native layout (str, f64, bool, sized ints,
+            // enums, structs, tuples, nested arrays, Option/Result) goes through
+            // `emit_arr_push_any`, which strides by the element layout — the
+            // same one array literals and `emit_index` use (AX-44). The element
+            // type comes from the array argument, else from the pushed value
+            // (`arr_push([], "a")`). With neither known, the pre-generic i64
+            // path still takes a non-bool integer, as it always has; anything
+            // else is refused by element type (I-2: match the interpreter or
+            // refuse honestly).
+            if name == "arr_push" && args.len() == 2 {
+                let elem = self.arr_arg_elem_ty(&args[0]).or_else(|| {
+                    self.infer_expr_sem_type(&args[1])
+                        .filter(|t| !Self::type_has_unknown(t))
+                });
+                let errors_before = self.codegen_errors.len();
+                let mut why = "the array argument did not lower";
+                match &elem {
+                    Some(Type::I64) | None => {
+                        if let (Some(slice_val), Some(x)) = (
+                            self.emit_expr(&args[0], fn_val),
+                            self.emit_expr(&args[1], fn_val),
+                        ) {
+                            match x {
+                                BasicValueEnum::IntValue(x) if x.get_type().get_bit_width() > 1 => {
+                                    if let Some(r) = self.emit_arr_i64_push(slice_val, x, fn_val) {
+                                        return Some(r);
+                                    }
+                                }
+                                _ => {
+                                    why =
+                                        "the element layout is needed to store a non-integer value"
+                                }
+                            }
+                        }
+                    }
+                    Some(inner) => match self.llvm_type(inner) {
+                        Some(elem_ty) => {
+                            if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
+                                // Build an Option/Result value in the element's
+                                // full canonical layout (a bare `None` would
+                                // otherwise pick a layout of its own).
+                                let saved_oi = self.current_option_inner.clone();
+                                let saved_rt = self.current_result_types.clone();
+                                match inner {
+                                    Type::Option(o) => {
+                                        self.current_option_inner = Some((**o).clone())
+                                    }
+                                    Type::Result(ok, err) => {
+                                        self.current_result_types =
+                                            Some(((**ok).clone(), (**err).clone()))
+                                    }
+                                    _ => {}
+                                }
+                                // The new element must own its buffer: a pushed
+                                // array place (`arr_push(rows, row)`) is
+                                // snapshotted, as the interpreter's value copy.
+                                let x = self.emit_expr_owned(&args[1], fn_val, CopySink::Always);
+                                self.current_option_inner = saved_oi;
+                                self.current_result_types = saved_rt;
+                                if let Some(x) = x {
+                                    let x = self.coerce_to_fixed_width(x, inner);
+                                    if x.get_type() == elem_ty {
+                                        if let Some(r) = self
+                                            .emit_arr_push_any(slice_val, x, inner, elem_ty, fn_val)
+                                        {
+                                            return Some(r);
+                                        }
+                                    } else {
+                                        why = "the pushed value's native layout differs from the \
+                                               element slot";
+                                    }
+                                } else {
+                                    why = "the pushed value did not lower";
+                                }
+                            }
+                        }
+                        None => why = "the element type has no native layout",
+                    },
+                }
+                if maybe_fn_v.is_none() {
+                    if self.codegen_errors.len() == errors_before {
+                        self.refuse_arr_elem(name, elem.as_ref(), why);
+                    }
+                    return Some(self.empty_slice_value());
                 }
             }
             // arr_map(&a, |x| ...) / arr_filter(&a, |x| ...) — the first
@@ -10918,6 +11413,63 @@ impl<'ctx> super::Codegen<'ctx> {
                     if let Some(r) = self.emit_arr_i64_pred(slice_val, lam, kind, fn_val) {
                         return Some(r);
                     }
+                }
+            }
+            // Every remaining `arr_*` lowering above handles only `[i64]`
+            // arrays (`[[i64]]` for `arr_flatten`): they compare elements as
+            // i64 or call an i64-ABI closure per element. Reaching here with a
+            // statically known other element type means that gate turned it
+            // away. Refuse by ELEMENT TYPE (AX-44): the builtin does lower for
+            // `[i64]`, so "builtin not yet supported" would be false.
+            if maybe_fn_v.is_none() {
+                let (arrays, returns_slice): (&[usize], bool) = match name.as_str() {
+                    "arr_zip" | "arr_zip_with" => (&[0, 1], true),
+                    "arr_unique" | "arr_enumerate" | "arr_chunk" | "arr_map" | "arr_filter"
+                    | "arr_take_while" | "arr_drop_while" | "arr_sort_by" | "arr_flatten" => {
+                        (&[0], true)
+                    }
+                    "arr_partition" | "arr_find" | "arr_max_by" | "arr_min_by" | "arr_count_if"
+                    | "arr_all" | "arr_any" | "arr_fold" | "arr_contains" | "arr_index_of" => {
+                        (&[0], false)
+                    }
+                    _ => (&[], false),
+                };
+                let lowered = if name == "arr_flatten" {
+                    Type::Slice(Box::new(Type::I64))
+                } else {
+                    Type::I64
+                };
+                let other = arrays
+                    .iter()
+                    .filter_map(|&i| args.get(i))
+                    .filter_map(|a| self.arr_arg_elem_ty(a))
+                    .find(|e| *e != lowered);
+                if let Some(elem) = other {
+                    let why = format!(
+                        "its native lowering handles only `[{}]` arrays",
+                        lowered.display()
+                    );
+                    self.refuse_arr_elem(name, Some(&elem), &why);
+                    // A placeholder of the builtin's result type, so emission
+                    // continues without secondary errors (the build aborts).
+                    let i64_zero: BasicValueEnum<'ctx> =
+                        self.ir.context.i64_type().const_zero().into();
+                    return Some(match name.as_str() {
+                        _ if returns_slice => self.empty_slice_value(),
+                        "arr_contains" | "arr_all" | "arr_any" => {
+                            self.ir.context.bool_type().const_zero().into()
+                        }
+                        "arr_index_of" => self.emit_option(None, &Type::I64),
+                        "arr_find" => self.emit_option(None, &elem),
+                        "arr_max_by" | "arr_min_by" => {
+                            self.llvm_type(&elem).map_or(i64_zero, |t| t.const_zero())
+                        }
+                        "arr_partition" => {
+                            let e = self.empty_slice_value();
+                            self.ir.context.const_struct(&[e, e], false).into()
+                        }
+                        _ => i64_zero,
+                    });
                 }
             }
         }
@@ -11344,10 +11896,7 @@ impl<'ctx> super::Codegen<'ctx> {
                          native codegen backend (it runs under the interpreter — use `axon run`). \
                          Building it would silently compute a wrong value."
                     );
-                    if !self.codegen_errors.iter().any(|e| e == &msg) {
-                        eprintln!("{msg}");
-                        self.codegen_errors.push(msg);
-                    }
+                    self.record_error(msg);
                     // Return a zero of a best-effort type so emission continues
                     // (the build aborts afterward on codegen_errors); this avoids
                     // a cascade of confusing secondary diagnostics.
@@ -11475,10 +12024,7 @@ impl<'ctx> super::Codegen<'ctx> {
                             i + 1,
                             fn_v.get_name().to_string_lossy()
                         );
-                        if !self.codegen_errors.iter().any(|e| e == &msg) {
-                            eprintln!("{msg}");
-                            self.codegen_errors.push(msg);
-                        }
+                        self.record_error(msg);
                         return None;
                     }
                 }
@@ -11505,10 +12051,7 @@ impl<'ctx> super::Codegen<'ctx> {
                         i + 1,
                         fn_v.get_name().to_string_lossy()
                     );
-                    if !self.codegen_errors.iter().any(|e| e == &msg) {
-                        eprintln!("{msg}");
-                        self.codegen_errors.push(msg);
-                    }
+                    self.record_error(msg);
                     return None;
                 };
                 arg_vals.push(slot.into());
@@ -11536,10 +12079,7 @@ impl<'ctx> super::Codegen<'ctx> {
                         i + 1,
                         fn_v.get_name().to_string_lossy()
                     );
-                    if !self.codegen_errors.iter().any(|e| e == &msg) {
-                        eprintln!("{msg}");
-                        self.codegen_errors.push(msg);
-                    }
+                    self.record_error(msg);
                     return None;
                 }
             };

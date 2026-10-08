@@ -87,7 +87,7 @@ pub(super) fn run_property_test_inner(
 pub(super) fn run_once(interp: &Interp, f: &FnDef, args: &[Value]) -> Result<(), String> {
     match interp.call_fn(f, args.to_vec()) {
         Ok(_) => Ok(()),
-        Err(Flow::Panic(m)) | Err(Flow::VerifyFailed(m)) => Err(m),
+        Err(Flow::Panic(m)) | Err(Flow::VerifyFailed(m)) => Err(m.into()),
         // A stray return/exit is treated as a pass (the assert didn't fire).
         Err(_) => Ok(()),
     }
