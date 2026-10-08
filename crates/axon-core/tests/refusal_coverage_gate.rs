@@ -2068,7 +2068,7 @@ fn a_value_is_credited_only_by_an_edit_of_that_value() {
     let _ = std::fs::remove_dir_all(&r);
 }
 
-const PRIV_PROBE: &str = "pub fn vp_priv(h: &VpHost, fd: i32, p: &std::path::Path) {\n    let _vp_o = vp_open(&h.vp_helper, Some(h.vp_owner));\n    let _vp_pat = match vp_x() { Some(vp_uid) => 1, None => 0 };\n    unsafe { libc::fchown(fd, 4242, u32::MAX); }\n    unsafe { libc::setuid(7); }\n    let _ = std::fs::DirBuilder::new().mode(0o731).create(p);\n    unsafe { libc::mkdirat(fd, std::ptr::null(), 0o705) };\n    let _ = std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o640));\n    let _vp_m = vp_stat(p) & 0o7777;\n}\n";
+const PRIV_PROBE: &str = "pub fn vp_priv(h: &VpHost, fd: i32, p: &std::path::Path) {\n    let _vp_o = vp_open(&h.vp_helper, Some(h.vp_owner));\n    let _vp_pat = match vp_x() { Some(vp_uid) => 1, None => 0 };\n    unsafe { libc::fchown(fd, 4242, u32::MAX); }\n    unsafe { libc::setuid(7); }\n    let _ = std::fs::DirBuilder::new().mode(0o731).create(p);\n    unsafe { libc::mkdirat(fd, std::ptr::null(), 0o705) };\n    let _ = std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o640));\n    let _vp_m = vp_stat(p) & 0o7777;\n    unsafe { libc::fchmod(fd, VP_MODE); }\n    let _vp_msg = format!(\"mode {:o}\", vp_stat(p) & 0o6666);\n}\n";
 
 /// Amendment 103 (b): an OWNER argument (`Some(<x>.owner|uid|gid)`), a uid/gid handed
 /// to a privilege primitive and a permission MODE literal are sites of their own, so
@@ -2088,6 +2088,7 @@ fn an_owner_argument_a_privilege_argument_and_a_mode_literal_are_sites() {
         ("val_mode", "0o705"),
         ("val_mode", "0o640"),
         ("val_mode", "0o7777"),
+        ("val_mode", "VP_MODE"),
     ] {
         names_value(
             &r,
@@ -2100,6 +2101,11 @@ fn an_owner_argument_a_privilege_argument_and_a_mode_literal_are_sites() {
         &r,
         "Some(vp_uid)",
         "a `Some(uid) =>` pattern was read as an owner argument",
+    );
+    not_names_value(
+        &r,
+        "0o6666",
+        "a mode inside a message macro was read as a decision",
     );
     let _ = std::fs::remove_dir_all(&r);
 }
