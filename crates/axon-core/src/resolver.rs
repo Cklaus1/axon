@@ -2182,7 +2182,7 @@ fn fill_captures_stmts(stmts: &mut [crate::ast::Stmt], outer: &std::collections:
 /// `bound` (the lambda's own params and locals introduced inside the body).
 /// A nested lambda's free variables are free here too: the enclosing closure
 /// must capture them so the nested one can be built from its env.
-fn collect_free_vars(
+pub(crate) fn collect_free_vars(
     expr: &Expr,
     bound: &std::collections::HashSet<String>,
     free: &mut std::collections::HashSet<String>,
@@ -2230,6 +2230,9 @@ fn collect_free_vars(
             for arm in arms {
                 let mut arm_bound = bound.clone();
                 collect_pattern_bindings(&arm.pattern, &mut arm_bound);
+                if let Some(g) = &arm.guard {
+                    collect_free_vars(g, &arm_bound, free);
+                }
                 collect_free_vars(&arm.body, &arm_bound, free);
             }
         }

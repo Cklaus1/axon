@@ -33005,6 +33005,140 @@ fn interp_string_and_array_builder_loops_are_linear() {
 }
 
 #[test]
+fn interp_closures_capture_only_their_free_variables_with_unchanged_semantics() {
+    // AX-40: a lambda captures only the bindings its body names (not the
+    // whole defining environment), and builtins that call a closure
+    // repeatedly lend its capture cell instead of copying it per call. Neither
+    // may change what a program observes: shadowing in blocks and loops,
+    // globals vs shadowing locals, per-closure persistent capture writes,
+    // nested closures, recursion, closures in arrays and structs, a name read
+    // only in a match guard, and closures called by `arr_fold`/`arr_map`/
+    // `arr_filter`/`arr_sort_by` all behave as before.
+    let src = r#"type Holder = { f: (i64) -> i64, n: i64 }
+
+let base = 100
+
+fn apply(f: (i64) -> i64, x: i64) -> i64 {
+    f(x)
+}
+
+fn make_counter(start: i64) -> () -> i64 {
+    let unused_a = 1
+    let unused_b = [1, 2, 3]
+    let n = start
+    || {
+        n = n + 1
+        n
+    }
+}
+
+fn fact(n: i64) -> i64 {
+    if n < 2 { 1 } else { n * fact(n - 1) }
+}
+
+fn main() -> i64 {
+    // Shadowing in nested blocks: the lambda sees the binding in scope where
+    // it is written, not a later or outer one.
+    let x = 1
+    let inner = if true {
+        let x = 2
+        |k: i64| x + k
+    } else {
+        |k: i64| k
+    }
+    let x = 3
+    println(to_str(inner(10)) + " " + to_str(x))
+
+    // Loop: each iteration's closure captures that iteration's binding.
+    let fs = []
+    for i in 0..3 {
+        let sq = i * i
+        fs = arr_push(fs, |k: i64| k + sq + i)
+    }
+    println(to_str(fs[0](100)) + " " + to_str(fs[1](100)) + " " + to_str(fs[2](100)))
+
+    // A global, and a local shadowing it.
+    let g = |k: i64| k + base
+    println(to_str(g(1)))
+    let base = 7
+    let h = |k: i64| k + base
+    println(to_str(h(1)) + " " + to_str(g(1)))
+
+    // Writes to captures persist per closure; the defining binding is a copy.
+    let c1 = make_counter(10)
+    let c2 = make_counter(20)
+    c1()
+    println(to_str(c1()) + " " + to_str(c2()) + " " + to_str(c1()))
+
+    // Nested closures: the inner one's free names are captured by the outer.
+    let m = 5
+    let outer = |a: i64| {
+        let mk = |b: i64| a * m + b
+        mk(1)
+    }
+    println(to_str(outer(2)))
+
+    // Recursion through a fn from inside a closure, and closures in a struct.
+    let hold = Holder { f: |k: i64| fact(k) + m, n: 1 }
+    let hf = hold.f
+    println(to_str(hf(5)) + " " + to_str(apply(hold.f, 3)))
+
+    // Closures called repeatedly by builtins, writing their captures: the
+    // writes persist across the builtin's calls, the outer binding is a copy.
+    let seen = 0
+    let total = arr_fold(arr_range(0, 5), 0, |acc: i64, v: i64| {
+        seen = seen + 1
+        acc + v * seen
+    })
+    let tick = 0
+    let bump = |v: i64| {
+        tick = tick + v
+        tick
+    }
+    let run = arr_map([1, 2, 3], bump)
+    println(to_str(total) + " " + to_str(seen) + " " + to_str(run[2]) + " " + to_str(bump(10)) + " " + to_str(tick))
+    let evens = arr_filter(arr_range(0, 10), |v: i64| v % 2 == 0 && v > m)
+    let sorted = arr_sort_by([3, 1, 2], |a: i64, b: i64| b - a)
+    println(to_str(len(evens)) + " " + to_str(sorted[0]))
+
+    // A name used only in a match guard is captured.
+    let limit = 4
+    let classify = |v: i64| match v {
+        n if n > limit => 1
+        _ => 0
+    }
+    println(to_str(classify(3)) + " " + to_str(classify(9)))
+
+    // A closure reachable while it runs (stored in an array it is passed
+    // alongside) still sees its own writes.
+    let cnt = 0
+    let step = |v: i64| {
+        cnt = cnt + v
+        cnt
+    }
+    let both = [step, step]
+    println(to_str(both[0](1)) + " " + to_str(both[1](2)) + " " + to_str(step(3)))
+    0
+}
+"#;
+    assert_eq!(
+        interp_stdout("ax40_closures", src),
+        "12 3\n100 102 106\n101\n8 101\n12 21 13\n11\n125 11\n40 0 6 16 0\n2 3\n0 1\n1 3 6"
+    );
+}
+
+#[test]
+fn interp_builtin_closure_writing_a_captured_array_is_linear() {
+    // AX-40: `arr_fold` lends a lambda literal's capture cell, so a captured
+    // array written by the lambda is uniquely owned and written in place. A
+    // per-call copy of the captures made each write copy the whole array
+    // (quadratic: minutes at n = 200k). Many unrelated bindings are in scope
+    // and must not be captured or copied either.
+    let src = "fn main() -> i64 {\n let n = 200000\n let p1 = [1, 2, 3]\n let p2 = \"pad\"\n let p3 = arr_repeat(1, 1000)\n let zs = arr_repeat(0, n)\n let k = arr_fold(arr_range(0, n), 0, |acc: i64, i: i64| {\n  zs[i] = i + 1\n  acc + zs[i] + zs[i / 2]\n })\n println(to_str(k) + \" \" + to_str(zs[n - 1]) + \" \" + to_str(len(p1) + len(p2) + len(p3)))\n 0\n}\n";
+    assert_eq!(interp_stdout("ax40_fold_lend", src), "30000200000 0 1006");
+}
+
+#[test]
 fn native_array_literals_in_hot_loops_run_in_bounded_memory() {
     // AX-12: every array-literal evaluation used to `malloc` a buffer that was
     // never freed, so 50M iterations of a 4-element literal reached 2.3 GB RSS.
