@@ -1626,3 +1626,135 @@ fn taint_survives_every_carrier_a_value_can_travel_by() {
     }
     all_refused(fails);
 }
+
+/// Amendment 106 (round 11): a channel is ONE shared object with one taint. The
+/// candidate's send, or its drain, decides how many values the operator finds
+/// in it, and a count or an emptiness the candidate decided must not pick the
+/// operator's closure or the NAME of the fn it runs. The honest operator's own
+/// channel, used the same ways, passes.
+#[test]
+fn a_channel_the_candidate_touched_never_selects_operator_code() {
+    let suite = |uses: &str, body: &str| {
+        format!("mod sol\nuse sol.{{{uses}}}\n{REF11}@[test]\nfn accept() {{\n{body}\n}}\n")
+    };
+    let own = suite(
+        "nop",
+        &format!("{OPS11}  let c = chan<i64>()\n  c.send(7)\n  let f = ops[c.len()]\n  assert(f(21) == reference(21))"),
+    );
+    passed(
+        &check(&own, &[], "pub fn nop() -> i64 { 0 }\n", "accept"),
+        "the operator's own channel",
+    );
+    let relay = suite(
+        "relay",
+        "  let c = chan<i64>()\n  c.send(21)\n  assert(relay(c) == reference(21))",
+    );
+    passed(
+        &check(
+            &relay,
+            &[],
+            "pub fn relay(c: Chan<i64>) -> i64 { c.recv() * 2 }\n",
+            "accept",
+        ),
+        "the candidate relays data and the operator compares it",
+    );
+    let push = "pub fn push(c: Chan<i64>) { c.send(7) }\n";
+    let drain = "pub fn drain(c: Chan<i64>) { let x = c.recv() }\n";
+    let drain_try = "pub fn drain(c: Chan<i64>) { let x = c.try_recv() }\n";
+    let named = |pre: &str, n: &str| {
+        format!("{SB10}{pre}  let nm = {n}\n  let got = sandbox_run(sb, nm, 21)\n  assert(got == reference(21))")
+    };
+    let mut fails = Vec::new();
+    for (what, uses, body, cand) in [
+        ("len after a sealed send picks a closure", "push", format!("{OPS11}  let c = chan<i64>()\n  push(c)\n  let f = ops[c.len()]\n  assert(f(21) == reference(21))"), push.to_string()),
+        ("len after a sealed send picks the name", "push", named("  let c = chan<i64>()\n  push(c)\n", "if c.len() == 1 { \"reference\" } else { \"zz\" }"), format!("{push}pub fn double(x: i64) -> i64 {{ 0 }}\n")),
+        ("len after a sealed drain picks a closure", "drain", format!("{OPS11}  let c = chan<i64>()\n  c.send(7)\n  drain(c)\n  let f = if c.len() == 0 {{ ops[1] }} else {{ ops[0] }}\n  assert(f(21) == reference(21))"), drain.to_string()),
+        ("try_recv after a sealed recv picks a closure", "drain", format!("{OPS11}  let c = chan<i64>()\n  c.send(7)\n  drain(c)\n  let f = match c.try_recv() {{ Some(v) => ops[0]  None => ops[1] }}\n  assert(f(21) == reference(21))"), drain.to_string()),
+        ("len after a sealed try_recv picks a closure", "drain", format!("{OPS11}  let c = chan<i64>()\n  c.send(7)\n  drain(c)\n  let f = if c.len() == 0 {{ ops[1] }} else {{ ops[0] }}\n  assert(f(21) == reference(21))"), drain_try.to_string()),
+        ("the arm select skips because the candidate drained its channel", "drain", format!("{OPS11}  let a = chan<i64>()\n  let b = chan<i64>()\n  a.send(7)\n  b.send(7)\n  drain(a)\n  let f = select {{ a.recv() => ops[0]  b.recv() => ops[1] }}\n  assert(f(21) == reference(21))"), drain.to_string()),
+        ("sends in a loop the candidate sized", "idx", format!("{OPS11}  let c = chan<i64>()\n  for i in 0..idx() {{ c.send(i) }}\n  let f = ops[c.len()]\n  assert(f(21) == reference(21))"), "pub fn idx() -> i64 { 1 }\n".to_string()),
+    ] {
+        fails.extend(taint_attack(what, &suite(uses, &body), &cand));
+    }
+    all_refused(fails);
+}
+
+/// The NAME rule of the taint, on the attacks the static name analysis lets
+/// through (a branch value, a match, a return out of a branch): the refusal is
+/// the runtime taint's own. The dispatch and width rules of the taint have no
+/// runner leg of their own: every attack they refuse the static layer refuses
+/// FIRST, so a runner row would score REFUSED_ELSEWHERE by construction (their
+/// attacks and rows are the interpreter unit tests', with the static layer off).
+#[test]
+fn the_taint_name_rule_refuses_what_the_static_name_analysis_lets_through() {
+    let dbl = "pub fn idx() -> i64 { 1 }\npub fn double(x: i64) -> i64 { 0 }\n";
+    let suite = |pre: &str, body: &str| {
+        format!("mod sol\nuse sol.{{idx}}\n{REF11}{pre}@[test]\nfn accept() {{\n{SB10}{body}\n}}\n")
+    };
+    let run = |n: &str| {
+        format!("    let got = sandbox_run(sb, {n}, 21)\n    assert(got == reference(21))")
+    };
+    let mut fails = Vec::new();
+    for (what, pre, body) in [
+        ("an if expression", "", run("if idx() == 1 { \"reference\" } else { \"double\" }")),
+        ("a match on its value", "", run("match idx() { 1 => \"reference\"  _ => \"double\" }")),
+        ("a return out of the branch", "fn pick() -> str {\n    if idx() == 1 { return \"reference\" }\n    \"double\"\n}\n", run("pick()")),
+        ("assigned in both arms", "", "    let nm = \"x\"\n    if idx() == 1 { nm = \"reference\" } else { nm = \"double\" }\n    let got = sandbox_run(sb, nm, 21)\n    assert(got == reference(21))".to_string()),
+    ] {
+        fails.extend(taint_attack(what, &suite(pre, &body), dbl));
+    }
+    all_refused(fails);
+}
+
+/// Amendment 106: a sealed caller's refusal does not say whether the operator
+/// defines a name. Run through the runner, the text for an operator fn, an
+/// operator global and a name nothing defines is the same text.
+#[test]
+fn a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one() {
+    let su = |uses: &str| {
+        format!("mod sol\nuse sol.{{{uses}}}\nlet TABLE = [41, 42]\nfn secret() -> i64 {{ 41 }}\nfn nonadapt(n: i64) -> i64 {{ n }}\n@[test]\nfn accept() {{\n  assert_eq(solve(), 41)\n}}\n")
+    };
+    let text = |name: &str, form: &str| {
+        let cand = format!(
+            "pub fn solve() -> i64 {{ {} }}\n",
+            form.replace("{N}", name)
+        );
+        let s = check(&su("solve"), &[], &cand, "accept");
+        let line = s
+            .stdout
+            .split("\"message\":\"")
+            .nth(1)
+            .and_then(|m| m.split("\",\"").next())
+            .unwrap_or("")
+            .to_string();
+        assert!(
+            refused_unkeyed(&s) || form.contains("goal_run"),
+            "{name} {form}: {:?} {}",
+            s.status,
+            s.stdout
+        );
+        (s.status, line.replace(name, "@"))
+    };
+    let mut fails = Vec::new();
+    for (form, exist, missing) in [
+        ("let g = {N}\n 41", "secret", "zznosuch"),
+        ("{N}[0]", "TABLE", "ZZNOSUCH"),
+        ("{N}.k", "TABLE", "ZZNOSUCH"),
+        (
+            "let r = goal_run(\"{N}\", 100.0, 5)\n 41",
+            "nonadapt",
+            "zznosuch",
+        ),
+        (
+            "let g = kernel_goal_create(0, \"{N}\", 100.0)\n 41",
+            "secret",
+            "zznosuch",
+        ),
+    ] {
+        let (a, b) = (text(exist, form), text(missing, form));
+        if a != b {
+            fails.push(format!("{form}: [{exist}] {a:?} vs [{missing}] {b:?}"));
+        }
+    }
+    all_refused(fails);
+}

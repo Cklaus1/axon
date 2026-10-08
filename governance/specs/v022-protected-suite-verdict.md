@@ -148,11 +148,21 @@ Each clause names what must hold. The negative matrix below names how each one f
   WHICH operator code runs or WHICH operator impl or width answers. It is NOT the claim that candidate
   output cannot influence the verdict: it does (the suite compares the candidate's answer with an
   expected one), and an operator that branches on candidate data (`if cand_ok() { a() } else { b() }`)
-  has written a rubric the candidate chooses a branch of. Not covered: integer HANDLES of kernel
+  has written a rubric the candidate chooses a branch of. That includes two shapes the taint cannot see
+  (amendment 106, executed by the round-11 reviewer): OMISSION (a candidate that does not call an operator
+  callback, or withholds a `send` on an operator channel, selects what the operator's branch or index does on
+  absence) and a table of precomputed operator VERDICTS indexed by a candidate value (a table of closures indexed
+  the same way is refused; a table of verdicts is not). A suite that lets candidate data, or candidate silence,
+  select between a strict and a lenient operator check has let the candidate choose the rubric; no sound rule
+  closes that. Honest suites compare the candidate's output to an expected value and never branch or index the
+  CHECK by candidate data or by whether the candidate acted. Not covered: integer HANDLES of kernel
   objects and authority values (effect lists, budgets) a tainted value supplies, a path, URL or
   `ai_complete` prompt a tainted value supplies, native codegen (`axon build`) and the native
   `gfx`/`axon-domain` registries; the taint is an over-approximation (coarse per binding, per dict and
-  per channel), and its cost to an honest suite is listed in amendment 102.
+  per channel), and its cost to an honest suite is listed in amendments 102 and 106 (among them: folding or
+  mapping a candidate's `[u8]` is refused unless the operator casts `as i64`, running a candidate-nominated
+  entry point by name is refused, an unpinned `let v = work(0)` then `v.ok()` in an arm is refused where
+  the pinned form passes).
 
 **PSV-2 — Separately sealed, digest-bound inputs.**
 - Candidate tree and suite tree are delivered to the guest as two separately sealed inputs, each
@@ -168,7 +178,7 @@ Each clause names what must hold. The negative matrix below names how each one f
   runs only if the candidate calls it, so a suite must assert after the call.
 - Sealing, containment and per-provenance kernels run in the guest interpreter as certified at
   `31413ca7` (`governance/proofs/v022-pci/CERTIFICATION.md`, local backend, EMPTY effect ceiling)
-  plus amendments 53/60/72/78/83/88/94/96/100/102 (the delta, listed from git in `governance/notes/v022-pci-delta.md`).
+  plus amendments 53/60/72/78/83/88/94/96/100/102/106 (the delta, listed from git in `governance/notes/v022-pci-delta.md`).
   origin/main's 13 commits under `crates/axon-core/src` were MERGED WITHOUT PCI REVIEW; only 5 of the 13
   change the interpreter (Rc arrays and cheaper calls, shared strings with lent closure captures,
   `&mut` write-through, first-class fns, the `arr_sort_by` rewrite) and the other 8 change no interpreter
@@ -193,11 +203,26 @@ Each clause names what must hold. The negative matrix below names how each one f
   Amendment 102 (round 11) moves the class "a value or name sealed code chose selects operator code" from a static
   sweep, which five rounds in a row found one instance short, to a runtime taint at the selection primitives (PSV-1
   above); the earlier edges stay underneath it and are not claimed redundant.
+  Amendment 106 (round 11) closes the channel's STATE (`len`, a sealed drain, a skipped `select` arm), a kernel or
+  world write made under a branch or loop the candidate sized, a callback run a candidate-chosen number of times,
+  the text of a value that shows shared state, and the existence oracle on every path (one text for a sealed
+  caller, 120 pairs tested); it words the PSV-1 residual to include omission and precomputed verdict tables.
   Each amendment's PRINCIPAL arms are exercised by named gate rows in `scripts/v022_pci_gates.sh`
-  (rows named `am53` ... `am96`; the row count is not quoted here, it is derived and drift-tested
+  (rows named `am53` ... `am106`; the row count is not quoted here, it is derived and drift-tested
   by `scripts/pci_delta.py --check`). Arms verified to fail a gate row when their code is removed:
   the declared-return cast, the dict edges, the `()` coercion of an absent return type, channel
-  stamping at creation, strict closure arguments at a crossing, and the am83 arithmetic arm. The
+  stamping at creation, strict closure arguments at a crossing, the am83 arithmetic arm, and the arms of
+  am100 and am102 (the name sinks, the existence-oracle text, the closure pick, the taint of a binding, a
+  shared object, the kernel and the world: each removal is a mutation row KILLED by its own attack, and the test that
+  row fails is itself a test a gate row runs: checked for every unit row of am100 (M2600-M2629), am102
+  (M2700-M2763) and am106 (M2910-M2939), by reading both registries). The runner rows of am100 (`axon-psv`, M2603-M2607) are CORROBORATION of
+  the unit rows, as am96's are: with the taint on, the production route refuses those attacks by the taint
+  first, so four of them were withdrawn (amendment 102) and the static guards are evidenced at unit level
+  only. The production pair (the static layer plus the taint) is covered only by the `Both` columns of
+  amendment 102's tests, the runner leg and the gate's sweep step; a static guard removed from the production
+  route ALONE is not observable, because the unit-test switch `TAINT_FORCE_ON` is `cfg(test)` and no shipped
+  binary has the taint off. Of the taint's own rules only the closure-table and name rules have runner rows
+  (amendment 106); dispatch and width have none, because the static layer refuses every such attack first. The
   closure arm of `replaced_ok` (am78) fails only the am72 dict-snapshot row, not an am78 row, and the
   remaining arms are covered by mutation rows only. That those rows are re-run and killed at the
   frozen head is a FREEZE OBLIGATION, not yet shown. A non-empty guest effect ceiling is OUTSIDE the PCI certification.

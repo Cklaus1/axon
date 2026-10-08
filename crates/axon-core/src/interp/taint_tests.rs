@@ -781,3 +781,637 @@ fn every_interp_file_is_read_by_the_drift_sweeps() {
         );
     }
 }
+
+// ── Amendment 106: shared channel state keeps its taint ────────────────────────
+
+const PUSH: &str = "fn push(c: Chan<i64>) { c.send(7) }\n";
+const DRAIN: &str = "fn drain(c: Chan<i64>) { let x = c.recv() }\n";
+const RELAY: &str = "fn relay(c: Chan<i64>) -> i64 { c.recv() * 2 }\n";
+
+/// A channel is one shared object with one taint. The round-11 SENTINEL hole:
+/// `len` carried none, and a sealed drain marked none.
+fn channel_cases() -> Vec<Case> {
+    use Expect::*;
+    let named = |pre: &str, n: &str| {
+        format!("{SB}{pre}    let nm = {n}\n    let got = sandbox_run(sb, nm, 21)\n    assert(got == reference(21))")
+    };
+    let dbl = "fn double(x: i64) -> i64 { 0 }\n";
+    vec![
+        // Honest: the operator's own channel, or the candidate only handing data back.
+        case("chan: an operator-only len selects", REF, &format!("{OPS}    let c = chan<i64>()\n    c.send(7)\n    let f = ops[c.len()]\n    assert(f(21) == reference(21))"), "", Ok),
+        case("chan: an operator-only drain then len", REF, &format!("{OPS}    let c = chan<i64>()\n    c.send(7)\n    let x = c.recv()\n    let f = ops[c.len() + 1]\n    assert(f(21) == reference(21))"), "", Ok),
+        case("chan: the candidate relays data, the operator compares it", REF, "    let c = chan<i64>()\n    c.send(21)\n    assert(relay(c) == reference(21))", RELAY, Ok),
+        case("chan: a channel the candidate never touched", REF, &format!("{OPS}    let c = chan<i64>()\n    c.send(7)\n    let d = chan<i64>()\n    d.send(1)\n    push(d)\n    let f = ops[c.len()]\n    assert(f(21) == reference(21))"), PUSH, Ok),
+        // Attacks: the candidate's send, or its drain, decides the count.
+        case("chan: len after a sealed send picks a closure", REF, &format!("{OPS}    let c = chan<i64>()\n    push(c)\n    let f = ops[c.len()]\n    assert(f(21) == reference(21))"), PUSH, Refused),
+        case("chan: len after a sealed send picks a sandbox name", REF, &named("    let c = chan<i64>()\n    push(c)\n", "if c.len() == 1 { \"reference\" } else { \"zz\" }"), &format!("{PUSH}{dbl}"), Refused),
+        case("chan: len after a sealed drain picks a closure", REF, &format!("{OPS}    let c = chan<i64>()\n    c.send(7)\n    drain(c)\n    let f = if c.len() == 0 {{ ops[1] }} else {{ ops[0] }}\n    assert(f(21) == reference(21))"), DRAIN, Refused),
+        case("chan: try_recv after a sealed drain picks a closure", REF, &format!("{OPS}    let c = chan<i64>()\n    c.send(7)\n    drain(c)\n    let f = match c.try_recv() {{ Some(v) => ops[0]  None => ops[1] }}\n    assert(f(21) == reference(21))"), DRAIN, Refused),
+        case("chan: len after a sealed try_recv drain picks a closure", REF, &format!("{OPS}    let c = chan<i64>()\n    c.send(7)\n    drain(c)\n    let f = if c.len() == 0 {{ ops[1] }} else {{ ops[0] }}\n    assert(f(21) == reference(21))"), "fn drain(c: Chan<i64>) { let x = c.try_recv() }\n", Refused),
+        case("chan: len after a sealed drain picks a sandbox name", REF, &named("    let c = chan<i64>()\n    c.send(7)\n    drain(c)\n", "if c.len() == 0 { \"reference\" } else { \"zz\" }"), &format!("{DRAIN}{dbl}"), Refused),
+        case("chan: len of a clone of a channel the candidate fed", REF, &format!("{OPS}    let c = chan<i64>()\n    let k = c.clone()\n    push(k)\n    let f = ops[c.len()]\n    assert(f(21) == reference(21))"), PUSH, Refused),
+        case("chan: len of a channel held in a struct the candidate fed", &format!("{REF}type Box = {{ c: Chan<i64> }}\n"), &format!("{OPS}    let b = Box {{ c: chan<i64>() }}\n    push(b.c)\n    let f = ops[b.c.len()]\n    assert(f(21) == reference(21))"), PUSH, Refused),
+        case("chan: len after a sealed send, through a helper", &format!("{REF}fn count(c: Chan<i64>) -> i64 {{ c.len() }}\n"), &format!("{OPS}    let c = chan<i64>()\n    push(c)\n    let f = ops[count(c)]\n    assert(f(21) == reference(21))"), PUSH, Refused),
+        case("chan: a send behind a branch on the candidate's answer", REF, &format!("{OPS}    let c = chan<i64>()\n    if idx() == 1 {{ c.send(7) }}\n    let f = ops[c.len()]\n    assert(f(21) == reference(21))"), IDX, Refused),
+        case("chan: sends in a loop the candidate sized", REF, &format!("{OPS}    let c = chan<i64>()\n    for i in 0..idx() {{ c.send(i) }}\n    let f = ops[c.len()]\n    assert(f(21) == reference(21))"), IDX, Refused),
+        case("chan: sends in a loop the operator sized", REF, &format!("{OPS}    let c = chan<i64>()\n    for i in 0..1 {{ c.send(i) }}\n    let f = ops[c.len()]\n    assert(f(21) == reference(21))"), IDX, Ok),
+        case("world: a write behind a branch on the candidate's answer", REF, &named(&format!("    let f = \"{}/r11u-w1.txt\"\n    let w0 = write_file(f, \"zz\")\n    if idx() == 1 {{ let w = write_file(f, \"reference\") }}\n", std::env::temp_dir().display()), "match read_file(f) { Ok(s) => s  Err(e) => \"\" }"), IDX, Refused),
+        stricter(case("world: the same write behind the operator's own branch", REF, &named(&format!("    let f = \"{}/r11u-w2.txt\"\n    let w0 = write_file(f, \"zz\")\n    if 1 == 1 {{ let w = write_file(f, \"reference\") }}\n", std::env::temp_dir().display()), "match read_file(f) { Ok(s) => s  Err(e) => \"\" }"), IDX, Ok)),
+        case("chan: len as a loop bound", REF, &format!("{OPS}    let c = chan<i64>()\n    push(c)\n    let k = 0\n    for i in 0..c.len() {{ k = k + 1 }}\n    let f = ops[k]\n    assert(f(21) == reference(21))"), PUSH, Refused),
+    ]
+}
+
+#[test]
+fn a_channel_the_candidate_touched_never_selects_an_operator_closure_or_name() {
+    let cases = channel_cases();
+    check(&cases, Rules::TaintOnly);
+    check(&cases, Rules::Both);
+    attacks_are_live(&cases);
+}
+
+/// A channel method call routes through ONE helper before it dispatches, so a
+/// new method cannot read the queue without it; and the methods are a closed set.
+#[test]
+fn every_channel_method_goes_through_the_one_access_helper() {
+    let src = sources()
+        .into_iter()
+        .find(|(f, _)| *f == "interp/eval.rs")
+        .expect("eval.rs")
+        .1;
+    let start = src
+        .find("if let Value::Chan(q) = &recv {")
+        .expect("the channel method block");
+    let block = &src[start..start + src[start..].find("let mut argv").expect("end of block")];
+    let helper = block
+        .find("self.t_chan_access(&recv, method)")
+        .expect("DRIFT: the channel method block no longer calls t_chan_access");
+    let dispatch = block
+        .find("return match method.as_str()")
+        .expect("dispatch");
+    assert!(
+        helper < dispatch,
+        "DRIFT: t_chan_access must run BEFORE the method dispatch"
+    );
+    let mut arms: Vec<&str> = block[dispatch..]
+        .lines()
+        .filter_map(|l| {
+            let t = l.trim_start();
+            if l.starts_with("                        \"") {
+                t.strip_prefix('"')?.split('"').next()
+            } else {
+                None
+            }
+        })
+        .collect();
+    arms.sort();
+    assert_eq!(
+        arms,
+        vec!["clone", "len", "recv", "send", "try_recv"],
+        "DRIFT: a channel method was added or removed; give it a case in channel_cases() and check it is covered by t_chan_access"
+    );
+    // `select` pops a queue itself: it must take and mark the same way.
+    let sel = src.find("Expr::Select(arms) =>").expect("select arm");
+    let sel_block = &src[sel..sel + 1800.min(src.len() - sel)];
+    assert!(
+        sel_block.contains("self.t_chan_access("),
+        "DRIFT: select pops a channel without t_chan_access"
+    );
+}
+
+// ── Amendment 106: every reader of shared mutable state returns tainted ────────
+
+/// Readers of a `Dict`, each as an expression that is `1` after the sealed
+/// write `dict_set(d, "n", 1)` (and `0` or absent before it).
+const DICT_READERS: &[(&str, &str)] = &[
+    ("dict_get", "match dict_get(d, \"n\") { Some(v) => v  None => 0 }"),
+    ("dict_has", "if dict_has(d, \"n\") { 1 } else { 0 }"),
+    ("dict_len", "dict_len(d)"),
+    ("dict_keys", "len(dict_keys(d))"),
+    ("dict_values", "dict_values(d)[0]"),
+    ("dict_map_values", "dict_len(dict_map_values(d, |v| v))"),
+    ("dict_each", "{\n        let acc = dict_new()\n        dict_each(d, |k, v| { dict_set(acc, k, v) })\n        dict_len(acc)\n    }"),
+    ("dict_merge", "dict_len(dict_merge(d, dict_new()))"),
+    ("dict_filter", "dict_len(dict_filter(d, |k, v| v > 0))"),
+    ("dict_get_or", "dict_get_or(d, \"n\", 0)"),
+    ("dict_to_pairs", "len(dict_to_pairs(d))"),
+    ("dict_to_str", "match dict_to_str(d) { Ok(s) => len(s) - 3  Err(e) => 0 }"),
+    ("dict_to_json", "match dict_to_json(d) { Ok(s) => len(s) - 6  Err(e) => 0 }"),
+];
+
+/// Builtins that take a `Dict` and write it, each: how the SEALED fn writes,
+/// what the operator put there first, and a reader that is `1` after the write.
+const DICT_WRITER_ROWS: &[(&str, &str, &str, &str)] = &[
+    ("dict_set", "", "dict_set(d, \"n\", 1)", "dict_len(d)"),
+    (
+        "dict_remove",
+        "    dict_set(d, \"n\", 1)\n    dict_set(d, \"m\", 1)\n",
+        "let r = dict_remove(d, \"m\")",
+        "dict_len(d)",
+    ),
+    (
+        "dict_inc",
+        "",
+        "let r = dict_inc(d, \"n\")",
+        "match dict_get(d, \"n\") { Some(v) => v  None => 0 }",
+    ),
+];
+
+/// Builtins that return a fresh dict or take no dict at all: neither a reader
+/// of one nor a writer.
+const DICT_NOT_READERS: &[&str] = &[
+    "dict_new",
+    "dict_from_pairs",
+    "dict_from_str",
+    "dict_try_from_str",
+];
+
+fn state_case(name: &'static str, setup: &str, write: &str, idx: &str, expect: Expect) -> Case {
+    state_case_in(name, "", setup, write, idx, expect)
+}
+
+fn state_case_in(
+    name: &'static str,
+    pre: &str,
+    setup: &str,
+    write: &str,
+    idx: &str,
+    expect: Expect,
+) -> Case {
+    case(
+        name,
+        &format!("{REF}{pre}"),
+        &format!(
+            "{OPS}{setup}    let i = {idx}\n    let f = ops[i]\n    assert(f(21) == reference(21))"
+        ),
+        write,
+        expect,
+    )
+}
+
+fn dict_state_cases() -> Vec<Case> {
+    use Expect::*;
+    let leak = |s: &str| -> &'static str { Box::leak(s.to_string().into_boxed_str()) };
+    let mut v = Vec::new();
+    for (b, expr) in DICT_READERS {
+        // Attack: sealed code wrote the dict, the operator's reader selects.
+        v.push(state_case(
+            leak(&format!("state: {b} after a sealed dict_set")),
+            "    let d = dict_new()\n    put(d)\n",
+            "fn put(d: Dict) { dict_set(d, \"n\", 1) }\n",
+            expr,
+            Refused,
+        ));
+        // Control: the operator wrote the same value itself.
+        v.push(state_case(
+            leak(&format!("state: {b} after the operator's own dict_set")),
+            "    let d = dict_new()\n    dict_set(d, \"n\", 1)\n",
+            "",
+            expr,
+            Ok,
+        ));
+    }
+    for (b, setup, sealed, reader) in DICT_WRITER_ROWS {
+        v.push(state_case(
+            leak(&format!("state: sealed {b}")),
+            &format!("    let d = dict_new()\n{setup}    put(d)\n"),
+            leak(&format!("fn put(d: Dict) {{ {sealed} }}\n")),
+            reader,
+            Refused,
+        ));
+        v.push(state_case(
+            leak(&format!("state: operator {b}")),
+            &format!("    let d = dict_new()\n{setup}    {sealed}\n"),
+            "",
+            reader,
+            Ok,
+        ));
+    }
+    v
+}
+
+#[test]
+fn a_dict_reader_is_tainted_after_a_sealed_write_and_clean_after_the_operators() {
+    let cases = dict_state_cases();
+    check(&cases, Rules::TaintOnly);
+    check(&cases, Rules::Both);
+    attacks_are_live(&cases);
+}
+
+/// Every builtin that takes a `Dict` is a row of one of the tables above, and
+/// every `dict_*` builtin is accounted for: a new one fails here until it has
+/// an attack and a control.
+#[test]
+fn every_dict_builtin_has_a_taint_routing_row() {
+    for b in crate::builtins::BUILTINS {
+        let takes_dict = b.params.iter().any(|(_, t)| *t == "Dict");
+        if takes_dict || b.name.starts_with("dict_") {
+            let known = DICT_READERS.iter().any(|(n, _)| *n == b.name)
+                || DICT_WRITER_ROWS.iter().any(|(n, ..)| *n == b.name)
+                || DICT_NOT_READERS.contains(&b.name);
+            assert!(
+                known,
+                "DRIFT: `{}` reads or writes a dict and has no row in DICT_READERS / DICT_WRITER_ROWS",
+                b.name
+            );
+        }
+    }
+    for (n, _) in DICT_READERS {
+        assert!(
+            crate::builtins::BUILTINS.iter().any(|b| b.name == *n),
+            "`{n}` is not a builtin"
+        );
+    }
+}
+
+/// Kernel getters. A sealed frame has a kernel of its own, so sealed code
+/// cannot write the operator's kernel; what it can do is steer an operator
+/// WRITE (an amount, a count, the number of times a loop spawns). Each row is
+/// `(getter, items, setup)` where setup writes the kernel under `idx()`, the
+/// candidate's number, and the getter reads back a number that is `1`.
+const KERNEL_GETTERS: &[(&str, &str, &str, &str)] = &[
+    (
+        "principal_budget_remaining",
+        "",
+        "    let p = principal_root(\"r\", true, true, true, 100)\n    let r = principal_spend(p, #)\n",
+        "100 - principal_budget_remaining(p)",
+    ),
+    (
+        "scheduler_done_count",
+        "fn one(x: i64) -> i64 { 1 }\n",
+        "    for i in 0..# { let id = scheduler_spawn(\"one\", 0) }\n    let n = scheduler_run()\n",
+        "scheduler_done_count()",
+    ),
+];
+
+/// Kernel builtins that are not a getter of state a sealed fn can have
+/// written, with the reason; each is behind the same `Class::Kernel` gate in
+/// `t_builtin_in` as a getter that IS in the table.
+const KERNEL_NOT_GETTERS: &[(&str, &str)] = &[
+    ("principal_root", "creates a handle"),
+    ("principal_mint", "creates a handle"),
+    ("principal_holds", "capabilities are fixed at creation; nothing sealed can change them"),
+    ("principal_spend", "a writer"),
+    ("principal_authorize", "capabilities are fixed at creation"),
+    ("principal_can_mint", "capabilities are fixed at creation"),
+    ("principal_activate", "returns unit"),
+    ("principal_current_name", "reads the activated principal; sealed code cannot activate (a writer in the kernel class)"),
+    ("sandbox_create", "creates a handle"),
+    ("sandbox_create_scoped", "creates a handle"),
+    ("sandbox_run", "runs a named fn: the name rule, not state"),
+    ("scheduler_spawn", "a writer"),
+    ("scheduler_run", "a writer"),
+    ("scheduler_result", "keyed by an id the spawner holds; the id is tainted if sealed spawned it"),
+    ("scheduler_failed", "keyed by an id the spawner holds"),
+    ("scheduler_restart", "a writer"),
+    ("scheduler_failed_count", "same Kernel-class gate as scheduler_done_count"),
+    ("supervisor_new", "creates a handle"),
+    ("supervisor_supervise", "a writer"),
+    ("supervisor_run", "a writer"),
+    ("supervisor_alive", "same Kernel-class gate as scheduler_done_count"),
+    ("supervisor_restarts", "same Kernel-class gate as scheduler_done_count"),
+    ("dstore_open", "creates a handle (and a log in the user cache dir, so no test drives it)"),
+    ("dstore_apply", "a writer"),
+    ("dstore_value", "same Kernel-class gate as principal_budget_remaining (a test would write the user cache dir)"),
+    ("dstore_version", "same Kernel-class gate as principal_budget_remaining"),
+    ("dstore_clear", "a writer"),
+    ("llm_open", "creates a handle"),
+    ("llm_complete", "a writer (and AI-policy gated)"),
+    ("llm_alive", "same Kernel-class gate as dstore_value"),
+    ("llm_spent", "same Kernel-class gate as principal_budget_remaining"),
+    ("kernel_goal_create", "creates a handle"),
+    ("kernel_goal_run", "a writer"),
+    ("kernel_goal_best_score", "same Kernel-class gate as dstore_value"),
+    ("kernel_goal_spent", "same Kernel-class gate as principal_budget_remaining"),
+    ("kernel_goal_budget_left", "same Kernel-class gate as principal_budget_remaining"),
+    ("corrigible_halt", "a writer"),
+    ("corrigible_halted", "same Kernel-class gate as dstore_value"),
+    ("goal_run", "a writer"),
+    ("goal_run_categorical", "a writer"),
+    ("goal_run_random", "a writer"),
+    ("goal_run_multistart", "a writer"),
+    ("goal_count", "same Kernel-class gate as principal_budget_remaining"),
+    ("goal_run_constrained", "a writer"),
+    ("goal_continue", "a writer"),
+    ("goal_best_input", "same Kernel-class gate as principal_budget_remaining"),
+    ("goal_best_inputs", "same Kernel-class gate as principal_budget_remaining"),
+    ("goal_best_inputs_f64", "same Kernel-class gate as principal_budget_remaining"),
+    ("goal_best_score", "same Kernel-class gate as principal_budget_remaining"),
+    ("goal_eval", "a writer"),
+    ("goal_history", "same Kernel-class gate as principal_budget_remaining"),
+    ("goal_clear", "a writer"),
+    ("agent_detect_loop", "same Kernel-class gate as principal_budget_remaining"),
+    ("agent_uncertainty", "same Kernel-class gate as principal_budget_remaining"),
+    ("agent_trace_len", "same Kernel-class gate as principal_budget_remaining"),
+];
+
+fn kernel_state_cases() -> Vec<Case> {
+    use Expect::*;
+    let leak = |s: &str| -> &'static str { Box::leak(s.to_string().into_boxed_str()) };
+    let mut v = Vec::new();
+    for (b, pre, setup, expr) in KERNEL_GETTERS {
+        // Attack: the candidate's number drives the operator's write.
+        v.push(state_case_in(
+            leak(&format!("kernel: {b} after a write the candidate sized")),
+            pre,
+            &setup.replace('#', "idx()"),
+            IDX,
+            expr,
+            Refused,
+        ));
+        // Control: the operator's literal does.
+        v.push(state_case_in(
+            leak(&format!("kernel: {b} after the operator's own write")),
+            pre,
+            &setup.replace('#', "1"),
+            IDX,
+            expr,
+            Ok,
+        ));
+    }
+    v
+}
+
+#[test]
+fn a_kernel_getter_is_tainted_after_a_write_the_candidate_steered() {
+    let cases = kernel_state_cases();
+    check(&cases, Rules::TaintOnly);
+    check(&cases, Rules::Both);
+    attacks_are_live(&cases);
+}
+
+#[test]
+fn every_kernel_builtin_is_a_tested_getter_or_stated_not_one() {
+    use super::taint::{info, Class};
+    for b in crate::builtins::BUILTINS {
+        if info(b.name).map(|i| i.class) == Some(Class::Kernel) {
+            let known = KERNEL_GETTERS.iter().any(|(n, ..)| *n == b.name)
+                || KERNEL_NOT_GETTERS.iter().any(|(n, _)| *n == b.name);
+            assert!(
+                known,
+                "DRIFT: kernel builtin `{}` is neither in KERNEL_GETTERS nor in KERNEL_NOT_GETTERS",
+                b.name
+            );
+        }
+    }
+    for (n, _) in KERNEL_NOT_GETTERS {
+        assert!(
+            info(n).map(|i| i.class) == Some(Class::Kernel),
+            "`{n}` is not a kernel builtin"
+        );
+    }
+}
+
+/// `&mut` arrays are the only array state two frames share.
+fn array_state_cases() -> Vec<Case> {
+    use Expect::*;
+    vec![
+        state_case(
+            "array: &mut push by sealed code",
+            "    let xs: [i64] = [0]\n    grow(&mut xs)\n",
+            "fn grow(xs: &mut [i64]) { xs = arr_push(xs, 1) }\n",
+            "len(xs) - 1",
+            Refused,
+        ),
+        state_case(
+            "array: &mut concat by sealed code",
+            "    let xs: [i64] = [0]\n    grow(&mut xs)\n",
+            "fn grow(xs: &mut [i64]) { xs = arr_concat(xs, [1]) }\n",
+            "len(xs) - 1",
+            Refused,
+        ),
+        state_case(
+            "array: &mut slot write by sealed code",
+            "    let xs: [i64] = [0]\n    grow(&mut xs)\n",
+            "fn grow(xs: &mut [i64]) { xs[0] = 1 }\n",
+            "xs[0]",
+            Refused,
+        ),
+        state_case(
+            "array: the operator's own push",
+            "    let xs: [i64] = [0]\n    xs = arr_push(xs, 1)\n",
+            "",
+            "len(xs) - 1",
+            Ok,
+        ),
+        state_case(
+            "array: the operator's own slot write",
+            "    let xs: [i64] = [0]\n    xs[0] = 1\n",
+            "",
+            "xs[0]",
+            Ok,
+        ),
+    ]
+}
+
+#[test]
+fn a_shared_array_is_tainted_after_a_sealed_write() {
+    let cases = array_state_cases();
+    check(&cases, Rules::TaintOnly);
+    check(&cases, Rules::Both);
+    attacks_are_live(&cases);
+}
+
+// ── Amendment 106: areas the round-11 PSV-3 reviewer did not hunt ─────────────
+
+fn hunt_r11_cases() -> Vec<Case> {
+    use Expect::*;
+    let named = |pre: &str, n: &str| {
+        format!("{SB}{pre}    let nm = {n}\n    let got = sandbox_run(sb, nm, 21)\n    assert(got == reference(21))")
+    };
+    vec![
+        // spawn: the body runs eagerly and its sends are the operator's own channel.
+        case("spawn: the candidate's number sent from a spawn body", REF, &format!("{OPS}    let c = chan<i64>()\n    spawn {{ c.send(idx()) }}\n    let f = ops[c.recv()]\n    assert(f(21) == reference(21))"), IDX, Refused),
+        case("spawn: a spawn body that hands the channel to the candidate", REF, &format!("{OPS}    let c = chan<i64>()\n    spawn {{ push(c) }}\n    let f = ops[c.len()]\n    assert(f(21) == reference(21))"), PUSH, Refused),
+        case("spawn: the operator's own number", REF, &format!("{OPS}    let c = chan<i64>()\n    spawn {{ c.send(1) }}\n    let f = ops[c.recv()]\n    assert(f(21) == reference(21))"), "", Ok),
+        // select: which arm fires depends on which queues are non-empty.
+        case("select: the arm skipped because the candidate drained its channel", REF, &format!("{OPS}    let a = chan<i64>()\n    let b = chan<i64>()\n    a.send(7)\n    b.send(7)\n    drain(a)\n    let f = select {{ a.recv() => ops[0]  b.recv() => ops[1] }}\n    assert(f(21) == reference(21))"), DRAIN, Refused),
+        case("select: the arm fired because the candidate fed its channel", REF, &format!("{OPS}    let a = chan<i64>()\n    let b = chan<i64>()\n    b.send(7)\n    push(a)\n    let f = select {{ a.recv() => ops[1]  b.recv() => ops[0] }}\n    assert(f(21) == reference(21))"), PUSH, Refused),
+        case("select: untouched channels", REF, &format!("{OPS}    let a = chan<i64>()\n    let b = chan<i64>()\n    b.send(7)\n    let f = select {{ a.recv() => ops[0]  b.recv() => ops[1] }}\n    assert(f(21) == reference(21))"), "", Ok),
+        // Uncertain / Temporal built by the candidate, read for a selection.
+        case("Uncertain: a value the candidate built", REF, &format!("{OPS}    let u = mku()\n    let f = ops[u.value]\n    assert(f(21) == reference(21))"), "fn mku() -> Uncertain<i64> { uncertain_new(1, 0.9) }\n", Refused),
+        case("Uncertain: a confidence the candidate set, as a branch", REF, &format!("{OPS}    let u = mku()\n    let f = if u.confidence > 0.5 {{ ops[1] }} else {{ ops[0] }}\n    assert(f(21) == reference(21))"), "fn mku() -> Uncertain<i64> { uncertain_new(1, 0.9) }\n", Refused),
+        case("Uncertain: the operator's own", REF, &format!("{OPS}    let u = uncertain_new(1, 0.9)\n    let f = ops[u.value]\n    assert(f(21) == reference(21))"), "", Ok),
+        case("Temporal: a value the candidate built", REF, &format!("{OPS}    let t = mkt()\n    let f = ops[t.value]\n    assert(f(21) == reference(21))"), "fn mkt() -> Temporal<i64> { temporal_new(1, 1000, 0.1) }\n", Refused),
+        case("Temporal: projected by the operator", REF, &format!("{OPS}    let t = temporal_at(mkt(), 0)\n    let f = ops[t.value]\n    assert(f(21) == reference(21))"), "fn mkt() -> Temporal<i64> { temporal_new(1, 1000, 0.1) }\n", Refused),
+        case("Temporal: the operator's own", REF, &format!("{OPS}    let t = temporal_new(1, 1000, 0.1)\n    let f = ops[t.value]\n    assert(f(21) == reference(21))"), "", Ok),
+        // JSON text the candidate produced, parsed by the operator.
+        case("json: a field the candidate wrote, as an index", REF, &format!("{OPS}    let f = match json_get_i64(mkj(), \"i\") {{ Ok(i) => ops[i]  Err(e) => ops[0] }}\n    assert(f(21) == reference(21))"), "fn mkj() -> str { \"{{\\\"i\\\":1}}\" }\n", Refused),
+        case("json: a string field the candidate wrote, as a name", REF, &named("", "match json_get_str(mkn(), \"n\") { Ok(s) => s  Err(e) => \"\" }"), "fn mkn() -> str { \"{{\\\"n\\\":\\\"reference\\\"}}\" }\n", Refused),
+        case("json: a path the candidate chose names a field", REF, &format!("{OPS}    let f = match json_get_i64(\"{{{{\\\"a\\\":0,\\\"b\\\":1}}}}\", keyname()) {{ Ok(i) => ops[i]  Err(e) => ops[0] }}\n    assert(f(21) == reference(21))"), "fn keyname() -> str { \"b\" }\n", Refused),
+        case("json: the operator's own text", REF, &format!("{OPS}    let f = match json_get_i64(\"{{{{\\\"i\\\":1}}}}\", \"i\") {{ Ok(i) => ops[i]  Err(e) => ops[0] }}\n    assert(f(21) == reference(21))"), "", Ok),
+        // The dict snapshot: handed over twice, written between, nested.
+        case("snapshot: handed over, then written by sealed code", REF, &format!("{OPS}    let d = dict_new()\n    look(d)\n    put(d)\n    let f = ops[dict_len(d)]\n    assert(f(21) == reference(21))"), "fn look(d: Dict) -> i64 { dict_len(d) }\nfn put(d: Dict) { dict_set(d, \"n\", 1) }\n", Refused),
+        case("snapshot: dirtied by the operator between hand-overs", REF, &format!("{OPS}    let d = dict_new()\n    dict_set(d, \"a\", 0)\n    look(d)\n    dict_set(d, \"b\", 0)\n    put(d)\n    let f = ops[dict_len(d) - 2]\n    assert(f(21) == reference(21))"), "fn look(d: Dict) -> i64 { dict_len(d) }\nfn put(d: Dict) { dict_set(d, \"n\", 1) }\n", Refused),
+        case("snapshot: a dict inside an operator array", REF, &format!("{OPS}    let d = dict_new()\n    let xs = [d]\n    put(xs[0])\n    let f = ops[dict_len(d)]\n    assert(f(21) == reference(21))"), "fn put(d: Dict) { dict_set(d, \"n\", 1) }\n", Refused),
+        case("snapshot: handed over, never written, operator writes after", REF, &format!("{OPS}    let d = dict_new()\n    look(d)\n    dict_set(d, \"n\", 1)\n    let f = ops[dict_len(d)]\n    assert(f(21) == reference(21))"), "fn look(d: Dict) -> i64 { dict_len(d) }\n", Ok),
+        // dict_merge / dict_each / fresh dicts derived from a tainted one.
+        case("merge: a fresh dict merged from a dict the candidate wrote", REF, &format!("{OPS}    let d = dict_new()\n    put(d)\n    let m = dict_merge(dict_new(), d)\n    let f = ops[dict_len(m)]\n    assert(f(21) == reference(21))"), "fn put(d: Dict) { dict_set(d, \"n\", 1) }\n", Refused),
+        case("merge: the merged dict kept in an operator array", REF, &format!("{OPS}    let d = dict_new()\n    put(d)\n    let ms = [dict_merge(dict_new(), d)]\n    let f = ops[dict_len(ms[0])]\n    assert(f(21) == reference(21))"), "fn put(d: Dict) { dict_set(d, \"n\", 1) }\n", Refused),
+        case("merge: the merged dict handed through an operator fn", &format!("{REF}fn count(m: Dict) -> i64 {{ dict_len(m) }}\n"), &format!("{OPS}    let d = dict_new()\n    put(d)\n    let m = dict_merge(dict_new(), d)\n    let f = ops[count(m)]\n    assert(f(21) == reference(21))"), "fn put(d: Dict) { dict_set(d, \"n\", 1) }\n", Refused),
+        case("merge: stored in another operator dict and read back", REF, &format!("{OPS}    let d = dict_new()\n    put(d)\n    let h = dict_new()\n    dict_set(h, \"m\", dict_merge(dict_new(), d))\n    let f = match dict_get(h, \"m\") {{ Some(m) => ops[dict_len(m)]  None => ops[0] }}\n    assert(f(21) == reference(21))"), "fn put(d: Dict) { dict_set(d, \"n\", 1) }\n", Refused),
+        case("merge: the operator's own dicts", REF, &format!("{OPS}    let d = dict_new()\n    dict_set(d, \"n\", 1)\n    let m = dict_merge(dict_new(), d)\n    let f = ops[dict_len(m)]\n    assert(f(21) == reference(21))"), "", Ok),
+        case("each: a sum built in dict_each over a dict the candidate wrote", REF, &format!("{OPS}    let d = dict_new()\n    put(d)\n    let c = chan<i64>()\n    dict_each(d, |k, v| {{ c.send(v) }})\n    let f = ops[c.recv()]\n    assert(f(21) == reference(21))"), "fn put(d: Dict) { dict_set(d, \"n\", 1) }\n", Refused),
+        case("each: a counter bumped by dict_each's closure", REF, &format!("{OPS}    let d = dict_new()\n    put(d)\n    let acc = dict_new()\n    dict_each(d, |k, v| {{ let r = dict_inc(acc, \"n\") }})\n    let f = ops[dict_get_or(acc, \"n\", 0)]\n    assert(f(21) == reference(21))"), "fn put(d: Dict) { dict_set(d, \"n\", 1) }\n", Refused),
+        case("each: a counter bumped for a dict the operator wrote", REF, &format!("{OPS}    let d = dict_new()\n    dict_set(d, \"n\", 1)\n    let acc = dict_new()\n    dict_each(d, |k, v| {{ let r = dict_inc(acc, \"n\") }})\n    let f = ops[dict_get_or(acc, \"n\", 0)]\n    assert(f(21) == reference(21))"), "", Ok),
+        case("map: a send per element of an array the candidate built", REF, &format!("{OPS}    let c = chan<i64>()\n    let r = arr_map(mkarr(), |x| {{ c.send(1)\n        x }})\n    let f = ops[c.len()]\n    assert(f(21) == reference(21))"), "fn mkarr() -> [i64] { [5] }\n", Refused),
+        case("map: a send per element of an array the operator wrote", REF, &format!("{OPS}    let c = chan<i64>()\n    let r = arr_map([5], |x| {{ c.send(1)\n        x }})\n    let f = ops[c.len()]\n    assert(f(21) == reference(21))"), "", Ok),
+        case("each: the count of entries visited", REF, &format!("{OPS}    let d = dict_new()\n    put(d)\n    let c = chan<i64>()\n    dict_each(d, |k, v| {{ c.send(1) }})\n    let f = ops[c.len()]\n    assert(f(21) == reference(21))"), "fn put(d: Dict) { dict_set(d, \"n\", 1) }\n", Refused),
+        case("each: the operator's own dict", REF, &format!("{OPS}    let d = dict_new()\n    dict_set(d, \"n\", 1)\n    let c = chan<i64>()\n    dict_each(d, |k, v| {{ c.send(v) }})\n    let f = ops[c.recv()]\n    assert(f(21) == reference(21))"), "", Ok),
+        // A channel's text form carries its length.
+        case("display: a channel interpolated into a string", REF, &format!("{OPS}    let c = chan<i64>()\n    push(c)\n    let s = \"{{c}}\"\n    let f = if str_contains(s, \"len=1\") {{ ops[1] }} else {{ ops[0] }}\n    assert(f(21) == reference(21))"), PUSH, Refused),
+        case("display: a channel in an array interpolated into a string", REF, &format!("{OPS}    let c = chan<i64>()\n    push(c)\n    let s = \"{{[c]}}\"\n    let f = if str_contains(s, \"len=1\") {{ ops[1] }} else {{ ops[0] }}\n    assert(f(21) == reference(21))"), PUSH, Refused),
+        case("display: dict_to_str of a dict holding a channel", REF, &format!("{OPS}    let c = chan<i64>()\n    let d = dict_new()\n    dict_set(d, \"c\", c)\n    push(c)\n    let s = match dict_to_str(d) {{ Ok(s) => s  Err(e) => \"\" }}\n    let f = if str_contains(s, \"len=1\") {{ ops[1] }} else {{ ops[0] }}\n    assert(f(21) == reference(21))"), PUSH, Refused),
+        case("display: dict_to_str of the operator's own channel", REF, &format!("{OPS}    let c = chan<i64>()\n    let d = dict_new()\n    dict_set(d, \"c\", c)\n    c.send(1)\n    let s = match dict_to_str(d) {{ Ok(s) => s  Err(e) => \"\" }}\n    let f = if str_contains(s, \"len=1\") {{ ops[1] }} else {{ ops[0] }}\n    assert(f(21) == reference(21))"), "", Ok),
+        case("display: a channel under 34 arrays", REF, &format!("{OPS}    let c = chan<i64>()\n    push(c)\n    let s = \"{{{}{}{}}}\"\n    let f = if str_contains(s, \"len=1\") {{ ops[1] }} else {{ ops[0] }}\n    assert(f(21) == reference(21))", "[".repeat(34), "c", "]".repeat(34)), PUSH, Refused),
+        case("display: a channel's text with nothing sent", REF, &format!("{OPS}    let c = chan<i64>()\n    c.send(1)\n    let s = \"{{c}}\"\n    let f = if str_contains(s, \"len=1\") {{ ops[1] }} else {{ ops[0] }}\n    assert(f(21) == reference(21))"), "", Ok),
+    ]
+}
+
+#[test]
+fn areas_the_psv3_reviewer_did_not_hunt() {
+    let cases = hunt_r11_cases();
+    check(&cases, Rules::TaintOnly);
+    attacks_are_live(&cases);
+}
+
+/// Every builtin arm that turns a value into text is either a stringifier (its
+/// result carries the taint of every object inside the argument) or an emitter
+/// (it writes to a stream and returns nothing readable).
+#[test]
+fn every_builtin_that_renders_a_value_to_text_is_a_stringifier_or_an_emitter() {
+    use super::taint::{EMITTERS, STRINGIFIERS};
+    let src = sources()
+        .into_iter()
+        .find(|(f, _)| *f == "interp/builtins.rs")
+        .expect("builtins.rs")
+        .1;
+    let mut cur: Vec<String> = Vec::new();
+    let mut found: Vec<String> = Vec::new();
+    for line in src.lines() {
+        let indent = line.len() - line.trim_start().len();
+        let t = line.trim_start();
+        if indent == 12 && t.starts_with('"') && t.contains("=>") {
+            cur = t[..t.find("=>").unwrap()]
+                .split('|')
+                .map(|n| n.trim().trim_matches('"').to_string())
+                .collect();
+        } else if !t.starts_with("//") && t.contains("display(") && !t.contains("fn display") {
+            found.extend(cur.iter().cloned());
+        }
+    }
+    found.sort();
+    found.dedup();
+    let mut want: Vec<String> = STRINGIFIERS
+        .iter()
+        .chain(EMITTERS)
+        .map(|s| s.to_string())
+        .collect();
+    want.sort();
+    assert_eq!(
+        found, want,
+        "DRIFT: a builtin renders a value with display() and is neither a STRINGIFIER nor an EMITTER (interp/taint.rs)"
+    );
+    // The two sinks of text in the evaluator itself.
+    let ev = sources()
+        .into_iter()
+        .find(|(f, _)| *f == "interp/eval.rs")
+        .unwrap()
+        .1;
+    let fmt = ev.find("Expr::FmtStr { parts }").expect("FmtStr arm");
+    assert!(
+        ev[fmt..fmt + 900].contains("t_obj_deep"),
+        "DRIFT: string interpolation no longer takes the taint of the objects it prints"
+    );
+}
+
+// ── Amendment 106: the existence oracle, on every path ────────────────────────
+
+/// Every form in which a sealed fn can name something the operator defines (or
+/// that does not exist). `{N}` is the name.
+const ORACLE_FORMS: &[(&str, &str)] = &[
+    ("call", "{N}()"),
+    ("fnvalue", "let g = {N}\n 41"),
+    (
+        "sandbox_run",
+        "let sb = sandbox_create(0, \"IO\")\n sandbox_run(sb, \"{N}\", 0)",
+    ),
+    ("sched_spawn", "let id = scheduler_spawn(\"{N}\", 0)\n 41"),
+    ("goal_run", "let r = goal_run(\"{N}\", 100.0, 5)\n 41"),
+    (
+        "goal_run_c",
+        "let r = goal_run_constrained(\"cg\", \"{N}\", 100.0, 5)\n 41",
+    ),
+    ("goal_cont", "let r = goal_continue(\"{N}\", 100.0, 5)\n 41"),
+    (
+        "goal_random",
+        "let r = goal_run_random(\"{N}\", 100.0, 5)\n 41",
+    ),
+    (
+        "kgoal",
+        "let g = kernel_goal_create(0, \"{N}\", 100.0)\n 41",
+    ),
+    ("goal_best", "let g = goal_best_input(\"{N}\")\n 41"),
+    ("goal_hist", "let g = goal_history(\"{N}\")\n 41"),
+    ("index", "{N}[0]"),
+    ("field", "{N}.k"),
+    ("ident", "{N}\n 41"),
+    ("cconst", "{N}(1)"),
+    ("arr_map", "arr_map([1], {N})[0]"),
+    ("assign", "{N} = 5\n 41"),
+    ("assign_idx", "{N}[0] = 5\n 41"),
+    ("ufcs", "3.{N}()"),
+    ("interp", "let s = \"{{N}}\"\n 41"),
+];
+
+/// (a name the operator defines, a name nothing defines): one pair per kind of
+/// operator definition.
+const ORACLE_PAIRS: &[(&str, &str)] = &[
+    ("secret", "zznosuch"),
+    ("TABLE", "ZZNOSUCH"),
+    ("ad", "zznosuch"),
+    ("nonadapt", "zznosuch"),
+    ("F", "ZZNOSUCH"),
+    ("CFG", "ZZNOSUCH"),
+];
+
+/// A sealed caller's refusal does not say whether the operator defines a name:
+/// across every form and kind of definition, the text for an operator name is
+/// the text for a missing one, modulo the name itself. 20 forms x 6 pairs.
+#[test]
+fn a_sealed_caller_cannot_tell_an_operator_name_from_a_missing_one_on_any_path() {
+    let su = "let TABLE = [41, 42]\n@[adaptive]\nfn ad(n: i64) -> i64 { n }\nfn secret() -> i64 { 41 }\nfn nonadapt(n: i64) -> i64 { n }\ntype C = { k: i64 }\nlet CFG = C { k: 41 }\nlet F = |x: i64| x + 1\nlet P = principal_root(\"r\", true, true, true, 100)\n";
+    let body = "    assert_eq(solve(), 41)";
+    let verdict = |name: &str, form: &str| -> String {
+        let cand = format!(
+            "@[adaptive]\nfn cg(n: i64) -> i64 {{ n }}\nfn solve() -> i64 {{ {} }}\n",
+            form.replace("{N}", name)
+        );
+        let c = case("oracle", su, body, &cand, Expect::Ok);
+        let out = run(&suite_of(&c), &format!("{LAUNDER8}{}", c.cand), Rules::Both);
+        // The first line of the verdict, Debug-formatted (an `Err(String)` keeps its text).
+        format!("{out:?}")
+            .split("\\n")
+            .next()
+            .unwrap_or("")
+            .replace(name, "@")
+    };
+    let mut diffs: Vec<String> = Vec::new();
+    let mut n = 0;
+    for (form, tmpl) in ORACLE_FORMS {
+        for (exist, missing) in ORACLE_PAIRS {
+            n += 1;
+            let a = verdict(exist, tmpl);
+            let b = verdict(missing, tmpl);
+            if a != b {
+                diffs.push(format!("{form} [{exist}] {a}  ||  [{missing}] {b}"));
+            }
+        }
+    }
+    assert_eq!(n, ORACLE_FORMS.len() * ORACLE_PAIRS.len());
+    assert!(
+        diffs.is_empty(),
+        "ORACLE: {} of {n} pairs differ:\n{}",
+        diffs.len(),
+        diffs.join("\n")
+    );
+}

@@ -3642,8 +3642,8 @@ impl<'p> Interp<'p> {
     /// (existence oracle, C9 round 10).
     pub(crate) fn sealed_no_fn_msg(name: &str) -> String {
         format!(
-            "sealed code (the candidate under test) cannot run `{name}`: no such function is \
-             visible to it"
+            "sealed code (the candidate under test) cannot use `{name}`: no such function or \
+             value is visible to it"
         )
     }
 
@@ -3841,9 +3841,7 @@ impl<'p> Interp<'p> {
     /// The global-read edge: a sealed frame may not read an operator global.
     pub(crate) fn seal_global(&self, name: &str) -> Result<(), Flow> {
         if self.seal.active && self.frame_sealed.get() && !self.seal.globals.contains(name) {
-            return panic(format!(
-                "sealed code (the candidate under test) cannot read `{name}`, which the operator defines"
-            ));
+            return panic(Self::sealed_no_fn_msg(name));
         }
         Ok(())
     }
@@ -4882,7 +4880,13 @@ impl<'p> Interp<'p> {
         if name.is_empty() {
             return false;
         }
-        self.fns.contains_key(name) || self.k().provenance.borrow().contains_key(name)
+        // A sealed caller names its OWN goals (an operator fn is not visible to it,
+        // and answers like a name nothing defines: the one existence message).
+        let defined = match self.fns.get(name) {
+            Some(f) => !(self.seal.active && self.frame_sealed.get()) || self.fn_is_sealed(f),
+            None => false,
+        };
+        defined || self.k().provenance.borrow().contains_key(name)
     }
 
     fn unknown_goal_name(&self, name: &str) -> Flow {
@@ -10027,8 +10031,7 @@ fn main() { }
         ] {
             let out = run(&format!("fn solve() -> i64 {{\n    {body}\n}}\n"));
             assert!(
-                out != Ok(TestEnd::Completed)
-                    && matches!(&out, Err(m) if m.contains("cannot read")),
+                out != Ok(TestEnd::Completed) && matches!(&out, Err(m) if m.contains("cannot use")),
                 "ATTACK: a sealed frame read an operator global ({what}): {out:?}"
             );
         }
@@ -10291,14 +10294,14 @@ fn main() { }
             let out = run(&format!("{rest}{solve}"), t);
             assert!(
                 out != Ok(TestEnd::Completed)
-                    && matches!(&out, Err(m) if m.contains("cannot run")),
+                    && matches!(&out, Err(m) if m.contains("cannot use")),
                 "ATTACK: a sealed frame took an operator fn as a value ({what}): {out:?}"
             );
         }
         // Returned to the operator, which calls it: the creation is refused.
         let out = run("fn solve() -> i64 { 0 }\nfn take(f: fn() -> i64) -> i64 { f() }\nfn give() -> fn() -> i64 { secret }\n", "t_back");
         assert!(
-            out != Ok(TestEnd::Completed) && matches!(&out, Err(m) if m.contains("cannot run")),
+            out != Ok(TestEnd::Completed) && matches!(&out, Err(m) if m.contains("cannot use")),
             "ATTACK: the candidate returned the operator's fn as a value: {out:?}"
         );
     }
@@ -10320,7 +10323,7 @@ fn main() { }
             true,
         );
         assert!(
-            out != Ok(TestEnd::Completed) && matches!(&out, Err(m) if m.contains("cannot run")),
+            out != Ok(TestEnd::Completed) && matches!(&out, Err(m) if m.contains("cannot use")),
             "ATTACK: the operator's call of a candidate fn value ran operator code in the candidate's name: {out:?}"
         );
     }
@@ -11169,7 +11172,7 @@ fn main() { }
             ("interp.rs", "self.fns", "current_fn_has_ai_policy: the running fn's own name"),
             ("interp.rs", "let Some(f) = self.fns.get(name.as_str()) else {", "current_ai_tier: the running fn's own name"),
             ("interp.rs", "match self.fns.get(name).copied() {", "fn_by_name: THE resolver, which applies seal_call"),
-            ("interp.rs", "self.fns.contains_key(name) || self.k().provenance.borrow().contains_key(name)", "goal_name_is_known: reached only from the listed goal_* sinks"),
+            ("interp.rs", "let defined = match self.fns.get(name) {", "goal_name_is_known: reached only from the listed goal_* sinks; a sealed caller sees only its own fns"),
             ("interp/goal.rs", "if let Some(f) = self.fns.get(name) {", "run_goal_*: reached only from the listed goal_* sinks; call_fn applies seal_call"),
             ("interp/goal.rs", "let Some(cf) = self.fns.get(cname.as_str()).copied() else {", "the constraint name, a sink (goal_run_constrained arg 2)"),
             ("interp/goal.rs", "let f = match self.fns.get(name) {", "run_goal_*: reached only from the listed goal_* sinks (4 sites)"),
@@ -11179,7 +11182,7 @@ fn main() { }
             ("interp/goal.rs", "if let Some(f) = self.fns.get(name) {", "run_goal: reached only from the listed goal_* sinks"),
             ("interp/goal.rs", "let Some(f) = self.fns.get(name) else {", "goal_eval_holdout: the goal_eval sink"),
             ("interp/builtins.rs", "let outcome = match self.fns.get(fn_name.as_str()).copied() {", "a queued fiber: its name passed the scheduler_spawn sink"),
-            ("interp/builtins.rs", "if !self.fns.contains_key(constraint.as_str()) {", "goal_run_constrained: a sink"),
+            ("interp/builtins.rs", "let visible = match self.fns.get(constraint.as_str()) {", "goal_run_constrained: a sink; a sealed caller sees only its own fns"),
             ("interp/builtins.rs", "let Some(f) = self.fns.get(&fn_name).copied() else {", "sandbox_run: a sink"),
             ("interp/builtins.rs", "if self.fn_by_name(&fn_name)?.is_none() {", "scheduler_spawn: a sink"),
             ("interp/builtins.rs", "if self.fn_by_name(&name)?.is_none() && !self.k().provenance.borrow().contains_key(&name) {", "kernel_goal_create: a sink"),

@@ -6445,3 +6445,134 @@ guards of the helper have no cargo row (`TMPDIR=/tmp`, the `/tmp` tmpfs); the ki
       of its own. `_begin#2` as above. The 16 `okor_unjudged` and 11 `py_guard` REMAINDERs of amendment 98 are untouched.
 
 **Renumbering at integration (round 11, integrate10).** Amendment 103 (eqgate6) wrote its matrix rows as A230-A236 while amendment 102 (psv1t) holds A219-A224; the integration made the matrix contiguous: amendment 103's rows are now A225-A231. The text of amendment 103 was rewritten to the new ids.
+
+## Amendment 106: shared state keeps its taint, a write carries the control it ran under, rendered text carries what it shows, the existence oracle is one text on every path, and the residual is worded to include omission and verdict tables (C9 round 11, PSV1U)
+
+106. **Source: the round-11 SENTINEL, PSV-1 and PSV-3 reviewers** (`/var/tmp/c9r11-findings-SENTINEL.json`, `-PSV-1.json`, `-PSV-3.json`).
+     Mutation ids M2910-M2946 (M2929 is not issued: see "Equivalent arm"; M2940-M2946 are runner legs), matrix rows A240-A245 (the integrator renumbers). Base `c9r11/integrate10`
+     (`3776884c`). `crates/axon-core/src/interp*` changed; classified in `scripts/pci_delta.py` as narrowing. Amendment 102's class ("a path on which
+     taint is dropped") is the one this closes further; its claim is unchanged apart from the wording below.
+
+     **1. The SENTINEL hole (blocker-class), a channel's STATE.** `Chan::len` carried no taint, and a sealed `recv`/`try_recv` that drained the queue
+     marked nothing, so `ops[c.len()]` after the candidate's `send`, `if c.len() == 0 {..}` after its drain, a `match c.try_recv()`, and the NAME given
+     to `sandbox_run` chosen the same way all picked operator code the candidate selected (executed at `3776884c`, both layers on; the control
+     `ops[c.recv() - 6]` was refused). Fixed at the one primitive every channel access passes through: `Interp::t_chan_access` runs BEFORE the method
+     dispatch of EVERY channel method (and in every `select` arm it examines, ready or not): it takes the channel's taint into the result (a READ
+     of the queue), and a sealed frame's MUTATING access (`send`, `recv`, `try_recv`, a `select` pop) marks the channel. A sealed `len`/`clone` changes
+     nothing and marks nothing, as a sealed `dict_len` does not (the existing honest control `an operator send is the operator's` says so). The brief
+     said "mark on ANY sealed access"; the read-only accesses were left unmarked on purpose and that is the one place this differs from it.
+     Drift: `every_channel_method_goes_through_the_one_access_helper` (the method set is closed, the helper runs before the dispatch, `select` calls it).
+     A `select` that SKIPS an arm because the candidate drained its channel is a choice the candidate made: closed by the same helper (M2915).
+
+     **2. Found while writing the routing tests (a second hole of the same class).** A kernel or world builtin recorded `acc` only, not the control
+     taint it ran under, so a `scheduler_spawn` in a loop the candidate sized (`for i in 0..idx() { scheduler_spawn(..) }`) or a `write_file` behind
+     a branch on the candidate's answer left the kernel (or the world) UNTAINTED, and the operator's `scheduler_done_count()` / `read_file` selected
+     with it. A write now stores `t_stored(acc)` (value taint plus the control taint, as a dict write and a channel send already did: M2917, M2918).
+     And a builtin that RUNS CALLBACKS runs them a number of times its arguments decide: `dict_each(d, |k, v| c.send(1))` over a dict the candidate
+     wrote left `c.len()` untainted. Every builtin call in a sealed run now executes under the control taint (VAL only) of its arguments
+     (M2919, M2920).
+
+     **3. Rendered text.** A channel prints its length (`<chan len=1>`) and a dict its contents, so `"{c}"`, `"{[c]}"`, `dict_to_str(d)` handed
+     the length to a `str_contains` that picked a closure. The text now carries the taint of every shared object reachable from the value
+     (`t_obj_deep`: arrays, tuples, records, enum payloads, dict values; past 32 levels the answer is "tainted"): string interpolation, and the builtins in
+     `STRINGIFIERS` (`to_str`, `dict_to_str`). Drift: `every_builtin_that_renders_a_value_to_text_is_a_stringifier_or_an_emitter` (every builtin arm
+     that calls `display(` is one of those or an emitter: `print`, `println`, `eprint`, `eprintln`).
+
+     **4. The existence oracle, on every path (MINOR, SENTINEL).** Of 119 existing-versus-missing pairs 48 still differed. One helper
+     (`Interp::sealed_no_fn_msg`, now "cannot use `X`: no such function or value is visible to it") is the text for a sealed caller on EVERY path: a call, a
+     value-position name, a read of an operator global, the receiver and index fast paths, a global closure constant call, `goal_run`/`goal_continue`
+     (a sealed caller sees only ITS OWN fns: an existing non-adaptive operator fn used to COMPLETE), `goal_run_constrained`'s constraint,
+     `kernel_goal_create`, `sandbox_run`, `scheduler_spawn`. The two other texts (`cannot read .., which the operator defines`, which named the
+     operator's definition outright, and `undefined identifier`) are gone for a sealed caller. Test: `a_sealed_caller_cannot_tell_an_operator_name_from_a_missing_one_on_any_path`,
+     20 forms x 6 kinds of definition (an fn, an `@[adaptive]` fn, a non-adaptive fn, a table, a record, a closure constant) = 120 pairs, all identical modulo the
+     name; a runner twin. **Equivalent arm:** the array-index fast path's `None => no_such_fn(..)` (`Expr::Index` on a name that `is_global`) is
+     unreachable, because `global_ref` returns `None` only for a name `is_global` already denied; it is kept as the same helper and has no row. The two
+     halves of `goal_run_constrained`'s check (an operator constraint is not visible to a sealed caller; a missing one answers in the sealed text) are
+     redundant with each other for THIS property (alone, either one removed leaves the pair indistinguishable: the other half, or the later `goal_*` call
+     edge, gives the same words), so M2930 removes both together (the pre-amendment check) and each half alone is an equivalent mutant.
+
+     **5. Routing, not just class (MINOR, PSV-3).** `every_builtin_has_a_taint_class` proves a builtin is classified, not that its taint is ROUTED. New:
+     `a_dict_reader_is_tainted_after_a_sealed_write_and_clean_after_the_operators` (all 13 dict readers, attack and control, plus the three writers
+     `dict_set`/`dict_remove`/`dict_inc` written by sealed code and read by the operator), `a_kernel_getter_is_tainted_after_a_write_the_candidate_steered` (a sealed
+     frame has a KERNEL of its own, so it cannot write the operator's kernel; what it can do is steer an operator write: the budget spent, the number of fibers
+     spawned), `a_shared_array_is_tainted_after_a_sealed_write` (`&mut` push, concat, slot write), and the drift tests
+     `every_dict_builtin_has_a_taint_routing_row` (every builtin that takes a `Dict` or is named `dict_*` has a row) and
+     `every_kernel_builtin_is_a_tested_getter_or_stated_not_one` (every kernel-class builtin is in the getter table or listed with the reason it is not a
+     getter of state a sealed fn can have written). A Value-reading arm of the Chan method table is covered by the helper test above; the dict
+     builtins have no method table (they are builtins), and each takes its dict through `t_builtin_in`'s argument touch (M2932), which the reader table exercises for all 13.
+     `dstore_*` is left out of the kernel table on purpose: its log lives in the user's cache directory and no test may write there.
+
+     **6. Areas the PSV-3 reviewer did not hunt, attack and control each** (`areas_the_psv3_reviewer_did_not_hunt`, 38 programs): `spawn` bodies (closed),
+     `select` (skipped arm: found and closed, item 1), a session cell (**not applicable**: `--seal` is a flag of `axon test` only, a session cell never runs a
+     sealed interpreter), `Uncertain`/`Temporal` fields and a projected `Temporal` (closed), JSON text the candidate wrote parsed or probed by the operator
+     (`json_get_i64`, `json_get_str`, a key the candidate chose) (closed), the copy-on-write dict snapshot (handed over twice, dirtied between hand-overs, a
+     dict inside an operator array) (closed), `dict_merge` (a fresh dict: kept in an array, handed through an operator fn, stored in another dict) (closed),
+     `dict_each` (its earlier probes were malformed; the callback count was an open route, item 2) and `arr_map` (the same), channel text (item 3).
+
+     **7. The residual, worded to include omission and precomputed verdict tables (PSV-1 reviewer, MAJOR-ADJACENT).** Amendment 102 said an operator that
+     branches on candidate data and runs a weaker check on one side "has written a rubric the candidate chooses a branch of". That is true of two more shapes,
+     now named, executed by the reviewer (`/var/tmp/c9r11-PSV1-logs/`) and NOT closed:
+     * **Omission.** A candidate that does not call an operator callback, or withholds a `send` on an operator channel, selects whatever the operator's
+       branch or table index does on ABSENCE; the lenient check passes (cases y1, y3, w3). The controls where the candidate WRITES are refused (y2, y4, w4). Absence
+       cannot be tainted: there is no value. Tainting every container at hand-over rather than at first write would refuse y1/y3/w3 and every honest callback
+       with them, and would still not touch `if cand_ok() { strict() } else { lenient() }`; it was weighed and not done.
+     * **A table of precomputed operator VERDICTS indexed by a candidate value** (`[strict(7), lenient(7)][idx()]`, a dict of verdicts, an `if` building the
+       verdict) is accepted, while a table of CLOSURES indexed the same way is refused. The closure rule closes the selection of operator CODE; it does not
+       close the selection of a verdict, because the verdict is data the candidate's output may legitimately decide.
+     * **The statement.** *A suite that lets candidate data, or candidate silence, select between a strict and a lenient operator check has let the candidate
+       choose the rubric; no sound rule closes that, because the verdict must depend on the candidate's output.* **Honest-suite guidance:** compare the
+       candidate's output to an expected value (`assert_eq(cand(x), 9)`); never branch or index the CHECK by candidate data or by whether the candidate acted;
+       run every callback and read every channel unconditionally and assert on what came back. The PSV-1 claim in `v022-protected-suite-verdict.md` says the same.
+
+     **8. Honest-program cost, stated (PSV-1 reviewer, MINOR).** Over and above amendment 102's list, each fail-closed and each by test: folding or mapping a
+     candidate's `[u8]` is refused unless the operator casts `as i64` first; running a candidate-NOMINATED entry point by name is refused (the name is the
+     candidate's; name the fn with a literal); an unpinned `let v = work(0)` followed by `v.ok()` in an arm is refused (the pinned form `let v: i64 = ..`
+     passes); a channel the candidate has sent to or drained, a kernel or world builtin run under a branch or a loop the candidate sized, and a value
+     rendered to text from either, are tainted for later reads. Measured, release build, min of 5 on a shared host (the two binaries ran concurrently;
+     run-to-run noise on this host is about 5%): `axon run`, base `3776884c` against this tree, tight loop 0.945 s / 0.963 s, `fib(35)` 7.232 s /
+     6.839 s, `arr_map` loop 1.247 s / 1.229 s; `axon test --seal` (one sealed candidate module), 1.582 s / 1.603 s, 10.300 s / 9.896 s, 2.335 s /
+     2.315 s. No change distinguishable from that noise: every new hook is behind `if T` (compiled out of an ordinary run) and the one sealed-run addition, a
+     `Cell<u8>` guard per builtin call, is one load and one store. The 102 figure stands: up to about 5% for an ordinary run, against the pre-taint base.
+
+     **9. What the runner proves of the static layer (PSV-1 reviewer, MINOR; PSV-3).** After the four withdrawn runner rows (M2603/4/5/7) the static name,
+     dispatch and width rules are NOT independently evidenced at the runner. Of the taint's rules only the closure-table rule had runner rows; this amendment adds
+     the NAME rule's: `the_taint_name_rule_refuses_what_the_static_name_analysis_lets_through` runs four attacks the static name analysis lets through
+     (measured by running every name case with only the static layer on: `an if expression on its bit`, `a match on its value`, `returned from a tainted
+     branch`, `assigned in both arms`, a loop the candidate sized, through the kernel), through `axon test --seal`, requiring the taint's own refusal text; rows M2940 (the call-site check) and M2941 (the VAL test) are killed there by their own attack. The
+     channel runner rows are M2942-M2945 (touch, sealed send, sealed recv, the `select` readiness) and the oracle's is M2946 (`goal_run` of an operator fn).
+     The DISPATCH and WIDTH rules of the taint have **no runner leg and cannot have one**: every attack they refuse the static layer refuses first, so a runner
+     row would be REFUSED_ELSEWHERE by construction (measured: none of their attack cases completes with only the static layer on); their rows are the unit rows of 102 with
+     the static layer off. The production pair (static layer plus taint) is covered only by the `Both` columns of amendment 102's tests, the runner leg and the
+     gate's sweep step; a static guard removed from the production route ALONE is not observable (`TAINT_FORCE_ON` is `cfg(test)`, so no shipped
+     binary has the taint off): the static arms are rowed at unit level, redundant on the production route by design.
+
+     **BYPASS VARIANTS (class: a path on which taint is dropped), this round.** Closed, with a test of their own: a channel's `len`, `recv`, `try_recv`, `clone`, a
+     `select` arm (examined or skipped); a send behind a branch or in a loop the candidate sized; a channel in a struct, behind a helper fn, in a clone; the 13
+     dict readers and 3 writers after a sealed write; a dict in an array, snapshotted, dirtied between hand-overs, merged; a kernel getter and a fiber count after
+     a steered write; a world write behind a branch; a callback run once per element of a tainted container; a channel's text by interpolation, in an array, under 34
+     arrays, through `dict_to_str`; `spawn`, `Uncertain`, `Temporal`, JSON. Open / not examined, stated: omission and verdict tables (item 7); `dstore_*` (not driven by a
+     test, same Kernel-class gate); `to_str` applied to a container (no test: `to_str` is a stringifier by the drift list, and its non-scalar behaviour is not exercised);
+     the integer-handle, path/URL/prompt, native-codegen and per-`Interp` registry classes of amendment 102 are unchanged.
+
+     **Evidence.** Branch `c9r11/psv1u`, base `3776884c`; interpreter source commit `83175bed` (the later commits are tests-only `1a75557b`, rows, markers
+     and docs). Rows ran on gpumaster from clean clones of the branch (`gm run`), `v022_g01_mutations.py --scope=all --only=<ids>`.
+     (1) **Every active `crates/axon-core/src` row re-run (the interpreter changed): 296 rows at `4f0f52ef`, in two shards (148 + 148), exit 0 and 1: 295
+     KILLED by their own attack, 0 REFUSED_ELSEWHERE, 1 survivor, M2930, whose first form removed one half of a two-half check (each half alone is an
+     equivalent mutant, see item 4); M2930 was rewritten to remove both halves and KILLED at `40481f10` (1/1).** That set includes the 68 rows of amendment 102
+     (M2700-M2767) and the 29 new unit rows M2910-M2939 (M2929 never issued). M2722/M2723 were re-anchored on the channel helper (their text moved).
+     (2) The 7 runner legs M2940-M2946: 7/7 KILLED at `925ea255` (0 REFUSED_ELSEWHERE, 0 survivors). Together: 303 rows, 303 KILLED by their own attack at the
+     named commits; no registry-wide `--scope=all` run was made (a sample by `--only`, not the freeze run).
+     (3) At `4f0f52ef`: `cargo test -p axon-core --no-default-features --no-fail-fast` exit 0, and `cargo test -p axon-psv` exit 0 (1929 passed, 0 failed over
+     32 test binaries); `scripts/v022_pci_gates.sh` exit 0, PASS 67 rows (5 added; the am102 sweep step passes with its two expected programs);
+     `cargo clippy --no-default-features -p axon-core --all-targets -- -D warnings` exit 0, `cargo clippy -p axon-psv --all-targets -- -D warnings` exit 0,
+     `cargo fmt --all -- --check` exit 0. At `40481f10` (the final commit): `harness_integrity` (10), `harness_binaries` (43), `refusal_coverage_gate` (2) and
+     `pci_delta_note` (46) exit 0, `v022_pci_gates.sh` PASS 67 rows, `v022_refusal_coverage.py` exit 0 and `--freeze` exit 0, `scripts/pci_delta.py --check` PASS,
+     `cargo fmt --all -- --check` exit 0.
+     (4) `scripts/psv_matrix_check.py`: PASS (245 rows, 841 citations, all resolve) WITH eight temporary placeholder rows A232-A239; the committed matrix has A240-A245
+     and the gap A232-A239 (the brief's numbering; the integrator renumbers), so the committed matrix FAILS the check on the gap alone, and nothing else.
+     (5) New tests: 10 in `taint_tests.rs` (channel cases, 13+3 dict rows, kernel and array rows, the 38-program hunt, the 120-pair oracle, four drift tests, the channel-method drift test,
+     the text-renderer drift test) and 3 runner tests in `sealed_frames.rs`. (6) Honest-program cost: measured, item 8.
+     **Unfinished / decided otherwise.** Omission and verdict tables are not closed (item 7). A sealed `len`/`clone` does not mark a channel (item 1). The index
+     fast path's arm has no row (unreachable). `dstore_*` and `to_str` of a container are not driven by a test. The dispatch and width taint rules have no runner
+     leg (item 9). The matrix numbering is for the integrator.
+
