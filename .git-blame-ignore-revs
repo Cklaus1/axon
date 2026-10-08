@@ -17,3 +17,8 @@
 # trailing commas on broken lines, `use`-list reordering, and braces around a
 # match arm that no longer fit. Suite was 1866 passed / 0 failed either side.
 29802068333c71877944862e770ea01f81773a44
+
+# style: rustfmt sweep of 12 files that had drifted (compilebench AX-52). Layout
+# only: same characters before and after once whitespace, commas, braces and use
+# lines are removed.
+d1334115e57e629bbcfeabb92a054744edc65aa7
