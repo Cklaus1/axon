@@ -2036,6 +2036,16 @@ fn a_value_is_credited_only_by_an_edit_of_that_value() {
         let _ = label;
         value_exempt(&r, SCANNED, "vs_spawn", n, frag, "REMAINDER", "REMAINDER (probe)");
     }
+    // The probe's `.env(..)` and `.current_dir(..)` lines are LINE sites of their own (amendment 91's
+    // child-build form); a value exemption credits only the value.
+    for anchor in [
+        ".env(\"VS_KEY_A\", \"vs_val_a\")",
+        ".env(\"VS_KEY_B\", \"vs_val_b\")",
+        ".env(\"VS_DYN\", vs_x)",
+        ".current_dir(\"/vs/cwd\")",
+    ] {
+        exempt(&r, SCANNED, anchor, "DOMINATED (probe): a line site, not a value");
+    }
     let t = text(&gate(&r, &["--remainder"]));
     assert!(
         !t.contains("refusal site with no row and no exemption: value ("),
