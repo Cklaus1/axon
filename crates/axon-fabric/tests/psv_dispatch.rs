@@ -1750,7 +1750,7 @@ fn a_privileged_helper_owned_by_a_stranger_launches_nothing() {
     let h = w.env.dir.path().join("stranger-owned-helper");
     copy_executable(helper_pin().path, &h, 0o755);
     std::os::unix::fs::chown(&h, Some(4243), Some(4243)).unwrap();
-    let mut run = |op: &str, owner: u32| {
+    let run = |op: &str, owner: u32| {
         let mut lx = w.lx("", "");
         let test_config = lx.privileged.as_ref().unwrap().test_config.clone();
         lx.privileged = Some(axon_fabric::backend::PrivilegedRoute {
