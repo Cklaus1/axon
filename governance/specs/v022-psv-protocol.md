@@ -6570,7 +6570,7 @@ guards of the helper have no cargo row (`TMPDIR=/tmp`, the `/tmp` tmpfs); the ki
      `cargo fmt --all -- --check` exit 0.
      (4) `scripts/psv_matrix_check.py`: PASS (245 rows, 841 citations, all resolve) WITH eight temporary placeholder rows A232-A239; the committed matrix has A240-A245
      and the gap A232-A239 (the brief's numbering; the integrator renumbers), so the committed matrix FAILS the check on the gap alone, and nothing else.
-     (5) New tests: 11 in `taint_tests.rs` (channel cases, 13+3 dict rows, kernel and array rows, the 38-program hunt, the 120-pair oracle, four drift tests,
+     (5) New tests: 10 in `taint_tests.rs` (channel cases, 13+3 dict rows, kernel and array rows, the 38-program hunt, the 120-pair oracle, four drift tests, the channel-method drift test,
      the text-renderer drift test) and 3 runner tests in `sealed_frames.rs`. (6) Honest-program cost: measured, item 8.
      **Unfinished / decided otherwise.** Omission and verdict tables are not closed (item 7). A sealed `len`/`clone` does not mark a channel (item 1). The index
      fast path's arm has no row (unreachable). `dstore_*` and `to_str` of a container are not driven by a test. The dispatch and width taint rules have no runner
