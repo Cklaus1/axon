@@ -215,8 +215,13 @@ instantiated `program_to_json` (AX-10; long misread as a `serde-json` ×
 `ast.rs`), so `serde-json` and `codegen` combine freely
 (`BUILD_RESOLVED.md`). `cargo build -p axon-core` produces the native `axon`
 compiler; `axon build foo.ax` emits a native binary, from any directory and
-without cargo on PATH (runtime staticlibs resolve from the compiler's own
-workspace/target dir or `AXON_RUNTIME_DIR`). `axon parse`/`lsp` (JSON) opt in
+without cargo on PATH. The runtime staticlib resolves from `AXON_RUNTIME_DIR`,
+else the install layout beside the binary (`scripts/install.sh --prefix DIR` →
+`DIR/bin/axon` + `DIR/lib/axon/runtime/<profile>/`), else the compiler's own
+target dir — linked with NO cargo run when it is current, rebuilt with the
+pinned toolchain (caller's `RUSTUP_TOOLCHAIN`/`RUSTC`/rustflags stripped) when a
+runtime source, manifest or the toolchain pin is newer or another build replaced
+it (AX-35; spec/runtime.md §5). `axon parse`/`lsp` (JSON) opt in
 with `--features serde-json`. Add `--features
 asi-runtime` to enable live `ai_complete`/`ai_extract_*` — **a feature NOTHING
 in `scripts/` or `.github/workflows/` compiles**, so the compiler-side AI
