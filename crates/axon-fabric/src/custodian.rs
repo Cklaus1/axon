@@ -77,6 +77,15 @@ impl Mode {
             _ => None,
         }
     }
+    /// The mode a PEER'S REPLY names. A mode no build knows is a REFUSAL, never a default: a reply is the
+    /// peer's claim, and "dev" read from a malformed one (the old `unwrap_or(Mode::Dev)`) was a value an
+    /// absent field decided. Every reader of a reply's mode goes through this one function
+    /// (`tests/default_sites.rs` fails if another `Mode::parse(` appears in a reader).
+    pub fn from_reply(s: &str) -> Result<Mode, String> {
+        Mode::parse(s).ok_or_else(|| {
+            format!("a reply names the mode {s:?}, which is none of protected, test, dev")
+        })
+    }
 }
 
 /// `axon-custodian/1`, the operator's.
@@ -351,7 +360,7 @@ impl CustodianRef {
             .nonce
             .filter(|n| is_hex(n, 32))
             .ok_or("custodian issued no well-formed nonce")?;
-        Ok((nonce, Mode::parse(&r.mode).unwrap_or(Mode::Dev)))
+        Ok((nonce, Mode::from_reply(&r.mode)?))
     }
 
     /// Amendment 79: ask whether `nonce` is outstanding for `epoch` (issued by
@@ -369,7 +378,7 @@ impl CustodianRef {
         let expires = r
             .expires_unix
             .ok_or("custodian's check names no expiry for the nonce")?;
-        Ok((Mode::parse(&r.mode).unwrap_or(Mode::Dev), expires))
+        Ok((Mode::from_reply(&r.mode)?, expires))
     }
 
     /// Spend `nonce` (issued for `epoch`) on the launch of `manifest_sha256`.
@@ -381,7 +390,7 @@ impl CustodianRef {
             nonce: Some(nonce.into()),
             manifest_sha256: Some(manifest_sha256.into()),
         })?;
-        Ok(Mode::parse(&r.mode).unwrap_or(Mode::Dev))
+        Mode::from_reply(&r.mode)
     }
 }
 
@@ -800,6 +809,26 @@ pub fn activated_listener(socket: &Path) -> Result<UnixListener, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Amendment 110: the mode a reply names is parsed in ONE place and a mode nobody knows is refused. The
+    /// default it replaced was the dev-vs-protected discriminator itself (a flip to Protected survived the
+    /// whole axon-fabric suite at four sites). Both directions: each known mode reads as itself, and every
+    /// near-miss refuses instead of reading as ANY mode.
+    #[test]
+    fn a_reply_names_a_mode_this_build_knows_or_is_refused() {
+        for (s, want) in [("protected", Mode::Protected), ("test", Mode::Test), ("dev", Mode::Dev)] {
+            assert_eq!(Mode::from_reply(s), Ok(want), "reply mode {s:?}");
+            assert_eq!(Mode::from_reply(want.as_str()), Ok(want), "{want:?} round-trips");
+        }
+        for bad in ["", "x", "Protected", "PROTECTED", " protected", "protected ", "protected\n", "prod", "devx"] {
+            let got = Mode::from_reply(bad);
+            assert!(
+                got.is_err(),
+                "ATTACK: reply mode default: {bad:?} read as {got:?} instead of a refusal"
+            );
+            assert!(got.unwrap_err().contains("none of protected, test, dev"), "{bad:?}");
+        }
+    }
 
     fn cfg() -> CustodianConfig {
         CustodianConfig {

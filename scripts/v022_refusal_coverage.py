@@ -5089,6 +5089,7 @@ def const_sites(f, text, names):
 
 REMAINDER_SITES = []
 OBSERVED_SITES = []
+SIGN_SITES = []    # (file, line, fn, disposition): the inputs to a signing / verification / MAC primitive (amendment 110)
 VALUE_STATS = {}   # (form|flow, disposition) -> count of value sites (amendment 107)
 
 
@@ -5283,7 +5284,7 @@ _OWNER_PARAM = re.compile(r"\bOption\s*<\s*u32\s*>")
 _OPEN_SINKS = re.compile(r"(?<![\w.])(?:libc::)?(openat|open)\(|\.custom_flags\(")
 _CONST_DEF = re.compile(
     r"^[ \t]*(?:pub(?:\([a-z]+\))?\s+)?(?:const|static)\s+([A-Z][A-Z0-9_]+)\s*:[^=;{]*=\s*", re.M)
-_FLOW_STATS = {"computed": 0}
+_FLOW_STATS = {"computed": set()}   # {(file, offset)}: a SET, because two passes (sink_consts, value_sites) walk every file and a counter counted each argument twice (round 12: "46" was 23)
 _CUR_FILE = [None]   # the file _flow_values is working on (SIGN_BUILDERS is keyed by it)
 _OWNER_PRIMS = None
 
@@ -5390,7 +5391,7 @@ DEFAULT_SCOPE = ("crates/axon-fabric/", "crates/axon-loop/", "crates/axon-loop-c
 _DFL_CALL = re.compile(r"\.(unwrap_or|map_or|unwrap_or_else)\(|\.or\(\s*Some\(|\.unwrap_or_default\(\)|(?<![\w])Default::default\(\)")
 _NOT_VARIANT_HEADS = {"Path", "PathBuf", "String", "Vec", "Value", "Duration", "HashMap", "BTreeMap", "HashSet",
                       "BTreeSet", "OsString", "Some", "Ok", "Err", "Box", "Rc", "Arc", "Instant", "SystemTime"}
-_DFL_STATS = {"computed": 0}
+_DFL_STATS = {"computed": set()}
 _RAW = [None]
 
 
@@ -5429,7 +5430,7 @@ def _default_sites(clean):
             if parts and _default_arg_is_value(clean[parts[0][0]:parts[0][1]]):
                 out[parts[0]] = "val_default"
             else:
-                _DFL_STATS["computed"] += 1
+                _DFL_STATS["computed"].add((_CUR_FILE[0], m.start()))
             continue
         parts = _split_group(clean, m.end() - 1)
         if not parts:
@@ -5440,14 +5441,14 @@ def _default_sites(clean):
         if name == "unwrap_or_else":
             cm = re.match(r"\|[^|]*\|\s*(.*)$", arg, re.S)
             if not cm:
-                _DFL_STATS["computed"] += 1
+                _DFL_STATS["computed"].add((_CUR_FILE[0], m.start()))
                 continue
             which = (which[0] + cm.start(1), which[1])
             arg = cm.group(1)
         if _default_arg_is_value(arg):
             out[which] = "val_default"
         else:
-            _DFL_STATS["computed"] += 1
+            _DFL_STATS["computed"].add((_CUR_FILE[0], m.start()))
     return out
 
 
@@ -5548,7 +5549,7 @@ def _flow_values(clean, cl, fspans, found, sink_consts_out=None):
         ml = _FLOW_LOCAL.match(st)
         if ml and depth < 2:
             if not resolve(ml.group(1), at, label, depth):
-                _FLOW_STATS["computed"] += 1
+                _FLOW_STATS["computed"].add((_CUR_FILE[0], a))
             return
         if _has_literal(st):
             for q, c in re.findall(r"(?<![\w])((?:\w+::)*)([A-Z][A-Z0-9_]{2,})\b", st):
@@ -5559,7 +5560,7 @@ def _flow_values(clean, cl, fspans, found, sink_consts_out=None):
                     consts.add((c, False))
             add(a, b, label)
             return
-        _FLOW_STATS["computed"] += 1
+        _FLOW_STATS["computed"].add((_CUR_FILE[0], a))
 
     # (1) exec wrappers
     for callee, positions in EXEC_WRAPPERS.items():
@@ -5810,6 +5811,7 @@ def value_sites(text, regions=None, flow=True, file=None):
     `flow` (the default), the amendment-107 flow sites, numbered under `<fn>~flow`. `n` counts a
     function's value sites from 1 in source order."""
     clean = _value_text(text)
+    _CUR_FILE[0], _RAW[0] = file, text
     found, _ = _old_value_sites(clean)
     cl = clean.split("\n")
     fspans = _fn_spans(cl)
@@ -5818,7 +5820,6 @@ def value_sites(text, regions=None, flow=True, file=None):
     if flow and file is not None and file.startswith(DEFAULT_SCOPE):
         dflt = _default_sites(clean)
     if flow:
-        _CUR_FILE[0], _RAW[0] = file, text
         flowed = _flow_values(clean, cl, fspans, found)
         local, qual = sink_consts()
         flowed.update(const_def_sites(clean, {**found, **flowed}, local.get(file, set()) | qual))
@@ -5908,6 +5909,9 @@ def judge_values(f, text, rows, bad):
                            f"{hit[0][3]!r}, which is not the value's text {frag!r}: a site was added or moved, re-judge it")
         flowk = ("flow" if fn.endswith("~flow") else "sign" if fn.endswith("~sign")
                  else "dflt" if fn.endswith("~dflt") else "form")
+        if flowk == "sign":
+            SIGN_SITES.append((f, line_of(text, a) + 1, fn.split("~")[0] or "-",
+                               "row" if by else hit[4] if hit is not None else "UNCOVERED"))
         if by:
             covered += 1
             VALUE_STATS[(flowk, "row")] = VALUE_STATS.get((flowk, "row"), 0) + 1
@@ -6366,8 +6370,10 @@ def check(without=(), freeze=False, out=print):
     bad = []
     del REMAINDER_SITES[:]
     del OBSERVED_SITES[:]
+    del SIGN_SITES[:]
     VALUE_STATS.clear()
-    _FLOW_STATS["computed"] = 0
+    _FLOW_STATS["computed"].clear()
+    _DFL_STATS["computed"].clear()
     exec_constructor_drift(bad)
     scope = in_scope_files()
     for f in sorted(set(OUT_OF_SCOPE) | set(NOT_YET_SCANNED)):
@@ -6409,13 +6415,17 @@ def check(without=(), freeze=False, out=print):
             bad.append(f"{ef}: exemption {anchor[:50]!r} cites {gone}, which are not registry rows")
     for b in bad:
         out(f"BAD {b}")
-    for kind in ("form", "flow"):
+    for kind in ("form", "flow", "sign", "dflt"):
         parts = {d: c for (k, d), c in sorted(VALUE_STATS.items()) if k == kind}
-        out(f"VALUE SITES ({'amendment 103 forms' if kind == 'form' else 'amendment 107 flow to sinks'}): "
-            f"{sum(parts.values())}: " + ", ".join(f"{c} {d}" for d, c in parts.items()))
+        what = {"form": "amendment 103 forms", "flow": "amendment 107 flow to sinks",
+                "sign": "amendment 110 INPUTS TO A SIGNING / VERIFICATION / MAC PRIMITIVE",
+                "dflt": "amendment 110 DEFAULTS read as a value, protected crates"}[kind]
+        out(f"VALUE SITES ({what}): {sum(parts.values())}: " + ", ".join(f"{c} {d}" for d, c in parts.items()))
+    for f, line, fn, how in sorted(SIGN_SITES):
+        out(f"SIGNING INPUT {f}:{line} fn {fn}: {how}")
     sink_consts()
-    out(f"VALUE FLOWS NOT FOLLOWED: {_FLOW_STATS['computed']} argument(s) of a sink were computed (not a literal, a const, "
-        "a local resolvable to one, or a collection of them) and "
+    out(f"VALUE FLOWS NOT FOLLOWED: {len(_FLOW_STATS['computed'])} argument(s) of a sink were computed (not a literal, a const, "
+        "a local resolvable to one, or a collection of them; each argument counted ONCE) and "
         f"{len(_CROSS_FILE)} const use(s) at a sink are bare names defined in another file: COUNTED, NOT sites")
     n, cats = remainder_summary(REMAINDER_SITES)
     out(f"OBSERVED-NOT-ROWED: {len(OBSERVED_SITES)} guards a survey removed with a named test failing and no row of "

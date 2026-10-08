@@ -925,6 +925,12 @@ impl axon_os::Runtime for AdmissionProbe {
     }
 }
 
+/// Whether a request's cost limit exceeds the grant's budget. A limit that does not fit an `i64` exceeds
+/// every budget (amendment 110: that arm was `map_or(true, ..)` inline, and `false` kept every suite green).
+fn exceeds_budget(max_cost_micro: u64, cap: i64) -> bool {
+    i64::try_from(max_cost_micro).map_or(true, |c| c > cap)
+}
+
 /// Admit `program` under the resolved grant. Returns the axon-os approval
 /// status on success.
 fn supervisor_admits(
@@ -945,7 +951,7 @@ fn supervisor_admits(
         };
     // The request may not spend more than its grant allows.
     let cap = grant.grant().budget.cost_micro;
-    if i64::try_from(req.limits.max_cost_micro).map_or(true, |c| c > cap) {
+    if exceeds_budget(req.limits.max_cost_micro, cap) {
         return Err(format!(
             "limits.max_cost_micro {} exceeds grant `{}` budget.cost_micro {cap}",
             req.limits.max_cost_micro, grant.grant_ref
@@ -1592,11 +1598,9 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                     // absent, the bundle carries none and intake's guest-verdict
                     // join (M299) refuses it: fail closed, not a silent second
                     // gate.
-                    let final_class = out
-                        .as_ref()
-                        .ok()
-                        .and_then(|(r, _, _)| crate::psv::EvidenceClass::of_receipt(r))
-                        .unwrap_or(crate::psv::EvidenceClass::GuestUnobserved);
+                    let final_class = crate::psv::EvidenceClass::of_outcome(
+                        out.as_ref().ok().map(|(r, _, _)| r),
+                    );
                     if let (Some(o), crate::psv::EvidenceClass::Protected) =
                         (&observation, final_class)
                     {
@@ -2110,6 +2114,22 @@ pub fn scope(tenant: &str, family: &str) -> Result<Scope, String> {
 
 #[cfg(test)]
 mod tests {
+    /// Amendment 110: the grant's cost budget, at the boundary and past `i64`. Equal passes, one over refuses,
+    /// and a limit that cannot be an `i64` refuses (it exceeds every budget).
+    #[test]
+    fn a_cost_limit_over_the_grants_budget_is_refused_including_one_that_overflows_i64() {
+        assert!(!super::exceeds_budget(0, 0), "zero against a zero budget");
+        assert!(!super::exceeds_budget(1000, 1000), "equal to the budget");
+        assert!(super::exceeds_budget(1001, 1000), "ATTACK: one micro over the budget was admitted");
+        assert!(!super::exceeds_budget(999, 1000));
+        assert!(
+            super::exceeds_budget(i64::MAX as u64 + 1, i64::MAX),
+            "ATTACK: a cost limit that does not fit an i64 was admitted"
+        );
+        assert!(super::exceeds_budget(u64::MAX, i64::MAX), "ATTACK: u64::MAX against the largest budget");
+        assert!(!super::exceeds_budget(i64::MAX as u64, i64::MAX), "the largest representable, equal");
+    }
+
     use super::*;
 
     /// Amendment 95 (eqgate4): a run dir is created NEW. A directory already at

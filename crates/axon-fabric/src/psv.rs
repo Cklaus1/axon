@@ -75,6 +75,15 @@ impl EvidenceClass {
         .into_iter()
         .find(|c| c.as_str() == one)
     }
+
+    /// The class of the FINAL outcome of a launch (`None`: the launch produced no receipt). Anything but one
+    /// known class ref is GUEST-UNOBSERVED, the class that attaches no evidence bundle: an absent, doubled
+    /// or unknown ref must never read as Protected (amendment 110: this default flipped to Protected kept
+    /// the whole axon-fabric suite green).
+    pub fn of_outcome(r: Option<&axon_loop_contracts::ExecutionReceipt>) -> EvidenceClass {
+        r.and_then(Self::of_receipt)
+            .unwrap_or(EvidenceClass::GuestUnobserved)
+    }
 }
 
 /// What O1 contributes to the manifest: the operator host config and the
@@ -655,5 +664,56 @@ mod mode_tests {
             write_private(&p, &[8u8; 32]).is_err(),
             "ATTACK: a completion secret was overwritten"
         );
+    }
+}
+
+#[cfg(test)]
+mod class_tests {
+    use super::*;
+
+    fn receipt(refs: &[&str]) -> axon_loop_contracts::ExecutionReceipt {
+        let p = format!(
+            "{}/../axon-loop-contracts/tests/fixtures/acf/receipt_outcome_unknown.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let mut v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(p).expect("fixture")).expect("json");
+        v["evidence_refs"] = serde_json::json!(refs);
+        serde_json::from_value(v).expect("receipt")
+    }
+
+    /// Amendment 110: the class of the final outcome, in both directions. A receipt that states ONE known
+    /// class reads as that class; no receipt, no ref, two refs (even two of the SAME class), or a ref this
+    /// build does not know read as GUEST-UNOBSERVED, never as Protected.
+    #[test]
+    fn the_class_of_an_outcome_defaults_to_guest_unobserved_and_never_to_protected() {
+        for c in [
+            EvidenceClass::Protected,
+            EvidenceClass::GuestUnobserved,
+            EvidenceClass::Development,
+        ] {
+            let r = receipt(&[&format!("{EVIDENCE_CLASS_PREFIX}{}", c.as_str())]);
+            assert_eq!(EvidenceClass::of_outcome(Some(&r)), c, "one {c:?} ref");
+        }
+        let p = format!("{EVIDENCE_CLASS_PREFIX}protected");
+        for (what, got) in [
+            ("no receipt", EvidenceClass::of_outcome(None)),
+            ("a receipt naming no class", EvidenceClass::of_outcome(Some(&receipt(&[])))),
+            ("two class refs", EvidenceClass::of_outcome(Some(&receipt(&[&p, &p])))),
+            (
+                "a class this build does not know",
+                EvidenceClass::of_outcome(Some(&receipt(&["evidence-class:quantum"]))),
+            ),
+            (
+                "other refs only",
+                EvidenceClass::of_outcome(Some(&receipt(&["sha256:abc"]))),
+            ),
+        ] {
+            assert_eq!(
+                got,
+                EvidenceClass::GuestUnobserved,
+                "ATTACK: evidence class default: {what} read as {got:?}"
+            );
+        }
     }
 }
