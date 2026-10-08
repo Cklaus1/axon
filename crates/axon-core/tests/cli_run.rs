@@ -33651,3 +33651,43 @@ fn effects_flow_through_a_fn_value() {
         );
     }
 }
+
+/// AX-41: returning a tuple that contains an enum failed E0307 `expected
+/// (A, i64), found (A, i64)` in `check`, `run` and `build` alike. The register's
+/// repro and the Option/array/match-arm shapes must now run under both engines
+/// and print the same thing.
+#[test]
+fn ax41_tuple_with_an_enum_returns_under_both_engines() {
+    let ty = "type A = Lit { v: i64 } | Two { x: i64 }\n";
+    let progs: [(&str, &str); 4] = [
+        (
+            "ax41_tup",
+            "fn f(n: i64) -> (A, i64) { (A::Lit { v: n }, n) }\n\
+             fn main() -> i64 { let (a, k) = f(3) println(to_str(k)) 0 }\n",
+        ),
+        (
+            "ax41_option",
+            "fn f(n: i64) -> Option<(A, i64)> { Some((A::Lit { v: n }, n)) }\n\
+             fn main() -> i64 { match f(3) { Some((a, k)) => println(to_str(k)) None => println(\"n\") } 0 }\n",
+        ),
+        (
+            "ax41_array",
+            "fn f(n: i64) -> [(A, i64)] { [(A::Lit { v: n }, n)] }\n\
+             fn main() -> i64 { let xs = f(3) let (a, k) = xs[0] println(to_str(k)) 0 }\n",
+        ),
+        (
+            "ax41_arms",
+            "fn f(n: i64) -> (A, i64) { match n { 0 => (A::Two { x: 0 }, 0) _ => (A::Lit { v: n }, n) } }\n\
+             fn main() -> i64 { let (a, k) = f(3) println(to_str(k)) 0 }\n",
+        ),
+    ];
+    for (tag, body) in progs {
+        let src = format!("{ty}{body}");
+        assert_eq!(interp_stdout(tag, &src), "3", "[{tag}] interpreter");
+        let Some(got) = native_stdout(tag, &src) else {
+            note_harness_skip("axon build (no codegen feature)");
+            return;
+        };
+        assert_eq!(got, "3", "[{tag}] native != interpreter");
+    }
+}
