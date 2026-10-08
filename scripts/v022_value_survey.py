@@ -10,7 +10,7 @@ KILL (the value is observed: the survey records the test names, which is an
 OBSERVED entry, not a row). A green suite is a SURVIVOR: it needs a test and a row.
 A build that breaks, or a value the survey cannot edit by rule, is reported MANUAL.
 
-    python3 scripts/v022_value_survey.py OUT.json PKG [--shard I/N] [--only SUBSTR] [--lines A-B] [--ff]
+    python3 scripts/v022_value_survey.py OUT.json PKG [--shard I/N] [--only SUBSTR] [--lines A-B]
         [--cmd "cargo test -p axon-fabric --test cortex_via_fabric"] -- cargo-test-args
 
 --cmd replaces the default `cargo test -p PKG --no-fail-fast` (a value of one crate that another crate's
@@ -106,7 +106,6 @@ def main():
     split = argv.index("--")
     opts, cargo = argv[2:split], argv[split + 1:]
     shard, only, lines, cmd = (0, 1), None, None, None
-    ff = "--ff" in opts   # stop at the first failing test binary (a kill needs only one failing test)
     for i, o in enumerate(opts):
         if o == "--lines":
             a, b = opts[i + 1].split("-")
@@ -119,6 +118,26 @@ def main():
         if o == "--only":
             only = opts[i + 1]
     results = []
+    full = cmd + cargo if cmd else ["cargo", "test", "-p", pkg, "--no-fail-fast", *cargo]
+
+    def run():
+        try:
+            r = subprocess.run(full, capture_output=True, text=True, timeout=2400)
+        except subprocess.TimeoutExpired:
+            r = subprocess.CompletedProcess([], 124, "", "hung")
+        tail = r.stdout + r.stderr
+        tests = set(re.findall(r"^---- (\S+) stdout ----$", tail, re.M))
+        # A test binary that failed WITHOUT a named test (a crash, a signal, a hang the harness killed).
+        tests |= {"<binary> " + t for t in re.findall(r"^\s+`(-p [^`]+)`$", tail, re.M)}
+        if r.returncode not in (0, 101, 124) and not tests:
+            tests.add(f"<rc {r.returncode}>")
+        return r, tail, tests
+
+    # The UNMUTATED tree first: a test that already fails here (a host-dependent one) is not a kill.
+    r0, tail0, base_failing = run()
+    print("baseline rc", r0.returncode, "failing", sorted(base_failing), flush=True)
+    if "could not compile" in tail0 or r0.returncode == 124:
+        sys.exit("the unmutated tree does not build or hangs: no survey")
     for idx, (f, a, b, label, fn, n) in enumerate(candidates(pkg, only)):
         if idx % shard[1] != shard[0]:
             continue
@@ -137,25 +156,19 @@ def main():
         rec["edit"] = new[:80]
         open(path, "w").write(text[:a] + new + text[b:])
         try:
-            try:
-                r = subprocess.run(cmd + cargo if cmd else ["cargo", "test", "-p", pkg, *([] if ff else ["--no-fail-fast"]), *cargo], capture_output=True,
-                                   text=True, timeout=2400)
-            except subprocess.TimeoutExpired:
-                r = subprocess.CompletedProcess([], 124, "", "hung")
+            r, tail, failing = run()
         finally:
             open(path, "w").write(text)
-        tail = r.stdout + r.stderr
-        failing = sorted(set(re.findall(r"^---- (\S+) stdout ----$", tail, re.M)))
+        new_failing = sorted(failing - base_failing)
         # `error[E....]` is the AXON interpreter's own diagnostic, printed by a test that
         # runs `axon test`: only cargo's "could not compile" is a build failure.
-        built = "could not compile" not in tail
         if r.returncode == 124:
             rec["result"] = "INCONCLUSIVE (hung)"
-        elif not built:
+        elif "could not compile" in tail:
             rec["result"] = "BUILD BROKE"
-        elif r.returncode != 0:
+        elif new_failing:
             rec["result"] = "KILLED"
-            rec["failing"] = failing[:6]
+            rec["failing"] = new_failing[:6]
         else:
             rec["result"] = "SURVIVED"
         results.append(rec)
