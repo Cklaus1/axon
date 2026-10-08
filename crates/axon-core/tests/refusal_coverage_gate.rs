@@ -1938,6 +1938,18 @@ fn not_names_value(r: &Path, frag: &str, attack: &str) {
 
 const SPAWN_PROBE: &str = "pub fn vs_spawn(vs_x: &str) {\n    let _vs_c = std::process::Command::new(\"vs_tool\")\n        .env(\"VS_KEY_A\", \"vs_val_a\")\n        .env(\"VS_KEY_B\", \"vs_val_b\")\n        .arg(\"vs_flag\")\n        .args([\"vs_arg1\", \"vs_arg2\"])\n        .env(\"VS_DYN\", vs_x)\n        .arg(vs_x)\n        .current_dir(\"/vs/cwd\")\n        .stdin(std::process::Stdio::piped());\n}\n\n#[cfg(test)]\nfn vs_test_only() {\n    let _vt = std::process::Command::new(\"x\").env(\"VT_K\", \"vt_val\").arg(\"vt_arg\");\n}\n";
 
+/// SPAWN_PROBE builds a `Command`: amendment 107's table of constructors must list it (a builder
+/// whose own `.env/.arg` are the sites), or the gate refuses for the unlisted constructor.
+fn add_spawn_probe(r: &Path) {
+    add_code(r, SCANNED, SPAWN_PROBE);
+    edit(
+        r,
+        GATE,
+        "\nEXEC_CONSTRUCTORS = {\n",
+        &format!("\nEXEC_CONSTRUCTORS = {{\n    ({SCANNED:?}, \"vs_spawn\"): \"builder: probe\",\n"),
+    );
+}
+
 /// Amendment 103 (a): a LITERAL or CONSTANT handed to a process-spawn builder is a
 /// site of its own: the value of `.env(K, V)`, `.arg(V)`, each literal element of
 /// `.args([..])`, `.current_dir(V)`, a `Stdio::..` handed to a stream. The key is not
@@ -1947,7 +1959,7 @@ const SPAWN_PROBE: &str = "pub fn vs_spawn(vs_x: &str) {\n    let _vs_c = std::p
 #[test]
 fn a_literal_handed_to_a_spawn_builder_is_a_site_of_its_own() {
     let r = tree("value-spawn");
-    add_code(&r, SCANNED, SPAWN_PROBE);
+    add_spawn_probe(&r);
     for (label, frag) in [
         ("val_env", "\"vs_val_a\""),
         ("val_env", "\"vs_val_b\""),
@@ -1983,7 +1995,7 @@ fn a_literal_handed_to_a_spawn_builder_is_a_site_of_its_own() {
 #[test]
 fn a_value_is_credited_only_by_an_edit_of_that_value() {
     let r = tree("value-credit");
-    add_code(&r, SCANNED, SPAWN_PROBE);
+    add_spawn_probe(&r);
     add_row(
         &r,
         "MVC1",
@@ -2023,7 +2035,7 @@ fn a_value_is_credited_only_by_an_edit_of_that_value() {
     let clean = tree("value-exempt-base");
     let base = text(&gate(&clean, &["--remainder"]));
     let _ = std::fs::remove_dir_all(&clean);
-    add_code(&r, SCANNED, SPAWN_PROBE);
+    add_spawn_probe(&r);
     let n0: usize = base
         .lines()
         .filter(|l| l.starts_with("REMAINDER ") && !l.starts_with("REMAINDER:"))
@@ -2084,7 +2096,7 @@ fn a_value_is_credited_only_by_an_edit_of_that_value() {
     );
     let _ = std::fs::remove_dir_all(&r);
     let r = tree("value-exempt-stale");
-    add_code(&r, SCANNED, SPAWN_PROBE);
+    add_spawn_probe(&r);
     for (n, frag) in [
         (1, "vs_val_a"),
         (2, "vs_val_b"),
