@@ -10,7 +10,11 @@ KILL (the value is observed: the survey records the test names, which is an
 OBSERVED entry, not a row). A green suite is a SURVIVOR: it needs a test and a row.
 A build that breaks, or a value the survey cannot edit by rule, is reported MANUAL.
 
-    python3 scripts/v022_value_survey.py OUT.json PKG [--shard I/N] [--only SUBSTR] -- cargo-test-args
+    python3 scripts/v022_value_survey.py OUT.json PKG [--shard I/N] [--only SUBSTR] [--lines A-B] [--ff]
+        [--cmd "cargo test -p axon-fabric --test cortex_via_fabric"] -- cargo-test-args
+
+--cmd replaces the default `cargo test -p PKG --no-fail-fast` (a value of one crate that another crate's
+tests observe); --lines restricts the sites to a line range of the --only file.
 
 Run from a clean clone; edits files in place and restores them.
 """
@@ -101,8 +105,14 @@ def main():
     out, pkg = argv[0], argv[1]
     split = argv.index("--")
     opts, cargo = argv[2:split], argv[split + 1:]
-    shard, only = (0, 1), None
+    shard, only, lines, cmd = (0, 1), None, None, None
+    ff = "--ff" in opts   # stop at the first failing test binary (a kill needs only one failing test)
     for i, o in enumerate(opts):
+        if o == "--lines":
+            a, b = opts[i + 1].split("-")
+            lines = (int(a), int(b))
+        if o == "--cmd":
+            cmd = opts[i + 1].split()
         if o == "--shard":
             k, n = opts[i + 1].split("/")
             shard = (int(k), int(n))
@@ -114,6 +124,8 @@ def main():
             continue
         path = os.path.join(rc.ROOT, f)
         text = open(path).read()
+        if lines and not lines[0] <= rc.line_of(text, a) + 1 <= lines[1]:
+            continue
         frag = text[a:b]
         new = mutate(label, frag, text[max(0, a - 12):a])
         rec = {"file": f, "line": rc.line_of(text, a) + 1, "label": label, "fn": fn, "n": n, "value": frag[:80]}
@@ -126,7 +138,7 @@ def main():
         open(path, "w").write(text[:a] + new + text[b:])
         try:
             try:
-                r = subprocess.run(["cargo", "test", "-p", pkg, "--no-fail-fast", *cargo], capture_output=True,
+                r = subprocess.run(cmd + cargo if cmd else ["cargo", "test", "-p", pkg, *([] if ff else ["--no-fail-fast"]), *cargo], capture_output=True,
                                    text=True, timeout=2400)
             except subprocess.TimeoutExpired:
                 r = subprocess.CompletedProcess([], 124, "", "hung")
