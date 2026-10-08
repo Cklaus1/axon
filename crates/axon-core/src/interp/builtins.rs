@@ -445,9 +445,7 @@ fn store_log_path(key: &str) -> Option<std::path::PathBuf> {
 fn alloc_array_elems(builtin: &str, n: usize) -> Result<Vec<Value>, Flow> {
     let mut out = Vec::new();
     out.try_reserve_exact(n).map_err(|e| {
-        Flow::Panic(format!(
-            "{builtin}: cannot allocate an array of {n} elements ({e})"
-        ))
+        Flow::Panic(format!("{builtin}: cannot allocate an array of {n} elements ({e})").into())
     })?;
     Ok(out)
 }
@@ -478,7 +476,7 @@ impl<'p> Interp<'p> {
                     };
                     self.call_fn(f, fiber_args)
                 }
-                None => Err(Flow::Panic(format!("fiber fn `{fn_name}` vanished"))),
+                None => Err(Flow::Panic(format!("fiber fn `{fn_name}` vanished").into())),
             };
             match outcome {
                 Ok(v) => {
@@ -503,7 +501,7 @@ impl<'p> Interp<'p> {
                 // Logged as MEDIUM in governance/reviews/2026-07-31-deep-review.md
                 // §333; propagating is that review's recommendation.
                 Err(Flow::Panic(m)) => {
-                    self.scheduler.borrow_mut().fail(id, m);
+                    self.scheduler.borrow_mut().fail(id, m.into());
                 }
                 Err(other) => return Err(other),
             }
@@ -657,12 +655,10 @@ impl<'p> Interp<'p> {
                             .collect();
                         if let Some(eff) = first_effect_outside_ceiling(sb, &all) {
                             audit(self, true);
-                            return Err(crate::interp::Flow::SandboxViolation(format!(
-                                "builtin `{op_name}` requires effect `{eff}` which is not \
-                                 in the active sandbox's allowed set {:?} \
-                                 (principal handle {})",
-                                sb.allowed, sb.principal
-                            )));
+                            return Err(crate::interp::Flow::SandboxViolation(format!("builtin `{op_name}` requires effect `{eff}` which is not \
+                             in the active sandbox's allowed set {:?} \
+                             (principal handle {})",
+                            sb.allowed, sb.principal).into()));
                         }
                         // AUDIT T3: the effect is permitted — now check its
                         // SCOPE. A grant of `fs: [write("./out/")]` must mean
@@ -670,7 +666,7 @@ impl<'p> Interp<'p> {
                         if let Some(args) = scope_args {
                             if let Some(v) = scope_violation(op_name, args, sb) {
                                 audit(self, true);
-                                return Err(crate::interp::Flow::SandboxViolation(v));
+                                return Err(crate::interp::Flow::SandboxViolation(v.into()));
                             }
                         }
                     }
@@ -691,10 +687,8 @@ impl<'p> Interp<'p> {
             if args.len() == n {
                 Ok(())
             } else {
-                Err(Flow::Panic(format!(
-                    "{name}: expected {n} args, got {}",
-                    args.len()
-                )))
+                Err(Flow::Panic(format!("{name}: expected {n} args, got {}",
+                args.len()).into()))
             }
         };
         macro_rules! ok {
@@ -745,21 +739,17 @@ impl<'p> Interp<'p> {
                         r.consumed = true;
                         return Ok(Some(r.feed.clone()));
                     }
-                    return Err(crate::interp::Flow::MultiShotUnsound(format!(
-                        "effect `{}` (via `{name}`) is performed a second time during a \
-                         handler-continuation replay; multi-shot `resume` is supported only \
-                         when the handled body performs exactly one effect and is otherwise \
-                         pure (a side effect cannot be re-executed on replay) [E1314]",
-                        r.effect
-                    )));
+                    return Err(crate::interp::Flow::MultiShotUnsound(format!("effect `{}` (via `{name}`) is performed a second time during a \
+                     handler-continuation replay; multi-shot `resume` is supported only \
+                     when the handled body performs exactly one effect and is otherwise \
+                     pure (a side effect cannot be re-executed on replay) [E1314]",
+                    r.effect).into()));
                 } else if !row.is_empty() {
                     // A DIFFERENT effect during the replay also can't be re-fired.
-                    return Err(crate::interp::Flow::MultiShotUnsound(format!(
-                        "effect `{}` (via `{name}`) is performed during a handler-continuation \
-                         replay for a different effect; multi-shot `resume` requires the handled \
-                         body to be pure after its single intercepted op [E1314]",
-                        row[0]
-                    )));
+                    return Err(crate::interp::Flow::MultiShotUnsound(format!("effect `{}` (via `{name}`) is performed during a handler-continuation \
+                     replay for a different effect; multi-shot `resume` requires the handled \
+                     body to be pure after its single intercepted op [E1314]",
+                    row[0]).into()));
                 }
                 // Pure builtin (empty row) during replay: fall through and run it
                 // normally — re-running pure code is exact.
@@ -788,7 +778,7 @@ impl<'p> Interp<'p> {
                 }
                 let payload = match args.len() {
                     1 => args[0].clone(),
-                    _ => Value::Tuple(args.to_vec()),
+                    _ => Value::tuple(args.to_vec()),
                 };
                 if let Some(v) = self.run_handler_arm(eff, payload)? {
                     return Ok(Some(v));
@@ -1462,7 +1452,7 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let s = as_str(&args[0])?;
                 ok!(match crate::decimal::parse_decimal(s) {
-                    Ok(m) => Value::Ok(Box::new(Value::Decimal(m))),
+                    Ok(m) => Value::Ok(Box::new(Value::decimal(m))),
                     Err(e) => Value::Err(Box::new(Value::Str(Rc::new(e)))),
                 });
             }
@@ -1482,7 +1472,7 @@ impl<'p> Interp<'p> {
                     return panic(format!("decimal_round: dp must be 0..=9, got {dp}"));
                 }
                 ok!(match crate::decimal::round_dp(d, dp as u32, mode) {
-                    Ok(m) => Value::Decimal(m),
+                    Ok(m) => Value::decimal(m),
                     Err(e) => return panic(e),
                 });
             }
@@ -1495,21 +1485,21 @@ impl<'p> Interp<'p> {
                     return panic(format!("decimal_div: unknown rounding mode {mode_s:?} (want half_even/half_up/down/up)"));
                 };
                 ok!(match crate::decimal::div(a, b, mode) {
-                    Ok(m) => Value::Decimal(m),
+                    Ok(m) => Value::decimal(m),
                     Err(e) => return panic(e),
                 });
             }
             "decimal_abs" => {
                 want(1)?;
                 ok!(match crate::decimal::abs(as_decimal(&args[0])?) {
-                    Ok(m) => Value::Decimal(m),
+                    Ok(m) => Value::decimal(m),
                     Err(e) => return panic(e),
                 });
             }
             "decimal_neg" => {
                 want(1)?;
                 ok!(match crate::decimal::neg(as_decimal(&args[0])?) {
-                    Ok(m) => Value::Decimal(m),
+                    Ok(m) => Value::decimal(m),
                     Err(e) => return panic(e),
                 });
             }
@@ -2005,7 +1995,7 @@ impl<'p> Interp<'p> {
                     // needs the u64 reinterpret before widening to f64.
                     Value::SizedInt {
                         val,
-                        ty: crate::types::Type::U64,
+                        ty: IntWidth::U64,
                     } => (*val as u64) as f64,
                     Value::SizedInt { val, .. } => *val as f64,
                     Value::Float(v) => *v,
@@ -2075,22 +2065,22 @@ impl<'p> Interp<'p> {
                     }
                 };
                 let ty = match name {
-                    "as_u8" => crate::types::Type::U8,
-                    "as_u16" => crate::types::Type::U16,
-                    "as_u32" => crate::types::Type::U32,
-                    "as_u64" => crate::types::Type::U64,
-                    "as_i8" => crate::types::Type::I8,
-                    "as_i16" => crate::types::Type::I16,
-                    _ => crate::types::Type::I32,
+                    "as_u8" => IntWidth::U8,
+                    "as_u16" => IntWidth::U16,
+                    "as_u32" => IntWidth::U32,
+                    "as_u64" => IntWidth::U64,
+                    "as_i8" => IntWidth::I8,
+                    "as_i16" => IntWidth::I16,
+                    _ => IntWidth::I32,
                 };
                 let masked = match ty {
-                    crate::types::Type::U8 => (raw as u8) as i64,
-                    crate::types::Type::U16 => (raw as u16) as i64,
-                    crate::types::Type::U32 => (raw as u32) as i64,
-                    crate::types::Type::U64 => raw, // same 64-bit pattern; unsigned display handles it
-                    crate::types::Type::I8 => (raw as i8) as i64,
-                    crate::types::Type::I16 => (raw as i16) as i64,
-                    _ => raw as i32 as i64,
+                    IntWidth::U8 => (raw as u8) as i64,
+                    IntWidth::U16 => (raw as u16) as i64,
+                    IntWidth::U32 => (raw as u32) as i64,
+                    IntWidth::U64 => raw, // same 64-bit pattern; unsigned display handles it
+                    IntWidth::I8 => (raw as i8) as i64,
+                    IntWidth::I16 => (raw as i16) as i64,
+                    IntWidth::I32 => raw as i32 as i64,
                 };
                 ok!(Value::SizedInt { val: masked, ty });
             }
@@ -2296,10 +2286,8 @@ impl<'p> Interp<'p> {
                     match v {
                         Value::Int(n) => Ok(*n as f64),
                         Value::Float(f) => Ok(*f),
-                        other => Err(Flow::Panic(format!(
-                            "{name}: element must be numeric, got {}",
-                            other.type_name()
-                        ))),
+                        other => Err(Flow::Panic(format!("{name}: element must be numeric, got {}",
+                        other.type_name()).into())),
                     }
                 };
                 let mut best_idx = 0;
@@ -2329,10 +2317,8 @@ impl<'p> Interp<'p> {
                     match v {
                         Value::Float(f) => Ok(*f),
                         Value::Int(n) => Ok(*n as f64),
-                        other => Err(Flow::Panic(format!(
-                            "{name}: element must be numeric, got {}",
-                            other.type_name()
-                        ))),
+                        other => Err(Flow::Panic(format!("{name}: element must be numeric, got {}",
+                        other.type_name()).into())),
                     }
                 };
                 let mut best = as_f(&xs[0])?;
@@ -2415,7 +2401,7 @@ impl<'p> Interp<'p> {
                 let n = xs.len().min(ys.len());
                 let mut out = Vec::with_capacity(n);
                 for i in 0..n {
-                    out.push(Value::Tuple(vec![xs[i].clone(), ys[i].clone()]));
+                    out.push(Value::tuple(vec![xs[i].clone(), ys[i].clone()]));
                 }
                 ok!(Value::Array(out.into()));
             }
@@ -3116,10 +3102,8 @@ impl<'p> Interp<'p> {
             "host_await_val" => {
                 want(1)?;
                 let req = crate::interp::SendValue::from_value(&args[0]).map_err(|e| {
-                    Flow::Panic(format!(
-                        "host_await_val: payload cannot cross a suspend — it contains a channel (Chan) at {}, which is identity-shared mutable state (R15 Slice 2 refuses Chan payloads)",
-                        e.path
-                    ))
+                    Flow::Panic(format!("host_await_val: payload cannot cross a suspend — it contains a channel (Chan) at {}, which is identity-shared mutable state (R15 Slice 2 refuses Chan payloads)",
+                    e.path).into())
                 })?;
                 match crate::interp::host_await_yield(req) {
                     Ok(Some(reply)) => ok!(reply.into_value()),
@@ -3134,10 +3118,8 @@ impl<'p> Interp<'p> {
             "host_await_val_opt" => {
                 want(1)?;
                 let req = crate::interp::SendValue::from_value(&args[0]).map_err(|e| {
-                    Flow::Panic(format!(
-                        "host_await_val_opt: payload cannot cross a suspend — it contains a channel (Chan) at {}, which is identity-shared mutable state (R15 Slice 2 refuses Chan payloads)",
-                        e.path
-                    ))
+                    Flow::Panic(format!("host_await_val_opt: payload cannot cross a suspend — it contains a channel (Chan) at {}, which is identity-shared mutable state (R15 Slice 2 refuses Chan payloads)",
+                    e.path).into())
                 })?;
                 match crate::interp::host_await_yield(req) {
                     Ok(Some(reply)) => ok!(Value::Some(Box::new(reply.into_value()))),
@@ -3700,7 +3682,7 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let (a, b) = (as_int(&args[0])?, as_int(&args[1])?);
                 if a != b {
-                    return Err(Flow::Panic(format!("assertion failed: {a} != {b}")));
+                    return Err(Flow::Panic(format!("assertion failed: {a} != {b}").into()));
                 }
                 ok!(Value::Unit);
             }
@@ -3708,7 +3690,7 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let (a, b) = (as_str(&args[0])?, as_str(&args[1])?);
                 if a != b {
-                    return Err(Flow::Panic(format!("assertion failed: {a:?} != {b:?}")));
+                    return Err(Flow::Panic(format!("assertion failed: {a:?} != {b:?}").into()));
                 }
                 ok!(Value::Unit);
             }
@@ -3716,7 +3698,7 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let (a, b) = (as_float(&args[0])?, as_float(&args[1])?);
                 if (a - b).abs() > 1e-9 {
-                    return Err(Flow::Panic(format!("assertion failed: {a} != {b}")));
+                    return Err(Flow::Panic(format!("assertion failed: {a} != {b}").into()));
                 }
                 ok!(Value::Unit);
             }
@@ -3870,15 +3852,16 @@ impl<'p> Interp<'p> {
             "temporal_at" => {
                 want(2)?;
                 match &args[0] {
-                    Value::Struct { fields, .. } => {
-                        let value = fields.get("value").cloned().unwrap_or(Value::Int(0));
+                    Value::Struct(s) => {
+                        let fields = &s.fields;
+                        let value = fields.named("value").cloned().unwrap_or(Value::Int(0));
                         let confidence = fields
-                            .get("confidence")
+                            .named("confidence")
                             .and_then(as_float_opt)
                             .unwrap_or(1.0);
-                        let horizon = fields.get("horizon_ms").and_then(as_int_opt).unwrap_or(0);
-                        let decay = fields.get("decay").and_then(as_float_opt).unwrap_or(0.0);
-                        let created = fields.get("created_ms").and_then(as_int_opt).unwrap_or(0);
+                        let horizon = fields.named("horizon_ms").and_then(as_int_opt).unwrap_or(0);
+                        let decay = fields.named("decay").and_then(as_float_opt).unwrap_or(0.0);
+                        let created = fields.named("created_ms").and_then(as_int_opt).unwrap_or(0);
                         let offset = as_int(&args[1])?;
                         // PRD §"Temporal": project forward by `offset` ms, DECAYING
                         // confidence as `c * (1 - decay)^(offset_ms / 86_400_000)`
@@ -3906,10 +3889,10 @@ impl<'p> Interp<'p> {
             "temporal_confidence" => {
                 want(1)?;
                 match &args[0] {
-                    Value::Struct { fields, .. } => {
+                    Value::Struct(s) => {
                         ok!(Value::Float(
-                            fields
-                                .get("confidence")
+                            s.fields
+                                .named("confidence")
                                 .and_then(as_float_opt)
                                 .unwrap_or(1.0)
                         ));
@@ -3920,9 +3903,9 @@ impl<'p> Interp<'p> {
             "temporal_is_valid" => {
                 want(1)?;
                 match &args[0] {
-                    Value::Struct { fields, .. } => {
-                        let horizon = fields.get("horizon_ms").and_then(as_int_opt).unwrap_or(0);
-                        let created = fields.get("created_ms").and_then(as_int_opt).unwrap_or(0);
+                    Value::Struct(s) => {
+                        let horizon = s.fields.named("horizon_ms").and_then(as_int_opt).unwrap_or(0);
+                        let created = s.fields.named("created_ms").and_then(as_int_opt).unwrap_or(0);
                         ok!(Value::Bool(program_now_ms() <= created + horizon));
                     }
                     _ => panic("temporal_is_valid: expected a Temporal value"),
@@ -4259,12 +4242,10 @@ impl<'p> Interp<'p> {
                                 .collect();
                             if !escalated.is_empty() {
                                 escalated.sort_unstable();
-                                return Err(crate::interp::Flow::SandboxViolation(format!(
-                                    "sandbox_create: cannot grant effect(s) {escalated:?} not \
-                                     held by the enclosing sandbox (allowed set {:?}, principal \
-                                     handle {}) — a nested sandbox may only narrow, never widen",
-                                    outer.allowed, outer.principal
-                                )));
+                                return Err(crate::interp::Flow::SandboxViolation(format!("sandbox_create: cannot grant effect(s) {escalated:?} not \
+                                 held by the enclosing sandbox (allowed set {:?}, principal \
+                                 handle {}) — a nested sandbox may only narrow, never widen",
+                                outer.allowed, outer.principal).into()));
                             }
                         }
                     }
@@ -4350,13 +4331,11 @@ impl<'p> Interp<'p> {
                                 .collect();
                             if !escalated.is_empty() {
                                 escalated.sort_unstable();
-                                return Err(crate::interp::Flow::SandboxViolation(format!(
-                                    "sandbox_create_scoped: cannot grant effect(s) {escalated:?} \
-                                     not held by the enclosing sandbox (allowed set {:?}, \
-                                     principal handle {}) — a nested sandbox may only narrow, \
-                                     never widen",
-                                    outer.allowed, outer.principal
-                                )));
+                                return Err(crate::interp::Flow::SandboxViolation(format!("sandbox_create_scoped: cannot grant effect(s) {escalated:?} \
+                                 not held by the enclosing sandbox (allowed set {:?}, \
+                                 principal handle {}) — a nested sandbox may only narrow, \
+                                 never widen",
+                                outer.allowed, outer.principal).into()));
                             }
                         }
                     }
@@ -4414,13 +4393,11 @@ impl<'p> Interp<'p> {
                                 .collect();
                             if !escalated.is_empty() {
                                 escalated.sort_unstable();
-                                return Err(crate::interp::Flow::SandboxViolation(format!(
-                                    "sandbox_run: sandbox {sb_handle} grants effect(s) \
-                                     {escalated:?} not held by the enclosing sandbox (allowed \
-                                     set {:?}, principal handle {}) — entering a sandbox may \
-                                     only narrow the active ceiling, never widen it",
-                                    outer.allowed, outer.principal
-                                )));
+                                return Err(crate::interp::Flow::SandboxViolation(format!("sandbox_run: sandbox {sb_handle} grants effect(s) \
+                                 {escalated:?} not held by the enclosing sandbox (allowed \
+                                 set {:?}, principal handle {}) — entering a sandbox may \
+                                 only narrow the active ceiling, never widen it",
+                                outer.allowed, outer.principal).into()));
                             }
                         }
                     }
@@ -4462,7 +4439,7 @@ impl<'p> Interp<'p> {
                     }
                 };
                 *self.current_principal.borrow_mut() = name;
-                ok!(Value::Tuple(vec![]));
+                ok!(Value::tuple(vec![]));
             }
 
             // F3 (Phase 9): `principal_current_name() -> str` — return the name of
@@ -4645,10 +4622,8 @@ impl<'p> Interp<'p> {
                     };
                     if halted {
                         let restarts = self.supervisors.borrow()[sup as usize].restarts;
-                        return Err(Flow::Halted(format!(
-                            "[E1602] supervisor halted its subtree after {restarts} restarts \
-                             (max-restart intensity exceeded — crash loop abandoned)"
-                        )));
+                        return Err(Flow::Halted(format!("[E1602] supervisor halted its subtree after {restarts} restarts \
+                         (max-restart intensity exceeded — crash loop abandoned)").into()));
                     }
                     // Re-queue the strategy's restart set for the next round.
                     {
@@ -4660,10 +4635,8 @@ impl<'p> Interp<'p> {
                     rounds += 1;
                     if rounds > max_rounds {
                         // Defense-in-depth: the latch should have tripped already.
-                        return Err(Flow::Halted(format!(
-                            "[E1602] supervisor exceeded {max_rounds} restart rounds without \
-                             latching — abandoned (defensive)"
-                        )));
+                        return Err(Flow::Halted(format!("[E1602] supervisor exceeded {max_rounds} restart rounds without \
+                         latching — abandoned (defensive)").into()));
                     }
                 }
                 ok!(Value::Int(rounds));
@@ -5012,10 +4985,8 @@ impl<'p> Interp<'p> {
                 }
                 if evals < max_evals.max(0) {
                     // Budget bounded the run short of the request → exhausted.
-                    return Err(Flow::GoalBudgetExhausted(format!(
-                        "goal `{name}` (principal {principal}) ran {evals} of {} requested evaluations before its budget was exhausted",
-                        max_evals.max(0)
-                    )));
+                    return Err(Flow::GoalBudgetExhausted(format!("goal `{name}` (principal {principal}) ran {evals} of {} requested evaluations before its budget was exhausted",
+                    max_evals.max(0)).into()));
                 }
                 ok!(Value::Float(best));
             }
@@ -5303,7 +5274,7 @@ impl<'p> Interp<'p> {
                 };
                 let mut out = Vec::with_capacity(xs.len());
                 for (i, v) in xs.iter().enumerate() {
-                    out.push(Value::Tuple(vec![Value::Int(i as i64), v.clone()]));
+                    out.push(Value::tuple(vec![Value::Int(i as i64), v.clone()]));
                 }
                 ok!(Value::Array(out.into()));
             }
@@ -5338,7 +5309,7 @@ impl<'p> Interp<'p> {
                         }
                     }
                 }
-                ok!(Value::Tuple(vec![Value::Array(yes.into()), Value::Array(no.into())]));
+                ok!(Value::tuple(vec![Value::Array(yes.into()), Value::Array(no.into())]));
             }
             // `dict_get_or(d, k, default)` — get the value at `k`, or
             // return `default` if absent. Compresses the ubiquitous
@@ -5448,7 +5419,7 @@ impl<'p> Interp<'p> {
                 let pairs: Vec<Value> = d
                     .borrow()
                     .iter()
-                    .map(|(k, v)| Value::Tuple(vec![Value::Str(Rc::new(k.clone())), v.clone()]))
+                    .map(|(k, v)| Value::tuple(vec![Value::Str(Rc::new(k.clone())), v.clone()]))
                     .collect();
                 ok!(Value::Array(pairs.into()));
             }
@@ -5636,10 +5607,8 @@ impl<'p> Interp<'p> {
                     match v {
                         Value::Int(n) => Ok(n as f64),
                         Value::Float(f) => Ok(f),
-                        other => Err(Flow::Panic(format!(
-                            "{name}: key fn must return numeric, got {}",
-                            other.type_name()
-                        ))),
+                        other => Err(Flow::Panic(format!("{name}: key fn must return numeric, got {}",
+                        other.type_name()).into())),
                     }
                 };
                 let mut best_idx = 0;
@@ -6345,11 +6314,9 @@ impl<'p> Interp<'p> {
             // R17 Slice 2: SMP atomics — no shared-memory hardware under `axon run`.
             | "atomic_load_i64" | "atomic_store_i64"
             | "atomic_fetch_add_i64" | "atomic_cas_i64" => {
-                Err(crate::interp::Flow::Panic(format!(
-                    "[E0910] `{name}` is a HAL builtin — it requires native codegen \
-                     (`axon build --freestanding`) and cannot run in the interpreter. \
-                     Use `axon check` to type-check the kernel source without running it."
-                )))
+                Err(crate::interp::Flow::Panic(format!("[E0910] `{name}` is a HAL builtin — it requires native codegen \
+                 (`axon build --freestanding`) and cannot run in the interpreter. \
+                 Use `axon check` to type-check the kernel source without running it.").into()))
             }
 
             // R23 eBPF helpers — there is no kernel under the tree-walking
@@ -6357,11 +6324,9 @@ impl<'p> Interp<'p> {
             // cleanly (E0910), exactly like the R17 HAL leaves.
             "bpf_map_lookup_elem" | "bpf_map_value_add" | "bpf_ktime_get_ns"
             | "bpf_get_smp_processor_id" => {
-                Err(crate::interp::Flow::Panic(format!(
-                    "[E0910] `{name}` is a BPF helper — it requires `axon build --target bpf` \
-                     (there is no kernel under `axon run`). Use `axon check` to type-check the \
-                     eBPF program source without running it."
-                )))
+                Err(crate::interp::Flow::Panic(format!("[E0910] `{name}` is a BPF helper — it requires `axon build --target bpf` \
+                 (there is no kernel under `axon run`). Use `axon check` to type-check the \
+                 eBPF program source without running it.").into()))
             }
 
             _ => Ok(None),

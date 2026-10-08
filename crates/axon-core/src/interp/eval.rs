@@ -8,44 +8,6 @@
 
 use super::*;
 
-// ── R19 Slice B — coercion helpers ────────────────────────────────────────────
-
-/// Map an `AxonType` annotation to the semantic `Type` it represents, but only
-/// for non-i64 fixed-width integer types. Returns `None` for i64 (no coercion
-/// needed — `Int(i64)` is already the correct representation) and for all
-/// non-integer types.
-fn axon_type_to_width(ty: &crate::ast::AxonType) -> Option<crate::types::Type> {
-    use crate::ast::AxonType::Named;
-    use crate::types::Type;
-    match ty {
-        Named(n) => match n.as_str() {
-            "u8" => Some(Type::U8),
-            "u16" => Some(Type::U16),
-            "u32" => Some(Type::U32),
-            "u64" => Some(Type::U64),
-            "i8" => Some(Type::I8),
-            "i16" => Some(Type::I16),
-            "i32" => Some(Type::I32),
-            _ => None, // i64 and non-integer names: no coercion
-        },
-        _ => None,
-    }
-}
-
-/// Coerce a runtime value to a `SizedInt` when the target type is a non-i64
-/// integer. `Int(n)` → `SizedInt{n, ty}`. Any other value is returned as-is
-/// (the type-checker has already validated the types match; this is a
-/// representation upgrade only). `SizedInt` with a different width is
-/// re-tagged to the new width (preserves the stored bit-pattern; the checker
-/// ensures same-width ops only).
-fn coerce_to_sized(v: Value, width: crate::types::Type) -> Value {
-    match v {
-        Value::Int(n) => Value::SizedInt { val: n, ty: width },
-        Value::SizedInt { val, .. } => Value::SizedInt { val, ty: width },
-        other => other,
-    }
-}
-
 /// R28 ledger class for a native module's declared effect row (AUDIT T45).
 /// Native modules carry an effect row rather than a builtin name, so the
 /// name-keyed `audit_effect_kind` does not apply to them.
@@ -95,7 +57,7 @@ enum AppendOp {
 fn fn_value(name: &str, arity: usize) -> Value {
     let params: Vec<String> = (0..arity).map(|i| format!("#{i}")).collect();
     let args = params.iter().map(|p| Expr::Ident(p.clone())).collect();
-    Value::Closure {
+    Value::Closure(Rc::new(ClosureVal {
         code: Rc::new(ClosureCode {
             params: params.iter().map(|p| intern(p)).collect(),
             body: Expr::Call {
@@ -104,8 +66,8 @@ fn fn_value(name: &str, arity: usize) -> Value {
                 tier: None,
             },
         }),
-        captured: Rc::new(std::cell::RefCell::new(Vec::new())),
-    }
+        captured: std::cell::RefCell::new(Vec::new()),
+    }))
 }
 
 impl<'p> Interp<'p> {
@@ -113,6 +75,13 @@ impl<'p> Interp<'p> {
 
     pub(super) fn eval(&self, expr: &Expr, env: &mut Env) -> R {
         match expr {
+            // AX-47: a string literal's value is made once, at resolution; an
+            // evaluation clones the `Rc`. A node outside the table (an AST
+            // clone made at run time) builds it.
+            Expr::Literal(Literal::Str(s)) => Ok(Value::Str(match self.res.str_lit(expr) {
+                Some(v) => Rc::clone(v),
+                None => Rc::new(s.clone()),
+            })),
             Expr::Literal(lit) => Ok(lit_to_val(lit)),
 
             Expr::Ident(name) => {
@@ -168,13 +137,11 @@ impl<'p> Interp<'p> {
                             // Also bind the bound name for inline `let x: T where E[x] > k`.
                             pe.define(self.res.sym(expr, name), v.clone());
                             if let Value::Bool(false) = self.eval(pred, &mut pe)? {
-                                return Err(Flow::RefineViolation(format!(
-                                    "the value bound to `{}` (= {}) violates the refinement `{}` \
-                                     — the value does not satisfy the type's predicate",
-                                    name,
-                                    display(&v),
-                                    rn
-                                )));
+                                return Err(Flow::RefineViolation(format!("the value bound to `{}` (= {}) violates the refinement `{}` \
+                                 — the value does not satisfy the type's predicate",
+                                name,
+                                display(&v),
+                                rn).into()));
                             }
                         }
                     }
@@ -215,23 +182,26 @@ impl<'p> Interp<'p> {
                 let v = self.eval(value, env)?;
                 let (base, steps) = self.flatten_place(place, env)?;
                 let mut slot = env.get_mut(base).ok_or_else(|| {
-                    Flow::Panic(format!("assignment to undefined variable `{}`", sym_name(base)))
+                    Flow::Panic(format!("assignment to undefined variable `{}`", sym_name(base)).into())
                 })?;
                 let (last, prefix) = steps
                     .split_last()
                     .ok_or_else(|| Flow::Panic("invalid assignment target".into()))?;
                 for step in prefix {
                     slot = match (step, slot) {
-                        (PlaceStep::Field(f), Value::Struct { fields, .. }) => fields
+                        (PlaceStep::Field(f), Value::Struct(s)) => Rc::make_mut(s)
+                            .fields
                             .get_mut(*f)
-                            .ok_or_else(|| Flow::Panic(format!("no field `{f}`")))?,
+                            .ok_or_else(|| {
+                                Flow::Panic(format!("no field `{}`", sym_name(*f)).into())
+                            })?,
                         (PlaceStep::Index(i), Value::Array(items)) => {
                             let n = items.len();
                             // Copy-on-write: copies only if this array is shared
                             // with another binding; a uniquely owned one is
                             // written in place.
                             Rc::make_mut(items).get_mut(*i).ok_or_else(|| {
-                                Flow::Panic(format!("index {i} out of bounds (len {n})"))
+                                Flow::Panic(format!("index {i} out of bounds (len {n})").into())
                             })?
                         }
                         (_, other) => {
@@ -243,12 +213,11 @@ impl<'p> Interp<'p> {
                     };
                 }
                 match (last, slot) {
-                    (PlaceStep::Field(f), Value::Struct { fields, .. }) => match fields.get_mut(*f) {
-                        Some(field) => *field = v,
-                        None => {
-                            fields.insert((*f).to_string(), v);
-                        }
-                    },
+                    (PlaceStep::Field(f), Value::Struct(s)) => {
+                        // Copy-on-write, as for arrays: copies only if this
+                        // record is shared with another binding.
+                        Rc::make_mut(s).fields.insert(*f, v)
+                    }
                     (PlaceStep::Index(i), Value::Array(items)) => {
                         if *i >= items.len() {
                             return panic(format!("index {i} out of bounds (len {})", items.len()));
@@ -503,6 +472,7 @@ impl<'p> Interp<'p> {
                 // A variable receiver (`p.x`, the common case) is read in
                 // place: only the field is cloned, not the whole record. The
                 // lookup is the `Expr::Ident` arm's, verbatim.
+                let f = self.res.sym(expr, field);
                 if let Expr::Ident(name) = receiver.as_ref() {
                     let s = self.res.sym(receiver, name);
                     let v = match env.get(s) {
@@ -512,10 +482,10 @@ impl<'p> Interp<'p> {
                             None => return panic(format!("undefined identifier `{name}`")),
                         },
                     };
-                    return field_of(v, field);
+                    return field_of(v, f, field);
                 }
                 let v = self.eval(receiver, env)?;
-                field_of(&v, field)
+                field_of(&v, f, field)
             }
 
             Expr::Tuple(elems) => {
@@ -523,7 +493,7 @@ impl<'p> Interp<'p> {
                 for e in elems {
                     vs.push(self.eval(e, env)?);
                 }
-                Ok(Value::Tuple(vs))
+                Ok(Value::tuple(vs))
             }
 
             Expr::Index { receiver, index } => {
@@ -548,10 +518,8 @@ impl<'p> Interp<'p> {
                         return match arr {
                             Some(Value::Array(items)) => {
                                 items.get(idx as usize).cloned().ok_or_else(|| {
-                                    Flow::Panic(format!(
-                                        "index {idx} out of bounds (len {})",
-                                        items.len()
-                                    ))
+                                    Flow::Panic(format!("index {idx} out of bounds (len {})",
+                                    items.len()).into())
                                 })
                             }
                             Some(other) => {
@@ -565,7 +533,7 @@ impl<'p> Interp<'p> {
                 let idx = self.eval_int(index, env)?;
                 match arr {
                     Value::Array(items) => items.get(idx as usize).cloned().ok_or_else(|| {
-                        Flow::Panic(format!("index {idx} out of bounds (len {})", items.len()))
+                        Flow::Panic(format!("index {idx} out of bounds (len {})", items.len()).into())
                     }),
                     other => panic(format!("indexing non-array ({})", other.type_name())),
                 }
@@ -580,94 +548,115 @@ impl<'p> Interp<'p> {
             }
 
             Expr::StructLit { name, fields } => {
-                let mut fmap = HashMap::with_capacity(fields.len());
-                for (fname, fexpr) in fields {
-                    let fval = self.eval(fexpr, env)?;
-                    // R19 Slice B: coerce field values to SizedInt when the struct's
-                    // declared field type is a non-i64 integer width.
-                    let fval = if let Some(td) = self.structs.get(name.as_str()) {
-                        if let Some(tf) = td.fields.iter().find(|f| &f.name == fname) {
-                            if let Some(width) = axon_type_to_width(&tf.ty) {
-                                coerce_to_sized(fval, width)
-                            } else {
-                                fval
-                            }
-                        } else {
-                            fval
-                        }
-                    } else {
-                        fval
-                    };
-                    fmap.insert(fname.clone(), fval);
+                // AX-47: the names, storage order and per-field coercion width
+                // were resolved once (see `RecordLit`); a node outside the
+                // table (an AST clone made at run time) resolves here.
+                let unresolved;
+                let lit = match self.res.record_lit(expr) {
+                    Some(lit) => lit,
+                    None => {
+                        unresolved = RecordLit::of(name, fields, &self.structs, &self.enums);
+                        &unresolved
+                    }
+                };
+                if let Some(v) = &lit.empty {
+                    return Ok(v.clone());
                 }
-                if let Some((enum_name, variant)) = name.split_once("::") {
-                    Ok(Value::Enum {
-                        enum_name: enum_name.to_string(),
-                        variant: variant.to_string(),
-                        fields: fmap,
-                    })
+                // Fields are evaluated in source order; each value lands in
+                // its slot of the definition's order. R19 Slice B: a field
+                // declared as a non-i64 integer width is coerced to SizedInt.
+                let mut vals: Vec<(Sym, Value)> = Vec::with_capacity(lit.names.len());
+                if lit.in_order {
+                    for ((_, fexpr), &(_, width)) in fields.iter().zip(lit.slots.iter()) {
+                        let v = self.eval(fexpr, env)?;
+                        let v = match width {
+                            Some(w) => coerce_to_sized(v, w),
+                            None => v,
+                        };
+                        vals.push((lit.names[vals.len()], v));
+                    }
                 } else {
-                    // Phase 5: refinement obligations at struct CONSTRUCTION (the
-                    // dual of the param/return checks), for non-constant values the
-                    // checker (E1209) only discharges for constants. Two checks,
-                    // both reusing the refinement-predicate evaluator with `_`
-                    // bound to the relevant value. A whole-struct `where` lives on
-                    // the TypeDef (not a RefineDef), so gate on the TypeDef having
-                    // a refinement OR the program having named refinements (for
-                    // refined fields), not on `refine_preds` alone.
-                    if let Some(td) = self.structs.get(name.as_str()).copied() {
-                        if td.refinement.is_some() || !self.refine_preds.is_empty() {
-                            // (1) per-FIELD refinement: each field whose declared
-                            // type is a refinement must satisfy that predicate.
-                            for tf in &td.fields {
-                                if let crate::ast::AxonType::Named(rn) = &tf.ty {
-                                    if let Some(pred) = self.refine_preds.get(rn.as_str()).copied()
-                                    {
-                                        if let Some(fv) = fmap.get(&tf.name) {
-                                            let mut pe = Env::new();
-                                            pe.define(SYM_UNDERSCORE, fv.clone());
-                                            if let Value::Bool(false) = self.eval(pred, &mut pe)? {
-                                                return Err(Flow::RefineViolation(format!(
+                    let mut slots: Vec<Option<Value>> = vec![None; lit.names.len()];
+                    for ((_, fexpr), &(idx, width)) in fields.iter().zip(lit.slots.iter()) {
+                        let v = self.eval(fexpr, env)?;
+                        slots[idx as usize] = Some(match width {
+                            Some(w) => coerce_to_sized(v, w),
+                            None => v,
+                        });
+                    }
+                    vals.extend(
+                        lit.names
+                            .iter()
+                            .zip(slots)
+                            .map(|(&n, v)| (n, v.expect("every named field is given"))),
+                    );
+                }
+                let fields = Fields(vals);
+                let (sname, fields) = match lit.kind {
+                    RecordKind::Enum(enum_name, variant) => {
+                        return Ok(Value::Enum(Rc::new(EnumVal {
+                            enum_name,
+                            variant,
+                            fields,
+                        })));
+                    }
+                    RecordKind::Struct(sname) => (sname, fields),
+                };
+                // Phase 5: refinement obligations at struct CONSTRUCTION (the
+                // dual of the param/return checks), for non-constant values the
+                // checker (E1209) only discharges for constants. Two checks,
+                // both reusing the refinement-predicate evaluator with `_`
+                // bound to the relevant value. A whole-struct `where` lives on
+                // the TypeDef (not a RefineDef), so gate on the TypeDef having
+                // a refinement OR the program having named refinements (for
+                // refined fields), not on `refine_preds` alone.
+                if let Some(td) = self.structs.get(name.as_str()).copied() {
+                    if td.refinement.is_some() || !self.refine_preds.is_empty() {
+                        // (1) per-FIELD refinement: each field whose declared
+                        // type is a refinement must satisfy that predicate.
+                        for tf in &td.fields {
+                            if let crate::ast::AxonType::Named(rn) = &tf.ty {
+                                if let Some(pred) = self.refine_preds.get(rn.as_str()).copied() {
+                                    if let Some(fv) = fields.named(&tf.name) {
+                                        let mut pe = Env::new();
+                                        pe.define(SYM_UNDERSCORE, fv.clone());
+                                        if let Value::Bool(false) = self.eval(pred, &mut pe)? {
+                                            return Err(Flow::RefineViolation(
+                                                format!(
                                                     "field `{}` of `{}` (= {}) violates the refinement \
                                                      `{}` — the value does not satisfy the type's predicate",
                                                     tf.name,
                                                     name,
                                                     display(fv),
                                                     rn
-                                                )));
-                                            }
+                                                )
+                                                .into(),
+                                            ));
                                         }
                                     }
                                 }
                             }
-                            // (2) WHOLE-STRUCT refinement: `_` binds to the whole
-                            // instance and `_.field` projects, so build it first.
-                            if let Some(pred) = &td.refinement {
-                                let sv = Value::Struct {
-                                    name: name.clone(),
-                                    fields: fmap,
-                                };
-                                let mut pe = Env::new();
-                                pe.define(SYM_UNDERSCORE, sv.clone());
-                                if let Value::Bool(false) = self.eval(pred, &mut pe)? {
-                                    return Err(Flow::RefineViolation(format!(
+                        }
+                        // (2) WHOLE-STRUCT refinement: `_` binds to the whole
+                        // instance and `_.field` projects, so build it first.
+                        if let Some(pred) = &td.refinement {
+                            let sv = Value::record(sname, fields);
+                            let mut pe = Env::new();
+                            pe.define(SYM_UNDERSCORE, sv.clone());
+                            if let Value::Bool(false) = self.eval(pred, &mut pe)? {
+                                return Err(Flow::RefineViolation(
+                                    format!(
                                         "the constructed `{name}` violates its struct refinement \
                                          — the value does not satisfy the type's predicate"
-                                    )));
-                                }
-                                return Ok(sv);
+                                    )
+                                    .into(),
+                                ));
                             }
-                            return Ok(Value::Struct {
-                                name: name.clone(),
-                                fields: fmap,
-                            });
+                            return Ok(sv);
                         }
                     }
-                    Ok(Value::Struct {
-                        name: name.clone(),
-                        fields: fmap,
-                    })
                 }
+                Ok(Value::record(sname, fields))
             }
 
             Expr::Ok(e) => Ok(Value::Ok(Box::new(self.eval(e, env)?))),
@@ -709,11 +698,11 @@ impl<'p> Interp<'p> {
                     .iter()
                     .filter_map(|s| env.get(*s).map(|v| (*s, v.clone())))
                     .collect();
-                Ok(Value::Closure {
+                // T40: a SHARED, persistent capture cell — see Value::Closure.
+                Ok(Value::Closure(Rc::new(ClosureVal {
                     code: Rc::clone(&info.code),
-                    // T40: a SHARED, persistent capture cell — see Value::Closure.
-                    captured: Rc::new(std::cell::RefCell::new(captured)),
-                })
+                    captured: std::cell::RefCell::new(captured),
+                })))
             }
 
             Expr::Comptime(inner) => self.eval(inner, env),
@@ -888,12 +877,8 @@ impl<'p> Interp<'p> {
                 Value::SizedInt { val, .. } => crate::native::GfxArg::Int(*val),
                 Value::Float(f) => crate::native::GfxArg::Float(*f),
                 Value::Str(s) => crate::native::GfxArg::Str(String::clone(s)),
-                Value::Handle {
-                    module: hm,
-                    name: hn,
-                    payload,
-                    ..
-                } => {
+                Value::Handle(h) => {
+                    let (hm, hn, payload) = (&h.module, &h.name, &h.payload);
                     // Verify the handle belongs to the expected module+name.
                     if let Some(crate::native::FfiType::Handle {
                         module: em,
@@ -947,15 +932,17 @@ impl<'p> Interp<'p> {
         match result {
             Ok(crate::native::GfxValue::Unit) => Ok(Value::Unit),
             Ok(crate::native::GfxValue::Int(n)) => Ok(Value::Int(n)),
-            Ok(crate::native::GfxValue::Handle { name, payload }) => Ok(Value::Handle {
-                module: module.name.to_string(),
-                name: name.to_string(),
-                payload,
-                resource: matches!(
-                    nf.ret,
-                    crate::native::FfiType::Handle { resource: true, .. }
-                ),
-            }),
+            Ok(crate::native::GfxValue::Handle { name, payload }) => {
+                Ok(Value::Handle(Rc::new(HandleVal {
+                    module: module.name.to_string(),
+                    name: name.to_string(),
+                    payload,
+                    resource: matches!(
+                        nf.ret,
+                        crate::native::FfiType::Handle { resource: true, .. }
+                    ),
+                })))
+            }
             Err(msg) => panic(msg),
         }
     }
@@ -1009,12 +996,8 @@ impl<'p> Interp<'p> {
                     }
                     DomainArg::IntArray(ints)
                 }
-                Value::Handle {
-                    module: hm,
-                    name: hn,
-                    payload,
-                    ..
-                } => {
+                Value::Handle(h) => {
+                    let (hm, hn, payload) = (&h.module, &h.name, &h.payload);
                     if let Some(crate::native::FfiType::Handle {
                         module: em,
                         name: en,
@@ -1051,7 +1034,7 @@ impl<'p> Interp<'p> {
             Ok(DomainValue::IntArray(ns)) => {
                 Ok(Value::Array(Rc::new(ns.into_iter().map(Value::Int).collect())))
             }
-            Ok(DomainValue::Handle { name, payload }) => Ok(Value::Handle {
+            Ok(DomainValue::Handle { name, payload }) => Ok(Value::Handle(Rc::new(HandleVal {
                 module: module.name.to_string(),
                 name: name.to_string(),
                 payload,
@@ -1059,7 +1042,7 @@ impl<'p> Interp<'p> {
                     nf.ret,
                     crate::native::FfiType::Handle { resource: true, .. }
                 ),
-            }),
+            }))),
             Err(msg) => panic(msg),
         }
     }
@@ -1611,22 +1594,20 @@ impl<'p> Interp<'p> {
             },
             Pattern::Struct { name, fields } => {
                 // Enum-variant pattern when the name is qualified (`Enum::Variant`).
-                let field_map = if let Some((enum_name, variant)) = name.split_once("::") {
-                    match val {
-                        Value::Enum {
-                            enum_name: en,
-                            variant: v,
-                            fields,
-                        } if en == enum_name && v == variant => fields,
-                        _ => return Ok(false),
-                    }
-                } else {
-                    match val {
-                        Value::Struct { name: sn, fields } if sn == name => fields,
-                        _ => return Ok(false),
+                // AX-47: names compare as syms resolved once; a pattern
+                // outside the table (an AST clone) resolves here.
+                let unresolved;
+                let rp = match self.res.record_pat(pat) {
+                    Some(rp) => rp,
+                    None => {
+                        unresolved = RecordPat::of(name, fields);
+                        &unresolved
                     }
                 };
-                for (fname, fpat) in fields {
+                let Some(field_map) = rp.kind.fields_of(val) else {
+                    return Ok(false);
+                };
+                for ((_, fpat), &fname) in fields.iter().zip(rp.fields.iter()) {
                     let Some(fval) = field_map.get(fname) else {
                         return Ok(false);
                     };
@@ -1675,9 +1656,9 @@ impl<'p> Interp<'p> {
             BinOp::GtEq => 1.0 - cdf,
             BinOp::Eq => {
                 // For continuous distributions P(X = k) = 0; Categorical: exact mass
-                if let Value::Struct { name, fields } = &dist_val {
-                    if name == "Categorical" {
-                        if let Some(Value::Array(probs)) = fields.get("probs") {
+                if let Value::Struct(s) = &dist_val {
+                    if sym_is(s.name, "Categorical") {
+                        if let Some(Value::Array(probs)) = s.fields.named("probs") {
                             let ki = k as i64;
                             if ki >= 0 && (ki as usize) < probs.len() {
                                 if let Value::Float(p) = probs[ki as usize] {
@@ -1708,10 +1689,11 @@ impl<'p> Interp<'p> {
 /// Compute E[dist] or Var[dist] from a runtime distribution struct value.
 /// Returns None for unrecognized distributions.
 pub(super) fn eval_dist_moment(tag: &str, dist: &Value) -> Option<f64> {
-    let Value::Struct { name, fields } = dist else {
+    let Value::Struct(s) = dist else {
         return None;
     };
-    match name.as_str() {
+    let fields = &s.fields;
+    match &*sym_name(s.name) {
         "Gaussian" => {
             let mu = get_f64_field(fields, "mu")?;
             let sigma = get_f64_field(fields, "sigma")?;
@@ -1756,10 +1738,11 @@ pub(super) fn eval_dist_moment(tag: &str, dist: &Value) -> Option<f64> {
 
 /// Compute CDF P(X <= k) for a distribution struct value.
 fn eval_dist_cdf(dist: &Value, k: f64) -> Option<f64> {
-    let Value::Struct { name, fields } = dist else {
+    let Value::Struct(s) = dist else {
         return None;
     };
-    match name.as_str() {
+    let fields = &s.fields;
+    match &*sym_name(s.name) {
         "Gaussian" => {
             let mu = get_f64_field(fields, "mu")?;
             let sigma = get_f64_field(fields, "sigma")?;
@@ -1789,27 +1772,32 @@ fn eval_dist_cdf(dist: &Value, k: f64) -> Option<f64> {
     }
 }
 
-/// `v.field` for a struct/enum field or a tuple's `.N`: clones only the
-/// selected component.
-fn field_of(v: &Value, field: &str) -> R {
+/// `v.field` (`f` is `field` interned) for a struct/enum field or a tuple's
+/// `.N`: clones only the selected component.
+fn field_of(v: &Value, f: Sym, field: &str) -> R {
+    let fields = match v {
+        Value::Struct(s) => &s.fields,
+        Value::Enum(e) => &e.fields,
+        _ => return field_of_tuple(v, field),
+    };
+    fields
+        .get(f)
+        .cloned()
+        .ok_or_else(|| Flow::Panic(format!("no field `{field}`").into()))
+}
+
+/// [`field_of`] on a non-record value.
+fn field_of_tuple(v: &Value, field: &str) -> R {
     match v {
-        Value::Struct { fields, .. } | Value::Enum { fields, .. } => fields
-            .get(field)
-            .cloned()
-            .ok_or_else(|| Flow::Panic(format!("no field `{field}`"))),
         Value::Tuple(items) => {
             // `t.0`, `t.1`, … : the parser stores the digit as the
             // field name, and the interpreter reads it as the index.
             let i: usize = field.parse().map_err(|_| {
-                Flow::Panic(format!(
-                    "tuple access expects a numeric index, got `.{field}`"
-                ))
+                Flow::Panic(format!("tuple access expects a numeric index, got `.{field}`").into())
             })?;
             items.get(i).cloned().ok_or_else(|| {
-                Flow::Panic(format!(
-                    "tuple index {i} out of bounds (len {})",
-                    items.len()
-                ))
+                Flow::Panic(format!("tuple index {i} out of bounds (len {})",
+                items.len()).into())
             })
         }
         other => panic(format!(
@@ -1819,16 +1807,16 @@ fn field_of(v: &Value, field: &str) -> R {
     }
 }
 
-fn get_f64_field(fields: &HashMap<String, Value>, key: &str) -> Option<f64> {
-    match fields.get(key)? {
+fn get_f64_field(fields: &Fields, key: &str) -> Option<f64> {
+    match fields.named(key)? {
         Value::Float(f) => Some(*f),
         Value::Int(n) => Some(*n as f64),
         _ => None,
     }
 }
 
-fn get_f64_array_field(fields: &HashMap<String, Value>, key: &str) -> Option<Vec<f64>> {
-    match fields.get(key)? {
+fn get_f64_array_field(fields: &Fields, key: &str) -> Option<Vec<f64>> {
+    match fields.named(key)? {
         Value::Array(items) => {
             let mut out = Vec::with_capacity(items.len());
             for v in items.iter() {
