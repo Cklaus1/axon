@@ -3252,7 +3252,7 @@ EXEMPT += [
     ('crates/axon-cortex/src/runner.rs', '        std::fs::create_dir_all(dst)?;',
      _CTX),
     ('crates/axon-cortex/src/runner.rs', '            .ok_or_else(|| unresolvable("not found on PATH".into()))?',
-     _offroute('Cortex, the local repair loop, which is not a route of the protected profile; not surveyed')),
+     _dominated('`resolve_executable` IS reached by the protected binary (axon-fabric.rs `CheckRegistry::load` -> `register_expected` on the pinned suite registry), so this is not an off-route site (amendment 107 withdraws the label); the removal changes only WHICH refusal a bare name that is not on PATH gets: the `canonicalize()` right after it refuses a bare name that is not a file of the working directory (`unresolvable(e.to_string())`), and `register_expected` then compares the bytes of the resolved file with the operator-stated sha256 (`DigestChanged`), so no executable that is not the pinned one is ever registered. Executed by the round-11 EQUIVALENCE reviewer: the edit leaves `cargo test -p axon-cortex` green')),
     ('crates/axon-cortex/src/runner.rs', 'const POLICY_FILES: &[&str] = &["axon.lock", ".axon-policy", "gate.sh", "profile.rs"];',
      _CTX),
     ('crates/axon-cortex/src/runner.rs', 'const POLICY_PREFIXES: &[&str] = &["scripts/", "governance/", ".github/"];',

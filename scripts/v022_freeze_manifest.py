@@ -127,6 +127,23 @@ def main():
                  f"({len(coverage_problems)} problem(s), first: {coverage_problems[0]}); "
                  "run scripts/v022_refusal_coverage.py --freeze (amendment 61)")
 
+    # Amendment 107: the OBSERVED entries of the refusal-site gate (167: value sites, Python guards,
+    # Rust guards) are recorded survey results nothing else re-verifies. A freeze needs a RECENT
+    # record, for this head, that a deterministic sample of them was re-measured and none stands
+    # stale (scripts/v022_resurvey.py --run, on gpumaster; --check says what is missing).
+    rspec = importlib.util.spec_from_file_location("rs", os.path.join(ROOT, "scripts/v022_resurvey.py"))
+    rs = importlib.util.module_from_spec(rspec)
+    rspec.loader.exec_module(rs)
+    try:
+        resurvey = json.load(open(os.path.join(ROOT, rs.STATUS)))
+    except (OSError, ValueError) as e:
+        sys.exit(f"refused: {rs.STATUS} cannot be read ({e}): the OBSERVED entries of the refusal-site "
+                 "gate were not re-measured for this head; run scripts/v022_resurvey.py --run (amendment 107)")
+    resurvey_problems = rs.problems(resurvey, git(["rev-parse", "HEAD"], ROOT), cov, mut)
+    if resurvey_problems:
+        sys.exit("refused: the re-survey record is not for this head or does not hold: "
+                 + "; ".join(resurvey_problems[:6]) + " (scripts/v022_resurvey.py --run, amendment 107)")
+
     # Amendment 81: the paired-disable status file is bound by digest below, so
     # it must be what the harness's `--join` wrote for the commit this freeze
     # binds: every retirement record, at that commit, holds recomputed from its
@@ -246,6 +263,8 @@ def main():
         "mutation_registry_digest": registry_digest,
         "equivalence_record_digest": equivalence_digest,
         "paired_disable_digest": sha_file("governance/status/v022-psv-paired-disable.json"),
+        "resurvey": {"record_sha256": sha_file(rs.STATUS), "commit": resurvey["commit"],
+                     "sample_pct": resurvey["sample"]["pct"], "seconds": resurvey["seconds"]},
         "refusal_coverage": {"gate_sha256": sha_file("scripts/v022_refusal_coverage.py"),
                              "in_scope_files": len(cov.in_scope_files()),
                              "out_of_scope": sorted(cov.OUT_OF_SCOPE)},

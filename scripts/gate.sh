@@ -313,6 +313,11 @@ python3 -B scripts/opkit_ns_drift.py --selftest || fail "opkit_ns_drift selftest
 # REMAINDER list of guards no test observes alone; REMAINDER is NOT claimed
 # covered (C9 round 3, amendment 48; round 9, amendment 98).
 python3 -B scripts/v022_refusal_coverage.py || fail "v0.22 protected refusal-site coverage"
+# Amendment 107: the OBSERVED entries of that gate are recorded survey results. Outside a freeze a
+# missing or stale re-survey record is a NOTE, not a failure (the freeze manifest REFUSES without a
+# recent record for its head): `scripts/v022_resurvey.py --run` (hours; run it on gpumaster) writes it.
+python3 -B scripts/test_v022_resurvey.py || fail "v0.22 re-survey record refusals (amendment 107)"
+python3 -B scripts/v022_resurvey.py --check || echo "NOTE: no usable re-survey record for this head (the FREEZE needs one: scripts/v022_resurvey.py --run)"
 # PSV in a REAL Firecracker guest. SKIP (77: no root/KVM/built image) is a
 # NON-RESULT, reported as such, never as a pass.
 cargo build -q -p axon-psv --example psv_dev || fail "v0.22 PSV dev tool build"
