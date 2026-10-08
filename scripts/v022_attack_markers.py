@@ -2439,4 +2439,10 @@ ATTACK_MARKERS.update({
     'M2818': "ATTACK: git inherits this process's stdin",
     'M2819': "ATTACK: git inherits this process's stderr",
     'M2820': 'ATTACK: a tracked symlink \\(and a file',
+    'M2821': "ATTACK: the check child's PATH is not exactly",
+    'M2822': "ATTACK: the check child's module path is not exclusive",
+    'M2823': 'ATTACK: the check child\'s argv\\[0\\] is not "test"',
+    'M2824': 'ATTACK: the check child\'s argv\\[2\\] is not "--json"',
+    'M2825': 'ATTACK: the check child\'s argv\\[3\\] is not "--filter"',
+    'M2826': 'ATTACK: the check child\'s argv\\[6\\] is not "--completion-key-stdin"',
 })

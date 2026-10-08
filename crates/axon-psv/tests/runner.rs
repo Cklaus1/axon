@@ -1167,19 +1167,20 @@ fn the_check_child_runs_in_the_suite_with_only_its_own_environment_and_stdio() {
         9,
         "ATTACK: the check child's argv is not the nine arguments the runner builds: {argv:?}"
     );
-    assert_eq!(
-        (argv[0], argv[2], argv[3], argv[4], argv[5], argv[6], argv[7]),
-        (
-            "test",
-            "--json",
-            "--filter",
-            "t_ok",
-            "--exact",
-            "--completion-key-stdin",
-            "--seal"
-        ),
-        "ATTACK: a flag of the check child's argv changed: {argv:?}"
-    );
+    for (i, want) in [
+        (0, "test"),
+        (2, "--json"),
+        (3, "--filter"),
+        (4, "t_ok"),
+        (5, "--exact"),
+        (6, "--completion-key-stdin"),
+        (7, "--seal"),
+    ] {
+        assert_eq!(
+            argv[i], want,
+            "ATTACK: the check child's argv[{i}] is not {want:?}: {argv:?}"
+        );
+    }
     assert!(
         argv[1].ends_with("/suite/accept.ax") && argv[8] == cand_dir,
         "ATTACK: the check child runs a different entry or seals a different candidate: {argv:?}"
