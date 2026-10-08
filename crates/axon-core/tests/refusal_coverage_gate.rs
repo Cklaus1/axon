@@ -1936,7 +1936,7 @@ fn not_names_value(r: &Path, frag: &str, attack: &str) {
     }
 }
 
-const SPAWN_PROBE: &str = "pub fn vs_spawn(p: &str) {\n    let _vs_c = std::process::Command::new(\"vs_tool\")\n        .env(\"VS_KEY_A\", \"vs_val_a\")\n        .env(\"VS_KEY_B\", \"vs_val_b\")\n        .arg(\"vs_flag\")\n        .args([\"vs_arg1\", \"vs_arg2\"])\n        .env(\"VS_DYN\", p)\n        .arg(p)\n        .current_dir(\"/vs/cwd\")\n        .stdin(std::process::Stdio::piped());\n}\n\n#[cfg(test)]\nfn vs_test_only() {\n    let _vt = std::process::Command::new(\"x\").env(\"VT_K\", \"vt_val\").arg(\"vt_arg\");\n}\n";
+const SPAWN_PROBE: &str = "pub fn vs_spawn(vs_x: &str) {\n    let _vs_c = std::process::Command::new(\"vs_tool\")\n        .env(\"VS_KEY_A\", \"vs_val_a\")\n        .env(\"VS_KEY_B\", \"vs_val_b\")\n        .arg(\"vs_flag\")\n        .args([\"vs_arg1\", \"vs_arg2\"])\n        .env(\"VS_DYN\", vs_x)\n        .arg(vs_x)\n        .current_dir(\"/vs/cwd\")\n        .stdin(std::process::Stdio::piped());\n}\n\n#[cfg(test)]\nfn vs_test_only() {\n    let _vt = std::process::Command::new(\"x\").env(\"VT_K\", \"vt_val\").arg(\"vt_arg\");\n}\n";
 
 /// Amendment 103 (a): a LITERAL or CONSTANT handed to a process-spawn builder is a
 /// site of its own: the value of `.env(K, V)`, `.arg(V)`, each literal element of
@@ -1965,7 +1965,7 @@ fn a_literal_handed_to_a_spawn_builder_is_a_site_of_its_own() {
         );
     }
     for (frag, what) in [
-        ("p", "a computed value"),
+        ("vs_x", "a computed value"),
         ("\"vt_val\"", "a value in a cfg(test) item"),
         ("\"vt_arg\"", "an arg in a cfg(test) item"),
         ("\"VS_KEY_A\"", "an env KEY"),
