@@ -2445,4 +2445,6 @@ ATTACK_MARKERS.update({
     'M2824': 'ATTACK: the check child\'s argv\\[2\\] is not "--json"',
     'M2825': 'ATTACK: the check child\'s argv\\[3\\] is not "--filter"',
     'M2826': 'ATTACK: the check child\'s argv\\[6\\] is not "--completion-key-stdin"',
+    'M2827': "ATTACK: the loaded host's observer accepts a program of any owner",
+    'M2828': "ATTACK: the loaded host's Linux profile accepts a program of any owner",
 })

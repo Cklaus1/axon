@@ -9721,6 +9721,14 @@ MUTATIONS += [
      'CHECK CHILD (eqgate6): the check child reads the completion key from stdin', 'crates/axon-psv/src/runner.rs',
      '        .arg("--completion-key-stdin")\n', '        .arg("--completion-key-file")\n',
      'axon-psv', '--test runner', 'the_check_child_runs_in_the_suite_with_only_its_own_environment_and_stdio'),
+    ('M2827',
+     "HOST CONFIG (eqgate6): the loaded host's observer takes only a program of the executable owner", 'crates/axon-fabric/src/protected_host.rs',
+     '                    interpreter,\n                    exec_owner: Some(exec_owner),', '                    interpreter,\n                    exec_owner: None,',
+     'axon-fabric', '--test protected_host', 'a_loaded_host_requires_the_executable_owner_of_every_program_it_pins'),
+    ('M2828',
+     "HOST CONFIG (eqgate6): the loaded host's Linux profile takes only a program of the executable owner", 'crates/axon-fabric/src/protected_host.rs',
+     '                exec_owner: Some(exec_owner),\n                interpreter: None,', '                exec_owner: None,\n                interpreter: None,',
+     'axon-fabric', '--test protected_host', 'a_loaded_host_requires_the_executable_owner_of_every_program_it_pins'),
 ]
 
 
