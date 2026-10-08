@@ -10,7 +10,7 @@ KILL (the value is observed: the survey records the test names, which is an
 OBSERVED entry, not a row). A green suite is a SURVIVOR: it needs a test and a row.
 A build that breaks, or a value the survey cannot edit by rule, is reported MANUAL.
 
-    python3 scripts/v022_value_survey.py OUT.json PKG [--shard I/N] [--only SUBSTR] [--lines A-B]
+    python3 scripts/v022_value_survey.py OUT.json PKG [--shard I/N] [--only SUBSTR] [--lines A-B] [--survivors-of PREV.json]
         [--cmd "cargo test -p axon-fabric --test cortex_via_fabric"] -- cargo-test-args
 
 --cmd replaces the default `cargo test -p PKG --no-fail-fast` (a value of one crate that another crate's
@@ -67,6 +67,8 @@ def mutate(label, frag, before):
     if label == "val_owner":
         return "None"
     if label == "val_field":
+        if frag == "None" and "host_signer_public_key" in before:
+            return 'Some("0".repeat(64))'
         if frag == "true":
             return "false"
         if frag == "false":
@@ -105,11 +107,14 @@ def main():
     out, pkg = argv[0], argv[1]
     split = argv.index("--")
     opts, cargo = argv[2:split], argv[split + 1:]
-    shard, only, lines, cmd = (0, 1), None, None, None
+    shard, only, lines, cmd, surv = (0, 1), None, None, None, None
     for i, o in enumerate(opts):
         if o == "--lines":
             a, b = opts[i + 1].split("-")
             lines = (int(a), int(b))
+        if o == "--survivors-of":   # re-run only what an earlier survey (JSON) left SURVIVED
+            surv = {(r["file"], r["fn"], r["n"]) for r in json.load(open(opts[i + 1]))
+                    if r["result"] in ("SURVIVED", "MANUAL (no mutation rule)")}
         if o == "--cmd":
             cmd = opts[i + 1].split()
         if o == "--shard":
@@ -139,14 +144,14 @@ def main():
     if "could not compile" in tail0 or r0.returncode == 124:
         sys.exit("the unmutated tree does not build or hangs: no survey")
     for idx, (f, a, b, label, fn, n) in enumerate(candidates(pkg, only)):
-        if idx % shard[1] != shard[0]:
+        if idx % shard[1] != shard[0] or (surv is not None and (f, fn, n) not in surv):
             continue
         path = os.path.join(rc.ROOT, f)
         text = open(path).read()
         if lines and not lines[0] <= rc.line_of(text, a) + 1 <= lines[1]:
             continue
         frag = text[a:b]
-        new = mutate(label, frag, text[max(0, a - 12):a])
+        new = mutate(label, frag, text[max(0, a - 40):a])
         rec = {"file": f, "line": rc.line_of(text, a) + 1, "label": label, "fn": fn, "n": n, "value": frag[:80]}
         if new is None or new == frag:
             rec["result"] = "MANUAL (no mutation rule)"

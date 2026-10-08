@@ -22,6 +22,24 @@ fn production_trust_is_the_operator_root_and_must_be_operator_owned() {
         Path::new(OPERATOR_TRUST_ROOT).join("qualification")
     );
     assert!(t.operator_owned);
+    // Amendment 103: every VALUE of the production constructor, not only the two a test happened
+    // to read. The maximum age of qualification evidence is 30 days; the host signer is set only
+    // when the host config loads (None here: a Some would make the root refuse a key it never held);
+    // the clock is the system's.
+    assert_eq!(
+        t.max_age_s,
+        30 * 24 * 3600,
+        "ATTACK: the production qualification trust accepts evidence of another age"
+    );
+    assert_eq!(
+        t.host_signer_public_key, None,
+        "ATTACK: the production qualification trust names a host signer before the host config loads"
+    );
+    assert_eq!(
+        t.clock,
+        axon_fabric::backend::Clock::System,
+        "ATTACK: the production qualification trust runs on a fixed clock"
+    );
     // The repository constructor is development-only: never operator-owned.
     assert!(
         !QualificationTrust::for_manifest(Path::new("profiles/linux-microvm/manifest.json"))
@@ -241,5 +259,38 @@ fn an_unreadable_authority_root_is_never_read_as_holding_no_key() {
     assert!(
         out.status.success() && text.contains("1 passed"),
         "the uid-65534 child:\n{text}"
+    );
+}
+
+/// Amendment 103: the production OBSERVER trust root. Round 10 listed no assertion on any field:
+/// the directory, the ownership requirement and the roots it is kept separate from are each a value
+/// a `Config`-shaped constructor hands the verifier, and `operator_owned: true` -> `false` kept a
+/// root that any uid can write.
+#[test]
+fn the_production_observer_trust_is_the_operators_and_separate_from_every_other_root() {
+    use axon_fabric::observer::ObserverTrust;
+    let t = ObserverTrust::operator();
+    assert_eq!(
+        t.dir,
+        Path::new(OPERATOR_TRUST_ROOT).join("observer"),
+        "ATTACK: the production observer root is not /etc/axon/trust/observer"
+    );
+    assert!(
+        t.operator_owned,
+        "ATTACK: the production observer root is not required to be operator-owned"
+    );
+    assert_eq!(
+        t.host_signer_public_key, None,
+        "ATTACK: the production observer trust names a host signer before the host config loads"
+    );
+    let sep: Vec<(TrustAuthority, std::path::PathBuf)> = TrustAuthority::ALL
+        .into_iter()
+        .filter(|b| *b != TrustAuthority::Observer)
+        .map(|b| (b, Path::new(OPERATOR_TRUST_ROOT).join(b.dir_name())))
+        .collect();
+    assert!(
+        !sep.is_empty() && t.separate_from == sep,
+        "ATTACK: the production observer root is not kept separate from every other operator root: {:?}",
+        t.separate_from
     );
 }
