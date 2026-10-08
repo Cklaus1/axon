@@ -4,11 +4,24 @@
 //! Emits `AXON_GIT_SHA`, consumed via `env!` in `main.rs`. Falls back to
 //! "unknown" when git is unavailable (e.g. a source tarball) — the build must
 //! never fail just because there's no `.git`.
+//!
+//! AX-50. A source copy (`git archive | tar -x`) placed inside ANOTHER git
+//! repository used to report that outer repo's commit, usually `-dirty`: git
+//! walks up to the nearest `.git`. So git is only trusted when its toplevel IS
+//! this workspace's root; otherwise the identity is "unknown". A packager that
+//! knows the real identity sets `AXON_GIT_SHA` in the build environment and it
+//! is embedded verbatim.
 
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
-    println!("cargo:rustc-env=AXON_GIT_SHA={}", git_describe());
+    println!("cargo:rerun-if-env-changed=AXON_GIT_SHA");
+    let sha = match std::env::var("AXON_GIT_SHA") {
+        Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
+        _ => git_describe(),
+    };
+    println!("cargo:rustc-env=AXON_GIT_SHA={sha}");
 
     // Re-run when HEAD moves or the index changes, so the embedded SHA stays
     // current without a manual `touch`. Best-effort: these paths may not exist
@@ -28,8 +41,12 @@ fn main() {
     println!("cargo:rerun-if-changed=src");
 }
 
-/// `<short-sha>` or `<short-sha>-dirty`, or `unknown` if git isn't available.
+/// `<short-sha>` or `<short-sha>-dirty`, or `unknown` if git isn't available
+/// or the enclosing repository is not this workspace (AX-50).
 fn git_describe() -> String {
+    if !git_owns_workspace() {
+        return "unknown".to_string();
+    }
     let sha = run_git(&["rev-parse", "--short", "HEAD"]);
     match sha {
         Some(s) if !s.is_empty() => {
@@ -41,6 +58,22 @@ fn git_describe() -> String {
         }
         _ => "unknown".to_string(),
     }
+}
+
+/// True if git's toplevel (run from the crate dir) is the workspace root, i.e.
+/// `CARGO_MANIFEST_DIR/../..`. Both sides are canonicalised so symlinked
+/// checkouts still match.
+fn git_owns_workspace() -> bool {
+    let Some(manifest) = std::env::var_os("CARGO_MANIFEST_DIR") else {
+        return false;
+    };
+    let Ok(root) = Path::new(&manifest).join("../..").canonicalize() else {
+        return false;
+    };
+    let Some(top) = run_git(&["rev-parse", "--show-toplevel"]) else {
+        return false;
+    };
+    PathBuf::from(top).canonicalize().is_ok_and(|t| t == root)
 }
 
 /// True if the working tree has uncommitted changes. Conservative: any error

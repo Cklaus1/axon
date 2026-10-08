@@ -153,6 +153,7 @@ axon session                              # R44: an accumulating typed session �
                                           #   `--transcript PATH` + AXON_RECORD gives a replayable pair.
 axon reference                            # the complete surface of THIS build (--json → axon-reference/1)
 axon --version                            # e.g. "axon 0.1.0 (02cd617)" — semver + git SHA (build.rs); "-dirty" if uncommitted
+                                          #   build-time AXON_GIT_SHA=<id> overrides it; a source copy not at its own git root reports "unknown"
 
 # Phase-10 Hello-Goal CLI flow (compile → review → approve → deploy):
 axon intent compile examples/goals/hello-goal.md   # prose .md → typed .ax skeleton (--out path; --json → axon-intent-compile/1)
