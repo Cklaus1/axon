@@ -6762,3 +6762,73 @@ row), and the `_text_ids` / `_unit_ids` / `_regular_text` guards beyond those th
       that is not Rust or that file.
 
 **Renumbering at integration (round 12, integrate11).** Four branches built in parallel numbered their matrix rows apart (amendment 105 A232-A238; amendment 106 A240-A245; amendment 107 A250-A253); the integration made the matrix contiguous: amendment 106's rows are now A239-A244 and amendment 107's are A245-A248. The text of those amendments was rewritten to the new ids.
+
+## Amendment 110: signing inputs and defaults are sites; the re-survey record is derived, floored and logged (C9 round 12, eqgate8)
+
+The round-12 equivalence reviewer REGISTERED the claim but named two classes as "not class-level" and one validator as self-attested. All
+three are closed here; the rest of this amendment is what was changed, what was measured and what is still not seen.
+
+- **Signing inputs (reviewer finding 1).** `CLEARANCE_DOMAIN`, `EXECUTION_DOMAIN` and `CONTEXT_DOMAIN` were filed as `const_tag` REMAINDER
+  ("compared with the value a document or peer carries"). That names the wrong mechanism: they are SIGNED OVER. Setting one equal to
+  another survived the full axon-fabric, axon-loop and axon-loop-contracts suites, because every test signed and verified with the same
+  constant on both sides. The enumeration (grep over the workspace for a const or literal reaching `hmac_sha256`, `sign_document`,
+  `verify_document`, `.sign(`, `.verify(` or building a signed message) found: the document-signature domains CLEARANCE, EXECUTION, CONTEXT
+  and the generic `DOCUMENT_SIGNATURE_SCHEMA`; the receipt-attestation schema; the execution document's schema; the evidence-signature
+  schema with the five trust authorities as its domain axis; the completion scheme (key message and binding) and the two outcome-token
+  contexts (`axon-test-completion/1`, `axon-test-failed/1`); the ledger-key label. `axon-attest` and `axon-audit` build MAC inputs by
+  appending computed buffers (no constant is a site there). `tests/signing_domains.rs` holds: (a) all domain strings pairwise distinct and
+  equal to their documented literals, the five authorities likewise; (b) CROSS-PROTOCOL REPLAY, with the real constants on both sides, a
+  signature minted under each domain refused under every other, and an attestation not a document signature either way; (c) KNOWN-ANSWER
+  tests, because Ed25519 and HMAC are deterministic: a fixed-seed key over a fixed document has one correct signature, so a change to any
+  signed byte (a schema tag inside a binding, a format string, a pass/fail context) changes it, which a round trip through the same code can
+  never show. Fabric's execution attestation moved from an inline CLI closure into `signing::sign_execution_attestation` (the path is
+  unreachable through the CLI while the protected profile offers no execution; M3134, swapping its domain, survived the WHOLE axon-fabric
+  suite before). **Gate form:** a const or literal that is an input to a signing, verification or MAC primitive is a site
+  (`SIGN_SINKS`, `SIGN_BUILDERS`), numbered under `<fn>~sign`, credited by a row or a VALUE_EXEMPT entry, and LISTED by the gate
+  (`SIGNING INPUT file:line fn name: row|...`). 15 such sites plus 7 const definitions: all rowed (M3110-M3134). The 9 `const_tag` /
+  predicate REMAINDER or OBSERVED exemptions they replaced are dropped. **Not seen:** a message builder fn not in `SIGN_BUILDERS`, an input
+  reaching a primitive through a parameter (counted among the computed arguments), a peer implementation outside this repository.
+- **Defaults (finding 2).** `Mode::parse(..).unwrap_or(Mode::Dev)` flipped to Protected survived at observer_service.rs, custodian.rs (x3),
+  `EvidenceClass` default at submit.rs, the B263 PASS count default at backend.rs, the cost-cap `map_or` at submit.rs. Fixed at the source:
+  the mode a REPLY names is read through ONE function, `Mode::from_reply`, which REFUSES a mode no build knows (custodian.rs: its three
+  readers had a default that was dead code, `call` already refuses an unknown mode; observer_service.rs's was live, and the reply field is
+  not optional so an absent field cannot arrive) with a drift test that fails on another `Mode::parse(` or any `unwrap_or(Mode::..)`
+  (`tests/default_sites.rs`); `EvidenceClass::of_outcome` (absent, doubled or unknown class ref is GUEST-UNOBSERVED, never Protected),
+  `submit::exceeds_budget` (a limit that does not fit an `i64` exceeds every budget), and `accept_b263`'s defaults (PASS count, result, end,
+  host, caveat) each have a unit test in BOTH directions with the exact message. **Gate form:** `unwrap_or(<literal|const|variant|None>)`,
+  `unwrap_or_default()`, `map_or(<lit>, ..)`, `.or(Some(<lit>))`, `unwrap_or_else(|| <lit>)`, `Default::default()` in the files of the seven
+  protected crates are sites numbered under `<fn>~dflt`; a default computed at the site is counted (`DEFAULTS NOT FOLLOWED`). The survey (`scripts/v022_value_survey.py`) flips a literal, flips an enum to the fail-open variant (`ENUM_FLIPS`)
+  and, for a default PRODUCED by `unwrap_or_default()` / `Default::default()`, makes taking it panic.
+- **The re-survey record is derived, floored and logged (finding 3).** `v022_resurvey.py` v2: the salt is
+  `sha256(tool version | commit | gate digest)`, computed by `--run` and RECOMPUTED by `problems()` (the record's own `salt` is a claim it is
+  checked against, `--salt` is gone); the entries are ranked by `sha256(salt|family|key)` and the first N drawn, N = ceil(1.2 x FLOOR),
+  FLOOR = max(20, 25 % of the population), so a lucky draw cannot be small; the record must hold at least FLOOR entries KILLED, at most 20 %
+  of the draw NOT RE-MEASURED, each with a readable reason; INCONCLUSIVE and SURVIVED refuse; the record is bound to the commit's TREE hash
+  and the tool and gate versions; each KILLED entry carries the commands, exit codes, test binaries and the sha256 of a log kept under
+  `governance/status/v022-resurvey-logs/<commit12>/`, and the check re-reads the log: present, unaltered, inside that directory, naming the
+  failing test, the binaries and the exit codes. `scripts/test_v022_resurvey.py` plants the shapes the reviewer forged by hand: a ground salt,
+  a never-run all-KILLED record, an all-NOT-RE-MEASURED record, a wrong head, a wrong tree, a stale tool and gate version, missing, altered,
+  traversing and wrong logs, a partial run. **Residual, stated as the other validators state theirs:** this is self-consistency and
+  reproducibility, not authentication. Whoever runs the freeze can still fabricate logs (they are text the runner writes); what changed is
+  that a forgery must now also fake a consistent log set for a sample it cannot choose, which a reviewer can re-run entry by entry
+  (`--run --only KEY`), and that `--check` ties the record to the commit, tree and gate that were frozen. A record nobody re-runs proves only
+  that it is consistent.
+- **THE FREEZE PROCEDURE for the record, in order, with its refusals.** (1) check out the freeze head with a clean tree; (2)
+  `python3 scripts/v022_resurvey.py --run` on gpumaster (refuses `the tree is not clean` otherwise; hours at the default sample); (3) commit
+  `governance/status/v022-resurvey.json` and `governance/status/v022-resurvey-logs/` in a status-only commit; (4) run the freeze
+  (`scripts/v022_freeze_manifest.py`), which refuses with `the re-survey record is not for this head or does not hold: ...` naming the first
+  defects (`cannot be read`, `commit ... not the freeze commit`, `its tree hash is not the tree of its commit`, `another version of the gate`,
+  `its sampling salt is not the one derived`, `only N entries were re-measured and held; the floor is F`, `its log ... is missing`).
+  `python3 scripts/v022_resurvey.py --check` answers the same question without freezing. ANY edit to `scripts/v022_refusal_coverage.py`
+  invalidates the record (the gate digest), so a record is made last.
+- **Counters and duplicates (finding 4).** The "46 sink arguments computed" of amendment 107 was a double count (two gate passes
+  incremented one counter); the counter is now a set keyed (file, offset), and amendments 107's text says 23. `PROTECTED_PROFILE` had two
+  definitions (axon-psv and axon-fabric's readiness.rs): readiness now re-exports axon-psv's, `tests/default_sites.rs` fails if a second
+  appears and pins it, and `axon_loop_contracts::PROTECTED_PROFILES`, to the documented literal (M3152-M3154). `ALLOWED_EFFECTS` in the
+  bare-metal guest kernel's mmds.rs is a `static mut` set by `read_policy`, not a constant: there is no literal to pin, and the kernel is not
+  on the protected route (its VALUE_EXEMPT entries say so).
+- **Direct-route argv values (finding 5).** `fabric_runs_its_direct_launcher_and_its_observer_with_exactly_their_flags_and_path` now
+  asserts the VALUES of `--psv-candidate`, `--psv-suite`, `--psv-job`, `--psv-manifest-sha` (the sha256 of the launch manifest the job drive
+  holds, recorded by the stand-in launcher) and `--policy` (M3147-M3151). The survey harness limitation (an entry naming two test binaries
+  run as one) is fixed in `v022_value_survey.py` (`--cmd` repeated, every command run until one kills; `run_commands`, tested in
+  `scripts/test_v022_value_survey.py`); the re-survey already ran every named binary (`commands_for`, now tested).

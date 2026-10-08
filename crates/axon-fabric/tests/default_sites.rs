@@ -61,8 +61,8 @@ fn a_replys_mode_is_read_only_through_mode_from_reply() {
     assert_eq!(
         parses,
         [
-            "custodian.rs: if r.schema != REPLY_SCHEMA || Mode::parse(&r.mode).is_none() {",
             "custodian.rs: Mode::parse(s).ok_or_else(|| {",
+            "custodian.rs: if r.schema != REPLY_SCHEMA || Mode::parse(&r.mode).is_none() {",
         ],
         "ATTACK: a new reader of a reply's mode bypasses Mode::from_reply"
     );
