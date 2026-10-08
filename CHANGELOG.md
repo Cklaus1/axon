@@ -1,5 +1,20 @@
 # Axon Changelog
 
+## Nested tuples and struct interpolation natively, honest `--version`, race-free parity tests (compilebench AX-48…AX-52)
+
+Fixes for the fourth batch of defects compilebench recorded in its `AXON_FINDINGS.md`.
+
+**Native build**
+- **A tuple element that is itself a tuple destructures** (AX-48). `let (a, u) = t` followed by `let (b, k) = u` was refused with E0910 when `b` was read: the element binding got no semantic type, so the second destructure had nothing to index. A nested pattern `let (a, (b, c)) = …` is still a parse error.
+- **Structs, enums, `Option`, `Result`, arrays and tuples interpolate** (AX-49). `"{p}"` with `p` a struct was refused with E0910 ("inner type is erased"). Interpolation now renders from the static type, through one generated helper per type, and prints what `axon run` prints, byte for byte. A bare `None` whose payload type is unknown at the site, and Decimal, Dict, channel, closure and Uncertain values, are still refused, with a message naming the type.
+
+**Build**
+- **`axon --version` names the commit it was built from, or `unknown`** (AX-50). `build.rs` asked git from the crate directory, so a source copy inside another repository reported that repository's commit, `-dirty`. It now trusts git only when the workspace is the repository root; a packager can set `AXON_GIT_SHA`. The build cache is keyed on the compiler binary's digest, so a shared `unknown` does not collide.
+- **`cargo fmt --all --check` passes** (AX-52). One layout-only sweep, listed in `.git-blame-ignore-revs`.
+
+**Tests**
+- **The `cli_run` parity harnesses test the binary under test** (AX-51). The scripts each ran `cargo build` into the worktree's `target/debug` and ran that, so they tested a compiler the test run had not built, and parallel tests rebuilt it under each other (`dict_parity` saw `interp=127`, `clock_parity` skipped). `cli_run` now passes `AXON` and `AXON_RUN`, and `scripts/lib/axon_bin.sh` builds only when they are unset. Tests that write an executable and run it do the write in a child process, which removes the `ETXTBSY` ("Text file busy") failures under parallel runs. Under `--no-default-features` the native-parity harnesses now skip (countable, fatal under `AXON_HARNESS_STRICT=1`) instead of building their own codegen binary.
+
 ## Recursive enums natively, tuples holding enums, one message per refusal, 16-byte interpreter values (compilebench AX-41…AX-47)
 
 Fixes for the third batch of defects compilebench recorded in its `AXON_FINDINGS.md`, found by writing a small lexer, parser and evaluator (the shape of a self-hosted compiler) in Axon.

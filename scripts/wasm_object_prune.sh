@@ -19,11 +19,9 @@ set -u
 if command -v flock >/dev/null 2>&1; then exec 9>"${TMPDIR:-/tmp}/axon_wasm_parity.lock" && flock 9; fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
+. "$ROOT/scripts/lib/axon_bin.sh"
 
-if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-  echo "wasm_object_prune: codegen build unavailable — skipping"; exit 0
-fi
-AXON="${AXON:-target/debug/axon}"
+need_codegen_axon wasm_object_prune
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 PROG="$WORK/triv.ax"; printf 'fn main() -> i64 { 21 + 21 }\n' > "$PROG"
 

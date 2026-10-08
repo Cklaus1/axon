@@ -209,6 +209,16 @@ pub(crate) fn w_signed_int_to_float<'ctx>(
 }
 
 #[inline(never)]
+pub(crate) fn w_float_ext<'ctx>(
+    b: &Builder<'ctx>,
+    float: FloatValue<'ctx>,
+    float_type: inkwell::types::FloatType<'ctx>,
+    name: &str,
+) -> FloatValue<'ctx> {
+    b.build_float_ext(float, float_type, name).unwrap()
+}
+
+#[inline(never)]
 pub(crate) fn w_float_to_signed_int<'ctx>(
     b: &Builder<'ctx>,
     float: FloatValue<'ctx>,

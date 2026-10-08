@@ -18,6 +18,7 @@ set -u
 # shellcheck source=lib/harness_skip.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/harness_skip.sh"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
+. "$ROOT/scripts/lib/axon_bin.sh"
 # Serialize the wasm parity scripts under one shared lock: each builds its
 # wasm artifacts next to the source (examples/$base.*.wasm), so concurrent runs
 # (cargo's parallel test threads invoke several of these at once) clobber each
@@ -32,12 +33,8 @@ for rt in wasmtime "$HOME/.wasmtime/bin/wasmtime"; do
 done
 [ -n "$WASMRT" ] || { echo "wasm_aot_stdout_parity: no wasm runtime — skipping"; exit 0; }
 
-if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-  echo "wasm_aot_stdout_parity: codegen build unavailable — skipping"; exit 0
-fi
-if ! cargo build -q -p axon-core --no-default-features --bin axon-run 2>/dev/null; then
-  echo "wasm_aot_stdout_parity: interp build unavailable — skipping"; exit 0
-fi
+need_codegen_axon wasm_aot_stdout_parity
+need_axon_run wasm_aot_stdout_parity
 # Distinguish an ABSENT target from a BROKEN build. The probe used to be
 # `if ! cargo build ... 2>/dev/null` reporting "unavailable - skipping", which
 # said the same thing for both and threw away the compiler error naming which.
@@ -59,8 +56,6 @@ if ! _rt_err="$(cargo build -q -p axon-rt --target wasm32-wasip1 2>&1)"; then
   echo "$_rt_err" | sed 's/^/    | /'
   exit 1
 fi
-AXON="${AXON:-target/debug/axon}"
-INTERP="target/debug/axon-run"
 
 # Builtins whose host the pure AOT-wasm path doesn't provide → skip those files.
 EXCLUDE_RE='ai_complete|ai_extract|spawn|thread|chan_|goal_run|goal_eval|agent_|read_file|write_file|env_var|exec\(|random_|srand'

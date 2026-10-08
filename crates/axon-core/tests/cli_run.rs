@@ -2,8 +2,8 @@
 //! actual stdout / exit codes (the unit tests cover parse/exit; these cover the
 //! whole pipeline through the interpreter, including printed output).
 //!
-//! Uses `CARGO_BIN_EXE_axon` (set by cargo for the codegen-free `axon` binary
-//! built under `--no-default-features`).
+//! Uses `CARGO_BIN_EXE_axon`: the `axon` cargo built for this test run, with
+//! whatever features the run was given. Harness scripts get it too ([`harness`]).
 
 use std::process::Command;
 
@@ -17,6 +17,31 @@ fn ex(rel: &str) -> String {
 
 fn fixture(rel: &str) -> String {
     format!("{}/tests/fixtures/{}", env!("CARGO_MANIFEST_DIR"), rel)
+}
+
+/// A harness script, run against THE BINARIES THIS TEST RUN BUILT (AX-51).
+///
+/// The scripts used to `cargo build` their own `target/debug/axon` (default
+/// features) and `--no-default-features` `axon-run` in the worktree's default
+/// target dir and run those. So under `--target-dir` or other features they
+/// measured a different compiler from the one under test, and concurrently
+/// running harnesses rebuilt that one path with different feature sets while
+/// others executed it: an `axon-run` gone mid-run (exit 127, reported as a
+/// `dict_parity` divergence), spurious BUILD-FAILs in `all_examples_parity`,
+/// parity failures that passed when rerun alone.
+///
+/// Passing both binaries makes every script (via `scripts/lib/axon_bin.sh`)
+/// build nothing and run exactly these. `axon-run` is the interpreter under any
+/// feature set, so cargo's build of it under this run's features is the same
+/// runner a `--no-default-features` build gives. Under `--no-default-features`
+/// `axon` cannot codegen, and a harness that needs native code SKIPs (it says
+/// so; under `AXON_HARNESS_STRICT=1` that skip is fatal).
+fn harness(script: &str) -> Command {
+    let mut c = Command::new("bash");
+    c.arg(script)
+        .env("AXON", env!("CARGO_BIN_EXE_axon"))
+        .env("AXON_RUN", env!("CARGO_BIN_EXE_axon-run"));
+    c
 }
 
 /// AUDIT O006: record that a harness-backed test SKIPPED rather than ran.
@@ -294,8 +319,7 @@ fn host_await_runs_identically_on_wasm_wasip1() {
         eprintln!("wasm_host_await_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_host_await_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -331,8 +355,7 @@ fn wasm_browser_host_await_round_trips_r7c() {
         eprintln!("wasm_browser_host_await.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_browser_host_await.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -369,8 +392,7 @@ fn wasm_asyncify_host_await_suspends_across_async_r7c() {
         eprintln!("wasm_asyncify_host_await.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_asyncify_host_await.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -409,8 +431,7 @@ fn wasm_interpreter_evals_identically_to_native_r7c() {
         eprintln!("wasm_browser_interp_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_browser_interp_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -446,8 +467,7 @@ fn interp_compiles_for_wasm32_unknown_unknown_r7c() {
         eprintln!("wasm_unknown_interp_builds.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_unknown_interp_builds.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -484,8 +504,7 @@ fn android_compute_parity_r14() {
         eprintln!("android_compute_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run android_compute_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -522,10 +541,7 @@ fn android_lifecycle_adapter_r14() {
         eprintln!("android_lifecycle.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run android_lifecycle.sh");
+    let out = harness(&script).output().expect("run android_lifecycle.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("SKIP") || harness_skipped(&out, &stdout, &stderr, &script) {
@@ -7620,8 +7636,7 @@ fn asi_hello_goal_acid_test_loop_runs_end_to_end() {
         eprintln!("asi/run.sh not found — skipping");
         return;
     }
-    let out = std::process::Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .arg("hello-goal")
         .env("AXON_AI_MOCK", "1")
         .output()
@@ -7666,8 +7681,7 @@ fn asi_demo_replay_and_audit_commands_work_end_to_end() {
         return;
     }
     // replay: record → replay → "reproducible".
-    let rep = std::process::Command::new("bash")
-        .arg(&script)
+    let rep = harness(&script)
         .arg("replay")
         .env("AXON_AI_MOCK", "1")
         .output()
@@ -7689,15 +7703,13 @@ fn asi_demo_replay_and_audit_commands_work_end_to_end() {
     // audit: the AI-call trail (run once to populate the log, then audit).
     let cache = std::env::temp_dir().join(format!("axon_asiaudit_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&cache);
-    let _ = std::process::Command::new("bash")
-        .arg(&script)
+    let _ = harness(&script)
         .arg("run")
         .env("AXON_AI_MOCK", "1")
         .env("XDG_CACHE_HOME", &cache)
         .output()
         .unwrap();
-    let aud = std::process::Command::new("bash")
-        .arg(&script)
+    let aud = harness(&script)
         .arg("audit")
         .env("XDG_CACHE_HOME", &cache)
         .output()
@@ -9055,8 +9067,7 @@ fn codegen_parse_int_radix_matches_interp() {
         eprintln!("parse_int_radix_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run parse_int_radix_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -9091,8 +9102,7 @@ fn codegen_parse_float_bool_matches_interp() {
         eprintln!("parse_float_bool_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run parse_float_bool_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -9126,8 +9136,7 @@ fn codegen_i64_to_str_radix_bad_base_panics_like_interp() {
         eprintln!("i64_radix_panic_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run i64_radix_panic_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -9162,10 +9171,7 @@ fn codegen_assert_failure_messages_match_interp() {
         eprintln!("assert_msg_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run assert_msg_parity.sh");
+    let out = harness(&script).output().expect("run assert_msg_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -9197,10 +9203,7 @@ fn codegen_str_count_matches_interp() {
         eprintln!("str_count_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run str_count_parity.sh");
+    let out = harness(&script).output().expect("run str_count_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -9232,8 +9235,7 @@ fn codegen_arr_panic_messages_match_interp() {
         eprintln!("arr_panic_msg_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run arr_panic_msg_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -9269,10 +9271,7 @@ fn codegen_fuzz_parity_finds_no_divergence() {
         eprintln!("fuzz_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run fuzz_parity.sh");
+    let out = harness(&script).output().expect("run fuzz_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -9306,10 +9305,7 @@ fn codegen_parse_int_or_and_float_or_match_interp() {
         eprintln!("parse_or_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run parse_or_parity.sh");
+    let out = harness(&script).output().expect("run parse_or_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -9341,8 +9337,7 @@ fn codegen_bitwise_and_casts_match_interp() {
         eprintln!("bitwise_cast_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run bitwise_cast_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -9376,10 +9371,7 @@ fn codegen_arr_sum_and_contains_match_interp() {
         eprintln!("arr_reduce_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run arr_reduce_parity.sh");
+    let out = harness(&script).output().expect("run arr_reduce_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -9412,10 +9404,7 @@ fn codegen_dict_core_matches_interp() {
         eprintln!("dict_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run dict_parity.sh");
+    let out = harness(&script).output().expect("run dict_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -9723,19 +9712,26 @@ fn build_refuses_ai_call_budget_e0910_f141() {
 }
 
 #[test]
-fn build_aborts_with_e0910_on_result_interpolation_not_ir_crash() {
-    // Interpolating a Result/Option in a string (e.g. `println("r={r}")` where
-    // r = parse_int(...)) used to pass the `{i1,…}` tag-struct straight to
-    // axon_concat (which wants a str `{i64,ptr}`), producing a raw "IR
-    // verification failed" dump with no source context. Native can't format the
-    // erased inner value (the interpreter prints `Ok(…)`); it must now refuse
-    // with a clean, actionable E0910 — NOT crash. Scalars/str still interpolate.
-    let f = std::env::temp_dir().join(format!("axon_rinterp_{}.ax", std::process::id()));
-    std::fs::write(
-        &f,
-        "fn main() {\n  let r = parse_int(\"42\")\n  println(\"r={r}\")\n}\n",
-    )
-    .unwrap();
+fn build_aborts_with_e0910_on_an_unrenderable_interpolation_not_ir_crash() {
+    // Interpolating a value whose LLVM shape is not a str (a parse_int Result,
+    // here) used to pass the struct straight to axon_concat (which wants a str
+    // `{i64,ptr}`), producing a raw "IR verification failed" dump with no
+    // source context. It was then refused with E0910 instead. Since AX-49 a
+    // Result renders by its static type, as the interpreter's `Ok(42)`; a type
+    // with no native rendering (a closure) is still refused with E0910 — NOT
+    // a crash.
+    let src = "fn main() {\n  let r = parse_int(\"42\")\n  println(\"r={r}\")\n}\n";
+    let Some(got) = native_stdout("rinterp_ok", src) else {
+        eprintln!("codegen feature absent — interpolation E0910 test skipped");
+        return;
+    };
+    assert_eq!(got, "r=Ok(42)");
+    assert_eq!(got, interp_stdout("rinterp_ok", src));
+
+    let f = tmp_ax(
+        "rinterp_fn",
+        "fn main() {\n  let f = |x: i64| x + 1\n  println(\"f={f}\")\n}\n",
+    );
     let out = axon()
         .args(["build", f.to_str().unwrap(), "-o"])
         .arg(std::env::temp_dir().join(format!("axon_rinterp_{}.bin", std::process::id())))
@@ -9747,17 +9743,13 @@ fn build_aborts_with_e0910_on_result_interpolation_not_ir_crash() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    if msg.contains("requires building axon with the `codegen` feature") {
-        eprintln!("codegen feature absent — Result-interpolation E0910 test skipped");
-        return;
-    }
     assert!(
         !out.status.success(),
-        "interpolating a Result must FAIL the build:\n{msg}"
+        "interpolating a closure must FAIL the build:\n{msg}"
     );
     assert!(
-        msg.contains("E0910") && msg.contains("interpolate"),
-        "must abort with a clear E0910 about interpolating a Result/Option, got:\n{msg}"
+        msg.contains("E0910") && msg.contains("interpolate") && msg.contains("fn(i64) -> i64"),
+        "must abort with a clear E0910 naming the type it cannot render, got:\n{msg}"
     );
     assert!(
         !msg.contains("IR verification") && !msg.contains("axon_concat"),
@@ -9932,8 +9924,7 @@ fn codegen_handler_tail_resume_lowers_via_parity_harness() {
         eprintln!("handler_resume_parity.sh not found — skipping");
         return;
     }
-    let out = std::process::Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run handler_resume_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -10035,8 +10026,7 @@ fn native_deep_recursion_panics_gracefully_not_segfault() {
         eprintln!("recursion_guard_parity.sh not found — skipping");
         return;
     }
-    let out = std::process::Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run recursion_guard_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -16698,8 +16688,7 @@ fn wasm_interp_matches_native_on_pure_compute() {
         "{home}/.wasmtime/bin:{}",
         std::env::var("PATH").unwrap_or_default()
     );
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .env("PATH", path)
         .output()
         .expect("run wasm_parity.sh");
@@ -16738,8 +16727,7 @@ fn wasm_aot_runs_and_matches_interp_on_pure_int() {
         eprintln!("wasm_aot_run_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_aot_run_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -16775,8 +16763,7 @@ fn wasm_browser_examples_run_identically_via_js_host() {
         eprintln!("wasm_browser_examples_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_browser_examples_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -16815,8 +16802,7 @@ fn wasm_browser_println_matches_interp_via_js_host() {
         eprintln!("wasm_browser_io_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_browser_io_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -16852,8 +16838,7 @@ fn wasm_browser_target_is_wasi_free_and_matches_interp() {
         eprintln!("wasm_browser_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_browser_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -16890,8 +16875,7 @@ fn wasm_examples_run_identically_on_aot_wasm() {
         eprintln!("wasm_examples_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_examples_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -16927,8 +16911,7 @@ fn wasm_str_abi_bridge_runs_str_builtins() {
         eprintln!("wasm_str_abi_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_str_abi_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -16964,8 +16947,7 @@ fn wasm_malloc_abi_bridge_runs_array_and_to_str() {
         eprintln!("wasm_malloc_abi_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_malloc_abi_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17001,8 +16983,7 @@ fn wasm_aot_stdout_matches_interp_across_corpus() {
         eprintln!("wasm_aot_stdout_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_aot_stdout_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17037,8 +17018,7 @@ fn wasm_aot_env_var_runs_on_wasm() {
         eprintln!("wasm_aot_env_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_aot_env_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17075,10 +17055,7 @@ fn wasm_object_prunes_dead_externs_and_links_clean() {
         eprintln!("wasm_object_prune.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run wasm_object_prune.sh");
+    let out = harness(&script).output().expect("run wasm_object_prune.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -17112,10 +17089,7 @@ fn wasm_host_io_matches_native_via_wasi() {
         eprintln!("wasm_fs_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run wasm_fs_parity.sh");
+    let out = harness(&script).output().expect("run wasm_fs_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -17149,10 +17123,7 @@ fn codegen_random_i64_degenerate_bounds_match_interp() {
         eprintln!("random_i64_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run random_i64_parity.sh");
+    let out = harness(&script).output().expect("run random_i64_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -17192,10 +17163,7 @@ fn virtual_clock_is_deterministic_and_matches_native() {
         eprintln!("clock_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run clock_parity.sh");
+    let out = harness(&script).output().expect("run clock_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -17241,11 +17209,7 @@ fn claude_md_claims_are_true() {
         std::path::Path::new(&script).exists(),
         "claims_gate.sh must exist — CLAUDE.md's claims are unverified without it"
     );
-    let out = Command::new("bash")
-        .arg(&script)
-        .env("AXON", env!("CARGO_BIN_EXE_axon"))
-        .output()
-        .expect("run claims_gate.sh");
+    let out = harness(&script).output().expect("run claims_gate.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -17274,16 +17238,7 @@ fn host_journal_records_and_replays_without_the_environment() {
         std::path::Path::new(&script).exists(),
         "replay_host_gate.sh must exist — the record/replay claim is unverified without it"
     );
-    let out = Command::new("bash")
-        .arg(&script)
-        // Point the script at THIS test run's binary rather than letting it fall
-        // back to `./target/debug/axon`. Two reasons: the script SKIPs when that
-        // path is missing (and a skip has no PASS line, so the assertion below
-        // would fail confusingly), and a stale binary on disk would mean this
-        // test and its siblings are checking different builds.
-        .env("AXON", env!("CARGO_BIN_EXE_axon"))
-        .output()
-        .expect("run replay_host_gate.sh");
+    let out = harness(&script).output().expect("run replay_host_gate.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -17316,10 +17271,7 @@ fn codegen_exit_codes_match_interp() {
         eprintln!("exit_code_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run exit_code_parity.sh");
+    let out = harness(&script).output().expect("run exit_code_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -17354,8 +17306,7 @@ fn all_examples_native_match_interp_under_mock() {
         eprintln!("all_examples_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run all_examples_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17392,8 +17343,7 @@ fn codegen_goal_run_unknown_name_matches_interp() {
         eprintln!("goal_unknown_name_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run goal_unknown_name_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17428,8 +17378,7 @@ fn codegen_agent_action_log_matches_interp() {
         eprintln!("agent_action_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run agent_action_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17465,10 +17414,7 @@ fn codegen_exec_matches_interp() {
         eprintln!("exec_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run exec_parity.sh");
+    let out = harness(&script).output().expect("run exec_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -17501,8 +17447,7 @@ fn codegen_parse_int_err_message_matches_interp() {
         eprintln!("parse_int_err_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run parse_int_err_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17538,10 +17483,7 @@ fn codegen_adaptive_provenance_carries_input_f11() {
         eprintln!("goal_input_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run goal_input_parity.sh");
+    let out = harness(&script).output().expect("run goal_input_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -17574,10 +17516,7 @@ fn codegen_to_str_scalar_dispatch_matches_interp() {
         eprintln!("to_str_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run to_str_parity.sh");
+    let out = harness(&script).output().expect("run to_str_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -17610,10 +17549,7 @@ fn codegen_str_reverse_replace_match_interp_on_utf8() {
         eprintln!("str_utf8_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run str_utf8_parity.sh");
+    let out = harness(&script).output().expect("run str_utf8_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -17692,10 +17628,7 @@ fn codegen_provenance_matches_interp_on_adaptive_returns() {
         eprintln!("provenance_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run provenance_parity.sh");
+    let out = harness(&script).output().expect("run provenance_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     let skipped = harness_skipped(&out, &stdout, &stderr, &script);
@@ -20156,10 +20089,7 @@ fn mock_native_module_interp_codegen_parity() {
         eprintln!("native_gfx_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run native_gfx_parity.sh");
+    let out = harness(&script).output().expect("run native_gfx_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -28308,6 +28238,48 @@ fn fmt_names_the_float_literals_it_renormalises() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Write `bytes` to `dst` as an executable WITHOUT this process ever holding a
+/// write descriptor on `dst` (AX-51).
+///
+/// The test harness runs tests on many threads of ONE process. Writing an
+/// executable here (`fs::copy`, `fs::write`, `File::options().write(true)`)
+/// opens it for writing, and any sibling test that spawns a child at that
+/// moment forks a copy of the descriptor table, write descriptor included.
+/// `O_CLOEXEC` only drops it at that child's `exec`, so for that window the
+/// file has a writer and exec'ing it fails with ETXTBSY ("Text file busy") —
+/// measured in `a_different_compiler_with_the_same_path_size_and_mtime_misses_
+/// the_build_cache` under the full suite. Closing our descriptor first does not
+/// help, and neither does writing a temp file and renaming it: the forked child
+/// holds the same open file description of the same inode.
+///
+/// So the write happens in a CHILD process: `cat` opens `dst`, writes, exits,
+/// and nothing else ever has its descriptor. This process only holds a pipe.
+fn write_executable(dst: &std::path::Path, bytes: &[u8]) {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    let mut child = Command::new("sh")
+        .args(["-c", "exec cat > \"$0\""])
+        .arg(dst)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn cat to write the executable");
+    child.stdin.take().unwrap().write_all(bytes).unwrap();
+    assert!(child.wait().unwrap().success(), "writing {}", dst.display());
+    // chmod by path: no descriptor at all.
+    std::fs::set_permissions(dst, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// `cp src dst` for an executable, by the same rule as [`write_executable`]:
+/// the only process that ever opens `dst` for writing is `cp` itself.
+fn copy_executable(src: &std::path::Path, dst: &std::path::Path) {
+    let st = Command::new("cp")
+        .arg(src)
+        .arg(dst)
+        .status()
+        .expect("spawn cp");
+    assert!(st.success(), "cp {} {}", src.display(), dst.display());
+}
+
 /// The build cache ignored imported modules, so editing one served a stale
 /// binary.
 ///
@@ -28354,7 +28326,7 @@ fn editing_an_imported_module_invalidates_the_build_cache() {
     // compiler can change underneath it. Copying the binary once gives this
     // test a compiler identity nothing else can touch.
     let pinned = dir.join("axon-pinned");
-    std::fs::copy(env!("CARGO_BIN_EXE_axon"), &pinned).unwrap();
+    copy_executable(std::path::Path::new(env!("CARGO_BIN_EXE_axon")), &pinned);
 
     // A private cache dir, so this test neither reads nor pollutes the user's.
     let build = |tag: &str| -> Option<String> {
@@ -28458,7 +28430,7 @@ fn a_different_compiler_with_the_same_path_size_and_mtime_misses_the_build_cache
     let app = dir.join("app.ax");
     std::fs::write(&app, "fn main() { println(\"hi\") }\n").unwrap();
     let compiler = dir.join("axon");
-    std::fs::copy(env!("CARGO_BIN_EXE_axon"), &compiler).unwrap();
+    copy_executable(std::path::Path::new(env!("CARGO_BIN_EXE_axon")), &compiler);
 
     let entries = || {
         std::fs::read_dir(&cache)
@@ -28516,13 +28488,13 @@ fn a_different_compiler_with_the_same_path_size_and_mtime_misses_the_build_cache
         .rposition(|w| w == needle)
         .expect("the compiler executable records its rustc version in `.comment`");
     bytes[at] = b'R';
-    std::fs::write(&compiler, &bytes).unwrap();
-    let f = std::fs::File::options()
-        .write(true)
-        .open(&compiler)
+    write_executable(&compiler, &bytes);
+    // Restoring the mtime needs no write access: futimens on a read-only
+    // descriptor works for the owner, and a read descriptor is no writer.
+    std::fs::File::open(&compiler)
+        .unwrap()
+        .set_modified(mtime)
         .unwrap();
-    f.set_modified(mtime).unwrap();
-    drop(f);
     let md = std::fs::metadata(&compiler).unwrap();
     assert_eq!((md.len() as usize, md.modified().unwrap()), (len, mtime));
 
@@ -28682,17 +28654,14 @@ fn native_build_links_from_any_directory_without_cargo_on_path() {
 /// A `cargo` that records each run in the returned marker file and fails:
 /// `(dir to prepend to PATH and use as CARGO_HOME/bin, marker)`.
 fn recording_cargo(dir: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
-    use std::os::unix::fs::PermissionsExt;
     let bin = dir.join("fake-cargo-home").join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let marker = dir.join("cargo-ran");
     let cargo = bin.join("cargo");
-    std::fs::write(
+    write_executable(
         &cargo,
-        format!("#!/bin/sh\necho \"$@\" >> '{}'\nexit 1\n", marker.display()),
-    )
-    .unwrap();
-    std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
+        format!("#!/bin/sh\necho \"$@\" >> '{}'\nexit 1\n", marker.display()).as_bytes(),
+    );
     (bin, marker)
 }
 
@@ -28802,7 +28771,7 @@ fn an_installed_compiler_links_the_runtime_installed_beside_it_without_cargo() {
     std::fs::create_dir_all(&runtime_dir).unwrap();
     let installed_exe = prefix.join("bin/axon");
     if std::fs::hard_link(workspace_exe, &installed_exe).is_err() {
-        std::fs::copy(workspace_exe, &installed_exe).unwrap();
+        copy_executable(workspace_exe, &installed_exe);
     }
     std::fs::copy(&built, runtime_dir.join("libaxon_rt.a")).unwrap();
 
@@ -34620,4 +34589,248 @@ fn an_unread_unbindable_match_field_leaves_the_outer_binding_intact_ax45() {
         .expect("run native");
     let _ = std::fs::remove_file(&bin);
     assert_eq!(String::from_utf8_lossy(&nat.stdout).trim(), want);
+}
+
+/// AX-48: `let (b, k) = u`, where `u` is the inner tuple bound by an outer
+/// destructure, was refused natively with E0910 "`b` is read, but native
+/// codegen produced no value for its binding": the desugar binds `u` as
+/// `__tup_N.1`, and that element access gave `u` no semantic type, so the
+/// second destructure could not index it. The register's three repros, plus
+/// the inner tuple passed to a fn, returned from one, matched on, and nested
+/// three deep, must build and print what the interpreter prints.
+#[test]
+fn ax48_destructuring_an_inner_tuple_binding_matches_the_interpreter() {
+    let progs: [(&str, &str, &str); 5] = [
+        (
+            "ax48_lit",
+            "fn main() -> i64 { let t = (1, (2, 3)) let (a, u) = t let (b, k) = u \
+             println(\"{a} {b} {k}\") 0 }\n",
+            "1 2 3",
+        ),
+        (
+            "ax48_ret",
+            "fn f(n: i64) -> (i64, (i64, i64)) { (n, (n + 1, n + 2)) }\n\
+             fn main() -> i64 { let (a, t) = f(3) let (b, k) = t println(\"{a} {b} {k}\") 0 }\n",
+            "3 4 5",
+        ),
+        (
+            "ax48_enum",
+            "type A = Lit { v: i64 } | Two { x: i64 }\n\
+             fn f(n: i64) -> (A, (A, i64)) { (A::Lit { v: n }, (A::Two { x: n }, n)) }\n\
+             fn val(a: A) -> i64 { match a { A::Lit { v } => v A::Two { x } => x * 10 } }\n\
+             fn main() -> i64 { let (a, t) = f(3) let (b, k) = t \
+             println(\"{val(a)} {val(b)} {k}\") 0 }\n",
+            "3 30 3",
+        ),
+        (
+            "ax48_pass_return_match",
+            "fn sum(p: (i64, i64)) -> i64 { let (x, y) = p x + y }\n\
+             fn inner(t: (i64, (i64, i64))) -> (i64, i64) { let (_a, u) = t u }\n\
+             fn main() -> i64 {\n  let t = (1, (2, 3))\n  let (a, u) = t\n  \
+             let (c, d) = inner(t)\n  let s = match u { (p, q) => p * q }\n  \
+             println(\"{a} {sum(u)} {c} {d} {s} {u.1}\")\n  0\n}\n",
+            "1 5 2 3 6 3",
+        ),
+        (
+            "ax48_deep",
+            "fn main() -> i64 {\n  let z = (\"x\", (\"y\", (2.5, true)))\n  let (s1, r1) = z\n  \
+             let (s2, r2) = r1\n  let (f, b) = r2\n  \
+             println(\"{s1}{s2} {to_str(f)} {to_str_bool(b)} {to_str(z.1.1.0)}\")\n  0\n}\n",
+            "xy 2.5 true 2.5",
+        ),
+    ];
+    for (tag, src, want) in progs {
+        assert_eq!(interp_stdout(tag, src), want, "[{tag}] interpreter");
+        let Some(got) = native_stdout(tag, src) else {
+            note_harness_skip("axon build (no codegen feature)");
+            return;
+        };
+        assert_eq!(got, want, "[{tag}] native != interpreter");
+    }
+}
+
+#[test]
+fn native_interpolation_renders_structs_and_enums_like_the_interpreter() {
+    // AX-49: native codegen refused to interpolate any struct or enum value
+    // (E0910, "its inner type is erased here") while the interpreter printed
+    // it. Interpolation now renders by the static type, through one helper per
+    // type, and must print exactly what `axon run` prints: the interpreter's
+    // field order (sorted by `name:`, so `a1` before `a`, never declaration
+    // order), raw str contents, `%.6g` floats, nested and recursive values.
+    const REPRO: &str = "type P = { x: i64, y: i64 }\ntype A = Lit { v: i64 } | Nil\nfn main() -> i64 { let p = P { x: 1, y: 2 } let a = A::Lit { v: 4 } println(\"{p} {a} {A::Nil}\") 0 }\n";
+    let progs: [(&str, &str); 9] = [
+        ("ax49_repro", REPRO),
+        (
+            "ax49_flat",
+            r#"type P = { y: i64, x: i64 }
+type O = { b: i64, a1: i64, a: i64, ab: i64 }
+fn main() -> i64 {
+ let p = P { y: -2, x: 1 }
+ println("p={p}")
+ println("{O { a: 1, ab: 2, a1: 3, b: 4 }}")
+ 0
+}
+"#,
+        ),
+        (
+            "ax49_nested",
+            r#"type P = { x: i64, y: i64 }
+type Line = { to: P, from: P }
+type Box = { line: Line, id: i64 }
+fn mk(a: i64) -> P { P { x: a, y: a * 2 } }
+fn main() -> i64 {
+ let l = Line { from: mk(1), to: mk(3) }
+ println("{l} {Box { line: l, id: 7 }}")
+ println("{mk(4)} {l.to}")
+ 0
+}
+"#,
+        ),
+        (
+            "ax49_scalars",
+            r#"type S = { s: str, t: str, f: f64, g: f64, h: f64, yes: bool, no: bool }
+type N = { a: i32, b: u8, c: u64, d: i16 }
+fn main() -> i64 {
+ let s = S { s: "say \"hi\"\tnow\nnext", t: "", f: 0.1, g: -2.5, h: 12345678.0, yes: true, no: false }
+ println("{s}")
+ println("{N { a: as_i32(-7), b: as_u8(200), c: as_u64(-1), d: as_i16(-300) }}")
+ let x: i32 = as_i32(-5)
+ let u: u64 = as_u64(-1)
+ println("{x} {u}")
+ 0
+}
+"#,
+        ),
+        (
+            "ax49_enums",
+            r#"type Shape = Circle { r: f64 } | Rect { w: f64, h: f64, label: str } | Empty
+type Sh = Wrap { s: Shape } | Pt { at: (i64, i64) }
+fn main() -> i64 {
+ let c = Shape::Circle { r: 1.5 }
+ let shapes = [c, Shape::Rect { w: 2.0, h: 1e7, label: "big" }, Shape::Empty]
+ let i = 0
+ while i < len(shapes) { println("{shapes[i]}") i = i + 1 }
+ println("{Shape::Empty} {Sh::Wrap { s: c }} {Sh::Pt { at: (3, -4) }}")
+ 0
+}
+"#,
+        ),
+        (
+            "ax49_recursive",
+            r#"type Expr = Num { n: i64 } | Add { l: Expr, r: Expr } | Neg { e: Expr }
+type Tree = Leaf | Node { l: Tree, v: str, r: Tree }
+fn main() -> i64 {
+ let e = Expr::Add { l: Expr::Num { n: 1 }, r: Expr::Neg { e: Expr::Add { l: Expr::Num { n: 2 }, r: Expr::Num { n: 3 } } } }
+ println("{e}")
+ let t = Tree::Node { l: Tree::Leaf, v: "root", r: Tree::Node { l: Tree::Leaf, v: "kid", r: Tree::Leaf } }
+ println("{t}")
+ 0
+}
+"#,
+        ),
+        (
+            "ax49_struct_holds_enum",
+            r#"type Tok = Num { v: i64 } | Op { c: str } | Eof
+type T = { kind: Tok, pos: i64 }
+type Q = { r: Result<Tok, str>, o: Option<T>, none: Option<i64>, bad: Result<i64, str> }
+type W = Boxed { t: T } | Nothing
+fn main() -> i64 {
+ let t = T { kind: Tok::Op { c: "+" }, pos: 3 }
+ println("{t}")
+ let q = Q { r: Ok(Tok::Eof), o: Some(t), none: None, bad: Err("no") }
+ println("{q}")
+ println("{W::Boxed { t: T { kind: Tok::Num { v: 9 }, pos: 0 } }} {W::Nothing}")
+ 0
+}
+"#,
+        ),
+        (
+            "ax49_arrays",
+            r#"type P = { x: i64, y: i64 }
+type Poly = { pts: [P], tag: str, names: [str], flags: [bool], grid: [[i64]] }
+fn main() -> i64 {
+ let empty: [P] = []
+ let pg = Poly { pts: [P { x: 1, y: 2 }, P { x: 3, y: 4 }], tag: "t", names: ["a", "b c"], flags: [true, false], grid: [[1, 2], [3]] }
+ println("{pg}")
+ let bare = Poly { pts: empty, tag: "", names: [], flags: [], grid: [] }
+ println("{bare}")
+ println("{pg.pts} {pg.grid} {[1.5, 0.1]}")
+ 0
+}
+"#,
+        ),
+        (
+            "ax49_option_result",
+            r#"type P = { x: i64 }
+fn half(n: i64) -> Result<P, str> { if n % 2 == 0 { Ok(P { x: n / 2 }) } else { Err("odd") } }
+fn main() -> i64 {
+ println("{half(4)} {half(3)}")
+ let so: Option<P> = Some(P { x: 5 })
+ let no: Option<P> = None
+ let pi = parse_int("12")
+ let pz = parse_int("zz")
+ println("{so} {no} {pi} {pz}")
+ let tup = (1, "x", true)
+ println("{tup}")
+ 0
+}
+"#,
+        ),
+    ];
+    // Pin the interpreter's text for the register's repro, so a change to
+    // either engine's display format cannot pass by changing both.
+    assert_eq!(
+        interp_stdout("ax49_repro_interp", REPRO),
+        "P { x: 1, y: 2 } A::Lit { v: 4 } A::Nil"
+    );
+    for (tag, src) in progs {
+        let Some(got) = native_stdout(tag, src) else {
+            return;
+        };
+        assert_eq!(
+            got,
+            interp_stdout(tag, src),
+            "[{tag}] native != interpreter"
+        );
+    }
+    // The register's exact command: `axon build --release`.
+    if let Some(got) = native_release_stdout("ax49_release", REPRO) {
+        assert_eq!(got, "P { x: 1, y: 2 } A::Lit { v: 4 } A::Nil");
+    }
+}
+
+#[test]
+fn native_interpolation_refuses_a_type_it_cannot_render_with_e0910() {
+    // AX-49 keeps E0910 for what still has no native rendering, and the message
+    // names the type rather than claiming the type is erased.
+    let src = "fn main() -> i64 {\n let d = dict_new()\n println(\"{d}\")\n 0\n}\n";
+    let f = tmp_ax("ax49_refuse", src);
+    let bin = std::env::temp_dir().join(format!("axon_ax49_refuse_{}", std::process::id()));
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .output()
+        .expect("spawn build");
+    let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_file(&bin);
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    if codegen_absent(&log) {
+        return;
+    }
+    assert_ne!(build.status.code(), Some(0), "must refuse:\n{log}");
+    assert!(
+        log.contains("E0910") && log.contains("cannot interpolate a value of type `Dict`"),
+        "must name the type it cannot render:\n{log}"
+    );
+    assert!(
+        !log.contains("erased") && !log.contains("IR verification"),
+        "must not blame type erasure or crash in LLVM:\n{log}"
+    );
 }

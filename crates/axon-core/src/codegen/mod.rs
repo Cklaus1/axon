@@ -41,6 +41,7 @@ pub mod bpf;
 pub mod build_wrappers;
 pub mod builtin_externs;
 pub mod builtins;
+pub mod display;
 pub mod enum_layout;
 pub mod escape;
 pub mod expr;
@@ -230,6 +231,10 @@ pub struct Codegen<'ctx> {
     /// Every user enum name, registered before any type body is laid out so
     /// `axon_type_to_semantic` resolves an enum-typed field as an enum.
     enum_names: std::collections::HashSet<String>,
+    /// The `__axon_display_N(T) -> str` helper built for each compound type
+    /// a string interpolation renders (`display.rs`), one per type, so a
+    /// recursive type calls its own helper instead of expanding forever.
+    display_fns: HashMap<Type, FunctionValue<'ctx>>,
     /// All top-level FnDefs by name, populated during emit_program for comptime evaluation.
     fndefs: HashMap<String, ast::FnDef>,
     /// Generic function type-parameter names (fn_name → [type param names]).
@@ -488,6 +493,7 @@ impl<'ctx> Codegen<'ctx> {
             fmtstr_counter: 0,
             enum_variants: HashMap::new(),
             enum_names: std::collections::HashSet::new(),
+            display_fns: HashMap::new(),
             fndefs: HashMap::new(),
             generic_fn_params: HashMap::new(),
             trait_defs: HashMap::new(),
@@ -2407,6 +2413,17 @@ impl<'ctx> Codegen<'ctx> {
                         let idx = names.iter().position(|n| n == fname)?;
                         self.struct_field_sem_types.get(&sname)?.get(idx).cloned()
                     }
+                    // Tuple element by position: `let u = t.1` binds `u` at the
+                    // element's own type. Without it a tuple-typed element (the
+                    // inner tuple of `(1, (2, 3))`, bound by the destructure
+                    // desugar `let u = __tup_N.1`) had no semantic type, so the
+                    // next `let (b, k) = u` could not index it and `b`/`k` had
+                    // no native value (AX-48).
+                    (Some(Type::Tuple(elts)), idx) => idx
+                        .parse::<usize>()
+                        .ok()
+                        .and_then(|i| elts.get(i).cloned())
+                        .filter(|t| !matches!(t, Type::Unknown)),
                     _ => None,
                 }
             }

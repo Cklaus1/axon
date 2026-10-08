@@ -17,16 +17,12 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 . "$ROOT/scripts/lib/harness_skip.sh"
+. "$ROOT/scripts/lib/axon_bin.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-echo "handler_resume_parity: building codegen axon binary…"
-if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-  echo "handler_resume_parity: codegen build unavailable (LLVM absent) — skipping"
-  exit 0
-fi
-AXON="${AXON:-target/debug/axon}"
+need_codegen_axon handler_resume_parity
 
 fail=0
 check() {

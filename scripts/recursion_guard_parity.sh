@@ -22,6 +22,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 . "$ROOT/scripts/lib/harness_skip.sh"
+. "$ROOT/scripts/lib/axon_bin.sh"
 
 case "$(uname -s)" in
   Linux|Darwin|*BSD) ;;
@@ -31,13 +32,7 @@ esac
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-echo "recursion_guard_parity: building codegen axon binary…"
-if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-  echo "recursion_guard_parity: codegen build unavailable (LLVM absent) — skipping"
-  exit 0
-fi
-cargo build -q -p axon-rt 2>/dev/null || true
-AXON="${AXON:-target/debug/axon}"
+need_codegen_axon recursion_guard_parity
 
 # (1) Infinite recursion — must panic gracefully (exit 101) on BOTH engines.
 REC="$WORK/rec.ax"

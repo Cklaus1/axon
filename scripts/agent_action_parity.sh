@@ -16,6 +16,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 . "$ROOT/scripts/lib/harness_skip.sh"
+. "$ROOT/scripts/lib/axon_bin.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -31,12 +32,7 @@ fn planner() -> i64 {
 fn main() -> i64 { planner() }
 AX
 
-echo "agent_action_parity: building codegen axon binary…"
-if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-  echo "agent_action_parity: codegen build unavailable (LLVM absent) — skipping"
-  exit 0
-fi
-AXON="${AXON:-target/debug/axon}"
+need_codegen_axon agent_action_parity
 
 # Extract the discriminating fields of each agent_action record.
 #
