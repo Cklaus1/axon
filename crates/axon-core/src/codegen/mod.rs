@@ -2201,7 +2201,20 @@ impl<'ctx> Codegen<'ctx> {
                                 } => operand.as_ref(),
                                 other => other,
                             };
-                            return self.infer_expr_sem_type(inner);
+                            let arr_ty = self.infer_expr_sem_type(inner);
+                            // `arr_push([], "a")`: the empty literal says nothing
+                            // about T; the pushed value does.
+                            if name == "arr_push" {
+                                let unknown = arr_ty.as_ref().is_none_or(Self::type_has_unknown);
+                                if let (true, Some(v)) = (unknown, args.get(1)) {
+                                    if let Some(t) = self.infer_expr_sem_type(v) {
+                                        if !Self::type_has_unknown(&t) {
+                                            return Some(Type::Slice(Box::new(t)));
+                                        }
+                                    }
+                                }
+                            }
+                            return arr_ty;
                         }
                     }
                     // Resolve a generic return (`first<T>(..) -> Option<T>`) to

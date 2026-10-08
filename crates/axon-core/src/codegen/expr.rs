@@ -753,6 +753,21 @@ impl<'ctx> super::Codegen<'ctx> {
                 let reason = match (emitted, self.locals.get(name).copied()) {
                     (Some(val), Some((ptr, _))) => {
                         build_wrappers::w_store(&self.ir.builder, ptr, val);
+                        // `let toks = []` records `[Unknown]`; the first
+                        // `toks = arr_push(toks, Tok { .. })` reveals the
+                        // element type (AX-44). Every slice shares one LLVM
+                        // layout and the checker allows one `T`, so filling
+                        // in the unknown element only adds information.
+                        if let Some(Type::Slice(old)) = self.local_types.get(name) {
+                            if Self::type_has_unknown(old) {
+                                if let Some(new @ Type::Slice(_)) = self.infer_expr_sem_type(value)
+                                {
+                                    if !Self::type_has_unknown(&new) {
+                                        self.local_types.insert(name.clone(), new);
+                                    }
+                                }
+                            }
+                        }
                         None
                     }
                     // A Unit value rebinding a Unit binding: nothing to store.
@@ -4087,51 +4102,13 @@ impl<'ctx> super::Codegen<'ctx> {
                 let Some(elem_size) = elem_ty.size_of() else {
                     return val;
                 };
-                let i64_ty = self.ir.context.i64_type();
                 let b = &self.ir.builder;
                 let len = b.build_extract_value(sv, 0, "cl_len").unwrap().into_int_value();
                 let src = b.build_extract_value(sv, 1, "cl_src").unwrap().into_pointer_value();
                 let bytes = b.build_int_mul(len, elem_size, "cl_bytes").unwrap();
                 let dst = self.emit_malloc(bytes, "cl_dst");
                 let _ = self.ir.builder.build_memcpy(dst, 1, src, 1, bytes);
-                if self.type_needs_deep_clone(inner, 0) {
-                    // for i in 0..len { dst[i] = clone(dst[i]) }
-                    let pre = self.ir.builder.get_insert_block().unwrap();
-                    let f = pre.get_parent().unwrap_or(fn_val);
-                    let hdr = self.ir.context.append_basic_block(f, "cl_hdr");
-                    let body = self.ir.context.append_basic_block(f, "cl_body");
-                    let exit = self.ir.context.append_basic_block(f, "cl_exit");
-                    self.ir.builder.build_unconditional_branch(hdr).unwrap();
-                    self.ir.builder.position_at_end(hdr);
-                    let i = self.ir.builder.build_phi(i64_ty, "cl_i").unwrap();
-                    i.add_incoming(&[(&i64_ty.const_zero(), pre)]);
-                    let iv = i.as_basic_value().into_int_value();
-                    let more = self
-                        .ir
-                        .builder
-                        .build_int_compare(IntPredicate::ULT, iv, len, "cl_more")
-                        .unwrap();
-                    self.ir
-                        .builder
-                        .build_conditional_branch(more, body, exit)
-                        .unwrap();
-                    self.ir.builder.position_at_end(body);
-                    let sp = unsafe {
-                        self.ir.builder.build_gep(elem_ty, dst, &[iv], "cl_sp").unwrap()
-                    };
-                    let elem = build_wrappers::w_load(&self.ir.builder, elem_ty, sp, "cl_elem");
-                    let cloned = self.emit_clone_value(elem, inner, fn_val);
-                    build_wrappers::w_store(&self.ir.builder, sp, cloned);
-                    let next = self
-                        .ir
-                        .builder
-                        .build_int_add(iv, i64_ty.const_int(1, false), "cl_next")
-                        .unwrap();
-                    let end = self.ir.builder.get_insert_block().unwrap();
-                    self.ir.builder.build_unconditional_branch(hdr).unwrap();
-                    i.add_incoming(&[(&next, end)]);
-                    self.ir.builder.position_at_end(exit);
-                }
+                self.emit_clone_elems_in_place(dst, len, inner, elem_ty, fn_val);
                 let b = &self.ir.builder;
                 let mut out = sv.get_type().get_undef();
                 out = b.build_insert_value(out, len, 0, "cl_o0").unwrap().into_struct_value();
@@ -4165,6 +4142,62 @@ impl<'ctx> super::Codegen<'ctx> {
             }
             _ => val,
         }
+    }
+
+    /// Replace each of the `len` elements at `dst` (stride `elem_ty`) with a
+    /// deep clone of itself, so a buffer filled by memcpy owns every level
+    /// below it. A no-op for element types holding no array buffer.
+    pub(super) fn emit_clone_elems_in_place(
+        &mut self,
+        dst: inkwell::values::PointerValue<'ctx>,
+        len: inkwell::values::IntValue<'ctx>,
+        inner: &Type,
+        elem_ty: BasicTypeEnum<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+    ) {
+        if !self.type_needs_deep_clone(inner, 0) {
+            return;
+        }
+        // for i in 0..len { dst[i] = clone(dst[i]) }
+        let i64_ty = self.ir.context.i64_type();
+        let pre = self.ir.builder.get_insert_block().unwrap();
+        let f = pre.get_parent().unwrap_or(fn_val);
+        let hdr = self.ir.context.append_basic_block(f, "cl_hdr");
+        let body = self.ir.context.append_basic_block(f, "cl_body");
+        let exit = self.ir.context.append_basic_block(f, "cl_exit");
+        self.ir.builder.build_unconditional_branch(hdr).unwrap();
+        self.ir.builder.position_at_end(hdr);
+        let i = self.ir.builder.build_phi(i64_ty, "cl_i").unwrap();
+        i.add_incoming(&[(&i64_ty.const_zero(), pre)]);
+        let iv = i.as_basic_value().into_int_value();
+        let more = self
+            .ir
+            .builder
+            .build_int_compare(IntPredicate::ULT, iv, len, "cl_more")
+            .unwrap();
+        self.ir
+            .builder
+            .build_conditional_branch(more, body, exit)
+            .unwrap();
+        self.ir.builder.position_at_end(body);
+        let sp = unsafe {
+            self.ir
+                .builder
+                .build_gep(elem_ty, dst, &[iv], "cl_sp")
+                .unwrap()
+        };
+        let elem = build_wrappers::w_load(&self.ir.builder, elem_ty, sp, "cl_elem");
+        let cloned = self.emit_clone_value(elem, inner, fn_val);
+        build_wrappers::w_store(&self.ir.builder, sp, cloned);
+        let next = self
+            .ir
+            .builder
+            .build_int_add(iv, i64_ty.const_int(1, false), "cl_next")
+            .unwrap();
+        let end = self.ir.builder.get_insert_block().unwrap();
+        self.ir.builder.build_unconditional_branch(hdr).unwrap();
+        i.add_incoming(&[(&next, end)]);
+        self.ir.builder.position_at_end(exit);
     }
 
     /// `emit_expr`, then snapshot the result when it is an array PLACE
@@ -5216,6 +5249,63 @@ impl<'ctx> super::Codegen<'ctx> {
             eprintln!("{msg}");
             self.codegen_errors.push(msg);
         }
+    }
+
+    /// E0910 for an `arr_*` builtin whose native lowering does not cover this
+    /// array's ELEMENT TYPE (AX-44). The builtin itself may lower fine for
+    /// other element types, so the generic "builtin is not yet supported"
+    /// message would be false; this one names the element type and why.
+    /// Recorded only - the build pipeline prints `codegen_errors` once.
+    fn refuse_arr_elem(&mut self, builtin: &str, elem: Option<&Type>, why: &str) {
+        let arr = match elem {
+            Some(t) => format!("`[{}]`", t.display()),
+            None => "an array whose element type is not known statically".to_string(),
+        };
+        let msg = format!(
+            "codegen error [E0910]: native codegen cannot lower `{builtin}` on {arr}: {why}. \
+             The interpreter supports it - use `axon run`."
+        );
+        if !self.codegen_errors.iter().any(|e| e == &msg) {
+            self.codegen_errors.push(msg);
+        }
+    }
+
+    /// The element type of an `arr_*` builtin's array argument, when it is
+    /// statically known (no `Unknown` anywhere in it).
+    fn arr_arg_elem_ty(&self, arg: &ast::Expr) -> Option<Type> {
+        let operand = match arg {
+            ast::Expr::UnaryOp {
+                op: ast::UnaryOp::Ref,
+                operand,
+            } => operand.as_ref(),
+            other => other,
+        };
+        match self
+            .sem_type_of_expr(operand)
+            .or_else(|| self.infer_expr_sem_type(operand))
+        {
+            Some(Type::Slice(e)) if !Self::type_has_unknown(&e) => Some(*e),
+            _ => None,
+        }
+    }
+
+    /// Is this array argument statically known to hold something other than
+    /// i64? (Unknown → false: the caller keeps its pre-existing path.)
+    fn arr_arg_elem_is_not_i64(&self, arg: &ast::Expr) -> bool {
+        self.arr_arg_elem_ty(arg).is_some_and(|e| e != Type::I64)
+    }
+
+    /// A zero-length `{i64 len, ptr data}` slice: the value a refused
+    /// array-returning builtin yields so emission continues without a
+    /// cascade of secondary type errors (the build aborts on the E0910).
+    fn empty_slice_value(&self) -> BasicValueEnum<'ctx> {
+        let i64_ty = self.ir.context.i64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        self.ir
+            .context
+            .struct_type(&[i64_ty.into(), ptr_ty.into()], false)
+            .const_named_struct(&[i64_ty.const_zero().into(), ptr_ty.const_null().into()])
+            .into()
     }
 
     /// `dict_from_pairs` refusal: the runtime side reads `(str, i64)` only.
@@ -7564,6 +7654,174 @@ impl<'ctx> super::Codegen<'ctx> {
             return Some(self.emit_clone_value(out, &slice_ty, fn_val));
         }
         Some(out)
+    }
+
+    /// `arr_push(a, x)` on an array of any element type with a layout → a
+    /// fresh array holding `a`'s elements then `x` (interp: `arr_push` clones
+    /// the input `Vec` and pushes). One malloc of `(len+1) * sizeof(elem)`, a
+    /// memcpy of `a`'s elements, then `x` stored at index `len` with the same
+    /// stride `emit_index` reads with. `a`'s elements that own an array buffer
+    /// are deep-cloned, so a later place write through the result cannot
+    /// reach `a` (the interpreter's value semantics); the caller hands in an
+    /// `x` that already owns its buffer.
+    fn emit_arr_push_any(
+        &mut self,
+        slice_val: BasicValueEnum<'ctx>,
+        x: BasicValueEnum<'ctx>,
+        inner: &Type,
+        elem_ty: BasicTypeEnum<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let BasicValueEnum::StructValue(s) = slice_val else {
+            return None;
+        };
+        let elem_size = elem_ty.size_of()?;
+        let b = &self.ir.builder;
+        let len = b
+            .build_extract_value(s, 0, "apush_len")
+            .ok()?
+            .into_int_value();
+        let src = b
+            .build_extract_value(s, 1, "apush_src")
+            .ok()?
+            .into_pointer_value();
+        let one = self.ir.context.i64_type().const_int(1, false);
+        let new_len = b.build_int_add(len, one, "apush_nlen").ok()?;
+        let old_bytes = b.build_int_mul(len, elem_size, "apush_ob").ok()?;
+        let bytes = b.build_int_mul(new_len, elem_size, "apush_b").ok()?;
+        let dst = self.emit_malloc(bytes, "apush_dst");
+        self.ir
+            .builder
+            .build_memcpy(dst, 1, src, 1, old_bytes)
+            .ok()?;
+        self.emit_clone_elems_in_place(dst, len, inner, elem_ty, fn_val);
+        let b = &self.ir.builder;
+        let tail = unsafe { b.build_gep(elem_ty, dst, &[len], "apush_tail").ok()? };
+        build_wrappers::w_store(b, tail, x);
+        let out = b.build_insert_value(s, new_len, 0, "apush_o0").ok()?;
+        let out = b.build_insert_value(out, dst, 1, "apush_o1").ok()?;
+        Some(out.into_struct_value().into())
+    }
+
+    /// `arr_take(a, n)` / `arr_drop(a, n)` on an array of any element type
+    /// with a layout → a fresh array of the leading `min(max(n,0), len)`
+    /// elements (take) or the rest (drop), as in the interpreter. One malloc
+    /// and one memcpy; elements owning an array buffer are deep-cloned.
+    fn emit_arr_take_drop_any(
+        &mut self,
+        slice_val: BasicValueEnum<'ctx>,
+        n: inkwell::values::IntValue<'ctx>,
+        is_take: bool,
+        inner: &Type,
+        elem_ty: BasicTypeEnum<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let BasicValueEnum::StructValue(s) = slice_val else {
+            return None;
+        };
+        let elem_size = elem_ty.size_of()?;
+        let i8_ty = self.ir.context.i8_type();
+        let zero = self.ir.context.i64_type().const_zero();
+        let b = &self.ir.builder;
+        let len = b
+            .build_extract_value(s, 0, "atd_len")
+            .ok()?
+            .into_int_value();
+        let src = b
+            .build_extract_value(s, 1, "atd_src")
+            .ok()?
+            .into_pointer_value();
+        let n = b
+            .build_int_s_extend_or_bit_cast(n, zero.get_type(), "atd_n")
+            .ok()?;
+        // nc = max(0, min(n, len))
+        let lt = b
+            .build_int_compare(IntPredicate::SLT, n, len, "atd_lt")
+            .ok()?;
+        let n_min = b.build_select(lt, n, len, "atd_min").ok()?.into_int_value();
+        let pos = b
+            .build_int_compare(IntPredicate::SGT, n_min, zero, "atd_pos")
+            .ok()?;
+        let nc = b
+            .build_select(pos, n_min, zero, "atd_nc")
+            .ok()?
+            .into_int_value();
+        let (start, count) = if is_take {
+            (zero, nc)
+        } else {
+            (nc, b.build_int_sub(len, nc, "atd_rest").ok()?)
+        };
+        let bytes = b.build_int_mul(count, elem_size, "atd_b").ok()?;
+        let skip = b.build_int_mul(start, elem_size, "atd_skip").ok()?;
+        let from = unsafe { b.build_gep(i8_ty, src, &[skip], "atd_from").ok()? };
+        let dst = self.emit_malloc(bytes, "atd_dst");
+        self.ir.builder.build_memcpy(dst, 1, from, 1, bytes).ok()?;
+        self.emit_clone_elems_in_place(dst, count, inner, elem_ty, fn_val);
+        let b = &self.ir.builder;
+        let out = b.build_insert_value(s, count, 0, "atd_o0").ok()?;
+        let out = b.build_insert_value(out, dst, 1, "atd_o1").ok()?;
+        Some(out.into_struct_value().into())
+    }
+
+    /// `arr_reverse(a)` on an array of any element type with a layout → a
+    /// fresh array with `dst[i] = src[len-1-i]`, stepping by the element
+    /// layout; elements owning an array buffer are deep-cloned.
+    fn emit_arr_reverse_any(
+        &mut self,
+        slice_val: BasicValueEnum<'ctx>,
+        inner: &Type,
+        elem_ty: BasicTypeEnum<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let BasicValueEnum::StructValue(s) = slice_val else {
+            return None;
+        };
+        let elem_size = elem_ty.size_of()?;
+        let i64_ty = self.ir.context.i64_type();
+        let one = i64_ty.const_int(1, false);
+        let b = &self.ir.builder;
+        let len = b
+            .build_extract_value(s, 0, "arv_len")
+            .ok()?
+            .into_int_value();
+        let src = b
+            .build_extract_value(s, 1, "arv_src")
+            .ok()?
+            .into_pointer_value();
+        let bytes = b.build_int_mul(len, elem_size, "arv_b").ok()?;
+        let dst = self.emit_malloc(bytes, "arv_dst");
+        // for i in 0..len { dst[i] = src[len-1-i] }
+        let pre = self.ir.builder.get_insert_block()?;
+        let f = pre.get_parent().unwrap_or(fn_val);
+        let hdr = self.ir.context.append_basic_block(f, "arv_hdr");
+        let body = self.ir.context.append_basic_block(f, "arv_body");
+        let exit = self.ir.context.append_basic_block(f, "arv_exit");
+        let b = &self.ir.builder;
+        b.build_unconditional_branch(hdr).ok()?;
+        b.position_at_end(hdr);
+        let i = b.build_phi(i64_ty, "arv_i").ok()?;
+        i.add_incoming(&[(&i64_ty.const_zero(), pre)]);
+        let iv = i.as_basic_value().into_int_value();
+        let more = b
+            .build_int_compare(IntPredicate::ULT, iv, len, "arv_more")
+            .ok()?;
+        b.build_conditional_branch(more, body, exit).ok()?;
+        b.position_at_end(body);
+        let last = b.build_int_sub(len, one, "arv_last").ok()?;
+        let j = b.build_int_sub(last, iv, "arv_j").ok()?;
+        let sp = unsafe { b.build_gep(elem_ty, src, &[j], "arv_sp").ok()? };
+        let dp = unsafe { b.build_gep(elem_ty, dst, &[iv], "arv_dp").ok()? };
+        let elem = build_wrappers::w_load(b, elem_ty, sp, "arv_elem");
+        build_wrappers::w_store(b, dp, elem);
+        let next = b.build_int_add(iv, one, "arv_next").ok()?;
+        b.build_unconditional_branch(hdr).ok()?;
+        i.add_incoming(&[(&next, body)]);
+        b.position_at_end(exit);
+        self.emit_clone_elems_in_place(dst, len, inner, elem_ty, fn_val);
+        let b = &self.ir.builder;
+        let out = b.build_insert_value(s, len, 0, "arv_o0").ok()?;
+        let out = b.build_insert_value(out, dst, 1, "arv_o1").ok()?;
+        Some(out.into_struct_value().into())
     }
 
     /// arr_std_f64(&a) → sample standard deviation. <2 elements → 0.0 (no
@@ -10540,7 +10798,13 @@ impl<'ctx> super::Codegen<'ctx> {
                     return self.emit_arr_i64_loop(slice_val, ArrReduce::Sum, fn_val);
                 }
             }
-            if name == "arr_contains" && args.len() == 2 {
+            // ELEMENT-TYPE GUARD (both below): the loop compares i64 elements
+            // at an 8-byte stride, so a `[bool]`/`[i32]`/`[str]` array failed IR
+            // verification. A statically non-i64 array is refused by element
+            // type at the end of this block; an unproven one keeps the old
+            // integer path.
+            if name == "arr_contains" && args.len() == 2 && !self.arr_arg_elem_is_not_i64(&args[0])
+            {
                 if let (Some(slice_val), Some(BasicValueEnum::IntValue(n))) = (
                     self.emit_expr(&args[0], fn_val),
                     self.emit_expr(&args[1], fn_val),
@@ -10552,7 +10816,8 @@ impl<'ctx> super::Codegen<'ctx> {
             // or None. The loop yields the index (or the -1 sentinel for "none");
             // wrap it in Option<i64> here (Some(idx) iff idx != -1), matching the
             // interpreter's `Some(i)`/`None` return — same shape as dict_get.
-            if name == "arr_index_of" && args.len() == 2 {
+            if name == "arr_index_of" && args.len() == 2 && !self.arr_arg_elem_is_not_i64(&args[0])
+            {
                 if let (Some(slice_val), Some(BasicValueEnum::IntValue(n))) = (
                     self.emit_expr(&args[0], fn_val),
                     self.emit_expr(&args[1], fn_val),
@@ -10633,54 +10898,160 @@ impl<'ctx> super::Codegen<'ctx> {
                     return self.emit_arr_f64_loop(slice_val, kind, fn_val);
                 }
             }
-            // arr_reverse(&a) — the first ALLOCATING arr_* lowering: malloc a new
-            // i64 buffer of the same length and copy src[len-1-i] → dst[i].
-            // Returns a fresh `{len, ptr}` slice (i64-element arrays; the common
-            // case — other element types stay E0910-gated below).
-            if name == "arr_reverse" && args.len() == 1 && self.arr_arg_elem_is_i64(&args[0]) {
-                if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
-                    if let Some(r) = self.emit_arr_i64_reverse(slice_val, fn_val) {
-                        return Some(r);
-                    }
-                }
-            }
-            // arr_take(&a, n) / arr_drop(&a, n) — copy a contiguous i64 range into
-            // a fresh slice. take = first min(n,len); drop = from min(n,len) on.
-            if (name == "arr_take" || name == "arr_drop")
-                && args.len() == 2
-                && self.arr_arg_elem_is_i64(&args[0])
+            // arr_reverse(&a) / arr_take(&a, n) / arr_drop(&a, n) — fresh arrays
+            // copied out of `a` (take = first min(n,len); drop = from min(n,len)
+            // on). `[i64]` keeps its dedicated i64-stride lowering; every other
+            // element type with a native layout copies by that layout (AX-44).
+            // Anything still unlowerable is refused by element type, never
+            // walked as if its elements were i64 (refuse, never miscompile).
+            if (name == "arr_reverse" && args.len() == 1)
+                || ((name == "arr_take" || name == "arr_drop") && args.len() == 2)
             {
-                if let (Some(slice_val), Some(BasicValueEnum::IntValue(n))) = (
-                    self.emit_expr(&args[0], fn_val),
-                    self.emit_expr(&args[1], fn_val),
-                ) {
-                    let is_take = name == "arr_take";
-                    if let Some(r) = self.emit_arr_i64_take_drop(slice_val, n, is_take, fn_val) {
-                        return Some(r);
-                    }
-                }
-            }
-            // arr_push(&a, x) → a ++ [x] (fresh array; input untouched).
-            //
-            // `arr_push` is GENERIC at the source level (`[T], T -> [T]`), but
-            // this lowering is the 8-byte-stride i64 one. Anything else — a
-            // struct/str/array element (StructValue), an f64 (FloatValue), or a
-            // BOOL (an i1 IntValue, which would be stored into an i64 slot and
-            // read back as garbage) — must fall through to the E0910 refusal
-            // below rather than miscompile (invariant I-2: native either matches
-            // the interpreter or refuses honestly). Narrow *signed* ints
-            // (i8/i16/i32) keep the pre-generic behaviour: they widened to the
-            // old `x: i64` parameter and lower correctly.
-            if name == "arr_push" && args.len() == 2 {
-                if let (Some(slice_val), Some(BasicValueEnum::IntValue(x))) = (
-                    self.emit_expr(&args[0], fn_val),
-                    self.emit_expr(&args[1], fn_val),
-                ) {
-                    if x.get_type().get_bit_width() > 1 {
-                        if let Some(r) = self.emit_arr_i64_push(slice_val, x, fn_val) {
-                            return Some(r);
+                let elem = self.arr_arg_elem_ty(&args[0]);
+                let errors_before = self.codegen_errors.len();
+                let mut why = "the array argument did not lower";
+                match &elem {
+                    Some(Type::I64) => {
+                        if name == "arr_reverse" {
+                            if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
+                                if let Some(r) = self.emit_arr_i64_reverse(slice_val, fn_val) {
+                                    return Some(r);
+                                }
+                            }
+                        } else if let (Some(slice_val), Some(BasicValueEnum::IntValue(n))) = (
+                            self.emit_expr(&args[0], fn_val),
+                            self.emit_expr(&args[1], fn_val),
+                        ) {
+                            let is_take = name == "arr_take";
+                            if let Some(r) =
+                                self.emit_arr_i64_take_drop(slice_val, n, is_take, fn_val)
+                            {
+                                return Some(r);
+                            }
                         }
                     }
+                    Some(inner) => match self.llvm_type(inner) {
+                        Some(elem_ty) => {
+                            if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
+                                let r = if name == "arr_reverse" {
+                                    self.emit_arr_reverse_any(slice_val, inner, elem_ty, fn_val)
+                                } else if let Some(BasicValueEnum::IntValue(n)) =
+                                    self.emit_expr(&args[1], fn_val)
+                                {
+                                    let is_take = name == "arr_take";
+                                    self.emit_arr_take_drop_any(
+                                        slice_val, n, is_take, inner, elem_ty, fn_val,
+                                    )
+                                } else {
+                                    why = "the count argument is not an integer";
+                                    None
+                                };
+                                if let Some(r) = r {
+                                    return Some(r);
+                                }
+                            }
+                        }
+                        None => why = "the element type has no native layout",
+                    },
+                    None => why = "the element layout is needed to copy elements",
+                }
+                if maybe_fn_v.is_none() {
+                    // A sub-expression that already reported its own error
+                    // needs no second, misleading one here.
+                    if self.codegen_errors.len() == errors_before {
+                        self.refuse_arr_elem(name, elem.as_ref(), why);
+                    }
+                    return Some(self.empty_slice_value());
+                }
+            }
+            // arr_push(&a, x) → a ++ [x] (fresh array; input untouched — the
+            // interpreter clones the input `Vec` and pushes).
+            //
+            // `[i64]` keeps its dedicated 8-byte-stride lowering. Every other
+            // element type with a native layout (str, f64, bool, sized ints,
+            // enums, structs, tuples, nested arrays, Option/Result) goes through
+            // `emit_arr_push_any`, which strides by the element layout — the
+            // same one array literals and `emit_index` use (AX-44). The element
+            // type comes from the array argument, else from the pushed value
+            // (`arr_push([], "a")`). With neither known, the pre-generic i64
+            // path still takes a non-bool integer, as it always has; anything
+            // else is refused by element type (I-2: match the interpreter or
+            // refuse honestly).
+            if name == "arr_push" && args.len() == 2 {
+                let elem = self.arr_arg_elem_ty(&args[0]).or_else(|| {
+                    self.infer_expr_sem_type(&args[1])
+                        .filter(|t| !Self::type_has_unknown(t))
+                });
+                let errors_before = self.codegen_errors.len();
+                let mut why = "the array argument did not lower";
+                match &elem {
+                    Some(Type::I64) | None => {
+                        if let (Some(slice_val), Some(x)) = (
+                            self.emit_expr(&args[0], fn_val),
+                            self.emit_expr(&args[1], fn_val),
+                        ) {
+                            match x {
+                                BasicValueEnum::IntValue(x) if x.get_type().get_bit_width() > 1 => {
+                                    if let Some(r) = self.emit_arr_i64_push(slice_val, x, fn_val) {
+                                        return Some(r);
+                                    }
+                                }
+                                _ => {
+                                    why =
+                                        "the element layout is needed to store a non-integer value"
+                                }
+                            }
+                        }
+                    }
+                    Some(inner) => match self.llvm_type(inner) {
+                        Some(elem_ty) => {
+                            if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
+                                // Build an Option/Result value in the element's
+                                // full canonical layout (a bare `None` would
+                                // otherwise pick a layout of its own).
+                                let saved_oi = self.current_option_inner.clone();
+                                let saved_rt = self.current_result_types.clone();
+                                match inner {
+                                    Type::Option(o) => {
+                                        self.current_option_inner = Some((**o).clone())
+                                    }
+                                    Type::Result(ok, err) => {
+                                        self.current_result_types =
+                                            Some(((**ok).clone(), (**err).clone()))
+                                    }
+                                    _ => {}
+                                }
+                                // The new element must own its buffer: a pushed
+                                // array place (`arr_push(rows, row)`) is
+                                // snapshotted, as the interpreter's value copy.
+                                let x = self.emit_expr_owned(&args[1], fn_val, CopySink::Always);
+                                self.current_option_inner = saved_oi;
+                                self.current_result_types = saved_rt;
+                                if let Some(x) = x {
+                                    let x = self.coerce_to_fixed_width(x, inner);
+                                    if x.get_type() == elem_ty {
+                                        if let Some(r) = self
+                                            .emit_arr_push_any(slice_val, x, inner, elem_ty, fn_val)
+                                        {
+                                            return Some(r);
+                                        }
+                                    } else {
+                                        why = "the pushed value's native layout differs from the \
+                                               element slot";
+                                    }
+                                } else {
+                                    why = "the pushed value did not lower";
+                                }
+                            }
+                        }
+                        None => why = "the element type has no native layout",
+                    },
+                }
+                if maybe_fn_v.is_none() {
+                    if self.codegen_errors.len() == errors_before {
+                        self.refuse_arr_elem(name, elem.as_ref(), why);
+                    }
+                    return Some(self.empty_slice_value());
                 }
             }
             // arr_map(&a, |x| ...) / arr_filter(&a, |x| ...) — the first
@@ -10918,6 +11289,63 @@ impl<'ctx> super::Codegen<'ctx> {
                     if let Some(r) = self.emit_arr_i64_pred(slice_val, lam, kind, fn_val) {
                         return Some(r);
                     }
+                }
+            }
+            // Every remaining `arr_*` lowering above handles only `[i64]`
+            // arrays (`[[i64]]` for `arr_flatten`): they compare elements as
+            // i64 or call an i64-ABI closure per element. Reaching here with a
+            // statically known other element type means that gate turned it
+            // away. Refuse by ELEMENT TYPE (AX-44): the builtin does lower for
+            // `[i64]`, so "builtin not yet supported" would be false.
+            if maybe_fn_v.is_none() {
+                let (arrays, returns_slice): (&[usize], bool) = match name.as_str() {
+                    "arr_zip" | "arr_zip_with" => (&[0, 1], true),
+                    "arr_unique" | "arr_enumerate" | "arr_chunk" | "arr_map" | "arr_filter"
+                    | "arr_take_while" | "arr_drop_while" | "arr_sort_by" | "arr_flatten" => {
+                        (&[0], true)
+                    }
+                    "arr_partition" | "arr_find" | "arr_max_by" | "arr_min_by" | "arr_count_if"
+                    | "arr_all" | "arr_any" | "arr_fold" | "arr_contains" | "arr_index_of" => {
+                        (&[0], false)
+                    }
+                    _ => (&[], false),
+                };
+                let lowered = if name == "arr_flatten" {
+                    Type::Slice(Box::new(Type::I64))
+                } else {
+                    Type::I64
+                };
+                let other = arrays
+                    .iter()
+                    .filter_map(|&i| args.get(i))
+                    .filter_map(|a| self.arr_arg_elem_ty(a))
+                    .find(|e| *e != lowered);
+                if let Some(elem) = other {
+                    let why = format!(
+                        "its native lowering handles only `[{}]` arrays",
+                        lowered.display()
+                    );
+                    self.refuse_arr_elem(name, Some(&elem), &why);
+                    // A placeholder of the builtin's result type, so emission
+                    // continues without secondary errors (the build aborts).
+                    let i64_zero: BasicValueEnum<'ctx> =
+                        self.ir.context.i64_type().const_zero().into();
+                    return Some(match name.as_str() {
+                        _ if returns_slice => self.empty_slice_value(),
+                        "arr_contains" | "arr_all" | "arr_any" => {
+                            self.ir.context.bool_type().const_zero().into()
+                        }
+                        "arr_index_of" => self.emit_option(None, &Type::I64),
+                        "arr_find" => self.emit_option(None, &elem),
+                        "arr_max_by" | "arr_min_by" => {
+                            self.llvm_type(&elem).map_or(i64_zero, |t| t.const_zero())
+                        }
+                        "arr_partition" => {
+                            let e = self.empty_slice_value();
+                            self.ir.context.const_struct(&[e, e], false).into()
+                        }
+                        _ => i64_zero,
+                    });
                 }
             }
         }
