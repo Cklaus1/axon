@@ -1970,12 +1970,8 @@ fn fabric_runs_its_direct_launcher_and_its_observer_with_exactly_their_flags_and
     );
     set_launcher(&mut lx, script);
     let s = w.submit_with(lx.clone(), "op-direct-dump", "t_psv_ok");
-    assert_eq!(
-        s.receipt.verification,
-        ReceiptVerification::Passed,
-        "control: {:?}",
-        s.reason
-    );
+    // (the control, that the launch PASSED, is asserted after the argv: a wrong VALUE makes the guest
+    // refuse, and that refusal must not hide the assertion on the value that caused it)
     let read = |p: &Path| std::fs::read_to_string(p).unwrap();
     let want_launch_path = "PATH=/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/bin\n";
     for n in ["environ-launch", "environ-verify"] {
@@ -2045,6 +2041,12 @@ fn fabric_runs_its_direct_launcher_and_its_observer_with_exactly_their_flags_and
     assert!(
         got.ends_with("/dist/guest-linux"),
         "ATTACK: Fabric handed the direct launcher --artifacts-dir {got:?}, not <repo>/dist/guest-linux"
+    );
+    assert_eq!(
+        s.receipt.verification,
+        ReceiptVerification::Passed,
+        "control: {:?}",
+        s.reason
     );
     let v = read(&rec.join("argv-verify"));
     let v: Vec<&str> = v.lines().collect();
