@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 83175bed8e38eb1d5854c9914b345a27ec377ec5
+generated-at: 1a75557b45bd62cf119166b9d79cc6631979f44f
 
-`git diff --numstat 31413ca7..83175bed -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..1a75557b -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -51,7 +51,7 @@ generated-at: 83175bed8e38eb1d5854c9914b345a27ec377ec5
 | `crates/axon-core/src/interp/pin.rs` | 944 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 35 | 15 |
 | `crates/axon-core/src/interp/taint.rs` | 1058 | 0 |
-| `crates/axon-core/src/interp/taint_tests.rs` | 1416 | 0 |
+| `crates/axon-core/src/interp/taint_tests.rs` | 1417 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 15 | 7 |
 | `crates/axon-core/src/kernel.rs` | 2 | 2 |
 | `crates/axon-core/src/lib.rs` | 114 | 13 |
@@ -60,9 +60,9 @@ generated-at: 83175bed8e38eb1d5854c9914b345a27ec377ec5
 | `crates/axon-core/src/mut_borrow.rs` | 800 | 0 |
 | `crates/axon-core/src/parser.rs` | 39 | 1 |
 | `crates/axon-core/src/resolver.rs` | 334 | 64 |
-| total | 18276 | 2822 |
+| total | 18277 | 2822 |
 
-`git log --reverse 31413ca7..83175bed -- crates/axon-core/src`:
+`git log --reverse 31413ca7..1a75557b -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -130,7 +130,8 @@ generated-at: 83175bed8e38eb1d5854c9914b345a27ec377ec5
 | cc74956e | amendment 100 | a handler arm and its continuation replay run under the pin owner of the fn that INSTALLED the handler, not the one that performed the effect; the name argument of every name-resolving builtin (sandbox_run, scheduler_spawn, goal_*, kernel_goal_create) must be an operator-chosen name (Ctx::npure) or the call is refused; an operator fn and a missing one read the same to sealed code; drift tests: narrowing, no widening |
 | c62e9b02 | amendment 102 | a runtime taint: a value sealed code produced carries a taint every operation of the evaluator propagates (an accumulator around `eval`, a taint per binding, per shared object and per module-level let, an early-exit taint for a fn result and for stores), and an operator frame refuses to use a tainted value to SELECT operator code: the name given to a name-resolving builtin, an operator closure the candidate picked (out of a table by a key, index or branch) and then called, the impl a method call dispatches to (receiver type), and the width of fixed-width arithmetic; the static pin analysis is kept underneath; a plain `axon run` is unchanged (one branch per eval); drift tests for builtin classes, dict writers, dispatch sites, value holders and swept files: narrowing, no widening |
 | 83175bed | amendment 106 | a channel is one shared object with one taint: every channel method and every `select` arm examined takes it into the result, and a sealed frame's mutating access (send, recv, try_recv) marks it; a kernel or world write stores the control taint it ran under; a builtin runs its callbacks under the control taint of its arguments; string interpolation and the stringifying builtins take the taint of every shared object they print; a sealed caller is refused in ONE text on every path (a name, a global, a field or index, `goal_run`, a goal constraint, `kernel_goal_create`: `goal_run` of an operator fn no longer completes); routing and drift tests for every dict, kernel and array reader, 38 hunted programs: narrowing, no widening |
-| 64 commits | | |
+| 1a75557b | amendment 106 | test only (the oracle test reads the verdict as Debug text; no production change) |
+| 65 commits | | |
 <!-- END MECHANICAL -->
 <!-- END MECHANICAL -->
 
