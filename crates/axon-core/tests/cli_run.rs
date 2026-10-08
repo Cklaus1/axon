@@ -33651,3 +33651,163 @@ fn effects_flow_through_a_fn_value() {
         );
     }
 }
+
+/// AX-45: build `src` natively and return the `codegen error [...]` lines and
+/// the final `N codegen error(s)` line, or `None` on an interpreter-only axon.
+/// Asserts the invariant every caller relies on: the build failed, and the
+/// count it states equals the number of codegen errors it printed.
+fn native_refusal_report(tag: &str, src: &str) -> Option<Vec<String>> {
+    let f = tmp_ax(&format!("ax45_{tag}"), src);
+    let bin = std::env::temp_dir().join(format!("axon_ax45_{tag}_{}", std::process::id()));
+    let out = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .output()
+        .expect("spawn build");
+    let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_file(&bin);
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    if codegen_absent(&all) {
+        return None;
+    }
+    assert_ne!(
+        out.status.code(),
+        Some(0),
+        "[{tag}] build must refuse:\n{all}"
+    );
+    let errors: Vec<String> = all
+        .lines()
+        .filter(|l| l.starts_with("codegen error ["))
+        .map(str::to_string)
+        .collect();
+    let count_line = format!("{} codegen error(s); build aborted", errors.len());
+    assert!(
+        all.lines().any(|l| l.ends_with(&count_line)),
+        "[{tag}] the stated error count must equal the {} codegen errors printed:\n{all}",
+        errors.len()
+    );
+    assert!(
+        !all.contains("not found in current scope"),
+        "[{tag}] a refusal cascaded into an unknown-identifier error on a valid name:\n{all}"
+    );
+    Some(errors)
+}
+
+#[test]
+fn a_native_refusal_prints_once_and_is_counted_once_ax45() {
+    // `sandbox_create` is interpreter-only by design. Its refusal was printed
+    // at the call site AND by the build pipeline: two lines, `1 codegen
+    // error(s)`. Two calls with the identical refusal are still one error.
+    let src = "fn main() -> i64 {\n    let a = sandbox_create(1, \"IO\")\n    let b = sandbox_create(2, \"IO\")\n    println(to_str(a + b))\n    0\n}\n";
+    let Some(errors) = native_refusal_report("once", src) else {
+        return;
+    };
+    assert_eq!(errors.len(), 1, "one refusal, printed once: {errors:#?}");
+    assert!(
+        errors[0].starts_with("codegen error [E0910]: builtin `sandbox_create`"),
+        "{errors:#?}"
+    );
+}
+
+#[test]
+fn a_refused_let_value_does_not_cascade_into_unknown_identifiers_ax45() {
+    // Native codegen folds `comptime` at build time, so an impure `comptime`
+    // block is refused by design. Its failure went to stderr only (uncounted),
+    // and every later read of the binding it left uncreated - `x`, then `y`,
+    // which depends on it - was reported as an unknown identifier (E0701).
+    let local = "fn main() -> i64 {\n    let x = comptime { println(\"side\") 1 }\n    let y = x + 1\n    let _z = y * 2\n    0\n}\n";
+    let Some(errors) = native_refusal_report("let", local) else {
+        return;
+    };
+    assert_eq!(errors.len(), 1, "{errors:#?}");
+    assert!(
+        errors[0].starts_with("codegen error [E0701]: this `comptime` block cannot be evaluated"),
+        "{errors:#?}"
+    );
+
+    // A module-level `let` has no runtime lowering at all: it is folded or
+    // nothing. Its failure was printed, not counted, and a program that never
+    // read it BUILT, dropping the value's side effects; `H`, defined from it,
+    // and the read of `H` in `main` are not further errors.
+    let module = "fn side() -> i64 { println(\"side\") 5 }\nlet G = side()\nlet H = G + 1\nfn main() -> i64 {\n    let _y = H * 2\n    0\n}\n";
+    let Some(errors) = native_refusal_report("module_let", module) else {
+        return;
+    };
+    assert_eq!(errors.len(), 1, "{errors:#?}");
+    assert!(
+        errors[0]
+            .starts_with("codegen error [E0701]: the module-level `let G` cannot be evaluated"),
+        "{errors:#?}"
+    );
+}
+
+#[test]
+fn an_unbindable_match_field_is_refused_where_it_is_bound_ax45() {
+    // Decimal is interpreter-only (R21), so a `Decimal` variant field has no
+    // native layout and the pattern binding `d` was silently not created; the
+    // only error was `identifier 'd' not found` on a valid name.
+    let src = "type E = W { d: Decimal, n: i64 } | N { n: i64 }\nfn h(e: E) -> i64 {\n    match e {\n        E::W { d, n } => {\n            let _q = d\n            n\n        }\n        E::N { n } => n\n    }\n}\nfn main() -> i64 {\n    println(to_str(h(E::N { n: 3 })))\n    0\n}\n";
+    let Some(errors) = native_refusal_report("bind", src) else {
+        return;
+    };
+    assert_eq!(errors.len(), 1, "{errors:#?}");
+    assert!(
+        errors[0].starts_with(
+            "codegen error [E0910]: native codegen could not bind `d`: field `d` of `E::W` has type Decimal"
+        ),
+        "{errors:#?}"
+    );
+}
+
+#[test]
+fn an_unread_unbindable_match_field_leaves_the_outer_binding_intact_ax45() {
+    // The arm binding `d` shadows the parameter `d` and cannot be created, but
+    // nothing reads it: no error, and past the arm `d` is the parameter again
+    // in both engines (the poisoning is scoped to the arm).
+    let src = "type E = W { d: Decimal, n: i64 } | N { n: i64 }\nfn h(e: E, d: i64) -> i64 {\n    let k = match e {\n        E::W { d: _d, n } => n\n        E::N { n } => n\n    }\n    let j = match e {\n        E::W { d, n } => n\n        E::N { n } => n\n    }\n    k + j + d\n}\nfn main() -> i64 {\n    println(to_str(h(E::N { n: 3 }, 36)))\n    0\n}\n";
+    let f = tmp_ax("ax45_scope", src);
+    let run = axon().arg("run").arg(&f).output().expect("spawn run");
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let want = String::from_utf8_lossy(&run.stdout).trim().to_string();
+    assert_eq!(want, "42");
+    let bin = std::env::temp_dir().join(format!("axon_ax45_scope_{}", std::process::id()));
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .output()
+        .expect("spawn build");
+    let _ = std::fs::remove_file(&f);
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    if codegen_absent(&log) {
+        return;
+    }
+    assert_eq!(
+        build.status.code(),
+        Some(0),
+        "native build must succeed:\n{log}"
+    );
+    let nat = std::process::Command::new(&bin)
+        .output()
+        .expect("run native");
+    let _ = std::fs::remove_file(&bin);
+    assert_eq!(String::from_utf8_lossy(&nat.stdout).trim(), want);
+}

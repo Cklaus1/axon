@@ -10,7 +10,8 @@
 //! All `pub(super)` so the parent `codegen::mod` can call `emit_match`
 //! from inside `emit_expr`'s `Expr::Match` arm.
 
-use inkwell::values::{BasicValueEnum, FunctionValue};
+use inkwell::types::BasicTypeEnum;
+use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue};
 use inkwell::AddressSpace;
 use inkwell::FloatPredicate;
 use inkwell::IntPredicate;
@@ -74,6 +75,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 miss_preds.push(self.ir.builder.get_insert_block().unwrap());
             }
 
+            let scope = self.begin_pattern_scope(&arm.pattern);
             if let Some(guard_expr) = &arm.guard {
                 // The guard sees the arm's bindings (`Some(v) if v > 2`), so it
                 // runs in its own block once the pattern has matched. It used
@@ -105,6 +107,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 self.emit_pattern_bindings(&arm.pattern, subject, subject_sem_ty);
             }
             let body_val = self.emit_expr(&arm.body, fn_val);
+            self.end_pattern_scope(scope);
 
             let current_bb = self.ir.builder.get_insert_block().unwrap();
             if current_bb.get_terminator().is_none() {
@@ -150,10 +153,7 @@ impl<'ctx> super::Codegen<'ctx> {
                            the default arm is not. The interpreter supports it; run under \
                            `axon run`."
                     .to_string();
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    eprintln!("{msg}");
-                    self.codegen_errors.push(msg);
-                }
+                self.record_error(msg);
                 return None;
             }
             let phi = build_wrappers::w_phi(&self.ir.builder, val_ty, "match_val");
@@ -474,6 +474,11 @@ impl<'ctx> super::Codegen<'ctx> {
                         _ => None,
                     };
                     self.emit_pattern_bindings(inner, inner_val, inner_ty.as_ref());
+                } else {
+                    self.poison_pattern_bindings(
+                        inner,
+                        "the `Some` payload has no native layout here",
+                    );
                 }
             }
             ast::Pattern::Ok(inner) => {
@@ -491,9 +496,18 @@ impl<'ctx> super::Codegen<'ctx> {
                     } else {
                         Some(payload)
                     };
-                    if let Some(v) = typed {
-                        self.emit_pattern_bindings(inner, v, ok_sem.as_ref());
+                    match typed {
+                        Some(v) => self.emit_pattern_bindings(inner, v, ok_sem.as_ref()),
+                        None => self.poison_pattern_bindings(
+                            inner,
+                            "the `Ok` payload has no native layout here",
+                        ),
                     }
+                } else {
+                    self.poison_pattern_bindings(
+                        inner,
+                        "the `Ok` payload has no native layout here",
+                    );
                 }
             }
             ast::Pattern::Err(inner) => {
@@ -509,9 +523,18 @@ impl<'ctx> super::Codegen<'ctx> {
                     } else {
                         Some(payload)
                     };
-                    if let Some(v) = typed {
-                        self.emit_pattern_bindings(inner, v, err_sem.as_ref());
+                    match typed {
+                        Some(v) => self.emit_pattern_bindings(inner, v, err_sem.as_ref()),
+                        None => self.poison_pattern_bindings(
+                            inner,
+                            "the `Err` payload has no native layout here",
+                        ),
                     }
+                } else {
+                    self.poison_pattern_bindings(
+                        inner,
+                        "the `Err` payload has no native layout here",
+                    );
                 }
             }
             ast::Pattern::Struct { name, fields } if name.contains("::") => {
@@ -533,7 +556,11 @@ impl<'ctx> super::Codegen<'ctx> {
 
                 let field_types = match field_types {
                     Some(ft) => ft,
-                    None => return,
+                    None => {
+                        let why = format!("the variant `{name}` has no native field layout");
+                        self.poison_pattern_bindings(pattern, &why);
+                        return;
+                    }
                 };
 
                 if let BasicValueEnum::StructValue(sv) = subject {
@@ -541,7 +568,11 @@ impl<'ctx> super::Codegen<'ctx> {
                     let struct_name = format!("{enum_name}_enum");
                     let enum_struct_ty = match self.ir.module.get_struct_type(&struct_name) {
                         Some(ty) => ty,
-                        None => return,
+                        None => {
+                            let why = format!("the enum `{enum_name}` has no native layout");
+                            self.poison_pattern_bindings(pattern, &why);
+                            return;
+                        }
                     };
                     let alloca = build_wrappers::w_alloca(
                         &self.ir.builder,
@@ -569,7 +600,7 @@ impl<'ctx> super::Codegen<'ctx> {
 
                     // For each bound field, compute byte offset in payload.
                     let mut byte_offset: u64 = 0;
-                    for (fi, (_fname, pat)) in fields.iter().enumerate() {
+                    for (fi, (fname, pat)) in fields.iter().enumerate() {
                         let fty = field_types.get(fi).cloned().unwrap_or(Type::Unknown);
                         let fsize = self.llvm_sizeof(&fty).unwrap_or(8);
 
@@ -592,10 +623,20 @@ impl<'ctx> super::Codegen<'ctx> {
                                 .build_load(llvm_fty, typed_ptr, "fieldval")
                                 .unwrap();
                             self.emit_pattern_bindings(pat, field_val, Some(&fty));
+                        } else {
+                            let why = format!(
+                                "field `{fname}` of `{name}` has type {}, which native codegen \
+                                 cannot lower",
+                                fty.display()
+                            );
+                            self.poison_pattern_bindings(pat, &why);
                         }
 
                         byte_offset += fsize;
                     }
+                } else {
+                    let why = format!("the matched `{name}` value has no native layout here");
+                    self.poison_pattern_bindings(pattern, &why);
                 }
             }
             ast::Pattern::Struct { fields, .. } => {
@@ -630,6 +671,11 @@ impl<'ctx> super::Codegen<'ctx> {
                         let fty = field_sem.as_ref().and_then(|v| v.get(i));
                         self.emit_pattern_bindings(pat, field_val, fty);
                     }
+                } else {
+                    self.poison_pattern_bindings(
+                        pattern,
+                        "the matched value has no native layout here",
+                    );
                 }
             }
             ast::Pattern::Tuple(pats) => {
@@ -648,9 +694,120 @@ impl<'ctx> super::Codegen<'ctx> {
                         let ety = elt_sem.and_then(|v| v.get(i));
                         self.emit_pattern_bindings(pat, elem_val, ety);
                     }
+                } else {
+                    self.poison_pattern_bindings(
+                        pattern,
+                        "the matched tuple has no native layout here",
+                    );
                 }
             }
             _ => {} // Wildcard, Literal, None — no bindings
         }
+    }
+
+    /// The bindings of `pattern` could not be created; `why` says what was
+    /// missing. Each bound name is poisoned with a deferred E0910 naming that
+    /// cause (AX-45): a read reports it, where it used to report the name as
+    /// unknown (E0701) — or, when it shadowed an outer local, silently read the
+    /// OUTER value, which is why that local is dropped here (and put back by
+    /// `end_pattern_scope`). A binding nobody reads stays harmless, as before.
+    fn poison_pattern_bindings(&mut self, pattern: &ast::Pattern, why: &str) {
+        match pattern {
+            ast::Pattern::Ident(name) => {
+                self.locals.remove(name);
+                self.local_types.remove(name);
+                let msg = format!(
+                    "codegen error [E0910]: native codegen could not bind `{name}`: {why}. The \
+                     interpreter supports it; run under `axon run`."
+                );
+                self.poison_binding(name, Some(msg));
+            }
+            ast::Pattern::Some(p) | ast::Pattern::Ok(p) | ast::Pattern::Err(p) => {
+                self.poison_pattern_bindings(p, why);
+            }
+            ast::Pattern::Struct { fields, .. } => {
+                for (_, p) in fields {
+                    self.poison_pattern_bindings(p, why);
+                }
+            }
+            ast::Pattern::Tuple(pats) => {
+                for p in pats {
+                    self.poison_pattern_bindings(p, why);
+                }
+            }
+            ast::Pattern::Wildcard | ast::Pattern::Literal(_) | ast::Pattern::None => {}
+        }
+    }
+
+    /// What each name `pattern` binds meant before the bindings were emitted,
+    /// so `end_pattern_scope` can undo a poisoning once the arm or loop body
+    /// that could see it is done.
+    pub(super) fn begin_pattern_scope(&self, pattern: &ast::Pattern) -> PatternScope<'ctx> {
+        let mut names = Vec::new();
+        collect_pattern_names(pattern, &mut names);
+        names
+            .into_iter()
+            .map(|name| PriorBinding {
+                local: self.locals.get(&name).copied(),
+                ty: self.local_types.get(&name).cloned(),
+                poison: self.poisoned.get(&name).cloned(),
+                name,
+            })
+            .collect()
+    }
+
+    /// A name the pattern poisoned is visible only inside the arm or loop body
+    /// it scopes, as in the interpreter: past it, the name means what it meant
+    /// before. Otherwise an unread failed binding that shadowed an outer local
+    /// would leave the outer local refused after the `match`. A name the
+    /// pattern bound successfully is left as before.
+    pub(super) fn end_pattern_scope(&mut self, scope: PatternScope<'ctx>) {
+        for prior in scope {
+            if self.locals.contains_key(&prior.name) || !self.poisoned.contains_key(&prior.name) {
+                continue;
+            }
+            match prior.local {
+                Some(l) => self.locals.insert(prior.name.clone(), l),
+                None => self.locals.remove(&prior.name),
+            };
+            match prior.ty {
+                Some(t) => self.local_types.insert(prior.name.clone(), t),
+                None => self.local_types.remove(&prior.name),
+            };
+            match prior.poison {
+                Some(p) => self.poisoned.insert(prior.name, p),
+                None => self.poisoned.remove(&prior.name),
+            };
+        }
+    }
+}
+
+/// One name a pattern binds, with what it meant before the pattern.
+pub(super) struct PriorBinding<'ctx> {
+    name: String,
+    local: Option<(PointerValue<'ctx>, BasicTypeEnum<'ctx>)>,
+    ty: Option<Type>,
+    poison: Option<Option<String>>,
+}
+
+pub(super) type PatternScope<'ctx> = Vec<PriorBinding<'ctx>>;
+
+fn collect_pattern_names(pattern: &ast::Pattern, out: &mut Vec<String>) {
+    match pattern {
+        ast::Pattern::Ident(name) => out.push(name.clone()),
+        ast::Pattern::Some(p) | ast::Pattern::Ok(p) | ast::Pattern::Err(p) => {
+            collect_pattern_names(p, out)
+        }
+        ast::Pattern::Struct { fields, .. } => {
+            for (_, p) in fields {
+                collect_pattern_names(p, out);
+            }
+        }
+        ast::Pattern::Tuple(pats) => {
+            for p in pats {
+                collect_pattern_names(p, out);
+            }
+        }
+        ast::Pattern::Wildcard | ast::Pattern::Literal(_) | ast::Pattern::None => {}
     }
 }
