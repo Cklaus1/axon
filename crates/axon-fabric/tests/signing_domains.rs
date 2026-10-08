@@ -181,8 +181,9 @@ fn fabric_signs_an_execution_attestation_in_the_execution_domain_and_no_other() 
     let pk = public_hex(&k);
     let att = axon_fabric::signing::sign_execution_attestation(&k, &issuer(), &req(), &rc()).expect("sign");
     let doc = execution_document(&req(), &rc()).expect("execution document");
-    verify_document(&att, EXECUTION_DOMAIN, &issuer(), &doc, &pk)
-        .expect("control: Fabric's execution attestation verifies in the execution domain");
+    verify_document(&att, EXECUTION_DOMAIN, &issuer(), &doc, &pk).unwrap_or_else(|e| {
+        panic!("ATTACK: Fabric's execution attestation does not verify in the execution domain: {e}")
+    });
     for (name, domain, _) in domains() {
         if domain == EXECUTION_DOMAIN {
             continue;
