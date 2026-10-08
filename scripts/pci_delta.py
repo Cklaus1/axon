@@ -100,6 +100,7 @@ THEMES = {
     "1a75557b": ("amendment 106", "test only (the oracle test reads the verdict as Debug text; no production change)"),
     "ee1c7056": ("amendment 108", "a comparison (`==`, `!=`, ordering) takes the taint of every shared object (dict, channel) inside either operand, however deep, and every builtin argument is walked deep (no table of names): `if d == e {lenient} else {strict}` over a dict the candidate filled is refused like `dict_get_or`; a sealed method call is judged by the methods sealed impls define and a run-time method miss reads like an operator method (existence oracle, method path); a `native::` call is World state (a sealed call marks it, an operator call reads it back); drift and routing tests, 12 rows: narrowing, no widening"),
     "b8f176d9": ("amendment 108", "test only (a clippy `useless_format` in a taint test): no production change"),
+    "8abeb02b": ("amendment 108", "builtin arguments are walked deep EXCEPT the first argument of ten builtins that only count, key into or append (`SHALLOW_FIRST_ARG`, fail-closed: unlisted is deep), which keeps a loop of a million `dict_set`s linear; tests: narrowing, no widening beyond amendment 108's first form"),
 }
 
 

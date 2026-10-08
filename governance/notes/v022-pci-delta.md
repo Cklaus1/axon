@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: b8f176d92f9544084d6554ce44e703e249be5fa3
+generated-at: 8abeb02bba54b259d5356d2a9307c8670e4c9841
 
-`git diff --numstat 31413ca7..b8f176d9 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..8abeb02b -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -50,8 +50,8 @@ generated-at: b8f176d92f9544084d6554ce44e703e249be5fa3
 | `crates/axon-core/src/interp/goal.rs` | 27 | 26 |
 | `crates/axon-core/src/interp/pin.rs` | 944 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 35 | 15 |
-| `crates/axon-core/src/interp/taint.rs` | 1072 | 0 |
-| `crates/axon-core/src/interp/taint_tests.rs` | 1651 | 0 |
+| `crates/axon-core/src/interp/taint.rs` | 1097 | 0 |
+| `crates/axon-core/src/interp/taint_tests.rs` | 1670 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 15 | 7 |
 | `crates/axon-core/src/kernel.rs` | 2 | 2 |
 | `crates/axon-core/src/lib.rs` | 114 | 13 |
@@ -60,9 +60,9 @@ generated-at: b8f176d92f9544084d6554ce44e703e249be5fa3
 | `crates/axon-core/src/mut_borrow.rs` | 800 | 0 |
 | `crates/axon-core/src/parser.rs` | 39 | 1 |
 | `crates/axon-core/src/resolver.rs` | 334 | 64 |
-| total | 18573 | 2828 |
+| total | 18617 | 2828 |
 
-`git log --reverse 31413ca7..b8f176d9 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..8abeb02b -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -133,7 +133,8 @@ generated-at: b8f176d92f9544084d6554ce44e703e249be5fa3
 | 1a75557b | amendment 106 | test only (the oracle test reads the verdict as Debug text; no production change) |
 | ee1c7056 | amendment 108 | a comparison (`==`, `!=`, ordering) takes the taint of every shared object (dict, channel) inside either operand, however deep, and every builtin argument is walked deep (no table of names): `if d == e {lenient} else {strict}` over a dict the candidate filled is refused like `dict_get_or`; a sealed method call is judged by the methods sealed impls define and a run-time method miss reads like an operator method (existence oracle, method path); a `native::` call is World state (a sealed call marks it, an operator call reads it back); drift and routing tests, 12 rows: narrowing, no widening |
 | b8f176d9 | amendment 108 | test only (a clippy `useless_format` in a taint test): no production change |
-| 67 commits | | |
+| 8abeb02b | amendment 108 | builtin arguments are walked deep EXCEPT the first argument of ten builtins that only count, key into or append (`SHALLOW_FIRST_ARG`, fail-closed: unlisted is deep), which keeps a loop of a million `dict_set`s linear; tests: narrowing, no widening beyond amendment 108's first form |
+| 68 commits | | |
 <!-- END MECHANICAL -->
 
 
