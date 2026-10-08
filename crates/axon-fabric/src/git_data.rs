@@ -1137,6 +1137,47 @@ pub(crate) mod tests {
         );
     }
 
+    /// Amendment 103: a tracked SYMLINK the working tree holds unchanged is not a difference, and
+    /// one retargeted is. Round 11's survey replaced the symlink's mode literal (`0o120000`) with
+    /// another: every symlink then read as differing and no test had a tracked symlink at all.
+    /// Control: the same tree with a regular file and an executable.
+    #[test]
+    fn a_tracked_symlink_is_judged_by_its_target_and_by_nothing_else() {
+        use std::os::unix::fs::symlink;
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path().join("repo");
+        std::fs::create_dir_all(&r).unwrap();
+        git(&r, &["init", "-q", "-b", "main"]);
+        std::fs::write(r.join("a"), "a\n").unwrap();
+        std::fs::write(r.join("x"), "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(r.join("x"), std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        symlink("a", r.join("l")).unwrap();
+        git(&r, &["add", "-A"]);
+        git(&r, &["commit", "-q", "-m", "c"]);
+        let top = r.canonicalize().unwrap();
+        let head = text(&top, &["rev-parse", "HEAD"]).unwrap();
+        let tree = Objects::open(&top).unwrap().entries(&head, None).unwrap();
+        assert_eq!(
+            tree.get(b"l".as_slice()).map(|e| e.0),
+            Some(0o120000),
+            "setup: the tree holds a symlink"
+        );
+        assert_eq!(
+            worktree_differs(&top, &tree),
+            None,
+            "ATTACK: a tracked symlink (and a file, and an executable) the working tree holds \
+             unchanged was reported as differing from the committed tree"
+        );
+        std::fs::remove_file(r.join("l")).unwrap();
+        symlink("x", r.join("l")).unwrap();
+        assert_eq!(
+            worktree_differs(&top, &tree).as_deref(),
+            Some("l"),
+            "ATTACK: a tracked symlink retargeted in the working tree was not reported"
+        );
+    }
+
     #[test]
     fn a_gitfile_or_symlinked_git_dir_is_refused() {
         let d = tempfile::tempdir().unwrap();

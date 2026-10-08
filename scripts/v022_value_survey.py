@@ -10,7 +10,7 @@ KILL (the value is observed: the survey records the test names, which is an
 OBSERVED entry, not a row). A green suite is a SURVIVOR: it needs a test and a row.
 A build that breaks, or a value the survey cannot edit by rule, is reported MANUAL.
 
-    python3 scripts/v022_value_survey.py OUT.json PKG [--shard I/N] [--only SUBSTR] [--lines A-B] [--survivors-of PREV.json]
+    python3 scripts/v022_value_survey.py OUT.json PKG [--shard I/N] [--only SUBSTR] [--lines A-B] [--survivors-of PREV.json] [--skip-done A.json,B.json] [--tier1 CMD]
         [--cmd "cargo test -p axon-fabric --test cortex_via_fabric"] -- cargo-test-args
 
 --cmd replaces the default `cargo test -p PKG --no-fail-fast` (a value of one crate that another crate's
@@ -48,6 +48,8 @@ def mutate(label, frag, before):
             n = "/tmp"
         return frag[:m.start(1)] + n + frag[m.end(1):]
     if label == "val_mode":
+        if frag.startswith("match") and "0o555" in frag:   # a table of modes: change one entry
+            return frag.replace("0o555", "0o557", 1)
         m = re.fullmatch(r"0o([0-7_]+)", frag)
         if not m:
             return None
@@ -107,7 +109,7 @@ def main():
     out, pkg = argv[0], argv[1]
     split = argv.index("--")
     opts, cargo = argv[2:split], argv[split + 1:]
-    shard, only, lines, cmd, surv = (0, 1), None, None, None, None
+    shard, only, lines, cmd, surv, tier1, done = (0, 1), None, None, None, None, None, set()
     for i, o in enumerate(opts):
         if o == "--lines":
             a, b = opts[i + 1].split("-")
@@ -115,6 +117,12 @@ def main():
         if o == "--survivors-of":   # re-run only what an earlier survey (JSON) left SURVIVED
             surv = {(r["file"], r["fn"], r["n"]) for r in json.load(open(opts[i + 1]))
                     if r["result"] in ("SURVIVED", "MANUAL (no mutation rule)")}
+        if o == "--skip-done":      # results already in these JSON files (comma separated) are not redone
+            for fn_ in opts[i + 1].split(","):
+                done |= {(r["file"], r["fn"], r["n"]) for r in json.load(open(fn_))
+                         if r["result"] in ("KILLED", "SURVIVED", "BUILD BROKE")}
+        if o == "--tier1":          # a quick command first: a kill there is a kill; a survivor runs --cmd in full
+            tier1 = opts[i + 1].split()
         if o == "--cmd":
             cmd = opts[i + 1].split()
         if o == "--shard":
@@ -125,9 +133,9 @@ def main():
     results = []
     full = cmd + cargo if cmd else ["cargo", "test", "-p", pkg, "--no-fail-fast", *cargo]
 
-    def run():
+    def run(command=None):
         try:
-            r = subprocess.run(full, capture_output=True, text=True, timeout=2400)
+            r = subprocess.run(command or full, capture_output=True, text=True, timeout=2400)
         except subprocess.TimeoutExpired:
             r = subprocess.CompletedProcess([], 124, "", "hung")
         tail = r.stdout + r.stderr
@@ -143,8 +151,12 @@ def main():
     print("baseline rc", r0.returncode, "failing", sorted(base_failing), flush=True)
     if "could not compile" in tail0 or r0.returncode == 124:
         sys.exit("the unmutated tree does not build or hangs: no survey")
+    base_failing1 = set()
+    if tier1:
+        r1, tail1, base_failing1 = run(tier1 + cargo)
+        print("tier-1 baseline rc", r1.returncode, "failing", sorted(base_failing1), flush=True)
     for idx, (f, a, b, label, fn, n) in enumerate(candidates(pkg, only)):
-        if idx % shard[1] != shard[0] or (surv is not None and (f, fn, n) not in surv):
+        if idx % shard[1] != shard[0] or (surv is not None and (f, fn, n) not in surv) or (f, fn, n) in done:
             continue
         path = os.path.join(rc.ROOT, f)
         text = open(path).read()
@@ -161,10 +173,13 @@ def main():
         rec["edit"] = new[:80]
         open(path, "w").write(text[:a] + new + text[b:])
         try:
-            r, tail, failing = run()
+            r, tail, failing = run(tier1 + cargo) if tier1 else run()
+            new_failing = sorted(failing - (base_failing1 if tier1 else base_failing))
+            if tier1 and not new_failing and "could not compile" not in tail and r.returncode != 124:
+                r, tail, failing = run()                 # the quick tier saw nothing: the full suite
+                new_failing = sorted(failing - base_failing)
         finally:
             open(path, "w").write(text)
-        new_failing = sorted(failing - base_failing)
         # `error[E....]` is the AXON interpreter's own diagnostic, printed by a test that
         # runs `axon test`: only cargo's "could not compile" is a build failure.
         if r.returncode == 124:

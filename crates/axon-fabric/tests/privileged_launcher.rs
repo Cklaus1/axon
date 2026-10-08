@@ -718,6 +718,80 @@ fn a_boot_input_the_helper_cannot_vouch_for_launches_nothing() {
     );
 }
 
+/// Amendment 103, ROOT ONLY: the launcher program the operator pinned is opened
+/// with the operator's uid as the required owner (`prepare`'s `Some(a.operator_uid)`),
+/// the same use-time re-check as for the boot inputs above. Round 11's survey replaced
+/// it by `None` ("any owner") with the whole suite green: only the firecracker binary
+/// was ever made another uid's. Control: the same launcher, owned by the operator.
+#[test]
+fn a_launcher_program_another_uid_owns_launches_nothing() {
+    if skip_unless_root() {
+        return;
+    }
+    let c = fx(None, "", |_| {});
+    let (code, rep) = c.run(&c.request("op-1"), None);
+    assert!(
+        code == Some(0) && c.launched(),
+        "control: the operator's own launcher runs: {code:?} {rep}"
+    );
+    let f = fx(None, "", |_| {});
+    chown(&f.base.join("launcher.sh"), OTHER);
+    let (code, rep) = f.run(&f.request("op-1"), None);
+    assert!(
+        code == Some(30) && !f.launched(),
+        "ATTACK: the helper ran a launcher program owned by uid {OTHER}, who can rewrite it \
+         after it is verified: {code:?} {rep}"
+    );
+}
+
+/// Amendment 103, ROOT ONLY: the hand-over gives the out tree to the Fabric uid and
+/// changes NOTHING ELSE about who owns it. `fchown(fd, uid, u32::MAX)` leaves the group
+/// as the launcher left it; each of the four calls (a directory, a regular file, a
+/// symlink never followed, the out dir itself) had its group argument replaced by 0 with
+/// the whole suite green, because every file the launcher made was already group 0. The
+/// launcher here puts every kind in group 4300.
+#[test]
+fn the_hand_over_changes_the_owner_of_the_out_tree_and_never_its_group() {
+    if skip_unless_root() {
+        return;
+    }
+    use std::os::unix::fs::MetadataExt;
+    let f = fx(
+        Some(FABRIC),
+        "mkdir \"$OUT/g-dir\"; echo x > \"$OUT/g-dir/g-in\"; echo x > \"$OUT/g-file\"; \
+         ln -s g-file \"$OUT/g-link\"\n\
+         chgrp 4300 \"$OUT\" \"$OUT/g-dir\" \"$OUT/g-file\" && chgrp -h 4300 \"$OUT/g-link\"",
+        |_| {},
+    );
+    let (code, rep) = f.run(&f.request("op-1"), Some((FABRIC, &[])));
+    assert!(
+        code == Some(0) && f.launched(),
+        "setup: the launch did not complete: {code:?} {rep}"
+    );
+    let out = f.out_root.join("op-1");
+    for (what, p) in [
+        ("the out dir itself", out.clone()),
+        ("a directory", out.join("g-dir")),
+        ("a regular file", out.join("g-file")),
+        ("a symlink", out.join("g-link")),
+    ] {
+        let m = std::fs::symlink_metadata(&p).unwrap();
+        assert_eq!(
+            m.uid(),
+            FABRIC,
+            "ATTACK: the hand-over left {what} owned by uid {}, not the Fabric uid",
+            m.uid()
+        );
+        assert_eq!(
+            m.gid(),
+            4300,
+            "ATTACK: the hand-over changed the GROUP of {what} to {} (it must leave it as the \
+             launcher set it)",
+            m.gid()
+        );
+    }
+}
+
 /// A (M596/M597, retired as a PAIR under the four-cell rule), ROOT ONLY:
 /// the snapshot holds the per-attempt secret, and no other uid may read it
 /// while the launcher runs. Two guards keep it private: the staging root must
