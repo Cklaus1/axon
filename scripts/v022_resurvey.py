@@ -121,6 +121,8 @@ def run_tests(cmd):
         failing.add(f"<rc {r.returncode}>")
     if "could not compile" in out:
         return failing, "build", r.returncode
+    if re.search(r"^error: no (?:test|bin) target named", out, re.M):
+        return failing, "bad", r.returncode
     return failing, "ok", r.returncode
 
 
@@ -132,12 +134,12 @@ def baseline(cmd):
 
 
 def commands_for(crate, reason):
-    """The test commands a VALUE entry's reason names, else the crate's suite."""
+    """The test commands a VALUE entry's reason names, then the crate's suite (a reason lists at most six
+    tests, so the binaries it names may be a subset of the ones that kill)."""
     cmds = []
-    for t in re.findall(r"<binary> (-p \S+ (?:--lib|--bin \S+|--test \S+))", reason):
+    for t in re.findall(r"<binary> (-p [\w-]+ (?:--lib|--bin [\w-]+|--test [\w-]+))", reason):
         cmds.append(["cargo", "test", "--no-fail-fast", *t.split(), "--", *FLAKY])
-    if not cmds:
-        cmds.append(["cargo", "test", "--no-fail-fast", "-p", crate, "--", *FLAKY])
+    cmds.append(["cargo", "test", "--no-fail-fast", "-p", crate, "--", *FLAKY])
     return list(dict.fromkeys(map(tuple, cmds)))
 
 
@@ -173,7 +175,7 @@ def value_family(rc, vs, chosen):
                 failing, state, _ = run_tests(cmd)
             finally:
                 open(path, "w").write(text)
-            if state == "build":
+            if state in ("build", "bad"):
                 broke = True
                 break
             if state == "hung":
