@@ -661,6 +661,7 @@ pub fn observer_script(d: &Path, mode: &str, key: &ObserverKey, authority: &str)
         &script,
         format!(
             r#"#!/bin/sh
+[ "{mode}" = dump ] && {{ tr '\0' '\n' < /proc/$$/environ > "{d}/observer-environ"; printf '%s\n' "$@" > "{d}/observer-argv"; }}
 while [ $# -gt 0 ]; do case "$1" in --manifest) M="$2"; shift 2;; --out) O="$2"; shift 2;; *) shift;; esac; done
 [ "{mode}" = exit ] && exit 1
 if [ "{mode}" = fds ]; then FDS=$(for i in 0 1 2; do readlink "/proc/$$/fd/$i"; done); echo "$FDS" > "{d}/observer-fds"; fi
@@ -792,6 +793,52 @@ pub fn helper_pin() -> axon_fabric::sealed_exec::Pinned {
         sha256: sha256_file(&path),
         path,
     }
+}
+
+/// Amendment 107: a compiled stand-in for a program Fabric launches through
+/// `sealed_exec::command` (the privileged helper, the observe relay). It writes
+/// the argv and the environment it was started with to `<its own path>.dump`
+/// (`A <arg>` then `E <NAME=value>` lines) and reports nothing; it depends on no
+/// flag's spelling, so a renamed flag is seen as a different dump, not a missing one. A test observes the CHILD's view of what was handed to it, which is
+/// the only place a flag spelling, a PATH or a swapped value can be seen: the
+/// call site is `vec![..]` and a constant, not a builder call.
+pub fn dump_helper(dir: &Path) -> axon_fabric::sealed_exec::Pinned {
+    let src = dir.join("dump-helper.c");
+    std::fs::write(
+        &src,
+        "#include <stdio.h>\n#include <string.h>\nextern char **environ;\n\
+         int main(int c, char **v) {\n  char path[4096];\n  \
+         snprintf(path, sizeof path, \"%s.dump\", v[0]);\n  FILE *f = fopen(path, \"w\");\n  \
+         if (!f) return 3;\n  \
+         for (int i = 1; i < c; i++) fprintf(f, \"A %s\\n\", v[i]);\n  \
+         for (char **e = environ; *e; e++) fprintf(f, \"E %s\\n\", *e);\n  fclose(f);\n  return 0;\n}\n",
+    )
+    .unwrap();
+    let bin = dir.join("dump-helper");
+    let st = std::process::Command::new("cc")
+        .arg("-o")
+        .arg(&bin)
+        .arg(&src)
+        .status()
+        .expect("setup: cc runs");
+    assert!(st.success(), "setup: the dump helper compiles");
+    axon_fabric::sealed_exec::Pinned {
+        sha256: sha256_file(&bin),
+        path: bin,
+    }
+}
+
+/// What a [`dump_helper`] wrote: (its arguments, its environment lines).
+pub fn read_dump(path: &Path) -> (Vec<String>, Vec<String>) {
+    let text = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("setup: the stand-in program left no dump {}: {e}", path.display()));
+    let pick = |tag: &str| {
+        text.lines()
+            .filter_map(|l| l.strip_prefix(tag))
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    (pick("A "), pick("E "))
 }
 
 /// The build revision a test helper config pins for the Fabric program

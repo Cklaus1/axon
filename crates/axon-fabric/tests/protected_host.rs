@@ -647,6 +647,12 @@ fn a_loaded_host_requires_the_executable_owner_of_every_program_it_pins() {
         Some(Some(euid)),
         "ATTACK: the loaded host's observer accepts a program of any owner"
     );
+    // Amendment 107: the privileged helper's route carries the same owner (`owner: exec_owner`).
+    assert_eq!(
+        host.linux.privileged.as_ref().map(|p| p.owner),
+        Some(euid),
+        "ATTACK: the loaded host opens the privileged helper requiring an owner other than the executable owner"
+    );
 }
 
 /// ADR-002 key-role separation when the host config LOADS (C9 dev review

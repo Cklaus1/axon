@@ -321,6 +321,7 @@ fn populate(root: &Path) {
     write(&root.join(MANIFEST), &manifest(clean_source()));
     paired_disable(root, "[]");
     mutation_run(root, Some("[]"));
+    resurvey(root, Some(None));
     // The pinned channel the build record's toolchain must be (amendment 63).
     write(
         &root.join("rust-toolchain.toml"),
@@ -346,6 +347,32 @@ fn paired_disable(root: &Path, problems: &str) {
         &root.join("governance/status/v022-psv-paired-disable.json"),
         &format!("{{\"problems\": {problems}}}\n"),
     );
+}
+
+/// The re-survey record the freeze consults (amendment 107), stood in the same way: the real
+/// `problems()` is tested over synthetic records in `scripts/test_v022_resurvey.py`, and this pins
+/// the WIRING. `Some(None)`: a record that holds; `Some(Some(why))`: one the validator refuses;
+/// `None`: the file is absent.
+fn resurvey(root: &Path, record: Option<Option<&str>>) {
+    write(
+        &root.join("scripts/v022_resurvey.py"),
+        "import json, os\nSTATUS = 'governance/status/v022-resurvey.json'\n\
+         def freeze_refusal(cov, mut, head, path=STATUS):\n    assert head and len(head) == 40, head\n    \
+         p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), path)\n    \
+         try:\n        doc = json.load(open(p))\n    except OSError as e:\n        \
+         return (path + ' cannot be read (' + str(e) + ')'), None\n    return doc.get('problem'), doc\n",
+    );
+    let f = root.join("governance/status/v022-resurvey.json");
+    match record {
+        Some(problem) => write(
+            &f,
+            &json!({"problem": problem, "commit": "c", "sample": {"pct": 25}, "seconds": 1.0})
+                .to_string(),
+        ),
+        None => {
+            let _ = std::fs::remove_file(&f);
+        }
+    }
 }
 
 /// The mutation-run validator the freeze consults (amendment 87), stood in the
@@ -1460,6 +1487,31 @@ fn a_paired_disable_status_that_is_not_the_joined_evidence_does_not_freeze() {
             && e.contains("59 of 148 retirement records are missing")
             && e.contains("not all at the file's aad46c05"),
         "one reason per defect: {e}"
+    );
+}
+
+/// Amendment 107: a freeze needs a RECENT record, for its head, that the OBSERVED entries of the
+/// refusal-site gate were re-measured. An absent record and one the validator refuses are both
+/// refused, each reason named. (Control: every other freeze test, whose fixture carries a good one.)
+#[test]
+fn a_freeze_needs_the_resurvey_record_for_its_head() {
+    let d = tempfile::tempdir().unwrap();
+    let r = clone(d.path());
+    resurvey(&r, None);
+    git(&r, &["add", "-A"]);
+    git(&r, &["commit", "-q", "-m", "no re-survey record"]);
+    let got = freeze(&r);
+    assert!(
+        got.clone().is_err_and(|e| e.contains("cannot be read")),
+        "ATTACK: the freeze was cut with no re-survey record at all: {got:?}"
+    );
+    resurvey(&r, Some(Some("it is 40.0 days old (the bound is 14)")));
+    git(&r, &["add", "-A"]);
+    git(&r, &["commit", "-q", "-m", "a stale re-survey record"]);
+    let got = freeze(&r);
+    assert!(
+        got.clone().is_err_and(|e| e.contains("it is 40.0 days old")),
+        "ATTACK: the freeze bound a re-survey record the validator refused: {got:?}"
     );
 }
 

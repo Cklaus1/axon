@@ -2539,6 +2539,25 @@ ATTACK_MARKERS.update({
     'M2765': 'ATTACK: sealed code selected operator code \\(ops\\[idx\\(\\)\\]\\)',
     'M2766': 'ATTACK: sealed code selected operator code \\(the\\ index\\ spelled\\ as\\ a\\ comparison\\)',
     'M2767': "ATTACK: sealed code selected operator code \\(the\\ closure\\ assigned\\ under\\ the\\ candidate's\\ branch\\)",
+    # Amendment 107 (C9 round 11, eqgate7)
+    'M2960': "ATTACK: the root helper's environ-(launch|verify) child ran with an environment other than exactly",
+    'M2961': 'ATTACK: Fabric launched the privileged helper with an environment other than exactly',
+    'M2962': "ATTACK: the root helper's launcher was started with the flags",
+    'M2963': "ATTACK: the root helper's launcher was started with the flags",
+    'M2964': "ATTACK: the root helper's launcher was started with the flags",
+    'M2965': 'ATTACK: the root helper handed its launcher (--fc-bin|--jailer-bin)',
+    'M2966': 'ATTACK: the direct route ran a launcher owned by uid',
+    'M2967': 'ATTACK: the direct route ran its launcher under an interpreter owned by uid',
+    'M2968': 'ATTACK: an observer program owned by uid',
+    'M2969': 'ATTACK: the observer ran under an interpreter owned by uid',
+    'M2970': 'ATTACK: the helper ran its launcher under an interpreter owned by uid',
+    'M2971': 'ATTACK: the ownership walk followed a symlinked directory component',
+    'M2972': 'ATTACK: the protected Linux microVM profile reports no hardware isolation',
+    'M2973': "ATTACK: the custodian's outstanding-nonce bound is not the decision value 1024",
+    'M2974': 'ATTACK: read_regular read a file one byte over 256 MiB',
+    'M2975': 'ATTACK: Fabric handed the direct launcher --timeout-s',
+    'M2976': 'ATTACK: the helper launched with a profile manifest owned by uid',
+    'M2977': 'ATTACK: the loaded host opens the privileged helper requiring an owner other than',
 })
 
 ATTACK_MARKERS.update({

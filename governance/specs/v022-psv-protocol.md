@@ -6685,3 +6685,78 @@ capability is left to make a node), `CAP_DAC_READ_SEARCH`, `CAP_SYS_PTRACE` and 
 three rowed, the block/character-device and `fd`-closing refusals beyond the rowed ones, the `OPKIT_RW` owner rule and the
 canonical-path rule, the drift gate's `cd`, `git -C`, redirect-deny-by-default and knob rules (selftest shapes only, no
 row), and the `_text_ids` / `_unit_ids` / `_regular_text` guards beyond those the survey observes.
+## Amendment 107: values followed to their sinks (C9 round 11, eqgate7)
+
+107. **Source: the round-11 EQUIVALENCE review** (`/var/tmp/c9r11-findings-EQUIVALENCE.json`): the value class "recurs one hop further out
+    each round". Executed there, full axon-fabric suite green each time: the ROOT helper's `PATH_ENV` and Fabric's `LAUNCH_PATH` prefixed
+    with `/tmp:`, the `--timeout-s` flag renamed in the root launcher's argv, `--fc-bin`/`--jailer-bin` values swapped, and the OWNER
+    argument carried in a field (`lx.exec_owner`, `cfg.exec_owner`) or a local (`owner`) replaced by `None` at four consumers. Cause: the
+    gate saw values handed to `.env/.arg/.args(..)` and `Some(<x>.owner)`; everything protected goes through `sealed_exec::command`, which
+    takes `vec![..]`, a local and a `[("PATH", CONST)]` array. Mutation ids M2960-M2977 (18 of 70), matrix rows A250-A253 (the integrator
+    renumbers; the matrix check was run with temporary placeholders for A232-A249, not committed). Base `c9r11/integrate10` (`3776884c`).
+    **No production code of any crate changed.** Tests, the gate, two survey/record scripts, the registry and this text. Nothing under
+    `crates/axon-core/src`, `scripts/guest_build_env.py`, `scripts/lib/opkit_*.sh`, `opkit_ns_drift.py` or the kit was touched.
+    - **The class-level rule (stop extending by instance).** `value_sites` now FOLLOWS VALUES TO SINKS with a conservative, name-based,
+      intra-crate dataflow (`_flow_values`, `owner_primitives`, `const_def_sites` in `scripts/v022_refusal_coverage.py`). Sinks: (1) an EXEC
+      WRAPPER (`EXEC_WRAPPERS`, by argument position: `sealed_exec::command` args and env); (2) every call of a fn with an `Option<u32>`
+      EXPECTED-OWNER parameter (discovered from the sources, today `open_verified`): the PARAMETER is the site, so a field, a local,
+      `None` or `Some(..)` are all covered; (3) a struct-literal field NAMED `*owner*`; (4) the flags argument of `openat/open/.custom_flags`
+      when it is a const. Flow: a `vec![..]`/array/tuple is split into its elements; a local is resolved ONE level to its `let` initialiser
+      and to the `push/extend/insert` made on it before the sink; a literal, a `format!`, a `"x".into()` is a site; a CONST name is a site at
+      the use AND at the const's definition (its initialiser; a bare use is followed to the defining file, or to the one in-scope file that
+      defines a unique name); anything else is COMPUTED and counted. Flow sites are numbered under `<fn>~flow`, so none of the 228
+      amendment-103 exemptions renumbered, and are credited exactly like the others (a row that changes THEIR characters, or a
+      `VALUE_EXEMPT` entry).
+    - **The wrapper set is EXPLICIT and drift-tested.** `EXEC_CONSTRUCTORS` lists every non-test `Command::new` of the scope (13: one
+      wrapper, `sealed_exec::command`; the rest builders whose own `.env/.arg` are sites, or out-of-scope language CLIs). The gate checks it
+      in BOTH directions (`exec_constructor_drift`): a new fn that builds a Command from its parameters fails the gate until it is listed;
+      a listed fn that builds none fails too. Planted-form tests: `a_value_followed_to_an_exec_wrapper_or_an_open_flag_is_a_site`,
+      `an_owner_argument_is_a_site_wherever_it_comes_from`, `a_function_that_builds_a_command_is_listed_as_a_wrapper_or_a_builder`
+      (`crates/axon-core/tests/refusal_coverage_gate.rs`).
+    - **Findings 1-3, with tests that observe the CHILD.** The child's own argv and initial environ are dumped and compared EXACTLY:
+      the root helper's launcher child, launch and verify (`the_root_helper_hands_its_launcher_exactly_its_flags_and_its_path`: PATH, all 12
+      flag names in order, the values that identify a path, the manifest digest, the descriptor numbers, the staged-copy leaves, the verify
+      argv); Fabric's privileged helper (a compiled stand-in, `dump_helper`: `--test-config FILE`, `PATH=.../usr/local/bin`); the observe relay
+      (`--observe --test-config FILE`); the DIRECT launcher and its verify step (flags, values, `LAUNCH_PATH`, and a 2001 ms wall time -> `3`);
+      the observer program (`--manifest FILE --out DIR`, the short PATH). Owners: a program another uid (4243) owns is refused at each
+      consumer -- direct launcher, its interpreter, observer program, its interpreter, the root helper's interpreter, the profile manifest,
+      and the loaded host's helper route -- each with its own control. Rows M2960-M2965 (PATH x2, `--timeout-s`, `--fc-bin`,
+      `--jailer-bin`, the swap), M2966-M2970 and M2976-M2977 (owners), M2974-M2975 (the 256 MiB read bound, the timeout rounding).
+      `Profile::hardware_isolation` is never read by dispatch (the REQUEST's field is; `grep '\.hardware_isolation' crates/*/src`): it is data a
+      listing reports, so `profiles_are_truthful` now asserts it (M2972). `DIR_FLAGS` without `O_NOFOLLOW` is observed by a symlinked
+      directory component (M2971, `a_walk_through_a_symlinked_directory_is_never_followed`); `MAX_OUTSTANDING` is asserted as the decision
+      value 1024 BEFORE it is a loop count (M2973), so raising it fails instead of hanging.
+    - **Finding 3, the label.** `CheckRegistry::load` -> `register_expected` reaches `resolve_executable` from the protected binary, so
+      the `not found on PATH` site was never "off route": it is now DOMINATED (checkable: the `canonicalize()` after it refuses a bare name
+      that is not a file, and the digest pin refuses any other bytes).
+    - **Finding 4, the OBSERVED disposition is re-measured.** `scripts/v022_resurvey.py --run` re-measures a deterministic SAMPLE of the
+      OBSERVED entries (values: the survey's own mutation and the binaries the entry names; Python guards: `v022_py_guard_survey.py`; Rust
+      `.ok_or` guards: `.unwrap_or_default()`), `auto` = all when the estimate is under 5 minutes, else 25 % drawn by
+      `sha256(HEAD|key) mod 100`, and writes `governance/status/v022-resurvey.json`. The FREEZE (`v022_freeze_manifest.py`) refuses without a
+      record that is for this head (modulo `governance/status/`), from a clean tree, under 14 days old, from this version of the gate, drawn
+      by the stated rule over the OBSERVED set the gate has NOW, with no survivor (`freeze_refusal`; `scripts/test_v022_resurvey.py`, run
+      by `gate.sh`, plants each defect). `gate.sh` prints a NOTE, not a failure, outside a freeze. The claim sentence therefore has a
+      fourth disposition and says so: **"or a recorded OBSERVED measurement, re-measured at the freeze over a sample, not by every run"**.
+    - **Finding 5, stated plainly (no code change).** The withdrawn amendment-100 runner rows M2603, M2604, M2605 and M2607 survive only
+      because the PRODUCTION route refuses by taint, and their unit twins (M2600, M2601, M2602, M2606) kill only with the taint rules
+      OFF (`TAINT_FORCE_ON=false`, `#[cfg(test)]` in `interp.rs`/`taint.rs`): the twins judge a layer in a mode the shipped binary never
+      runs. That is defence in depth and honest, but the runner-level A208/A209 tests no longer guard the production behaviour of the
+      static layer, and the `stricter(..)` programs of `taint_tests.rs` have no production-route row.
+    - **Counts, before -> after** (`python3 scripts/v022_refusal_coverage.py`): amendment-103 value sites 228 -> 228 (94 rowed, 96 OBSERVED,
+      22 NOTROUTE, 11 DOMINATED, 5 REMAINDER); amendment-107 flow sites 0 -> 59 (16 rowed, 43 OBSERVED, 0 uncovered); OBSERVED-NOT-ROWED
+      167 -> 210; computed sink arguments counted, not sites: 46; bare const uses defined in several files, not followed: 2.
+    - **Survey table** (`scripts/v022_value_survey.py`, 2 shards on gpumaster, tier-1 = psv_dispatch/privileged_launcher/observer_service +
+      lib, survivors to the full suite): 47 flow sites, **42 KILLED**, **5 SURVIVED -> a test and a row each**: `read_regular`'s `256 << 20`
+      (M2974), the direct launcher's `div_ceil(1000)` (M2975), the root helper's manifest owner (M2976), the loaded host's helper-route owner
+      (M2977); the fifth, axon-psv's `LAUNCH_MANIFEST_SCHEMA`, survived axon-psv's own suite and is killed by axon-fabric's
+      `observer_service` (OBSERVED). Before the tests above, the review's seven executed survivors survived; with them each is KILLED by its own
+      attack (`python3 scripts/v022_g01_mutations.py --scope=all --only=M2960-M2977`: 18/18 killed, 0 REFUSED_ELSEWHERE).
+    - **WHAT THE GATE STILL CANNOT SEE** (printed by the gate, and in `v022-protected-suite-verdict.md`). (1) A COMPUTED sink argument
+      (46 counted, listed by the count only): a path joined at run time, `s(&c.firecracker)`, a value through two locals or a
+      parameter other than an expected-owner `Option<u32>`. Their VALUES are observed here by the exact-argv tests, not by the gate.
+      (2) A wrapper that forwards its parameters to `sealed_exec::command` is followed at the inner call only. (3) A struct literal of a type
+      not named Config/Cfg/Authority/Policy/Manifest/Trust (except a field named owner) and a literal in a nested literal. (4) A default read
+      as a value. (5) A uid or mode that is an operand of a comparison. (6) A const used bare at a sink in a file that does not define it when
+      the name is defined in several files (2 today). (7) The re-survey covers a sample, and the 3 Rust OBSERVED guards whose edit is not an
+      `.ok_or` replacement are counted NOT RE-MEASURED. (8) Python other than `guest_build_env.py`, the shell scripts, and any decision
+      that is not Rust or that file.

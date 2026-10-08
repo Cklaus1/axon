@@ -390,6 +390,37 @@ impl Obs {
     }
 }
 
+/// Amendment 107: Fabric asks the helper for an observation with exactly `--observe
+/// --test-config FILE` under exactly `PATH=/usr/sbin:/usr/bin:/sbin:/bin`, observed in the
+/// CHILD (a compiled stand-in that dumps what it was started with). The call site is a
+/// `vec![..]` and an array literal handed to `sealed_exec::command`, which no source form
+/// saw: renaming `--observe` or prefixing that PATH kept the suite green.
+#[test]
+fn fabric_asks_the_helper_for_an_observation_with_exactly_its_flags_and_its_path() {
+    let o = obs();
+    let helper = dump_helper(&o.base);
+    let dump = PathBuf::from(format!("{}.dump", helper.path.display()));
+    let cfg_file = o.base.join("some-helper-config");
+    let cfg = o.fabric_cfg_via(axon_fabric::backend::PrivilegedRoute {
+        helper,
+        owner: euid(),
+        test_config: Some(cfg_file.clone()),
+    });
+    let m = o.manifest(&o.nonce(), |_| {});
+    let _ = o.fabric_observe_cfg(&cfg, &m, "w-dump");
+    let (args, env) = read_dump(&dump);
+    let want = vec!["--observe".to_string(), "--test-config".to_string(), cfg_file.display().to_string()];
+    assert!(
+        args == want,
+        "ATTACK: Fabric asked the helper for an observation with {args:?}, not exactly {want:?}"
+    );
+    assert!(
+        env == ["PATH=/usr/sbin:/usr/bin:/sbin:/bin".to_string()],
+        "ATTACK: Fabric ran the observe relay with an environment other than exactly \
+         PATH=/usr/sbin:/usr/bin:/sbin:/bin: {env:?}"
+    );
+}
+
 /// Amendment 68, the CONTROL every observer test stands on, and A94's replay
 /// half (M1540): Fabric, on the relay route, obtains an observation the
 /// observer SERVICE made of its manifest (the helper measured this running
