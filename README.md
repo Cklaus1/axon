@@ -70,7 +70,7 @@ fn main() -> i64 {
 - **LSP server** — hover, go-to-definition, diagnostics (JSON-RPC 2.0)
 - **Formatter** — `axon fmt` idempotent pretty-printer
 - **Doc generator** — `axon doc` extracts `///` comments to Markdown
-- **Incremental cache** — SHA-256 keyed `.axc` bitcode cache
+- **Incremental cache** — SHA-256 keyed `.axc` cache of the optimised program object; a hit only links
 - **Cross-compilation** — `--target <triple>` via `cross.toml` linker config
 
 ## Pipeline

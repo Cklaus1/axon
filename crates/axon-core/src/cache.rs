@@ -1,18 +1,30 @@
 //! Incremental compilation cache for the Axon compiler (`axon build`).
 //!
 //! Cache files (`.axc`) live in `~/.cache/axon/` by default.  Each entry is
-//! keyed by a SHA-256 digest over (source bytes, compiler identity) and
-//! stores the LLVM bitcode for the compiled module.  The compiler identity
-//! ([`compiler_identity`]) is a digest of the running compiler EXECUTABLE, so
+//! keyed by a SHA-256 digest over (source and imported-module bytes, target,
+//! opt level, artifact kind, compiler identity) and stores the hosted
+//! program's relocatable OBJECT after the opt-level IR pipeline and the
+//! backend, so a hit only links (AX-34). The compiler identity
+//! ([`compiler_digest`]) is a digest of the running compiler EXECUTABLE, so
 //! any rebuilt compiler — committed or not — misses every older entry.
 //!
-//! Format of a `.axc` file:
+//! Format of a `.axc` file (format version 2):
 //! ```text
-//! [0..8]   magic bytes  b"AXONCACH"
-//! [8..12]  version string length  (u32 LE)
-//! [12..N]  compiler version string (UTF-8, no NUL)
-//! [N..]    LLVM bitcode
+//! [0..8]       magic bytes  b"AXONCACH"
+//! [8..12]      format version (u32 LE) = 2
+//! [12..16]     compiler identity length  (u32 LE)
+//! [16..N]      compiler identity (UTF-8, no NUL)
+//! [N]          flags: bit 0 = the object links the AI runtime; others 0
+//! [N+1..N+9]   object length (u64 LE)
+//! [N+9..N+41]  SHA-256 of the object
+//! [N+41..]     the relocatable object
 //! ```
+//!
+//! Version 1 stored pre-optimisation LLVM bitcode with no format field; its
+//! bytes 8..12 hold the identity length, never 2, so a v1 entry reads as
+//! unusable and is rebuilt. An object is linked as-is, with nothing to reject
+//! a damaged one before the linker (or the program) does, so the checksum is
+//! what makes a truncated or bit-flipped entry a rebuild instead of a binary.
 
 use std::path::{Path, PathBuf};
 
@@ -21,6 +33,12 @@ use sha2::{Digest, Sha256};
 // ── Magic / header ────────────────────────────────────────────────────────────
 
 const MAGIC: &[u8; 8] = b"AXONCACH";
+
+/// Bump whenever the entry layout or the meaning of its payload changes.
+const FORMAT_VERSION: u32 = 2;
+
+/// `flags` bit 0: the object links `libaxon_rt_ai.a`.
+const FLAG_AI_RUNTIME: u8 = 1;
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -115,46 +133,123 @@ pub fn cache_path(key: &str, dir: &Path) -> PathBuf {
     dir.join(format!("{key}.axc"))
 }
 
-/// Write LLVM `bitcode` to a `.axc` file at `path`.
+/// Outcome of reading a cache entry.
+#[derive(Debug, PartialEq, Eq)]
+pub enum CacheLookup {
+    /// A valid entry: the stored object and whether it links the AI runtime.
+    Hit {
+        object: Vec<u8>,
+        links_ai_runtime: bool,
+    },
+    /// No entry at this path.
+    Miss,
+    /// An entry exists but must not be used (old format, damaged, or another
+    /// compiler's); the reason says which. The caller rebuilds and overwrites.
+    Unusable(String),
+}
+
+/// Write a hosted program `object` to a `.axc` file at `path`.
 ///
-/// Creates parent directories as needed.  Silently overwrites existing files.
-pub fn write_axc(path: &Path, bitcode: &[u8], compiler_version: &str) -> std::io::Result<()> {
+/// Creates parent directories as needed. The entry is written to a temporary
+/// file in the same directory (`<key>.<pid>.tmp.axc`, so `axon cache clean`
+/// removes one a crash left behind) and renamed into place, so a concurrent
+/// reader sees the old entry or the new one, never a partial write.
+pub fn write_axc(
+    path: &Path,
+    object: &[u8],
+    links_ai_runtime: bool,
+    compiler_version: &str,
+) -> std::io::Result<()> {
     use std::io::Write as _;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let mut f = std::fs::File::create(path)?;
-    f.write_all(MAGIC)?;
-    let ver = compiler_version.as_bytes();
-    f.write_all(&(ver.len() as u32).to_le_bytes())?;
-    f.write_all(ver)?;
-    f.write_all(bitcode)?;
-    Ok(())
+    let tmp = path.with_extension(format!("{}.tmp.axc", std::process::id()));
+    let write = || -> std::io::Result<()> {
+        let ver = compiler_version.as_bytes();
+        let mut f = std::io::BufWriter::new(std::fs::File::create(&tmp)?);
+        f.write_all(MAGIC)?;
+        f.write_all(&FORMAT_VERSION.to_le_bytes())?;
+        f.write_all(&(ver.len() as u32).to_le_bytes())?;
+        f.write_all(ver)?;
+        f.write_all(&[if links_ai_runtime { FLAG_AI_RUNTIME } else { 0 }])?;
+        f.write_all(&(object.len() as u64).to_le_bytes())?;
+        f.write_all(&Sha256::digest(object))?;
+        f.write_all(object)?;
+        f.into_inner().map_err(|e| e.into_error())?;
+        std::fs::rename(&tmp, path)
+    };
+    write().inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
 }
 
-/// Read LLVM bitcode from a `.axc` file, validating the magic bytes and
-/// compiler version.
-///
-/// Returns `None` if the file is absent, corrupt, or was written by a
-/// different compiler version (E0906 scenario — caller logs the warning).
-pub fn read_axc(path: &Path, compiler_version: &str) -> Option<Vec<u8>> {
-    let data = std::fs::read(path).ok()?;
-    if data.len() < 12 {
-        return None;
+/// Read a cache entry, validating the magic bytes, format version, compiler
+/// identity, flags, object length and object checksum.
+pub fn read_axc(path: &Path, compiler_version: &str) -> CacheLookup {
+    let mut data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return CacheLookup::Miss,
+        Err(e) => return CacheLookup::Unusable(format!("cannot read it: {e}")),
+    };
+    match parse_axc(&data, compiler_version) {
+        Ok((object_start, links_ai_runtime)) => {
+            data.drain(..object_start);
+            CacheLookup::Hit {
+                object: data,
+                links_ai_runtime,
+            }
+        }
+        Err(why) => CacheLookup::Unusable(why),
     }
-    if data[..8] != *MAGIC {
-        return None;
+}
+
+/// Validate an entry; on success return where the object starts and the
+/// AI-runtime flag.
+fn parse_axc(data: &[u8], compiler_version: &str) -> Result<(usize, bool), String> {
+    let truncated = || "truncated entry".to_string();
+    let u32_at = |at: usize| -> Option<u32> {
+        Some(u32::from_le_bytes(data.get(at..at + 4)?.try_into().ok()?))
+    };
+    if data.get(..8) != Some(MAGIC.as_slice()) {
+        return Err("not an axon cache entry (bad magic)".to_string());
     }
-    let ver_len = u32::from_le_bytes(data[8..12].try_into().ok()?) as usize;
-    let body_start = 12 + ver_len;
-    if data.len() < body_start {
-        return None;
+    let format = u32_at(8).ok_or_else(truncated)?;
+    if format != FORMAT_VERSION {
+        return Err(format!(
+            "cache format {format}, this compiler reads format {FORMAT_VERSION}"
+        ));
     }
-    let stored_ver = std::str::from_utf8(&data[12..body_start]).ok()?;
-    if stored_ver != compiler_version {
-        return None; // different compiler version — cache miss
+    let ver_len = u32_at(12).ok_or_else(truncated)? as usize;
+    let ver_end = 16usize.checked_add(ver_len).ok_or_else(truncated)?;
+    let stored_ver = data.get(16..ver_end).ok_or_else(truncated)?;
+    if stored_ver != compiler_version.as_bytes() {
+        return Err("written by a different compiler".to_string());
     }
-    Some(data[body_start..].to_vec())
+    let flags = *data.get(ver_end).ok_or_else(truncated)?;
+    if flags & !FLAG_AI_RUNTIME != 0 {
+        return Err(format!("unknown flags {flags:#04x}"));
+    }
+    let len_at = ver_end + 1;
+    let obj_len = u64::from_le_bytes(
+        data.get(len_at..len_at + 8)
+            .ok_or_else(truncated)?
+            .try_into()
+            .map_err(|_| truncated())?,
+    );
+    let sum = data.get(len_at + 8..len_at + 40).ok_or_else(truncated)?;
+    let object_start = len_at + 40;
+    let object = &data[object_start..];
+    if object.len() as u64 != obj_len {
+        return Err(format!(
+            "object is {} bytes, header says {obj_len}",
+            object.len()
+        ));
+    }
+    if Sha256::digest(object).as_slice() != sum {
+        return Err("object checksum mismatch".to_string());
+    }
+    Ok((object_start, flags & FLAG_AI_RUNTIME != 0))
 }
 
 /// Remove `.axc` files from `dir`.
@@ -201,4 +296,81 @@ pub fn clean_cache(dir: &Path, older_than_secs: Option<u64>) -> (usize, usize) {
     }
 
     (removed, errors)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ID: &str = "0.1.0+0123456789abcdef";
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("axon_cache_unit_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join(format!("{name}.axc"))
+    }
+
+    #[test]
+    fn an_entry_round_trips_its_object_and_runtime_flag() {
+        let p = scratch("roundtrip");
+        for ai in [false, true] {
+            write_axc(&p, b"\x7fELF object bytes", ai, ID).unwrap();
+            assert_eq!(
+                read_axc(&p, ID),
+                CacheLookup::Hit {
+                    object: b"\x7fELF object bytes".to_vec(),
+                    links_ai_runtime: ai,
+                }
+            );
+        }
+        // The temp file was renamed into place, not left beside it.
+        let leftovers = std::fs::read_dir(p.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().contains(".tmp."))
+            .count();
+        assert_eq!(leftovers, 0);
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn an_absent_entry_is_a_miss() {
+        assert_eq!(read_axc(&scratch("absent"), ID), CacheLookup::Miss);
+    }
+
+    /// Every way an entry can be damaged or stale must read as unusable,
+    /// never as a hit carrying the wrong bytes.
+    #[test]
+    fn damaged_old_or_foreign_entries_are_unusable() {
+        let p = scratch("damaged");
+        write_axc(&p, &[7u8; 4096], false, ID).unwrap();
+        let good = std::fs::read(&p).unwrap();
+        let unusable = |bytes: &[u8], id: &str| -> String {
+            std::fs::write(&p, bytes).unwrap();
+            match read_axc(&p, id) {
+                CacheLookup::Unusable(why) => why,
+                other => panic!("expected unusable, got {other:?}"),
+            }
+        };
+
+        // Truncated anywhere: in the header, and in the object.
+        for cut in [4, 10, 20, good.len() / 2, good.len() - 1] {
+            unusable(&good[..cut], ID);
+        }
+        // One flipped bit in the object.
+        let mut flipped = good.clone();
+        *flipped.last_mut().unwrap() ^= 1;
+        assert!(unusable(&flipped, ID).contains("checksum"));
+        // Another compiler's entry.
+        assert!(unusable(&good, "0.1.0+other").contains("different compiler"));
+        // A format-1 entry: magic, identity length, identity, LLVM bitcode.
+        let mut v1 = MAGIC.to_vec();
+        v1.extend_from_slice(&(ID.len() as u32).to_le_bytes());
+        v1.extend_from_slice(ID.as_bytes());
+        v1.extend_from_slice(b"BC\xc0\xde bitcode");
+        assert!(unusable(&v1, ID).contains("cache format"));
+        // Not a cache entry at all.
+        unusable(b"garbage that is long enough to have a header", ID);
+        let _ = std::fs::remove_file(&p);
+    }
 }

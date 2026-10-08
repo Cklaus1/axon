@@ -83,7 +83,7 @@ pub const E0902: &str = "E0902"; // circular import between source files
 pub const E0903: &str = "E0903"; // duplicate top-level name across files
 pub const E0904: &str = "E0904"; // --target triple not supported by this LLVM build
 pub const E0905: &str = "E0905"; // cross-compilation needs sysroot (cross.toml missing)
-pub const E0906: &str = "E0906"; // cache entry corrupt or wrong compiler version
+pub const E0906: &str = "E0906"; // build-cache entry unusable (corrupt, old format, other compiler) — ignored and rebuilt
 pub const E0907: &str = "E0907"; // AOT wasm build needs the native codegen backend (R7)
 pub const E0908: &str = "E0908"; // no engine supports the requested target triple (R7, reserved)
 pub const E0910: &str = "E0910"; // builtin / construct has no native codegen lowering — honest abort, runs under the interpreter
@@ -485,7 +485,7 @@ pub const ALL_CODES: &[(&str, &str)] = &[
     ("E0903", "duplicate top-level name across files"),
     ("E0904", "--target triple not supported by this LLVM build"),
     ("E0905", "cross-compilation needs sysroot (cross.toml missing)"),
-    ("E0906", "cache entry corrupt or wrong compiler version"),
+    ("E0906", "build-cache entry unusable (corrupt, old format, or another compiler's) — warning; ignored and rebuilt"),
     ("E0907", "AOT wasm build needs the native codegen backend (R7)"),
     ("E0908", "RESERVED — the condition is reported as E0904 (target not supported by this LLVM build); never emitted under this code"),
     ("E0910", "builtin / construct has no native codegen lowering — honest abort, runs under the interpreter"),

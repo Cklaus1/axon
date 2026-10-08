@@ -1,8 +1,8 @@
 //! Output / driver methods on `Codegen<'ctx>` plus the `TestResult` type.
 //!
 //! Phase 2.6 of the §7.5 module split: extracts the user-facing entry
-//! points that finalise compilation (write IR, compile to binary, emit
-//! bitcode for the cache) and the JIT test runner.
+//! points that finalise compilation (write IR, compile to an object or a
+//! binary) and the JIT test runner.
 //!
 //! All Codegen methods declared `pub` because they are part of the
 //! external API consumed by `lib.rs` and `main.rs`.  TestResult is also
@@ -14,7 +14,7 @@ use std::path::Path;
 use inkwell::values::BasicValue;
 use inkwell::OptimizationLevel;
 
-use super::link::{emit_object_and_link, OptLevel};
+use super::link::{link_hosted_object, HostedObject, OptLevel};
 
 // Public test-result type used by `run_tests` callers.
 #[derive(Debug)]
@@ -91,31 +91,46 @@ impl<'ctx> super::Codegen<'ctx> {
         total
     }
 
-    /// Compile the module to a binary for an optional target triple.
-    ///
-    /// Steps:
-    /// 1. Verify the LLVM IR.
-    /// 2. Initialize the appropriate LLVM backend (native or all targets for cross).
-    /// 3. Create the `TargetMachine`.
-    /// 4. Emit an object file to a temp path.
-    /// 5. Link with the system linker (or cross-linker from `~/.config/axon/cross.toml`).
+    /// Compile the module to a binary for an optional target triple: the
+    /// hosted object ([`Self::compile_to_hosted_object`]) linked with the
+    /// system linker (or cross-linker from `~/.config/axon/cross.toml`).
     pub fn compile_to_binary_target(
         &self,
         output_path: &str,
         opt: OptLevel,
         target_triple: Option<&str>,
     ) -> Result<(), String> {
+        let obj = self.compile_to_hosted_object(opt, target_triple)?;
+        link_hosted_object(&obj, output_path, opt, target_triple)
+    }
+
+    /// Compile the module to the hosted program object a binary links,
+    /// in memory, without linking. This is what the build cache stores
+    /// (AX-34): everything up to and including the backend.
+    ///
+    /// Steps:
+    /// 1. Prune the uncalled AI wrappers (below).
+    /// 2. Verify the LLVM IR.
+    /// 3. Initialize the appropriate LLVM backend (native or all targets for cross)
+    ///    and create the `TargetMachine`.
+    /// 4. Internalise program functions, run the `opt` IR pipeline and emit
+    ///    the object.
+    pub fn compile_to_hosted_object(
+        &self,
+        opt: OptLevel,
+        target_triple: Option<&str>,
+    ) -> Result<HostedObject, String> {
         // Dead builtin helpers are dropped by `globaldce` once
-        // `link::emit_hosted_object` has internalised them, at every level
-        // including `O0` (AX-37). The uncalled AI wrappers are also deleted up
-        // front, so the module `link::Runtime` inspects is AI-free whatever
-        // pipeline runs: a program that makes no AI call links the AI-free
-        // runtime (AX-11).
+        // `link::emit_hosted_object_bytes` has internalised them, at every
+        // level including `O0` (AX-37). The uncalled AI wrappers are also
+        // deleted up front, so the module `link::Runtime` inspects is AI-free
+        // whatever pipeline runs: a program that makes no AI call links the
+        // AI-free runtime (AX-11).
         crate::time_passes::time("ir_opt", || {
             super::link::prune_unreachable_ai_callers(&self.ir.module)
         });
         self.verify_ir()?;
-        emit_object_and_link(&self.ir.module, output_path, opt, target_triple)
+        super::link::emit_hosted_object_bytes(&self.ir.module, opt, target_triple)
     }
 
     /// AX-23: compile the hosted program to its relocatable object file at
@@ -259,11 +274,6 @@ impl<'ctx> super::Codegen<'ctx> {
             }
         }
         total
-    }
-
-    /// Serialize the compiled LLVM IR as bitcode bytes (for the incremental cache).
-    pub fn emit_bitcode(&self) -> Vec<u8> {
-        self.ir.module.write_bitcode_to_memory().as_slice().to_vec()
     }
 
     /// R17 Slice 2/3: serialize the compiled LLVM IR as human-readable text

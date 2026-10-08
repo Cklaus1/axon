@@ -391,48 +391,56 @@ skip stages that have not changed, bringing rebuild times close to zero for incr
 
 ### Cache Location and Format
 
-Cache files are stored in `~/.cache/axon/<hash>.axc`.
+Cache files are stored in `~/.cache/axon/<hash>.axc` (`--cache-dir` overrides).
 
-Each `.axc` file is a binary bundle containing:
-- A header with the compiler version string and the source hash.
-- The LLVM bitcode (`.bc`) for the compiled module.
+Each `.axc` file holds the hosted program's **relocatable object after the
+opt-level IR pipeline and the backend** (AX-34) — the exact object a fresh
+build links — behind a versioned header:
+- magic `AXONCACH`, cache format version (currently 2), the compiler identity;
+- a flag recording whether the object links the AI runtime (`libaxon_rt_ai.a`)
+  — derived from the program, needed by the link, not visible in the object;
+- the object's length and SHA-256.
+
+The object, not optimised bitcode, is stored because instruction selection and
+register allocation are most of the remaining cost: a hit then needs no LLVM
+work at all. Measured on `big-compile` (`--release`): a warm build went from
+104.9 G instructions (cached O0 bitcode, re-optimised on every hit) to 1.4 G
+(check + link), the binary byte-identical to a `--no-cache` build.
 
 ```
 ~/.cache/axon/
-  <sha256_of_inputs>.axc    (one per unique (source, compiler version) pair)
+  <sha256_of_inputs>.axc    (one per unique key, below)
+  compiler-<fingerprint>.id (memo of the compiler executable's digest)
 ```
 
 ### Hash Computation
 
-The cache key is a SHA-256 digest over:
-1. The exact content of the source file (all bytes).
-2. The compiler version string (e.g. `"axon 0.4.0"`).
+The cache key is a SHA-256 digest over everything the object depends on:
+1. The entry source path and the exact content of the source file.
+2. The name and content of every transitively imported module (sorted by name).
+3. The target triple — the host triple for a native build.
+4. The opt level (`--opt-level`, `--release` = 2).
+5. The artifact kind (`hosted-exe-object`).
+6. The compiler identity: version plus SHA-256 of the compiler executable
+   (which includes the statically linked LLVM).
 
-```rust
-use sha2::{Sha256, Digest};
-
-fn cache_key(source: &[u8], compiler_version: &str) -> String {
-    let mut h = Sha256::new();
-    h.update(source);
-    h.update(compiler_version.as_bytes());
-    format!("{:x}", h.finalize())
-}
-```
-
-The source content of any `use`-d modules is **not** included in the hash in Phase 4. Cross-module
-cache invalidation is deferred; if a depended-upon module changes, recompilation of dependents must
-be forced with `--no-cache`.
+Only a hosted executable build uses the cache. `--emit-obj` (an object without
+the AI-wrapper pruning a binary gets), `--emit-llvm`, `--freestanding` and
+`--host mobile` neither read nor write it.
 
 ### Cache Lookup and Miss
 
-On every `axon build`:
+On every cacheable `axon build`:
 
-1. Compute the cache key for each source file.
-2. Check whether `~/.cache/axon/<key>.axc` exists and is readable.
-3. **Cache hit**: extract the LLVM bitcode from the `.axc` file; skip the lexer through IR
-   emission stages for this file; proceed directly to LLVM optimisation and linking.
-4. **Cache miss**: run the full pipeline; after successful IR emission, write the bitcode and
-   header to `~/.cache/axon/<key>.axc`.
+1. Parse and type-check (always: it prints the program's warnings, and costs
+   ~1% of a cold release build), then run the R23 cert gate.
+2. Compute the cache key and read `<key>.axc`.
+3. **Cache hit**: link the stored object against the runtime staticlib. No IR
+   is emitted, optimised or compiled.
+4. **Unusable entry** (truncated, checksum mismatch, older format, another
+   compiler's): warn `E0906`, then continue as a miss; the entry is overwritten.
+5. **Cache miss**: run the full pipeline; write the object (temp file + rename)
+   before linking, so a link failure does not cost the next build its hit.
 
 ### CLI Flags
 
@@ -463,7 +471,7 @@ fn fib(n: i64) -> i64 {
 
 ```
 $ axon build lib.ax          # cache miss — compiles and writes .axc
-$ axon build lib.ax          # cache hit  — skips IR emission (~5ms vs ~120ms)
+$ axon build lib.ax          # cache hit  — links the cached object, no LLVM work
 $ touch lib.ax               # file unchanged — mtime irrelevant, hash determines hit
 $ axon build lib.ax          # cache hit (content hash unchanged)
 $ echo "// comment" >> lib.ax
@@ -858,7 +866,7 @@ E0902  circular import: {cycle}
 E0903  duplicate top-level name '{name}' (first: {file1}:{line}, redefined: {file2}:{line})
 E0904  --target '{triple}' not supported by this LLVM build
 E0905  cross-compilation target '{triple}' requires sysroot — add [target.{triple}] to ~/.config/axon/cross.toml
-E0906  cache entry is corrupt or was written by a different compiler version — ignoring
+E0906  (warning) cache entry is unusable (truncated, checksum mismatch, older cache format, another compiler's) — ignored, rebuilt and overwritten
 ```
 
 ---

@@ -138,7 +138,8 @@ axon build examples/hello.ax              # native AOT binary   (codegen is now 
 axon build f.ax --release                 # optimised: LLVM `default<O2>` IR pipeline + O2 backend (default without flags: O0 = `globaldce` only)
 axon build f.ax --opt-level 3             # pick the level: 0|1|2|3|s|z (`s`/`z` = size pipelines + `optsize`/`minsize` fn attrs); overrides --release; part of the cache key
 axon build f.ax --emit-obj -o f.o         # write the program's relocatable object only (no link; hosted or --freestanding); links against libaxon_rt.a when no AI builtin is called
-axon build f.ax --release --emit-llvm -o f.ll  # dump the IR AFTER the selected level's pipeline (what the backend compiles)
+axon build f.ax --release --emit-llvm -o f.ll  # dump the IR AFTER the selected level's pipeline (what the backend compiles); stdout unless -o names a .ll
+axon build f.ax --release --cache-dir D    # warm rebuild: the cache holds the optimised OBJECT, so a hit only links (AX-34); --no-cache bypasses it
 axon session                              # R44: an accumulating typed session — bind a name in one
                                           #   cell, read it in the next. Every cell re-type-checks the
                                           #   WHOLE accumulated program, so redefining a name in a way
