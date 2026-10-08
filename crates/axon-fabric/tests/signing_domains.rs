@@ -81,10 +81,6 @@ fn rc() -> ExecutionReceipt {
 
 /// A known-answer check whose panic names the context: the marker cannot match a setup failure.
 fn kat(what: &str, got: &str, want: &str) {
-    if want == "TODO" {
-        println!("KATVAL {what} = {got}");
-        return;
-    }
     assert_eq!(
         got, want,
         "signing KAT {what}: the signed bytes changed (a domain, a schema tag or a context string \
@@ -304,13 +300,13 @@ fn known_answer_ledger_key_derivation() {
 }
 
 // golden values, computed from the implementation at the head that introduced this file
-const KAT_CLEARANCE: &str = "TODO";
-const KAT_EXECUTION: &str = "TODO";
-const KAT_CONTEXT: &str = "TODO";
-const KAT_GENERIC: &str = "TODO";
-const KAT_ATTESTATION: &str = "TODO";
-const KAT_EXEC_DOC: &str = "TODO";
-const KAT_COMPLETION_KEY: &str = "TODO";
-const KAT_PASS_TOKEN: &str = "TODO";
-const KAT_FAIL_TOKEN: &str = "TODO";
-const KAT_LEDGER_MAC: &str = "TODO";
+const KAT_CLEARANCE: &str = "a7ccdc34fc02151a36b351b59c9e358edf0f4484e0de8f958ff4e6795f38ca0b1cd897a7a4534c4e5db164af255977330be57c4b1ecc9ea5daa646f65afcfc05";
+const KAT_EXECUTION: &str = "36dd450b54ef212ebf9a81b3b458221f6c5c2f5f3365a44563e1eddce8928623a5dda151341362a40a0df4d08220897c2ea65cdacd1564ce934b6f242541030e";
+const KAT_CONTEXT: &str = "6805a1b986fe8460aa37fcddac13577570900a3358cbe5f1560c3487eec8bf0de042d508ca34620358673ee9b3add4a158229a626e7a56643fb9810dd9a4870d";
+const KAT_GENERIC: &str = "0f08f1fc5ed0310812f99e5593f43d4552ce7e83232c2ac3921647d95877d59f59d041d77eb602436b73f84868d461503d045006d11c2736473e71c1f3ea4702";
+const KAT_ATTESTATION: &str = "6af6ea42280388d2624162c154d01fafb74eff6e87748a0e7134ca008e26506ace534651775b92ccc577a3463a9c3853a1ebdd4869e79b85500ff6f277c23405";
+const KAT_EXEC_DOC: &str = r#"{"receipt_ref":"cl22:4b349c1d5f1c513e2bfe679949820d7971c6854f5b80b4a52fd3122007617f9a","request_ref":"cl22:1e76837a7cd36abf01d9c2aac10a9c609b9af1b03435b83e590c270e045af749","schema":"axon.fabric-execution-attestation/1"}"#;
+const KAT_COMPLETION_KEY: &str = "9560211e3d5b588d490e073f28fbba5a3dfe0d9f40b0e0a7bc95a5dc8ce5f656";
+const KAT_PASS_TOKEN: &str = "a875b3413a17359d72e634a6f4fe07f2de3e20de9d4d2359b370ac51c0cb9f54";
+const KAT_FAIL_TOKEN: &str = "c9ed37e39e339072d5c5984526379387efc65131001b8da55dd17dd69a67f5bd";
+const KAT_LEDGER_MAC: &str = "bdda876a50e9d7514e92b4e6cf0f5108a69092bb68f855e0aa3185206f9660c5";
