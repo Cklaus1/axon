@@ -2652,7 +2652,7 @@ ATTACK_MARKERS.update({
     'M3130': 'clearance is not from a monitor the operator still trusts with the key it was signed under',
     'M3131': 'protected verdict does not re-verify from its stored documents \\(context signature: shape: signature: domain is',
     'M3132': 'control:',
-    'M3133': 'context signature refused: shape: signature: domain is "axon\.closed-loop\.context/1" but the document it must vouch for has "axon\.loop\.trial-safety/1"',
+    'M3133': r'context signature refused: shape: signature: domain is "axon\.closed-loop\.context/1" but the document it must vouch for has "axon\.loop\.trial-safety/1"',
     'M3134': "ATTACK: Fabric's execution attestation does not verify in the execution domain",
     'M3135': 'ATTACK: reply mode default',
     'M3136': "ATTACK: a new reader of a reply's mode bypasses Mode::from_reply|ATTACK: a mode default",
