@@ -128,8 +128,8 @@ echo ""
 echo "  \$ AXON_AI_MOCK=1 axon run examples/flagship/agent_task.ax"
 echo ""
 
-AXON_AI_MOCK=1 timeout 10 "$AXON" run "$D/agent_task.ax" 2>&1 | grep -v "^axon: run-id"
-RUN_EXIT="${PIPESTATUS[0]}"
+RUN_EXIT=0
+AXON_AI_MOCK=1 timeout 10 "$AXON" run "$D/agent_task.ax" 2>&1 || RUN_EXIT=$?
 
 if [[ "$RUN_EXIT" -eq 0 ]]; then
     ok "good agent ran cleanly (exit 0) — scored candidates without touching net/fs/exec"

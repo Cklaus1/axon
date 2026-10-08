@@ -93,7 +93,7 @@ for range in "0, 4" "4, 5" "0, 4" ; do
   f="$WORK/split.ax"
   printf 'fn main() -> i64 {\n    let s = "café"\n    println(str_slice(s, %s))\n    0\n}\n' "$range" > "$f"
 
-  i_all="$("$AXON" run "$f" 2>&1 | grep -v 'run-id')"; i_code=${PIPESTATUS[0]}
+  i_all="$("$AXON" run "$f" 2>&1)"; i_code=$?
   if [ "$i_code" -eq 0 ]; then
     echo "  FAIL split($range): interp ACCEPTED a split range"
     fail=$((fail+1)); continue

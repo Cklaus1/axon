@@ -53,11 +53,12 @@
 //! - **The provenance log itself** (`interp/provenance.rs` uses `std::fs`
 //!   directly). It is the recorder; routing it through the host would make
 //!   recording recursive.
-//! - **`now_ms`, when `AXON_CLOCK` is set.** `program_now_ms` consults the
-//!   virtual clock BEFORE the host, so the clock wins and the journal never
-//!   sees the call. Two mechanisms answering the same question with different
-//!   answers is precisely the `temporal_*` two-timelines bug; the precedence is
-//!   fixed and tested rather than left to chance.
+//! - **`now_ms`/`now_ns`, when `AXON_CLOCK` is set.** `program_now_ms` and
+//!   `program_now_ns` consult the virtual clock BEFORE the host, so the clock
+//!   wins and the journal never sees the call. Two mechanisms answering the
+//!   same question with different answers is precisely the `temporal_*`
+//!   two-timelines bug; the precedence is fixed and tested rather than left to
+//!   chance.
 
 use crate::host::{AxonHost, SharedHost};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -358,6 +359,12 @@ impl AxonHost for RecordingHost {
         t
     }
 
+    fn now_ns(&self) -> i64 {
+        let t = self.inner.now_ns();
+        self.record("now_ns", vec![], "val", vec![t.to_string()]);
+        t
+    }
+
     fn sleep_ms(&self, ms: u64) {
         self.inner.sleep_ms(ms);
         self.record("sleep_ms", vec![ms.to_string()], "val", vec![]);
@@ -583,6 +590,21 @@ impl ReplayHost {
             ))),
         }
     }
+
+    /// Serve a no-argument clock read (`now_ms`/`now_ns`) from its recorded
+    /// `i64` payload. 0 after a divergence: the run is already latched to exit 11.
+    fn next_i64(&self, method: &str) -> i64 {
+        let Ok(ev) = self.next_event(method, &[]) else {
+            return 0;
+        };
+        ev.payload
+            .first()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_else(|| {
+                diverge(format!("event {} (`{method}`) has no i64 payload", ev.seq));
+                0
+            })
+    }
 }
 
 impl AxonHost for ReplayHost {
@@ -620,16 +642,11 @@ impl AxonHost for ReplayHost {
     }
 
     fn now_ms(&self) -> i64 {
-        let Ok(ev) = self.next_event("now_ms", &[]) else {
-            return 0;
-        };
-        ev.payload
-            .first()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or_else(|| {
-                diverge(format!("event {} (`now_ms`) has no i64 payload", ev.seq));
-                0
-            })
+        self.next_i64("now_ms")
+    }
+
+    fn now_ns(&self) -> i64 {
+        self.next_i64("now_ns")
     }
 
     fn sleep_ms(&self, ms: u64) {
@@ -781,7 +798,7 @@ impl HostEvent {
                     "does not exist".to_string()
                 }
             }
-            ("now_ms", _) => format!("= {pay0}"),
+            ("now_ms" | "now_ns", _) => format!("= {pay0}"),
             ("sleep_ms", _) => "ok".to_string(),
             ("dir_list" | "http_sse" | "http_sse_post", _) => {
                 format!("{} item(s)", self.payload.len())
@@ -795,6 +812,7 @@ impl HostEvent {
             "read_line" => "read a line from stdin".to_string(),
             "env_var" => format!("read env {}", arg(0)),
             "now_ms" => "read the clock".to_string(),
+            "now_ns" => "read the monotonic clock".to_string(),
             "sleep_ms" => format!("slept {}ms", arg(0)),
             "file_exists" => format!("checked whether {} exists", arg(0)),
             "dir_create" => format!("CREATE dir {}", arg(0)),
@@ -885,7 +903,7 @@ pub fn render_transcript(events: &[HostEvent], opts: &RenderOpts) -> String {
             // Deliberately not summarised: the clock is not a channel anyone
             // audits for exposure, and it would swamp the line on any loop.
             // Still listed event-by-event above.
-            "now_ms" | "sleep_ms" => {}
+            "now_ms" | "now_ns" | "sleep_ms" => {}
             other => reads.push(format!("{other} (unclassified)")),
         }
     }
@@ -1238,6 +1256,9 @@ mod tests {
             fn now_ms(&self) -> i64 {
                 42
             }
+            fn now_ns(&self) -> i64 {
+                42_000_123
+            }
             fn sleep_ms(&self, _: u64) {}
             fn read_line(&self) -> Result<String, String> {
                 Ok("typed input".into())
@@ -1253,6 +1274,7 @@ mod tests {
         assert_eq!(rec.env_var("PRESENT").as_deref(), Some("yes"));
         assert_eq!(rec.env_var("ABSENT"), None);
         assert_eq!(rec.now_ms(), 42);
+        assert_eq!(rec.now_ns(), 42_000_123);
         assert_eq!(rec.dir_list("/d").unwrap(), vec!["a", "b c"]);
         drop(rec);
 
@@ -1263,6 +1285,7 @@ mod tests {
         assert_eq!(rp.env_var("PRESENT").as_deref(), Some("yes"));
         assert_eq!(rp.env_var("ABSENT"), None);
         assert_eq!(rp.now_ms(), 42);
+        assert_eq!(rp.now_ns(), 42_000_123);
         assert_eq!(rp.dir_list("/d").unwrap(), vec!["a", "b c"]);
         assert_eq!(rp.unconsumed(), 0, "journal fully consumed");
         assert!(divergence().is_none(), "a faithful replay must not diverge");

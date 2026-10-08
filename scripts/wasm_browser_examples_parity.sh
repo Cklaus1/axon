@@ -67,7 +67,7 @@ for f in examples/*.ax; do
   # follow-on), I/O, exec, goal search, spawn. (Everything else now links wasi-free
   # and matches — 29/29; an object-only example would be a NEW frontier, reported
   # below, not failed.)
-  if grep -qE 'ai_complete|ai_extract|random_|now_ms|temporal_|sleep_ms|read_line|read_file|write_file|exec\(|goal_run|goal_step|for!|spawn|llm_|agent_' "$f"; then
+  if grep -qE 'ai_complete|ai_extract|random_|now_ms|now_ns|temporal_|sleep_ms|read_line|read_file|write_file|exec\(|goal_run|goal_step|for!|spawn|llm_|agent_' "$f"; then
     continue
   fi
   total=$((total + 1))

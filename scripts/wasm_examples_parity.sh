@@ -89,7 +89,7 @@ fails=""; objs=""
 for f in examples/*.ax; do
   grep -q "fn main" "$f" || continue
   # Skip host / non-deterministic examples (not on the wasm target, or differ by design).
-  if grep -qE 'ai_complete|ai_extract|random_|now_ms|read_line|read_file|write_file|exec\(|goal_run|goal_step|for!|spawn|llm_|agent_' "$f"; then
+  if grep -qE 'ai_complete|ai_extract|random_|now_ms|now_ns|read_line|read_file|write_file|exec\(|goal_run|goal_step|for!|spawn|llm_|agent_' "$f"; then
     continue
   fi
   total=$((total + 1))

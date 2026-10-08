@@ -259,8 +259,10 @@ fn is_kill_file_tripped(path: &std::path::Path) -> bool {
 }
 
 /// Extract the first `axon:` FAULT line from stderr (the human-facing reason),
-/// skipping the run-id stamp and informational lines (SMT discharge summaries,
-/// the mint certificate-checked notice) that aren't faults; fall back to `default`.
+/// skipping informational lines (SMT discharge summaries, the mint
+/// certificate-checked notice) that aren't faults; fall back to `default`.
+/// (`axon run` no longer prints its run-id by default, and the job runs under
+/// `env_clear` without `AXON_RECORD`, so there is no run-id line to skip.)
 /// Did the sandbox wrapper run to completion? (AUDIT T44.) True only if stdout
 /// carries the exact marker for THIS run — the nonce makes it unforgeable by the
 /// job, which never sees the generated wrapper.
@@ -270,9 +272,7 @@ fn ran_to_completion(stdout: &str, nonce: &str) -> bool {
 }
 
 fn first_axon_line(stderr: &str, default: &str) -> String {
-    let is_info = |l: &str| {
-        l.starts_with("axon: run-id") || l.starts_with("axon: SMT") || l.starts_with("axon: mint")
-    };
+    let is_info = |l: &str| l.starts_with("axon: SMT") || l.starts_with("axon: mint");
     stderr
         .lines()
         .find(|l| l.starts_with("axon:") && !is_info(l))

@@ -77,7 +77,7 @@ AX
 VAL="wasiworks"   # str_len = 9
 
 # interpreter oracle (env on the process)
-I="$(AXON_AOT_ENV="$VAL" "$INTERP" "$SRC" 2>/dev/null | grep -v '^axon: run-id ' | tail -1)"
+I="$(AXON_AOT_ENV="$VAL" "$INTERP" "$SRC" 2>/dev/null | tail -1)"
 [ -n "$I" ] || { echo "wasm_aot_env_parity: FAIL — interp printed nothing"; exit 1; }
 echo "wasm_aot_env_parity: interp = $I"
 

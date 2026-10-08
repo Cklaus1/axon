@@ -27,6 +27,10 @@
 #   4. parity       — native and interp agree byte-for-byte on all of the above;
 #   5. off by default — with no AXON_CLOCK the clock is real, so two runs differ
 #                     and the value is a plausible epoch (not 0, not the start).
+#   6. now_ns       — the monotonic ns clock reads the SAME virtual timeline as
+#                     ns since the configured start, in both engines, with exact
+#                     values; and with no AXON_CLOCK it never decreases and a
+#                     real sleep shows up at ns scale.
 #
 # Exit 0 = pass. Exit 1 = a real divergence or a wrong value. SKIP (exit 0) only
 # when codegen is unavailable, and it says so on stdout.
@@ -165,6 +169,66 @@ else
 — a virtual now_ms compared against a real created_ms is meaningless"
 fi
 
+# ── now_ns: one timeline, in ns since the configured start ──────────────────
+#
+# `now_ns` is a third clock reader, so it gets the same treatment: an exact
+# expected value under AXON_CLOCK, in BOTH engines (checked natively below). It
+# is relative to the start, not `ms * 1e6`: 1700000000000 ms is 1.7e21 ns, past
+# i64::MAX, so the absolute scheme would pin every read at the top — a FROZEN
+# clock, the exact failure this harness exists to catch.
+#   read 1 -> 0 (the start), advances by tick -> start+1
+#   sleep 250 -> start+251; read 2 -> 251 ms = 251000000 ns, advances -> +252
+#   now_ms -> 1700000000252: the SAME timeline, not a second one
+NS="$WORK/ns.ax"
+cat > "$NS" <<'AXEOF'
+fn main() -> i64 {
+    let a = now_ns()
+    sleep_ms(250)
+    let b = now_ns()
+    let m = now_ms()
+    println(to_str(a))
+    println(to_str(b))
+    println(to_str(b - a))
+    println(to_str(m))
+    0
+}
+AXEOF
+NS_WANT="$(printf '0\n251000000\n251000000\n1700000000252\n')"
+AXON_CLOCK=1700000000000 "$AXON" run "$NS" 2>/dev/null > "$WORK/ns_i.txt"
+if [ "$(cat "$WORK/ns_i.txt")" = "$NS_WANT" ]; then
+  ok "interp: now_ns exact values on the shared timeline"
+else
+  bad ns_values "interp now_ns under AXON_CLOCK: expected '$NS_WANT', got '$(cat "$WORK/ns_i.txt")'"
+fi
+
+# Real clock: never decreases across many reads, and a 2 ms sleep advances it by
+# at least 2e6 ns (it is a clock, not a counter, and not frozen at 0).
+NSREAL="$WORK/nsreal.ax"
+cat > "$NSREAL" <<'AXEOF'
+fn main() -> i64 {
+    let prev = now_ns()
+    let back = 0
+    for i in 0..10000 {
+        let t = now_ns()
+        if t < prev { back = back + 1 }
+        prev = t
+    }
+    let a = now_ns()
+    sleep_ms(2)
+    let b = now_ns()
+    if back == 0 { println("never-backwards") } else { println("BACKWARDS") }
+    if b - a >= 2000000 { println("sleep-visible") } else { println("SLEEP-INVISIBLE") }
+    0
+}
+AXEOF
+NSREAL_WANT="$(printf 'never-backwards\nsleep-visible\n')"
+nsreal_i="$("$AXON" run "$NSREAL" 2>/dev/null)"
+if [ "$nsreal_i" = "$NSREAL_WANT" ]; then
+  ok "interp: real now_ns is monotonic and advances across a sleep"
+else
+  bad ns_real "interp real now_ns: expected '$NSREAL_WANT', got '$nsreal_i'"
+fi
+
 # ── 4/5 + 5/5: native parity ────────────────────────────────────────────────
 BUILD_OUT="$("$AXON" build "$PROG" --out "$WORK/clocknat" 2>&1)"
 BUILD_EXIT=$?
@@ -197,6 +261,27 @@ $(diff "$WANT" "$WORK/n1.txt" || true)"
   else
     bad parity "native and interp disagree:
 $(diff "$WORK/i1.txt" "$WORK/n1.txt" || true)"
+  fi
+
+  if "$AXON" build "$NS" --out "$WORK/nsnat" >/dev/null 2>&1; then
+    AXON_CLOCK=1700000000000 "$WORK/nsnat" 2>/dev/null > "$WORK/ns_n.txt"
+    if cmp -s "$WORK/ns_n.txt" "$WORK/ns_i.txt" && [ "$(cat "$WORK/ns_n.txt")" = "$NS_WANT" ]; then
+      ok "native == interp on now_ns (exact values)"
+    else
+      bad ns_parity "native now_ns under AXON_CLOCK: expected '$NS_WANT', got '$(cat "$WORK/ns_n.txt")'"
+    fi
+  else
+    bad ns_build "axon build of the now_ns probe failed"
+  fi
+  if "$AXON" build "$NSREAL" --out "$WORK/nsrealnat" >/dev/null 2>&1; then
+    nsreal_n="$("$WORK/nsrealnat" 2>/dev/null)"
+    if [ "$nsreal_n" = "$NSREAL_WANT" ]; then
+      ok "native: real now_ns is monotonic and advances across a sleep"
+    else
+      bad ns_real_native "native real now_ns: expected '$NSREAL_WANT', got '$nsreal_n'"
+    fi
+  else
+    bad nsreal_build "axon build of the real now_ns probe failed"
   fi
 fi
 

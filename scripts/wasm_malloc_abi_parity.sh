@@ -92,7 +92,7 @@ for name in arr tostr interp eprint combo; do
   SRC="$WORK/$name.ax"
   printf '%s\n' "${PROGS[$name]}" | sed 's/fn main() -> i64 {/fn probe() -> i64 {/' > "$SRC"
   printf 'fn main() { println(to_str(probe())) }\n' >> "$SRC"
-  I="$("$INTERP" "$SRC" 2>/dev/null | grep -v '^axon: run-id ' | tail -1)"
+  I="$("$INTERP" "$SRC" 2>/dev/null | tail -1)"
   [ -n "$I" ] || { echo "  FAIL $name: interp printed nothing"; fail=1; continue; }
   # native
   # A failed native build used to vanish silently out of this `if`.

@@ -69,7 +69,7 @@ cli_case() {
   # whitespace-separated field rather than stripping a hardcoded prompt --
   # the prompt is part of the contract under test and should not be silently
   # discarded from the capture.
-  local raw; raw="$(printf '%b' "$input" | "$AXON" run "$prog" 2>/dev/null | grep -v '^axon: run-id ')"
+  local raw; raw="$(printf '%b' "$input" | "$AXON" run "$prog" 2>/dev/null)"
   local got; got="${raw##* }"
   ran=$((ran+1))
   if [ "$got" != "$want" ]; then

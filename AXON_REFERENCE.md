@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 25 CLI verbs, 343 builtins, 24 attributes, 145 diagnostic codes (132 live, 13 reserved), 55 environment variables.
+The complete surface of this build — 25 CLI verbs, 344 builtins, 24 attributes, 145 diagnostic codes (132 live, 13 reserved), 55 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -282,7 +282,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `I0001` | deferred attribute (AI annotations) |
 | `I0002` | a foreign keyword was accepted as a no-op (`let mut x`) |
 
-## Builtins (343)
+## Builtins (344)
 
 | Signature | Purpose |
 |---|---|
@@ -512,6 +512,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `min_i32(a: i64, b: i64) -> i32` | Return the lesser of two integers (truncated to i32 range). |
 | `min_i64(a: i64, b: i64) -> i64` | Return the lesser of two i64 values. |
 | `now_ms() -> i64` | Return the current wall-clock time as milliseconds since the Unix epoch. |
+| `now_ns() -> i64` | Return a monotonic clock reading in nanoseconds, for timing. Never decreases and never jumps with the wall clock; the origin is unspecified (not the Unix epoch), so only the difference of two reads is meaningful. Under `AXON_CLOCK` it reads the shared virtual timeline as ns since the configured start ((virtual ms − start) × 1000000) and advances it by one tick, like `now_ms`. |
 | `parse_bool(s: str) -> Result<bool, str>` | Parse `"true"` or `"false"`. Returns `Ok(true/false)` or `Err("invalid bool")`. |
 | `parse_bool_or(s: str, default: bool) -> bool` | Parse `s` as bool (`"true"` / `"false"`); fall back to `default` if neither. |
 | `parse_float(s: str) -> Result<f64, str>` | Parse `s` as a 64-bit float. Returns Ok(n) or Err(message). |

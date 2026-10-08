@@ -108,7 +108,7 @@ for name in "${!PROGS[@]}"; do
   probe_src="${src%.ax}_probe.ax"
   sed 's/fn main() -> i64 {/fn probe() -> i64 {/' "$src" > "$probe_src"
   printf 'fn main() { println(to_str(probe())) }\n' >> "$probe_src"
-  i_exit="$("$INTERP" "$probe_src" 2>/dev/null | grep -v '^axon: run-id ' | tail -1)"
+  i_exit="$("$INTERP" "$probe_src" 2>/dev/null | tail -1)"
   # BOTH engines must read the same way. wasm implements the SAME exit remap, so
   # rewriting only the interp side manufactures a divergence that is not there.
   if [ -z "$i_exit" ]; then

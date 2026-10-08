@@ -105,7 +105,7 @@ pub fn run_brief_gate(
         .arg("run")
         .arg(&script)
         .env("BRIEF", &brief)
-        .stderr(std::process::Stdio::null()) // suppress axon run-id noise
+        .stderr(std::process::Stdio::null()) // the verdict is the exit code alone
         .stdout(std::process::Stdio::null())
         .status();
 

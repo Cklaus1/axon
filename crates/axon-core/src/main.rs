@@ -285,6 +285,18 @@ enum Command {
         )]
         require_contained: bool,
 
+        /// Print `axon: run-id <id>` on stderr before the program starts. Off by
+        /// default so the program owns its stderr; the id is always stamped to
+        /// the provenance log's `run_start` record either way, and is also
+        /// printed whenever `AXON_RECORD` is set (a journal needs its run-id).
+        #[arg(
+            long,
+            short = 'v',
+            help = "Print the run-id (the `axon trace --replay` handle) on stderr. \
+                    Also printed under AXON_RECORD; always in the provenance log"
+        )]
+        verbose: bool,
+
         /// Extra arguments. Not forwarded to the program yet: `axon run` warns and ignores them.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
@@ -458,11 +470,13 @@ enum Command {
 
         /// Replay the run with this run-id: re-execute the source file with the
         /// same RNG seed that was used in the original run (Phase 9 / F2).
-        /// The run-id is printed to stderr by `axon run` / `axon goal`.
+        /// Every `axon run` stamps its run-id to the provenance log; it is
+        /// printed on stderr only under `axon run --verbose` or `AXON_RECORD`.
         #[arg(
             long,
             value_name = "RUN_ID",
-            help = "Replay a prior run by its run-id (see axon run stderr)"
+            help = "Replay a prior run by its run-id (printed by `axon run --verbose`; \
+                    stamped as `run_start` in the provenance log)"
         )]
         replay: Option<String>,
     },
@@ -889,10 +903,11 @@ fn dispatch(command: Command) {
         Command::Run {
             file,
             require_contained,
+            verbose,
             args,
         } => {
             axon_core::capabilities::set_require_contained(require_contained);
-            cmd_run(file, args)
+            cmd_run(file, args, verbose)
         }
         Command::Fmt { files, check } => cmd_fmt(files, check),
         Command::Doc { files, out } => cmd_doc(files, out),
@@ -1611,6 +1626,7 @@ fn load_corpus(dir: &Path) -> Vec<(String, Vec<u8>, axon_core::ast::Program)> {
             let pure = axon_core::capabilities::program_capabilities(&program).is_empty()
                 && ![
                     "now_ms",
+                    "now_ns",
                     "random_i64",
                     "random_f64",
                     "host_await",
@@ -4098,7 +4114,8 @@ fn cmd_trace_replay(run_id: String, path: Option<PathBuf>) {
         None => {
             eprintln!("error: run-id '{run_id}' not found in provenance log");
             eprintln!(
-                "hint: run-ids are printed by `axon run` / `axon goal` (check stderr output)"
+                "hint: every `axon run` stamps a `run_start` record (run_id, seed, src) \
+                 to the provenance log; `axon run --verbose` also prints the run-id"
             );
             process::exit(1);
         }
@@ -4159,7 +4176,9 @@ fn cmd_trace_replay(run_id: String, path: Option<PathBuf>) {
         axon_core::clock::set(rec.ts_ms as i64, 1);
     }
     let source_path = PathBuf::from(&rec.src);
-    cmd_run(source_path, vec![]);
+    // The replay is itself a run (it gets a fresh run-id in the log); the banner
+    // above already names what is being reproduced, so no extra stderr line.
+    cmd_run(source_path, vec![], false);
 }
 
 // ── Phase 9: run-id + seed helpers ───────────────────────────────────────────
@@ -5512,7 +5531,7 @@ fn render_cell_jsonl(sess: &Session, r: &CellResult) -> String {
     )
 }
 
-fn cmd_run(file: PathBuf, args: Vec<String>) {
+fn cmd_run(file: PathBuf, args: Vec<String>, verbose: bool) {
     // Fix 5: validate .ax extension.
     validate_ax_extension(&file);
 
@@ -5526,7 +5545,17 @@ fn cmd_run(file: PathBuf, args: Vec<String>) {
         std::env::set_var("AXON_SEED", seed.to_string());
     }
     axon_core::interp::append_run_start_jsonl(&run_id, seed, &file.display().to_string());
-    eprintln!("axon: run-id {run_id}");
+    // AX-33: the program owns its stderr. The run-id used to be printed here
+    // unconditionally, so no stderr protocol could hold under `axon run` and a
+    // native build of the same program (which prints nothing) behaved
+    // differently. It is always in the provenance log (`run_start` above, which
+    // `axon trace --replay` reads); on stderr only when asked for (`--verbose`)
+    // or when recording, where a journal is useless without the id that pairs
+    // it with its provenance record.
+    let recording = std::env::var(axon_core::replay::RECORD_ENV_VAR).is_ok_and(|p| !p.is_empty());
+    if verbose || recording {
+        eprintln!("axon: run-id {run_id}");
+    }
 
     // Stamp provenance with this program's identity so `trace` keeps its
     // metrics distinct from other programs that share a function name
