@@ -106,16 +106,16 @@ fn domains() -> Vec<(&'static str, &'static str, &'static str)> {
 #[test]
 fn signing_domains_are_pairwise_distinct_and_golden() {
     let d = domains();
+    for (i, (an, av, _)) in d.iter().enumerate() {
+        for (bn, bv, _) in &d[i + 1..] {
+            assert_ne!(av, bv, "signing domain collapse: {an} == {bn} ({av:?})");
+        }
+    }
     for (name, value, literal) in &d {
         assert_eq!(
             value, literal,
             "signing domain {name} is not its documented literal {literal:?}"
         );
-    }
-    for (i, (an, av, _)) in d.iter().enumerate() {
-        for (bn, bv, _) in &d[i + 1..] {
-            assert_ne!(av, bv, "signing domain collapse: {an} == {bn} ({av:?})");
-        }
     }
     // the evidence signature's own domain axis: one per trust authority
     let names: Vec<_> = TrustAuthority::ALL.iter().map(|a| a.dir_name()).collect();
