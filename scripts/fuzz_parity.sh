@@ -44,31 +44,17 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 . "$ROOT/scripts/lib/harness_skip.sh"
+. "$ROOT/scripts/lib/axon_bin.sh"
 
 SEED="${AXON_SEED:-42}"
 N="${FUZZ_N:-40}"   # random inputs per builtin (edges added on top)
 
-# Locate the codegen binary. Prefer an already-built one (the gate builds it
-# before tests); if absent try one build; if THAT fails (no LLVM / build lock
-# held by a parent cargo), skip cleanly rather than report a false divergence.
-AXON="${AXON:-target/debug/axon}"
-if [ ! -x "$AXON" ]; then
-  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-    echo "fuzz_parity: codegen build unavailable (LLVM absent or build lock) — skipping"; exit 0
-  fi
-fi
+# The caller's AXON, or a codegen `axon` built here; either way it must prove it
+# can emit native code (an interp-only build `run`s but cannot `build`).
+need_codegen_axon fuzz_parity
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-
-# Probe: can this binary actually emit native code? (A --no-default-features
-# build leaves a codegen-less `axon` that can `run` but not `build`.)
-printf 'fn main() -> i64 { 0 }\n' > "$WORK/probe.ax"
-if ! berr="$("$AXON" build "$WORK/probe.ax" -o "$WORK/probe.bin" --no-cache 2>&1)"; then
-  # The probe must prove its own reason — "no codegen feature" was asserted for
-  # every possible build failure, including a broken compiler.
-  native_build_failed fuzz_parity "trivial probe program" "$berr" || exit 1
-fi
 
 fail=0
 

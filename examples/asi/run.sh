@@ -19,7 +19,10 @@ DEMO="$HERE/${DEMO:-optimize.ax}"
 PROV="${XDG_CACHE_HOME:-$HOME/.cache}/axon/provenance.jsonl"
 
 axon_bin() {
-    if [[ -x "$REPO/target/release/axon" ]]; then
+    # A caller-chosen binary first: the tests pass the one they built (AX-51).
+    if [[ -n "${AXON:-}" ]]; then
+        echo "$AXON"
+    elif [[ -x "$REPO/target/release/axon" ]]; then
         echo "$REPO/target/release/axon"
     elif [[ -x "$REPO/target/debug/axon" ]]; then
         echo "$REPO/target/debug/axon"

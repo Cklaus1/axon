@@ -14,16 +14,12 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 . "$ROOT/scripts/lib/harness_skip.sh"
+. "$ROOT/scripts/lib/axon_bin.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-echo "random_i64_parity: building codegen axon binary…"
-if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-  echo "random_i64_parity: codegen build unavailable (LLVM absent) — skipping"
-  exit 0
-fi
-AXON="${AXON:-target/debug/axon}"
+need_codegen_axon random_i64_parity
 
 # AUDIT T51 (GATE-04). This used to `exit 0` here on a build failure — but
 # `build_run` is ALWAYS invoked as `code="$(build_run ...)"`, so the exit

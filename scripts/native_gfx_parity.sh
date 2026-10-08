@@ -24,26 +24,14 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 . "$ROOT/scripts/lib/harness_skip.sh"
+. "$ROOT/scripts/lib/axon_bin.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-echo "native_gfx_parity: building codegen axon binary…"
-if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-  echo "native_gfx_parity: codegen build unavailable (LLVM absent) — skipping"
-  exit 0
-fi
-AXON="${AXON:-target/debug/axon}"
-
-# Probe: can this binary actually emit native code?
-printf 'fn main() -> i64 { 0 }\n' > "$WORK/probe.ax"
-if ! berr="$("$AXON" build "$WORK/probe.ax" -o "$WORK/probe.bin" --no-cache 2>&1)"; then
-  # Even the capability PROBE has to prove its reason: `fn main() -> i64 { 0 }`
-  # failing to build is only a skip when the binary says it has no codegen.
-  # Anything else is a broken compiler, and calling that "cannot emit native
-  # builds" is how a codegen regression exits 0.
-  native_build_failed native_gfx_parity "trivial probe program" "$berr" || exit 1
-fi
+# Asks the binary whether it can emit native code (a trivial build) and says
+# why when it cannot: no backend is a skip, a broken compiler is a FAIL.
+need_codegen_axon native_gfx_parity
 
 fail=0
 

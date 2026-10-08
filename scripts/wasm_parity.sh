@@ -52,10 +52,16 @@ elif [ "$_rt" -ne 0 ]; then
 fi
 
 echo "wasm_parity: building axon-run (native + wasm32-wasip1)…"
-cargo build -q -p axon-core --no-default-features --bin axon-run || { echo "native build failed"; exit 1; }
+# Native side: the caller's AXON_RUN (the binary under test) when given, so
+# nothing rebuilds target/debug/axon-run under harnesses executing it.
+if [ -n "${AXON_RUN:-}" ]; then
+  NATIVE="$AXON_RUN"
+else
+  cargo build -q -p axon-core --no-default-features --bin axon-run || { echo "native build failed"; exit 1; }
+  NATIVE="$ROOT/target/debug/axon-run"
+fi
 cargo build -q -p axon-core --no-default-features --bin axon-run --target wasm32-wasip1 || { echo "wasm build failed"; exit 1; }
 
-NATIVE="target/debug/axon-run"
 WASM="target/wasm32-wasip1/debug/axon-run.wasm"
 
 # Pure-compute corpus (R7 §4.1 row 1): AUTO-DISCOVERED — every examples/*.ax with

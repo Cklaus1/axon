@@ -2,8 +2,8 @@
 //! actual stdout / exit codes (the unit tests cover parse/exit; these cover the
 //! whole pipeline through the interpreter, including printed output).
 //!
-//! Uses `CARGO_BIN_EXE_axon` (set by cargo for the codegen-free `axon` binary
-//! built under `--no-default-features`).
+//! Uses `CARGO_BIN_EXE_axon`: the `axon` cargo built for this test run, with
+//! whatever features the run was given. Harness scripts get it too ([`harness`]).
 
 use std::process::Command;
 
@@ -17,6 +17,31 @@ fn ex(rel: &str) -> String {
 
 fn fixture(rel: &str) -> String {
     format!("{}/tests/fixtures/{}", env!("CARGO_MANIFEST_DIR"), rel)
+}
+
+/// A harness script, run against THE BINARIES THIS TEST RUN BUILT (AX-51).
+///
+/// The scripts used to `cargo build` their own `target/debug/axon` (default
+/// features) and `--no-default-features` `axon-run` in the worktree's default
+/// target dir and run those. So under `--target-dir` or other features they
+/// measured a different compiler from the one under test, and concurrently
+/// running harnesses rebuilt that one path with different feature sets while
+/// others executed it: an `axon-run` gone mid-run (exit 127, reported as a
+/// `dict_parity` divergence), spurious BUILD-FAILs in `all_examples_parity`,
+/// parity failures that passed when rerun alone.
+///
+/// Passing both binaries makes every script (via `scripts/lib/axon_bin.sh`)
+/// build nothing and run exactly these. `axon-run` is the interpreter under any
+/// feature set, so cargo's build of it under this run's features is the same
+/// runner a `--no-default-features` build gives. Under `--no-default-features`
+/// `axon` cannot codegen, and a harness that needs native code SKIPs (it says
+/// so; under `AXON_HARNESS_STRICT=1` that skip is fatal).
+fn harness(script: &str) -> Command {
+    let mut c = Command::new("bash");
+    c.arg(script)
+        .env("AXON", env!("CARGO_BIN_EXE_axon"))
+        .env("AXON_RUN", env!("CARGO_BIN_EXE_axon-run"));
+    c
 }
 
 /// AUDIT O006: record that a harness-backed test SKIPPED rather than ran.
@@ -294,8 +319,7 @@ fn host_await_runs_identically_on_wasm_wasip1() {
         eprintln!("wasm_host_await_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_host_await_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -331,8 +355,7 @@ fn wasm_browser_host_await_round_trips_r7c() {
         eprintln!("wasm_browser_host_await.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_browser_host_await.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -369,8 +392,7 @@ fn wasm_asyncify_host_await_suspends_across_async_r7c() {
         eprintln!("wasm_asyncify_host_await.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_asyncify_host_await.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -409,8 +431,7 @@ fn wasm_interpreter_evals_identically_to_native_r7c() {
         eprintln!("wasm_browser_interp_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_browser_interp_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -446,8 +467,7 @@ fn interp_compiles_for_wasm32_unknown_unknown_r7c() {
         eprintln!("wasm_unknown_interp_builds.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_unknown_interp_builds.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -484,8 +504,7 @@ fn android_compute_parity_r14() {
         eprintln!("android_compute_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run android_compute_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -522,10 +541,7 @@ fn android_lifecycle_adapter_r14() {
         eprintln!("android_lifecycle.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run android_lifecycle.sh");
+    let out = harness(&script).output().expect("run android_lifecycle.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("SKIP") || harness_skipped(&out, &stdout, &stderr, &script) {
@@ -7620,8 +7636,7 @@ fn asi_hello_goal_acid_test_loop_runs_end_to_end() {
         eprintln!("asi/run.sh not found — skipping");
         return;
     }
-    let out = std::process::Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .arg("hello-goal")
         .env("AXON_AI_MOCK", "1")
         .output()
@@ -7666,8 +7681,7 @@ fn asi_demo_replay_and_audit_commands_work_end_to_end() {
         return;
     }
     // replay: record → replay → "reproducible".
-    let rep = std::process::Command::new("bash")
-        .arg(&script)
+    let rep = harness(&script)
         .arg("replay")
         .env("AXON_AI_MOCK", "1")
         .output()
@@ -7689,15 +7703,13 @@ fn asi_demo_replay_and_audit_commands_work_end_to_end() {
     // audit: the AI-call trail (run once to populate the log, then audit).
     let cache = std::env::temp_dir().join(format!("axon_asiaudit_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&cache);
-    let _ = std::process::Command::new("bash")
-        .arg(&script)
+    let _ = harness(&script)
         .arg("run")
         .env("AXON_AI_MOCK", "1")
         .env("XDG_CACHE_HOME", &cache)
         .output()
         .unwrap();
-    let aud = std::process::Command::new("bash")
-        .arg(&script)
+    let aud = harness(&script)
         .arg("audit")
         .env("XDG_CACHE_HOME", &cache)
         .output()
@@ -9055,8 +9067,7 @@ fn codegen_parse_int_radix_matches_interp() {
         eprintln!("parse_int_radix_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run parse_int_radix_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -9091,8 +9102,7 @@ fn codegen_parse_float_bool_matches_interp() {
         eprintln!("parse_float_bool_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run parse_float_bool_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -9126,8 +9136,7 @@ fn codegen_i64_to_str_radix_bad_base_panics_like_interp() {
         eprintln!("i64_radix_panic_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run i64_radix_panic_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -9162,10 +9171,7 @@ fn codegen_assert_failure_messages_match_interp() {
         eprintln!("assert_msg_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run assert_msg_parity.sh");
+    let out = harness(&script).output().expect("run assert_msg_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -9197,10 +9203,7 @@ fn codegen_str_count_matches_interp() {
         eprintln!("str_count_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run str_count_parity.sh");
+    let out = harness(&script).output().expect("run str_count_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -9232,8 +9235,7 @@ fn codegen_arr_panic_messages_match_interp() {
         eprintln!("arr_panic_msg_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run arr_panic_msg_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -9269,10 +9271,7 @@ fn codegen_fuzz_parity_finds_no_divergence() {
         eprintln!("fuzz_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run fuzz_parity.sh");
+    let out = harness(&script).output().expect("run fuzz_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -9306,10 +9305,7 @@ fn codegen_parse_int_or_and_float_or_match_interp() {
         eprintln!("parse_or_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run parse_or_parity.sh");
+    let out = harness(&script).output().expect("run parse_or_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -9341,8 +9337,7 @@ fn codegen_bitwise_and_casts_match_interp() {
         eprintln!("bitwise_cast_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run bitwise_cast_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -9376,10 +9371,7 @@ fn codegen_arr_sum_and_contains_match_interp() {
         eprintln!("arr_reduce_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run arr_reduce_parity.sh");
+    let out = harness(&script).output().expect("run arr_reduce_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -9412,10 +9404,7 @@ fn codegen_dict_core_matches_interp() {
         eprintln!("dict_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run dict_parity.sh");
+    let out = harness(&script).output().expect("run dict_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -9935,8 +9924,7 @@ fn codegen_handler_tail_resume_lowers_via_parity_harness() {
         eprintln!("handler_resume_parity.sh not found — skipping");
         return;
     }
-    let out = std::process::Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run handler_resume_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -10038,8 +10026,7 @@ fn native_deep_recursion_panics_gracefully_not_segfault() {
         eprintln!("recursion_guard_parity.sh not found — skipping");
         return;
     }
-    let out = std::process::Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run recursion_guard_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -16701,8 +16688,7 @@ fn wasm_interp_matches_native_on_pure_compute() {
         "{home}/.wasmtime/bin:{}",
         std::env::var("PATH").unwrap_or_default()
     );
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .env("PATH", path)
         .output()
         .expect("run wasm_parity.sh");
@@ -16741,8 +16727,7 @@ fn wasm_aot_runs_and_matches_interp_on_pure_int() {
         eprintln!("wasm_aot_run_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_aot_run_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -16778,8 +16763,7 @@ fn wasm_browser_examples_run_identically_via_js_host() {
         eprintln!("wasm_browser_examples_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_browser_examples_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -16818,8 +16802,7 @@ fn wasm_browser_println_matches_interp_via_js_host() {
         eprintln!("wasm_browser_io_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_browser_io_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -16855,8 +16838,7 @@ fn wasm_browser_target_is_wasi_free_and_matches_interp() {
         eprintln!("wasm_browser_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_browser_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -16893,8 +16875,7 @@ fn wasm_examples_run_identically_on_aot_wasm() {
         eprintln!("wasm_examples_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_examples_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -16930,8 +16911,7 @@ fn wasm_str_abi_bridge_runs_str_builtins() {
         eprintln!("wasm_str_abi_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_str_abi_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -16967,8 +16947,7 @@ fn wasm_malloc_abi_bridge_runs_array_and_to_str() {
         eprintln!("wasm_malloc_abi_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_malloc_abi_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17004,8 +16983,7 @@ fn wasm_aot_stdout_matches_interp_across_corpus() {
         eprintln!("wasm_aot_stdout_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_aot_stdout_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17040,8 +17018,7 @@ fn wasm_aot_env_var_runs_on_wasm() {
         eprintln!("wasm_aot_env_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run wasm_aot_env_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17078,10 +17055,7 @@ fn wasm_object_prunes_dead_externs_and_links_clean() {
         eprintln!("wasm_object_prune.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run wasm_object_prune.sh");
+    let out = harness(&script).output().expect("run wasm_object_prune.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -17115,10 +17089,7 @@ fn wasm_host_io_matches_native_via_wasi() {
         eprintln!("wasm_fs_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run wasm_fs_parity.sh");
+    let out = harness(&script).output().expect("run wasm_fs_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -17152,10 +17123,7 @@ fn codegen_random_i64_degenerate_bounds_match_interp() {
         eprintln!("random_i64_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run random_i64_parity.sh");
+    let out = harness(&script).output().expect("run random_i64_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -17195,10 +17163,7 @@ fn virtual_clock_is_deterministic_and_matches_native() {
         eprintln!("clock_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run clock_parity.sh");
+    let out = harness(&script).output().expect("run clock_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -17244,11 +17209,7 @@ fn claude_md_claims_are_true() {
         std::path::Path::new(&script).exists(),
         "claims_gate.sh must exist — CLAUDE.md's claims are unverified without it"
     );
-    let out = Command::new("bash")
-        .arg(&script)
-        .env("AXON", env!("CARGO_BIN_EXE_axon"))
-        .output()
-        .expect("run claims_gate.sh");
+    let out = harness(&script).output().expect("run claims_gate.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -17277,16 +17238,7 @@ fn host_journal_records_and_replays_without_the_environment() {
         std::path::Path::new(&script).exists(),
         "replay_host_gate.sh must exist — the record/replay claim is unverified without it"
     );
-    let out = Command::new("bash")
-        .arg(&script)
-        // Point the script at THIS test run's binary rather than letting it fall
-        // back to `./target/debug/axon`. Two reasons: the script SKIPs when that
-        // path is missing (and a skip has no PASS line, so the assertion below
-        // would fail confusingly), and a stale binary on disk would mean this
-        // test and its siblings are checking different builds.
-        .env("AXON", env!("CARGO_BIN_EXE_axon"))
-        .output()
-        .expect("run replay_host_gate.sh");
+    let out = harness(&script).output().expect("run replay_host_gate.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -17319,10 +17271,7 @@ fn codegen_exit_codes_match_interp() {
         eprintln!("exit_code_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run exit_code_parity.sh");
+    let out = harness(&script).output().expect("run exit_code_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -17357,8 +17306,7 @@ fn all_examples_native_match_interp_under_mock() {
         eprintln!("all_examples_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run all_examples_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17395,8 +17343,7 @@ fn codegen_goal_run_unknown_name_matches_interp() {
         eprintln!("goal_unknown_name_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run goal_unknown_name_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17431,8 +17378,7 @@ fn codegen_agent_action_log_matches_interp() {
         eprintln!("agent_action_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run agent_action_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17468,10 +17414,7 @@ fn codegen_exec_matches_interp() {
         eprintln!("exec_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run exec_parity.sh");
+    let out = harness(&script).output().expect("run exec_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -17504,8 +17447,7 @@ fn codegen_parse_int_err_message_matches_interp() {
         eprintln!("parse_int_err_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
+    let out = harness(&script)
         .output()
         .expect("run parse_int_err_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -17541,10 +17483,7 @@ fn codegen_adaptive_provenance_carries_input_f11() {
         eprintln!("goal_input_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run goal_input_parity.sh");
+    let out = harness(&script).output().expect("run goal_input_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -17577,10 +17516,7 @@ fn codegen_to_str_scalar_dispatch_matches_interp() {
         eprintln!("to_str_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run to_str_parity.sh");
+    let out = harness(&script).output().expect("run to_str_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -17613,10 +17549,7 @@ fn codegen_str_reverse_replace_match_interp_on_utf8() {
         eprintln!("str_utf8_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run str_utf8_parity.sh");
+    let out = harness(&script).output().expect("run str_utf8_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -17695,10 +17628,7 @@ fn codegen_provenance_matches_interp_on_adaptive_returns() {
         eprintln!("provenance_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run provenance_parity.sh");
+    let out = harness(&script).output().expect("run provenance_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     let skipped = harness_skipped(&out, &stdout, &stderr, &script);
@@ -20159,10 +20089,7 @@ fn mock_native_module_interp_codegen_parity() {
         eprintln!("native_gfx_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash")
-        .arg(&script)
-        .output()
-        .expect("run native_gfx_parity.sh");
+    let out = harness(&script).output().expect("run native_gfx_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if harness_skipped(&out, &stdout, &stderr, &script) {
@@ -28311,6 +28238,48 @@ fn fmt_names_the_float_literals_it_renormalises() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Write `bytes` to `dst` as an executable WITHOUT this process ever holding a
+/// write descriptor on `dst` (AX-51).
+///
+/// The test harness runs tests on many threads of ONE process. Writing an
+/// executable here (`fs::copy`, `fs::write`, `File::options().write(true)`)
+/// opens it for writing, and any sibling test that spawns a child at that
+/// moment forks a copy of the descriptor table, write descriptor included.
+/// `O_CLOEXEC` only drops it at that child's `exec`, so for that window the
+/// file has a writer and exec'ing it fails with ETXTBSY ("Text file busy") —
+/// measured in `a_different_compiler_with_the_same_path_size_and_mtime_misses_
+/// the_build_cache` under the full suite. Closing our descriptor first does not
+/// help, and neither does writing a temp file and renaming it: the forked child
+/// holds the same open file description of the same inode.
+///
+/// So the write happens in a CHILD process: `cat` opens `dst`, writes, exits,
+/// and nothing else ever has its descriptor. This process only holds a pipe.
+fn write_executable(dst: &std::path::Path, bytes: &[u8]) {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    let mut child = Command::new("sh")
+        .args(["-c", "exec cat > \"$0\""])
+        .arg(dst)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn cat to write the executable");
+    child.stdin.take().unwrap().write_all(bytes).unwrap();
+    assert!(child.wait().unwrap().success(), "writing {}", dst.display());
+    // chmod by path: no descriptor at all.
+    std::fs::set_permissions(dst, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// `cp src dst` for an executable, by the same rule as [`write_executable`]:
+/// the only process that ever opens `dst` for writing is `cp` itself.
+fn copy_executable(src: &std::path::Path, dst: &std::path::Path) {
+    let st = Command::new("cp")
+        .arg(src)
+        .arg(dst)
+        .status()
+        .expect("spawn cp");
+    assert!(st.success(), "cp {} {}", src.display(), dst.display());
+}
+
 /// The build cache ignored imported modules, so editing one served a stale
 /// binary.
 ///
@@ -28357,7 +28326,7 @@ fn editing_an_imported_module_invalidates_the_build_cache() {
     // compiler can change underneath it. Copying the binary once gives this
     // test a compiler identity nothing else can touch.
     let pinned = dir.join("axon-pinned");
-    std::fs::copy(env!("CARGO_BIN_EXE_axon"), &pinned).unwrap();
+    copy_executable(std::path::Path::new(env!("CARGO_BIN_EXE_axon")), &pinned);
 
     // A private cache dir, so this test neither reads nor pollutes the user's.
     let build = |tag: &str| -> Option<String> {
@@ -28461,7 +28430,7 @@ fn a_different_compiler_with_the_same_path_size_and_mtime_misses_the_build_cache
     let app = dir.join("app.ax");
     std::fs::write(&app, "fn main() { println(\"hi\") }\n").unwrap();
     let compiler = dir.join("axon");
-    std::fs::copy(env!("CARGO_BIN_EXE_axon"), &compiler).unwrap();
+    copy_executable(std::path::Path::new(env!("CARGO_BIN_EXE_axon")), &compiler);
 
     let entries = || {
         std::fs::read_dir(&cache)
@@ -28519,13 +28488,13 @@ fn a_different_compiler_with_the_same_path_size_and_mtime_misses_the_build_cache
         .rposition(|w| w == needle)
         .expect("the compiler executable records its rustc version in `.comment`");
     bytes[at] = b'R';
-    std::fs::write(&compiler, &bytes).unwrap();
-    let f = std::fs::File::options()
-        .write(true)
-        .open(&compiler)
+    write_executable(&compiler, &bytes);
+    // Restoring the mtime needs no write access: futimens on a read-only
+    // descriptor works for the owner, and a read descriptor is no writer.
+    std::fs::File::open(&compiler)
+        .unwrap()
+        .set_modified(mtime)
         .unwrap();
-    f.set_modified(mtime).unwrap();
-    drop(f);
     let md = std::fs::metadata(&compiler).unwrap();
     assert_eq!((md.len() as usize, md.modified().unwrap()), (len, mtime));
 
@@ -28685,17 +28654,14 @@ fn native_build_links_from_any_directory_without_cargo_on_path() {
 /// A `cargo` that records each run in the returned marker file and fails:
 /// `(dir to prepend to PATH and use as CARGO_HOME/bin, marker)`.
 fn recording_cargo(dir: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
-    use std::os::unix::fs::PermissionsExt;
     let bin = dir.join("fake-cargo-home").join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let marker = dir.join("cargo-ran");
     let cargo = bin.join("cargo");
-    std::fs::write(
+    write_executable(
         &cargo,
-        format!("#!/bin/sh\necho \"$@\" >> '{}'\nexit 1\n", marker.display()),
-    )
-    .unwrap();
-    std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
+        format!("#!/bin/sh\necho \"$@\" >> '{}'\nexit 1\n", marker.display()).as_bytes(),
+    );
     (bin, marker)
 }
 
@@ -28805,7 +28771,7 @@ fn an_installed_compiler_links_the_runtime_installed_beside_it_without_cargo() {
     std::fs::create_dir_all(&runtime_dir).unwrap();
     let installed_exe = prefix.join("bin/axon");
     if std::fs::hard_link(workspace_exe, &installed_exe).is_err() {
-        std::fs::copy(workspace_exe, &installed_exe).unwrap();
+        copy_executable(workspace_exe, &installed_exe);
     }
     std::fs::copy(&built, runtime_dir.join("libaxon_rt.a")).unwrap();
 

@@ -17,6 +17,7 @@ set -u
 # shellcheck source=lib/harness_skip.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/harness_skip.sh"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
+. "$ROOT/scripts/lib/axon_bin.sh"
 # Serialize the wasm parity scripts under one shared lock: each builds its
 # wasm artifacts next to the source (examples/$base.*.wasm), so concurrent runs
 # (cargo's parallel test threads invoke several of these at once) clobber each
@@ -31,10 +32,7 @@ for rt in wasmtime "$HOME/.wasmtime/bin/wasmtime"; do
 done
 [ -n "$WASMRT" ] || { echo "wasm_browser_parity: no wasm runtime — skipping"; exit 0; }
 
-AXON="${AXON:-target/debug/axon}"
-if [ ! -x "$AXON" ]; then
-  cargo build -q -p axon-core --bin axon 2>/dev/null || { echo "wasm_browser_parity: codegen unavailable — skipping"; exit 0; }
-fi
+need_axon wasm_browser_parity
 # The browser (unknown-unknown) axon-rt must be built for the wasi-free link.
 # Distinguish an ABSENT target from a BROKEN build. The probe used to be
 # `if ! cargo build ... 2>/dev/null` reporting "unavailable - skipping", which
@@ -60,16 +58,13 @@ fi
 # Probe: can this binary link an unknown-unknown module at all?
 PROBE="$(mktemp -d)/p.ax"; printf 'fn main() -> i64 { 7 }\n' > "$PROBE"
 # Report WHY the link failed instead of calling every cause "unavailable".
-# E0907 means this `axon` was built --no-default-features, i.e. another
-# harness clobbered the shared target/debug/axon with a codegen-less binary.
-# That is a suite bug, not an absent toolchain, and it silently un-asserted
-# this harness while parity_all printed "SKIP (toolchain absent)".
+# E0907 means this `axon` has no codegen backend: a skip when the caller chose
+# an interp-only binary, a FAIL when it is the codegen build made above and a
+# concurrent build replaced it. Neither is an absent toolchain.
 _probe_err="$("$AXON" target build "$PROBE" --target wasm32-unknown-unknown 2>&1)"
 if [ ! -f "${PROBE%.ax}.linked.wasm" ]; then
   if echo "$_probe_err" | grep -q E0907; then
-    echo "wasm_browser_parity: FAIL — \$AXON ($AXON) has no codegen backend (E0907)."
-    echo "    A --no-default-features build clobbered the shared target/debug/axon."
-    exit 1
+    axon_has_no_codegen wasm_browser_parity
   fi
   echo "wasm_browser_parity: unknown-unknown link unavailable — skipping"; exit 0
 fi

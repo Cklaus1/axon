@@ -13,15 +13,10 @@
 # Skips (exit 0) when the codegen toolchain is absent.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
+. "$ROOT/scripts/lib/axon_bin.sh"
 
-if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-  echo "arr_reduce_parity: codegen build unavailable — skipping"; exit 0
-fi
-if ! cargo build -q -p axon-core --no-default-features --bin axon-run 2>/dev/null; then
-  echo "arr_reduce_parity: interp build unavailable — skipping"; exit 0
-fi
-AXON="${AXON:-target/debug/axon}"
-INTERP="target/debug/axon-run"
+need_codegen_axon arr_reduce_parity
+need_axon_run arr_reduce_parity
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
 fail=0
