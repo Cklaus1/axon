@@ -155,10 +155,13 @@ Each clause names what must hold. The negative matrix below names how each one f
   the same way is refused; a table of verdicts is not). A suite that lets candidate data, or candidate silence,
   select between a strict and a lenient operator check has let the candidate choose the rubric; no sound rule
   closes that. Honest suites compare the candidate's output to an expected value and never branch or index the
-  CHECK by candidate data or by whether the candidate acted. Not covered: integer HANDLES of kernel
+  CHECK by candidate data or by whether the candidate acted. Also enforced (amendment 108): a COMPARISON (`==`, `!=`, ordering)
+  and every builtin argument read the content of the dicts and channels inside their operands, however deep, so
+  `if d == e { lenient } else { strict }` over a dict the candidate filled is refused like `dict_get_or(d, ..)`; a
+  `native::` call is state every frame shares, so a native handle a sealed frame used taints what the operator reads
+  back from the registry. Not covered: integer HANDLES of kernel
   objects and authority values (effect lists, budgets) a tainted value supplies, a path, URL or
-  `ai_complete` prompt a tainted value supplies, native codegen (`axon build`) and the native
-  `gfx`/`axon-domain` registries; the taint is an over-approximation (coarse per binding, per dict and
+  `ai_complete` prompt a tainted value supplies, native codegen (`axon build`); the taint is an over-approximation (coarse per binding, per dict and
   per channel), and its cost to an honest suite is listed in amendments 102 and 106 (among them: folding or
   mapping a candidate's `[u8]` is refused unless the operator casts `as i64`, running a candidate-nominated
   entry point by name is refused, an unpinned `let v = work(0)` then `v.ok()` in an arm is refused where
@@ -205,17 +208,22 @@ Each clause names what must hold. The negative matrix below names how each one f
   above); the earlier edges stay underneath it and are not claimed redundant.
   Amendment 106 (round 11) closes the channel's STATE (`len`, a sealed drain, a skipped `select` arm), a kernel or
   world write made under a branch or loop the candidate sized, a callback run a candidate-chosen number of times,
-  the text of a value that shows shared state, and the existence oracle on every path (one text for a sealed
-  caller, 120 pairs tested); it words the PSV-1 residual to include omission and precomputed verdict tables.
+  the text of a value that shows shared state, and the existence oracle on every path TESTED (one text for a sealed
+  caller: 20 call forms x 6 kinds of definition = 120 pairs; the method path was not among them until
+  amendment 108, which adds it, 10 receiver forms); it words the PSV-1 residual to include omission and precomputed verdict tables.
+  Amendment 108 (round 12) closes the CONTENT reads of a dict the candidate filled: a comparison (`==`, `!=`, ordering) and
+  every builtin argument now take the taint of every shared object inside the operands, however deep (`d == e`,
+  `[d] == [e]`, a struct or tuple holding one, `arr_contains([d], e)`), the existence oracle on the method path, and
+  a native call (`gfx`, `axon-domain`) as World state.
   Each amendment's PRINCIPAL arms are exercised by named gate rows in `scripts/v022_pci_gates.sh`
-  (rows named `am53` ... `am106`; the row count is not quoted here, it is derived and drift-tested
+  (rows named `am53` ... `am108`; the row count is not quoted here, it is derived and drift-tested
   by `scripts/pci_delta.py --check`). Arms verified to fail a gate row when their code is removed:
   the declared-return cast, the dict edges, the `()` coercion of an absent return type, channel
   stamping at creation, strict closure arguments at a crossing, the am83 arithmetic arm, and the arms of
   am100 and am102 (the name sinks, the existence-oracle text, the closure pick, the taint of a binding, a
   shared object, the kernel and the world: each removal is a mutation row KILLED by its own attack, and the test that
-  row fails is itself a test a gate row runs: checked for every unit row of am100 (M2600-M2629), am102
-  (M2700-M2763) and am106 (M2910-M2939), by reading both registries). The runner rows of am100 (`axon-psv`, M2603-M2607) are CORROBORATION of
+  row fails is itself a test a gate row runs: checked for every row of am100 (M2600-M2629, by reading the registry) and of am102 (M2700-M2767), am106 (M2910-M2946) and am108 (M3030-M3041), by
+  `scripts/pci_delta.py --check`, which derives those ranges from the registry and fails when a row's test is run by no gate row). The runner rows of am100 (`axon-psv`, M2603-M2607) are CORROBORATION of
   the unit rows, as am96's are: with the taint on, the production route refuses those attacks by the taint
   first, so four of them were withdrawn (amendment 102) and the static guards are evidenced at unit level
   only. The production pair (the static layer plus the taint) is covered only by the `Both` columns of

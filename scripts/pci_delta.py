@@ -131,6 +131,97 @@ def block(rev):
     return "\n".join(out), missing
 
 
+def registry_ranges():
+    """{amendment: (lo, hi, ids)} for the mutation rows tagged `(amN` in their description
+    (amendments 102 onward tag their rows): the ranges the note and the claim quote are
+    DERIVED from the registry here, never retyped."""
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import v022_g01_mutations as reg  # noqa: E402
+
+    out = {}
+    for r in reg.MUTATIONS:
+        mm = re.search(r"\(am(\d+)\b", r[1])
+        if mm:
+            out.setdefault(int(mm.group(1)), []).append((int(r[0][1:]), r[7].split("::")[-1]))
+    return {n: (min(i for i, _ in v), max(i for i, _ in v), v) for n, v in out.items()}
+
+
+def doc_drift():
+    """The amendment -> matrix-rows and amendment -> mutation-ids statements of the note and of
+    the claim, each checked against the file that owns it."""
+    bad = []
+    note = open(NOTE).read()
+    spec = open(os.path.join(ROOT, "governance/specs/v022-psv-protocol.md")).read()
+    verdict = open(os.path.join(ROOT, "governance/specs/v022-protected-suite-verdict.md")).read()
+    matrix = open(os.path.join(ROOT, "governance/specs/v022-psv-negative-matrix.md")).read()
+    gates = open(os.path.join(ROOT, "scripts/v022_pci_gates.sh")).read()
+    have = {int(m.group(1)) for m in re.finditer(r"^\|\s*A(\d+)\s*\|", matrix, re.M)}
+    reg = registry_ranges()
+    for line in note.splitlines():
+        m = re.match(r"\| amendment (\d+) \|(.*)", line)
+        if not m:
+            continue
+        n = int(m.group(1))
+        mr = re.search(r"matrix (A\d+)(?:-(A\d+))?", m.group(2))
+        if mr:
+            lo = int(mr.group(1)[1:])
+            hi = int(mr.group(2)[1:]) if mr.group(2) else lo
+            # The amendment's own text states its rows (and the integrator rewrites that text
+            # when it renumbers), so the note must say what the amendment says.
+            i = re.search(r"^%d\. \*\*" % n, spec, re.M)
+            st = re.search(r"matrix rows? A(\d+)(?:-A(\d+))?", spec[i.start() : i.start() + 3500]) if i else None
+            if st:
+                slo = int(st.group(1))
+                shi = int(st.group(2)) if st.group(2) else slo
+                if (slo, shi) != (lo, hi):
+                    bad.append(f"the note gives amendment {n} matrix rows A{lo}-A{hi}; the amendment says A{slo}-A{shi}")
+            miss = [k for k in range(lo, hi + 1) if k not in have]
+            if miss:
+                bad.append(f"the note gives amendment {n} matrix rows A{lo}-A{hi}; the matrix has no A{miss[0]}")
+        if n in reg:
+            want = f"M{reg[n][0]}-M{reg[n][1]}"
+            if want not in m.group(2):
+                bad.append(f"the note gives amendment {n} mutation ids other than the registry's {want}")
+    for n, (lo, hi, ids) in sorted(reg.items()):
+        if f"M{lo}-M{hi}" not in note:
+            bad.append(f"the note does not give amendment {n}'s registry range M{lo}-M{hi}")
+        # Every row of the amendment fails a test some gate row runs.
+        for _, t in ids:
+            if t not in gates:
+                bad.append(f"amendment {n}: the test {t} of a mutation row is run by no gate row")
+    for m in re.finditer(r"am(\d+) \(M(\d+)-M(\d+)\)", verdict):
+        n = int(m.group(1))
+        if n in reg and (int(m.group(2)), int(m.group(3))) != reg[n][:2]:
+            bad.append(f"the claim quotes am{n} as M{m.group(2)}-M{m.group(3)}; the registry says M{reg[n][0]}-M{reg[n][1]}")
+    # The coverage table of the note has exactly the gate script's rows plus the am102 sweep.
+    rows = re.findall(r'^  "([^"]*\|[^"]*\|[^"]*\|[^"]*)"$', gates, re.M)
+    t = re.search(r"\| row \| package/target \| result \|\n\|[-|]*\|\n((?:\|.*\n)+)", note)
+    if not t:
+        bad.append("the note has no gate-row coverage table")
+    else:
+        lab = lambda x: re.sub(r"\s+", " ", x).strip()
+        tab = sorted(lab(l.split("|")[1]) for l in t.group(1).splitlines())
+        want = sorted([lab(r.split("|")[0]) for r in rows] + [lab("am102 sweep (only the taint on: exactly the two static-only programs differ)")])
+        if tab != want:
+            only_t = [x for x in tab if x not in want][:3]
+            only_s = [x for x in want if x not in tab][:3]
+            bad.append(f"the note's coverage table ({len(tab)} rows) is not the gate script's rows plus the sweep ({len(want)}): table-only {only_t}, script-only {only_s}")
+    # The list of non-retired rows whose target is the interpreter, with its count.
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import v022_g01_mutations as regm  # noqa: E402
+
+    ids = sorted(int(r[0][1:]) for r in regm.MUTATIONS if r[2].startswith(PATHSPEC) and r[0] not in regm.RETIRED)
+    runs, a = [], ids[0]
+    for x, y in zip(ids, ids[1:] + [None]):
+        if y != x + 1:
+            runs.append(f"M{a}" if a == x else f"M{a}-M{x}")
+            a = y
+    want_list = f"{len(ids)} rows at this head, recomputed from the script): " + ", ".join(runs)
+    if want_list not in note:
+        bad.append("the note's list of interpreter mutation rows is not the registry's: expected " + want_list[:120] + " ... " + want_list[-80:])
+    return bad
+
+
 def main():
     if len(sys.argv) >= 2 and sys.argv[1] == "--emit":
         # `--drop HASH8` forgets one classification: the control that shows an
@@ -165,6 +256,7 @@ def main():
                 bad.append(f"the note quotes {q} gate rows, the script has {rows}")
         if re.search(r"v022_pci_gates\.sh`?,? \d+ rows", open(os.path.join(ROOT, "governance/specs/v022-protected-suite-verdict.md")).read()):
             bad.append("the verdict spec quotes a hand-typed gate row count")
+        bad += doc_drift()
         later = git("log", "--format=%h %s", f"{pin.group(1)}..HEAD", "--", PATHSPEC).strip()
         if later:
             bad.append("commits after the pinned head touch " + PATHSPEC + " (regenerate the note):\n" + later)
