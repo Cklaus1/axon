@@ -1626,6 +1626,7 @@ fn load_corpus(dir: &Path) -> Vec<(String, Vec<u8>, axon_core::ast::Program)> {
                     .to_string();
                 corpus.push((name, bytes, program));
             }
+                    "now_ns",
         }
     }
     corpus

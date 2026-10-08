@@ -91,6 +91,17 @@ fn program_now_ms() -> i64 {
     crate::host::with_host(|h| h.now_ms())
 }
 
+/// The monotonic nanosecond clock a PROGRAM observes (`now_ns`). Same precedence
+/// as [`program_now_ms`]: a virtual clock wins (the shared ms timeline read as
+/// ns since its start, `crate::clock::now_ns`), otherwise the host — which is
+/// where record and replay journal it.
+fn program_now_ns() -> i64 {
+    if let Some(t) = crate::clock::now_ns() {
+        return t;
+    }
+    crate::host::with_host(|h| h.now_ns())
+}
+
 fn value_type_tag(v: &Value) -> &'static str {
     match v {
         Value::Int(_) | Value::SizedInt { .. } => "i64",
@@ -3729,6 +3740,10 @@ impl<'p> Interp<'p> {
             "now_ms" => {
                 want(0)?;
                 ok!(Value::Int(program_now_ms()));
+            }
+            "now_ns" => {
+                want(0)?;
+                ok!(Value::Int(program_now_ns()));
             }
             "sleep_ms" => {
                 want(1)?;

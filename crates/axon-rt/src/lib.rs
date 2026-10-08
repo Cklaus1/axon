@@ -1993,6 +1993,26 @@ pub extern "C" fn __axon_now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// Monotonic nanoseconds for timing (`now_ns`). `std::time::Instant` (which is
+/// `CLOCK_MONOTONIC` on Linux) relative to a process-local anchor taken at the
+/// FIRST read — the same origin `axon-core`'s `host::monotonic_ns` uses, so the
+/// two engines agree on what the number means. Only differences are
+/// meaningful; it never decreases and never follows wall-clock jumps.
+///
+/// Under `AXON_CLOCK` it reads the SAME virtual timeline as `__axon_now_ms`, as
+/// ns since the configured start (`(virtual_ms - start_ms) * 1_000_000`) and
+/// advances it by one tick — mirroring `clock::now_ns`;
+/// `scripts/clock_parity.sh` pins the agreement.
+#[no_mangle]
+pub extern "C" fn __axon_now_ns() -> i64 {
+    if let Some(t) = vclock::now_ns() {
+        return t;
+    }
+    static ANCHOR: std::sync::LazyLock<std::time::Instant> =
+        std::sync::LazyLock::new(std::time::Instant::now);
+    i64::try_from(ANCHOR.elapsed().as_nanos()).unwrap_or(i64::MAX)
+}
+
 /// Refuse to run a native binary under an INTERPRETER-ONLY control.
 ///
 /// Neither variable is read anywhere in `codegen/` or in this crate's host
@@ -2190,6 +2210,8 @@ mod vclock {
     static INITIALIZED: AtomicBool = AtomicBool::new(false);
     static CURRENT: AtomicI64 = AtomicI64::new(0);
     static TICK: AtomicI64 = AtomicI64::new(1);
+    /// The configured start: the origin of the virtual `now_ns`.
+    static START: AtomicI64 = AtomicI64::new(0);
 
     fn init_from_env() {
         if INITIALIZED.swap(true, Ordering::SeqCst) {
@@ -2209,6 +2231,7 @@ mod vclock {
         // Malformed input leaves the clock OFF rather than inventing a timeline.
         if let Ok(start) = start {
             CURRENT.store(start, Ordering::SeqCst);
+            START.store(start, Ordering::SeqCst);
             TICK.store(tick.unwrap_or(1).max(0), Ordering::SeqCst);
             ENABLED.store(true, Ordering::SeqCst);
         }
@@ -2225,6 +2248,18 @@ mod vclock {
             return None;
         }
         Some(CURRENT.fetch_add(TICK.load(Ordering::SeqCst), Ordering::SeqCst))
+    }
+
+    /// The virtual clock read in ns SINCE THE CONFIGURED START —
+    /// `(virtual_ms - start_ms) * 1_000_000`, advancing by `tick` like a
+    /// `now_ms` read. Relative, because an epoch-scale start in ns overflows
+    /// i64 (see `clock::now_ns` in axon-core). `None` → use the real clock.
+    pub fn now_ns() -> Option<i64> {
+        now_ms().map(|ms| {
+            ms.saturating_sub(START.load(Ordering::SeqCst))
+                .max(0)
+                .saturating_mul(1_000_000)
+        })
     }
 
     /// Advance by `ms`. `false` → the caller should really sleep.

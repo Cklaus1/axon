@@ -129,7 +129,7 @@ No imports — all available everywhere. Full list in `spec/stdlib.md`.
 | Convert | `to_str` (i64/f64/bool — polymorphic) `to_str_f64` `to_str_bool` `parse_int` `parse_float` `parse_bool` `i64_to_f64` `f64_to_i64` |
 | String | `len` `str_eq` `str_contains` `str_starts_with` `str_ends_with` `str_slice` `str_index_of` `char_at` `str_to_upper` `str_to_lower` `str_trim` `str_replace` `str_repeat` `str_pad_start` `str_pad_end` |
 | Math | `abs_i64` `abs_f64` `min_i64` `max_i64` `min_f64` `max_f64` `clamp_i64` `clamp_f64` `pow_i64` `sqrt_f64` `floor_f64` `ceil_f64` `round_f64` `sign_i64` |
-| Time/Sys | `now_ms` `sleep_ms` `env_var` `exit` |
+| Time/Sys | `now_ms` `now_ns` `sleep_ms` `env_var` `exit` — time code with `now_ns()` (monotonic ns; only differences are meaningful), not the wall-clock `now_ms()` |
 | Random | `random_i64(lo, hi)` `random_f64()` — seed with `AXON_SEED` for reproducibility |
 | Test | `assert` `assert_eq` `assert_err` |
 

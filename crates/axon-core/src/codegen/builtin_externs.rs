@@ -366,6 +366,14 @@ pub(super) const BUILTIN_EXTERNS: &[ExternSig] = &[
         fn_key: Some("now_ms"),
         ret_type: Some(("now_ms", SemRet::I64)),
     },
+    ExternSig {
+        axon_name: "now_ns",
+        symbol: "__axon_now_ns",
+        params: &[],
+        ret: L::I64,
+        fn_key: Some("now_ns"),
+        ret_type: Some(("now_ns", SemRet::I64)),
+    },
     // ── f64 math intrinsics (Phase 3; R1d slice 2 batch) ────────────────────
     // LLVM intrinsics lowered to C libm (`llvm.*.f64`), not axon-rt externs —
     // `symbol` is just the declared function name either way, so the same row

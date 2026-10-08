@@ -26,6 +26,13 @@ pub trait AxonHost {
     fn write_file(&self, path: &str, data: &str) -> Result<(), String>;
     fn env_var(&self, key: &str) -> Option<String>;
     fn now_ms(&self) -> i64;
+    /// Monotonic nanoseconds (the `now_ns` builtin). Only DIFFERENCES are
+    /// meaningful: the origin is unspecified and is not the Unix epoch. Never
+    /// decreases within a process. Required rather than defaulted, like
+    /// `now_ms`: a wrapping host that inherited a default would read the real
+    /// clock behind its inner host's back, which is exactly how a recorder or a
+    /// replayer would silently stop covering it.
+    fn now_ns(&self) -> i64;
     fn sleep_ms(&self, ms: u64);
 
     /// Read one line from standard input, newline stripped. `Ok("")` at EOF.
@@ -157,6 +164,21 @@ pub(crate) fn collect_sse_events(reader: impl std::io::BufRead) -> Result<Vec<St
     Ok(events)
 }
 
+// ── Monotonic clock ──────────────────────────────────────────────────────────
+
+/// Nanoseconds elapsed on the OS monotonic clock (`std::time::Instant`, which
+/// is `CLOCK_MONOTONIC` on Linux) since a process-local anchor taken at the
+/// FIRST call. Not wall-clock: it never jumps with NTP or `date -s`, and it
+/// never decreases. The anchor is lazy so the origin is the same in both
+/// engines — `axon-rt`'s `__axon_now_ns` anchors the same way — and so a value
+/// fits an `i64` for 292 years of process lifetime.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn monotonic_ns() -> i64 {
+    static ANCHOR: std::sync::LazyLock<std::time::Instant> =
+        std::sync::LazyLock::new(std::time::Instant::now);
+    i64::try_from(ANCHOR.elapsed().as_nanos()).unwrap_or(i64::MAX)
+}
+
 // ── Default implementation ───────────────────────────────────────────────────
 
 /// Wraps the Rust std library exactly as the interpreter used to call it
@@ -239,6 +261,16 @@ impl AxonHost for DefaultHost {
         0
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    fn now_ns(&self) -> i64 {
+        monotonic_ns()
+    }
+    // Same reasoning as `now_ms` above: no clock on wasm32 here, a fixed 0
+    // (which is still non-decreasing) rather than a trap.
+    #[cfg(target_arch = "wasm32")]
+    fn now_ns(&self) -> i64 {
+        0
+    }
     #[cfg(not(target_arch = "wasm32"))]
     fn sleep_ms(&self, ms: u64) {
         std::thread::sleep(std::time::Duration::from_millis(ms));
@@ -554,6 +586,10 @@ mod tests {
             guard.unwrap()
         }
 
+        fn now_ns(&self) -> i64 {
+            7
+        }
+
         fn sleep_ms(&self, _ms: u64) {
             // No-op in tests.
         }
@@ -584,6 +620,15 @@ mod tests {
 
         // now_ms > 0.
         assert!(h.now_ms() > 0);
+
+        // now_ns is monotonic: successive reads never decrease, and a real
+        // sleep shows up at nanosecond scale (not quantised to whole ms).
+        let a = h.now_ns();
+        let b = h.now_ns();
+        assert!(a >= 0 && b >= a, "now_ns went backwards: {a} then {b}");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let c = h.now_ns();
+        assert!(c - b >= 2_000_000, "a 2ms sleep must advance now_ns by >=2e6 ns: {b} -> {c}");
 
         let _ = std::fs::remove_file(&tmp);
     }
@@ -682,6 +727,9 @@ mod tests {
                 None
             }
             fn now_ms(&self) -> i64 {
+                0
+            }
+            fn now_ns(&self) -> i64 {
                 0
             }
             fn sleep_ms(&self, _m: u64) {}
@@ -811,6 +859,9 @@ mod tests {
                 None
             }
             fn now_ms(&self) -> i64 {
+                0
+            }
+            fn now_ns(&self) -> i64 {
                 0
             }
             fn sleep_ms(&self, _: u64) {}
