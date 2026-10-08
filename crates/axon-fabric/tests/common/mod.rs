@@ -797,9 +797,9 @@ pub fn helper_pin() -> axon_fabric::sealed_exec::Pinned {
 
 /// Amendment 107: a compiled stand-in for a program Fabric launches through
 /// `sealed_exec::command` (the privileged helper, the observe relay). It writes
-/// the argv and the environment it was started with to the file named after its
-/// `--test-config` flag (`A <arg>` then `E <NAME=value>` lines) and reports
-/// nothing. A test observes the CHILD's view of what was handed to it, which is
+/// the argv and the environment it was started with to `<its own path>.dump`
+/// (`A <arg>` then `E <NAME=value>` lines) and reports nothing; it depends on no
+/// flag's spelling, so a renamed flag is seen as a different dump, not a missing one. A test observes the CHILD's view of what was handed to it, which is
 /// the only place a flag spelling, a PATH or a swapped value can be seen: the
 /// call site is `vec![..]` and a constant, not a builder call.
 pub fn dump_helper(dir: &Path) -> axon_fabric::sealed_exec::Pinned {
@@ -807,8 +807,9 @@ pub fn dump_helper(dir: &Path) -> axon_fabric::sealed_exec::Pinned {
     std::fs::write(
         &src,
         "#include <stdio.h>\n#include <string.h>\nextern char **environ;\n\
-         int main(int c, char **v) {\n  FILE *f = 0;\n  for (int i = 1; i + 1 < c; i++)\n    \
-         if (!strcmp(v[i], \"--test-config\")) f = fopen(v[i + 1], \"w\");\n  if (!f) return 3;\n  \
+         int main(int c, char **v) {\n  char path[4096];\n  \
+         snprintf(path, sizeof path, \"%s.dump\", v[0]);\n  FILE *f = fopen(path, \"w\");\n  \
+         if (!f) return 3;\n  \
          for (int i = 1; i < c; i++) fprintf(f, \"A %s\\n\", v[i]);\n  \
          for (char **e = environ; *e; e++) fprintf(f, \"E %s\\n\", *e);\n  fclose(f);\n  return 0;\n}\n",
     )
