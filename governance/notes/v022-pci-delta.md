@@ -280,7 +280,7 @@ Mutation rows whose target is `crates/axon-core/src` and which are not retired (
 | amendment 96 | M2470-M2480, matrix A190-A194 |
 | amendment 100 | M2600-M2602, M2606, M2608-M2624 (M2603-M2605 and M2607, the runner-leg duplicates, withdrawn by amendment 102), matrix A208-A212 |
 | amendment 102 | M2700-M2767, matrix A219-A224 |
-| amendment 106 | M2910-M2939 (M2929 not issued), matrix A240-A244 |
+| amendment 106 | M2910-M2939 (M2929 not issued), matrix A240-A245 |
 
 FREEZE OBLIGATION, not a present fact: the claims spec says these rows are re-run at the frozen head.
 What the freeze procedure must show is a joined paired-disable run at the frozen head in which each of

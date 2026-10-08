@@ -6449,7 +6449,7 @@ guards of the helper have no cargo row (`TMPDIR=/tmp`, the `/tmp` tmpfs); the ki
 ## Amendment 106: shared state keeps its taint, a write carries the control it ran under, rendered text carries what it shows, the existence oracle is one text on every path, and the residual is worded to include omission and verdict tables (C9 round 11, PSV1U)
 
 106. **Source: the round-11 SENTINEL, PSV-1 and PSV-3 reviewers** (`/var/tmp/c9r11-findings-SENTINEL.json`, `-PSV-1.json`, `-PSV-3.json`).
-     Mutation ids M2910-M2939 (M2929 is not issued: see "Equivalent arm"), matrix rows A240-A244 (the integrator renumbers). Base `c9r11/integrate10`
+     Mutation ids M2910-M2939 (M2929 is not issued: see "Equivalent arm"), matrix rows A240-A245 (the integrator renumbers). Base `c9r11/integrate10`
      (`3776884c`). `crates/axon-core/src/interp*` changed; classified in `scripts/pci_delta.py` as narrowing. Amendment 102's class ("a path on which
      taint is dropped") is the one this closes further; its claim is unchanged apart from the wording below.
 
