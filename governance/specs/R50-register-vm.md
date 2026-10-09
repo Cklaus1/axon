@@ -6,8 +6,9 @@ verdict "incorrect" (first 2 blockers and 11 must-fix, second 4 must-fix and 8 s
 and 6 smaller, fourth 7 must-fix and 5 smaller, fifth 5 must-fix and 7 smaller, sixth 5 must-fix and 6
 smaller, seventh 2 must-fix and 3 smaller, eighth 2 must-fix and 2 smaller), and the ninth, verdict
 "correct" (0 blockers, 0 must-fix, 4 nits), are answered in §15. Revision 11 adds slices S7 and S8
-because §12 Q3 came true at S4 (measured, §15 "Revision 11"); revision 12 answers the tenth review and
-revision 13 the eleventh; a twelfth is pending, and S7 and S8 do not start before it passes.
+because §12 Q3 came true at S4 (measured, §15 "Revision 11"); revisions 12-14 answer the tenth to twelfth
+reviews; the twelfth judged it ready once its four text fixes landed (revision 14), so the S7/S8
+additions are Reviewed at revision 14 and S7 and S8 may start.
 **Risk class:** Structural (a second execution path for the reference engine)
 **Author / date:** 2026-10-09, from compilebench AX-18 (interpreter cost) after AX-53..AX-55.
 
@@ -396,14 +397,16 @@ Evaluating one has no effect besides its value or its panic.
 = 0 }` appended to the body, a never-taken branch that makes the loop ineligible (it costs 50 per
 iteration on the S4 VM: `loop.ax` 229,167,352, `loop_generic.ax` 279,207,377). So that it cancels, S7
 appends the same `if` to the loop bodies of `call1.ax` and `mutcall.ax`, and `swapcall.ax` (S8) has it
-from the start (measured exact for `call1.ax` and `mutcall.ax`; `swapcall.ax`'s `if` costs about 10 more,
-which the row charges to the call, so the gate errs strict).
+from the start (measured at S4: exact for `call1.ax`, +10 for `mutcall.ax`, charged to the call; `swapcall.ax`'s
+count moves by up to ±20 per call between runs, so its `if` cancels only within that spread).
 
 Gate: red tests `vm_pure_mandel_loop` (mandelbrot's `main` prints `vm: pure main <p> exprs, 1 loops`)
 and `vm_pure_fold_leaf` (arr-sum prints `vm: fold-leaf main::lambda#0`), both failing on S4, which prints
-neither line; every `vm_pure_*` behaviour test places its expression in a sink (an `Assign` value, an
-untyped `let` value, or an `if`/`while` condition) and asserts that the `vm: pure` line for that body is
-present, so it cannot pass without a `Pure` op; behaviour tests `vm_pure_overflow_replays` (an `i64` overflow in the third iteration of a
+neither line; every `vm_pure_*` behaviour test of a `Pure` or `PureLoop` op places its expression in a sink (the
+value of a non-AX-31-shaped `Assign`, an untyped `let` value, or an `if`/`while` condition) and asserts
+the `vm: pure` line for that body, with `1 loops` for `vm_pure_overflow_replays` and
+`vm_pure_sized_declines`, so it cannot pass without the op; `vm_pure_fold_decline` asserts `vm: fold-leaf
+main::lambda#0` (printed at element 2, before the decline at element 5); behaviour tests `vm_pure_overflow_replays` (an `i64` overflow in the third iteration of a
 `PureLoop` gives the tree's panic text and exit 101, and a `println` after the loop never runs), `vm_pure_sized_declines` (an `i32` local in a pure loop gives the tree's output),
 `vm_pure_short_circuit` (`let r = b != 0 && a / b > 1` and `if b != 0 && a / b > 1` with `b = 0` print
 what the tree prints), `vm_pure_bool_ops` (through untyped lambda parameters, which `axon check` accepts:
@@ -701,8 +704,8 @@ qsort is the gate's tightest program. Revision 5 split its 18.97 G with two esti
 | `quicksort`'s own `&mut` calls at the S5 budget | 1,333,559 | 600 | 0.80 G |
 | `swap` calls, body included (the S8 `swap` row) | 13,670,662 | ≤ 730 | ≤ 9.98 G |
 
-The total is 18.92 G, about 0.05 G under budget (residual computed with the `swap` row measured against
-`loop_generic.ax`, 2,638 per call at S4; against `loop.ax` it would be 19.06 G, over), so the `swap` row's 730 is derived, not padded. The
+The total is 18.92 G, about 0.05 G under budget (the residual uses the same base as the S8 `swap` row,
+`loop_generic.ax`, 2,638 per call at S4, so a base bias cancels between them), so the `swap` row's 730 is derived, not padded. The
 slice budgets still do not by themselves prove qsort's gate; Q3 applies after S8.
 
 sieve is reported but not gated: CPython clears multiples with one slice assignment that runs in C.
@@ -950,4 +953,5 @@ printing the golden output:
 | `loop.ax` becomes a `PureLoop` (229 → 92 per iteration), so rows that subtract it would charge the call for the loop's lost speed | `call`, `fastcall`, `mutcall`, `swap` subtract `loop_generic.ax` from S7, and their programs carry the same never-taken `if`, so it cancels (§4 S7) |
 | Tenth review (2026-10-09, `reviewer`, verdict "incorrect": 0 blockers, 1 must-fix, 1 gap, 1 nit), answered in revision 12: `loop_generic.ax`'s `if` measured 50 (47 stacked), crediting each `swap` call ≈ 0.68 G in total; `Pure` silent on `Bool` operands outside `&&`/`||` and non-`Bool` branch values; collatz row misattributed | The `if` is added to `call1.ax`, `mutcall.ax` and `swapcall.ax` so it cancels; decline rules and `vm_pure_bool_ops` added; collatz row corrected |
 | Eleventh review (2026-10-09, `reviewer`, verdict "incorrect": 0 blockers, 1 must-fix, 3 nits), answered in revision 13: `vm_pure_bool_ops`/`vm_pure_short_circuit` did not put the expression in a sink, so they could not fail; swap `if` cancels within ≈ 10; qsort split re-measured 18.922 G; value.rs:719-720 is `eval_binop_vals` | Tests use `let`/`if` sinks and assert the `vm: pure` line; cancellation stated as measured; split total 18.92 G with residual ≈ 1,014; citation renamed |
+| Twelfth review (2026-10-09, `reviewer`, verdict "incorrect" pending four text fixes, then ready): `vm_pure_fold_decline` cannot assert a `vm: pure` line; `mutcall` `if` is +10 and `swapcall` bimodal; "19.06 G against `loop.ax`" contradicts the 2,641 swap figure; `PureLoop` tests should pin `1 loops` and the `Assign` sink is non-AX-31 only | Revision 14: fold test asserts `vm: fold-leaf`; cancellation restated as measured; base-bias sentence replaces the 19.06 G claim; `1 loops` and the AX-31 qualifier added |
 | S5's gate named "all rows", which would include the S7 and S8 rows | S5 gate is `--repros S1,part,fold,S5` |
