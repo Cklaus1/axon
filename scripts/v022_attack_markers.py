@@ -2794,6 +2794,8 @@ ATTACK_MARKERS.update({
     'M3268': 'verify predicate: ACCEPT/REFUSE differs',
     'M3269': 'the text differs|ACCEPT/REFUSE differs|both texts are EMPTY',
     'M3270': 'control a candidate module with its own helper',
+})
+
 # BUILDENV10 (amendment 113; M3200-M3227)
 ATTACK_MARKERS.update({
     'M3200': 'ATTACK: bare opkit_ns_isolate\\s+was not refused with 97',
