@@ -3487,9 +3487,9 @@ impl<'p> Interp<'p> {
         }
         self.bind_params(entry, &mut args, env);
         self.recycle_args(args);
-        // `goal_met` follows the parameters (its slot in `Resolution`); it is
-        // 0 for a fn without `@[goal]`.
-        env.define_var(SYM_GOAL_MET, entry.params.len() as u32, Value::Int(0));
+        // `goal_met` follows the parameters (its slot in `Resolution`, the
+        // next one: see `bind_params`); it is 0 for a fn without `@[goal]`.
+        env.vars.push((SYM_GOAL_MET, Value::Int(0)));
         let result = match self.run_body(entry, env) {
             Ok(v) | Err(Flow::Return(v)) => v,
             Err(other) => return Err(other),
@@ -3624,8 +3624,9 @@ impl<'p> Interp<'p> {
         } else {
             0
         };
-        // `goal_met` follows the parameters (its slot in `Resolution`).
-        env.define_var(SYM_GOAL_MET, params.len() as u32, Value::Int(goal_met));
+        // `goal_met` follows the parameters (its slot in `Resolution`, the
+        // next one: see `bind_params`).
+        env.vars.push((SYM_GOAL_MET, Value::Int(goal_met)));
         // PROTOTYPE (RLM session option 2): when dumping bindings, run main's
         // top-level statements WITHOUT the extra block scope (eval_block pops
         // its scope before returning, discarding the locals), then capture the
@@ -3690,8 +3691,13 @@ impl<'p> Interp<'p> {
     /// Bind the arguments of a call to `entry` to its parameters in the
     /// empty frame `env`; `args` is left empty. The caller has checked that
     /// `args`, `entry.params` and `entry.param_coerce` have the same length.
+    /// Parameter `i` lives in frame slot `i` (AX-53): the frame starts empty
+    /// (`call_fn_in`'s callers take it from `take_frame`), so each parameter
+    /// is the next binding and is pushed, which is what `Env::define_var`
+    /// does for a slot equal to the frame's length (cost only).
     #[inline(always)]
     fn bind_params(&self, entry: &FnEntry<'p>, args: &mut Vec<Value>, env: &mut Env) {
+        debug_assert!(env.vars.is_empty() && env.marks.is_empty());
         // Each argument is moved out of its slot (leaving a `Unit`), so the
         // buffer is emptied without a `Drain` (cost only).
         for (i, a) in args.iter_mut().enumerate() {
@@ -3716,8 +3722,7 @@ impl<'p> Interp<'p> {
             } else {
                 a
             };
-            // Parameter `i` lives in frame slot `i` (AX-53).
-            env.define_var(*s, i as u32, a);
+            env.vars.push((*s, a));
         }
         args.clear();
     }
