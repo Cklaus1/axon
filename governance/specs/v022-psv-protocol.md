@@ -7483,8 +7483,7 @@ damages that namespace and not the host; they do not run in the host's mount nam
 (it mounts nothing) called on the host's shell, not by a destructive primitive called there.
 **Unfinished, stated.** (a) The axon-core gates (`refusal_coverage_gate`, `harness_integrity`, `harness_binaries`): gm, `0e974b29` (the commit that adds this text before this sentence was edited), rc 0: 52, 43 and 10 passed; the only change since is this sentence. (b) A forged `OPKIT_HOST_NS` from a caller that is PID 1 of its own
 PID namespace passes the precondition (recorded as a control, above). (c) The NUL rule reads a file as UTF-16/32 only when the result is >= 90% ASCII printable; UTF-16 text
-in which that does not hold, and a UTF-16 file larger than the 64 KiB read cap, are not covered (the cap already refuses the second). (d) The matrix numbers A274-A280 are
-renumbered at integration. (e) The `IDENTICAL` host listing is of this host only.
+in which that does not hold, and a UTF-16 file larger than the 64 KiB read cap, are not covered (the cap already refuses the second). (d) The matrix numbers A274-A280 held at integration (round 14: psv1w's A280 collided with the last of them and moved to A281). (e) The `IDENTICAL` host listing is of this host only.
 ## Amendment 115: an absent-value decision is a site in whatever combinator spells it; the waiver expiry, the observed-class arm, the tracked-path kind and the clearance reads are tested; each crate pins its own signing domains; the re-survey logs must look like logs (C9 round 13, eqgate9)
 
 The round-13 equivalence reviewer REGISTERED the claim as written but found a family the default form of amendment 110 did not name: a decision made by the
@@ -7578,3 +7577,97 @@ refusals and not for defaults.
 obsolete: it is an active row again). (b) The rows of the touched files other than `psv.rs` and the new ones were not re-run (their old text and the code they edit are unchanged). (c) The survey judgements of
 the 70 `val_default` REMAINDER entries are reasoning plus a measurement against the stated suites. (d) `psv_dispatch.rs` still says derive's None arm and `psv_receipt`'s downgrade "each hold it alone": the
 statement is true of the full receipt path and false of the arm now that it is a function with a test. (e) The five findings fixed here are of the SPELLINGS the reviewer found; see what the gate still cannot see.
+
+## Amendment 116: round-14 integration of psv1w, buildenv10 and eqgate9 (integrate13): the matrix ids are contiguous; M3038 is WITHDRAWN, not retired; M186 is an active row again; one host defect found
+
+**Source:** this is an INTEGRATION amendment (workstream c9r14/integrate13). Base `c9r13/integrate12` (`e8b8b48a`) + `c9r13/psv1w` (amendment 114) + `c9r13/buildenv10` (amendment 113) + `c9r13/eqgate9`
+(amendment 115). Union merge; the markers junction (`'})'`) was repaired by the merge commit and is re-checked here. No Rust source was changed in this round; the registry, the markers, the matrix and the notes were.
+
+**1. Matrix renumbering.** The three branches numbered their rows apart and collided (psv1w A280-A284 against buildenv10 A274-A280; eqgate9's A290-A294 left a gap). `governance/specs/v022-psv-negative-matrix.md`
+is now CONTIGUOUS after A273 in the order buildenv10, psv1w, eqgate9:
+
+| amendment | was | now |
+|---|---|---|
+| 113 (buildenv10) | A274-A280 | A274-A280 (unchanged) |
+| 114 (psv1w) | A280, A281, A282, A283, A284 | A281, A282, A283, A284, A285 |
+| 115 (eqgate9) | A290, A291, A292, A293, A294 | A286, A287, A288, A289, A290 |
+
+The ids written INSIDE amendments 113, 114 and 115 and in `governance/notes/v022-pci-delta.md` (the amendment-to-rows table, which `scripts/pci_delta.py --check` now compares with the matrix and the spec) were rewritten
+to match; `git grep` for A274-A299 outside the matrix finds only those. No test, script or runbook cites a row by its number. Amendment 114's evidence paragraph (a branch-local statement about its placeholder rows
+A274-A279) and amendment 115's evidence line about the check listing placeholders are left as history and carry a note. `python3 scripts/psv_matrix_check.py`: PASS, 290 rows, 930 test citations, all resolve, no placeholder.
+
+**2. Registry and markers.** `scripts/v022_g01_mutations.py` imported and read as a program (not run): 2308 rows after the M3038 withdrawal (2309 before; 2151 active either way, since M3038 was retired and not counted), no duplicate id,
+no active row whose old text is absent or ambiguous (0 BAD), every active row has an attack marker and every marker names a row (0 missing, 0 orphan), every `EQUIVALENT_DID` row has a marker. M3284 is unused. The
+junction of the markers dictionary is a single well-formed `update({...})` per workstream. Every marker was then exercised by the mutation runs below: a marker that belonged to the wrong row would have failed to match
+and the row would have been REFUSED_ELSEWHERE or a survivor.
+
+**3. Gate reconciliation.** `python3 scripts/v022_refusal_coverage.py` plain and `--freeze`: both rc 0 on the merged tree with no BAD line, with the counts amendment 115 and amendment 113 each stated for
+themselves: DEFAULTS NOT FOLLOWED 113, OBSERVED-NOT-ROWED 252, REMAINDER 208 (`val_default` 70, `const_tag` 36, `okor_unjudged` 16, `okor_nodefault` 12, `const_path` 11, `py_guard` 11, ...). Nothing needed re-anchoring:
+buildenv10's `py_guard` exemptions and eqgate9's `~comb`/`~arm` forms were computed against the files as merged and agree. (The gate does not see the withdrawn M3038 guard as a site; it was never in the REMAINDER list.)
+
+**4. M3038: WITHDRAWN.** Amendment 114 retired M3038 (the checker judges a sealed call against the sealed impls' methods) behind M3243 on four cells and said, correctly, that the full-suite condition was not shown. This
+round tried to show it and could not, so the row is withdrawn rather than counted. Reproduced, through the harness's own path (`v022_paired_disable.py --only=M3038`, this host, root, clean clone of `995aa932`):
+the owner suite (axon-psv + axon-core) and the baselines ran, and the `axon-ledger` consumer's CLEAN-TREE baseline was SUITE_BROKEN (`attribution_integrity`, 4 tests: `recorded_by` is `uid:0` where the test expects `root`),
+which the harness reports as CONSUMER_BASELINE_BROKEN and does not print the name of in its one-line summary; the name is in the cell log (`pd-suite-axon-ledger-*.log`) and in `retired_guard_full_suite_failures`.
+The cause is the HOST, not the tree: `/etc/passwd` on this host has no `root` entry (see item 9), and `axon-ledger` resolves the uid by reading that file. On gpumaster the `axon-fabric` consumer hangs in `privileged_launcher`
+(not calibrated for it; amendment 114) and the harness has no mechanism to skip one test of a consumer. I did not work around either: an attempt to give the harness a private mount of a good `passwd` was refused by the
+permission check and was not retried or routed around. A retirement without its full-suite condition is not counted, and M3038 cannot stand as an active row either: with the sealed-only check in place its edit
+SURVIVES the runner test (it sits behind that check), and a Rust test that reaches the merged check alone would be a Rust change this round does not make. So: the row, its marker, its `EQUIV_RECORD`, its `EQUIVALENT_DID`/`RETIRED`
+membership and its `GUARD_SETS` entry are removed (like M2603-M2605 and M2607 in amendment 102: STATED as withdrawn, not retired). The guard stays in `checker.rs`, unrowed; the diagnostics about a sealed file come from the
+sealed-only check (M3243), whose attack is killed by its own marker. Anyone who wants the row back needs a test that runs `checker::check` over a merged program with an operator impl and a sealed call, or a full-suite
+run on a host whose `/etc/passwd` is whole and whose `axon-fabric` suite completes under the harness. `governance/notes/v022-pci-delta.md` and the matrix row A251 say so.
+
+**5. M186: active, killed by its own attack.** Amendment 115 reinstated M186 (the `None` arm of the class decision, now `psv::observed_class`): its `EQUIV_RECORD` and `GUARD_SETS` entry are gone, its marker is
+`ATTACK: a verdict made without an observation was classed Protected`, and the mutation run below kills it by that marker (shard 1: `psv::class_tests::a_passed_verdict_with_no_observation_is_guest_unobserved_and_names_none` panics on that marker). No reference to its retirement remains in the registry, the markers or
+`v022_paired_disable.py` (its comments name M186 as a historical route only). Two files still carry it as history and are left: `governance/status/v022-psv-paired-disable.json` (a status file that is remade at the freeze head, along with
+`v022-resurvey.json`) and the test fixture `crates/axon-core/tests/fixtures/paired-disable-status-59-of-148.json` (a pinned historical fixture). The GUARD_SETS == EQUIVALENT_DID consistency tests
+(`scripts/test_v022_paired_disable_join.py`, `..._selection.py`) pass.
+
+**6. Production changes of eqgate9 (`git diff c9r13/integrate12 -- crates/*/src`).** There is exactly ONE production change: `axon-fabric/src/psv.rs`, the class decision inside `derive` extracted unchanged into
+`fn observed_class(observation, evidence)`; tested by `class_tests::a_passed_verdict_with_no_observation_is_guest_unobserved_and_names_none` and rowed by M186 and M3285. Every other hunk under `crates/*/src` is
+after the file's first `#[cfg(test)]` (checked mechanically per file) and is a test: `backend.rs` `a_waiver_without_a_parseable_future_expiry_waives_nothing` (M3280-M3282), `git_data.rs`
+`a_tracked_path_of_another_kind_or_mode_or_gone_differs` (M3292, M3295), `readiness.rs` `a_digest_field_that_is_not_a_string_of_the_right_length_is_not_hex` (M3294) and
+`a_certification_whose_suite_does_not_name_all_five_fields_is_refused` (M3283), `signing.rs` `a_registered_check_naming_no_suite_at_all_is_not_signed` (M3293),
+`axon-loop-contracts/src/schema.rs` `an_object_schema_without_properties_that_forbids_additions_admits_no_key` (M3299). The other fail-open items of the brief (the clearance monitor signature, the verifier pin, the usage
+episode status, `Mode::from_reply`, the signing-domain collapses) are tests that PIN existing behaviour (`axon-loop/tests/{protected_class,plan_evo_tel,signing_domain_pins}.rs`, `axon-loop-contracts/tests/signing_domain_pins.rs`;
+M3286-M3291, M3296-M3298) over production code this round did not touch. No production change lacks a test; nothing outside the intended behaviour changed (the `observed_class` extraction is a move). psv1w's production
+changes (`interp/eval.rs`, `interp/taint.rs`, `checker.rs`, `resolver.rs`, `main.rs`: control taint on `&&`/`||`, `CONTROL_TABLE`, the static-path sealed-only check) are described by amendment 114 and are covered by
+`interp::taint_tests` (439 added lines), `axon-psv/tests/sealed_frames.rs` and M3230-M3270, all re-run here.
+
+**7. pci_delta.** `python3 scripts/pci_delta.py --check`: PASS (no unclassified commit under `crates/axon-core/src`; the merge commits are classified by the existing THEMES entries). The note was edited by hand only in its
+amendment-to-rows table and the M3038 sentence, which the tool compares with the matrix and the spec; the generated block is unchanged. `scripts/v022_pci_gates.sh`: PASS, 78 rows.
+
+**8. Evidence.** Commits: `995aa932` (renumbering), `102a1090` (M3038 withdrawn; no Rust file differs from `995aa932`) and this amendment's two successors, which change only governance text. Heavy jobs ran on gpumaster
+(`gm`, three slots) from clean clones of the named commit; `local` is this host, as root. Every line is rc-checked.
+
+| Check | Where | Result |
+|---|---|---|
+| mutation runs `--scope=all --only=<1181 rows> --shard=K/3`, K = 0,1,2, at `102a1090`: every row whose target is under `crates/axon-core/src`, `scripts/v022_refusal_coverage.py`, `scripts/opkit_ns_drift.py`, `scripts/lib/opkit_ns.sh`, `scripts/guest_build_env.py`, `crates/axon-fabric/src/{psv,backend,readiness,git_data,signing}.rs`, `crates/axon-loop-contracts/src/schema.rs`, and every row with id >= M2170 | gm | rc 0 x3. 395, 393 and 389 active rows KILLED by their own attack (1177) + 4 LIBRARY_PRIMITIVE rows (M1214, M1217, M1223, M1224) that the harness kills by a direct library test and does NOT count; 0 REFUSED_ELSEWHERE, 0 unexpected survivors, 0 stale or unapplied |
+| the 110 namespace-dependent rows (every row targeting `scripts/opkit_ns_drift.py` or `scripts/lib/opkit_ns.sh`), `--only=` over all of them, at `102a1090`, as root | local | 110/110 KILLED by their own attack, 0 REFUSED_ELSEWHERE, 0 survivors, 0 stale (rc 0) |
+| `cargo test --locked -p axon-fabric --test guest_build_env` x3 (default-parallel), `--test guest_build_env_guards`, `--test operator_examples`, `--test freeze_manifest`, at `102a1090` | local | rc 0 each: 38, 38, 38, 9, 4, 26 passed |
+| `a_callers_scheduling_state_never_reaches_the_root_launch` and `readiness::a_narrowing_list_the_verifier_cannot_stat_is_not_read_as_absent` (the two tests skipped on gpumaster), as root | local | rc 0, 1 passed each |
+| `scripts/test_opkit_ns.sh` | local | rc 0 (PASS: opkit namespace helper) |
+| `scripts/test_operator_deploy.sh` (its apply runs in a private mount namespace; stdout/stderr through a pipe, because a redirect to a regular file is itself refused by the helper's descriptor rule) | local | PASS: operator deployment kit; the host listing was identical before and after |
+| `scripts/opkit_ns_drift.py` / `--selftest` / `--check-quoted-counts` | local | rc 0 / 0 (149 must-flag shapes, 32 controls) / 0 |
+| `scripts/test_v022_paired_disable_join.py`, `..._selection.py`, `scripts/test_v022_resurvey.py`, `scripts/test_v022_value_survey.py` | local | PASS (20 cases), PASS, PASS, PASS |
+| `python3 scripts/v022_refusal_coverage.py` plain and `--freeze` | local | rc 0 and rc 0 (counts in item 3) |
+| `python3 scripts/psv_matrix_check.py`; `python3 scripts/pci_delta.py --check`; `scripts/v022_pci_gates.sh` | local | PASS (290 rows, 930 citations); PASS; PASS (78 rows) |
+| `cargo fmt --all -- --check`; clippy `-D warnings`: axon-core `--no-default-features --tests`; axon-fabric, axon-psv, axon-cortex, axon-loop, axon-loop-contracts `--all-targets` | local | rc 0; rc 0; rc 0 |
+| `cargo test --locked -p axon-core --no-default-features --no-fail-fast` | gm | @CORE@ |
+| `cargo test --locked --workspace --exclude axon-core --exclude axon-fabric --exclude axon-guest-kernel --no-fail-fast` (includes axon-psv, axon-loop, axon-loop-contracts, axon-cortex) | gm | @WS@ |
+| `cargo test --locked -p axon-fabric --no-fail-fast`, default-parallel and `-- --test-threads=1`, both with the two namespace-dependent tests skipped | gm | @FAB@ |
+
+**Counts.** Matrix rows 290 (A1-A290). Mutation registry 2308 rows: 2151 active, 147 retired EQUIVALENT (each with a four-cell record; M3038 is no longer among them), 1 STALE_REFACTORED, 9 SIBLING_ONLY. Ids added by
+the three branches: buildenv10 M3200-M3227 (28), psv1w M3230-M3270 less M3252 (40), eqgate9 M3280-M3299 less M3284 (19); M186 reinstated; M3038 withdrawn. PCI gate rows 78. Refusal coverage: REMAINDER 208, OBSERVED-NOT-ROWED 252, DEFAULTS NOT FOLLOWED 113.
+
+**9. A host defect found (not caused by this work): `/etc/passwd` on this host (the one the local steps ran on) is damaged.** Its first five lines (`root`, `daemon`, `bin`, `sys`, `sync`) were overwritten at
+2026-10-09 01:14:46 -0400, before this round started, by the three-line text `LEAK: descriptor 2 is a WRITABLE regular file (/etc/passwd) outside the caller's named scratch` / `REFUSE(ns_run): an inherited
+descriptor is a way around the shadows; the command did not run`: the helper's own refusal message, written to its stderr, which the caller had opened read-write on the real `/etc/passwd`. `/etc/passwd-` (2026-10-06)
+still holds the original (it also has `axonb263`, absent from the live file); gpumaster's `/etc/passwd` is intact. Consequences observed: `id -un` still says `root`, but anything that parses the file for uid 0 does not
+(`axon-ledger`'s `attribution_integrity`, the M3038 consumer baseline above). I did NOT repair it (never write under `/etc`); the operator should compare `/etc/passwd` with `/etc/passwd-` and restore the five lines.
+The helper behaved correctly (it refused); the defect is the caller that handed it a writable descriptor on a real host file. Whoever ran it should be asked which test or probe did; a test that needs an inherited
+writable descriptor must open a file in its own scratch, as `scripts/test_opkit_ns.sh` does.
+
+**Unfinished, stated.** (a) M3038 is withdrawn, not proven; see item 4 for what would bring it back. (b) `governance/status/v022-psv-paired-disable.json` and `v022-resurvey.json` are not remade (made at the freeze
+head, last), so the status file still carries M186's obsolete record and the freeze manifest cannot be produced from this tree. (c) The mutation runs ran at `102a1090` and the suites at the commit named in the table; the commits between
+change only governance text. (d) `/etc/passwd` is not repaired (item 9). (e) The `IDENTICAL` host listing is of this host and gpumaster only.
