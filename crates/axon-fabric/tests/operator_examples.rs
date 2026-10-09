@@ -241,27 +241,6 @@ fn every_quoted_selftest_count_is_the_selftests_own() {
         num_before(&out, " controls accepted"),
     );
     assert!(must > 0 && ctl > 0, "setup: {out}");
-    // the real documents
-    let o = run(&["--check-quoted-counts"], &root);
-    let out = String::from_utf8_lossy(&o.stdout).to_string();
-    assert!(
-        o.status.success(),
-        "ATTACK: a document quotes a must-flag or control count that is not the self-test's ({must} and {ctl}):\n{out}"
-    );
-    assert!(
-        out.contains(&format!("{must} must-flag shapes, {ctl} controls")),
-        "ATTACK: --check-quoted-counts derived other counts than --selftest prints ({must}, {ctl}): {out}"
-    );
-    let quotes: u64 = out
-        .rsplit("; ")
-        .next()
-        .and_then(|t| t.split(' ').next())
-        .and_then(|n| n.parse().ok())
-        .unwrap_or(0);
-    assert!(
-        quotes >= 1,
-        "ATTACK: --check-quoted-counts read no quote at all, so it checked nothing: {out}"
-    );
     // a stale quote planted in each tree is refused, by name; the right numbers are accepted
     for (rel, tree) in [
         ("governance/specs/x.md", "governance"),
@@ -307,6 +286,27 @@ fn every_quoted_selftest_count_is_the_selftests_own() {
             }
         }
     }
+    // the real documents
+    let o = run(&["--check-quoted-counts"], &root);
+    let out = String::from_utf8_lossy(&o.stdout).to_string();
+    assert!(
+        o.status.success(),
+        "ATTACK: a document quotes a must-flag or control count that is not the self-test's ({must} and {ctl}):\n{out}"
+    );
+    assert!(
+        out.contains(&format!("{must} must-flag shapes, {ctl} controls")),
+        "ATTACK: --check-quoted-counts derived other counts than --selftest prints ({must}, {ctl}): {out}"
+    );
+    let quotes: u64 = out
+        .rsplit("; ")
+        .next()
+        .and_then(|t| t.split(' ').next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0);
+    assert!(
+        quotes >= 1,
+        "ATTACK: --check-quoted-counts read no quote at all, so it checked nothing: {out}"
+    );
 }
 
 /// Amendment 92 (M2266-M2269): the helper REFUSES when its proof fails: a destination that is not a
