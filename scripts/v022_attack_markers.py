@@ -2534,7 +2534,7 @@ ATTACK_MARKERS.update({
     'M2758': 'ATTACK: <hook:\\ question\\ type> completed',
     'M2759': 'ATTACK: <hook:\\ handler\\ payload> completed',
     'M2760': 'ATTACK: <hook:\\ handler\\ return\\ arm> completed',
-    'M2761': "ATTACK: <hook:\\ a\\ completed\\ arm's\\ value\\ reaches\\ the\\ return\\ arm> completed",
+    'M2761': "ATTACK: <hook:\\ an\\ aborting\\ arm's\\ value\\ reaches\\ the\\ return\\ arm> completed",
     'M2762': 'ATTACK: <hook:\\ an\\ open\\ builtin\\ result> completed',
     'M2763': 'ATTACK: <hook:\\ a\\ for\\ bound> completed',
     'M2764': 'ATTACK: sealed code selected operator code \\(dict_get\\(h,\\ entry\\(\\)\\)\\)',
