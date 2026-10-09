@@ -1843,7 +1843,8 @@ impl<'p> Interp<'p> {
                 };
                 let mut acc = args[1].clone();
                 let f = &args[2];
-                for x in xs.iter() {
+                let mut i = 0;
+                while let Some(x) = xs.get(i) {
                     // An int element is copied inline, not through `Value`'s
                     // out-of-line `clone` (R50 S4, cost only).
                     let x = match x {
@@ -1851,6 +1852,15 @@ impl<'p> Interp<'p> {
                         x => x.clone(),
                     };
                     acc = self.call_closure_arg(f, [acc, x])?;
+                    i += 1;
+                    if i == 1 {
+                        // R50 S7: under `AXON_ENGINE=vm`, the elements
+                        // after the first in registers when the closure's
+                        // body is one pure tree, up to the first that
+                        // declines; it and the rest take the call above
+                        // (cost only).
+                        i += self.fold_leaf(f, &xs[1..], &mut acc);
+                    }
                 }
                 ok!(acc);
             }
