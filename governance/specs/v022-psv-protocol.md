@@ -7637,7 +7637,7 @@ changes (`interp/eval.rs`, `interp/taint.rs`, `checker.rs`, `resolver.rs`, `main
 **7. pci_delta.** `python3 scripts/pci_delta.py --check`: PASS (no unclassified commit under `crates/axon-core/src`; the merge commits are classified by the existing THEMES entries). The note was edited by hand only in its
 amendment-to-rows table and the M3038 sentence, which the tool compares with the matrix and the spec; the generated block is unchanged. `scripts/v022_pci_gates.sh`: PASS, 78 rows.
 
-**8. Evidence.** Commits: `995aa932` (renumbering), `102a1090` (M3038 withdrawn; no Rust file differs from `995aa932`) and this amendment's two successors, which change only governance text. Heavy jobs ran on gpumaster
+**8. Evidence.** Commits: `995aa932` (renumbering), `102a1090` (M3038 withdrawn; no Rust file differs from `995aa932`) `46417e1a` (this amendment with its evidence cells open) and the commit that fills them, which changes only the cells of that table. Heavy jobs ran on gpumaster
 (`gm`, three slots) from clean clones of the named commit; `local` is this host, as root. Every line is rc-checked.
 
 | Check | Where | Result |
@@ -7653,9 +7653,9 @@ amendment-to-rows table and the M3038 sentence, which the tool compares with the
 | `python3 scripts/v022_refusal_coverage.py` plain and `--freeze` | local | rc 0 and rc 0 (counts in item 3) |
 | `python3 scripts/psv_matrix_check.py`; `python3 scripts/pci_delta.py --check`; `scripts/v022_pci_gates.sh` | local | PASS (290 rows, 930 citations); PASS; PASS (78 rows) |
 | `cargo fmt --all -- --check`; clippy `-D warnings`: axon-core `--no-default-features --tests`; axon-fabric, axon-psv, axon-cortex, axon-loop, axon-loop-contracts `--all-targets` | local | rc 0; rc 0; rc 0 |
-| `cargo test --locked -p axon-core --no-default-features --no-fail-fast` | gm | @CORE@ |
-| `cargo test --locked --workspace --exclude axon-core --exclude axon-fabric --exclude axon-guest-kernel --no-fail-fast` (includes axon-psv, axon-loop, axon-loop-contracts, axon-cortex) | gm | @WS@ |
-| `cargo test --locked -p axon-fabric --no-fail-fast`, default-parallel and `-- --test-threads=1`, both with the two namespace-dependent tests skipped | gm | @FAB@ |
+| `cargo test --locked -p axon-core --no-default-features --no-fail-fast` | gm | rc 0 at `46417e1a`: 1870 passed, 0 failed, 1 ignored (includes `refusal_coverage_gate`, `harness_integrity`, `harness_binaries`, `pci_delta_note`) |
+| `cargo test --locked --workspace --exclude axon-core --exclude axon-fabric --exclude axon-guest-kernel --no-fail-fast` (includes axon-psv, axon-loop, axon-loop-contracts, axon-cortex) | gm | rc 0 at `46417e1a`: 1565 passed, 0 failed, 4 ignored |
+| `cargo test --locked -p axon-fabric --no-fail-fast`, default-parallel and `-- --test-threads=1`, both with the two namespace-dependent tests skipped | gm | rc 0 and rc 0 at `46417e1a`: 1764 passed across the two runs (882 each), 0 failed, 4 ignored |
 
 **Counts.** Matrix rows 290 (A1-A290). Mutation registry 2308 rows: 2151 active, 147 retired EQUIVALENT (each with a four-cell record; M3038 is no longer among them), 1 STALE_REFACTORED, 9 SIBLING_ONLY. Ids added by
 the three branches: buildenv10 M3200-M3227 (28), psv1w M3230-M3270 less M3252 (40), eqgate9 M3280-M3299 less M3284 (19); M186 reinstated; M3038 withdrawn. PCI gate rows 78. Refusal coverage: REMAINDER 208, OBSERVED-NOT-ROWED 252, DEFAULTS NOT FOLLOWED 113.
