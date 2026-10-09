@@ -2695,7 +2695,6 @@ ATTACK_MARKERS.update({
     'M3035': 'ATTACK: sealed code selected operator code \\(comparison: arr_contains\\)',
     'M3036': 'DRIFT:\\ BinOp::Lt\\ is\\ not\\ routed\\ through\\ t_obj_deep',
     'M3037': 'missing-method verdict is not the sealed refusal|method forms differ',
-    'M3038': '3\\.\\{N\\}\\(\\): \\[score\\]',
     'M3039': 'ATTACK:\\ <native:\\ a\\ surface\\ the\\ candidate\\ presented>\\ completed',
     'M3040': 'ATTACK:\\ <native:\\ a\\ surface\\ the\\ candidate\\ presented>\\ completed',
     'M3042': 'ATTACK:\\ <builtin\\ arr_contains\\ over\\ \\[tainted\\ dict\\]>\\ completed',

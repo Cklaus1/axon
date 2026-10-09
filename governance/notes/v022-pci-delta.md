@@ -297,7 +297,7 @@ Mutation rows whose target is `crates/axon-core/src` and which are not retired (
 | amendment 100 | M2600-M2602, M2606, M2608-M2624 (M2603-M2605 and M2607, the runner-leg duplicates, withdrawn by amendment 102), matrix A208-A212 |
 | amendment 102 | M2700-M2767, matrix A219-A224 |
 | amendment 106 | M2910-M2946 (M2929 not issued; M2940-M2946 runner legs), matrix A239-A244 |
-| amendment 108 | M3030-M3042 (M3033, M3035, M3038 runner legs; M3038 retired by amendment 114 behind M3243, four-cell), matrix A249-A253 |
+| amendment 108 | M3030-M3042 (M3033, M3035, M3038 runner leg, WITHDRAWN by amendment 116: retired by amendment 114 behind M3243 on four cells, the full-suite condition never shown), matrix A249-A253 |
 | amendment 114 | M3230-M3270 (M3242-M3253, M3260, M3267-M3270 static names, runner; M3256-M3259 runner legs of the control taint; M3261-M3266 the note's own checks; M3252 not issued), matrix A281-A285 (written A280-A284) |
 
 FREEZE OBLIGATION, not a present fact: the claims spec says these rows are re-run at the frozen head.
@@ -312,8 +312,8 @@ from the production route ALONE is not observable, because the unit-test switch 
 of its five duplicates were withdrawn by amendment 102) and the runner legs of amendments 96 and 100 are CORROBORATION of the
 unit rows, and are labelled so in the gate script. So are the runner legs of amendments 106, 108 and 114, each labelled
 `(runner leg, corroboration)` there: the production route refuses those attacks by the taint first, so each unit row is the
-evidence and the runner row is a second witness (am108's M3033 and M3035; am114's M3256-M3259). Two runner rows are NOT
-corroboration and are not labelled so: the method oracle at check time (am108, M3038) and the names twin (am114, M3242-M3253)
+evidence and the runner row is a second witness (am108's M3033 and M3035; am114's M3256-M3259). Two runner families are NOT
+corroboration and are not labelled so: the method oracle at check time (am108, M3038, now WITHDRAWN by amendment 116; its guard is unrowed) and the names twin (am114, M3242-M3253)
 test the static CHECK, which only the real `axon test --seal` binary runs, so for the checker path the runner test is the only witness.
 
 Round 12 (c9r12/psv1v, `9a95c9ce`, gpumaster, `--only=<ids>`, two shards): all 316 active rows whose target is `crates/axon-core/src` were re-run, 316/316 KILLED by their own

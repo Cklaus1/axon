@@ -10525,9 +10525,6 @@ MUTATIONS += [
     ('M3037', 'ORACLE (am108): a sealed call of a missing method is told the plain text', 'crates/axon-core/src/interp/eval.rs',
      '                    self.no_such_fn(method, format!("no method `{method}` on type `{tn}`"))', '                    panic(format!("no method `{method}` on type `{tn}`"))',
      'axon-core', '--lib', 'interp::taint_tests::a_sealed_caller_cannot_tell_an_operator_method_from_a_missing_one'),
-    ('M3038', "ORACLE (am108, runner): a sealed call is judged against the operator's methods too", 'crates/axon-core/src/checker.rs',
-     '                    let has_method = if sealed_site {\n                        &self.sealed_type_methods\n                    } else {\n                        &self.type_methods\n                    }', '                    let _ = sealed_site;\n                    let has_method = if false {\n                        &self.sealed_type_methods\n                    } else {\n                        &self.type_methods\n                    }',
-     'axon-psv', '--test sealed_frames', 'a_sealed_method_call_is_refused_in_the_same_words_for_an_operator_method_and_a_missing_one'),
     ('M3039', 'TAINT (am108): a native call does not touch the world taint', 'crates/axon-core/src/interp/eval.rs',
      '                        if T {\n                            self.t_native_call();\n                        }', '                        let _ = T;',
      'axon-core', '--lib', 'interp::taint_tests::a_native_registry_a_sealed_frame_wrote_taints_what_the_operator_reads_back'),
@@ -10664,20 +10661,11 @@ MUTATIONS += [
      'axon-core', '--test pci_delta_note', 'a_test_the_gate_runs_under_another_package_or_name_is_no_gate'),
 ]
 
-# Amendment 114 turned the guard of M3038 into defence in depth: the diagnostics about a sealed file now come from
-# a check over the sealed items alone (M3243 keeps the merged check's instead), which has no operator impl to find.
-EQUIV_RECORD["M3038"] = {
-    "property": "a sealed call of a method an operator impl defines is refused at check time in the words of a missing method",
-    "subsumed_by": ["M3243"], "killer": "joint:M3038+M3243",
-    "all_paths": "the method-call arm of the checker is the only place E0403 for a method is decided, and its table is "
-                 "built from the impl blocks of the program it runs over: the merged check (where M3038 picks the "
-                 "sealed impls' methods for a sealed call site) and the sealed-only check run by "
-                 "run_check_pipeline_located, whose program holds no operator impl at all, so the operator's method is "
-                 "absent there whatever the merged check says; the merged check's diagnostics about a sealed file are "
-                 "used only when the sealed-only check found no error (M3243 puts them in its place, and then M3038's "
-                 "guard is the one that refuses)"}
-EQUIVALENT_DID |= {"M3038"}
-RETIRED |= {"M3038"}
+# M3038 (am108, runner: the checker judges a sealed call against the sealed impls' methods) is WITHDRAWN by amendment 116. Amendment 114
+# retired it behind M3243 on the four cells only; the full-suite condition was never shown (round 14: the local consumer baseline of axon-ledger
+# is red on this host for want of a root entry in /etc/passwd, and the axon-fabric consumer hangs in privileged_launcher on gpumaster), and a
+# retirement is not counted without it. The row cannot be an active row either: with the sealed-only check in place its edit SURVIVES the
+# runner test (the guard sits behind it). The guard stays in the checker, unrowed, and is counted as such (REMAINDER, see the amendment).
 
 
 # ── C9 round 13, workstream EQGATE9 (amendment 115; M3280-M3339) ─────────────────────────────────────

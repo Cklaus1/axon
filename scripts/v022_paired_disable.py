@@ -892,9 +892,6 @@ GUARD_SETS = {
     # M255 (store-writer route) were all load-bearing and are ACTIVE.
     # (M209/M210 again EQUIVALENT since M360/M361: C9 round 1b, below.)
     "M245": {"siblings": ["M264"], "kind": "pair"},
-    # Amendment 114: M3038's guard (a sealed call is judged against the sealed impls' methods) is behind the
-    # sealed-only check, which has no operator impl; M3243 puts the merged check's diagnostics in its place.
-    "M3038": {"siblings": ["M3243"], "kind": "pair"},
     # M58 (call_fn_frame's break/continue arm) vs M59 (contain_frame). ALL
     # PATHS: call_fn_frame has exactly ONE caller (interp.rs, in call_fn),
     # and it wraps the call in contain_frame, which maps break/continue to
