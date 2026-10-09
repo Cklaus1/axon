@@ -943,7 +943,9 @@ pub struct Interp<'p> {
     arg_bufs: RefCell<Vec<Vec<Value>>>,
     /// AX-54: emptied frames of finished user-fn calls, reused by
     /// `call_fn_entry` so a call does not allocate its bindings, marks and
-    /// operand stack.
+    /// operand stack. Boxed so taking and returning a frame moves a pointer,
+    /// not the frame.
+    #[allow(clippy::vec_box)]
     env_pool: RefCell<Vec<Box<Env>>>,
     /// Phase-7 `cost_meter` / F4: cumulative AI spend across the whole run, in
     /// integer micro-dollars (µ$). Every `ai_complete` adds `tier.cost_micro(est
