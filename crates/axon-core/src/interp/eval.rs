@@ -420,23 +420,30 @@ impl<'p> Interp<'p> {
                 if st != 0 {
                     self.t_control_val_only();
                 }
+                // The taint of every guard that REFUSED an earlier arm: which arm
+                // runs after a failed guard is that guard's value too, and so is
+                // whether a later guard is evaluated at all.
+                let mut lost = 0u8;
                 for arm in arms {
                     env.push();
                     if self.match_pattern(&arm.pattern, &v, env, self.ts::<T>(st))? {
                         let mut gt = 0;
                         if let Some(guard) = &arm.guard {
-                            let ok = matches!(self.eval_t::<T>(guard, env)?, Value::Bool(true));
+                            let g = self.t_branch(lost, false, || self.eval_t::<T>(guard, env))?;
+                            let ok = matches!(g, Value::Bool(true));
                             gt = self.tl::<T>();
                             if !ok {
+                                lost |= gt;
                                 env.pop();
                                 continue;
                             }
                         }
-                        let exits = (st | gt) != 0
+                        let ct = st | gt | lost;
+                        let exits = ct != 0
                             && arms
                                 .iter()
                                 .any(|a| taint::has_exit(&a.body) || a.guard.as_ref().is_some_and(taint::has_exit));
-                        let r = self.t_branch(st | gt, exits, || self.eval_t::<T>(&arm.body, env));
+                        let r = self.t_branch(ct, exits, || self.eval_t::<T>(&arm.body, env));
                         env.pop();
                         return r;
                     }
@@ -549,6 +556,14 @@ impl<'p> Interp<'p> {
                 let r = self.eval_t::<T>(inner, env)?;
                 if T {
                     self.taint.ret.set(self.ts::<T>(self.tl::<T>()));
+                    // `?` is an early exit chosen by the operand's value: what
+                    // runs after it is control-dependent on it, taken or not
+                    // (the exit `return` has, via `t_branch`'s `exits`).
+                    let ct = self.tl::<T>() & taint::VAL;
+                    if ct != 0 {
+                        let st = &self.taint.sticky;
+                        st.set(st.get() | ct);
+                    }
                 }
                 match r {
                     Value::Ok(x) => Ok(*x),
@@ -951,6 +966,7 @@ impl<'p> Interp<'p> {
             // arm body. Arms are `c.recv() => body`. With eager `spawn`, channels
             // are pre-filled, so this is deterministic (first ready arm wins).
             Expr::Select(arms) => {
+                let mut lost = 0u8;
                 for arm in arms {
                     let Expr::MethodCall {
                         receiver, method, ..
@@ -970,9 +986,17 @@ impl<'p> Interp<'p> {
                     if T {
                         self.t_chan_access(&Value::Chan(q.clone()), "recv");
                     }
+                    // Which arm fires is the readiness of every queue looked at
+                    // up to it: the arm's body runs under the control taint of
+                    // all of them, and so does what runs after it if any arm
+                    // can leave the fn (a skipped arm is a branch not taken).
+                    if T {
+                        lost |= self.t_obj(&Value::Chan(q.clone())) & taint::VAL;
+                    }
                     let ready = q.borrow_mut().pop_front();
                     if ready.is_some() {
-                        return self.eval_t::<T>(&arm.body, env);
+                        let exits = lost != 0 && arms.iter().any(|a| taint::has_exit(&a.body));
+                        return self.t_branch(lost, exits, || self.eval_t::<T>(&arm.body, env));
                     }
                 }
                 panic("select: no channel was ready (cooperative interpreter — send before select)")
@@ -1766,6 +1790,47 @@ impl<'p> Interp<'p> {
         }
     }
 
+    /// `&&` / `||` in a sealed run, the left operand `lv` already evaluated. The
+    /// right operand runs only for one value of the left: a selection like
+    /// `if`'s, so it runs under the left's control taint, and a right operand
+    /// that can leave the fn or loop keeps everything after it control-dependent
+    /// too, taken or not (the sixth member of the "operator-side control flow"
+    /// class, round 13, amendment 114). Kept out of `eval_binop` so the ordinary
+    /// run's `&&` is the code it always was.
+    #[cold]
+    #[inline(never)]
+    fn short_circuit_tainted(&self, op: &BinOp, lv: Value, right: &Expr, env: &mut Env) -> R {
+        let and = matches!(op, BinOp::And);
+        let ct = self.tl::<true>();
+        if ct != 0 {
+            self.t_control_val_only();
+        }
+        let exits = ct != 0 && taint::has_exit(right);
+        // The value of the left that SKIPS the right operand.
+        if let Value::Bool(b) = lv {
+            if b != and {
+                // A branch not taken: when it could exit, whether it ran is still
+                // the left's bit.
+                if exits {
+                    self.t_branch(ct, exits, || Ok(()))?;
+                }
+                return Ok(Value::Bool(b));
+            }
+            return self.t_branch(ct, exits, || match self.eval_t::<true>(right, env)? {
+                Value::Bool(r) => Ok(Value::Bool(r)),
+                other if uncertain_parts(&other).is_some() => eval_binop_vals(op, lv, other),
+                other => panic(format!(
+                    "`{}` rhs must be bool, got {}",
+                    if and { "&&" } else { "||" },
+                    other.type_name()
+                )),
+            });
+        }
+        // lv is Uncertain (or other) — value-level path handles/errors.
+        let rv = self.t_branch(ct, exits, || self.eval_t::<true>(right, env))?;
+        eval_binop_vals(op, lv, rv)
+    }
+
     pub(super) fn eval_binop<const T: bool>(
         &self,
         op: &BinOp,
@@ -1779,6 +1844,9 @@ impl<'p> Interp<'p> {
         match op {
             BinOp::And => {
                 let lv = self.eval_t::<T>(left, env)?;
+                if T {
+                    return self.short_circuit_tainted(op, lv, right, env);
+                }
                 if let Value::Bool(false) = lv {
                     return Ok(Value::Bool(false));
                 }
@@ -1797,6 +1865,9 @@ impl<'p> Interp<'p> {
             }
             BinOp::Or => {
                 let lv = self.eval_t::<T>(left, env)?;
+                if T {
+                    return self.short_circuit_tainted(op, lv, right, env);
+                }
                 if let Value::Bool(true) = lv {
                     return Ok(Value::Bool(true));
                 }

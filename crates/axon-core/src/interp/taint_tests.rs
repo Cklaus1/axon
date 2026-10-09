@@ -1668,3 +1668,435 @@ fn a_native_registry_a_sealed_frame_wrote_taints_what_the_operator_reads_back() 
     check(&cases, Rules::TaintOnly);
     attacks_are_live(&cases);
 }
+
+// ── Amendment 114: operator-side control flow that depends on candidate data ───
+//
+// The class PSV-1 found a sixth member of in round 13: a branch, loop, exit or
+// short-circuit whose CONDITION is the candidate's. What runs under it, or after
+// an exit out of it, is the candidate's bit made into operator state, and a
+// selector read from that state chooses operator code. `taint::CONTROL_TABLE` lists every
+// construct; each conditional, repeated or exiting one has an ATTACK and a CONTROL here, and a
+// drift test fails if the table and `ast.rs` disagree.
+//
+// The attack is the reviewer's: the operator runs a side effect (`mark(op)`) under a
+// condition on the candidate's answer, then picks a closure from a table by the size
+// of the dict it marked. The candidate fixes which closure runs unless the marked
+// state carries the candidate's taint. Each attack COMPLETES with the rule off
+// (the right closure runs, keyed) and is REFUSED with it on; each control uses a
+// condition the operator wrote, and completes under both.
+
+const CTL_PRE: &str = "fn reference(x: i64) -> i64 { x * 2 }\nfn mark(op: Dict) -> bool {\n    dict_set(op, \"x\", 1)\n    true\n}\nfn bump(op: Dict, x: i64) -> i64 {\n    dict_set(op, to_str(x), 1)\n    x\n}\nfn okr() -> Result<i64, str> { Ok(4) }\nfn oo() -> Option<i64> { Some(4) }\nfn tq(op: Dict) -> Result<i64, str> {\n    let v = cr()?\n    let u = mark(op)\n    Ok(v)\n}\nfn tq_ok(op: Dict) -> Result<i64, str> {\n    let v = okr()?\n    let u = mark(op)\n    Ok(v)\n}\nfn tq_if(op: Dict) -> Result<i64, str> {\n    if cn() == 4 { let w = okr()? }\n    let u = mark(op)\n    Ok(1)\n}\nfn tq_if_ok(op: Dict) -> Result<i64, str> {\n    if 1 == 1 { let w = okr()? }\n    let u = mark(op)\n    Ok(1)\n}\nfn tr(op: Dict) -> i64 {\n    if cn() == 5 { return 0 }\n    let u = mark(op)\n    1\n}\nfn tr_ok(op: Dict) -> i64 {\n    if 1 == 1 { return 0 }\n    let u = mark(op)\n    1\n}\nfn tand(op: Dict) -> Result<i64, str> {\n    let z = cn() == 4 && { let w = okr()?\n        true }\n    let u = mark(op)\n    Ok(1)\n}\nfn tand_ok(op: Dict) -> Result<i64, str> {\n    let z = 1 == 1 && { let w = okr()?\n        true }\n    let u = mark(op)\n    Ok(1)\n}\nfn tand_skip(op: Dict) -> Result<i64, str> {\n    let z = cn() == 5 && { let w = okr()?\n        true }\n    let u = mark(op)\n    Ok(1)\n}\nfn tand_skip_ok(op: Dict) -> Result<i64, str> {\n    let z = 1 == 2 && { let w = okr()?\n        true }\n    let u = mark(op)\n    Ok(1)\n}\nfn tor_skip(op: Dict) -> Result<i64, str> {\n    let z = cn() == 4 || { let w = okr()?\n        true }\n    let u = mark(op)\n    Ok(1)\n}\nfn tor_skip_ok(op: Dict) -> Result<i64, str> {\n    let z = 1 == 1 || { let w = okr()?\n        true }\n    let u = mark(op)\n    Ok(1)\n}\n";
+const CTL_CAND: &str = "fn cn() -> i64 { 4 }\nfn cr() -> Result<i64, str> { Ok(4) }\nfn co() -> Option<i64> { Some(4) }\nfn drain(c: Chan<i64>) { let x = c.recv() }\n";
+const CTL_SEL: &str = "    let f = ops[dict_len(op)]\n    assert(f(21) == reference(21))";
+
+/// `op` the operator's dict, `ops` its table, then `body`, then the selector.
+fn ctl_body(body: &str) -> String {
+    format!("    let op = dict_new()\n{OPS}{body}\n{CTL_SEL}")
+}
+
+fn control_flow_cases() -> Vec<Case> {
+    use Expect::*;
+    let mut v: Vec<Case> = Vec::new();
+    let mut add = |name: &'static str, body: &str, expect: Expect| {
+        v.push(case(name, CTL_PRE, &ctl_body(body), CTL_CAND, expect));
+    };
+    // ── && and || (the round-13 finding) ──
+    add(
+        "ctl[and] attack: the right operand runs because the candidate's answer was 4",
+        "    let ok = (cn() == 4) && mark(op)",
+        Refused,
+    );
+    add(
+        "ctl[and] control: the right operand runs because of the operator's own condition",
+        "    let ok = (1 == 1) && mark(op)",
+        Ok,
+    );
+    add("ctl[and] attack: a local assigned in the right operand, sizing a loop", "    let k = 0\n    let ok = (cn() == 4) && { k = 1\n        true }\n    for i in 0..k { let u = mark(op) }", Refused);
+    add("ctl[and] control: a local assigned in the right operand under the operator's condition", "    let k = 0\n    let ok = (1 == 1) && { k = 1\n        true }\n    for i in 0..k { let u = mark(op) }", Ok);
+    add(
+        "ctl[and] attack: inside a closure",
+        "    let g = || (cn() == 4) && mark(op)\n    let ok = g()",
+        Refused,
+    );
+    add(
+        "ctl[and] control: inside a closure, the operator's condition",
+        "    let g = || (1 == 1) && mark(op)\n    let ok = g()",
+        Ok,
+    );
+    add(
+        "ctl[and] attack: a right operand that exits (`?`)",
+        "    let z = tand(op)",
+        Refused,
+    );
+    add(
+        "ctl[and] control: a right operand that exits, the operator's condition",
+        "    let z = tand_ok(op)",
+        Ok,
+    );
+    add(
+        "ctl[and] attack: a right operand that exits, SKIPPED by the candidate's answer",
+        "    let z = tand_skip(op)",
+        Refused,
+    );
+    add(
+        "ctl[and] control: a right operand that exits, skipped by the operator's condition",
+        "    let z = tand_skip_ok(op)",
+        Ok,
+    );
+    add(
+        "ctl[or] attack: a right operand that exits, SKIPPED by the candidate's answer",
+        "    let z = tor_skip(op)",
+        Refused,
+    );
+    add(
+        "ctl[or] control: a right operand that exits, skipped by the operator's condition",
+        "    let z = tor_skip_ok(op)",
+        Ok,
+    );
+    add(
+        "ctl[or] attack: the right operand runs because the candidate's answer was not 5",
+        "    let ok = (cn() == 5) || mark(op)",
+        Refused,
+    );
+    add(
+        "ctl[or] control: the right operand runs because of the operator's own condition",
+        "    let ok = (1 == 2) || mark(op)",
+        Ok,
+    );
+    // ── if / match ──
+    add(
+        "ctl[if] attack: a branch on the candidate's answer",
+        "    let ok = if cn() == 4 { mark(op) } else { false }",
+        Refused,
+    );
+    add(
+        "ctl[if] control: a branch on the operator's condition",
+        "    let ok = if 1 == 1 { mark(op) } else { false }",
+        Ok,
+    );
+    add(
+        "ctl[match] attack: an arm chosen by a guard that REFUSED the earlier arm",
+        "    let q = match 1 { x if cn() == 5 => 0, _ => { let u = mark(op)\n        1 } }",
+        Refused,
+    );
+    add(
+        "ctl[match] control: a guard of the operator's refusing the earlier arm",
+        "    let q = match 1 { x if 1 == 5 => 0, _ => { let u = mark(op)\n        1 } }",
+        Ok,
+    );
+    add("ctl[match] attack: a later guard evaluated because the candidate's guard refused the earlier arm", "    let q = match 1 { x if cn() == 5 => 0, y if mark(op) => 1, _ => 2 }", Refused);
+    add(
+        "ctl[match] control: a later guard evaluated because of the operator's guard",
+        "    let q = match 1 { x if 1 == 5 => 0, y if mark(op) => 1, _ => 2 }",
+        Ok,
+    );
+    add(
+        "ctl[match] attack: the arm taken for the candidate's answer",
+        "    let q = match cn() { 4 => { let u = mark(op)\n        1 } _ => 0 }",
+        Refused,
+    );
+    add(
+        "ctl[match] control: the arm taken for the operator's value",
+        "    let q = match 4 { 4 => { let u = mark(op)\n        1 } _ => 0 }",
+        Ok,
+    );
+    // ── loops ──
+    add(
+        "ctl[while] attack: a loop run while the candidate's answer allows",
+        "    let i = 0\n    while i < cn() - 3 { let u = mark(op)\n        i = i + 1 }",
+        Refused,
+    );
+    add(
+        "ctl[while] control: a loop run while the operator's bound allows",
+        "    let i = 0\n    while i < 1 { let u = mark(op)\n        i = i + 1 }",
+        Ok,
+    );
+    add("ctl[whilelet] attack: a loop run while the candidate's option is Some", "    let n = 0\n    while let Some(x) = (if n < 1 { co() } else { None }) { let u = mark(op)\n        n = n + 1 }", Refused);
+    add("ctl[whilelet] control: the same with the operator's option", "    let n = 0\n    while let Some(x) = (if n < 1 { oo() } else { None }) { let u = mark(op)\n        n = n + 1 }", Ok);
+    add(
+        "ctl[for] attack: a range sized by the candidate's answer",
+        "    for i in 0..(cn() - 3) { let u = mark(op) }",
+        Refused,
+    );
+    add(
+        "ctl[for] control: a range sized by the operator",
+        "    for i in 0..1 { let u = mark(op) }",
+        Ok,
+    );
+    // ── exits ──
+    add(
+        "ctl[break] attack: what runs after a `break` chosen by the candidate's answer",
+        "    for i in 0..3 { if i == cn() - 3 { break } }\n    let u = mark(op)",
+        Refused,
+    );
+    add(
+        "ctl[break] control: a `break` chosen by the operator",
+        "    for i in 0..3 { if i == 1 { break } }\n    let u = mark(op)",
+        Ok,
+    );
+    add(
+        "ctl[continue] attack: what runs after a `continue` chosen by the candidate's answer",
+        "    for i in 0..2 { if cn() == 5 { continue }\n        let u = mark(op) }",
+        Refused,
+    );
+    add(
+        "ctl[continue] control: a `continue` chosen by the operator",
+        "    for i in 0..2 { if 1 == 2 { continue }\n        let u = mark(op) }",
+        Ok,
+    );
+    add(
+        "ctl[return] attack: what runs after a `return` chosen by the candidate's answer",
+        "    let z = tr(op)",
+        Refused,
+    );
+    add(
+        "ctl[return] control: a `return` chosen by the operator is not taken here",
+        "    let z = if 1 == 2 { tr_ok(op) } else { 0 }\n    let u = mark(op)",
+        Ok,
+    );
+    add(
+        "ctl[question] attack: what runs after `?` on the candidate's result",
+        "    let z = tq(op)",
+        Refused,
+    );
+    add(
+        "ctl[question] control: `?` on the operator's result",
+        "    let z = tq_ok(op)",
+        Ok,
+    );
+    add(
+        "ctl[question] attack: a `?` inside a branch on the candidate's answer",
+        "    let z = tq_if(op)",
+        Refused,
+    );
+    add(
+        "ctl[question] control: a `?` inside the operator's branch",
+        "    let z = tq_if_ok(op)",
+        Ok,
+    );
+    // ── select, handlers, spawn, closures, callbacks ──
+    add("ctl[select] attack: the arm that fires because the candidate drained the other channel", "    let a = chan<i64>()\n    let b = chan<i64>()\n    a.send(7)\n    b.send(7)\n    drain(a)\n    let s = select { a.recv() => 0  b.recv() => { let u = mark(op)\n        1 } }", Refused);
+    add("ctl[select] control: the arm that fires because the operator never fed the other channel", "    let a = chan<i64>()\n    let b = chan<i64>()\n    b.send(7)\n    let s = select { a.recv() => 0  b.recv() => { let u = mark(op)\n        1 } }", Ok);
+    add("ctl[handler] attack: a handler arm that runs because the candidate's answer reached the effect", "    let r = with handler { on IO(p) => { let u = mark(op)\n        resume(Ok(\"x\")) } } {\n        if cn() == 4 { match read_file(\"/nonexistent/c9r13\") { Ok(s) => 1  Err(e) => 2 } } else { 3 }\n    }", Refused);
+    add("ctl[handler] control: a handler arm that runs because of the operator's condition", "    let r = with handler { on IO(p) => { let u = mark(op)\n        resume(Ok(\"x\")) } } {\n        if 1 == 1 { match read_file(\"/nonexistent/c9r13\") { Ok(s) => 1  Err(e) => 2 } } else { 3 }\n    }", Ok);
+    add(
+        "ctl[spawn] attack: a spawn body started because the candidate's answer was 4",
+        "    if cn() == 4 { spawn { let u = mark(op) } }",
+        Refused,
+    );
+    add(
+        "ctl[spawn] control: a spawn body started by the operator",
+        "    if 1 == 1 { spawn { let u = mark(op) } }",
+        Ok,
+    );
+    add(
+        "ctl[lambda] attack: a closure called because the candidate's answer was 4",
+        "    let g = |x| mark(op)\n    if cn() == 4 { let u = g(1) }",
+        Refused,
+    );
+    add(
+        "ctl[lambda] control: a closure called by the operator's condition",
+        "    let g = |x| mark(op)\n    if 1 == 1 { let u = g(1) }",
+        Ok,
+    );
+    // arr_any / arr_all / arr_find / arr_take_while / arr_drop_while stop (or go on) on
+    // what the callback returned: the 2nd call on runs after the 1st result. ops needs
+    // dict_len(op) == 1 here, so the callbacks mark one key per call and stop at the 2nd.
+    for (tag, call) in [
+        (
+            "any",
+            "arr_any([1, 2, 3], |x| { let u = bump(op, x)\n        x == cn() - 2 })",
+        ),
+        (
+            "all",
+            "arr_all([1, 2, 3], |x| { let u = bump(op, x)\n        x < cn() - 2 })",
+        ),
+        (
+            "find",
+            "arr_find([1, 2, 3], |x| { let u = bump(op, x)\n        x == cn() - 2 })",
+        ),
+        (
+            "take_while",
+            "arr_take_while([1, 2, 3], |x| { let u = bump(op, x)\n        x < cn() - 2 })",
+        ),
+        (
+            "drop_while",
+            "arr_drop_while([1, 2, 3], |x| { let u = bump(op, x)\n        x < cn() - 2 })",
+        ),
+    ] {
+        let (a, c): (&'static str, &'static str) = match tag {
+            "any" => (
+                "ctl[callback] attack: arr_any stopped by the candidate's answer",
+                "ctl[callback] control: arr_any stopped by the operator's",
+            ),
+            "all" => (
+                "ctl[callback] attack: arr_all stopped by the candidate's answer",
+                "ctl[callback] control: arr_all stopped by the operator's",
+            ),
+            "find" => (
+                "ctl[callback] attack: arr_find stopped by the candidate's answer",
+                "ctl[callback] control: arr_find stopped by the operator's",
+            ),
+            "take_while" => (
+                "ctl[callback] attack: arr_take_while stopped by the candidate's answer",
+                "ctl[callback] control: arr_take_while stopped by the operator's",
+            ),
+            _ => (
+                "ctl[callback] attack: arr_drop_while stopped by the candidate's answer",
+                "ctl[callback] control: arr_drop_while stopped by the operator's",
+            ),
+        };
+        let attack = format!("    let r = {call}");
+        let control = format!("    let r = {}", call.replace("cn()", "4"));
+        // Two keys written: ops[2 - 1] needs the index one lower.
+        let sel = "    let f = ops[dict_len(op) - 1]\n    assert(f(21) == reference(21))";
+        v.push(case(
+            a,
+            CTL_PRE,
+            &format!("    let op = dict_new()\n{OPS}{attack}\n{sel}"),
+            CTL_CAND,
+            Refused,
+        ));
+        v.push(case(
+            c,
+            CTL_PRE,
+            &format!("    let op = dict_new()\n{OPS}{control}\n{sel}"),
+            CTL_CAND,
+            Ok,
+        ));
+    }
+    v
+}
+
+#[test]
+fn operator_side_control_flow_on_candidate_data_carries_its_taint_into_what_it_runs() {
+    let cases = control_flow_cases();
+    check(&cases, Rules::TaintOnly);
+    check(&cases, Rules::Both);
+    attacks_are_live(&cases);
+}
+
+/// The table is the construct list: every `Expr` variant has a row, every row
+/// names a variant, a conditional/repeated/exiting row has an attack and a
+/// control, and `And`/`Or` are rows too.
+#[test]
+fn every_conditional_evaluation_form_in_the_ast_has_a_row_with_an_attack() {
+    use super::taint::{CONTROL_TABLE, SHORT_CIRCUIT_TABLE};
+    let ast = include_str!("../ast.rs");
+    let variants_of = |header: &str| -> Vec<String> {
+        let at = ast
+            .find(header)
+            .unwrap_or_else(|| panic!("{header} in ast.rs"));
+        let mut out = Vec::new();
+        for l in ast[at..].lines().skip(1) {
+            if l.starts_with('}') {
+                break;
+            }
+            let t = l.trim_start();
+            if l.starts_with("    ")
+                && !l.starts_with("     ")
+                && !t.starts_with("//")
+                && !t.starts_with('#')
+            {
+                let name: String = t.chars().take_while(|c| c.is_alphanumeric()).collect();
+                if name.chars().next().is_some_and(|c| c.is_uppercase()) {
+                    out.push(name);
+                }
+            }
+        }
+        out
+    };
+    let exprs = variants_of("pub enum Expr {");
+    assert!(
+        exprs.len() > 30,
+        "DRIFT: could not read the Expr variants: {exprs:?}"
+    );
+    for e in &exprs {
+        assert!(
+            CONTROL_TABLE.iter().any(|r| r.0 == e),
+            "DRIFT: Expr::{e} has no row in taint::CONTROL_TABLE (is its evaluation conditional, repeated or an exit?)"
+        );
+    }
+    for r in CONTROL_TABLE {
+        assert!(
+            exprs.iter().any(|e| e == r.0),
+            "DRIFT: CONTROL_TABLE row `{}` names no Expr variant",
+            r.0
+        );
+        assert!(
+            ["conditional", "repeated", "exit", "straight"].contains(&r.1),
+            "kind of {}",
+            r.0
+        );
+        assert!(!r.2.is_empty(), "{} has no stated site", r.0);
+    }
+    let binops = variants_of("pub enum BinOp {");
+    for (op, _, _) in SHORT_CIRCUIT_TABLE {
+        assert!(
+            binops.iter().any(|b| b == op),
+            "DRIFT: SHORT_CIRCUIT_TABLE row {op} is not a BinOp"
+        );
+    }
+    // The evaluator short-circuits exactly the BinOps in the table.
+    let ev = sources()
+        .into_iter()
+        .find(|(f, _)| *f == "interp/eval.rs")
+        .unwrap()
+        .1;
+    let at = ev.find("pub(super) fn eval_binop").expect("eval_binop");
+    let head = &ev[at..at + 5000];
+    for op in ["And", "Or"] {
+        assert!(
+            head.contains(&format!("BinOp::{op} =>")),
+            "DRIFT: eval_binop does not short-circuit {op} as the table says"
+        );
+        assert!(
+            SHORT_CIRCUIT_TABLE.iter().any(|r| r.0 == op),
+            "DRIFT: BinOp::{op} short-circuits, no row"
+        );
+    }
+    // Every non-straight row, and both short-circuit rows, has an attack and a control.
+    let cases = control_flow_cases();
+    let has = |tag: &str, kind: &str| {
+        cases
+            .iter()
+            .any(|c| c.name.starts_with(&format!("ctl[{tag}] {kind}")))
+    };
+    let tags: Vec<&str> = CONTROL_TABLE
+        .iter()
+        .filter(|r| r.1 != "straight" || r.3 != "-")
+        .inspect(|r| {
+            assert!(
+                r.3 != "-",
+                "DRIFT: the {} row `{}` has no attack/control tag",
+                r.1,
+                r.0
+            )
+        })
+        .map(|r| r.3)
+        .chain(SHORT_CIRCUIT_TABLE.iter().map(|r| r.2))
+        .collect();
+    for t in &tags {
+        assert!(
+            has(t, "attack"),
+            "DRIFT: table tag `{t}` has no attack case"
+        );
+        assert!(
+            has(t, "control"),
+            "DRIFT: table tag `{t}` has no control case"
+        );
+    }
+    // ...and every tag a case uses is a table tag.
+    for c in &cases {
+        let tag = c
+            .name
+            .strip_prefix("ctl[")
+            .and_then(|r| r.split(']').next())
+            .unwrap();
+        assert!(
+            tags.contains(&tag),
+            "DRIFT: case `{}` has a tag no table row names",
+            c.name
+        );
+    }
+}

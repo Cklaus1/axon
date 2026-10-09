@@ -7200,8 +7200,8 @@ three are closed here; the rest of this amendment is what was changed, what was 
           step's call site (one contiguous edit). Either layer alone is redundant and is NOT counted killed; the joint edit reopens the attack
           (SURVIVORS>=1) and is KILLED by its own marker. This is a joint row, not a four-cell retirement: no paired-disable record was made.
        6. M322 re-anchored: `rustfmt` joined two lines of `submit.rs` that eqgate8 had left unformatted.
-     - **rustfmt.** `cargo fmt --all` had drift from eqgate8 (nine files; six production files of axon-fabric: `backend.rs`, `custodian.rs`,
-       `observer.rs`, `psv.rs`, `submit.rs`, formatting only). Applied so that `cargo fmt --check` is rc 0; the only row it moved was M322.
+     - **rustfmt.** `cargo fmt --all` had drift from eqgate8 (nine files; five production files of axon-fabric: `backend.rs`, `custodian.rs`,
+       `observer.rs`, `psv.rs`, `submit.rs`, formatting only; the count read "six" until amendment 114). Applied so that `cargo fmt --check` is rc 0; the only row it moved was M322.
      - **Evidence** (every line rc-checked; hosts: `gm` = gpumaster; `local` = this host as root; commits abbreviated):
 
        | Check | Where, at | Result |

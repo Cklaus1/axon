@@ -6444,7 +6444,166 @@ fn run_check_pipeline_located(
     Vec<axon_core::PipelineDiagnostic>,
     axon_core::infer::InferCtx,
 ) {
+    let sealed = axon_core::resolver::sealed_module_dirs();
+    if sealed.is_empty() {
+        let mut dropped = Vec::new();
+        return run_check_pipeline_inner(
+            program,
+            src,
+            source_path,
+            true,
+            SealView::Whole,
+            None,
+            &mut dropped,
+        );
+    }
+    // `axon test --seal`: the candidate's items are judged by a check that
+    // never saw the operator's (C9 round 13, amendment 114). Run on the merged
+    // program, an operator name in a candidate position said so (`cannot use
+    // `X`, which the operator's code defines`) where a name nothing defines said
+    // "cannot find name"/"unknown type"/"no type or module", one text per
+    // position, and a struct literal or an enum pattern of the operator's was
+    // refused where the missing one was accepted. Nothing can be made to differ
+    // between the two cases that is not there to look at: every diagnostic in a
+    // sealed file comes from a pipeline over the SEALED items alone, where an
+    // operator name IS a name nothing defines.
+    //
+    // The candidate's `use` declarations carry no span, so the merged check cannot
+    // tell them from the operator's: they are set aside for the merged check (and
+    // put back after it) and judged by the sealed-only one, where a module the
+    // operator declares is a module nothing declares.
+    let entry_uses: std::collections::HashSet<(Vec<String>, Vec<String>)> = program
+        .items
+        .iter()
+        .filter_map(|it| match it {
+            axon_core::ast::Item::UseDecl(u) => Some((u.path.clone(), u.items.clone())),
+            _ => None,
+        })
+        .collect();
+    let mut decls = sealed_module_decls(&sealed);
+    decls.uses.retain(|u| !entry_uses.contains(u));
+    let mut dropped_merged = Vec::new();
+    let (merged, ictx) = run_check_pipeline_inner(
+        program,
+        src,
+        source_path,
+        true,
+        SealView::OperatorsOnly,
+        Some(&decls.uses),
+        &mut dropped_merged,
+    );
+    let mut iso = axon_core::ast::Program {
+        items: program
+            .items
+            .iter()
+            .filter(|it| axon_core::resolver::item_in_sealed(it, &sealed, &decls))
+            .cloned()
+            .collect(),
+    };
+    let mut none = Vec::new();
+    let (mut iso_diags, _) = run_check_pipeline_inner(
+        &mut iso,
+        src,
+        source_path,
+        false,
+        SealView::SealedOnly,
+        None,
+        &mut none,
+    );
+    let mut diags = merged;
+    if iso_diags.is_empty() {
+        // The sealed-only check found nothing: anything the merged check said
+        // about a sealed file is the backstop (E0004), kept so it still refuses.
+        diags.extend(dropped_merged.into_iter().filter(|d| d.severity == "error"));
+    } else {
+        diags.append(&mut iso_diags);
+    }
+    axon_core::collapse_refined_type_errors(&mut diags);
+    axon_core::collapse_unresolved_duplicates(&mut diags);
+    (diags, ictx)
+}
+
+/// Which diagnostics a run of the pipeline keeps (see
+/// [`run_check_pipeline_located`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SealView {
+    /// No sealing: every diagnostic.
+    Whole,
+    /// The merged program: diagnostics about files outside the sealed set only.
+    OperatorsOnly,
+    /// The sealed-only program: diagnostics about the sealed files only.
+    SealedOnly,
+}
+
+/// The `mod` and `use` declarations the sealed files make (they carry no span,
+/// so which of the program's declarations are the candidate's is read off the
+/// files themselves).
+fn sealed_module_decls(sealed: &[PathBuf]) -> axon_core::resolver::SealedDecls {
+    let mut d = axon_core::resolver::SealedDecls::default();
+    fn walk(dir: &Path, d: &mut axon_core::resolver::SealedDecls, depth: u8) {
+        if depth > 8 {
+            return;
+        }
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, d, depth + 1);
+            } else if p.extension().is_some_and(|x| x == "ax") {
+                if let Ok(src) = std::fs::read_to_string(&p) {
+                    if let Ok(prog) = parse_source(&src) {
+                        for it in prog.items {
+                            match it {
+                                axon_core::ast::Item::ModDecl(m) => {
+                                    d.mods.insert(m.name);
+                                }
+                                axon_core::ast::Item::UseDecl(u) => {
+                                    d.uses.insert((u.path, u.items));
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for dir in sealed {
+        walk(dir, &mut d, 0);
+    }
+    d
+}
+
+fn run_check_pipeline_inner(
+    program: &mut axon_core::ast::Program,
+    src: &str,
+    source_path: &Path,
+    load_modules: bool,
+    view: SealView,
+    hide_uses: Option<&std::collections::HashSet<(Vec<String>, Vec<String>)>>,
+    dropped: &mut Vec<axon_core::PipelineDiagnostic>,
+) -> (
+    Vec<axon_core::PipelineDiagnostic>,
+    axon_core::infer::InferCtx,
+) {
     use axon_core::PipelineDiagnostic;
+    let sealed_dirs = axon_core::resolver::sealed_module_dirs();
+    // Whether a diagnostic about `file` belongs to the other half of the split.
+    let masked = |file: &str, line: u32| -> bool {
+        if view == SealView::Whole {
+            return false;
+        }
+        let p = PathBuf::from(file);
+        let p = p.canonicalize().unwrap_or(p);
+        let in_sealed = sealed_dirs.iter().any(|d| p.starts_with(d));
+        // A diagnostic with no line (no span: a `use` declaration) is attributed to
+        // the entry file; in the sealed-only program it can only be the sealed
+        // items', so it is kept there.
+        let sealed_side = in_sealed || (view == SealView::SealedOnly && line == 0);
+        (view == SealView::OperatorsOnly) == sealed_side
+    };
     let file = source_path.display().to_string();
     let source_map = axon_core::span::SourceMap::new(src.to_string());
     let mut diags: Vec<PipelineDiagnostic> = Vec::new();
@@ -6537,7 +6696,12 @@ fn run_check_pipeline_located(
     // Step 0: load modules referenced by `use` declarations (AXON_PATH search).
     // MergeErrors carry no span (they're file-level), so line/col stay 0.
     let search_dirs = axon_core::axon_search_dirs(std::env::current_exe().ok().as_deref());
-    for e in axon_core::load_use_decls(program, &search_dirs) {
+    let load_errors = if load_modules {
+        axon_core::load_use_decls(program, &search_dirs)
+    } else {
+        Vec::new()
+    };
+    for e in load_errors {
         // A MergeError is about the ENTRY file's `use` line (the module it
         // names could not be found or is circular), so the entry file is the
         // right label here — unlike everything below, which is about a span.
@@ -6550,6 +6714,23 @@ fn run_check_pipeline_located(
             0,
             0,
         );
+    }
+
+    // The `use` declarations set aside for this run (see the wrapper), put back at the end.
+    let mut hidden: Vec<(usize, axon_core::ast::Item)> = Vec::new();
+    if let Some(set) = hide_uses {
+        let mut kept = Vec::with_capacity(program.items.len());
+        for (i, it) in std::mem::take(&mut program.items).into_iter().enumerate() {
+            match &it {
+                axon_core::ast::Item::UseDecl(u)
+                    if set.contains(&(u.path.clone(), u.items.clone())) =>
+                {
+                    hidden.push((i, it));
+                }
+                _ => kept.push(it),
+            }
+        }
+        program.items = kept;
     }
 
     // Step 1: name resolution
@@ -6603,6 +6784,9 @@ fn run_check_pipeline_located(
             help: warn.fix.clone(),
         };
         if suppressed_as_session_prelude(&d.code, d.line) {
+            continue;
+        }
+        if masked(&d.file, d.line) {
             continue;
         }
         if !std::io::stderr().is_terminal() {
@@ -6701,6 +6885,9 @@ fn run_check_pipeline_located(
                 found: err.found.clone(),
                 help: err.fix.clone(),
             };
+            if masked(&wd.file, wd.line) {
+                continue;
+            }
             if !std::io::stderr().is_terminal() {
                 eprintln!("{}", wd.json());
             } else {
@@ -6863,6 +7050,18 @@ fn run_check_pipeline_located(
             line,
             col,
         );
+    }
+
+    for (i, it) in hidden {
+        program.items.insert(i, it);
+    }
+
+    // The split of a `--seal` check: keep this run's half, hand back the rest.
+    if view != SealView::Whole {
+        let (keep, rest): (Vec<_>, Vec<_>) =
+            diags.drain(..).partition(|d| !masked(&d.file, d.line));
+        diags = keep;
+        *dropped = rest;
     }
 
     // Collapse byte-identical diagnostics. Some checks fire per-operand: `"a" +

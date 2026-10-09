@@ -57,3 +57,94 @@ fn an_unclassified_interpreter_commit_is_refused() {
         "{err}"
     );
 }
+
+/// `pci_delta.py --check` with one in-memory change (`--plant KEY:OLD=>NEW`): the output, and
+/// whether it passed. The unplanted check passes (above), so each failure below is the plant's.
+fn check_with_plant(plant: &str) -> (bool, String) {
+    let r = repo_root();
+    let o = script(
+        "python3",
+        r.join("scripts/pci_delta.py"),
+        Bins::NoWorkspaceBinary,
+    )
+    .args(["--check", "--plant", plant])
+    .current_dir(&r)
+    .env("PYTHONDONTWRITEBYTECODE", "1")
+    .env_remove("PYTHONPATH")
+    .output()
+    .unwrap();
+    let out = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    (o.status.success(), out)
+}
+
+/// The note's gate table is compared with the gate script on label, package/target AND the
+/// result each row prints, not on labels alone (round-13 PSV-3: `PASS 1/1` -> `PASS 2/2`, and
+/// `axon-core/lib` -> `axon-psv/lib` on an am108 row, both passed the check that read labels).
+#[test]
+fn a_wrong_result_or_target_in_the_notes_gate_table_is_refused() {
+    let row =
+        "| am108 a native registry a sealed frame wrote is tainted | axon-core/lib | PASS 1/1 |";
+    for (what, new) in [
+        ("result", row.replace("PASS 1/1", "PASS 2/2")),
+        ("target", row.replace("axon-core/lib", "axon-psv/lib")),
+    ] {
+        let (ok, out) = check_with_plant(&format!("note:{row}=>{new}"));
+        assert!(
+            !ok && out.contains("coverage table"),
+            "ATTACK: a wrong {what} in the note's gate table was accepted:\n{out}"
+        );
+    }
+}
+
+/// The claim's two amendment lists are derived, not retyped: dropping am108 and am114 from the
+/// delta list, or naming only am100 and am102 as the amendments whose arms are verified, fails.
+#[test]
+fn a_stale_amendment_list_in_the_claim_is_refused() {
+    for (key, plant, fragment) in [
+        (
+            "the delta list",
+            "verdict:/102/106/108/114 (the delta=>/102/106 (the delta",
+            "delta amendment list",
+        ),
+        (
+            "the arms list",
+            "verdict:am100, am102, am106, am108 and am114 (=>am100 and am102 (",
+            "amendments whose arms are verified",
+        ),
+    ] {
+        let (ok, out) = check_with_plant(plant);
+        assert!(
+            !ok && out.contains(fragment),
+            "ATTACK: a stale claim list ({key}) was accepted:\n{out}"
+        );
+    }
+}
+
+/// A mutation row's test is run by a gate row only if a row names it under the SAME package and
+/// target, by its exact name; a substring of another test's name, or the right name under the
+/// wrong package, is no gate.
+#[test]
+fn a_test_the_gate_runs_under_another_package_or_name_is_no_gate() {
+    let name = "operator_side_control_flow_on_candidate_data_never_selects_operator_code";
+    let right = format!("|axon-psv|sealed_frames|{name}\"");
+    for (what, wrong) in [
+        (
+            "another package",
+            format!("|axon-core|sealed_frames|{name}\""),
+        ),
+        (
+            "a name that only contains it",
+            format!("|axon-psv|sealed_frames|x_{name}\""),
+        ),
+    ] {
+        let (ok, out) = check_with_plant(&format!("gates:{right}=>{wrong}"));
+        assert!(
+            !ok && out.contains("is run by no gate row"),
+            "ATTACK: a gate row with {what} counted as running the test:\n{out}"
+        );
+    }
+}

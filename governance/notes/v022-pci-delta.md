@@ -182,9 +182,9 @@ account and are NOT mechanically verified; the files and commits above are):
 
 ## (b) Coverage: PCI gate rows, and the mutation rows
 
-`scripts/v022_pci_gates.sh` has 71 rows at this head: the original 18 (surfaces 1-21), ten
+`scripts/v022_pci_gates.sh` has 77 rows at this head: the original 18 (surfaces 1-21), ten
 added by amendment 84, one group per delta amendment (53, 60, 72 incl. its dict snapshot, 78), two for
-amendment 83's dispatch rule (integration), and six for amendment 94 (the `&mut` edge-back cast, the `&mut` operand in the dispatch analysis, the fn-value seal edge and the Rc/copy-on-write observation, each unit and runner where both exist), nine for amendment 96 (sandbox_run's cast, the one global-read edge, the fn-value mark, the unary width arm, the classified user-code builtins and the handler-expression cost), and six for amendment 100 (a handler arm's pin owner, the name sinks, the existence oracle and the drift tests), and seven for amendment 102 (the runtime taint: the closure picks, the names, the impl and width, the carriers, an ordinary run, the drift tests and the runner leg; plus the sweep step that runs every rule-on interpreter test with only the taint on), and five for amendment 106 (channel state and the areas not hunted before, every reader of shared state after a sealed write, the existence oracle on every path TESTED, the drift tests, and the runner leg), and four for amendment 108 (comparisons and builtin arguments read the shared objects inside them, the existence oracle on the method path, a native registry as world state, and the runner leg), each with
+amendment 83's dispatch rule (integration), and six for amendment 94 (the `&mut` edge-back cast, the `&mut` operand in the dispatch analysis, the fn-value seal edge and the Rc/copy-on-write observation, each unit and runner where both exist), nine for amendment 96 (sandbox_run's cast, the one global-read edge, the fn-value mark, the unary width arm, the classified user-code builtins and the handler-expression cost), and six for amendment 100 (a handler arm's pin owner, the name sinks, the existence oracle and the drift tests), and seven for amendment 102 (the runtime taint: the closure picks, the names, the impl and width, the carriers, an ordinary run, the drift tests and the runner leg; plus the sweep step that runs every rule-on interpreter test with only the taint on), and five for amendment 106 (channel state and the areas not hunted before, every reader of shared state after a sealed write, the existence oracle on every path TESTED, the drift tests, and the runner leg), and five for amendment 108 (comparisons and builtin arguments read the shared objects inside them, the existence oracle on the method path, a native registry as world state, the runner leg of the comparison, and the runner row of the method path at check time), and five for amendment 114 (the control taint of every conditional, repeated or exiting form, the drift test of the control table, its runner leg, the existence oracle on the static path, and the note's own planted-change checks), each with
 unit tests in `interp.rs`/`conform.rs` AND a real-runner test (`axon_psv::runner::run`, in
 `crates/axon-psv/tests/sealed_frames.rs`). The gate fails if a named test is absent (grep), renamed,
 filtered out or `#[ignore]`d (the passed count must equal the named count). Verified to discriminate:
@@ -288,6 +288,7 @@ Mutation rows whose target is `crates/axon-core/src` and which are not retired (
 | amendment 102 | M2700-M2767, matrix A219-A224 |
 | amendment 106 | M2910-M2946 (M2929 not issued; M2940-M2946 runner legs), matrix A239-A244 |
 | amendment 108 | M3030-M3042 (M3033, M3035, M3038 runner legs), matrix A249-A253 |
+| amendment 114 | M3230-M3266 (M3242-M3253 and M3260 static names, runner; M3256-M3259 runner legs of the control taint; M3261-M3266 the note's own checks; M3252 not issued), matrix A280-A284 |
 
 FREEZE OBLIGATION, not a present fact: the claims spec says these rows are re-run at the frozen head.
 What the freeze procedure must show is a joined paired-disable run at the frozen head in which each of
@@ -299,9 +300,11 @@ Coverage of the PRODUCTION PAIR (the static layer plus the taint, as shipped): i
 from the production route ALONE is not observable, because the unit-test switch `TAINT_FORCE_ON` is
 `cfg(test)` and no shipped binary has the taint off; so the runner rows of amendment 100 (`axon-psv`; four
 of its five duplicates were withdrawn by amendment 102) and the runner legs of amendments 96 and 100 are CORROBORATION of the
-unit rows, and are labelled so in the gate script. The same holds for amendment 108's runner legs
-(M3033, M3035, M3038): the production route refuses those attacks by the taint first (M3038 by the checker's
-E0403), so each unit row is the evidence and the runner row is a second witness.
+unit rows, and are labelled so in the gate script. So are the runner legs of amendments 106, 108 and 114, each labelled
+`(runner leg, corroboration)` there: the production route refuses those attacks by the taint first, so each unit row is the
+evidence and the runner row is a second witness (am108's M3033 and M3035; am114's M3256-M3259). Two runner rows are NOT
+corroboration and are not labelled so: the method oracle at check time (am108, M3038) and the names twin (am114, M3242-M3253)
+test the static CHECK, which only the real `axon test --seal` binary runs, so for the checker path the runner test is the only witness.
 
 Round 12 (c9r12/psv1v, `9a95c9ce`, gpumaster, `--only=<ids>`, two shards): all 316 active rows whose target is `crates/axon-core/src` were re-run, 316/316 KILLED by their own
 attack, 0 REFUSED_ELSEWHERE, 0 stale. Still a sample run (`--only`), not the scope run the freeze requires.

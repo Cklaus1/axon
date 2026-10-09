@@ -1454,9 +1454,27 @@ impl<'a> Resolver<'a> {
                 }
                 // TypeDef / EnumDef / ModDecl / TraitDef have no expressions to walk.
                 Item::LetDef { value, .. } => self.resolve_expr(value),
+                // A sealed refinement's predicate is resolved (see `resolve_fn`).
+                Item::RefineDef(r) if self.in_sealed_file(r.span) => {
+                    self.table.push_scope();
+                    self.table.define(
+                        "_".to_string(),
+                        Symbol::Local {
+                            name: "_".to_string(),
+                        },
+                    );
+                    self.resolve_expr(&r.predicate);
+                    self.table.pop_scope();
+                }
                 _ => {}
             }
         }
+    }
+
+    /// Whether `span` lies in a sealed file of a `--seal` run.
+    fn in_sealed_file(&self, span: crate::span::Span) -> bool {
+        let dirs = sealed_module_dirs();
+        !dirs.is_empty() && span_in_sealed(span, &dirs)
     }
 
     fn resolve_fn(&mut self, f: &FnDef) {
@@ -1495,6 +1513,27 @@ impl<'a> Resolver<'a> {
         }
 
         self.resolve_expr(&f.body);
+
+        // A SEALED fn's `@[verify]` predicate is resolved too, so a name in it
+        // that nothing defines is refused as it is in a body (amendment 114: an
+        // operator fn named there was refused E0004 while a missing one was
+        // accepted). The names the runtime binds for it are `value`,
+        // `confidence`, `source_tag`.
+        if let Some(v) = &f.verify {
+            if self.in_sealed_file(f.span) {
+                self.table.push_scope();
+                for n in ["value", "confidence", "source_tag"] {
+                    self.table.define(
+                        n.to_string(),
+                        Symbol::Local {
+                            name: n.to_string(),
+                        },
+                    );
+                }
+                self.resolve_expr(&v.predicate);
+                self.table.pop_scope();
+            }
+        }
 
         // Unused-local lint (W0006): a `let`-binding whose name is never read.
         self.check_unused_locals(&f.body);
@@ -2286,6 +2325,33 @@ pub fn set_sealed_module_dirs(dirs: &[std::path::PathBuf]) {
         .map(|d| d.canonicalize().unwrap_or_else(|_| d.clone()))
         .collect();
     *SEALED_DIRS.lock().unwrap_or_else(|p| p.into_inner()) = canon;
+}
+
+/// The `mod`/`use` declarations the sealed files themselves make (they carry no
+/// span, so a declaration is the candidate's if a sealed file makes it).
+#[derive(Default)]
+pub struct SealedDecls {
+    pub mods: std::collections::HashSet<String>,
+    pub uses: std::collections::HashSet<(Vec<String>, Vec<String>)>,
+}
+
+/// Whether `item` belongs to the sealed set: a span in a sealed file, or (for
+/// the spanless `mod`/`use`) a declaration a sealed file makes.
+pub fn item_in_sealed(item: &Item, sealed: &[std::path::PathBuf], decls: &SealedDecls) -> bool {
+    let span = match item {
+        Item::FnDef(f) => f.span,
+        Item::TypeDef(t) => t.span,
+        Item::EnumDef(e) => e.span,
+        Item::TraitDef(t) => t.span,
+        Item::ImplBlock(b) => b.span,
+        Item::RefineDef(r) => r.span,
+        Item::LetDef { span, .. } => *span,
+        Item::ModDecl(m) => return decls.mods.contains(&m.name),
+        Item::UseDecl(u) => {
+            return decls.uses.contains(&(u.path.clone(), u.items.clone()));
+        }
+    };
+    span_in_sealed(span, sealed)
 }
 
 /// The sealed directories currently in force (see [`set_sealed_module_dirs`]).

@@ -44,6 +44,10 @@ struct Seen {
     status: GuestStatus,
     host: Option<bool>,
     stdout: String,
+    /// The test's stderr: a CHECK-TIME refusal goes here, not to stdout.
+    stderr: String,
+    /// The run's temp directory, which paths in a message name.
+    root: String,
 }
 
 /// Run `test` of `suite` (entry `main.ax`, plus `files` beside it) against
@@ -136,11 +140,14 @@ fn check(suite: &str, files: &[(&str, &str)], candidate: &str, test: &str) -> Se
     };
     let v = run(&cfg);
     let stdout = std::fs::read_to_string(cfg.out.join("test-stdout")).unwrap_or_default();
+    let stderr = std::fs::read_to_string(cfg.out.join("test-stderr")).unwrap_or_default();
     let host = keyed_outcome(&stdout, test, &completion_key(&secret, &m));
     Seen {
         status: v.status,
         host,
         stdout,
+        stderr,
+        root: d.path().display().to_string(),
     }
 }
 
@@ -1706,56 +1713,163 @@ fn the_taint_name_rule_refuses_what_the_static_name_analysis_lets_through() {
     all_refused(fails);
 }
 
-/// Amendment 106: a sealed caller's refusal does not say whether the operator
-/// defines a name. Run through the runner, the text for an operator fn, an
-/// operator global and a name nothing defines is the same text.
+/// What the candidate can READ of one run: every diagnostic printed at check time
+/// (test-STDERR) and every line printed at run time (test-STDOUT), with the
+/// temp directory and the durations taken out. The first version of this twin read
+/// stdout only, and a check-time refusal goes to stderr, so it compared two empty
+/// strings and passed (round-13 SENTINEL).
+fn candidate_visible(s: &Seen) -> String {
+    let strip = |l: &str, key: &str| -> String {
+        // Remove `"<key>":"..."` (a value without quotes inside).
+        match l.find(&format!("\"{key}\":\"")) {
+            Some(at) => {
+                let rest = &l[at + key.len() + 4..];
+                let end = rest.find('"').map_or(rest.len(), |e| e + 1);
+                format!("{}{}", &l[..at], &rest[end..])
+            }
+            None => l.to_string(),
+        }
+    };
+    let mut out = String::new();
+    for l in s.stderr.lines().chain(s.stdout.lines()) {
+        let l = l.trim();
+        if l.is_empty()
+            || l.starts_with("running ")
+            || l.starts_with("test result")
+            || l.starts_with("STDERR")
+        {
+            continue;
+        }
+        let l = strip(&strip(l, "file"), "completion").replace(&s.root, "<D>");
+        // `module `sol` at <tmp>/candidate/sol.ax: parse error`
+        let mut l = l;
+        while let Some(at) = l.find("\"duration_ms\":") {
+            let n = l[at + 14..]
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .count();
+            l = format!("{}{}", &l[..at], &l[at + 14 + n..]);
+        }
+        let l = match (l.find(" at /"), l.find("/candidate/sol.ax")) {
+            (Some(a), Some(b)) if a < b => format!("{} at <D>{}", &l[..a], &l[b..]),
+            _ => l,
+        };
+        // `test accept ... ok (1.0ms)`
+        let l = match l.rfind(" (") {
+            Some(at) if l.ends_with("ms)") => l[..at].to_string(),
+            _ => l,
+        };
+        out.push_str(&l);
+        out.push('\n');
+    }
+    out
+}
+
+/// Amendment 106 / 114: a sealed caller's refusal does not say whether the operator
+/// defines a name. Run through the runner with the check-time text included, the
+/// refusal for an operator fn, global, type, enum, trait, struct literal, pattern,
+/// annotation... and for a name nothing defines is the same text, and the same
+/// ACCEPT/REFUSE.
 #[test]
 fn a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one() {
-    let su = |uses: &str| {
-        format!("mod sol\nuse sol.{{{uses}}}\nlet TABLE = [41, 42]\nfn secret() -> i64 {{ 41 }}\nfn nonadapt(n: i64) -> i64 {{ n }}\n@[test]\nfn accept() {{\n  assert_eq(solve(), 41)\n}}\n")
-    };
-    let text = |name: &str, form: &str| {
-        let cand = format!(
-            "pub fn solve() -> i64 {{ {} }}\n",
-            form.replace("{N}", name)
-        );
-        let s = check(&su("solve"), &[], &cand, "accept");
-        let line = s
-            .stdout
-            .split("\"message\":\"")
-            .nth(1)
-            .and_then(|m| m.split("\",\"").next())
-            .unwrap_or("")
-            .to_string();
-        assert!(
-            refused_unkeyed(&s) || form.contains("goal_run"),
-            "{name} {form}: {:?} {}",
-            s.status,
-            s.stdout
-        );
-        (s.status, line.replace(name, "@"))
+    let su = "mod sol\nmod opmod\nuse sol.{solve}\ntrait Sc {\n    fn score(self) -> i64\n}\nimpl Sc for i64 {\n    fn score(self: i64) -> i64 { 41 }\n}\ntype OT = { k: i64 }\ntype OE = P | Q\nlet OG = 5\nlet TABLE = [41, 42]\nfn ofn(x: i64) -> i64 { x }\nfn secret() -> i64 { 41 }\nfn nonadapt(n: i64) -> i64 { n }\n@[test]\nfn accept() {\n  assert_eq(solve(), 41)\n}\n";
+    // (position, body naming the operator's, body naming the same shape of a
+    // missing name, item before `solve` naming the operator's, ... the missing's)
+    let forms: &[(&str, &str, &str, &str, &str)] = &[
+        ("fn call", "ofn(1)", "zfn(1)", "", ""),
+        ("fn value", "let g = ofn\n 41", "let g = zfn\n 41", "", ""),
+        ("global", "OG", "ZG", "", ""),
+        ("global index", "TABLE[0]", "ZTABLE[0]", "", ""),
+        ("global field", "TABLE.k", "ZTABLE.k", "", ""),
+        ("assign", "OG = 6\n 41", "ZG = 6\n 41", "", ""),
+        ("struct literal", "let t = OT { k: 1 }\n 41", "let t = ZT { k: 1 }\n 41", "", ""),
+        ("field of a struct literal", "(OT { k: 1 }).k", "(ZT { k: 1 }).k", "", ""),
+        ("let annotation", "let t: OT = mk()\n 41", "let t: ZT = mk()\n 41", "", ""),
+        ("own annotation", "own t: OT = mk()\n 41", "own t: ZT = mk()\n 41", "", ""),
+        ("cast", "mk() as OT", "mk() as ZT", "", ""),
+        ("option annotation", "let a: Option<OT> = None\n 41", "let a: Option<ZT> = None\n 41", "", ""),
+        ("array annotation", "let a: [OT] = []\n 41", "let a: [ZT] = []\n 41", "", ""),
+        ("fn type annotation", "let a: fn(OT) -> i64 = |x| 1\n 41", "let a: fn(ZT) -> i64 = |x| 1\n 41", "", ""),
+        ("lambda parameter", "let f = |x: OT| 1\n 41", "let f = |x: ZT| 1\n 41", "", ""),
+        ("param type", "41", "41", "fn pt(x: OT) -> i64 { 1 }\n", "fn pt(x: ZT) -> i64 { 1 }\n"),
+        ("return type", "41", "41", "fn pt() -> OT { mk() }\n", "fn pt() -> ZT { mk() }\n"),
+        ("struct field type", "41", "41", "type CT = { a: OT }\n", "type CT = { a: ZT }\n"),
+        ("enum field type", "41", "41", "type CE = A { a: OT } | B\n", "type CE = A { a: ZT } | B\n"),
+        ("trait method type", "41", "41", "trait CTr { fn m(self, x: OT) -> i64 }\n", "trait CTr { fn m(self, x: ZT) -> i64 }\n"),
+        ("refinement base", "41", "41", "type CR = OT where _.k > 0\n", "type CR = ZT where _.k > 0\n"),
+        ("refinement predicate", "41", "41", "type CP = i64 where _ > ofn(0)\n", "type CP = i64 where _ > zfn(0)\n"),
+        ("verify predicate", "41", "41", "@[verify(ofn(1) > 0)]\nfn cv() -> i64 { 41 }\n", "@[verify(zfn(1) > 0)]\nfn cv() -> i64 { 41 }\n"),
+        ("generic bound", "41", "41", "fn pt<T: OT>(x: T) -> i64 { 1 }\n", "fn pt<T: ZT>(x: T) -> i64 { 1 }\n"),
+        ("impl for", "41", "41", "trait My { fn five(self) -> i64 }\nimpl My for OT { fn five(self: OT) -> i64 { 1 } }\n", "trait My { fn five(self) -> i64 }\nimpl My for ZT { fn five(self: ZT) -> i64 { 1 } }\n"),
+        ("enum type path", "let t = OE::P\n 41", "let t = ZE::P\n 41", "", ""),
+        ("enum variant literal", "let t = OE::P { }\n 41", "let t = ZE::P { }\n 41", "", ""),
+        ("match pattern", "match mk() { OE::P => 41  _ => 41 }", "match mk() { ZE::P => 41  _ => 41 }", "", ""),
+        ("guard", "match mk() { x if OG > 1 => 41  _ => 41 }", "match mk() { x if ZG > 1 => 41  _ => 41 }", "", ""),
+        ("for bound", "for i in 0..(OG) { }\n 41", "for i in 0..(ZG) { }\n 41", "", ""),
+        ("interpolation", "\"{OG}\"\n 41", "\"{ZG}\"\n 41", "", ""),
+        ("trait path", "Sc::score(3)", "ZC::score(3)", "", ""),
+        ("type path call", "OT::new()", "ZT::new()", "", ""),
+        ("spawn body", "spawn { ofn(1) }\n 41", "spawn { zfn(1) }\n 41", "", ""),
+        ("use of a module", "41", "41", "use opmod.{a}\n", "use zmod.{a}\n"),
+        ("goal_run name", "let r = goal_run(\"nonadapt\", 100.0, 5)\n 41", "let r = goal_run(\"zznosuch\", 100.0, 5)\n 41", "", ""),
+        ("kernel_goal_create name", "let g = kernel_goal_create(0, \"nonadapt\", 100.0)\n 41", "let g = kernel_goal_create(0, \"zznosuch\", 100.0)\n 41", "", ""),
+    ];
+    let swaps = [
+        ("zznosuch", "nonadapt"),
+        ("ZTABLE", "TABLE"),
+        ("zfn", "ofn"),
+        ("ZG", "OG"),
+        ("ZT", "OT"),
+        ("ZE", "OE"),
+        ("ZC", "Sc"),
+        ("zmod", "opmod"),
+    ];
+    let run_one = |body: &str, extra: &str| {
+        let cand = format!("fn mk() -> i64 {{ 1 }}\n{extra}pub fn solve() -> i64 {{ {body} }}\n");
+        let s = check(su, &[], &cand, "accept");
+        let mut text = candidate_visible(&s);
+        for (miss, op) in swaps {
+            text = text.replace(miss, op);
+        }
+        (refused_unkeyed(&s), s.status, s.host, text)
     };
     let mut fails = Vec::new();
-    for (form, exist, missing) in [
-        ("let g = {N}\n 41", "secret", "zznosuch"),
-        ("{N}[0]", "TABLE", "ZZNOSUCH"),
-        ("{N}.k", "TABLE", "ZZNOSUCH"),
-        (
-            "let r = goal_run(\"{N}\", 100.0, 5)\n 41",
-            "nonadapt",
-            "zznosuch",
-        ),
-        (
-            "let g = kernel_goal_create(0, \"{N}\", 100.0)\n 41",
-            "secret",
-            "zznosuch",
-        ),
-    ] {
-        let (a, b) = (text(exist, form), text(missing, form));
-        if a != b {
-            fails.push(format!("{form}: [{exist}] {a:?} vs [{missing}] {b:?}"));
+    for (pos, eb, mb, ee, me) in forms {
+        let a = run_one(eb, ee);
+        let b = run_one(mb, me);
+        if (a.0, a.1, a.2) != (b.0, b.1, b.2) {
+            fails.push(format!(
+                "{pos}: ACCEPT/REFUSE differs: operator name {:?}/{:?} vs missing name {:?}/{:?}",
+                a.1, a.2, b.1, b.2
+            ));
+        } else if a.3 != b.3 {
+            fails.push(format!(
+                "{pos}: the text differs:\n  operator name: {:?}\n  missing name : {:?}",
+                a.3, b.3
+            ));
+        } else if a.3.trim().is_empty() {
+            fails.push(format!(
+                "{pos}: both texts are EMPTY, so nothing was compared"
+            ));
+        } else if !a.0 {
+            fails.push(format!(
+                "{pos}: both were ACCEPTED (a candidate may not name these)"
+            ));
         }
     }
+    all_refused(std::mem::take(&mut fails));
+    // Honest controls: the candidate's OWN names of the same shapes pass, keyed.
+    let own = "type CT = { k: i64 }\ntype CE = A | B | C { n: i64 }\ntype CPos = i64 where _ > 0\ntrait Cm {\n    fn m(self) -> i64\n    fn plus(self, x: CT) -> i64\n}\nimpl Cm for CT {\n    fn m(self: CT) -> i64 { self.k }\n    fn plus(self: CT, x: CT) -> i64 { self.k + x.k }\n}\nlet CG = 5\nfn cfn(x: i64) -> i64 { x }\nfn gm<T: Cm>(x: T) -> i64 { x.m() }\nfn pos(x: CPos) -> i64 { x }\npub fn solve() -> i64 {\n  let t = CT { k: 1 }\n  let e = CE::A\n  let f = |x: CT| x.k\n  let m = match e { CE::A => cfn(CG) + f(t) + gm(t) - t.plus(t)  CE::B => 0  CE::C { n } => n }\n  let spare = 1\n  m + 36 + pos(1) - 1\n}\n";
+    let seen = check(su, &[], own, "accept");
+    passed(&seen, "own names of every shape");
+    // A sealed file's diagnostics come from ONE check (the sealed-only one): the
+    // merged check's copy is dropped, so a warning is printed once.
+    let once = seen.stderr.matches("unused variable `spare`").count();
+    assert_eq!(
+        once, 1,
+        "the candidate's warning is printed {once} times: {}",
+        seen.stderr
+    );
     all_refused(fails);
 }
 
@@ -1860,6 +1974,118 @@ fn a_sealed_method_call_is_refused_in_the_same_words_for_an_operator_method_and_
         let (a, b) = (text("score", form), text("zzscore", form));
         if a != b {
             fails.push(format!("{form}: [score] {a:?} vs [zzscore] {b:?}"));
+        }
+    }
+    all_refused(fails);
+}
+
+// ---- C9 round 13, PSV1W (amendment 114): operator-side control flow -------------
+//
+// The reviewer's attack: `let ok = (d == e) && mark(op)`, then
+// `let f = TBL[1 - dict_len(op)]` picks the lenient or the strict check by whether
+// the right operand RAN, which was the candidate's data (V=1 passed a wrong answer,
+// V=2 failed it), because the right operand of `&&`/`||` ran under no control
+// taint. The class is every construct that evaluates something conditionally, a
+// number of times, or leaves early on a value (`taint::CONTROL_TABLE`); the
+// interpreter tests cover each row, and these run the runner leg of the shapes
+// that matter most. An attack is refused by the taint rule and earns no keyed
+// pass; its control (the SAME code under a condition the operator wrote) passes.
+
+#[test]
+fn operator_side_control_flow_on_candidate_data_never_selects_operator_code() {
+    let cand = "pub fn cand() -> i64 { 4 }\npub fn candr() -> Result<i64, str> { Ok(4) }\npub fn fill(d: Dict) { dict_set(d, \"k\", 1) }\npub fn drain(c: Chan<i64>) { let x = c.recv() }\n";
+    let pre = "fn strict(x: i64) -> bool { x == 9 }\nfn lenient(x: i64) -> bool { true }\nlet TBL = [lenient, strict]\nfn mark(op: Dict) -> bool {\n  dict_set(op, \"x\", 1)\n  true\n}\nfn bump(op: Dict, x: i64) -> i64 {\n  dict_set(op, to_str(x), 1)\n  x\n}\nfn okr() -> Result<i64, str> { Ok(4) }\nfn tq(op: Dict) -> Result<i64, str> {\n  let v = candr()?\n  let u = mark(op)\n  Ok(v)\n}\nfn tq_ok(op: Dict) -> Result<i64, str> {\n  let v = okr()?\n  let u = mark(op)\n  Ok(v)\n}\n";
+    let suite = |body: &str| {
+        format!("mod sol\nuse sol.{{cand, candr, fill, drain}}\n{pre}@[test]\nfn accept() {{\n  let op = dict_new()\n{body}\n}}\n")
+    };
+    let sel = "  let f = TBL[1 - dict_len(op)]\n  assert(f(cand()))";
+    let sel2 = "  let f = TBL[2 - dict_len(op)]\n  assert(f(cand()))";
+    // (what, the attack body, the control body, selector)
+    let dict_setup = |v: &str| {
+        format!(
+            "  let d = dict_new()\n  fill(d)\n  let e = dict_new()\n  dict_set(e, \"k\", {v})\n"
+        )
+    };
+    let cases: Vec<(&str, String, String, &str)> = vec![
+        (
+            "&& on a dict the candidate filled (the reviewer's attack)",
+            format!("{}  let ok = (d == e) && mark(op)", dict_setup("1")),
+            "  let d = dict_new()\n  dict_set(d, \"k\", 1)\n  let e = dict_new()\n  dict_set(e, \"k\", 1)\n  let ok = (d == e) && mark(op)".to_string(),
+            sel,
+        ),
+        (
+            "&& on the candidate's answer",
+            "  let ok = (cand() == 4) && mark(op)".to_string(),
+            "  let ok = (1 == 1) && mark(op)".to_string(),
+            sel,
+        ),
+        (
+            "|| on the candidate's answer",
+            "  let ok = (cand() == 5) || mark(op)".to_string(),
+            "  let ok = (1 == 2) || mark(op)".to_string(),
+            sel,
+        ),
+        (
+            "&& whose right operand assigns a local that sizes a loop",
+            "  let k = 0\n  let ok = (cand() == 4) && { k = 1\n    true }\n  for i in 0..k { let u = mark(op) }".to_string(),
+            "  let k = 0\n  let ok = (1 == 1) && { k = 1\n    true }\n  for i in 0..k { let u = mark(op) }".to_string(),
+            sel,
+        ),
+        (
+            "&& inside a closure",
+            "  let g = || (cand() == 4) && mark(op)\n  let ok = g()".to_string(),
+            "  let g = || (1 == 1) && mark(op)\n  let ok = g()".to_string(),
+            sel,
+        ),
+        (
+            "&& inside an arr_any callback",
+            "  let r = arr_any([1], |x| (cand() == 4) && mark(op))".to_string(),
+            "  let r = arr_any([1], |x| (1 == 1) && mark(op))".to_string(),
+            sel,
+        ),
+        (
+            "an arm taken because a guard refused the earlier arm",
+            "  let q = match 1 { x if cand() == 5 => 0, _ => { let u = mark(op)\n    1 } }".to_string(),
+            "  let q = match 1 { x if 1 == 5 => 0, _ => { let u = mark(op)\n    1 } }".to_string(),
+            sel,
+        ),
+        (
+            "what runs after `?` on the candidate's result",
+            "  let z = tq(op)".to_string(),
+            "  let z = tq_ok(op)".to_string(),
+            sel,
+        ),
+        (
+            "a select arm that fired because the candidate drained the other channel",
+            "  let a = chan<i64>()\n  let b = chan<i64>()\n  a.send(7)\n  b.send(7)\n  drain(a)\n  let s = select { a.recv() => 0  b.recv() => { let u = mark(op)\n    1 } }".to_string(),
+            "  let a = chan<i64>()\n  let b = chan<i64>()\n  b.send(7)\n  let s = select { a.recv() => 0  b.recv() => { let u = mark(op)\n    1 } }".to_string(),
+            sel,
+        ),
+        (
+            "an arr_find stopped by the candidate's answer",
+            "  let r = arr_find([1, 2, 3], |x| { let u = bump(op, x)\n    x == cand() - 2 })".to_string(),
+            "  let r = arr_find([1, 2, 3], |x| { let u = bump(op, x)\n    x == 4 - 2 })".to_string(),
+            sel2,
+        ),
+    ];
+    let mut fails = Vec::new();
+    for (what, attack, control, selector) in &cases {
+        fails.extend(taint_attack(
+            what,
+            &suite(&format!("{attack}\n{selector}")),
+            cand,
+        ));
+        let s = check(
+            &suite(&format!("{control}\n{selector}")),
+            &[],
+            cand,
+            "accept",
+        );
+        if (s.status, s.host) != (GuestStatus::Passed, Some(true)) {
+            fails.push(format!(
+                "CONTROL ({what}): the operator's own condition was not a keyed pass: {:?} {:?} {}",
+                s.status, s.host, s.stdout
+            ));
         }
     }
     all_refused(fails);

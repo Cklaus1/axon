@@ -104,6 +104,23 @@ THEMES = {
 }
 
 
+# `--plant KEY:OLD=>NEW` (KEY: note | verdict | gates | spec | matrix) changes the text of one input IN MEMORY before
+# `--check` judges it: the control that shows a wrong table row, a wrong result, a wrong package or a wrong
+# claim list is REFUSED (crates/axon-core/tests/pci_delta_note.rs). A plant that matches nothing is an error, so
+# a control cannot pass because it planted nothing.
+PLANTS = {}
+
+
+def read(key, path):
+    text = open(path).read()
+    for old, new in PLANTS.get(key, []):
+        if old not in text:
+            print(f"pci_delta: --plant {key}: {old!r} is not in {os.path.basename(path)}", file=sys.stderr)
+            sys.exit(3)
+        text = text.replace(old, new, 1)
+    return text
+
+
 def git(*a):
     return subprocess.run(["git", *a], cwd=ROOT, check=True, capture_output=True, text=True).stdout
 
@@ -145,21 +162,57 @@ def registry_ranges():
     for r in reg.MUTATIONS:
         mm = re.search(r"\(am(\d+)\b", r[1])
         if mm:
-            out.setdefault(int(mm.group(1)), []).append((int(r[0][1:]), r[7].split("::")[-1]))
-    return {n: (min(i for i, _ in v), max(i for i, _ in v), v) for n, v in out.items()}
+            out.setdefault(int(mm.group(1)), []).append((int(r[0][1:]), r[7].split("::")[-1], r[5], r[6], r[7]))
+    return {n: (min(i for i, *_ in v), max(i for i, *_ in v), v) for n, v in out.items()}
+
+
+GATES = os.path.join(ROOT, "scripts/v022_pci_gates.sh")
+# The cargo invocation the gate script builds for each row, as the lines that build it say.
+INVOCATION = (
+    'cargo test --locked -q -p "$pkg" "${feat[@]}" "${sel[@]}" -- --exact $names',
+    'if [ "$target" = lib ]; then sel=(--lib); else sel=(--test "$target"); fi',
+)
+# Amendments in the note's table that are not interpreter-EVALUATION deltas the claim lists:
+# 74 made predicate primitives refusal sites and rowed `keyed_outcome` (test CLI, not evaluation).
+NOT_IN_CLAIM_LIST = {74}
+
+
+def gate_rows():
+    """[(label, package, target, [exact test names])] parsed from the script's ROWS array, and the
+    script text. The invocation is the one the script builds from those fields, checked below."""
+    text = read("gates", GATES)
+    rows = [
+        (m.group(1).strip(), m.group(2), m.group(3), m.group(4).split())
+        for m in re.finditer(r'^  "([^"|]*)\|([^"|]*)\|([^"|]*)\|([^"|]*)"$', text, re.M)
+    ]
+    return rows, text
+
+
+def gate_runs(rows):
+    """{(package, cargo target selector, exact test name)} the gate runs: `--lib` for `lib`, else
+    `--test <target>`, which is how registry rows spell their target."""
+    out = set()
+    for _, pkg, target, names in rows:
+        sel = "--lib" if target == "lib" else f"--test {target}"
+        out.update((pkg, sel, n) for n in names)
+    return out
 
 
 def doc_drift():
     """The amendment -> matrix-rows and amendment -> mutation-ids statements of the note and of
     the claim, each checked against the file that owns it."""
     bad = []
-    note = open(NOTE).read()
-    spec = open(os.path.join(ROOT, "governance/specs/v022-psv-protocol.md")).read()
-    verdict = open(os.path.join(ROOT, "governance/specs/v022-protected-suite-verdict.md")).read()
-    matrix = open(os.path.join(ROOT, "governance/specs/v022-psv-negative-matrix.md")).read()
-    gates = open(os.path.join(ROOT, "scripts/v022_pci_gates.sh")).read()
+    note = read("note", NOTE)
+    spec = read("spec", os.path.join(ROOT, "governance/specs/v022-psv-protocol.md"))
+    verdict = read("verdict", os.path.join(ROOT, "governance/specs/v022-protected-suite-verdict.md"))
+    matrix = read("matrix", os.path.join(ROOT, "governance/specs/v022-psv-negative-matrix.md"))
     have = {int(m.group(1)) for m in re.finditer(r"^\|\s*A(\d+)\s*\|", matrix, re.M)}
     reg = registry_ranges()
+    grows, gates = gate_rows()
+    runs = gate_runs(grows)
+    for shape in INVOCATION:
+        if shape not in gates:
+            bad.append(f"the gate script no longer builds its cargo invocation as pci_delta.py parses it: missing `{shape}`")
     for line in note.splitlines():
         m = re.match(r"\| amendment (\d+) \|(.*)", line)
         if not m:
@@ -188,27 +241,43 @@ def doc_drift():
     for n, (lo, hi, ids) in sorted(reg.items()):
         if f"M{lo}-M{hi}" not in note:
             bad.append(f"the note does not give amendment {n}'s registry range M{lo}-M{hi}")
-        # Every row of the amendment fails a test some gate row runs.
-        for _, t in ids:
-            if t not in gates:
-                bad.append(f"amendment {n}: the test {t} of a mutation row is run by no gate row")
+        # Every row of the amendment fails a test some gate row RUNS: the package, the cargo
+        # target and the exact name of the invocation the script builds (not a substring of it).
+        for _, t, pkg, tgt, full in ids:
+            if (pkg, tgt, full) not in runs:
+                bad.append(f"amendment {n}: the test {full} ({pkg} {tgt}) of a mutation row is run by no gate row")
     for m in re.finditer(r"am(\d+) \(M(\d+)-M(\d+)\)", verdict):
         n = int(m.group(1))
         if n in reg and (int(m.group(2)), int(m.group(3))) != reg[n][:2]:
             bad.append(f"the claim quotes am{n} as M{m.group(2)}-M{m.group(3)}; the registry says M{reg[n][0]}-M{reg[n][1]}")
-    # The coverage table of the note has exactly the gate script's rows plus the am102 sweep.
-    rows = re.findall(r'^  "([^"]*\|[^"]*\|[^"]*\|[^"]*)"$', gates, re.M)
+    # The coverage table of the note is the gate script's rows plus the am102 sweep: label, package/target
+    # AND the result each row prints (`PASS n/n`, n the number of named tests), not the labels alone.
     t = re.search(r"\| row \| package/target \| result \|\n\|[-|]*\|\n((?:\|.*\n)+)", note)
     if not t:
         bad.append("the note has no gate-row coverage table")
     else:
         lab = lambda x: re.sub(r"\s+", " ", x).strip()
-        tab = sorted(lab(l.split("|")[1]) for l in t.group(1).splitlines())
-        want = sorted([lab(r.split("|")[0]) for r in rows] + [lab("am102 sweep (only the taint on: exactly the two static-only programs differ)")])
+        tab = sorted((lab(c[1]), lab(c[2]), lab(c[3])) for c in (l.split("|") for l in t.group(1).splitlines()))
+        want = sorted(
+            [(lab(l), f"{pkg}/{tg}", f"PASS {len(ns)}/{len(ns)}") for l, pkg, tg, ns in grows]
+            + [(lab("am102 sweep (only the taint on: exactly the two static-only programs differ)"), "axon-core/lib (PSV1T_TAINT_ONLY)", "PASS")]
+        )
         if tab != want:
             only_t = [x for x in tab if x not in want][:3]
             only_s = [x for x in want if x not in tab][:3]
             bad.append(f"the note's coverage table ({len(tab)} rows) is not the gate script's rows plus the sweep ({len(want)}): table-only {only_t}, script-only {only_s}")
+    # The claim's two amendment lists are derived, not retyped: the delta amendments are the note's table
+    # rows (bar those that are not evaluation deltas), and the amendments whose ARMS are verified to fail a
+    # gate row are am100 and every amendment the registry tags.
+    delta = sorted({int(x) for x in re.findall(r"^\| amendment (\d+) \|", note, re.M)} - NOT_IN_CLAIM_LIST)
+    m = re.search(r"plus amendments ([0-9/]+) \(the delta", verdict)
+    if not m or [int(x) for x in m.group(1).split("/")] != delta:
+        bad.append("the claim's delta amendment list is not the note's table: expected " + "/".join(map(str, delta)) + ", the claim says " + (m.group(1) if m else "nothing"))
+    arms = sorted({100} | set(reg))
+    m = re.search(r"and the arms of\s+((?:am\d+, )*am\d+(?: and am\d+)?) \(", verdict)
+    got = sorted(int(x) for x in re.findall(r"am(\d+)", m.group(1))) if m else None
+    if got != arms:
+        bad.append("the claim's list of amendments whose arms are verified is not am100 plus the registry's: expected " + ", ".join(f"am{x}" for x in arms) + ", the claim says " + (m.group(1) if m else "nothing"))
     # The list of non-retired rows whose target is the interpreter, with its count.
     sys.path.insert(0, os.path.join(ROOT, "scripts"))
     import v022_g01_mutations as regm  # noqa: E402
@@ -226,6 +295,18 @@ def doc_drift():
 
 
 def main():
+    args = sys.argv[1:]
+    while "--plant" in args:
+        i = args.index("--plant")
+        spec = args[i + 1]
+        key, _, rest = spec.partition(":")
+        old, sep, new = rest.partition("=>")
+        if not sep or key not in ("note", "verdict", "gates", "spec", "matrix"):
+            print("pci_delta: --plant KEY:OLD=>NEW with KEY in note|verdict|gates|spec|matrix", file=sys.stderr)
+            return 2
+        PLANTS.setdefault(key, []).append((old, new))
+        del args[i : i + 2]
+    sys.argv[1:] = args
     if len(sys.argv) >= 2 and sys.argv[1] == "--emit":
         # `--drop HASH8` forgets one classification: the control that shows an
         # unclassified commit is refused (crates/axon-core/tests/pci_delta_note.rs).

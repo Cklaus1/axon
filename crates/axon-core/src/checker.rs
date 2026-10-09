@@ -1194,13 +1194,66 @@ impl CheckCtx {
             // Phase 5: a named refinement `type Name = T where P`. Sub-slice 1
             // registers the form; predicate well-formedness + proof obligations
             // (R01-R05, constant-arg comptime / SMT) are later sub-slices.
-            Item::RefineDef(_) => {}
+            Item::RefineDef(r) => {
+                if self.sealed_at(r.span) {
+                    self.check_axon_type(
+                        &r.base,
+                        &format!("#refine_{}.base", r.name),
+                        Some(r.span),
+                    );
+                }
+            }
+            // Sealed items only: the type positions an unsealed program leaves
+            // unchecked are checked as an annotation is, so a name nothing
+            // defines is refused there exactly as an operator's was (C9 round
+            // 13, amendment 114: one accept/refuse for both).
+            Item::EnumDef(e) if self.sealed_at(e.span) => {
+                let prev = std::mem::replace(
+                    &mut self.current_generic_params,
+                    e.generic_params.iter().cloned().collect(),
+                );
+                for v in &e.variants {
+                    for f in &v.fields {
+                        let path = format!("#enum_{}.{}.{}", e.name, v.name, f.name);
+                        self.check_axon_type(&f.ty, &path, Some(e.span));
+                    }
+                }
+                self.current_generic_params = prev;
+            }
+            Item::TraitDef(t) if self.sealed_at(t.span) => {
+                // `Self` is the receiver's type in a method signature.
+                let prev = std::mem::replace(
+                    &mut self.current_generic_params,
+                    t.generic_params
+                        .iter()
+                        .cloned()
+                        .chain(std::iter::once("Self".to_string()))
+                        .collect(),
+                );
+                for m in &t.methods {
+                    for p in &m.params {
+                        let path = format!("#trait_{}.{}.{}", t.name, m.name, p.name);
+                        self.check_axon_type(&p.ty, &path, Some(m.span));
+                    }
+                    if let Some(rt) = &m.return_type {
+                        let path = format!("#trait_{}.{}.ret", t.name, m.name);
+                        self.check_axon_type(rt, &path, Some(m.span));
+                    }
+                }
+                self.current_generic_params = prev;
+            }
             Item::EnumDef(_)
             | Item::ModDecl(_)
             | Item::UseDecl(_)
             | Item::TraitDef(_)
             | Item::LetDef { .. } => {}
         }
+    }
+
+    /// Whether `span` lies in a sealed module (a `--seal` run only).
+    fn sealed_at(&self, span: crate::span::Span) -> bool {
+        let dirs = crate::resolver::sealed_module_dirs();
+        !dirs.is_empty() && crate::resolver::span_in_sealed(span, &dirs)
     }
 
     fn check_fn(&mut self, f: &FnDef) {
@@ -1227,6 +1280,22 @@ impl CheckCtx {
         let prev_span = self.current_span;
         if !f.span.is_dummy() {
             self.current_span = f.span;
+        }
+
+        // Sealed only: a bound naming no trait (and no type) is refused as an
+        // annotation naming no type is (amendment 114).
+        if self.sealed_at(f.span) {
+            for (_, bounds) in &f.generic_bounds {
+                for b in bounds {
+                    if !self.trait_defs.contains_key(b) {
+                        self.check_axon_type(
+                            &AxonType::Named(b.clone()),
+                            &format!("#fn_{}.bound_{b}", f.name),
+                            Some(f.span),
+                        );
+                    }
+                }
+            }
         }
 
         // R5 goal sugar: validate `#[goal(...)]` attributes on the function.
@@ -4262,10 +4331,19 @@ impl CheckCtx {
             // Introduce a fresh return-type context so `?` / return checks
             // inside the lambda do not bleed into the outer function.
             Expr::Lambda {
-                params: _,
+                params,
                 body,
                 captures: _,
             } => {
+                // Sealed only (see `check_item`): an annotation on a lambda
+                // parameter naming a type nothing defines is refused.
+                if self.sealed_at(self.current_span) {
+                    for p in params {
+                        if let Some(t) = &p.ty {
+                            self.check_axon_type(t, &format!("{node_path}.param_{}", p.name), None);
+                        }
+                    }
+                }
                 let prev = self.current_ret_ty.take();
                 self.check_expr(body, &format!("{node_path}.body"), scope);
                 self.current_ret_ty = prev;
@@ -4339,6 +4417,17 @@ impl CheckCtx {
 
             // ── StructLit (incl. enum-variant literals `Enum::Variant {..}`) ──
             Expr::StructLit { name, fields } => {
+                // In a sealed module a literal of a type nothing defines is
+                // refused as an annotation naming it is (`unknown type`): it was
+                // accepted and built an anonymous value, while the operator's own
+                // type of the same shape was refused, so the pair said which
+                // names the operator defined (C9 round 13, amendment 114). The
+                // sealed-only check this runs in has no operator types, so the
+                // two now get the one refusal.
+                if self.sealed_at(self.current_span) {
+                    let head = name.split("::").next().unwrap_or(name).to_string();
+                    self.check_axon_type(&AxonType::Named(head), node_path, None);
+                }
                 // Check field VALUE expressions (infer owns field-name validation
                 // for structs via E0101; this walks nested exprs for other rules).
                 for (i, (_fname, fexpr)) in fields.iter().enumerate() {
