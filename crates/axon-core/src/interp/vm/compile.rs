@@ -15,7 +15,7 @@
 //! [`Compiler::stmt`] none.
 
 use super::{Body, Cond, Loop, Op, Opnd, Var};
-use crate::ast::{BinOp, Expr, FmtPart, Literal, Stmt, UnaryOp};
+use crate::ast::{BinOp, Expr, FmtPart, Literal, MatchArm, Pattern, Stmt, UnaryOp};
 use crate::interp::PlaceStep;
 use crate::interp::{lit_to_val, Interp, Resolution, Value};
 
@@ -69,6 +69,7 @@ impl<'p> Compiler<'_, 'p> {
             | Expr::Assign { .. }
             | Expr::AssignTo { .. }
             | Expr::While { .. }
+            | Expr::WhileLet { .. }
             | Expr::For { .. } => {
                 self.stmt(e);
                 self.emit(Op::Const(Value::Unit), 0, 1);
@@ -144,8 +145,12 @@ impl<'p> Compiler<'_, 'p> {
                     self.tree(e);
                 }
             }
-            Expr::MethodCall { .. } => self.tree(e),
-            Expr::Match { .. } => self.tree(e),
+            Expr::MethodCall {
+                receiver,
+                method,
+                args,
+            } => self.method_call(receiver, method, args),
+            Expr::Match { subject, arms } => self.match_(subject, arms),
             Expr::Spawn(_) => self.tree(e),
             Expr::Select(_) => self.tree(e),
             Expr::Comptime(_) => self.tree(e),
@@ -173,7 +178,6 @@ impl<'p> Compiler<'_, 'p> {
                     }
                 }
             }
-            Expr::WhileLet { .. } => self.tree(e),
             Expr::WithHandler { .. } => self.tree(e),
         }
     }
@@ -196,6 +200,11 @@ impl<'p> Compiler<'_, 'p> {
             Expr::Assign { name, value } => self.assign(e, name, value),
             Expr::AssignTo { place, value } => self.assign_to(place, value),
             Expr::While { cond, body } => self.while_(cond, body),
+            Expr::WhileLet {
+                pattern,
+                expr,
+                body,
+            } => self.while_let(pattern, expr, body),
             Expr::For {
                 var,
                 start,
@@ -519,6 +528,137 @@ impl<'p> Compiler<'_, 'p> {
         }
     }
 
+    /// `match subject { arms }`, as the `Match` arm runs it: the subject
+    /// first (kept on the stack under each arm), then per arm the scope,
+    /// `match_pattern`, the guard (true only for a plain `true`) and the
+    /// body; the arm's scope is popped on every way out of it. No arm taken:
+    /// the `no match arm matched` panic. An arm whose pattern, guard and
+    /// body bind nothing runs without the scope ([`binds`]).
+    fn match_(&mut self, subject: &'p Expr, arms: &'p [MatchArm]) {
+        self.expr(subject);
+        let mut ends = Vec::with_capacity(arms.len());
+        for arm in arms {
+            let scoped = pattern_binds(&arm.pattern)
+                || arm.guard.as_ref().is_some_and(expr_binds)
+                || expr_binds(&arm.body);
+            let head = self.emit(
+                Op::MatchArm {
+                    pat: &arm.pattern,
+                    scoped,
+                    next: 0,
+                },
+                0,
+                0,
+            );
+            self.scopes += scoped as u32;
+            let guard = arm.guard.as_ref().map(|g| {
+                self.expr(g);
+                self.emit(Op::Guard { scoped, next: 0 }, 1, 0)
+            });
+            self.expr(&arm.body);
+            self.scopes -= scoped as u32;
+            ends.push(self.emit(Op::MatchEnd { scoped, end: 0 }, 2, 1));
+            // The next arm starts with the subject alone on top again.
+            let next = self.here();
+            for at in std::iter::once(head).chain(guard) {
+                self.patch_to(at, next);
+            }
+        }
+        // `panic` never yields; the static height is the match's value's.
+        self.emit(Op::NoMatch, 1, 1);
+        let end = self.here();
+        for at in ends {
+            self.patch_to(at, end);
+        }
+    }
+
+    /// `while let pat = expr { body }`, as the `WhileLet` arm runs it: per
+    /// iteration the value, the pattern's scope and `match_pattern`, then
+    /// the body in a scope of its own (`run_loop_body`'s), both popped at
+    /// the end of the iteration. A pattern that binds nothing, or a body
+    /// that binds nothing, runs without that scope.
+    fn while_let(&mut self, pat: &'p Pattern, expr: &'p Expr, body: &'p [Stmt]) {
+        let scoped = pattern_binds(pat);
+        let body_scoped = binds(body);
+        let (scopes, height) = (self.scopes, self.height);
+        let head = self.here();
+        self.expr(expr);
+        let test = self.emit(
+            Op::WhileLet {
+                pat,
+                scoped,
+                body: body_scoped,
+                exit: 0,
+            },
+            1,
+            0,
+        );
+        let inner = scopes + scoped as u32 + body_scoped as u32;
+        self.scopes = inner;
+        let start = self.here();
+        for s in body {
+            self.stmt(&s.expr);
+        }
+        let end = self.emit(
+            Op::WhileLetNext {
+                scoped,
+                body: body_scoped,
+                head,
+            },
+            0,
+            0,
+        );
+        self.scopes = scopes;
+        let exit = self.here();
+        self.patch_to(test, exit);
+        self.loops.push(Loop {
+            start,
+            end,
+            scopes,
+            height,
+            brk: exit,
+            cont: end,
+            cont_scopes: inner,
+        });
+    }
+
+    /// `receiver.method(args)`, as the `MethodCall` arm: the receiver first;
+    /// a channel takes `chan_method` with the argument nodes
+    /// ([`Op::MethodRecv`]), any other receiver the compiled arguments, left
+    /// to right, and `impl_method`.
+    fn method_call(&mut self, receiver: &'p Expr, method: &'p str, args: &'p [Expr]) {
+        self.expr(receiver);
+        let recv = self.emit(
+            Op::MethodRecv {
+                method,
+                args,
+                done: 0,
+            },
+            0,
+            0,
+        );
+        for a in args {
+            self.expr(a);
+        }
+        let argc = args.len() as u32;
+        self.emit(Op::MethodCall { method, argc }, argc + 1, 1);
+        let done = self.here();
+        self.patch_to(recv, done);
+    }
+
+    /// Point the S3 op at `at` (an arm's or `while let`'s exit, a channel
+    /// method's skip) to `to`.
+    fn patch_to(&mut self, at: u32, to: u32) {
+        match &mut self.ops[at as usize] {
+            Op::MatchArm { next: t, .. }
+            | Op::Guard { next: t, .. }
+            | Op::MatchEnd { end: t, .. }
+            | Op::WhileLet { exit: t, .. }
+            | Op::MethodRecv { done: t, .. } => *t = to,
+            _ => unreachable!("vm: patching a non-S3 op"),
+        }
+    }
+
     /// `left op right`, pushing the result.
     fn binop(&mut self, op: &'p BinOp, left: &'p Expr, right: &'p Expr) {
         if matches!(op, BinOp::And | BinOp::Or) {
@@ -759,6 +899,31 @@ fn binds(stmts: &[Stmt]) -> bool {
         });
     }
     hit
+}
+
+/// [`binds`] for one expression run in a scope of its own (a match arm's
+/// guard or body).
+fn expr_binds(e: &Expr) -> bool {
+    let mut hit = false;
+    crate::ast::walk_expr(e, &mut |e| {
+        hit |= matches!(
+            e,
+            Expr::Let { .. } | Expr::Own { .. } | Expr::RefBind { .. }
+        );
+    });
+    hit
+}
+
+/// Whether `match_pattern` can bind a name for `pat`: it binds only through
+/// an identifier pattern, nested ones included.
+fn pattern_binds(pat: &Pattern) -> bool {
+    match pat {
+        Pattern::Ident(_) => true,
+        Pattern::Wildcard | Pattern::Literal(_) | Pattern::None => false,
+        Pattern::Some(p) | Pattern::Ok(p) | Pattern::Err(p) => pattern_binds(p),
+        Pattern::Struct { fields, .. } => fields.iter().any(|(_, p)| pattern_binds(p)),
+        Pattern::Tuple(ps) => ps.iter().any(pattern_binds),
+    }
 }
 
 /// A compare-and-branch (target patched later), specialized as

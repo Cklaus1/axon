@@ -1,0 +1,73 @@
+// R50 S3 (`vm_match_impl_methods`): impl method calls evaluate the receiver,
+// then the arguments left to right, then dispatch on the receiver's type.
+// The record and enum literals (`StructLit`) live in `mk`/`shape` so the
+// bodies under test use only S1 and S3 constructs.
+type P = { x: i64 }
+
+enum Shape {
+    Circle { r: i64 },
+    Square { side: i64 },
+    Dot,
+}
+
+trait Get {
+    fn get(self) -> i64
+    fn add(self, k: i64, m: i64) -> i64
+}
+
+impl Get for P {
+    fn get(self: P) -> i64 { self.x }
+    fn add(self: P, k: i64, m: i64) -> i64 { self.x + k * m }
+}
+
+trait Area {
+    fn area(self) -> i64
+}
+
+impl Area for Shape {
+    fn area(self: Shape) -> i64 {
+        match self {
+            Shape::Circle { r } => 3 * r * r,
+            Shape::Square { side } => side * side,
+            Shape::Dot => 0,
+        }
+    }
+}
+
+fn mk(x: i64) -> P {
+    P { x: x }
+}
+
+fn shape(k: i64) -> Shape {
+    if k == 0 { Shape::Circle { r: 2 } } else if k == 1 { Shape::Square { side: 3 } } else { Shape::Dot }
+}
+
+fn logi(s: str, v: i64) -> i64 {
+    println(s)
+    v
+}
+
+fn logp(s: str, x: i64) -> P {
+    println(s)
+    mk(x)
+}
+
+fn use_p(p: P) -> i64 {
+    let a = p.get()
+    let b = logp("recv", 10).add(logi("k", 5), logi("m", 2))
+    a + b
+}
+
+fn areas() -> i64 {
+    let t = 0
+    for k in 0..3 {
+        t = t + shape(k).area()
+    }
+    t
+}
+
+fn main() -> i64 {
+    println(to_str(use_p(mk(3))))
+    println(to_str(areas()))
+    0
+}

@@ -1,0 +1,57 @@
+// R50 S3 (`vm_match_guard_*`): a match guard is true only for a plain
+// `true` (an `Uncertain<bool>` guard is false, with no panic), an arm's
+// bindings shadow and then unshadow the enclosing ones, and a `?` failing in
+// a guard pops the arm's scope before it returns from the fn.
+fn fail() -> Result<i64, str> {
+    Err("no")
+}
+
+fn guarded(n: i64) -> Result<i64, str> {
+    let n2 = n * 10
+    match Some(n) {
+        Some(b) if fail()? > b => Ok(n2),
+        _ => Ok(2),
+    }
+}
+
+fn shadow(x: i64) -> i64 {
+    let y = 1
+    let r = match x {
+        y if y > 5 => y * 100,
+        y => y,
+    }
+    r + y
+}
+
+fn soft(k: i64) -> i64 {
+    let a = uncertain_new(k, 0.9)
+    match k {
+        n if a > 5 => n,
+        n if n > 5 => n * 1000,
+        _ => -1,
+    }
+}
+
+fn main() -> i64 {
+    let a = uncertain_new(10, 0.9)
+    match 1 {
+        n if a > 5 => println("guard"),
+        _ => println("wild"),
+    }
+    let i = 0
+    while i < 3 {
+        let k = i * 7
+        let r = guarded(i)
+        match r {
+            Ok(v) => println(to_str(v)),
+            Err(e) => println(e),
+        }
+        println(to_str(k))
+        i = i + 1
+    }
+    println(to_str(shadow(3)))
+    println(to_str(shadow(9)))
+    println(to_str(soft(9)))
+    println(to_str(soft(2)))
+    0
+}

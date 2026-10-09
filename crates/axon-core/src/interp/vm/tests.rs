@@ -103,6 +103,21 @@ fn kinds(body: &Body<'_>) -> Vec<&'static str> {
             Op::PlaceIndex => "place-index",
             Op::WritePlace { .. } | Op::WriteIndexLocal { .. } => "write-place",
             Op::PlaceInvalid => "place-invalid",
+            Op::MatchArm { scoped: true, .. } => "arm+scope",
+            Op::MatchArm { scoped: false, .. } => "arm",
+            Op::Guard { .. } => "guard",
+            Op::MatchEnd { scoped: true, .. } => "arm-end+pop",
+            Op::MatchEnd { scoped: false, .. } => "arm-end",
+            Op::NoMatch => "no-match",
+            Op::WhileLet { scoped, body, .. } => match (scoped, body) {
+                (true, true) => "while-let+scope+body",
+                (true, false) => "while-let+scope",
+                (false, true) => "while-let+body",
+                (false, false) => "while-let",
+            },
+            Op::WhileLetNext { .. } => "while-let-next",
+            Op::MethodRecv { .. } => "method-recv",
+            Op::MethodCall { .. } => "method",
         })
         .collect()
 }
@@ -128,7 +143,7 @@ fn s1_leaves_only_unlowered_variants_on_the_tree() {
             _ => None,
         })
         .collect();
-    assert_eq!(trees, ["Match"]);
+    assert!(trees.is_empty(), "{trees:?}");
 }
 
 #[test]
@@ -144,8 +159,8 @@ fn s1_every_expr_node_compiles_to_a_balanced_body() {
         crate::ast::walk_expr(&f.body, &mut |e| {
             let body = compile(&interp.res, e);
             let root_is_tree = matches!(&body.ops[..], [Op::Tree(t)] if std::ptr::eq(*t, e));
-            let lowered = !matches!(e, Expr::Match { .. });
-            assert_eq!(root_is_tree, !lowered, "{}", compile::variant_name(e));
+            // Every node of the program lowers: none compiles to a root `Tree`.
+            assert!(!root_is_tree, "{}", compile::variant_name(e));
             seen.insert(compile::variant_name(e));
         });
     }
@@ -336,6 +351,66 @@ fn while_without_a_binding_runs_its_iterations_unscoped() {
             "jump",
             "load",
             "pop"
+        ]
+    );
+}
+
+#[test]
+fn match_arm_pushes_its_scope_only_when_it_can_bind() {
+    // The subject stays on the stack under every arm; an arm whose pattern
+    // binds (`Some(x)`) has a scope, which the guard's false branch and the
+    // arm's end each pop; `None` and `_` bind nothing and run unscoped.
+    let k = kinds_of(
+        "fn f(v: Option<i64>) -> i64 { match v { Some(x) if x > 1 => x, None => 0, _ => 1 } }",
+        "f",
+    );
+    assert_eq!(
+        k,
+        [
+            "load",
+            "arm+scope",
+            "bin",
+            "guard",
+            "load",
+            "arm-end+pop",
+            "arm",
+            "const",
+            "arm-end",
+            "arm",
+            "const",
+            "arm-end",
+            "no-match",
+        ]
+    );
+}
+
+#[test]
+fn while_let_pushes_the_pattern_scope_then_the_body_scope() {
+    let k = kinds_of(
+        "fn g(n: i64) -> Option<i64> { None }\n\
+         fn f() -> i64 { let n = 0\n while let Some(x) = g(n) { let t = x\n n = n + t }\n while let None = g(n) { n = n + 1 }\n n }",
+        "f",
+    );
+    assert_eq!(
+        k,
+        [
+            "push",
+            "const",
+            "define", // let n = 0
+            "load",
+            "call",
+            "while-let+scope+body",
+            "load",
+            "define",
+            "store-bin",
+            "while-let-next",
+            "load",
+            "call",
+            "while-let",
+            "store-bin",
+            "while-let-next",
+            "load",
+            "pop",
         ]
     );
 }
