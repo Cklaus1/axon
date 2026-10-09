@@ -1221,6 +1221,36 @@ impl Drop for CallGuard<'_, '_> {
     }
 }
 
+/// The panic of a call to `f` with `got` arguments for a different number of
+/// parameters.
+#[cold]
+#[inline(never)]
+fn arity_mismatch(f: &FnDef, got: usize) -> R {
+    panic(format!(
+        "{}: expected {} args, got {}",
+        f.name,
+        f.params.len(),
+        got
+    ))
+}
+
+/// Soft typing at the RETURN boundary: a fn declared `-> T` (a plain
+/// scalar) whose body produces an `Uncertain<T>`/`Temporal<T>` unwraps to
+/// the inner value — the same rule as a plain-T parameter. Without this,
+/// `fn f() -> i64 { uncertain }` leaked the struct and `f() + 1` silently
+/// produced 0. A fn declared `-> Uncertain<T>`/`-> Temporal<T>` keeps it.
+/// Only unwrap when the declared return is a plain SCALAR (i64/i32/
+/// f64/bool); a str/struct/tuple/soft-wrapper return is left untouched.
+#[inline(always)]
+fn scalar_return(entry: &FnEntry<'_>, result: Value) -> Value {
+    if entry.ret_is_scalar {
+        if let Some(inner) = value::soft_inner(&result) {
+            return inner;
+        }
+    }
+    result
+}
+
 /// Like `CallGuard`'s `current_fn` restore but for an `Option<String>` cell —
 /// used for the `enclosing_agent` save/restore (R4/I-13 transitive agent
 /// attribution).
@@ -3427,7 +3457,6 @@ impl<'p> Interp<'p> {
 
     fn call_fn_in(&self, entry: &FnEntry<'p>, mut args: Vec<Value>, env: &mut Env) -> R {
         let f = entry.def;
-        let params = &entry.params;
         // Bound recursion: a graceful panic instead of a process-aborting stack
         // overflow on runaway/infinite recursion. `_guard` restores the depth on
         // any return path (including `?`), and the caller's `current_fn`: the
@@ -3446,6 +3475,36 @@ impl<'p> Interp<'p> {
             interp: self,
             prev_fn: self.current_fn.replace(Some(f)),
         };
+        // A fn with an attribute-driven step around its body, and every fn of
+        // a program that declares refinements, takes the general path. The
+        // common call is the steps below and nothing else; the rest stays out
+        // of its frame (cost only, AX-54).
+        if !entry.plain || !self.refine_preds.is_empty() {
+            return self.call_fn_in_general(entry, args, env);
+        }
+        if f.params.len() != args.len() {
+            return arity_mismatch(f, args.len());
+        }
+        self.bind_params(entry, &mut args, env);
+        self.recycle_args(args);
+        // `goal_met` follows the parameters (its slot in `Resolution`); it is
+        // 0 for a fn without `@[goal]`.
+        env.define_var(SYM_GOAL_MET, entry.params.len() as u32, Value::Int(0));
+        let result = match self.run_body(entry, env) {
+            Ok(v) | Err(Flow::Return(v)) => v,
+            Err(other) => return Err(other),
+        };
+        Ok(scalar_return(entry, result))
+    }
+
+    /// [`Interp::call_fn_in`] for a fn with an attribute-driven step around
+    /// its body (`@[agent]`, `@[ai]` metering, `@[corrigible]`, a zone,
+    /// `@[goal]`, `@[verify]`, `main`'s binding capture) or in a program that
+    /// declares refinements, after the depth and `current_fn` guards.
+    #[inline(never)]
+    fn call_fn_in_general(&self, entry: &FnEntry<'p>, mut args: Vec<Value>, env: &mut Env) -> R {
+        let f = entry.def;
+        let params = &entry.params;
         // R4/I-13: if THIS fn is an `@[agent]`, it becomes the enclosing agent for
         // everything it transitively calls; otherwise the caller's enclosing agent
         // is inherited unchanged. Restored on return so sibling calls aren't
@@ -3468,12 +3527,7 @@ impl<'p> Interp<'p> {
         });
 
         if f.params.len() != args.len() {
-            return panic(format!(
-                "{}: expected {} args, got {}",
-                f.name,
-                f.params.len(),
-                args.len()
-            ));
+            return arity_mismatch(f, args.len());
         }
 
         // R9 corrigibility: if the kill-switch latch is tripped, REFUSE every
@@ -3519,35 +3573,7 @@ impl<'p> Interp<'p> {
             Some(Value::Int(n)) => Some(*n),
             _ => None,
         };
-        // The arity check above makes `args`, `params` and `param_coerce` the
-        // same length. Each argument is moved out of its slot (leaving a
-        // `Unit`), so the buffer is emptied without a `Drain` (cost only).
-        for (i, a) in args.iter_mut().enumerate() {
-            let a = std::mem::replace(a, Value::Unit);
-            let (unwrap_soft, width) = entry.param_coerce[i];
-            let s = &params[i];
-            // Soft typing: `Uncertain<T>` is compatible with a plain-`T` parameter
-            // (the checker allows it). If the declared param type is NOT itself a
-            // soft wrapper but the argument IS one, unwrap to the inner value so
-            // the body sees a plain `T` (else `x * 2` on the struct silently
-            // produced 0). Confidence/horizon dropped at this T-typed boundary.
-            let a = if unwrap_soft {
-                value::soft_inner(&a).unwrap_or(a)
-            } else {
-                a
-            };
-            // R19 Slice B: coerce Int→SizedInt when the declared param type is a
-            // non-i64 integer width — ensures arithmetic inside the callee's body
-            // uses width-correct ops (completeness, I-9).
-            let a = if let Some(width) = width {
-                coerce_to_sized(a, width)
-            } else {
-                a
-            };
-            // Parameter `i` lives in frame slot `i` (AX-53).
-            env.define_var(*s, i as u32, a);
-        }
-        args.clear();
+        self.bind_params(entry, &mut args, env);
         self.recycle_args(args);
         // Phase 5: refinement-type PRECONDITIONS. A parameter `p: T where P`
         // desugars to a synthetic named refinement; the checker discharges P
@@ -3640,23 +3666,12 @@ impl<'p> Interp<'p> {
                 .collect();
             *self.main_locals.borrow_mut() = snap;
         }
-        let mut result = match body_result {
+        let result = match body_result {
             Ok(v) => v,
             Err(Flow::Return(v)) => v,
             Err(other) => return Err(other),
         };
-        // Soft typing at the RETURN boundary: a fn declared `-> T` (a plain
-        // scalar) whose body produces an `Uncertain<T>`/`Temporal<T>` unwraps to
-        // the inner value — the same rule as a plain-T parameter. Without this,
-        // `fn f() -> i64 { uncertain }` leaked the struct and `f() + 1` silently
-        // produced 0. A fn declared `-> Uncertain<T>`/`-> Temporal<T>` keeps it.
-        // Only unwrap when the declared return is a plain SCALAR (i64/i32/
-        // f64/bool); a str/struct/tuple/soft-wrapper return is left untouched.
-        if entry.ret_is_scalar {
-            if let Some(inner) = value::soft_inner(&result) {
-                result = inner;
-            }
-        }
+        let result = scalar_return(entry, result);
 
         if entry.has_epilogue || !self.refine_preds.is_empty() {
             return self.finish_call_cold(
@@ -3670,6 +3685,41 @@ impl<'p> Interp<'p> {
         }
 
         Ok(result)
+    }
+
+    /// Bind the arguments of a call to `entry` to its parameters in the
+    /// empty frame `env`; `args` is left empty. The caller has checked that
+    /// `args`, `entry.params` and `entry.param_coerce` have the same length.
+    #[inline(always)]
+    fn bind_params(&self, entry: &FnEntry<'p>, args: &mut Vec<Value>, env: &mut Env) {
+        // Each argument is moved out of its slot (leaving a `Unit`), so the
+        // buffer is emptied without a `Drain` (cost only).
+        for (i, a) in args.iter_mut().enumerate() {
+            let a = std::mem::replace(a, Value::Unit);
+            let (unwrap_soft, width) = entry.param_coerce[i];
+            let s = &entry.params[i];
+            // Soft typing: `Uncertain<T>` is compatible with a plain-`T` parameter
+            // (the checker allows it). If the declared param type is NOT itself a
+            // soft wrapper but the argument IS one, unwrap to the inner value so
+            // the body sees a plain `T` (else `x * 2` on the struct silently
+            // produced 0). Confidence/horizon dropped at this T-typed boundary.
+            let a = if unwrap_soft {
+                value::soft_inner(&a).unwrap_or(a)
+            } else {
+                a
+            };
+            // R19 Slice B: coerce Int→SizedInt when the declared param type is a
+            // non-i64 integer width — ensures arithmetic inside the callee's body
+            // uses width-correct ops (completeness, I-9).
+            let a = if let Some(width) = width {
+                coerce_to_sized(a, width)
+            } else {
+                a
+            };
+            // Parameter `i` lives in frame slot `i` (AX-53).
+            env.define_var(*s, i as u32, a);
+        }
+        args.clear();
     }
 
     /// R5 `@[goal(...)]` sugar for [`Interp::call_fn_in`]: whether the goal is
