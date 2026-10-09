@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """opkit_ns_drift.py -- a BEST-EFFORT SECOND LAYER that flags the shapes in which a test script runs the operator
-deployment kit, or any other state-changing verb, outside the namespace helper (amendments 92, 97, 101, 105, 109).
+deployment kit, a controlled-build verb, a verb of HOST_VERBS (mount, useradd, ...) or a verb of MUTATORS (mkdir, cp, ...) aimed
+at a real destination, outside the namespace helper (amendments 92, 97, 101, 105, 109, 113).
+
+EXACTLY WHICH VERBS (amendment 113). Earlier wording said "any other state-changing verb"; that was broader than the gate. In a
+TEST SCRIPT the gate flags HOST_VERBS (whatever their operands) and MUTATORS whose operand is a real destination. It does NOT
+flag `sed -i`, `tar -x -C`, `rsync`, `dd of=`, `curl -o`, `git clone/checkout/apply`, `patch`, `chattr` or `setfacl` aimed at
+a real destination in a test script (some are HOST_VERBS and so flagged, but rsync, sed -i, tar, dd, curl, git, patch are not).
+The KIT's own write targets are held to a wider list (`destination_problems`: its `sed -i`, `tar -x -C`, `dd of=`, `curl -o`,
+`git clone` ... under a real destination are flagged). What holds for the rest is the namespace, not this file.
 
 WHAT THIS IS AND IS NOT (amendment 109). It is a textual gate: it flags the shapes it lists (the must-flag shapes of
 `--selftest`, which prints their count) and the mentions it derives from them, and it keeps the real test scripts clean. It is
@@ -22,6 +30,12 @@ PROVED before the command starts). This gate keeps it the usual door:
      the command's first word (after VAR=value prefixes, and after the `refused LABEL
      PATTERN` test helper). `ns_run true; bash "$KIT" --apply` has an `ns_run` on the
      line and is REFUSED: the second command is not inside it (amendment 97, f);
+  1b. DESTRUCTIVE HELPER PRIMITIVES (amendment 113). The helper's own primitives -- every function of scripts/lib/opkit_ns.sh that
+     mounts, umounts, pivots or calls mount_setattr, plus opkit_ns_drop_host_fd (derived from the file, united with the five named in PRIM_BASE) -- change the
+     mount table of whatever namespace they run in. A test script (other than the helper's own self-test child block, which
+     unshares first) must not call one bare, nor mention one in a command that is not an ns_run command; and the helper must make
+     each one start with `opkit_ns_precondition NAME || return 97` (the check that this is not the host's mount namespace,
+     BEFORE any mount). A new primitive that mounts without it fails HERE;
   2. a state-changing command (mkdir, mktemp, rm, cp, install, chown, chmod, ln, mv, tee,
      useradd, groupadd) whose operand is under a real destination is held to the same rule;
   3. the kit-running scripts must source/use opkit_ns.sh at all;
@@ -88,6 +102,89 @@ REAL = ("/etc", "/usr/local", "/var/lib", "/var/log", "/var/spool", "/var/mail",
         "/usr/share", "/var/cache", "/boot", "/root", "/home", "/lib")
 SPLIT = re.compile(r'(\|\||&&|;;|[;&|(){}`\n]|\$\()')
 KEYWORDS = {"then", "do", "else", "elif", "if", "while", "until", "!", "time"}
+
+# amendment 113: the helper's DESTRUCTIVE primitives. Derived from scripts/lib/opkit_ns.sh (every function other than ns_run that
+# mounts, umounts, pivots or calls mount_setattr) and unioned with these five (opkit_ns_drop_host_fd closes the host-root descriptor
+# and mounts nothing, so only the union names it), so a primitive that is
+# renamed or whose body is rewritten out of the pattern is still named.
+PRIM_BASE = {"opkit_ns_isolate", "opkit_ns_make_ro", "opkit_ns_fresh_proc", "opkit_ns_private_dev", "opkit_ns_drop_host_fd"}
+PRECONDITION = "opkit_ns_precondition"
+PRIM_OUTER = {"ns_run"}                    # unshares BEFORE it mounts: the one sanctioned entry
+HELPER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib", "opkit_ns.sh")
+_MOUNTING = re.compile(r'(?:^\s*|[;&|{(]\s*|\b(?:then|do|else)\s+)(?:mount|umount|pivot_root)\b|mount_setattr')
+_FIRST = re.compile(r'^\s*' + PRECONDITION + r'\s+(\S+)\s*\|\|\s*return\s+97\b')
+_prims_override = None
+
+
+def helper_functions(text):
+    """{name: [(lineno, line without its comment)]} for the top-level `name() {` ... `}` functions of the helper."""
+    out, cur = {}, None
+    for n, ln in enumerate(text.splitlines(), 1):
+        m = re.match(r'^([A-Za-z_]\w*)\(\)\s*\{', ln)
+        if m and cur is None:
+            cur = m.group(1)
+            out[cur] = []
+            rest = ln[m.end():]
+            if rest.strip():
+                out[cur].append((n, re.sub(r'\s#.*$', '', rest)))
+            continue
+        if cur is not None:
+            if ln == "}":
+                cur = None
+            else:
+                out[cur].append((n, ln if not ln.lstrip().startswith("#") else ""))
+    return out
+
+
+def derived_primitives(text):
+    return {name for name, body in helper_functions(text).items()
+            if name not in PRIM_OUTER and any(_MOUNTING.search(re.sub(r'\s#.*$', '', l)) for _, l in body)}
+
+
+def prims():
+    if _prims_override is not None:
+        return _prims_override
+    try:
+        return derived_primitives(open(HELPER_PATH).read()) | PRIM_BASE
+    except OSError:
+        return set(PRIM_BASE)
+
+
+def primitive_problems(root, text=None, label="scripts/lib/opkit_ns.sh"):
+    """The helper side of 1b: every primitive starts with `opkit_ns_precondition NAME || return 97`, the five named ones exist."""
+    if text is None:
+        text = open(os.path.join(root, "scripts", "lib", "opkit_ns.sh")).read()
+    fns = helper_functions(text)
+    bad = []
+    if PRECONDITION not in fns:
+        bad.append(f"{label}: {PRECONDITION} is not defined")
+    for name in sorted(PRIM_BASE - set(fns)):
+        bad.append(f"{label}: the destructive primitive {name} is not defined (PRIM_BASE names it)")
+    for name in sorted((derived_primitives(text) | (PRIM_BASE & set(fns))) - {PRECONDITION}):
+        body = [(n, l) for n, l in fns[name] if l.strip() and not re.match(r'^\s*local\b', l)]
+        first = body[0] if body else None
+        m = _FIRST.match(first[1]) if first else None
+        if not m or m.group(1) != name:
+            bad.append(f"{label}:{first[0] if first else '?'}: {name} mounts or closes a host descriptor but its FIRST statement is not "
+                       f"`{PRECONDITION} {name} || return 97`: {(first[1].strip() if first else '')[:80]}")
+    return bad
+
+
+def prim_called(w):
+    """A bare call of a destructive primitive, or a mention of one in a command that is not read-only (bash -c '...', env, sudo ...)."""
+    ws = strip_helper(w)
+    if not ws:
+        return None
+    ps = prims()
+    if ws[0] in ps:
+        return ws[0]
+    if ws[0] in BENIGN or ws[0] in ("echo", "printf", "grep", "egrep"):
+        return None
+    flat = " ".join(ws)
+    for p in sorted(ps):
+        if re.search(r'(?<![\w])' + re.escape(p) + r'(?![\w])', flat):
+            return p
+    return None
 
 
 _HEREDOC_RE = re.compile(r"<<-?[ \t]*(['\"]?)([^\s;&|<>()'\"]+)\1")
@@ -883,6 +980,8 @@ def check_text_core(path, text):
                     (ctx.kit_re().search(" ".join(w)) or re.search(r'--apply|' + BUILD_VERB.pattern, " ".join(w))):
                 ctx.cmdvars.add(w[w.index("-v") + 1])
             kind, wrapped = command_class(w, ctx)
+            if not wrapped and (pc := prim_called(w)):
+                bad.append(f"{path}:{n}: [primitive] {pc} changes the mount table of whatever namespace it runs in; run it only inside ns_run: {cmd.strip()[:100]}")
             if not kind and not wrapped and relevant:
                 kind = conservative_kind(cmd, w, ctx)
             note_writes(cmd, w, ctx)
@@ -1077,6 +1176,7 @@ def check(root):
         if "opkit_ns_assert" not in t.split("\n", 12)[0:12].__str__():
             bad.append(f"{fx}: an in-namespace script must call opkit_ns_assert in its first lines")
     bad += destination_problems(root)
+    bad += primitive_problems(root)
     return bad
 
 
@@ -1324,6 +1424,30 @@ def check_quoted_counts(root):
     return 0
 
 
+# amendment 113: bare calls of a destructive helper primitive (each preceded by sourcing the helper)
+PRIM_SHAPES = [
+    ("a bare opkit_ns_isolate", 'OPKIT_SCRATCH=/var/tmp/x opkit_ns_isolate\n'),
+    ("a bare opkit_ns_make_ro", 'opkit_ns_make_ro\n'),
+    ("a bare opkit_ns_fresh_proc", 'opkit_ns_fresh_proc\n'),
+    ("a bare opkit_ns_private_dev", 'opkit_ns_private_dev /var/tmp/x\n'),
+    ("a bare opkit_ns_drop_host_fd", 'opkit_ns_drop_host_fd\n'),
+    ("a primitive in an if", 'if opkit_ns_make_ro; then echo x; fi\n'),
+    ("a primitive after &&", 'true && opkit_ns_fresh_proc\n'),
+    ("a primitive in a bash -c string", "bash -c '. scripts/lib/opkit_ns.sh; opkit_ns_make_ro'\n"),
+    ("a primitive behind env", 'env A=1 opkit_ns_private_dev /var/tmp/x\n'),
+    ("a primitive behind sudo", 'sudo opkit_ns_isolate\n'),
+    ("a primitive in a function body", 'f() { opkit_ns_make_ro; }\n'),
+    ("a primitive in a command substitution", 'x=$(opkit_ns_fresh_proc)\n'),
+]
+PRIM_CONTROLS = [
+    ("ns_run", 'ns_run true\n'),
+    ("an echo naming a primitive", 'echo opkit_ns_isolate\n'),
+    ("the non-destructive assertion", 'opkit_ns_assert\n'),
+    ("a grep for a primitive", 'grep -q opkit_ns_make_ro scripts/lib/opkit_ns.sh\n'),
+    ("a comment naming a primitive", '# opkit_ns_isolate is not called here\n'),
+    ("an assertion inside ns_run", 'ns_run bash -c \'. "$OPKIT_LIB"; opkit_ns_assert\'\n'),
+]
+
 def selftest(root):
     src = open(os.path.join(root, "scripts", "test_operator_deploy.sh")).read()
     base = check_text("real", src)
@@ -1390,7 +1514,73 @@ def selftest(root):
                        ("an unrelated controls number", f"{nm} must-flag shapes. 57 controls tracked elsewhere")]:
         if quoted_count_problems({"planted.md": doc}, nm, nc)[0]:
             print(f"selftest: the derived quoted count was REFUSED ({label})"); return 1
-    print(f"selftest: ok ({len(BYPASSES) + 1} must-flag shapes refused, {len(CONTROLS)} controls accepted, plus the kit-destination shapes)"); return 0
+    # amendment 113: the destructive primitives of the helper. NOT counted in the must-flag / control numbers above (those are
+    # quoted in the amendments and derived from BYPASSES and CONTROLS); reported on their own.
+    global _prims_override
+    hp = open(os.path.join(root, "scripts", "lib", "opkit_ns.sh")).read()
+    if primitive_problems(root, hp):
+        print("selftest: the real helper's primitives do not all start with the precondition:\n" + "\n".join(primitive_problems(root, hp))); return 1
+    _prims_override = derived_primitives(hp) | PRIM_BASE
+    try:
+        pre = ". scripts/lib/opkit_ns.sh\n"
+        for label, text in PRIM_SHAPES:
+            if not check_text("primitive", pre + text):
+                print(f"selftest: the primitive shape '{label}' was ACCEPTED"); return 1
+        for label, text in PRIM_CONTROLS:
+            got = check_text("primitive-control", pre + text)
+            if got:
+                print(f"selftest: the primitive control '{label}' was REFUSED: {got}"); return 1
+    finally:
+        _prims_override = None
+    new_fn = "\nopkit_ns_newmount() {\n  mount --bind /a /b\n}\n"
+    new_ok = "\nopkit_ns_newmount() {\n  opkit_ns_precondition opkit_ns_newmount || return 97\n  mount --bind /a /b\n}\n"
+    first = "  opkit_ns_precondition opkit_ns_make_ro || return 97\n"
+    drop1 = "  opkit_ns_precondition opkit_ns_drop_host_fd || return 97\n"
+    assert first in hp and drop1 in hp and "opkit_ns_make_ro() {" in hp, "selftest: the helper's make_ro / drop_host_fd lines moved"
+    planted = [          # ORDER matters to the mutation rows: each guard of primitive_problems is first refused by its own shape
+        ("a precondition that is not the first statement", hp.replace(first, "  true\n" + first, 1)),
+        ("a precondition that does not return 97", hp.replace(first, "  opkit_ns_precondition opkit_ns_make_ro\n", 1)),
+        ("a precondition naming another primitive", hp.replace(first, "  opkit_ns_precondition opkit_ns_isolate || return 97\n", 1)),
+        ("no precondition at all in a base primitive", hp.replace(first, "", 1)),
+        ("no precondition in opkit_ns_drop_host_fd (a primitive that mounts nothing)", hp.replace(drop1, "", 1)),
+        ("a base primitive that is not defined", hp.replace("opkit_ns_make_ro() {", "opkit_ns_make_rw() {", 1)),
+        ("a new function that mounts, with no precondition", hp + new_fn),
+    ]
+    for label, text in planted:
+        if not primitive_problems(root, text):
+            print(f"selftest: a helper with {label} was ACCEPTED"); return 1
+    if primitive_problems(root, hp + new_ok):
+        print("selftest: a new mounting function that starts with the precondition was REFUSED"); return 1
+    # the primitive set is DERIVED: a new function that mounts is named, so its bare call in a test script is flagged
+    _prims_override = derived_primitives(hp + new_ok) | PRIM_BASE
+    try:
+        if not check_text("primitive", ". scripts/lib/opkit_ns.sh\nopkit_ns_newmount\n"):
+            print("selftest: a bare call of a primitive the helper gained (derived, not listed) was ACCEPTED"); return 1
+    finally:
+        _prims_override = None
+    # check() itself is wired to the helper's primitives: a tree whose helper lacks the precondition in make_ro is refused as a whole
+    import shutil, tempfile
+    tmp = tempfile.mkdtemp(prefix="opkit-drift-selftest.")
+    try:
+        os.makedirs(os.path.join(tmp, "scripts", "lib"))
+        for f in os.listdir(os.path.join(root, "scripts")):
+            if f.startswith("test_") and f.endswith(".sh") or f == "operator_deploy_protected_host.sh":
+                shutil.copy(os.path.join(root, "scripts", f), os.path.join(tmp, "scripts", f))
+        for f in ("opkit_fixture.sh",):
+            if os.path.exists(os.path.join(root, "scripts", "lib", f)):
+                shutil.copy(os.path.join(root, "scripts", "lib", f), os.path.join(tmp, "scripts", "lib", f))
+        with open(os.path.join(tmp, "scripts", "lib", "opkit_ns.sh"), "w") as fh:
+            fh.write(hp)
+        if check(tmp):
+            print("selftest: check() refuses a copy of the real tree:\n" + "\n".join(check(tmp))); return 1
+        with open(os.path.join(tmp, "scripts", "lib", "opkit_ns.sh"), "w") as fh:
+            fh.write(hp.replace(first, "", 1))
+        if not check(tmp):
+            print("selftest: check() on a tree whose helper has no precondition in opkit_ns_make_ro was ACCEPTED"); return 1
+    finally:
+        shutil.rmtree(tmp)
+    print(f"selftest: ok ({len(BYPASSES) + 1} must-flag shapes refused, {len(CONTROLS)} controls accepted, plus the kit-destination shapes and "
+          f"{len(PRIM_SHAPES) + len(planted) + 1} primitive shapes)"); return 0
 
 
 if __name__ == "__main__":

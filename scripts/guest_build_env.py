@@ -113,6 +113,7 @@ The records go into the guest manifest (scripts/linux_profile_manifest.py),
 and the freeze (scripts/v022_freeze_manifest.py) refuses a guest manifest any
 of whose components is not this controlled build's.
 """
+import codecs
 import hashlib
 import hmac
 import json
@@ -451,6 +452,14 @@ def _text_ids(text, where, uids, gids):
         t = ln.strip()
         if not t or t.startswith(("#", ";", "[", "//")) and not (mode == "array" and t.startswith("[")):
             continue
+        if mode != "array":
+            # a YAML list item that is itself a mapping entry (`- uid: 1000`, `- - uid: 1000`) is judged as the KEY it is, not as a
+            # value of the previous key (amendment 113: after another identity the old branch below took it for a scalar item of the
+            # previous key, and a soft key skipped it silently)
+            dm = re.match(r"^(?:-\s+)+(.*)$", t)
+            if dm and _TEXT_KV.match(dm.group(1)):
+                t = dm.group(1).strip()
+                mode = None
         if mode == "array" and last is not None:
             kind, strict, soft_gid, key, occ = last
             body = re.sub(r"\s+[#;].*$", "", t)
@@ -494,6 +503,31 @@ def _text_ids(text, where, uids, gids):
             raise DiscoveryRefused(f"{where}: {key} has no value this reader can read: it may name a service account")
     if mentions and not found:
         raise DiscoveryRefused(f"{where} mentions a uid or gid in a form that cannot be read: it may name a service account")
+
+
+def _decode_config(data, where):
+    """A service config's bytes as TEXT, or a refusal. The encoding is read from the byte-order mark (UTF-32 before UTF-16: the
+    UTF-32 little-endian mark begins with the UTF-16 one), UTF-8 with or without its mark; a file with NUL bytes and no mark
+    (UTF-16/32 written without one) and one that is not valid in the encoding it declares are AMBIGUOUS and refuse: the old
+    `decode(errors="replace")` turned a UTF-16 file into NUL-interleaved noise, and left a UTF-8 mark glued to the first key, so
+    the first `uid` of a file was read as no key at all."""
+    if data.startswith((codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE)):
+        enc = "utf-32"
+    elif data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        enc = "utf-16"
+    elif data.startswith(codecs.BOM_UTF8):
+        enc = "utf-8-sig"
+    elif b"\x00" in data:
+        raise DiscoveryRefused(f"{where} holds NUL bytes without a byte-order mark: its encoding is ambiguous, so it cannot be read for the service accounts it names")
+    else:
+        enc = "utf-8"
+    try:
+        text = data.decode(enc)
+    except UnicodeDecodeError:
+        raise DiscoveryRefused(f"{where} is not valid {enc}: its encoding is ambiguous, so it cannot be read for the service accounts it names")
+    if text.startswith("\ufeff"):
+        raise DiscoveryRefused(f"{where} begins with a second byte-order mark: its encoding is ambiguous, so it cannot be read for the service accounts it names")
+    return text
 
 
 def _read_small(path):
@@ -612,7 +646,7 @@ def service_ids(users=None, etc=None, units=None):
         for d, files in sorted(walked):
             for n in sorted(files):
                 path = os.path.join(d, n)
-                data = _regular_text(path)
+                data = _decode_config(_regular_text(path), path)
                 if n.endswith(".json"):
                     try:
                         _id_fields(json.loads(data), path, uids, gids)
@@ -622,7 +656,7 @@ def service_ids(users=None, etc=None, units=None):
                     try:
                         doc = json.loads(data)
                     except (ValueError, UnicodeDecodeError):
-                        _text_ids(data.decode(errors="replace"), path, uids, gids)    # TOML / YAML / env / key-value lines
+                        _text_ids(data, path, uids, gids)    # TOML / YAML / env / key-value lines
                         continue
                     _id_fields(doc, path, uids, gids)
     # every unit directory systemd reads from; `units` (a test fixture) replaces them all
@@ -644,7 +678,7 @@ def service_ids(users=None, etc=None, units=None):
             full = os.path.join(units, n)
             # ANY service or socket unit: a User= is an account the deployment may share, whatever the unit is named or runs
             if n.endswith((".service", ".socket")) and os.path.isfile(full):
-                text = _regular_text(full).decode(errors="replace")
+                text = _decode_config(_regular_text(full), full)
                 if not vendor or n.startswith("axon-") or re.search(r"^\s*Exec\w*\s*=.*axon", text, re.M):
                     _unit_ids(text, full, uids, gids)
             # drop-ins, of a unit that exists in this directory or not (`axon-x.service.d`, `service.d`)
@@ -656,7 +690,7 @@ def service_ids(users=None, etc=None, units=None):
                         raise DiscoveryRefused(f"{full} cannot be listed ({e.strerror}): it may hold a service unit override")
                     for c in dropins:
                         if c.endswith(".conf"):
-                            _unit_ids(_regular_text(os.path.join(full, c)).decode(errors="replace"), os.path.join(full, c), uids, gids)
+                            _unit_ids(_decode_config(_regular_text(os.path.join(full, c)), os.path.join(full, c)), os.path.join(full, c), uids, gids)
     return uids, gids
 
 

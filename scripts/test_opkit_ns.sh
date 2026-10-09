@@ -38,7 +38,7 @@ if [ "${1:-}" = --child ]; then
       # TMPDIR is ignored (the helper never consults it): a TMPDIR naming a host directory changes nothing, and does not make one a temp root
       tryrun 0 "TMPDIR=$MNTD (ignored: the helper never consults it)" "$M" TMPDIR="$MNTD" OPKIT_SCRATCH="$W/scr109" OPKIT_RW="$W/rw109"
       tryrun 97 "TMPDIR=$MNTD OPKIT_RW=$MNTD/rw (the environment named a temp root and a directory under it)" "$MNTD/rw/ran" TMPDIR="$MNTD" OPKIT_RW="$MNTD/rw" OPKIT_SCRATCH="$W/scr109"
-      grep -q 'not strictly below /tmp or /var/tmp' <<<"$LASTOUT" || { echo "refused for another reason (the temp-root rule alone was to refuse it): $LASTOUT"; exit 1; }
+      grep -q 'not strictly below /var/tmp:' <<<"$LASTOUT" || { echo "refused for another reason (the temp-root rule alone was to refuse it): $LASTOUT"; exit 1; }
       tryrun 97 "OPKIT_SCRATCH=$MNTD/scr (not below a temp root)" "$M" OPKIT_SCRATCH="$MNTD/scr" OPKIT_RW="$W/rw109"
       grep -q 'OPKIT_SCRATCH' <<<"$LASTOUT" || { echo "refused for another reason (OPKIT_SCRATCH alone was to refuse it): $LASTOUT"; exit 1; }
       ! grep -q 'isolation not proved' <<<"$LASTOUT" || { echo "ATTACK: ns_run mounted and unshared before it validated OPKIT_SCRATCH (the namespace's own check refused it): $LASTOUT"; exit 1; }
@@ -50,8 +50,8 @@ if [ "${1:-}" = --child ]; then
       done
       # the primitive, called directly: opkit_rw_validate no longer trusts TMPDIR for a temp root; opkit_ns_isolate refuses a scratch the environment named
       o=$(TMPDIR="$MNTD/tmp1" opkit_rw_validate "$MNTD/tmp1/x" 2>&1); rc=$?
-      { [ $rc = 1 ] && grep -q 'not strictly below /tmp or /var/tmp' <<<"$o"; } || { echo "ATTACK: opkit_rw_validate took \$TMPDIR for a temp root (rc $rc): $o"; exit 1; }
-      o=$(OPKIT_SCRATCH="$MNTD/scr" opkit_ns_isolate 2>&1); rc=$?
+      { [ $rc = 1 ] && grep -q 'not strictly below /var/tmp:' <<<"$o"; } || { echo "ATTACK: opkit_rw_validate took \$TMPDIR for a temp root (rc $rc): $o"; exit 1; }
+      o=$(OPKIT_NS_PID_FOR_TEST=$STANDIN OPKIT_SCRATCH="$MNTD/scr" opkit_ns_isolate 2>&1); rc=$?
       { [ $rc = 1 ] && [ -z "$(ls -A "$MNTD/scr")" ]; } || { echo "ATTACK: opkit_ns_isolate worked in a scratch directory the environment named (rc $rc, $(ls -A "$MNTD/scr" | tr '\n' ' ')): $o"; exit 1; }
       # controls: /var/tmp itself is a fine TMPDIR; a scratch under it is fine; with no OPKIT_SCRATCH the helper makes its own and leaves nothing
       tryrun 0 "TMPDIR=/var/tmp with a valid scratch and OPKIT_RW" "$M" TMPDIR=/var/tmp OPKIT_SCRATCH="$W/scr109" OPKIT_RW="$W/rw109"
@@ -70,9 +70,39 @@ os.execvp("bash", ["bash", "-c", ". \"$OPKIT_LIB\"; ns_run touch \"$1\"", "bash"
 import os, pty, sys
 m, sl = pty.openpty(); os.dup2(sl, 0)
 os.execvp("bash", ["bash", "-c", ". \"$OPKIT_LIB\"; ns_run touch \"$1\"", "bash", sys.argv[1]])' "$4"; exit $? ;;
+    pre)          # W KIND: the PURE precondition (it mounts nothing) in one context; prints RC=<n> (amendment 113)
+      . "$LIB"
+      FORGED="mnt=mnt:[1],pid=pid:[1],uts=uts:[1],ipc=ipc:[1],net=net:[1]"
+      case "$4" in
+        host-bare) opkit_ns_precondition probe; echo "RC=$?" ;;
+        host-forged) OPKIT_HOST_NS=$FORGED opkit_ns_precondition probe; echo "RC=$?" ;;
+        standin-self) OPKIT_NS_PID_FOR_TEST=$$ opkit_ns_precondition probe; echo "RC=$?" ;;
+        standin-host) OPKIT_NS_PID_FOR_TEST=$STANDIN opkit_ns_precondition probe; echo "RC=$?" ;;
+        init-forged) OPKIT_HOST_NS=$FORGED opkit_ns_precondition probe; echo "RC=$?" ;;
+        noninit-forged) ( OPKIT_HOST_NS=$FORGED opkit_ns_precondition probe; echo "RC=$?" ) ;;
+        *) exit 91 ;;
+      esac
+      exit 0 ;;
+    bare)         # W PRIM [forged]: a destructive primitive called with NO proof inside a throw-away mount namespace (amendment 113)
+      . "$LIB"; P=$4; SC=$W/bare-$P; mkdir -p "$SC/dmp" || exit 90
+      [ "${5:-}" = forged ] && export OPKIT_HOST_NS="mnt=mnt:[1],pid=pid:[1],uts=uts:[1],ipc=ipc:[1],net=net:[1]"
+      exec 9</
+      before=$(awk '{ print $5, $6 }' /proc/self/mountinfo)
+      case "$P" in
+        isolate) OPKIT_SCRATCH=$SC opkit_ns_isolate ;;
+        make_ro) opkit_ns_make_ro ;;
+        fresh_proc) opkit_ns_fresh_proc ;;
+        private_dev) opkit_ns_private_dev "$SC/dmp" ;;
+        drop_host_fd) OPKIT_HOST_FD=9 opkit_ns_drop_host_fd ;;
+        *) exit 91 ;;
+      esac
+      rc=$?
+      after=$(awk '{ print $5, $6 }' /proc/self/mountinfo)
+      echo "BARE rc=$rc mounts=$([ "$before" = "$after" ] && echo same || echo CHANGED) scratch=[$(ls -A "$SC" | tr '\n' ' ')] fd9=$([ -e /proc/self/fd/9 ] && echo open || echo CLOSED)"
+      exit 0 ;;
     mknodc) mknod "$W/devs/$4" c "$5" "$6" 2>/dev/null; exit $? ;;       # W NAME MAJOR MINOR: a node in scratch, never under /dev
     devpriv)
-      . "$LIB"; mkdir -p "$W/devmp" && opkit_ns_private_dev "$W/devmp" || exit 93
+      . "$LIB"; mkdir -p "$W/devmp" && OPKIT_NS_PID_FOR_TEST=$STANDIN opkit_ns_private_dev "$W/devmp" || exit 93
       echo "DEVLIST $(ls /dev | tr '\n' ' ')"
       { : >/dev/opkit-new-node; } 2>/dev/null && echo CREATED-IN-DEV
       umount -l /dev
@@ -81,7 +111,7 @@ os.execvp("bash", ["bash", "-c", ". \"$OPKIT_LIB\"; ns_run touch \"$1\"", "bash"
     procpriv)
       . "$LIB"
       mount -t proc proc /proc || exit 93          # a cover over the host's /proc, as unshare --mount-proc lays one
-      opkit_ns_fresh_proc || exit 93
+      OPKIT_NS_PID_FOR_TEST=$STANDIN opkit_ns_fresh_proc || exit 93
       python3 -c '
 import os
 for p in ("/proc/sysrq-trigger", "/proc/sys/kernel/hostname"):
@@ -94,7 +124,7 @@ for p in ("/proc/sysrq-trigger", "/proc/sys/kernel/hostname"):
       exit 0 ;;
   esac
   # RO=1: the root is made read-only first, as ns_run does, and the tmpfs shadows are laid over it afterwards
-  if [ "${RO:-0}" = 1 ]; then . "$LIB"; opkit_ns_make_ro || exit 92; export OPKIT_REQUIRE_RO=1; fi
+  if [ "${RO:-0}" = 1 ]; then . "$LIB"; OPKIT_NS_PID_FOR_TEST=${NSPID:?} opkit_ns_make_ro || exit 92; export OPKIT_REQUIRE_RO=1; fi
   mount -t tmpfs tmpfs "$W/a" || exit 90
   if [ "${TMPFS_B:-1}" = 1 ]; then mount -t tmpfs tmpfs "$W/b" || exit 90
   else mkdir -p "$W/disk" && mount --bind "$W/disk" "$W/b" || exit 90   # shadowed by a DISK directory: a different object, not a tmpfs
@@ -125,13 +155,13 @@ fi
 # amendment 109: ns_run refuses a socket on fds 0-2 (a write through it reaches the peer). An ssh-driven run can hand a script
 # one for stdin; the tests' own commands do not read it, so it is replaced here, and the socket tests below hand their own.
 [ ! -S /proc/self/fd/0 ] || exec </dev/null
-W=$(mktemp -d "${TMPDIR:-/var/tmp}/axon-opkit-ns-test.XXXXXX") || exit 1
+W=$(mktemp -d "/var/tmp/axon-opkit-ns-test.XXXXXX") || exit 1
 trap 'rm -rf "$W"' EXIT
 mkdir -p "$W/a" "$W/b" "$W/scratch"
 fail() { echo "FAIL: $*"; exit 1; }
 
 # the mechanisms, judged on their own (a throw-away mount namespace, no proof, no ns_run): a regression in one cannot hide behind the proof
-o=$(unshare -m --propagation private bash "$SELF" --child devpriv "$W" 2>&1); rc=$?
+o=$(STANDIN=$$ unshare -m --propagation private bash "$SELF" --child devpriv "$W" 2>&1); rc=$?
 [ $rc = 0 ] && grep -q '^AFTER-UMOUNT' <<<"$o" || fail "setup: the private /dev mechanism did not run (rc $rc): $o"
 dl=$(sed -n 's/^DEVLIST //p' <<<"$o")
 [ "$(tr ' ' '\n' <<<"$dl" | grep -v '^$' | sort | tr '\n' ' ')" = "fd full null ptmx pts random shm stderr stdin stdout tty urandom zero " ] \
@@ -141,11 +171,59 @@ dl=$(sed -n 's/^DEVLIST //p' <<<"$o")
 for w in $(sed -n 's/^AFTER-UMOUNT \[\(.*\)\]$/\1/p' <<<"$o"); do
   case " console fd full null ptmx pts random shm stderr stdin stdout tty urandom zero " in *" $w "*) ;; *) fail "ATTACK: after umount /dev the host's devices show through ($w): $o" ;; esac
 done
-o=$(unshare -m --propagation private bash "$SELF" --child procpriv "$W" 2>&1); rc=$?
+o=$(STANDIN=$$ unshare -m --propagation private bash "$SELF" --child procpriv "$W" 2>&1); rc=$?
 [ $rc = 0 ] && grep -q '^AFTER-UMOUNT' <<<"$o" || fail "setup: the private /proc mechanism did not run (rc $rc): $o"
 ! grep -q OPENED-FOR-WRITE <<<"$o" || fail "ATTACK: a /proc file that reaches the host could be opened for writing (mechanism): $o"
 grep -q '^AFTER-UMOUNT \[\]$' <<<"$o" || fail "ATTACK: after umount /proc the host's /proc shows through (mechanism): $o"
 echo "ok: the private /dev (exactly the listed nodes, read-only, nothing beneath) and the private /proc (sysrq-trigger and sys read-only, nothing beneath) work on their own"
+# ── amendment 113 ───────────────────────────────────────────────────────────────────────────────────
+# Every DESTRUCTIVE primitive (opkit_ns_isolate, _make_ro, _fresh_proc, _private_dev, _drop_host_fd) starts with ONE function,
+# opkit_ns_precondition, that refuses (97) unless this process is not in the host's mount namespace, with nothing changed. Round 12
+# found isolate making `/` read-only BEFORE it refused the host's namespace. The attacks below call the primitives with no proof
+# inside a throw-away private mount namespace as root (`unshare -m --propagation private`), so a guard that regressed damages
+# that namespace and not the host; the host's own mount table is listed before and after the section.
+hostmounts() { awk '{ print $5, $6 }' /proc/self/mountinfo | sort; }
+HM_BEFORE=$(hostmounts)
+prectx() { # KIND -> prints the child's output; the pure precondition in one context
+  case $1 in
+    standin-host) STANDIN=$$ unshare -m --propagation private bash "$SELF" --child pre "$W" "$1" 2>&1 ;;
+    init-forged|noninit-forged) unshare --pid --fork --mount-proc --propagation private bash "$SELF" --child pre "$W" "$1" 2>&1 ;;
+    *) bash "$SELF" --child pre "$W" "$1" 2>&1 ;;
+  esac
+}
+o=$(prectx host-forged); grep -q '^RC=97$' <<<"$o" || fail "ATTACK: a forged OPKIT_HOST_NS on the host's own shell was accepted by the precondition: $o"
+o=$(prectx host-bare); grep -q '^RC=97$' <<<"$o" || fail "ATTACK: the precondition accepted a process with no recorded host namespace: $o"
+o=$(prectx standin-self); grep -q '^RC=97$' <<<"$o" || fail "ATTACK: the precondition accepted a process whose mount namespace IS the stand-in host's: $o"
+o=$(prectx noninit-forged); grep -q '^RC=97$' <<<"$o" || fail "ATTACK: the precondition accepted a process that is not PID 1 of its PID namespace: $o"
+o=$(prectx standin-host); grep -q '^RC=0$' <<<"$o" || fail "control: the precondition refused a throw-away mount namespace with a stand-in host (the self-test's own route): $o"
+o=$(prectx init-forged); grep -q '^RC=0$' <<<"$o" || fail "control: the precondition refused PID 1 of a private PID namespace that recorded a different host mount namespace: $o"
+echo "ok: the precondition refuses the host's own shell (bare or with a forged OPKIT_HOST_NS), the stand-in's own namespace and a non-init process; it passes the init of a private PID namespace that recorded another host namespace, and the self-test's stand-in route"
+bare_try() { # PRIM [forged]
+  local pr=$1 v=${2:-} o rc line
+  o=$(unshare -m --propagation private bash "$SELF" --child bare "$W" "$pr" $v 2>&1); rc=$?
+  line=$(grep '^BARE ' <<<"$o")
+  [ -n "$line" ] || fail "setup: the bare-primitive probe for $pr $v did not report (rc $rc): $o"
+  grep -q "^BARE rc=97 " <<<"$line" || fail "ATTACK: bare opkit_ns_$pr $v was not refused with 97: $line :: $o"
+  grep -q "REFUSE(opkit_ns): opkit_ns_$pr: " <<<"$o" || fail "ATTACK: bare opkit_ns_$pr $v was refused, but not by the precondition: $o"
+  grep -q ' mounts=same ' <<<"$line" || fail "ATTACK: bare opkit_ns_$pr $v changed the mount table before refusing: $line"
+  grep -q ' scratch=\[dmp \] ' <<<"$line" || fail "ATTACK: bare opkit_ns_$pr $v created something in the scratch directory before refusing: $line"
+  grep -q ' fd9=open$' <<<"$line" || fail "ATTACK: bare opkit_ns_$pr $v closed a descriptor before refusing: $line"
+}
+for pr in isolate make_ro fresh_proc private_dev drop_host_fd; do bare_try "$pr"; done
+for pr in isolate make_ro fresh_proc private_dev drop_host_fd; do bare_try "$pr" forged; done
+[ "$HM_BEFORE" = "$(hostmounts)" ] || fail "ATTACK: the host's mount table changed during the amendment-113 primitive tests"
+echo "ok: each destructive primitive called with no proof (and with a forged OPKIT_HOST_NS) refuses 97 by the precondition, changes no mount, creates nothing in its scratch and closes no descriptor; the host's mount table is unchanged"
+# OPKIT_RW is strictly below /var/tmp: an entry under /tmp validated and then failed to bind (/tmp is a fresh tmpfs by then)
+TMPRW=$(mktemp -d /tmp/opkit-rw113.XXXXXX) || fail "setup: no directory under /tmp"
+M7=$W/scratch/ran7
+o=$(OPKIT_RW=$TMPRW OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$M7" 2>&1 </dev/null); rc=$?
+{ [ ! -e "$M7" ] && [ $rc = 97 ]; } || fail "ATTACK: OPKIT_RW under /tmp was accepted (rc $rc): $o"
+grep -q 'not strictly below /var/tmp:' <<<"$o" || fail "ATTACK: OPKIT_RW under /tmp was validated and failed later instead of being refused by its own rule: $o"
+! grep -q 'isolation not proved\|cannot make' <<<"$o" || fail "ATTACK: OPKIT_RW under /tmp got past the validation and failed inside the namespace: $o"
+o=$(OPKIT_RW=$W/scratch OPKIT_LIB=$LIB OPKIT_SCRATCH=$TMPRW bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$M7" 2>&1 </dev/null); rc=$?
+{ [ -e "$M7" ] && [ $rc = 0 ]; } || fail "control: a scratch root under /tmp (OPKIT_SCRATCH) with OPKIT_RW under /var/tmp was refused (rc $rc): $o"
+rm -f "$M7"; rm -rf "$TMPRW"
+echo "ok: OPKIT_RW under /tmp is refused by its own rule (97, before anything is mounted); a scratch root under /tmp with OPKIT_RW under /var/tmp runs"
 # Runs the assertion in a fresh private namespace with $W/a (and $W/b when TMPFS_B=1) a tmpfs.
 assert_in_ns() { # VIEW NSPID -> prints stderr, exits with the assertion's rc
   VIEW=$1 NSPID=$2 TMPFS_B=${TMPFS_B:-1} unshare -m --propagation private bash "$SELF" --child assert "$W" 2>&1
@@ -457,7 +535,7 @@ for cand in /mnt /media; do [ -d "$cand" ] && [ ! -L "$cand" ] && [ "$(stat -c %
 if [ -n "${MNT:-}" ]; then
   o=$(OPKIT_RW="$MNT" OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$M5" 2>&1 </dev/null); rc=$?
   { [ ! -e "$M5" ] && [ $rc = 97 ]; } || fail "ATTACK: OPKIT_RW=$MNT (a host directory outside every temp root) was accepted (rc $rc): $o"
-  grep -q 'not strictly below /tmp or /var/tmp' <<<"$o" || fail "refused for another reason: $o"
+  grep -q 'not strictly below /var/tmp:' <<<"$o" || fail "refused for another reason: $o"
 else echo "SKIP: no /mnt or /media to try as a directory outside every temp root"; fi
 for cand in /usr/share/zoneinfo /usr/share/doc /usr/lib/systemd /usr/share/misc; do [ -d "$cand" ] && [ ! -L "$cand" ] && { SYS=$cand; break; }; done
 if [ -n "${SYS:-}" ]; then
@@ -483,7 +561,7 @@ hostlist() { ls -A /opt /home /mnt /media /srv /usr/local /etc/axon /etc/systemd
 HL_BEFORE=$(hostlist)
 MNTD=""; for cand in /mnt /media; do [ -d "$cand" ] && [ ! -L "$cand" ] && { MNTD=$cand; break; }; done
 if [ -n "$MNTD" ]; then
-  o=$(unshare -m --propagation private bash "$SELF" --child mnttmpfs "$W" "$MNTD" 2>&1); rc=$?
+  o=$(STANDIN=$$ unshare -m --propagation private bash "$SELF" --child mnttmpfs "$W" "$MNTD" 2>&1); rc=$?
   [ $rc = 0 ] || fail "(rc $rc) $o"
   echo "ok: TMPDIR is ignored and is no temp root; OPKIT_SCRATCH outside /tmp and /var/tmp is refused (97) before anything is mounted, nothing is created there; the helper's own scratch is removed"
 else echo "SKIP: no /mnt or /media to stand in for a host directory outside every temp root"; fi
