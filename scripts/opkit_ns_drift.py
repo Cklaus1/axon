@@ -1543,7 +1543,7 @@ def selftest(root):
         ("a precondition naming another primitive", hp.replace(first, "  opkit_ns_precondition opkit_ns_isolate || return 97\n", 1)),
         ("no precondition at all in a base primitive", hp.replace(first, "", 1)),
         ("no precondition in opkit_ns_drop_host_fd (a primitive that mounts nothing)", hp.replace(drop1, "", 1)),
-        ("a base primitive that is not defined", hp.replace("opkit_ns_make_ro() {", "opkit_ns_make_rw() {", 1)),
+        ("a base primitive that is not defined", hp.replace("opkit_ns_drop_host_fd() {", "opkit_ns_drop_host_fd_renamed() {", 1)),
         ("a new function that mounts, with no precondition", hp + new_fn),
     ]
     for label, text in planted:
