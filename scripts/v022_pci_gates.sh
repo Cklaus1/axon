@@ -131,6 +131,15 @@ ROWS=(
   "am117 the sealed kernel's token stream is its own|axon-core|lib|kernel::tests::a_sealed_registry_drawing_tokens_does_not_move_the_operators_stream"
   "am117 the clock is not a Pure builtin (runner: the Time ceiling refuses it)|axon-psv|sealed_frames|a_candidate_cannot_read_or_drive_the_clock_through_the_temporal_builtins"
   "am117 the PSV-1 non-claim list names every NARROW-CLAIM finding of the triage table|axon-core|pci_delta_note|every_narrow_claim_finding_of_the_loop_is_in_the_non_claim_list_and_no_other_is"
+  # Amendment 121 (round 15): the existence oracle at every placement of the item, the operator-typed value the
+  # candidate picked, the closure-helper scan, the observer's prune.
+  "am121 a diagnostic about a sealed item names the sealed file wherever the item sits|axon-core|lib|resolver::tests::a_diagnostic_about_a_sealed_item_names_the_sealed_file_wherever_the_item_sits"
+  "am121 a spanless merged diagnostic joins the backstop|axon-core|lib|seal_split::tests::a_spanless_merged_diagnostic_is_not_shown_beside_the_sealed_ones"
+  "am121 the operator value the candidate picked is never dispatched on (attacks and honest controls)|axon-core|lib|interp::taint_tests::an_operator_value_the_candidate_picked_is_never_dispatched_on"
+  "am121 the operator value the candidate picked (runner leg, corroboration)|axon-psv|sealed_frames|an_operator_value_the_candidate_picked_is_refused_through_the_runner"
+  "am121 every position the sealed walk visits has a twin row|axon-psv|sealed_frames|every_position_the_sealed_walk_visits_has_a_twin_row"
+  "am121 a cheat module at byte 0 is refused by the sealed-only check, not the backstop|axon-psv|runner|a_sealed_candidate_cannot_read_the_suites_answer"
+  "am121 a live nonce's record survives another request's prune|axon-fabric|observer_service|a_record_of_a_live_nonce_survives_another_requests_prune_and_refuses_its_replay"
 )
 
 for row in "${ROWS[@]}"; do

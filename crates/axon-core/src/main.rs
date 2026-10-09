@@ -6525,84 +6525,6 @@ fn run_check_pipeline_located(
     (diags, ictx)
 }
 
-/// The split of one half of a `--seal` check (see [`run_check_pipeline_located`]):
-/// `(kept, handed back)`. `n_load` is how many leading diagnostics are the
-/// module-load ones, which are about the entry file's own `use` lines.
-fn split_for_view(
-    diags: Vec<axon_core::PipelineDiagnostic>,
-    n_load: usize,
-    view: SealView,
-    masked: &dyn Fn(&str, u32) -> bool,
-) -> (
-    Vec<axon_core::PipelineDiagnostic>,
-    Vec<axon_core::PipelineDiagnostic>,
-) {
-    let mut kept = Vec::new();
-    let mut rest = Vec::new();
-    for (i, d) in diags.into_iter().enumerate() {
-        let unattributable = view == SealView::OperatorsOnly && d.line == 0 && i >= n_load;
-        if masked(&d.file, d.line) || unattributable {
-            rest.push(d);
-        } else {
-            kept.push(d);
-        }
-    }
-    (kept, rest)
-}
-
-/// The module-load diagnostics are the only spanless ones the merged half keeps.
-#[cfg(test)]
-mod split_for_view_tests {
-    use super::*;
-
-    fn d(file: &str, line: u32, msg: &str) -> axon_core::PipelineDiagnostic {
-        axon_core::PipelineDiagnostic {
-            code: "E0001".into(),
-            message: msg.into(),
-            file: file.into(),
-            line,
-            col: 0,
-            severity: "error".into(),
-            caret: String::new(),
-            expected: None,
-            found: None,
-            help: None,
-        }
-    }
-
-    #[test]
-    fn a_spanless_merged_diagnostic_is_not_shown_beside_the_sealed_ones() {
-        // The sealed side is the files named `sealed/..`.
-        let masked = |f: &str, _l: u32| f.starts_with("sealed/");
-        let diags = vec![
-            d("suite/main.ax", 0, "load"),
-            d("suite/main.ax", 0, "spanless, could be a sealed item's"),
-            d("suite/main.ax", 4, "operator's, located"),
-            d("sealed/sol.ax", 2, "sealed, located"),
-        ];
-        let (kept, rest) = split_for_view(diags, 1, SealView::OperatorsOnly, &masked);
-        let kept: Vec<_> = kept.iter().map(|x| x.message.as_str()).collect();
-        let rest: Vec<_> = rest.iter().map(|x| x.message.as_str()).collect();
-        assert!(
-            !kept.contains(&"spanless, could be a sealed item's"),
-            "ATTACK: a spanless merged diagnostic was shown as the operator's: {kept:?}"
-        );
-        assert!(
-            kept.contains(&"load"),
-            "ATTACK: a module-load diagnostic of the entry file was hidden: {kept:?}"
-        );
-        assert!(
-            kept.contains(&"operator's, located"),
-            "an operator-file diagnostic with a line was not kept: {kept:?}"
-        );
-        assert_eq!(
-            rest,
-            ["spanless, could be a sealed item's", "sealed, located"],
-            "a spanless merged diagnostic was not handed to the backstop"
-        );
-    }
-}
-
 /// Which diagnostics a run of the pipeline keeps (see
 /// [`run_check_pipeline_located`]).
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -7153,7 +7075,12 @@ fn run_check_pipeline_inner(
         // that half's own text. The only spanless diagnostics that are the
         // operator's for certain are the module-load ones (`n_load`), which are
         // about the entry file's own `use` lines.
-        let (kept, rest) = split_for_view(std::mem::take(&mut diags), n_load, view, &masked);
+        let (kept, rest) = axon_core::seal_split::split_for_view(
+            std::mem::take(&mut diags),
+            n_load,
+            view == SealView::OperatorsOnly,
+            &masked,
+        );
         diags = kept;
         *dropped = rest;
     }

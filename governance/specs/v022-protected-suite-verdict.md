@@ -147,7 +147,8 @@ Each clause names what must hold. The negative matrix below names how each one f
   (1) the NAME given to a name-resolving builtin (`sandbox_run`, `scheduler_spawn`, `kernel_goal_create`, the `goal_*`
   family); (2) an operator CLOSURE (or fn value) the candidate picked out of a container by a key, an index or a branch and
   then CALLED; (3) the IMPL a method call dispatches to, when the receiver's runtime TYPE was the candidate's (a receiver of a type the
-  OPERATOR defines is exempt: see *Not claimed*); (4) the
+  OPERATOR defines is exempt UNLESS sealed code PICKED the value: out of a container by a key or an index, by a branch, by being
+  handed back from a sealed fn or closure, or by the order or survivors a sealed callback gave: amendment 121); (4) the
   WIDTH of fixed-width arithmetic whose operand's width was the candidate's, including a width carried inside an
   `Uncertain`/`Temporal`. The claim is that a candidate cannot choose WHICH operator code runs, or which operator impl or
   width answers, **through the constructs and value routes the two lists below name**; the lists, not this sentence, are the
@@ -160,8 +161,11 @@ Each clause names what must hold. The negative matrix below names how each one f
     and so what a parameter-free store inside it writes), and the Rust loops that run operator code (a goal search, a
     scheduler pass, a kernel goal: `Interp::t_loop_pc` after each run). Tables: `taint::CONTROL_TABLE` (drift-tested against
     the `Expr` enum: a construct added to the language cannot ship without a row, an attack and a control) and
-    `taint::CALLBACK_BUILTINS` (drift-tested against `BUILTINS`: every builtin with a closure parameter has a row, and none
-    calls a closure except through `call_cb`).
+    `taint::CALLBACK_BUILTINS` (drift-tested against `BUILTINS`: every builtin with a closure parameter has a row; and no
+    interpreter source file other than the evaluator's own (`eval.rs`, `interp.rs`, where the helpers are defined and where a
+    closure the PROGRAM called is run) names a closure-invoking helper: `call_closure`, `call_local_closure`,
+    `call_closure_owned_by`, `call_fn_mut`. The helper list is itself held to the helpers `interp.rs` defines, so a new one
+    cannot hide from the scan).
   * *Value routes (the taint CLASSES).* Every builtin is `Pure` (a function of its arguments), `Kernel` (the operator's
     kernel tables) or `World` (state outside the interpreter: files, env, exec, http, the clock, the RNG, the durable
     store, native registries, the zoned-call provenance log); a sealed call writes World and Kernel taint, an operator call
@@ -171,50 +175,69 @@ Each clause names what must hold. The negative matrix below names how each one f
     `every_kernel_builtin_that_draws_the_rng_is_coupled_to_the_world_cell`, `every_rust_loop_that_runs_operator_code_raises_the_control_taint_after_each_run`,
     `both_provenance_writes_of_a_zoned_call_are_marked`, `every_type_that_holds_a_value_keeps_its_taint` with
     `the_holder_reasons_name_things_that_exist`. A refinement type pins exactly what its base pins (`Tys::closed` looks
-    through it), so a refinement over a union, a trait or a container of a union does not.
+    through it), so a refinement over a union, a trait or a container of a union does not. The clock builtins
+    `temporal_new`, `temporal_now` and `temporal_is_valid` are `World` and carry the `Time` effect (amendment 117, a VISIBLE
+    CHANGE): a fn that declares an effect row and calls one must name `Time`, and a run whose ceiling lacks `Time` (the
+    guest's default policy lists IO, Net, AI) refuses them as it refuses `now_ms`; an honest suite that uses them needs `Time`
+    in the guest's allowed effects.
+  * *Operator values (the PICK mark; amendment 121).* A struct or enum only the operator defines has no identity the taint
+    can tell from its fields, so a taint on the VALUE cannot separate `Sq { s: val() }.area()` (the operator's value, built
+    from the candidate's number: honest) from a value the candidate chose. The mark is therefore a third bit, `PICK`, that
+    a value carries only while it IS or HOLDS an operator-typed value (it is dropped from every scalar and every value that
+    holds none), and that is raised on the edges that select: an element read at an index the candidate chose; a builtin's
+    result that was already in its arguments (`dict_get_or`, `dict_get`, `arr_filter`, `arr_sort_by`, ...) when an argument
+    that holds no operator value carried the candidate's choice or sealed code ran inside the builtin; the value an `if` or
+    `match` on the candidate's data yielded; an assignment or place write under such control; the result of an operator fn or
+    closure after an exit the candidate's data decided; and the value a sealed fn or closure hands back. The dispatch rule
+    refuses a receiver that carries it. Data from sealed code inside an operator value (a struct literal, a factory fn, a
+    registry the operator filled and reads by its own key, `arr_map` over the candidate's numbers) does not raise it.
   * *Check time.* The sealed files' diagnostics come from a check that never saw the operator's definitions, so an operator
     name and a name nothing defines get the same text AND the same accept/refuse **in the positions the runner test
-    `a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one` lists** (fn, global, struct
-    literal, type, enum, trait, pattern, annotation, cast, lambda parameter, generic bound, `dyn`, array and tuple
-    elements, refinement base, refinement/`where`/`@[verify]` predicates, whole-struct refinement predicates, the deferred
-    type names, `goal_*` and `goal_eval` names). That list is what is tested, not an enumeration of the language.
+    `a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one` lists, at every placement of the
+    item in the candidate's file that test lists** (fn, global, struct literal, type, enum, trait, pattern, annotation, cast,
+    lambda parameter, generic bound, `dyn`, array and tuple elements, refinement base, refinement/`where`/`@[verify]`
+    predicates, whole-struct refinement predicates, a module-level `let` initializer, the deferred type names, `goal_*` and
+    `goal_eval` names; each at the top of the file as a bare `fn` at byte 0, and after a fn, a `pub fn`, a type, a `let`, a
+    comment, a blank line and a `mod`). The positions x placements are a table, and `every_position_the_sealed_walk_visits_has_a_twin_row`
+    fails if a construct the resolver's sealed walk visits has no row. The refusal a candidate meets is the SEALED-ONLY
+    check's (E0001, E0308 ...); E0004 `cannot use X, which the operator's code defines` is the merged check's BACKSTOP, kept
+    only when the sealed-only check found no error, and the twin fails if its text ever reaches the candidate in a listed
+    position. A merged diagnostic that names no line cannot be told from a sealed item's, so it joins the backstop. That
+    list is what is tested, not an enumeration of the language.
 - **NOT claimed.** The candidate's OUTPUT influences the verdict (the suite compares it with an expected value), and an
   operator that branches on candidate data (`if cand_ok() { a() } else { b() }`) has written a rubric the candidate chooses a
-  branch of. Standing residuals, none closed by the taint: OMISSION (a candidate that does not call an operator callback,
-  withholds a `send`, makes a `?` or a handler arm skip an operator store, or fails a scheduler fiber, selects what the
-  operator's branch or index does on absence; the taken branch of an exit taints what runs AFTER it, a skipped store leaves
-  nothing to mark); a table of precomputed operator VERDICTS indexed by a candidate value (a table of closures so indexed is
+  branch of. Standing residuals, none closed by the taint: OMISSION, whose consequence is a skipped ASSERTION (a false pass) as
+  much as a skipped store: an assertion inside a `with handler` body whose arm does not resume is skipped when the candidate
+  performs the handled effect (`http_get`), and the wrong answer passes; an operator loop over a candidate-returned EMPTY
+  array runs zero times; a candidate that does not call an operator callback, withholds a `send`, makes a `?` or a handler
+  arm skip a store, or fails a scheduler fiber, selects what the operator's branch or index does on absence; and a
+  candidate that ENDS a scan or a search early (`arr_any`/`arr_find`/`arr_take_while`, `for`/`break`, `while`, `goal_run`)
+  leaves the call count clean, so a single-call stop picks the lenient check: the first result's store is never marked
+  (the finding-16 repro with `cscore = 10` stops at the first evaluation and is ACCEPTED where `cscore = x` is refused: a
+  stop is accepted or refused, the candidate does not choose between two accepted outcomes). The taken branch of an exit
+  taints what runs AFTER it; a skipped assertion or store leaves nothing to mark. Also standing: a table of precomputed operator VERDICTS indexed by a candidate value (a table of closures so indexed is
   refused, a table of verdicts is not); a branch on candidate data into a weaker check; integer HANDLES of kernel objects and
   authority values (effect lists, budgets), a path, URL or `ai_complete` prompt a tainted value supplies; native codegen
   (`axon build`); an operator-built class holding hidden state that is not yet classed `World` or `Kernel`; existence-oracle
   text on any path or position the runner test does not list (among them: a candidate that DEFINES a name the operator defines, a
   fn, type, enum, constant, trait or impl method, is refused E0002 where a fresh name is accepted, an oracle readable from source
-  that cannot shadow anything); the coverage of the sealed-only static check beyond the
+  that cannot shadow anything, and the same refusal falsely refuses an HONEST candidate whose helper name collides with an
+  operator helper; the duplicate check is the merged resolver's and is unchanged since `e8b8b48a`); the principal HANDLE token
+  of an operator sandbox appears in the sandbox-violation text printed from a sealed frame (no authority is gained: sealed code
+  cannot resolve it; FUTURE: blank it in the copied entry); the coverage of the sealed-only static check beyond the
   positions it lists. The taint is an over-approximation (coarse per binding, per dict and per channel), and its cost to an
   honest suite is listed in amendments 102 and 106. **Findings of the round-14 loop decided NARROW-CLAIM** (each entry names the
   finding's signature, `governance/notes/v022-psv1-loop-triage.md` holds the table and the loop's evidence path, and
   `scripts/pci_delta.py --check` fails if an entry is missing or stale). Every non-claim here, with the follow-up it needs, is carried by `governance/specs/post-c9-hardening.md`
   (non-normative; `scripts/check_postc9_spec.py` holds it to this list):
 <!-- BEGIN PSV-1 NON-CLAIMS (scripts/pci_delta.py checks this list against governance/notes/v022-psv1-loop-triage.md) -->
-  * Operator-typed values with impls (cluster h). The impl a method call on a value of an operator-DEFINED type answers is not
-    refused when the candidate chose WHICH operator value reached the call, because a struct has no identity the taint can tell
-    from its fields (refusing it also refuses the honest `Sq { s: val() }.area()` over a trait implemented for two operator
-    types: measured). Not covered: a candidate-keyed table of operator values (`dict_get_or(d, key(), ..)`), a sealed
-    generic that hands one of two operator values back, an operator ctor closure the candidate picks, an order a candidate
-    comparator gives (`arr_sort_by`) to operator values. Closures are covered; impl-carrying values are not.
-    - `dispatch-operator-type-exempt-no-val-taint`
-    - `dispatch-operator-type-exempt-ctor-closure-pick`
-    - `dispatch-operator-type-exempt-via-sort-order`
   * Existence oracle (cluster f), beyond the tested positions. An operator-defined name and a missing one are not claimed to
     read identically: (a) when a sealed `mod X`/`use X` reaches an operator module FILE (the loader names the operator path);
-    (b) in a candidate's module-level `let` initializer (the merged check's did-you-mean and error count survive the split);
-    (c) in the predicate of a sealed refinement ITEM that names an unresolved fn (no span, so the merged diagnostic is
-    attributed to the operator's file); (d) in a binding position (a local, parameter, `for` variable or pattern binding named
-    like an operator global is refused where a fresh name is accepted); (e) for a name the SUITE references but its own tree
-    does not define, which resolves from the candidate's directory.
+    (b) in a binding position (a local, parameter, closure parameter, `for` variable or pattern binding named like an operator
+    global is refused E0004 where a fresh name is accepted: an honest candidate cannot know the suite's globals, so this is also
+    a false refusal); (c) for a name the SUITE references but its own tree does not define, which resolves from the
+    candidate's directory.
     - `module-loader-existence-oracle-text`
-    - `static-oracle-global-initializer-merged-check`
-    - `refine-item-predicate-dummy-span-merged-diag`
     - `merged-e0004-backstop-name-walk-no-shadowing-oracle`
     - `dangling-operator-reference-resolved-from-candidate`
   * Emitters (cluster e). `print`, `println`, `eprint` and `eprintln` are classed `Pure`: where the process's stdout is a
@@ -230,7 +253,16 @@ Each clause names what must hold. The negative matrix below names how each one f
   the operator's code and the candidate's (a file, the clock, the RNG, the durable store, a native handle, the provenance log):
   the taint follows it conservatively and an honest suite pays in false refusals. The cost list of amendments 102 and 106
   stands (folding a candidate's `[u8]` needs `as i64`; running a candidate-nominated entry point by name is refused; an
-  unpinned `let v = work(0)` then `v.ok()` in an arm is refused where the pinned form passes).
+  unpinned `let v = work(0)` then `v.ok()` in an arm is refused where the pinned form passes). Amendment 121 adds: do not
+  select an operator checker object (a struct or enum with impls) by a candidate-derived key, index, branch or order, or let a
+  candidate fn hand one back and then dispatch on it: look it up by a literal key the operator wrote (a registry the operator
+  filled from the candidate's DATA, read by the operator's own key, passes; `let r = if cand_ok() { A {..} } else { A {..} }`
+  then `r.rub()` is refused although both arms are one type); put the verdict where a candidate cannot skip it: no assertion
+  inside a `with handler` body that has a non-resuming arm, and assert a length or an expected value outside any loop over a
+  candidate-returned collection (an empty one runs the body zero times); and avoid giving the candidate's own parameters,
+  locals, closure parameters or `for` variables the name of a suite global (E0004: an honest candidate cannot know them, so the
+  suite should not rely on short generic global names such as `expected`). A fn that declares an effect row and calls a
+  `temporal_*` builtin must name `Time`.
 - **Evidence for this clause, stated at its strength.** Reviewed in rounds 8-13 plus a six-pass find-until-dry loop that did
   not reach two consecutive clean passes (53 confirmed findings, 31 of them blocker-class; 44 fixed in amendment 117; the
   rest are the non-claims above). A fix closes the executed shape and the mechanism named in its mutation row (M3300-M3351),
@@ -241,7 +273,9 @@ Each clause names what must hold. The negative matrix below names how each one f
 - Candidate tree and suite tree are delivered to the guest as two separately sealed inputs, each
   bound by digest (candidate WorkspaceVersion; suite id@version#entry).
 - The guest runner refuses to start if either digest differs from what the launch manifest names.
-- The candidate reaches the suite only as a module path, and is sealed per PCI (E0004).
+- The candidate reaches the suite only as a module path, and is sealed per PCI: the sealed-only check refuses a name the
+  operator defines exactly as it refuses a name nothing defines (E0001, E0308 ...); E0004 is the merged check's backstop, shown
+  only when the sealed-only check found no error.
 
 **PSV-3 — PCI inside the guest.**
 - The affirmative completion token (a per-run key and a token per completed test) is derived
@@ -292,6 +326,11 @@ Each clause names what must hold. The negative matrix below names how each one f
   base; a width inside an `Uncertain`; the sandbox ceiling on a sealed fn; the per-registry token stream; the positions the
   sealed-only check skipped), and 9 decided NARROW-CLAIM and written into the claim, with the table in
   `governance/notes/v022-psv1-loop-triage.md`.
+  Amendment 121 (round 15) closes 5 of those 9: the operator-typed receiver the candidate picked (findings 21, 44, 51: the
+  PICK mark, with the honest `Sq { s: val() }.area()` kept as a control), and the two existence-oracle shapes the round-15
+  reviewers executed (findings 7 and 33: a diagnostic about a sealed item that sat first in its file, after a `type`, a `let`
+  or a comment was filed under the operator's entry file because the parser's end-of-input span was the dummy `0..0` and the
+  resolver located a predicate or a module-level `let` at the previous statement). 4 remain.
   Each amendment's PRINCIPAL arms are exercised by named gate rows in `scripts/v022_pci_gates.sh`
   (rows named `am53` ... `am108`; the row count is not quoted here, it is derived and drift-tested
   by `scripts/pci_delta.py --check`). Arms verified to fail a gate row when their code is removed:

@@ -33,13 +33,16 @@ needs its own amendment, rows and a review round before it lands. No item may we
 What C9 claims, in one line: a candidate cannot choose WHICH operator code runs, or which operator impl or width answers, through the
 constructs and value routes the claim lists. What follows is what the claim does not cover.
 
-#### PH-A1. Operator-typed receivers with impls (cluster h)
-Sources: triage 21, 44, 51; verdict "Operator-typed values with impls"; amendment 117 item 3. Sev BLOCKER-class (narrowed, measured).
-The impl a method call answers on a value of an operator-defined type is not refused when the candidate chose which operator value
-reached the call (a candidate-keyed table of operator values, a sealed generic handing one of two back, an operator ctor closure the
-candidate picks, an `arr_sort_by` order). Refusing VAL taint on the receiver also refuses the honest `Sq { s: val() }.area()`: a struct has no
-identity the taint can tell from its fields. Fix needs value IDENTITY (an origin bit on the struct/enum value itself, separate from the taint of its fields), see PH-A19.
-Closing test: the three attacks refused, `HONEST: an operator struct holding the candidate's number, dispatched on` still passes.
+#### PH-A1. Operator-typed receivers with impls (cluster h): CLOSED in amendment 121; the residual
+Sources: triage 21, 44, 51; verdict "Operator values (the PICK mark)"; amendments 117 item 3 and 121. Sev BLOCKER-class. The exemption for a
+receiver of an operator-defined type is kept for a value the operator named, and refused for a value sealed code PICKED (a candidate-keyed
+table, a branch, an index, a sealed generic or closure that hands one back, a comparator's order or survivors), by a third taint bit, `PICK`, that a
+value carries only while it is or holds an operator-typed value: field data from sealed code never raises it, so the honest `Sq { s: val() }.area()` stays
+accepted (taint_tests `an_operator_value_the_candidate_picked_is_never_dispatched_on`; rows M3460-M3478). What is left (open, small): a pick through a path
+the edges above do not name (a `select` arm, a `Chan` receive by a candidate-chosen channel, an operator struct stored in a dict by a candidate-written key and
+read by an operator literal); an over-refusal (`let r = if cand_ok() { A {..} } else { A {..} }; r.rub()` is refused although both arms are one type);
+identity proper still needs PH-A19.
+Closing test for the residual: each unnamed edge gets an attack and the honest control keeps passing.
 
 #### PH-A2. Omission (a skipped store, a withheld send, an absent callback)
 Sources: r11 PSV-1 MAJOR-ADJACENT, amendment 106 item 7, triage 15/31/32/34/45 ("what a FIX does not close"). Sev MAJOR-ADJACENT (stated residual).
@@ -106,12 +109,12 @@ Close by classing emitters World when the fd is a regular file, or by making the
 Source: triage 6. Sev MAJOR-ADJACENT (narrowed). A sealed `mod X`/`use X` that reaches an operator module file gets different text from a missing module (the loader names the operator path).
 Fix is in the loader's error taxonomy: one text for "not found" and "found but not readable from a sealed frame".
 
-#### PH-A12. Existence oracle: candidate global initializer under the merged check
-Source: triage 7. Sev BLOCKER-class (narrowed). A candidate's module-level `let` initializer is judged by the merged check, so did-you-mean text and struct-literal acceptance
+#### PH-A12. Existence oracle: candidate global initializer under the merged check (CLOSED in amendment 121)
+Source: triage 7. Sev BLOCKER-class. CLOSED: a sealed module-level `let` initializer is walked by the sealed-only checker (`check_sealed_predicate`), and located at the item; twin rows `top-level let: ...` at every placement (M3453, M3458). Kept as a heading for traceability. Was: A candidate's module-level `let` initializer is judged by the merged check, so did-you-mean text and struct-literal acceptance
 differ for an operator name. Fix: judge sealed global initializers by the sealed-only check first (as fn bodies are), and drop did-you-mean from sealed diagnostics.
 
-#### PH-A13. Existence oracle: sealed refinement ITEM predicate with no span
-Source: triage 33. Sev MAJOR-ADJACENT (narrowed). Predicate nodes of a sealed refinement item carry no span, so the merged diagnostic is attributed to the operator's file and survives the split. Give the parser
+#### PH-A13. Existence oracle: sealed refinement ITEM predicate with no span (CLOSED in amendment 121)
+Source: triage 33. Sev MAJOR-ADJACENT. CLOSED: the parser's end-of-input span is no longer the dummy `0..0`, the resolver locates a predicate at its item, and a merged diagnostic that names no line joins the backstop (M3450-M3454, M3456-M3457). Was: Predicate nodes of a sealed refinement item carry no span, so the merged diagnostic is attributed to the operator's file and survives the split. Give the parser
 spans for refinement-item predicates; closing test the unresolved-fn predicate attack.
 
 #### PH-A14. Existence oracle: bindings named like an operator global
@@ -325,8 +328,8 @@ Order is risk reduction per effort, highest first. Effort: S under a day, M a fe
 | PH-D7 | Stale status records at freeze | amendments 112, 116 | MAJOR-ADJACENT | freeze refuses a stale record by name; runbook order | S | |
 | PH-A15 | Dangling suite reference resolves from the candidate | triage 22 | MAJOR-ADJACENT | `AXON_PATH_EXCLUSIVE` over the suite tree; attack refused | S | |
 | PH-A11 | Module-loader existence text | triage 6 | MAJOR-ADJACENT | one text for operator file / missing | S | |
-| PH-A12 | Candidate global initializer under merged check | triage 7 | BLOCKER-class | sealed-only check first; no did-you-mean | M | |
-| PH-A13 | Refinement item predicate span | triage 33 | MAJOR-ADJACENT | spans on refinement predicates | S | |
+| PH-A12 | Candidate global initializer under merged check (CLOSED, amendment 121) | triage 7 | BLOCKER-class | done | - | |
+| PH-A13 | Refinement item predicate span (CLOSED, amendment 121) | triage 33 | MAJOR-ADJACENT | done | - | |
 | PH-A14 | Binding named like an operator global | triage 23 | MAJOR-ADJACENT | scope-aware backstop | M | |
 | PH-C11 | Kit judges in place, installs later (TOCTOU) | r8 FIELD-ORIGIN | MAJOR-ADJACENT | swap between judge and install refused | M | |
 | PH-C4 | Drift gate is a text matcher; make the wrapper the only way | r10-r13 FIELD-ORIGIN | MAJOR-ADJACENT | kit refuses to run in the host mount namespace; matcher demoted to lint | M | PH-C1 |
@@ -338,7 +341,7 @@ Order is risk reduction per effort, highest first. Effort: S under a day, M a fe
 | PH-A8 | Hidden-state classes / containers of state | verdict, amendment 108 | MAJOR-ADJACENT | state registry drift test | M | PH-A19 |
 | PH-A6 | Paths, URLs, prompts as tainted arguments | amendments 100-108 | FUTURE | attack per builtin family + honest literal control | M | |
 | PH-A5 | Integer handles / authority values | amendments 100-108 | FUTURE | opaque per-frame handles | L | PH-A19 |
-| PH-A1 | Operator-typed receiver identity | triage 21, 44, 51 | BLOCKER-class | three attacks + honest control | L | PH-A19 |
+| PH-A1 | Operator-typed receiver: the residual after the PICK mark (amendment 121) | triage 21, 44, 51 | BLOCKER-class | an attack per unnamed edge + honest control | M | PH-A19 |
 | PH-A2 | Omission | r11, amendment 106 | MAJOR-ADJACENT | absence-sensitive sink | L | PH-A19 |
 | PH-A3 | Verdict tables keyed by candidate value | r11, r12 | MAJOR-ADJACENT | suite lint | M | |
 | PH-A7 | Native module classes; native build excluded | amendments 102-112 | FUTURE | taint class per `native::` module | M | PH-A19, LLVM item L |
@@ -378,7 +381,7 @@ Order is risk reduction per effort, highest first. Effort: S under a day, M a fe
 
 ## Part G. Traceability: the 53 confirmed loop findings
 
-Source: `governance/notes/v022-psv1-loop-triage.md` (the checker reads both tables). "fixed in amendment 117" means the executed shape is fixed
+Source: `governance/notes/v022-psv1-loop-triage.md` (the checker reads both tables). "fixed in amendment 117" (or 121, which closed five of the narrowed ones) means the executed shape is fixed
 with rows M3300-M3351; a spec item in the last column names a residual the fix does not close. "narrowed" means NARROW-CLAIM: not fixed, listed in the verdict's non-claims, and carried by the named item.
 
 <!-- BEGIN TRACE (scripts/check_postc9_spec.py reads this table) -->
@@ -391,7 +394,7 @@ with rows M3300-M3351; a spec item in the last column names a residual the fix d
 | 4 | `sealed-check-skips-struct-refinement-predicate-names` | fixed in amendment 117 | - |
 | 5 | `sealed-check-skips-dyn-trait-name` | fixed in amendment 117 | - |
 | 6 | `module-loader-existence-oracle-text` | narrowed | PH-A11 |
-| 7 | `static-oracle-global-initializer-merged-check` | narrowed | PH-A12 |
+| 7 | `static-oracle-global-initializer-merged-check` | fixed in amendment 121 | PH-A12 |
 | 8 | `static-oracle-dyn-trait-position` | fixed in amendment 117 | - |
 | 9 | `static-oracle-predicate-expr-kinds` | fixed in amendment 117 | - |
 | 10 | `builtin-callback-count-store-untainted-no-pc` | fixed in amendment 117 | - |
@@ -405,7 +408,7 @@ with rows M3300-M3351; a spec item in the last column names a residual the fix d
 | 18 | `callback-stop-store-without-param-clean` | fixed in amendment 117 | - |
 | 19 | `adaptive-provenance-push-no-kernel-mark` | fixed in amendment 117 | - |
 | 20 | `select-receiver-choice-not-in-lost` | fixed in amendment 117 | - |
-| 21 | `dispatch-operator-type-exempt-no-val-taint` | narrowed | PH-A1 |
+| 21 | `dispatch-operator-type-exempt-no-val-taint` | fixed in amendment 121 | PH-A1 |
 | 22 | `dangling-operator-reference-resolved-from-candidate` | narrowed | PH-A15 |
 | 23 | `merged-e0004-backstop-name-walk-no-shadowing-oracle` | narrowed | PH-A14 |
 | 24 | `adaptive-provenance-write-in-call_fn-not-marked-kernel` | fixed in amendment 117 | - |
@@ -417,7 +420,7 @@ with rows M3300-M3351; a spec item in the last column names a residual the fix d
 | 30 | `pure-class-emitter-readable-via-proc-fd` | narrowed | PH-A10 |
 | 31 | `handler-abort-skips-operator-stores-no-sticky` | fixed in amendment 117 | PH-A2 |
 | 32 | `handlerdone-effect-exit-not-in-has_exit` | fixed in amendment 117 | PH-A2 |
-| 33 | `refine-item-predicate-dummy-span-merged-diag` | narrowed | PH-A13 |
+| 33 | `refine-item-predicate-dummy-span-merged-diag` | fixed in amendment 121 | PH-A13 |
 | 34 | `handler-abort-exit-skips-operator-body-no-sticky` | fixed in amendment 117 | PH-A2 |
 | 35 | `refine-def-closed-regardless-of-base` | fixed in amendment 117 | - |
 | 36 | `refine-name-closed-ignores-base-union` | fixed in amendment 117 | - |
@@ -428,14 +431,14 @@ with rows M3300-M3351; a spec item in the last column names a residual the fix d
 | 41 | `sandbox-ceiling-not-applied-to-sealed-frame-per-kernel-active-sandbox` | fixed in amendment 117 | - |
 | 42 | `refine-def-closed-base-shapes-beyond-bare-union` | fixed in amendment 117 | - |
 | 43 | `adaptive-provenance-file-append-no-world-mark-executed` | fixed in amendment 117 | - |
-| 44 | `dispatch-operator-type-exempt-ctor-closure-pick` | narrowed | PH-A1 |
+| 44 | `dispatch-operator-type-exempt-ctor-closure-pick` | fixed in amendment 121 | PH-A1 |
 | 45 | `sched-fiber-prebody-failure-bit-no-acc-taint` | fixed in amendment 117 | PH-A2 |
 | 46 | `drift-holders-reason-prose-unchecked-feed` | fixed in amendment 117 | - |
 | 47 | `kernel-class-goal-loop-advances-world-rng-stream` | fixed in amendment 117 | PH-A9 |
 | 48 | `goal-loop-count-hidden-world-state-ai-cost-clock` | fixed in amendment 117 | PH-A9 |
 | 49 | `callback-stop-decided-by-in-body-candidate-read-no-pc` | fixed in amendment 117 | - |
 | 50 | `deferred-prefix-names-accepted-as-known-types-in-sealed-only-check` | fixed in amendment 117 | - |
-| 51 | `dispatch-operator-type-exempt-via-sort-order` | narrowed | PH-A1 |
+| 51 | `dispatch-operator-type-exempt-via-sort-order` | fixed in amendment 121 | PH-A1 |
 | 52 | `width-rule-top-level-sizedint-only-soft-wrapper-hides-width` | fixed in amendment 117 | - |
 <!-- END TRACE -->
 

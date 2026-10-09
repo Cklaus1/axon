@@ -6,7 +6,7 @@ What it holds, so the document cannot silently lose what it exists to keep:
      is in the spec's traceability table (Part G), and the table names no signature the triage
      table does not have;
   2. a NARROW-CLAIM finding is `narrowed` and names a PH-A item that exists as a heading; a FIX
-     finding is `fixed in amendment 117`; the two tables agree on the decision;
+     finding is `fixed in amendment 117` (or 121, which closed five of the narrowed ones); the two tables agree on the decision;
   3. every `PH-` heading appears in the Part F backlog table and every Part F id is a heading;
   4. the PSV-1 NON-CLAIMS section of the verdict spec names the spec by path;
   5. the spec says it is non-normative.
@@ -84,7 +84,7 @@ def check():
             if not re.fullmatch(r"PH-A\d+", item) or item not in items:
                 bad.append(f"`{sig}` is narrowed and names `{item}`, which is not a PH-A item heading of the spec")
         elif dec == "FIX":
-            if disp != "fixed in amendment 117":
+            if disp not in ("fixed in amendment 117", "fixed in amendment 121"):
                 bad.append(f"`{sig}` is FIX in the triage table and `{disp}` in the spec")
             if item != "-" and item not in items:
                 bad.append(f"`{sig}` names the residual item `{item}`, which is not a heading of the spec")

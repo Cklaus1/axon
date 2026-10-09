@@ -11,7 +11,8 @@
 //! WHAT IS SELECTED (refused in an operator frame): a NAME a sealed value chose, given to a
 //! name-resolving builtin; an operator CLOSURE a sealed value picked out of a container,
 //! then called; the IMPL a method call dispatches to when the receiver's TYPE was sealed
-//! code's; the WIDTH of fixed-width arithmetic on an operand whose width was sealed code's
+//! code's, or when the operator-typed receiver was itself PICKED by sealed code (the
+//! [`PICK`] mark, amendment 121); the WIDTH of fixed-width arithmetic on an operand whose width was sealed code's
 //! (a width inside an `Uncertain`/`Temporal` included). WHAT IS NOT: plain data compared
 //! with an expected value, and control flow on data (`if cand_ok() { a() } else { b() }`:
 //! both arms are the operator's own code). The property is "candidate bytes cannot choose
@@ -22,8 +23,11 @@
 //! IT IS NOT A PROOF that candidate bytes cannot influence the rubric in all ways
 //! (amendment 117, after a six-pass find-until-dry loop that did not go dry): omission, a
 //! table of precomputed verdicts, a branch into a weaker check, integer handles, paths,
-//! URLs, prompts, native codegen, an operator-typed value (not a closure) the candidate
-//! chose, and the existence-oracle text on untested paths are standing non-claims. The
+//! URLs, prompts, native codegen, and the existence-oracle text on untested paths are
+//! standing non-claims. (An operator-typed value the candidate chose was one until
+//! amendment 121, which closes the shapes it names with [`PICK`]; a pick through an edge
+//! it does not name is still not claimed.) An omission has a consequence in a skipped
+//! ASSERTION as much as in a skipped store. The
 //! list and its drift check live in `governance/specs/v022-protected-suite-verdict.md`
 //! (PSV-1) and `governance/notes/v022-psv1-loop-triage.md`.
 //!
