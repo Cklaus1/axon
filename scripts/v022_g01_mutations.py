@@ -7954,9 +7954,16 @@ MUTATIONS += [
 # a kit guard: removed alone by hand INSIDE the namespace helper, see amendment 92; not a cargo row.)
 _OE = '--test operator_examples'
 MUTATIONS += [
-    ('M2261', 'BUILD-ENV (92): after a step every process of the build uid is killed before anything is signed', _GE,
-     '            reap_build_processes()\n            lock_from_build(rec)\n',
-     '            lock_from_build(rec)\n',
+    # Re-anchored at integration 12 (amendment 112): since amendment 97 the step runs in its own PID
+    # namespace (as_build_uid), so the kernel kills a detached descendant when the step's init exits and
+    # `reap_build_processes()` is its verification and backstop. Removing the reaper ALONE therefore
+    # survived (measured at integrate10, integrate11 and integrate12: the namespace kill still held).
+    # The property the row names -- nothing of the build uid runs after a cargo step -- is held by BOTH
+    # layers, so the row removes both at the cargo step's call site (no PID namespace, no reaper), the
+    # one contiguous edit that reopens the attack. A single layer is redundant and is not claimed killed.
+    ('M2261', 'BUILD-ENV (92, 97): after a cargo step every process of the build uid is killed before anything is signed (the PID namespace AND the reaper both off)', _GE,
+     '            r = subprocess.run(as_build_uid([rec["toolchain"]["cargo"], *args]), env=env, cwd=rec["src_dir"])\n        finally:\n            reap_build_processes()\n            lock_from_build(rec)\n',
+     '            r = subprocess.run(["/usr/bin/setpriv", "--reuid=%d" % build_ids()[0], "--regid=%d" % build_ids()[1], "--clear-groups", "--no-new-privs", "--", rec["toolchain"]["cargo"], *args], env=env, cwd=rec["src_dir"])\n        finally:\n            lock_from_build(rec)\n',
      'axon-fabric', _GBT, 'a_detached_build_process_does_not_outlive_its_step_or_rewrite_what_is_signed'),
     ('M2262', 'BUILD-ENV (92): after a step the source copy, CARGO_HOME and target dir are root-owned and not writable by the build uid', _GE,
      '            lock_from_build(rec)\n    finally:\n        os.close(lockfd)\n',
