@@ -55,13 +55,14 @@ cd "$ROOT"
 # of all its ancestors. Shapes that stay `Tree` permanently (`Call(struct-lit)`,
 # `Call(P)`, `Call(computed)`, `Index(E|Var)`) are never listed; a variant
 # listed bare does not cover its shapes, because tokens compare exactly.
-SLICES=(S0 S1 S2 S3 S4) # landing order; the last one is the default
+SLICES=(S0 S1 S2 S3 S4 S5) # landing order; the last one is the default
 declare -A SLICE_DEPS=(
   [S0]=""
   [S1]="S0"
   [S2]="S1"
   [S3]="S2"
   [S4]="S3"
+  [S5]="S4"
 )
 declare -A SLICE_LOWERED=(
   [S0]="" # S0 lowers nothing: every compiled body is exactly one Tree op
@@ -76,6 +77,10 @@ declare -A SLICE_LOWERED=(
   [S3]="Match WhileLet MethodCall"
   # S4: lambdas (`make_closure`); their bodies compile on their own.
   [S4]="Lambda"
+  # S5: call costs. A `&mut` call is a `CallMut` op over `call_mut`, so the
+  # `Call(&mut)` shape no longer stays `Tree`; fast VM->VM calls lower nothing
+  # new (the callee was already a lowered `Call`).
+  [S5]="Call(&mut)"
 )
 # ────────────────────────────────────────────────────────────────────────────
 

@@ -188,11 +188,18 @@ impl Body<'_> {
     /// (`fn id(x: i64) -> i64 { x }`), the value its `Load` op pushes. `None`
     /// for any other body, and wherever that fast path declines (another
     /// operand type, overflow, a zero divisor, an unbound name); the op loop
-    /// then runs the body, panic included.
+    /// then runs the body, panic included. With `pre_goal` (a fast call,
+    /// S5) the frame holds only the parameters, `goal_met` not pushed yet:
+    /// a body that names `goal_met` declines, so every name it reads finds
+    /// the binding it would find with `goal_met` there.
     #[inline(always)]
-    fn leaf_value(&self, env: &Env) -> Option<Value> {
+    fn leaf_value(&self, env: &Env, pre_goal: bool) -> Option<Value> {
+        let goal = |o: &Opnd<'_>| matches!(o, Opnd::Local(v) if v.s == SYM_GOAL_MET);
         let v = match &*self.ops {
             [Op::Bin { op, l, r }] => {
+                if pre_goal && (goal(l) || goal(r)) {
+                    return None;
+                }
                 // A one-op body has no stack operand; `scalar_at` declines one.
                 match (scalar_at(l, env, &[], 0)?, scalar_at(r, env, &[], 0)?) {
                     (Scalar::Int(a), Scalar::Int(b)) => int_fast(op, a, b)?,
@@ -201,10 +208,13 @@ impl Body<'_> {
                 }
             }
             [Op::Load(var)] => {
+                if pre_goal && var.s == SYM_GOAL_MET {
+                    return None;
+                }
                 return Some(match env.get_var(var.s, var.slot)? {
                     Value::Int(n) => Value::Int(*n),
                     v => v.clone(),
-                })
+                });
             }
             _ => return None,
         };
@@ -368,6 +378,13 @@ pub(super) enum Op<'p> {
         l: Var<'p>,
         r: Var<'p>,
     },
+    /// [`Op::StoreBin`] with a local left operand and the right one on the
+    /// stack (`s = s + f(i)`, S5).
+    StoreLocalStack {
+        var: Var<'p>,
+        op: BinOp,
+        l: Var<'p>,
+    },
     /// Push `l op r` (any operator but `&&`/`||`).
     Bin {
         op: BinOp,
@@ -523,11 +540,13 @@ pub(super) enum Op<'p> {
         steps: Box<[PlaceStep]>,
         nidx: u32,
     },
-    /// `base[i] = v` with an inline index: pop the value, read the index
-    /// (`place_index`), then `write_place` with that one step.
+    /// `base[i] = v` with an inline index: the value (popped, or read from
+    /// `val` when it is an inline operand), then the index (`place_index`),
+    /// then `write_place` with that one step.
     WriteIndexLocal {
         base: Var<'p>,
         idx: Opnd<'p>,
+        val: Opnd<'p>,
     },
     /// A place whose root is not an identifier, after its value and index
     /// expressions: the `invalid assignment target` panic.
@@ -641,14 +660,37 @@ pub(super) enum Op<'p> {
         args: Box<[Opnd<'p>]>,
         proven: Cell<bool>,
     },
-    /// `f(.., &mut a, ..)` (S5): pop `argc` arguments (a `Unit` in each
-    /// `&mut` position) and run `call_mut_with` with `fn_table[entry]`;
-    /// with no entry (the callee is not a fn) `call_mut`, which panics.
+    /// `f(.., &mut a, ..)` (S5): a call with one operand per argument in
+    /// `args`, each plain one either inline (every plain argument an
+    /// identifier or a literal, read here in order) or on the stack
+    /// ([`Opnd::Stack`], `stacked` of them, pushed left to right), and a
+    /// `Unit` constant in each `&mut` position; then each borrowed local of
+    /// `refs` (in argument order) moved in. `fn_table[entry]` runs in a
+    /// pooled frame and the params' final values move back:
+    /// `call_mut_with`'s steps with the borrowed bindings resolved at
+    /// compile time. With no entry (the callee is not a fn, or a `&mut`
+    /// operand is not an identifier) `args` is empty and `call_mut` runs the
+    /// whole call, panic included. A statement call (`discard`) drops its
+    /// value instead of pushing it.
     CallMut {
         call: &'p Expr,
         entry: Option<u32>,
-        argc: u32,
+        args: Box<[Opnd<'p>]>,
+        stacked: u32,
+        refs: Box<[MutRef<'p>]>,
+        discard: bool,
     },
+}
+
+/// One `&mut name` argument of an [`Op::CallMut`].
+pub(super) struct MutRef<'p> {
+    /// Its argument position.
+    pub(super) arg: u32,
+    /// The borrowed local.
+    pub(super) var: Var<'p>,
+    /// The callee's parameter at `arg` is `&mut`, so its final value moves
+    /// back (else the binding gets `Unit`, as `call_mut_with` gives it).
+    pub(super) back: bool,
 }
 
 /// The operand stack is malformed: the compiler pushed fewer values than an
@@ -943,6 +985,25 @@ fn index_fast(env: &Env, arr: &Var<'_>, idx: &Opnd<'_>) -> Option<Value> {
     })
 }
 
+/// [`Op::WriteIndexLocal`] when the local holds a uniquely owned array and
+/// `i` is in its bounds: what `write_place` does there (`make_mut` copies
+/// nothing), the element set in place without the step walk (cost only,
+/// S5). `Some(v)` hands the value back for `write_place` in every other
+/// case, nothing written.
+#[inline(always)]
+fn write_index_unique(env: &mut Env, base: &Var<'_>, i: usize, v: Value) -> Option<Value> {
+    let Some(Value::Array(items)) = env.get_var_mut(base.s, base.slot) else {
+        return Some(v);
+    };
+    match Rc::get_mut(items).and_then(|a| a.get_mut(i)) {
+        Some(slot) => {
+            forget_scalar(std::mem::replace(slot, v));
+            None
+        }
+        None => Some(v),
+    }
+}
+
 /// [`Op::WritePlace`]: the steps with the indices on the stack filled in
 /// (the base-most index on top), then `write_place` with the value below
 /// them.
@@ -1020,7 +1081,7 @@ impl<'p> Interp<'p> {
     pub(super) fn run_lambda(&self, code: &ClosureCode, env: &mut Env) -> R {
         if self.engine == Engine::Vm {
             if let Some(body) = code.compiled.as_ref().and_then(|lb| lb.compiled()) {
-                if let Some(v) = body.leaf_value(env) {
+                if let Some(v) = body.leaf_value(env, false) {
                     return Ok(v);
                 }
                 return self.exec(body, env);
@@ -1084,7 +1145,7 @@ impl<'p> Interp<'p> {
         let mut pc = 0usize;
         let mut out = self.run(body, env, &mut st, &mut scopes, &mut pc);
         if matches!(out, Err(Flow::Break | Flow::Continue)) {
-            out = self.exec_catching(body, env, &mut st, &mut scopes, &mut pc, out);
+            out = self.exec_catching(body, env, &mut st, 0, &mut scopes, &mut pc, out);
         }
         for _ in 0..scopes {
             env.pop();
@@ -1093,7 +1154,42 @@ impl<'p> Interp<'p> {
             if !st.is_empty() {
                 st.clear();
             }
-            env.stack = st;
+            // The slot holds the empty `Vec` `take` left (nothing runs a
+            // body on this frame meanwhile): forget it rather than call its
+            // drop glue (cost only, S5).
+            let old = std::mem::replace(&mut env.stack, st);
+            if old.capacity() == 0 {
+                std::mem::forget(old);
+            }
+        }
+        match out {
+            Err(Flow::Return(v)) => Ok(v),
+            out => out,
+        }
+    }
+
+    /// [`Interp::exec`] for a fast call (S5): the body runs on the caller's
+    /// operand stack `st` above its current height, the callee's values
+    /// stacked on the caller's as the tree-walker's Rust frames nest them,
+    /// so the activation neither takes nor returns a stack of its own (cost
+    /// only). Every op addresses the stack relative to its top; the loop
+    /// heights a caught `Break`/`Continue` trims to are offset by the base.
+    /// The base is restored on every exit (temporaries an `Err` left are
+    /// dropped here, as `exec` drops them when it clears its stack).
+    #[inline(always)]
+    fn exec_on(&self, body: &Body<'_>, env: &mut Env, st: &mut Vec<Value>) -> R {
+        let base = st.len();
+        let mut scopes = 0u32;
+        let mut pc = 0usize;
+        let mut out = self.run(body, env, st, &mut scopes, &mut pc);
+        if matches!(out, Err(Flow::Break | Flow::Continue)) {
+            out = self.exec_catching(body, env, st, base, &mut scopes, &mut pc, out);
+        }
+        for _ in 0..scopes {
+            env.pop();
+        }
+        if st.len() > base {
+            st.truncate(base);
         }
         match out {
             Err(Flow::Return(v)) => Ok(v),
@@ -1103,15 +1199,17 @@ impl<'p> Interp<'p> {
 
     /// [`Interp::exec`] after `run` stopped on a `Flow::Break`/`Continue`:
     /// the innermost loop of this body holding the failing op catches it
-    /// (pops back to its scopes, trims the stack, resumes at its target);
-    /// with no such loop the flow propagates. Repeats until `run` ends some
-    /// other way.
+    /// (pops back to its scopes, trims the stack to `base` plus its height,
+    /// resumes at its target); with no such loop the flow propagates.
+    /// Repeats until `run` ends some other way.
     #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
     fn exec_catching(
         &self,
         body: &Body<'_>,
         env: &mut Env,
         st: &mut Vec<Value>,
+        base: usize,
         scopes: &mut u32,
         pc: &mut usize,
         mut out: R,
@@ -1131,7 +1229,7 @@ impl<'p> Interp<'p> {
                         env.pop();
                         *scopes -= 1;
                     }
-                    st.truncate(l.height as usize);
+                    st.truncate(base + l.height as usize);
                     *pc = to as usize;
                     out = self.run(body, env, st, scopes, pc);
                 }
@@ -1216,6 +1314,20 @@ impl<'p> Interp<'p> {
                         tri!(self.store_bin_slow(var, *in_place, op, &l, &r, env, st))
                     }
                 },
+                Op::StoreLocalStack { var, op, l } => {
+                    let fast = match st.last() {
+                        Some(Value::Int(b)) => local_int(env, l).and_then(|a| int_fast(op, a, *b)),
+                        _ => None,
+                    };
+                    match fast {
+                        Some(s) => {
+                            // The popped operand is an int: nothing to drop.
+                            std::mem::forget(st.pop());
+                            tri!(store_scalar(env, var, s))
+                        }
+                        None => tri!(self.store_local_stack_slow(var, op, l, env, st)),
+                    }
+                }
                 Op::BranchCmp {
                     op,
                     l,
@@ -1303,6 +1415,7 @@ impl<'p> Interp<'p> {
                 }
                 Op::Const(v) => st.push(match v {
                     Value::Int(n) => Value::Int(*n),
+                    Value::Unit => Value::Unit,
                     v => v.clone(),
                 }),
                 Op::ScopePush => {
@@ -1364,16 +1477,27 @@ impl<'p> Interp<'p> {
                             };
                             self.call_fast(entry, st, at)
                         } else {
-                            self.call_fast_inline(entry, args, env)
+                            self.call_fast_inline(entry, args, env, st)
                         }
                     } else {
                         self.call_unproven(callee, *argc, args, env, st)
                     };
                     st.push(tri!(v));
                 }
-                Op::CallMut { call, entry, argc } => {
-                    let v = self.call_mut_op(call, *entry, *argc, env, st);
-                    st.push(tri!(v));
+                Op::CallMut {
+                    call,
+                    entry,
+                    args,
+                    stacked,
+                    refs,
+                    discard,
+                } => {
+                    let v = tri!(self.call_mut_op(call, *entry, args, *stacked, refs, env, st));
+                    if *discard {
+                        forget_scalar(v);
+                    } else {
+                        st.push(v);
+                    }
                 }
                 Op::Store(var) => {
                     let v = pop(st);
@@ -1545,16 +1669,18 @@ impl<'p> Interp<'p> {
                 Op::WritePlace { base, steps, nidx } => {
                     tri!(write_place_op(base, steps, *nidx, env, st));
                 }
-                Op::WriteIndexLocal { base, idx } => {
-                    let v = pop(st);
-                    let i = tri!(self.place_index_opnd(idx, env));
-                    tri!(write_place(
-                        base.s,
-                        base.slot,
-                        &[PlaceStep::Index(i)],
-                        v,
-                        env
-                    ));
+                Op::WriteIndexLocal { base, idx, val } => {
+                    let v = match val {
+                        Opnd::Stack => pop(st),
+                        Opnd::Int(n) => Value::Int(*n),
+                        Opnd::Local(var) => match env.get_var(var.s, var.slot) {
+                            Some(Value::Int(n)) => Value::Int(*n),
+                            Some(v) => v.clone(),
+                            None => tri!(self.ident_unbound(var.name, var.s)),
+                        },
+                        o => tri!(self.opnd_value(o, env)),
+                    };
+                    tri!(self.write_index_local(base, idx, v, env));
                 }
                 Op::PlaceInvalid => tri!(Err(Flow::Panic("invalid assignment target".into()))),
                 Op::BranchIndexLocal {
@@ -1691,6 +1817,25 @@ impl<'p> Interp<'p> {
                 }
                 Op::Lambda(e) => st.push(self.make_closure(e, env)),
             }
+        }
+    }
+
+    /// [`Op::StoreLocalStack`] when its int fast path declined: the scalar
+    /// fast path over the local and the stack operand, else
+    /// [`Interp::store_bin_slow`]. Out of line so the op loop stays small.
+    #[inline(never)]
+    fn store_local_stack_slow(
+        &self,
+        var: &Var<'_>,
+        op: &BinOp,
+        l: &Var<'_>,
+        env: &mut Env,
+        st: &mut Vec<Value>,
+    ) -> Result<(), Flow> {
+        let l = Opnd::Local(*l);
+        match scalar_fast(op, &l, &Opnd::Stack, env, st) {
+            Some(s) => store_scalar(env, var, s),
+            None => self.store_bin_slow(var, None, op, &l, &Opnd::Stack, env, st),
         }
     }
 
@@ -1856,6 +2001,66 @@ impl<'p> Interp<'p> {
         }
     }
 
+    /// [`Op::WriteIndexLocal`] once its value `v` is read: the index, then
+    /// the element set in place when `base` holds a uniquely owned array
+    /// and the index is in its bounds, else `write_place` with that one
+    /// step.
+    #[inline(always)]
+    fn write_index_local(
+        &self,
+        base: &Var<'_>,
+        idx: &Opnd<'_>,
+        v: Value,
+        env: &mut Env,
+    ) -> Result<(), Flow> {
+        let i = self.place_index_opnd(idx, env)?;
+        match write_index_unique(env, base, i, v) {
+            None => Ok(()),
+            Some(v) => write_place(base.s, base.slot, &[PlaceStep::Index(i)], v, env),
+        }
+    }
+
+    /// S5: a fast call's body that is one `base[idx] = val` on locals and
+    /// literals, its value `()` (an [`Op::WriteIndexLocal`] with inline
+    /// operands, then `Const(Unit)`), runs without an activation of the op
+    /// loop: the op's steps, panics included, then `()` (cost only). `None`
+    /// for any other body, and for one that names `goal_met`, which a fast
+    /// call binds only when the body runs on the op loop (as
+    /// [`Body::leaf_value`]).
+    #[inline(always)]
+    fn leaf_store(&self, body: &Body<'_>, env: &mut Env) -> Option<R> {
+        let [Op::WriteIndexLocal { base, idx, val }, Op::Const(Value::Unit)] = &*body.ops else {
+            return None;
+        };
+        let declines = |o: &Opnd<'_>| match o {
+            Opnd::Local(v) => v.s == SYM_GOAL_MET,
+            Opnd::Stack => true,
+            _ => false,
+        };
+        if base.s == SYM_GOAL_MET || declines(idx) || declines(val) {
+            return None;
+        }
+        let v = match val {
+            Opnd::Int(n) => Value::Int(*n),
+            Opnd::Local(var) => match env.get_var(var.s, var.slot) {
+                Some(Value::Int(n)) => Value::Int(*n),
+                Some(v) => v.clone(),
+                None => match self.ident_unbound(var.name, var.s) {
+                    Ok(v) => v,
+                    Err(flow) => return Some(Err(flow)),
+                },
+            },
+            o => match self.opnd_value(o, env) {
+                Ok(v) => v,
+                Err(flow) => return Some(Err(flow)),
+            },
+        };
+        Some(
+            self.write_index_local(base, idx, v, env)
+                .map(|()| Value::Unit),
+        )
+    }
+
     /// [`Op::Record`]: the literal's resolution (else resolved now, as the
     /// `StructLit` arm does for a node outside the table), then its `empty`
     /// value or `finish_record` over the field values on top of the stack.
@@ -1952,7 +2157,7 @@ impl<'p> Interp<'p> {
                             env.vars.push((entry.params[i], param_value(entry, i, a)));
                         }
                     }
-                    self.fast_body(entry, env)
+                    self.fast_body(entry, env, st)
                 }
             }
             Err(flow) => {
@@ -1970,13 +2175,23 @@ impl<'p> Interp<'p> {
     /// straight into the pooled frame (soft unwrap, sized coercion: pure, so
     /// doing it before the depth check is unobservable); then the `tier:`
     /// clear, the depth check and the `current_fn` swap, and
-    /// [`Interp::fast_body`].
+    /// [`Interp::fast_body`]. A leaf body ([`Interp::leaf_call`]) is
+    /// computed without a frame.
     #[inline(never)]
-    fn call_fast_inline(&self, entry: &FnEntry<'p>, args: &[Opnd<'_>], env: &Env) -> R {
+    fn call_fast_inline(
+        &self,
+        entry: &FnEntry<'p>,
+        args: &[Opnd<'_>],
+        env: &Env,
+        st: &mut Vec<Value>,
+    ) -> R {
         debug_assert!(compile::fast_call_blocker(entry, self.refine_preds.is_empty()).is_none());
         debug_assert_eq!(args.len(), entry.params.len());
+        if let Some(v) = self.leaf_call(entry, args, env) {
+            return Ok(v);
+        }
         let mut frame = self.take_frame();
-        for (i, a) in args.iter().enumerate() {
+        for (i, (a, &p)) in args.iter().zip(entry.params.iter()).enumerate() {
             let v = match a {
                 Opnd::Local(var) => match env.get_var(var.s, var.slot) {
                     Some(Value::Int(n)) => Value::Int(*n),
@@ -1994,30 +2209,113 @@ impl<'p> Interp<'p> {
                 Opnd::Const(v) => v.clone(),
                 Opnd::Stack => malformed(),
             };
-            frame.vars.push((entry.params[i], param_value(entry, i, v)));
+            frame.vars.push((p, param_value(entry, i, v)));
         }
         self.set_call_tier(None);
         let out = match self.enter_fn(entry.def) {
-            Ok(_guard) => self.fast_body(entry, &mut frame),
+            Ok(_guard) => self.fast_body(entry, &mut frame, st),
             Err(flow) => Err(flow),
         };
         self.give_frame(frame);
         out
     }
 
-    /// The rest of a fast call once the parameters are bound, as
-    /// `call_fn_common` does it: `goal_met`, the body (a one-op body without
-    /// an activation of the op loop), the scalar return.
+    /// A fast call (inline arguments) whose body is a leaf: one `Load` of a
+    /// parameter, or one int/float `Bin` on parameters and literals. Its
+    /// value is computed from the arguments as the parameters bind them
+    /// (soft unwrap, sized coercion), without a frame, `goal_met` or
+    /// `current_fn` swap: nothing runs in the callee that could observe
+    /// them, and it cannot fail. The depth check and the `tier:` clear stay
+    /// (a call one past the limit takes the full path and panics there).
+    /// `None`, with nothing changed, wherever the full path could differ:
+    /// a body not compiled yet or not a leaf, more than two parameters, an
+    /// unbound argument (the full path panics on it, in order), a name that
+    /// is not a parameter's slot or is `goal_met`, an operand that is not an
+    /// int or float, overflow or a zero divisor (cost only, S5).
     #[inline(always)]
-    fn fast_body(&self, entry: &FnEntry<'p>, env: &mut Env) -> R {
-        // `goal_met` follows the parameters, as in `call_fn_common`.
-        env.vars.push((SYM_GOAL_MET, Value::Int(0)));
-        let out = match entry.compiled.as_ref().and_then(std::cell::OnceCell::get) {
-            Some(body) => match body.leaf_value(env) {
-                Some(v) => Ok(v),
-                None => self.exec(body, env),
+    fn leaf_call(&self, entry: &FnEntry<'p>, args: &[Opnd<'_>], env: &Env) -> Option<Value> {
+        let body = entry.compiled.as_ref()?.get()?;
+        if args.len() > 2 || self.call_depth.get() >= self.max_depth {
+            return None;
+        }
+        // Parameter `k`'s value as `bind_params` binds it.
+        let param = |var: &Var<'_>| -> Option<Value> {
+            let k = var.slot as usize;
+            if var.s == SYM_GOAL_MET || entry.params.get(k) != Some(&var.s) {
+                return None;
+            }
+            let a = match &args[k] {
+                Opnd::Local(a) => match env.get_var(a.s, a.slot)? {
+                    Value::Int(n) => Value::Int(*n),
+                    v => v.clone(),
+                },
+                Opnd::Int(n) => Value::Int(*n),
+                Opnd::Float(f) => Value::Float(*f),
+                Opnd::Const(v) => v.clone(),
+                Opnd::Stack => malformed(),
+            };
+            Some(param_value(entry, k, a))
+        };
+        // Every argument must be bound, read or not.
+        for a in args {
+            if let Opnd::Local(a) = a {
+                env.get_var(a.s, a.slot)?;
+            }
+        }
+        let scalar = |o: &Opnd<'_>| -> Option<Scalar> {
+            let v = match o {
+                Opnd::Int(n) => return Some(Scalar::Int(*n)),
+                Opnd::Float(f) => return Some(Scalar::Float(*f)),
+                Opnd::Local(var) => param(var)?,
+                _ => return None,
+            };
+            match v {
+                Value::Int(n) => Some(Scalar::Int(n)),
+                Value::Float(f) => Some(Scalar::Float(f)),
+                v => {
+                    drop(v);
+                    None
+                }
+            }
+        };
+        let v = match &*body.ops {
+            [Op::Load(var)] => param(var)?,
+            [Op::Bin { op, l, r }] => match (scalar(l)?, scalar(r)?) {
+                (Scalar::Int(a), Scalar::Int(b)) => int_fast(op, a, b)?.value(),
+                (Scalar::Float(a), Scalar::Float(b)) => float_fast(op, a, b)?.value(),
+                _ => return None,
             },
-            None => self.run_body_vm(entry, env),
+            _ => return None,
+        };
+        self.set_call_tier(None);
+        Some(scalar_return(entry, v))
+    }
+
+    /// The rest of a fast call once the parameters are bound, as
+    /// `call_fn_common` does it: `goal_met`, the body (a leaf body,
+    /// [`Body::leaf_value`] or [`Interp::leaf_store`], without an activation
+    /// of the op loop, any other on the caller's stack `st`,
+    /// [`Interp::exec_on`]), the scalar return.
+    #[inline(always)]
+    fn fast_body(&self, entry: &FnEntry<'p>, env: &mut Env, st: &mut Vec<Value>) -> R {
+        let out = match entry.compiled.as_ref().and_then(std::cell::OnceCell::get) {
+            // A leaf body never sees `goal_met` (it declines one that names
+            // it), so it is not bound for one (cost only).
+            Some(body) => match body.leaf_value(env, true) {
+                Some(v) => return Ok(scalar_return(entry, v)),
+                None => match self.leaf_store(body, env) {
+                    Some(out) => out,
+                    None => {
+                        // `goal_met` follows the parameters, as in `call_fn_common`.
+                        env.vars.push((SYM_GOAL_MET, Value::Int(0)));
+                        self.exec_on(body, env, st)
+                    }
+                },
+            },
+            None => {
+                env.vars.push((SYM_GOAL_MET, Value::Int(0)));
+                self.run_body_vm(entry, env)
+            }
         };
         match out {
             Ok(v) | Err(Flow::Return(v)) => Ok(scalar_return(entry, v)),
@@ -2025,33 +2323,162 @@ impl<'p> Interp<'p> {
         }
     }
 
-    /// [`Op::CallMut`]: the arguments are the top `argc` of `st`.
+    /// [`Op::CallMut`]: `call_mut_with` → `call_fn_in`'s steps for
+    /// `fn_table[entry]`, one operand per argument (`args`, the `stacked`
+    /// stack ones the top of `st`) and the borrowed bindings `refs`. For a
+    /// fn `call_fn_in` sends down its common path (`plain`, no refinements
+    /// in the program, as many arguments as parameters) the arguments bind
+    /// straight into the pooled frame: every plain one first, read in order
+    /// (an unbound name panics as the `Ident` arm does, nothing borrowed
+    /// yet), then each borrowed local moved out of its binding in argument
+    /// order; a borrowed name that is not bound panics with
+    /// `call_mut_with`'s text, the bindings moved before it left `Unit` as
+    /// there. Then the `tier:` slot, the depth check and `current_fn` swap,
+    /// `goal_met`, the body and the scalar return ([`Interp::fast_body`]),
+    /// and each `&mut` param's final value moved back. A call that never
+    /// binds its params (the depth check failed) moves nothing back: the
+    /// borrowed bindings stay `Unit`, as `call_mut_with` leaves them. Any
+    /// other fn takes [`Interp::call_mut_general`].
     #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
     fn call_mut_op(
         &self,
         call: &Expr,
         entry: Option<u32>,
-        argc: u32,
+        args: &[Opnd<'_>],
+        stacked: u32,
+        refs: &[MutRef<'_>],
         env: &mut Env,
         st: &mut Vec<Value>,
     ) -> R {
-        let Expr::Call { callee, args, tier } = call else {
+        let Expr::Call {
+            callee,
+            args: arg_nodes,
+            tier,
+        } = call
+        else {
             unreachable!("`CallMut` is compiled from a call")
         };
         let Some(entry) = entry else {
-            return self.call_mut(callee, args, tier.as_deref(), env);
+            return self.call_mut(callee, arg_nodes, tier.as_deref(), env);
         };
-        let Some(at) = st.len().checked_sub(argc as usize) else {
+        let entry = &self.fn_table[entry as usize];
+        let argc = args.len();
+        let Some(at) = st.len().checked_sub(stacked as usize) else {
             malformed()
         };
-        let argv = StackTail { st, at };
-        self.call_mut_with(
-            &self.fn_table[entry as usize],
-            args,
-            argv,
-            tier.as_deref(),
-            env,
-        )
+        if !entry.plain || !self.refine_preds.is_empty() || entry.params.len() != argc {
+            return self.call_mut_general(entry, arg_nodes, args, tier.as_deref(), env, st, at);
+        }
+        let mut frame = self.take_frame();
+        frame.vars.reserve(argc + 1);
+        let mut next_plain = at;
+        for (i, o) in args.iter().enumerate() {
+            let v = match o {
+                Opnd::Stack => {
+                    let v = std::mem::replace(&mut st[next_plain], Value::Unit);
+                    next_plain += 1;
+                    v
+                }
+                Opnd::Int(n) => Value::Int(*n),
+                // A `&mut` position's placeholder.
+                Opnd::Const(Value::Unit) => Value::Unit,
+                Opnd::Local(var) => match env.get_var(var.s, var.slot) {
+                    Some(Value::Int(n)) => Value::Int(*n),
+                    Some(v) => v.clone(),
+                    // Not a local: a global's value, or the unbound panic.
+                    None => match self.ident_unbound(var.name, var.s) {
+                        Ok(v) => v,
+                        Err(flow) => {
+                            self.give_frame(frame);
+                            return Err(flow);
+                        }
+                    },
+                },
+                o => match self.opnd_value(o, env) {
+                    Ok(v) => v,
+                    Err(flow) => {
+                        self.give_frame(frame);
+                        return Err(flow);
+                    }
+                },
+            };
+            frame.vars.push((entry.params[i], param_value(entry, i, v)));
+        }
+        // Every stack argument moved out, leaving a `Unit`: nothing to drop.
+        while st.len() > at {
+            forget_scalar(pop(st));
+        }
+        // Each `&mut` position holds a `Unit` placeholder until its
+        // borrowed binding moves in.
+        for r in refs {
+            let Some(b) = env.get_var_mut(r.var.s, r.var.slot) else {
+                self.give_frame(frame);
+                let name = r.var.name;
+                return panic(format!("`&mut {name}`: `{name}` is not a local variable"));
+            };
+            let v = param_value(entry, r.arg as usize, std::mem::replace(b, Value::Unit));
+            forget_scalar(std::mem::replace(&mut frame.vars[r.arg as usize].1, v));
+        }
+        self.set_call_tier(tier.as_deref());
+        let result = match self.enter_fn(entry.def) {
+            Ok(_guard) => self.fast_body(entry, &mut frame, st),
+            Err(flow) => {
+                self.give_frame(frame);
+                return Err(flow);
+            }
+        };
+        // The body's scopes are popped, so the frame holds the params and
+        // `goal_met` alone (param `i` at slot `i`; a leaf body binds no
+        // `goal_met`) unless a `define` at the base scope added a binding;
+        // then the name lookup finds it as `call_mut_with`'s does.
+        let exact = frame.vars.len() <= argc + 1;
+        for r in refs {
+            let out = match r.back {
+                true if exact => std::mem::replace(&mut frame.vars[r.arg as usize].1, Value::Unit),
+                true => match frame.get_mut(entry.params[r.arg as usize]) {
+                    Some(v) => std::mem::replace(v, Value::Unit),
+                    None => Value::Unit,
+                },
+                false => Value::Unit,
+            };
+            if let Some(b) = env.get_var_mut(r.var.s, r.var.slot) {
+                forget_scalar(std::mem::replace(b, out));
+            }
+        }
+        self.give_frame(frame);
+        result
+    }
+
+    /// [`Op::CallMut`] for a fn off `call_fn_in`'s common path: the plain
+    /// arguments (the stack ones from `at`, the inline ones read in order)
+    /// and a `Unit` in each `&mut` position, in a pooled buffer, then
+    /// `call_mut_with` as the tree-walker runs it.
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn call_mut_general(
+        &self,
+        entry: &FnEntry<'p>,
+        arg_nodes: &[Expr],
+        args: &[Opnd<'_>],
+        tier: Option<&str>,
+        env: &mut Env,
+        st: &mut Vec<Value>,
+        at: usize,
+    ) -> R {
+        let mut argv = self.take_args(args.len());
+        let mut plain = st.drain(at..);
+        for o in args {
+            argv.push(match o {
+                Opnd::Stack => match plain.next() {
+                    Some(v) => v,
+                    None => malformed(),
+                },
+                o => self.opnd_value(o, env)?,
+            });
+        }
+        drop(plain);
+        self.call_mut_with(entry, arg_nodes, argv, tier, env)
     }
 
     /// `vm: tree <name>: <reason>` under `AXON_ENGINE=vm AXON_VM_TRACE=1`: a

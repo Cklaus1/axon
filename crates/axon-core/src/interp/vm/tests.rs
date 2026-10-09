@@ -64,9 +64,10 @@ fn kinds(body: &Body<'_>) -> Vec<&'static str> {
             Op::Let { .. } => "let",
             Op::AssignInPlace { .. } => "in-place",
             Op::Store(_) => "store",
-            Op::StoreBin { .. } | Op::StoreLocalInt { .. } | Op::StoreLocalLocal { .. } => {
-                "store-bin"
-            }
+            Op::StoreBin { .. }
+            | Op::StoreLocalInt { .. }
+            | Op::StoreLocalLocal { .. }
+            | Op::StoreLocalStack { .. } => "store-bin",
             Op::Bin { .. } => "bin",
             Op::ShortCircuit { .. } => "short",
             Op::Logic(_) => "logic",

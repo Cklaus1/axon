@@ -662,15 +662,26 @@ impl Env {
     }
     /// Empty the frame for reuse. A scalar binding has nothing to drop, so it
     /// is forgotten instead of going through `Value`'s drop glue; every other
-    /// binding is dropped (cost only).
-    #[inline]
+    /// binding is dropped (cost only). A frame of scalars alone (the common
+    /// call's) is emptied by its length, inline; any other out of line.
+    #[inline(always)]
     fn clear(&mut self) {
+        if self.vars.iter().all(|(_, v)| is_scalar(v)) && self.marks.is_empty() {
+            // SAFETY: a length of 0 is within capacity and leaves no
+            // element initialised past it to be read; the elements it
+            // forgets are scalars, which own nothing, so forgetting one
+            // is what dropping it does.
+            unsafe { self.vars.set_len(0) };
+        } else {
+            self.clear_slow();
+        }
+    }
+    #[inline(never)]
+    fn clear_slow(&mut self) {
         while let Some((_, v)) = self.vars.pop() {
             forget_scalar(v);
         }
-        if !self.marks.is_empty() {
-            self.marks.clear();
-        }
+        self.marks.clear();
     }
     /// Drop the bindings from index `len` on, as `vars.truncate(len)` does,
     /// forgetting scalars as [`Env::clear`] does (R50 S4, cost only).
@@ -791,18 +802,29 @@ impl Env {
     }
 }
 
+/// Whether `v` is a scalar: a value that owns nothing, so it has no drop
+/// glue to run.
+#[inline(always)]
+fn is_scalar(v: &Value) -> bool {
+    matches!(
+        v,
+        Value::Int(_)
+            | Value::SizedInt { .. }
+            | Value::Float(_)
+            | Value::Bool(_)
+            | Value::Unit
+            | Value::None
+    )
+}
+
 /// Drop a binding's value, forgetting a scalar (nothing to drop) instead of
 /// running `Value`'s drop glue on it (cost only).
 #[inline(always)]
 fn forget_scalar(v: Value) {
-    match v {
-        Value::Int(_)
-        | Value::SizedInt { .. }
-        | Value::Float(_)
-        | Value::Bool(_)
-        | Value::Unit
-        | Value::None => std::mem::forget(v),
-        v => drop(v),
+    if is_scalar(&v) {
+        std::mem::forget(v);
+    } else {
+        drop(v);
     }
 }
 
@@ -958,6 +980,11 @@ pub struct Interp<'p> {
     /// not the frame.
     #[allow(clippy::vec_box)]
     env_pool: RefCell<Vec<Box<Env>>>,
+    /// R50 S5: the most recently returned frame, kept out of `env_pool` so
+    /// the common call (one frame in flight below the caller's) takes and
+    /// returns it with a `Cell` swap instead of a `RefCell` borrow and a
+    /// vector push/pop (cost only).
+    frame_spare: Cell<Option<Box<Env>>>,
     /// Phase-7 `cost_meter` / F4: cumulative AI spend across the whole run, in
     /// integer micro-dollars (µ$). Every `ai_complete` adds `tier.cost_micro(est
     /// tokens)` — the real per-token cost, stamped into the `ai_call` provenance
@@ -1395,7 +1422,8 @@ fn lambda_arity_mismatch(want: usize, got: usize) -> R {
 /// f64/bool); a str/struct/tuple/soft-wrapper return is left untouched.
 #[inline(always)]
 fn scalar_return(entry: &FnEntry<'_>, result: Value) -> Value {
-    if entry.ret_is_scalar {
+    // Only a struct can be a soft wrapper (cost only, R50 S5).
+    if entry.ret_is_scalar && matches!(result, Value::Struct(_)) {
         if let Some(inner) = value::soft_inner(&result) {
             return inner;
         }
@@ -1413,7 +1441,17 @@ fn scalar_return(entry: &FnEntry<'_>, result: Value) -> Value {
 /// the callee's body uses width-correct ops (completeness, I-9).
 #[inline(always)]
 fn param_value(entry: &FnEntry<'_>, i: usize, a: Value) -> Value {
-    let (unwrap_soft, width) = entry.param_coerce[i];
+    match entry.param_coerce[i] {
+        // Only a struct can be a soft wrapper: anything else binds as is
+        // when there is no width to coerce to (cost only, R50 S5).
+        (_, None) if !matches!(a, Value::Struct(_)) => a,
+        (unwrap_soft, width) => param_value_coerced(unwrap_soft, width, a),
+    }
+}
+
+/// [`param_value`]'s soft unwrap and sized-int coercion.
+#[inline(never)]
+fn param_value_coerced(unwrap_soft: bool, width: Option<IntWidth>, a: Value) -> Value {
     let a = if unwrap_soft {
         value::soft_inner(&a).unwrap_or(a)
     } else {
@@ -3326,6 +3364,7 @@ impl<'p> Interp<'p> {
             ai_calls_this_fn: Cell::new(0),
             arg_bufs: RefCell::new(Vec::new()),
             env_pool: RefCell::new(Vec::new()),
+            frame_spare: Cell::new(None),
             ai_cost_micro: Cell::new(0),
             w1310_warned: RefCell::new(std::collections::HashSet::new()),
             tokens_used: Cell::new(0),
@@ -3583,20 +3622,38 @@ impl<'p> Interp<'p> {
     /// taking and returning one moves a pointer, not the frame.
     #[inline(always)]
     fn take_frame(&self) -> Box<Env> {
+        if let Some(env) = self.frame_spare.take() {
+            return env;
+        }
+        self.take_pooled_frame()
+    }
+
+    #[inline(never)]
+    fn take_pooled_frame(&self) -> Box<Env> {
         match self.env_pool.borrow_mut().pop() {
             Some(env) => env,
             None => Box::new(Env::new()),
         }
     }
 
-    /// Return a finished call's frame to the pool, emptied here (dropping the
-    /// bindings where dropping the frame did); a frame that grew unusually
-    /// large is not kept.
+    /// Return a finished call's frame to the spare slot (the slot's previous
+    /// frame to the pool), emptied here (dropping the bindings where dropping
+    /// the frame did); a frame that grew unusually large is not kept.
     #[inline(always)]
     fn give_frame(&self, mut env: Box<Env>) {
         env.clear();
+        if env.vars.capacity() > 1024 {
+            return;
+        }
+        if let Some(prev) = self.frame_spare.replace(Some(env)) {
+            self.pool_frame(prev);
+        }
+    }
+
+    #[inline(never)]
+    fn pool_frame(&self, env: Box<Env>) {
         let mut pool = self.env_pool.borrow_mut();
-        if pool.len() < 64 && env.vars.capacity() <= 1024 {
+        if pool.len() < 64 {
             pool.push(env);
         }
     }
@@ -3894,10 +3951,16 @@ impl<'p> Interp<'p> {
     #[inline(always)]
     fn bind_params(&self, entry: &FnEntry<'p>, args: &mut [Value], env: &mut Env) {
         debug_assert!(env.vars.is_empty() && env.marks.is_empty());
-        for (i, a) in args.iter_mut().enumerate() {
-            let a = std::mem::replace(a, Value::Unit);
-            env.vars.push((entry.params[i], param_value(entry, i, a)));
-        }
+        // One `extend` over a trusted-length iterator reserves once instead
+        // of a capacity check per push (cost only, R50 S5).
+        env.vars.extend(
+            entry
+                .params
+                .iter()
+                .zip(args.iter_mut())
+                .enumerate()
+                .map(|(i, (&p, a))| (p, param_value(entry, i, std::mem::replace(a, Value::Unit)))),
+        );
     }
 
     /// R5 `@[goal(...)]` sugar for [`Interp::call_fn_in`]: whether the goal is

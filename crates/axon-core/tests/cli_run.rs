@@ -36158,6 +36158,29 @@ fn vm_fastcall_keeps_the_depth_limit() {
     assert!(stderr.contains("recursion limit exceeded"), "{stderr}");
 }
 
+/// R50 §4 S5: a `&mut` call to a one-store body (`a[i] = v`, written
+/// without an activation of the op loop) copies an array another binding
+/// shares before writing it, and panics with the tree's out-of-bounds text.
+#[test]
+fn vm_fastcall_mut_store_keeps_sharing_and_bounds() {
+    let src = "fn set(a: &mut [i64], i: i64, v: i64) { a[i] = v }\n\
+               fn main() -> i64 {\n let a = [1, 2, 3]\n let b = a\n set(&mut a, 0, 9)\n \
+               println(to_str(a[0]))\n println(to_str(b[0]))\n set(&mut a, 5, 1)\n 0 }\n";
+    let (code, stdout, stderr) = vm_fastcall_case("mut_store", src, &[]);
+    assert_eq!((code, stdout.as_str()), (Some(101), "9\n1\n"), "{stderr}");
+    assert!(stderr.contains("index 5 out of bounds (len 3)"), "{stderr}");
+}
+
+/// R50 §4 S5: a `CallMut` argument that names a global (no local of that
+/// name) reads the global's value, as the tree's `Ident` arm does.
+#[test]
+fn vm_fastcall_mut_call_reads_a_global_argument() {
+    let src = "let D = 3\nfn r(a: &mut [i64], n: i64) { a[0] = a[0] + n }\n\
+               fn main() -> i64 {\n let a = [0]\n r(&mut a, D)\n println(to_str(a[0]))\n 0 }\n";
+    let (code, stdout, stderr) = vm_fastcall_case("mut_global", src, &[]);
+    assert_eq!((code, stdout.as_str()), (Some(0), "3\n"), "{stderr}");
+}
+
 /// R50 §4 S5: a callee whose `FnEntry` flag is set (or, for
 /// `refine_preds`, any program with a refinement) takes the general path,
 /// traced as `vm: slow <fn>: <flag>`, with identical output.

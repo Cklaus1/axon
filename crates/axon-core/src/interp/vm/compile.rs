@@ -16,7 +16,7 @@
 
 use std::cell::Cell;
 
-use super::{Body, Cond, Loop, Op, Opnd, Var};
+use super::{Body, Cond, Loop, MutRef, Op, Opnd, Var};
 use crate::ast::{BinOp, Expr, FmtPart, Literal, MatchArm, Pattern, Stmt, UnaryOp};
 use crate::interp::sym::{FnEntry, NOT_LOCAL};
 use crate::interp::PlaceStep;
@@ -135,7 +135,7 @@ impl<'p> Compiler<'_, '_, 'p> {
                 if tree_shape(e).is_some() {
                     self.tree(e);
                 } else if has_ref_mut_arg(args) {
-                    self.call_mut(e, callee, args);
+                    self.call_mut(e, callee, args, false);
                 } else if let Expr::Ident(name) = callee.as_ref() {
                     self.call(callee, name, args, tier.as_deref());
                 } else {
@@ -227,6 +227,9 @@ impl<'p> Compiler<'_, '_, 'p> {
             }
             Expr::Continue => {
                 self.emit(Op::Continue, 0, 0);
+            }
+            Expr::Call { args, callee, .. } if tree_shape(e).is_none() && has_ref_mut_arg(args) => {
+                self.call_mut(e, callee, args, true);
             }
             _ => {
                 self.expr(e);
@@ -487,14 +490,23 @@ impl<'p> Compiler<'_, '_, 'p> {
     /// `write_place`. A root that is not an identifier ends in the
     /// `invalid assignment target` panic and is never evaluated.
     fn assign_to(&mut self, place: &'p Expr, value: &'p Expr) {
-        self.expr(value);
         if let Expr::Index { receiver, index } = place {
             if let (Expr::Ident(name), Some(idx)) = (receiver.as_ref(), self.inline(index)) {
                 let base = self.var(receiver, name);
-                self.emit(Op::WriteIndexLocal { base, idx }, 1, 0);
+                // An inline value is read by the op, before the index, as
+                // the arm evaluates them.
+                let (val, pops) = match self.inline(value) {
+                    Some(v) => (v, 0),
+                    None => {
+                        self.expr(value);
+                        (Opnd::Stack, 1)
+                    }
+                };
+                self.emit(Op::WriteIndexLocal { base, idx, val }, pops, 0);
                 return;
             }
         }
+        self.expr(value);
         let mut steps = Vec::new();
         let mut nidx = 0;
         let mut cur = place;
@@ -743,36 +755,81 @@ impl<'p> Compiler<'_, '_, 'p> {
             && !self.fast_inline_args(entry, args).is_empty()
     }
 
-    /// `f(.., &mut a, ..)` (S5): the plain arguments left to right with a
-    /// `Unit` in each `&mut` position, then [`Op::CallMut`] over
-    /// `call_mut_with`. A callee that is not a fn panics before any argument
-    /// runs, as `call_mut` does, so it compiles to the op alone.
-    fn call_mut(&mut self, e: &'p Expr, callee: &'p Expr, args: &'p [Expr]) {
+    /// `f(.., &mut a, ..)` (S5): the plain arguments (inline operands when
+    /// every one is an identifier or a literal, else pushed left to right),
+    /// then [`Op::CallMut`] with the borrowed locals resolved here (the
+    /// plain arguments cannot mention them, E0606, and the op reads every
+    /// plain argument before it moves a borrowed one, as `call_mut` does). A
+    /// callee that is not a fn, or a `&mut` operand that is not an
+    /// identifier, compiles to the op alone: `call_mut` then runs the whole
+    /// call and panics where it does. `discard`: the call is a statement, so
+    /// the op drops its value.
+    fn call_mut(&mut self, e: &'p Expr, callee: &'p Expr, args: &'p [Expr], discard: bool) {
         let entry = match callee {
             Expr::Ident(name) => self.ix.fn_of_sym.get(&self.res.sym(callee, name)).copied(),
             _ => None,
         };
-        let argc = match entry {
-            Some(_) => {
-                for a in args {
-                    if is_ref_mut(a) {
-                        self.emit(Op::Const(Value::Unit), 0, 1);
-                    } else {
-                        self.expr(a);
-                    }
-                }
-                args.len() as u32
+        let mut refs = Vec::new();
+        if let Some(i) = entry {
+            let params = &self.ix.fn_table[i as usize].def.params;
+            for (arg, a) in args.iter().enumerate() {
+                let Expr::UnaryOp {
+                    op: UnaryOp::RefMut,
+                    operand,
+                } = a
+                else {
+                    continue;
+                };
+                let Expr::Ident(name) = operand.as_ref() else {
+                    refs.clear();
+                    break;
+                };
+                refs.push(MutRef {
+                    arg: arg as u32,
+                    var: self.var(operand, name),
+                    back: params
+                        .get(arg)
+                        .is_some_and(|p| matches!(p.ty, crate::ast::AxonType::RefMut(_))),
+                });
             }
-            None => 0,
-        };
+        }
+        let entry = entry.filter(|_| !refs.is_empty());
+        let mut opnds = Vec::new();
+        let mut stacked = 0;
+        if entry.is_some() {
+            let inline: Option<Vec<Opnd<'p>>> = args
+                .iter()
+                .map(|a| match is_ref_mut(a) {
+                    true => Some(Opnd::Const(Value::Unit)),
+                    false => self.inline(a),
+                })
+                .collect();
+            opnds = match inline {
+                Some(o) => o,
+                None => args
+                    .iter()
+                    .map(|a| match is_ref_mut(a) {
+                        true => Opnd::Const(Value::Unit),
+                        false => {
+                            self.expr(a);
+                            stacked += 1;
+                            Opnd::Stack
+                        }
+                    })
+                    .collect(),
+            };
+        }
         self.emit(
             Op::CallMut {
                 call: e,
                 entry,
-                argc,
+                args: opnds.into_boxed_slice(),
+                stacked,
+                refs: refs.into_boxed_slice(),
+                discard,
             },
-            argc,
-            1,
+            stacked,
+            u32::from(!discard),
         );
     }
 
@@ -1017,8 +1074,9 @@ impl<'p> Compiler<'_, '_, 'p> {
     }
 }
 
-/// `x = l op r` as one op: the local/int and local/local shapes get their
-/// own op ([`Op::StoreLocalInt`], [`Op::StoreLocalLocal`]).
+/// `x = l op r` as one op: the local/int, local/local and (with no
+/// in-place step) local/stack shapes get their own op
+/// ([`Op::StoreLocalInt`], [`Op::StoreLocalLocal`], [`Op::StoreLocalStack`]).
 fn store_bin<'p>(
     var: Var<'p>,
     in_place: Option<&'p Expr>,
@@ -1041,6 +1099,7 @@ fn store_bin<'p>(
             l,
             r,
         },
+        (Opnd::Local(l), Opnd::Stack) if in_place.is_none() => Op::StoreLocalStack { var, op, l },
         (l, r) => Op::StoreBin {
             var,
             in_place,

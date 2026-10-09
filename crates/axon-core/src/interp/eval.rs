@@ -1257,10 +1257,7 @@ impl<'p> Interp<'p> {
         tier: Option<&str>,
         env: &mut Env,
     ) -> R {
-        let entry = match self.call_mut_entry(callee) {
-            Ok(i) => &self.fn_table[i as usize],
-            Err(flow) => return Err(flow),
-        };
+        let entry = &self.fn_table[self.call_mut_entry(callee)? as usize];
         // Plain arguments first, left to right: they cannot mention a
         // borrowed variable (E0606), so this order is unobservable — and if
         // one unwinds (`?`, panic) nothing has been moved out yet. A pooled
@@ -1319,7 +1316,8 @@ impl<'p> Interp<'p> {
                 let Some(b) = env.get_var_mut(s, slot) else {
                     return panic(format!("`&mut {name}`: `{name}` is not a local variable"));
                 };
-                argv.values()[i] = std::mem::replace(b, Value::Unit);
+                let v = std::mem::replace(b, Value::Unit);
+                forget_scalar(std::mem::replace(&mut argv.values()[i], v));
             }
         }
         self.set_call_tier(tier);
@@ -1349,7 +1347,7 @@ impl<'p> Interp<'p> {
                 };
                 let (s, slot) = self.res.var(operand, name);
                 if let Some(b) = env.get_var_mut(s, slot) {
-                    *b = out;
+                    forget_scalar(std::mem::replace(b, out));
                 }
             }
         }
