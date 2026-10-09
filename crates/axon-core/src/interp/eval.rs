@@ -53,15 +53,15 @@ enum AppendOp {
 /// An evaluated operand of a binary operation (AX-55): an int or a float as
 /// the scalar itself, so the int/float fast path never builds or drops a
 /// `Value`; any other value as is.
-enum Operand {
+pub(super) enum Operand {
     Int(i64),
     Float(f64),
     Val(Value),
 }
 
 impl Operand {
-    #[inline]
-    fn of(v: Value) -> Operand {
+    #[inline(always)]
+    pub(super) fn of(v: Value) -> Operand {
         match v {
             Value::Int(n) => Operand::Int(n),
             Value::Float(f) => Operand::Float(f),
@@ -69,13 +69,138 @@ impl Operand {
         }
     }
 
-    #[inline]
+    /// The operand a local's current value `v` gives, copied out of the slot
+    /// for an int or a float.
+    #[inline(always)]
+    pub(super) fn of_ref(v: &Value) -> Operand {
+        match v {
+            Value::Int(n) => Operand::Int(*n),
+            Value::Float(f) => Operand::Float(*f),
+            v => Operand::Val(v.clone()),
+        }
+    }
+
+    #[inline(always)]
     fn into_value(self) -> Value {
         match self {
             Operand::Int(n) => Value::Int(n),
             Operand::Float(f) => Value::Float(f),
             Operand::Val(v) => v,
         }
+    }
+}
+
+/// `l op r` for every operator but `&&`/`||`, on evaluated operands. AX-46: two
+/// plain ints or floats (the hot case) skip the general dispatch; same
+/// helpers, so the same semantics, as `eval_binop_vals`. Shared by
+/// `eval_binop` and the bytecode engine (R50).
+#[inline(always)]
+pub(super) fn binop_operands(op: &BinOp, l: Operand, r: Operand) -> R {
+    let fast = match (&l, &r) {
+        (Operand::Int(a), Operand::Int(b)) => int_binop(op, *a, *b),
+        (Operand::Float(a), Operand::Float(b)) => float_binop(op, *a, *b),
+        _ => None,
+    };
+    match fast {
+        Some(res) => res,
+        None => eval_binop_vals(op, l.into_value(), r.into_value()),
+    }
+}
+
+/// Whether `&&`/`||` (`op`) is decided by its left operand `lv` alone:
+/// `false && _` and `true || _`. An `Uncertain<bool>` operand never
+/// short-circuits (the confidences must combine). Shared by `eval_binop` and
+/// the bytecode engine (R50).
+#[inline(always)]
+pub(super) fn short_circuits(op: &BinOp, lv: &Value) -> bool {
+    matches!(
+        (op, lv),
+        (BinOp::And, Value::Bool(false)) | (BinOp::Or, Value::Bool(true))
+    )
+}
+
+/// `lv && rv` / `lv || rv` once [`short_circuits`] said the right operand
+/// runs. A plain-bool left operand needs a bool (or an `Uncertain`) right
+/// operand; any other left operand (an `Uncertain<bool>`) takes the
+/// value-level path, which propagates uncertainty or errs.
+pub(super) fn logic_rhs(op: &BinOp, lv: Value, rv: Value) -> R {
+    if let Value::Bool(_) = lv {
+        return match rv {
+            Value::Bool(b) => Ok(Value::Bool(b)),
+            other if uncertain_parts(&other).is_some() => eval_binop_vals(op, lv, other),
+            other => {
+                let sym = if matches!(op, BinOp::And) { "&&" } else { "||" };
+                panic(format!(
+                    "`{sym}` rhs must be bool, got {}",
+                    other.type_name()
+                ))
+            }
+        };
+    }
+    eval_binop_vals(op, lv, rv)
+}
+
+/// An `if` or `while` condition (`what` is `"if"` or `"while"`): an
+/// `Uncertain<bool>` or `Temporal<bool>` branches on its inner bool
+/// (confidence is irrelevant to control flow); any other non-bool panics.
+/// Not used for match guards, which are true only for a plain `true`. Shared
+/// by the `If`/`While` arms and the bytecode engine (R50).
+#[inline(always)]
+pub(super) fn cond_bool(v: Value, what: &str) -> Result<bool, Flow> {
+    match v {
+        Value::Bool(b) => Ok(b),
+        v => cond_bool_slow(v, what),
+    }
+}
+
+/// [`cond_bool`] for anything but a plain bool (`soft_inner` returns `None`
+/// for a bool, so testing it first changes nothing).
+#[cold]
+#[inline(never)]
+fn cond_bool_slow(v: Value, what: &str) -> Result<bool, Flow> {
+    let v = match soft_inner(&v) {
+        Some(inner) => inner,
+        None => v,
+    };
+    match v {
+        Value::Bool(b) => Ok(b),
+        other => panic(format!(
+            "{what} condition must be bool, got {}",
+            other.type_name()
+        )),
+    }
+}
+
+/// A `for` bound or an index read: an `Int` only; anything else, a sized int
+/// included, panics. Shared by the `For`/`Index` arms and the bytecode engine
+/// (R50).
+#[inline(always)]
+pub(super) fn strict_int(v: Value) -> Result<i64, Flow> {
+    match v {
+        Value::Int(n) => Ok(n),
+        other => strict_int_panic(other),
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn strict_int_panic(other: Value) -> Result<i64, Flow> {
+    panic(format!("expected i64, got {}", other.type_name()))
+}
+
+/// `v?`: the payload of an `Ok`/`Some`; an `Err`/`None` returns from the fn;
+/// anything else panics. Shared by the `Question` arm and the bytecode engine
+/// (R50).
+pub(super) fn question(v: Value) -> R {
+    match v {
+        Value::Ok(x) => Ok(*x),
+        Value::Some(x) => Ok(*x),
+        Value::Err(e) => Err(Flow::Return(Value::Err(e))),
+        Value::None => Err(Flow::Return(Value::None)),
+        other => panic(format!(
+            "`?` applied to non-Result/Option ({})",
+            other.type_name()
+        )),
     }
 }
 
@@ -120,22 +245,9 @@ impl<'p> Interp<'p> {
 
             Expr::Ident(name) => {
                 let (s, slot) = self.res.var(expr, name);
-                if let Some(v) = env.get_var(s, slot) {
-                    Ok(v.clone())
-                } else if let Some(v) = self.globals.get(&s) {
-                    Ok(v.clone())
-                } else if let Some(&i) = self.fn_of_sym.get(&s) {
-                    let f = self.fn_table[i as usize].def;
-                    // AX-25: a top-level fn named in VALUE position (`let g = f`,
-                    // `[f, h]`, `apply(f, x)`) is a first-class closure. It is the
-                    // forwarding lambda `|a0, ..| f(a0, ..)` with no captures, so a
-                    // call through the value re-enters `eval_call` by NAME and takes
-                    // exactly the path a direct `f(..)` call takes — contracts,
-                    // `@[verify]` gates, effect/capability gates and provenance
-                    // included. The resolver refuses builtins and generic fns here.
-                    Ok(fn_value(name, f.params.len()))
-                } else {
-                    panic(format!("undefined identifier `{name}`"))
+                match env.get_var(s, slot) {
+                    Some(v) => Ok(v.clone()),
+                    None => self.ident_unbound(name, s),
                 }
             }
 
@@ -244,25 +356,16 @@ impl<'p> Interp<'p> {
             }
 
             Expr::If { cond, then, else_ } => {
-                let cv = self.eval(cond, env)?;
                 // An `Uncertain<bool>` condition (e.g. `if a > 5` where `a` is
                 // Uncertain — the comparison stays Uncertain) branches on its
-                // inner bool; confidence is irrelevant to control flow. Unwrap it
-                // to the inner value before the bool match.
-                let cv = match soft_inner(&cv) {
-                    Some(inner) => inner,
-                    None => cv,
-                };
-                match cv {
-                    Value::Bool(true) => self.eval(then, env),
-                    Value::Bool(false) => match else_ {
+                // inner bool; confidence is irrelevant to control flow.
+                if cond_bool(self.eval(cond, env)?, "if")? {
+                    self.eval(then, env)
+                } else {
+                    match else_ {
                         Some(e) => self.eval(e, env),
                         None => Ok(Value::Unit),
-                    },
-                    other => panic(format!(
-                        "if condition must be bool, got {}",
-                        other.type_name()
-                    )),
+                    }
                 }
             }
 
@@ -304,24 +407,9 @@ impl<'p> Interp<'p> {
             }
 
             Expr::While { cond, body } => {
-                loop {
-                    let cv = self.eval(cond, env)?;
-                    // An `Uncertain<bool>` condition branches on its inner bool
-                    // (confidence is irrelevant to control flow) — same as `if`.
-                    let cv = match soft_inner(&cv) {
-                        Some(inner) => inner,
-                        None => cv,
-                    };
-                    match cv {
-                        Value::Bool(true) => {}
-                        Value::Bool(false) => break,
-                        other => {
-                            return panic(format!(
-                                "while condition must be bool, got {}",
-                                other.type_name()
-                            ))
-                        }
-                    }
+                // An `Uncertain<bool>` condition branches on its inner bool
+                // (confidence is irrelevant to control flow) — same as `if`.
+                while cond_bool(self.eval(cond, env)?, "while")? {
                     match self.run_loop_body(body, env)? {
                         LoopStep::Break => break,
                         LoopStep::Continue => {}
@@ -367,8 +455,8 @@ impl<'p> Interp<'p> {
                 inclusive,
                 body,
             } => {
-                let s = self.eval_int(start, env)?;
-                let e = self.eval_int(end, env)?;
+                let s = strict_int(self.eval(start, env)?)?;
+                let e = strict_int(self.eval(end, env)?)?;
                 let mut i = s;
                 let (var, slot) = self.res.var(expr, var);
                 loop {
@@ -399,16 +487,7 @@ impl<'p> Interp<'p> {
             Expr::Break => Err(Flow::Break),
             Expr::Continue => Err(Flow::Continue),
 
-            Expr::Question(inner) => match self.eval(inner, env)? {
-                Value::Ok(x) => Ok(*x),
-                Value::Some(x) => Ok(*x),
-                Value::Err(e) => Err(Flow::Return(Value::Err(e))),
-                Value::None => Err(Flow::Return(Value::None)),
-                other => panic(format!(
-                    "`?` applied to non-Result/Option ({})",
-                    other.type_name()
-                )),
-            },
+            Expr::Question(inner) => question(self.eval(inner, env)?),
 
             Expr::Call { callee, args, tier } => {
                 // `chan<T>()` lowers to a call whose callee is `chan::<T>`.
@@ -538,7 +617,7 @@ impl<'p> Interp<'p> {
                 if let Expr::Ident(name) = receiver.as_ref() {
                     let (s, slot) = self.res.var(receiver, name);
                     if env.get_var(s, slot).is_some() || self.globals.contains_key(&s) {
-                        let idx = self.eval_int(index, env)?;
+                        let idx = strict_int(self.eval(index, env)?)?;
                         let arr = env.get_var(s, slot).or_else(|| self.globals.get(&s));
                         return match arr {
                             Some(Value::Array(items)) => {
@@ -555,7 +634,7 @@ impl<'p> Interp<'p> {
                     }
                 }
                 let arr = self.eval(receiver, env)?;
-                let idx = self.eval_int(index, env)?;
+                let idx = strict_int(self.eval(index, env)?)?;
                 match arr {
                     Value::Array(items) => items.get(idx as usize).cloned().ok_or_else(|| {
                         Flow::Panic(format!("index {idx} out of bounds (len {})", items.len()).into())
@@ -1179,92 +1258,114 @@ impl<'p> Interp<'p> {
     pub(super) fn dispatch_call(
         &self,
         callee: &Expr,
-        mut argv: Vec<Value>,
+        argv: Vec<Value>,
         tier: Option<&str>,
         env: &mut Env,
     ) -> R {
-        // Phase 6: `resume(v)` inside a handler arm carries `v` back to the
-        // intercepted operation as a `Flow::Resume`. It is caught at the
-        // builtin-interception site (`run_handler_arm`). `resume` with no arg
-        // resumes with Unit. (The resolver only binds `resume` inside an arm, so
-        // a `resume` here is genuinely a handler resume, not a user fn named
-        // `resume` — and the builtin/user-fn lookups never define one.)
         if let Expr::Ident(name) = callee {
             if name == "resume" {
-                let v = argv.into_iter().next().unwrap_or(Value::Unit);
-                // Phase 6 multi-shot: if a handler arm is currently servicing a
-                // suspended computation (`resume_ctx` non-empty) AND we are not
-                // already inside a replay (no nested-replay re-entrancy), reify
-                // the continuation by REPLAYING the body with `v` fed at the
-                // intercepted op, and return its value to the arm. This lets the
-                // arm use `resume`'s result (`let a = resume(2)`) and resume again
-                // (multi-shot) — without a CPS rewrite. When there is no ctx (or
-                // we're mid-replay), fall back to the single-shot `Flow::Resume`
-                // unwind, which the interception site catches tail-resumptively
-                // (byte-identical to the pre-multishot fast path).
-                let in_replay = self.resume_replay.borrow().is_some();
-                let has_ctx = !self.resume_ctx.borrow().is_empty();
-                if has_ctx && !in_replay {
-                    return self.replay_continuation(v);
-                }
-                return Err(Flow::Resume(v));
+                return self.dispatch_resume(argv);
             }
-        }
-
-        // R3b: make the per-call `tier:` (if any) visible to the builtin dispatch
-        // for the duration of this call (read by `current_ai_tier`). A call with
-        // no `tier:` leaves an already-clear slot alone (AX-54).
-        if tier.is_some() || self.current_call_tier.borrow().is_some() {
-            *self.current_call_tier.borrow_mut() = tier.map(|t| t.to_string());
-        }
-
-        if let Expr::Ident(name) = callee {
             let (s, slot) = self.res.var(callee, name);
-            // 1. A local/captured variable holding a closure.
-            if let Some(c @ Value::Closure { .. }) = env.get_var(s, slot) {
-                let c = c.clone();
-                return self.call_local_closure(c, argv);
-            }
-            // 2. A builtin — skipped for a name already proven not to be one
-            //    (see `callees`), which also caches step 3's lookup.
-            let known = self.callees.borrow().get(s.index()).copied();
-            let resolved = match known {
-                Some(r) if r != CALLEE_UNKNOWN => r,
-                _ => {
-                    if let Some(v) = self.call_builtin(name, &argv)? {
-                        argv.clear();
-                        self.recycle_args(argv);
-                        return Ok(v);
-                    }
-                    let r = match self.fn_of_sym.get(&s) {
-                        Some(&i) => CALLEE_FN + i,
-                        None => CALLEE_NOT_FN,
-                    };
-                    if super::builtins::builtin_dispatch_is_inert(name) {
-                        let mut callees = self.callees.borrow_mut();
-                        if callees.len() <= s.index() {
-                            callees.resize(s.index() + 1, CALLEE_UNKNOWN);
-                        }
-                        callees[s.index()] = r;
-                    }
-                    r
-                }
-            };
-            // 3. A user-defined function.
-            if resolved >= CALLEE_FN {
-                return self.call_fn_entry(&self.fn_table[(resolved - CALLEE_FN) as usize], argv);
-            }
-            // 4. A module-level closure constant.
-            if let Some(c @ Value::Closure { .. }) = self.globals.get(&s) {
-                return self.call_closure(c.clone(), argv);
-            }
-            return panic(format!("call to unknown function `{name}`"));
+            return self.dispatch_named(name, s, slot, argv, tier, env);
         }
-
+        self.set_call_tier(tier);
         // Callee is an expression that should evaluate to a closure
         // (e.g. `make_adder(1)(2)` or an array element).
         let c = self.eval(callee, env)?;
         self.call_closure(c, argv)
+    }
+
+    /// Phase 6: `resume(v)` inside a handler arm carries `v` back to the
+    /// intercepted operation as a `Flow::Resume`. It is caught at the
+    /// builtin-interception site (`run_handler_arm`). `resume` with no arg
+    /// resumes with Unit. (The resolver only binds `resume` inside an arm, so
+    /// a `resume` here is genuinely a handler resume, not a user fn named
+    /// `resume` — and the builtin/user-fn lookups never define one.) Shared
+    /// by [`Interp::dispatch_call`] and the bytecode engine (R50).
+    #[cold]
+    pub(super) fn dispatch_resume(&self, argv: Vec<Value>) -> R {
+        let v = argv.into_iter().next().unwrap_or(Value::Unit);
+        // Phase 6 multi-shot: if a handler arm is currently servicing a
+        // suspended computation (`resume_ctx` non-empty) AND we are not
+        // already inside a replay (no nested-replay re-entrancy), reify
+        // the continuation by REPLAYING the body with `v` fed at the
+        // intercepted op, and return its value to the arm. This lets the
+        // arm use `resume`'s result (`let a = resume(2)`) and resume again
+        // (multi-shot) — without a CPS rewrite. When there is no ctx (or
+        // we're mid-replay), fall back to the single-shot `Flow::Resume`
+        // unwind, which the interception site catches tail-resumptively
+        // (byte-identical to the pre-multishot fast path).
+        let in_replay = self.resume_replay.borrow().is_some();
+        let has_ctx = !self.resume_ctx.borrow().is_empty();
+        if has_ctx && !in_replay {
+            return self.replay_continuation(v);
+        }
+        Err(Flow::Resume(v))
+    }
+
+    /// R3b: make the per-call `tier:` (if any) visible to the builtin dispatch
+    /// for the duration of this call (read by `current_ai_tier`). A call with
+    /// no `tier:` leaves an already-clear slot alone (AX-54).
+    #[inline(always)]
+    fn set_call_tier(&self, tier: Option<&str>) {
+        if tier.is_some() || self.current_call_tier.borrow().is_some() {
+            *self.current_call_tier.borrow_mut() = tier.map(|t| t.to_string());
+        }
+    }
+
+    /// [`Interp::dispatch_call`] for an identifier callee `name` other than
+    /// `resume`, already resolved to `(s, slot)` (the bytecode engine resolves
+    /// it at compile time, R50): the per-call `tier:`, then a local closure, a
+    /// builtin, a user fn, a module-level closure, the unknown-function panic.
+    pub(super) fn dispatch_named(
+        &self,
+        name: &str,
+        s: Sym,
+        slot: u32,
+        mut argv: impl CallArgs,
+        tier: Option<&str>,
+        env: &mut Env,
+    ) -> R {
+        self.set_call_tier(tier);
+        // 1. A local/captured variable holding a closure.
+        if let Some(c @ Value::Closure { .. }) = env.get_var(s, slot) {
+            let c = c.clone();
+            return self.call_local_closure(c, argv.into_vec(self));
+        }
+        // 2. A builtin — skipped for a name already proven not to be one
+        //    (see `callees`), which also caches step 3's lookup.
+        let known = self.callees.borrow().get(s.index()).copied();
+        let resolved = match known {
+            Some(r) if r != CALLEE_UNKNOWN => r,
+            _ => {
+                if let Some(v) = self.call_builtin(name, argv.values())? {
+                    argv.done(self);
+                    return Ok(v);
+                }
+                let r = match self.fn_of_sym.get(&s) {
+                    Some(&i) => CALLEE_FN + i,
+                    None => CALLEE_NOT_FN,
+                };
+                if super::builtins::builtin_dispatch_is_inert(name) {
+                    let mut callees = self.callees.borrow_mut();
+                    if callees.len() <= s.index() {
+                        callees.resize(s.index() + 1, CALLEE_UNKNOWN);
+                    }
+                    callees[s.index()] = r;
+                }
+                r
+            }
+        };
+        // 3. A user-defined function.
+        if resolved >= CALLEE_FN {
+            return self.call_fn_entry(&self.fn_table[(resolved - CALLEE_FN) as usize], argv);
+        }
+        // 4. A module-level closure constant.
+        if let Some(c @ Value::Closure { .. }) = self.globals.get(&s) {
+            return self.call_closure(c.clone(), argv.into_vec(self));
+        }
+        panic(format!("call to unknown function `{name}`"))
     }
 
     /// AX-08: `f(.., &mut a, ..)`. The checker (E0605/E0606) guarantees the
@@ -1274,6 +1375,7 @@ impl<'p> Interp<'p> {
     /// copy) and the param's final value is moved back on every outcome,
     /// including `return` / `?` / error unwinds, so the caller's binding is
     /// never left hollow. Shared by `eval_call` and the bytecode engine (R50).
+    #[inline(never)]
     pub(super) fn call_mut(
         &self,
         callee: &Expr,
@@ -1320,7 +1422,7 @@ impl<'p> Interp<'p> {
             }
         }
         *self.current_call_tier.borrow_mut() = tier.map(|t| t.to_string());
-        let mut frame = Env::new();
+        let mut frame = self.take_frame();
         let result = self.call_fn_in(entry, argv, &mut frame);
         // The body's block scopes are popped by now (on `return`/`?` too), so
         // each name resolves to the parameter binding itself. Per param, its
@@ -1342,6 +1444,7 @@ impl<'p> Interp<'p> {
                 *b = std::mem::replace(&mut outs[i], Value::Unit);
             }
         }
+        self.give_frame(frame);
         result
     }
 
@@ -1535,75 +1638,31 @@ impl<'p> Interp<'p> {
         // Short-circuit boolean operators. An `Uncertain<bool>` operand can't
         // short-circuit (we must combine confidences), so it falls through to
         // the value-level path which propagates uncertainty.
-        match op {
-            BinOp::And => {
-                let lv = self.eval(left, env)?;
-                if let Value::Bool(false) = lv {
-                    return Ok(Value::Bool(false));
-                }
-                if let Value::Bool(true) = lv {
-                    return match self.eval(right, env)? {
-                        Value::Bool(b) => Ok(Value::Bool(b)),
-                        other if uncertain_parts(&other).is_some() => {
-                            eval_binop_vals(op, lv, other)
-                        }
-                        other => panic(format!("`&&` rhs must be bool, got {}", other.type_name())),
-                    };
-                }
-                // lv is Uncertain (or other) — value-level path handles/errors.
-                let rv = self.eval(right, env)?;
-                return eval_binop_vals(op, lv, rv);
+        if matches!(op, BinOp::And | BinOp::Or) {
+            let lv = self.eval(left, env)?;
+            if short_circuits(op, &lv) {
+                return Ok(lv);
             }
-            BinOp::Or => {
-                let lv = self.eval(left, env)?;
-                if let Value::Bool(true) = lv {
-                    return Ok(Value::Bool(true));
-                }
-                if let Value::Bool(false) = lv {
-                    return match self.eval(right, env)? {
-                        Value::Bool(b) => Ok(Value::Bool(b)),
-                        other if uncertain_parts(&other).is_some() => {
-                            eval_binop_vals(op, lv, other)
-                        }
-                        other => panic(format!("`||` rhs must be bool, got {}", other.type_name())),
-                    };
-                }
-                let rv = self.eval(right, env)?;
-                return eval_binop_vals(op, lv, rv);
-            }
-            _ => {}
+            let rv = self.eval(right, env)?;
+            return logic_rhs(op, lv, rv);
         }
 
         let l = self.operand(left, env)?;
         let r = self.operand(right, env)?;
-        // AX-46: two plain ints or floats (the hot case) skip the general
-        // dispatch; same helpers, so the same semantics, as `eval_binop_vals`.
-        let fast = match (&l, &r) {
-            (Operand::Int(a), Operand::Int(b)) => int_binop(op, *a, *b),
-            (Operand::Float(a), Operand::Float(b)) => float_binop(op, *a, *b),
-            _ => None,
-        };
-        match fast {
-            Some(res) => res,
-            None => eval_binop_vals(op, l.into_value(), r.into_value()),
-        }
+        binop_operands(op, l, r)
     }
 
     /// Evaluate binary-operation operand `e` (AX-55). A local or a numeric
     /// literal is read in place: an int or float is copied out of its slot or
     /// literal without building, cloning or dropping a `Value`. Anything else
     /// is evaluated as usual. Reading a local is what `eval` does for it.
-    #[inline]
+    #[inline(always)]
     fn operand(&self, e: &Expr, env: &mut Env) -> Result<Operand, Flow> {
         match e {
             Expr::Ident(name) => {
                 let (s, slot) = self.res.var(e, name);
                 if let Some(v) = env.get_var(s, slot) {
-                    return Ok(match v {
-                        Value::Int(n) => Operand::Int(*n),
-                        Value::Float(f) => Operand::Float(*f),
-                        v => Operand::Val(v.clone()),
-                    });
+                    return Ok(Operand::of_ref(v));
                 }
             }
             Expr::Literal(Literal::Int(n)) => return Ok(Operand::Int(*n)),
@@ -1632,7 +1691,7 @@ impl<'p> Interp<'p> {
     /// `call_builtin` skips no gate, audit row or handler. Returns `Ok(false)`,
     /// having evaluated nothing, for any other statement shape or when `x` is
     /// not a str/array local.
-    fn assign_in_place(
+    pub(super) fn assign_in_place(
         &self,
         s: Sym,
         slot: u32,
@@ -1716,10 +1775,44 @@ impl<'p> Interp<'p> {
         Ok(true)
     }
 
-    pub(super) fn eval_int(&self, expr: &Expr, env: &mut Env) -> Result<i64, Flow> {
-        match self.eval(expr, env)? {
-            Value::Int(n) => Ok(n),
-            other => panic(format!("expected i64, got {}", other.type_name())),
+    /// Whether `x = value` (`name` is `x`) has one of the shapes
+    /// [`Interp::assign_in_place`] matches by syntax; for any other shape it
+    /// returns `Ok(false)` without reading or evaluating anything, so the
+    /// bytecode engine (R50) does not call it.
+    pub(super) fn assign_in_place_shaped(name: &str, value: &Expr) -> bool {
+        match value {
+            Expr::BinOp {
+                op: BinOp::Add,
+                left,
+                ..
+            } => matches!(left.as_ref(), Expr::Ident(x) if x == name),
+            Expr::Call { callee, args, .. } => {
+                matches!(callee.as_ref(), Expr::Ident(f) if f == "arr_push" || f == "arr_concat")
+                    && matches!(args.as_slice(), [Expr::Ident(x), _] if x == name)
+            }
+            _ => false,
+        }
+    }
+
+    /// The rest of an identifier read once `get_var` found no local: a
+    /// module-level `let`, then a top-level fn as a value, then the
+    /// undefined-identifier panic. Shared by the `Ident` arm and the bytecode
+    /// engine's local reads (R50).
+    pub(super) fn ident_unbound(&self, name: &str, s: Sym) -> R {
+        if let Some(v) = self.globals.get(&s) {
+            Ok(v.clone())
+        } else if let Some(&i) = self.fn_of_sym.get(&s) {
+            let f = self.fn_table[i as usize].def;
+            // AX-25: a top-level fn named in VALUE position (`let g = f`,
+            // `[f, h]`, `apply(f, x)`) is a first-class closure. It is the
+            // forwarding lambda `|a0, ..| f(a0, ..)` with no captures, so a
+            // call through the value re-enters `eval_call` by NAME and takes
+            // exactly the path a direct `f(..)` call takes — contracts,
+            // `@[verify]` gates, effect/capability gates and provenance
+            // included. The resolver refuses builtins and generic fns here.
+            Ok(fn_value(name, f.params.len()))
+        } else {
+            panic(format!("undefined identifier `{name}`"))
         }
     }
 

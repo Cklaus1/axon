@@ -339,9 +339,6 @@ pub(super) struct FnEntry<'p> {
     pub(super) param_coerce: Box<[(bool, Option<IntWidth>)]>,
     /// Some parameter is `&mut` (see `Interp::call_fn`).
     pub(super) has_ref_mut: bool,
-    /// `def.name`, installed as `Interp::current_fn` per activation without
-    /// copying the string.
-    pub(super) name: Rc<str>,
     /// `@[agent]`: the enclosing agent for everything it calls (R4/I-13).
     pub(super) is_agent: bool,
     /// The fn the `current_fn` readers find under this name carries
@@ -362,6 +359,10 @@ pub(super) struct FnEntry<'p> {
     pub(super) ret_is_scalar: bool,
     /// Named `main` (the binding-dump capture applies to it).
     pub(super) is_main: bool,
+    /// No attribute-driven step around the body: not `@[agent]`, `@[ai]`
+    /// metered, `@[corrigible]`, zoned, `@[goal]`, `@[verify]` or `main`
+    /// (`Interp::call_fn_in` takes its common path).
+    pub(super) plain: bool,
     /// Has a zone (`adaptive`/`experiment`) or `@[verify]` step after the
     /// body (`Interp::finish_call_cold`).
     pub(super) has_epilogue: bool,
@@ -378,7 +379,7 @@ impl<'p> FnEntry<'p> {
     pub(super) fn new(def: &'p FnDef, fns: &HashMap<String, &FnDef>) -> Self {
         use crate::ast::AxonType;
         let has_attr = |name: &str| def.attrs.iter().any(|a| a.name == name);
-        FnEntry {
+        let mut entry = FnEntry {
             def,
             params: def.params.iter().map(|p| intern(&p.name)).collect(),
             param_coerce: def
@@ -396,7 +397,6 @@ impl<'p> FnEntry<'p> {
                 .params
                 .iter()
                 .any(|p| matches!(p.ty, AxonType::RefMut(_))),
-            name: Rc::from(def.name.as_str()),
             is_agent: has_attr("agent"),
             ai_metered: fns
                 .get(&def.name)
@@ -415,8 +415,17 @@ impl<'p> FnEntry<'p> {
             ),
             is_main: def.name == "main",
             has_epilogue: has_attr("adaptive") || has_attr("experiment") || def.verify.is_some(),
+            plain: false,
             compiled: None,
-        }
+        };
+        entry.plain = !(entry.is_agent
+            || entry.ai_metered
+            || entry.corrigible
+            || entry.adaptive
+            || entry.has_goal
+            || entry.is_main
+            || entry.has_epilogue);
+        entry
     }
 }
 

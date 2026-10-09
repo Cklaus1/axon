@@ -634,9 +634,15 @@ fn ai_policy_err<T>(msg: impl Into<String>) -> Result<T, Flow> {
 /// its sym, which serves code resolved by name ([`NAMED`]: a reverse scan,
 /// the innermost binding first), [`Env::snapshot`], and the fallback when a
 /// slot does not hold the expected binding.
+///
+/// `stack` is the operand stack of a bytecode-engine activation running on
+/// this frame (R50): `vm::exec` takes it for the activation and hands it back
+/// emptied, so a pooled frame brings a grown stack with it. The tree-walker
+/// never touches it.
 struct Env {
     vars: Vec<(Sym, Value)>,
     marks: Vec<usize>,
+    stack: Vec<Value>,
 }
 
 impl Env {
@@ -644,6 +650,7 @@ impl Env {
         Env {
             vars: Vec::new(),
             marks: Vec::new(),
+            stack: Vec::new(),
         }
     }
     fn push(&mut self) {
@@ -652,6 +659,26 @@ impl Env {
     fn pop(&mut self) {
         let start = self.marks.pop().unwrap_or(0);
         self.vars.truncate(start);
+    }
+    /// Empty the frame for reuse. A scalar binding has nothing to drop, so it
+    /// is forgotten instead of going through `Value`'s drop glue; every other
+    /// binding is dropped (cost only).
+    #[inline]
+    fn clear(&mut self) {
+        while let Some((_, v)) = self.vars.pop() {
+            match v {
+                Value::Int(_)
+                | Value::SizedInt { .. }
+                | Value::Float(_)
+                | Value::Bool(_)
+                | Value::Unit
+                | Value::None => std::mem::forget(v),
+                v => drop(v),
+            }
+        }
+        if !self.marks.is_empty() {
+            self.marks.clear();
+        }
     }
     fn define(&mut self, name: Sym, val: Value) {
         let start = self.marks.last().copied().unwrap_or(0);
@@ -669,6 +696,14 @@ impl Env {
     #[inline]
     fn define_var(&mut self, name: Sym, slot: u32, val: Value) {
         let i = slot as usize;
+        // The common case: the slot is the next binding (a parameter, a
+        // `let` in a fresh scope). `i == len` implies `i >= start` and
+        // `slot != NAMED`, so this is the `None` arm below with nothing to
+        // fill (cost only, AX-53).
+        if i == self.vars.len() {
+            self.vars.push((name, val));
+            return;
+        }
         let start = self.marks.last().copied().unwrap_or(0);
         if slot == NAMED || i < start {
             return self.define(name, val);
@@ -750,6 +785,7 @@ impl Env {
         Env {
             vars: captured,
             marks: Vec::new(),
+            stack: Vec::new(),
         }
     }
     /// The bindings of the base (outermost) scope.
@@ -854,11 +890,12 @@ pub struct Interp<'p> {
     /// one-way latch is the whole safety property: a kill-switch you can turn
     /// back off is not a kill-switch.
     corrigible_halted: Cell<bool>,
-    /// Name of the Axon function currently executing, for attributing builtin
+    /// The Axon function currently executing, whose name attributes builtin
     /// side effects (e.g. R3's `ai_call` provenance records) to their caller.
-    /// Set on entry to `call_fn`, restored on exit. `None` at top level. An
-    /// `Rc` shared with the fn's [`FnEntry`], so a call copies no string (AX-54).
-    current_fn: RefCell<Option<Rc<str>>>,
+    /// Set on entry to `call_fn`, restored on exit. `None` at top level. A
+    /// reference to the fn's definition, so a call copies and counts nothing
+    /// (AX-54).
+    current_fn: Cell<Option<&'p FnDef>>,
     /// R4/I-13 — the nearest ENCLOSING `@[agent]` fn on the call stack (not just
     /// the immediate fn). Set when entering an `@[agent]` fn and INHERITED through
     /// non-agent helpers, so a capability builtin called inside a helper of an
@@ -905,8 +942,11 @@ pub struct Interp<'p> {
     /// `eval_call` so a call does not allocate one.
     arg_bufs: RefCell<Vec<Vec<Value>>>,
     /// AX-54: emptied frames of finished user-fn calls, reused by
-    /// `call_fn_entry` so a call does not allocate its bindings and marks.
-    env_pool: RefCell<Vec<Env>>,
+    /// `call_fn_entry` so a call does not allocate its bindings, marks and
+    /// operand stack. Boxed so taking and returning a frame moves a pointer,
+    /// not the frame.
+    #[allow(clippy::vec_box)]
+    env_pool: RefCell<Vec<Box<Env>>>,
     /// Phase-7 `cost_meter` / F4: cumulative AI spend across the whole run, in
     /// integer micro-dollars (µ$). Every `ai_complete` adds `tier.cost_micro(est
     /// tokens)` — the real per-token cost, stamped into the `ai_call` provenance
@@ -1171,29 +1211,126 @@ fn stack_size_for_depth(depth: usize) -> usize {
         .max(MIN_STACK_BYTES)
 }
 
-/// Decrements the call-depth counter when a `call_fn` frame unwinds (any path).
-struct DepthGuard<'a>(&'a Cell<usize>);
-impl Drop for DepthGuard<'_> {
+/// Restores the call depth and the caller's `current_fn` when a `call_fn`
+/// frame unwinds (any path), so builtin side effects (R3 `ai_call`
+/// provenance) are attributed to the nearest enclosing Axon function even
+/// across nested calls.
+struct CallGuard<'a, 'p> {
+    interp: &'a Interp<'p>,
+    prev_fn: Option<&'p FnDef>,
+}
+impl Drop for CallGuard<'_, '_> {
+    #[inline(always)]
     fn drop(&mut self) {
-        self.0.set(self.0.get().saturating_sub(1));
+        self.interp.current_fn.set(self.prev_fn);
+        let depth = &self.interp.call_depth;
+        depth.set(depth.get().saturating_sub(1));
     }
 }
 
-/// Saves the caller's `current_fn` and restores it on drop, so builtin side
-/// effects (R3 `ai_call` provenance) are attributed to the nearest enclosing
-/// Axon function even across nested calls.
-struct FnNameGuard<'a> {
-    cell: &'a RefCell<Option<Rc<str>>>,
-    prev: Option<Rc<str>>,
+/// The evaluated arguments of a call, in order, as the call path
+/// ([`Interp::dispatch_named`], [`Interp::call_fn_entry`]) consumes them:
+/// a `Vec` from [`Interp::take_args`] (the tree-walker), or the top of a
+/// bytecode activation's operand stack ([`StackTail`]), which a call that
+/// binds them to a fn's parameters reads in place (cost only, AX-54).
+trait CallArgs {
+    fn count(&self) -> usize;
+    /// The arguments; a binder moves each out, leaving a `Unit`.
+    fn values(&mut self) -> &mut [Value];
+    /// Finished with the arguments: drop what is left of them and release
+    /// the storage.
+    fn done(self, interp: &Interp<'_>);
+    /// The arguments as an owned vector (for a callee that takes one).
+    fn into_vec(self, interp: &Interp<'_>) -> Vec<Value>;
 }
-impl Drop for FnNameGuard<'_> {
-    fn drop(&mut self) {
-        *self.cell.borrow_mut() = self.prev.take();
+
+impl CallArgs for Vec<Value> {
+    #[inline(always)]
+    fn count(&self) -> usize {
+        self.len()
+    }
+    #[inline(always)]
+    fn values(&mut self) -> &mut [Value] {
+        self
+    }
+    #[inline(always)]
+    fn done(mut self, interp: &Interp<'_>) {
+        self.clear();
+        interp.recycle_args(self);
+    }
+    #[inline(always)]
+    fn into_vec(self, _: &Interp<'_>) -> Vec<Value> {
+        self
     }
 }
 
-/// Like `FnNameGuard` but for an `Option<String>` cell — used for the
-/// `enclosing_agent` save/restore (R4/I-13 transitive agent attribution).
+/// The arguments of a call as the values of `st` from index `at` on (R50:
+/// the operand stack of the calling activation). Dropping it truncates `st`
+/// to `at`, dropping them where dropping their vector did.
+struct StackTail<'a> {
+    st: &'a mut Vec<Value>,
+    at: usize,
+}
+
+impl Drop for StackTail<'_> {
+    #[inline(always)]
+    fn drop(&mut self) {
+        self.st.truncate(self.at);
+    }
+}
+
+impl CallArgs for StackTail<'_> {
+    #[inline(always)]
+    fn count(&self) -> usize {
+        self.st.len() - self.at
+    }
+    #[inline(always)]
+    fn values(&mut self) -> &mut [Value] {
+        &mut self.st[self.at..]
+    }
+    #[inline(always)]
+    fn done(self, _: &Interp<'_>) {}
+    #[inline]
+    fn into_vec(self, interp: &Interp<'_>) -> Vec<Value> {
+        let mut v = interp.take_args(self.count());
+        v.extend(self.st.drain(self.at..));
+        v
+    }
+}
+
+/// The panic of a call to `f` with `got` arguments for a different number of
+/// parameters.
+#[cold]
+#[inline(never)]
+fn arity_mismatch(f: &FnDef, got: usize) -> R {
+    panic(format!(
+        "{}: expected {} args, got {}",
+        f.name,
+        f.params.len(),
+        got
+    ))
+}
+
+/// Soft typing at the RETURN boundary: a fn declared `-> T` (a plain
+/// scalar) whose body produces an `Uncertain<T>`/`Temporal<T>` unwraps to
+/// the inner value — the same rule as a plain-T parameter. Without this,
+/// `fn f() -> i64 { uncertain }` leaked the struct and `f() + 1` silently
+/// produced 0. A fn declared `-> Uncertain<T>`/`-> Temporal<T>` keeps it.
+/// Only unwrap when the declared return is a plain SCALAR (i64/i32/
+/// f64/bool); a str/struct/tuple/soft-wrapper return is left untouched.
+#[inline(always)]
+fn scalar_return(entry: &FnEntry<'_>, result: Value) -> Value {
+    if entry.ret_is_scalar {
+        if let Some(inner) = value::soft_inner(&result) {
+            return inner;
+        }
+    }
+    result
+}
+
+/// Like `CallGuard`'s `current_fn` restore but for an `Option<String>` cell —
+/// used for the `enclosing_agent` save/restore (R4/I-13 transitive agent
+/// attribution).
 struct FnNameOptGuard<'a> {
     cell: &'a RefCell<Option<String>>,
     prev: Option<String>,
@@ -3087,7 +3224,7 @@ impl<'p> Interp<'p> {
                     .unwrap_or_else(|| "root".to_string()),
             ),
             goal_constraint: RefCell::new(None),
-            current_fn: RefCell::new(None),
+            current_fn: Cell::new(None),
             current_call_tier: RefCell::new(None),
             callees: RefCell::new(Vec::new()),
             ai_calls_this_fn: Cell::new(0),
@@ -3244,8 +3381,7 @@ impl<'p> Interp<'p> {
     /// The fn named like the currently-executing one in the by-name fn map —
     /// the policy source for the `current_ai_*` readers.
     fn current_fn_def(&self) -> Option<&'p FnDef> {
-        let name = self.current_fn.borrow();
-        self.fns.get(name.as_deref()?).copied()
+        self.fns.get(self.current_fn.get()?.name.as_str()).copied()
     }
 
     /// R3 §4.2 — resolve the AI tier for the current call from the enclosing
@@ -3321,7 +3457,7 @@ impl<'p> Interp<'p> {
         }
     }
 
-    fn call_fn(&self, f: &FnDef, args: Vec<Value>) -> R {
+    fn call_fn(&self, f: &'p FnDef, args: Vec<Value>) -> R {
         match self.fn_of_def.get(&(f as *const FnDef as usize)) {
             Some(&i) => self.call_fn_entry(&self.fn_table[i as usize], args),
             None => self.call_fn_entry(&FnEntry::new(f, &self.fns), args),
@@ -3330,7 +3466,7 @@ impl<'p> Interp<'p> {
 
     /// [`Interp::call_fn`] with the callee already resolved (AX-18: a call
     /// by name reaches its `fn_table` entry without hashing).
-    fn call_fn_entry(&self, f: &FnEntry<'_>, args: Vec<Value>) -> R {
+    fn call_fn_entry(&self, f: &FnEntry<'p>, args: impl CallArgs) -> R {
         // A `&mut` param must be moved back to the caller (`call_mut`); a
         // path that cannot do that (a fn reached by name string, a method)
         // would silently drop the callee's writes — refuse instead.
@@ -3340,23 +3476,38 @@ impl<'p> Interp<'p> {
                 f.def.name, f.def.name
             ));
         }
-        // AX-54: the frame comes from a pool of finished calls' frames, so a
-        // call does not allocate its bindings and scope marks. Emptied here
-        // (dropping the bindings exactly where dropping the frame did); a
-        // frame that grew unusually large is not kept.
-        let mut env = self.env_pool.borrow_mut().pop().unwrap_or_else(Env::new);
+        let mut env = self.take_frame();
         let result = self.call_fn_in(f, args, &mut env);
-        env.vars.clear();
-        env.marks.clear();
+        self.give_frame(env);
+        result
+    }
+
+    /// AX-54: an empty call frame from the pool of finished calls' frames, so
+    /// a call does not allocate its bindings and scope marks. Boxed, so
+    /// taking and returning one moves a pointer, not the frame.
+    #[inline(always)]
+    fn take_frame(&self) -> Box<Env> {
+        match self.env_pool.borrow_mut().pop() {
+            Some(env) => env,
+            None => Box::new(Env::new()),
+        }
+    }
+
+    /// Return a finished call's frame to the pool, emptied here (dropping the
+    /// bindings where dropping the frame did); a frame that grew unusually
+    /// large is not kept.
+    #[inline(always)]
+    fn give_frame(&self, mut env: Box<Env>) {
+        env.clear();
         let mut pool = self.env_pool.borrow_mut();
         if pool.len() < 64 && env.vars.capacity() <= 1024 {
             pool.push(env);
         }
-        result
     }
 
     /// AX-54: an empty argument vector with room for `n`, reusing one that a
     /// finished call handed back to [`Interp::recycle_args`].
+    #[inline]
     fn take_args(&self, n: usize) -> Vec<Value> {
         match self.arg_bufs.borrow_mut().pop() {
             Some(mut v) => {
@@ -3371,6 +3522,7 @@ impl<'p> Interp<'p> {
     /// only created while the pool is empty, so it holds at most as many as
     /// were outstanding at once (argument lists nested in argument lists);
     /// the cap bounds what deep recursion through such nesting leaves behind.
+    #[inline]
     fn recycle_args(&self, args: Vec<Value>) {
         debug_assert!(args.is_empty());
         let mut pool = self.arg_bufs.borrow_mut();
@@ -3379,12 +3531,13 @@ impl<'p> Interp<'p> {
         }
     }
 
-    fn call_fn_in(&self, entry: &FnEntry<'_>, mut args: Vec<Value>, env: &mut Env) -> R {
+    fn call_fn_in(&self, entry: &FnEntry<'p>, mut args: impl CallArgs, env: &mut Env) -> R {
         let f = entry.def;
-        let params = &entry.params;
         // Bound recursion: a graceful panic instead of a process-aborting stack
         // overflow on runaway/infinite recursion. `_guard` restores the depth on
-        // any return path (including `?`).
+        // any return path (including `?`), and the caller's `current_fn`: the
+        // executing fn is tracked so builtins (R3 ai_call provenance) can
+        // attribute their records to the caller.
         let depth = self.call_depth.get() + 1;
         if depth > self.max_depth {
             return panic(format!(
@@ -3394,13 +3547,40 @@ impl<'p> Interp<'p> {
             ));
         }
         self.call_depth.set(depth);
-        let _guard = DepthGuard(&self.call_depth);
-        // Track the executing fn so builtins (R3 ai_call provenance) can
-        // attribute their records to the caller; restored on return.
-        let _fn_guard = FnNameGuard {
-            cell: &self.current_fn,
-            prev: self.current_fn.replace(Some(entry.name.clone())),
+        let _guard = CallGuard {
+            interp: self,
+            prev_fn: self.current_fn.replace(Some(f)),
         };
+        // A fn with an attribute-driven step around its body, and every fn of
+        // a program that declares refinements, takes the general path. The
+        // common call is the steps below and nothing else; the rest stays out
+        // of its frame (cost only, AX-54).
+        if !entry.plain || !self.refine_preds.is_empty() {
+            return self.call_fn_in_general(entry, args.into_vec(self), env);
+        }
+        if f.params.len() != args.count() {
+            return arity_mismatch(f, args.count());
+        }
+        self.bind_params(entry, args.values(), env);
+        args.done(self);
+        // `goal_met` follows the parameters (its slot in `Resolution`, the
+        // next one: see `bind_params`); it is 0 for a fn without `@[goal]`.
+        env.vars.push((SYM_GOAL_MET, Value::Int(0)));
+        let result = match self.run_body(entry, env) {
+            Ok(v) | Err(Flow::Return(v)) => v,
+            Err(other) => return Err(other),
+        };
+        Ok(scalar_return(entry, result))
+    }
+
+    /// [`Interp::call_fn_in`] for a fn with an attribute-driven step around
+    /// its body (`@[agent]`, `@[ai]` metering, `@[corrigible]`, a zone,
+    /// `@[goal]`, `@[verify]`, `main`'s binding capture) or in a program that
+    /// declares refinements, after the depth and `current_fn` guards.
+    #[inline(never)]
+    fn call_fn_in_general(&self, entry: &FnEntry<'p>, mut args: Vec<Value>, env: &mut Env) -> R {
+        let f = entry.def;
+        let params = &entry.params;
         // R4/I-13: if THIS fn is an `@[agent]`, it becomes the enclosing agent for
         // everything it transitively calls; otherwise the caller's enclosing agent
         // is inherited unchanged. Restored on return so sibling calls aren't
@@ -3423,12 +3603,7 @@ impl<'p> Interp<'p> {
         });
 
         if f.params.len() != args.len() {
-            return panic(format!(
-                "{}: expected {} args, got {}",
-                f.name,
-                f.params.len(),
-                args.len()
-            ));
+            return arity_mismatch(f, args.len());
         }
 
         // R9 corrigibility: if the kill-switch latch is tripped, REFUSE every
@@ -3474,34 +3649,8 @@ impl<'p> Interp<'p> {
             Some(Value::Int(n)) => Some(*n),
             _ => None,
         };
-        for (i, ((&(unwrap_soft, width), a), s)) in entry
-            .param_coerce
-            .iter()
-            .zip(args.drain(..))
-            .zip(params.iter())
-            .enumerate()
-        {
-            // Soft typing: `Uncertain<T>` is compatible with a plain-`T` parameter
-            // (the checker allows it). If the declared param type is NOT itself a
-            // soft wrapper but the argument IS one, unwrap to the inner value so
-            // the body sees a plain `T` (else `x * 2` on the struct silently
-            // produced 0). Confidence/horizon dropped at this T-typed boundary.
-            let a = if unwrap_soft {
-                value::soft_inner(&a).unwrap_or(a)
-            } else {
-                a
-            };
-            // R19 Slice B: coerce Int→SizedInt when the declared param type is a
-            // non-i64 integer width — ensures arithmetic inside the callee's body
-            // uses width-correct ops (completeness, I-9).
-            let a = if let Some(width) = width {
-                coerce_to_sized(a, width)
-            } else {
-                a
-            };
-            // Parameter `i` lives in frame slot `i` (AX-53).
-            env.define_var(*s, i as u32, a);
-        }
+        self.bind_params(entry, &mut args, env);
+        args.clear();
         self.recycle_args(args);
         // Phase 5: refinement-type PRECONDITIONS. A parameter `p: T where P`
         // desugars to a synthetic named refinement; the checker discharges P
@@ -3552,8 +3701,9 @@ impl<'p> Interp<'p> {
         } else {
             0
         };
-        // `goal_met` follows the parameters (its slot in `Resolution`).
-        env.define_var(SYM_GOAL_MET, params.len() as u32, Value::Int(goal_met));
+        // `goal_met` follows the parameters (its slot in `Resolution`, the
+        // next one: see `bind_params`).
+        env.vars.push((SYM_GOAL_MET, Value::Int(goal_met)));
         // PROTOTYPE (RLM session option 2): when dumping bindings, run main's
         // top-level statements WITHOUT the extra block scope (eval_block pops
         // its scope before returning, discarding the locals), then capture the
@@ -3594,23 +3744,12 @@ impl<'p> Interp<'p> {
                 .collect();
             *self.main_locals.borrow_mut() = snap;
         }
-        let mut result = match body_result {
+        let result = match body_result {
             Ok(v) => v,
             Err(Flow::Return(v)) => v,
             Err(other) => return Err(other),
         };
-        // Soft typing at the RETURN boundary: a fn declared `-> T` (a plain
-        // scalar) whose body produces an `Uncertain<T>`/`Temporal<T>` unwraps to
-        // the inner value — the same rule as a plain-T parameter. Without this,
-        // `fn f() -> i64 { uncertain }` leaked the struct and `f() + 1` silently
-        // produced 0. A fn declared `-> Uncertain<T>`/`-> Temporal<T>` keeps it.
-        // Only unwrap when the declared return is a plain SCALAR (i64/i32/
-        // f64/bool); a str/struct/tuple/soft-wrapper return is left untouched.
-        if entry.ret_is_scalar {
-            if let Some(inner) = value::soft_inner(&result) {
-                result = inner;
-            }
-        }
+        let result = scalar_return(entry, result);
 
         if entry.has_epilogue || !self.refine_preds.is_empty() {
             return self.finish_call_cold(
@@ -3624,6 +3763,43 @@ impl<'p> Interp<'p> {
         }
 
         Ok(result)
+    }
+
+    /// Bind the arguments of a call to `entry` to its parameters in the
+    /// empty frame `env`, moving each out of `args` (leaving a `Unit`). The
+    /// caller has checked that `args`, `entry.params` and
+    /// `entry.param_coerce` have the same length.
+    /// Parameter `i` lives in frame slot `i` (AX-53): the frame starts empty
+    /// (`call_fn_in`'s callers take it from `take_frame`), so each parameter
+    /// is the next binding and is pushed, which is what `Env::define_var`
+    /// does for a slot equal to the frame's length (cost only).
+    #[inline(always)]
+    fn bind_params(&self, entry: &FnEntry<'p>, args: &mut [Value], env: &mut Env) {
+        debug_assert!(env.vars.is_empty() && env.marks.is_empty());
+        for (i, a) in args.iter_mut().enumerate() {
+            let a = std::mem::replace(a, Value::Unit);
+            let (unwrap_soft, width) = entry.param_coerce[i];
+            let s = &entry.params[i];
+            // Soft typing: `Uncertain<T>` is compatible with a plain-`T` parameter
+            // (the checker allows it). If the declared param type is NOT itself a
+            // soft wrapper but the argument IS one, unwrap to the inner value so
+            // the body sees a plain `T` (else `x * 2` on the struct silently
+            // produced 0). Confidence/horizon dropped at this T-typed boundary.
+            let a = if unwrap_soft {
+                value::soft_inner(&a).unwrap_or(a)
+            } else {
+                a
+            };
+            // R19 Slice B: coerce Int→SizedInt when the declared param type is a
+            // non-i64 integer width — ensures arithmetic inside the callee's body
+            // uses width-correct ops (completeness, I-9).
+            let a = if let Some(width) = width {
+                coerce_to_sized(a, width)
+            } else {
+                a
+            };
+            env.vars.push((*s, a));
+        }
     }
 
     /// R5 `@[goal(...)]` sugar for [`Interp::call_fn_in`]: whether the goal is
