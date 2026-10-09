@@ -161,7 +161,7 @@ def primitive_problems(root, text=None, label="scripts/lib/opkit_ns.sh"):
     for name in sorted(PRIM_BASE - set(fns)):
         bad.append(f"{label}: the destructive primitive {name} is not defined (PRIM_BASE names it)")
     for name in sorted((derived_primitives(text) | (PRIM_BASE & set(fns))) - {PRECONDITION}):
-        body = [(n, l) for n, l in fns[name] if l.strip() and not re.match(r'^\s*local\b', l)]
+        body = [(n, l) for n, l in fns[name] if l.strip() and not re.match(r'^\s*local\b', l) and l.strip() != GUARD]
         first = body[0] if body else None
         m = _FIRST.match(first[1]) if first else None
         if not m or m.group(1) != name:
@@ -1173,6 +1173,60 @@ def destination_problems(root, kit_text=None, label="operator_deploy_protected_h
 # the classifier on fd 2, and the VALUE functions below, whose stdout is a command substitution's input; (b) ns_run classifies
 # fds 0-2 (opkit_ns_std_fds_ok) before it unshares, makes a directory or opens a handle, and runs its pre-checks with their
 # stderr captured; (c) the in-namespace shell classifies them again before it mounts anything.
+# Amendment 120: the helper's functions run in the CALLER's shell, and bash writes to fd 2 on the caller's behalf (xtrace, verbose).
+# The guard turns those off, locally (`local -`), with what bash prints about the guard itself sent to /dev/null. It is line 1 of the
+# file (source time, restored at the end) and the FIRST statement of every function; the inner shell is launched without the
+# variables that switch a shell's diagnostics on.
+GUARD = "{ local -; set +xvTE; } </dev/null >/dev/null 2>&1"
+SRC_GUARD = "{ __opkit_so=$-; set +xvTE; } </dev/null >/dev/null 2>&1"
+SRC_RESTORE = '*) eval "unset __opkit_so __opkit_f; set -$__opkit_f" ;;'
+INNER_UNSET = ("SHELLOPTS", "BASH_ENV", "BASH_XTRACEFD", "BASHOPTS", "ENV", "PS4", "BASH_COMPAT")
+_ROOTS_OK = re.compile(r'OPKIT_DIAG_ROOTS=\(\)|OPKIT_DIAG_ROOTS\+=\("\$|"\$\{OPKIT_DIAG_ROOTS\[@\]\}"')
+
+
+def shell_diag_problems(text, label="scripts/lib/opkit_ns.sh"):
+    """Amendment 120: the helper neutralises the shell's own diagnostics before any descriptor is classified, and names its roots safely."""
+    bad, fns = [], helper_functions(text)
+    lines = text.splitlines()
+    if not lines or lines[0] != SRC_GUARD:
+        bad.append(f"{label}:1: line 1 must be the source-time guard `{SRC_GUARD}` (a caller's `set -x` would trace the top level of this file)")
+    tail = text[text.find("__opkit_f=${__opkit_so//"):] if "__opkit_f=${__opkit_so//" in text else ""
+    tl = [x.strip() for x in tail.splitlines() if x.strip()]
+    if len(tl) < 2 or tl[-1] != "esac" or not tl[-2].startswith(SRC_RESTORE):
+        bad.append(f"{label}: the file must END by restoring the caller's options, the last statement being `{SRC_RESTORE}` inside the final `case` (after it nothing is traced)")
+    for name, body in fns.items():
+        first = next(((n, l) for n, l in body if l.strip()), None)
+        if first is None or first[1].strip() != GUARD:
+            bad.append(f"{label}:{first[0] if first else '?'}: {name} does not begin with the shell-diagnostics guard `{GUARD}`: "
+                       f"{(first[1].strip() if first else '')[:70]}")
+    run = "\n".join(l for _, l in fns.get("ns_run", []))
+    k = run.find("bash --noprofile --norc -c")
+    seg = run[run.find("--kill-child"):k] if k >= 0 and "--kill-child" in run else ""
+    if k < 0 or not re.search(r'\benv\b', seg):
+        bad.append(f"{label}: ns_run must launch the inner shell as `env -u ... bash --noprofile --norc -c`")
+    else:
+        for v in INNER_UNSET:
+            if not re.search(r'-u ' + v + r'\b', seg):
+                bad.append(f"{label}: ns_run's inner shell is launched without `env -u {v}` (the caller's {v} would steer the shell inside the namespace)")
+    if not re.search(r"set \+o xtrace \+o verbose\s*\n\s*\. \"\$OPKIT_LIB\"", run):
+        bad.append(f"{label}: the inner shell must run `set +o xtrace +o verbose` before it sources the helper")
+    fd = "\n".join(l for _, l in fns.get("opkit_ns_fd_why", []))
+    i_nl, i_rl = fd.find("stat -L -c '%h'"), fd.find("readlink -f")
+    if i_nl < 0 or i_rl < 0 or i_nl > i_rl or 'case "$nl" in 1) ;;' not in fd:
+        bad.append(f"{label}: opkit_ns_fd_why must refuse a writable regular file with more than one name (`stat -L -c '%h'`) BEFORE it matches on the path: a hard link has the path of scratch and the inode of something else")
+    for n, l in enumerate(lines, 1):
+        code = re.sub(r"\s#\s.*$", "", l)
+        if code.lstrip().startswith("#") or "OPKIT_DIAG_ROOTS" not in code:
+            continue
+        if "OPKIT_DIAG_ROOTS" in _ROOTS_OK.sub("", code):
+            bad.append(f"{label}:{n}: OPKIT_DIAG_ROOTS is used other than as an array (`=()`, `+=(\"...\")`, `\"${{OPKIT_DIAG_ROOTS[@]}}\"`): {code.strip()[:80]}")
+    for n, l in enumerate(lines, 1):
+        code = re.sub(r"\s#\s.*$", "", l)
+        if not code.lstrip().startswith("#") and re.search(r'\$\{OPKIT_RW:-\}\s+\$\{OPKIT_SCRATCH', code):
+            bad.append(f"{label}:{n}: OPKIT_RW and OPKIT_SCRATCH are joined into ONE string (a path with a space is split into roots nobody validated): {code.strip()[:80]}")
+    return bad
+
+
 VALUE_FUNCTIONS = {"opkit_overrides", "opkit_ns_ids", "opkit_bounding_arg", "opkit_rw_extra_roots", "opkit_ns_prephase"}
 _FD_WRITE = re.compile(r'(?<![\w<])[12]?>&2|>\s*/dev/(?:stderr|stdout)\b|>\s*/(?:proc/self|dev)/fd/[12]\b|sys\.(?:stderr|stdout)')
 _PRINTS = re.compile(r'\b(?:echo|printf)\b')
@@ -1191,7 +1245,7 @@ def diagnostic_problems(text, label="scripts/lib/opkit_ns.sh"):
             elif _PRINTS.search(code) and "opkit_say" not in code.split("echo")[0] and name not in VALUE_FUNCTIONS | {"opkit_say"} \
                     and not _REDIRECTED.search(code) and not re.search(r'\$\([^)]*\b(?:echo|printf)\b', code):
                 bad.append(f"{label}:{n}: {name} prints to its stdout, which may be an unvetted descriptor: {code.strip()[:90]}")
-    say = [l for _, l in fns.get("opkit_say", []) if l.strip()]
+    say = [l for _, l in fns.get("opkit_say", []) if l.strip() and l.strip() != GUARD]
     if not say or not re.match(r'\s*if opkit_ns_fd_why 2\b', say[0]):
         bad.append(f"{label}: opkit_say must begin by classifying fd 2 (`if opkit_ns_fd_why 2 ...`)")
     run = "\n".join(l for _, l in fns.get("ns_run", []))
@@ -1201,11 +1255,11 @@ def diagnostic_problems(text, label="scripts/lib/opkit_ns.sh"):
         bad.append(f"{label}: ns_run must classify fds 0-2 (opkit_ns_std_fds_ok) before it unshares, makes a directory or says anything")
     if not re.search(r'\$\(opkit_ns_prephase 2>&1\)', run):
         bad.append(f"{label}: ns_run must run its pre-checks with stderr captured (`$(opkit_ns_prephase 2>&1)`)")
-    i_std = text.find("opkit_ns_std_fds_ok $OPKIT_DIAG_ROOTS || exit 97")
+    i_std = text.find('opkit_ns_std_fds_ok "${OPKIT_DIAG_ROOTS[@]}" || exit 97')
     i_iso = text.find("\n    opkit_ns_isolate || {")
     if i_std < 0 or i_iso < 0 or i_iso < i_std:
         bad.append(f"{label}: the in-namespace shell must classify fds 0-2 (exit 97) before opkit_ns_isolate")
-    return bad
+    return bad + shell_diag_problems(text, label)
 
 
 def check(root):
@@ -1492,6 +1546,9 @@ PRIM_CONTROLS = [
 ]
 
 # (label, anchor in the real helper, replacement): each planted text must be flagged by diagnostic_problems
+_G = '  { local -; set +xvTE; } </dev/null >/dev/null 2>&1\n'
+_SEVEN = ("SHELLOPTS", "BASH_ENV", "BASH_XTRACEFD", "BASHOPTS", "ENV", "PS4", "BASH_COMPAT")   # literal, NOT INNER_UNSET: the shapes must not follow a edit of the rule's own list
+_LAUNCH = '    env ' + ' '.join('-u ' + v for v in _SEVEN) + ' bash --noprofile --norc -c'
 DIAG_SHAPES = [
     ("a bare >&2 in a function", '  [ -e "$p" ] || return 0\n', '  [ -e "$p" ] || return 0\n  echo "x" >&2\n'),
     ("1>&2", '  [ -e "$p" ] || return 0\n', '  [ -e "$p" ] || return 0\n  echo "x" 1>&2\n'),
@@ -1499,11 +1556,27 @@ DIAG_SHAPES = [
     ("echo to /proc/self/fd/2", '  [ -e "$p" ] || return 0\n', '  [ -e "$p" ] || return 0\n  echo x >/proc/self/fd/2\n'),
     ("a bare echo on stdout in a non-value function", '  [ -e "$p" ] || return 0\n', '  [ -e "$p" ] || return 0\n  echo LEAK\n'),
     ("python writing sys.stderr", '    sys.exit(1)   # (amendment 118', '    sys.stderr.write("x"); sys.exit(1)   # (amendment 118'),
-    ("opkit_say that writes without classifying fd 2", "  if opkit_ns_fd_why 2 $OPKIT_DIAG_ROOTS; then printf '%s\\n' \"$*\" >&2; return 0; fi\n", "  printf '%s\\n' \"$*\" >&2; return 0\n"),
-    ("ns_run that unshares before it classifies fds 0-2", '  opkit_ns_std_fds_ok $OPKIT_DIAG_ROOTS || return 97\n', '  unshare --mount true\n  opkit_ns_std_fds_ok $OPKIT_DIAG_ROOTS || return 97\n'),
-    ("ns_run that never classifies fds 0-2", '  opkit_ns_std_fds_ok $OPKIT_DIAG_ROOTS || return 97\n', ''),
+    ("opkit_say that writes without classifying fd 2", "  if opkit_ns_fd_why 2 \"${OPKIT_DIAG_ROOTS[@]}\"; then printf '%s\\n' \"$*\" >&2; return 0; fi\n", "  printf '%s\\n' \"$*\" >&2; return 0\n"),
+    ("ns_run that unshares before it classifies fds 0-2", '  opkit_ns_std_fds_ok "${OPKIT_DIAG_ROOTS[@]}" || return 97\n', '  unshare --mount true\n  opkit_ns_std_fds_ok "${OPKIT_DIAG_ROOTS[@]}" || return 97\n'),
+    ("ns_run that never classifies fds 0-2", '  opkit_ns_std_fds_ok "${OPKIT_DIAG_ROOTS[@]}" || return 97\n', ''),
     ("ns_run pre-checks with stderr not captured", 'pre=$(opkit_ns_prephase 2>&1)', 'pre=$(opkit_ns_prephase)'),
-    ("the in-namespace shell mounts before it classifies fds", '    opkit_ns_std_fds_ok $OPKIT_DIAG_ROOTS || exit 97\n', ''),
+    ("the in-namespace shell mounts before it classifies fds", '    opkit_ns_std_fds_ok "${OPKIT_DIAG_ROOTS[@]}" || exit 97\n', ''),
+    # amendment 120: the shell's own diagnostics (xtrace, verbose), hard links, word splitting
+    ("a function that does not begin with the shell-diagnostics guard", 'opkit_say() {\n' + _G, 'opkit_say() {\n'),
+    ("a new opkit_say-like function with no guard", '# THE diagnostic channel.', 'opkit_say2() {\n  opkit_say "$*"\n}\n# THE diagnostic channel.'),
+    ("a guard that leaves xtrace on", 'ns_run() {\n' + _G, 'ns_run() {\n  { local -; set +vTE; } </dev/null >/dev/null 2>&1\n'),
+    ("a guard that is not the first statement", 'ns_run() {\n' + _G + '  [ "$#" -gt 0 ] || return 2\n', 'ns_run() {\n  [ "$#" -gt 0 ] || return 2\n' + _G),
+    ("line 1 without the source-time guard", "{ __opkit_so=$-; set +xvTE; } </dev/null >/dev/null 2>&1\n", ''),
+    ("no restore of the caller's options at the end of the file", '  *) eval "unset __opkit_so __opkit_f; set -$__opkit_f" ;;', '  *) unset __opkit_so __opkit_f ;;'),
+    ("code after the restore of the caller's xtrace", '# the LAST statement: nothing below this line is traced\nesac\n', '# the LAST statement: nothing below this line is traced\nesac\nOPKIT_AFTER=1\n'),
+] + [(f"the inner shell launched without env -u {v}", _LAUNCH, _LAUNCH.replace(f"-u {v} ", "")) for v in _SEVEN] + [
+    ("the inner shell that does not switch xtrace and verbose off before it sources the helper", '    set +o xtrace +o verbose\n', ''),
+    ("a classifier that matches only on the path (no hard-link check)", "      nl=$(stat -L -c '%h' -- \"$p\" 2>/dev/null)\n", ''),
+    ("a hard-link check made after the path match", "      nl=$(stat -L -c '%h' -- \"$p\" 2>/dev/null)\n", "      t=$(readlink -f -- \"$p\" 2>/dev/null)\n      nl=$(stat -L -c '%h' -- \"$p\" 2>/dev/null)\n"),
+    ("an unquoted roots array expansion", 'if opkit_ns_fd_why 2 "${OPKIT_DIAG_ROOTS[@]}"; then', 'if opkit_ns_fd_why 2 ${OPKIT_DIAG_ROOTS[@]}; then'),
+    ("a roots string expanded unquoted", 'if opkit_ns_fd_why 2 "${OPKIT_DIAG_ROOTS[@]}"; then', 'if opkit_ns_fd_why 2 $OPKIT_DIAG_ROOTS; then'),
+    ("OPKIT_RW and OPKIT_SCRATCH joined into one string", '  local r\n  set -f\n', '  local r joined="${OPKIT_RW:-} ${OPKIT_SCRATCH:-}"\n  set -f\n'),
+    ("the old scalar roots assignment", '  [ "$prerc" != 0 ] || opkit_diag_roots_set\n', '  [ "$prerc" != 0 ] || OPKIT_DIAG_ROOTS="${OPKIT_RW:-} ${OPKIT_SCRATCH:-}"\n'),
 ]
 
 
@@ -1655,6 +1728,10 @@ def selftest(root):
             fh.write(hp.replace('  [ -e "$p" ] || return 0\n', '  [ -e "$p" ] || return 0\n  echo x >&2\n', 1))
         if not check(tmp):
             print("selftest: check() on a tree whose helper writes to fd 2 directly was ACCEPTED"); return 1
+        with open(os.path.join(tmp, "scripts", "lib", "opkit_ns.sh"), "w") as fh:
+            fh.write(hp.replace('opkit_say() {\n' + _G, 'opkit_say() {\n', 1))
+        if not check(tmp):
+            print("selftest: check() on a tree whose opkit_say has no shell-diagnostics guard was ACCEPTED"); return 1
     finally:
         shutil.rmtree(tmp)
     print(f"selftest: ok ({len(BYPASSES) + 1} must-flag shapes refused, {len(CONTROLS)} controls accepted, plus the kit-destination shapes and "

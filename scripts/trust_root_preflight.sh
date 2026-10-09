@@ -60,8 +60,9 @@
 #              without it and cannot see how the service is really started
 #
 # Every write attempt is NON-DESTRUCTIVE if it unexpectedly succeeds: a probe
-# directory is created and removed, a file is opened read-write without being
-# written, chmod re-applies the file's own mode. A success is a FAIL either way.
+# directory is created and removed, a file is opened for writing without being
+# written (amendment 120: O_WRONLY, never O_CREAT, never O_TRUNC; a file that is missing is its own failure), chmod re-applies the
+# file's own mode. A success is a FAIL either way.
 #
 # Modes:
 #   protected  root is fixed at /etc/axon/trust, and every ancestor from / is
@@ -258,6 +259,17 @@ done
 mapfile -t DIRS < <(printf '%s\n' "${DIRS[@]}" | sort -u)
 mapfile -t QFILES < <(find "$ROOT/qualification" -xdev -type f | sort)
 
+# open_for_write UID:GID FILE: succeeds iff that actor can open the EXISTING file for writing. O_WRONLY only: no O_CREAT (a missing file
+# stays missing), no O_TRUNC (an open that succeeds changes no byte), O_NONBLOCK (a FIFO does not hang the preflight), closed at once.
+# Without python3 the fallback opens through the shell, guarded by a test that the file exists, and still never creates.
+open_for_write() {
+  if command -v python3 >/dev/null 2>&1; then
+    as "$1" python3 -c 'import os,sys; os.close(os.open(sys.argv[1], os.O_WRONLY | os.O_NONBLOCK | os.O_NOCTTY | os.O_CLOEXEC))' "$2"
+  else
+    as "$1" sh -c '[ -f "$1" ] && exec 3>>"$1"' _ "$2"
+  fi
+}
+
 cannot_modify() { # actor uid:gid [service: also the Fabric's own directories]
   local who=$1 ug=$2 d f probe
   if [ "${3:-}" = service ]; then
@@ -277,8 +289,12 @@ cannot_modify() { # actor uid:gid [service: also the Fabric's own directories]
     else record "$who" "$ug" create "$d" refused refused; fi
   done
   for f in "${FILES[@]}"; do
-    # open read-write without writing a byte: the kernel's write permission check.
-    if as "$ug" sh -c 'exec 3<>"$1"' _ "$f"; then record "$who" "$ug" open-write "$f" refused SUCCEEDED
+    # Amendment 120: open for WRITING, without O_CREAT and without O_TRUNC, and close at once: the kernel's write permission check.
+    # (The probe was `exec 3<>"$1"`, which under dash is O_RDWR|O_CREAT: for a protected file that was MISSING, in a directory the
+    # actor could write, it CREATED an empty file nobody removed. A file that is not there cannot be shown unwritable, so it is its
+    # own refusal reason: observed `missing`, which fails the check. Looked up as root, not as the actor, whose path may not traverse.)
+    if [ ! -e "$f" ]; then record "$who" "$ug" open-write "$f" refused missing
+    elif open_for_write "$ug" "$f"; then record "$who" "$ug" open-write "$f" refused SUCCEEDED
     else record "$who" "$ug" open-write "$f" refused refused; fi
     # chmod(2) itself, re-applying the file's own mode. NOT chmod(1): GNU
     # chmod skips the syscall when the mode is unchanged and reports success,

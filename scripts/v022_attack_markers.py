@@ -2877,6 +2877,40 @@ ATTACK_MARKERS.update({
     'M3419': r'selftest: check\(\) on a tree whose helper writes to fd 2 directly was ACCEPTED',
 })
 
+# BUILDENV12 (amendment 120; M3420-M3449)
+ATTACK_MARKERS.update({
+    'M3420': r"ATTACK: set -x in the caller: bash wrote the helper",
+    'M3421': r"ATTACK: set -x in the caller: bash wrote the helper",
+    'M3422': r"ATTACK: set -x around a direct call of opkit_say: bash wrote",
+    'M3423': r"ATTACK: set -x around a direct call of opkit_ns_fd_why: bash wrote",
+    'M3424': r"ATTACK: set -x around a direct call of opkit_ns_std_fds_ok: bash wrote",
+    'M3425': r"ATTACK: an exported SHELLOPTS=xtrace: bash wrote the helper",
+    'M3426': r"ATTACK: sourcing the helper turned the caller.s xtrace off",
+    'M3427': r"ATTACK: ns_run left the caller.s xtrace switched off",
+    'M3428': r"ATTACK: the caller.s SHELLOPTS reached the shell inside the namespace",
+    'M3429': r"ATTACK: the caller.s BASH_ENV reached the shell inside the namespace",
+    'M3430': r"ATTACK: the caller.s BASH_XTRACEFD reached the shell inside the namespace",
+    'M3431': r"ATTACK: the caller.s BASHOPTS reached the shell inside the namespace",
+    'M3432': r"ATTACK: the caller.s ENV reached the shell inside the namespace",
+    'M3433': r"ATTACK: the caller.s PS4 reached the shell inside the namespace",
+    'M3434': r"ATTACK: the caller.s BASH_COMPAT reached the shell inside the namespace",
+    'M3435': r"ATTACK: a hard link to a host-style file, inside the caller.s scratch, on fd \d was accepted as scratch",
+    'M3436': r"ATTACK: a hard link to a host-style file, inside the caller.s scratch, on fd \d was accepted as scratch",
+    'M3437': r"ATTACK: a scratch path with a space was refused, but not by the character rule",
+    'M3438': r"ATTACK: a scratch path with a glob character was accepted",
+    'M3439': r"ATTACK: an array element holding a space was split into two roots",
+    'M3440': r"ATTACK: OPKIT_RW with a glob character was refused, but not for that",
+    'M3441': r"ATTACK: opkit_diag_roots_set split a scratch path with a space into two roots",
+    'M3442': r"selftest: the diagnostic shape 'line 1 without the source-time guard' was ACCEPTED",
+    'M3443': r"selftest: the diagnostic shape 'a function that does not begin with the shell-diagnostics guard' was ACCEPTED",
+    'M3444': r"selftest: the diagnostic shape 'no restore of the caller.s options at the end of the file' was ACCEPTED",
+    'M3445': r"selftest: the diagnostic shape 'the inner shell launched without env -u SHELLOPTS' was ACCEPTED",
+    'M3446': r"selftest: the diagnostic shape 'a classifier that matches only on the path \(no hard-link check\)' was ACCEPTED",
+    'M3447': r"selftest: the diagnostic shape 'an unquoted roots array expansion' was ACCEPTED",
+    'M3448': r"selftest: the diagnostic shape 'OPKIT_RW and OPKIT_SCRATCH joined into one string' was ACCEPTED",
+    'M3449': r"selftest: the diagnostic shape 'the inner shell that does not switch xtrace and verbose off before it sources the helper' was ACCEPTED",
+})
+
 # C9 round 14, PSV1X (amendment 117)
 ATTACK_MARKERS.update({
     'M3300': "ATTACK: <ctl\\[match\\]\\ attack:\\ a\\ guard's\\ side\\ effect,\\ run\\ because\\ the\\ candidate's\\ answer\\ matched\\ the\\ pattern>",
