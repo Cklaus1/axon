@@ -653,6 +653,26 @@ impl Env {
         let start = self.marks.pop().unwrap_or(0);
         self.vars.truncate(start);
     }
+    /// Empty the frame for reuse. A scalar binding has nothing to drop, so it
+    /// is forgotten instead of going through `Value`'s drop glue; every other
+    /// binding is dropped (cost only).
+    #[inline]
+    fn clear(&mut self) {
+        while let Some((_, v)) = self.vars.pop() {
+            match v {
+                Value::Int(_)
+                | Value::SizedInt { .. }
+                | Value::Float(_)
+                | Value::Bool(_)
+                | Value::Unit
+                | Value::None => std::mem::forget(v),
+                v => drop(v),
+            }
+        }
+        if !self.marks.is_empty() {
+            self.marks.clear();
+        }
+    }
     fn define(&mut self, name: Sym, val: Value) {
         let start = self.marks.last().copied().unwrap_or(0);
         match self.vars[start..].iter_mut().find(|(k, _)| *k == name) {
@@ -914,7 +934,7 @@ pub struct Interp<'p> {
     arg_bufs: RefCell<Vec<Vec<Value>>>,
     /// AX-54: emptied frames of finished user-fn calls, reused by
     /// `call_fn_entry` so a call does not allocate its bindings and marks.
-    env_pool: RefCell<Vec<Env>>,
+    env_pool: RefCell<Vec<Box<Env>>>,
     /// R50 S1: emptied operand stacks of finished bytecode-engine activations,
     /// reused by `vm::exec` so an activation does not allocate one (spec §4
     /// Execution, Re-entrancy: each activation owns its stack).
@@ -3354,13 +3374,16 @@ impl<'p> Interp<'p> {
             ));
         }
         // AX-54: the frame comes from a pool of finished calls' frames, so a
-        // call does not allocate its bindings and scope marks. Emptied here
-        // (dropping the bindings exactly where dropping the frame did); a
-        // frame that grew unusually large is not kept.
-        let mut env = self.env_pool.borrow_mut().pop().unwrap_or_else(Env::new);
+        // call does not allocate its bindings and scope marks. Boxed, so
+        // taking and returning one moves a pointer, not the frame. Emptied
+        // here (dropping the bindings where dropping the frame did); a frame
+        // that grew unusually large is not kept.
+        let mut env = match self.env_pool.borrow_mut().pop() {
+            Some(env) => env,
+            None => Box::new(Env::new()),
+        };
         let result = self.call_fn_in(f, args, &mut env);
-        env.vars.clear();
-        env.marks.clear();
+        env.clear();
         let mut pool = self.env_pool.borrow_mut();
         if pool.len() < 64 && env.vars.capacity() <= 1024 {
             pool.push(env);
