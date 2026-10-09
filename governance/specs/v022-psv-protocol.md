@@ -7689,7 +7689,7 @@ change only governance text. (d) `/etc/passwd` is not repaired (item 9). (e) The
         on paths and positions the runner test does not list; 30: the emitters). No finding was decided NOT-A-RUBRIC-ISSUE.
      2. **THE FIXES, by cluster** (each has an attack and an honest control in `taint_tests.rs` under the construct's table tag, a
         runner leg where the attack is reachable through the production route, and mutation rows killed by their own attack):
-        (a) `temporal_new`/`temporal_is_valid` are `World` and `Time`; a drift test scans every `Pure` arm for ambient state.
+        (a) `temporal_new`/`temporal_is_valid` (and `temporal_now`) are `World` and carry the `Time` effect row: VISIBLE CHANGE, a fn that declares an effect row and calls them must now name `Time`, and a run whose ceiling lacks `Time` refuses them as it refuses `now_ms` (no example in `examples/` is affected; `wasm_parity.sh` lists them as host builtins); a drift test scans every `Pure` arm for ambient state.
         (b) control taint: a match guard runs under the subject's; every evaluation of a `while` condition / `while let` scrutinee
         after the first runs under the earlier ones; `Interp::call_cb` raises the control taint of the results so far for every
         callback after the first (so a parameter-free store inside `arr_any`/`arr_find`/`arr_sort_by`'s comparator is marked) and
