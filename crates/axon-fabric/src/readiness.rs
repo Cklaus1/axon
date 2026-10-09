@@ -1289,4 +1289,73 @@ mod tests {
             "ATTACK: the operator's readiness trust reads another provenance allowlist"
         );
     }
+
+    /// Amendment 115 (eqgate9): a certification's `suite` must NAME its id, version, entry, test and digest. The
+    /// check is `.any(|k| suite[k].as_str().is_none_or(str::is_empty))`: flipped to `is_some_and`, a suite
+    /// with a key MISSING (or not a string) was accepted here and no suite failed. Every absent shape is
+    /// refused with this rule's exact message; the record naming all five proceeds past it.
+    #[test]
+    fn a_certification_whose_suite_does_not_name_all_five_fields_is_refused() {
+        let want = "fabric: suite must name id, version, entry, test and digest";
+        let record = |suite: Value| {
+            let d = tempfile::tempdir().unwrap();
+            let mut doc = serde_json::Map::new();
+            for k in CERT_FIELDS {
+                let v = match k {
+                    "schema" => json!(CERT_SCHEMA),
+                    "component" => json!("fabric"),
+                    "host_profile" | "qualification_profile" => json!(PROTECTED_PROFILE),
+                    "axon_sha" | "micode_sha" | "fabric_revision" => json!("b".repeat(40)),
+                    "suite" => suite.clone(),
+                    k if k.ends_with("sha256") => json!("a".repeat(64)),
+                    _ => json!("x"),
+                };
+                doc.insert(k.to_string(), v);
+            }
+            let dir = d.path().join(CERT_DIR);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("fabric.json"), Value::Object(doc).to_string()).unwrap();
+            let issuers = d.path().join("qualification");
+            let t = ReadinessTrust::test(d.path(), &issuers);
+            certification(d.path(), "fabric", &t)
+        };
+        let full = json!({"id": "s", "version": "v", "entry": "e", "test": "t", "digest": "d"});
+        let got = record(full.clone());
+        assert!(
+            !got.as_ref().is_err_and(|e| e.contains("suite must name")),
+            "control: a suite naming all five fields was refused as unnamed: {got:?}"
+        );
+        for k in ["id", "version", "entry", "test", "digest"] {
+            let mut absent = full.clone();
+            absent.as_object_mut().unwrap().remove(k);
+            let mut empty = full.clone();
+            empty[k] = json!("");
+            let mut number = full.clone();
+            number[k] = json!(5);
+            let mut null = full.clone();
+            null[k] = Value::Null;
+            for (what, suite) in [
+                ("absent", absent),
+                ("empty", empty),
+                ("a number", number),
+                ("null", null),
+            ] {
+                assert_eq!(
+                    record(suite),
+                    Err(want.to_string()),
+                    "ATTACK: a certification whose suite {k} is {what} was not refused as unnamed"
+                );
+            }
+        }
+        assert_eq!(
+            record(Value::Null),
+            Err(want.to_string()),
+            "ATTACK: a certification with no suite at all was not refused as unnamed"
+        );
+        assert_eq!(
+            record(json!([1, 2])),
+            Err(want.to_string()),
+            "ATTACK: a certification whose suite is not an object was not refused as unnamed"
+        );
+    }
 }

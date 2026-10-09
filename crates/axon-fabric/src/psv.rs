@@ -619,13 +619,7 @@ pub fn derive(
             ReceiptVerification::Passed
         }
     };
-    let class = match observation {
-        Some(o) => {
-            evidence.push(format!("preflight-observation-sha256:{}", o.sha256));
-            EvidenceClass::Protected
-        }
-        None => EvidenceClass::GuestUnobserved,
-    };
+    let class = observed_class(observation, &mut evidence);
     HostVerdict {
         verification,
         class,
@@ -633,6 +627,25 @@ pub fn derive(
         evidence: with_class(evidence, class),
         report: Some(report_json),
         guest_verdict: Some(vbytes),
+    }
+}
+
+/// The class of a verdict that PASSED the guest checks: protected only with a verified preflight
+/// observation (which it then names in `evidence`), guest-unobserved without one. A function of its own so a
+/// test can reach the `None` arm directly: `derive` is reached in the suite only through `submit`, where
+/// `psv_receipt`'s downgrade of a route that does not attest holds the class on the direct route whatever
+/// this arm says (amendment 115: flipping it to Protected survived the whole axon-fabric suite once M186 was
+/// retired against its sibling).
+fn observed_class(
+    observation: Option<&VerifiedObservation>,
+    evidence: &mut Vec<String>,
+) -> EvidenceClass {
+    match observation {
+        Some(o) => {
+            evidence.push(format!("preflight-observation-sha256:{}", o.sha256));
+            EvidenceClass::Protected
+        }
+        None => EvidenceClass::GuestUnobserved,
     }
 }
 
@@ -721,5 +734,39 @@ mod class_tests {
                 "ATTACK: evidence class default: {what} read as {got:?}"
             );
         }
+    }
+
+    /// Amendment 115 (eqgate9): a verdict that passed with NO observation is guest-unobserved and names no
+    /// observation; one WITH an observation is protected and names it. `derive`'s class is decided here.
+    #[test]
+    fn a_passed_verdict_with_no_observation_is_guest_unobserved_and_names_none() {
+        let mut evidence = vec!["launch-manifest-sha256:x".to_string()];
+        let class = observed_class(None, &mut evidence);
+        assert_eq!(
+            class,
+            EvidenceClass::GuestUnobserved,
+            "ATTACK: a verdict made without an observation was classed {class:?}"
+        );
+        assert_eq!(
+            evidence,
+            vec!["launch-manifest-sha256:x".to_string()],
+            "ATTACK: a verdict with no observation named one"
+        );
+        let o = VerifiedObservation {
+            sha256: "c".repeat(64),
+            bytes: vec![],
+            signature: String::new(),
+        };
+        let class = observed_class(Some(&o), &mut evidence);
+        assert_eq!(
+            class,
+            EvidenceClass::Protected,
+            "control: an observed verdict"
+        );
+        assert_eq!(
+            evidence.last().map(String::as_str),
+            Some(format!("preflight-observation-sha256:{}", "c".repeat(64)).as_str()),
+            "control"
+        );
     }
 }

@@ -5547,6 +5547,70 @@ def _default_sites(clean):
     return out
 
 
+# Amendment 115 (C9 round 13, eqgate9): a default or an ABSENT-VALUE decision spelled in a form `_DFL_CALL` does
+# not read. `w.expires.is_none_or(|t| now >= t)` -> `is_some_and` accepted a signed waiver with no parseable
+# expiry forever and the whole axon-fabric suite (1058 tests) stayed green: the None arm of the combinator is a
+# DEFAULT with no literal to see. Three more forms, numbered under their own suffix so no earlier exemption
+# is renumbered:
+#   `<fn>~comb`  a combinator that decides the ABSENT / ERR arm (`is_none_or`, `is_some_and`, `is_ok_and`,
+#                `is_err_and`, `map_or_else`; the span is the whole call) and `.or_else(|| Some(<lit>))`
+#                (the span is the literal) and `matches!(x, .. None ..)` / `Err(_)` / `Ok(_)` (the whole macro);
+#   `<fn>~arm`   a `None | Err(_) | Err(..) => <literal | variant>,` match arm whose body is a bare value,
+#                and a `let .. else { [return] <literal | variant> }` (the span is the value).
+_COMB_CALL = re.compile(r"\.(is_none_or|is_some_and|is_ok_and|is_err_and|map_or_else)\(")
+_ORELSE_CALL = re.compile(r"\.or_else\(\s*\|\|\s*Some\(")
+_MATCHES = re.compile(r"(?<![\w])matches!\(")
+_ARM = re.compile(r"(?<![\w])(?:None|Err\((?:_|\.\.)\))(?:\s*\|\s*(?:None|Err\((?:_|\.\.)\)))*\s*=>\s*")
+_LET_ELSE = re.compile(r"\belse\s*\{")
+_ABSENT_PAT = re.compile(r"(?<![\w])None(?![\w])|(?<![\w])Err\(\s*_\s*\)|(?<![\w])Ok\(\s*_\s*\)")
+
+
+def _comb_sites(clean):
+    """{(begin, end): label} of the amendment-115 forms over the blanked text."""
+    out = {}
+    for m in _COMB_CALL.finditer(clean):
+        out[(m.start(), _match_close(clean, m.end() - 1))] = "val_comb"
+    for m in _ORELSE_CALL.finditer(clean):
+        parts = _split_group(clean, m.end() - 1)
+        if parts and _default_arg_is_value(clean[parts[0][0]:parts[0][1]]):
+            out[parts[0]] = "val_comb"
+    for m in _MATCHES.finditer(clean):
+        parts = _split_group(clean, m.end() - 1)
+        if len(parts) >= 2 and _ABSENT_PAT.search(clean[parts[1][0]:parts[-1][1]]):
+            out[(m.start(), _match_close(clean, m.end() - 1))] = "val_comb"
+    for m in _ARM.finditer(clean):
+        j = m.end()
+        e = j
+        depth = 0
+        while e < len(clean):
+            c = clean[e]
+            if c in "([{":
+                depth += 1
+            elif c in ")]}":
+                if depth == 0:
+                    break
+                depth -= 1
+            elif c == "," and depth == 0:
+                break
+            e += 1
+        arg = clean[j:e].strip()
+        if arg and arg != "None" and _default_arg_is_value(arg):
+            a = j + (len(clean[j:e]) - len(clean[j:e].lstrip()))
+            out[(a, a + len(arg))] = "val_arm"
+    for m in _LET_ELSE.finditer(clean):
+        stmt_start = max(clean.rfind(";", 0, m.start()), clean.rfind("{", 0, m.start()), clean.rfind("}", 0, m.start())) + 1
+        head = clean[stmt_start:m.start()]
+        if not re.match(r"\s*let\b", head) or re.search(r"\b(?:if|match)\b", head):
+            continue
+        close = _match_close(clean, m.end() - 1) - 1
+        body = clean[m.end():close]
+        rm = re.fullmatch(r"(\s*)(?:return\s+)?(.*?)\s*;?\s*", body, re.S)
+        if rm and rm.group(2) and rm.group(2) != "None" and _default_arg_is_value(rm.group(2)):
+            a = m.end() + body.index(rm.group(2), len(rm.group(1)))
+            out[(a, a + len(rm.group(2)))] = "val_arm"
+    return out
+
+
 def _line_offsets(clean):
     offs, n = [0], 0
     for l in clean.split("\n"):
@@ -5914,6 +5978,7 @@ def value_sites(text, regions=None, flow=True, file=None):
     dflt = {}
     if flow and file is not None and file.startswith(DEFAULT_SCOPE):
         dflt = _default_sites(clean)
+        dflt.update({k: v for k, v in _comb_sites(clean).items() if k not in dflt})
     if flow:
         flowed = _flow_values(clean, cl, fspans, found)
         local, qual = sink_consts()
@@ -5925,6 +5990,10 @@ def value_sites(text, regions=None, flow=True, file=None):
         fn = _fn_of(cl, fspans, line_of(clean, a))
         if label == "val_default" and (a, b) not in found and (a, b) not in flowed:
             fn += "~dflt"
+        elif label == "val_comb" and (a, b) not in found and (a, b) not in flowed:
+            fn += "~comb"
+        elif label == "val_arm" and (a, b) not in found and (a, b) not in flowed:
+            fn += "~arm"
         elif label == "flow_sign" and (a, b) in flowed and (a, b) not in found:
             fn += "~sign"
         elif (a, b) in flowed and (a, b) not in found:
@@ -6003,7 +6072,8 @@ def judge_values(f, text, rows, bad):
                 bad.append(f"{f}:{line_of(text, a) + 1}: value exemption ({fn}, {n}) names the fragment "
                            f"{hit[0][3]!r}, which is not the value's text {frag!r}: a site was added or moved, re-judge it")
         flowk = ("flow" if fn.endswith("~flow") else "sign" if fn.endswith("~sign")
-                 else "dflt" if fn.endswith("~dflt") else "form")
+                 else "dflt" if fn.endswith("~dflt") else "comb" if fn.endswith("~comb")
+                 else "arm" if fn.endswith("~arm") else "form")
         if flowk == "sign":
             SIGN_SITES.append((f, line_of(text, a) + 1, fn.split("~")[0] or "-",
                                "row" if by else hit[4] if hit is not None else "UNCOVERED"))
@@ -6510,11 +6580,13 @@ def check(without=(), freeze=False, out=print):
             bad.append(f"{ef}: exemption {anchor[:50]!r} cites {gone}, which are not registry rows")
     for b in bad:
         out(f"BAD {b}")
-    for kind in ("form", "flow", "sign", "dflt"):
+    for kind in ("form", "flow", "sign", "dflt", "comb", "arm"):
         parts = {d: c for (k, d), c in sorted(VALUE_STATS.items()) if k == kind}
         what = {"form": "amendment 103 forms", "flow": "amendment 107 flow to sinks",
                 "sign": "amendment 110 INPUTS TO A SIGNING / VERIFICATION / MAC PRIMITIVE",
-                "dflt": "amendment 110 DEFAULTS read as a value, protected crates"}[kind]
+                "dflt": "amendment 110 DEFAULTS read as a value, protected crates",
+                "comb": "amendment 115 ABSENT-ARM COMBINATORS and matches!, protected crates",
+                "arm": "amendment 115 MATCH-ARM and let-else DEFAULTS, protected crates"}[kind]
         out(f"VALUE SITES ({what}): {sum(parts.values())}: " + ", ".join(f"{c} {d}" for d, c in parts.items()))
     for f, line, fn, how in sorted(SIGN_SITES):
         out(f"SIGNING INPUT {f}:{line} fn {fn}: {how}")
