@@ -127,6 +127,81 @@ impl Body<'_> {
     }
 }
 
+/// R50 S4: a lambda body's compiled code, kept in its `ClosureCode`
+/// (`compiled`) so it lives exactly as long as the body it was compiled from.
+/// No compiled code is stored in the `Interp`.
+pub(super) struct LambdaBody {
+    /// The trace name, `<owner>::lambda#<i>` (spec §3).
+    name: Box<str>,
+    /// Filled on the body's first run under `AXON_ENGINE=vm`. Its ops point
+    /// into the owning `ClosureCode::body` (`Tree` nodes, names, operands):
+    /// `'static` stands for that borrow, which [`LambdaBody::get`] hands out
+    /// only for as long as the code is borrowed. Dropping a `Body` reads
+    /// none of those pointers.
+    body: std::cell::OnceCell<Body<'static>>,
+}
+
+impl LambdaBody {
+    pub(super) fn new(name: String) -> LambdaBody {
+        LambdaBody {
+            name: name.into_boxed_str(),
+            body: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// The compiled body, once its first run compiled it.
+    #[inline(always)]
+    fn compiled(&self) -> Option<&Body<'_>> {
+        self.body.get()
+    }
+
+    /// The compiled body of `code`, whose `compiled` this is, compiled by
+    /// `init` on the first call.
+    fn get<'a>(
+        &'a self,
+        code: &'a ClosureCode,
+        init: impl FnOnce(&'a Expr) -> Body<'a>,
+    ) -> &'a Body<'a> {
+        debug_assert!(code
+            .compiled
+            .as_ref()
+            .is_some_and(|c| std::ptr::eq(c, self)));
+        self.body.get_or_init(|| {
+            let body = init(&code.body);
+            // SAFETY: `body` borrows only `code.body`, the body of the
+            // `ClosureCode` that owns `self`. A `ClosureCode` is only ever
+            // built inside an `Rc` and never moved out of it or mutated
+            // (sym.rs), so those nodes stay where they are until the code is
+            // dropped, and `self.body` is dropped with it. The extended
+            // lifetime never escapes: `get` returns the body at `'a` again,
+            // and `Body` is covariant in its lifetime.
+            unsafe { std::mem::transmute::<Body<'a>, Body<'static>>(body) }
+        })
+    }
+}
+
+impl Body<'_> {
+    /// R50 S4: the value of a lambda body that is one int or float operation
+    /// on locals and literals (`|acc, x| acc + x`), computed without an
+    /// activation of the op loop by the scalar fast path its `Bin` op tries
+    /// first (cost only). `None` for any other body, and wherever that fast
+    /// path declines (another operand type, overflow, a zero divisor); the
+    /// op loop then runs the body, panic included.
+    #[inline(always)]
+    fn leaf_value(&self, env: &Env) -> Option<Value> {
+        let [Op::Bin { op, l, r }] = &*self.ops else {
+            return None;
+        };
+        // A one-op body has no stack operand; `scalar_at` declines one.
+        let v = match (scalar_at(l, env, &[], 0)?, scalar_at(r, env, &[], 0)?) {
+            (Scalar::Int(a), Scalar::Int(b)) => int_fast(op, a, b)?,
+            (Scalar::Float(a), Scalar::Float(b)) => float_fast(op, a, b)?,
+            _ => return None,
+        };
+        Some(v.value())
+    }
+}
+
 /// A `while`, `while let` or `for` loop of a [`Body`]: where `break`/`continue` land.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Loop {
@@ -530,6 +605,11 @@ pub(super) enum Op<'p> {
         method: &'p str,
         argc: u32,
     },
+
+    // ── S4: lambdas ──
+    /// Push the closure a lambda node makes in this env (`make_closure`,
+    /// S4).
+    Lambda(&'p Expr),
 }
 
 /// The operand stack is malformed: the compiler pushed fewer values than an
@@ -892,6 +972,53 @@ impl<'p> Interp<'p> {
         self.exec(body, env)
     }
 
+    /// Run a lambda body (S4): compiled under [`Engine::Vm`] for a code the
+    /// resolution table built, on the tree otherwise. `call_closure_owned_by`
+    /// is the only caller, with the env it built (captures, then the
+    /// parameters' scope); everything before and after the body stays there.
+    /// A `Flow::Return(v)` out of the body is its value `Ok(v)`.
+    #[inline(always)]
+    pub(super) fn run_lambda(&self, code: &ClosureCode, env: &mut Env) -> R {
+        if self.engine == Engine::Vm {
+            if let Some(body) = code.compiled.as_ref().and_then(|lb| lb.compiled()) {
+                if let Some(v) = body.leaf_value(env) {
+                    return Ok(v);
+                }
+                return self.exec(body, env);
+            }
+        }
+        self.run_lambda_cold(code, env)
+    }
+
+    /// [`Interp::run_lambda`] on the tree, or for a body's first run.
+    #[inline(never)]
+    fn run_lambda_cold(&self, code: &ClosureCode, env: &mut Env) -> R {
+        let out = match (self.engine, &code.compiled) {
+            (Engine::Tree, _) => self.eval(&code.body, env),
+            (Engine::Vm, None) => {
+                // No name and no compiled body: one line per code instance.
+                if self.vm_trace && !code.traced.replace(true) {
+                    eprintln!("vm: tree <anon>: unresolved lambda");
+                }
+                self.eval(&code.body, env)
+            }
+            (Engine::Vm, Some(lb)) => {
+                let body = lb.get(code, |src| {
+                    let body = compile(&self.res, src);
+                    if self.vm_trace {
+                        self.vm_trace_named(&lb.name, &body);
+                    }
+                    body
+                });
+                return self.exec(body, env);
+            }
+        };
+        match out {
+            Err(Flow::Return(v)) => Ok(v),
+            out => out,
+        }
+    }
+
     /// Execute `body` against `env` on an operand stack of its own (the
     /// frame's `Env::stack`, empty for a nested activation on the same frame).
     /// A `Flow::Break`/`Flow::Continue` out of an op in a
@@ -903,7 +1030,9 @@ impl<'p> Interp<'p> {
     /// name afterwards, spec §4 Execution). `Flow::Return(v)` ends the body
     /// with `Ok(v)`, which `call_fn_in` treats exactly as the
     /// `Err(Flow::Return(v))` the tree-walker's body yields; every other
-    /// `Flow` propagates unchanged.
+    /// `Flow` propagates unchanged. Inlined into each caller, so a fn call
+    /// does not pay a call into it (cost only).
+    #[inline(always)]
     pub(super) fn exec(&self, body: &Body<'_>, env: &mut Env) -> R {
         // A pooled frame's stack keeps the capacity it grew to; a new one
         // starts at the body's height so it does not regrow while the body
@@ -1494,6 +1623,7 @@ impl<'p> Interp<'p> {
                     let v = self.impl_method(method, StackTail { st: &mut *st, at });
                     st.push(tri!(v));
                 }
+                Op::Lambda(e) => st.push(self.make_closure(e, env)),
             }
         }
     }
@@ -1696,7 +1826,12 @@ impl<'p> Interp<'p> {
     /// The per-body trace line and one `tree-op` line per `Tree` op, printed
     /// when a body is compiled (its first run).
     fn vm_trace_compiled(&self, entry: &FnEntry<'_>, body: &Body<'_>) {
-        let name = self.vm_body_name(entry);
+        self.vm_trace_named(&self.vm_body_name(entry), body);
+    }
+
+    /// [`Interp::vm_trace_compiled`] for the body named `name` (a fn's or a
+    /// lambda's, spec §3).
+    fn vm_trace_named(&self, name: &str, body: &Body<'_>) {
         eprintln!(
             "vm: {name} {} ops, {} tree nodes",
             body.ops.len(),

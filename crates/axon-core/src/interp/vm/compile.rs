@@ -8,8 +8,8 @@
 //! `ScopePush`/`ScopePop` exactly where `eval` calls `env.push()`/`env.pop()`
 //! (block, loop iteration, `for`), except around statements that bind
 //! nothing ([`binds`]): there the scope would stay empty, and an empty scope
-//! is unobservable (no slot moves, no lookup sees it, `base_scope` and
-//! `snapshot` read the same bindings), so the push and the pop are elided.
+//! is unobservable (no slot moves, no lookup sees it, a closure's write-back
+//! and `snapshot` read the same bindings), so the push and the pop are elided.
 //! The compiler tracks the operand-stack height and the scope depth
 //! statically: [`Compiler::expr`] leaves one value more on the stack,
 //! [`Compiler::stmt`] none.
@@ -155,7 +155,9 @@ impl<'p> Compiler<'_, 'p> {
             Expr::Select(_) => self.tree(e),
             Expr::Comptime(_) => self.tree(e),
             Expr::InlineAsm { .. } => self.tree(e),
-            Expr::Lambda { .. } => self.tree(e),
+            Expr::Lambda { .. } => {
+                self.emit(Op::Lambda(e), 0, 1);
+            }
             Expr::FieldAccess { receiver, field } => self.field(e, receiver, field),
             Expr::Index { .. } if tree_shape(e).is_some() => self.tree(e),
             Expr::Index { receiver, index } => self.index(receiver, index),

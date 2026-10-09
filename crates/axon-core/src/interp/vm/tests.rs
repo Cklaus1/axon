@@ -118,6 +118,7 @@ fn kinds(body: &Body<'_>) -> Vec<&'static str> {
             Op::WhileLetNext { .. } => "while-let-next",
             Op::MethodRecv { .. } => "method-recv",
             Op::MethodCall { .. } => "method",
+            Op::Lambda(_) => "lambda",
         })
         .collect()
 }

@@ -35455,6 +35455,143 @@ fn vm_scalar_recursion_limit() {
     assert!(stderr.contains("recursion"), "{stderr}");
 }
 
+/// R50 S4 red test (§8): `fold.ax`'s `main` and its lambda use only S1
+/// constructs and a lambda, so both compile with no `Tree` op (on S1 the
+/// lambda is one `Tree` op and its body runs on the tree). The fixture runs
+/// at a thousandth of its size here.
+#[test]
+fn vm_closure_fold_no_tree_nodes() {
+    let src = std::fs::read_to_string(fixture("vm_perf/fold.ax"))
+        .expect("read fold.ax")
+        .replace("arr_range(0, 1000000)", "arr_range(0, 1000)");
+    let (code, stdout, stderr) =
+        vm_scalar_case("closure_fold", &src, &[("main", 0), ("main::lambda#0", 0)]);
+    assert_eq!((code, stdout.as_str()), (Some(0), "4995000\n"), "{stderr}");
+}
+
+/// R50 S4: a lambda captures by value at creation (later assignments to the
+/// captured local do not reach it), an assignment to a captured variable
+/// persists in the closure's capture cell across calls (T40) but not back to
+/// the defining scope, and a parameter shadows a captured name.
+#[test]
+fn vm_closure_capture_semantics() {
+    let src = "fn main() -> i64 {\n    let a = 1\n    let b = 10\n    let f = |x: i64| x + a + b\n    a = 100\n    println(to_str(f(1)))\n    let n = 0\n    let inc = || {\n        n = n + 1\n        n\n    }\n    println(to_str(inc()))\n    println(to_str(inc()))\n    println(to_str(n))\n    let g = |a: i64| a * b\n    println(to_str(g(3)))\n    let k = |x: i64| {\n        let a = x + 1\n        a\n    }\n    println(to_str(k(4)))\n    println(to_str(a))\n    0\n}\n";
+    let (code, stdout, _) = vm_scalar_case(
+        "closure_capture",
+        src,
+        &[
+            ("main", 0),
+            ("main::lambda#0", 0),
+            ("main::lambda#1", 0),
+            ("main::lambda#2", 0),
+            ("main::lambda#3", 0),
+        ],
+    );
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "12\n1\n2\n0\n30\n5\n100\n")
+    );
+}
+
+/// R50 S4: closures calling closures (a captured closure, a nested lambda
+/// capturing its enclosing lambda's parameter), recursion through a closure
+/// that calls its enclosing fn, and a lambda passed to a user fn.
+#[test]
+fn vm_closure_calls_and_recursion() {
+    let src = "fn apply(f: fn(i64) -> i64, n: i64) -> i64 { f(n) }\nfn r(n: i64) -> i64 {\n    let g = |k: i64| if k == 0 { 0 } else { r(k - 1) + 1 }\n    g(n)\n}\nfn main() -> i64 {\n    let add = |p: i64, q: i64| p + q\n    let dbl = |x: i64| add(x, x)\n    println(to_str(dbl(21)))\n    let outer = |x: i64| {\n        let inner = |y: i64| y * x\n        inner(2)\n    }\n    println(to_str(outer(5)))\n    println(to_str(r(50)))\n    println(to_str(apply(|z: i64| z * 3, 7)))\n    0\n}\n";
+    let (code, stdout, _) = vm_scalar_case(
+        "closure_calls",
+        src,
+        &[
+            ("main", 0),
+            ("main::lambda#0", 0),
+            ("main::lambda#1", 0),
+            ("main::lambda#2", 0),
+            ("main::lambda#3", 0),
+            ("main::lambda#4", 0),
+            ("r", 0),
+            ("r::lambda#0", 0),
+            ("apply", 0),
+        ],
+    );
+    assert_eq!((code, stdout.as_str()), (Some(0), "42\n10\n50\n21\n"));
+}
+
+/// R50 S4: a closure with other references (bound to a local, then passed to
+/// a builtin) takes the copied path, and a builtin's closure panicking or
+/// returning the wrong type fails the same way under both engines.
+#[test]
+fn vm_closure_copied_path_and_errors() {
+    let src = "fn main() -> i64 {\n    let xs = arr_range(0, 100)\n    let c = 0\n    let g = |acc: i64, x: i64| {\n        c = c + 1\n        acc + x * 2\n    }\n    println(to_str(arr_fold(xs, 0, g)))\n    println(to_str(arr_fold(xs, 1, g)))\n    println(to_str(len(arr_map(xs, |x: i64| x + c))))\n    println(to_str(arr_count_if(xs, |x: i64| x % 3 == 0)))\n    println(to_str(arr_fold(xs, 0, |acc: i64, x: i64| acc + 10 / (50 - x))))\n    0\n}\n";
+    let (code, stdout, stderr) = vm_scalar_case(
+        "closure_copied",
+        src,
+        &[("main", 0), ("main::lambda#0", 0), ("main::lambda#3", 0)],
+    );
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(101), "9900\n9901\n100\n34\n"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("integer division by zero"), "{stderr}");
+}
+
+/// R50 S4: a lambda in a `@[verify]` predicate is `<fn>::verify::lambda#<i>`,
+/// numbered apart from the body's lambdas, and the failed postcondition
+/// exits 3 the same way under both engines.
+#[test]
+fn vm_closure_in_verify_predicate() {
+    let src = "@[verify(arr_all([value, value + 1], |x: i64| x >= 0))]\nfn mk(n: i64) -> i64 {\n    let f = |k: i64| k * 2 - 3\n    f(n)\n}\nfn main() -> i64 {\n    println(to_str(mk(5)))\n    println(to_str(mk(1)))\n    0\n}\n";
+    let (code, stdout, stderr) = vm_scalar_case(
+        "closure_verify",
+        src,
+        &[
+            ("main", 0),
+            ("mk", 0),
+            ("mk::lambda#0", 0),
+            ("mk::verify::lambda#0", 0),
+        ],
+    );
+    assert_eq!((code, stdout.as_str()), (Some(3), "7\n"), "{stderr}");
+    assert!(stderr.contains("verify failed in `mk`"), "{stderr}");
+}
+
+/// R50 §3 lambda trace names: `<owner>::lambda#<i>` in source pre-order
+/// (nested lambdas included), `Type::method` owners, `<module>` for module
+/// items numbered across them, each body's line printed once however often
+/// it runs, and one `vm: tree <anon>: unresolved lambda` line per code
+/// instance of a fn-value forwarder.
+#[test]
+fn vm_closure_trace_names() {
+    let src = "fn neg(x: i64) -> i64 { 0 - x }\ntrait Scale { fn scaled(self: Box2, k: i64) -> i64 }\ntype Box2 = { w: i64 }\nimpl Scale for Box2 {\n    fn scaled(self: Box2, k: i64) -> i64 {\n        let f = |x: i64| x * k\n        f(self.w)\n    }\n}\nlet OFF = |x: i64| x + 1\nlet TWO = |x: i64| x + 2\nfn main() -> i64 {\n    let b = Box2 { w: 3 }\n    println(to_str(b.scaled(4)))\n    let outer = |x: i64| {\n        let inner = |y: i64| y * x\n        inner(2)\n    }\n    let last = |x: i64| x - 1\n    println(to_str(outer(5) + outer(1) + last(OFF(1)) + TWO(0)))\n    let h = neg\n    println(to_str(h(7) + h(1)))\n    0\n}\n";
+    let (code, stdout, stderr) = vm_same_both_engines("closure_names", src);
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "12\n15\n-8\n"),
+        "{stderr}"
+    );
+    let traced = vm_run("closure_names", src, "vm", true);
+    let err = String::from_utf8_lossy(&traced.stderr);
+    for name in [
+        "Box2::scaled::lambda#0",
+        "main::lambda#0",
+        "main::lambda#1",
+        "main::lambda#2",
+        "<module>::lambda#0",
+        "<module>::lambda#1",
+    ] {
+        let head = format!("vm: {name} ");
+        let lines = err.lines().filter(|l| l.starts_with(&head)).count();
+        assert_eq!(lines, 1, "`{name}`:\n{err}");
+        assert_eq!(vm_tree_nodes(&err, name), 0, "`{name}`:\n{err}");
+    }
+    let anon = err
+        .lines()
+        .filter(|l| *l == "vm: tree <anon>: unresolved lambda")
+        .count();
+    assert_eq!(anon, 1, "{err}");
+}
+
 /// R50 §4 (AX-31): `s = s + t` and `x = arr_push(x, v)` in a 100k-iteration
 /// loop append in place under the vm too (a copying engine would take
 /// quadratic time here: 100k appends of up to 100k elements).
