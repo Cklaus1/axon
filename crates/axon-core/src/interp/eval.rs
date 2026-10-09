@@ -1180,7 +1180,7 @@ impl<'p> Interp<'p> {
     /// for the duration of this call (read by `current_ai_tier`). A call with
     /// no `tier:` leaves an already-clear slot alone (AX-54).
     #[inline(always)]
-    fn set_call_tier(&self, tier: Option<&str>) {
+    pub(super) fn set_call_tier(&self, tier: Option<&str>) {
         if tier.is_some() || self.current_call_tier.borrow().is_some() {
             *self.current_call_tier.borrow_mut() = tier.map(|t| t.to_string());
         }
@@ -1246,7 +1246,9 @@ impl<'p> Interp<'p> {
     /// borrowed value is MOVED out of the caller's binding into the callee (no
     /// copy) and the param's final value is moved back on every outcome,
     /// including `return` / `?` / error unwinds, so the caller's binding is
-    /// never left hollow. Shared by `eval_call` and the bytecode engine (R50).
+    /// never left hollow. The bytecode engine (R50 S5) resolves the callee
+    /// and evaluates the plain arguments itself, then joins at
+    /// [`Interp::call_mut_with`].
     #[inline(never)]
     pub(super) fn call_mut(
         &self,
@@ -1255,17 +1257,12 @@ impl<'p> Interp<'p> {
         tier: Option<&str>,
         env: &mut Env,
     ) -> R {
-        let entry = match callee {
-            Expr::Ident(name) => match self.fn_of_sym.get(&self.res.sym(callee, name)) {
-                Some(&i) => &self.fn_table[i as usize],
-                None => return panic(format!("`&mut` argument passed to `{name}`, which is not a function taking `&mut` parameters")),
-            },
-            _ => return panic("`&mut` argument passed to a computed callee".to_string()),
-        };
+        let entry = &self.fn_table[self.call_mut_entry(callee)? as usize];
         // Plain arguments first, left to right: they cannot mention a
         // borrowed variable (E0606), so this order is unobservable — and if
-        // one unwinds (`?`, panic) nothing has been moved out yet.
-        let mut argv = Vec::with_capacity(args.len());
+        // one unwinds (`?`, panic) nothing has been moved out yet. A pooled
+        // buffer (AX-54), which `call_fn_in` recycles.
+        let mut argv = self.take_args(args.len());
         for a in args {
             argv.push(match a {
                 Expr::UnaryOp {
@@ -1275,7 +1272,37 @@ impl<'p> Interp<'p> {
                 _ => self.eval(a, env)?,
             });
         }
-        let mut borrowed: Vec<(usize, Sym, u32)> = Vec::new();
+        self.call_mut_with(entry, args, argv, tier, env)
+    }
+
+    /// The `fn_table` index of a `&mut` call's callee, or the panic of a
+    /// callee that is not a fn (spec §4 S5: the VM resolves it at compile
+    /// time, the same way).
+    pub(super) fn call_mut_entry(&self, callee: &Expr) -> Result<u32, Flow> {
+        match callee {
+            Expr::Ident(name) => match self.fn_of_sym.get(&self.res.sym(callee, name)) {
+                Some(&i) => Ok(i),
+                None => panic(format!("`&mut` argument passed to `{name}`, which is not a function taking `&mut` parameters")),
+            },
+            _ => panic("`&mut` argument passed to a computed callee".to_string()),
+        }
+    }
+
+    /// [`Interp::call_mut`] after the plain arguments are evaluated into
+    /// `argv` (a `Unit` in each `&mut` position): move the borrowed values
+    /// in, call `entry` in a pooled frame, move each `&mut` param's final
+    /// value back. Allocation-free (R50 S5): the frame and `argv` come from
+    /// their pools, and the borrowed bindings are found again from `args`
+    /// instead of being listed.
+    #[inline(always)]
+    pub(super) fn call_mut_with(
+        &self,
+        entry: &FnEntry<'p>,
+        args: &[Expr],
+        mut argv: impl CallArgs,
+        tier: Option<&str>,
+        env: &mut Env,
+    ) -> R {
         for (i, a) in args.iter().enumerate() {
             if let Expr::UnaryOp {
                 op: UnaryOp::RefMut,
@@ -1289,31 +1316,39 @@ impl<'p> Interp<'p> {
                 let Some(b) = env.get_var_mut(s, slot) else {
                     return panic(format!("`&mut {name}`: `{name}` is not a local variable"));
                 };
-                argv[i] = std::mem::replace(b, Value::Unit);
-                borrowed.push((i, s, slot));
+                let v = std::mem::replace(b, Value::Unit);
+                forget_scalar(std::mem::replace(&mut argv.values()[i], v));
             }
         }
-        *self.current_call_tier.borrow_mut() = tier.map(|t| t.to_string());
+        self.set_call_tier(tier);
         let mut frame = self.take_frame();
         let result = self.call_fn_in(entry, argv, &mut frame);
         // The body's block scopes are popped by now (on `return`/`?` too), so
-        // each name resolves to the parameter binding itself. Per param, its
-        // final value (`Unit` for a non-`&mut` param).
-        let mut outs: Vec<Value> = entry
-            .def
-            .params
-            .iter()
-            .zip(entry.params.iter())
-            .map(|(p, s)| match (&p.ty, frame.get_mut(*s)) {
-                (crate::ast::AxonType::RefMut(_), Some(slot)) => {
-                    std::mem::replace(slot, Value::Unit)
+        // each name resolves to the parameter binding itself. Each borrowed
+        // binding gets its param's final value (`Unit` for a param that is
+        // not `&mut`, or none).
+        for (i, a) in args.iter().enumerate() {
+            if let Expr::UnaryOp {
+                op: UnaryOp::RefMut,
+                operand,
+            } = a
+            {
+                let Expr::Ident(name) = operand.as_ref() else {
+                    continue;
+                };
+                let out = match (entry.def.params.get(i), entry.params.get(i)) {
+                    (Some(p), Some(s)) if matches!(p.ty, crate::ast::AxonType::RefMut(_)) => {
+                        match frame.get_mut(*s) {
+                            Some(v) => std::mem::replace(v, Value::Unit),
+                            None => Value::Unit,
+                        }
+                    }
+                    _ => Value::Unit,
+                };
+                let (s, slot) = self.res.var(operand, name);
+                if let Some(b) = env.get_var_mut(s, slot) {
+                    forget_scalar(std::mem::replace(b, out));
                 }
-                _ => Value::Unit,
-            })
-            .collect();
-        for (i, s, slot) in borrowed {
-            if let Some(b) = env.get_var_mut(s, slot) {
-                *b = std::mem::replace(&mut outs[i], Value::Unit);
             }
         }
         self.give_frame(frame);

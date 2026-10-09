@@ -64,9 +64,10 @@ fn kinds(body: &Body<'_>) -> Vec<&'static str> {
             Op::Let { .. } => "let",
             Op::AssignInPlace { .. } => "in-place",
             Op::Store(_) => "store",
-            Op::StoreBin { .. } | Op::StoreLocalInt { .. } | Op::StoreLocalLocal { .. } => {
-                "store-bin"
-            }
+            Op::StoreBin { .. }
+            | Op::StoreLocalInt { .. }
+            | Op::StoreLocalLocal { .. }
+            | Op::StoreLocalStack { .. } => "store-bin",
             Op::Bin { .. } => "bin",
             Op::ShortCircuit { .. } => "short",
             Op::Logic(_) => "logic",
@@ -121,6 +122,9 @@ fn kinds(body: &Body<'_>) -> Vec<&'static str> {
             Op::Lambda(_) => "lambda",
             Op::Pure(_) => "pure",
             Op::PureLoop { .. } => "pure-loop",
+            Op::CallFast { args, .. } if args.is_empty() => "call-fast",
+            Op::CallFast { .. } => "call-fast-inline",
+            Op::CallMut { .. } => "call-mut",
         })
         .collect()
 }
@@ -129,7 +133,7 @@ fn kinds(body: &Body<'_>) -> Vec<&'static str> {
 fn s1_compiles_fib_without_tree_ops() {
     let prog = program();
     let interp = Interp::build(&prog);
-    let body = compile(&interp.res, body_of(&interp, "fib"));
+    let body = compile(&interp, body_of(&interp, "fib"));
     assert_eq!(body.tree_nodes(), 0, "{:?}", kinds(&body));
 }
 
@@ -137,7 +141,7 @@ fn s1_compiles_fib_without_tree_ops() {
 fn s1_leaves_only_unlowered_variants_on_the_tree() {
     let prog = program();
     let interp = Interp::build(&prog);
-    let body = compile(&interp.res, body_of(&interp, "main"));
+    let body = compile(&interp, body_of(&interp, "main"));
     let trees: Vec<&str> = body
         .ops
         .iter()
@@ -160,7 +164,7 @@ fn s1_every_expr_node_compiles_to_a_balanced_body() {
             continue;
         };
         crate::ast::walk_expr(&f.body, &mut |e| {
-            let body = compile(&interp.res, e);
+            let body = compile(&interp, e);
             let root_is_tree = matches!(&body.ops[..], [Op::Tree(t)] if std::ptr::eq(*t, e));
             // Every node of the program lowers: none compiles to a root `Tree`.
             assert!(!root_is_tree, "{}", compile::variant_name(e));
@@ -192,7 +196,7 @@ fn f(xs: [i64], g: [[i64]], i: i64) -> i64 {
 ";
     let prog = crate::parse_source(src).expect("parses");
     let interp = Interp::build(&prog);
-    let body = compile(&interp.res, body_of(&interp, "f"));
+    let body = compile(&interp, body_of(&interp, "f"));
     let k = kinds(&body);
     let count = |name: &str| k.iter().filter(|&&x| x == name).count();
     assert_eq!(count("write-place"), 2, "{k:?}");
@@ -265,7 +269,7 @@ fn engine_parse_accepts_only_vm_and_tree() {
 fn kinds_of(src: &str, f: &str) -> Vec<&'static str> {
     let prog = crate::parse_source(src).expect("parses");
     let interp = Interp::build(&prog);
-    kinds(&compile(&interp.res, body_of(&interp, f)))
+    kinds(&compile(&interp, body_of(&interp, f)))
 }
 
 #[test]
@@ -401,16 +405,14 @@ fn while_let_pushes_the_pattern_scope_then_the_body_scope() {
         [
             "push",
             "const",
-            "define", // let n = 0
-            "load",
-            "call",
+            "define",           // let n = 0
+            "call-fast-inline", // S5: the argument is read by the call
             "while-let+scope+body",
             "load",
             "define",
             "store-bin",
             "while-let-next",
-            "load",
-            "call",
+            "call-fast-inline",
             "while-let",
             "store-bin",
             "while-let-next",
@@ -462,7 +464,7 @@ fn ax31_shaped_assign_runs_assign_in_place_first() {
     let prog =
         crate::parse_source("fn f() -> str { let s = \"\"\n s = s + \"x\"\n s }").expect("parses");
     let interp = Interp::build(&prog);
-    let body = compile(&interp.res, body_of(&interp, "f"));
+    let body = compile(&interp, body_of(&interp, "f"));
     assert!(body.ops.iter().any(|op| matches!(
         op,
         Op::StoreBin {
@@ -479,7 +481,7 @@ fn ax31_shaped_assign_runs_assign_in_place_first() {
     // Not AX-31-shaped: no `assign_in_place` call at all.
     let prog = crate::parse_source("fn f() -> i64 { let i = 0\n i = 1 + i\n i }").unwrap();
     let interp = Interp::build(&prog);
-    let body = compile(&interp.res, body_of(&interp, "f"));
+    let body = compile(&interp, body_of(&interp, "f"));
     assert!(body.ops.iter().all(|op| !matches!(
         op,
         Op::AssignInPlace { .. }
@@ -626,7 +628,7 @@ fn run_both(f: &str) -> R {
     };
     check(&env, "tree");
     let mut env = frame();
-    let vm = interp.exec(&compile(&interp.res, body), &mut env);
+    let vm = interp.exec(&compile(&interp, body), &mut env);
     check(&env, "vm");
     assert_eq!(format!("{vm:?}"), format!("{tree:?}"), "{f}");
     vm
@@ -896,4 +898,61 @@ fn pure_rechecks_leaf_kinds() {
     *env.get_mut(a).expect("bound") = Value::Str(Rc::new("x".to_string()));
     assert!(e.eval(&env).is_none(), "str");
     assert!(e.eval(&Env::new()).is_none(), "unbound");
+}
+
+// -- S5: fast calls ----------------------------------------------------------
+
+/// R50 §4 S5 (§8 unit row): an `FnEntry` with `has_ref_mut` set is never a
+/// fast-call candidate; a plain fn with no refinement in the program is.
+#[test]
+fn has_ref_mut_entry_is_not_fast_call_eligible() {
+    let prog = crate::parse_source(
+        "fn t(a: &mut [i64]) { a[0] = 1 }\nfn p(x: i64) -> i64 { x }\n\
+         fn main() -> i64 { let a = [0]\n t(&mut a)\n p(1) }",
+    )
+    .expect("parses");
+    let interp = Interp::build(&prog);
+    let entry = |name: &str| interp.fn_table.iter().find(|e| e.def.name == name).unwrap();
+    assert!(entry("t").has_ref_mut);
+    assert_eq!(
+        compile::fast_call_blocker(entry("t"), true),
+        Some("has_ref_mut")
+    );
+    assert_eq!(compile::fast_call_blocker(entry("p"), true), None);
+    assert_eq!(
+        compile::fast_call_blocker(entry("p"), false),
+        Some("refine_preds")
+    );
+}
+
+/// R50 §4 S5: a fast call keeps `call_fn_in`'s order: the depth check
+/// before the arity check, each with the tree's panic. The body runs three
+/// times: the first call goes through `dispatch_named` (which proves the
+/// name), the next two through the fast path, the last one at the depth
+/// limit.
+#[test]
+fn fast_call_checks_depth_before_arity() {
+    let prog = crate::parse_source("fn f(x: i64) -> i64 { x }\nfn g() -> i64 { f(1, 2) }")
+        .expect("parses");
+    let interp = Interp::build(&prog);
+    let g = body_of(&interp, "g");
+    let body = compile(&interp, g);
+    assert!(kinds(&body).contains(&"call-fast"), "{:?}", kinds(&body));
+    let both = || {
+        let mut env = Env::new();
+        env.push();
+        let tree = format!("{:?}", interp.eval(g, &mut env));
+        let mut env = Env::new();
+        env.push();
+        let vm = format!("{:?}", interp.exec(&body, &mut env));
+        assert_eq!(vm, tree);
+        vm
+    };
+    for _ in 0..2 {
+        assert!(both().contains("f: expected 1 args, got 2"));
+    }
+    let depth = interp.call_depth.replace(interp.max_depth);
+    let at_limit = both();
+    interp.call_depth.set(depth);
+    assert!(at_limit.contains("recursion limit exceeded"), "{at_limit}");
 }

@@ -38,7 +38,19 @@ fn soft_temporal_inner(v: &Value) -> Option<Value> {
 /// value flow into a plain-`T` slot (if/while condition, scalar param, scalar
 /// return). `None` for any other value. Confidence/horizon are dropped at the
 /// T-typed boundary.
+///
+/// Inline, so the common case (not a struct) costs one compare at every
+/// boundary (cost only, R50 S5).
+#[inline(always)]
 pub(super) fn soft_inner(v: &Value) -> Option<Value> {
+    match v {
+        Value::Struct(_) => soft_inner_struct(v),
+        _ => None,
+    }
+}
+
+#[inline(never)]
+fn soft_inner_struct(v: &Value) -> Option<Value> {
     if let Value::Struct(s) = v {
         if s.name == SYM_UNCERTAIN || s.name == SYM_TEMPORAL {
             return Some(s.fields.get(SYM_VALUE).cloned().unwrap_or(Value::Int(0)));

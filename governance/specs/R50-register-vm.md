@@ -1,7 +1,7 @@
 # R50 — Bytecode engine for `axon run`
 
 **Spec ID:** `R50-register-vm`
-**Status:** Implementing (S0-S4 landed). Reviewed at revision 10 after nine adversarial reviews (2026-10-09, `reviewer`). The first eight,
+**Status:** Implementing (S0-S5 landed). Reviewed at revision 10 after nine adversarial reviews (2026-10-09, `reviewer`). The first eight,
 verdict "incorrect" (first 2 blockers and 11 must-fix, second 4 must-fix and 8 smaller, third 6 must-fix
 and 6 smaller, fourth 7 must-fix and 5 smaller, fifth 5 must-fix and 7 smaller, sixth 5 must-fix and 6
 smaller, seventh 2 must-fix and 3 smaller, eighth 2 must-fix and 2 smaller), and the ninth, verdict
@@ -317,10 +317,12 @@ the order of `call_fn_entry` → `call_fn_in` (interp.rs:3321, 3403):
 4. the arity check, with the same panic (interp.rs:3446-3453); it comes after the depth check, so a
    too-deep call with the wrong arity reports the depth limit, as now;
 5. per-parameter soft unwrap and sized-int coercion from `param_coerce`;
-6. the `goal_met` slot define;
+6. the `goal_met` slot define, except for a leaf body (one `Load`, one `Bin`, or one `a[i] = v`) that
+   does not name `goal_met`, which never binds it (unobservable: nothing reads it);
 7. clearing `current_call_tier` when it is set;
 8. the soft unwrap of the result for `ret_is_scalar`;
-9. `recycle_args`;
+9. returning the argument storage: the arguments go straight into the pooled frame (no `Vec` is formed,
+   so there is no `recycle_args`); the tree path keeps `recycle_args` in `call_fn_in`;
 10. restoring all of the above on every exit path.
 
 Budget: at most 300 instructions per fast one-argument call (§10 `--repros`). S5 is accepted only with a
@@ -332,8 +334,9 @@ never a fast-call candidate. A unit test asserts that an `FnEntry` with `has_ref
 fast-call eligible.
 
 **`&mut` calls.** `call_mut` becomes allocation-free. Today it allocates `argv`, `borrowed`, an unpooled
-`Env::new()` and `outs` per call. After S5 it uses the frame and argument pools and a pooled move-back
-buffer, with unchanged behaviour. The VM lowers `&mut` calls to a `CallMut` op over `call_mut`. Budget:
+`Env::new()` and `outs` per call. After S5 it uses the frame and argument pools, and each borrowed
+binding is moved back straight from the callee's frame in argument order (no move-back buffer), with
+unchanged behaviour. The VM lowers `&mut` calls to a `CallMut` op over `call_mut`. Budget:
 at most 600 instructions per one-`&mut`-argument call (§10 `--repros`).
 
 #### S7 — pure scalar regions (required; added in revision 11)
@@ -776,7 +779,7 @@ the reference code, gaps cost speed, never correctness.
 | R50.S2 aggregates, index/field reads, place writes (`AssignTo`); extract `index_in_place`, `index_value`, `field_in_place`, `finish_record`, `place_index`, `write_place` | R50.S1 | `cli_run vm_aggregate_` (incl. `vm_aggregate_part_no_tree_nodes`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (S1 and `part.ax` rows) + `vm_wasm_depth.sh` | done (`2d10cf99`) |
 | R50.S3 match, patterns, enums, methods; extract `chan_method`, `impl_method` | R50.S1 | `cli_run vm_match_` (incl. `vm_match_option_no_tree_nodes`) + `vm_parity.sh` + `vm_wasm_depth.sh` | done (`765bb811`) |
 | R50.S4 lambdas; extract `make_closure`; `ClosureCode.compiled`; allocation-free builtin → closure call on the lent path (`Rc::strong_count(cv) == private_refs`, interp.rs:4054), the one `fold.ax` and arr-sum take: `arr_fold`/`arr_map`/... take argument buffers from `arg_bufs`, `call_closure_owned_by` drains its arguments into the params and hands the buffer to `recycle_args` (today `zip(args)` consumes it, interp.rs:4067), and its `Env` gets a pooled `marks` Vec (today `vec![acc, x.clone()]` per element, builtins.rs:1847, and `Env::from_snapshot` starts with an empty `marks`, so `env.push()` allocates, interp.rs:749-754, 4058-4066). The copied path (a closure with other references, e.g. `let f = \|..\| ..; arr_fold(xs, 0, f)`) keeps its per-call `Vec::with_capacity` (interp.rs:4061-4064) | R50.S1 | `cli_run vm_closure_` (incl. `vm_closure_fold_no_tree_nodes`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (S1 and `fold.ax` rows) + `vm_wasm_depth.sh` | done (`12713cbd`) |
-| R50.S5 fast calls; allocation-free `call_mut` and `CallMut` op | R50.S2, R50.S3, R50.S4 | `cli_run vm_fastcall_` (incl. `vm_fastcall_mutcall_no_tree_nodes`, `vm_fastcall_slow_<flag>`) + `vm_parity.sh` + `vm_perf_gate.sh --repros S1,part,fold,S5` + `vm_wasm_depth.sh` + `AXON_ENGINE=vm AXON_HARNESS_STRICT=1 scripts/parity_all.sh` | todo |
+| R50.S5 fast calls; allocation-free `call_mut` and `CallMut` op | R50.S2, R50.S3, R50.S4 | `cli_run vm_fastcall_` (incl. `vm_fastcall_mutcall_no_tree_nodes`, `vm_fastcall_slow_<flag>`) + `vm_parity.sh` + `vm_perf_gate.sh --repros S1,part,fold,S5` + `vm_wasm_depth.sh` + `AXON_ENGINE=vm AXON_HARNESS_STRICT=1 scripts/parity_all.sh` | `3eb79f1a` |
 | R50.S7 pure scalar regions: `Pure`, `PureLoop`, `fold_leaf`; `pure`/`fold-leaf` trace lines; `loop_generic.ax`, `foldmod.ax`, `--programs` | R50.S4 | `cli_run vm_pure_` (incl. `vm_pure_mandel_loop`, `vm_pure_fold_leaf`) + `vm_parity.sh` + `vm_perf_gate.sh --programs mandelbrot,arr-sum,collatz` + `vm_perf_gate.sh --repros S1,part,fold,foldmod` + `vm_wasm_depth.sh` | todo |
 | R50.S8 qsort and fib superops (§4 S8); `swapcall.ax` | R50.S5, R50.S7 | `cli_run vm_superop_` + `vm_parity.sh` + `vm_perf_gate.sh` (all five) + `vm_perf_gate.sh --repros` (every row; `swap` is the red check) + `vm_wasm_depth.sh` + `AXON_ENGINE=vm AXON_HARNESS_STRICT=1 scripts/parity_all.sh` | todo |
 | R50.S6 default flip, docs | R50.S5, R50.S7, R50.S8; blocked-by Q3 or Q4 only if it comes true | whole suite under both engines + `vm_parity.sh` (S8 list) + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` under each engine (VM default) + `vm_perf_gate.sh` + `reference_gate.sh` + `vm_wasm_depth.sh --require-default-stack` (default-stack VM depth ≥ tree on all four chains) | todo |
@@ -796,6 +799,11 @@ the reference code, gaps cost speed, never correctness.
 | S2/S4 repros: part ≤ 250, fold ≤ 350; S1 rows hold | `scripts/vm_perf_gate.sh --repros S1,part,fold` | exit 0; loop 229.2, call 759.1, part 227.1, fold 330.0 | `12713cbd` @ 2026-10-09 | PASS |
 | S2-S4 wasm depth | `scripts/vm_wasm_depth.sh` | exit 0; default-stack `mut` chain VM below tree (debug 478 vs 533), reported only | `12713cbd` @ 2026-10-09 | PASS |
 | S2-S4 suite: both feature sets × both engines; strict parity under tree | `cargo test -p axon-core`; `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` | all green (after the cache-test scratch-dir race fix); 53 passed, 2 allowed skips of 55 | `12713cbd` @ 2026-10-09 | PASS |
+| S5 parity (merged on S0-S4) | `VM_PARITY_SLICE=S5 scripts/vm_parity.sh` | `290 files, 1894 bodies, 32243 lowered ops, 111 tree ops, 0 differ` | `3eb79f1a` @ 2026-10-09 | PASS |
+| S5 repros: fastcall ≤ 300, mutcall ≤ 600; S1/S2/S4 rows hold | `scripts/vm_perf_gate.sh --repros S1,part,fold,S5` | exit 0; loop 233.2, call 257.1, part 231.1, fold 341.0, fastcall 257.1, mutcall 562.2 (`fd8816b7`) | `fd8816b7` @ 2026-10-09 | PASS |
+| S5 wasm depth | `scripts/vm_wasm_depth.sh` | exit 0; default-stack VM ≥ tree on every chain (`fd8816b7`) | `fd8816b7` @ 2026-10-09 | PASS |
+| S5 suite: both feature sets × both engines; strict parity under each engine | `cargo test -p axon-core`; `AXON_ENGINE=<e> AXON_HARNESS_STRICT=1 scripts/parity_all.sh` | all green; 53 passed, 2 allowed skips of 55, under tree and under vm | `3eb79f1a` @ 2026-10-09 | PASS |
+| S5 programs (not gated until S6; S7/S8 targets) | `perf stat -e instructions:u` under `AXON_ENGINE=vm` | fib 4.243 G, collatz 20.602 G, mandelbrot 24.195 G, arr-sum 34.182 G, qsort 25.796 G (`fd8816b7`) | `fd8816b7` @ 2026-10-09 | over on 4 of 5 |
 
 ### 15. Review resolution (2026-10-09)
 
