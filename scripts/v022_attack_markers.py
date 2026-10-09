@@ -2752,3 +2752,19 @@ ATTACK_MARKERS.update({
     'M3195': 'ATTACK: a stale quoted count under scripts/',
     'M3196': 'ATTACK: a stale quoted count under crates/',
 })
+
+ATTACK_MARKERS.update({
+    # C9 round 13, EQGATE9 (amendment 115)
+    'M3280': r'ATTACK: a signed waiver with no expiry waived a BLOCKED assertion',
+    'M3281': r'ATTACK: a signed waiver with an expiry AT the decision time waived a BLOCKED assertion',
+    'M3282': r'ATTACK: a signed waiver with no expiry waived a BLOCKED assertion',
+    'M3283': r'ATTACK: a certification whose suite id is absent was not refused as unnamed',
+    'M3284': r'ATTACK: a verdict made without an observation was classed Protected',
+    'M3285': r'left: None\s+right: Some\("preflight-observation-sha256:',
+    'M3286': r'ATTACK: the trial-safety clearance domain is not its documented literal',
+    'M3287': r'ATTACK: signing domain collapse: CLEARANCE_DOMAIN == CONTEXT_DOMAIN',
+    'M3288': r'ATTACK: signing domain collapse: EXECUTION_DOMAIN == axon-loop CONTEXT_DOMAIN',
+    'M3289': r'ATTACK: signing domain collapse: EXECUTION_DOMAIN == DOCUMENT_SIGNATURE_SCHEMA',
+    'M3290': r'ATTACK: signing domain collapse: CLEARANCE_DOMAIN == DOCUMENT_SIGNATURE_SCHEMA',
+    'M3291': r'ATTACK: signing domain EXECUTION_DOMAIN is not its documented literal',
+})

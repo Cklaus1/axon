@@ -276,6 +276,26 @@ mod tests {
         );
     }
 
+    /// Amendment 115 (eqgate9): a registered check whose argv is EMPTY names no suite, so it is not a check of an
+    /// operator-registered suite and is not signed. The guard is `!argv.first().is_some_and(..)`; flipped to
+    /// `is_none_or` an empty argv passed it, and the schema has no `minItems` for `argv`.
+    #[test]
+    fn a_registered_check_naming_no_suite_at_all_is_not_signed() {
+        let vm = ran(LINUX_MICROVM_PROTECTED.id, "");
+        let mut r = req("registered_check", "check:acc@1");
+        assert_eq!(
+            attestation_decision(&r, false, Some(&vm)),
+            Ok(()),
+            "control: the same request with a suite named is signed"
+        );
+        r.argv = vec![];
+        assert_eq!(
+            attestation_decision(&r, false, Some(&vm)),
+            Err(CANDIDATE_RUBRIC),
+            "ATTACK: a registered check with an empty argv (no suite named) was signed"
+        );
+    }
+
     fn receipt(refs: &[&str]) -> ExecutionReceipt {
         let mut v: serde_json::Value = serde_json::from_str(include_str!(
             "../../axon-loop-contracts/tests/fixtures/acf/receipt_exit_zero_unverified.json"

@@ -5224,7 +5224,16 @@ STILL_BLIND = [
     "printed as `DEFAULTS NOT FOLLOWED`), the TYPE behind an `unwrap_or_default()` (a neutral empty string and a "
     "fail-open enum look the same to a text rule; the survey's panic edit tells them apart only where a test takes "
     "the default), and an absent field's neutral value that is not spelled as one of the forms (`as_str() == "
-    "Some(..)`, `!= Some(0)`, `.get(..).is_some_and(..)`)",
+    "Some(..)`, `!= Some(0)`)",
+    "amendment 115: an absent-value decision spelled other than as a combinator of `_COMB_CALL` (is_none_or / "
+    "is_some_and / is_ok_and / is_err_and / map_or_else), `.or_else(|| Some(<lit>))`, `matches!` over None / Err(_) / "
+    "Ok(_), a `None | Err(_) => <literal | variant>,` arm or a `let .. else { [return] <literal | variant> }`: an "
+    "`if let None/Err(_) = x { .. }` block, a `match` arm whose body is a block or a computed value, a `filter(..)` "
+    "that turns Some into None, `ok_or(..)` / `ok_or_else(..)` supplying a default, `.get(..).copied().unwrap_or(<x>)` "
+    "with a computed x, an arm bound to a name (`Err(e) => false`), a `_ =>` arm, the same decision made through a "
+    "helper fn the sites call, and the tests: a site is a SPELLING, and a decision the text rule does not match is "
+    "not seen (round 13 found two such spellings; there may be a third). A site's row covers THAT edit, not every "
+    "sub-predicate of the guard it sits in",
     "a signing / verification / MAC input that reaches its primitive through a PARAMETER or a fn not in SIGN_SINKS "
     "or SIGN_BUILDERS (a new message builder is a blind sink until it is listed; the sinks are NOT checked against "
     "every `.sign(` of the scope in both directions the way EXEC_CONSTRUCTORS is), a context spelled inside a format "

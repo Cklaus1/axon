@@ -10437,5 +10437,47 @@ MUTATIONS += [
 ]
 
 
+# ── C9 round 13, workstream EQGATE9 (amendment 115; M3280-M3339) ─────────────────────────────────────
+MUTATIONS += [
+    ('M3280', 'WAIVER EXPIRY (eq9): a signed waiver with no parseable expiry is accepted (is_none_or -> is_some_and)', 'crates/axon-fabric/src/backend.rs',
+     'w.expires.is_none_or(|t| now >= t)', 'w.expires.is_some_and(|t| now >= t)',
+     'axon-fabric', '--lib', 'backend::tests::a_waiver_without_a_parseable_future_expiry_waives_nothing'),
+    ('M3281', 'WAIVER EXPIRY (eq9): a waiver is still good AT its expiry second', 'crates/axon-fabric/src/backend.rs',
+     'w.expires.is_none_or(|t| now >= t)', 'w.expires.is_none_or(|t| now > t)',
+     'axon-fabric', '--lib', 'backend::tests::a_waiver_without_a_parseable_future_expiry_waives_nothing'),
+    ('M3282', 'WAIVER EXPIRY (eq9): an absent or garbage expiry is parsed as never', 'crates/axon-fabric/src/backend.rs',
+     'expires: x["expires"].as_str().and_then(parse_utc),', 'expires: x["expires"].as_str().and_then(parse_utc).or(Some(i64::MAX)),',
+     'axon-fabric', '--lib', 'backend::tests::a_waiver_without_a_parseable_future_expiry_waives_nothing'),
+    ('M3283', 'CERTIFICATION SUITE (eq9): a certification whose suite lacks a field is accepted (is_none_or -> is_some_and)', 'crates/axon-fabric/src/readiness.rs',
+     '.any(|k| suite[k].as_str().is_none_or(str::is_empty))', '.any(|k| suite[k].as_str().is_some_and(str::is_empty))',
+     'axon-fabric', '--lib', 'readiness::tests::a_certification_whose_suite_does_not_name_all_five_fields_is_refused'),
+    ('M3284', 'EVIDENCE CLASS (eq9): a passed verdict with no observation is classed protected', 'crates/axon-fabric/src/psv.rs',
+     '        None => EvidenceClass::GuestUnobserved,\n    }\n}', '        None => EvidenceClass::Protected,\n    }\n}',
+     'axon-fabric', '--lib', 'psv::class_tests::a_passed_verdict_with_no_observation_is_guest_unobserved_and_names_none'),
+    ('M3285', 'EVIDENCE CLASS (eq9): an observed verdict does not name its observation', 'crates/axon-fabric/src/psv.rs',
+     '            evidence.push(format!("preflight-observation-sha256:{}", o.sha256));\n            EvidenceClass::Protected\n        }\n        None =>',
+     '            let _ = o;\n            EvidenceClass::Protected\n        }\n        None =>',
+     'axon-fabric', '--lib', 'psv::class_tests::a_passed_verdict_with_no_observation_is_guest_unobserved_and_names_none'),
+    ('M3286', 'SIGNING DOMAIN (eq9, axon-loop alone): the trial-safety clearance domain is the context domain\'s literal', 'crates/axon-loop/src/safety.rs',
+     'pub const CLEARANCE_DOMAIN: &str = "axon.loop.trial-safety/1";', 'pub const CLEARANCE_DOMAIN: &str = "axon.closed-loop.context/1";',
+     'axon-loop', '--test signing_domain_pins', 'this_crates_signing_domains_are_their_documented_literals'),
+    ('M3287', 'SIGNING DOMAIN (eq9, axon-loop alone): the context domain is the clearance domain\'s literal', 'crates/axon-loop/src/evl.rs',
+     'pub const CONTEXT_DOMAIN: &str = "axon.closed-loop.context/1";', 'pub const CONTEXT_DOMAIN: &str = "axon.loop.trial-safety/1";',
+     'axon-loop', '--test signing_domain_pins', 'this_crates_signing_domains_are_distinct_from_every_domain_they_share_a_protocol_with'),
+    ('M3288', 'SIGNING DOMAIN (eq9, axon-loop-contracts alone): the execution domain is the context domain\'s literal', 'crates/axon-loop-contracts/src/attestation.rs',
+     'pub const EXECUTION_DOMAIN: &str = "axon.fabric-execution/1";', 'pub const EXECUTION_DOMAIN: &str = "axon.closed-loop.context/1";',
+     'axon-loop-contracts', '--test signing_domain_pins', 'this_crates_signing_domains_are_distinct_from_each_other_and_from_the_sibling_crates_domains'),
+    ('M3289', 'SIGNING DOMAIN (eq9, axon-loop-contracts alone): the execution domain is the document-signature schema', 'crates/axon-loop-contracts/src/attestation.rs',
+     'pub const EXECUTION_DOMAIN: &str = "axon.fabric-execution/1";', 'pub const EXECUTION_DOMAIN: &str = "axon-document-signature/1";',
+     'axon-loop-contracts', '--test signing_domain_pins', 'this_crates_signing_domains_are_distinct_from_each_other_and_from_the_sibling_crates_domains'),
+    ('M3290', 'SIGNING DOMAIN (eq9, axon-loop alone): the clearance domain is the document-signature schema', 'crates/axon-loop/src/safety.rs',
+     'pub const CLEARANCE_DOMAIN: &str = "axon.loop.trial-safety/1";', 'pub const CLEARANCE_DOMAIN: &str = "axon-document-signature/1";',
+     'axon-loop', '--test signing_domain_pins', 'this_crates_signing_domains_are_distinct_from_every_domain_they_share_a_protocol_with'),
+    ('M3291', 'SIGNING DOMAIN (eq9, axon-loop-contracts alone): the execution domain is versioned differently', 'crates/axon-loop-contracts/src/attestation.rs',
+     'pub const EXECUTION_DOMAIN: &str = "axon.fabric-execution/1";', 'pub const EXECUTION_DOMAIN: &str = "axon.fabric-execution/2";',
+     'axon-loop-contracts', '--test signing_domain_pins', 'this_crates_signing_domains_are_their_documented_literals'),
+]
+
+
 if __name__ == "__main__":
     main()

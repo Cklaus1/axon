@@ -1181,6 +1181,83 @@ pub(crate) mod tests {
         );
     }
 
+    /// Amendment 115 (eqgate9): a tracked path whose KIND or EXECUTABLE BIT is not the committed one, or which is
+    /// gone, differs, whatever its bytes. `body.is_none_or(..)` in `worktree_differs` is the arm that says so
+    /// for a kind or mode mismatch; flipped to `is_some_and` a tracked file replaced by a symlink to a copy of
+    /// itself, or one made executable, read as unchanged and the whole axon-fabric suite stayed green.
+    #[test]
+    fn a_tracked_path_of_another_kind_or_mode_or_gone_differs() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path().join("repo");
+        std::fs::create_dir_all(&r).unwrap();
+        git(&r, &["init", "-q", "-b", "main"]);
+        for n in ["a", "b", "c", "gone"] {
+            std::fs::write(r.join(n), format!("{n}\n")).unwrap();
+        }
+        std::fs::write(r.join("x"), "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(r.join("x"), PermissionsExt::from_mode(0o755)).unwrap();
+        git(&r, &["add", "-A"]);
+        git(&r, &["commit", "-q", "-m", "c"]);
+        let top = r.canonicalize().unwrap();
+        let head = text(&top, &["rev-parse", "HEAD"]).unwrap();
+        let tree = Objects::open(&top).unwrap().entries(&head, None).unwrap();
+        assert_eq!(
+            worktree_differs(&top, &tree),
+            None,
+            "control: the tree as committed"
+        );
+        let one = |what: &str, edit: &dyn Fn(), want: &str| {
+            edit();
+            assert_eq!(
+                worktree_differs(&top, &tree).as_deref(),
+                Some(want),
+                "ATTACK: {what} was not reported as differing from the committed tree"
+            );
+        };
+        // a regular file replaced by a symlink to an identical copy: the bytes read through the link are the same
+        one(
+            "a tracked file replaced by a symlink to a copy of itself",
+            &|| {
+                std::fs::write(r.join("copy"), "a\n").unwrap();
+                std::fs::remove_file(r.join("a")).unwrap();
+                symlink("copy", r.join("a")).unwrap();
+            },
+            "a",
+        );
+        std::fs::remove_file(r.join("a")).unwrap();
+        std::fs::write(r.join("a"), "a\n").unwrap();
+        one(
+            "a tracked non-executable file made executable",
+            &|| std::fs::set_permissions(r.join("b"), PermissionsExt::from_mode(0o755)).unwrap(),
+            "b",
+        );
+        std::fs::set_permissions(r.join("b"), PermissionsExt::from_mode(0o644)).unwrap();
+        one(
+            "a tracked executable made non-executable",
+            &|| std::fs::set_permissions(r.join("x"), PermissionsExt::from_mode(0o644)).unwrap(),
+            "x",
+        );
+        std::fs::set_permissions(r.join("x"), PermissionsExt::from_mode(0o755)).unwrap();
+        one(
+            "a tracked file replaced by a directory",
+            &|| {
+                std::fs::remove_file(r.join("c")).unwrap();
+                std::fs::create_dir(r.join("c")).unwrap();
+            },
+            "c",
+        );
+        std::fs::remove_dir(r.join("c")).unwrap();
+        std::fs::write(r.join("c"), "c\n").unwrap();
+        one(
+            "a tracked file that is gone",
+            &|| std::fs::remove_file(r.join("gone")).unwrap(),
+            "gone",
+        );
+        std::fs::write(r.join("gone"), "gone\n").unwrap();
+        assert_eq!(worktree_differs(&top, &tree), None, "control: restored");
+    }
+
     #[test]
     fn a_gitfile_or_symlinked_git_dir_is_refused() {
         let d = tempfile::tempdir().unwrap();

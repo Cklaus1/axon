@@ -1290,6 +1290,42 @@ mod tests {
         );
     }
 
+    /// Amendment 115 (eqgate9): `is_hex` of a digest field answers FALSE for a value that is not a string at
+    /// all. Flipped to `is_none_or` a certification whose `psv_spec_sha256` (or `axon_sha`) was a NUMBER, an
+    /// object or null passed the shape check, and the whole suite stayed green.
+    #[test]
+    fn a_digest_field_that_is_not_a_string_of_the_right_length_is_not_hex() {
+        for (what, v, n, want) in [
+            ("a number", json!(5), 64, false),
+            ("null", Value::Null, 64, false),
+            ("an object", json!({"a": 1}), 64, false),
+            ("an array", json!(["a"]), 40, false),
+            ("a string one short", json!("a".repeat(63)), 64, false),
+            ("a string one long", json!("a".repeat(65)), 64, false),
+            ("upper case", json!("A".repeat(64)), 64, false),
+            (
+                "a non-hex letter",
+                json!(format!("{}g", "a".repeat(63))),
+                64,
+                false,
+            ),
+            (
+                "64 lower-case hex",
+                json!("0123456789abcdef".repeat(4)),
+                64,
+                true,
+            ),
+            ("40 lower-case hex", json!("f".repeat(40)), 40, true),
+        ] {
+            assert_eq!(
+                is_hex(&v, n),
+                want,
+                "ATTACK: is_hex of {what} (length {n}) answered {}",
+                !want
+            );
+        }
+    }
+
     /// Amendment 115 (eqgate9): a certification's `suite` must NAME its id, version, entry, test and digest. The
     /// check is `.any(|k| suite[k].as_str().is_none_or(str::is_empty))`: flipped to `is_some_and`, a suite
     /// with a key MISSING (or not a string) was accepted here and no suite failed. Every absent shape is
