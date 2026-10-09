@@ -2768,3 +2768,9 @@ ATTACK_MARKERS.update({
     'M3290': r'ATTACK: signing domain collapse: CLEARANCE_DOMAIN == DOCUMENT_SIGNATURE_SCHEMA',
     'M3291': r'ATTACK: signing domain EXECUTION_DOMAIN is not its documented literal',
 })
+ATTACK_MARKERS.update({
+    'M3292': r'ATTACK: a tracked file replaced by a symlink to a copy of itself was not reported',
+    'M3293': r'ATTACK: a registered check with an empty argv \(no suite named\) was signed',
+    'M3294': r'ATTACK: is_hex of a number \(length 64\) answered true',
+    'M3295': r'ATTACK: a tracked file that is gone was not reported',
+})

@@ -10478,6 +10478,21 @@ MUTATIONS += [
      'axon-loop-contracts', '--test signing_domain_pins', 'this_crates_signing_domains_are_their_documented_literals'),
 ]
 
+MUTATIONS += [
+    ('M3292', 'TREE PROVENANCE (eq9): a tracked file of another kind or mode reads as unchanged (is_none_or -> is_some_and)', 'crates/axon-fabric/src/git_data.rs',
+     '            body.is_none_or(|b| object_id("blob", &b) != *oid)', '            body.is_some_and(|b| object_id("blob", &b) != *oid)',
+     'axon-fabric', '--lib', 'git_data::tests::a_tracked_path_of_another_kind_or_mode_or_gone_differs'),
+    ('M3293', 'ATTESTATION (eq9): a registered check with an empty argv names a suite (is_some_and -> is_none_or)', 'crates/axon-fabric/src/signing.rs',
+     '    if !req.argv.first().is_some_and(|a| a.starts_with("check:")) {', '    if !req.argv.first().is_none_or(|a| a.starts_with("check:")) {',
+     'axon-fabric', '--lib', 'signing::tests::a_registered_check_naming_no_suite_at_all_is_not_signed'),
+    ('M3294', 'CERTIFICATION SHAPE (eq9): a digest field that is not a string passes is_hex (is_some_and -> is_none_or)', 'crates/axon-fabric/src/readiness.rs',
+     '    v.as_str().is_some_and(|s| {\n        s.len() == n', '    v.as_str().is_none_or(|s| {\n        s.len() == n',
+     'axon-fabric', '--lib', 'readiness::tests::a_digest_field_that_is_not_a_string_of_the_right_length_is_not_hex'),
+    ('M3295', 'TREE PROVENANCE (eq9): a tracked path that is gone reads as unchanged', 'crates/axon-fabric/src/git_data.rs',
+     '            let Ok(md) = std::fs::symlink_metadata(&p) else {\n                return true;\n            };', '            let Ok(md) = std::fs::symlink_metadata(&p) else {\n                return false;\n            };',
+     'axon-fabric', '--lib', 'git_data::tests::a_tracked_path_of_another_kind_or_mode_or_gone_differs'),
+]
+
 
 if __name__ == "__main__":
     main()
