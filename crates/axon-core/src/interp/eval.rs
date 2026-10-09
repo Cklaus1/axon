@@ -60,7 +60,7 @@ pub(super) enum Operand {
 }
 
 impl Operand {
-    #[inline]
+    #[inline(always)]
     pub(super) fn of(v: Value) -> Operand {
         match v {
             Value::Int(n) => Operand::Int(n),
@@ -71,7 +71,7 @@ impl Operand {
 
     /// The operand a local's current value `v` gives, copied out of the slot
     /// for an int or a float.
-    #[inline]
+    #[inline(always)]
     pub(super) fn of_ref(v: &Value) -> Operand {
         match v {
             Value::Int(n) => Operand::Int(*n),
@@ -80,7 +80,7 @@ impl Operand {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn into_value(self) -> Value {
         match self {
             Operand::Int(n) => Value::Int(n),
@@ -94,7 +94,7 @@ impl Operand {
 /// plain ints or floats (the hot case) skip the general dispatch; same
 /// helpers, so the same semantics, as `eval_binop_vals`. Shared by
 /// `eval_binop` and the bytecode engine (R50).
-#[inline]
+#[inline(always)]
 pub(super) fn binop_operands(op: &BinOp, l: Operand, r: Operand) -> R {
     let fast = match (&l, &r) {
         (Operand::Int(a), Operand::Int(b)) => int_binop(op, *a, *b),
@@ -111,7 +111,7 @@ pub(super) fn binop_operands(op: &BinOp, l: Operand, r: Operand) -> R {
 /// `false && _` and `true || _`. An `Uncertain<bool>` operand never
 /// short-circuits (the confidences must combine). Shared by `eval_binop` and
 /// the bytecode engine (R50).
-#[inline]
+#[inline(always)]
 pub(super) fn short_circuits(op: &BinOp, lv: &Value) -> bool {
     matches!(
         (op, lv),
@@ -145,7 +145,19 @@ pub(super) fn logic_rhs(op: &BinOp, lv: Value, rv: Value) -> R {
 /// (confidence is irrelevant to control flow); any other non-bool panics.
 /// Not used for match guards, which are true only for a plain `true`. Shared
 /// by the `If`/`While` arms and the bytecode engine (R50).
+#[inline(always)]
 pub(super) fn cond_bool(v: Value, what: &str) -> Result<bool, Flow> {
+    match v {
+        Value::Bool(b) => Ok(b),
+        v => cond_bool_slow(v, what),
+    }
+}
+
+/// [`cond_bool`] for anything but a plain bool (`soft_inner` returns `None`
+/// for a bool, so testing it first changes nothing).
+#[cold]
+#[inline(never)]
+fn cond_bool_slow(v: Value, what: &str) -> Result<bool, Flow> {
     let v = match soft_inner(&v) {
         Some(inner) => inner,
         None => v,
@@ -162,11 +174,18 @@ pub(super) fn cond_bool(v: Value, what: &str) -> Result<bool, Flow> {
 /// A `for` bound or an index read: an `Int` only; anything else, a sized int
 /// included, panics. Shared by the `For`/`Index` arms and the bytecode engine
 /// (R50).
+#[inline(always)]
 pub(super) fn strict_int(v: Value) -> Result<i64, Flow> {
     match v {
         Value::Int(n) => Ok(n),
-        other => panic(format!("expected i64, got {}", other.type_name())),
+        other => strict_int_panic(other),
     }
+}
+
+#[cold]
+#[inline(never)]
+fn strict_int_panic(other: Value) -> Result<i64, Flow> {
+    panic(format!("expected i64, got {}", other.type_name()))
 }
 
 /// `v?`: the payload of an `Ok`/`Some`; an `Err`/`None` returns from the fn;
@@ -1613,7 +1632,7 @@ impl<'p> Interp<'p> {
     /// literal is read in place: an int or float is copied out of its slot or
     /// literal without building, cloning or dropping a `Value`. Anything else
     /// is evaluated as usual. Reading a local is what `eval` does for it.
-    #[inline]
+    #[inline(always)]
     fn operand(&self, e: &Expr, env: &mut Env) -> Result<Operand, Flow> {
         match e {
             Expr::Ident(name) => {
