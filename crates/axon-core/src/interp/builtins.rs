@@ -465,10 +465,26 @@ impl<'p> Interp<'p> {
                     } else {
                         vec![Value::Int(arg)]
                     };
-                    self.call_fn(f, fiber_args)
+                    // A fiber that ran sealed code (its root among it: a root that
+                    // fails at the call edge, on its declared parameter type, has
+                    // entered a sealed frame too) and then FAILED skipped whatever
+                    // the operator's part of it would have stored after that point,
+                    // and a supervisor re-runs it: both are exits chosen by the
+                    // candidate (amendment 117, loop findings 15 and 45).
+                    let entries = self.taint.entries.get();
+                    let c = &self.taint.catchable;
+                    c.set(c.get() + 1);
+                    let out = self.call_fn(f, fiber_args);
+                    c.set(c.get() - 1);
+                    if out.is_err() && self.taint.entries.get() != entries {
+                        let st = &self.taint.sticky;
+                        st.set(st.get() | taint::VAL);
+                    }
+                    out
                 }
                 None => Err(Flow::Panic(format!("fiber fn `{fn_name}` vanished"))),
             };
+            self.t_loop_pc();
             match outcome {
                 Ok(v) => {
                     let r = numeric_score(&v).map(|s| s as i64).unwrap_or(0);
@@ -736,7 +752,10 @@ impl<'p> Interp<'p> {
                     // (the resume value); a second hit can't be soundly re-fired.
                     if !r.consumed {
                         r.consumed = true;
-                        return Ok(Some(r.feed.clone()));
+                        let (feed, ft) = (r.feed.clone(), r.feed_t);
+                        drop(replay);
+                        self.t_touch(ft);
+                        return Ok(Some(feed));
                     }
                     return Err(crate::interp::Flow::MultiShotUnsound(format!(
                         "effect `{}` (via `{name}`) is performed a second time during a \
@@ -1329,7 +1348,7 @@ impl<'p> Interp<'p> {
                 };
                 let count = events.len() as i64;
                 for event in events {
-                    self.call_closure(callback.clone(), vec![Value::Str(Rc::new(event))])?;
+                    self.call_cb(callback.clone(), vec![Value::Str(Rc::new(event))])?;
                 }
                 ok!(Value::Ok(Box::new(Value::Int(count))))
             }
@@ -1348,7 +1367,7 @@ impl<'p> Interp<'p> {
                     };
                 let count = events.len() as i64;
                 for event in events {
-                    self.call_closure(callback.clone(), vec![Value::Str(Rc::new(event))])?;
+                    self.call_cb(callback.clone(), vec![Value::Str(Rc::new(event))])?;
                 }
                 ok!(Value::Ok(Box::new(Value::Int(count))))
             }
@@ -1823,7 +1842,7 @@ impl<'p> Interp<'p> {
                 let f = args[1].clone();
                 let mut out = Vec::with_capacity(xs.len());
                 for x in xs.iter() {
-                    let mapped = self.call_closure(f.clone(), vec![x.clone()])?;
+                    let mapped = self.call_cb(f.clone(), vec![x.clone()])?;
                     out.push(mapped);
                 }
                 ok!(Value::Array(out.into()));
@@ -1845,7 +1864,7 @@ impl<'p> Interp<'p> {
                 let mut acc = args[1].clone();
                 let f = args[2].clone();
                 for x in xs.iter() {
-                    acc = self.call_closure(f.clone(), vec![acc, x.clone()])?;
+                    acc = self.call_cb(f.clone(), vec![acc, x.clone()])?;
                 }
                 ok!(acc);
             }
@@ -1881,7 +1900,7 @@ impl<'p> Interp<'p> {
                         let hi = (mid + width).min(n);
                         let (mut i, mut j) = (lo, mid);
                         while i < mid && j < hi {
-                            let r = self.call_closure(cmp.clone(), vec![a[j].clone(), a[i].clone()])?;
+                            let r = self.call_cb(cmp.clone(), vec![a[j].clone(), a[i].clone()])?;
                             let r = match r {
                                 Value::Int(n) => n,
                                 other => {
@@ -2517,7 +2536,7 @@ impl<'p> Interp<'p> {
                 let pred = args[1].clone();
                 let mut hit = false;
                 for x in xs.iter().cloned() {
-                    let r = self.call_closure(pred.clone(), vec![x])?;
+                    let r = self.call_cb(pred.clone(), vec![x])?;
                     match r {
                         Value::Bool(true) => {
                             hit = true;
@@ -2551,7 +2570,7 @@ impl<'p> Interp<'p> {
                 let pred = args[1].clone();
                 let mut all = true;
                 for x in xs.iter().cloned() {
-                    let r = self.call_closure(pred.clone(), vec![x])?;
+                    let r = self.call_cb(pred.clone(), vec![x])?;
                     match r {
                         Value::Bool(true) => {}
                         Value::Bool(false) => {
@@ -2593,7 +2612,7 @@ impl<'p> Interp<'p> {
                 let mut acc_i: i64 = 0;
                 let mut acc_f: f64 = 0.0;
                 for x in xs.iter().cloned() {
-                    let r = self.call_closure(key_fn.clone(), vec![x])?;
+                    let r = self.call_cb(key_fn.clone(), vec![x])?;
                     match r {
                         // Accept an Int for the f64 form: a projection like
                         // `|r| r.amount` over an i64 field is the overwhelmingly
@@ -2647,7 +2666,7 @@ impl<'p> Interp<'p> {
                 let pred = args[1].clone();
                 let mut n: i64 = 0;
                 for x in xs.iter().cloned() {
-                    let r = self.call_closure(pred.clone(), vec![x])?;
+                    let r = self.call_cb(pred.clone(), vec![x])?;
                     match r {
                         Value::Bool(true) => {
                             n += 1;
@@ -2692,7 +2711,7 @@ impl<'p> Interp<'p> {
                 let n = xs.len().min(ys.len());
                 let mut out = Vec::with_capacity(n);
                 for i in 0..n {
-                    let z = self.call_closure(f.clone(), vec![xs[i].clone(), ys[i].clone()])?;
+                    let z = self.call_cb(f.clone(), vec![xs[i].clone(), ys[i].clone()])?;
                     out.push(z);
                 }
                 ok!(Value::Array(out.into()));
@@ -2715,7 +2734,7 @@ impl<'p> Interp<'p> {
                 let pred = args[1].clone();
                 let mut hit: Option<Value> = None;
                 for x in xs.iter().cloned() {
-                    let keep = self.call_closure(pred.clone(), vec![x.clone()])?;
+                    let keep = self.call_cb(pred.clone(), vec![x.clone()])?;
                     match keep {
                         Value::Bool(true) => {
                             hit = Some(x);
@@ -2776,7 +2795,7 @@ impl<'p> Interp<'p> {
                 let f = args[1].clone();
                 let mut out = Vec::with_capacity(xs.len());
                 for x in xs.iter().cloned() {
-                    let keep = self.call_closure(f.clone(), vec![x.clone()])?;
+                    let keep = self.call_cb(f.clone(), vec![x.clone()])?;
                     match keep {
                         Value::Bool(true) => out.push(x),
                         Value::Bool(false) => {}
@@ -4441,7 +4460,30 @@ impl<'p> Interp<'p> {
                 }
                 // Set the active sandbox, save the previous value for restore.
                 let prev_sandbox = self.k().active_sandbox.replace(sb_handle);
+                // The ceiling is a property of the CALL, not of one kernel
+                // (amendment 117, loop findings 37, 41): a sealed fn runs in a
+                // frame whose kernel is the candidate's own, whose
+                // `active_sandbox` the operator's `sandbox_run` never set, so the
+                // candidate ran outside the sandbox that contained the operator's
+                // own code. The entry is copied into the sealed kernel for the
+                // life of the call (it is a subset of the ambient ceiling by the
+                // narrowing check above) and removed after.
+                let sealed_ceiling = if self.seal.active && !self.frame_sealed.get() {
+                    let entry = self.kernels[0].sandboxes.borrow().get(sb_handle as usize).cloned();
+                    entry.map(|e| {
+                        let mut sb1 = self.kernels[1].sandboxes.borrow_mut();
+                        let idx = sb1.len();
+                        sb1.push(e);
+                        (idx, self.kernels[1].active_sandbox.replace(idx as i64))
+                    })
+                } else {
+                    None
+                };
                 let result = self.call_fn(f, vec![Value::Int(arg)]);
+                if let Some((idx, prev)) = sealed_ceiling {
+                    self.kernels[1].active_sandbox.set(prev);
+                    self.kernels[1].sandboxes.borrow_mut().truncate(idx);
+                }
                 self.k().active_sandbox.set(prev_sandbox);
                 match result {
                     Ok(Value::Int(n)) => ok!(Value::Int(n)),
@@ -5330,7 +5372,7 @@ impl<'p> Interp<'p> {
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
                 for (k, v) in pairs {
-                    let nv = self.call_closure(f.clone(), vec![v])?;
+                    let nv = self.call_cb(f.clone(), vec![v])?;
                     out.insert(k, nv);
                 }
                 ok!(Value::Dict(Rc::new(RefCell::new(out))));
@@ -5375,7 +5417,7 @@ impl<'p> Interp<'p> {
                 let mut yes = Vec::new();
                 let mut no = Vec::new();
                 for x in xs.iter().cloned() {
-                    let r = self.call_closure(pred.clone(), vec![x.clone()])?;
+                    let r = self.call_cb(pred.clone(), vec![x.clone()])?;
                     match r {
                         Value::Bool(true) => yes.push(x),
                         Value::Bool(false) => no.push(x),
@@ -5464,7 +5506,7 @@ impl<'p> Interp<'p> {
                     std::collections::BTreeMap::new();
                 for (k, v) in pairs {
                     let keep =
-                        self.call_closure(pred.clone(), vec![Value::Str(Rc::new(k.clone())), v.clone()])?;
+                        self.call_cb(pred.clone(), vec![Value::Str(Rc::new(k.clone())), v.clone()])?;
                     match keep {
                         Value::Bool(true) => {
                             out.insert(k, v);
@@ -5693,9 +5735,9 @@ impl<'p> Interp<'p> {
                     }
                 };
                 let mut best_idx = 0;
-                let mut best_key = to_f(self.call_closure(key_fn.clone(), vec![xs[0].clone()])?)?;
+                let mut best_key = to_f(self.call_cb(key_fn.clone(), vec![xs[0].clone()])?)?;
                 for (i, x) in xs.iter().enumerate().skip(1) {
-                    let k = to_f(self.call_closure(key_fn.clone(), vec![x.clone()])?)?;
+                    let k = to_f(self.call_cb(key_fn.clone(), vec![x.clone()])?)?;
                     if (pick_max && k > best_key) || (!pick_max && k < best_key) {
                         best_key = k;
                         best_idx = i;
@@ -5720,7 +5762,7 @@ impl<'p> Interp<'p> {
                 let pred = args[1].clone();
                 let mut out = Vec::new();
                 for x in xs.iter().cloned() {
-                    let r = self.call_closure(pred.clone(), vec![x.clone()])?;
+                    let r = self.call_cb(pred.clone(), vec![x.clone()])?;
                     match r {
                         Value::Bool(true) => out.push(x),
                         Value::Bool(false) => break,
@@ -5752,7 +5794,7 @@ impl<'p> Interp<'p> {
                 let mut out = Vec::new();
                 for x in xs.iter().cloned() {
                     if still_dropping {
-                        let r = self.call_closure(pred.clone(), vec![x.clone()])?;
+                        let r = self.call_cb(pred.clone(), vec![x.clone()])?;
                         match r {
                             Value::Bool(true) => continue,
                             Value::Bool(false) => still_dropping = false,
@@ -5791,7 +5833,7 @@ impl<'p> Interp<'p> {
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
                 for (k, v) in pairs {
-                    let _ = self.call_closure(f.clone(), vec![Value::Str(Rc::new(k)), v])?;
+                    let _ = self.call_cb(f.clone(), vec![Value::Str(Rc::new(k)), v])?;
                 }
                 ok!(Value::Unit);
             }
@@ -5816,7 +5858,7 @@ impl<'p> Interp<'p> {
                 let mut out: std::collections::BTreeMap<String, Vec<Value>> =
                     std::collections::BTreeMap::new();
                 for x in xs.iter().cloned() {
-                    let k = self.call_closure(key_fn.clone(), vec![x.clone()])?;
+                    let k = self.call_cb(key_fn.clone(), vec![x.clone()])?;
                     let key = match k {
                         Value::Str(s) => Rc::unwrap_or_clone(s),
                         other => {

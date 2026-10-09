@@ -330,6 +330,23 @@ fn dispatch_cases() -> Vec<Case> {
         case("width: unary", "", &body("assert((-narrow(4)) == 252)"), "", Refused),
         case("width: bit-not", "", &body("assert((~narrow(4)) == 251)"), "", Refused),
         case("width: through a tuple", "", &body("let t = (narrow(255), 1)\n    assert((t.0 << 1) == 254)"), "", Refused),
+        // Amendment 117 (loop findings 35, 36, 42, 52): a refinement pins what its BASE pins,
+        // and a width hidden in a soft-typed wrapper is still a width.
+        case("HONEST: an operator struct holding the candidate's number, dispatched on", "type Sq = { s: i64 }\ntype Ci = { r: i64 }\ntrait Area {\n    fn area(self) -> i64\n}\nimpl Area for Sq {\n    fn area(self: Sq) -> i64 { self.s * self.s }\n}\nimpl Area for Ci {\n    fn area(self: Ci) -> i64 { self.r * 3 }\n}\n", &body("let q = Sq { s: val() }\n    assert(q.area() == 81)"), "fn val() -> i64 { 9 }\n", Ok),
+        // Amendment 117 (loop findings 37, 41): the operator's sandbox ceiling binds the candidate it runs.
+        case("an operator sandbox that denies IO, around a candidate that prints", "", "    let p = principal_root(\"r\", true, true, true, 100)\n    let sb = sandbox_create(p, \"Net\")\n    let r = sandbox_run(sb, \"cprint\", 1)\n    assert(r == 1)", "fn cprint(x: i64) -> i64 {\n    println(\"hi\")\n    1\n}\n", Fails),
+        case("an operator sandbox that allows IO, around a candidate that prints", "", "    let p = principal_root(\"r\", true, true, true, 100)\n    let sb = sandbox_create(p, \"IO\")\n    let r = sandbox_run(sb, \"cprint\", 1)\n    assert(r == 1)", "fn cprint(x: i64) -> i64 {\n    println(\"hi\")\n    1\n}\n", Ok),
+        case("refinement over a union: let", "type Num = i64 | u8 where true\n", &body("let n: Num = go()\n    assert(n.ok())"), "fn go() -> i64 | u8 { narrow(4) }\n", Refused),
+        case("refinement over a union: parameter", "type Num = i64 | u8 where true\nfn run(n: Num) -> bool { n.ok() }\n", &body("assert(run(go()))"), "fn go() -> i64 | u8 { narrow(4) }\n", Refused),
+        case("refinement over a union: closure parameter", "type Num = i64 | u8 where true\n", &body("let g = |n: Num| n.ok()\n    assert(g(go()))"), "fn go() -> i64 | u8 { narrow(4) }\n", Refused),
+        case("refinement over an Option of a union", "type Op = Option<i64 | u8> where true\n", &body("let n: Op = go()\n    match n { Some(x) => assert(x.ok())  None => assert(false) }"), "fn go() -> Option<i64 | u8> { Some(narrow(4)) }\n", Refused),
+        case("refinement over an array of a union", "type Arr = [i64 | u8] where true\n", &body("let n: Arr = go()\n    assert(n[0].ok())"), "fn go() -> [i64 | u8] { [narrow(4)] }\n", Refused),
+        case("a chain of refinements over a union", "type A = i64 | u8 where true\ntype B = A where true\n", &body("let n: B = go()\n    assert(n.ok())"), "fn go() -> i64 | u8 { narrow(4) }\n", Refused),
+        case("refinement over a closed base still pins", "type Pos = i64 where true\n", &body("let n: Pos = go()\n    assert(n.ok())"), "fn go() -> i64 { 9 }\n", Ok),
+        case("a chain of refinements over a closed base still pins", "type A = i64 where true\ntype B = A where true\n", &body("let n: B = go()\n    assert(n.ok())"), "fn go() -> i64 { 9 }\n", Ok),
+        case("width: inside an Uncertain the candidate built", "", &body("let u = k()\n    let s = u << 1\n    assert_eq(s.value, 144)"), "fn k() -> Uncertain { Uncertain { value: narrow(200), confidence: 1.0 } }\n", Refused),
+        case("width: inside a Temporal the candidate built", "", &body("let u = k()\n    assert((u << 1) == 144)"), "fn k() -> Temporal { Temporal { value: narrow(200), confidence: 1.0, horizon_ms: 1000, decay: 0.0, created_ms: 0 } }\n", Refused),
+        case("width: inside an Uncertain the operator built", "", &body("let u = uncertain_new(72, 1.0)\n    let s = u << 1\n    assert_eq(s.value, 144)"), "", Ok),
     ]
 }
 
@@ -510,6 +527,7 @@ fn hook_cases() -> Vec<Case> {
         case("hook: world written by sealed code", REF, &with(&format!("    let f = \"{}/r11t-hook2.txt\"\n    let w = write_file(f, \"double\")\n    stomp(f)\n    let nm = match read_file(f) {{ Ok(s) => s  Err(e) => \"\" }}\n", std::env::temp_dir().display()), "nm"), &format!("fn stomp(f: str) {{ let w = write_file(f, \"reference\") }}\n{dbl}"), Refused),
         case("hook: handler payload", REF, &format!("{SB}    let nm = with handler {{ on IO(p) => {{\n        let r = sandbox_run(sb, p, 21)\n        resume(Ok(to_str(r)))\n    }} }} {{\n        match read_file(entry()) {{ Ok(s) => s  Err(e) => \"\" }}\n    }}\n    assert(nm == \"42\")"), ENT, Refused),
         case("hook: handler return arm", REF, &format!("{SB}    let nm = with handler {{ on IO(p) => resume(Ok(\"x\")) return(v) => to_str(sandbox_run(sb, v, 21)) }} {{\n        entry()\n    }}\n    assert(nm == \"42\")"), ENT, Refused),
+        case("hook: an aborting arm's value reaches the return arm", REF, &format!("{SB}    let nm = with handler {{ on IO(p) => entry() return(v) => to_str(sandbox_run(sb, v, 21)) }} {{\n        read_file(\"/nonexistent/r11t4\")\n    }}\n    assert(nm == \"42\")"), ENT, Refused),
         case("hook: a completed arm's value reaches the return arm", REF, &format!("{SB}    let nm = with handler {{ on IO(p) => {{\n        let a = resume(Ok(entry()))\n        a\n    }} return(v) => to_str(sandbox_run(sb, match v {{ Ok(s) => s  Err(e) => \"\" }}, 21)) }} {{\n        read_file(\"/nonexistent/r11t3\")\n    }}\n    assert(nm == \"42\")"), ENT, Refused),
         case("hook: replay feed", REF, &with("    let nm = with handler { on IO(p) => {\n        let a = resume(Ok(entry()))\n        a\n    } } {\n        match read_file(\"/nonexistent/r11t2\") { Ok(s) => s  Err(e) => \"\" }\n    }\n", "nm"), ENT, Refused),
         case("hook: pattern binding", REF, &with("    let nm = match Some(entry()) { Some(s) => s  None => \"\" }\n", "nm"), ENT, Refused),
@@ -681,7 +699,7 @@ fn every_type_that_holds_a_value_keeps_its_taint() {
         ("Interp", "`globals` (a taint per module-level let, `Taint::lets`/`seal_owns_global`) and `main_locals` (a session report written after the run)"),
         ("HandlerFrame", "its env snapshots are `Env::snapshot` maps, which carry taint companions"),
         ("HandlerArmRt", "its captured map is an `Env::snapshot`"),
-        ("ResumeReplay", "`feed` is the `resume(..)` argument; its taint is `Taint::feed`, read when the replay yields it"),
+        ("ResumeReplay", "`feed` is the `resume(..)` argument; its taint is `ResumeReplay::feed_t`, read when the replay yields it"),
         ("ResumeCtx", "its env snapshot is an `Env::snapshot`"),
         ("DictSnap", "what the operator's dict held, kept to judge a replacement by; never returned to a program"),
         ("Taint", "the objects it pins and the closures it remembers, to keep their addresses from being reused"),
@@ -1056,59 +1074,114 @@ const KERNEL_GETTERS: &[(&str, &str, &str, &str)] = &[
 const KERNEL_NOT_GETTERS: &[(&str, &str)] = &[
     ("principal_root", "creates a handle"),
     ("principal_mint", "creates a handle"),
-    ("principal_holds", "capabilities are fixed at creation; nothing sealed can change them"),
+    (
+        "principal_holds",
+        "capabilities are fixed at creation; nothing sealed can change them",
+    ),
     ("principal_spend", "a writer"),
     ("principal_authorize", "capabilities are fixed at creation"),
     ("principal_can_mint", "capabilities are fixed at creation"),
     ("principal_activate", "returns unit"),
-    ("principal_current_name", "reads the activated principal; sealed code cannot activate (a writer in the kernel class)"),
+    (
+        "principal_current_name",
+        "reads the activated principal; sealed code cannot activate (a writer in the kernel class)",
+    ),
     ("sandbox_create", "creates a handle"),
     ("sandbox_create_scoped", "creates a handle"),
     ("sandbox_run", "runs a named fn: the name rule, not state"),
     ("scheduler_spawn", "a writer"),
     ("scheduler_run", "a writer"),
-    ("scheduler_result", "keyed by an id the spawner holds; the id is tainted if sealed spawned it"),
+    (
+        "scheduler_result",
+        "keyed by an id the spawner holds; the id is tainted if sealed spawned it",
+    ),
     ("scheduler_failed", "keyed by an id the spawner holds"),
     ("scheduler_restart", "a writer"),
-    ("scheduler_failed_count", "same Kernel-class gate as scheduler_done_count"),
+    (
+        "scheduler_failed_count",
+        "same Kernel-class gate as scheduler_done_count",
+    ),
     ("supervisor_new", "creates a handle"),
     ("supervisor_supervise", "a writer"),
     ("supervisor_run", "a writer"),
-    ("supervisor_alive", "same Kernel-class gate as scheduler_done_count"),
-    ("supervisor_restarts", "same Kernel-class gate as scheduler_done_count"),
-    ("dstore_open", "creates a handle (and a log in the user cache dir, so no test drives it)"),
-    ("dstore_apply", "a writer"),
-    ("dstore_value", "same Kernel-class gate as principal_budget_remaining (a test would write the user cache dir)"),
-    ("dstore_version", "same Kernel-class gate as principal_budget_remaining"),
-    ("dstore_clear", "a writer"),
+    (
+        "supervisor_alive",
+        "same Kernel-class gate as scheduler_done_count",
+    ),
+    (
+        "supervisor_restarts",
+        "same Kernel-class gate as scheduler_done_count",
+    ),
     ("llm_open", "creates a handle"),
     ("llm_complete", "a writer (and AI-policy gated)"),
     ("llm_alive", "same Kernel-class gate as dstore_value"),
-    ("llm_spent", "same Kernel-class gate as principal_budget_remaining"),
+    (
+        "llm_spent",
+        "same Kernel-class gate as principal_budget_remaining",
+    ),
     ("kernel_goal_create", "creates a handle"),
     ("kernel_goal_run", "a writer"),
-    ("kernel_goal_best_score", "same Kernel-class gate as dstore_value"),
-    ("kernel_goal_spent", "same Kernel-class gate as principal_budget_remaining"),
-    ("kernel_goal_budget_left", "same Kernel-class gate as principal_budget_remaining"),
+    (
+        "kernel_goal_best_score",
+        "same Kernel-class gate as dstore_value",
+    ),
+    (
+        "kernel_goal_spent",
+        "same Kernel-class gate as principal_budget_remaining",
+    ),
+    (
+        "kernel_goal_budget_left",
+        "same Kernel-class gate as principal_budget_remaining",
+    ),
     ("corrigible_halt", "a writer"),
-    ("corrigible_halted", "same Kernel-class gate as dstore_value"),
+    (
+        "corrigible_halted",
+        "same Kernel-class gate as dstore_value",
+    ),
     ("goal_run", "a writer"),
     ("goal_run_categorical", "a writer"),
     ("goal_run_random", "a writer"),
     ("goal_run_multistart", "a writer"),
-    ("goal_count", "same Kernel-class gate as principal_budget_remaining"),
+    (
+        "goal_count",
+        "same Kernel-class gate as principal_budget_remaining",
+    ),
     ("goal_run_constrained", "a writer"),
     ("goal_continue", "a writer"),
-    ("goal_best_input", "same Kernel-class gate as principal_budget_remaining"),
-    ("goal_best_inputs", "same Kernel-class gate as principal_budget_remaining"),
-    ("goal_best_inputs_f64", "same Kernel-class gate as principal_budget_remaining"),
-    ("goal_best_score", "same Kernel-class gate as principal_budget_remaining"),
+    (
+        "goal_best_input",
+        "same Kernel-class gate as principal_budget_remaining",
+    ),
+    (
+        "goal_best_inputs",
+        "same Kernel-class gate as principal_budget_remaining",
+    ),
+    (
+        "goal_best_inputs_f64",
+        "same Kernel-class gate as principal_budget_remaining",
+    ),
+    (
+        "goal_best_score",
+        "same Kernel-class gate as principal_budget_remaining",
+    ),
     ("goal_eval", "a writer"),
-    ("goal_history", "same Kernel-class gate as principal_budget_remaining"),
+    (
+        "goal_history",
+        "same Kernel-class gate as principal_budget_remaining",
+    ),
     ("goal_clear", "a writer"),
-    ("agent_detect_loop", "same Kernel-class gate as principal_budget_remaining"),
-    ("agent_uncertainty", "same Kernel-class gate as principal_budget_remaining"),
-    ("agent_trace_len", "same Kernel-class gate as principal_budget_remaining"),
+    (
+        "agent_detect_loop",
+        "same Kernel-class gate as principal_budget_remaining",
+    ),
+    (
+        "agent_uncertainty",
+        "same Kernel-class gate as principal_budget_remaining",
+    ),
+    (
+        "agent_trace_len",
+        "same Kernel-class gate as principal_budget_remaining",
+    ),
 ];
 
 fn kernel_state_cases() -> Vec<Case> {
@@ -1972,6 +2045,7 @@ fn control_flow_cases() -> Vec<Case> {
             Ok,
         ));
     }
+    v.extend(amendment_117_cases());
     v
 }
 
@@ -2106,4 +2180,534 @@ fn every_conditional_evaluation_form_in_the_ast_has_a_row_with_an_attack() {
             c.name
         );
     }
+}
+
+// ── Amendment 117: the constructs the six-pass loop found uncovered ──────────
+//
+// Each row of the loop's triage that was FIXED has an ATTACK and a CONTROL here under
+// the table tag of the construct it extends (`match`, `while`, `whilelet`, `callback`,
+// `select`, `handler`). Every attack stores something that does NOT use a candidate-valued
+// argument (a constant-key counter, a module-level marker, a skipped store), which is the
+// shape the round-13 cases could not exercise: they all stored under a key built from the
+// callback parameter or a value the candidate returned.
+
+/// Items for the amendment-117 cases: a module-level marker dict, an operator
+/// fiber that calls candidate code, and an adaptive operator metric.
+const C117_PRE: &str = "let OPD = dict_new()\nfn runner(a: i64) -> i64 {\n    let v = cpanic()\n    dict_set(OPD, \"reached\", 1)\n    0\n}\nfn runner_f(a: i64) -> i64 {\n    let v = cfail()\n    0\n}\nfn runner_ok(a: i64) -> i64 {\n    let v = 3\n    dict_set(OPD, \"reached\", 1)\n    0\n}\nfn opfail(x: str) -> i64 { 1 }\n@[adaptive]\nfn met(x: i64) -> i64 {\n    let u = dict_inc(OPD, \"n\")\n    csc(x)\n}\n@[adaptive]\nfn met_ok(x: i64) -> i64 {\n    let u = dict_inc(OPD, \"n\")\n    3\n}\n@[adaptive]\nfn adp(x: i64) -> i64 { x }\n";
+const C117_CAND: &str = "fn cn() -> i64 { 4 }\nfn cr() -> Result<i64, str> { Ok(4) }\nfn co() -> Option<i64> { Some(4) }\nfn drain(c: Chan<i64>) { let x = c.recv() }\nfn cpanic() -> i64 {\n    assert(cn() > 1)\n    4\n}\nfn csc(x: i64) -> i64 { 3 }\nfn cfail() -> i64 {\n    assert(cn() > 5)\n    4\n}\nfn mkf() -> fn(i64) -> i64 { |x| x + 1 }\nfn work(x: str) -> i64 { 1 }\nfn crd() -> i64 {\n    if cn() == 5 {\n        match read_file(\"/nonexistent/c9r14\") { Ok(s) => 1  Err(e) => 2 }\n    } else { 0 }\n}\nfn spin() -> i64 {\n    let t = temporal_new(0, 1000, 0.5)\n    0\n}\n";
+
+fn amendment_117_cases() -> Vec<Case> {
+    use Expect::*;
+    let mut v: Vec<Case> = Vec::new();
+    let wpath = format!("{}/c9r14-w.txt", std::env::temp_dir().display());
+    let pre = format!("{CTL_PRE}{C117_PRE}let PATHW = \"{wpath}\"\n@[adaptive]\nfn met_w(x: i64) -> i64 {{\n    let u = append_file(PATHW, \"x\")\n    csc(x)\n}}\n@[adaptive]\nfn met_w_ok(x: i64) -> i64 {{\n    let u = append_file(PATHW, \"x\")\n    3\n}}\n");
+    let mut add = |name: &'static str, body: &str, expect: Expect| {
+        v.push(case(
+            name,
+            &pre,
+            &format!("    let op = dict_new()\n{OPS}{body}"),
+            C117_CAND,
+            expect,
+        ));
+    };
+    // The selector reads the operator's own state and picks from `ops`.
+    let by_len = "\n    let f = ops[dict_len(op)]\n    assert(f(21) == reference(21))";
+    let by_count = "\n    let f = ops[min_i64(max_i64(dict_get_or(op, \"c\", 0) - 1, 0), 1)]\n    assert(f(21) == reference(21))";
+    // ── match: a guard runs only because the pattern matched the subject ──
+    add("ctl[match] attack: a guard's side effect, run because the candidate's answer matched the pattern", &format!("    let q = match cn() {{ 4 if mark(op) => 1  _ => 0 }}{by_len}"), Refused);
+    add("ctl[match] control: a guard's side effect, run because the operator's value matched the pattern", &format!("    let q = match 4 {{ 4 if mark(op) => 1  _ => 0 }}{by_len}"), Ok);
+    add("ctl[match] attack: a guard's side effect in a tuple subject holding the candidate's answer", &format!("    let q = match (cn(), 1) {{ (4, 1) if mark(op) => 1  _ => 0 }}{by_len}"), Refused);
+    add(
+        "ctl[match] control: the same tuple subject, the operator's values",
+        &format!("    let q = match (4, 1) {{ (4, 1) if mark(op) => 1  _ => 0 }}{by_len}"),
+        Ok,
+    );
+    // ── while / while let: the CONDITION is re-evaluated because the last one was true ──
+    // The store in the condition uses a constant key, so nothing but the control taint can mark it.
+    let wsel = "\n    let f = ops[min_i64(max_i64(dict_get_or(op, \"c\", 0) - 1, 0), 1)]\n    assert(f(21) == reference(21))";
+    let gdef = "    let g = || {{ let u = dict_inc(op, \"c\")\n        true }}\n";
+    add("ctl[while] attack: a side effect in the condition, evaluated a number of times the candidate's answer chose", &format!("    let i = 0\n    let c = cn()\n{gdef}    while g() && i < c - 3 {{ i = i + 1 }}{wsel}").replace("{{", "{").replace("}}", "}"), Refused);
+    add(
+        "ctl[while] control: the same condition, the operator's bound",
+        &format!(
+            "    let i = 0\n    let c = 4\n{gdef}    while g() && i < c - 3 {{ i = i + 1 }}{wsel}"
+        )
+        .replace("{{", "{")
+        .replace("}}", "}"),
+        Ok,
+    );
+    add("ctl[whilelet] attack: a side effect in the scrutinee, evaluated a number of times the candidate's answer chose", &format!("    let n = 0\n    let c = cn()\n{gdef}    while let Some(x) = (if g() && n < c - 3 {{ Some(n) }} else {{ None }}) {{ n = n + 1 }}{wsel}").replace("{{", "{").replace("}}", "}"), Refused);
+    add("ctl[whilelet] control: the same scrutinee, the operator's bound", &format!("    let n = 0\n    let c = 4\n{gdef}    while let Some(x) = (if g() && n < c - 3 {{ Some(n) }} else {{ None }}) {{ n = n + 1 }}{wsel}").replace("{{", "{").replace("}}", "}"), Ok);
+    // ── callbacks: the store does NOT use the parameter ──
+    for (tag, call) in [
+        ("any", "arr_any([1, 2, 3], |x| { let u = dict_inc(op, \"c\")\n        x == cn() - 2 })"),
+        ("all", "arr_all([1, 2, 3], |x| { let u = dict_inc(op, \"c\")\n        x < cn() - 2 })"),
+        ("find", "arr_find([1, 2, 3], |x| { let u = dict_inc(op, \"c\")\n        x == cn() - 2 })"),
+        ("take_while", "arr_take_while([1, 2, 3], |x| { let u = dict_inc(op, \"c\")\n        x < cn() - 2 })"),
+        ("drop_while", "arr_drop_while([1, 2, 3], |x| { let u = dict_inc(op, \"c\")\n        x < cn() - 2 })"),
+        ("sort_by", "arr_sort_by([3, 1, 2], |a, b| { let u = dict_inc(op, \"c\")\n        (a - b) * (cn() - 3) })"),
+    ] {
+        let (a, c): (&'static str, &'static str) = match tag {
+            "any" => ("ctl[callback] attack: a parameter-free store in arr_any stopped by the candidate's answer", "ctl[callback] control: a parameter-free store in arr_any stopped by the operator's"),
+            "all" => ("ctl[callback] attack: a parameter-free store in arr_all stopped by the candidate's answer", "ctl[callback] control: a parameter-free store in arr_all stopped by the operator's"),
+            "find" => ("ctl[callback] attack: a parameter-free store in arr_find stopped by the candidate's answer", "ctl[callback] control: a parameter-free store in arr_find stopped by the operator's"),
+            "take_while" => ("ctl[callback] attack: a parameter-free store in arr_take_while stopped by the candidate's answer", "ctl[callback] control: a parameter-free store in arr_take_while stopped by the operator's"),
+            "drop_while" => ("ctl[callback] attack: a parameter-free store in arr_drop_while stopped by the candidate's answer", "ctl[callback] control: a parameter-free store in arr_drop_while stopped by the operator's"),
+            _ => ("ctl[callback] attack: a parameter-free store in the arr_sort_by comparator, whose call count the candidate's answers decide", "ctl[callback] control: a parameter-free store in the arr_sort_by comparator, the operator's answers"),
+        };
+        add(a, &format!("    let r = {call}{by_count}"), Refused);
+        add(c, &format!("    let r = {}{by_count}", call.replace("cn()", "4")), Ok);
+    }
+    // ── select: the channel LOOKED AT is the candidate's pick; a pop under the candidate's control ──
+    add("ctl[select] attack: the arm that fires because the candidate chose WHICH channel to look at", &format!("    let a = chan<i64>()\n    let e = chan<i64>()\n    let b = chan<i64>()\n    a.send(7)\n    b.send(7)\n    let c = if cn() == 4 {{ a }} else {{ e }}\n    let s = select {{ c.recv() => {{ let u = mark(op)\n        1 }}  b.recv() => 0 }}{by_len}"), Refused);
+    add("ctl[select] control: the same, the channel chosen by the operator", &format!("    let a = chan<i64>()\n    let e = chan<i64>()\n    let b = chan<i64>()\n    a.send(7)\n    b.send(7)\n    let c = if 1 == 1 {{ a }} else {{ e }}\n    let s = select {{ c.recv() => {{ let u = mark(op)\n        1 }}  b.recv() => 0 }}{by_len}"), Ok);
+    let pop_sel = "\n    let f = ops[k]\n    assert(f(21) == reference(21))";
+    add("ctl[select] attack: the operator pops its own channel only because the candidate's answer was 4", &format!("    let ch = chan<i64>()\n    ch.send(0)\n    ch.send(1)\n    if cn() == 4 {{ let u = ch.recv() }}\n    let k = ch.recv(){pop_sel}"), Refused);
+    add("ctl[select] control: the operator pops its own channel because of its own condition", &format!("    let ch = chan<i64>()\n    ch.send(0)\n    ch.send(1)\n    if 1 == 1 {{ let u = ch.recv() }}\n    let k = ch.recv(){pop_sel}"), Ok);
+    add("ctl[select] attack: try_recv under the candidate's answer", &format!("    let ch = chan<i64>()\n    ch.send(0)\n    ch.send(1)\n    if cn() == 4 {{ let u = ch.try_recv() }}\n    let k = ch.recv(){pop_sel}"), Refused);
+    add("ctl[select] control: try_recv under the operator's condition", &format!("    let ch = chan<i64>()\n    ch.send(0)\n    ch.send(1)\n    if 1 == 1 {{ let u = ch.try_recv() }}\n    let k = ch.recv(){pop_sel}"), Ok);
+    // ── handlers: an arm that does not resume ABORTS the with body at the perform point ──
+    let hsel = "\n    let f = ops[dict_len(op)]\n    assert(f(21) == reference(21))";
+    add("ctl[handler] attack: what follows candidate code that could have aborted the with body by performing the handled effect", &format!("    let r = with handler {{ on IO(p) => 5 }} {{\n        let a = crd()\n        let u = mark(op)\n        7\n    }}{hsel}"), Refused);
+    add("ctl[handler] control: the same with body, no candidate code in it", &format!("    let r = with handler {{ on IO(p) => 5 }} {{\n        let a = 3\n        let u = mark(op)\n        7\n    }}{hsel}"), Ok);
+    add("ctl[handler] attack: what follows an operator perform that the candidate's answer could have caused to abort the with body", &format!("    let c = cn()\n    let r = with handler {{ on IO(p) => 5 }} {{\n        if c == 5 {{ let a = read_file(\"/nonexistent/c9r14\") }}\n        let u = mark(op)\n        7\n    }}{hsel}"), Refused);
+    add("ctl[handler] control: the same perform under the operator's condition", &format!("    let c = 4\n    let r = with handler {{ on IO(p) => 5 }} {{\n        if c == 5 {{ let a = read_file(\"/nonexistent/c9r14\") }}\n        let u = mark(op)\n        7\n    }}{hsel}"), Ok);
+    add("ctl[handler] attack: the value a non-tail arm resumes with is the candidate's", "    let v = cn()\n    let r = with handler { on IO(p) => { let z = resume(Ok(to_str(v)))\n        z } } {\n        let s = match read_file(\"/nonexistent/c9r14\") { Ok(s) => parse_int_or(s, 0)  Err(e) => 0 }\n        let f = ops[s - 3]\n        assert(f(21) == reference(21))\n        s\n    }", Refused);
+    add("ctl[handler] control: the value a non-tail arm resumes with is the operator's", "    let v = 4\n    let r = with handler { on IO(p) => { let z = resume(Ok(to_str(v)))\n        z } } {\n        let s = match read_file(\"/nonexistent/c9r14\") { Ok(s) => parse_int_or(s, 0)  Err(e) => 0 }\n        let f = ops[s - 3]\n        assert(f(21) == reference(21))\n        s\n    }", Ok);
+    // ── scheduler fibers: a swallowed panic, and a failure at the call edge ──
+    let osel = "\n    let f = ops[dict_len(OPD)]\n    assert(f(21) == reference(21))";
+    let osel_ok = "\n    let f = ops[dict_len(OPD)]\n    assert(f(21) == reference(21))";
+    add("ctl[callback] attack: an operator fiber that calls candidate code (which could panic) sets its marker after it", &format!("    let id = scheduler_spawn(\"runner\", 1)\n    let n = scheduler_run(){osel}"), Refused);
+    add(
+        "ctl[callback] control: an operator fiber that calls no candidate code sets its marker",
+        &format!(
+            "    let id = scheduler_spawn(\"runner_ok\", 1)\n    let n = scheduler_run(){osel_ok}"
+        ),
+        Ok,
+    );
+    add("ctl[callback] attack: a candidate fiber root that fails at the call edge", "    let id = scheduler_spawn(\"work\", 5)\n    let n = scheduler_run()\n    let f = ops[scheduler_failed_count()]\n    assert(f(21) == reference(21))", Refused);
+    add("ctl[callback] control: an operator fiber root that fails at the call edge", "    let id = scheduler_spawn(\"opfail\", 5)\n    let n = scheduler_run()\n    let f = ops[scheduler_failed_count()]\n    assert(f(21) == reference(21))", Ok);
+    add("ctl[callback] attack: an operator store after a scheduler pass in which a fiber that ran candidate code failed", &format!("    let id = scheduler_spawn(\"runner_f\", 1)\n    let n = scheduler_run()\n    let u = mark(op){by_len}"), Refused);
+    add("ctl[callback] control: an operator store after a scheduler pass over a fiber that ran no candidate code", &format!("    let id = scheduler_spawn(\"runner_ok\", 1)\n    let n = scheduler_run()\n    let u = mark(op){by_len}"), Ok);
+    add("ctl[handler] attack: a candidate closure called inside an abort-capable with body, the store after the with", &format!("    let g = mkf()\n    let r = with handler {{ on IO(p) => 5 }} {{\n        let z = g(1)\n        7\n    }}\n    let u = mark(op){by_len}"), Refused);
+    add("ctl[handler] control: an operator closure called inside an abort-capable with body, the store after the with", &format!("    let g = |x| x + 1\n    let r = with handler {{ on IO(p) => 5 }} {{\n        let z = g(1)\n        7\n    }}\n    let u = mark(op){by_len}"), Ok);
+    // ── goal searches: the number of evaluations is the candidate's score's ──
+    add("ctl[callback] attack: the number of evaluations of an operator metric, decided by the candidate's score", "    let r = goal_run(\"met\", 10.0, 5)\n    let f = ops[min_i64(max_i64(dict_get_or(OPD, \"n\", 0) - 1, 0), 1)]\n    assert(f(21) == reference(21))", Refused);
+    add("ctl[callback] control: the same search over a metric that ignores the candidate", "    let r = goal_run(\"met_ok\", 10.0, 5)\n    let f = ops[min_i64(max_i64(dict_get_or(OPD, \"n\", 0) - 1, 0), 1)]\n    assert(f(21) == reference(21))", Ok);
+    let nsel = "\n    let f = ops[min_i64(max_i64(dict_get_or(OPD, \"n\", 0) - 1, 0), 1)]\n    assert(f(21) == reference(21))";
+    add("ctl[callback] attack: the number of evaluations of an operator metric in a random search, decided by the candidate's score", &format!("    let r = goal_run_random(\"met\", 100.0, 5, 0, 10){nsel}"), Refused);
+    add(
+        "ctl[callback] control: the same random search over a metric that ignores the candidate",
+        &format!("    let r = goal_run_random(\"met_ok\", 100.0, 5, 0, 10){nsel}"),
+        Ok,
+    );
+    add("ctl[callback] attack: the number of evaluations of an operator metric in a categorical search, decided by the candidate's score", &format!("    let r = goal_run_categorical(\"met\", 4, 100.0, 5){nsel}"), Refused);
+    add("ctl[callback] control: the same categorical search over a metric that ignores the candidate", &format!("    let r = goal_run_categorical(\"met_ok\", 4, 100.0, 5){nsel}"), Ok);
+    add("ctl[callback] attack: a search over a stream the operator seeded with the candidate's number", "    let z = srand(cn())\n    let r = goal_run_random(\"met_ok\", 0.0, 6, 0, 10)\n    let f = ops[min_i64(f64_to_i64(r), 0) + 1]\n    assert(f(21) == reference(21))", Refused);
+    add("ctl[callback] control: the same search seeded with the operator's number", "    let z = srand(4)\n    let r = goal_run_random(\"met_ok\", 0.0, 6, 0, 10)\n    let f = ops[min_i64(f64_to_i64(r), 0) + 1]\n    assert(f(21) == reference(21))", Ok);
+    add("ctl[callback] attack: a World reader of the stream a search drew a candidate-decided number of times (marked by the search's own provenance log)", "    let r = goal_run_random(\"met\", 0.0, 6, 0, 10)\n    let z = random_i64(0, 2)\n    let f = ops[min_i64(z, 0) + 1]\n    assert(f(21) == reference(21))", Refused);
+    add("ctl[callback] control: the same search over a metric that ignores the candidate", "    let r = goal_run_random(\"met_ok\", 0.0, 6, 0, 10)\n    let z = random_i64(0, 2)\n    let f = ops[min_i64(z, 0) + 1]\n    assert(f(21) == reference(21))", Ok);
+    let wsel = "\n    let c = match read_file(PATHW) { Ok(s) => len(s)  Err(e) => 0 }\n    let f = ops[min_i64(max_i64(c - 1, 0), 1)]\n    assert(f(21) == reference(21))";
+    add("ctl[callback] attack: a file an operator metric appended to a number of times the candidate's score decided", &format!("    let z = write_file(PATHW, \"\")\n    let r = goal_run(\"met_w\", 10.0, 5){wsel}"), Refused);
+    add("ctl[callback] control: the same search over a metric that ignores the candidate", &format!("    let z = write_file(PATHW, \"\")\n    let r = goal_run(\"met_w_ok\", 10.0, 5){wsel}"), Ok);
+    // ── hidden state the runtime writes for the caller: provenance, the clock ──
+    add("ctl[for] attack: provenance recorded by an operator adaptive fn called in a loop the candidate sized", "    for i in 0..(cn() - 3) { let u = adp(1) }\n    let n = goal_count(\"adp\")\n    let f = ops[n]\n    assert(f(21) == reference(21))", Refused);
+    add("ctl[for] control: provenance recorded by an operator adaptive fn in a loop the operator sized", "    for i in 0..1 { let u = adp(1) }\n    let n = goal_count(\"adp\")\n    let f = ops[n]\n    assert(f(21) == reference(21))", Ok);
+    add("ctl[callback] attack: the clock the candidate advanced through temporal_new, read back through temporal_is_valid", "    let z = spin()\n    let t = temporal_new(0, 1000, 0.5)\n    let i = if temporal_is_valid(t) { 1 } else { 0 }\n    let f = ops[i]\n    assert(f(21) == reference(21))", Refused);
+    add("ctl[callback] control: the operator's own temporal_new and temporal_is_valid", "    let t = temporal_new(0, 1000, 0.5)\n    let i = if temporal_is_valid(t) { 1 } else { 0 }\n    let f = ops[i]\n    assert(f(21) == reference(21))", Ok);
+    v
+}
+
+// ── Amendment 117: the drift tests the loop's findings call for ───────────────
+
+/// The arms of `call_builtin`, split at their 12-space `"name" … =>` headers:
+/// (names, the arm's text up to the next header).
+fn builtin_arms() -> Vec<(Vec<String>, String)> {
+    let src = sources()
+        .into_iter()
+        .find(|(f, _)| *f == "interp/builtins.rs")
+        .expect("builtins.rs")
+        .1;
+    let mut arms: Vec<(Vec<String>, String)> = Vec::new();
+    for line in src.lines() {
+        let indent = line.len() - line.trim_start().len();
+        let t = line.trim_start();
+        if indent == 12 && t.starts_with('"') && t.contains("=>") {
+            let head = &t[..t.find("=>").unwrap()];
+            let names = head
+                .split('|')
+                .map(|n| n.trim().trim_matches('"').to_string())
+                .filter(|n| !n.contains(' '))
+                .collect();
+            arms.push((names, String::new()));
+        } else if let Some(last) = arms.last_mut() {
+            last.1.push_str(line);
+            last.1.push('\n');
+        }
+    }
+    arms
+}
+
+/// Loop findings 0, 1, 11, 13: `temporal_new` read the process clock from an arm
+/// classed Pure. Every arm of a builtin classed Pure is scanned: it may reach no
+/// ambient state (the clock, the host seam, the RNG), and no interpreter state
+/// except the two it is allowed (`call_cb`, which carries the callbacks' taint,
+/// and `dict_mutated`, the dict edge's dirty flag).
+#[test]
+fn no_arm_of_a_pure_builtin_reads_or_advances_ambient_state() {
+    use super::taint::{info, Class};
+    const FORBIDDEN: &[&str] = &[
+        "program_now_ms",
+        "crate::clock",
+        "with_host",
+        "rng_next",
+        "rng_reseed",
+        "self.k()",
+        "self.kernels",
+        "std::env",
+        "std::fs",
+        "std::process",
+        "std::time",
+    ];
+    const ALLOWED_SELF: &[&str] = &["self.call_cb", "self.dict_mutated"];
+    let mut scanned = 0;
+    let mut bad: Vec<String> = Vec::new();
+    for (names, body) in builtin_arms() {
+        let pure: Vec<&String> = names
+            .iter()
+            .filter(|n| info(n).is_some_and(|i| i.class == Class::Pure))
+            .collect();
+        if pure.is_empty() {
+            continue;
+        }
+        scanned += 1;
+        if names
+            .iter()
+            .any(|n| info(n).is_some_and(|i| i.class != Class::Pure))
+        {
+            bad.push(format!(
+                "{names:?}: one arm serves a Pure and a non-Pure builtin"
+            ));
+        }
+        for line in body.lines() {
+            let t = line.trim_start();
+            if t.starts_with("//") {
+                continue;
+            }
+            for f in FORBIDDEN {
+                if t.contains(f) {
+                    bad.push(format!("{names:?}: `{f}` in `{t}`"));
+                }
+            }
+            let mut rest = t;
+            while let Some(i) = rest.find("self.") {
+                let tail = &rest[i..];
+                let word: String = tail
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
+                    .collect();
+                if !ALLOWED_SELF.iter().any(|a| word.starts_with(a)) {
+                    bad.push(format!(
+                        "{names:?}: `{word}` reads interpreter state in a Pure arm"
+                    ));
+                }
+                rest = &tail[4..];
+            }
+        }
+    }
+    assert!(
+        scanned > 100,
+        "DRIFT: only {scanned} Pure arms found; did the arm layout change?"
+    );
+    assert!(
+        bad.is_empty(),
+        "DRIFT: a Pure-classed builtin touches ambient state (classify it World):\n{}",
+        bad.join("\n")
+    );
+    // The two that did, and the clock row.
+    for n in [
+        "temporal_new",
+        "temporal_is_valid",
+        "temporal_now",
+        "now_ms",
+        "sleep_ms",
+    ] {
+        assert_eq!(
+            info(n).map(|i| i.class),
+            Some(Class::World),
+            "`{n}` reads the clock"
+        );
+        assert_eq!(
+            crate::builtins::builtin_effect_row(n),
+            &["Time"],
+            "`{n}` reads the clock, so it needs the Time effect"
+        );
+    }
+}
+
+/// Loop finding 12: the durable store is a log file every kernel opens, not
+/// operator-kernel state.
+#[test]
+fn the_durable_store_is_world_state_not_kernel_state() {
+    use super::taint::{info, Class};
+    for n in [
+        "dstore_open",
+        "dstore_apply",
+        "dstore_value",
+        "dstore_version",
+        "dstore_clear",
+    ] {
+        assert_eq!(info(n).map(|i| i.class), Some(Class::World), "`{n}`");
+    }
+}
+
+/// Every builtin with a closure parameter has a row in `CALLBACK_BUILTINS`, every
+/// row names one, and none of their arms calls a closure except through
+/// `Interp::call_cb` (loop findings 3, 10, 18, 27, 40, 49). The tags a row names
+/// have attack and control cases.
+#[test]
+fn every_builtin_that_takes_a_closure_has_a_callback_row_and_calls_through_call_cb() {
+    use super::taint::CALLBACK_BUILTINS;
+    let takes_fn: Vec<&str> = crate::builtins::BUILTINS
+        .iter()
+        .filter(|b| b.params.iter().any(|(_, t)| t.contains("fn(")))
+        .map(|b| b.name)
+        .collect();
+    for n in &takes_fn {
+        assert!(
+            CALLBACK_BUILTINS.iter().any(|r| r.0 == *n),
+            "DRIFT: builtin `{n}` takes a closure and has no row in taint::CALLBACK_BUILTINS"
+        );
+    }
+    for r in CALLBACK_BUILTINS {
+        assert!(
+            takes_fn.contains(&r.0),
+            "DRIFT: CALLBACK_BUILTINS row `{}` is not a builtin with a closure parameter",
+            r.0
+        );
+        assert!(!r.1.is_empty());
+    }
+    let cases = control_flow_cases();
+    for r in CALLBACK_BUILTINS.iter().filter(|r| r.2 != "-") {
+        let short = r.0.strip_prefix("arr_").unwrap_or(r.0);
+        assert!(
+            cases
+                .iter()
+                .any(|c| c.name.starts_with(&format!("ctl[{}] attack", r.2))
+                    && c.name.contains(short)),
+            "DRIFT: callback row `{}` has no parameter-free-store attack case",
+            r.0
+        );
+        assert!(
+            cases
+                .iter()
+                .any(|c| c.name.starts_with(&format!("ctl[{}] control", r.2))
+                    && c.name.contains(short)),
+            "DRIFT: callback row `{}` has no control case",
+            r.0
+        );
+    }
+    // No arm runs a closure around the control taint.
+    let src = sources()
+        .into_iter()
+        .find(|(f, _)| *f == "interp/builtins.rs")
+        .unwrap()
+        .1;
+    for (i, l) in src.lines().enumerate() {
+        let t = l.trim_start();
+        assert!(
+            t.starts_with("//") || !t.contains("self.call_closure("),
+            "DRIFT: builtins.rs line {} calls a closure with `call_closure`, not `call_cb` (the control taint of the results so far is dropped)",
+            i + 1
+        );
+    }
+    // The arms that use `call_cb` are exactly the closure-taking builtins.
+    let mut used: Vec<String> = Vec::new();
+    for (names, body) in builtin_arms() {
+        if body.contains("self.call_cb(") {
+            used.extend(names);
+        }
+    }
+    for n in &used {
+        assert!(
+            takes_fn.contains(&n.as_str()),
+            "DRIFT: `{n}` calls call_cb but has no closure parameter"
+        );
+    }
+    for n in &takes_fn {
+        assert!(
+            used.iter().any(|u| u == n),
+            "DRIFT: `{n}` takes a closure and its arm never calls call_cb"
+        );
+    }
+}
+
+/// The builtins that run operator code in a Rust loop (goal searches, scheduler
+/// passes): each evaluation is followed by `t_loop_pc`, so the next one runs
+/// under the taint of what the earlier ones returned (loop findings 16, 15, 45, 48).
+#[test]
+fn every_rust_loop_that_runs_operator_code_raises_the_control_taint_after_each_run() {
+    let all = sources();
+    let goal = &all.iter().find(|(f, _)| *f == "interp/goal.rs").unwrap().1;
+    let lines: Vec<&str> = goal.lines().collect();
+    let mut n = 0;
+    let mut cur = String::new();
+    for (i, l) in lines.iter().enumerate() {
+        let t = l.trim_start();
+        let t2 = t
+            .strip_prefix("pub(super) ")
+            .or_else(|| t.strip_prefix("pub(crate) "))
+            .unwrap_or(t);
+        if let Some(r) = t2.strip_prefix("fn ") {
+            cur = r
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+        }
+        if t.starts_with("//") || !l.contains("self.call_fn(") {
+            continue;
+        }
+        // The held-out evaluation is one run, scored and thrown away.
+        if cur == "goal_eval_holdout" {
+            continue;
+        }
+        n += 1;
+        let window = lines[i..(i + 8).min(lines.len())].join("\n");
+        assert!(
+            window.contains("self.t_loop_pc()"),
+            "DRIFT: goal.rs line {} (in `{cur}`) runs operator code and does not raise the control taint after it",
+            i + 1
+        );
+    }
+    assert!(n >= 8, "only {n} goal evaluations found");
+    let b = &all
+        .iter()
+        .find(|(f, _)| *f == "interp/builtins.rs")
+        .unwrap()
+        .1;
+    let at = b
+        .find("fn builtin_scheduler_run_once")
+        .expect("scheduler pass");
+    let body = &b[at..at + 3500];
+    for needle in ["self.t_loop_pc()", "catchable", "entries"] {
+        assert!(
+            body.contains(needle),
+            "DRIFT: the scheduler pass lost `{needle}`"
+        );
+    }
+}
+
+/// Loop finding 47: a Kernel builtin that draws from the RNG stream is coupled
+/// to the world cell `random_*` reads.
+#[test]
+fn every_kernel_builtin_that_draws_the_rng_is_coupled_to_the_world_cell() {
+    use super::taint::{info, Class, RNG_COUPLED};
+    let g = sources()
+        .into_iter()
+        .find(|(f, _)| *f == "interp/goal.rs")
+        .unwrap()
+        .1;
+    // The goal fns that draw, by name, and the builtins that reach them.
+    let mut drawers: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for l in g.lines() {
+        let t = l.trim_start();
+        let t2 = t
+            .strip_prefix("pub(super) ")
+            .or_else(|| t.strip_prefix("pub(crate) "))
+            .unwrap_or(t);
+        if let Some(r) = t2.strip_prefix("fn ") {
+            cur = r
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+        }
+        if l.contains("rng_next(") && !t.starts_with("//") {
+            drawers.push(cur.clone());
+        }
+    }
+    drawers.sort();
+    drawers.dedup();
+    assert!(
+        drawers.len() >= 3,
+        "DRIFT: goal.rs RNG drawers not found: {drawers:?}"
+    );
+    for (names, body) in builtin_arms() {
+        if drawers.iter().any(|d| body.contains(&format!("self.{d}("))) {
+            for n in names {
+                if info(&n).is_some_and(|i| i.class == Class::Kernel) {
+                    assert!(
+                        RNG_COUPLED.contains(&n.as_str()),
+                        "DRIFT: Kernel builtin `{n}` draws the RNG and is not in RNG_COUPLED"
+                    );
+                }
+            }
+        }
+    }
+    for n in RNG_COUPLED {
+        assert_eq!(
+            info(n).map(|i| i.class),
+            Some(Class::Kernel),
+            "RNG_COUPLED lists `{n}`, which is not a Kernel builtin"
+        );
+    }
+}
+
+/// Loop finding 46: the HOLDERS reasons name a field or fn that exists.
+#[test]
+fn the_holder_reasons_name_things_that_exist() {
+    let all = sources();
+    let text: String = all
+        .iter()
+        .map(|(_, s)| s.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let me = include_str!("taint_tests.rs");
+    let at = me.find("const HOLDERS").expect("HOLDERS");
+    let table = &me[at..at + me[at..].find("];").unwrap()];
+    let mut checked = 0;
+    for part in table.split('`').skip(1).step_by(2) {
+        let Some((ty, field)) = part.split_once("::") else {
+            continue;
+        };
+        if !ty.chars().next().is_some_and(|c| c.is_uppercase()) {
+            continue;
+        }
+        checked += 1;
+        let start = text
+            .find(&format!("struct {ty} {{"))
+            .or_else(|| text.find(&format!("struct {ty}<")))
+            .or_else(|| text.find(&format!("enum {ty} {{")))
+            .unwrap_or_else(|| panic!("DRIFT: HOLDERS names `{part}` but no type `{ty}` exists"));
+        let body = &text[start..start + text[start..].find("\n}").unwrap_or(2000)];
+        assert!(
+            body.contains(&format!("{field}:"))
+                || body.contains(&format!("{field},"))
+                || text.contains(&format!("fn {field}(")),
+            "DRIFT: HOLDERS names `{part}`, but `{ty}` has no field `{field}` (and no fn of that name)"
+        );
+    }
+    assert!(
+        checked >= 3,
+        "only {checked} Type::field names found in HOLDERS"
+    );
+}
+
+/// Loop findings 19, 24, 43: both writes the runtime makes for a zoned call
+/// (the in-memory best store, the JSONL log) are marked where they happen.
+#[test]
+fn both_provenance_writes_of_a_zoned_call_are_marked() {
+    let src = sources()
+        .into_iter()
+        .find(|(f, _)| *f == "interp.rs")
+        .unwrap()
+        .1;
+    assert!(
+        src.contains("self.t_provenance_write(entry_t | self.taint.last.get(), true, false);"),
+        "DRIFT: the in-memory provenance push is not marked as kernel state"
+    );
+    assert!(
+        src.contains("self.t_provenance_write(entry_t | self.taint.last.get(), false, true);"),
+        "DRIFT: the provenance.jsonl append is not marked as world state"
+    );
 }

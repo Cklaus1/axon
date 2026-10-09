@@ -88,7 +88,40 @@ impl Principal {
 /// seeded by `AXON_SEED` and re-seedable from Axon source via `srand(n)`, so drawing
 /// tokens from it would let a program set the seed and then enumerate every
 /// handle the kernel is about to issue. This state is never exposed to Axon.
-static TOKEN_STATE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+//
+/// ONE STREAM PER REGISTRY (amendment 117, PSV-1 loop finding 14). This was a
+/// process-global static that the sealed (candidate) kernel and the operator's
+/// both drew from, and successive handles are successive xorshift steps, so the
+/// operator could count how many tokens the candidate drew between two of its
+/// own `principal_root` calls. Each registry now owns its state and a sealed
+/// registry mixes a second domain constant in. (The sentence above is also too
+/// strong: a handle IS one step of the state. What keeps one unguessable is
+/// that the seed is not readable from a contained program.)
+const TOKEN_DOMAIN: u64 = 0x9E37_79B9_7F4A_7C15;
+/// Mixed into a SEALED registry's stream so the two never coincide.
+const TOKEN_DOMAIN_SEALED: u64 = 0xD1B5_4A32_D192_ED03;
+
+/// The first state of a registry's stream. `seed` is `AXON_SEED` when set;
+/// a time-seeded stream is unguessable outright.
+fn seed_stream(sealed: bool, seed: Option<u64>) -> u64 {
+    let x = match seed {
+        // Domain separation: the same AXON_SEED must not make handle tokens
+        // shadow the `random_*` sequence.
+        Some(seed) => seed ^ TOKEN_DOMAIN,
+        None => {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0x5DEE_CE66_D000_0000)
+                ^ 0xA076_1D64_78BD_642F
+        }
+    } | 1;
+    if sealed {
+        (x ^ TOKEN_DOMAIN_SEALED) | 1
+    } else {
+        x
+    }
+}
 
 /// A fresh, unguessable principal handle.
 ///
@@ -105,31 +138,21 @@ static TOKEN_STATE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 /// Never returns 0: 0 is a plausible value for a program to try, and reserving
 /// it means the single most likely forged handle is guaranteed to resolve to
 /// nothing.
-fn fresh_token() -> i64 {
-    use std::sync::atomic::Ordering;
-    let mut x = TOKEN_STATE.load(Ordering::Relaxed);
+fn fresh_token(state: &mut u64, sealed: bool) -> i64 {
+    let mut x = *state;
     if x == 0 {
-        x = match std::env::var("AXON_SEED")
-            .ok()
-            .and_then(|s| s.trim().parse::<u64>().ok())
-        {
-            // Domain separation: the same AXON_SEED must not make handle tokens
-            // shadow the `random_*` sequence.
-            Some(seed) => seed ^ 0x9E37_79B9_7F4A_7C15,
-            None => {
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_nanos() as u64)
-                    .unwrap_or(0x5DEE_CE66_D000_0000)
-                    ^ 0xA076_1D64_78BD_642F
-            }
-        } | 1;
+        x = seed_stream(
+            sealed,
+            std::env::var("AXON_SEED")
+                .ok()
+                .and_then(|s| s.trim().parse::<u64>().ok()),
+        );
     }
     // xorshift64 — same shape as the interpreter's RNG, separate state.
     x ^= x << 13;
     x ^= x >> 7;
     x ^= x << 17;
-    TOKEN_STATE.store(x, Ordering::Relaxed);
+    *state = x;
     let t = x as i64;
     if t == 0 {
         1
@@ -161,6 +184,10 @@ fn fresh_token() -> i64 {
 /// the registry is still append-only.
 #[derive(Debug, Default)]
 pub struct PrincipalRegistry {
+    /// This registry's token stream (see `fresh_token`).
+    token_state: u64,
+    /// Whether this is the sealed (candidate) kernel's registry.
+    sealed: bool,
     principals: Vec<Principal>,
     /// handle token → index into `principals`. The ONLY way in from Axon.
     by_token: std::collections::HashMap<i64, usize>,
@@ -169,8 +196,18 @@ pub struct PrincipalRegistry {
 impl PrincipalRegistry {
     pub fn new() -> Self {
         PrincipalRegistry {
+            token_state: 0,
+            sealed: false,
             principals: Vec::new(),
             by_token: std::collections::HashMap::new(),
+        }
+    }
+
+    /// The registry of the sealed (candidate) kernel: its own token stream.
+    pub fn new_sealed() -> Self {
+        PrincipalRegistry {
+            sealed: true,
+            ..Self::new()
         }
     }
 
@@ -208,7 +245,7 @@ impl PrincipalRegistry {
     /// principals onto one handle — an alias would be an escalation.
     fn issue(&mut self, idx: usize) -> i64 {
         loop {
-            let t = fresh_token();
+            let t = fresh_token(&mut self.token_state, self.sealed);
             if let std::collections::hash_map::Entry::Vacant(e) = self.by_token.entry(t) {
                 e.insert(idx);
                 return t;
@@ -756,6 +793,35 @@ impl KernelGoal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Amendment 117 (PSV-1 loop finding 14): a handle is one xorshift step of
+    /// its registry's stream, so a draw from ANOTHER registry (the sealed
+    /// kernel's) between two of the operator's must not move it. The operator's
+    /// second handle is exactly the step after its first.
+    #[test]
+    fn a_sealed_registry_drawing_tokens_does_not_move_the_operators_stream() {
+        let step = |t: i64| -> i64 {
+            let mut x = t as u64;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x as i64
+        };
+        let mut op = PrincipalRegistry::new();
+        let mut sealed = PrincipalRegistry::new_sealed();
+        let a1 = op.root("a".into(), true, true, true, 10);
+        for i in 0..5 {
+            sealed.root(format!("s{i}"), true, true, true, 10);
+        }
+        let a2 = op.root("b".into(), true, true, true, 10);
+        assert_eq!(a2, step(a1), "the operator's stream moved by a sealed draw");
+        // ...and the two registries' streams are different streams, from the same seed.
+        assert_ne!(
+            seed_stream(false, Some(5)),
+            seed_stream(true, Some(5)),
+            "the sealed stream coincides with the operator's"
+        );
+    }
 
     #[test]
     fn kernel_mint_matches_oracle_subset() {
