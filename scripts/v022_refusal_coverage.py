@@ -1049,7 +1049,6 @@ EXEMPT += [
     (FC, '            .unwrap_or_else(|e| refuse("unregistered", &e, 4)),',
      "NOTHING TO ADMIT: the protected host's authority store is unusable; the store rule is "
      "protected_host.rs's"),
-    (FC, '                    .unwrap_or_else(|e| refuse("io", &e.to_string(), 2));', _IO + " (output)"),
     (FC, '                    .unwrap_or_else(|e| refuse("io", &e, 2)),', _IO + " (output)"),
     (FC, '                            .unwrap_or_else(|e| refuse("malformed", &e.to_string(), 3));',
      "NO OUTCOME: the same parse function on the same bytes submit() parsed successfully a few "
@@ -2104,9 +2103,6 @@ EXEMPT += [
      "NOTHING TO ADMIT: a number that is no integer has no integer value; its caller number_rules "
      "refuses it (`non-integer number`) and the schema bounds read through it are compiled in"),
     # ── loop ──
-    (LA, "fn clearance_verifies(",
-     "PREDICATE OF NAMED ROWS: its one caller is the clearance condition at admission (M264 replaces "
-     "the call with `signature_ref.is_some() | true`, ACTIVE; M245 the rooted-key leg)"),
     (EV, "fn is_d12(ep: &LoopEpisode) -> bool {",
      "SELECTS ONLY WHICH REFUSAL: its one caller (evaluate) routes a D12 episode (MiCode's not-produced "
      "markers) to the D12 branch, which refuses delivered execution documents (M129) and is never "
@@ -3455,8 +3451,6 @@ EXEMPT += [
      _A95['const_tag']),
     ('crates/axon-fabric/src/readiness.rs', 'pub const CERT_SCHEMA: &str = "axon-v022-protected-certification/2";',
      _A95['const_tag']),
-    ('crates/axon-fabric/src/readiness.rs', 'pub const PROTECTED_PROFILE: &str = "linux-microvm-protected";',
-     _A95['const_text']),
     ('crates/axon-fabric/src/readiness.rs', 'const PSV_SPEC: &str = "governance/specs/v022-protected-suite-verdict.md";',
      _A95['const_path']),
     ('crates/axon-fabric/src/readiness.rs', 'const REGISTRY: &str = "governance/cortex_gate_execution_registry.json";',
@@ -3501,16 +3495,8 @@ EXEMPT += [
      _A95['const_path']),
     ('crates/axon-guest-init/src/main.rs', 'const POLICY_SCHEMA: &str = "axon-vm-mmds/1";',
      _A95['const_tag']),
-    ('crates/axon-loop-contracts/src/attestation.rs', 'pub const ATTESTATION_SCHEMA: &str = "acf-receipt-attestation/2";',
-     _A95['const_tag']),
-    ('crates/axon-loop-contracts/src/attestation.rs', 'pub const EXECUTION_DOMAIN: &str = "axon.fabric-execution/1";',
-     _A95['const_tag']),
-    ('crates/axon-loop-contracts/src/lib.rs', 'pub const PROTECTED_PROFILES: &[&str] = &["linux-microvm-protected"];',
-     _observed('protected_profiles_is_the_one_profile_the_launch_manifest_pins (a second profile added)')),
     ('crates/axon-loop-contracts/src/operator_trust.rs', '    pub const ALL: [TrustAuthority; 5] = [',
      _A95['const_table']),
-    ('crates/axon-loop-contracts/src/operator_trust.rs', 'pub const EVIDENCE_SIGNATURE_SCHEMA: &str = "axon-evidence-signature/2";',
-     _A95['const_tag']),
     ('crates/axon-loop-contracts/src/protected_evidence.rs', 'pub const PSV_EVIDENCE_SCHEMA: &str = "axon-psv-evidence/2";',
      _A95['const_tag']),
     ('crates/axon-loop-contracts/src/schema.rs', 'const ANNOTATIONS: &[&str] = &["$schema", "$id", "title", "description"];',
@@ -3523,8 +3509,6 @@ EXEMPT += [
      _unjudged('`unwrap_or_default()`')),
     ('crates/axon-loop/src/candidates.rs', '        .ok_or_else(|| LoopError::Io(format!("store corrupt: candidate set {r} missing")))?;',
      _dominated('an empty text is not a record: `strict_record("")` is an error, and it is the next statement')),
-    ('crates/axon-loop/src/evl.rs', 'pub const CONTEXT_DOMAIN: &str = "axon.closed-loop.context/1";',
-     _A95['const_tag']),
     ('crates/axon-loop/src/intake.rs', 'pub const ACK_SCHEMA: &str = "micode.closed-loop.policy-ack/1";',
      _A95['const_tag']),
     ('crates/axon-loop/src/plan.rs', '        .ok_or_else(|| LoopError::Io(format!("store corrupt: plan {r} missing")))?;',
@@ -3533,8 +3517,6 @@ EXEMPT += [
      _A95['const_tag']),
     ('crates/axon-loop/src/rules.rs', 'pub const PPM: u64 = 1_000_000;',
      _A95['const_bound']),
-    ('crates/axon-loop/src/safety.rs', 'pub const CLEARANCE_DOMAIN: &str = "axon.loop.trial-safety/1";',
-     _A95['const_tag']),
     ('crates/axon-loop/src/store.rs', '            .ok_or_else(|| format!("{who} has no registered {} key", a.dir_name()))?;',
      _nodefault()),
     ('crates/axon-loop/src/store.rs', '        fs::create_dir_all(&root)?;',
@@ -3579,10 +3561,6 @@ EXEMPT += [
      _A95['const_tag']),
     ('crates/axon-psv/src/lib.rs', 'pub const GUEST_POLICY_SCHEMA: &str = "axon-vm-mmds/1";',
      _A95['const_tag']),
-    ('crates/axon-psv/src/lib.rs', 'pub const COMPLETION_SCHEME: &str = "axon-guest-completion/1";',
-     _A95['const_tag']),
-    ('crates/axon-psv/src/lib.rs', 'pub const PROTECTED_PROFILE: &str = "linux-microvm-protected";',
-     _A95['const_text']),
     ('crates/axon-psv/src/lib.rs', 'const MKFS_LOST_FOUND: &str = "lost+found";',
      _A95['const_text']),
     ('crates/axon-psv/src/lib.rs', 'pub const PREFLIGHT_OBSERVATION_SCHEMA: &str = "axon-preflight-observation/1";',
@@ -3788,6 +3766,114 @@ VALUE_EXEMPT += [
     ('crates/axon-psv/src/lib.rs', '~flow', 1, '"axon-launch-manifest/2"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 107): editing this value ("axon-launch-manifest/2" -> "axon-launch-manifest/2x") fails the test(s) <binary> -p axon-fabric --test observer_service, a_dev_observer_is_never_relayed, a_program_that_execs_the_pinned_file_after_spawning_the_helper_gets_no_observation, an_observe_relay_for_a_caller_that_is_not_the_fabric_relays_nothing, an_observe_relay_for_a_program_the_operator_never_pinned_relays_nothing, an_observe_relay_helper_owned_by_a_stranger_is_never_executed; no row of its own'),
 ]
 # END VALUE_EXEMPT
+# BEGIN EQ8 VALUE_EXEMPT (amendment 110; generated from the survey, edit via the survey)
+VALUE_EXEMPT += [
+    ('crates/axon-fabric/src/backend.rs', 'accept_b263~dflt', 1, '"?"', 'REMAINDER', 'REMAINDER (survey, amendment 110, text): editing this value ("?" -> "?x") leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; the NAME of a BLOCKED assertion in a refusal message'),
+    ('crates/axon-fabric/src/backend.rs', 'accept_b263~dflt', 7, '""', 'DOMINATED', 'DOMINATED (checkable, survey amendment 110): `is_hex64(&eng["firecracker_sha256"])` is checked ten lines above (RULE:engine-digests), so `as_str()` is `Some` here'),
+    ('crates/axon-fabric/src/backend.rs', 'accept_b263~dflt', 8, '""', 'DOMINATED', 'DOMINATED (checkable, survey amendment 110): `is_hex64(&eng["jailer_sha256"])` is checked ten lines above (RULE:engine-digests), so `as_str()` is `Some` here'),
+    ('crates/axon-fabric/src/backend.rs', 'for_manifest~dflt', 1, 'Path::new(".")', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (Path::new(".") -> Path::new(".x")) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/backend.rs', 'interpret_linux_result~dflt', 1, '""', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value ("" -> "x") leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/backend.rs', 'now_unix~dflt', 1, '0', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (0 -> 1) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/backend.rs', 'parse_waivers~dflt', 1, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/backend.rs', 'run_privileged~dflt', 1, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/backend.rs', 'run_privileged~dflt', 2, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/backend.rs', 'run_privileged~dflt', 3, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/backend.rs', 'run_privileged~dflt', 4, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/backend.rs', 'run_privileged~dflt', 5, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/backend.rs', 'sibling_roots~dflt', 1, 'Path::new("/nonexistent")', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (Path::new("/nonexistent") -> Path::new("/nonexistentx")) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/bin/axon-custodian.rs', 'main~dflt', 1, 'std::path::Path::new("/")', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (std::path::Path::new("/") -> std::path::Path::new("/x")) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/bin/axon-custodian.rs', 'main~dflt', 2, '300', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (300 -> 301) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/bin/axon-fabric.rs', 'authorized~dflt', 1, '"(none recorded)"', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value ("(none recorded)" -> "(none recorded)x") leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/bin/axon-fabric.rs', 'main~dflt', 1, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/bin/axon-fabric.rs', 'protected_host_paths~dflt', 1, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/bin/axon-fabric.rs', 'psv_host_guest~dflt', 1, 'false', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (false -> true) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/bin/axon-fabric.rs', 'psv_host_guest~dflt', 2, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/bin/axon-fabric.rs', 'psv_host_guest~dflt', 3, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/bin/axon-fabric.rs', 'signer_from~dflt', 1, 'std::path::Path::new(".")', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (std::path::Path::new(".") -> std::path::Path::new(".x")) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/bin/axon-fabric.rs', 'submit~dflt', 1, '0', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (0 -> 1) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/bin/axon-observer.rs', 'main~dflt', 1, 'std::path::Path::new("/")', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (std::path::Path::new("/") -> std::path::Path::new("/x")) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/bin/axon-protected-launcher.rs', 'main~dflt', 1, 'Path::new("/")', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (Path::new("/") -> Path::new("/x")) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/bin/axon-protected-launcher.rs', 'main~dflt', 2, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/bin/axon-protected-launcher.rs', 'main~dflt', 3, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/bin/axon-protected-launcher.rs', 'main~dflt', 4, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/bin/axon-provenance.rs', 'main~dflt', 1, '""', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value ("" -> "x") leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/bin/axon-provenance.rs', 'main~dflt', 2, '"."', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value ("." -> ".x") leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/bin/axon-provenance.rs', 'main~dflt', 3, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/bin/axon-provenance.rs', 'main~dflt', 4, '&[]', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (&[] -> manual: no mutation rule) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/bin/axon-provenance.rs', 'main~dflt', 5, '.unwrap_or_default()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 110): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) fails the test(s) <binary> -p axon-fabric --test guest_provenance, a_clean_committed_tree_is_clean_and_names_its_head, a_linked_worktree_disguised_as_a_git_directory_is_never_clean, a_linked_worktree_passes_the_lineage_check_but_is_never_clean, a_symlinked_git_dir_is_never_a_clean_build_tree; no row of its own'),
+    ('crates/axon-fabric/src/custodian.rs', 'activated_listener~dflt', 1, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the WHOLE axon-fabric suite green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/custodian.rs', 'activated_listener~dflt', 2, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the WHOLE axon-fabric suite green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/custodian.rs', 'call~dflt', 1, '.unwrap_or_default()', 'REMAINDER', "REMAINDER (survey, amendment 110, text): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the WHOLE axon-fabric suite green; the custodian's error text in a refusal"),
+    ('crates/axon-fabric/src/custodian.rs', 'serve_one_within~dflt', 1, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, platform): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the WHOLE axon-fabric suite green; `serde_json::to_vec` of a plain reply struct cannot fail'),
+    ('crates/axon-fabric/src/grants.rs', 'parse~dflt', 1, 'Path::new(".")', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (Path::new(".") -> Path::new(".x")) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/grants.rs', 'resolve~dflt', 1, 'Path::new(".")', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (Path::new(".") -> Path::new(".x")) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/journal.rs', 'usage_where~dflt', 1, 'Default::default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (Default::default() -> { panic!("eq8 default") }) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/observer.rs', 'prune~dflt', 1, 'i64::MIN / 2', 'REMAINDER', 'REMAINDER (survey, amendment 110, platform): editing this value (i64::MIN / 2 -> i64::MAX / 2) leaves the WHOLE axon-fabric suite green; reached only when a file has no readable mtime, which a Linux filesystem always provides'),
+    ('crates/axon-fabric/src/observer.rs', 'relayed~dflt', 1, '.unwrap_or_default()', 'REMAINDER', "REMAINDER (survey, amendment 110, text): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the WHOLE axon-fabric suite green; the observer's error text in a relayed refusal"),
+    ('crates/axon-fabric/src/observer_service.rs', 'observe~dflt', 1, '.unwrap_or_default()', 'REMAINDER', "REMAINDER (survey, amendment 110, text): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the WHOLE axon-fabric suite green; the observer's error text in a refusal"),
+    ('crates/axon-fabric/src/observer_service.rs', 'open_measured~dflt', 1, 'false', 'REMAINDER', 'REMAINDER (survey, amendment 110, platform): editing this value (false -> true) leaves the WHOLE axon-fabric suite green; `fstat` of a descriptor this function just opened does not fail'),
+    ('crates/axon-fabric/src/observer_service.rs', 'serve_one~dflt', 1, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, platform): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the WHOLE axon-fabric suite green; `serde_json::to_vec` of a plain reply struct cannot fail'),
+    ('crates/axon-fabric/src/privileged_launcher.rs', 'probe~dflt', 1, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unmeasured): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; the privileged_launcher binary hangs on a loaded host at a_callers_scheduling_state_never_reaches_the_root_launch (skipped by the re-survey as FLAKY), so the targeted run could not conclude; only the lib tests measured this site'),
+    ('crates/axon-fabric/src/privileged_launcher.rs', 'running_caller~dflt', 1, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unmeasured): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; the privileged_launcher binary hangs on a loaded host at a_callers_scheduling_state_never_reaches_the_root_launch (skipped by the re-survey as FLAKY), so the targeted run could not conclude; only the lib tests measured this site'),
+    ('crates/axon-fabric/src/protected_host.rs', 'load~dflt', 1, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the WHOLE axon-fabric suite green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/provenance.rs', 'dirty_reasons~dflt', 1, '""', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value ("" -> "x") leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/psv.rs', 'derive~dflt', 1, '"none"', 'REMAINDER', 'REMAINDER (survey, amendment 110, text): editing this value ("none" -> "nonex") leaves the WHOLE axon-fabric suite green; the evidence-class label of a receipt in a report'),
+    ('crates/axon-fabric/src/psv.rs', 'derive~dflt', 2, '"(no reason)"', 'REMAINDER', 'REMAINDER (survey, amendment 110, text): editing this value ("(no reason)" -> "(no reason)x") leaves the WHOLE axon-fabric suite green; a refusal\'s reason text in a report'),
+    ('crates/axon-fabric/src/psv.rs', 'prepare~dflt', 1, '"unknown"', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value ("unknown" -> "unknownx") leaves the WHOLE axon-fabric suite green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/readiness.rs', 'attribution~dflt', 1, '""', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value ("" -> "x") leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/readiness.rs', 'attribution~dflt', 2, '"absent"', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value ("absent" -> "absentx") leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/readiness.rs', 'git~dflt', 1, '""', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value ("" -> "x") leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/readiness.rs', 'launched~dflt', 1, '""', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value ("" -> "x") leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/readiness.rs', 'launched~dflt', 2, '""', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value ("" -> "x") leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/readiness.rs', 'launched~dflt', 3, '"(none, or more than one)"', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value ("(none, or more than one)" -> "(none, or more than one)x") leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/readiness.rs', 'launched~dflt', 4, '""', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value ("" -> "x") leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/readiness.rs', 'protected_components~dflt', 1, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/readiness.rs', 'running_image~dflt', 1, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/submit.rs', 'local_receipt~dflt', 1, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/submit.rs', 'module_path~dflt', 1, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/submit.rs', 'receipt~dflt', 1, 'Default::default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (Default::default() -> { panic!("eq8 default") }) leaves the axon-fabric LIB tests (the integration suite was NOT run for this site) green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/submit.rs', 'submit~dflt', 1, '.unwrap_or_default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves the WHOLE axon-fabric suite green; which way the default then fails was not judged'),
+    ('crates/axon-fabric/src/submit.rs', 'submit~dflt', 2, '"none"', 'REMAINDER', 'REMAINDER (survey, amendment 110, text): editing this value ("none" -> "nonex") leaves the WHOLE axon-fabric suite green; the evidence-class label printed in the CLI\'s output'),
+    ('crates/axon-guest-init/src/main.rs', 'allow_unpoliced~dflt', 1, 'false', 'REMAINDER', "REMAINDER (survey, amendment 110, unjudged): editing this value (false -> true) leaves axon-guest-init's whole suite green; which way the default then fails was not judged"),
+    ('crates/axon-guest-init/src/main.rs', 'main~dflt', 1, '.unwrap_or_default()', 'REMAINDER', "REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves axon-guest-init's whole suite green; which way the default then fails was not judged"),
+    ('crates/axon-guest-init/src/main.rs', 'main~dflt', 2, '.unwrap_or_default()', 'REMAINDER', "REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves axon-guest-init's whole suite green; which way the default then fails was not judged"),
+    ('crates/axon-loop-contracts/src/protected_evidence.rs', 'check_bundle~dflt', 1, '""', 'DOMINATED', 'DOMINATED (checkable, survey amendment 110): an absent argv[1] reads as "" and is compared with the manifest\'s test name, which is non-empty (a manifest with an empty test name is refused by LaunchManifest::verify), so the join refuses it; "x" would be refused the same way'),
+    ('crates/axon-loop-contracts/src/protected_evidence.rs', 'walk~dflt', 1, '.unwrap_or_default()', 'REMAINDER', "REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves axon-loop-contracts' whole suite green; which way the default then fails was not judged"),
+    ('crates/axon-loop/src/admission.rs', 'reverify_protected~dflt', 1, '.unwrap_or_default()', 'DOMINATED', 'DOMINATED (checkable, survey amendment 110): an absent `observed_issuer_ref` reads as "", which `OpaqueRef::new` refuses (ids.rs: `OpaqueRef::new("").is_err()`), and the next statement refuses the trial as having a context observer the operator no longer trusts'),
+    ('crates/axon-loop/src/evl.rs', 'evaluate~dflt', 1, '.unwrap_or_default()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 110): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) fails the test(s) <binary> -p axon-loop --test activation_sites, <binary> -p axon-loop --test admit_verdict_sites, <binary> -p axon-loop --test assignment, <binary> -p axon-loop --test candidates, <binary> -p axon-loop --test checks_rest_sites, <binary> -p axon-loop --test checks_sites; no row of its own'),
+    ('crates/axon-loop/src/evl.rs', 'evaluate~dflt', 2, '.unwrap_or_default()', 'REMAINDER', "REMAINDER (survey, amendment 110, unjudged): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves axon-loop's whole suite green; which way the default then fails was not judged"),
+    ('crates/axon-loop/src/evl.rs', 'evaluate~dflt', 3, '.unwrap_or_default()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 110): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) fails the test(s) <binary> -p axon-loop --test d12_unknown_outcome, a_stated_not_run_reason_keeps_the_kind, every_d12_non_success_keeps_its_kind_and_nothing_passes; no row of its own'),
+    ('crates/axon-loop/src/evl.rs', 'judge~dflt', 1, '.unwrap_or_default()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 110): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) fails the test(s) <binary> -p axon-loop --test activation_sites, <binary> -p axon-loop --test admit_verdict_sites, <binary> -p axon-loop --test assignment, <binary> -p axon-loop --test candidates, <binary> -p axon-loop --test checks_rest_sites, <binary> -p axon-loop --test checks_sites; no row of its own'),
+    ('crates/axon-loop/src/evl.rs', 'judge~dflt', 2, 'UnknownKind::NotRun', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 110): editing this value (UnknownKind::NotRun -> UnknownKind::MissingEvidence) fails the test(s) <binary> -p axon-loop --test d12_unknown_outcome, every_d12_non_success_keeps_its_kind_and_nothing_passes; no row of its own'),
+    ('crates/axon-loop/src/evl.rs', 'judge~dflt', 4, '0', 'REMAINDER', "REMAINDER (survey, amendment 110, text): editing this value (0 -> 1) leaves axon-loop's whole suite green; the matched-check count is formatted into the reason of an Unknown verdict; the decision above it (`unwrap_or(0) == 0`) is OBSERVED separately"),
+    ('crates/axon-loop/src/evl.rs', 'judge~dflt', 5, 'UnknownKind::MissingEvidence', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 110): editing this value (UnknownKind::MissingEvidence -> UnknownKind::NotRun) fails the test(s) <binary> -p axon-loop --test d12_unknown_outcome, every_d12_non_success_keeps_its_kind_and_nothing_passes; no row of its own'),
+    ('crates/axon-loop/src/intake.rs', 'check_pins~dflt', 1, '""', 'DOMINATED', 'DOMINATED (checkable, survey amendment 110): an absent argv[0] reads as "", which has no `check:` prefix, so the next statement refuses it as a rubric from the candidate\'s own tree (a changed default "x" is refused the same way)'),
+    ('crates/axon-loop/src/intake.rs', 'verify_check_evidence~dflt', 1, '0', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 110): editing this value (0 -> 1) fails the test(s) <binary> -p axon-loop --test d12_unknown_outcome, a_cited_unknown_takes_its_kind_from_the_signed_check, every_d12_non_success_keeps_its_kind_and_nothing_passes; no row of its own'),
+    ('crates/axon-loop/src/lib.rs', 'now_ms~dflt', 1, '0', 'REMAINDER', "REMAINDER (survey, amendment 110, clock): editing this value (0 -> 1) leaves axon-loop's whole suite green; a system clock before 1970 reads 0 ms"),
+    ('crates/axon-loop/src/price.rs', 'execution_cost~dflt', 1, '0', 'REMAINDER', "REMAINDER (survey, amendment 110, closed): editing this value (0 -> 1) leaves axon-loop's whole suite green; the held liability is the MAX of the request's limit, the receipt's unresolved liability and its cost: an absent cost adds 0 to a maximum that already holds the limit, so it never lowers the reservation"),
+    ('crates/axon-loop/src/store.rs', 'check_separation~dflt', 1, 'Default::default()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 110): editing this value (Default::default() -> { panic!("eq8 default") }) fails the test(s) <binary> -p axon-loop --test activation_sites, <binary> -p axon-loop --test admit_verdict_sites, <binary> -p axon-loop --test assignment, <binary> -p axon-loop --test candidates, <binary> -p axon-loop --test checks_rest_sites, <binary> -p axon-loop --test checks_sites; no row of its own'),
+    ('crates/axon-loop/src/store.rs', 'config~dflt', 1, 'Default::default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (Default::default() -> { panic!("eq8 default") }) leaves axon-loop\'s whole suite green; which way the default then fails was not judged'),
+    ('crates/axon-loop/src/store.rs', 'config~dflt', 2, 'Default::default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (Default::default() -> { panic!("eq8 default") }) leaves axon-loop\'s whole suite green; which way the default then fails was not judged'),
+    ('crates/axon-loop/src/store.rs', 'config~dflt', 3, 'Default::default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (Default::default() -> { panic!("eq8 default") }) leaves axon-loop\'s whole suite green; which way the default then fails was not judged'),
+    ('crates/axon-loop/src/store.rs', 'config~dflt', 4, 'Default::default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (Default::default() -> { panic!("eq8 default") }) leaves axon-loop\'s whole suite green; which way the default then fails was not judged'),
+    ('crates/axon-loop/src/store.rs', 'config~dflt', 5, 'Default::default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (Default::default() -> { panic!("eq8 default") }) leaves axon-loop\'s whole suite green; which way the default then fails was not judged'),
+    ('crates/axon-loop/src/store.rs', 'config~dflt', 6, 'Default::default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (Default::default() -> { panic!("eq8 default") }) leaves axon-loop\'s whole suite green; which way the default then fails was not judged'),
+    ('crates/axon-loop/src/store.rs', 'config~dflt', 7, 'Default::default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (Default::default() -> { panic!("eq8 default") }) leaves axon-loop\'s whole suite green; which way the default then fails was not judged'),
+    ('crates/axon-loop/src/store.rs', 'config~dflt', 8, 'Default::default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (Default::default() -> { panic!("eq8 default") }) leaves axon-loop\'s whole suite green; which way the default then fails was not judged'),
+    ('crates/axon-loop/src/store.rs', 'config~dflt', 9, 'Default::default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (Default::default() -> { panic!("eq8 default") }) leaves axon-loop\'s whole suite green; which way the default then fails was not judged'),
+    ('crates/axon-loop/src/store.rs', 'config~dflt', 10, 'Default::default()', 'REMAINDER', 'REMAINDER (survey, amendment 110, unjudged): editing this value (Default::default() -> { panic!("eq8 default") }) leaves axon-loop\'s whole suite green; which way the default then fails was not judged'),
+    ('crates/axon-psv/src/bin/axon-psv-runner.rs', 'guest_config~dflt', 1, '""', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 110): editing this value ("" -> "x") fails the test(s) <binary> -p axon-psv --bin axon-psv-runner, tests::the_guest_runs_the_check_as_nobody_and_holds_the_manifest_to_the_cmdline_digest; no row of its own'),
+    ('crates/axon-psv/src/bin/axon-psv-runner.rs', 'run_guest~dflt', 1, '.unwrap_or_default()', 'REMAINDER', "REMAINDER (survey, amendment 110, closed): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves axon-psv's whole suite green; an unreadable /proc/cmdline reads as empty, so `guest_config` finds no `axon.psv` arguments and the runner refuses to run"),
+    ('crates/axon-psv/src/lib.rs', 'check_inputs~dflt', 1, '.unwrap_or_default()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 110): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) fails the test(s) <binary> -p axon-psv --test protocol, inputs_carrying_an_extended_attribute_are_refused, inputs_holding_what_the_digest_cannot_see_are_refused, inputs_must_match_the_manifest_each_one_named, inputs_with_links_or_omitted_entries_are_refused; no row of its own'),
+    ('crates/axon-psv/src/lib.rs', 'check_inputs~dflt', 2, '.unwrap_or_default()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 110): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) fails the test(s) <binary> -p axon-psv --test protocol, <binary> -p axon-psv --test runner, an_input_carrying_an_acl_is_refused_not_run, inputs_carrying_an_extended_attribute_are_refused, inputs_holding_what_the_digest_cannot_see_are_refused, inputs_with_links_or_omitted_entries_are_refused; no row of its own'),
+    ('crates/axon-psv/src/runner.rs', 'exec_axon_test~dflt', 1, '.unwrap_or_default()', 'REMAINDER', "REMAINDER (survey, amendment 110, text): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves axon-psv's whole suite green; the stdout of a reader thread that panicked reads as empty: the run is then judged by its (missing) result line, which fails closed"),
+    ('crates/axon-psv/src/runner.rs', 'exec_axon_test~dflt', 2, '.unwrap_or_default()', 'REMAINDER', "REMAINDER (survey, amendment 110, text): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves axon-psv's whole suite green; the stderr of a reader thread that panicked reads as empty: diagnostics only"),
+    ('crates/axon-psv/src/runner.rs', 'given_policy_sha256~dflt', 1, '.unwrap_or_default()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 110): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) fails the test(s) <binary> -p axon-psv --test runner, the_guest_runs_only_the_policy_the_manifest_names; no row of its own'),
+    ('crates/axon-psv/src/runner.rs', 'runner_identity~dflt', 1, '.unwrap_or_default()', 'REMAINDER', "REMAINDER (survey, amendment 110, recorded): editing this value (.unwrap_or_default() -> .into_iter().next().unwrap_or_else(|| pa) leaves axon-psv's whole suite green; the runner's and the interpreter's digests are RECORDED in the guest verdict and read by no consumer (grep `.runner` finds none), so an unreadable binary records an empty identity"),
+    ('crates/axon-psv/src/runner.rs', 'run~dflt', 1, 'std::path::Path::new(".")', 'REMAINDER', 'REMAINDER (survey, amendment 110, path): editing this value (std::path::Path::new(".") -> std::path::Path::new(".x")) leaves axon-psv\'s whole suite green; the parent of the completion-secret path, which always has one (it is a file in the job drive); `.` is never reached'),
+    ('crates/axon-guest-kernel/src/main.rs', '~dflt', 1, '"root"', 'NOTROUTE', "NOT ON THE PROTECTED ROUTE (checkable): the bare-metal guest kernel is the `axon` backend of scripts/build-guest-image.sh (AXON_KERNEL_BACKEND=axon, the default of a DEMO image) and Fabric's AXON_KERNEL profile (backend.rs: guest_kind axon_kernel_demo, `job_kinds: &[]`, it runs no program). The protected profile, linux-microvm-protected, boots the Linux backend (vmlinux + rootfs.sqfs, /init = axon-guest-init), whose policy decisions are scanned in crates/axon-guest-init and crates/axon-psv"),
+]
+# END EQ8 VALUE_EXEMPT
 
 
 def load_rows():
@@ -5089,6 +5175,7 @@ def const_sites(f, text, names):
 
 REMAINDER_SITES = []
 OBSERVED_SITES = []
+SIGN_SITES = []    # (file, line, fn, disposition): the inputs to a signing / verification / MAC primitive (amendment 110)
 VALUE_STATS = {}   # (form|flow, disposition) -> count of value sites (amendment 107)
 
 
@@ -5132,7 +5219,16 @@ STILL_BLIND = [
     "inner call (its callers' literals are not), and the bytes of a script or file handed to a child",
     "a struct literal whose type name is not Config/Cfg/Authority/Policy/Manifest/Trust (except a field NAMED owner, "
     "which is a site anywhere), and a literal inside a nested literal",
-    "a default read as a value (unwrap_or / map_or / Default::default) and an absent field's neutral value",
+    "a default read as a value OUTSIDE the protected crates' files (axon-core, axon-os, axon-cortex, axon-vm ... are "
+    "scanned for refusals, not defaults), a default whose argument is COMPUTED at the site (`unwrap_or(x.len())`; "
+    "printed as `DEFAULTS NOT FOLLOWED`), the TYPE behind an `unwrap_or_default()` (a neutral empty string and a "
+    "fail-open enum look the same to a text rule; the survey's panic edit tells them apart only where a test takes "
+    "the default), and an absent field's neutral value that is not spelled as one of the forms (`as_str() == "
+    "Some(..)`, `!= Some(0)`, `.get(..).is_some_and(..)`)",
+    "a signing / verification / MAC input that reaches its primitive through a PARAMETER or a fn not in SIGN_SINKS "
+    "or SIGN_BUILDERS (a new message builder is a blind sink until it is listed; the sinks are NOT checked against "
+    "every `.sign(` of the scope in both directions the way EXEC_CONSTRUCTORS is), a context spelled inside a format "
+    "string by a variable rather than a const, and a peer implementation outside this repository",
     "a uid or mode that is the operand of a COMPARISON (only the per-term rule and the constant rule see those), and a "
     "literal compared inside a refusal",
     "a const used at a sink in a file OTHER than the one defining it, written bare through a `use` (its initialiser is "
@@ -5283,7 +5379,8 @@ _OWNER_PARAM = re.compile(r"\bOption\s*<\s*u32\s*>")
 _OPEN_SINKS = re.compile(r"(?<![\w.])(?:libc::)?(openat|open)\(|\.custom_flags\(")
 _CONST_DEF = re.compile(
     r"^[ \t]*(?:pub(?:\([a-z]+\))?\s+)?(?:const|static)\s+([A-Z][A-Z0-9_]+)\s*:[^=;{]*=\s*", re.M)
-_FLOW_STATS = {"computed": 0}
+_FLOW_STATS = {"computed": set()}   # {(file, offset)}: a SET, because two passes (sink_consts, value_sites) walk every file and a counter counted each argument twice (round 12: "46" was 23)
+_CUR_FILE = [None]   # the file _flow_values is working on (SIGN_BUILDERS is keyed by it)
 _OWNER_PRIMS = None
 
 
@@ -5353,6 +5450,103 @@ def exec_constructor_drift(bad):
     return bad
 
 
+# ── Amendment 110 (C9 round 12, eqgate8): SIGNING INPUTS and DEFAULTS are sites ───────────────
+# Two classes the round-12 equivalence reviewer named as "not class-level":
+#  (1) a CONST or literal that is INPUT TO a signing, verification or MAC primitive: a signature
+#      domain, a schema tag, a HMAC context. Collapsing two of them lets a signature minted for one
+#      protocol verify as another, and no suite failed (CLEARANCE_DOMAIN := CONTEXT_DOMAIN kept axon-fabric,
+#      axon-loop and axon-loop-contracts green). They were filed as const_tag REMAINDER ("compared with
+#      the value a document or peer carries"), which names the wrong mechanism: they are not compared,
+#      they are SIGNED OVER. SIGN_SINKS lists the primitives and the argument that is the signed
+#      message/domain; SIGN_BUILDERS the fns whose body BUILDS a signed message (the primitive is
+#      called elsewhere, with the result). Sites are numbered under `<fn>~sign` so no earlier
+#      exemption is renumbered, and the gate PRINTS them (`SIGNING INPUTS`).
+SIGN_SINKS = [
+    # (callee regex, argument index of the message / domain)
+    (r"(?<![\w])(?:\w+::)*hmac_sha256\(", 1),
+    (r"(?<![\w])(?:\w+::)*sign_document\(", 1),
+    (r"(?<![\w])(?:\w+::)*verify_document\(", 1),
+    (r"\.sign\(", 0),
+    (r"\.verify\(", 0),
+]
+SIGN_BUILDERS = {
+    ("crates/axon-loop-contracts/src/attestation.rs", "binding"),
+    ("crates/axon-loop-contracts/src/attestation.rs", "document_binding"),
+    ("crates/axon-loop-contracts/src/attestation.rs", "execution_document"),
+    ("crates/axon-loop-contracts/src/operator_trust.rs", "evidence_signing_message"),
+    ("crates/axon-psv/src/lib.rs", "completion_binding"),
+}
+# (2) a DEFAULT read as a value: `unwrap_or(<lit|variant|None>)`, `unwrap_or_default()`, `map_or(<lit>, ..)`,
+#     `.or(Some(<lit>))`, `Default::default()`, `unwrap_or_else(|| <lit>)`, in the files of the protected
+#     crates. A mode, an evidence class or a count that an ABSENT field decides is a verdict
+#     (round 12: `Mode::parse(..).unwrap_or(Mode::Dev)` -> Protected survived the full axon-fabric suite
+#     at three sites). Sites are numbered under `<fn>~dflt`.
+DEFAULT_SCOPE = ("crates/axon-fabric/", "crates/axon-loop/", "crates/axon-loop-contracts/", "crates/axon-psv/",
+                 "crates/axon-guest-init/", "crates/axon-workspace-recipe/", "crates/axon-guest-kernel/")
+_DFL_CALL = re.compile(r"\.(unwrap_or|map_or|unwrap_or_else)\(|\.or\(\s*Some\(|\.unwrap_or_default\(\)|(?<![\w])Default::default\(\)")
+_NOT_VARIANT_HEADS = {"Path", "PathBuf", "String", "Vec", "Value", "Duration", "HashMap", "BTreeMap", "HashSet",
+                      "BTreeSet", "OsString", "Some", "Ok", "Err", "Box", "Rc", "Arc", "Instant", "SystemTime"}
+_DFL_STATS = {"computed": set()}
+_RAW = [None]
+
+
+def _default_arg_is_value(s):
+    """Whether the default ARGUMENT text (strings blanked, quotes kept) is a literal, a const, a bool,
+    `None`, an enum variant path or a literal collection, as opposed to a value COMPUTED at the site."""
+    st = s.strip()
+    if not st:
+        return False
+    if st in ("None", "true", "false", "&[]", "&[ ]", "[]", "vec![]"):
+        return True
+    if re.fullmatch(r'&?"[^"]*"', st) or re.fullmatch(r"-?\d[\w.]*(?:\s*[-/*+]\s*\d+)?", st):
+        return True
+    if re.fullmatch(r"(?:\w+::)*(?:i64|u64|u32|i32|usize|u8|i8)::(?:MIN|MAX)(?:\s*[/*+-]\s*\d+)?", st):
+        return True
+    if re.fullmatch(r"&?(?:\w+::)*[A-Z][A-Z0-9_]{2,}", st):
+        return True
+    m = re.fullmatch(r"((?:\w+::)*?)(\w+)::([A-Z]\w*)(?:\s*\{[^{}]*\}|\([^()]*\))?", st)
+    if m and m.group(2) not in _NOT_VARIANT_HEADS and m.group(2)[:1].isupper():
+        return True
+    m = re.fullmatch(r"(?:\w+::)*(?:Path|PathBuf|String)::(?:new|from)\(\s*(?:\"[^\"]*\")?\s*\)", st)
+    return bool(m)
+
+
+def _default_sites(clean):
+    """{(begin, end): 'val_default'} over the blanked text: the default VALUE of each form above."""
+    out = {}
+    for m in _DFL_CALL.finditer(clean):
+        g = m.group(0)
+        if g.startswith(".unwrap_or_default") or g.startswith("Default::default"):
+            out[(m.start(), m.end())] = "val_default"
+            continue
+        if g.startswith(".or("):
+            op = m.end() - 1                      # the `(` of Some(
+            parts = _split_group(clean, op)
+            if parts and _default_arg_is_value(clean[parts[0][0]:parts[0][1]]):
+                out[parts[0]] = "val_default"
+            else:
+                _DFL_STATS["computed"].add((_CUR_FILE[0], m.start()))
+            continue
+        parts = _split_group(clean, m.end() - 1)
+        if not parts:
+            continue
+        which = parts[0]
+        name = m.group(1)
+        arg = clean[which[0]:which[1]]
+        if name == "unwrap_or_else":
+            cm = re.match(r"\|[^|]*\|\s*(.*)$", arg, re.S)
+            if not cm:
+                _DFL_STATS["computed"].add((_CUR_FILE[0], m.start()))
+                continue
+            which = (which[0] + cm.start(1), which[1])
+            arg = cm.group(1)
+        if _default_arg_is_value(arg):
+            out[which] = "val_default"
+        else:
+            _DFL_STATS["computed"].add((_CUR_FILE[0], m.start()))
+    return out
+
+
 def _line_offsets(clean):
     offs, n = [0], 0
     for l in clean.split("\n"):
@@ -5406,7 +5600,7 @@ def _flow_values(clean, cl, fspans, found, sink_consts_out=None):
                 break
             j += 1
         expr(a, j, label, depth + 1, at)
-        for g in re.finditer(r"(?<![\w.])" + re.escape(name) + r"\s*\.\s*(push|extend|insert|push_str)\(", clean[j:at]):
+        for g in re.finditer(r"(?<![\w.])" + re.escape(name) + r"\s*\.\s*(push|extend|extend_from_slice|insert|push_str)\(", clean[j:at]):
             op = j + g.end() - 1
             for x, y in _split_group(clean, op):
                 expr(x, y, label, depth + 1, at)
@@ -5425,22 +5619,43 @@ def _flow_values(clean, cl, fspans, found, sink_consts_out=None):
             for x, y in _split_group(clean, k):
                 expr(x, y, label, depth, at)
             return
+        if label == "flow_sign" and re.match(r"(?:\w+::)*(?:Vec|String)::(?:with_capacity|new)\(", st):
+            return   # an empty buffer a message is then built in: the pushes are the sites
         mc = _FLOW_CONST.match(st)
         if mc:
             consts.add((mc.group(2), bool(mc.group(1))))
             add(a, b, label)
             return
+        if label == "flow_sign" and re.match(r"if\b", body) and depth < 3:
+            # `if c { A } else { B }`: each branch is a signed message of its own
+            base = a + s.index(body)
+            k, found_any = base, False
+            while True:
+                o = clean.find("{", k, b)
+                if o < 0:
+                    break
+                c = _match_close(clean, o)
+                if re.match(r"\s*(?:if\b[^{]*)?$", clean[k:o]) or found_any:
+                    expr(o + 1, c - 1, label, depth + 1, at)
+                    found_any = True
+                k = c
+            if found_any:
+                return
         ml = _FLOW_LOCAL.match(st)
         if ml and depth < 2:
             if not resolve(ml.group(1), at, label, depth):
-                _FLOW_STATS["computed"] += 1
+                _FLOW_STATS["computed"].add((_CUR_FILE[0], a))
             return
         if _has_literal(st):
             for q, c in re.findall(r"(?<![\w])((?:\w+::)*)([A-Z][A-Z0-9_]{2,})\b", st):
                 consts.add((c, bool(q)))
+            if label == "flow_sign" and _RAW[0] is not None and len(_RAW[0]) == len(clean):
+                # a `{CONST}` inside a format string is blanked in `clean`: read it from the raw text
+                for c in re.findall(r"\{([A-Z][A-Z0-9_]{2,})\}", _RAW[0][a:b]):
+                    consts.add((c, False))
             add(a, b, label)
             return
-        _FLOW_STATS["computed"] += 1
+        _FLOW_STATS["computed"].add((_CUR_FILE[0], a))
 
     # (1) exec wrappers
     for callee, positions in EXEC_WRAPPERS.items():
@@ -5498,6 +5713,27 @@ def _flow_values(clean, cl, fspans, found, sink_consts_out=None):
             for q, c in re.findall(r"(?<![\w])((?:\w+::)*)([A-Z][A-Z0-9_]{2,})\b", clean[a:b]):
                 if not c.startswith(("O_", "AT_", "S_")):
                     consts.add((c, bool(q)))
+    # (5) amendment 110: the message / domain handed to a signing, verification or MAC primitive
+    for pat, idx in SIGN_SINKS:
+        for m in re.finditer(pat, clean):
+            before = clean[max(0, m.start() - 12):m.start()]
+            if re.search(r"\bfn\s*$", before):
+                continue
+            parts = _split_group(clean, m.end() - 1)
+            if idx < len(parts):
+                expr(parts[idx][0], parts[idx][1], "flow_sign", 0, m.start())
+    # (6) fns that BUILD a signed message: their `let` initialisers, their json! values and their consts
+    for head, last, name, _ in fspans:
+        if (_CUR_FILE[0], name) not in SIGN_BUILDERS:
+            continue
+        lo, hi = offs[head], offs[min(last + 1, len(offs) - 1)]
+        body = clean[lo:hi]
+        for m in re.finditer(r"\bformat!\(|\bb\"", body):
+            if m.group(0).startswith("format!"):
+                op = lo + m.end() - 1
+                expr(lo + m.start(), _match_close(clean, op), "flow_sign", 3, lo + m.start())
+        for m in re.finditer(r'"[^"\n]*"\s*:\s*("[^"\n]*"|(?:\w+::)*[A-Z][A-Z0-9_]{2,}\b)', body):
+            expr(lo + m.start(1), lo + m.end(1), "flow_sign", 3, lo + m.start(1))
     return out
 
 
@@ -5519,6 +5755,7 @@ def sink_consts():
             cl = clean.split("\n")
             found, _ = _old_value_sites(clean)
             names = set()
+            _CUR_FILE[0], _RAW[0] = f, text
             _flow_values(clean, cl, _fn_spans(cl), found, names)
             for (a, b) in found:
                 for q, c in re.findall(r"(?<![\w])((?:\w+::)*)([A-Z][A-Z0-9_]{2,})\b", clean[a:b]):
@@ -5669,20 +5906,28 @@ def value_sites(text, regions=None, flow=True, file=None):
     `flow` (the default), the amendment-107 flow sites, numbered under `<fn>~flow`. `n` counts a
     function's value sites from 1 in source order."""
     clean = _value_text(text)
+    _CUR_FILE[0], _RAW[0] = file, text
     found, _ = _old_value_sites(clean)
     cl = clean.split("\n")
     fspans = _fn_spans(cl)
     flowed = {}
+    dflt = {}
+    if flow and file is not None and file.startswith(DEFAULT_SCOPE):
+        dflt = _default_sites(clean)
     if flow:
         flowed = _flow_values(clean, cl, fspans, found)
         local, qual = sink_consts()
         flowed.update(const_def_sites(clean, {**found, **flowed}, local.get(file, set()) | qual))
     per, out = {}, []
-    for (a, b), label in sorted({**found, **flowed}.items()):
+    for (a, b), label in sorted({**dflt, **found, **flowed}.items()):
         if regions is not None and not any(x <= line_of(clean, a) <= y for x, y in regions):
             continue
         fn = _fn_of(cl, fspans, line_of(clean, a))
-        if (a, b) in flowed and (a, b) not in found:
+        if label == "val_default" and (a, b) not in found and (a, b) not in flowed:
+            fn += "~dflt"
+        elif label == "flow_sign" and (a, b) in flowed and (a, b) not in found:
+            fn += "~sign"
+        elif (a, b) in flowed and (a, b) not in found:
             fn += "~flow"
         per[fn] = per.get(fn, 0) + 1
         out.append((a, b, label, fn, per[fn]))
@@ -5757,7 +6002,11 @@ def judge_values(f, text, rows, bad):
             if hit[0][3] not in " ".join(frag.split()) and hit[0][3] not in frag:
                 bad.append(f"{f}:{line_of(text, a) + 1}: value exemption ({fn}, {n}) names the fragment "
                            f"{hit[0][3]!r}, which is not the value's text {frag!r}: a site was added or moved, re-judge it")
-        flowk = "flow" if fn.endswith("~flow") else "form"
+        flowk = ("flow" if fn.endswith("~flow") else "sign" if fn.endswith("~sign")
+                 else "dflt" if fn.endswith("~dflt") else "form")
+        if flowk == "sign":
+            SIGN_SITES.append((f, line_of(text, a) + 1, fn.split("~")[0] or "-",
+                               "row" if by else hit[4] if hit is not None else "UNCOVERED"))
         if by:
             covered += 1
             VALUE_STATS[(flowk, "row")] = VALUE_STATS.get((flowk, "row"), 0) + 1
@@ -6216,8 +6465,10 @@ def check(without=(), freeze=False, out=print):
     bad = []
     del REMAINDER_SITES[:]
     del OBSERVED_SITES[:]
+    del SIGN_SITES[:]
     VALUE_STATS.clear()
-    _FLOW_STATS["computed"] = 0
+    _FLOW_STATS["computed"].clear()
+    _DFL_STATS["computed"].clear()
     exec_constructor_drift(bad)
     scope = in_scope_files()
     for f in sorted(set(OUT_OF_SCOPE) | set(NOT_YET_SCANNED)):
@@ -6259,14 +6510,20 @@ def check(without=(), freeze=False, out=print):
             bad.append(f"{ef}: exemption {anchor[:50]!r} cites {gone}, which are not registry rows")
     for b in bad:
         out(f"BAD {b}")
-    for kind in ("form", "flow"):
+    for kind in ("form", "flow", "sign", "dflt"):
         parts = {d: c for (k, d), c in sorted(VALUE_STATS.items()) if k == kind}
-        out(f"VALUE SITES ({'amendment 103 forms' if kind == 'form' else 'amendment 107 flow to sinks'}): "
-            f"{sum(parts.values())}: " + ", ".join(f"{c} {d}" for d, c in parts.items()))
+        what = {"form": "amendment 103 forms", "flow": "amendment 107 flow to sinks",
+                "sign": "amendment 110 INPUTS TO A SIGNING / VERIFICATION / MAC PRIMITIVE",
+                "dflt": "amendment 110 DEFAULTS read as a value, protected crates"}[kind]
+        out(f"VALUE SITES ({what}): {sum(parts.values())}: " + ", ".join(f"{c} {d}" for d, c in parts.items()))
+    for f, line, fn, how in sorted(SIGN_SITES):
+        out(f"SIGNING INPUT {f}:{line} fn {fn}: {how}")
     sink_consts()
-    out(f"VALUE FLOWS NOT FOLLOWED: {_FLOW_STATS['computed']} argument(s) of a sink were computed (not a literal, a const, "
-        "a local resolvable to one, or a collection of them) and "
+    out(f"VALUE FLOWS NOT FOLLOWED: {len(_FLOW_STATS['computed'])} argument(s) of a sink were computed (not a literal, a const, "
+        "a local resolvable to one, or a collection of them; each argument counted ONCE) and "
         f"{len(_CROSS_FILE)} const use(s) at a sink are bare names defined in another file: COUNTED, NOT sites")
+    out(f"DEFAULTS NOT FOLLOWED: {len(_DFL_STATS['computed'])} default argument(s) in the protected crates were computed at "
+        "the site (not a literal, a const, a variant or `None`): COUNTED, NOT sites")
     n, cats = remainder_summary(REMAINDER_SITES)
     out(f"OBSERVED-NOT-ROWED: {len(OBSERVED_SITES)} guards a survey removed with a named test failing and no row of "
         "their own (a measurement, not a row)")

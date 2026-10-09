@@ -562,4 +562,62 @@ mod tests {
         assert!(!d.join("absent").exists());
         let _ = std::fs::remove_dir_all(&d);
     }
+
+    /// Amendment 110: a nonce record that states no `issued_unix` (or a non-integer one) reads as ANCIENT, never
+    /// as future or fresh: the default was `i64::MIN / 2`, and `i64::MAX / 2` kept the suite green because both
+    /// refuse (one as "-N s old", the other as "N s old"). Both the refusal and the SIGN of the age are asserted,
+    /// the record is neither consumable nor counted as outstanding, and a well-formed record is the control.
+    #[test]
+    fn a_nonce_record_without_an_issue_time_is_ancient_not_fresh() {
+        let d = tempfile::tempdir().unwrap();
+        let store = NonceStore { dir: d.path().to_path_buf() };
+        let clock = Clock::FixedUnix(1_000_000);
+        let good = store.issue(7, &clock).expect("control: a nonce is issued");
+        store.check(&good, 7, &clock, 300).expect("control: a fresh nonce is outstanding");
+        for (what, body) in [
+            ("no issue time", serde_json::json!({"epoch": 7})),
+            ("a non-integer issue time", serde_json::json!({"epoch": 7, "issued_unix": "1000000"})),
+            ("a float issue time", serde_json::json!({"epoch": 7, "issued_unix": 1000000.5})),
+        ] {
+            let nonce = format!("{:032x}", 0xabcdu64);
+            std::fs::write(d.path().join(format!("{nonce}.issued")), body.to_string()).unwrap();
+            let e = store.check(&nonce, 7, &clock, 300).expect_err(&format!("ATTACK: nonce default: {what} was outstanding"));
+            assert!(
+                e.contains("s old") && !e.contains("is -"),
+                "ATTACK: nonce default: {what} read as FUTURE, not ancient: {e}"
+            );
+            assert!(store.consume(&nonce, 7, &clock, 300).is_err(), "{what}: consumed");
+            std::fs::remove_file(d.path().join(format!("{nonce}.issued"))).unwrap();
+        }
+    }
+
+    /// Amendment 110: `prune` ages a record that does not parse by its file's mtime and drops it once that is
+    /// older than the bound; a record with a parseable `issued_unix` ages by it (not by the mtime).
+    #[test]
+    fn prune_ages_an_unparseable_record_by_its_mtime_and_a_parseable_one_by_its_issue_time() {
+        let d = tempfile::tempdir().unwrap();
+        let store = NonceStore { dir: d.path().to_path_buf() };
+        let real_now = Clock::System.now_unix();
+        std::fs::write(d.path().join(format!("{:032x}.issued", 1u64)), b"{not json").unwrap();
+        std::fs::write(
+            d.path().join(format!("{:032x}.issued", 2u64)),
+            serde_json::json!({"epoch": 1, "issued_unix": real_now - 10_000}).to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            d.path().join(format!("{:032x}.issued", 3u64)),
+            serde_json::json!({"epoch": 1, "issued_unix": real_now}).to_string(),
+        )
+        .unwrap();
+        // 300 s bound: the unparseable record is young by its mtime (kept), the stale one is old by its stated time (dropped)
+        let left = store.prune(&Clock::System, 300).unwrap();
+        assert_eq!(left, 2, "ATTACK: prune kept or dropped the wrong records");
+        assert!(d.path().join(format!("{:032x}.issued", 1u64)).exists(), "the young unparseable record was dropped");
+        assert!(!d.path().join(format!("{:032x}.issued", 2u64)).exists(), "the stale record survived");
+        // an hour later the unparseable record is old by its mtime too
+        let later = Clock::FixedUnix(real_now + 3_600);
+        assert_eq!(store.prune(&later, 300).unwrap(), 0);
+        assert!(!d.path().join(format!("{:032x}.issued", 1u64)).exists(), "the old unparseable record survived");
+    }
+
 }

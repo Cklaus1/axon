@@ -379,7 +379,7 @@ impl ObserverRef {
                 r.error.unwrap_or_default()
             ));
         }
-        let mode = Mode::parse(&r.mode).unwrap_or(Mode::Dev);
+        let mode = Mode::from_reply(&r.mode).map_err(|e| format!("observer: {e}"))?;
         let observation = r
             .observation
             .ok_or("the observer's reply carries no observation")?;

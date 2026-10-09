@@ -66,7 +66,9 @@ def mutate(label, frag, before):
         if frag.strip() == "0":
             return "1"
         return "0"
-    if label in ("flow_argv", "flow_env", "flow_const"):
+    if label == "val_default":
+        return mutate_default(frag)
+    if label in ("flow_argv", "flow_env", "flow_const", "flow_sign"):
         # Amendment 107 flow sites: a string is spelled differently, a bare const name is replaced by
         # a different string, a number is moved by one.
         m = STR.search(frag)
@@ -104,6 +106,60 @@ def mutate(label, frag, before):
     return None
 
 
+# The DEFAULT a security-relevant enum falls back to, flipped to the value that would be fail-OPEN there.
+# (Amendment 110: `Mode::parse(..).unwrap_or(Mode::Dev)` -> Protected survived the whole axon-fabric suite at
+# three sites; the flip is the attack, so it must be the other mode, not an arbitrary one.)
+ENUM_FLIPS = {
+    "Mode::Dev": "Mode::Protected",
+    "Mode::Protected": "Mode::Dev",
+    "EvidenceClass::GuestUnobserved": "EvidenceClass::Protected",
+    "UnknownKind::NotRun": "UnknownKind::MissingEvidence",
+    "UnknownKind::MissingEvidence": "UnknownKind::NotRun",
+}
+
+
+def mutate_default(frag):
+    """The replacement for a DEFAULT value site (see `_default_sites` in the gate): a literal moved, an enum
+    variant flipped, and for a default PRODUCED by `unwrap_or_default()` / `Default::default()` the path that
+    produces it made to PANIC when taken (a test that reaches the default then fails; one that never does is
+    blind to it)."""
+    f = frag.strip()
+    if f == ".unwrap_or_default()":
+        return '.into_iter().next().unwrap_or_else(|| panic!("eq8 default"))'
+    if f == "Default::default()":
+        return '{ panic!("eq8 default") }'
+    for k, v in ENUM_FLIPS.items():
+        if f == k or f.endswith("::" + k):
+            return f[:len(f) - len(k)] + v
+    if f in ("true", "false"):
+        return "false" if f == "true" else "true"
+    m = re.fullmatch(r"-?\d+", f)
+    if m:
+        return str(int(f) + 1)
+    if re.fullmatch(r"(?:\w+::)*i64::MIN\s*/\s*2", f):
+        return f.replace("MIN", "MAX", 1)
+    m = re.fullmatch(r'(&?)"((?:[^"\\]|\\.)*)"', f)
+    if m:
+        return f'{m.group(1)}"{m.group(2)}x"'
+    m = re.fullmatch(r'((?:\w+::)*(?:Path|PathBuf)::(?:new|from)\()"((?:[^"\\]|\\.)*)"(\))', f)
+    if m:
+        return f'{m.group(1)}"{m.group(2)}x"{m.group(3)}'
+    return None
+
+
+def run_commands(cmds, runner):
+    """Run EVERY command of an entry until one fails a test, returning (any_new_failing, per-command results).
+    Round 12: a survey script ran only the last of two named binaries and reported SURVIVED for a value that
+    the first one killed. `runner(cmd)` returns the set of failing tests of one run."""
+    results = []
+    for cmd in cmds:
+        failing = runner(cmd)
+        results.append((cmd, failing))
+        if failing:
+            return failing, results
+    return set(), results
+
+
 def candidates(pkg, only, again=False):
     rows = rc.load_rows()
     out = []
@@ -127,6 +183,7 @@ def main():
     split = argv.index("--")
     opts, cargo = argv[2:split], argv[split + 1:]
     shard, only, lines, cmd, surv, tier1, done = (0, 1), None, None, None, None, None, set()
+    cmds = []   # every --cmd, in order: an entry that names two test binaries names two commands
     again = "--again" in opts
     for i, o in enumerate(opts):
         if o == "--lines":
@@ -143,13 +200,15 @@ def main():
             tier1 = opts[i + 1].split()
         if o == "--cmd":
             cmd = opts[i + 1].split()
+            cmds.append(cmd)
         if o == "--shard":
             k, n = opts[i + 1].split("/")
             shard = (int(k), int(n))
         if o == "--only":
             only = opts[i + 1]
     results = []
-    full = cmd + cargo if cmd else ["cargo", "test", "-p", pkg, "--no-fail-fast", *cargo]
+    fulls = [c + cargo for c in cmds] if cmds else [["cargo", "test", "-p", pkg, "--no-fail-fast", *cargo]]
+    full = fulls[0]
 
     def run(command=None):
         try:
@@ -165,10 +224,28 @@ def main():
         return r, tail, tests
 
     # The UNMUTATED tree first: a test that already fails here (a host-dependent one) is not a kill.
-    r0, tail0, base_failing = run()
-    print("baseline rc", r0.returncode, "failing", sorted(base_failing), flush=True)
-    if "could not compile" in tail0 or r0.returncode == 124:
-        sys.exit("the unmutated tree does not build or hangs: no survey")
+    base_by_cmd = []
+    for c_ in fulls:
+        r0, tail0, bf = run(c_)
+        print("baseline rc", r0.returncode, "failing", sorted(bf), flush=True)
+        if "could not compile" in tail0 or r0.returncode == 124:
+            sys.exit("the unmutated tree does not build or hangs: no survey")
+        base_by_cmd.append(bf)
+    base_failing = set().union(*base_by_cmd)
+
+    def run_full():
+        """Every --cmd of the entry (stopping at the first kill): (last result, all tails, new failing tests)."""
+        seen = {}
+        tails = []
+
+        def runner(c_):
+            r_, tl, fl = run(c_)
+            seen["r"] = r_
+            tails.append(tl)
+            i_ = fulls.index(c_)
+            return fl - base_by_cmd[i_] if r_.returncode != 124 else fl
+        new_, _ = run_commands(fulls, runner)
+        return seen["r"], "\n".join(tails), new_
     base_failing1 = set()
     if tier1:
         r1, tail1, base_failing1 = run(tier1 + cargo)
@@ -191,11 +268,15 @@ def main():
         rec["edit"] = new[:80]
         open(path, "w").write(text[:a] + new + text[b:])
         try:
-            r, tail, failing = run(tier1 + cargo) if tier1 else run()
-            new_failing = sorted(failing - (base_failing1 if tier1 else base_failing))
+            if tier1:
+                r, tail, failing = run(tier1 + cargo)
+                new_failing = sorted(failing - base_failing1)
+            else:
+                r, tail, nf = run_full()
+                new_failing = sorted(nf)
             if tier1 and not new_failing and "could not compile" not in tail and r.returncode != 124:
-                r, tail, failing = run()                 # the quick tier saw nothing: the full suite
-                new_failing = sorted(failing - base_failing)
+                r, tail, nf = run_full()                 # the quick tier saw nothing: every full command
+                new_failing = sorted(nf)
         finally:
             open(path, "w").write(text)
         # `error[E....]` is the AXON interpreter's own diagnostic, printed by a test that

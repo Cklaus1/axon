@@ -1800,6 +1800,102 @@ fn run_direct(lx: &LinuxProfileConfig, req: &ComputeRequest, psv: &crate::psv::L
 mod tests {
     use super::*;
 
+    // ── Amendment 110: the DEFAULTS of accept_b263 are observed, in both directions ─────────────────────
+    // `counts.PASS` absent read as 0 (so "no PASS" refused); `unwrap_or(1)` there kept every suite green.
+    // The same record with one field missing or empty must be refused with THAT rule's message, and the
+    // genuine record accepted (the control), so a default moved either way shows.
+
+    const B263_END: &str = "2026-10-01T00:00:00Z";
+
+    fn b263() -> serde_json::Value {
+        serde_json::json!({
+            "issuer_key_id": "key-1",
+            "assertions": [{"name": "a1", "status": "PASS"}],
+            "counts": {"PASS": 1, "FAIL": 0, "BLOCKED": 0},
+            "result": "PASS",
+            "end": B263_END,
+            "engine": {"firecracker_sha256": "a".repeat(64), "jailer_sha256": "b".repeat(64)},
+            "source": {"tree_dirty": false},
+            "host": "build-host-1",
+            "caveat": "the boundary excludes the host kernel",
+        })
+    }
+
+    fn accept(ev: &serde_json::Value) -> Result<AcceptedB263, String> {
+        let now = parse_utc(B263_END).unwrap() + 60;
+        accept_b263(ev, "key-1", now, 3600, || Ok(Waivers::new()))
+    }
+
+    fn refused_with(edit: impl FnOnce(&mut serde_json::Value), want: &str, what: &str) {
+        let mut ev = b263();
+        edit(&mut ev);
+        match accept(&ev) {
+            Ok(_) => panic!("ATTACK: b263 default: {what} was accepted"),
+            Err(e) => assert!(e.contains(want), "ATTACK: b263 default: {what}: refused for another reason: {e}"),
+        }
+    }
+
+    #[test]
+    fn accept_b263_defaults_are_observed_and_fail_closed() {
+        let a = accept(&b263()).expect("control: the genuine record");
+        assert_eq!((a.host.as_str(), a.end.as_str()), ("build-host-1", B263_END));
+        assert_eq!(a.caveat, "the boundary excludes the host kernel");
+        assert_eq!(a.firecracker_sha256, "a".repeat(64));
+        assert_eq!(a.jailer_sha256, "b".repeat(64));
+        assert!(a.waived.is_empty() && !a.guest_policy_channel);
+        // the PASS count: absent, null, zero and a string all read as "no PASS assertion"
+        for (what, v) in [("absent", None), ("null", Some(serde_json::Value::Null)), ("zero", Some(0.into())), ("a string", Some("1".into()))] {
+            refused_with(
+                |e| match v.clone() {
+                    None => {
+                        e["counts"].as_object_mut().unwrap().remove("PASS");
+                    }
+                    Some(x) => e["counts"]["PASS"] = x,
+                },
+                "counts no PASS assertion",
+                &format!("a PASS count that is {what}"),
+            );
+        }
+        // the result: absent is the empty string, said as such
+        refused_with(|e| {
+            e.as_object_mut().unwrap().remove("result");
+        }, "evidence result is \"\"", "a record with no result");
+        refused_with(|e| e["result"] = 7.into(), "evidence result is \"\"", "a result that is not a string");
+        // the end time: absent is the empty string, said as such
+        refused_with(|e| {
+            e.as_object_mut().unwrap().remove("end");
+        }, "evidence end \"\" is not", "a record with no end time");
+        // the host and the caveat: absent, empty and not-a-string are all "states no ..."
+        for (what, v) in [("absent", None), ("empty", Some("".into())), ("a number", Some(5.into()))] {
+            refused_with(
+                |e| match v.clone() {
+                    None => {
+                        e.as_object_mut().unwrap().remove("host");
+                    }
+                    Some(x) => e["host"] = x,
+                },
+                "states no host",
+                &format!("a host that is {what}"),
+            );
+            refused_with(
+                |e| match v.clone() {
+                    None => {
+                        e.as_object_mut().unwrap().remove("caveat");
+                    }
+                    Some(x) => e["caveat"] = x,
+                },
+                "states no caveat",
+                &format!("a caveat that is {what}"),
+            );
+        }
+        // a record whose tree state is not the boolean false
+        refused_with(|e| {
+            e["source"].as_object_mut().unwrap().remove("tree_dirty");
+        }, "dirty (or unstated)", "a record that does not state its tree state");
+        // an engine digest that is not 64 hex
+        refused_with(|e| e["engine"]["jailer_sha256"] = "zz".into(), "lacks engine.firecracker_sha256", "a jailer digest that is not hex");
+    }
+
     /// Amendment 107: `read_regular`'s size bound is 256 MiB exactly (the sum of every file the
     /// evidence path reads is bounded by it). Round 11's survey moved it by one MiB with the suite
     /// green. A SPARSE file one byte over it is refused; one at it is read (a hole, no disk).

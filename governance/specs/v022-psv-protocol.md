@@ -6746,7 +6746,7 @@ row), and the `_text_ids` / `_unit_ids` / `_regular_text` guards beyond those th
       static layer, and the `stricter(..)` programs of `taint_tests.rs` have no production-route row.
     - **Counts, before -> after** (`python3 scripts/v022_refusal_coverage.py`): amendment-103 value sites 228 -> 228 (94 rowed, 96 OBSERVED,
       22 NOTROUTE, 11 DOMINATED, 5 REMAINDER); amendment-107 flow sites 0 -> 59 (16 rowed, 43 OBSERVED, 0 uncovered); OBSERVED-NOT-ROWED
-      167 -> 210; computed sink arguments counted, not sites: 46; bare const uses defined in several files, not followed: 2.
+      167 -> 210; computed sink arguments counted, not sites: 23 (printed as 46 at the time: two gate passes incremented one counter, corrected by amendment 110); bare const uses defined in several files, not followed: 2.
     - **Survey table** (`scripts/v022_value_survey.py`, 2 shards on gpumaster, tier-1 = psv_dispatch/privileged_launcher/observer_service +
       lib, survivors to the full suite): 47 flow sites, **42 KILLED**, **5 SURVIVED -> a test and a row each**: `read_regular`'s `256 << 20`
       (M2974), the direct launcher's `div_ceil(1000)` (M2975), the root helper's manifest owner (M2976), the loaded host's helper-route owner
@@ -6754,7 +6754,7 @@ row), and the `_text_ids` / `_unit_ids` / `_regular_text` guards beyond those th
       `observer_service` (OBSERVED). Before the tests above, the review's seven executed survivors survived; with them each is KILLED by its own
       attack (`python3 scripts/v022_g01_mutations.py --scope=all --only=M2960-M2977`: 18/18 killed, 0 REFUSED_ELSEWHERE).
     - **WHAT THE GATE STILL CANNOT SEE** (printed by the gate, and in `v022-protected-suite-verdict.md`). (1) A COMPUTED sink argument
-      (46 counted, listed by the count only): a path joined at run time, `s(&c.firecracker)`, a value through two locals or a
+      (23 counted, listed by the count only; "46" was a double count, amendment 110): a path joined at run time, `s(&c.firecracker)`, a value through two locals or a
       parameter other than an expected-owner `Option<u32>`. Their VALUES are observed here by the exact-argv tests, not by the gate.
       (2) A wrapper that forwards its parameters to `sealed_exec::command` is followed at the inner call only. (3) A struct literal of a type
       not named Config/Cfg/Authority/Policy/Manifest/Trust (except a field named owner) and a literal in a nested literal. (4) A default read
@@ -7055,3 +7055,108 @@ M2880-M2909, M3080-M3109, M3180-M3196; 151 rows) on gpumaster, 150 of 151 killed
 (M3194: the real-documents assertion of its test failed before the planted-governance one, so its marker did not match; REFUSED_ELSEWHERE is
 never a kill) fixed by planting before reading and re-run 7 of 7; the same 105 namespace rows locally (as root, the real `ns_run`; 105 of 106
 on the first run, M3194 again, then 7 of 7). Unexpected survivors 0, stale rows 0. M2659 and M2507-M2510 are among them and are killed by their own attacks.
+## Amendment 110: signing inputs and defaults are sites; the re-survey record is derived, floored and logged (C9 round 12, eqgate8)
+
+The round-12 equivalence reviewer REGISTERED the claim but named two classes as "not class-level" and one validator as self-attested. All
+three are closed here; the rest of this amendment is what was changed, what was measured and what is still not seen.
+
+- **Signing inputs (reviewer finding 1).** `CLEARANCE_DOMAIN`, `EXECUTION_DOMAIN` and `CONTEXT_DOMAIN` were filed as `const_tag` REMAINDER
+  ("compared with the value a document or peer carries"). That names the wrong mechanism: they are SIGNED OVER. Setting one equal to
+  another survived the full axon-fabric, axon-loop and axon-loop-contracts suites, because every test signed and verified with the same
+  constant on both sides. The enumeration (grep over the workspace for a const or literal reaching `hmac_sha256`, `sign_document`,
+  `verify_document`, `.sign(`, `.verify(` or building a signed message) found: the document-signature domains CLEARANCE, EXECUTION, CONTEXT
+  and the generic `DOCUMENT_SIGNATURE_SCHEMA`; the receipt-attestation schema; the execution document's schema; the evidence-signature
+  schema with the five trust authorities as its domain axis; the completion scheme (key message and binding) and the two outcome-token
+  contexts (`axon-test-completion/1`, `axon-test-failed/1`); the ledger-key label. `axon-attest` and `axon-audit` build MAC inputs by
+  appending computed buffers (no constant is a site there). `tests/signing_domains.rs` holds: (a) all domain strings pairwise distinct and
+  equal to their documented literals, the five authorities likewise; (b) CROSS-PROTOCOL REPLAY, with the real constants on both sides, a
+  signature minted under each domain refused under every other, and an attestation not a document signature either way; (c) KNOWN-ANSWER
+  tests, because Ed25519 and HMAC are deterministic: a fixed-seed key over a fixed document has one correct signature, so a change to any
+  signed byte (a schema tag inside a binding, a format string, a pass/fail context) changes it, which a round trip through the same code can
+  never show. Fabric's execution attestation moved from an inline CLI closure into `signing::sign_execution_attestation` (the path is
+  unreachable through the CLI while the protected profile offers no execution; M3134, swapping its domain, survived the WHOLE axon-fabric
+  suite before). **Gate form:** a const or literal that is an input to a signing, verification or MAC primitive is a site
+  (`SIGN_SINKS`, `SIGN_BUILDERS`), numbered under `<fn>~sign`, credited by a row or a VALUE_EXEMPT entry, and LISTED by the gate
+  (`SIGNING INPUT file:line fn name: row|...`). 15 such sites plus 7 const definitions: all rowed (M3110-M3134). The 9 `const_tag` /
+  predicate REMAINDER or OBSERVED exemptions they replaced are dropped. **Not seen:** a message builder fn not in `SIGN_BUILDERS`, an input
+  reaching a primitive through a parameter (counted among the computed arguments), a peer implementation outside this repository.
+- **Defaults (finding 2).** `Mode::parse(..).unwrap_or(Mode::Dev)` flipped to Protected survived at observer_service.rs, custodian.rs (x3),
+  `EvidenceClass` default at submit.rs, the B263 PASS count default at backend.rs, the cost-cap `map_or` at submit.rs. Fixed at the source:
+  the mode a REPLY names is read through ONE function, `Mode::from_reply`, which REFUSES a mode no build knows (custodian.rs: its three
+  readers had a default that was dead code, `call` already refuses an unknown mode; observer_service.rs's was live, and the reply field is
+  not optional so an absent field cannot arrive) with a drift test that fails on another `Mode::parse(` or any `unwrap_or(Mode::..)`
+  (`tests/default_sites.rs`); `EvidenceClass::of_outcome` (absent, doubled or unknown class ref is GUEST-UNOBSERVED, never Protected),
+  `submit::exceeds_budget` (a limit that does not fit an `i64` exceeds every budget), and `accept_b263`'s defaults (PASS count, result, end,
+  host, caveat) each have a unit test in BOTH directions with the exact message. **Gate form:** `unwrap_or(<literal|const|variant|None>)`,
+  `unwrap_or_default()`, `map_or(<lit>, ..)`, `.or(Some(<lit>))`, `unwrap_or_else(|| <lit>)`, `Default::default()` in the files of the seven
+  protected crates are sites numbered under `<fn>~dflt`; a default computed at the site is counted (`DEFAULTS NOT FOLLOWED`). The survey (`scripts/v022_value_survey.py`) flips a literal, flips an enum to the fail-open variant (`ENUM_FLIPS`)
+  and, for a default PRODUCED by `unwrap_or_default()` / `Default::default()`, makes taking it panic.
+- **The re-survey record is derived, floored and logged (finding 3).** `v022_resurvey.py` v2: the salt is
+  `sha256(tool version | commit | gate digest)`, computed by `--run` and RECOMPUTED by `problems()` (the record's own `salt` is a claim it is
+  checked against, `--salt` is gone); the entries are ranked by `sha256(salt|family|key)` and the first N drawn, N = ceil(1.2 x FLOOR),
+  FLOOR = max(20, 25 % of the population), so a lucky draw cannot be small; the record must hold at least FLOOR entries KILLED, at most 20 %
+  of the draw NOT RE-MEASURED, each with a readable reason; INCONCLUSIVE and SURVIVED refuse; the record is bound to the commit's TREE hash
+  and the tool and gate versions; each KILLED entry carries the commands, exit codes, test binaries and the sha256 of a log kept under
+  `governance/status/v022-resurvey-logs/<commit12>/`, and the check re-reads the log: present, unaltered, inside that directory, naming the
+  failing test, the binaries and the exit codes. `scripts/test_v022_resurvey.py` plants the shapes the reviewer forged by hand: a ground salt,
+  a never-run all-KILLED record, an all-NOT-RE-MEASURED record, a wrong head, a wrong tree, a stale tool and gate version, missing, altered,
+  traversing and wrong logs, a partial run. **Residual, stated as the other validators state theirs:** this is self-consistency and
+  reproducibility, not authentication. Whoever runs the freeze can still fabricate logs (they are text the runner writes); what changed is
+  that a forgery must now also fake a consistent log set for a sample it cannot choose, which a reviewer can re-run entry by entry
+  (`--run --only KEY`), and that `--check` ties the record to the commit, tree and gate that were frozen. A record nobody re-runs proves only
+  that it is consistent.
+- **THE FREEZE PROCEDURE for the record, in order, with its refusals.** (1) check out the freeze head with a clean tree; (2)
+  `python3 scripts/v022_resurvey.py --run` on gpumaster (refuses `the tree is not clean` otherwise; hours at the default sample); (3) commit
+  `governance/status/v022-resurvey.json` and `governance/status/v022-resurvey-logs/` in a status-only commit; (4) run the freeze
+  (`scripts/v022_freeze_manifest.py`), which refuses with `the re-survey record is not for this head or does not hold: ...` naming the first
+  defects (`cannot be read`, `commit ... not the freeze commit`, `its tree hash is not the tree of its commit`, `another version of the gate`,
+  `its sampling salt is not the one derived`, `only N entries were re-measured and held; the floor is F`, `its log ... is missing`).
+  `python3 scripts/v022_resurvey.py --check` answers the same question without freezing. ANY edit to `scripts/v022_refusal_coverage.py`
+  invalidates the record (the gate digest), so a record is made last.
+- **Counters and duplicates (finding 4).** The "46 sink arguments computed" of amendment 107 was a double count (two gate passes
+  incremented one counter); the counter is now a set keyed (file, offset), and amendments 107's text says 23. `PROTECTED_PROFILE` had two
+  definitions (axon-psv and axon-fabric's readiness.rs): readiness now re-exports axon-psv's, `tests/default_sites.rs` fails if a second
+  appears and pins it, and `axon_loop_contracts::PROTECTED_PROFILES`, to the documented literal (M3152-M3154). `ALLOWED_EFFECTS` in the
+  bare-metal guest kernel's mmds.rs is a `static mut` set by `read_policy`, not a constant: there is no literal to pin, and the kernel is not
+  on the protected route (its VALUE_EXEMPT entries say so).
+- **Direct-route argv values (finding 5).** `fabric_runs_its_direct_launcher_and_its_observer_with_exactly_their_flags_and_path` now
+  asserts the VALUES of `--psv-candidate`, `--psv-suite`, `--psv-job`, `--psv-manifest-sha` (the sha256 of the launch manifest the job drive
+  holds, recorded by the stand-in launcher) and `--policy` (M3147-M3151). The survey harness limitation (an entry naming two test binaries
+  run as one) is fixed in `v022_value_survey.py` (`--cmd` repeated, every command run until one kills; `run_commands`, tested in
+  `scripts/test_v022_value_survey.py`); the re-survey already ran every named binary (`commands_for`, now tested).
+- **Counts, before -> after** (`python3 scripts/v022_refusal_coverage.py`, rc 0, and `--freeze` rc 0): amendment-103 value sites 228 -> 228
+  (unchanged); amendment-107 flow sites 59 -> 67 (the 7 signing-domain constants' initialisers, which the sink walk now reaches, plus one);
+  NEW amendment-110 signing inputs 0 -> 15, all rowed; NEW amendment-110 defaults 0 -> 113 (9 rowed, 12 OBSERVED, 5 DOMINATED, 1 NOTROUTE,
+  86 REMAINDER); OBSERVED-NOT-ROWED 216 -> 227; REMAINDER 142 -> 220 (the 86 defaults, less 8 `const_tag` entries and others the new rows
+  now cover): **the REMAINDER grew because the gate now sees more, not because anything weakened**; computed sink arguments 46 -> 45
+  (23 true at amendment 107; 45 now includes the new signing sinks' computed arguments, each counted once); computed defaults counted, not
+  sites: 113; bare const uses defined in several files, not followed: 2 -> 1 (`PROTECTED_PROFILE` has one definition now).
+- **Survey tables** (`scripts/v022_value_survey.py`, amendment-110 forms; site counts are what each suite was run against).
+  Signing inputs: all 15 + 7 constants are rowed (M3110-M3134; M3129-M3133 were already killed by the loop's protected-evaluation tests
+  and are recorded as rows with their own markers; M3134 survived the WHOLE axon-fabric suite until `sign_execution_attestation` and its
+  test). Defaults, 113 sites: axon-psv 9 (4 KILLED, 5 SURVIVED the crate's whole suite); axon-loop-contracts 2 (0 / 2); axon-loop 23
+  (7 / 16); axon-guest-init 3 (0 / 3); axon-fabric 67 survey records: 47 in library files against the LIB tests alone (0 killed: unit
+  tests do not reach them), 20 in the binaries against 15 of the fast integration binaries (1 killed); of these, 16 security-relevant sites
+  were re-run against the targeted slow binaries (`observer_service`+`custodian`, `psv_dispatch`+`submit`, `custodian`, `protected_host`:
+  0 killed), two of which (the nonce record's issue time, M3162, and its prune by mtime, M3163) were then given tests and rows; the two
+  `privileged_launcher.rs` sites could not be concluded (that binary hangs on a loaded host at `a_callers_scheduling_state_never_reaches_
+  the_root_launch`, FLAKY in the re-survey, passes in 1 s on an idle one) and say so. The sites that decide a mode, a class, a count or a
+  cap have tests and rows (M3135-M3146, M3162). **What is NOT claimed:** a default in axon-fabric was NOT run, one site at a time, against
+  the whole 24-minute axon-fabric suite (the first attempt, three parallel whole-suite surveys, timed out at its 2400 s baseline on a loaded
+  host): such a site is a counted REMAINDER whose reason names the narrower suite it survived, and the `text` / `platform` / `closed` /
+  `recorded` judgements say why the default decides nothing (an error text, a serialization or `fstat` that cannot fail, a digest recorded
+  and compared by nobody). Those judgements are reasoning, not tests; they are measurements of a narrower suite, not proofs of absence.
+- **Rows** M3110-M3163, matrix rows A256-A264, mutation ids inside M3110-M3179. `python3 scripts/v022_g01_mutations.py --scope=all
+  --only=M3110,...,M3163` (run on a quiet tree: the runner refuses an interpreter rebuilt during the run, as it did when a cargo of mine shared
+  its target).
+- **Evidence** (head `4266398688`, rc-checked): all 54 rows M3110-M3163 KILLED by their own attack on the local host, in three runs on a quiet tree
+  (a first batch whose M3133/M3134/M3144-M3154 were repeated after a cargo of mine shared the runner's target and tripped its
+  interpreter-rebuilt check; M3149 (the job drive swapped made the control fail before the value assertion: the control now follows the
+  value assertions), M3155 (a marker regex), M3160 (the row edited the wrong one of two `computed` lines) were corrected and re-run: 7 rows
+  repeated, 7 KILLED). `cargo test -p axon-fabric` 874 passed / 0 failed both with `--test-threads=1` and default-parallel on gpumaster
+  (the one test skipped there, `a_callers_scheduling_state_never_reaches_the_root_launch`, hangs on a loaded host and passes in 1 s on the
+  idle local one); axon-psv, axon-loop-contracts, axon-loop, axon-cortex whole suites rc 0 (69 binaries ok); axon-core
+  `refusal_coverage_gate` 52, `harness_integrity` 43, `harness_binaries` 10 passed (rc 0); clippy `-D warnings` on axon-fabric and axon-core
+  rc 0; `scripts/test_v022_resurvey.py` and `scripts/test_v022_value_survey.py` PASS; `psv_matrix_check.py` lists only the A249-A255
+  placeholders of other workstreams. The committed `governance/status/v022-resurvey.json` is for an earlier gate digest and is REFUSED by
+  `--check` now (the digest changed, as it must): the record is made at the freeze head, last.

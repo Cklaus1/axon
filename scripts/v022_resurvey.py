@@ -1,40 +1,60 @@
 #!/usr/bin/env python3
-"""Re-measure the OBSERVED entries of the refusal-site gate (C9 round 11, eqgate7, amendment 107).
+"""Re-measure the OBSERVED entries of the refusal-site gate (C9 round 11 eqgate7 amendment 107, hardened by
+round 12 eqgate8 amendment 110).
 
 The gate's third disposition for a site is neither a row nor a checkable fact but a RECORDED
-MEASUREMENT: a survey removed (or changed) the guard / value, and a named test failed. 167 entries
-(96 value sites, 60 Python guards, 11 Rust guards) rest on it, and nothing re-ran it: a test that was
-later deleted, weakened or renamed leaves the entry standing and the claim wrong. This tool
-re-measures a deterministic SAMPLE of them and writes a record the FREEZE refuses to proceed
-without.
+MEASUREMENT: a survey removed (or changed) the guard / value, and a named test failed. Hundreds of entries
+rest on it, and nothing re-ran it: a test that was later deleted, weakened or renamed leaves the entry
+standing and the claim wrong. This tool re-measures a deterministic SAMPLE of them and writes a record the
+FREEZE refuses to proceed without.
 
-    python3 scripts/v022_resurvey.py --run [--out PATH] [--sample auto|all|PCT] [--salt S]
-                                     [--families value,py,guard]
-    python3 scripts/v022_resurvey.py --check [PATH]      # is there a recent record for HEAD? (exit 1: no)
+    python3 scripts/v022_resurvey.py --run [--out PATH] [--sample auto|all|PCT] [--families value,py,guard]
+    python3 scripts/v022_resurvey.py --check [PATH]      # is there a valid record for HEAD? (exit 1: no)
     python3 scripts/v022_resurvey.py --plan [--sample ..] # what would be re-measured, and the estimate
 
-SAMPLE. `auto` (the default) is every entry when the estimate (EST_SECONDS per entry) is under 5
-minutes, else a deterministic 25 %: an entry is drawn when sha256(salt|key) mod 100 < pct, the salt
-being the HEAD commit, so the same head draws the same entries and a new head rotates which 25 %.
-`--sample all` re-measures everything (hours; the whole run is a freeze-time step on gpumaster).
+THE FREEZE PROCEDURE (also in governance/notes/v022-operator-runbook.md):
+  1. check out the freeze head with a CLEAN tree;
+  2. `python3 scripts/v022_resurvey.py --run` (on gpumaster; hours at the default sample);
+  3. commit governance/status/v022-resurvey.json AND governance/status/v022-resurvey-logs/ (a status-only
+     commit; the record is for the commit it was made at, and only governance/status/ may differ);
+  4. `python3 scripts/v022_freeze_manifest.py` (the freeze). It refuses, naming the first defects, when the
+     record is missing, for another commit or tree, made by another gate or tool version, drawn by a salt
+     that is not the commit's, below the floor, or backed by a log that is missing or does not name the test.
 
-WHAT IS MEASURED. A VALUE entry: the survey's own mutation of that value (v022_value_survey.mutate),
-then the test binaries the entry's reason names (every `<binary> -p P --test T` token) or, with none,
-the owning crate's suite; the entry holds when a test that passed on the unmutated tree now fails.
-A PYTHON guard: scripts/v022_py_guard_survey.py on that site's line. A RUST guard: the `.ok_or(..)?`
-replaced by `.unwrap_or_default()` and the tests the entry names; an entry whose edit is not that
-(a bound raised, a table extended) or does not compile is counted NOT RE-MEASURED, never passed.
-Any entry that now SURVIVES fails the run (exit 1) and the record says which.
+THE SAMPLE IS NOT THE RECORD'S TO CHOOSE. The salt is sha256(commit | gate digest | tool version), computed
+here and RECOMPUTED by `problems()` from the record's commit and this tree's gate: a record cannot name its
+own salt (round 12: a ground salt whose 25 % draw held 1 of the 43 flow entries, against an honest ~11, passed
+a check that read the salt from the record). The entries are ranked by sha256(salt|family|key) and the first N
+are drawn, N = ceil(1.2 x FLOOR) where FLOOR = max(20, 25 % of the population): a count, not a per-entry coin,
+so a lucky draw cannot be small.
 
-THE RECORD (governance/status/v022-resurvey.json) names the commit, the gate's digest, the counts per
-family, every entry drawn with its result, the sample rule and the seconds taken. `--check` (and the
-freeze manifest) refuse a record that is for another commit (modulo governance/status/), was made from
-a dirty tree, is older than MAX_AGE_DAYS, drew fewer than MIN_PCT of the entries, covers a different
-OBSERVED set than the gate now has, lists a survivor, or drew entries the rule does not draw.
+WHAT IS MEASURED. A VALUE entry: the survey's own mutation of that value (v022_value_survey.mutate), then the
+test binaries the entry's reason names (EVERY `<binary> -p P --test T` token, one command each) and then the
+owning crate's suite; the entry holds when a test that passed on the unmutated tree now fails. A PYTHON guard:
+scripts/v022_py_guard_survey.py on that site's line. A RUST guard: the `.ok_or(..)?` replaced by
+`.unwrap_or_default()` and the tests the entry names; an entry whose edit is not that or does not compile is
+counted NOT RE-MEASURED, never passed. Any entry that now SURVIVES fails the run (exit 1).
+
+THE RECORD (governance/status/v022-resurvey.json, schema /2) names the commit, the commit's TREE hash, the
+gate's digest and the tool version, the counts, every entry drawn with its result, and for each re-measured
+entry the commands run, their exit codes, the test binaries, the sha256 of a log kept under
+governance/status/v022-resurvey-logs/ and the failing tests the log must name. `problems()` refuses a record
+that: is for another commit or tree, was made from a dirty tree, is older than MAX_AGE_DAYS, was made by another
+gate or tool version, drew other entries than the rule draws, holds fewer than FLOOR re-measured entries, caps
+NOT RE-MEASURED at 20 % of the draw and requires each to carry a reason, lists a survivor or an INCONCLUSIVE
+entry, or backs a KILLED entry with a log that is missing, altered, outside the log directory, or does not
+mention the failing test, the binaries and the exit codes the entry records.
+
+RESIDUAL, stated as the other validators state theirs: this is SELF-CONSISTENCY and REPRODUCIBILITY, not
+authentication. Whoever runs the freeze can still fabricate the logs (they are text the runner writes); what the
+checks add is that a forged record must now also forge a consistent log set for a derived sample, which a reviewer
+can re-run entry by entry (`--run --only KEY` reproduces one) and which `--check` ties to the commit, tree and
+gate that were frozen. A record that nobody re-runs proves only that it is consistent.
 """
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import re
 import subprocess
@@ -44,12 +64,19 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 STATUS = "governance/status/v022-resurvey.json"
-SCHEMA = "axon-v022-resurvey/1"
+LOG_DIR = "governance/status/v022-resurvey-logs"
+SCHEMA = "axon-v022-resurvey/2"
+TOOL_VERSION = 2          # bumped when the sampling rule, the floor or the log format changes
 MAX_AGE_DAYS = 14
 MIN_PCT = 25
-BUDGET_S = 300           # `auto` re-measures everything when the estimate is under this
+FLOOR_ABS = 20            # at least this many entries are re-measured, whatever the population
+FLOOR_FRAC = 0.25         # ... and at least this fraction of the population
+OVERDRAW = 1.2            # N = ceil(OVERDRAW x FLOOR) entries are drawn, so NOT RE-MEASURED has room
+NOT_REMEASURED_MAX = 0.2  # of the entries drawn
+BUDGET_S = 300            # `auto` re-measures everything when the estimate is under this
 EST_SECONDS = {"value": 40, "py": 45, "guard": 40}
 FLAKY = ["--skip", "a_callers_scheduling_state_never_reaches_the_root_launch"]
+LOG_CAP = 48_000          # bytes kept per entry log
 
 
 def load(name):
@@ -67,9 +94,42 @@ def head():
     return sh(["git", "rev-parse", "HEAD"]).stdout.strip()
 
 
-def drawn(key, salt, pct):
-    """Whether the entry `key` is in the sample: a fixed function of (salt, key, pct)."""
-    return int(hashlib.sha256(f"{salt}|{key}".encode()).hexdigest()[:8], 16) % 100 < pct
+def tree_of(commit):
+    return sh(["git", "rev-parse", f"{commit}^{{tree}}"]).stdout.strip()
+
+
+def gate_sha():
+    return hashlib.sha256(open(os.path.join(ROOT, "scripts/v022_refusal_coverage.py"), "rb").read()).hexdigest()
+
+
+def derive_salt(commit, gate=None):
+    """The sampling salt: a function of the COMMIT, the gate's digest and the tool version, and nothing else.
+    `problems()` recomputes it; a record's own `salt` field is a claim it is checked against."""
+    return hashlib.sha256(f"axon-resurvey-salt/{TOOL_VERSION}|{commit}|{gate or gate_sha()}".encode()).hexdigest()
+
+
+def floor_for(pop):
+    return min(pop, max(FLOOR_ABS, math.ceil(FLOOR_FRAC * pop)))
+
+
+def sample_size(pop, pct):
+    if pct >= 100:
+        return pop
+    return min(pop, math.ceil(max(floor_for(pop), pct / 100 * pop) * OVERDRAW))
+
+
+def rank(salt, family, key):
+    return hashlib.sha256(f"{salt}|{family}|{key}".encode()).hexdigest()
+
+
+def draw(ents, salt, pct):
+    """{family: [key]}: the first N entries (all families together) by sha256(salt|family|key)."""
+    allk = [(rank(salt, f, key), f, key) for f, v in ents.items() for key, _ in v]
+    n = sample_size(len(allk), pct)
+    chosen = {f: [] for f in ents}
+    for _, f, key in sorted(allk)[:n]:
+        chosen[f].append(key)
+    return chosen
 
 
 def entries(rc):
@@ -97,8 +157,38 @@ def plan(rc, sample, salt):
         pct = 100
     else:
         pct = int(sample)
-    chosen = {k: [(key, p) for key, p in v if pct >= 100 or drawn(key, salt, pct)] for k, v in ents.items()}
+    keys = draw(ents, salt, pct)
+    chosen = {k: [(key, p) for key, p in v if key in set(keys[k])] for k, v in ents.items()}
     return ents, chosen, pct, total, est
+
+
+# ── logs ──────────────────────────────────────────────────────────────────────
+
+_INTEREST = re.compile(r"^(\s+Running |\s+Doc-tests |test result:|failures:|error: |.*\bFAILED\b|---- |thread '|.*panicked at |"
+                       r"\s+`-p )")
+
+
+def log_block(cmd, rc, out):
+    """The part of one command's output a reviewer needs: what ran, every failure and its panic, the exit code."""
+    keep = [l for l in out.split("\n") if _INTEREST.match(l)]
+    # panic bodies: the two lines after each `---- name stdout ----`
+    lines = out.split("\n")
+    for i, l in enumerate(lines):
+        if l.startswith("---- ") and l.endswith(" stdout ----"):
+            keep.extend(lines[i + 1:i + 5])
+    body = "\n".join(dict.fromkeys(keep))
+    return f"$ {' '.join(cmd)}\nexit code: {rc}\n{body}\n"
+
+
+def write_log(commit, idx, family, blocks):
+    """Write one entry's log; returns (relative path, sha256)."""
+    text = "".join(blocks)[:LOG_CAP]
+    d = os.path.join(ROOT, LOG_DIR, commit[:12])
+    os.makedirs(d, exist_ok=True)
+    rel = f"{LOG_DIR}/{commit[:12]}/{idx:03d}-{family}.log"
+    with open(os.path.join(ROOT, rel), "w") as fh:
+        fh.write(text)
+    return rel, hashlib.sha256(text.encode()).hexdigest()
 
 
 # ── the three families ───────────────────────────────────────────────────────
@@ -111,10 +201,12 @@ def run_tests(cmd):
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=2400)
     except subprocess.TimeoutExpired:
+        _LAST.update(tail="", rc=124, out="hung\n")
         return {"<hung>"}, "hung", 124
     out = r.stdout + r.stderr
     _LAST["tail"] = out[-600:]
     _LAST["rc"] = r.returncode
+    _LAST["out"] = out
     failing = set(re.findall(r"^---- (\S+) stdout ----$", out, re.M))
     failing |= {"<binary> " + t for t in re.findall(r"^\s+`(-p [^`]+)`$", out, re.M)}
     if r.returncode not in (0, 101) and not failing:
@@ -134,8 +226,9 @@ def baseline(cmd):
 
 
 def commands_for(crate, reason):
-    """The test commands a VALUE entry's reason names, then the crate's suite (a reason lists at most six
-    tests, so the binaries it names may be a subset of the ones that kill)."""
+    """The test commands a VALUE entry's reason names (ONE per named binary: round 12 found a survey that ran
+    only the last of two), then the crate's suite (a reason lists at most six tests, so the binaries it names
+    may be a subset of the ones that kill)."""
     cmds = []
     for t in re.findall(r"<binary> (-p [\w-]+ (?:--lib|--bin [\w-]+|--test [\w-]+))", reason):
         cmds.append(["cargo", "test", "--no-fail-fast", *t.split(), "--", *FLAKY])
@@ -143,7 +236,12 @@ def commands_for(crate, reason):
     return list(dict.fromkeys(map(tuple, cmds)))
 
 
-def value_family(rc, vs, chosen):
+def _binaries(out):
+    return sorted(set(re.findall(r"^\s+Running (\S+)", out, re.M))
+                  | set(re.findall(r"^\s+`(-p [^`]+)`$", out, re.M)))
+
+
+def value_family(rc, vs, chosen, logger):
     out = []
     cache = {}
     for key, e in chosen:
@@ -166,6 +264,7 @@ def value_family(rc, vs, chosen):
             continue
         crate = f.split("/")[1]
         killed, broke = [], False
+        blocks, bins = [], set()
         path = os.path.join(ROOT, f)
         for cmd in commands_for(crate, reason):
             cmd = list(cmd)
@@ -182,21 +281,24 @@ def value_family(rc, vs, chosen):
                 rec["result"] = "INCONCLUSIVE (hung)"
                 break
             killed += sorted(failing - base)
-            rec.setdefault("ran", []).append({"cmd": " ".join(cmd[:8]), "failing": sorted(failing)[:3], "base": sorted(base)[:3], "rc": _LAST.get("rc"), "tail": _LAST.get("tail", "")[-300:]})
+            blocks.append(log_block(cmd, _LAST.get("rc"), _LAST.get("out", "")))
+            bins |= set(_binaries(_LAST.get("out", "")))
+            rec.setdefault("ran", []).append({"cmd": " ".join(cmd[:8]), "failing": sorted(failing)[:3], "base": sorted(base)[:3], "rc": _LAST.get("rc")})
             if killed:
                 break
-        else:
-            pass
         if "result" not in rec:
             rec["result"] = ("NOT RE-MEASURED (the edit does not build)" if broke
                              else "KILLED" if killed else "SURVIVED")
             rec["failing"] = killed[:4]
+        if blocks:
+            rec["binaries"] = sorted(bins)
+            rec["log"], rec["log_sha256"] = logger(blocks)
         out.append(rec)
         print(rec["result"], key, flush=True)
     return out
 
 
-def py_family(rc, chosen):
+def py_family(rc, chosen, logger):
     """The Python guards: scripts/v022_py_guard_survey.py on the drawn sites' lines."""
     if not chosen:
         return []
@@ -220,12 +322,17 @@ def py_family(rc, chosen):
         else:
             rec["result"] = "KILLED" if row["verdict"] == "KILLED" else "SURVIVED"
             rec["failing"] = row.get("cases", [])[:4]
+            rec["binaries"] = ["scripts/v022_py_guard_survey.py"]
+            rec["ran"] = [{"cmd": "scripts/v022_py_guard_survey.py --json", "failing": rec["failing"], "base": [], "rc": r.returncode}]
+            rec["log"], rec["log_sha256"] = logger([
+                f"$ python3 scripts/v022_py_guard_survey.py --json OUT {' '.join(lines)}\nexit code: {r.returncode}\n"
+                + json.dumps(row, sort_keys=True)[:6000] + "\n"])
         res.append(rec)
         print(rec["result"], key, flush=True)
     return res
 
 
-def guard_family(rc, chosen):
+def guard_family(rc, chosen, logger):
     """A Rust guard exemption: an `.ok_or(..)?` replaced by `.unwrap_or_default()`, and the tests it names."""
     out = []
     for key, (f, anchor, reason) in chosen:
@@ -241,7 +348,6 @@ def guard_family(rc, chosen):
             print(rec["result"], key, flush=True)
             continue
         s = i + m.start()
-        clean = text
         op = i + m.end() - 1
         close = rc._match_close(text, op)
         tail = text[close:close + 2]
@@ -267,6 +373,9 @@ def guard_family(rc, chosen):
             hit = sorted(t for t in failing - base if any(t.endswith(n.split("::")[-1]) for n in test_names))
             rec["result"] = "KILLED" if hit else "SURVIVED"
             rec["failing"] = hit[:4]
+            rec["binaries"] = _binaries(_LAST.get("out", ""))
+            rec["ran"] = [{"cmd": " ".join(cmd[:8]), "failing": sorted(failing)[:3], "base": sorted(base)[:3], "rc": _LAST.get("rc")}]
+            rec["log"], rec["log_sha256"] = logger([log_block(cmd, _LAST.get("rc"), _LAST.get("out", ""))])
         out.append(rec)
         print(rec["result"], key, flush=True)
     return out
@@ -275,35 +384,48 @@ def guard_family(rc, chosen):
 # ── the record ────────────────────────────────────────────────────────────────
 
 def run(args):
-    sample, salt, out, only = "auto", None, STATUS, None
+    sample, out, only = "auto", STATUS, None
     fams = ["value", "py", "guard"]
     it = iter(args)
     for a in it:
         if a == "--sample":
             sample = next(it)
-        elif a == "--salt":
-            salt = next(it)
         elif a == "--out":
             out = next(it)
         elif a == "--families":
             fams = next(it).split(",")
         elif a == "--only":      # debugging: keys containing this text (the record is then NOT a freeze record)
             only = next(it)
+        else:
+            sys.exit(__doc__)    # no --salt: the salt is derived, never chosen
     if sh(["git", "status", "--porcelain", "--untracked-files=no"]).stdout.strip():
         sys.exit("refused: the tree is not clean; the survey edits sources in place and a record is evidence about a commit")
     rc, vs = load("v022_refusal_coverage"), load("v022_value_survey")
-    salt = salt or head()
+    commit = head()
+    salt = derive_salt(commit)
     ents, chosen, pct, total, est = plan(rc, sample, salt)
     if only:
         chosen = {k: [(key, p) for key, p in v if only in key] for k, v in ents.items()}
+    ctr = [0]
+    d = os.path.join(ROOT, LOG_DIR, commit[:12])
+    if os.path.isdir(d):
+        for fn_ in os.listdir(d):
+            os.unlink(os.path.join(d, fn_))
+
+    def logger(family):
+        def f(blocks):
+            ctr[0] += 1
+            return write_log(commit, ctr[0], family, blocks)
+        return f
+
     t0 = time.time()
     results = []
     if "value" in fams:
-        results += value_family(rc, vs, chosen["value"])
+        results += value_family(rc, vs, chosen["value"], logger("value"))
     if "py" in fams:
-        results += py_family(rc, chosen["py"])
+        results += py_family(rc, chosen["py"], logger("py"))
     if "guard" in fams:
-        results += guard_family(rc, chosen["guard"])
+        results += guard_family(rc, chosen["guard"], logger("guard"))
     secs = round(time.time() - t0, 1)
     fam = {}
     for k in ("value", "py", "guard"):
@@ -312,10 +434,12 @@ def run(args):
                   "killed": sum(r["result"] == "KILLED" for r in rs),
                   "survived": [r["key"] for r in rs if r["result"] == "SURVIVED"],
                   "not_remeasured": sum(r["result"].startswith(("NOT RE-MEASURED", "INCONCLUSIVE")) for r in rs)}
-    doc = {"schema": SCHEMA, "commit": head(), "tree_clean": True,
-           "gate_sha256": hashlib.sha256(open(os.path.join(ROOT, "scripts/v022_refusal_coverage.py"), "rb").read()).hexdigest(),
-           "sample": {"pct": pct, "salt": salt, "mode": sample,
-                      "rule": "an entry is drawn when sha256(salt|key)[:8] mod 100 < pct"},
+    doc = {"schema": SCHEMA, "tool_version": TOOL_VERSION, "commit": commit, "tree_sha": tree_of(commit), "tree_clean": True,
+           "gate_sha256": gate_sha(), "partial": bool(only) or sorted(fams) != ["guard", "py", "value"],
+           "sample": {"pct": pct, "salt": salt, "mode": sample, "population": total, "floor": floor_for(total),
+                      "n": sample_size(total, pct),
+                      "rule": "salt = sha256(axon-resurvey-salt/V|commit|gate sha256); entries ranked by "
+                              "sha256(salt|family|key); the first N are drawn"},
            "estimate_seconds": est, "seconds": secs, "finished_unix": int(time.time()),
            "host": os.uname().nodename, "families": fam, "entries": results}
     with open(os.path.join(ROOT, out), "w") as fh:
@@ -330,7 +454,40 @@ def run(args):
     return 1 if surv else 0
 
 
-def problems(doc, head_sha, rc, mut, now=None):
+def _log_problems(r, logs_root):
+    """Why a KILLED entry's log does not back it (empty: it does)."""
+    rel = r.get("log")
+    if not isinstance(rel, str) or not rel.startswith(LOG_DIR + "/") or ".." in rel.split("/"):
+        return ["has no log under " + LOG_DIR]
+    path = os.path.join(logs_root, rel)
+    try:
+        text = open(path).read()
+    except OSError:
+        return [f"its log {rel} is missing"]
+    out = []
+    if hashlib.sha256(text.encode()).hexdigest() != r.get("log_sha256"):
+        out.append(f"its log {rel} does not match the sha256 the record holds (altered)")
+    failing = r.get("failing") or []
+    if not failing:
+        out.append("is KILLED but names no failing test")
+    for t in failing:
+        if t not in text:
+            out.append(f"its log {rel} does not mention the failing test {t!r}")
+    ran = r.get("ran") or []
+    if not ran:
+        out.append("records no command it ran")
+    for c in ran:
+        if not isinstance(c.get("rc"), int) or f"exit code: {c['rc']}" not in text:
+            out.append(f"its log {rel} does not show the exit code {c.get('rc')!r} of `{str(c.get('cmd'))[:60]}`")
+        if str(c.get("cmd", ""))[:60] not in text:
+            out.append(f"its log {rel} does not show the command `{str(c.get('cmd'))[:60]}`")
+    for b in r.get("binaries") or []:
+        if b not in text:
+            out.append(f"its log {rel} does not name the test binary {b!r}")
+    return out
+
+
+def problems(doc, head_sha, rc, mut, now=None, logs_root=ROOT, tree_fn=tree_of):
     """Every defect that stops `doc` from being the re-survey record for the commit `head_sha`."""
     mstat = load("v022_mutation_status")
     out = []
@@ -339,49 +496,85 @@ def problems(doc, head_sha, rc, mut, now=None):
     out.extend(mstat.evidence_commit_problems(doc.get("commit"), head_sha, mut))
     if doc.get("tree_clean") is not True:
         out.append("it does not record a clean tree")
+    if doc.get("partial"):
+        out.append("it is a PARTIAL run (--only or --families), not a freeze record")
+    if doc.get("tool_version") != TOOL_VERSION:
+        out.append(f"it was made by tool version {doc.get('tool_version')!r}, this tree's is {TOOL_VERSION}")
+    if not isinstance(doc.get("commit"), str) or not doc.get("tree_sha") or doc.get("tree_sha") != tree_fn(doc["commit"]):
+        out.append("its tree hash is not the tree of its commit (a record is bound to the tree it was made on)")
     now = now if now is not None else time.time()
     age = (now - doc.get("finished_unix", 0)) / 86400
     if not (0 <= age <= MAX_AGE_DAYS):
         out.append(f"it is {age:.1f} days old (the bound is {MAX_AGE_DAYS})")
-    gate = hashlib.sha256(open(os.path.join(ROOT, "scripts/v022_refusal_coverage.py"), "rb").read()).hexdigest()
+    gate = gate_sha()
     if doc.get("gate_sha256") != gate:
         out.append("it was made by another version of the gate than this tree's")
     s = doc.get("sample") or {}
     if not isinstance(s.get("pct"), int) or s["pct"] < MIN_PCT:
         out.append(f"it drew {s.get('pct')!r}% of the entries; the freeze needs at least {MIN_PCT}%")
+    salt = derive_salt(doc.get("commit"), doc.get("gate_sha256"))
+    if s.get("salt") != salt:
+        out.append("its sampling salt is not the one derived from its commit and its gate (a record cannot choose its own sample)")
     ents = entries(rc)
+    pop = sum(len(v) for v in ents.values())
+    pct = s["pct"] if isinstance(s.get("pct"), int) else MIN_PCT
+    want_by = draw(ents, salt, max(pct, MIN_PCT)) if pop else {k: [] for k in ents}
     fam = doc.get("families") or {}
+    killed_total = nrm_total = drawn_total = 0
     for k, v in ents.items():
         f = fam.get(k) or {}
         if f.get("observed") != len(v):
             out.append(f"{k}: it covers {f.get('observed')} OBSERVED entries, the gate now has {len(v)}")
-        want = [key for key, _ in v if s.get("pct", 0) >= 100 or drawn(key, s.get("salt", ""), s.get("pct", 0))]
-        got = sorted(r["key"] for r in doc.get("entries", []) if r.get("family") == k)
+        want = want_by[k]
+        recs = [r for r in doc.get("entries", []) if r.get("family") == k]
+        got = sorted(r.get("key") for r in recs)
         if got != sorted(want):
-            out.append(f"{k}: the entries it re-measured are not the ones its sample rule draws "
+            out.append(f"{k}: the entries it re-measured are not the ones the rule draws "
                        f"({len(got)} recorded, {len(want)} drawn)")
         if f.get("survived"):
             out.append(f"{k}: {len(f['survived'])} OBSERVED entr(ies) now SURVIVE (first: {f['survived'][0]})")
-        r_ok = sum(1 for r in doc.get("entries", []) if r.get("family") == k and r.get("result") == "KILLED")
+        r_ok = sum(1 for r in recs if r.get("result") == "KILLED")
         if f.get("killed") != r_ok:
             out.append(f"{k}: the family counts {f.get('killed')} killed, the entries show {r_ok}")
-        if want and r_ok + int(f.get("not_remeasured", 0)) < len(want):
-            out.append(f"{k}: {len(want) - r_ok - int(f.get('not_remeasured', 0))} drawn entr(ies) are neither killed nor listed as not re-measured")
+        nrm = [r for r in recs if str(r.get("result", "")).startswith("NOT RE-MEASURED")]
+        if f.get("not_remeasured") != len(nrm):
+            out.append(f"{k}: the family counts {f.get('not_remeasured')} not re-measured, the entries show {len(nrm)}")
+        for r in recs:
+            res = str(r.get("result"))
+            if res == "KILLED":
+                for why in _log_problems(r, logs_root):
+                    out.append(f"{k}: entry {str(r.get('key'))[:70]!r} {why}")
+            elif res.startswith("NOT RE-MEASURED"):
+                if not re.fullmatch(r"NOT RE-MEASURED \([^()]{8,}\)", res):
+                    out.append(f"{k}: entry {str(r.get('key'))[:70]!r} is NOT RE-MEASURED with no reason a reviewer can read")
+            else:
+                out.append(f"{k}: entry {str(r.get('key'))[:70]!r} has the result {res[:40]!r}, which is neither KILLED nor "
+                           "NOT RE-MEASURED (a survivor, or a run that did not conclude)")
+        killed_total += r_ok
+        nrm_total += len(nrm)
+        drawn_total += len(recs)
+    floor = floor_for(pop)
+    if killed_total < floor:
+        out.append(f"only {killed_total} entries were re-measured and held; the floor is {floor} "
+                   f"(max({FLOOR_ABS}, {int(FLOOR_FRAC * 100)}% of {pop}))")
+    if nrm_total > math.floor(NOT_REMEASURED_MAX * max(drawn_total, 1)):
+        out.append(f"{nrm_total} of {drawn_total} drawn entries are NOT RE-MEASURED; the cap is {int(NOT_REMEASURED_MAX * 100)}%")
     return out
 
 
-def freeze_refusal(rc, mut, head_sha, path=STATUS):
+def freeze_refusal(rc, mut, head_sha, path=STATUS, logs_root=ROOT):
     """(reason, doc): why a FREEZE at `head_sha` must refuse (None: it may proceed), and the record read.
     Used by scripts/v022_freeze_manifest.py, so the refusal is this function's and a test can call it."""
     try:
         doc = json.load(open(os.path.join(ROOT, path)))
     except (OSError, ValueError) as e:
         return (f"{path} cannot be read ({e}): the OBSERVED entries of the refusal-site gate were not "
-                "re-measured for this head; run scripts/v022_resurvey.py --run (amendment 107)"), None
-    bad = problems(doc, head_sha, rc, mut)
+                "re-measured for this head; run scripts/v022_resurvey.py --run and commit "
+                f"{STATUS} with {LOG_DIR}/ (amendment 110)"), None
+    bad = problems(doc, head_sha, rc, mut, logs_root=logs_root)
     if bad:
         return ("the re-survey record is not for this head or does not hold: " + "; ".join(bad[:6])
-                + " (scripts/v022_resurvey.py --run, amendment 107)"), doc
+                + " (scripts/v022_resurvey.py --run, amendment 110)"), doc
     return None, doc
 
 
@@ -398,8 +591,9 @@ def check(args):
         print("resurvey: " + b)
     if not bad:
         f = doc["families"]
-        print(f"resurvey: a record for this head: {sum(v['drawn'] for v in f.values())} OBSERVED entries re-measured at "
-              f"{doc['sample']['pct']}% in {doc['seconds']}s, none stale")
+        print(f"resurvey: a record for this head: {sum(v['drawn'] for v in f.values())} OBSERVED entries drawn at "
+              f"{doc['sample']['pct']}% (floor {doc['sample']['floor']}), "
+              f"{sum(v['killed'] for v in f.values())} re-measured and held, in {doc['seconds']}s, none stale")
     return 1 if bad else 0
 
 
@@ -412,9 +606,9 @@ def main():
     if a[:1] == ["--plan"]:
         rc = load("v022_refusal_coverage")
         sample = a[a.index("--sample") + 1] if "--sample" in a else "auto"
-        ents, chosen, pct, total, est = plan(rc, sample, head())
+        ents, chosen, pct, total, est = plan(rc, sample, derive_salt(head()))
         print(f"{total} OBSERVED entries ({', '.join(f'{k} {len(v)}' for k, v in ents.items())}); estimate {est}s; "
-              f"sample {pct}%: {sum(len(v) for v in chosen.values())} drawn")
+              f"sample {pct}%: {sum(len(v) for v in chosen.values())} drawn (floor {floor_for(total)})")
         return
     sys.exit(__doc__)
 

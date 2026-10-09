@@ -28,7 +28,10 @@ use std::path::{Path, PathBuf};
 
 pub const READINESS_SCHEMA: &str = "axon-fabric-readiness/1";
 pub const CERT_SCHEMA: &str = "axon-v022-protected-certification/2";
-pub const PROTECTED_PROFILE: &str = "linux-microvm-protected";
+/// The protected profile's name. ONE definition, axon-psv's (this was a second copy of the same literal: a
+/// change to one and not the other made the launch manifest and the readiness record disagree about what
+/// "protected" is; `tests/signing_domains.rs` pins all the copies to the documented literal).
+pub use axon_psv::PROTECTED_PROFILE;
 const PSV_SPEC: &str = "governance/specs/v022-protected-suite-verdict.md";
 const REGISTRY: &str = "governance/cortex_gate_execution_registry.json";
 const CERT_DIR: &str = "governance/proofs/v022-protected";

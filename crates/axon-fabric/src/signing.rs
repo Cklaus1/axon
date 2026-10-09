@@ -110,6 +110,27 @@ pub fn execution_attestation_decision(
     Ok(())
 }
 
+/// Sign the attestation of an EXECUTION (the caller has checked [`execution_attestation_decision`]), in the
+/// execution domain and in no other: the signed document is that execution's request and receipt by digest.
+/// A function of the library, not an inline closure of the CLI, so a test can verify what it signs (amendment
+/// 110: the domain argument of the inline call was swapped for another domain's and the whole suite stayed
+/// green, because the path is unreachable through the CLI while the protected profile offers no execution).
+pub fn sign_execution_attestation(
+    key: &[u8],
+    issuer: &axon_loop_contracts::OpaqueRef,
+    req: &ComputeRequest,
+    receipt: &ExecutionReceipt,
+) -> Result<serde_json::Value, String> {
+    let doc = axon_loop_contracts::attestation::execution_document(req, receipt)
+        .map_err(|e| e.to_string())?;
+    axon_loop_contracts::attestation::sign_document(
+        key,
+        axon_loop_contracts::attestation::EXECUTION_DOMAIN,
+        issuer,
+        &doc,
+    )
+}
+
 /// The receipt states an observed protected launch: its one class is
 /// `protected`, and it names the launch manifest and the preflight observation.
 fn observed_launch(r: &ExecutionReceipt) -> bool {
