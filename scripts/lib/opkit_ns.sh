@@ -630,9 +630,8 @@ opkit_ns_prephase() {
   { local -; set +xvTE; } </dev/null >/dev/null 2>&1
   local bset
   # amendment 120: OPKIT_RW is split into words below (a list), so a glob character in the RAW string would be expanded to
-  # whatever it matches; the raw string is refused before anything splits it, and globbing is off for the pre-checks.
+  # whatever it matches; the raw string is refused before anything splits it.
   case "${OPKIT_RW:-}" in *[\*\?\[\]\\]*|*$'\n'*|*$'\t'*) opkit_say "REFUSE(ns_run): OPKIT_RW contains a glob character, a newline or a tab"; return 97 ;; esac
-  set -f
   [ "$(id -u)" = 0 ] || { opkit_say "REFUSE(ns_run): not root, so no namespace to prove; the command did not run"; return 97; }
   opkit_env_roots_validate || return 97
   opkit_rw_validate ${OPKIT_RW:-} || return 97

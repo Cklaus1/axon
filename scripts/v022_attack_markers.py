@@ -2899,7 +2899,7 @@ ATTACK_MARKERS.update({
     'M3437': r"ATTACK: a scratch path with a space was refused, but not by the character rule",
     'M3438': r"ATTACK: a scratch path with a glob character was accepted",
     'M3439': r"ATTACK: an array element holding a space was split into two roots",
-    'M3440': r"ATTACK: OPKIT_RW with a glob character was refused, but not for that",
+    'M3440': r"ATTACK: OPKIT_RW with a glob character was expanded and accepted",
     'M3441': r"ATTACK: opkit_diag_roots_set split a scratch path with a space into two roots",
     'M3442': r"selftest: the diagnostic shape 'line 1 without the source-time guard' was ACCEPTED",
     'M3443': r"selftest: the diagnostic shape 'a function that does not begin with the shell-diagnostics guard' was ACCEPTED",

@@ -842,7 +842,7 @@ vec120() {
   local label=$1 snip=$2 F o rc; shift 2
   [ -z "${WRAP120:-}" ] || snip="set -x; $snip; set +x; exit 97"
   F=$H120/victim-$((++V120)); printf '%s' "$ORIG120" >"$F"; rm -f "$M120"
-  o=$(LIB118=$LIB OPKIT_RW=$W/scratch OPKIT_SCRATCH=$W/scratch run118 "2:rdwr:$F" "$snip" "$@")
+  o=$(LIB118=$LIB OPKIT_RW=$W/scratch OPKIT_SCRATCH=$W/scratch run118 "${FD120:-2}:rdwr:$F" "$snip" "$@")
   if [ "${WANT120:-97}" = 97 ]; then
     head -1 <<<"$o" | grep -qx 'RC=97' || fail "ATTACK: $label: ns_run was not refused with 97: $o"
     [ ! -e "$M120" ] || fail "ATTACK: $label: the command ran with a writable regular file on fd 2"
@@ -861,6 +861,8 @@ printf 'set -x\n' >"$H120/benv"
 vec120 "a BASH_ENV file that says set -x" "ns_run touch $M120; r=\$?; exit \$r" BASH_ENV="$H120/benv"
 allow120 "$TR" '+ r=97' '+ set +x'
 vec120 "BASH_XTRACEFD=2" "BASH_XTRACEFD=2; set -x; ns_run touch $M120; r=\$?; set +x; exit \$r"
+FD120=1 vec120 "BASH_XTRACEFD=1 with the refused file on fd 1" "BASH_XTRACEFD=1; set -x; ns_run touch $M120; r=\$?; set +x; exit \$r"
+FD120=0 vec120 "BASH_XTRACEFD=0 with the refused file on fd 0" "BASH_XTRACEFD=0; set -x; ns_run touch $M120; r=\$?; set +x; exit \$r"
 allow120 "$TR" '+ r=97' '+ set +x' 'PS4-RAN'
 vec120 "a PS4 with a command substitution" "PS4='\$(echo PS4-RAN >&2)+ '; set -x; ns_run touch $M120; r=\$?; set +x; exit \$r"
 # set -v echoes the lines the shell READS: the caller's own, not the helper's functions
