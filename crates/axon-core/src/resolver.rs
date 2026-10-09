@@ -1452,8 +1452,24 @@ impl<'a> Resolver<'a> {
                         self.resolve_fn(m);
                     }
                 }
-                // TypeDef / EnumDef / ModDecl / TraitDef have no expressions to walk.
+                // EnumDef / ModDecl / TraitDef have no expressions to walk.
                 Item::LetDef { value, .. } => self.resolve_expr(value),
+                // A sealed struct's WHOLE-struct refinement (`type S = {..} where
+                // _.a > f(0)`) is resolved as a named refinement's predicate is,
+                // so a name in it gets the one refusal (amendment 117, finding 4).
+                Item::TypeDef(t) if self.in_sealed_file(t.span) && t.refinement.is_some() => {
+                    self.table.push_scope();
+                    self.table.define(
+                        "_".to_string(),
+                        Symbol::Local {
+                            name: "_".to_string(),
+                        },
+                    );
+                    if let Some(p) = t.refinement.as_deref() {
+                        self.resolve_expr(p);
+                    }
+                    self.table.pop_scope();
+                }
                 // A sealed refinement's predicate is resolved (see `resolve_fn`).
                 Item::RefineDef(r) if self.in_sealed_file(r.span) => {
                     self.table.push_scope();

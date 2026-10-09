@@ -6134,6 +6134,8 @@ guards of the helper have no cargo row (`TMPDIR=/tmp`, the `/tmp` tmpfs); the ki
      renumbers). Base `c9r10/integrate9` (`5e16d8b4`), source commit `22c44ac7`. `crates/axon-core/src/interp*` changed;
      classified in `scripts/pci_delta.py` as narrowing.
 
+     *(Narrowed by amendment 117: the property below holds through the constructs of `taint::CONTROL_TABLE` and `taint::CALLBACK_BUILTINS` and the value routes of the taint classes, and is not a proof that candidate bytes cannot influence the rubric in all ways; the non-claims, with the findings of the round-14 loop decided NARROW-CLAIM, are in PSV-1 of `v022-protected-suite-verdict.md`.)*
+
      **WHAT IS ENFORCED, EXACTLY.** The property is **candidate bytes cannot choose WHICH operator code runs, or WHICH
      operator impl or integer width answers.** It is not "candidate output cannot influence the verdict": it
      legitimately does, because a suite exists to compare the candidate's answer with an expected one.
@@ -7760,3 +7762,57 @@ The one thing this work left on the host was a `/var/tmp/opkit-ns.*` scratch dir
 **Damaged `/etc/passwd` (amendment 116, item 9): unchanged and NOT repaired.** The hash above is the damaged file's. With this amendment the helper cannot do that to a file again; nothing in this work can repair one.
 
 **Unfinished, stated.** (a) The in-namespace classification (`|| exit 97` before `opkit_ns_isolate`) is held by the drift gate (M3418) but has no helper row (not observable; see above). (b) `trust_root_preflight.sh`'s `exec 3<>` open-write probe on protected real files is reported, not changed; the operator decides. (c) The kit proper and `fc_linux_profile.sh` still write their refusals to whatever fd 2 they were given, by decision (audit table). (d) `/dev/tty` is the one fallback channel; a caller with a controlling terminal sees the text there, a caller without one sees only the exit code 97. (e) The status files (`governance/status/v022-psv-paired-disable.json`, `v022-resurvey.json`) are not remade by this branch (integration does that).
+## Amendment 117: the PSV-1 claim is narrowed to what the taint enforces; the clear, localized members of a six-pass find-until-dry loop are fixed (C9 round 14, psv1x)
+
+117. **Source: the operator's decision of 2026-10-09, "narrow the claim, fix only clear blockers".** A find-until-dry loop at head
+     `27697781` (six passes, 154 agents, `/var/tmp/c9r14-loop/confirmed-indexed.json`) confirmed 53 findings, 31 of them
+     blocker-class, in seven clusters, and never reached two consecutive clean passes (findings per pass: 14, 15, 8, 6, 4, 6).
+     Branch `c9r14/psv1x`, base `27697781`. Mutation ids M3300-M3351 (M3308, M3324 and M3350 not issued: the first two were
+     drawn and found equivalent while being killed, see item 4), matrix rows A291-A300 (renumbered at integration). `crates/axon-core/src/interp*`,
+     `checker.rs`, `resolver.rs`, `kernel.rs` and `builtins.rs` changed; classified in `scripts/pci_delta.py` as narrowing.
+
+     1. **TRIAGE.** Every finding was replayed against the loop's prebuilt interpreter and decided FIX or NARROW-CLAIM; the table
+        (`governance/notes/v022-psv1-loop-triage.md`, idx, signature, decision, cluster, reason, the loop's evidence path) is the record.
+        **44 FIX, 9 NARROW-CLAIM** (21, 44, 51: an operator-typed receiver the candidate chose; 6, 7, 23, 33, 22: existence-oracle text
+        on paths and positions the runner test does not list; 30: the emitters). No finding was decided NOT-A-RUBRIC-ISSUE.
+     2. **THE FIXES, by cluster** (each has an attack and an honest control in `taint_tests.rs` under the construct's table tag, a
+        runner leg where the attack is reachable through the production route, and mutation rows killed by their own attack):
+        (a) `temporal_new`/`temporal_is_valid` (and `temporal_now`) are `World` and carry the `Time` effect row: VISIBLE CHANGE, a fn that declares an effect row and calls them must now name `Time`, and a run whose ceiling lacks `Time` refuses them as it refuses `now_ms` (no example in `examples/` is affected; `wasm_parity.sh` lists them as host builtins); a drift test scans every `Pure` arm for ambient state.
+        (b) control taint: a match guard runs under the subject's; every evaluation of a `while` condition / `while let` scrutinee
+        after the first runs under the earlier ones; `Interp::call_cb` raises the control taint of the results so far for every
+        callback after the first (so a parameter-free store inside `arr_any`/`arr_find`/`arr_sort_by`'s comparator is marked) and
+        `Interp::t_loop_pc` does it after each run of operator code in a goal search or scheduler pass; an operator pop marks the
+        channel and the channel a `select` looked at is part of the arm's taint; an abort-capable `with` body treats a branch on
+        tainted data as a possible exit and sealed code that ran in it raises the sticky taint; a scheduler fiber that ran sealed
+        code and failed does too; a multi-shot resume value keeps its taint (`ResumeReplay::feed_t`). `taint::CALLBACK_BUILTINS`
+        is the new table beside `CONTROL_TABLE`; a drift test holds it against `BUILTINS`, and another holds every Rust loop that
+        runs operator code to a `t_loop_pc`.
+        (c) `Tys::closed` looks through a refinement's base (a union, `dyn`, a trait name, a container of a union, a chain).
+        (d) `width_sized` sees a fixed-width integer inside an `Uncertain`/`Temporal` in the static and the runtime width rule.
+        (e) `dstore_*` is `World`; a zoned call's in-memory provenance push is kernel state and its `provenance.jsonl` append is
+        world state (`t_provenance_write`); an RNG-drawing goal search reads the world cell (`RNG_COUPLED`).
+        (f) the sealed-only check resolves a sealed `dyn` trait, walks sealed array/tuple elements and refinement/`where`/`@[verify]`/
+        whole-struct predicates, matches the deferred type names exactly, and the goal variants and `goal_eval` give a sealed
+        caller the missing-name text for an operator fn; the runner's existence-oracle test lists 24 more positions.
+        (g) `sandbox_run` copies the operator's sandbox entry into the sealed kernel for the call (the ceiling binds the candidate).
+        And: the principal-handle token stream is per registry (finding 14); the HOLDERS drift test checks the `Type::field` names
+        its reasons give (finding 46).
+     3. **NARROW-CLAIM (h), measured, not fixed.** The exemption for an operator-typed receiver was made to require no VAL taint and
+        run against the suite: nothing in the existing tests failed, and the honest program `let q = Sq { s: val() }; q.area()`
+        over a trait implemented for two operator types was REFUSED, because a struct has no identity the taint can tell from its
+        fields (it is the candidate's number inside an operator value). That case is kept as an honest control
+        (`HONEST: an operator struct holding the candidate's number, dispatched on`) and the exemption stays; findings 21, 44 and 51
+        are written into the claim as not covered.
+     4. **Equivalent edits found by the rows, and what was done.** Two rows were drawn and withdrawn before the run that counts: the
+        RNG-coupling WRITE edge (a search is always followed by a `provenance.jsonl` append of its tainted score, which marks the world cell, so
+        the edge could not be killed by any attack; the edge is removed and the read edge, which `srand` needs, is rowed) and a file-write
+        row for the same reason (M3308). `root_sealed` and a `t_touch(ALL)` in the scheduler pass were redundant with the entry counter and are gone.
+     5. **THE CLAIM.** `governance/specs/v022-protected-suite-verdict.md` PSV-1 now states the property as enforced (the four selectors, the
+        constructs and value routes, the drift tests that hold the lists complete), what is NOT claimed (the standing residuals and
+        each NARROW-CLAIM finding by signature), the honest-suite guidance and the evidence at its strength ("reviewed in rounds 8-13 plus a
+        six-pass find-until-dry loop that did not reach two consecutive clean passes (53 confirmed findings; 44 fixed in amendment 117;
+        the rest are the stated non-claims)"). `scripts/pci_delta.py --check` fails if a NARROW-CLAIM signature of the triage table is
+        missing from the claim's list, or the list names one the table does not narrow (planted controls in `pci_delta_note.rs`).
+        The wording of amendment 102's "WHAT IS ENFORCED, EXACTLY" and `interp/taint.rs`'s header are brought in line.
+     6. **Cost.** See the evidence section below; the interpreter outside a sealed run takes the same branches it took (the new work is
+        behind `seal.active`, a `const T` parameter or a `Cell` the unsealed run never writes).

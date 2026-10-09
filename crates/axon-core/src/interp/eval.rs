@@ -423,7 +423,10 @@ impl<'p> Interp<'p> {
                 // The taint of every guard that REFUSED an earlier arm: which arm
                 // runs after a failed guard is that guard's value too, and so is
                 // whether a later guard is evaluated at all.
-                let mut lost = 0u8;
+                // (It starts at the SUBJECT's taint: a guard is evaluated only because
+                // the pattern matched the subject, so its side effects are
+                // control-dependent on it too: amendment 117, loop finding 2.)
+                let mut lost = st;
                 for arm in arms {
                     env.push();
                     if self.match_pattern(&arm.pattern, &v, env, self.ts::<T>(st))? {
@@ -453,8 +456,13 @@ impl<'p> Interp<'p> {
             }
 
             Expr::While { cond, body } => {
+                // Every evaluation of the condition after the first runs only
+                // because an earlier (possibly tainted) evaluation was true, so
+                // a store in the condition is control-dependent on them
+                // (amendment 117, loop finding 26).
+                let mut seen = 0u8;
                 loop {
-                    let cv = self.eval_t::<T>(cond, env)?;
+                    let cv = self.t_branch(seen, false, || self.eval_t::<T>(cond, env))?;
                     // An `Uncertain<bool>` condition branches on its inner bool
                     // (confidence is irrelevant to control flow) — same as `if`.
                     let cv = match soft_inner(&cv) {
@@ -462,6 +470,7 @@ impl<'p> Interp<'p> {
                         None => cv,
                     };
                     let ct = self.tl::<T>();
+                    seen |= ct & taint::VAL;
                     match cv {
                         Value::Bool(true) => {}
                         Value::Bool(false) => break,
@@ -486,9 +495,11 @@ impl<'p> Interp<'p> {
                 expr,
                 body,
             } => {
+                let mut seen = 0u8;
                 loop {
-                    let v = self.eval_t::<T>(expr, env)?;
+                    let v = self.t_branch(seen, false, || self.eval_t::<T>(expr, env))?;
                     let vt = self.tl::<T>();
+                    seen |= vt & taint::VAL;
                     env.push();
                     let matched = self.match_pattern(pattern, &v, env, self.ts::<T>(vt))?;
                     if !matched {
@@ -630,6 +641,9 @@ impl<'p> Interp<'p> {
                 if let Value::Chan(q) = &recv {
                     if T {
                         self.t_chan_access(&recv, method);
+                    }
+                    if T {
+                        self.t_chan_choice(&recv, rt);
                     }
                     return match method.as_str() {
                         "send" => {
@@ -980,11 +994,20 @@ impl<'p> Interp<'p> {
                     let Value::Chan(q) = self.eval_t::<T>(receiver, env)? else {
                         return panic("select arm `recv` on a non-channel");
                     };
+                    // The channel looked at may itself be the candidate's pick
+                    // (`if c { a } else { b }.recv()`, `cs[i].recv()`): which arm
+                    // fires then depends on it. `t_chan_choice` marks the channel
+                    // with that taint, and `lost`
+                    // below reads the mark (amendment 117, loop finding 20).
+                    let rt = self.tl::<T>();
                     // Whether this channel is ready is a READ of its queue, ready
                     // or not: an arm skipped because sealed code drained (or never
                     // fed) it is a choice the candidate made (amendment 106).
                     if T {
                         self.t_chan_access(&Value::Chan(q.clone()), "recv");
+                    }
+                    if T {
+                        self.t_chan_choice(&Value::Chan(q.clone()), rt);
                     }
                     // Which arm fires is the readiness of every queue looked at
                     // up to it: the arm's body runs under the control taint of
@@ -1580,7 +1603,31 @@ impl<'p> Interp<'p> {
         };
         let depth = self.handlers.borrow().len();
         self.handlers.borrow_mut().push(frame);
+        // An arm that is not a bare tail `resume(..)` can ABORT the body at the
+        // operation it answers (or replay it): what runs after that point is
+        // skipped by a decision of whoever performed the operation. While such
+        // a handler is installed, a branch on candidate data is treated as a
+        // possible exit (sticky), taken or not, and sealed code that ran inside
+        // the body makes what follows control-dependent on it (amendment 117,
+        // loop findings 31, 32, 34).
+        let abortable = self.seal.active
+            && arms
+                .iter()
+                .any(|a| !crate::effects::arm_is_bare_tail_resume(&a.body));
+        let entries = self.taint.entries.get();
+        if abortable {
+            let n = &self.taint.abortable;
+            n.set(n.get() + 1);
+        }
         let result = self.eval(body, env);
+        if abortable {
+            let n = &self.taint.abortable;
+            n.set(n.get() - 1);
+            if !self.frame_sealed.get() && self.taint.entries.get() != entries {
+                let st = &self.taint.sticky;
+                st.set(st.get() | taint::VAL);
+            }
+        }
         let mut vt = self.t_last();
         if matches!(result, Err(Flow::HandlerDone(_, d)) if d == depth) {
             // The arm's value is the block's value: what the arm touched unwound
@@ -1640,6 +1687,7 @@ impl<'p> Interp<'p> {
             effect: ctx.effect.clone(),
             feed: v,
             consumed: false,
+            feed_t: self.t_stored(self.taint.acc.get()),
             sealed: ctx.sealed,
             operator_frames: self.operator_frames.get(),
         });

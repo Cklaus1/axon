@@ -111,7 +111,10 @@ impl<'p> Interp<'p> {
         let Some(cf) = self.fns.get(cname.as_str()).copied() else {
             return Ok(score);
         };
-        match self.call_fn(cf, args.to_vec())? {
+        let verdict = self.call_fn(cf, args.to_vec())?;
+        // Whether a probe is feasible is the candidate's score's too (amendment 117).
+        self.t_loop_pc();
+        match verdict {
             Value::Bool(true) => Ok(score),
             Value::Bool(false) => Ok(INFEASIBLE_SCORE),
             other => panic(format!(
@@ -153,6 +156,9 @@ impl<'p> Interp<'p> {
 
         let eval_at = |xs: &[Value]| -> Result<f64, Flow> {
             let other = self.call_fn(f, xs.to_vec())?;
+            // The score decides whether, and how often, the search goes on: the next
+            // evaluation of the metric is control-dependent on it (amendment 117).
+            self.t_loop_pc();
             match numeric_score(&other) {
                 Some(s) => self.apply_goal_constraint(xs, s),
                 None => panic(format!(
@@ -263,6 +269,9 @@ impl<'p> Interp<'p> {
             }
             None => return Err(self.unknown_goal_name(name)),
         };
+        // A name the operator defines reads exactly as one nothing defines to a
+        // sealed caller (amendment 117, loop finding 38).
+        self.seal_call(f)?;
         let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
         let all_i64_params = !f.params.is_empty() && f.params.iter().all(|p| is_i64_type(&p.ty));
         let i64_ret = f
@@ -294,6 +303,9 @@ impl<'p> Interp<'p> {
                 probe.push(Value::Int(v));
             }
             let result = self.call_fn(f, probe)?;
+            // The score decides whether, and how often, the search goes on: the next
+            // evaluation of the metric is control-dependent on it (amendment 117).
+            self.t_loop_pc();
             // numeric_score unwraps a soft wrapper (Uncertain<i64>/Temporal<i64>)
             // to its inner score, so an AI scorer returning an Uncertain is optimized.
             let score = match numeric_score(&result) {
@@ -356,6 +368,9 @@ impl<'p> Interp<'p> {
             }
             None => return Err(self.unknown_goal_name(name)),
         };
+        // A name the operator defines reads exactly as one nothing defines to a
+        // sealed caller (amendment 117, loop finding 38).
+        self.seal_call(f)?;
         let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
         let one_i64_param = f.params.len() == 1 && is_i64_type(&f.params[0].ty);
         let i64_ret = f
@@ -378,6 +393,9 @@ impl<'p> Interp<'p> {
         let eval_choice =
             |c: i64, best_score: &mut f64, best_dist: &mut f64| -> Result<bool, Flow> {
                 let result = self.call_fn(f, vec![Value::Int(c)])?;
+                // The score decides whether, and how often, the search goes on: the next
+                // evaluation of the metric is control-dependent on it (amendment 117).
+                self.t_loop_pc();
                 let score = match numeric_score(&result) {
                     Some(s) => self.apply_goal_constraint(&[Value::Int(c)], s)?,
                     None => {
@@ -453,6 +471,9 @@ impl<'p> Interp<'p> {
             }
             None => return Err(self.unknown_goal_name(name)),
         };
+        // A name the operator defines reads exactly as one nothing defines to a
+        // sealed caller (amendment 117, loop finding 38).
+        self.seal_call(f)?;
         let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
         let all_i64_params = !f.params.is_empty() && f.params.iter().all(|p| is_i64_type(&p.ty));
         let i64_ret = f
@@ -528,6 +549,9 @@ impl<'p> Interp<'p> {
             }
             None => return Err(self.unknown_goal_name(name)),
         };
+        // A name the operator defines reads exactly as one nothing defines to a
+        // sealed caller (amendment 117, loop finding 38).
+        self.seal_call(f)?;
         let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
         let all_i64_params = !f.params.is_empty() && f.params.iter().all(|p| is_i64_type(&p.ty));
         let i64_ret = f
@@ -544,6 +568,9 @@ impl<'p> Interp<'p> {
         let eval = |probe: &[i64]| -> Result<f64, Flow> {
             let args: Vec<Value> = probe.iter().map(|&x| Value::Int(x)).collect();
             let other = self.call_fn(f, args)?;
+            // The score decides whether, and how often, the search goes on: the next
+            // evaluation of the metric is control-dependent on it (amendment 117).
+            self.t_loop_pc();
             match numeric_score(&other) {
                 Some(s) => Ok(s),
                 None => panic(format!(
@@ -676,6 +703,9 @@ impl<'p> Interp<'p> {
         let eval_at = |x: i64| -> Result<f64, Flow> {
             let args = vec![Value::Int(x)];
             let other = self.call_fn(f, args.clone())?;
+            // The score decides whether, and how often, the search goes on: the next
+            // evaluation of the metric is control-dependent on it (amendment 117).
+            self.t_loop_pc();
             match numeric_score(&other) {
                 Some(s) => self.apply_goal_constraint(&args, s),
                 None => panic(format!(
@@ -812,6 +842,9 @@ impl<'p> Interp<'p> {
         let eval_at = |xs: &[i64]| -> Result<f64, Flow> {
             let args: Vec<Value> = xs.iter().map(|&x| Value::Int(x)).collect();
             let other = self.call_fn(f, args.clone())?;
+            // The score decides whether, and how often, the search goes on: the next
+            // evaluation of the metric is control-dependent on it (amendment 117).
+            self.t_loop_pc();
             match numeric_score(&other) {
                 Some(s) => self.apply_goal_constraint(&args, s),
                 None => panic(format!(
@@ -998,6 +1031,9 @@ impl<'p> Interp<'p> {
         let eval_at = |xs: &[f64]| -> Result<f64, Flow> {
             let args: Vec<Value> = xs.iter().map(|&x| Value::Float(x)).collect();
             let result = self.call_fn(f, args.clone())?;
+            // The score decides whether, and how often, the search goes on: the next
+            // evaluation of the metric is control-dependent on it (amendment 117).
+            self.t_loop_pc();
             match numeric_score(&result) {
                 Some(s) => self.apply_goal_constraint(&args, s),
                 None => panic(format!(
@@ -1280,9 +1316,11 @@ impl<'p> Interp<'p> {
     /// The provenance must remain unmodified so that `goal_run` is unbiased.
     pub(super) fn goal_eval_holdout(&self, name: &str, input: i64) -> Result<f64, Flow> {
         let Some(f) = self.fns.get(name) else {
-            return Err(Flow::Panic(format!(
-                "goal_eval: `{name}` is not a defined function"
-            )));
+            // The common text for a sealed caller (amendment 117, loop finding 39).
+            return self.no_such_fn(
+                name,
+                format!("goal_eval: `{name}` is not a defined function"),
+            );
         };
         // Snapshot the three provenance stores for this fn.
         let snap_scores = self.k().provenance.borrow().get(name).cloned();

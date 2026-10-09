@@ -93,7 +93,7 @@ HOST_BUILTINS='read_file|write_file|append_file|file_size|file_exists|dir_create
 '|dstore_'\
 '|srand'\
 '|random_|gaussian_sample|beta_sample|categorical_sample'\
-'|now_ms|sleep_ms|temporal_now'\
+'|now_ms|sleep_ms|temporal_now|temporal_new|temporal_is_valid'\
 '|atomic_|volatile_|port_in_|port_out_|ptr_from_addr|fn_addr|tee_|bpf_'
 CORPUS=()
 for f in examples/*.ax; do

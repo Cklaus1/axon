@@ -15,17 +15,17 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: da68ec7e9346f33c4915b14a24ab21c4a94ad5ea
+generated-at: c4ea5684a475d71a1ae40c4249b23a1cc4935517
 
-`git diff --numstat 31413ca7..da68ec7e -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..c4ea5684 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
 | `crates/axon-core/src/ast.rs` | 86 | 8 |
-| `crates/axon-core/src/builtins.rs` | 2 | 2 |
+| `crates/axon-core/src/builtins.rs` | 8 | 3 |
 | `crates/axon-core/src/cache.rs` | 70 | 2 |
 | `crates/axon-core/src/capabilities.rs` | 18 | 1 |
-| `crates/axon-core/src/checker.rs` | 327 | 63 |
+| `crates/axon-core/src/checker.rs` | 398 | 74 |
 | `crates/axon-core/src/codegen/asi.rs` | 8 | 0 |
 | `crates/axon-core/src/codegen/build_wrappers.rs` | 15 | 1 |
 | `crates/axon-core/src/codegen/builtins.rs` | 6 | 0 |
@@ -43,26 +43,26 @@ generated-at: da68ec7e9346f33c4915b14a24ab21c4a94ad5ea
 | `crates/axon-core/src/error.rs` | 20 | 11 |
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 6698 | 1216 |
-| `crates/axon-core/src/interp/builtins.rs` | 424 | 325 |
+| `crates/axon-core/src/interp.rs` | 6750 | 1211 |
+| `crates/axon-core/src/interp/builtins.rs` | 482 | 341 |
 | `crates/axon-core/src/interp/conform.rs` | 1789 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 914 | 182 |
-| `crates/axon-core/src/interp/goal.rs` | 27 | 26 |
-| `crates/axon-core/src/interp/pin.rs` | 944 | 0 |
+| `crates/axon-core/src/interp/eval.rs` | 962 | 182 |
+| `crates/axon-core/src/interp/goal.rs` | 69 | 30 |
+| `crates/axon-core/src/interp/pin.rs` | 955 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 35 | 15 |
-| `crates/axon-core/src/interp/taint.rs` | 1164 | 0 |
-| `crates/axon-core/src/interp/taint_tests.rs` | 2109 | 0 |
+| `crates/axon-core/src/interp/taint.rs` | 1347 | 0 |
+| `crates/axon-core/src/interp/taint_tests.rs` | 2713 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 15 | 7 |
-| `crates/axon-core/src/kernel.rs` | 2 | 2 |
+| `crates/axon-core/src/kernel.rs` | 89 | 23 |
 | `crates/axon-core/src/lib.rs` | 114 | 13 |
 | `crates/axon-core/src/main.rs` | 407 | 94 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
 | `crates/axon-core/src/mut_borrow.rs` | 800 | 0 |
 | `crates/axon-core/src/parser.rs` | 39 | 1 |
-| `crates/axon-core/src/resolver.rs` | 403 | 64 |
-| total | 19559 | 2831 |
+| `crates/axon-core/src/resolver.rs` | 420 | 65 |
+| total | 20738 | 2880 |
 
-`git log --reverse 31413ca7..da68ec7e -- crates/axon-core/src`:
+`git log --reverse 31413ca7..c4ea5684 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -137,7 +137,9 @@ generated-at: da68ec7e9346f33c4915b14a24ab21c4a94ad5ea
 | 65d407d8 | amendment 114 | the right operand of `&&`/`||` runs under the left's control taint (sealed runs, a cold function), a refused match guard, a `?` and a `select` arm raise theirs, `?` counts as an exit, the sealed files are checked by a second pipeline over the sealed items alone with the checker refusing the missing name wherever the operator's was (struct literal, lambda parameter, enum/trait/refinement types, generic bound, verify and refinement predicates); taint::CONTROL_TABLE drift-tested against ast.rs: narrowing, no widening |
 | 5d333913 | amendment 114 | test and registry only (a taint test for the type a `?` carries, plant controls for the note check): no production change |
 | 2e68236b | amendment 114 | the sealed-only check holds the operator's `mod` of a candidate module (found by the fabric suite), so a candidate whose module uses its own helper resolves; an operator module the candidate does not ship is still missing: narrowing relative to the first form of amendment 114, no widening of what base accepted |
-| 71 commits | | |
+| 3849fadb | amendment 117 | the clear, localized members of the round-14 find-until-dry loop (44 of 53 findings): `temporal_new`/`temporal_is_valid` are World and Time (a clock reader is no Pure builtin); a match guard, every `while`/`while let` condition evaluation after the first, every builtin callback after the first (`call_cb`) and every Rust loop that runs operator code (`t_loop_pc`: goal searches, the scheduler pass) run under the control taint of what decided them; an operator pop and the channel a `select` looked at are marked; an abort-capable `with` body treats a branch on tainted data as a possible exit and sealed code that ran in it raises the sticky taint, as does a scheduler fiber that ran sealed code and failed; a resume value keeps its taint; `dstore_*` is World, a zoned call's provenance push is kernel state and its append is world state; a refinement type pins what its base pins; a width inside an `Uncertain`/`Temporal` is a width; `sandbox_run` copies the operator's sandbox entry into the sealed kernel for the call; the principal token stream is per registry; the sealed-only check resolves `dyn`, array/tuple elements, refinement/`where`/`@[verify]`/whole-struct predicates and the exact deferred type names, and the goal variants and `goal_eval` give a sealed caller the missing-name text: narrowing, no widening (the claim itself is NARROWED to what is enforced) |
+| c4ea5684 | amendment 117 | follow-up to 3849fadb found by the full mutation run: two guards that proved redundant are removed (a sealed-caller check after goal_name_is_known; the operator-pop branch of t_chan_access, covered by t_chan_choice) and a test case for an aborting arm's value: no change in what is refused |
+| 73 commits | | |
 <!-- END MECHANICAL -->
 
 
@@ -185,7 +187,7 @@ account and are NOT mechanically verified; the files and commits above are):
 
 ## (b) Coverage: PCI gate rows, and the mutation rows
 
-`scripts/v022_pci_gates.sh` has 78 rows at this head: the original 18 (surfaces 1-21), ten
+`scripts/v022_pci_gates.sh` has 85 rows at this head: the original 18 (surfaces 1-21), ten
 added by amendment 84, one group per delta amendment (53, 60, 72 incl. its dict snapshot, 78), two for
 amendment 83's dispatch rule (integration), and six for amendment 94 (the `&mut` edge-back cast, the `&mut` operand in the dispatch analysis, the fn-value seal edge and the Rc/copy-on-write observation, each unit and runner where both exist), nine for amendment 96 (sandbox_run's cast, the one global-read edge, the fn-value mark, the unary width arm, the classified user-code builtins and the handler-expression cost), and six for amendment 100 (a handler arm's pin owner, the name sinks, the existence oracle and the drift tests), and seven for amendment 102 (the runtime taint: the closure picks, the names, the impl and width, the carriers, an ordinary run, the drift tests and the runner leg; plus the sweep step that runs every rule-on interpreter test with only the taint on), and five for amendment 106 (channel state and the areas not hunted before, every reader of shared state after a sealed write, the existence oracle on every path TESTED, the drift tests, and the runner leg), and five for amendment 108 (comparisons and builtin arguments read the shared objects inside them, the existence oracle on the method path, a native registry as world state, the runner leg of the comparison, and the runner row of the method path at check time), and six for amendment 114 (a module the operator declares for the candidate resolves its own helper, the control taint of every conditional, repeated or exiting form, the drift test of the control table, its runner leg, the existence oracle on the static path, and the note's own planted-change checks), each with
 unit tests in `interp.rs`/`conform.rs` AND a real-runner test (`axon_psv::runner::run`, in
@@ -278,9 +280,16 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am114 a module the operator declares for the candidate resolves the candidate's own helper | axon-psv/sealed_frames | PASS 1/1 |
 | am114 the note's checks refuse a wrong result, target, claim list or gate package | axon-core/pci_delta_note | PASS 3/3 |
 | am114 the existence oracle on the static path, every position the test lists, text and accept/refuse (runner: the only witness) | axon-psv/sealed_frames | PASS 1/1 |
+| am117 types and widths: a refinement pins what its base pins, a width inside Uncertain/Temporal, the operator's sandbox ceiling on a sealed fn | axon-core/lib | PASS 1/1 |
+| am117 drift: no Pure arm touches ambient state; the durable store is World; provenance writes are marked | axon-core/lib | PASS 3/3 |
+| am117 drift: every closure-taking builtin has a callback row and calls through call_cb; every Rust loop raises the control taint; RNG draws are coupled | axon-core/lib | PASS 3/3 |
+| am117 drift: the holder reasons name things that exist | axon-core/lib | PASS 1/1 |
+| am117 the sealed kernel's token stream is its own | axon-core/lib | PASS 1/1 |
+| am117 the clock is not a Pure builtin (runner: the Time ceiling refuses it) | axon-psv/sealed_frames | PASS 1/1 |
+| am117 the PSV-1 non-claim list names every NARROW-CLAIM finding of the triage table | axon-core/pci_delta_note | PASS 1/1 |
 | am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 349 rows at this head, recomputed from the script): M59, M61-M62, M65, M67-M70, M72-M79, M82-M83, M85-M88, M90-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3251, M3253-M3260, M3267-M3270
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 398 rows at this head, recomputed from the script): M59, M61-M62, M65, M67-M70, M72-M79, M82-M83, M85-M88, M90-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3251, M3253-M3260, M3267-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351
 
 | delta | rows (named in the amendment's own text) |
 |---|---|
@@ -299,6 +308,7 @@ Mutation rows whose target is `crates/axon-core/src` and which are not retired (
 | amendment 106 | M2910-M2946 (M2929 not issued; M2940-M2946 runner legs), matrix A239-A244 |
 | amendment 108 | M3030-M3042 (M3033, M3035, M3038 runner leg, WITHDRAWN by amendment 116: retired by amendment 114 behind M3243 on four cells, the full-suite condition never shown), matrix A249-A253 |
 | amendment 114 | M3230-M3270 (M3242-M3253, M3260, M3267-M3270 static names, runner; M3256-M3259 runner legs of the control taint; M3261-M3266 the note's own checks; M3252 not issued), matrix A281-A285 (written A280-A284) |
+| amendment 117 | M3300-M3351 (M3308, M3324, M3350 not issued: the first two were drawn and found equivalent; M3346-M3349 runner legs; the drift rows M3321-M3323, M3326, M3327, M3329, M3344, M3345), matrix A291-A300 (the claim's non-claim list is checked by `pci_delta.py`, no row) |
 
 FREEZE OBLIGATION, not a present fact: the claims spec says these rows are re-run at the frozen head.
 What the freeze procedure must show is a joined paired-disable run at the frozen head in which each of
@@ -318,6 +328,8 @@ test the static CHECK, which only the real `axon test --seal` binary runs, so fo
 
 Round 12 (c9r12/psv1v, `9a95c9ce`, gpumaster, `--only=<ids>`, two shards): all 316 active rows whose target is `crates/axon-core/src` were re-run, 316/316 KILLED by their own
 attack, 0 REFUSED_ELSEWHERE, 0 stale. Still a sample run (`--only`), not the scope run the freeze requires.
+
+Round 14 (c9r14/psv1x, amendment 117; src `c4ea5684`, rows/markers at `b3034408`-era script plus the follow-ups, gpumaster, clean clones, `v022_g01_mutations.py --scope=all --only=<ids>`, two shards): ALL 398 active rows whose target is `crates/axon-core/src` (am102, am106, am108, am114 included, retired rows skipped) were re-run, 398/398 KILLED by their own attack, 0 REFUSED_ELSEWHERE, 0 survived. The first full run (three shards, before the follow-up) found 12 older rows whose anchor text the source change had moved (re-anchored: M2478, M2172, M2174 and others kept their text by restructuring the edit) and six that survived (M2925, M2946: a guard made redundant by `goal_name_is_known`, removed; M3319: an operator-pop branch made redundant by `t_chan_choice`, removed; M2761: its resume-based attack is now also caught by the feed taint, a new aborting-arm case is the row's attack; M2172/M2174: compile errors from the refinement table's new type). One shard was run twice because a concurrent job rebuilt the shared interpreter (`interpreter binary changed during the run`); the second run is the one counted. Still a sample run (`--only`), not the scope run the freeze requires. The gate script (85 rows) exited 0 locally; axon-core (`--no-default-features --no-fail-fast`), axon-psv and the axon-fabric tests `psv_dispatch`, `check_effects`, `attestation`, `cortex_via_fabric` exited 0 on gpumaster at `0ffceec3`; clippy `-D warnings` (default and `--no-default-features`), `cargo fmt --check`, `v022_refusal_coverage.py` plain and `--freeze`, `psv_matrix_check.py` and `pci_delta.py --check` exit 0. Cost (release build, `axon run`, seven runs each, alternating order, gpumaster, src `1f2e5196`): tight loop 2.02 s old / 2.03 s new, fib(32) 1.64 / 1.64, `arr_map` 1.84 / 1.83, `&&` loop 1.08 / 1.08 (medians): inside noise.
 
 ## (c) Surfaces 18 and 19, and what the protected profile does with a non-empty ceiling
 

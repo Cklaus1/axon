@@ -137,47 +137,104 @@ Each clause names what must hold. The negative matrix below names how each one f
 **PSV-1 — The operator's suite, not the candidate's checks.**
 - The guest executes the operator-registered suite (`check_registry`, pinned by WorkspaceVersion
   and entry) and exactly the task's registered acceptance test (`task_acceptance`).
-- Candidate bytes can never define, add or select the rubric (G01-r22-verifier-separation, in the
-  guest). What the guest interpreter ENFORCES by that name (amendment 102, a runtime taint under the
-  static analyses of amendments 53-100, which stay): a value that sealed (candidate) code produced
-  carries a taint that every operation of the evaluator propagates, and an operator frame REFUSES to use
-  a tainted value as a SELECTOR: the NAME given to a name-resolving builtin (`sandbox_run`,
-  `scheduler_spawn`, the `goal_*` family), an operator CLOSURE the candidate picked out of a table by a
-  key, an index or a branch and then called, the IMPL a method call dispatches to (the receiver's runtime
-  type), and the WIDTH of fixed-width arithmetic. That is the whole claim: candidate bytes cannot choose
-  WHICH operator code runs or WHICH operator impl or width answers. It is NOT the claim that candidate
-  output cannot influence the verdict: it does (the suite compares the candidate's answer with an
-  expected one), and an operator that branches on candidate data (`if cand_ok() { a() } else { b() }`)
-  has written a rubric the candidate chooses a branch of. That includes two shapes the taint cannot see
-  (amendment 106, executed by the round-11 reviewer): OMISSION (a candidate that does not call an operator
-  callback, or withholds a `send` on an operator channel, selects what the operator's branch or index does on
-  absence) and a table of precomputed operator VERDICTS indexed by a candidate value (a table of closures indexed
-  the same way is refused; a table of verdicts is not). A suite that lets candidate data, or candidate silence,
-  select between a strict and a lenient operator check has let the candidate choose the rubric; no sound rule
-  closes that. Honest suites compare the candidate's output to an expected value and never branch or index the
-  CHECK by candidate data or by whether the candidate acted. Also enforced (amendment 108): a COMPARISON (`==`, `!=`, ordering)
-  and every builtin argument read the content of the dicts and channels inside their operands, however deep, so
-  `if d == e { lenient } else { strict }` over a dict the candidate filled is refused like `dict_get_or(d, ..)`; a
-  `native::` call is state every frame shares, so a native handle a sealed frame used taints what the operator reads
-  back from the registry. Also enforced (amendment 114): the taint of a CONDITION reaches whatever runs under it, in every
-  conditional, repeated or exiting form of the language (`if`, `match` with its guards, `while`, `while let`, `for`, `&&`, `||`, `?`,
-  `select`, an effect-handler arm, a spawned or called closure, `break`/`continue`/`return`, and the callbacks of the
-  short-circuiting `arr_*` builtins): what such a branch STORES, and what runs after an exit out of it, is tainted, so
-  `(d == e) && mark(op)` followed by a table index by the size of `op` is refused like the same code with `if`. The list is a
-  table (`taint::CONTROL_TABLE`) drift-tested against the `Expr` enum, so a construct added to the language cannot ship without a
-  row, an attack and a control. A branch NOT taken stores nothing to taint: that is the omission case above. The sealed files'
-  check-time diagnostics come from a check that never saw the operator's definitions, so an operator name and a name nothing
-  defines get the same text AND the same accept/refuse in every position the runner test lists (fn, global, struct literal,
-  type, enum, trait, enum pattern, annotation, cast, lambda parameter, generic bound, refinement base, refinement and `@[verify]`
-  predicate: tested, not enumerated from the evaluator). Residual: a candidate that DEFINES a name the operator defines (a fn,
-  type, enum, constant, trait or impl method) is refused E0002 where a fresh name is accepted, an existence oracle readable
-  from source that cannot shadow anything. Not covered: integer HANDLES of kernel
-  objects and authority values (effect lists, budgets) a tainted value supplies, a path, URL or
-  `ai_complete` prompt a tainted value supplies, native codegen (`axon build`); the taint is an over-approximation (coarse per binding, per dict and
-  per channel), and its cost to an honest suite is listed in amendments 102 and 106 (among them: folding or
-  mapping a candidate's `[u8]` is refused unless the operator casts `as i64`, running a candidate-nominated
-  entry point by name is refused, an unpinned `let v = work(0)` then `v.ok()` in an arm is refused where
-  the pinned form passes).
+- Candidate bytes do not define or add to the rubric: the registered suite and its acceptance test are fixed by the operator
+  (G01-r22-verifier-separation, in the guest). Whether they cannot SELECT among the operator's own checks is the clause below,
+  stated at the strength it has.
+- **What the guest interpreter ENFORCES, and nothing wider (amendments 102-117).** PSV-1 is NOT a proof that candidate
+  bytes cannot influence the rubric in all ways. It is a runtime taint at four selection primitives. A value that sealed
+  (candidate) code produced carries a taint that every operation of the evaluator propagates, and an operator frame
+  REFUSES to use a tainted value, or to act under a tainted control decision, as one of four SELECTORS:
+  (1) the NAME given to a name-resolving builtin (`sandbox_run`, `scheduler_spawn`, `kernel_goal_create`, the `goal_*`
+  family); (2) an operator CLOSURE (or fn value) the candidate picked out of a container by a key, an index or a branch and
+  then CALLED; (3) the IMPL a method call dispatches to, when the receiver's runtime TYPE was the candidate's (a receiver of a type the
+  OPERATOR defines is exempt: see *Not claimed*); (4) the
+  WIDTH of fixed-width arithmetic whose operand's width was the candidate's, including a width carried inside an
+  `Uncertain`/`Temporal`. The claim is that a candidate cannot choose WHICH operator code runs, or which operator impl or
+  width answers, **through the constructs and value routes the two lists below name**; the lists, not this sentence, are the
+  claim, and each is held complete by a drift test:
+  * *Control decisions (the CONSTRUCTS).* The taint of a condition reaches whatever runs under it and what runs after an
+    exit out of it, in `if`, `match` (its subject and every guard), `while` and `while let` (every evaluation of the
+    condition, not only the body), `for`, `&&`, `||`, `?`, `break`/`continue`/`return`, `select` (the channel looked at and
+    every pop), an effect-handler arm (the resume value; sealed code that ran inside an abort-capable `with` body), a
+    spawned or called closure, every callback a builtin runs (`Interp::call_cb`: the results so far taint every later call,
+    and so what a parameter-free store inside it writes), and the Rust loops that run operator code (a goal search, a
+    scheduler pass, a kernel goal: `Interp::t_loop_pc` after each run). Tables: `taint::CONTROL_TABLE` (drift-tested against
+    the `Expr` enum: a construct added to the language cannot ship without a row, an attack and a control) and
+    `taint::CALLBACK_BUILTINS` (drift-tested against `BUILTINS`: every builtin with a closure parameter has a row, and none
+    calls a closure except through `call_cb`).
+  * *Value routes (the taint CLASSES).* Every builtin is `Pure` (a function of its arguments), `Kernel` (the operator's
+    kernel tables) or `World` (state outside the interpreter: files, env, exec, http, the clock, the RNG, the durable
+    store, native registries, the zoned-call provenance log); a sealed call writes World and Kernel taint, an operator call
+    reads it back. Dicts and channels are tainted per object; a comparison and every builtin argument are walked deep.
+    Drift tests: `every_builtin_has_a_taint_class`, `no_arm_of_a_pure_builtin_reads_or_advances_ambient_state` (every `Pure`
+    arm is scanned for the clock, the host seam, the RNG and interpreter state), `the_durable_store_is_world_state_not_kernel_state`,
+    `every_kernel_builtin_that_draws_the_rng_is_coupled_to_the_world_cell`, `every_rust_loop_that_runs_operator_code_raises_the_control_taint_after_each_run`,
+    `both_provenance_writes_of_a_zoned_call_are_marked`, `every_type_that_holds_a_value_keeps_its_taint` with
+    `the_holder_reasons_name_things_that_exist`. A refinement type pins exactly what its base pins (`Tys::closed` looks
+    through it), so a refinement over a union, a trait or a container of a union does not.
+  * *Check time.* The sealed files' diagnostics come from a check that never saw the operator's definitions, so an operator
+    name and a name nothing defines get the same text AND the same accept/refuse **in the positions the runner test
+    `a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one` lists** (fn, global, struct
+    literal, type, enum, trait, pattern, annotation, cast, lambda parameter, generic bound, `dyn`, array and tuple
+    elements, refinement base, refinement/`where`/`@[verify]` predicates, whole-struct refinement predicates, the deferred
+    type names, `goal_*` and `goal_eval` names). That list is what is tested, not an enumeration of the language.
+- **NOT claimed.** The candidate's OUTPUT influences the verdict (the suite compares it with an expected value), and an
+  operator that branches on candidate data (`if cand_ok() { a() } else { b() }`) has written a rubric the candidate chooses a
+  branch of. Standing residuals, none closed by the taint: OMISSION (a candidate that does not call an operator callback,
+  withholds a `send`, makes a `?` or a handler arm skip an operator store, or fails a scheduler fiber, selects what the
+  operator's branch or index does on absence; the taken branch of an exit taints what runs AFTER it, a skipped store leaves
+  nothing to mark); a table of precomputed operator VERDICTS indexed by a candidate value (a table of closures so indexed is
+  refused, a table of verdicts is not); a branch on candidate data into a weaker check; integer HANDLES of kernel objects and
+  authority values (effect lists, budgets), a path, URL or `ai_complete` prompt a tainted value supplies; native codegen
+  (`axon build`); an operator-built class holding hidden state that is not yet classed `World` or `Kernel`; existence-oracle
+  text on any path or position the runner test does not list (among them: a candidate that DEFINES a name the operator defines, a
+  fn, type, enum, constant, trait or impl method, is refused E0002 where a fresh name is accepted, an oracle readable from source
+  that cannot shadow anything); the coverage of the sealed-only static check beyond the
+  positions it lists. The taint is an over-approximation (coarse per binding, per dict and per channel), and its cost to an
+  honest suite is listed in amendments 102 and 106. **Findings of the round-14 loop decided NARROW-CLAIM** (each entry names the
+  finding's signature, `governance/notes/v022-psv1-loop-triage.md` holds the table and the loop's evidence path, and
+  `scripts/pci_delta.py --check` fails if an entry is missing or stale):
+<!-- BEGIN PSV-1 NON-CLAIMS (scripts/pci_delta.py checks this list against governance/notes/v022-psv1-loop-triage.md) -->
+  * Operator-typed values with impls (cluster h). The impl a method call on a value of an operator-DEFINED type answers is not
+    refused when the candidate chose WHICH operator value reached the call, because a struct has no identity the taint can tell
+    from its fields (refusing it also refuses the honest `Sq { s: val() }.area()` over a trait implemented for two operator
+    types: measured). Not covered: a candidate-keyed table of operator values (`dict_get_or(d, key(), ..)`), a sealed
+    generic that hands one of two operator values back, an operator ctor closure the candidate picks, an order a candidate
+    comparator gives (`arr_sort_by`) to operator values. Closures are covered; impl-carrying values are not.
+    - `dispatch-operator-type-exempt-no-val-taint`
+    - `dispatch-operator-type-exempt-ctor-closure-pick`
+    - `dispatch-operator-type-exempt-via-sort-order`
+  * Existence oracle (cluster f), beyond the tested positions. An operator-defined name and a missing one are not claimed to
+    read identically: (a) when a sealed `mod X`/`use X` reaches an operator module FILE (the loader names the operator path);
+    (b) in a candidate's module-level `let` initializer (the merged check's did-you-mean and error count survive the split);
+    (c) in the predicate of a sealed refinement ITEM that names an unresolved fn (no span, so the merged diagnostic is
+    attributed to the operator's file); (d) in a binding position (a local, parameter, `for` variable or pattern binding named
+    like an operator global is refused where a fresh name is accepted); (e) for a name the SUITE references but its own tree
+    does not define, which resolves from the candidate's directory.
+    - `module-loader-existence-oracle-text`
+    - `static-oracle-global-initializer-merged-check`
+    - `refine-item-predicate-dummy-span-merged-diag`
+    - `merged-e0004-backstop-name-walk-no-shadowing-oracle`
+    - `dangling-operator-reference-resolved-from-candidate`
+  * Emitters (cluster e). `print`, `println`, `eprint` and `eprintln` are classed `Pure`: where the process's stdout is a
+    regular file an operator `read_file("/proc/self/fd/1")` observes sealed output untainted. The protected runner gives the
+    child pipes; the property is not claimed for a regular-file stdout.
+    - `pure-class-emitter-readable-via-proc-fd`
+<!-- END PSV-1 NON-CLAIMS -->
+- **What an honest suite must do.** Pin with `let x: T = ..` before dispatching on or doing width arithmetic on anything the
+  candidate returned; name candidate fns by a literal or a constant the operator wrote, never by a value the candidate
+  returned; compare the candidate's OUTPUT to an expected value; never let candidate data, or the candidate's silence, choose
+  between a strict and a lenient check (a table of closures or verdicts keyed by it, a branch that runs a weaker check, a
+  count of calls); ship every module, fn and type the suite names in the suite's own tree; avoid hidden shared state between
+  the operator's code and the candidate's (a file, the clock, the RNG, the durable store, a native handle, the provenance log):
+  the taint follows it conservatively and an honest suite pays in false refusals. The cost list of amendments 102 and 106
+  stands (folding a candidate's `[u8]` needs `as i64`; running a candidate-nominated entry point by name is refused; an
+  unpinned `let v = work(0)` then `v.ok()` in an arm is refused where the pinned form passes).
+- **Evidence for this clause, stated at its strength.** Reviewed in rounds 8-13 plus a six-pass find-until-dry loop that did
+  not reach two consecutive clean passes (53 confirmed findings, 31 of them blocker-class; 44 fixed in amendment 117; the
+  rest are the non-claims above). A fix closes the executed shape and the mechanism named in its mutation row (M3300-M3351),
+  not every sibling no pass reached. A further review should be expected to find further members of the same classes; the
+  clause does not say it cannot.
 
 **PSV-2 — Separately sealed, digest-bound inputs.**
 - Candidate tree and suite tree are delivered to the guest as two separately sealed inputs, each
@@ -193,7 +250,7 @@ Each clause names what must hold. The negative matrix below names how each one f
   runs only if the candidate calls it, so a suite must assert after the call.
 - Sealing, containment and per-provenance kernels run in the guest interpreter as certified at
   `31413ca7` (`governance/proofs/v022-pci/CERTIFICATION.md`, local backend, EMPTY effect ceiling)
-  plus amendments 53/60/72/78/83/88/94/96/100/102/106/108/114 (the delta, listed from git in `governance/notes/v022-pci-delta.md`).
+  plus amendments 53/60/72/78/83/88/94/96/100/102/106/108/114/117 (the delta, listed from git in `governance/notes/v022-pci-delta.md`).
   origin/main's 13 commits under `crates/axon-core/src` were MERGED WITHOUT PCI REVIEW; only 5 of the 13
   change the interpreter (Rc arrays and cheaper calls, shared strings with lent closure captures,
   `&mut` write-through, first-class fns, the `arr_sort_by` rewrite) and the other 8 change no interpreter
@@ -227,14 +284,21 @@ Each clause names what must hold. The negative matrix below names how each one f
   every builtin argument now take the taint of every shared object inside the operands, however deep (`d == e`,
   `[d] == [e]`, a struct or tuple holding one, `arr_contains([d], e)`), the existence oracle on the method path, and
   a native call (`gfx`, `axon-domain`) as World state.
+  Amendment 117 (round 14) NARROWS the PSV-1 claim to what is enforced (above) and fixes the clear, localized members of a
+  six-pass find-until-dry loop that did not go dry: 44 of its 53 confirmed findings (a clock reader classed `Pure`; the control
+  taint of a match guard, a `while` condition, a callback after the first, a Rust search loop, a select's channel and an operator
+  pop, an abort-capable `with` body, a scheduler fiber; `dstore_*` and the provenance log as World/Kernel state; a refinement's
+  base; a width inside an `Uncertain`; the sandbox ceiling on a sealed fn; the per-registry token stream; the positions the
+  sealed-only check skipped), and 9 decided NARROW-CLAIM and written into the claim, with the table in
+  `governance/notes/v022-psv1-loop-triage.md`.
   Each amendment's PRINCIPAL arms are exercised by named gate rows in `scripts/v022_pci_gates.sh`
   (rows named `am53` ... `am108`; the row count is not quoted here, it is derived and drift-tested
   by `scripts/pci_delta.py --check`). Arms verified to fail a gate row when their code is removed:
   the declared-return cast, the dict edges, the `()` coercion of an absent return type, channel
   stamping at creation, strict closure arguments at a crossing, the am83 arithmetic arm, and the arms of
-  am100, am102, am106, am108 and am114 (the name sinks, the existence-oracle text, the closure pick, the taint of a binding, a
-  shared object, the kernel and the world, a comparison's and a builtin's deep read, the control taint of a short-circuit, a refused guard, a `?` and a `select`, the sealed-only check: each removal is a mutation row KILLED by its own attack, and the test that
-  row fails is itself a test a gate row runs, by package, target and exact name: checked for every row of am100 (M2600-M2629, by reading the registry) and of am102 (M2700-M2767), am106 (M2910-M2946), am108 (M3030-M3042) and am114 (M3230-M3270), by
+  am100, am102, am106, am108, am114 and am117 (the name sinks, the existence-oracle text, the closure pick, the taint of a binding, a
+  shared object, the kernel and the world, a comparison's and a builtin's deep read, the control taint of a short-circuit, a refused guard, a `?` and a `select`, the sealed-only check, and (am117) the control taint of a match guard, of every evaluation of a `while` condition, of a callback after the first, of a Rust loop that runs operator code, of a select's channel and an operator pop, of an abort-capable `with` body and of a scheduler fiber, the World class of the clock readers and the durable store, the provenance marks, a refinement's base, a width inside an `Uncertain`, the sandbox ceiling on a sealed fn and the sealed-only check of `dyn`, array, predicate and deferred-name positions: each removal is a mutation row KILLED by its own attack, and the test that
+  row fails is itself a test a gate row runs, by package, target and exact name: checked for every row of am100 (M2600-M2629, by reading the registry) and of am102 (M2700-M2767), am106 (M2910-M2946), am108 (M3030-M3042) am114 (M3230-M3270) and am117 (M3300-M3351), by
   `scripts/pci_delta.py --check`, which derives those ranges AND both amendment lists of this paragraph from the registry and the note, and fails when a row's test is run by no gate row). The runner rows of am100 (`axon-psv`, M2603-M2607) are CORROBORATION of
   the unit rows, as am96's are: with the taint on, the production route refuses those attacks by the taint
   first, so four of them were withdrawn (amendment 102) and the static guards are evidenced at unit level

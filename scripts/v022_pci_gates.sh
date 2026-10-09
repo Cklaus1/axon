@@ -120,6 +120,17 @@ ROWS=(
   "am114 a module the operator declares for the candidate resolves the candidate's own helper|axon-psv|sealed_frames|a_module_the_operator_declares_for_the_candidate_resolves_the_candidates_own_helper"
   "am114 the note's checks refuse a wrong result, target, claim list or gate package|axon-core|pci_delta_note|a_wrong_result_or_target_in_the_notes_gate_table_is_refused a_stale_amendment_list_in_the_claim_is_refused a_test_the_gate_runs_under_another_package_or_name_is_no_gate"
   "am114 the existence oracle on the static path, every position the test lists, text and accept/refuse (runner: the only witness)|axon-psv|sealed_frames|a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one"
+  # Amendment 117 (round 14): the clear, localized members of the six-pass find-until-dry loop, and the
+  # NARROWED PSV-1 claim (governance/notes/v022-psv1-loop-triage.md). The control-flow, types-and-widths and
+  # existence-oracle attacks join the am114 / am102 / am114 tests above; these are the drift tests and the
+  # new runner test of the amendment.
+  "am117 types and widths: a refinement pins what its base pins, a width inside Uncertain/Temporal, the operator's sandbox ceiling on a sealed fn|axon-core|lib|interp::taint_tests::a_type_or_width_sealed_code_chose_is_never_dispatched_on"
+  "am117 drift: no Pure arm touches ambient state; the durable store is World; provenance writes are marked|axon-core|lib|interp::taint_tests::no_arm_of_a_pure_builtin_reads_or_advances_ambient_state interp::taint_tests::the_durable_store_is_world_state_not_kernel_state interp::taint_tests::both_provenance_writes_of_a_zoned_call_are_marked"
+  "am117 drift: every closure-taking builtin has a callback row and calls through call_cb; every Rust loop raises the control taint; RNG draws are coupled|axon-core|lib|interp::taint_tests::every_builtin_that_takes_a_closure_has_a_callback_row_and_calls_through_call_cb interp::taint_tests::every_rust_loop_that_runs_operator_code_raises_the_control_taint_after_each_run interp::taint_tests::every_kernel_builtin_that_draws_the_rng_is_coupled_to_the_world_cell"
+  "am117 drift: the holder reasons name things that exist|axon-core|lib|interp::taint_tests::the_holder_reasons_name_things_that_exist"
+  "am117 the sealed kernel's token stream is its own|axon-core|lib|kernel::tests::a_sealed_registry_drawing_tokens_does_not_move_the_operators_stream"
+  "am117 the clock is not a Pure builtin (runner: the Time ceiling refuses it)|axon-psv|sealed_frames|a_candidate_cannot_read_or_drive_the_clock_through_the_temporal_builtins"
+  "am117 the PSV-1 non-claim list names every NARROW-CLAIM finding of the triage table|axon-core|pci_delta_note|every_narrow_claim_finding_of_the_loop_is_in_the_non_claim_list_and_no_other_is"
 )
 
 for row in "${ROWS[@]}"; do

@@ -399,7 +399,11 @@ fn is_known_type_name(
     if PRIMITIVE_NAMES.contains(&name) {
         return true;
     }
-    if DEFERRED_PREFIXES.iter().any(|p| name.starts_with(p)) {
+    // EXACT names only (amendment 117, loop finding 50): `starts_with` made any
+    // `DictFoo`/`GoalBar` a known type, so a sealed `DictTable` the operator
+    // defined was refused (E0004) while a `DictTableZ9` nothing defines was
+    // accepted.
+    if DEFERRED_PREFIXES.contains(&name) {
         return true;
     }
     if struct_fields.contains_key(name) {
@@ -1177,6 +1181,15 @@ impl CheckCtx {
                     &mut self.current_generic_params,
                     td.generic_params.iter().cloned().collect(),
                 );
+                if self.sealed_at(td.span) {
+                    if let Some(p) = td.refinement.as_deref() {
+                        self.check_sealed_predicate(
+                            p,
+                            &format!("#typedef_{}.where", td.name),
+                            td.span,
+                        );
+                    }
+                }
                 for field in &td.fields {
                     let path = format!("#typedef_{}.field_{}", td.name, field.name);
                     // `TypeField` has no span of its own, so the typedef's is
@@ -1200,6 +1213,11 @@ impl CheckCtx {
                         &r.base,
                         &format!("#refine_{}.base", r.name),
                         Some(r.span),
+                    );
+                    self.check_sealed_predicate(
+                        &r.predicate,
+                        &format!("#refine_{}.where", r.name),
+                        r.span,
                     );
                 }
             }
@@ -1250,6 +1268,20 @@ impl CheckCtx {
         }
     }
 
+    /// A sealed refinement / `where` / `@[verify]` predicate is walked as an
+    /// expression, so a struct literal, enum path or type path in it is
+    /// name-checked as one in a body is (amendment 117, loop finding 9): only
+    /// fn calls in a predicate were, and a name nothing defines was accepted
+    /// where the operator's own was refused. `_` is the implicit binder.
+    fn check_sealed_predicate(&mut self, pred: &Expr, path: &str, span: crate::span::Span) {
+        let prev = self.current_span;
+        self.current_span = span;
+        let mut scope: HashMap<String, Type> = HashMap::new();
+        scope.insert("_".to_string(), Type::Unknown);
+        self.check_expr(pred, path, &mut scope);
+        self.current_span = prev;
+    }
+
     /// Whether `span` lies in a sealed module (a `--seal` run only).
     fn sealed_at(&self, span: crate::span::Span) -> bool {
         let dirs = crate::resolver::sealed_module_dirs();
@@ -1295,6 +1327,18 @@ impl CheckCtx {
                         );
                     }
                 }
+            }
+        }
+
+        // Sealed only: the `@[verify]` predicate is an expression like any other
+        // (amendment 117, loop finding 9).
+        if self.sealed_at(f.span) {
+            if let Some(v) = &f.verify {
+                self.check_sealed_predicate(
+                    &v.predicate,
+                    &format!("#fn_{}.verify", f.name),
+                    f.span,
+                );
             }
         }
 
@@ -4568,13 +4612,19 @@ impl CheckCtx {
             }
 
             // ── Leaves ───────────────────────────────────────────────────────
-            Expr::Ident(_)
-            | Expr::Literal(_)
-            | Expr::None
-            | Expr::Array(_)
-            | Expr::Tuple(_)
-            | Expr::Break
-            | Expr::Continue => {}
+            // A sealed container literal is walked too (amendment 117, loop
+            // finding 25): a struct literal, enum path or type path in an
+            // element was never name-checked, so a name nothing defines was
+            // accepted where the operator's own was refused. An unsealed
+            // program's arrays are untouched.
+            Expr::Array(elems) | Expr::Tuple(elems) => {
+                if self.sealed_at(self.current_span) {
+                    for (i, e) in elems.iter().enumerate() {
+                        self.check_expr(e, &format!("{node_path}.elem_{i}"), scope);
+                    }
+                }
+            }
+            Expr::Ident(_) | Expr::Literal(_) | Expr::None | Expr::Break | Expr::Continue => {}
         }
     }
 
@@ -6064,7 +6114,17 @@ impl CheckCtx {
                 }
                 self.check_axon_type(ret, &format!("{node_path}.ret"), span);
             }
-            AxonType::TypeParam(_) | AxonType::DynTrait(_) => {}
+            AxonType::TypeParam(_) => {}
+            // Sealed only: the trait a `dyn` names is a name like any other
+            // (amendment 117, loop findings 5, 8). It was a leaf, so a trait the
+            // operator defined was refused by the merged check (E0004) while one
+            // nothing defines was accepted.
+            AxonType::DynTrait(tr) => {
+                let here = span.unwrap_or(self.current_span);
+                if self.sealed_at(here) && !self.trait_defs.contains_key(tr) {
+                    self.check_axon_type(&AxonType::Named(tr.clone()), node_path, span);
+                }
+            }
             AxonType::Tuple(elems) => {
                 for (i, elem) in elems.iter().enumerate() {
                     self.check_axon_type(elem, &format!("{node_path}.elem_{i}"), span);
@@ -6855,7 +6915,7 @@ pub fn axon_type_to_type(ty: &AxonType) -> Type {
             "()" | "unit" => Type::Unit,
             "never" | "Never" | "!" => Type::Never,
             other => {
-                if DEFERRED_PREFIXES.iter().any(|p| other.starts_with(p)) {
+                if DEFERRED_PREFIXES.contains(&other) {
                     Type::Deferred(other.to_string())
                 } else {
                     Type::Struct(other.to_string())
@@ -6870,7 +6930,7 @@ pub fn axon_type_to_type(ty: &AxonType) -> Type {
         AxonType::Chan(inner) => Type::Chan(Box::new(axon_type_to_type(inner))),
         AxonType::Slice(inner) => Type::Slice(Box::new(axon_type_to_type(inner))),
         AxonType::Generic { base, args } => {
-            if DEFERRED_PREFIXES.iter().any(|p| base.starts_with(p)) {
+            if DEFERRED_PREFIXES.contains(&base.as_str()) {
                 return Type::Deferred(base.clone());
             }
             let _ = args;
