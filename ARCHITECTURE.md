@@ -49,7 +49,10 @@ would expect to be able to replay a run that recorded nothing.
 
 **I-2: the interpreter is the reference semantics.** There are two execution engines —
 `interp.rs` (tree-walking, always available) and LLVM codegen (`codegen/`, feature-gated but on by
-default). When they disagree, the interpreter is right and codegen is wrong.
+default). When they disagree, the interpreter is right and codegen is wrong. The interpreter runs fn
+bodies either by walking the tree or by executing compiled ops against the same frames (R50,
+`interp/vm/`, the default; `AXON_ENGINE=tree` selects the walk), and the tree-walker is the reference
+for both.
 
 This is not a stylistic preference. It is what makes every other guarantee checkable:
 

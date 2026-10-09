@@ -15,8 +15,8 @@
 //!                                   captures the program's stdout for read-back
 //!   axon_output_ptr() -> ptr      — start of the captured output (valid until the
 //!   axon_output_len() -> len        next axon_eval)
-//!   axon_set_engine(e) -> i32     — R50: engine for later axon_evals, 0 = tree
-//!                                   (default), 1 = vm; 0 on success, 1 (and no
+//!   axon_set_engine(e) -> i32     — R50: engine for later axon_evals, 0 = tree,
+//!                                   1 = vm (default); 0 on success, 1 (and no
 //!                                   change) for any other value. The browser has
 //!                                   no environment, so this stands in for
 //!                                   AXON_ENGINE
@@ -37,7 +37,7 @@ thread_local! {
 }
 
 /// R50: select the engine every later `axon_eval` runs fn bodies with (`0` =
-/// tree, the default; `1` = vm), the counterpart of `AXON_ENGINE` for a host
+/// tree; `1` = vm, the default), the counterpart of `AXON_ENGINE` for a host
 /// without an environment. Returns 0 on success; any other value returns 1 and
 /// changes nothing.
 #[no_mangle]
