@@ -1376,6 +1376,7 @@ impl<'p> Interp<'p> {
     /// copy) and the param's final value is moved back on every outcome,
     /// including `return` / `?` / error unwinds, so the caller's binding is
     /// never left hollow. Shared by `eval_call` and the bytecode engine (R50).
+    #[inline(never)]
     pub(super) fn call_mut(
         &self,
         callee: &Expr,
@@ -1422,7 +1423,7 @@ impl<'p> Interp<'p> {
             }
         }
         *self.current_call_tier.borrow_mut() = tier.map(|t| t.to_string());
-        let mut frame = Env::new();
+        let mut frame = self.take_frame();
         let result = self.call_fn_in(entry, argv, &mut frame);
         // The body's block scopes are popped by now (on `return`/`?` too), so
         // each name resolves to the parameter binding itself. Per param, its
@@ -1444,6 +1445,7 @@ impl<'p> Interp<'p> {
                 *b = std::mem::replace(&mut outs[i], Value::Unit);
             }
         }
+        self.give_frame(frame);
         result
     }
 

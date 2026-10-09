@@ -3373,22 +3373,33 @@ impl<'p> Interp<'p> {
                 f.def.name, f.def.name
             ));
         }
-        // AX-54: the frame comes from a pool of finished calls' frames, so a
-        // call does not allocate its bindings and scope marks. Boxed, so
-        // taking and returning one moves a pointer, not the frame. Emptied
-        // here (dropping the bindings where dropping the frame did); a frame
-        // that grew unusually large is not kept.
-        let mut env = match self.env_pool.borrow_mut().pop() {
+        let mut env = self.take_frame();
+        let result = self.call_fn_in(f, args, &mut env);
+        self.give_frame(env);
+        result
+    }
+
+    /// AX-54: an empty call frame from the pool of finished calls' frames, so
+    /// a call does not allocate its bindings and scope marks. Boxed, so
+    /// taking and returning one moves a pointer, not the frame.
+    #[inline(always)]
+    fn take_frame(&self) -> Box<Env> {
+        match self.env_pool.borrow_mut().pop() {
             Some(env) => env,
             None => Box::new(Env::new()),
-        };
-        let result = self.call_fn_in(f, args, &mut env);
+        }
+    }
+
+    /// Return a finished call's frame to the pool, emptied here (dropping the
+    /// bindings where dropping the frame did); a frame that grew unusually
+    /// large is not kept.
+    #[inline(always)]
+    fn give_frame(&self, mut env: Box<Env>) {
         env.clear();
         let mut pool = self.env_pool.borrow_mut();
         if pool.len() < 64 && env.vars.capacity() <= 1024 {
             pool.push(env);
         }
-        result
     }
 
     /// AX-54: an empty argument vector with room for `n`, reusing one that a
