@@ -35229,7 +35229,7 @@ fn vm_engine_trace_names_each_compiled_body_once_under_vm_only() {
     // the method call).
     assert_eq!(
         err,
-        "vm: main 13 ops, 0 tree nodes\n\
+        "vm: main 12 ops, 0 tree nodes\n\
          vm: fib 8 ops, 0 tree nodes\n\
          vm: P::get 1 ops, 0 tree nodes\n"
     );
@@ -36041,3 +36041,224 @@ fn vm_match_impl_methods() {
         "{stderr}"
     );
 }
+
+// ── R50 S5: call costs (`vm_fastcall_`) ─────────────────────────────────────
+
+/// R50 S5: `axon run` on `src` under `engine`, with the AI mock on and a
+/// fresh cache directory (zoned and goal fns record provenance there), so a
+/// run sees neither the user's cache nor an earlier run's.
+fn vm_fastcall_run(tag: &str, src: &str, engine: &str, trace: bool) -> std::process::Output {
+    let f = tmp_ax(&format!("vm_fastcall_{tag}"), src);
+    let cache = std::env::temp_dir().join(format!(
+        "axon_vm_fastcall_{tag}_{engine}_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&cache);
+    let mut c = axon();
+    c.arg("run")
+        .arg(&f)
+        .env("AXON_ENGINE", engine)
+        .env("AXON_AI_MOCK", "1")
+        .env("XDG_CACHE_HOME", &cache);
+    if trace {
+        c.env("AXON_VM_TRACE", "1");
+    } else {
+        c.env_remove("AXON_VM_TRACE");
+    }
+    let out = c.output().expect("spawn axon run");
+    let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_dir_all(&cache);
+    out
+}
+
+/// R50 §4 S5 CLI row: identical stdout, stderr and exit code under both
+/// engines, and under `AXON_ENGINE=vm AXON_VM_TRACE=1` the `vm: slow <fn>:
+/// <flag>` lines are exactly `slow` (as `<fn>: <flag>`, in trace order).
+/// Returns the shared `(exit, stdout, stderr)`.
+fn vm_fastcall_case(tag: &str, src: &str, slow: &[&str]) -> (Option<i32>, String, String) {
+    let text = |o: &std::process::Output| {
+        (
+            o.status.code(),
+            String::from_utf8_lossy(&o.stdout).into_owned(),
+            String::from_utf8_lossy(&o.stderr).into_owned(),
+        )
+    };
+    let tree = text(&vm_fastcall_run(tag, src, "tree", false));
+    let vm = text(&vm_fastcall_run(tag, src, "vm", false));
+    assert_eq!(vm, tree, "[{tag}] engines differ");
+    let traced = text(&vm_fastcall_run(tag, src, "vm", true)).2;
+    let got: Vec<&str> = traced
+        .lines()
+        .filter_map(|l| l.strip_prefix("vm: slow "))
+        .collect();
+    assert_eq!(got, slow, "[{tag}] slow lines:\n{traced}");
+    tree
+}
+
+/// R50 S5 red test (§8): `mutcall.ax`'s `main` compiles with no `Tree` op:
+/// the `&mut` call is a `CallMut` op over `call_mut` (on S4 it is one
+/// `Call(&mut)` tree op). The fixture runs at a thousandth of its size.
+#[test]
+fn vm_fastcall_mutcall_no_tree_nodes() {
+    let src = std::fs::read_to_string(fixture("vm_perf/mutcall.ax"))
+        .expect("read mutcall.ax")
+        .replace("1000000", "1000");
+    let (code, stdout, stderr) =
+        vm_scalar_case("fastcall_mutcall", &src, &[("main", 0), ("touch", 0)]);
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "499500 999\n"),
+        "{stderr}"
+    );
+}
+
+/// R50 §4 S5: a fast call keeps the tree's parameter binding (a soft
+/// argument unwraps for a plain param, an `i32` param is coerced so its
+/// arithmetic overflows at `i32`), the frame layout locals rely on
+/// (`goal_met` after the params), and the soft unwrap of a scalar return.
+/// No call here is slow.
+#[test]
+fn vm_fastcall_keeps_param_and_return_semantics() {
+    let src = "fn s(x: i64) -> i64 { x * 2 }\nfn w(x: i32) -> i32 { x + 1 }\n\
+               fn loc(x: i64) -> i64 { let y = x + 1\n y * 2 }\n\
+               fn u() -> i64 { uncertain_new(7, 0.9) }\n\
+               fn main() -> i64 {\n let a = uncertain_new(10, 0.9)\n println(to_str(s(a)))\n \
+               println(to_str(loc(4)))\n println(to_str(u() + 1))\n println(to_str(w(5)))\n \
+               println(to_str(w(2147483647)))\n 0 }\n";
+    let (code, stdout, stderr) = vm_fastcall_case("semantics", src, &[]);
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(101), "20\n10\n8\n6\n"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("integer overflow: i32"), "{stderr}");
+}
+
+/// R50 §4 S5: a fast call clears a pending call tier as `dispatch_call`
+/// does: `ask(tier: strong)` leaves `strong` pending, and `helper()` (a fast
+/// call) clears it, so helper's `ai_complete` costs the default tier's 3.
+#[test]
+fn vm_fastcall_clears_the_call_tier() {
+    let src =
+        "fn helper() -> i64 { let _ = ai_complete(\"hi\")\n 0 }\nfn ask() -> i64 { helper() }\n\
+               fn main() -> i64 { let _ = ask(tier: strong)\n println(to_str(ai_cost_spent()))\n \
+               let _ = ai_complete(\"x\", tier: strong)\n println(to_str(ai_cost_spent()))\n 0 }\n";
+    let (code, stdout, stderr) = vm_fastcall_case("tier", src, &[]);
+    assert_eq!((code, stdout.as_str()), (Some(0), "3\n18\n"), "{stderr}");
+}
+
+/// R50 §4 S5: a fast call with an inline argument checks the depth limit
+/// and panics with the tree's message.
+#[test]
+fn vm_fastcall_keeps_the_depth_limit() {
+    let src = "fn d(n: i64) -> i64 { if n == 0 { 0 } else { let m = n - 1\n 1 + d(m) } }\n\
+               fn main() -> i64 { println(to_str(d(1000000)))\n 0 }\n";
+    let (code, stdout, stderr) = vm_fastcall_case("depth", src, &[]);
+    assert_eq!((code, stdout.as_str()), (Some(101), ""), "{stderr}");
+    assert!(stderr.contains("recursion limit exceeded"), "{stderr}");
+}
+
+/// R50 §4 S5: a `&mut` call to a one-store body (`a[i] = v`, written
+/// without an activation of the op loop) copies an array another binding
+/// shares before writing it, and panics with the tree's out-of-bounds text.
+#[test]
+fn vm_fastcall_mut_store_keeps_sharing_and_bounds() {
+    let src = "fn set(a: &mut [i64], i: i64, v: i64) { a[i] = v }\n\
+               fn main() -> i64 {\n let a = [1, 2, 3]\n let b = a\n set(&mut a, 0, 9)\n \
+               println(to_str(a[0]))\n println(to_str(b[0]))\n set(&mut a, 5, 1)\n 0 }\n";
+    let (code, stdout, stderr) = vm_fastcall_case("mut_store", src, &[]);
+    assert_eq!((code, stdout.as_str()), (Some(101), "9\n1\n"), "{stderr}");
+    assert!(stderr.contains("index 5 out of bounds (len 3)"), "{stderr}");
+}
+
+/// R50 §4 S5: a `CallMut` argument that names a global (no local of that
+/// name) reads the global's value, as the tree's `Ident` arm does.
+#[test]
+fn vm_fastcall_mut_call_reads_a_global_argument() {
+    let src = "let D = 3\nfn r(a: &mut [i64], n: i64) { a[0] = a[0] + n }\n\
+               fn main() -> i64 {\n let a = [0]\n r(&mut a, D)\n println(to_str(a[0]))\n 0 }\n";
+    let (code, stdout, stderr) = vm_fastcall_case("mut_global", src, &[]);
+    assert_eq!((code, stdout.as_str()), (Some(0), "3\n"), "{stderr}");
+}
+
+/// R50 §4 S5: a callee whose `FnEntry` flag is set (or, for
+/// `refine_preds`, any program with a refinement) takes the general path,
+/// traced as `vm: slow <fn>: <flag>`, with identical output.
+macro_rules! vm_fastcall_slow {
+    ($test:ident, $flag:literal, $src:expr, $slow:expr, $stdout:expr) => {
+        #[test]
+        fn $test() {
+            let (code, stdout, stderr) = vm_fastcall_case($flag, $src, &[$slow]);
+            assert_eq!((code, stdout.as_str()), (Some(0), $stdout), "{stderr}");
+        }
+    };
+}
+
+vm_fastcall_slow!(
+    vm_fastcall_slow_is_agent,
+    "is_agent",
+    "@[agent]\nfn plan(x: i64) -> i64 { x + 1 }\nfn main() -> i64 { println(to_str(plan(1)))\n 0 }\n",
+    "plan: is_agent",
+    "2\n"
+);
+vm_fastcall_slow!(
+    vm_fastcall_slow_ai_metered,
+    "ai_metered",
+    "@[ai(policy(tier: cheap, budget: 3))]\nfn m(x: i64) -> i64 { x + 1 }\n\
+     fn main() -> i64 { println(to_str(m(1)))\n 0 }\n",
+    "m: ai_metered",
+    "2\n"
+);
+vm_fastcall_slow!(
+    vm_fastcall_slow_corrigible,
+    "corrigible",
+    "@[corrigible]\nfn c(x: i64) -> i64 { x + 1 }\nfn main() -> i64 { println(to_str(c(1)))\n 0 }\n",
+    "c: corrigible",
+    "2\n"
+);
+vm_fastcall_slow!(
+    vm_fastcall_slow_adaptive,
+    "adaptive",
+    "@[adaptive]\nfn q(x: i64) -> i64 { x + 1 }\nfn main() -> i64 { println(to_str(q(1)))\n 0 }\n",
+    "q: adaptive",
+    "2\n"
+);
+vm_fastcall_slow!(
+    vm_fastcall_slow_experiment,
+    "experiment",
+    "@[experiment(\"probe\")]\nfn e(x: i64) -> i64 { x + 1 }\nfn main() -> i64 { println(to_str(e(1)))\n 0 }\n",
+    "e: experiment",
+    "2\n"
+);
+vm_fastcall_slow!(
+    vm_fastcall_slow_has_goal,
+    "has_goal",
+    "@[adaptive]\nfn quality(x: i64) -> i64 { 100 - abs_i64(x - 7) * 10 }\n\
+     @[goal(metric: quality, target: 60, max_evals: 40, test_set: [5, 7, 9])]\n\
+     fn opt() -> i64 { goal_met }\nfn main() -> i64 { println(to_str(opt()))\n 0 }\n",
+    "opt: has_goal",
+    "1\n"
+);
+vm_fastcall_slow!(
+    vm_fastcall_slow_is_main,
+    "is_main",
+    "fn f(n: i64) -> i64 { if n > 100 { main() } else { n } }\nfn main() -> i64 { println(to_str(f(1)))\n 0 }\n",
+    "main: is_main",
+    "1\n"
+);
+vm_fastcall_slow!(
+    vm_fastcall_slow_has_epilogue,
+    "has_epilogue",
+    "@[verify(confidence >= 0.8)]\nfn low() -> Uncertain<i64> { uncertain_dyn_i64(42, 0.9) }\n\
+     fn main() -> i64 { let x = low()\n println(\"ok\")\n 0 }\n",
+    "low: has_epilogue",
+    "ok\n"
+);
+vm_fastcall_slow!(
+    vm_fastcall_slow_refine_preds,
+    "refine_preds",
+    "type Pos = i64 where _ > 0\nfn inc(x: i64) -> i64 { x + 1 }\n\
+     fn main() -> i64 { let p: Pos = 3\n println(to_str(inc(p)))\n 0 }\n",
+    "inc: refine_preds",
+    "4\n"
+);
