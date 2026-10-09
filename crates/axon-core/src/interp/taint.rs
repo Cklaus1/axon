@@ -862,23 +862,20 @@ impl<'p> Interp<'p> {
     /// (amendment 106). A sealed `len`/`clone` changes nothing and marks nothing,
     /// as a sealed `dict_len` does not.
     ///
-    /// An OPERATOR pop is a write too (amendment 117, loop finding 17): a pop that
-    /// runs under a candidate-controlled `pc`/`sticky` changes what the queue holds
-    /// and how long it is by the candidate's bit, exactly as an operator
-    /// `dict_set` under the same control does.
+    /// An OPERATOR pop is a write too (amendment 117, loop finding 17): see
+    /// [`Interp::t_chan_choice`], which marks the channel with the control taint
+    /// the pop ran under as well as the taint of the expression that chose it.
     pub(super) fn t_chan_access(&self, chan: &Value, method: &str) {
         self.t_touch(self.t_obj(chan));
         if self.frame_sealed.get() && matches!(method, "send" | "recv" | "try_recv") {
             self.t_mark_obj(chan, ALL);
-        } else if !self.frame_sealed.get() && matches!(method, "recv" | "try_recv") {
-            let c = self.t_stored(0);
-            if c != 0 {
-                self.t_mark_obj(chan, c);
-            }
         }
     }
 
-    /// The channel an operator frame used may itself be the candidate's PICK
+    /// An operator frame's use of a channel is a write when it runs under a
+    /// candidate-controlled `pc`/`sticky` (a pop changes what the queue holds and
+    /// how long it is by the candidate's bit, as an operator `dict_set` under the
+    /// same control does), and the channel it used may itself be the candidate's PICK
     /// (`if c { a } else { b }.recv()`, `cs[i].recv()`): what that queue holds
     /// afterwards, and which `select` arm fires, depend on it, so it carries the
     /// taint of the expression that chose it (`rt`; amendment 117, finding 20).

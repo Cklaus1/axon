@@ -32,8 +32,6 @@ impl<'p> Interp<'p> {
         }
         if let Some(f) = self.fns.get(name) {
             let f = *f;
-            // (see the sealed-caller note on the search variants)
-            self.seal_call(f)?;
             let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
             let all_i64_params =
                 !f.params.is_empty() && f.params.iter().all(|p| is_i64_type(&p.ty));
@@ -661,8 +659,6 @@ impl<'p> Interp<'p> {
         }
         if let Some(f) = self.fns.get(name) {
             let f = *f;
-            // (see the sealed-caller note on the search variants)
-            self.seal_call(f)?;
             let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
             let all_i64_params =
                 !f.params.is_empty() && f.params.iter().all(|p| is_i64_type(&p.ty));
