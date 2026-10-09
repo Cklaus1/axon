@@ -1,5 +1,5 @@
-// R50 §10 --repros: loop.ax plus `touch(&mut a, i)` per iteration.
-// (instructions - loop.ax's) / 1M = one one-`&mut`-argument call via call_mut.
+// R50 §10 --repros: loop_generic.ax plus `touch(&mut a, i)` per iteration.
+// (instructions - loop_generic.ax's) / 1M = one one-`&mut`-argument call via call_mut.
 fn touch(a: &mut [i64], i: i64) { a[0] = i }
 
 fn main() -> i64 {
@@ -10,6 +10,7 @@ fn main() -> i64 {
         s = s + i
         touch(&mut a, i)
         i = i + 1
+        if i < 0 { s = 0 }
     }
     println("{to_str(s)} {to_str(a[0])}")
     0

@@ -26,10 +26,12 @@ use super::*;
 use crate::ast::{AxonType, UnaryOp};
 
 mod compile;
+mod pure;
 #[cfg(test)]
 mod tests;
 
 pub(super) use compile::compile;
+use pure::{PureExpr, PureLoop, PureOp};
 
 /// Which engine runs fn bodies. Chosen once per `Interp` (spec §4 Activation).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,6 +110,9 @@ pub(super) struct Body<'p> {
     pub(super) loops: Box<[Loop]>,
     /// The operand-stack height the body reaches at most.
     pub(super) max_stack: usize,
+    /// R50 S7: the body as one pure tree, when it is one (a lambda body
+    /// such as `acc + x % m`), for [`Interp::fold_leaf`].
+    pub(super) leaf: Option<Box<PureExpr<'p>>>,
 }
 
 impl Body<'_> {
@@ -117,6 +122,22 @@ impl Body<'_> {
             .iter()
             .filter(|op| matches!(op, Op::Tree(_)))
             .count()
+    }
+
+    /// The [`Op::Pure`] and [`Op::PureLoop`] ops, the trace's `vm: pure`
+    /// line's `<p> exprs, <q> loops`.
+    fn pure_ops(&self) -> (usize, usize) {
+        let p = self
+            .ops
+            .iter()
+            .filter(|op| matches!(op, Op::Pure(_)))
+            .count();
+        let q = self
+            .ops
+            .iter()
+            .filter(|op| matches!(op, Op::PureLoop { .. }))
+            .count();
+        (p, q)
     }
 
     /// The innermost loop of this body whose iteration holds op `at`: the
@@ -139,6 +160,9 @@ pub(super) struct LambdaBody {
     /// only for as long as the code is borrowed. Dropping a `Body` reads
     /// none of those pointers.
     body: std::cell::OnceCell<Body<'static>>,
+    /// Whether the `vm: fold-leaf` trace line was printed (spec §3: once
+    /// per lambda code).
+    fold_traced: std::cell::Cell<bool>,
 }
 
 impl LambdaBody {
@@ -146,6 +170,7 @@ impl LambdaBody {
         LambdaBody {
             name: name.into_boxed_str(),
             body: std::cell::OnceCell::new(),
+            fold_traced: std::cell::Cell::new(false),
         }
     }
 
@@ -642,6 +667,17 @@ pub(super) enum Op<'p> {
     /// S4).
     Lambda(&'p Expr),
 
+    // ── S7: pure scalar regions (spec §4 S7) ──
+    /// Deliver a pure tree's value to its sink and continue at `skip`, or
+    /// decline into the twin that follows ([`PureOp::run`]).
+    Pure(Box<PureOp<'p>>),
+    /// Run a `while` in registers and continue at `exit` when its condition
+    /// went false, or decline into the generic loop that follows
+    /// ([`PureLoop::run`]).
+    PureLoop {
+        lp: Box<PureLoop<'p>>,
+        exit: u32,
+    },
     // -- S5: call costs --
     /// A fast VM→VM call (spec §4 S5) to `fn_table[entry]`: `call_fast`,
     /// once `proven`. The arguments are `args` when it is not empty: inline
@@ -1427,6 +1463,16 @@ impl<'p> Interp<'p> {
                 Op::PopJump(t) => {
                     pop_scope(env, scopes);
                     pc = *t as usize;
+                }
+                Op::Pure(p) => {
+                    if let Some(to) = p.run(env, scopes) {
+                        pc = to as usize;
+                    }
+                }
+                Op::PureLoop { lp, exit } => {
+                    if lp.run(env) {
+                        pc = *exit as usize;
+                    }
                 }
                 Op::BranchFalse { target, cond, push } => {
                     let b = match pop(st) {
@@ -2504,6 +2550,10 @@ impl<'p> Interp<'p> {
             body.ops.len(),
             body.tree_nodes()
         );
+        let (p, q) = body.pure_ops();
+        if p + q > 0 {
+            eprintln!("vm: pure {name} {p} exprs, {q} loops");
+        }
         for op in body.ops.iter() {
             match op {
                 Op::Tree(e) => {

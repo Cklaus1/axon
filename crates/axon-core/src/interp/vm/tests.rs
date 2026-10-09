@@ -120,6 +120,8 @@ fn kinds(body: &Body<'_>) -> Vec<&'static str> {
             Op::MethodRecv { .. } => "method-recv",
             Op::MethodCall { .. } => "method",
             Op::Lambda(_) => "lambda",
+            Op::Pure(_) => "pure",
+            Op::PureLoop { .. } => "pure-loop",
             Op::CallFast { args, .. } if args.is_empty() => "call-fast",
             Op::CallFast { .. } => "call-fast-inline",
             Op::CallMut { .. } => "call-mut",
@@ -317,7 +319,7 @@ fn a_block_that_binds_nothing_has_no_scope_ops() {
 #[test]
 fn while_pushes_one_scope_per_iteration_after_the_condition() {
     // The fused condition pushes the iteration's scope when it holds; the
-    // back edge pops it.
+    // back edge pops it. The S7 `PureLoop` ahead of the loop pushes none.
     let k = kinds_of(
         "fn f() -> i64 { let i = 0\n while i < 3 { let t = 1\n i = i + t }\n i }",
         "f",
@@ -327,7 +329,8 @@ fn while_pushes_one_scope_per_iteration_after_the_condition() {
         [
             "push",
             "const",
-            "define", // let i = 0
+            "define",    // let i = 0
+            "pure-loop", // S7: the loop in registers, declining into it
             "branch-cmp",
             "const",
             "define",
@@ -351,6 +354,7 @@ fn while_without_a_binding_runs_its_iterations_unscoped() {
             "push",
             "const",
             "define",
+            "pure-loop",
             "branch-cmp",
             "store-bin",
             "jump",
@@ -692,6 +696,7 @@ fn exec_runs_hand_built_ops_with_balanced_scopes() {
         .into_boxed_slice(),
         loops: Box::new([]),
         max_stack: 1,
+        leaf: None,
     };
     let r = interp.exec(&body, &mut env);
     assert!(matches!(r, Ok(Value::Int(7))), "{r:?}");
@@ -701,6 +706,7 @@ fn exec_runs_hand_built_ops_with_balanced_scopes() {
         ops: Box::new([]),
         loops: Box::new([]),
         max_stack: 0,
+        leaf: None,
     };
     assert!(matches!(interp.exec(&empty, &mut env), Ok(Value::Unit)));
 }
@@ -787,6 +793,111 @@ fn float_fast_agrees_with_float_binop() {
             }
         }
     }
+}
+
+/// R50 S7: a [`pure::PureExpr`] yields exactly the scalar fast path's value
+/// for every operator on two ints and two floats, `==`/`!=` on two bools
+/// (`eval_binop_vals`), `&&`/`||` on bools, and declines (`None`) exactly
+/// where the spec's rules say (no fast-path arm, mixed kinds, another
+/// operator on bools, `&&`/`||` on a non-bool), on the first run (the tree
+/// walk) and on later runs (the register code).
+#[test]
+fn pure_ops_agree_with_scalar_fast() {
+    use crate::ast::BinOp::*;
+    use pure::{Pure, PureExpr};
+    let ops = [
+        Add, Sub, Mul, Div, Rem, Eq, NotEq, Lt, Gt, LtEq, GtEq, And, Or, BitAnd, BitOr, BitXor,
+        Shl, Shr,
+    ];
+    let ints = [i64::MIN, -7, -1, 0, 1, 2, 63, 64, i64::MAX];
+    let floats = [f64::NEG_INFINITY, -1.5, -0.0, 0.0, 0.1, 1.0, f64::NAN];
+    let mut leaves: Vec<(Pure<'static>, Scalar)> = Vec::new();
+    for &n in &ints {
+        leaves.push((Pure::Int(n), Scalar::Int(n)));
+    }
+    for &f in &floats {
+        leaves.push((Pure::Float(f), Scalar::Float(f)));
+    }
+    for b in [false, true] {
+        leaves.push((Pure::Bool(b), Scalar::Bool(b)));
+    }
+    let leaf = |s: Scalar| match s {
+        Scalar::Int(n) => Pure::Int(n),
+        Scalar::Float(f) => Pure::Float(f),
+        Scalar::Bool(b) => Pure::Bool(b),
+    };
+    let show = |s: Option<Scalar>| s.map(|s| display(&s.value()));
+    let env = Env::new();
+    for op in &ops {
+        for (_, a) in &leaves {
+            for (_, b) in &leaves {
+                let want = match (op, *a, *b) {
+                    (And, Scalar::Bool(x), Scalar::Bool(y)) => Some(Scalar::Bool(x && y)),
+                    (Or, Scalar::Bool(x), Scalar::Bool(y)) => Some(Scalar::Bool(x || y)),
+                    (And | Or, Scalar::Bool(false), _) if matches!(op, And) => {
+                        Some(Scalar::Bool(false))
+                    }
+                    (Or, Scalar::Bool(true), _) => Some(Scalar::Bool(true)),
+                    (And | Or, _, _) => None,
+                    (_, Scalar::Int(x), Scalar::Int(y)) => int_fast(op, x, y),
+                    (_, Scalar::Float(x), Scalar::Float(y)) => float_fast(op, x, y),
+                    (Eq, Scalar::Bool(x), Scalar::Bool(y)) => Some(Scalar::Bool(x == y)),
+                    (NotEq, Scalar::Bool(x), Scalar::Bool(y)) => Some(Scalar::Bool(x != y)),
+                    _ => None,
+                };
+                let k = Box::new([leaf(*a), leaf(*b)]);
+                let tree = match op {
+                    And => Pure::And(k),
+                    Or => Pure::Or(k),
+                    op => Pure::Bin(op.clone(), k),
+                };
+                let e = PureExpr::new(tree);
+                let first = e.eval(&env);
+                let later = e.eval(&env);
+                assert_eq!(show(first), show(want), "first {op:?} {a:?} {b:?}");
+                assert_eq!(show(later), show(want), "later {op:?} {a:?} {b:?}");
+            }
+        }
+    }
+}
+
+/// R50 S7: register code specialised on a local's first kind declines when
+/// the local later holds another kind, or a value that is not a plain
+/// scalar, or is unbound.
+#[test]
+fn pure_rechecks_leaf_kinds() {
+    use crate::ast::BinOp::*;
+    use pure::{Pure, PureExpr};
+    let name = String::from("a");
+    let a = intern("a");
+    let var = Var {
+        s: a,
+        slot: 0,
+        name: &name,
+    };
+    // a * 2 + a
+    let tree = Pure::Bin(
+        Add,
+        Box::new([
+            Pure::Bin(Mul, Box::new([Pure::Local(var), Pure::Int(2)])),
+            Pure::Local(var),
+        ]),
+    );
+    let e = PureExpr::new(tree);
+    let mut env = Env::new();
+    env.define(a, Value::Int(5));
+    assert!(matches!(e.eval(&env), Some(Scalar::Int(15))), "first run");
+    assert!(
+        matches!(e.eval(&env), Some(Scalar::Int(15))),
+        "register code"
+    );
+    *env.get_mut(a).expect("bound") = Value::Float(1.5);
+    assert!(e.eval(&env).is_none(), "float against int code");
+    *env.get_mut(a).expect("bound") = Value::Int(i64::MAX);
+    assert!(e.eval(&env).is_none(), "overflow");
+    *env.get_mut(a).expect("bound") = Value::Str(Rc::new("x".to_string()));
+    assert!(e.eval(&env).is_none(), "str");
+    assert!(e.eval(&Env::new()).is_none(), "unbound");
 }
 
 // -- S5: fast calls ----------------------------------------------------------
