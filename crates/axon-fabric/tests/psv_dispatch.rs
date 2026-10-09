@@ -2022,13 +2022,10 @@ fn fabric_runs_its_direct_launcher_and_its_observer_with_exactly_their_flags_and
     let inputs = lx
         .out_root
         .join(format!("{}.psv-inputs", axon_fabric::backend::jail_id("op-direct-dump")));
-    let manifest_sha = read(&rec.join("jobsha-launch")).trim().to_string();
-    assert_eq!(manifest_sha.len(), 64, "setup: the recording launcher saw the job drive's manifest");
     for (flag, want) in [
         ("--psv-candidate", inputs.join("candidate").display().to_string()),
         ("--psv-suite", inputs.join("check").display().to_string()),
         ("--psv-job", inputs.join("job").display().to_string()),
-        ("--psv-manifest-sha", manifest_sha.clone()),
         ("--policy", inputs.join("policy.json").display().to_string()),
     ] {
         let got = value(flag);
@@ -2037,6 +2034,15 @@ fn fabric_runs_its_direct_launcher_and_its_observer_with_exactly_their_flags_and
             "ATTACK: Fabric handed the direct launcher {flag} {got:?}, not {want:?}"
         );
     }
+    // the digest is the sha256 of the manifest on the job drive the launcher was handed (read by the
+    // recording launcher from the --psv-job it received, so a wrong job drive is the assertion above)
+    let manifest_sha = read(&rec.join("jobsha-launch")).trim().to_string();
+    assert_eq!(manifest_sha.len(), 64, "setup: the recording launcher saw the job drive's manifest");
+    let got = value("--psv-manifest-sha");
+    assert!(
+        got == manifest_sha,
+        "ATTACK: Fabric handed the direct launcher --psv-manifest-sha {got:?}, not {manifest_sha:?}"
+    );
     let got = value("--artifacts-dir");
     assert!(
         got.ends_with("/dist/guest-linux"),
