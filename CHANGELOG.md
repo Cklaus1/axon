@@ -1,5 +1,11 @@
 # Axon Changelog
 
+## The bytecode engine compiles a body on its second entry unless it is hot (R50 S9)
+
+Under `AXON_ENGINE=vm` (the default) a fn or lambda body now runs its first entry on the tree-walker and compiles on its second, unless it holds a `while`, a `while let`, a `for` that is not a literal range of at most 32 iterations, or a loop inside a loop; those still compile on their first entry. Code that runs once no longer pays a compile it never reuses (compilebench AX-58). Same stdout, stderr, exit code and provenance. `AXON_VM_EAGER=1` restores compile-on-first-entry, and `AXON_VM_TRACE=1` prints `vm: defer <name>` for each deferred first entry.
+
+Instructions retired (`perf stat -e instructions:u`, release, core 6, tree / vm on the same binary): `big-compile` (1,002 fns, each called once) 768.78 M / 768.33 M, which was 1.076× the tree-walker before; fib-recursive 2.30 G, collatz 18.58 G, mandelbrot 5.07 G, arr-sum 4.88 G and qsort 11.40 G under vm, all still under CPython 3.14.4.
+
 ## `axon run` executes fn bodies on the bytecode engine by default (R50 S6)
 
 `AXON_ENGINE` now defaults to `vm`; `AXON_ENGINE=tree` selects the reference tree-walker, which is unchanged. Same stdout, stderr, exit code, panic text and provenance under both (`scripts/vm_parity.sh`: 293 files, 1,899 bodies, 0 differ; `parity_all.sh` strict under each engine: 53 passed, 2 allowed skips). On wasm32-unknown-unknown `axon_set_engine` defaults to 1.

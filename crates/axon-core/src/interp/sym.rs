@@ -400,11 +400,17 @@ pub(super) struct FnEntry<'p> {
     /// Has a zone (`adaptive`/`experiment`) or `@[verify]` step after the
     /// body (`Interp::finish_call_cold`).
     pub(super) has_epilogue: bool,
-    /// R50: the body compiled for the bytecode engine, filled on its first
-    /// run under `AXON_ENGINE=vm`. `Some` only for the entries
+    /// R50: the body compiled for the bytecode engine, filled on its second
+    /// run under `AXON_ENGINE=vm`, or its first when it is hot (S9,
+    /// `FnEntry::hot`). `Some` only for the entries
     /// `Interp::build` puts in `fn_table`; an owned entry built per call (a
     /// def missing from `fn_of_def`) is `None` and runs on the tree-walker.
     pub(super) compiled: Option<std::cell::OnceCell<super::vm::Body<'p>>>,
+    /// R50 S9: the body has been entered once, on the tree.
+    pub(super) entered: std::cell::Cell<bool>,
+    /// R50 S9: the body is hot on entry ([`Resolution::hot_fn`]), so it
+    /// compiles on its first entry; set by `Interp::build` for table entries.
+    pub(super) hot: bool,
 }
 
 impl<'p> FnEntry<'p> {
@@ -451,6 +457,8 @@ impl<'p> FnEntry<'p> {
             has_epilogue: has_attr("adaptive") || has_attr("experiment") || def.verify.is_some(),
             plain: false,
             compiled: None,
+            entered: std::cell::Cell::new(false),
+            hot: false,
         };
         entry.plain = !(entry.is_agent
             || entry.ai_metered
@@ -640,6 +648,9 @@ pub(super) struct Resolution {
     /// literals are built in place by the evaluator, which is cheaper than a
     /// probe of this table.
     lits: Vec<Value>,
+    /// R50 S9: the fns (by `FnDef` address, sorted) whose body is hot on
+    /// entry (`vm::long_for`).
+    hot_fns: Vec<usize>,
 }
 
 impl Resolution {
@@ -656,6 +667,9 @@ impl Resolution {
             structs,
             enums,
             entries: Vec::new(),
+            loops: 0,
+            hot: 0,
+            hot_fns: Vec::new(),
             lambdas: Vec::new(),
             records: Vec::new(),
             lits: Vec::new(),
@@ -695,13 +709,24 @@ impl Resolution {
             }
             slots[i] = entry;
         }
+        b.hot_fns.sort_unstable();
         Resolution {
             slots,
             shift,
             lambdas: b.lambdas,
             records: b.records,
             lits: b.lits,
+            hot_fns: b.hot_fns,
         }
+    }
+
+    /// R50 S9: whether `def`'s body is hot on entry: it holds a `while`, a
+    /// `while let`, a `for` that [`super::vm::long_for`] calls long, or a loop
+    /// inside a loop, lambda bodies inside it included.
+    pub(super) fn hot_fn(&self, def: &FnDef) -> bool {
+        self.hot_fns
+            .binary_search(&(def as *const FnDef as usize))
+            .is_ok()
     }
 
     #[inline]
@@ -809,6 +834,12 @@ struct Builder<'a, 'd> {
     structs: &'a HashMap<String, &'d TypeDef>,
     enums: &'a HashMap<String, &'d EnumDef>,
     entries: Vec<(usize, u32, u32)>,
+    /// R50 S9: loops seen so far, and those that make the body holding them
+    /// hot on entry (`vm::long_for`); a body is hot when the second count
+    /// grows while it is resolved.
+    loops: u32,
+    hot: u32,
+    hot_fns: Vec<usize>,
     lambdas: Vec<LambdaInfo>,
     records: Vec<Record>,
     lits: Vec<Value>,
@@ -832,7 +863,11 @@ impl Builder<'_, '_> {
             .chain([SYM_GOAL_MET]);
         self.next_lambda = 0;
         self.owner = name;
+        let hot = self.hot;
         self.expr(&f.body, &mut Some(Frame::with_base(base)));
+        if self.hot > hot {
+            self.hot_fns.push(f as *const FnDef as usize);
+        }
         if let Some(v) = &f.verify {
             self.next_lambda = 0;
             self.owner.push_str("::verify");
@@ -935,6 +970,8 @@ impl Builder<'_, '_> {
                 }
             }
             Expr::While { cond, body } => {
+                self.loops += 1;
+                self.hot += 1;
                 self.expr(cond, fr);
                 self.loop_body(body, fr);
             }
@@ -943,6 +980,8 @@ impl Builder<'_, '_> {
                 expr,
                 body,
             } => {
+                self.loops += 1;
+                self.hot += 1;
                 self.expr(expr, fr);
                 push(fr);
                 self.pattern(pattern, fr);
@@ -954,8 +993,10 @@ impl Builder<'_, '_> {
                 start,
                 end,
                 body,
-                ..
+                inclusive,
             } => {
+                self.loops += 1;
+                let loops = self.loops;
                 self.expr(start, fr);
                 self.expr(end, fr);
                 push(fr);
@@ -963,6 +1004,9 @@ impl Builder<'_, '_> {
                 self.name(e, var, slot);
                 self.loop_body(body, fr);
                 pop(fr);
+                if self.loops > loops || super::vm::long_for(start, end, *inclusive) {
+                    self.hot += 1;
+                }
             }
             // Handler arms run on a snapshot of the defining env (the arms
             // themselves on run-time clones), so they are resolved by name;
@@ -1063,7 +1107,13 @@ impl Builder<'_, '_> {
             compiled: Some(super::vm::LambdaBody::new(name)),
             traced: std::cell::Cell::new(false),
         });
+        let hot = self.hot;
         self.expr(&code.body, &mut inner);
+        if self.hot > hot {
+            if let Some(lb) = &code.compiled {
+                lb.set_hot();
+            }
+        }
         let idx = tagged_index(self.lambdas.len(), LAMBDA_TAG);
         self.lambdas.push(LambdaInfo { code, captures });
         self.entries.push((e as *const Expr as usize, idx, NAMED));

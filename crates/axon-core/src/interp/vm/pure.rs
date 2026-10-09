@@ -861,7 +861,8 @@ impl LoopBuilder<'_> {
 
 impl Interp<'_> {
     /// R50 S7 `fold_leaf` (spec §4 S7): `arr_fold`'s later elements `xs`
-    /// (after the first, whose general call compiled the closure's body) in
+    /// (after the first or second, once a general call compiled the closure's
+    /// body; 0 while it is not compiled) in
     /// registers, when the engine is `vm` and `f` is a closure of two
     /// parameters whose compiled body is one pure tree over them, its
     /// captures and literals. The captures are read once (a pure body cannot

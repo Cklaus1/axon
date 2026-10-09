@@ -4,7 +4,8 @@
 # Binary: `cargo build --release -p axon-core --no-default-features --bin axon`
 # (workspace release profile). Set AXON_BIN=<path> to use an already-built one.
 #
-# Every measurement runs the program with AXON_ENGINE=vm, stdin /dev/null,
+# Every measurement runs the program with AXON_ENGINE=vm (the default deferred
+# compile: AXON_VM_EAGER and AXON_VM_TRACE are unset, S9), stdin /dev/null,
 # under `perf stat -e instructions:u` pinned with `taskset -c $VM_PERF_CPU`
 # (default 6), three times; the gate uses the median of the three counts (perf's
 # own `-r 3` reports a mean, so the three runs are separate perf invocations).
@@ -104,6 +105,9 @@ not_measured() {
 
 command -v perf >/dev/null 2>&1 || not_measured "perf is not installed"
 command -v taskset >/dev/null 2>&1 || not_measured "taskset is not installed"
+
+# The shipping configuration: no eager compile, no trace (R50 S9).
+unset AXON_VM_EAGER AXON_VM_TRACE
 
 if [ -n "${AXON_BIN:-}" ]; then
   AXON="$AXON_BIN"

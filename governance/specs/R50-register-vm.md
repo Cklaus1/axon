@@ -8,7 +8,8 @@ smaller, seventh 2 must-fix and 3 smaller, eighth 2 must-fix and 2 smaller), and
 "correct" (0 blockers, 0 must-fix, 4 nits), are answered in §15. Revision 11 adds slices S7 and S8
 because §12 Q3 came true at S4 (measured, §15 "Revision 11"); revisions 12-14 answer the tenth to twelfth
 reviews; the twelfth judged it ready once its four text fixes landed (revision 14), so the S7/S8
-additions are Reviewed at revision 14 and S7 and S8 may start.
+additions are Reviewed at revision 14 and S7 and S8 may start. Revision 15 adds slice S9 (deferred
+compile, compilebench AX-58; §4 S9, §15 "Revision 15"); its review is pending.
 **Risk class:** Structural (a second execution path for the reference engine)
 **Author / date:** 2026-10-09, from compilebench AX-18 (interpreter cost) after AX-53..AX-55.
 
@@ -21,7 +22,7 @@ blocked-by: none
 supersedes: none
 related: R2a-type-map-threading, R0-interp-module-split, R44-accumulating-session, R7-targets
 conflicts-with: none
-reserves: none (no new diagnostic or exit codes; env vars AXON_ENGINE and AXON_VM_TRACE are registered in env_registry.rs at S0)
+reserves: none (no new diagnostic or exit codes; env vars AXON_ENGINE and AXON_VM_TRACE are registered in env_registry.rs at S0, AXON_VM_EAGER at S9)
 evidence: scripts/vm_parity.sh; scripts/vm_wasm_depth.sh; scripts/vm_perf_gate.sh; spec review evidence is §15
 ```
 
@@ -58,12 +59,13 @@ closing it needs a bytecode VM or similar".
 
 ### 3. Surface (what the user writes)
 
-No language change. Two environment variables:
+No language change. Three environment variables:
 
 | Var | Values | Effect |
 |---|---|---|
 | `AXON_ENGINE` | `tree` (default until S6), `vm` (default from S6) | Which engine runs fn and lambda bodies under every interpreter entry (`axon run`, `axon-run`, `axon test`, `axon goal`). On `wasm32-unknown-unknown`, which has no environment, the `axon_set_engine` export selects it instead (§4 Activation). Any other value: exit 2 with `AXON_ENGINE must be "vm" or "tree" (got "<v>")`. |
-| `AXON_VM_TRACE` | `1` | Five kinds of stderr line. Per fn or lambda body, the first time it runs: `vm: <name> <n> ops, <k> tree nodes`, or `vm: tree <name>: <reason>` when the whole body stays on the tree-walker. Per `Tree` op compiled into a body: `vm: tree-op <name> <Variant>[(<shape>)]`, where `<shape>` is one of `Call(struct-lit)`, `Call(P)`, `Call(computed)`, `Index(E\|Var)` and, through S4, `Call(&mut)` (§8). From S5, per call that a flag keeps off the fast path: `vm: slow <fn>: <flag>` (§4 S5). From S7, per body that holds S7 ops, right after its body line: `vm: pure <name> <p> exprs, <q> loops` (`<p>` `Pure` ops, `<q>` `PureLoop` ops); and per lambda code the first time `arr_fold` runs it in registers: `vm: fold-leaf <name>` (§4 S7). `<name>` is the fn's name (`Type::method` for an impl method) or, for a lambda body, `<owner>::lambda#<i>`. `<owner>` is the enclosing fn; `<fn>::verify` for a lambda inside fn `<fn>`'s `@[verify]` predicate (resolved after the body, sym.rs:769-771); or `<module>` for a lambda the resolver reaches through a module item (a module `let`, a `refine` predicate or a type's refinement; sym.rs:614-622). `<i>` is the lambda's 0-based position among its owner's lambdas in source (pre-)order, nested ones included; for `<module>` the count runs over those items in source order. A code with `compiled: None` (`LambdaInfo::of`, `fn_value`, `SendValue`) has no name and no first-run state (`LambdaInfo::of` builds a fresh code per evaluation, eval.rs:722-730): it prints the literal line `vm: tree <anon>: unresolved lambda` once per code instance, and `vm_parity.sh` excludes those lines from its body count. Off by default. It never changes stdout or the exit code. |
+| `AXON_VM_TRACE` | `1` | Six kinds of stderr line. Per fn or lambda body, the first time it is compiled (its first run, or from S9 its second; §4 S9): `vm: <name> <n> ops, <k> tree nodes`, or `vm: tree <name>: <reason>` when the whole body stays on the tree-walker. Per `Tree` op compiled into a body: `vm: tree-op <name> <Variant>[(<shape>)]`, where `<shape>` is one of `Call(struct-lit)`, `Call(P)`, `Call(computed)`, `Index(E\|Var)` and, through S4, `Call(&mut)` (§8). From S5, per call that a flag keeps off the fast path: `vm: slow <fn>: <flag>` (§4 S5). From S7, per body that holds S7 ops, right after its body line: `vm: pure <name> <p> exprs, <q> loops` (`<p>` `Pure` ops, `<q>` `PureLoop` ops); and per lambda code the first time `arr_fold` runs it in registers: `vm: fold-leaf <name>` (§4 S7). From S9, per body whose first entry runs on the tree-walker, at that entry: `vm: defer <name>` (§4 S9). `<name>` is the fn's name (`Type::method` for an impl method) or, for a lambda body, `<owner>::lambda#<i>`. `<owner>` is the enclosing fn; `<fn>::verify` for a lambda inside fn `<fn>`'s `@[verify]` predicate (resolved after the body, sym.rs:769-771); or `<module>` for a lambda the resolver reaches through a module item (a module `let`, a `refine` predicate or a type's refinement; sym.rs:614-622). `<i>` is the lambda's 0-based position among its owner's lambdas in source (pre-)order, nested ones included; for `<module>` the count runs over those items in source order. A code with `compiled: None` (`LambdaInfo::of`, `fn_value`, `SendValue`) has no name and no first-run state (`LambdaInfo::of` builds a fresh code per evaluation, eval.rs:722-730): it prints the literal line `vm: tree <anon>: unresolved lambda` once per code instance, and `vm_parity.sh` excludes those lines from its body count. Off by default. It never changes stdout or the exit code. |
+| `AXON_VM_EAGER` | `1` | From S9: under `AXON_ENGINE=vm`, compile every body on its first entry instead of deferring a body that is not hot on entry to its second (§4 S9). Read once, when the `Interp` is built; `wasm32-unknown-unknown` has no environment and never sets it. Same stdout, stderr and exit code either way; the `vm_` cli tests and `vm_parity.sh` use it so a body run once is still compiled code under test. |
 
 ```text
 $ AXON_ENGINE=vm AXON_VM_TRACE=1 axon run fib.ax
@@ -155,7 +157,8 @@ index reads take `Int` only (`strict_int`, below), while place writes also accep
   result. Through S4 **every** call, VM→VM included, goes through `dispatch_call` → `call_fn_in`. S5's fast
   call is the only bypass, under the S5 conditions.
 - Compiled fn bodies live in `FnEntry`: it gains `compiled: Option<OnceCell<Body<'p>>>`, `Some` only for
-  the entries `Interp::build` (interp.rs:2982) pushes into `fn_table` (interp.rs:3045) and filled on first run. That costs no
+  the entries `Interp::build` (interp.rs:2982) pushes into `fn_table` (interp.rs:3045) and filled on first
+  compile (the body's first entry, or from S9 its second; §4 S9). That costs no
   lookup per call, so AX-54's removal of the `fn_of_def` probe stays intact. `FnEntry::new` builds table
   and owned entries the same way (sym.rs:373-414), so the `Option` is the discriminator: the owned
   `FnEntry::new(f, ..)` that `call_fn`/`call_fn_mut` build for a def missing from `fn_of_def`
@@ -455,6 +458,53 @@ write to an array another binding holds leaves that binding unchanged), `vm_supe
 `vm_superop_for_shadow` (a `for` body `let` shadowing the loop variable) and
 `vm_superop_fib_overflow` (the `local ± literal` op at `i64::MAX` panics as the tree does).
 
+#### S9 — deferred compile (required; added in revision 15)
+
+S0–S8 compile every fn-table body and every resolved lambda body on its first entry, so a body entered
+once pays its compile and gains nothing. compilebench AX-58 measured that on `big-compile` (1,002 fns,
+each called once and holding a short literal `for`): run `20261009T115201Z` at `2a83e6ab` retired
+1.076× the instructions of the tree-walker at `886aae53`.
+
+- **Rule.** Under `AXON_ENGINE=vm`, a body that would be compiled (`compiled: Some`, no whole-body
+  exclusion) compiles on its **second** entry; its first entry runs the body on the tree-walker (`eval`)
+  inside the same `call_fn_in` or `call_closure_owned_by` activation. It still compiles on its first
+  entry when it is *hot on entry*: it holds a `while`, a `while let`, a `for` whose bounds are not both
+  integer literals or that runs more than 32 times (`long_for`, `COLD_FOR_MAX`, vm/mod.rs:114-132), or
+  a loop inside a loop; loops in lambda bodies inside it count too. The resolver works this out while it
+  walks the body anyway (`Builder`'s `loops`/`hot` counts, sym.rs:972-1010; a body is hot when `hot`
+  grows while it is resolved, sym.rs:866-870 and 1110-1116), into `FnEntry.hot` (set by `Interp::build`
+  from `Resolution::hot_fn`, interp.rs:3329) and `LambdaBody.hot`; an extra walk per first entry cost
+  `big-compile` ≈ 5.4 k instructions per fn (§15 "Revision 15"). Each body records its first entry in an
+  `entered: Cell<bool>` (`FnEntry`, sym.rs:409-410; `LambdaBody`, vm/mod.rs:252-253), set on that entry
+  whichever path runs it (vm/mod.rs:1271, 1319).
+- **Why it is unobservable.** Only the body step of the activation differs on a first entry: `eval`
+  instead of the compiled ops, and the tree-walker is the reference. Depth guard, arity check, coercions,
+  refinement checks, provenance and scope rules are the wrapper's, unchanged. Compiled code depends only on
+  its body, so compiling at the second entry builds the same `Body` the first would have. S7's `Pure`
+  ops re-check their leaf kinds on every run (§4 S7), so which run is first is cost only.
+- **Consumers that assumed a compiled body after one entry.** `arr_fold` offers `fold_leaf` the rest
+  of the array after element 1 and again after element 2 (builtins.rs:1856-1865): when the closure's body
+  was deferred, element 2's call compiles it. `fold_leaf` folds nothing while the body is not compiled.
+  S8's `CallMut` resolves and caches its moves form (`MovesCall`) only once the callee's body is
+  compiled (vm/mod.rs:1731-1741); a call that finds it uncompiled takes `call_mut_op` and leaves the
+  cache empty, so a later call still finds the moves form. S5's `leaf_arm`/`leaf_call` and S7's caches
+  read the current compiled state on every call already.
+- **`AXON_VM_EAGER=1`** restores compile-on-first-entry for every body (§3). The `vm_` cli tests run
+  their VM leg with it, so a body called once is still compiled code under test, and
+  `vm_same_both_engines` and `vm_fastcall_case` also run the default (deferred) leg and compare it with
+  the tree. `vm_parity.sh` runs both legs (§8).
+- On compilebench's five gated programs the hot code compiles on its first entry (collatz, mandelbrot
+  and qsort `main`s hold `while` or computed-range `for` loops) or on its second (fib, arr-sum's fold
+  lambda); arr-sum's `main`, a 10-iteration literal `for`, and fib's `main` now run on the tree.
+
+Gate: red test `vm_defer_compiles_on_second_entry_unless_hot` (fails before S9: no `vm: defer` line,
+every body compiled on its first entry), with `vm_defer_lambda_and_fold_leaf` and
+`vm_defer_mutcall_after_tree_entry`; `vm_parity.sh` (slice S9: runs 3-5, §8); the whole suite under
+both feature sets with `AXON_ENGINE` unset, `tree` and `vm`; `AXON_HARNESS_STRICT=1
+scripts/parity_all.sh` under each engine; `vm_perf_gate.sh` (all five) and `--repros` (every row);
+`vm_wasm_depth.sh --require-default-stack`; and compilebench `big-compile` at or below the
+tree-walker's instructions on the same binary (`AXON_ENGINE=tree`), measured in §14.
+
 #### Behaviour table
 
 Each row is a parity case. "Same" means identical stdout, stderr, exit code, provenance JSONL and audit
@@ -572,11 +622,13 @@ against the same frames, and the tree-walker is the reference for both.
   `886aae53`), and the three that do not finish without a host or by design
   (`examples/jobs/runaway.ax`, an intentional infinite loop; `examples/r27/killable_agent.ax`, 1e9
   iterations; `examples/mobile/lifecycle.ax`, a `host_await` lifecycle with no host driver). The script
-  diffs stdout, stderr, exit code, the audit ledger and `provenance.jsonl`.
+  diffs stdout, stderr, exit code, the audit ledger and `provenance.jsonl`. From S9 the VM side is two
+  diffed runs: `AXON_ENGINE=vm AXON_VM_EAGER=1` (every body compiled on its first entry, so code run once
+  is still compiled code under test) and `AXON_ENGINE=vm` alone (the shipping deferred compile, §4 S9).
   Normalisation is one rule: drop the `ts_ms` and `run_id` keys from every provenance row. Both are
   wall-clock values the virtual clock does not reach (`now_ms` in interp.rs:4267, `generate_run_id` in
   main.rs:4329); every row has `ts_ms`, and the `run_start` row (provenance.rs:606-628) has `run_id`.
-  Coverage comes from a third, undiffed run per file under `AXON_ENGINE=vm AXON_VM_TRACE=1`. Besides the
+  Coverage comes from a last, undiffed run per file under `AXON_ENGINE=vm AXON_VM_EAGER=1 AXON_VM_TRACE=1`. Besides the
   per-body line (§3), the trace prints one `vm: tree-op <name> <Variant>[(<shape>)]` line per `Tree` op it
   compiles. `<shape>` names the exceptions inside a lowered variant: `Call(struct-lit)`, `Call(P)`,
   `Call(computed)` (a callee that is neither an `Ident` nor a `StructLit`), `Index(E|Var)`, and through S4
@@ -632,8 +684,11 @@ Every `tests/fixtures/` path in this spec is under `crates/axon-core/`.
 
 ### 9. Acceptance criteria
 
-- [ ] `scripts/vm_parity.sh` exits 0 with 0 differing files and no `tree-op` line of a variant or shape
-  the S8 list marks lowered (S7 and S8 lower no new variant, so it equals S5's).
+- [ ] `scripts/vm_parity.sh` exits 0 with 0 differing files (eager and deferred VM runs both diffed
+  against the tree) and no `tree-op` line of a variant or shape the S9 list marks lowered (S7, S8 and
+  S9 lower no new variant, so it equals S5's).
+- [ ] compilebench `big-compile` under `axon run` retires no more instructions with `AXON_ENGINE` unset
+  than with `AXON_ENGINE=tree` on the same binary (S9).
 - [ ] `scripts/vm_wasm_depth.sh --require-default-stack` exits 0.
 - [ ] `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` exits 0 under `AXON_ENGINE=vm` (the default) and
   under `AXON_ENGINE=tree`.
@@ -641,7 +696,7 @@ Every `tests/fixtures/` path in this spec is under `crates/axon-core/`.
 - [ ] `cargo test -p axon-core --no-default-features` and `--features codegen` green under both
   `AXON_ENGINE` values.
 - [ ] `scripts/vm_perf_gate.sh` exits 0 on the compilebench host (not a skip; see §10).
-- [ ] `scripts/reference_gate.sh` in sync (two env vars registered).
+- [ ] `scripts/reference_gate.sh` in sync (three env vars registered).
 
 ### 10. Performance budget
 
@@ -783,6 +838,7 @@ the reference code, gaps cost speed, never correctness.
 | R50.S7 pure scalar regions: `Pure`, `PureLoop`, `fold_leaf`; `pure`/`fold-leaf` trace lines; `loop_generic.ax`, `foldmod.ax`, `--programs` | R50.S4 | `cli_run vm_pure_` (incl. `vm_pure_mandel_loop`, `vm_pure_fold_leaf`) + `vm_parity.sh` + `vm_perf_gate.sh --programs mandelbrot,arr-sum,collatz` + `vm_perf_gate.sh --repros S1,part,fold,foldmod` + `vm_wasm_depth.sh` | `850036e3` |
 | R50.S8 qsort and fib superops (§4 S8); `swapcall.ax` | R50.S5, R50.S7 | `cli_run vm_superop_` + `vm_parity.sh` + `vm_perf_gate.sh` (all five) + `vm_perf_gate.sh --repros` (every row; `swap` is the red check) + `vm_wasm_depth.sh` + `AXON_ENGINE=vm AXON_HARNESS_STRICT=1 scripts/parity_all.sh` | `c048113e` |
 | R50.S6 default flip, docs | R50.S5, R50.S7, R50.S8; blocked-by Q3 or Q4 only if it comes true (neither did) | whole suite under both engines + `vm_parity.sh` (S8 list) + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` under each engine (VM default) + `vm_perf_gate.sh` + `reference_gate.sh` + `vm_wasm_depth.sh --require-default-stack` (default-stack VM depth ≥ tree on all four chains) | `a9176ce5` |
+| R50.S9 deferred compile (§4 S9); `AXON_VM_EAGER`; `vm: defer` trace line | R50.S6, R50.S8 | `cli_run vm_defer_` + `cli_run vm_` (eager and default legs) + `vm_parity.sh` (S9 list; eager and default runs) + `vm_perf_gate.sh` (all five) + `vm_perf_gate.sh --repros` (every row) + `reference_gate.sh` + `vm_wasm_depth.sh --require-default-stack` + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` under each engine + compilebench `big-compile` vm ≤ tree | todo |
 
 ### 14. Evidence ledger
 
@@ -972,3 +1028,23 @@ printing the golden output:
 | Eleventh review (2026-10-09, `reviewer`, verdict "incorrect": 0 blockers, 1 must-fix, 3 nits), answered in revision 13: `vm_pure_bool_ops`/`vm_pure_short_circuit` did not put the expression in a sink, so they could not fail; swap `if` cancels within ≈ 10; qsort split re-measured 18.922 G; value.rs:719-720 is `eval_binop_vals` | Tests use `let`/`if` sinks and assert the `vm: pure` line; cancellation stated as measured; split total 18.92 G with residual ≈ 1,014; citation renamed |
 | Twelfth review (2026-10-09, `reviewer`, verdict "incorrect" pending four text fixes, then ready): `vm_pure_fold_decline` cannot assert a `vm: pure` line; `mutcall` `if` is +10 and `swapcall` bimodal; "19.06 G against `loop.ax`" contradicts the 2,641 swap figure; `PureLoop` tests should pin `1 loops` and the `Assign` sink is non-AX-31 only | Revision 14: fold test asserts `vm: fold-leaf`; cancellation restated as measured; base-bias sentence replaces the 19.06 G claim; `1 loops` and the AX-31 qualifier added |
 | S5's gate named "all rows", which would include the S7 and S8 rows | S5 gate is `--repros S1,part,fold,S5` |
+
+Revision 15 (2026-10-09): compilebench AX-58. At `2a83e6ab` (S0-S8, VM default) `big-compile`, 1,002
+fns each entered once, retired 1.076× the tree-walker's instructions at `886aae53`: every body paid a
+compile it never reused. Measured on the S9 branch (release, `--no-default-features`, `perf stat -e
+instructions:u`, core 6). With the hot test as a body walk on first entry (`-r 1`): `big-compile` eager
+841.0 M, deferred 775.4 M, tree 769.0 M; disabling the walk alone gave 770.0 M, so the walk cost
+≈ 5.4 k per fn. With hotness computed by the resolver (`-r 3`, same binary, `AXON_ENGINE=tree` /
+`vm`): `big-compile` 768.78 M / 768.33 M; hello 4.04 M / 4.04 M; fib-recursive 9.89 G / 2.30 G (its
+`main` defers, `fib` compiles on its second entry); collatz 59.72 G / 18.58 G; mandelbrot 41.11 G /
+5.07 G; arr-sum 34.73 G / 4.88 G (once `arr_fold` re-offers `fold_leaf` after element 2); qsort
+75.52 G / 11.40 G. All five stay under their CPython budgets (§10).
+
+| Finding | Resolution |
+|---|---|
+| A body entered once pays a compile it never reuses (`big-compile` 1.076× tree) | S9: compile on the second entry, unless hot on entry (a `while`, `while let`, a `for` over a non-literal or >32-iteration range, or nested loops) |
+| Compiling only on the second entry would leave once-run `main` loops on the tree (collatz 69 G, mandelbrot 49 G under the tree) | Hot-on-entry bodies keep compiling on their first entry |
+| A body walk on first entry to test hotness cost ≈ 5.4 k per fn, leaving `big-compile` at 1.008× tree | The resolver computes hotness during the walk it already makes (sym.rs:972-1010); `big-compile` 768.33 M vs tree 768.78 M |
+| `arr_fold` offered `fold_leaf` once, after element 1, before a deferred lambda body is compiled | Offered again after element 2 (builtins.rs:1856-1865) |
+| S8's `CallMut` cached "no moves form" when the callee was not yet compiled, keeping qsort's `swap` on the slow path (12.02 G) | The cache fills only once the callee is compiled (vm/mod.rs:1731-1741): qsort 11.40 G |
+| `vm_` cli tests pin compile-on-first-run trace lines | `AXON_VM_EAGER=1` restores it for those legs; default-engine legs added to `vm_same_both_engines` and `vm_fastcall_case`; `vm_parity.sh` diffs both |

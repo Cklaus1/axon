@@ -1,7 +1,8 @@
 //! R50: the bytecode engine for fn bodies (`governance/specs/R50-register-vm.md`).
 //!
-//! A fn body in `Interp::fn_table` is compiled on its first run under
-//! `AXON_ENGINE=vm` into a [`Body`]: a flat op sequence that runs against the
+//! A fn body in `Interp::fn_table` is compiled under `AXON_ENGINE=vm` on its
+//! second entry, or on its first when it is hot on entry (holds a loop that
+//! may run long, spec §4 S9), into a [`Body`]: a flat op sequence that runs against the
 //! same `Env` the tree-walker would use (spec §4 Fork 1), so params, `goal_met`,
 //! `&mut` read-back, postconditions and closure capture see the bindings where
 //! they always were. A node the compiler does not lower is one [`Op::Tree`],
@@ -15,8 +16,8 @@
 //! it as an inline [`Opnd`] instead of a stack slot, and an assignment whose
 //! value is a binary operation on two such operands is one [`Op::StoreBin`].
 //!
-//! The tree-walker stays the reference engine (I-2). `AXON_ENGINE=tree` (the
-//! default) never compiles anything.
+//! The tree-walker stays the reference engine (I-2). `AXON_ENGINE=tree` never
+//! compiles anything.
 
 use super::eval::{
     binop_operands, cond_bool, logic_rhs, question, short_circuits, strict_int, Operand,
@@ -99,6 +100,35 @@ pub(super) fn engine_at_build() -> Engine {
 /// `AXON_VM_TRACE=1` (spec §3), read once when the `Interp` is built.
 pub(super) fn trace_at_build() -> bool {
     std::env::var_os("AXON_VM_TRACE").is_some_and(|v| v == "1")
+}
+
+/// `AXON_VM_EAGER=1` (spec §3, S9), read once when the `Interp` is built:
+/// compile every body on its first entry, as S0-S8 did.
+pub(super) fn eager_at_build() -> bool {
+    std::env::var_os("AXON_VM_EAGER").is_some_and(|v| v == "1")
+}
+
+/// A `for` with integer-literal bounds and at most this many iterations, not
+/// nested in or around another loop, does not make its body hot (spec §4 S9).
+/// compilebench `big-compile`'s fns, each run once, hold 5 to 8.
+const COLD_FOR_MAX: i64 = 32;
+
+/// Whether a `for` over `start..end` (`..=` when `inclusive`) makes the body
+/// holding it hot on entry by itself (spec §4 S9): its bounds are not both
+/// integer literals, or it runs more than [`COLD_FOR_MAX`] times. A body is
+/// hot on entry when it holds such a `for`, a `while`, a `while let`, or a
+/// loop inside a loop, lambda bodies inside it included; the resolver works
+/// that out while it walks the body anyway (`FnEntry::hot`,
+/// [`LambdaBody::set_hot`]). A body run once on the tree is the reference
+/// code, so this decides cost only.
+pub(super) fn long_for(start: &Expr, end: &Expr, inclusive: bool) -> bool {
+    use crate::ast::Literal;
+    match (start, end) {
+        (Expr::Literal(Literal::Int(a)), Expr::Literal(Literal::Int(b))) => {
+            b.saturating_sub(*a).saturating_add(i64::from(inclusive)) > COLD_FOR_MAX
+        }
+        _ => true,
+    }
 }
 
 /// A compiled fn body. It borrows the nodes of the program it was compiled
@@ -209,7 +239,8 @@ impl Body<'_> {
 pub(super) struct LambdaBody {
     /// The trace name, `<owner>::lambda#<i>` (spec §3).
     name: Box<str>,
-    /// Filled on the body's first run under `AXON_ENGINE=vm`. Its ops point
+    /// Filled on the body's second run under `AXON_ENGINE=vm`, or its first
+    /// when it is hot on entry (S9). Its ops point
     /// into the owning `ClosureCode::body` (`Tree` nodes, names, operands):
     /// `'static` stands for that borrow, which [`LambdaBody::get`] hands out
     /// only for as long as the code is borrowed. Dropping a `Body` reads
@@ -218,6 +249,11 @@ pub(super) struct LambdaBody {
     /// Whether the `vm: fold-leaf` trace line was printed (spec §3: once
     /// per lambda code).
     fold_traced: std::cell::Cell<bool>,
+    /// The body has been entered once, on the tree (S9).
+    entered: std::cell::Cell<bool>,
+    /// The body is hot on entry (S9, [`long_for`]); set by the resolver once
+    /// it has walked the body.
+    hot: std::cell::Cell<bool>,
 }
 
 impl LambdaBody {
@@ -226,7 +262,14 @@ impl LambdaBody {
             name: name.into_boxed_str(),
             body: std::cell::OnceCell::new(),
             fold_traced: std::cell::Cell::new(false),
+            entered: std::cell::Cell::new(false),
+            hot: std::cell::Cell::new(false),
         }
+    }
+
+    /// Mark the body hot on entry: it compiles on its first entry (S9).
+    pub(super) fn set_hot(&self) {
+        self.hot.set(true);
     }
 
     /// The compiled body, once its first run compiled it.
@@ -763,7 +806,8 @@ pub(super) enum Op<'p> {
     /// operand is not an identifier) `args` is empty and `call_mut` runs the
     /// whole call, panic included. A statement call (`discard`) drops its
     /// value instead of pushing it. S8: `moves` caches, after the first
-    /// call, the call's [`MovesCall`] form when it has one; the op tries it
+    /// call that finds the callee compiled (S9 defers that to its second
+    /// entry), the call's [`MovesCall`] form when it has one; the op tries it
     /// before anything else ([`Interp::run_moves`]).
     CallMut {
         call: &'p Expr,
@@ -1207,10 +1251,29 @@ impl<'p> Interp<'p> {
 
     #[inline(never)]
     fn run_body_vm(&self, entry: &FnEntry<'_>, env: &mut Env) -> R {
+        if let Some(body) = entry.compiled.as_ref().and_then(std::cell::OnceCell::get) {
+            return self.exec(body, env);
+        }
+        self.run_body_first(entry, env)
+    }
+
+    /// [`Interp::run_body_vm`] for a body not compiled yet: on the tree for
+    /// an owned entry, and for a table entry's first entry unless the body
+    /// is hot on entry (`FnEntry::hot`) or `AXON_VM_EAGER=1` (S9); compiled
+    /// otherwise.
+    #[cold]
+    #[inline(never)]
+    fn run_body_first(&self, entry: &FnEntry<'_>, env: &mut Env) -> R {
         let Some(cell) = &entry.compiled else {
             self.vm_trace_tree(entry, "not in fn table");
             return self.eval(&entry.def.body, env);
         };
+        if !self.vm_eager && !entry.entered.replace(true) && !entry.hot {
+            if self.vm_trace {
+                eprintln!("vm: defer {}", self.vm_body_name(entry));
+            }
+            return self.eval(&entry.def.body, env);
+        }
         let body = cell.get_or_init(|| {
             let body = compile(self, &entry.def.body);
             if self.vm_trace {
@@ -1239,7 +1302,9 @@ impl<'p> Interp<'p> {
         self.run_lambda_cold(code, env)
     }
 
-    /// [`Interp::run_lambda`] on the tree, or for a body's first run.
+    /// [`Interp::run_lambda`] on the tree, or for a body not compiled yet
+    /// (on the tree on its first entry unless it is hot on entry or
+    /// `AXON_VM_EAGER=1`, S9).
     #[inline(never)]
     fn run_lambda_cold(&self, code: &ClosureCode, env: &mut Env) -> R {
         let out = match (self.engine, &code.compiled) {
@@ -1248,6 +1313,14 @@ impl<'p> Interp<'p> {
                 // No name and no compiled body: one line per code instance.
                 if self.vm_trace && !code.traced.replace(true) {
                     eprintln!("vm: tree <anon>: unresolved lambda");
+                }
+                self.eval(&code.body, env)
+            }
+            (Engine::Vm, Some(lb))
+                if !self.vm_eager && !lb.entered.replace(true) && !lb.hot.get() =>
+            {
+                if self.vm_trace {
+                    eprintln!("vm: defer {}", lb.name);
                 }
                 self.eval(&code.body, env)
             }
@@ -1657,8 +1730,16 @@ impl<'p> Interp<'p> {
                         _ => {
                             let v =
                                 tri!(self.call_mut_op(call, *entry, args, *stacked, refs, env, st));
+                            // Resolved once the callee's body is compiled:
+                            // before that (its first entry ran on the tree,
+                            // S9) there is nothing to resolve against yet.
                             if let Some(e) = entry {
-                                moves.get_or_init(|| self.moves_call(*e, args, refs));
+                                let callee = &self.fn_table[*e as usize];
+                                if moves.get().is_none()
+                                    && callee.compiled.as_ref().is_some_and(|c| c.get().is_some())
+                                {
+                                    moves.get_or_init(|| self.moves_call(*e, args, refs));
+                                }
                             }
                             v
                         }
