@@ -6893,7 +6893,12 @@ only by dropping one exemption that a new row now covers.
    lock test; the remaining 4242 literals in `guest_build_env.rs` are file ownership in two forged-record tests (no process, no
    `begin`). Nothing there checks "owns running processes", so none needed the claim. The `pkill -f` lines in `privileged_launcher.rs` match
    a path under the test's own temp directory, not a uid.
-   **Proof:** <LOOPLOCAL>
+   **Proof:** 10 consecutive default-parallel runs of the three binaries (`guest_build_env` 38 tests, `guest_build_env_guards` 9, `operator_examples` 4)
+   locally through `c9-heavy.sh`: 30 of 30 rc 0; 5 on gpumaster from the committed branch: 15 of 15 rc 0. Both loops ran with a hostile
+   `sleep` as uid 4242 and another as uid 65534 alive for the whole loop (the exact condition that failed the test: with only the 4242 sleeper
+   and the old test, `refused: ... it already owns running processes [pid]`). An earlier local loop was discarded, not counted: it was killed at
+   iteration 8 because an operator_examples run executed `scripts/test_opkit_ns.sh` while I was still editing it (the loop runs the tree's
+   scripts); the failure was my unfinished edit, not the lock test.
 2. **Rows dropped for want of ids, now written (M3180-M3189).** M3180-M3182 remove `command`, `builtin`, `exec` from `PEEL`; M3183 the
    `-p`/`--` skip after `command`; M3184 and M3185 the two places the wrappers are stripped (`peel()` and the token loop of the conservative
    layer); M3186 the judgement of a literal `eval` operand; M3187 the refusal of `alias`; M3188 that of `shopt -s expand_aliases`; M3189
@@ -6942,7 +6947,13 @@ only by dropping one exemption that a new row now covers.
    ambient capabilities: 97, 97 (`cannot mount a private /proc`, isolation not proved), 97, 97, absent in all four. So the command never
    runs in any cell; the 97 is the same only while the `unshare` pre-check is there, and with both gone the exit code is 1. The check
    is defence in depth and an exit-code contract, not a row: **equivalent for refusal, never counted killed** (`rootcheck-4cell.log`).
-7. **Checks** (all rc 0): <CHECKS>
+7. **Checks** (all rc 0): `cargo fmt --all -- --check`; `cargo clippy -p axon-fabric --all-targets -- -D warnings`; `scripts/test_opkit_ns.sh` (inside the
+   helper's own namespaces; PASS with the amendment-111 section); `scripts/test_operator_deploy.sh` (the kit test inside `ns_run`, piped, `</dev/null`;
+   PASS, 5m41s); `scripts/test_trust_root_preflight.sh` (PASS); `python3 scripts/opkit_ns_drift.py` and `--selftest` and `--check-quoted-counts`;
+   `python3 scripts/v022_refusal_coverage.py` and `--freeze` (rc 0); `psv_matrix_check.py` reports only the rows A249-A251, which belong to other branches (as at the base);
+   `cargo test -p axon-core --no-default-features --test refusal_coverage_gate --test harness_integrity --test harness_binaries` (10, 43 and 49 passed).
+   Host listings before and after (`/etc/axon`, `/usr/local`, `/var/lib`, `/etc/systemd/system`, `/opt`, `/home`, `/mnt`, `/media`, `/srv`, users, groups, setuid files,
+   enabled units) around the helper test, the kit test and the four-cell experiment: empty diffs.
 
 **What is not done, stated.** (a) The 4242 literals that remain in `guest_build_env.rs` (two forged-record tests) are file ownership, not
 processes; they are outside the new scan only by not matching it, and a future `begin` there would need a claim. (b) The hostile routes of
@@ -6950,4 +6961,8 @@ item 5 were not run. (c) The alias shapes cannot tell whether alias expansion is
 under three trees; a count in another place (a JSON file, a commit message) is not seen.
 
 **Rows.** M3180-M3189 (drift: peel x6, literal eval, alias, shopt; service ids text key), M3190-M3196 (quoted counts: compare, the
-`shapes its` wording, the control capture, the failing exit, and the three trees). <ROWS>
+`shapes its` wording, the control capture, the failing exit, and the three trees). Re-run on the committed branch: ALL build-environment rows (M1473, M2221, M2265-M2269, M2500-M2515, M2540-M2553, M2570-M2576, M2630-M2659,
+M2880-M2909, M3080-M3109, M3180-M3196; 151 rows) on gpumaster, 150 of 151 killed by their own attack on the first run and the one weak row
+(M3194: the real-documents assertion of its test failed before the planted-governance one, so its marker did not match; REFUSED_ELSEWHERE is
+never a kill) fixed by planting before reading and re-run 7 of 7; the same 105 namespace rows locally (as root, the real `ns_run`; 105 of 106
+on the first run, M3194 again, then 7 of 7). Unexpected survivors 0, stale rows 0. M2659 and M2507-M2510 are among them and are killed by their own attacks.
