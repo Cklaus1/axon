@@ -643,35 +643,24 @@ impl<'p> Interp<'p> {
     /// `Err(Flow::Return(v))` the tree-walker's body yields; every other
     /// `Flow` propagates unchanged.
     pub(super) fn exec(&self, body: &Body<'_>, env: &mut Env) -> R {
-        let mut st = self.vm_stacks.borrow_mut().pop().unwrap_or_default();
-        st.reserve(body.max_stack);
+        // A pooled stack keeps the capacity it grew to; a new one starts at
+        // the body's height so it does not regrow while the body runs.
+        let mut st = match self.vm_stacks.borrow_mut().pop() {
+            Some(st) => st,
+            None => Vec::with_capacity(body.max_stack),
+        };
         let mut scopes = 0u32;
         let mut pc = 0usize;
-        let out = loop {
-            match self.run(body, env, &mut st, &mut scopes, &mut pc) {
-                Err(flow @ (Flow::Break | Flow::Continue)) => {
-                    // `pc` is one past the op that failed.
-                    let Some(l) = body.loop_at(pc as u32 - 1) else {
-                        break Err(flow);
-                    };
-                    let (keep, to) = match flow {
-                        Flow::Break => (l.scopes, l.brk),
-                        _ => (l.cont_scopes, l.cont),
-                    };
-                    while scopes > keep {
-                        env.pop();
-                        scopes -= 1;
-                    }
-                    st.truncate(l.height as usize);
-                    pc = to as usize;
-                }
-                out => break out,
-            }
-        };
+        let mut out = self.run(body, env, &mut st, &mut scopes, &mut pc);
+        if matches!(out, Err(Flow::Break | Flow::Continue)) {
+            out = self.exec_catching(body, env, &mut st, &mut scopes, &mut pc, out);
+        }
         for _ in 0..scopes {
             env.pop();
         }
-        st.clear();
+        if !st.is_empty() {
+            st.clear();
+        }
         let mut pool = self.vm_stacks.borrow_mut();
         if pool.len() < 64 && st.capacity() <= 4096 {
             pool.push(st);
@@ -680,6 +669,45 @@ impl<'p> Interp<'p> {
         match out {
             Err(Flow::Return(v)) => Ok(v),
             out => out,
+        }
+    }
+
+    /// [`Interp::exec`] after `run` stopped on a `Flow::Break`/`Continue`:
+    /// the innermost loop of this body holding the failing op catches it
+    /// (pops back to its scopes, trims the stack, resumes at its target);
+    /// with no such loop the flow propagates. Repeats until `run` ends some
+    /// other way.
+    #[inline(never)]
+    fn exec_catching(
+        &self,
+        body: &Body<'_>,
+        env: &mut Env,
+        st: &mut Vec<Value>,
+        scopes: &mut u32,
+        pc: &mut usize,
+        mut out: R,
+    ) -> R {
+        loop {
+            match out {
+                Err(flow @ (Flow::Break | Flow::Continue)) => {
+                    // `pc` is one past the op that failed.
+                    let Some(l) = body.loop_at(*pc as u32 - 1) else {
+                        return Err(flow);
+                    };
+                    let (keep, to) = match flow {
+                        Flow::Break => (l.scopes, l.brk),
+                        _ => (l.cont_scopes, l.cont),
+                    };
+                    while *scopes > keep {
+                        env.pop();
+                        *scopes -= 1;
+                    }
+                    st.truncate(l.height as usize);
+                    *pc = to as usize;
+                    out = self.run(body, env, st, scopes, pc);
+                }
+                out => return out,
+            }
         }
     }
 
