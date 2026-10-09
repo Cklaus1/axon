@@ -7232,8 +7232,8 @@ three are closed here; the rest of this amendment is what was changed, what was 
 
 114. **Source: the round-13 PSV-1, SENTINEL and PSV-3 reviewers** (`/var/tmp/c9r13-findings-PSV-1.json`, `/var/tmp/c9r13-findings-SENTINEL.json`,
      `/var/tmp/c9r13-findings-PSV-3.json`), workstream c9r13/psv1w. Mutation ids M3230-M3270 (M3252 not issued; M3242-M3253, M3260, M3267-M3270 are runner rows of the
-     static path, M3256-M3259 are runner legs of the control taint, M3261-M3266 mutate `scripts/pci_delta.py`), matrix rows A280-A284 (written A280-A284 on the branch;
-     renumbered at integration). Base `c9r13/integrate12` (`e8b8b48a`). `crates/axon-core/src/{interp/eval.rs, interp/taint.rs, checker.rs, resolver.rs, main.rs}`
+     static path, M3256-M3259 are runner legs of the control taint, M3261-M3266 mutate `scripts/pci_delta.py`), matrix rows A281-A285 (written A280-A284 on the branch;
+     renumbered at integration, round 14). Base `c9r13/integrate12` (`e8b8b48a`). `crates/axon-core/src/{interp/eval.rs, interp/taint.rs, checker.rs, resolver.rs, main.rs}`
      changed; classified in `scripts/pci_delta.py` as narrowing (one new refusal path per item; nothing is accepted that was refused, except where item 3 says an
      accepted shape became a refusal for the missing name as well). Amendment 102's class ("a path on which taint is dropped") is the one this closes further, and
      amendment 106's wording of control flow ("a callback run a candidate-chosen number of times") is the part this amendment makes a table.
@@ -7367,7 +7367,7 @@ three are closed here; the rest of this amendment is what was changed, what was 
 ## Amendment 113: the destructive primitives of the namespace helper refuse the host's mount namespace BEFORE they mount; `OPKIT_RW` is `/var/tmp` only; service-account discovery reads `- uid: N` and every encoding or refuses; the header says what was and was not executed (C9 round 13, buildenv10)
 
 113. **Source: the round-13 FIELD-ORIGIN review (`/var/tmp/c9r13-findings-FIELD-ORIGIN.json`), five findings.** Branch `c9r13/buildenv10`, base `e8b8b48a`.
-Mutation ids M3200-M3227, matrix rows A274-A280 (renumbered at integration). `crates/axon-core/src` is untouched; no Rust file changed.
+Mutation ids M3200-M3227, matrix rows A274-A280 (the numbers held at integration; psv1w's A280 collided with the last of them and moved to A281). `crates/axon-core/src` is untouched; no Rust file changed.
 
 1. **MAJOR-ADJACENT: `opkit_ns_isolate` made `/` read-only and shadowed `/etc` BEFORE `opkit_ns_assert` refused the host's mount namespace.**
    Reproduced by the reviewer in a throwaway namespace (rc 1, `/` already read-only) and by me the same way with the guard removed by hand
@@ -7549,7 +7549,7 @@ defaults 0 -> 8: 3 row, 1 OBSERVED, 3 DOMINATED, 1 REMAINDER. OBSERVED-NOT-ROWED
 and the 113 computed defaults of the previous count are two different sets that happen to be equal in size (`DEFAULTS NOT FOLLOWED` counts defaults computed at the site, which are not sites); the gate
 prints both and their sets differ.
 
-**Rows** M3280-M3299, with M186 reinstated (M3284 was folded into it): `python3 scripts/v022_g01_mutations.py --scope=all --only=...`, matrix rows A290-A294 (renumbered at integration), mutation ids inside M3280-M3339.
+**Rows** M3280-M3299, with M186 reinstated (M3284 was folded into it): `python3 scripts/v022_g01_mutations.py --scope=all --only=...`, matrix rows A286-A290 (written A290-A294 on the branch; renumbered at integration, round 14), mutation ids inside M3280-M3339.
 Planted-form test: `crates/axon-core/tests/refusal_coverage_gate.rs::an_absent_arm_decision_is_a_site_in_a_protected_crate` (every form is a site; the look-alikes, a computed default, an outside-crate file
 and a `#[cfg(test)]` item are not; the sites carry their own suffixes).
 
@@ -7571,7 +7571,7 @@ refusals and not for defaults.
 | `cargo test --locked -p axon-loop`, `-p axon-loop-contracts`, `-p axon-psv`, `-p axon-cortex` (`--no-fail-fast`) | gm | rc 0 each; 2538 tests passed across the six runs, 0 failed |
 | clippy `-D warnings`: axon-core `--no-default-features --tests`; axon-fabric, axon-loop, axon-loop-contracts, axon-psv, axon-cortex `--all-targets`; `cargo fmt --all -- --check` | local | rc 0; rc 0; rc 0 |
 | `test_v022_resurvey.py` (the forged shapes), `test_v022_value_survey.py`, the paired-disable join and selection tests | local | PASS, PASS, PASS (20 cases), rc 0 |
-| `psv_matrix_check.py` | local | lists only the A274-A289 placeholders of other workstreams (branch-local numbering); A290-A294 resolve |
+| `psv_matrix_check.py` | local | at the branch it listed only the A274-A289 placeholders of other workstreams (branch-local numbering); after the round-14 renumbering A274-A290 are contiguous and resolve |
 | the value survey (121 records) | gm | 85 + 24 + 5 + 5 + 2 records, results above; the full-suite baseline of axon-fabric rc 0 in 4 min 52 s on a warm target |
 
 **Unfinished, stated.** (a) `governance/status/v022-resurvey.json` is not remade (the gate digest changed; it is made at the freeze head, last), nor the paired-disable records (M186's cell is
