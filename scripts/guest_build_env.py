@@ -507,24 +507,34 @@ def _text_ids(text, where, uids, gids):
 
 def _decode_config(data, where):
     """A service config's bytes as TEXT, or a refusal. The encoding is read from the byte-order mark (UTF-32 before UTF-16: the
-    UTF-32 little-endian mark begins with the UTF-16 one), UTF-8 with or without its mark; a file with NUL bytes and no mark
-    (UTF-16/32 written without one) and one that is not valid in the encoding it declares are AMBIGUOUS and refuse: the old
-    `decode(errors="replace")` turned a UTF-16 file into NUL-interleaved noise, and left a UTF-8 mark glued to the first key, so
-    the first `uid` of a file was read as no key at all."""
+    UTF-32 little-endian mark begins with the UTF-16 one) or is UTF-8. A file that declares an encoding it is not valid in, one
+    that begins with a SECOND mark, and one with NUL bytes and no mark that decodes as UTF-16/32 into text that is mostly ASCII
+    (UTF-16 written bare) are AMBIGUOUS and refuse: the old `decode(errors="replace")` turned a UTF-16 file into NUL-interleaved
+    noise and left a UTF-8 mark glued to the first key, so a `uid` was read as no key at all. What is NOT refused is a file that is
+    not text in any of those encodings (a program, a raw key: they live in /etc/axon too -- `suites/bin/axon` -- and carry no
+    `uid = N` line): it is read as before, undecodable bytes replaced."""
     if data.startswith((codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE)):
         enc = "utf-32"
     elif data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
         enc = "utf-16"
     elif data.startswith(codecs.BOM_UTF8):
         enc = "utf-8-sig"
-    elif b"\x00" in data:
-        raise DiscoveryRefused(f"{where} holds NUL bytes without a byte-order mark: its encoding is ambiguous, so it cannot be read for the service accounts it names")
     else:
-        enc = "utf-8"
+        enc = None
+    if enc is None:
+        if b"\x00" in data:
+            for cand in ("utf-32-le", "utf-32-be", "utf-16-le", "utf-16-be"):
+                try:
+                    t = data.decode(cand)
+                except UnicodeDecodeError:
+                    continue
+                if t and sum(1 for c in t if c in "\t\n\r" or " " <= c <= "~") * 10 >= len(t) * 9:
+                    raise DiscoveryRefused(f"{where} holds NUL bytes without a byte-order mark and reads as {cand} text: its encoding is ambiguous, so it cannot be read for the service accounts it names")
+        return data.decode("utf-8", errors="replace")
     try:
         text = data.decode(enc)
     except UnicodeDecodeError:
-        raise DiscoveryRefused(f"{where} is not valid {enc}: its encoding is ambiguous, so it cannot be read for the service accounts it names")
+        raise DiscoveryRefused(f"{where} declares {enc} by its byte-order mark but is not valid {enc}: its encoding is ambiguous, so it cannot be read for the service accounts it names")
     if text.startswith("\ufeff"):
         raise DiscoveryRefused(f"{where} begins with a second byte-order mark: its encoding is ambiguous, so it cannot be read for the service accounts it names")
     return text

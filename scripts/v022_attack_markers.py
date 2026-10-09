@@ -2779,7 +2779,7 @@ ATTACK_MARKERS.update({
     'M3221': 'ATTACK: gbe service ids a\\ UTF\\-16\\ file\\ \\(with\\ its\\ mark\\)',
     'M3222': 'ATTACK: gbe service ids a\\ UTF\\-32\\ file\\ \\(with\\ its\\ mark\\)',
     'M3223': 'ATTACK: gbe service ids a\\ UTF\\-16\\ file\\ WITHOUT\\ a\\ mark\\ is\\ ambiguous',
-    'M3224': 'ATTACK: gbe service ids a\\ file\\ that\\ is\\ not\\ valid\\ UTF\\-8\\ is\\ ambiguous',
+    'M3224': 'ATTACK: gbe service ids a\\ file\\ that\\ declares\\ UTF\\-16\\ by\\ its\\ mark\\ but\\ is\\ not\\ valid\\ UTF\\-16',
     'M3225': 'ATTACK: gbe service ids a\\ second\\ byte\\-order\\ mark\\ is\\ ambiguous',
     'M3226': 'ATTACK: gbe service ids a\\ unit\\ file\\ led\\ by\\ a\\ byte\\-order\\ mark\\ is\\ read',
     'M3227': 'ATTACK: gbe service ids a\\ drop\\-in\\ led\\ by\\ a\\ byte\\-order\\ mark\\ is\\ read',
