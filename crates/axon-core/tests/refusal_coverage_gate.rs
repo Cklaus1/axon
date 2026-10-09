@@ -1248,7 +1248,7 @@ fn an_exemption_inside_a_site_a_row_covers_is_stale() {
 // atomic directory refusal, a single-line `.ok_or(..)?`, one TERM of a
 // compound guard, or a constant a guard reads.
 
-const VALUE_PROBES: &str = "pub fn gv_dirs(p: &std::path::Path) {\n    let gv_create = std::fs::create_dir(p);\n    let gv_createall = std::fs::create_dir_all(p);\n    let gv_builder = std::fs::DirBuilder::new();\n    let _ = (gv_create, gv_createall, gv_builder);\n}\n\npub fn gv_values() {\n    let gv_dropsome = Cfg { drop: Some((1, 2)) };\n    let gv_dropnone = Cfg { drop: None };\n    let gv_uidconst = GV_PROBE_UID + 1;\n    let gv_expected = Pin {\n        expected_manifest_sha256: String::new(),\n    };\n    std::env::set_var(\"GV_SETVAR\", \"1\");\n    std::env::remove_var(\"GV_REMOVEVAR\");\n    let _ = (gv_dropsome, gv_dropnone, gv_uidconst, gv_expected);\n}\n\npub fn gv_not_values(expected_sha256: &str, x: Pin) {\n    // create_dir( and drop: Some( are named only in this comment\n    let gv_plain = x.expected_manifest_sha256.len();\n    let _ = (expected_sha256, gv_plain);\n}\n\npub struct Pin {\n    pub expected_manifest_sha256: String,\n}\n";
+const VALUE_PROBES: &str = "pub fn gv_dirs(p: &std::path::Path) {\n    let gv_create = std::fs::create_dir(p);\n    let gv_createall = std::fs::create_dir_all(p);\n    let gv_builder = std::fs::DirBuilder::new();\n    let _ = (gv_create, gv_createall, gv_builder);\n}\n\npub fn gv_values() {\n    let gv_dropsome = GvBox { drop: Some((1, 2)) };\n    let gv_dropnone = GvBox { drop: None };\n    let gv_uidconst = GV_PROBE_UID + 1;\n    let gv_expected = Pin {\n        expected_manifest_sha256: String::new(),\n    };\n    std::env::set_var(\"GV_SETVAR\", \"1\");\n    std::env::remove_var(\"GV_REMOVEVAR\");\n    let _ = (gv_dropsome, gv_dropnone, gv_uidconst, gv_expected);\n}\n\npub fn gv_not_values(expected_sha256: &str, x: Pin) {\n    // create_dir( and drop: Some( are named only in this comment\n    let gv_plain = x.expected_manifest_sha256.len();\n    let _ = (expected_sha256, gv_plain);\n}\n\npub struct Pin {\n    pub expected_manifest_sha256: String,\n}\n";
 
 /// Amendment 95: a guard expressed as a value or an atomic refusal is a site:
 /// `create_dir` / `create_dir_all` / `DirBuilder` (an existing directory is
@@ -1578,7 +1578,7 @@ fn an_absolute_path_literal_handed_to_a_config_field_is_a_site() {
     add_code(
         &r,
         SCANNED,
-        "pub fn gp_cfg(v: &str) -> GpCfg {\n    let gp_local = std::path::PathBuf::from(\"/gp/local\");\n    let _ = gp_local;\n    GpCfg {\n        gp_secret: PathBuf::from(\"/in/job/gp-secret\"),\n        gp_new: Path::new(\"/gp/new\"),\n        gp_rel: PathBuf::from(\"rel/gp\"),\n        gp_dyn: PathBuf::from(v),\n    }\n}\n\npub struct GpCfg {\n    pub gp_decl: PathBuf,\n}\n",
+        "pub fn gp_cfg(v: &str) -> GpBox {\n    let gp_local = std::path::PathBuf::from(\"/gp/local\");\n    let _ = gp_local;\n    GpBox {\n        gp_secret: PathBuf::from(\"/in/job/gp-secret\"),\n        gp_new: Path::new(\"/gp/new\"),\n        gp_rel: PathBuf::from(\"rel/gp\"),\n        gp_dyn: PathBuf::from(v),\n    }\n}\n\npub struct GpBox {\n    pub gp_decl: PathBuf,\n}\n",
     );
     for (site, form) in [
         ("gp_secret: PathBuf::from", "a PathBuf::from(\"/..\") field"),
