@@ -1,7 +1,7 @@
 # R50 — Bytecode engine for `axon run`
 
 **Spec ID:** `R50-register-vm`
-**Status:** Implementing (S0-S5, S7 landed). Reviewed at revision 10 after nine adversarial reviews (2026-10-09, `reviewer`). The first eight,
+**Status:** Landed (S0-S8; S6 made `vm` the default at `a9176ce5`). Reviewed at revision 10 after nine adversarial reviews (2026-10-09, `reviewer`). The first eight,
 verdict "incorrect" (first 2 blockers and 11 must-fix, second 4 must-fix and 8 smaller, third 6 must-fix
 and 6 smaller, fourth 7 must-fix and 5 smaller, fifth 5 must-fix and 7 smaller, sixth 5 must-fix and 6
 smaller, seventh 2 must-fix and 3 smaller, eighth 2 must-fix and 2 smaller), and the ninth, verdict
@@ -14,7 +14,7 @@ additions are Reviewed at revision 14 and S7 and S8 may start.
 
 ```spec-meta
 id: R50-register-vm
-status-claim: Implementing
+status-claim: Landed
 depends-on: none
 blocks: none
 blocked-by: none
@@ -22,7 +22,7 @@ supersedes: none
 related: R2a-type-map-threading, R0-interp-module-split, R44-accumulating-session, R7-targets
 conflicts-with: none
 reserves: none (no new diagnostic or exit codes; env vars AXON_ENGINE and AXON_VM_TRACE are registered in env_registry.rs at S0)
-evidence: scripts/vm_parity.sh; scripts/vm_wasm_depth.sh; scripts/vm_perf_gate.sh (budgets met from S6); spec review evidence is §15
+evidence: scripts/vm_parity.sh; scripts/vm_wasm_depth.sh; scripts/vm_perf_gate.sh; spec review evidence is §15
 ```
 
 R47–R49 are named as planned in `R46-in-flight-operations.md` §2 (that file is untracked in the main
@@ -781,8 +781,8 @@ the reference code, gaps cost speed, never correctness.
 | R50.S4 lambdas; extract `make_closure`; `ClosureCode.compiled`; allocation-free builtin → closure call on the lent path (`Rc::strong_count(cv) == private_refs`, interp.rs:4054), the one `fold.ax` and arr-sum take: `arr_fold`/`arr_map`/... take argument buffers from `arg_bufs`, `call_closure_owned_by` drains its arguments into the params and hands the buffer to `recycle_args` (today `zip(args)` consumes it, interp.rs:4067), and its `Env` gets a pooled `marks` Vec (today `vec![acc, x.clone()]` per element, builtins.rs:1847, and `Env::from_snapshot` starts with an empty `marks`, so `env.push()` allocates, interp.rs:749-754, 4058-4066). The copied path (a closure with other references, e.g. `let f = \|..\| ..; arr_fold(xs, 0, f)`) keeps its per-call `Vec::with_capacity` (interp.rs:4061-4064) | R50.S1 | `cli_run vm_closure_` (incl. `vm_closure_fold_no_tree_nodes`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (S1 and `fold.ax` rows) + `vm_wasm_depth.sh` | done (`12713cbd`) |
 | R50.S5 fast calls; allocation-free `call_mut` and `CallMut` op | R50.S2, R50.S3, R50.S4 | `cli_run vm_fastcall_` (incl. `vm_fastcall_mutcall_no_tree_nodes`, `vm_fastcall_slow_<flag>`) + `vm_parity.sh` + `vm_perf_gate.sh --repros S1,part,fold,S5` + `vm_wasm_depth.sh` + `AXON_ENGINE=vm AXON_HARNESS_STRICT=1 scripts/parity_all.sh` | `3eb79f1a` |
 | R50.S7 pure scalar regions: `Pure`, `PureLoop`, `fold_leaf`; `pure`/`fold-leaf` trace lines; `loop_generic.ax`, `foldmod.ax`, `--programs` | R50.S4 | `cli_run vm_pure_` (incl. `vm_pure_mandel_loop`, `vm_pure_fold_leaf`) + `vm_parity.sh` + `vm_perf_gate.sh --programs mandelbrot,arr-sum,collatz` + `vm_perf_gate.sh --repros S1,part,fold,foldmod` + `vm_wasm_depth.sh` | `850036e3` |
-| R50.S8 qsort and fib superops (§4 S8); `swapcall.ax` | R50.S5, R50.S7 | `cli_run vm_superop_` + `vm_parity.sh` + `vm_perf_gate.sh` (all five) + `vm_perf_gate.sh --repros` (every row; `swap` is the red check) + `vm_wasm_depth.sh` + `AXON_ENGINE=vm AXON_HARNESS_STRICT=1 scripts/parity_all.sh` | todo |
-| R50.S6 default flip, docs | R50.S5, R50.S7, R50.S8; blocked-by Q3 or Q4 only if it comes true | whole suite under both engines + `vm_parity.sh` (S8 list) + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` under each engine (VM default) + `vm_perf_gate.sh` + `reference_gate.sh` + `vm_wasm_depth.sh --require-default-stack` (default-stack VM depth ≥ tree on all four chains) | todo |
+| R50.S8 qsort and fib superops (§4 S8); `swapcall.ax` | R50.S5, R50.S7 | `cli_run vm_superop_` + `vm_parity.sh` + `vm_perf_gate.sh` (all five) + `vm_perf_gate.sh --repros` (every row; `swap` is the red check) + `vm_wasm_depth.sh` + `AXON_ENGINE=vm AXON_HARNESS_STRICT=1 scripts/parity_all.sh` | `c048113e` |
+| R50.S6 default flip, docs | R50.S5, R50.S7, R50.S8; blocked-by Q3 or Q4 only if it comes true (neither did) | whole suite under both engines + `vm_parity.sh` (S8 list) + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` under each engine (VM default) + `vm_perf_gate.sh` + `reference_gate.sh` + `vm_wasm_depth.sh --require-default-stack` (default-stack VM depth ≥ tree on all four chains) | `a9176ce5` |
 
 ### 14. Evidence ledger
 
@@ -808,6 +808,11 @@ the reference code, gaps cost speed, never correctness.
 | S7 programs and repros | `scripts/vm_perf_gate.sh --programs mandelbrot,arr-sum,collatz`; `--repros S1,part,fold,foldmod` | exit 0; mandelbrot 5,057,593,503, arr-sum 4,879,377,354, collatz 20,103,241,433; loop 92.2, call 261.1, part 235.1, fold 58.0, foldmod 95.0 | `0899ae24` @ 2026-10-09 | PASS |
 | S7 wasm depth | `scripts/vm_wasm_depth.sh` | exit 0; default-stack VM ≥ tree on every chain | `0899ae24` @ 2026-10-09 | PASS |
 | S7 suite: both feature sets × both engines; strict parity under each engine | `cargo test -p axon-core`; `AXON_ENGINE=<e> AXON_HARNESS_STRICT=1 scripts/parity_all.sh` | all green; 53 passed, 2 allowed skips of 55, under tree and under vm | `850036e3` @ 2026-10-09 | PASS |
+| S8 parity (merged on S0-S7) | `VM_PARITY_SLICE=S8 scripts/vm_parity.sh` | `293 files, 1899 bodies, 32375 lowered ops, 111 tree ops, 0 differ` | `c048113e` @ 2026-10-09 | PASS |
+| S6 programs and repros (VM default): all five at or below CPython; every repro row | `scripts/vm_perf_gate.sh`; `--repros` | exit 0 both; fib-recursive 2,298,929,095, collatz 18,544,539,278, mandelbrot 5,069,612,114, arr-sum 4,879,380,031, qsort 11,434,122,532; loop 92.2, call 241.1, part 218.1, fold 58.0, fastcall 241.1, mutcall 275.2, foldmod 95.0, swap 259.3 | `a9176ce5` @ 2026-10-09 | PASS |
+| S6 wasm depth (default stack required) | `scripts/vm_wasm_depth.sh --require-default-stack` | exit 0; release default stack tree/vm: plain 272/678, closure 170/277, mut 387/581, with 214/221 | `a9176ce5` @ 2026-10-09 | PASS |
+| S8 suite: both feature sets × both engines; strict parity under each engine | `cargo test -p axon-core`; `AXON_ENGINE=<e> AXON_HARNESS_STRICT=1 scripts/parity_all.sh` | all green; 53 passed, 2 allowed skips of 55, under tree and under vm | `c048113e` @ 2026-10-09 | PASS |
+| S6 gate (VM default) | `cargo test -p axon-core` (both feature sets; `AXON_ENGINE` unset, `tree`, `vm`); `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` (unset, `tree`); `vm_parity.sh`; `vm_perf_gate.sh`; `reference_gate.sh`; `vm_wasm_depth.sh --require-default-stack`; clippy both feature sets; `cargo fmt --check` | all exit 0; parity 53 passed, 2 allowed skips of 55 under each engine; 293 files, 0 differ; reference in sync (57 env vars) | `a9176ce5` @ 2026-10-09 | PASS |
 
 ### 15. Review resolution (2026-10-09)
 
