@@ -153,7 +153,10 @@ struct Tys {
     structs: HashMap<String, (Vec<String>, Vec<T>)>,
     /// Operator enums: generics and every variant's field types.
     enums: HashMap<String, (Vec<String>, Vec<T>)>,
-    refines: HashSet<String>,
+    /// Operator refinement types and the base each one refines. A refinement
+    /// pins exactly what its BASE pins: `type U = (i64 | str) where true` is as
+    /// open as the union (amendment 117, PSV-1 loop findings 35, 36, 42).
+    refines: HashMap<String, T>,
     /// Names that never pin: every trait, and every type a sealed module defines.
     open: HashSet<String>,
 }
@@ -174,8 +177,16 @@ impl Tys {
                 if n == "?" || gp.contains(n) || self.open.contains(n) {
                     return false;
                 }
-                if ok.contains(n) || SCALARS.contains(&n.as_str()) || self.refines.contains(n) {
+                if ok.contains(n) || SCALARS.contains(&n.as_str()) {
                     return true;
+                }
+                if let Some(base) = self.refines.get(n) {
+                    if !seen.insert(n.clone()) {
+                        return true; // a refinement of itself: its base decides
+                    }
+                    let r = go(base, seen);
+                    seen.remove(n);
+                    return r;
                 }
                 match self.structs.get(n).or_else(|| self.enums.get(n)) {
                     Some((g, fields)) if g.is_empty() => self.fields_closed(n, fields, &[], seen),
@@ -493,7 +504,7 @@ impl Pins {
                     );
                 }
                 Item::RefineDef(r) => {
-                    tys.refines.insert(r.name.clone());
+                    tys.refines.insert(r.name.clone(), r.base.clone());
                 }
                 _ => {}
             }

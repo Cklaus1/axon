@@ -674,6 +674,7 @@ impl Env {
 /// F5 (Phase 9): one live sandbox entry — a named principal + the concrete set
 /// of effects it allows at runtime. Created by `sandbox_create`; enforced by
 /// `call_builtin` whenever `active_sandbox` points at this entry.
+#[derive(Clone)]
 struct SandboxEntry {
     /// The principal handle this sandbox is scoped to (for audit attribution).
     principal: i64,
@@ -1098,6 +1099,11 @@ struct ResumeReplay {
     /// Whether the feed has been consumed yet (the first hit consumes it; a
     /// second effect hit in the same replay is the unsound case → E1314).
     consumed: bool,
+    /// The taint of `feed` (the `resume(..)` argument, with the control it was
+    /// evaluated under): read when the replay yields it, so a value derived from
+    /// a candidate-chosen resume value stays tainted inside the replayed body
+    /// (amendment 117, loop finding 28).
+    feed_t: u8,
     /// Provenance of the handler whose arm armed this replay, and
     /// `Interp::operator_frames` when it did. The feed answers an operation
     /// only under the same rule as a live handler frame
@@ -3192,7 +3198,11 @@ impl<'p> Interp<'p> {
                         .unwrap_or_else(|| "root".to_string()),
                 ),
                 goal_constraint: RefCell::new(None),
-                principals: RefCell::new(crate::kernel::PrincipalRegistry::new()),
+                principals: RefCell::new(if sealed {
+                    crate::kernel::PrincipalRegistry::new_sealed()
+                } else {
+                    crate::kernel::PrincipalRegistry::new()
+                }),
                 // Scheduler order is a function of spawn order + AXON_SEED (R12 §5
                 // determinism): derive the round-robin start offset from the seed.
                 scheduler: RefCell::new(crate::kernel::Scheduler::new(rng_seed() as usize)),
@@ -3601,6 +3611,16 @@ impl<'p> Interp<'p> {
         });
         self.taint.pc.set(ctl_pc);
         self.taint.sticky.set(ctl_sticky);
+        // Operator code in a scheduler fiber (or in the body of a `with handler`
+        // that can abort it) that called sealed code: a panic in the callee would
+        // have ended the fiber here, and an operation it performed would have
+        // ended the body, so what the fiber does
+        // after this point is control-dependent on the candidate whether or not
+        // it panicked (amendment 117, loop finding 15).
+        if crossing && (self.taint.catchable.get() | self.taint.abortable.get()) != 0 {
+            let st = &self.taint.sticky;
+            st.set(ctl_sticky | taint::VAL);
+        }
         if crossing && r.is_ok() {
             self.dict_edge_out()?;
         }
@@ -3777,7 +3797,7 @@ impl<'p> Interp<'p> {
         if !self.seal.active || self.frame_sealed.get() {
             return Ok(());
         }
-        let sized = |v: &Value| matches!(v, Value::SizedInt { .. });
+        let sized = |v: &Value| width_sized(v);
         if !(sized(l) || sized(r)) {
             return Ok(());
         }
@@ -3820,7 +3840,7 @@ impl<'p> Interp<'p> {
         if !self.seal.active || self.frame_sealed.get() {
             return Ok(());
         }
-        if !matches!(v, Value::SizedInt { .. }) || !matches!(op, UnaryOp::Neg | UnaryOp::BitNot) {
+        if !width_sized(v) || !matches!(op, UnaryOp::Neg | UnaryOp::BitNot) {
             return Ok(());
         }
         #[cfg(test)]
@@ -3958,6 +3978,9 @@ impl<'p> Interp<'p> {
             &self.operator_frames
         };
         count.set(count.get() + 1);
+        if sealed {
+            self.taint.entries.set(self.taint.entries.get() + 1);
+        }
         let out = g();
         count.set(count.get() - 1);
         self.frame_sealed.set(prev);
@@ -4426,6 +4449,7 @@ impl<'p> Interp<'p> {
                 // Experiment records are deliberately withheld so the optimizer
                 // never treats a baseline as a candidate to beat.
                 if is_adaptive_zone {
+                    self.t_provenance_write(entry_t | self.taint.last.get(), true, false);
                     self.k()
                         .provenance
                         .borrow_mut()
@@ -4484,6 +4508,7 @@ impl<'p> Interp<'p> {
                 // log) does degrade under a restrictive ceiling. That is the
                 // correct direction: durable state is what was not granted.
                 if self.provenance_write_permitted() {
+                    self.t_provenance_write(entry_t | self.taint.last.get(), false, true);
                     append_provenance_jsonl(&f.name, &payload, score, input_arg, zone, label);
                 }
             }
@@ -4640,6 +4665,23 @@ impl<'p> Interp<'p> {
             self.taint.acc.set(entry_t | body_t);
         }
         Ok(result)
+    }
+
+    /// A callback a BUILTIN runs (arr_any/all/find/take_while/drop_while,
+    /// arr_sort_by's comparator, every `arr_*`/`dict_*` higher-order builtin):
+    /// the number of calls, and which ones run, is decided by what the earlier
+    /// results said, so every call AFTER the first is control-dependent on them
+    /// (amendment 117, PSV-1 loop findings 3/10/18/27/40/49). The taint was
+    /// reaching the callback only through its PARAMETERS; a store that does not
+    /// use the parameter (`dict_inc(op, "c")`) was clean. The control taint of
+    /// everything the callbacks returned so far is raised for the rest of the
+    /// builtin's life (the builtin dispatch restores it), so the body of the
+    /// next call runs under it and so does anything stored after the loop.
+    /// Operator frames only: a sealed frame's pc is already everything.
+    fn call_cb(&self, c: Value, args: Vec<Value>) -> R {
+        let r = self.call_closure(c, args)?;
+        self.t_loop_pc();
+        Ok(r)
     }
 
     fn call_closure(&self, c: Value, args: Vec<Value>) -> R {
@@ -5193,6 +5235,21 @@ fn ambient_sandbox() -> Vec<SandboxEntry> {
 /// uses `AXON_SEED` (parsed as u64) when set for a deterministic run,
 /// otherwise time-based entropy. A fixed seed makes every `random_*`,
 /// `goal_run_random`, and `goal_run_multistart` result replayable.
+/// Whether arithmetic on `v` runs at a fixed WIDTH: a fixed-width integer, or
+/// an `Uncertain`/`Temporal` whose inner `value` is one (`eval_binop_vals`
+/// unwraps the soft wrapper and runs the inner operation at the inner width, so
+/// a width rule that looked only at the top-level value never saw it: amendment
+/// 117, PSV-1 loop finding 52).
+pub(crate) fn width_sized(v: &Value) -> bool {
+    match v {
+        Value::SizedInt { .. } => true,
+        Value::Struct { name, fields } if name == "Uncertain" || name == "Temporal" => {
+            fields.get("value").is_some_and(width_sized)
+        }
+        _ => false,
+    }
+}
+
 fn rng_seed() -> u64 {
     if let Ok(s) = std::env::var("AXON_SEED") {
         if let Ok(n) = s.trim().parse::<u64>() {

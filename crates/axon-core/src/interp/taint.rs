@@ -1,22 +1,31 @@
 //! The runtime taint (C9 round 11, PSV-1, amendment 102).
 //!
-//! PSV-1 is "candidate bytes can never define, add or select the rubric". Five
-//! review rounds in a row found a new member of one class: a value, name, key or
-//! owner chosen by SEALED code reaches operator state with no seal edge, and the
-//! static pin analysis (`interp/pin.rs`) was one instance short of the next.
-//! This is the rule at the source: values sealed code PRODUCED carry a taint
-//! that every operation propagates, and the primitives that SELECT operator
-//! code, an operator impl or an integer width refuse a tainted selector.
+//! PSV-1 started as "candidate bytes can never define, add or select the rubric". Five
+//! review rounds in a row found a new member of one class: a value, name, key or owner
+//! chosen by SEALED code reaches operator state with no seal edge, and the static pin
+//! analysis (`interp/pin.rs`) was one instance short of the next. This is the rule at the
+//! source: values sealed code PRODUCED carry a taint that every operation propagates, and
+//! the primitives that SELECT operator code, an operator impl or an integer width refuse a
+//! tainted selector.
 //!
-//! WHAT IS SELECTED (refused in an operator frame): a NAME a sealed value chose,
-//! given to a name-resolving builtin; an operator CLOSURE a sealed value picked
-//! out of a container, then called; the IMPL a method call dispatches to when
-//! the receiver's TYPE was sealed code's; the WIDTH of fixed-width arithmetic on
-//! an operand whose width was sealed code's. WHAT IS NOT: plain data compared
-//! with an expected value, and control flow on data (`if cand_ok() { a() } else
-//! { b() }`: both arms are the operator's own code). The property is "candidate
-//! bytes cannot choose WHICH operator code runs", not "candidate output cannot
-//! influence the verdict": a suite exists to check the candidate's answer.
+//! WHAT IS SELECTED (refused in an operator frame): a NAME a sealed value chose, given to a
+//! name-resolving builtin; an operator CLOSURE a sealed value picked out of a container,
+//! then called; the IMPL a method call dispatches to when the receiver's TYPE was sealed
+//! code's; the WIDTH of fixed-width arithmetic on an operand whose width was sealed code's
+//! (a width inside an `Uncertain`/`Temporal` included). WHAT IS NOT: plain data compared
+//! with an expected value, and control flow on data (`if cand_ok() { a() } else { b() }`:
+//! both arms are the operator's own code). The property is "candidate bytes cannot choose
+//! WHICH operator code runs through the constructs of `CONTROL_TABLE` and
+//! `CALLBACK_BUILTINS` and the value routes of the taint classes", not "candidate output
+//! cannot influence the verdict": a suite exists to check the candidate's answer.
+//!
+//! IT IS NOT A PROOF that candidate bytes cannot influence the rubric in all ways
+//! (amendment 117, after a six-pass find-until-dry loop that did not go dry): omission, a
+//! table of precomputed verdicts, a branch into a weaker check, integer handles, paths,
+//! URLs, prompts, native codegen, an operator-typed value (not a closure) the candidate
+//! chose, and the existence-oracle text on untested paths are standing non-claims. The
+//! list and its drift check live in `governance/specs/v022-protected-suite-verdict.md`
+//! (PSV-1) and `governance/notes/v022-psv1-loop-triage.md`.
 //!
 //! TWO BITS. [`VAL`]: the VALUE is the candidate's choice. [`TYP`]: the runtime
 //! TYPE or width is. Everything a sealed frame computes carries both. A pin the
@@ -73,12 +82,23 @@ pub(crate) struct Taint {
     /// there does not (a name literal given straight to a sink is the operator's
     /// statement-level choice to run it).
     pub(crate) sticky: Cell<u8>,
+    /// How many `with handler` bodies that can be aborted are being evaluated
+    /// (see `eval_with_handler`): inside one, every branch on tainted data is a
+    /// possible exit.
+    pub(crate) abortable: Cell<u32>,
+    /// How many scheduler fibers are running: a panic in one is caught and
+    /// recorded, so a call into sealed code from operator code in a fiber is a
+    /// possible exit (sticky once it returns).
+    pub(crate) catchable: Cell<u32>,
     /// The taint of the value the last `return` carried (a `return` unwinds past
     /// the statements around it, whose accumulation must not become the fn's
     /// result, so the fn's frame reads it from here).
     pub(crate) ret: Cell<u8>,
     /// Operator-kernel state a builtin reads back later (see [`Class::Kernel`]).
     kernel: Cell<u8>,
+    /// How many times a SEALED frame has been entered (a scheduler pass
+    /// compares it before and after a fiber to know whether sealed code ran).
+    pub(crate) entries: Cell<u64>,
     /// State outside the interpreter that sealed code can write and the
     /// operator read back (see [`Class::World`]).
     world: Cell<u8>,
@@ -129,7 +149,6 @@ pub(crate) const KERNEL_PREFIXES: &[&str] = &[
     "sandbox_",
     "scheduler_",
     "supervisor_",
-    "dstore_",
     "llm_",
     "kernel_goal_",
     "corrigible_",
@@ -163,7 +182,16 @@ pub(crate) const WORLD_BUILTINS: &[&str] = &[
     "random_i64",
     "random_f64",
     "srand",
+    // The durable store is a log file in the user cache dir that every kernel
+    // opens: state outside the interpreter (amendment 117, PSV-1 loop finding 12).
+    "dstore_open",
+    "dstore_apply",
+    "dstore_value",
+    "dstore_version",
+    "dstore_clear",
     "temporal_now",
+    "temporal_new",
+    "temporal_is_valid",
     "ai_complete",
     "ai_extract_uncertain_i64",
     "ai_extract_uncertain_f64",
@@ -200,6 +228,25 @@ pub(crate) const WORLD_BUILTINS: &[&str] = &[
     "tee_unseal",
     "tee_in_enclave",
     "tee_attest_measurement",
+];
+
+/// Kernel builtins that draw from the RNG stream a World-class `srand` seeds and
+/// `random_*` reads. The kernel and world cells are separate, so a search whose
+/// stream the operator seeded from a candidate's number (`srand(cand())`) was
+/// joined to that seed by nothing (amendment 117, loop finding 47): these READ
+/// the world cell too. (The other direction, a `random_*` read after a search
+/// that drew a candidate-decided number of times, is marked by the search's own
+/// provenance append, which every search that runs a metric makes and which is
+/// World state: tested, but no separate edge is needed.)
+/// `taint_tests` fails if a builtin arm that draws is not listed.
+pub(crate) const RNG_COUPLED: &[&str] = &[
+    "goal_run",
+    "goal_run_constrained",
+    "goal_run_categorical",
+    "goal_run_random",
+    "goal_run_multistart",
+    "goal_continue",
+    "kernel_goal_run",
 ];
 
 /// Every other builtin: a function of its arguments. Listed, not defaulted, so a
@@ -382,9 +429,7 @@ pub(crate) const PURE_BUILTINS: &[&str] = &[
     "uncertain_new_f64",
     "uncertain_dyn_i64",
     "uncertain_dyn_f64",
-    "temporal_new",
     "temporal_at",
-    "temporal_is_valid",
     "temporal_confidence",
     "bit_and",
     "bit_or",
@@ -463,18 +508,18 @@ pub(crate) const EMITTERS: &[&str] = &["print", "println", "eprint", "eprintln"]
 #[cfg(test)]
 pub(crate) const CONTROL_TABLE: &[(&str, &str, &str, &str)] = &[
     ("If", "conditional", "eval If: t_branch(cond taint) around the taken branch; sticky when a branch can exit", "if"),
-    ("Match", "conditional", "eval Match: t_branch(subject | taken guard | every REFUSED guard) around the arm; sticky when an arm can exit", "match"),
-    ("While", "repeated", "eval While: t_branch(cond taint) around each body; sticky when the body can exit", "while"),
-    ("WhileLet", "repeated", "eval WhileLet: t_branch(scrutinee taint) around each body", "whilelet"),
+    ("Match", "conditional", "eval Match: t_branch(subject | every REFUSED guard) around each guard, t_branch(subject | taken guard | every REFUSED guard) around the arm; sticky when an arm can exit", "match"),
+    ("While", "repeated", "eval While: t_branch(cond taint) around each body, and t_branch(the conditions so far) around every evaluation of the condition after the first; sticky when the body can exit", "while"),
+    ("WhileLet", "repeated", "eval WhileLet: t_branch(scrutinee taint) around each body, and t_branch(the scrutinees so far) around every evaluation of the scrutinee after the first", "whilelet"),
     ("For", "repeated", "eval For: t_branch(range bound taint) around each body; the loop variable carries it", "for"),
     ("Break", "exit", "the enclosing t_branch's `exits` (taint::has_exit) raises sticky", "break"),
     ("Continue", "exit", "the enclosing t_branch's `exits` (taint::has_exit) raises sticky", "continue"),
     ("Return", "exit", "the enclosing t_branch's `exits`; the returned value is stored under taint.ret", "return"),
     ("Question", "exit", "eval Question: sticky |= operand taint (a `?` is an exit chosen by its operand), and has_exit counts it for the branch it sits in", "question"),
     ("Select", "conditional", "eval Select: t_branch(taint of every channel looked at up to the arm that fired) around the arm body", "select"),
-    ("WithHandler", "conditional", "an arm runs where the body PERFORMS the effect, under the pc of that point (an `if` around it raised pc)", "handler"),
-    ("Call", "conditional", "a callback a builtin runs (arr_any/all/find/take_while/drop_while): the 2nd call on runs after the 1st result, under the accumulated taint (entry_t) like a loop body after its condition; a user fn call is a frame (call_fn_sealed); `assert`/`assert_eq` end the test when they fail, which IS the verdict (no builtin catches a panic)", "callback"),
-    ("MethodCall", "straight", "a channel method is a read/mark of the channel's one taint (t_chan_access); a dispatched impl is the TYPE rule", "-"),
+    ("WithHandler", "conditional", "an arm runs where the body PERFORMS the effect, under the pc of that point (an `if` around it raised pc); a resume value keeps its taint (ResumeReplay::feed_t); while an abort-capable handler is installed a branch on tainted data is a possible exit and sealed code that ran in the body raises sticky (Taint::abortable, eval_with_handler/call_fn_sealed)", "handler"),
+    ("Call", "conditional", "a callback a builtin runs (every row of CALLBACK_BUILTINS): Interp::call_cb raises the control taint of the results so far for the rest of the builtin, so the 2nd call on runs under it as a loop body runs after its condition; a goal search, a scheduler pass and a kernel goal do the same through Interp::t_loop_pc after each evaluation of operator code; a fiber that ran sealed code and failed, or whose root is sealed, raises sticky; a user fn call is a frame (call_fn_sealed); `assert`/`assert_eq` end the test when they fail, which IS the verdict", "callback"),
+    ("MethodCall", "straight", "a channel method is a read/mark of the channel's one taint (t_chan_access), an operator pop marks it with the control taint, and the channel the expression chose carries that expression's taint (t_chan_choice); a dispatched impl is the TYPE rule", "-"),
     ("Spawn", "straight", "the body runs eagerly and once, at the spawn site, under the pc there", "spawn"),
     ("Lambda", "conditional", "a closure body is code run where it is CALLED, under the pc of the call (call_closure_owned_by)", "lambda"),
     ("Block", "straight", "statements run in order; a statement's value is dropped (eval_block)", "-"),
@@ -499,6 +544,68 @@ pub(crate) const CONTROL_TABLE: &[(&str, &str, &str, &str)] = &[
     ("Assign", "straight", "stores under the pc and sticky (t_stored)", "-"),
     ("AssignTo", "straight", "stores under the pc and sticky (t_stored)", "-"),
     ("BinOp", "straight", "evaluates both operands; the short-circuiting `And`/`Or` are the two rows below", "-"),
+];
+
+/// Every builtin that takes a closure and runs it a number of times, or on
+/// which entries, the earlier results can decide (amendment 117). `taint_tests`
+/// fails if a builtin with a `fn(..)` parameter has no row, if a row names a
+/// builtin without one, and if an arm calls a closure other than through
+/// `Interp::call_cb`, which raises the control taint of the results so far for the
+/// rest of the builtin. Columns: the builtin, how the number of calls is decided,
+/// and the CONTROL_TABLE attack/control tag (`callback`) that exercises the
+/// stop-deciding ones with a store that does NOT use the callback's parameter.
+#[cfg(test)]
+pub(crate) const CALLBACK_BUILTINS: &[(&str, &str, &str)] = &[
+    (
+        "arr_map",
+        "once per element: the array's length (the argument's taint)",
+        "-",
+    ),
+    ("arr_filter", "once per element", "-"),
+    ("arr_fold", "once per element", "-"),
+    (
+        "arr_sort_by",
+        "the comparator's own answers decide how many comparisons the merge makes",
+        "callback",
+    ),
+    (
+        "arr_find",
+        "stops at the first hit: the earlier results decide",
+        "callback",
+    ),
+    (
+        "arr_any",
+        "stops at the first hit: the earlier results decide",
+        "callback",
+    ),
+    (
+        "arr_all",
+        "stops at the first miss: the earlier results decide",
+        "callback",
+    ),
+    ("arr_count_if", "once per element", "-"),
+    ("arr_sum_by", "once per element", "-"),
+    ("arr_sum_by_f64", "once per element", "-"),
+    ("arr_zip_with", "once per pair", "-"),
+    ("arr_group_by", "once per element", "-"),
+    ("arr_max_by", "once per element", "-"),
+    ("arr_min_by", "once per element", "-"),
+    (
+        "arr_take_while",
+        "stops at the first miss: the earlier results decide",
+        "callback",
+    ),
+    (
+        "arr_drop_while",
+        "stops dropping at the first miss: the earlier results decide",
+        "callback",
+    ),
+    ("arr_partition", "once per element", "-"),
+    ("dict_map_values", "once per entry", "-"),
+    ("dict_filter", "once per entry", "-"),
+    ("dict_each", "once per entry", "-"),
+    ("http_sse", "once per event the host returned", "-"),
+    ("http_sse_post", "once per event the host returned", "-"),
 ];
 
 /// The two `BinOp`s whose right operand runs only for one value of the left.
@@ -712,6 +819,12 @@ impl<'p> Interp<'p> {
             let st = &self.taint.sticky;
             st.set(st.get() | ct);
         }
+        // Inside an abort-capable `with` body any branch on tainted data is a
+        // possible exit (amendment 117, loop findings 31, 32, 34).
+        if self.taint.abortable.get() != 0 {
+            let st = &self.taint.sticky;
+            st.set(st.get() | ct);
+        }
         r
     }
 
@@ -748,10 +861,33 @@ impl<'p> Interp<'p> {
     /// how many values it holds is then something sealed code decided
     /// (amendment 106). A sealed `len`/`clone` changes nothing and marks nothing,
     /// as a sealed `dict_len` does not.
+    ///
+    /// An OPERATOR pop is a write too (amendment 117, loop finding 17): a pop that
+    /// runs under a candidate-controlled `pc`/`sticky` changes what the queue holds
+    /// and how long it is by the candidate's bit, exactly as an operator
+    /// `dict_set` under the same control does.
     pub(super) fn t_chan_access(&self, chan: &Value, method: &str) {
         self.t_touch(self.t_obj(chan));
         if self.frame_sealed.get() && matches!(method, "send" | "recv" | "try_recv") {
             self.t_mark_obj(chan, ALL);
+        } else if !self.frame_sealed.get() && matches!(method, "recv" | "try_recv") {
+            let c = self.t_stored(0);
+            if c != 0 {
+                self.t_mark_obj(chan, c);
+            }
+        }
+    }
+
+    /// The channel an operator frame used may itself be the candidate's PICK
+    /// (`if c { a } else { b }.recv()`, `cs[i].recv()`): what that queue holds
+    /// afterwards, and which `select` arm fires, depend on it, so it carries the
+    /// taint of the expression that chose it (`rt`; amendment 117, finding 20).
+    pub(super) fn t_chan_choice(&self, chan: &Value, rt: u8) {
+        if !self.frame_sealed.get() {
+            let c = self.t_stored(rt & VAL);
+            if c != 0 {
+                self.t_mark_obj(chan, c);
+            }
         }
     }
 
@@ -939,6 +1075,56 @@ impl<'p> Interp<'p> {
             // `BUILTINS` does not list): a function of its arguments.
             None => {}
         }
+        // A search that draws the RNG stream reads the world cell `srand` wrote
+        // (amendment 117, loop finding 47).
+        if RNG_COUPLED.contains(&name) {
+            self.t_touch(self.taint.world.get());
+        }
+    }
+
+    /// The provenance a zoned (`@[adaptive]` / `@[experiment]`) call records
+    /// is a write the runtime performs for the CALLER, not a builtin, so it
+    /// reached no `t_builtin_out` (amendment 117, PSV-1 loop findings 19, 24,
+    /// 43). The in-memory best store is kernel state (`agent_trace_len`,
+    /// `goal_count`, `goal_history` read it back); the JSONL append is a file
+    /// both kernels share, so it is World state like `write_file`. A sealed
+    /// call writes the sealed kernel's store (not the operator's) but the file
+    /// is shared: ALL. An operator call stores the taint of what it recorded
+    /// and the control it ran under, as any other operator write does.
+    pub(super) fn t_provenance_write(&self, arg_t: u8, in_memory: bool, file: bool) {
+        if !self.seal.active {
+            return;
+        }
+        let (kernel, world) = (&self.taint.kernel, &self.taint.world);
+        if self.frame_sealed.get() {
+            if file {
+                world.set(world.get() | ALL);
+            }
+            return;
+        }
+        let a = self.t_stored(arg_t);
+        if in_memory {
+            kernel.set(kernel.get() | a);
+        }
+        if file {
+            world.set(world.get() | a);
+        }
+    }
+
+    /// Inside a builtin that runs operator code a number of times the earlier
+    /// results decide (a callback loop, a goal search, a scheduler pass): raise
+    /// the control taint of everything the runs returned so far for the rest of
+    /// the builtin, so the next run and what it stores are control-dependent on
+    /// them (amendment 117). The builtin dispatch restores the pc on return.
+    /// Operator frames only: a sealed frame's control is already everything.
+    #[inline(always)]
+    pub(super) fn t_loop_pc(&self) {
+        if self.seal.active && !self.frame_sealed.get() {
+            let t = self.taint.acc.get() & VAL;
+            if t != 0 {
+                self.taint.pc.set(self.taint.pc.get() | t);
+            }
+        }
     }
 
     /// A `native::M::fn(..)` call (gfx surface, modbus/fhir/fix session ...):
@@ -1123,7 +1309,7 @@ impl<'p> Interp<'p> {
             || self.frame_sealed.get()
             || !self.t_rules()
             || vt & TYP == 0
-            || !matches!(v, Value::SizedInt { .. })
+            || !width_sized(v)
         {
             return Ok(());
         }
