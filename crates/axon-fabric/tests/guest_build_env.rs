@@ -475,6 +475,13 @@ fn a_callers_compiler_wrapper_does_not_reach_the_guest_builds_cargo() {
 /// under a CLEARED environment: a caller's RUSTUP_HOME holding a toolchain of
 /// the same name does not choose the compiler. Control: the recorded rustc
 /// is the invoking user's real toolchain.
+///
+/// The planted `rustc`/`cargo` answer `-vV` (a host triple) and `config get
+/// --format json` (the committed keys): since the build learns the host triple
+/// and reads cargo's structured config BEFORE it records a compiler, a plant that
+/// answered neither was refused there, and the row that sends the caller's
+/// environment through (M732) failed on the control line, REFUSED_ELSEWHERE,
+/// instead of on its own attack. The plant must get as far as the record.
 #[test]
 fn a_callers_rustup_home_does_not_choose_the_guest_toolchain() {
     let d = tempfile::tempdir().unwrap();
@@ -498,7 +505,7 @@ fn a_callers_rustup_home_does_not_choose_the_guest_toolchain() {
     for tool in ["cargo", "rustc"] {
         write(
             &bin.join(tool),
-            "#!/bin/sh\ncase \"$*\" in *config*) exit 0;; esac\necho \"fake 1.0 (planted)\"\n",
+            "#!/bin/sh\ncase \"$*\" in *-vV*) printf 'rustc 1.0 (planted)\\nhost: x86_64-unknown-linux-gnu\\n'; exit 0;; *json*) echo '{\"target\":{\"wasm32-wasip1\":{\"rustflags\":[\"-Cx\"]},\"wasm32-unknown-unknown\":{\"rustflags\":[\"-Cx\"]}}}'; exit 0;; *config*) exit 0;; esac\necho \"fake 1.0 (planted)\"\n",
         );
         chmod_x(&bin.join(tool));
     }
