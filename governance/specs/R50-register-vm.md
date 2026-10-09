@@ -5,7 +5,9 @@
 verdict "incorrect" (first 2 blockers and 11 must-fix, second 4 must-fix and 8 smaller, third 6 must-fix
 and 6 smaller, fourth 7 must-fix and 5 smaller, fifth 5 must-fix and 7 smaller, sixth 5 must-fix and 6
 smaller, seventh 2 must-fix and 3 smaller, eighth 2 must-fix and 2 smaller), and the ninth, verdict
-"correct" (0 blockers, 0 must-fix, 4 nits), are answered in §15.
+"correct" (0 blockers, 0 must-fix, 4 nits), are answered in §15. Revision 11 adds slices S7 and S8
+because §12 Q3 came true at S4 (measured, §15 "Revision 11"); a tenth review of it is pending, and S7
+and S8 do not start before it passes.
 **Risk class:** Structural (a second execution path for the reference engine)
 **Author / date:** 2026-10-09, from compilebench AX-18 (interpreter cost) after AX-53..AX-55.
 
@@ -60,7 +62,7 @@ No language change. Two environment variables:
 | Var | Values | Effect |
 |---|---|---|
 | `AXON_ENGINE` | `tree` (default until S6), `vm` (default from S6) | Which engine runs fn and lambda bodies under every interpreter entry (`axon run`, `axon-run`, `axon test`, `axon goal`). On `wasm32-unknown-unknown`, which has no environment, the `axon_set_engine` export selects it instead (§4 Activation). Any other value: exit 2 with `AXON_ENGINE must be "vm" or "tree" (got "<v>")`. |
-| `AXON_VM_TRACE` | `1` | Three kinds of stderr line. Per fn or lambda body, the first time it runs: `vm: <name> <n> ops, <k> tree nodes`, or `vm: tree <name>: <reason>` when the whole body stays on the tree-walker. Per `Tree` op compiled into a body: `vm: tree-op <name> <Variant>[(<shape>)]`, where `<shape>` is one of `Call(struct-lit)`, `Call(P)`, `Call(computed)`, `Index(E\|Var)` and, through S4, `Call(&mut)` (§8). From S5, per call that a flag keeps off the fast path: `vm: slow <fn>: <flag>` (§4 S5). `<name>` is the fn's name (`Type::method` for an impl method) or, for a lambda body, `<owner>::lambda#<i>`. `<owner>` is the enclosing fn; `<fn>::verify` for a lambda inside fn `<fn>`'s `@[verify]` predicate (resolved after the body, sym.rs:769-771); or `<module>` for a lambda the resolver reaches through a module item (a module `let`, a `refine` predicate or a type's refinement; sym.rs:614-622). `<i>` is the lambda's 0-based position among its owner's lambdas in source (pre-)order, nested ones included; for `<module>` the count runs over those items in source order. A code with `compiled: None` (`LambdaInfo::of`, `fn_value`, `SendValue`) has no name and no first-run state (`LambdaInfo::of` builds a fresh code per evaluation, eval.rs:722-730): it prints the literal line `vm: tree <anon>: unresolved lambda` once per code instance, and `vm_parity.sh` excludes those lines from its body count. Off by default. It never changes stdout or the exit code. |
+| `AXON_VM_TRACE` | `1` | Five kinds of stderr line. Per fn or lambda body, the first time it runs: `vm: <name> <n> ops, <k> tree nodes`, or `vm: tree <name>: <reason>` when the whole body stays on the tree-walker. Per `Tree` op compiled into a body: `vm: tree-op <name> <Variant>[(<shape>)]`, where `<shape>` is one of `Call(struct-lit)`, `Call(P)`, `Call(computed)`, `Index(E\|Var)` and, through S4, `Call(&mut)` (§8). From S5, per call that a flag keeps off the fast path: `vm: slow <fn>: <flag>` (§4 S5). From S7, per body that holds S7 ops, right after its body line: `vm: pure <name> <p> exprs, <q> loops` (`<p>` `Pure` ops, `<q>` `PureLoop` ops); and per lambda code the first time `arr_fold` runs it in registers: `vm: fold-leaf <name>` (§4 S7). `<name>` is the fn's name (`Type::method` for an impl method) or, for a lambda body, `<owner>::lambda#<i>`. `<owner>` is the enclosing fn; `<fn>::verify` for a lambda inside fn `<fn>`'s `@[verify]` predicate (resolved after the body, sym.rs:769-771); or `<module>` for a lambda the resolver reaches through a module item (a module `let`, a `refine` predicate or a type's refinement; sym.rs:614-622). `<i>` is the lambda's 0-based position among its owner's lambdas in source (pre-)order, nested ones included; for `<module>` the count runs over those items in source order. A code with `compiled: None` (`LambdaInfo::of`, `fn_value`, `SendValue`) has no name and no first-run state (`LambdaInfo::of` builds a fresh code per evaluation, eval.rs:722-730): it prints the literal line `vm: tree <anon>: unresolved lambda` once per code instance, and `vm_parity.sh` excludes those lines from its body count. Off by default. It never changes stdout or the exit code. |
 
 ```text
 $ AXON_ENGINE=vm AXON_VM_TRACE=1 axon run fib.ax
@@ -106,6 +108,11 @@ to `eval_binop_vals`. Unboxed typed registers are rejected for this spec: no per
 checking (`infer_program` returns only a `Substitution`, and production passes the checker an empty
 `expr_types`), and `Uncertain<T>`/`Temporal<T>` are soft-compatible with `T` (infer.rs:2012), so an
 `i64`-annotated local can hold a soft struct at run time (§12 Q1).
+
+S7's registers (§4 S7) are not typed registers in that sense. They live only inside one op (a `Pure`
+expression, one `PureLoop` run, one `fold_leaf` run), are filled from the `Env` with a kind check on
+every entry, and any value other than a plain `Int`, `Float` or `Bool` makes the op decline to the
+generic ops. No static type is assumed.
 
 #### Reference semantics
 
@@ -192,6 +199,9 @@ index reads take `Int` only (`strict_int`, below), while place writes also accep
   `marks.len()`. `call_fn_mut` depends on this: it reads `&mut` params back by reverse name scan after the
   body returns on any outcome (interp.rs:3387-3399), so a callee that left a shadowing `let a` scope in
   place would hand the caller the shadow.
+  Two later exceptions leave the `Env` in the state the pushes and pops would have: S7's `PureLoop` does
+  not execute the iteration scope of a loop nothing in which can observe the `Env`, and S8's `ForNext`
+  overwrites the loop variable instead of popping and re-pushing a scope that holds only it (§4 S7, S8).
 - The tree-walker today leaks one mark when `match_pattern` or a guard returns `Err` inside a match arm,
   and when `match_pattern` errs in `while let` (eval.rs:306, 308, 358: `?` before `env.pop()`). The
   enclosing scope's single pop on that `Err` removes the arm's mark instead of its own, so the enclosing
@@ -244,7 +254,7 @@ index reads take `Int` only (`strict_int`, below), while place writes also accep
     reports the exit-101 depth panic at 450.
   - The wasm engine's own native stack. Under wasmtime's default `max-wasm-stack` the tree-walker already
     traps before 450 on all four chains (deepest completed 136–318; compilebench AX-56). R50 does not fix
-    that, and must not make it worse once the VM is the default. Through S5 the script only *reports* each
+    that, and must not make it worse once the VM is the default. Before S6 the script only *reports* each
     chain's deepest completed VM depth under the default configuration next to the tree's, and a shortfall
     there does not fail a slice: at S0 every level of every chain runs `run_body` and the exec loop on top
     of the tree's own `eval` frames (the tree completes 260 on `plain.ax` in debug), so the VM starts
@@ -276,6 +286,8 @@ index reads take `Int` only (`strict_int`, below), while place writes also accep
 | `match` and `while let` (via `match_pattern` into the shared `Env`), enum construction, method calls via `MethodRecv` (`chan_method` / `impl_method`) | S3 |
 | `Lambda` via `make_closure`; compiled lambda bodies run by `call_closure_owned_by` | S4 |
 | fast VM→VM calls; `CallMut` through an allocation-free `call_mut` | S5 |
+| no new `Expr` variant: `Pure` ops for pure scalar trees, `PureLoop` for pure `while` loops, `fold_leaf` in `arr_fold` (§4 S7) | S7 |
+| no new `Expr` variant: in-place and fused index ops, `for` scope reuse, frames sized for body `let`s, fib-shaped arithmetic and call ops (§4 S8) | S8 |
 | `with` handlers, `spawn`, `select`, `asm`, `resume` (only inside `with` arms, which are `Tree` ops as a whole); an `Index` whose receiver is the identifier `E` or `Var` (eval.rs:536-545, the whole node, so both the moment path and its fall-through stay the tree's); any `Call` whose callee is a `StructLit` (`Chan::new(n)`, `chan::<T>`, native `M::fn`; eval.rs:423-452); `P(..)` (intercepted before argument evaluation, eval.rs:1098); any `Call` whose callee is neither an `Ident` nor a `StructLit` | `Tree`, permanently |
 
 The compiler's `match` over `Expr` is exhaustive, with an explicit `Tree` arm for each variant that is not
@@ -322,6 +334,109 @@ fast-call eligible.
 `Env::new()` and `outs` per call. After S5 it uses the frame and argument pools and a pooled move-back
 buffer, with unchanged behaviour. The VM lowers `&mut` calls to a `CallMut` op over `call_mut`. Budget:
 at most 600 instructions per one-`&mut`-argument call (§10 `--repros`).
+
+#### S7 — pure scalar regions (required; added in revision 11)
+
+At S4 (`12713cbd`, release, `perf stat`) the VM retired 23.86 G on mandelbrot and 33.78 G on arr-sum
+against budgets of 15.02 G and 23.62 G, and no planned slice targeted either. Profiles put mandelbrot's
+cost in per-op dispatch and operand-stack traffic: about 2,110 instructions per inner iteration, about
+1,307 of them in nine generic float `Bin` ops. arr-sum's is a full closure activation per element: 675
+per element, against `fold.ax`'s 330, because its two-op body (`acc + x % m`) misses S4's one-`Bin` leaf
+path. Prototypes on `12713cbd` reached 5.01 G and 5.38 G with golden output (§15 "Revision 11"). S7
+specifies them.
+
+A **pure tree** is an expression built only from an `Ident` that resolution binds to a local slot, `Int`,
+`Float` and `Bool` literals, and `BinOp` nodes (every operator, `&&` and `||` included) over pure trees.
+Evaluating one has no effect besides its value or its panic.
+
+- **`Pure` op.** The compiler may emit one for a pure tree with at least two operator nodes when the tree
+  is the value of an `Assign` to a local that is not AX-31-shaped, the value of an untyped `let`, or an
+  `if`/`while` condition. It sits before the expression's generic ops (its twin). It either delivers the
+  value to its sink (store to the local, define, or branch) and skips the twin, or declines and falls into
+  the twin, which evaluates the whole expression again. The reads are pure, so the second evaluation is
+  unobservable. It declines when a leaf local is unbound or holds anything but a plain `Int`, `Float` or
+  `Bool` (`SizedInt`, `Uncertain`, `Temporal` and `Str` included); when an operator's two operands differ
+  in kind (`Int` with `Float`); when an `Int` or `Float` operator has no arm in `int_fast`/`float_fast`
+  (overflow, `/ 0`, `% 0`, `MIN / -1`, `&&` on numbers); or when `&&`/`||` gets a non-`Bool`. Its results
+  are `int_fast`/`float_fast`'s, which S1's unit tests pin to `int_binop`/`float_binop`. Its code may be
+  specialised on the leaf kinds of its first run; every later run re-checks the kinds and declines on a
+  mismatch. `&&`/`||` may evaluate both sides: a pure right side that would decline costs only the
+  decline.
+- **`PureLoop` op.** A `while` whose condition is a pure tree and whose body is only `let x = <pure>`
+  (untyped) and `x = <pure>` to locals compiles to a `PureLoop` op ahead of the generic loop. On entry it
+  reads every env local the loop reads or assigns (not the body's own `let`s) with `Pure`'s kind check;
+  any failure declines before the first iteration. Each iteration runs the condition, then the statements
+  in order, in registers. A body `let` is a register only, and the iteration's `ScopePush`/`ScopePop` is
+  not executed. A statement whose result kind differs from its register's current kind declines. When the
+  condition is false, the assigned env locals are written back once and execution continues after the
+  loop. When any step declines, the registers are restored to the iteration's start, written back, and
+  control jumps to the generic loop's condition, which re-runs that iteration and produces the panic or
+  slow path exactly. Eliding the scope and the per-iteration writes is unobservable: nothing in the
+  region can see the `Env` (no calls, no `Tree` ops, no closures, no snapshots), and the tree-walker's
+  `while` checks nothing per iteration besides its condition (eval.rs:360-370), so there is no kill,
+  step or depth check to keep.
+- **`fold_leaf`.** In `arr_fold` (builtins.rs:1833-1856), after an element's general call, when the
+  engine is `vm` and the closure's compiled body (S4) is one pure tree over its two parameters, its
+  captured bindings and literals (a single `Bin` included), later elements may run in registers: the
+  captured values are read once (a pure body cannot write them), the accumulator stays in a register,
+  and each element gets the kind check. The first element always takes the general `call_closure_arg`
+  call, which compiles the body. On a decline at element `i` (a kind outside the register kinds, overflow,
+  `% 0`), element `i` and every later one take the general call, which produces the panic exactly.
+  Skipping the closure frame is unobservable: a lambda call binds its parameters without coercion and has
+  no depth guard (interp.rs:4272-4345), and a pure body neither writes its captures nor calls out. Under
+  `AXON_ENGINE=tree` no compiled body exists, so `fold_leaf` never runs.
+
+**`--repros` base after S7.** `loop.ax` becomes a `PureLoop` (prototype: 229 → 92 per iteration), while
+`call1.ax`'s and `mutcall.ax`'s loops cannot, since their bodies call. From S7 the `call`, `fastcall`,
+`mutcall` and `swap` rows subtract `loop_generic.ax` instead of `loop.ax`: `loop.ax` with `if i < 0 { s
+= 0 }` appended to the body, a never-taken branch that makes the loop ineligible. Its compare-and-branch
+(≈ 30 per iteration [INFERENCE]) is then subtracted from those rows too, a slight loosening that the
+program budgets do not share.
+
+Gate: red tests `vm_pure_mandel_loop` (mandelbrot's `main` prints `vm: pure main <p> exprs, 1 loops`)
+and `vm_pure_fold_leaf` (arr-sum prints `vm: fold-leaf main::lambda#0`), both failing on S4, which prints
+neither line; behaviour tests `vm_pure_overflow_replays` (an `i64` overflow in the third iteration of a
+`PureLoop` gives the tree's panic text and exit 101, and a `println` after the loop never runs), `vm_pure_sized_declines` (an `i32` local in a pure loop gives the tree's output),
+`vm_pure_short_circuit` (`b != 0 && a / b > 1` with `b = 0` prints what the tree prints) and
+`vm_pure_fold_decline` (`% 0` at element 5 of an `arr_fold` panics as the tree does);
+`vm_perf_gate.sh --programs mandelbrot,arr-sum,collatz` and `--repros S1,part,fold,foldmod`.
+
+#### S8 — qsort and fib superops (required; added in revision 11)
+
+After S5's budgets, qsort and fib-recursive still need cuts no earlier slice makes. Measured at
+`12713cbd`: a 3-argument `swap(&mut a, i, j)` body costs 801 beyond an empty-body call (revision 5's
+§10 estimate was ≈ 150); qsort's `main` costs 1.09 G; fib's body ops (`n < 2`, two subtractions, the
+add, the `if`, dispatch) cost about 290 per call, while the budget leaves 485 per call, so a
+300-instruction fast call does not fit (§10). S8 adds cost-only ops. Each keeps the generic op's
+evaluation order and takes the generic path, through the unchanged S2 helpers, whenever its fast
+condition fails:
+
+- `a[i] = v` to a local array: when the index is an `Int` in bounds and the array is uniquely owned
+  (`Rc::get_mut` succeeds, which also excludes weak references), the element is replaced in place, which
+  is what `write_place`'s `Rc::make_mut(items)[i] = v` does on such an array (interp.rs:4502-4506).
+  Otherwise `place_index`, then `write_place`.
+- Fused forms without the operand stack: `a[i] = x` (`x` a local or literal), `a[i] = b[j]` and
+  `let t = a[i]` (untyped), where `a` and `b` are locals and `i` and `j` are locals or literals. The value
+  is read first (`b[j]` with `index_in_place`'s conversion and panics), then the target index is
+  converted, then the write: S2's order.
+- `for` scope reuse: when an iteration's scope holds only the loop variable, `ForNext` overwrites that
+  binding with the next value instead of `env.pop()`, `i += 1`, `env.push()` and `define_var`. The `Env`
+  afterwards is the same.
+- Frames sized for the body: a pooled frame keeps capacity for the callee's slots, its `let`s included,
+  so a body `let` does not grow `vars` on a hot call.
+- fib-shaped arithmetic and calls: a `local ± Int literal` op and a stack-plus-stack add with `int_fast`
+  tried first, an argument computed straight into the call's argument buffer, and a
+  compare-branch-return for a leaf arm. Each declines to `Bin` and to S1/S5's call path exactly as S1's
+  ops do.
+
+The op shapes are open; the budgets are fixed. Gate: `vm_perf_gate.sh` (all five programs) and
+`vm_perf_gate.sh --repros` (every row, `swap` included), with the `swap` row as the red check (at
+`12713cbd` the swap call costs about 2,641; with S5's 600-instruction `&mut` call and an 801 body it would
+still cost about 1,400 [INFERENCE until S5 is measured]); behaviour tests `vm_superop_write_shared` (a
+write to an array another binding holds leaves that binding unchanged), `vm_superop_write_panics`
+(out-of-bounds, negative and non-`Int` indexes give the tree's texts, value evaluated before index),
+`vm_superop_for_shadow` (a `for` body `let` shadowing the loop variable) and
+`vm_superop_fib_overflow` (the `local ± literal` op at `i64::MAX` panics as the tree does).
 
 #### Behaviour table
 
@@ -469,7 +584,7 @@ against the same frames, and the tree-walker is the reference for both.
   (`wasm_parity.sh`, `wasm_fs_parity.sh`, `wasm_host_await_parity.sh`) pass `--env AXON_ENGINE` to
   wasmtime, and `wasm_browser_interp_parity.sh` call `axon_set_engine` from `AXON_ENGINE`, so the
   `parity_all.sh` runs in the S5 and S6 gates cover wasm32 too.
-- [ ] wasm depth: `scripts/vm_wasm_depth.sh` (§4 Execution, Recursion) gates every slice S0–S5 on the
+- [ ] wasm depth: `scripts/vm_wasm_depth.sh` (§4 Execution, Recursion) gates every slice S0–S5, S7 and S8 on the
   linear-stack bound and the 450 panic, comparing against the tree from the same commit; default-stack
   depths are reported. S6 runs it with `--require-default-stack`.
 - [ ] Red tests first, one per slice (all in `tests/cli_run.rs`, named under the slice's gate prefix so
@@ -489,14 +604,19 @@ against the same frames, and the tree-walker is the reference for both.
     and lambda bodies are not compiled;
   - S5 `vm_fastcall_mutcall_no_tree_nodes` (`mutcall.ax`'s `main` has 0 tree nodes; fails on S4, where
     the call is a `Call(&mut)` `Tree` op) and `vm_fastcall_slow_<flag>` per flag except `has_ref_mut`
-    (§4 S5; the `vm: slow` line; fails on S4, which prints none).
+    (§4 S5; the `vm: slow` line; fails on S4, which prints none);
+  - S7 `vm_pure_mandel_loop` and `vm_pure_fold_leaf` (the `vm: pure` and `vm: fold-leaf` lines; fail
+    on S4, which prints neither). S7 lowers no new `Expr` variant, so these assert trace lines, not tree
+    nodes;
+  - S8: the `swap` row of `vm_perf_gate.sh --repros` (§4 S8). S8 changes cost only, so its red check is
+    a budget, and its `vm_superop_` tests are behaviour tests that pass before and after.
 
 Every `tests/fixtures/` path in this spec is under `crates/axon-core/`.
 
 ### 9. Acceptance criteria
 
 - [ ] `scripts/vm_parity.sh` exits 0 with 0 differing files and no `tree-op` line of a variant or shape
-  the S5 list marks lowered.
+  the S8 list marks lowered (S7 and S8 lower no new variant, so it equals S5's).
 - [ ] `scripts/vm_wasm_depth.sh --require-default-stack` exits 0.
 - [ ] `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` exits 0 under `AXON_ENGINE=vm` (the default) and
   under `AXON_ENGINE=tree`.
@@ -534,7 +654,11 @@ minus `loop.ax`'s. `part.ax` is qsort's partition loop without the swap:
 so the branch is taken every time; its cost is (instructions − those of the same program without the
 `for` loop) / 1 M. `fold.ax` runs `arr_fold(xs, 0, |acc: i64, x: i64| acc + x)` ten times over
 `xs = arr_range(0, 1000000)`, arr-sum's shape with a one-op body; its cost is (instructions − those of the
-same program with the `arr_fold` line removed) / 10 M, per element.
+same program with the `arr_fold` line removed) / 10 M, per element. `foldmod.ax` (S7) is `fold.ax` with
+arr-sum's body, `|acc: i64, x: i64| acc + x % m` with a captured `let m = 7`, costed the same way.
+`swapcall.ax` (S8) is the 1M-iteration loop with `swap(&mut a, 0, 1)` and qsort's three-statement `swap`
+body; its cost is per call, body included. From S7, `call`, `fastcall`, `mutcall` and `swap` subtract
+`loop_generic.ax` (§4 S7). `--programs SEL` runs a comma-separated subset of the five programs.
 
 | Repro | Slice | Budget | Tree-walker (Axon `886aae53`, release, 2026-10-09) |
 |---|---|---|---|
@@ -544,6 +668,8 @@ same program with the `arr_fold` line removed) / 10 M, per element.
 | `fold.ax`, per element: builtin → closure call, body included | S4 | ≤ 350 | 916 |
 | one-argument fast call | S5 | ≤ 300 | n/a |
 | one-`&mut`-argument call via `call_mut` | S5 | ≤ 600 | ≈ 2,607 |
+| `foldmod.ax`, per element: arr-sum's body | S7 | ≤ 200 | n/a (VM at `12713cbd`: ≈ 675) |
+| `swapcall.ax`, per `swap` call, body included | S8 | ≤ 730 | n/a (VM at `12713cbd`: ≈ 2,641) |
 
 The S1 call budget is for the general path, which every call keeps through S4 and flagged calls keep for
 good. The program budgets need S4 and S5. fib(32) makes 7,049,155 calls, so 3,423,642,492 leaves about 485
@@ -552,28 +678,29 @@ makes 50 M closure calls (10 folds over 5 M elements), so its budget leaves abou
 (`acc + x % m`) and the builtin's loop included; the S4 `fold.ax` budget leaves about 120 of those for the
 extra `%` and the variable read.
 
-qsort is the gate's tightest program. Its budget of 18.97 G splits as follows; the terms marked
-[INFERENCE] are estimates, not measurements:
+qsort is the gate's tightest program. Revision 5 split its 18.97 G with two estimated terms; at S4 the
+`swap` body measured 801 beyond the call, not ≈ 150, so revision 11 re-splits it from measurements at
+`12713cbd` (the term marked [INFERENCE] is a residual, not a measurement):
 
 | Term | Count | Per unit | Total |
 |---|---|---|---|
-| `&mut` calls, `mutcall.ax`-shaped (§4 S5) | 15,004,221 | 600 (S5 budget) | 9.00 G |
-| `swap` bodies beyond `touch`'s one statement: two more statements, two index reads, one more index write, two more arguments [INFERENCE] | 13,670,662 | ≈ 150 | ≈ 2.05 G |
-| `quicksort` prologues: bound check, `let pivot = a[hi]`, `let i = lo` [INFERENCE] | 1,333,559 | ≈ 300 | ≈ 0.40 G |
-| `main`: `arr_repeat` and two 1M-iteration loops [INFERENCE] | 2 M | ≈ 400 | ≈ 0.80 G |
-| partition iterations (the rest) | 25,092,348 | ≈ 268 | ≈ 6.72 G |
+| partition iterations (`part.ax`, measured 227; S2 budget 250) | 25,092,348 | 227 | 5.70 G |
+| `main` without `quicksort`'s work (measured) | — | — | 1.09 G |
+| `quicksort` prologues and the rest beyond its call (residual) [INFERENCE] | 1,333,559 | ≈ 1,000 | ≈ 1.34 G |
+| `quicksort`'s own `&mut` calls at the S5 budget | 1,333,559 | 600 | 0.80 G |
+| `swap` calls, body included (the S8 `swap` row) | 13,670,662 | ≤ 730 | ≤ 9.98 G |
 
-So a partition iteration has about 268 instructions, and `part.ax`'s S2 budget of 250 leaves under 20 for
-error in the estimated terms. The slice budgets do not by themselves show that qsort's gate is
-reachable. If it is not, Q3 applies.
+The total is 18.91 G, about 0.06 G under budget, so the `swap` row's 730 is derived, not padded. The
+slice budgets still do not by themselves prove qsort's gate; Q3 applies after S8.
 
 sieve is reported but not gated: CPython clears multiples with one slice assignment that runs in C.
 
 ### 11. Rollout & rollback
 
-`AXON_ENGINE` defaults to `tree` through S0–S5, so engine selection does not change while coverage grows.
-Three changes touch the reference tree-walker, each with a CHANGELOG entry: the S0 scope-leak fix
-(behaviour), and the S4 pooled closure call and S5 allocation-free `call_mut` (cost only).
+`AXON_ENGINE` defaults to `tree` through S0–S5, S7 and S8, so engine selection does not change while coverage grows.
+Four changes touch the reference tree-walker, each with a CHANGELOG entry: the S0 scope-leak fix
+(behaviour), and the S4 pooled closure call, S5 allocation-free `call_mut` and S7 `arr_fold` loop that
+offers `fold_leaf` the remaining elements (cost only; `fold_leaf` never runs under the tree).
 
 - The scope-leak fix is the one intended change to reference behaviour. Today an `Err` out of
   `match_pattern` or a guard (eval.rs:306, 308, 358) skips the arm's `env.pop()`. The catcher's single
@@ -616,7 +743,9 @@ the reference code, gaps cost speed, never correctness.
   every `--repros` budget met. For qsort that is possible by construction (§10: the estimated terms leave
   under 20 instructions of slack). Then the per-op cost of the S1-S3 ops is the gap. The response is a
   spec revision re-reviewed before S6 (for example an index-compare-branch superop for qsort's loop, or a
-  fold-specialised closure call for arr-sum). The gate is never loosened in place.
+  fold-specialised closure call for arr-sum). The gate is never loosened in place. It came true at S4
+  for mandelbrot and arr-sum (not on this list) and is projected for qsort and fib (§15 "Revision 11");
+  revision 11 answers it with S7 and S8. It stays open for any miss after S8, with the same rule.
 - Q4 (blocks R50.S6 only if it comes true): after S5, `vm_wasm_depth.sh --require-default-stack` finds a
   chain whose default-native-stack VM depth is below the tree's. `with.ax` is the likely one: `with`
   bodies stay `Tree` ops, so every level keeps the tree's frames plus the VM's. The response is a spec
@@ -632,8 +761,10 @@ the reference code, gaps cost speed, never correctness.
 | R50.S2 aggregates, index/field reads, place writes (`AssignTo`); extract `index_in_place`, `index_value`, `field_in_place`, `finish_record`, `place_index`, `write_place` | R50.S1 | `cli_run vm_aggregate_` (incl. `vm_aggregate_part_no_tree_nodes`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (S1 and `part.ax` rows) + `vm_wasm_depth.sh` | done (`2d10cf99`) |
 | R50.S3 match, patterns, enums, methods; extract `chan_method`, `impl_method` | R50.S1 | `cli_run vm_match_` (incl. `vm_match_option_no_tree_nodes`) + `vm_parity.sh` + `vm_wasm_depth.sh` | done (`765bb811`) |
 | R50.S4 lambdas; extract `make_closure`; `ClosureCode.compiled`; allocation-free builtin → closure call on the lent path (`Rc::strong_count(cv) == private_refs`, interp.rs:4054), the one `fold.ax` and arr-sum take: `arr_fold`/`arr_map`/... take argument buffers from `arg_bufs`, `call_closure_owned_by` drains its arguments into the params and hands the buffer to `recycle_args` (today `zip(args)` consumes it, interp.rs:4067), and its `Env` gets a pooled `marks` Vec (today `vec![acc, x.clone()]` per element, builtins.rs:1847, and `Env::from_snapshot` starts with an empty `marks`, so `env.push()` allocates, interp.rs:749-754, 4058-4066). The copied path (a closure with other references, e.g. `let f = \|..\| ..; arr_fold(xs, 0, f)`) keeps its per-call `Vec::with_capacity` (interp.rs:4061-4064) | R50.S1 | `cli_run vm_closure_` (incl. `vm_closure_fold_no_tree_nodes`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (S1 and `fold.ax` rows) + `vm_wasm_depth.sh` | done (`12713cbd`) |
-| R50.S5 fast calls; allocation-free `call_mut` and `CallMut` op | R50.S2, R50.S3, R50.S4 | `cli_run vm_fastcall_` (incl. `vm_fastcall_mutcall_no_tree_nodes`, `vm_fastcall_slow_<flag>`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (all rows) + `vm_wasm_depth.sh` + `AXON_ENGINE=vm AXON_HARNESS_STRICT=1 scripts/parity_all.sh` | todo |
-| R50.S6 default flip, docs | R50.S5; blocked-by Q3 or Q4 only if it comes true | whole suite under both engines + `vm_parity.sh` (S5 list) + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` under each engine (VM default) + `vm_perf_gate.sh` + `reference_gate.sh` + `vm_wasm_depth.sh --require-default-stack` (default-stack VM depth ≥ tree on all four chains) | todo |
+| R50.S5 fast calls; allocation-free `call_mut` and `CallMut` op | R50.S2, R50.S3, R50.S4 | `cli_run vm_fastcall_` (incl. `vm_fastcall_mutcall_no_tree_nodes`, `vm_fastcall_slow_<flag>`) + `vm_parity.sh` + `vm_perf_gate.sh --repros S1,part,fold,S5` + `vm_wasm_depth.sh` + `AXON_ENGINE=vm AXON_HARNESS_STRICT=1 scripts/parity_all.sh` | todo |
+| R50.S7 pure scalar regions: `Pure`, `PureLoop`, `fold_leaf`; `pure`/`fold-leaf` trace lines; `loop_generic.ax`, `foldmod.ax`, `--programs` | R50.S4 | `cli_run vm_pure_` (incl. `vm_pure_mandel_loop`, `vm_pure_fold_leaf`) + `vm_parity.sh` + `vm_perf_gate.sh --programs mandelbrot,arr-sum,collatz` + `vm_perf_gate.sh --repros S1,part,fold,foldmod` + `vm_wasm_depth.sh` | todo |
+| R50.S8 qsort and fib superops (§4 S8); `swapcall.ax` | R50.S5, R50.S7 | `cli_run vm_superop_` + `vm_parity.sh` + `vm_perf_gate.sh` (all five) + `vm_perf_gate.sh --repros` (every row; `swap` is the red check) + `vm_wasm_depth.sh` + `AXON_ENGINE=vm AXON_HARNESS_STRICT=1 scripts/parity_all.sh` | todo |
+| R50.S6 default flip, docs | R50.S5, R50.S7, R50.S8; blocked-by Q3 or Q4 only if it comes true | whole suite under both engines + `vm_parity.sh` (S8 list) + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` under each engine (VM default) + `vm_perf_gate.sh` + `reference_gate.sh` + `vm_wasm_depth.sh --require-default-stack` (default-stack VM depth ≥ tree on all four chains) | todo |
 
 ### 14. Evidence ledger
 
@@ -791,3 +922,18 @@ revision 10. It confirmed all four revision-9 resolutions against code and the r
 | `While`/`For` arm spans | eval.rs:323-348 and 373-400 |
 | `for` bound order ambiguous | `start` evaluated and converted before `end` is evaluated (§4 `strict_int` row) |
 | `soft_inner` also unwraps `Temporal` | Stated (§4, value.rs:41-44) |
+
+Revision 11 (2026-10-09): §12 Q3 came true at S4, answered by adding S7 and S8. Measured on
+`12713cbd` (S0-S4 merged, release, `--no-default-features`, `AXON_ENGINE=vm`, `perf stat -e
+instructions:u -r 3`, core 6), and on prototypes of the S7/S8 ops built on that commit, every run
+printing the golden output:
+
+| Finding | Resolution |
+|---|---|
+| mandelbrot 23.86 G against 15.02 G; no slice targeted it. ≈ 2,110 per inner iteration, ≈ 1,307 in nine generic float `Bin` ops (callgrind, 60×40 copy) | S7 `Pure` and `PureLoop` (§4 S7). Prototype: `Pure` 18.67 G, typed 17.29 G, registers 15.35 G / 14.72 G, `PureLoop` 5.03 G |
+| arr-sum 33.78 G against 23.62 G; 675 per element because the two-op body misses S4's leaf path | S7 `fold_leaf`; `foldmod` row ≤ 200. Prototype: 5.38 G |
+| qsort 46.69 G against 18.97 G; `swap` body 801 beyond the call, not revision 5's ≈ 150; projected ≈ 28.1 G after S5 at 600 per `&mut` call | S8 index ops, `for` scope reuse, sized frames; §10 re-split from measurements; `swap` row ≤ 730. Prototype index ops: 40.82 G before S5 |
+| fib-recursive 5.46 G against 3.42 G; body ops ≈ 290 per call, so S5's 300 fast call cannot fit 485 per call | S8 fib-shaped ops, gated by the program budget. Prototype `local ± literal` and stack add: 5.28 G before S5 |
+| collatz 20.12 G, within 26.06 G | Unchanged; in the S7 `--programs` gate because `PureLoop` touches its loops (prototype 18.57 G) |
+| `loop.ax` becomes a `PureLoop` (229 → 92 per iteration), so rows that subtract it would charge the call for the loop's lost speed | `call`, `fastcall`, `mutcall`, `swap` subtract `loop_generic.ax` from S7 (§4 S7) |
+| S5's gate named "all rows", which would include the S7 and S8 rows | S5 gate is `--repros S1,part,fold,S5` |
