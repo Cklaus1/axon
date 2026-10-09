@@ -28,7 +28,7 @@
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
-WORK=$(mktemp -d "${TMPDIR:-/var/tmp}/axon-opkit-test.XXXXXX") || exit 2
+WORK=$(mktemp -d "/var/tmp/axon-opkit-test.XXXXXX") || exit 2
 chmod 0755 "$WORK"
 trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: $*"; exit 1; }
@@ -67,7 +67,7 @@ BUILD_UID=65534
 # nothing is created under the host's /var/lib. The fixture hands it out through $KEYSTASH.
 KEYPARENT=/var/lib/axon-opkit-keys
 # The stash is NOT under $WORK: `chmod -R a+rX "$WORK"` below would make the proof keys world-readable.
-STASHDIR=$(mktemp -d "${TMPDIR:-/var/tmp}/axon-opkit-stash.XXXXXX") || exit 2
+STASHDIR=$(mktemp -d "/var/tmp/axon-opkit-stash.XXXXXX") || exit 2
 chmod 0700 "$STASHDIR"
 trap 'rm -rf "$WORK" "$STASHDIR"' EXIT
 KEYSTASH=$STASHDIR/keys

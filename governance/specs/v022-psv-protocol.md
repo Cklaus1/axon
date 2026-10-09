@@ -7364,3 +7364,124 @@ three are closed here; the rest of this amendment is what was changed, what was 
      the control table is a table of the language's constructs, so it covers only constructs `ast.rs` has, and a builtin that runs a callback in a new way (a new short-circuiting
      `arr_*`) is covered by the accumulated-taint rule and by the every-builtin-that-runs-user-code classification (`every_builtin_that_runs_user_code_is_classified`), not by a row of its
      own. The sealed-only check costs a second pass of the checker pipeline over the sealed items in an `axon test --seal` run (not in any other verb).
+## Amendment 113: the destructive primitives of the namespace helper refuse the host's mount namespace BEFORE they mount; `OPKIT_RW` is `/var/tmp` only; service-account discovery reads `- uid: N` and every encoding or refuses; the header says what was and was not executed (C9 round 13, buildenv10)
+
+113. **Source: the round-13 FIELD-ORIGIN review (`/var/tmp/c9r13-findings-FIELD-ORIGIN.json`), five findings.** Branch `c9r13/buildenv10`, base `e8b8b48a`.
+Mutation ids M3200-M3227, matrix rows A274-A280 (renumbered at integration). `crates/axon-core/src` is untouched; no Rust file changed.
+
+1. **MAJOR-ADJACENT: `opkit_ns_isolate` made `/` read-only and shadowed `/etc` BEFORE `opkit_ns_assert` refused the host's mount namespace.**
+   Reproduced by the reviewer in a throwaway namespace (rc 1, `/` already read-only) and by me the same way with the guard removed by hand
+   (table below: `isolate` run bare with every precondition removed returns 0 and leaves `/` read-only in the throwaway namespace; the host listing
+   is identical before and after). The drift gate accepted a bare `opkit_ns_isolate`, `_make_ro`, `_fresh_proc` or `_private_dev` line in a test
+   script. Cure, at the one place every such call passes:
+   - **`opkit_ns_precondition NAME`** is the FIRST statement of `opkit_ns_isolate`, `opkit_ns_make_ro`, `opkit_ns_fresh_proc`, `opkit_ns_private_dev`
+     and `opkit_ns_drop_host_fd` (before the scratch directories of isolate are even created). It returns 97, having changed nothing, unless
+     (1) this process's mount namespace differs from the host's, whose id is the one `ns_run` recorded before it unshared (`OPKIT_HOST_NS`) or,
+     for `test_opkit_ns.sh` alone, the stand-in PID's; with neither there is no proof and the answer is refusal; and (2) outside the self-test
+     the process is PID 1 of a private PID namespace (the last field of `NSpid` in `/proc/$BASHPID/status`, which is 1 for the inner shell of
+     `ns_run`'s `unshare --pid --fork` and never for the host's shell, whatever `OPKIT_HOST_NS` says).
+   - **What this does NOT stop, stated:** a caller that is itself PID 1 of a private PID namespace and forges `OPKIT_HOST_NS` passes (the test
+     `init-forged` records this as a control: the function can pass at all). That caller has root in a namespace it made. What the check stops is a
+     mistake, which is all a textual id can stop. A read of `/proc/$BASHPID` rather than `/proc/self` matters: `self` inside the awk is the awk process
+     (found by the first run of the new test, which refused the genuine namespace).
+   - **The drift gate** (`opkit_ns_drift.py`) now DERIVES the primitives from `scripts/lib/opkit_ns.sh` (every function other than `ns_run` whose body
+     mounts, umounts, pivots or calls `mount_setattr`) united with the five named, (a) flags a bare call of one, or a mention of one in a command that
+     is not an `ns_run` command (`bash -c '...'`, `env`, `sudo`, an `if`, a substitution, a function body), in any test script (the self-test's own
+     `--child` block, which unshares first, is the one exception), and (b) fails unless every primitive's first statement is
+     `opkit_ns_precondition NAME || return 97` for that NAME. `--selftest` plants 12 call shapes and 6 controls, 7 defective helpers (a precondition not
+     first, not followed by `|| return 97`, naming another primitive, missing from a base primitive, missing from `opkit_ns_drop_host_fd`, an undefined base
+     primitive, and a NEW function that mounts with none) and a copy of the whole tree whose `make_ro` lacks it. These are reported on their own line
+     and are NOT counted in the must-flag numbers, so the quoted counts are unchanged: **the self-test carries 149 must-flag shapes and 32 controls at
+     this commit** (`opkit_ns_drift.py --selftest`, `--check-quoted-counts`: ok).
+   - **Executed** (`scripts/test_opkit_ns.sh`, as root, in a throwaway `unshare -m --propagation private`, canaries only): the pure precondition
+     refuses the host's own shell bare and with a forged `OPKIT_HOST_NS`, the stand-in's own namespace and a non-init process, and passes the init of a
+     private PID namespace that recorded another host namespace and the self-test's stand-in route; each of the five primitives called with no proof,
+     and again with a forged `OPKIT_HOST_NS`, returns 97 with the precondition's message, changes no mount (mount point + options listed before and
+     after), creates nothing in its scratch directory and closes no descriptor; the host's mount table is the same before and after the section.
+     The mechanism children that call a primitive directly (`devpriv`, `procpriv`, `rowrite`, `mnttmpfs`) now hand it the stand-in host.
+2. **MINOR: `service_ids` missed `- uid: N` next to another identity, and BOM-led or UTF-16/32 files.** (a) A YAML list item written `- uid: N` was
+   taken for a scalar item of the PREVIOUS key (`if last is not None and t.startswith("- ")`), and a soft key skipped it silently; alone it was caught by
+   the per-file fallback. A leading list dash (any number of them) is now stripped and the rest is judged as the key it is; `- 4567` under a uid key is
+   still that key's value. (b) Every config was decoded with `decode(errors="replace")`: a UTF-8 byte-order mark stayed glued to the first key (`﻿uid`
+   matches no key), and a UTF-16 or UTF-32 file read as NUL-interleaved noise. `_decode_config` reads the mark (UTF-32 before UTF-16: the UTF-32 LE mark
+   begins with the UTF-16 one; UTF-8 with its mark), and REFUSES a file that declares an encoding by its mark and is not valid in it, one that begins with a
+   second mark, and one with NUL bytes and no mark that decodes as UTF-16/32 into mostly-ASCII text. Units and drop-ins use the same rule.
+   **Measured, and why the rule is not "any NUL byte":** the first version refused every file with a NUL, and `scripts/test_operator_deploy.sh` failed:
+   `/etc/axon/suites/bin/axon` is a PROGRAM in the config tree. A file that is not text in any of those encodings is read as before. Cases in
+   `guest_build_env_guards/service_ids.py` (the hidden-key cases carry a second identity, so the per-file fallback cannot mask a miss).
+3. **MINOR wording: "any other state-changing verb".** The drift docstring and the helper header said the gate flags it; it flags `HOST_VERBS` and
+   `MUTATORS` aimed at a real destination, and `sed -i`, `tar -x -C`, `rsync`, `dd of=`, `curl -o`, `git clone/checkout/apply`, `patch` pass in a test
+   script (only the KIT's own write targets get the wider list, `destination_problems`). Both sentences now say exactly that; the gate's behaviour is
+   unchanged. (The other option, adding the verbs, was not taken: a textual gate that grows verbs is the same best-effort layer; the namespace holds.)
+4. **MINOR: `OPKIT_RW` under `/tmp`.** It validated, then `opkit_ns_isolate` could not bind it (`/tmp` is already a fresh tmpfs): 97 from inside, the
+   command not run. `OPKIT_RW` is now validated strictly below `/var/tmp` only; `OPKIT_SCRATCH` keeps `/tmp` and `/var/tmp` (its mounts are made before `/tmp` is
+   shadowed). Tested both ways (an entry under `/tmp` is refused by its own rule before anything is mounted; a scratch root under `/tmp` with
+   `OPKIT_RW` under `/var/tmp` runs). `test_operator_deploy.sh` and `test_opkit_ns.sh` made their scratch under `${TMPDIR:-/var/tmp}`; with `TMPDIR=/tmp` that
+   would now be a 97, so both use `/var/tmp` unconditionally. The header's "an ordinary uid cannot unshare" is corrected: `ns_run`'s root check stops it first.
+5. **MINOR wording: "NOT executed by anyone".** Restricted to what is true: the CURRENT helper, `OPKIT_CAPS_KEEP=sys_admin` included, was not run
+   with a hostile `CAP_SYS_ADMIN` step; round 11 ran `mount -o remount,rw /` and `dd` as full-capability root against an EARLIER helper (which is why the
+   bounding set exists). The header now also says that the capability-drop evidence in `test_opkit_ns.sh` (amendments 105 and 111) was executed by its author
+   once and is NOT independently reproduced: two reviewers who tried were stopped by the automated safety check.
+
+**Rows (M3200-M3227, 28; the registry has 2250 rows, 2092 active; no row retired).**
+M3200-M3204 remove the precondition from `opkit_ns_isolate`, `_make_ro`, `_fresh_proc`, `_private_dev`, `_drop_host_fd` (each killed by that primitive's own
+bare-call attack: `ATTACK: bare opkit_ns_<name>  was not refused with 97`); M3205 moves isolate's precondition AFTER the scratch directories are made
+(`created something in the scratch directory before refusing`); M3206 drops the "not the host's namespace" comparison; M3207 drops the PID-1 test (a
+forged `OPKIT_HOST_NS` on the host's own shell is accepted); M3208 puts `/tmp` back among `OPKIT_RW`'s roots; M3209-M3217 are the drift gate (a mention inside
+`bash -c`/`env`/`sudo`, the per-command call site, the derivation from the helper, the union with the five named, first-statement, names-itself,
+`|| return 97`, undefined base primitive, `check()` applying the rule to the tree it is given); M3218-M3227 are service ids (the list dash, the nested dash,
+a UTF-8 mark, UTF-16, UTF-32, bare UTF-16/32 text, a declared-but-invalid file, a second mark, a unit, a drop-in). Rows edited because my change moved
+their anchor, with the same attacks: **M2267** (the `own != hostmnt` line now occurs in the precondition too, so the anchor carries the next line),
+**M3082** (the loop is `for root in $roots ...`), **M2905** (`_text_ids(data, ...)`). **Placement matters and was measured:** my first `OPKIT_RW`-under-`/tmp`
+test sat before the older `OPKIT_RW` tests, and three older rows (M2632, M2891, M2894) became REFUSED_ELSEWHERE because the new test failed first
+under their mutation; the test now runs after the older ones, and the older `/mnt` check says its failure as an `ATTACK:` message (M3208's marker matches
+it or the `/tmp` test's). Two of my own rows were wrong the first time: M3216 survived (the "undefined primitive" plant was also refused by the sibling check;
+the plant now renames `opkit_ns_drop_host_fd`, which only that check can see) and M3224 first mutated the line above the `raise`, which the refusal-coverage
+gate does not count as covering it.
+**Not rowed:** the `NSpid` field-count clause (an `NF > 2` test) was dropped from the check: with `$NF == 1` it is redundant (a one-field entry that is 1 is the host's PID 1,
+refused by the namespace comparison), so removing it would be an equivalent mutant and there is no row for it.
+**Measured while building it (the shared-target trap):** a first gm run of the two shards used the SAME `--target` for both; dozens of rows read survived, REFUSED_ELSEWHERE or baseline-failed
+that read killed locally. The operator_examples test bakes its repository path in at compile time, so a shared target made one shard judge the other's mutated scripts.
+Each shard now has its own target; this is the reason `common.md` says harness scripts run what they build. Those results are not used.
+
+**Evidence** (every line rc-checked; `gm` = gpumaster; `local` = this host as root; code final at `11c24e2d`, governance text only after it):
+
+| Check | Where, at | Result |
+|---|---|---|
+| `cargo fmt --all -- --check` | local, `11c24e2d` | rc 0 (no `.rs` file changed: `git diff e8b8b48a -- '*.rs'` is empty) |
+| clippy `-D warnings`: axon-core `--no-default-features --tests`; axon-fabric, axon-psv, axon-cortex, axon-loop, axon-loop-contracts `--all-targets` | gm, `11c24e2d` | rc 0 each |
+| `guest_build_env` x3 consecutive default-parallel | local, `11c24e2d` | rc 0 x3: 38, 38, 38 passed |
+| `guest_build_env_guards`, `operator_examples` | local, `11c24e2d`; gm, `9b5ee4af` | rc 0: 9 and 4 passed (both hosts) |
+| `scripts/test_opkit_ns.sh` (includes its unchanged amendment-105/111 capability probes) | local, `11c24e2d` | rc 0, PASS; 31 s |
+| `scripts/test_operator_deploy.sh` (the kit, its apply inside `ns_run`) | local, `11c24e2d` | rc 0, "the namespace apply left the host untouched (state identical)" (the first run, at `fa7b6ccd`, FAILED: the NUL rule above) |
+| `scripts/test_trust_root_preflight.sh` | local, `11c24e2d` | rc 0, PASS (dev mode; certifies nothing) |
+| `opkit_ns_drift.py` plain, `--selftest`, `--check-quoted-counts` | local, `11c24e2d` | ok; ok (149 must-flag shapes, 32 controls, 20 primitive shapes); ok (149, 32) |
+| refusal coverage plain and `--freeze` | local, `11c24e2d` | rc 0 and rc 0, no BAD; `scripts/guest_build_env.py` 65 covered by a row (62 + M3223-M3225), 77 exempt: no exemption re-keyed or added |
+| Mutation rows, ALL 180 build-environment rows (M1473, M2221, M2261, M2265-M2269, M2500-M2515, M2540-M2553, M2570-M2576, M2630-M2659, M2880-M2909, M3080-M3109, M3180-M3196) + the 28 new | local, `11c24e2d` | 180/180 KILLED by their own attack, 0 REFUSED_ELSEWHERE, 0 survivors, 0 stale |
+| the same 180, two shards, each with its own target | gm, `11c24e2d` | 91/91 and 89/89 KILLED, 0 REFUSED_ELSEWHERE, 0 survivors, 0 stale |
+| Host listing (`/etc/axon`, `/usr/local`, `/var/lib` names, `/etc/systemd/system`, `/opt`, `/home`, `/mnt`, `/media`, `/srv`, users, groups, setuid files, enabled units, the host's mount table) | local, before vs after each of: test_opkit_ns.sh x3, test_operator_deploy.sh x3, test_trust_root_preflight.sh, the hand-removal experiments | identical every time (`diff` empty) |
+
+**Hand-removal evidence in the isolation** (`unshare -m --propagation private`, root, canaries only; a copy of the helper with the line removed; the host listing and mount table identical before and after):
+
+| Copy of the helper | Call (no proof) | rc | mount table | `/` read-only | descriptor 9 | scratch |
+|---|---|---|---|---|---|---|
+| unmodified | `opkit_ns_isolate` | 97 (the precondition) | same | no | open | untouched |
+| isolate's precondition removed | `opkit_ns_isolate` | 1 (make_ro's own precondition refuses it) | same | no | open | `etc.N`, `dev.N` created (M3205's attack) |
+| make_ro's removed | `opkit_ns_make_ro` | 0 | CHANGED | yes | open | |
+| fresh_proc's removed | `opkit_ns_fresh_proc` | 0 | CHANGED | no | open | |
+| private_dev's removed | `opkit_ns_private_dev` | 0 | CHANGED | no | open | |
+| drop_host_fd's removed | `opkit_ns_drop_host_fd` | 0 | same | no | CLOSED | |
+| ALL removed (the reviewer's reproduction) | `opkit_ns_isolate` | 0 | CHANGED | yes | open | `etc.N`, `dev.N` created |
+
+Logs: `/var/tmp/c9r13-be10-evidence/`.
+
+**Not executed, stated.** The escape-syscall batch (setns, chroot, a nested user namespace, `open_by_handle_at`, mounting a setuid binary, bpf, `init_module`, reboot), a hostile
+`CAP_SYS_ADMIN` step, and the capability-raising probes were NOT written or run by me. The committed `scripts/test_opkit_ns.sh` contains the author's amendment-105/111 probes
+(`setpriv --inh-caps/--ambient-caps` re-adds, a prctl ambient raise, a `setcap` copy); I ran that script UNCHANGED in those parts (its amendment-113 additions are mine),
+as the brief allowed, and it is the only place they ran. The new primitive tests run in a throwaway private mount namespace as root: a primitive whose guard regressed
+damages that namespace and not the host; they do not run in the host's mount namespace. The refusal of the host's own namespace is therefore shown by the PURE precondition
+(it mounts nothing) called on the host's shell, not by a destructive primitive called there.
+**Unfinished, stated.** (a) The axon-core gates (`refusal_coverage_gate`, `harness_integrity`, `harness_binaries`): gm, `0e974b29` (the commit that adds this text before this sentence was edited), rc 0: 52, 43 and 10 passed; the only change since is this sentence. (b) A forged `OPKIT_HOST_NS` from a caller that is PID 1 of its own
+PID namespace passes the precondition (recorded as a control, above). (c) The NUL rule reads a file as UTF-16/32 only when the result is >= 90% ASCII printable; UTF-16 text
+in which that does not hold, and a UTF-16 file larger than the 64 KiB read cap, are not covered (the cap already refuses the second). (d) The matrix numbers A274-A280 are
+renumbered at integration. (e) The `IDENTICAL` host listing is of this host only.
