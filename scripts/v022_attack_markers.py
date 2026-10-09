@@ -2774,3 +2774,8 @@ ATTACK_MARKERS.update({
     'M3294': r'ATTACK: is_hex of a number \(length 64\) answered true',
     'M3295': r'ATTACK: a tracked file that is gone was not reported',
 })
+ATTACK_MARKERS.update({
+    'M3296': r'ATTACK: a clearance naming a monitor signature that is not stored cleared the trial',
+    'M3297': r'ATTACK: an execution attested by a verifier with no pin at all counted as a protected execution',
+    'M3298': r'ATTACK: a usage with no episode status was counted as a non-completed record',
+})

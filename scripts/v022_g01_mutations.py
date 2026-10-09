@@ -10493,6 +10493,19 @@ MUTATIONS += [
      'axon-fabric', '--lib', 'git_data::tests::a_tracked_path_of_another_kind_or_mode_or_gone_differs'),
 ]
 
+MUTATIONS += [
+    ('M3296', 'CLEARANCE (eq9): a clearance whose stored monitor signature cannot be read is verified', 'crates/axon-loop/src/admission.rs',
+     '        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())\n    else {\n        return false;\n    };',
+     '        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())\n    else {\n        return true;\n    };',
+     'axon-loop', '--test protected_class', 'a_clearance_whose_stored_signature_is_missing_clears_nothing'),
+    ('M3297', 'EXECUTION ATTESTER (eq9): a verifier with no pin at all is qualified for the backend (is_some_and -> is_none_or)', 'crates/axon-loop/src/evl.rs',
+     'let qualified = config.verifier_pins.get(&issuer).is_some_and(|pin| {', 'let qualified = config.verifier_pins.get(&issuer).is_none_or(|pin| {',
+     'axon-loop', '--test protected_class', 'an_execution_attested_by_a_verifier_with_no_pin_at_all_counts_nothing'),
+    ('M3298', 'ECONOMICS (eq9): a usage with no episode status is counted non-completed (is_some_and -> is_none_or)', 'crates/axon-loop/src/tel.rs',
+     '        if status.is_some_and(|s| s != EpisodeStatus::Completed) {', '        if status.is_none_or(|s| s != EpisodeStatus::Completed) {',
+     'axon-loop', '--test plan_evo_tel', 'tel_does_not_count_a_usage_with_no_episode_status_as_non_completed'),
+]
+
 
 if __name__ == "__main__":
     main()
