@@ -2452,6 +2452,12 @@ pub fn builtin_ret(name: &str) -> Option<&'static str> {
     BUILTIN_INDEX.get(name).map(|b| b.ret)
 }
 
+/// `name` is a row of `BUILTINS` (R50 S5: a call by such a name never takes
+/// the bytecode engine's fast VM→VM path).
+pub fn is_builtin(name: &str) -> bool {
+    BUILTIN_INDEX.contains_key(name)
+}
+
 /// R17 Slice 3 (§4 / E1704): true if calling `name` may allocate on the heap.
 ///
 /// `@[no_alloc]` functions (ISRs / early-boot code) may not reach any of these.
