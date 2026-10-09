@@ -129,7 +129,7 @@ impl<'p> Interp<'p> {
     /// eval flows through `call_fn`, so the provenance store accumulates as usual.
     pub(super) fn hill_climb_mixed(
         &self,
-        f: &FnDef,
+        f: &'p FnDef,
         target: f64,
         max_evals: i64,
     ) -> Result<f64, Flow> {
@@ -666,7 +666,7 @@ impl<'p> Interp<'p> {
     /// [`Interp::call_fn`], so the provenance store accumulates as a side effect.
     pub(super) fn hill_climb_i64(
         &self,
-        f: &FnDef,
+        f: &'p FnDef,
         target: f64,
         max_evals: i64,
     ) -> Result<f64, Flow> {
@@ -782,7 +782,7 @@ impl<'p> Interp<'p> {
     /// full input tuples) accumulates as a side effect.
     pub(super) fn hill_climb_multi_i64(
         &self,
-        f: &FnDef,
+        f: &'p FnDef,
         target: f64,
         max_evals: i64,
     ) -> Result<f64, Flow> {
@@ -791,7 +791,7 @@ impl<'p> Interp<'p> {
 
     pub(super) fn hill_climb_multi_i64_from(
         &self,
-        f: &FnDef,
+        f: &'p FnDef,
         target: f64,
         max_evals: i64,
         start: Option<Vec<i64>>,
@@ -972,7 +972,7 @@ impl<'p> Interp<'p> {
     /// learned weights, well above f64 precision noise.
     pub(super) fn hill_climb_multi_f64(
         &self,
-        f: &FnDef,
+        f: &'p FnDef,
         target: f64,
         max_evals: i64,
     ) -> Result<f64, Flow> {
@@ -981,7 +981,7 @@ impl<'p> Interp<'p> {
 
     pub(super) fn hill_climb_multi_f64_from(
         &self,
-        f: &FnDef,
+        f: &'p FnDef,
         target: f64,
         max_evals: i64,
         start: Option<Vec<f64>>,

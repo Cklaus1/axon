@@ -339,9 +339,6 @@ pub(super) struct FnEntry<'p> {
     pub(super) param_coerce: Box<[(bool, Option<IntWidth>)]>,
     /// Some parameter is `&mut` (see `Interp::call_fn`).
     pub(super) has_ref_mut: bool,
-    /// `def.name`, installed as `Interp::current_fn` per activation without
-    /// copying the string.
-    pub(super) name: Rc<str>,
     /// `@[agent]`: the enclosing agent for everything it calls (R4/I-13).
     pub(super) is_agent: bool,
     /// The fn the `current_fn` readers find under this name carries
@@ -396,7 +393,6 @@ impl<'p> FnEntry<'p> {
                 .params
                 .iter()
                 .any(|p| matches!(p.ty, AxonType::RefMut(_))),
-            name: Rc::from(def.name.as_str()),
             is_agent: has_attr("agent"),
             ai_metered: fns
                 .get(&def.name)

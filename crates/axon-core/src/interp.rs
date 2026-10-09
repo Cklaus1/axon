@@ -882,11 +882,12 @@ pub struct Interp<'p> {
     /// one-way latch is the whole safety property: a kill-switch you can turn
     /// back off is not a kill-switch.
     corrigible_halted: Cell<bool>,
-    /// Name of the Axon function currently executing, for attributing builtin
+    /// The Axon function currently executing, whose name attributes builtin
     /// side effects (e.g. R3's `ai_call` provenance records) to their caller.
-    /// Set on entry to `call_fn`, restored on exit. `None` at top level. An
-    /// `Rc` shared with the fn's [`FnEntry`], so a call copies no string (AX-54).
-    current_fn: RefCell<Option<Rc<str>>>,
+    /// Set on entry to `call_fn`, restored on exit. `None` at top level. A
+    /// reference to the fn's definition, so a call copies and counts nothing
+    /// (AX-54).
+    current_fn: Cell<Option<&'p FnDef>>,
     /// R4/I-13 — the nearest ENCLOSING `@[agent]` fn on the call stack (not just
     /// the immediate fn). Set when entering an `@[agent]` fn and INHERITED through
     /// non-agent helpers, so a capability builtin called inside a helper of an
@@ -1203,29 +1204,26 @@ fn stack_size_for_depth(depth: usize) -> usize {
         .max(MIN_STACK_BYTES)
 }
 
-/// Decrements the call-depth counter when a `call_fn` frame unwinds (any path).
-struct DepthGuard<'a>(&'a Cell<usize>);
-impl Drop for DepthGuard<'_> {
+/// Restores the call depth and the caller's `current_fn` when a `call_fn`
+/// frame unwinds (any path), so builtin side effects (R3 `ai_call`
+/// provenance) are attributed to the nearest enclosing Axon function even
+/// across nested calls.
+struct CallGuard<'a, 'p> {
+    interp: &'a Interp<'p>,
+    prev_fn: Option<&'p FnDef>,
+}
+impl Drop for CallGuard<'_, '_> {
+    #[inline(always)]
     fn drop(&mut self) {
-        self.0.set(self.0.get().saturating_sub(1));
+        self.interp.current_fn.set(self.prev_fn);
+        let depth = &self.interp.call_depth;
+        depth.set(depth.get().saturating_sub(1));
     }
 }
 
-/// Saves the caller's `current_fn` and restores it on drop, so builtin side
-/// effects (R3 `ai_call` provenance) are attributed to the nearest enclosing
-/// Axon function even across nested calls.
-struct FnNameGuard<'a> {
-    cell: &'a RefCell<Option<Rc<str>>>,
-    prev: Option<Rc<str>>,
-}
-impl Drop for FnNameGuard<'_> {
-    fn drop(&mut self) {
-        *self.cell.borrow_mut() = self.prev.take();
-    }
-}
-
-/// Like `FnNameGuard` but for an `Option<String>` cell — used for the
-/// `enclosing_agent` save/restore (R4/I-13 transitive agent attribution).
+/// Like `CallGuard`'s `current_fn` restore but for an `Option<String>` cell —
+/// used for the `enclosing_agent` save/restore (R4/I-13 transitive agent
+/// attribution).
 struct FnNameOptGuard<'a> {
     cell: &'a RefCell<Option<String>>,
     prev: Option<String>,
@@ -3119,7 +3117,7 @@ impl<'p> Interp<'p> {
                     .unwrap_or_else(|| "root".to_string()),
             ),
             goal_constraint: RefCell::new(None),
-            current_fn: RefCell::new(None),
+            current_fn: Cell::new(None),
             current_call_tier: RefCell::new(None),
             callees: RefCell::new(Vec::new()),
             ai_calls_this_fn: Cell::new(0),
@@ -3277,8 +3275,7 @@ impl<'p> Interp<'p> {
     /// The fn named like the currently-executing one in the by-name fn map —
     /// the policy source for the `current_ai_*` readers.
     fn current_fn_def(&self) -> Option<&'p FnDef> {
-        let name = self.current_fn.borrow();
-        self.fns.get(name.as_deref()?).copied()
+        self.fns.get(self.current_fn.get()?.name.as_str()).copied()
     }
 
     /// R3 §4.2 — resolve the AI tier for the current call from the enclosing
@@ -3354,7 +3351,7 @@ impl<'p> Interp<'p> {
         }
     }
 
-    fn call_fn(&self, f: &FnDef, args: Vec<Value>) -> R {
+    fn call_fn(&self, f: &'p FnDef, args: Vec<Value>) -> R {
         match self.fn_of_def.get(&(f as *const FnDef as usize)) {
             Some(&i) => self.call_fn_entry(&self.fn_table[i as usize], args),
             None => self.call_fn_entry(&FnEntry::new(f, &self.fns), args),
@@ -3363,7 +3360,7 @@ impl<'p> Interp<'p> {
 
     /// [`Interp::call_fn`] with the callee already resolved (AX-18: a call
     /// by name reaches its `fn_table` entry without hashing).
-    fn call_fn_entry(&self, f: &FnEntry<'_>, args: Vec<Value>) -> R {
+    fn call_fn_entry(&self, f: &FnEntry<'p>, args: Vec<Value>) -> R {
         // A `&mut` param must be moved back to the caller (`call_mut`); a
         // path that cannot do that (a fn reached by name string, a method)
         // would silently drop the callee's writes — refuse instead.
@@ -3428,12 +3425,14 @@ impl<'p> Interp<'p> {
         }
     }
 
-    fn call_fn_in(&self, entry: &FnEntry<'_>, mut args: Vec<Value>, env: &mut Env) -> R {
+    fn call_fn_in(&self, entry: &FnEntry<'p>, mut args: Vec<Value>, env: &mut Env) -> R {
         let f = entry.def;
         let params = &entry.params;
         // Bound recursion: a graceful panic instead of a process-aborting stack
         // overflow on runaway/infinite recursion. `_guard` restores the depth on
-        // any return path (including `?`).
+        // any return path (including `?`), and the caller's `current_fn`: the
+        // executing fn is tracked so builtins (R3 ai_call provenance) can
+        // attribute their records to the caller.
         let depth = self.call_depth.get() + 1;
         if depth > self.max_depth {
             return panic(format!(
@@ -3443,12 +3442,9 @@ impl<'p> Interp<'p> {
             ));
         }
         self.call_depth.set(depth);
-        let _guard = DepthGuard(&self.call_depth);
-        // Track the executing fn so builtins (R3 ai_call provenance) can
-        // attribute their records to the caller; restored on return.
-        let _fn_guard = FnNameGuard {
-            cell: &self.current_fn,
-            prev: self.current_fn.replace(Some(entry.name.clone())),
+        let _guard = CallGuard {
+            interp: self,
+            prev_fn: self.current_fn.replace(Some(f)),
         };
         // R4/I-13: if THIS fn is an `@[agent]`, it becomes the enclosing agent for
         // everything it transitively calls; otherwise the caller's enclosing agent
