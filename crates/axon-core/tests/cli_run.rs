@@ -35230,7 +35230,7 @@ fn vm_engine_trace_names_each_compiled_body_once_under_vm_only() {
     assert_eq!(
         err,
         "vm: main 12 ops, 0 tree nodes\n\
-         vm: fib 8 ops, 0 tree nodes\n\
+         vm: fib 6 ops, 0 tree nodes\n\
          vm: P::get 1 ops, 0 tree nodes\n"
     );
     let tree = vm_run("trace", VM_FIB_SRC, "tree", true);
@@ -35259,7 +35259,7 @@ fn vm_engine_main_under_binding_capture_runs_on_the_tree() {
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.starts_with("vm: tree main: binding capture\n"), "{err}");
-    assert!(err.contains("vm: fib 8 ops, 0 tree nodes\n"), "{err}");
+    assert!(err.contains("vm: fib 6 ops, 0 tree nodes\n"), "{err}");
 }
 
 #[test]
@@ -36455,3 +36455,197 @@ vm_fastcall_slow!(
     "inc: refine_preds",
     "4\n"
 );
+
+// ── R50 S8: qsort and fib superops (`vm_superop_`) ──────────────────────────
+// S8 changes cost only; these are behaviour tests that pass before and after
+// it (its red check is the `swap` row of `vm_perf_gate.sh --repros`).
+
+/// qsort's three-statement `swap` body, shared by the S8 programs.
+const VM_SWAP_FN: &str =
+    "fn swap(a: &mut [i64], i: i64, j: i64) {\n    let t = a[i]\n    a[i] = a[j]\n    a[j] = t\n}\n";
+
+/// R50 §4 S8: an index write in place only when the array is uniquely owned.
+/// A write to an array another binding (a copy, an outer array's element, a
+/// closure capture, a `&mut` caller's other copy) holds leaves that binding
+/// unchanged, through each fused form (`a[i] = x`, `a[i] = b[j]`,
+/// `let t = a[i]`) and the generic one.
+#[test]
+fn vm_superop_write_shared() {
+    let src = format!(
+        "{VM_SWAP_FN}fn main() -> i64 {{\n    let a = [1, 2, 3]\n    let b = a\n    a[0] = 9\n    \
+         println(\"{{to_str(a[0])}} {{to_str(b[0])}}\")\n    let c = a\n    swap(&mut a, 0, 2)\n    \
+         println(\"{{to_str(a[0])}} {{to_str(a[2])}} {{to_str(c[0])}} {{to_str(c[2])}}\")\n    \
+         let k = 1\n    let d = a\n    a[k] = d[2]\n    println(\"{{to_str(a[1])}} {{to_str(d[1])}}\")\n    \
+         let rows = [[1, 2], [3, 4]]\n    let row = rows[0]\n    row[0] = 7\n    \
+         println(\"{{to_str(row[0])}} {{to_str(rows[0][0])}}\")\n    let f = || a[0]\n    a[0] = 5\n    \
+         println(\"{{to_str(f())}} {{to_str(a[0])}}\")\n    for i in 0..3 {{\n        let e = a\n        \
+         a[i] = i * 10\n        let t = e[i]\n        println(\"{{to_str(a[i])}} {{to_str(t)}}\")\n    }}\n    0\n}}\n"
+    );
+    let (code, stdout, stderr) = vm_scalar_case(
+        "superop_shared",
+        &src,
+        &[("main", 0), ("swap", 0), ("main::lambda#0", 0)],
+    );
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "9 1\n3 9 9 3\n9 2\n7 1\n3 5\n0 5\n10 9\n20 9\n"),
+        "{stderr}"
+    );
+}
+
+/// R50 §4 S8: the fused index ops keep S2's texts and order. Out-of-bounds,
+/// negative and non-`Int` indexes panic as the tree does; in `a[i] = b[j]`
+/// the value `b[j]` is read (and fails) before the target index is converted;
+/// an `i32` target index is written, an `i32` read index panics.
+#[test]
+fn vm_superop_write_panics() {
+    let cases: [(&str, &str, Option<i32>, &str, &str); 12] = [
+        ("oob", "let i = 5\n    a[i] = x", Some(101), "", "index 5 out of bounds (len 2)"),
+        ("neg", "let i = 0 - 1\n    a[i] = 7", Some(101), "", "negative index -1"),
+        ("read_oob", "let i = 1\n    let j = 9\n    a[i] = b[j]", Some(101), "", "index 9 out of bounds (len 2)"),
+        (
+            "value_first",
+            "let i = 7\n    let j = 0 - 2\n    a[i] = b[j]",
+            Some(101),
+            "",
+            "index -2 out of bounds (len 2)",
+        ),
+        ("let_oob", "let i = 4\n    let t = a[i]\n    println(to_str(t))", Some(101), "", "index 4 out of bounds (len 2)"),
+        ("let_i32", "let i: i32 = 1\n    let t = a[i]\n    println(to_str(t))", Some(101), "", "expected i64, got i32"),
+        ("write_i32", "let i: i32 = 1\n    a[i] = x\n    println(to_str(a[1]))", Some(0), "5\nend\n", ""),
+        ("read_i32", "let j: i32 = 1\n    a[0] = b[j]", Some(101), "", "expected i64, got i32"),
+        ("swap_oob", "swap(&mut a, 0, 3)", Some(101), "", "index 3 out of bounds (len 2)"),
+        (
+            "bool_index",
+            "let f = |v, k| {\n        v[k] = 1\n        v\n    }\n    println(to_str(f(a, true)[0]))",
+            Some(101),
+            "",
+            "expected i64, got bool",
+        ),
+        (
+            "float_index",
+            "let f = |v, k| {\n        let t = v[k]\n        t\n    }\n    println(to_str(f(a, 1.5)))",
+            Some(101),
+            "",
+            "expected i64, got f64",
+        ),
+        (
+            "non_array",
+            "let f = |v, w, k| {\n        v[k] = w[k]\n        v\n    }\n    println(to_str(f(a, x, 0)[0]))",
+            Some(101),
+            "",
+            "indexing non-array (i64)",
+        ),
+    ];
+    for (tag, body, want, out, msg) in cases {
+        let src = format!(
+            "{VM_SWAP_FN}fn main() -> i64 {{\n    let a = [1, 2]\n    let b = [3, 4]\n    let x = 5\n    \
+             {body}\n    println(\"end\")\n    0\n}}\n"
+        );
+        // `swap` and the lambda compile only when called.
+        let mut bodies = vec![("main", 0)];
+        if body.contains("swap(") {
+            bodies.push(("swap", 0));
+        }
+        if body.contains("|v") {
+            bodies.push(("main::lambda#0", 0));
+        }
+        let (code, stdout, stderr) = vm_scalar_case(&format!("superop_panic_{tag}"), &src, &bodies);
+        assert_eq!((code, stdout.as_str()), (want, out), "[{tag}] {stderr}");
+        assert!(stderr.contains(msg), "[{tag}] {stderr}");
+    }
+}
+
+/// R50 §4 S8 `for` scope reuse: a body `let` that shadows the loop variable
+/// (so the iteration scope holds more than the loop variable), nested `for`s
+/// shadowing the same name, `continue`/`break`, closures capturing the loop
+/// variable (AX-19: each sees its own iteration's value), and a `for` in a
+/// lambda body.
+#[test]
+fn vm_superop_for_shadow() {
+    let src = "fn main() -> i64 {\n    let total = 0\n    for i in 0..4 {\n        let i = i * 10\n        \
+               total = total + i\n        println(to_str(i))\n    }\n    println(to_str(total))\n    \
+               let fs = []\n    for k in 0..3 {\n        fs = arr_push(fs, || k)\n    }\n    \
+               let f0 = fs[0]\n    let f1 = fs[1]\n    let f2 = fs[2]\n    \
+               println(\"{to_str(f0())} {to_str(f1())} {to_str(f2())}\")\n    let n = 0\n    \
+               for i in 0..5 {\n        if i == 1 { continue }\n        let j = i + 1\n        \
+               for i in j..j + 2 {\n            let i = i * 2\n            n = n + i\n        }\n        \
+               if i == 3 { break }\n        n = n + i\n    }\n    println(to_str(n))\n    let g = || {\n        \
+               let s = 0\n        for q in 0..3 {\n            let q = q + 100\n            s = s + q\n        }\n        \
+               s\n    }\n    println(to_str(g()))\n    0\n}\n";
+    let (code, stdout, stderr) =
+        vm_scalar_case("superop_for", src, &[("main", 0), ("main::lambda#1", 0)]);
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "0\n10\n20\n30\n60\n0 1 2\n40\n303\n"),
+        "{stderr}"
+    );
+}
+
+/// R50 §4 S8 fib-shaped ops: `local ± literal` at `i64::MAX`/`MIN` and the
+/// stack-plus-stack add overflow with the tree's text; a `Float` or
+/// `Uncertain` operand declines to the generic `Bin` (its panic or value).
+#[test]
+fn vm_superop_fib_overflow() {
+    let cases: [(&str, &str, Option<i32>, &str, &str); 6] = [
+        (
+            "plus_max",
+            "println(to_str(up(9223372036854775807)))",
+            Some(101),
+            "start\n",
+            "axon: panic: integer overflow: 9223372036854775807 + 1 exceeds i64\n",
+        ),
+        (
+            "minus_min",
+            "let m = 0 - 9223372036854775807 - 1\n    println(to_str(down(m)))",
+            Some(101),
+            "start\n",
+            "axon: panic: integer overflow: -9223372036854775808 - 1 exceeds i64\n",
+        ),
+        (
+            "stack_add",
+            "println(to_str(g(1)))\n    println(to_str(g(2)))",
+            Some(101),
+            "start\n9223372036854775807\n",
+            "axon: panic: integer overflow: 9223372036854775807 + 9223372036854775807 exceeds i64\n",
+        ),
+        (
+            "float",
+            "let f = |n| n - 1\n    println(to_str(f(2.5)))",
+            Some(101),
+            "start\n",
+            "axon: panic: cannot apply Sub to f64 / i64\n",
+        ),
+        (
+            "uncertain",
+            "let f = |n| n + 1\n    let r = f(uncertain_new(4, 0.5))\n    println(\"{r}\")\n    \
+             let s = |p, q| p + q\n    println(\"{s(r, 2)}\")",
+            Some(0),
+            "start\nUncertain { confidence: 0.5, source_tag: 0, value: 5 }\n\
+             Uncertain { confidence: 0.5, source_tag: 0, value: 7 }\n",
+            "",
+        ),
+        (
+            "fib",
+            "println(to_str(fib(15)))\n    println(to_str(fib(uncertain_new(10, 0.9))))",
+            Some(0),
+            "start\n610\n55\n",
+            "",
+        ),
+    ];
+    for (tag, body, want, out, err) in cases {
+        let src = format!(
+            "fn up(n: i64) -> i64 {{ n + 1 }}\nfn down(n: i64) -> i64 {{ n - 1 }}\nfn g(n: i64) -> i64 {{\n    \
+             if n < 2 {{ 9223372036854775807 }} else {{ g(n - 1) + g(n - 2) }}\n}}\n\
+             fn fib(n: i64) -> i64 {{\n    if n < 2 {{ n }} else {{ fib(n - 1) + fib(n - 2) }}\n}}\n\
+             fn main() -> i64 {{\n    println(\"start\")\n    {body}\n    0\n}}\n"
+        );
+        let (code, stdout, stderr) =
+            vm_scalar_case(&format!("superop_fib_{tag}"), &src, &[("main", 0)]);
+        assert_eq!(
+            (code, stdout.as_str(), stderr.as_str()),
+            (want, out, err),
+            "[{tag}]"
+        );
+    }
+}

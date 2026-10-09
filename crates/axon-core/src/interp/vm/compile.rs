@@ -17,7 +17,7 @@
 use std::cell::Cell;
 
 use super::pure::{Pure, PureExpr, PureLoop, PureOp, PureStmt, Sink};
-use super::{Body, Cond, Loop, MutRef, Op, Opnd, Var};
+use super::{Body, Cond, Loop, Move, Moves, MutRef, Op, Opnd, Src, Var};
 use crate::ast::{BinOp, Expr, FmtPart, Literal, MatchArm, Pattern, Stmt, UnaryOp};
 use crate::interp::sym::{FnEntry, NOT_LOCAL};
 use crate::interp::PlaceStep;
@@ -39,10 +39,12 @@ pub(in crate::interp) fn compile<'p>(ix: &Interp<'_>, body: &'p Expr) -> Body<'p
     };
     c.expr(body);
     debug_assert_eq!((c.height, c.scopes), (1, 0), "a body leaves one value");
+    branch_return(&mut c.ops);
     let leaf = c
         .pure_tree(body, &mut 0)
         .map(|t| Box::new(PureExpr::new(t)));
     Body {
+        moves: moves(&c.ops),
         ops: c.ops.into_boxed_slice(),
         loops: c.loops.into_boxed_slice(),
         max_stack: c.max_height as usize,
@@ -203,12 +205,23 @@ impl<'p> Compiler<'_, '_, 'p> {
                     (Expr::Let { .. }, None) => self.try_pure(value, Sink::Define(var)),
                     _ => None,
                 };
+                let before = self.ops.len();
                 self.expr(value);
-                let op = match ty {
-                    None => Op::Define(var),
-                    Some(ty) => Op::Let { var, ty },
+                // S8: `let t = a[i]` (untyped, inline index) in one op.
+                let fused = match &self.ops[before..] {
+                    [Op::IndexLocal { .. }] if pure.is_none() && ty.is_none() => self.ops.pop(),
+                    _ => None,
                 };
-                self.emit(op, 1, 0);
+                if let Some(Op::IndexLocal { arr, idx }) = fused {
+                    self.adjust(1, 0);
+                    self.emit(Op::IndexDefine { var, arr, idx }, 0, 0);
+                } else {
+                    let op = match ty {
+                        None => Op::Define(var),
+                        Some(ty) => Op::Let { var, ty },
+                    };
+                    self.emit(op, 1, 0);
+                }
                 self.end_pure(pure);
             }
             Expr::Assign { name, value } => self.assign(e, name, value),
@@ -522,11 +535,34 @@ impl<'p> Compiler<'_, '_, 'p> {
             if let (Expr::Ident(name), Some(idx)) = (receiver.as_ref(), self.inline(index)) {
                 let base = self.var(receiver, name);
                 // An inline value is read by the op, before the index, as
-                // the arm evaluates them.
+                // the arm evaluates them; S8: so is `b[j]`, in one op.
+                let before = self.ops.len();
                 let (val, pops) = match self.inline(value) {
                     Some(v) => (v, 0),
                     None => {
                         self.expr(value);
+                        let fused = match &self.ops[before..] {
+                            [Op::IndexLocal { .. }] => self.ops.pop(),
+                            _ => None,
+                        };
+                        if let Some(Op::IndexLocal {
+                            arr: src,
+                            idx: sidx,
+                        }) = fused
+                        {
+                            self.adjust(1, 0);
+                            self.emit(
+                                Op::WriteIndexIndex {
+                                    base,
+                                    idx,
+                                    src,
+                                    sidx,
+                                },
+                                0,
+                                0,
+                            );
+                            return;
+                        }
                         (Opnd::Stack, 1)
                     }
                 };
@@ -690,6 +726,21 @@ impl<'p> Compiler<'_, '_, 'p> {
         };
         let (op, popped) = match target {
             Ok(entry) => {
+                if let Some((op, l, r)) = self.local_int_arg(entry, args) {
+                    // Until it is proven, or where `int_fast` declines, the
+                    // op pushes the argument.
+                    self.max_height = self.max_height.max(self.height + 1);
+                    let op = Op::CallFastLocalInt {
+                        callee: var,
+                        entry,
+                        op,
+                        l,
+                        r,
+                        proven: Cell::new(false),
+                    };
+                    self.emit(op, 0, 1);
+                    return;
+                }
                 let inline = self.fast_inline_args(entry, args);
                 let popped = if inline.is_empty() {
                     for a in args {
@@ -756,6 +807,24 @@ impl<'p> Compiler<'_, '_, 'p> {
             .map(|a| self.inline(a))
             .collect::<Option<Box<[_]>>>()
             .unwrap_or_default()
+    }
+
+    /// S8: the one argument of a fast call to a one-parameter
+    /// `fn_table[entry]` when it is `l op r` with `l` an identifier and `r`
+    /// an int literal (`fib(n - 1)`), for [`Op::CallFastLocalInt`].
+    fn local_int_arg(&self, entry: u32, args: &'p [Expr]) -> Option<(BinOp, Var<'p>, i64)> {
+        let [Expr::BinOp { op, left, right }] = args else {
+            return None;
+        };
+        if matches!(op, BinOp::And | BinOp::Or)
+            || self.ix.fn_table[entry as usize].params.len() != 1
+        {
+            return None;
+        }
+        match (self.inline(left)?, self.inline(right)?) {
+            (Opnd::Local(l), Opnd::Int(r)) => Some((op.clone(), l, r)),
+            _ => None,
+        }
     }
 
     /// Whether `e` compiles to an [`Op::CallFast`] with inline arguments:
@@ -855,6 +924,7 @@ impl<'p> Compiler<'_, '_, 'p> {
                 stacked,
                 refs: refs.into_boxed_slice(),
                 discard,
+                moves: std::cell::OnceCell::new(),
             },
             stacked,
             u32::from(!discard),
@@ -913,6 +983,10 @@ impl<'p> Compiler<'_, '_, 'p> {
         }
         let (l, r, popped) = self.operands(left, right);
         let op = op.clone();
+        if let (Opnd::Stack, Opnd::Stack) = (&l, &r) {
+            self.emit(Op::BinStack(op), 2, 1);
+            return;
+        }
         self.emit(Op::Bin { op, l, r }, popped, 1);
     }
 
@@ -1360,6 +1434,135 @@ pub(super) fn variant_name(e: &Expr) -> &'static str {
         Expr::Continue => "Continue",
         Expr::For { .. } => "For",
     }
+}
+
+/// S8: a body that leads with `if l op r { val } else { .. }`, `val` a
+/// local or an int literal and the `then` arm binding nothing, as
+/// [`Op::BranchLocalInt`], `val`'s `Load`/`Const` and a `Jump` to the end:
+/// the branch becomes an [`Op::BranchReturn`], the other two ops stay (the
+/// path it takes when the fast return declines), so the op count and every
+/// jump target are unchanged.
+fn branch_return(ops: &mut [Op<'_>]) {
+    let end = ops.len() as u32;
+    let val = match ops {
+        [Op::BranchLocalInt {
+            target: 3,
+            cond: Cond::If,
+            push: false,
+            ..
+        }, val, Op::Jump(t), ..]
+            if *t == end =>
+        {
+            match val {
+                Op::Load(var) => Opnd::Local(*var),
+                Op::Const(Value::Int(n)) => Opnd::Int(*n),
+                _ => return,
+            }
+        }
+        _ => return,
+    };
+    if let Op::BranchLocalInt { op, l, r, .. } = &ops[0] {
+        ops[0] = Op::BranchReturn {
+            op: op.clone(),
+            l: *l,
+            r: *r,
+            val,
+            target: 3,
+        };
+    }
+}
+
+/// S8: the [`Moves`] form of a body's ops, when they have it: an optional
+/// scope around the statements (required when one is a `let`), each an
+/// [`Op::IndexDefine`], [`Op::WriteIndexIndex`] or [`Op::WriteIndexLocal`]
+/// on the same array local, then `Const(Unit)`.
+fn moves<'p>(ops: &[Op<'p>]) -> Option<Box<Moves<'p>>> {
+    let (inner, scoped) = match ops {
+        [Op::ScopePush, inner @ .., Op::Const(Value::Unit), Op::ScopePop]
+        | [Op::ScopePush, inner @ .., Op::ScopePop, Op::Const(Value::Unit)] => (inner, true),
+        [inner @ .., Op::Const(Value::Unit)] => (inner, false),
+        _ => return None,
+    };
+    let same = |a: &Var<'_>, b: &Var<'_>| a.s == b.s && a.slot == b.slot;
+    let mut arr: Option<Var<'p>> = None;
+    let mut the_arr = |v: &Var<'p>| match &arr {
+        Some(a) => same(a, v),
+        None => {
+            arr = Some(*v);
+            true
+        }
+    };
+    // `(var, register)` of each `let` so far.
+    let mut lets: Vec<(Var<'p>, u8)> = Vec::new();
+    let src = |o: &Opnd<'p>, lets: &[(Var<'p>, u8)]| match o {
+        Opnd::Int(n) => Some(Src::Int(*n)),
+        Opnd::Local(v) => Some(match lets.iter().rev().find(|(l, _)| same(l, v)) {
+            Some(&(_, r)) => Src::Reg(r),
+            None => Src::Param(v.s, v.slot),
+        }),
+        _ => None,
+    };
+    let index = |o: &Opnd<'p>, lets: &[(Var<'p>, u8)]| match src(o, lets)? {
+        Src::Reg(_) => None,
+        s => Some(s),
+    };
+    let mut steps = Vec::with_capacity(inner.len());
+    for op in inner {
+        let step = match op {
+            Op::IndexDefine { var, arr: a, idx } => {
+                let dst = u8::try_from(lets.len()).ok().filter(|&n| n < 2)?;
+                let idx = index(idx, &lets)?;
+                if !the_arr(a) {
+                    return None;
+                }
+                lets.push((*var, dst));
+                Move::Read { dst, idx }
+            }
+            Op::WriteIndexIndex {
+                base,
+                idx,
+                src: s,
+                sidx,
+            } => {
+                if !(the_arr(s) && the_arr(base)) {
+                    return None;
+                }
+                Move::Copy {
+                    idx: index(idx, &lets)?,
+                    sidx: index(sidx, &lets)?,
+                }
+            }
+            Op::WriteIndexLocal { base, idx, val } => {
+                if !the_arr(base) {
+                    return None;
+                }
+                Move::Write {
+                    idx: index(idx, &lets)?,
+                    val: src(val, &lets)?,
+                }
+            }
+            _ => return None,
+        };
+        steps.push(step);
+    }
+    let arr = arr?;
+    // The array is a local no `let` here rebinds.
+    if (!scoped && !lets.is_empty()) || lets.iter().any(|(l, _)| same(l, &arr)) || steps.len() > 4 {
+        return None;
+    }
+    if let [Move::Read { dst, idx: a }, Move::Copy { idx: a2, sidx: b }, Move::Write {
+        idx: b2,
+        val: Src::Reg(r),
+    }] = steps[..]
+    {
+        if dst == r && a == a2 && b == b2 {
+            steps = vec![Move::Swap { a, b }];
+        }
+    }
+    Some(Box::new(Moves {
+        arr,
+        steps: steps.into_boxed_slice(),
+    }))
 }
 
 /// The `<shape>` of a `vm: tree-op` line (spec §3, §8): the exceptions inside
