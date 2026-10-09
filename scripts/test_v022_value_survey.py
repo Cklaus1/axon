@@ -34,6 +34,20 @@ def main():
     eq("Default::default becomes a panic when taken", vs.mutate("val_default", "Default::default()", ""),
        '{ panic!("eq8 default") }')
     eq("an unknown enum variant has no rule (MANUAL, never a silent pass)", vs.mutate("val_default", "Foo::Bar", ""), None)
+    # amendment 115: the absent arm of a combinator answers the other way; matches! stops matching the absent case
+    eq("is_none_or becomes is_some_and", vs.mutate("val_comb", ".is_none_or(|t| now >= t)", ""), ".is_some_and(|t| now >= t)")
+    eq("is_some_and becomes is_none_or", vs.mutate("val_comb", ".is_some_and(|s| s != pid)", ""), ".is_none_or(|s| s != pid)")
+    eq("is_ok_and gives Err the true answer", vs.mutate("val_comb", ".is_ok_and(|m| m.is_dir())", ""), ".map_or(true, |m| m.is_dir())")
+    eq("is_err_and gives Ok the true answer", vs.mutate("val_comb", ".is_err_and(|e| e.is_empty())", ""),
+       ".map_or_else(|e| e.is_empty(), |_| true)")
+    eq("matches! drops its absent alternative", vs.mutate("val_comb", "matches!(v.exit_code, Some(0) | None)", ""),
+       "matches!(v.exit_code, Some(0))")
+    eq("matches! over a lone None stops matching it", vs.mutate("val_comb", "matches!(x, None)", ""), "matches!(x, Some(_))")
+    eq("an or_else literal moves", vs.mutate("val_comb", "9191", ""), "9192")
+    eq("a match-arm variant flips to the fail-open one", vs.mutate("val_arm", "EvidenceClass::GuestUnobserved", ""),
+       "EvidenceClass::Protected")
+    eq("a let-else literal flips", vs.mutate("val_arm", "false", ""), "true")
+    eq("a combinator with no rule is MANUAL, never a silent pass", vs.mutate("val_comb", "matches!(x)", ""), None)
     # signing inputs: a string moves, a const is replaced
     eq("a signed string moves", vs.mutate("flow_sign", 'b"axon-loop ledger key v1"', ""), 'b"axon-loop ledger key v1x"')
     eq("a signed const is replaced", vs.mutate("flow_sign", "CLEARANCE_DOMAIN", ""), '"/tmp"')
