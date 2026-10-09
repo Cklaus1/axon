@@ -1,10 +1,10 @@
 # R50 — Bytecode engine for `axon run`
 
 **Spec ID:** `R50-register-vm`
-**Status:** Draft (revision 6). Five adversarial reviews (2026-10-09, `reviewer`, all verdict "incorrect":
+**Status:** Draft (revision 7). Six adversarial reviews (2026-10-09, `reviewer`, all verdict "incorrect":
 first 2 blockers and 11 must-fix, second 4 must-fix and 8 smaller, third 6 must-fix and 6 smaller, fourth
-7 must-fix and 5 smaller, fifth 5 must-fix and 7 smaller) are answered in §15; a sixth review of this
-revision is pending.
+7 must-fix and 5 smaller, fifth 5 must-fix and 7 smaller, sixth 5 must-fix and 6 smaller) are answered in
+§15; a seventh review of this revision is pending.
 **Risk class:** Structural (a second execution path for the reference engine)
 **Author / date:** 2026-10-09, from compilebench AX-18 (interpreter cost) after AX-53..AX-55.
 
@@ -58,7 +58,7 @@ No language change. Two environment variables:
 | Var | Values | Effect |
 |---|---|---|
 | `AXON_ENGINE` | `tree` (default until S6), `vm` (default from S6) | Which engine runs fn and lambda bodies under every interpreter entry (`axon run`, `axon-run`, `axon test`, `axon goal`). On `wasm32-unknown-unknown`, which has no environment, the `axon_set_engine` export selects it instead (§4 Activation). Any other value: exit 2 with `AXON_ENGINE must be "vm" or "tree" (got "<v>")`. |
-| `AXON_VM_TRACE` | `1` | Three kinds of stderr line. Per fn or lambda body, the first time it runs: `vm: <name> <n> ops, <k> tree nodes`, or `vm: tree <name>: <reason>` when the whole body stays on the tree-walker. Per `Tree` op compiled into a body: `vm: tree-op <fn> <Variant>[(<shape>)]`, where `<shape>` is one of `Call(struct-lit)`, `Call(P)`, `Call(computed)`, `Index(E\|Var)` and, through S4, `Call(&mut)` (§8). From S5, per call that a flag keeps off the fast path: `vm: slow <fn>: <flag>` (§4 S5). Off by default. It never changes stdout or the exit code. |
+| `AXON_VM_TRACE` | `1` | Three kinds of stderr line. Per fn or lambda body, the first time it runs: `vm: <name> <n> ops, <k> tree nodes`, or `vm: tree <name>: <reason>` when the whole body stays on the tree-walker. Per `Tree` op compiled into a body: `vm: tree-op <name> <Variant>[(<shape>)]`, where `<shape>` is one of `Call(struct-lit)`, `Call(P)`, `Call(computed)`, `Index(E\|Var)` and, through S4, `Call(&mut)` (§8). From S5, per call that a flag keeps off the fast path: `vm: slow <fn>: <flag>` (§4 S5). `<name>` is the fn's name (`Type::method` for an impl method) or, for a lambda body, `<enclosing fn>::lambda#<i>`, where `<i>` is the lambda's 0-based position among the enclosing fn body's lambdas in source (pre-)order, nested ones included. Off by default. It never changes stdout or the exit code. |
 
 ```text
 $ AXON_ENGINE=vm AXON_VM_TRACE=1 axon run fib.ax
@@ -112,8 +112,8 @@ exit code, panic text, host journal, provenance JSONL and audit ledger. Semantic
 Ops call the functions the tree-walker calls: operators (`int_binop`, `float_binop`, `eval_binop_vals`,
 `eval_unary` for non-`RefMut` ops), `values_equal`, display, `coerce_to_sized`, `soft_inner`,
 `match_pattern`, `call_builtin`, `call_fn_in`, `call_closure_owned_by`. Where the tree-walker inlines logic
-in an `eval` arm that the engine also needs, S0/S3 first extract it into a function the arm then calls
-(no behaviour change), and both engines call that function:
+in an `eval` arm that the engine also needs, the slice the §13 DAG names (S0–S4) extracts it into a
+function the arm then calls (no behaviour change), and both engines call that function:
 
 | Extracted helper | From | Contents (in eval's order) |
 |---|---|---|
@@ -122,7 +122,11 @@ in an `eval` arm that the engine also needs, S0/S3 first extract it into a funct
 | `chan_method(recv, method, args: &[Expr], env)` and `impl_method(recv, method, argv, env)` | `Expr::MethodCall` arm (eval.rs:453-505) | The arm evaluates the receiver first. For a `Value::Chan` receiver, `recv`/`try_recv`/`len`/`clone` and the unknown-method panic never evaluate the arguments, and `send` evaluates only `args[0]`; that path is `chan_method`, which takes the unevaluated argument nodes and evaluates them itself exactly as the arm does. Every other receiver evaluates all arguments left to right and then calls `impl_method`. The engine lowers a method call as: evaluate the receiver; op `MethodRecv` calls `chan_method` with the argument nodes when the receiver is a channel, and otherwise falls through to the compiled argument evaluation and `impl_method`. The receiver's type is known only at run time, so the branch is a run-time check. |
 | `make_closure(lambda_expr, env)` | `Expr::Lambda` arm | `res.lambda(expr)` (else `LambdaInfo::of`); captures built from `env` in `captures` order |
 | `assign_in_place(s, slot, name, value, env)` | `Assign` arm (eval.rs:198-209, 1550-1632) | already a function: it matches the AX-31 shapes by syntax, then returns `Ok(false)` without evaluating anything unless the local currently holds a `Str` or `Array`; the engine calls it first for every local `Assign`, exactly as the arm does (§4 lowered set) |
-| `call_mut(callee, args: &[Expr], env)` | `eval_call_mut` + `call_fn_mut` (eval.rs:1214-1261, interp.rs:3375-3401) | the `&mut` move-out / call / move-back protocol, unchanged in behaviour; S5 makes it allocation-free (pooled frame and buffers), which the tree-walker gets too |
+| `call_mut(callee, args: &[Expr], tier, env)` | `eval_call_mut` + `call_fn_mut` (eval.rs:1214-1261, interp.rs:3375-3401) | the `&mut` move-out / call / move-back protocol, unchanged in behaviour, including the unconditional write of `tier` to `current_call_tier` (eval.rs:1253); S5 makes it allocation-free (pooled frame and buffers), which the tree-walker gets too |
+| `index_in_place(s, slot, name, idx, env)` and `index_value(arr, idx)` (S2) | `Index` arm (eval.rs:548-574) | The arm's two paths stay two ops. An `Ident` receiver that is bound locally or in `globals` is read in place: the engine evaluates the index (`eval_int`'s conversion) only after that existence test, then calls `index_in_place`. Any other receiver, an unbound `Ident` included (which then runs the `Ident` op's chain: `fn_of_sym`, then the undefined-identifier panic), is evaluated first, then the index, then `index_value`. Same bounds and non-array panic texts |
+| `field_in_place(s, slot, name, f, field, env)` (S2) | `FieldAccess` arm (eval.rs:506-524) | An `Ident` receiver: `get_var`, then `globals`, then the undefined-identifier panic (no `fn_of_sym` step, unlike the `Ident` arm), then `field_of`; any other receiver is evaluated, then `field_of` |
+| `finish_record(expr, name, vals, env)` (S2) | `StructLit` arm (eval.rs:585-695) | The caller evaluates the field expressions in source order (the arm's order) into `vals`; the helper does the rest exactly as the arm: `res.record_lit` or `RecordLit::of`, the `empty` shortcut (taken before any field is evaluated, so the engine tests it first), slot placement, per-field sized-int coercion, enum versus struct, then the per-field and whole-struct refinement checks (`Flow::RefineViolation`, exit 6) |
+| `place_index(v)` and `write_place(base, slot, steps, value, env)` (S2) | `AssignTo` arm (eval.rs:216-270) and `flatten_place` (interp.rs:4136-4163) | The value is evaluated first. Then the index expressions of the place, in `flatten_place`'s order (outermost `Index` node first, walking toward the base: `g[i][j] = v` evaluates `j` before `i`), each converted by `place_index` (`as_int`, then the `negative index` panic). `write_place` is phase 2: `get_var_mut` with the undefined-variable panic, the copy-on-write walk and its panic texts |
 
 #### Activation
 
@@ -144,8 +148,8 @@ in an `eval` arm that the engine also needs, S0/S3 first extract it into a funct
   body (sym.rs:957-985: `body: body.clone()`, resolved in the clone); the AST original is never resolved,
   so only the clone has slots. `ClosureCode` gains `compiled: Option<OnceCell<Body>>`. It is `Some` only for
   codes built by `Resolution::lambda`, and `None` for `LambdaInfo::of` codes (run-time AST clones),
-  `fn_value` forwarders and `SendValue` deep copies (made only by `host_await_val`/`host_await_val_opt`,
-  builtins.rs:3115, 3131), whose bodies run on the tree. A compiled lambda body
+  `fn_value` forwarders and `SendValue` deep copies (built by `SendValue::into_value`, interp.rs:1945, on
+  the reply of `host_await_val`/`host_await_val_opt`, builtins.rs:3120, 3136), whose bodies run on the tree. A compiled lambda body
   refers to nodes of that same `ClosureCode.body` by raw `*const Expr` (for `Tree` ops and literal
   operands), not by `&'p Expr`. This is sound because `ClosureCode` is only ever built inside an `Rc`
   (interp.rs:1945, eval.rs:90, sym.rs:307 and 977), its `body` is never mutated or moved afterwards, and
@@ -226,7 +230,8 @@ in an `eval` arm that the engine also needs, S0/S3 first extract it into a funct
     fn → closure → fn 1,011 / 9,574; `&mut` recursion (qsort's shape) 1,884 / 18,638; recursion inside a
     `with` body 889 / 9,018. The tightest margin over 450 is 1.98× (`with`, debug). The requirement: under
     `AXON_ENGINE=vm`, in both profiles, every chain completes depth 585 (1.3 × 450) under that
-    configuration, and with the guard in place reports the exit-101 depth panic at 450.
+    configuration, and with the guard in place (`-W max-wasm-stack=4294967295`, `AXON_MAX_DEPTH` unset)
+    reports the exit-101 depth panic at 450.
   - The wasm engine's own native stack. Under wasmtime's default `max-wasm-stack` the tree-walker already
     traps before 450 on all four chains (deepest completed 136–318; compilebench AX-56). R50 does not fix
     that, and must not make it worse once the VM is the default. Through S5 the script only *reports* each
@@ -239,12 +244,14 @@ in an `eval` arm that the engine also needs, S0/S3 first extract it into a funct
 
   `scripts/vm_wasm_depth.sh` checks both. It builds `axon-run` for `wasm32-wasip1` in both profiles from
   the commit under test, runs the four chain programs in `tests/fixtures/vm_depth/` (`plain.ax`,
-  `closure.ax`, `mut.ax`, `with.ax`) under both engines of that same build, bisects the deepest completed
-  depth in each configuration, checks the panic at 450, and prints one line per (profile, engine, chain,
-  configuration). It fails when a chain misses 585 in the linear stack or the 450 panic is wrong, and with
-  `--require-default-stack` also when a default-stack VM depth is below the tree's. There is no run-time
-  refusal: a slice that fails the script does not land. `wasm32-unknown-unknown` runs the same code with
-  the same linear-stack setting; its native stack belongs to the browser and is AX-56's, not this gate's.
+  `closure.ax`, `mut.ax`, `with.ax`; each recurses to the depth in its first line, `let DEPTH = 100`, which
+  the script rewrites in a temporary copy per probe) under both engines of that same build, bisects the
+  deepest completed depth in each configuration, checks the panic at 450, and prints one line per
+  (profile, engine, chain, configuration). It fails when a chain misses 585 in the linear stack or the 450
+  panic is wrong, and with `--require-default-stack` also when a default-stack VM depth is below the
+  tree's. There is no run-time refusal: a slice that fails the script does not land.
+  `wasm32-unknown-unknown` runs the same code with the same linear-stack setting; its native stack belongs
+  to the browser and is AX-56's, not this gate's.
 
 #### Lowered set per slice (anything else is a `Tree` op)
 
@@ -295,7 +302,11 @@ the order of `call_fn_entry` → `call_fn_in` (interp.rs:3321, 3403):
 
 Budget: at most 300 instructions per fast one-argument call (§10 `--repros`). S5 is accepted only with a
 cli test per flag showing that a flagged fn never takes the fast path (trace line
-`vm: slow <fn>: <flag>`).
+`vm: slow <fn>: <flag>`), for every flag above except `has_ref_mut`. That flag cannot be reached by a
+checked program: E0605 (mut_borrow.rs:16-21) rejects a plain argument for a `&mut` param and a
+`&mut`-taking fn used as a value, so every call to such a fn has a `&mut` argument and is a `CallMut`,
+never a fast-call candidate. A unit test asserts that an `FnEntry` with `has_ref_mut` set is not
+fast-call eligible.
 
 **`&mut` calls.** `call_mut` becomes allocation-free. Today it allocates `argv`, `borrowed`, an unpooled
 `Env::new()` and `outs` per call. After S5 it uses the frame and argument pools and a pooled move-back
@@ -389,26 +400,31 @@ against the same frames, and the tree-walker is the reference for both.
   both engines and asserts identical stdout, stderr and exit code. Each also runs once with
   `AXON_VM_TRACE=1` and asserts the fns under test were compiled with the expected tree-node count, so
   parity is never vacuous.
-- [ ] Parity corpus: `scripts/vm_parity.sh` runs every `examples/**/*.ax` that has a `main`, and every
-  `tests/fixtures/**/*.ax` that `axon run` accepts, under both engines. Isolation: each run starts in a
-  fresh temporary working directory with its own `TMPDIR`, `XDG_CACHE_HOME`, `AXON_AUDIT_LEDGER`,
-  `AXON_LEARNER_STATE` and `AXON_BANDIT_STATE` (the two `examples/asi/persistent_*.ax` state files, which
-  otherwise default to fixed `/tmp` paths), reads stdin from `/dev/null`, and sets `AXON_AI_MOCK=1`,
-  `AXON_SEED=42`, `AXON_CLOCK=0:1`, `AXON_AUDIT_DETERMINISTIC=1` and no `--verbose`. Each run has a
-  30-second wall-clock limit. Imports resolve only through `AXON_PATH`, `~/.axon/lib` and
-  `<binary dir>/../lib/axon` (`axon_search_dirs`, lib.rs:517-541; the last at 536-539), so the script
-  exports an absolute `AXON_PATH`: the union `all_examples_parity.sh` uses (`examples/stdlib`,
-  `examples/asi`, `examples/modular`, `examples/domain`), rooted at the repository.
+- [ ] Parity corpus: `scripts/vm_parity.sh` builds the §10 binary (`cargo build --release -p axon-core
+  --no-default-features --bin axon`; the tree-walker runs qsort in 5.8 s there against 57.7 s in debug)
+  and runs, under both engines, every `examples/**/*.ax` that has a `main`, and every
+  `crates/axon-core/tests/fixtures/**/*.ax` that `axon check` accepts and that defines `main` (31 of the
+  157 fixtures are rejected by check on purpose and 2 have no `main`, at `886aae53`). Isolation: each run
+  starts in a fresh temporary working directory with its own `TMPDIR`, `XDG_CACHE_HOME` and
+  `AXON_AUDIT_LEDGER`, sets `AXON_LEARNER_STATE=learner.state` and `AXON_BANDIT_STATE=bandit.state`
+  (relative, so they resolve inside that directory and every run sees the same strings:
+  `examples/asi/persistent_learner.ax:91` prints its state path; without the variables both default to
+  fixed `/tmp` paths), reads stdin from `/dev/null`, and sets `AXON_AI_MOCK=1`, `AXON_SEED=42`,
+  `AXON_CLOCK=0:1`, `AXON_AUDIT_DETERMINISTIC=1` and no `--verbose`. Each run has a 30-second wall-clock
+  limit. Imports resolve only through `AXON_PATH`, `~/.axon/lib` and `<binary dir>/../lib/axon`
+  (`axon_search_dirs`, lib.rs:517-544; the last at 536-539), so the script exports an absolute
+  `AXON_PATH`: the union `all_examples_parity.sh` uses (`examples/stdlib`, `examples/asi`,
+  `examples/modular`, `examples/domain`), rooted at the repository.
   `tests/fixtures/vm_parity_skip.txt` lists files with a reason each; a listed file is not run. An
-  unlisted file fails the gate when `axon check` rejects it, when a run hits the time limit, or when its
-  two tree runs (made before comparing engines) differ, which means it keeps state the isolation does not
-  reach. The list starts with the 10 examples that have a `main` and that `axon check` rejects by design
-  under that `AXON_PATH` (the 9 `examples/flagship/**` capability-violation programs and
-  `examples/asi/contained_violation.ax`; checked 2026-10-09 at `886aae53`), and the three that do not
-  finish without a host or by design (`examples/jobs/runaway.ax`, an intentional infinite loop;
-  `examples/r27/killable_agent.ax`, 1e9 iterations; `examples/mobile/lifecycle.ax`, a `host_await`
-  lifecycle with no host driver). The script diffs stdout, stderr, exit code, the audit ledger and
-  `provenance.jsonl`.
+  unlisted example fails the gate when `axon check` rejects it; any unlisted file fails it when a run hits
+  the time limit, or when its two tree runs (made before comparing engines) differ, which means it keeps
+  state the isolation does not reach. The list starts with the 10 examples that have a `main` and that
+  `axon check` rejects by design under that `AXON_PATH` (the 9 `examples/flagship/**`
+  capability-violation programs and `examples/asi/contained_violation.ax`; checked 2026-10-09 at
+  `886aae53`), and the three that do not finish without a host or by design
+  (`examples/jobs/runaway.ax`, an intentional infinite loop; `examples/r27/killable_agent.ax`, 1e9
+  iterations; `examples/mobile/lifecycle.ax`, a `host_await` lifecycle with no host driver). The script
+  diffs stdout, stderr, exit code, the audit ledger and `provenance.jsonl`.
   Normalisation is one rule: drop the `ts_ms` and `run_id` keys from every provenance row. Both are
   wall-clock values the virtual clock does not reach (`now_ms` in interp.rs:4267, `generate_run_id` in
   main.rs:4329); every row has `ts_ms`, and the `run_start` row (provenance.rs:606-628) has `run_id`.
@@ -437,32 +453,38 @@ against the same frames, and the tree-walker is the reference for both.
 - [ ] wasm depth: `scripts/vm_wasm_depth.sh` (§4 Execution, Recursion) gates every slice S0–S5 on the
   linear-stack bound and the 450 panic, comparing against the tree from the same commit; default-stack
   depths are reported. S6 runs it with `--require-default-stack`.
-- [ ] Red tests first, one per slice, each failing on the slice before it (all in `tests/cli_run.rs`,
-  named under the slice's gate prefix so the gate runs them):
+- [ ] Red tests first, one per slice (all in `tests/cli_run.rs`, named under the slice's gate prefix so
+  the gate runs them). The S2, S3 and S4 programs each use only S1 constructs and those of their own
+  slice, so each fails on any build without that slice and passes once it lands, whatever order those
+  three independent slices land in (S5's may use all of S1–S4, which it depends on). Each asserts
+  `<k> tree nodes` = 0 on the named bodies, never an op count:
   - S0 `vm_engine_scope_leak` (above);
-  - S1 `vm_scalar_fib_no_tree_nodes`: trace line `vm: fib <k> ops, 0 tree nodes` (`<k>` fixed when S1
-    lands); fails on S0, where every body is one `Tree` op;
-  - S2 `vm_aggregate_part_no_tree_nodes`: `part.ax`'s `main` compiles with 0 tree nodes; fails on S1,
-    where `a[j]` is a `Tree` op;
+  - S1 `vm_scalar_fib_no_tree_nodes`: trace line `vm: fib <n> ops, 0 tree nodes`; fails on S0, where
+    every body is one `Tree` op;
+  - S2 `vm_aggregate_part_no_tree_nodes`: `part.ax`'s `main` compiles with 0 tree nodes; fails without
+    S2, where `a[j]` is a `Tree` op;
   - S3 `vm_match_option_no_tree_nodes`: a fn matching an `Option<i64>` with a guard, and a `while let`,
-    compiles with 0 tree nodes; fails on S2;
-  - S4 `vm_closure_fold_no_tree_nodes`: `fold.ax`'s `main` and its lambda body both compile with 0 tree
-    nodes; fails on S3, where `Lambda` is a `Tree` op and lambda bodies are not compiled;
+    compiles with 0 tree nodes; fails without S3;
+  - S4 `vm_closure_fold_no_tree_nodes`: `fold.ax`'s `main` (which uses no S2 construct) and its lambda
+    body `main::lambda#0` both compile with 0 tree nodes; fails without S4, where `Lambda` is a `Tree` op
+    and lambda bodies are not compiled;
   - S5 `vm_fastcall_mutcall_no_tree_nodes` (`mutcall.ax`'s `main` has 0 tree nodes; fails on S4, where
-    the call is a `Call(&mut)` `Tree` op) and `vm_fastcall_slow_<flag>` per flag (the `vm: slow` line;
-    fails on S4, which prints none).
+    the call is a `Call(&mut)` `Tree` op) and `vm_fastcall_slow_<flag>` per flag except `has_ref_mut`
+    (§4 S5; the `vm: slow` line; fails on S4, which prints none).
+
+Every `tests/fixtures/` path in this spec is under `crates/axon-core/`.
 
 ### 9. Acceptance criteria
 
 - [ ] `scripts/vm_parity.sh` exits 0 with 0 differing files and no `tree-op` line of a variant or shape
   the S5 list marks lowered.
 - [ ] `scripts/vm_wasm_depth.sh --require-default-stack` exits 0.
+- [ ] `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` exits 0 with the VM as the default engine.
 - [ ] `vm_engine_scope_leak` and every per-slice red test (§8) pass.
 - [ ] `cargo test -p axon-core --no-default-features` and `--features codegen` green under both
   `AXON_ENGINE` values.
 - [ ] `scripts/vm_perf_gate.sh` exits 0 on the compilebench host (not a skip; see §10).
 - [ ] `scripts/reference_gate.sh` in sync (two env vars registered).
-- [ ] compilebench reruns the `axon-interp` row at the S6 commit and records the numbers in AX-18.
 
 ### 10. Performance budget
 
@@ -542,12 +564,14 @@ Three changes touch the reference tree-walker, each with a CHANGELOG entry: the 
   `call_fn_mut`'s reverse scan read a body `let` that shadows a `&mut` param back instead of the param
   (compilebench AX-57: `axon run` panics where the native build prints `3`). After the fix those programs
   see the outer binding. Native codegen keeps no run-time scope stack, so it never had the leak; the fix
-  moves the interpreter onto codegen's behaviour. S0 runs the interp↔codegen parity harnesses to confirm no
-  other case changes.
+  moves the interpreter onto codegen's behaviour. The S0 gate runs `AXON_HARNESS_STRICT=1
+  scripts/parity_all.sh` under the tree engine to confirm no other case changes.
 - The pooled closure call (S4) and the allocation-free `call_mut` (S5) change cost only.
 
 Each slice is a revertible commit series with its own gate. S6 flips the default to `vm` in one commit;
 reverting it restores the tree default. `AXON_ENGINE=tree` remains the reference and the escape hatch.
+After S6 lands, compilebench re-pins Axon, reruns its `axon-interp` row and records the numbers in AX-18;
+that is a follow-up in the benchmark repo, not an R50 gate.
 
 Blast radius if wrong: a lowering bug changes a program's output under `axon run`. The net is the parity
 corpus, the whole suite under both engines, and the per-test trace assertions. Since an unlowered node is
@@ -575,13 +599,13 @@ the reference code, gaps cost speed, never correctness.
 
 | Node | Depends-on / blocked-by | Gate (named test or script) | Status |
 |---|---|---|---|
-| R50.S0 selector (`AXON_ENGINE`, `axon_set_engine`), trace (body and `tree-op` lines), `run_body`, `FnEntry.compiled`, every body = one `Tree` op; extract `dispatch_call`, `bind_let`, `call_mut`; tree-walker scope-leak fix; `vm_parity.sh`; `vm_perf_gate.sh`; `vm_wasm_depth.sh` and `tests/fixtures/vm_depth/` | — | `cargo test -p axon-core --test cli_run vm_engine_` (incl. `vm_engine_scope_leak`) + `scripts/vm_parity.sh` (empty lowered list) + `scripts/vm_wasm_depth.sh` | todo |
+| R50.S0 selector (`AXON_ENGINE`, `axon_set_engine`), trace (body and `tree-op` lines), `run_body`, `FnEntry.compiled`, every body = one `Tree` op; extract `dispatch_call`, `bind_let`, `call_mut`; tree-walker scope-leak fix; `vm_parity.sh`; `vm_perf_gate.sh`; `vm_wasm_depth.sh` and `tests/fixtures/vm_depth/` | — | `cargo test -p axon-core --test cli_run vm_engine_` (incl. `vm_engine_scope_leak`) + `scripts/vm_parity.sh` (empty lowered list) + `scripts/vm_wasm_depth.sh` + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` (tree engine; §11) | todo |
 | R50.S1 scalar core and calls; `AssignInPlace` (AX-31 shapes); operand-stack pool | R50.S0 | `cli_run vm_scalar_` (incl. `vm_scalar_fib_no_tree_nodes`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (S1 rows) + `vm_wasm_depth.sh` | todo |
-| R50.S2 aggregates, index/field reads, place writes (`AssignTo`) | R50.S1 | `cli_run vm_aggregate_` (incl. `vm_aggregate_part_no_tree_nodes`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (S1 and `part.ax` rows) + `vm_wasm_depth.sh` | todo |
+| R50.S2 aggregates, index/field reads, place writes (`AssignTo`); extract `index_in_place`, `index_value`, `field_in_place`, `finish_record`, `place_index`, `write_place` | R50.S1 | `cli_run vm_aggregate_` (incl. `vm_aggregate_part_no_tree_nodes`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (S1 and `part.ax` rows) + `vm_wasm_depth.sh` | todo |
 | R50.S3 match, patterns, enums, methods; extract `chan_method`, `impl_method` | R50.S1 | `cli_run vm_match_` (incl. `vm_match_option_no_tree_nodes`) + `vm_parity.sh` + `vm_wasm_depth.sh` | todo |
 | R50.S4 lambdas; extract `make_closure`; `ClosureCode.compiled`; allocation-free builtin → closure call on the lent path (`Rc::strong_count(cv) == private_refs`, interp.rs:4054), the one `fold.ax` and arr-sum take: `arr_fold`/`arr_map`/... take argument buffers from `arg_bufs`, `call_closure_owned_by` drains its arguments into the params and hands the buffer to `recycle_args` (today `zip(args)` consumes it, interp.rs:4067), and its `Env` gets a pooled `marks` Vec (today `vec![acc, x.clone()]` per element, builtins.rs:1847, and `Env::from_snapshot` starts with an empty `marks`, so `env.push()` allocates, interp.rs:749-754, 4058-4066). The copied path (a closure with other references, e.g. `let f = \|..\| ..; arr_fold(xs, 0, f)`) keeps its per-call `Vec::with_capacity` (interp.rs:4061-4064) | R50.S1 | `cli_run vm_closure_` (incl. `vm_closure_fold_no_tree_nodes`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (S1 and `fold.ax` rows) + `vm_wasm_depth.sh` | todo |
 | R50.S5 fast calls; allocation-free `call_mut` and `CallMut` op | R50.S2, R50.S3, R50.S4 | `cli_run vm_fastcall_` (incl. `vm_fastcall_mutcall_no_tree_nodes`, `vm_fastcall_slow_<flag>`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (all rows) + `vm_wasm_depth.sh` | todo |
-| R50.S6 default flip, docs | R50.S5; blocked-by Q3 or Q4 only if it comes true | whole suite under both engines + `vm_perf_gate.sh` + `reference_gate.sh` + `vm_wasm_depth.sh --require-default-stack` (default-stack VM depth ≥ tree on all four chains) | todo |
+| R50.S6 default flip, docs | R50.S5; blocked-by Q3 or Q4 only if it comes true | whole suite under both engines + `vm_parity.sh` (S5 list) + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` (VM default) + `vm_perf_gate.sh` + `reference_gate.sh` + `vm_wasm_depth.sh --require-default-stack` (default-stack VM depth ≥ tree on all four chains) | todo |
 
 ### 14. Evidence ledger
 
@@ -676,8 +700,25 @@ costs) and found them correct.
 | [must-fix] S1 red test not matched by the S1 gate filter; S2–S5 have no red test | Renamed `vm_scalar_fib_no_tree_nodes`; one named red test per slice under its gate prefix (§8, §13, §9) |
 | S2 DAG row still owns the AX-31 shapes | S1 node names `AssignInPlace` (AX-31 shapes); S2 is aggregates, index/field reads, `AssignTo` |
 | third-review stack row describes the replaced design | Marked replaced in revision 5 |
-| import path cited as the binary's directory; skip seed names `bpf/bad_*` | `<binary dir>/../lib/axon` (lib.rs:536-539, inside `axon_search_dirs` at 517-541; the review's 544-549 is past the function); seed is the 10 rejected examples with `main`, re-checked at `886aae53` (§8) |
+| import path cited as the binary's directory; skip seed names `bpf/bad_*` | `<binary dir>/../lib/axon` (lib.rs:536-539, inside `axon_search_dirs` at 517-544); seed is the 10 rejected examples with `main`, re-checked at `886aae53` (§8) |
 | `host_await_opt` | `host_await_val_opt` (builtins.rs:3129-3131) |
 | §11 "Two S0 changes" | Three changes named with their slices |
 | §3 trace row lists one line kind | All three kinds and the shape tokens (§3) |
 | `for` over arrays | `for` is integer ranges only (ast.rs:400-410) |
+
+Sixth review (2026-10-09, `reviewer`, verdict "incorrect": 0 blockers, 5 must-fix, 6 smaller), answered
+in revision 7. It confirmed all twelve fifth-review resolutions against code and runs.
+
+| Finding | Resolution |
+|---|---|
+| [must-fix] per-run absolute state paths make `persistent_learner.ax` differ between two tree runs (it prints the path, line 91) | `AXON_LEARNER_STATE=learner.state`, `AXON_BANDIT_STATE=bandit.state`, relative to each run's fresh cwd (§8); the review measured all 295 runnable files stable that way |
+| [must-fix] `vm_parity.sh` binary unnamed; the `vm_perf` fixtures exceed 30 s in debug | It builds the §10 release binary (§8) |
+| [must-fix] no S2 helper for `StructLit`, `AssignTo`, in-place `Index`/`FieldAccess` | Six S2 helpers in the §4 table with their arms' order and texts (`index_in_place`, `index_value`, `field_in_place`, `finish_record`, `place_index`, `write_place`), named in the S2 DAG row; "S0/S3" replaced by the DAG's slices |
+| [must-fix] a `has_ref_mut` fast-path test cannot be written (E0605) | Flag tests exclude `has_ref_mut`; a unit test asserts such an entry is not fast-call eligible (§4 S5, §8) |
+| [must-fix] §11's interp↔codegen check not in the S0 gate | `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` (tree) in the S0 gate |
+| red tests assume a linear S2→S3→S4 order | Each red program uses only S1 constructs and its own slice's; "fails without Sn" (§8) |
+| fib op count pinned; lambda body names undefined | Tests assert only `0 tree nodes`; `<fn>::lambda#<i>` defined in §3 |
+| stack setting for the 450-panic check unnamed | `-W max-wasm-stack=4294967295`, `AXON_MAX_DEPTH` unset (§4 Recursion); fixtures take their depth from a rewritten `let DEPTH` line |
+| fixture corpus filter and root | `crates/axon-core/tests/fixtures`, check-accepted with `main`; the check-rejection failure applies to examples only (§8) |
+| citations: `axon_search_dirs` span, `SendValue` closure site, `call_mut` tier | lib.rs:517-544; `SendValue::into_value` (interp.rs:1945) on the reply at builtins.rs:3120, 3136; `call_mut` takes `tier` (eval.rs:1253) |
+| S6 gate lacks `vm_parity.sh` and the interp↔codegen harnesses; compilebench rerun is not a named check | Both added to the S6 gate and §9; the compilebench rerun moved to §11 as a follow-up |
