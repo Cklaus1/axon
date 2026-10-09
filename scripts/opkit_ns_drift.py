@@ -1176,7 +1176,7 @@ def destination_problems(root, kit_text=None, label="operator_deploy_protected_h
 VALUE_FUNCTIONS = {"opkit_overrides", "opkit_ns_ids", "opkit_bounding_arg", "opkit_rw_extra_roots", "opkit_ns_prephase"}
 _FD_WRITE = re.compile(r'(?<![\w<])[12]?>&2|>\s*/dev/(?:stderr|stdout)\b|>\s*/(?:proc/self|dev)/fd/[12]\b|sys\.(?:stderr|stdout)')
 _PRINTS = re.compile(r'\b(?:echo|printf)\b')
-_REDIRECTED = re.compile(r'(?<![<\d&])>(?!&)')
+_REDIRECTED = re.compile(r'(?<![<])>')   # any redirection: >&2 and 1>&2 belong to _FD_WRITE alone, not to a second rule
 
 
 def diagnostic_problems(text, label="scripts/lib/opkit_ns.sh"):

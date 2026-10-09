@@ -10778,7 +10778,7 @@ MUTATIONS += [
     ('M3414', "NS-DIAG (118): the drift gate flags a bare echo/printf on stdout in a function that is not a value function", 'scripts/opkit_ns_drift.py',
      "            elif _PRINTS.search(code) and", "            elif False and _PRINTS.search(code) and", *_DR11),
     ('M3415', "NS-DIAG (118): the drift gate requires opkit_say to begin by classifying fd 2", 'scripts/opkit_ns_drift.py',
-     "    if not say or not re.match(", "    if False and not say or not re.match(", *_DR11),
+     "    if not say or not re.match(r'\\s*if opkit_ns_fd_why 2\\b', say[0]):", "    if False:", *_DR11),
     ('M3416', "NS-DIAG (118): the drift gate requires ns_run to classify fds before it unshares", 'scripts/opkit_ns_drift.py',
      "    if std < 0 or any(i >= 0 and i < std for i in first):", "    if std < 0 or False and any(i >= 0 and i < std for i in first):", *_DR11),
     ('M3417', "NS-DIAG (118): the drift gate requires ns_run's pre-checks to run with stderr captured", 'scripts/opkit_ns_drift.py',
