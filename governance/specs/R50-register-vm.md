@@ -1,17 +1,17 @@
 # R50 — Bytecode engine for `axon run`
 
 **Spec ID:** `R50-register-vm`
-**Status:** Draft (revision 9). Eight adversarial reviews (2026-10-09, `reviewer`, all verdict "incorrect":
-first 2 blockers and 11 must-fix, second 4 must-fix and 8 smaller, third 6 must-fix and 6 smaller, fourth
-7 must-fix and 5 smaller, fifth 5 must-fix and 7 smaller, sixth 5 must-fix and 6 smaller, seventh 2
-must-fix and 3 smaller, eighth 2 must-fix and 2 smaller) are answered in §15; a ninth review of this
-revision is pending.
+**Status:** Reviewed (revision 10). Nine adversarial reviews (2026-10-09, `reviewer`). The first eight,
+verdict "incorrect" (first 2 blockers and 11 must-fix, second 4 must-fix and 8 smaller, third 6 must-fix
+and 6 smaller, fourth 7 must-fix and 5 smaller, fifth 5 must-fix and 7 smaller, sixth 5 must-fix and 6
+smaller, seventh 2 must-fix and 3 smaller, eighth 2 must-fix and 2 smaller), and the ninth, verdict
+"correct" (0 blockers, 0 must-fix, 4 nits), are answered in §15.
 **Risk class:** Structural (a second execution path for the reference engine)
 **Author / date:** 2026-10-09, from compilebench AX-18 (interpreter cost) after AX-53..AX-55.
 
 ```spec-meta
 id: R50-register-vm
-status-claim: Draft
+status-claim: Reviewed
 depends-on: none
 blocks: none
 blocked-by: none
@@ -116,7 +116,7 @@ Ops call the functions the tree-walker calls: operators (`int_binop`, `float_bin
 `match_pattern`, `call_builtin`, `call_fn_in`, `call_closure_owned_by`. Where the tree-walker inlines logic
 in an `eval` arm that the engine also needs, the slice the §13 DAG names (S0–S4) extracts it into a
 function the arm then calls (no behaviour change), and both engines call that function. The three
-condition rules differ and stay different: `if` and `while` unwrap an `Uncertain<bool>` with `soft_inner`
+condition rules differ and stay different: `if` and `while` unwrap an `Uncertain<bool>` or `Temporal<bool>` with `soft_inner`
 and panic on a non-bool (`cond_bool`, below); a match guard is true only for `Value::Bool(true)`, with no
 unwrap and no panic, so an `Uncertain<bool>` or any other value is false (eval.rs:308); `for` bounds and
 index reads take `Int` only (`strict_int`, below), while place writes also accept a sized int
@@ -130,8 +130,8 @@ index reads take `Int` only (`strict_int`, below), while place writes also accep
 | `make_closure(lambda_expr, env)` | `Expr::Lambda` arm | `res.lambda(expr)` (else `LambdaInfo::of`); captures built from `env` in `captures` order |
 | `assign_in_place(s, slot, name, value, env)` | `Assign` arm (eval.rs:198-209, 1550-1632) | already a function: it matches the AX-31 shapes by syntax, then returns `Ok(false)` without evaluating anything unless the local currently holds a `Str` or `Array`; the engine calls it first for every local `Assign`, exactly as the arm does (§4 lowered set) |
 | `call_mut(callee, args: &[Expr], tier, env)` | `eval_call_mut` + `call_fn_mut` (eval.rs:1214-1261, interp.rs:3375-3401) | the `&mut` move-out / call / move-back protocol, unchanged in behaviour, including the unconditional write of `tier` to `current_call_tier` (eval.rs:1253); S5 makes it allocation-free (pooled frame and buffers), which the tree-walker gets too |
-| `cond_bool(v, what)` (S1) | `If` and `While` arms (eval.rs:279-300, 322-339) | `soft_inner` unwrap of an `Uncertain`, then `Bool(b)` gives `b`; any other value panics `if condition must be bool, got <t>` or `while condition must be bool, got <t>` (`what` picks the word). The S1 fused compare-and-branch takes this path whenever the comparison does not yield a plain `Bool`. Not used for match guards |
-| `strict_int(v)` (S1) | `eval_int` (eval.rs:1634-1638) | `Int(n)` gives `n`; anything else, a `SizedInt` included, panics `expected i64, got <t>`. `for` (S1): `start`, then `end`, each through `strict_int`, before the variable is bound; then per iteration the `i <= e` (inclusive) or `i < e` test, `env.push()`, define the variable, the body as `run_loop_body` runs it, `env.pop()`, `i += 1` (eval.rs:378-399) |
+| `cond_bool(v, what)` (S1) | `If` and `While` arms (eval.rs:279-300, 323-348) | `soft_inner` unwrap of an `Uncertain` or `Temporal` (value.rs:41-44), then `Bool(b)` gives `b`; any other value panics `if condition must be bool, got <t>` or `while condition must be bool, got <t>` (`what` picks the word). The S1 fused compare-and-branch takes this path whenever the comparison does not yield a plain `Bool`. Not used for match guards |
+| `strict_int(v)` (S1) | `eval_int` (eval.rs:1634-1638) | `Int(n)` gives `n`; anything else, a `SizedInt` included, panics `expected i64, got <t>`. `for` (S1, eval.rs:373-400): evaluate `start` and pass it through `strict_int`, then evaluate `end` and pass it through `strict_int` (eval.rs:380-381; a bad `start` panics before `end` runs), before the variable is bound; then per iteration the `i <= e` (inclusive) or `i < e` test, `env.push()`, define the variable, the body as `run_loop_body` runs it, `env.pop()`, `i += 1` |
 | `index_in_place(s, slot, name, idx, env)` and `index_value(arr, idx)` (S2) | `Index` arm (eval.rs:548-574) | The arm's two paths stay two ops; both convert the index with `strict_int` (eval.rs:551, 568), so a `SizedInt` index panics on a read although `place_index` accepts it on a write. An `Ident` receiver that is bound locally or in `globals` is read in place: the engine evaluates the index only after that existence test, converts it, then calls `index_in_place`. Any other receiver, an unbound `Ident` included (which then runs the `Ident` op's chain: `fn_of_sym`, then the undefined-identifier panic), is evaluated first, then the index, converted, then `index_value` with the `i64`. Same bounds and non-array panic texts |
 | `field_in_place(s, slot, name, f, field, env)` (S2) | `FieldAccess` arm (eval.rs:506-524) | An `Ident` receiver: `get_var`, then `globals`, then the undefined-identifier panic (no `fn_of_sym` step, unlike the `Ident` arm), then `field_of`; any other receiver is evaluated, then `field_of` |
 | `finish_record(expr, name, vals, env)` (S2) | `StructLit` arm (eval.rs:585-695) | `res.record_lit(expr)` (else `RecordLit::of`) is known at compile time. When its `empty` is set (a literal with no fields and no whole-struct refinement, sym.rs:533-541) the engine emits that value as a constant and calls nothing. Otherwise the caller evaluates the field expressions in source order (the arm's order) into `vals`, and the helper does the rest exactly as the arm: slot placement, per-field sized-int coercion, enum versus struct, then the per-field and whole-struct refinement checks (`Flow::RefineViolation`, exit 6) |
@@ -464,8 +464,10 @@ against the same frames, and the tree-walker is the reference for both.
   `AXON_ENGINE=vm AXON_HARNESS_STRICT=1 scripts/parity_all.sh`, and S6 runs it under each engine. After S6
   the default interpreter they compare against native codegen is the VM.
 - [ ] wasm: `cargo check -p axon-core --target wasm32-unknown-unknown` and `wasm32-wasip1` with the
-  features `CLAUDE.md` names. The wasm parity harnesses run both engines: `axon_set_engine` on
-  unknown-unknown, `AXON_ENGINE` on wasip1.
+  features `CLAUDE.md` names. The wasm parity harnesses run both engines: S0 makes the wasip1 harnesses
+  (`wasm_parity.sh`, `wasm_fs_parity.sh`, `wasm_host_await_parity.sh`) pass `--env AXON_ENGINE` to
+  wasmtime, and `wasm_browser_interp_parity.sh` call `axon_set_engine` from `AXON_ENGINE`, so the
+  `parity_all.sh` runs in the S5 and S6 gates cover wasm32 too.
 - [ ] wasm depth: `scripts/vm_wasm_depth.sh` (§4 Execution, Recursion) gates every slice S0–S5 on the
   linear-stack bound and the 450 panic, comparing against the tree from the same commit; default-stack
   depths are reported. S6 runs it with `--require-default-stack`.
@@ -624,7 +626,7 @@ the reference code, gaps cost speed, never correctness.
 
 | Node | Depends-on / blocked-by | Gate (named test or script) | Status |
 |---|---|---|---|
-| R50.S0 selector (`AXON_ENGINE`, `axon_set_engine`), trace (body and `tree-op` lines), `run_body`, `FnEntry.compiled`, every body = one `Tree` op; extract `dispatch_call`, `bind_let`, `call_mut`; tree-walker scope-leak fix; `AXON_HARNESS_STRICT` in `parity_all.sh` with `scripts/parity_allowed_skips.txt` (§11); `vm_parity.sh`; `vm_perf_gate.sh`; `vm_wasm_depth.sh` and `tests/fixtures/vm_depth/` | — | `cargo test -p axon-core --test cli_run vm_engine_` (incl. `vm_engine_scope_leak`) + `scripts/vm_parity.sh` (empty lowered list) + `scripts/vm_wasm_depth.sh` + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` (tree engine; §11) | todo |
+| R50.S0 selector (`AXON_ENGINE`, `axon_set_engine`), trace (body and `tree-op` lines), `run_body`, `FnEntry.compiled`, every body = one `Tree` op; extract `dispatch_call`, `bind_let`, `call_mut`; tree-walker scope-leak fix; `AXON_HARNESS_STRICT` in `parity_all.sh` with `scripts/parity_allowed_skips.txt` (§11); wasm harnesses forward the engine (§8 wasm); `vm_parity.sh`; `vm_perf_gate.sh`; `vm_wasm_depth.sh` and `tests/fixtures/vm_depth/` | — | `cargo test -p axon-core --test cli_run vm_engine_` (incl. `vm_engine_scope_leak`) + `scripts/vm_parity.sh` (empty lowered list) + `scripts/vm_wasm_depth.sh` + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` (tree engine; §11) | todo |
 | R50.S1 scalar core and calls; `AssignInPlace` (AX-31 shapes); extract `cond_bool`, `strict_int`; operand-stack pool | R50.S0 | `cli_run vm_scalar_` (incl. `vm_scalar_fib_no_tree_nodes`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (S1 rows) + `vm_wasm_depth.sh` | todo |
 | R50.S2 aggregates, index/field reads, place writes (`AssignTo`); extract `index_in_place`, `index_value`, `field_in_place`, `finish_record`, `place_index`, `write_place` | R50.S1 | `cli_run vm_aggregate_` (incl. `vm_aggregate_part_no_tree_nodes`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (S1 and `part.ax` rows) + `vm_wasm_depth.sh` | todo |
 | R50.S3 match, patterns, enums, methods; extract `chan_method`, `impl_method` | R50.S1 | `cli_run vm_match_` (incl. `vm_match_option_no_tree_nodes`) + `vm_parity.sh` + `vm_wasm_depth.sh` | todo |
@@ -768,3 +770,13 @@ in revision 9. It confirmed all seven revision-8 resolutions against code and th
 | [must-fix] conversion on the computed-receiver `Index` path unnamed | Both `Index` paths use `strict_int` (eval.rs:551, 568); `index_value` takes the `i64` |
 | lambda names for `@[verify]` predicates; `<lambda>` placeholder; first-run state of uncompiled codes | `<fn>::verify::lambda#<i>`; literal `<anon>`, printed once per code instance and excluded from the body count (§3) |
 | `parity_all.sh` never runs under both engines | S5 gate runs it under `AXON_ENGINE=vm`; S6 and §9 under each engine (§8 Parity) |
+
+Ninth review (2026-10-09, `reviewer`, verdict "correct": 0 blockers, 0 must-fix, 4 nits), answered in
+revision 10. It confirmed all four revision-9 resolutions against code and the release binary.
+
+| Finding | Resolution |
+|---|---|
+| wasm harnesses never forward `AXON_ENGINE` to the guest (wasm_parity.sh:117, wasm_fs_parity.sh:71, wasm_host_await_parity.sh:66) | S0 adds `--env AXON_ENGINE` and the browser harness's `axon_set_engine` call (§8 wasm, S0 DAG row) |
+| `While`/`For` arm spans | eval.rs:323-348 and 373-400 |
+| `for` bound order ambiguous | `start` evaluated and converted before `end` is evaluated (§4 `strict_int` row) |
+| `soft_inner` also unwraps `Temporal` | Stated (§4, value.rs:41-44) |
