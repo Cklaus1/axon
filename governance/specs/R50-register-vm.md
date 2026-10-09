@@ -1,10 +1,10 @@
 # R50 — Bytecode engine for `axon run`
 
 **Spec ID:** `R50-register-vm`
-**Status:** Draft (revision 7). Six adversarial reviews (2026-10-09, `reviewer`, all verdict "incorrect":
+**Status:** Draft (revision 8). Seven adversarial reviews (2026-10-09, `reviewer`, all verdict "incorrect":
 first 2 blockers and 11 must-fix, second 4 must-fix and 8 smaller, third 6 must-fix and 6 smaller, fourth
-7 must-fix and 5 smaller, fifth 5 must-fix and 7 smaller, sixth 5 must-fix and 6 smaller) are answered in
-§15; a seventh review of this revision is pending.
+7 must-fix and 5 smaller, fifth 5 must-fix and 7 smaller, sixth 5 must-fix and 6 smaller, seventh 2
+must-fix and 3 smaller) are answered in §15; an eighth review of this revision is pending.
 **Risk class:** Structural (a second execution path for the reference engine)
 **Author / date:** 2026-10-09, from compilebench AX-18 (interpreter cost) after AX-53..AX-55.
 
@@ -46,8 +46,9 @@ observable behaviour.
 
 ### 2. Requirement link
 
-`REQUIREMENTS.md` row **R50** (added with this spec): "the interpreter executes compute code within
-CPython's instruction count". Acceptance anchor: `scripts/vm_perf_gate.sh` (§10) plus `scripts/vm_parity.sh`
+`REQUIREMENTS.md` row **R50** (added with this spec), acceptance: "`scripts/vm_parity.sh` (both engines
+byte-identical, incl. stderr, provenance and ledger) and `scripts/vm_perf_gate.sh` (instructions at or below
+CPython's on fib-recursive, collatz, mandelbrot, arr-sum, qsort)". Acceptance anchor: `scripts/vm_perf_gate.sh` (§10) plus `scripts/vm_parity.sh`
 (§8). It also closes compilebench AX-18 (S3): "the remaining gap is the tree-walking design itself;
 closing it needs a bytecode VM or similar".
 
@@ -58,7 +59,7 @@ No language change. Two environment variables:
 | Var | Values | Effect |
 |---|---|---|
 | `AXON_ENGINE` | `tree` (default until S6), `vm` (default from S6) | Which engine runs fn and lambda bodies under every interpreter entry (`axon run`, `axon-run`, `axon test`, `axon goal`). On `wasm32-unknown-unknown`, which has no environment, the `axon_set_engine` export selects it instead (§4 Activation). Any other value: exit 2 with `AXON_ENGINE must be "vm" or "tree" (got "<v>")`. |
-| `AXON_VM_TRACE` | `1` | Three kinds of stderr line. Per fn or lambda body, the first time it runs: `vm: <name> <n> ops, <k> tree nodes`, or `vm: tree <name>: <reason>` when the whole body stays on the tree-walker. Per `Tree` op compiled into a body: `vm: tree-op <name> <Variant>[(<shape>)]`, where `<shape>` is one of `Call(struct-lit)`, `Call(P)`, `Call(computed)`, `Index(E\|Var)` and, through S4, `Call(&mut)` (§8). From S5, per call that a flag keeps off the fast path: `vm: slow <fn>: <flag>` (§4 S5). `<name>` is the fn's name (`Type::method` for an impl method) or, for a lambda body, `<enclosing fn>::lambda#<i>`, where `<i>` is the lambda's 0-based position among the enclosing fn body's lambdas in source (pre-)order, nested ones included. Off by default. It never changes stdout or the exit code. |
+| `AXON_VM_TRACE` | `1` | Three kinds of stderr line. Per fn or lambda body, the first time it runs: `vm: <name> <n> ops, <k> tree nodes`, or `vm: tree <name>: <reason>` when the whole body stays on the tree-walker. Per `Tree` op compiled into a body: `vm: tree-op <name> <Variant>[(<shape>)]`, where `<shape>` is one of `Call(struct-lit)`, `Call(P)`, `Call(computed)`, `Index(E\|Var)` and, through S4, `Call(&mut)` (§8). From S5, per call that a flag keeps off the fast path: `vm: slow <fn>: <flag>` (§4 S5). `<name>` is the fn's name (`Type::method` for an impl method) or, for a lambda body, `<owner>::lambda#<i>`. `<owner>` is the enclosing fn, or `<module>` for a lambda the resolver reaches through a module item (a module `let`, a `refine` predicate or a type's refinement; sym.rs:614-622). `<i>` is the lambda's 0-based position among its owner's lambdas in source (pre-)order, nested ones included; for `<module>` the count runs over those items in source order. A code with `compiled: None` (`LambdaInfo::of`, `fn_value`, `SendValue`) prints `vm: tree <lambda>: unresolved lambda`. Off by default. It never changes stdout or the exit code. |
 
 ```text
 $ AXON_ENGINE=vm AXON_VM_TRACE=1 axon run fib.ax
@@ -123,10 +124,10 @@ function the arm then calls (no behaviour change), and both engines call that fu
 | `make_closure(lambda_expr, env)` | `Expr::Lambda` arm | `res.lambda(expr)` (else `LambdaInfo::of`); captures built from `env` in `captures` order |
 | `assign_in_place(s, slot, name, value, env)` | `Assign` arm (eval.rs:198-209, 1550-1632) | already a function: it matches the AX-31 shapes by syntax, then returns `Ok(false)` without evaluating anything unless the local currently holds a `Str` or `Array`; the engine calls it first for every local `Assign`, exactly as the arm does (§4 lowered set) |
 | `call_mut(callee, args: &[Expr], tier, env)` | `eval_call_mut` + `call_fn_mut` (eval.rs:1214-1261, interp.rs:3375-3401) | the `&mut` move-out / call / move-back protocol, unchanged in behaviour, including the unconditional write of `tier` to `current_call_tier` (eval.rs:1253); S5 makes it allocation-free (pooled frame and buffers), which the tree-walker gets too |
-| `index_in_place(s, slot, name, idx, env)` and `index_value(arr, idx)` (S2) | `Index` arm (eval.rs:548-574) | The arm's two paths stay two ops. An `Ident` receiver that is bound locally or in `globals` is read in place: the engine evaluates the index (`eval_int`'s conversion) only after that existence test, then calls `index_in_place`. Any other receiver, an unbound `Ident` included (which then runs the `Ident` op's chain: `fn_of_sym`, then the undefined-identifier panic), is evaluated first, then the index, then `index_value`. Same bounds and non-array panic texts |
+| `index_in_place(s, slot, name, idx, env)`, `index_value(arr, idx)` and `index_int(v)` (S2) | `Index` arm (eval.rs:548-574) | The arm's two paths stay two ops. An `Ident` receiver that is bound locally or in `globals` is read in place: the engine evaluates the index only after that existence test, converts it with `index_int` (`eval_int`'s conversion, eval.rs:1634-1638: `Int` only, else `expected i64, got <t>`, so a `SizedInt` index panics here although `place_index` accepts one), then calls `index_in_place`. Any other receiver, an unbound `Ident` included (which then runs the `Ident` op's chain: `fn_of_sym`, then the undefined-identifier panic), is evaluated first, then the index, then `index_value`. Same bounds and non-array panic texts |
 | `field_in_place(s, slot, name, f, field, env)` (S2) | `FieldAccess` arm (eval.rs:506-524) | An `Ident` receiver: `get_var`, then `globals`, then the undefined-identifier panic (no `fn_of_sym` step, unlike the `Ident` arm), then `field_of`; any other receiver is evaluated, then `field_of` |
-| `finish_record(expr, name, vals, env)` (S2) | `StructLit` arm (eval.rs:585-695) | The caller evaluates the field expressions in source order (the arm's order) into `vals`; the helper does the rest exactly as the arm: `res.record_lit` or `RecordLit::of`, the `empty` shortcut (taken before any field is evaluated, so the engine tests it first), slot placement, per-field sized-int coercion, enum versus struct, then the per-field and whole-struct refinement checks (`Flow::RefineViolation`, exit 6) |
-| `place_index(v)` and `write_place(base, slot, steps, value, env)` (S2) | `AssignTo` arm (eval.rs:216-270) and `flatten_place` (interp.rs:4136-4163) | The value is evaluated first. Then the index expressions of the place, in `flatten_place`'s order (outermost `Index` node first, walking toward the base: `g[i][j] = v` evaluates `j` before `i`), each converted by `place_index` (`as_int`, then the `negative index` panic). `write_place` is phase 2: `get_var_mut` with the undefined-variable panic, the copy-on-write walk and its panic texts |
+| `finish_record(expr, name, vals, env)` (S2) | `StructLit` arm (eval.rs:585-695) | `res.record_lit(expr)` (else `RecordLit::of`) is known at compile time. When its `empty` is set (a literal with no fields and no whole-struct refinement, sym.rs:533-541) the engine emits that value as a constant and calls nothing. Otherwise the caller evaluates the field expressions in source order (the arm's order) into `vals`, and the helper does the rest exactly as the arm: slot placement, per-field sized-int coercion, enum versus struct, then the per-field and whole-struct refinement checks (`Flow::RefineViolation`, exit 6) |
+| `place_index(v)` and `write_place(base, slot, steps, value, env)` (S2) | `AssignTo` arm (eval.rs:216-270) and `flatten_place` (interp.rs:4136-4163) | The value is evaluated first. Then the index expressions of the place, in `flatten_place`'s order (outermost `Index` node first, walking toward the base: `g[i][j] = v` evaluates `j` before `i`), each converted by `place_index` (`as_int`, then the `negative index` panic). `write_place` is phase 2: `get_var_mut` with the undefined-variable panic, the copy-on-write walk and its panic texts. A place whose root is not an `Ident` (`f()[i] = v`, which `axon check` accepts; the parser takes any `Index`/`FieldAccess` as a place, parser.rs:1808-1817) compiles to the value, then the index expressions down to that root through `place_index`, then `Panic("invalid assignment target")` (`flatten_place`'s `_` arm, interp.rs:4158); the root is never evaluated. So every `AssignTo` lowers in S2 and none is a `Tree` op |
 
 #### Activation
 
@@ -349,6 +350,7 @@ ledger under `AXON_ENGINE=vm` and `AXON_ENGINE=tree`.
 | `Chan::new(n)`, `chan::<T>()`, native `M::fn(..)`, `P(x)` | same output (`Tree` ops) |
 | `s = s + t`, `x = arr_push(x, v)`, `x = arr_concat(x, ys)` in a 100k-iteration loop | same output; instructions linear in the iteration count (in-place append kept) |
 | a `?` failing in a match guard of a fn whose body shadows its `&mut` param (AX-57's program) | same output: the caller gets its array back (`3`, as native prints today); scopes balanced (S0's tree-walker fix) |
+| `f()[i] = v` where `f` and the index expression both print | the value, then the index, print; `f` never runs; panic `invalid assignment target`, exit 101 |
 
 ### 5. Type rules
 
@@ -392,6 +394,9 @@ against the same frames, and the tree-walker is the reference for both.
   every exit path (normal, caught `Break`/`Continue`, propagated `Err`) pops exactly the scopes pushed; an
   exhaustive `Tree` fallback for each unlowered `Expr` variant; `compiled` is `None` for `LambdaInfo::of`
   codes, `fn_value` forwarders and `SendValue` copies.
+- [ ] Integration: `scripts/vm_parity.sh` over the example and fixture corpus (below) and
+  `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` (§11) exercise both engines through the real binary.
+  Journey/red-team: N/A; the only user-facing surface is two environment variables.
 - [ ] S0 tree-walker fix: `match_pattern` / guard / `while let` errors pop their scope (eval.rs:306, 308,
   358). Red test first: `vm_engine_scope_leak` runs AX-57's program (a `&mut [i64]` param shadowed by
   `let a = 99`, then a `?` failing in a match guard) and asserts the caller's `len(a)` prints `3`, as the
@@ -429,7 +434,7 @@ against the same frames, and the tree-walker is the reference for both.
   wall-clock values the virtual clock does not reach (`now_ms` in interp.rs:4267, `generate_run_id` in
   main.rs:4329); every row has `ts_ms`, and the `run_start` row (provenance.rs:606-628) has `run_id`.
   Coverage comes from a third, undiffed run per file under `AXON_ENGINE=vm AXON_VM_TRACE=1`. Besides the
-  per-body line (§3), the trace prints one `vm: tree-op <fn> <Variant>[(<shape>)]` line per `Tree` op it
+  per-body line (§3), the trace prints one `vm: tree-op <name> <Variant>[(<shape>)]` line per `Tree` op it
   compiles. `<shape>` names the exceptions inside a lowered variant: `Call(struct-lit)`, `Call(P)`,
   `Call(computed)` (a callee that is neither an `Ident` nor a `StructLit`), `Index(E|Var)`, and through S4
   `Call(&mut)`. The script prints `vm_parity: <n> files, <c> bodies, <l> lowered ops, <t> tree ops,
@@ -566,6 +571,14 @@ Three changes touch the reference tree-walker, each with a CHANGELOG entry: the 
   see the outer binding. Native codegen keeps no run-time scope stack, so it never had the leak; the fix
   moves the interpreter onto codegen's behaviour. The S0 gate runs `AXON_HARNESS_STRICT=1
   scripts/parity_all.sh` under the tree engine to confirm no other case changes.
+- `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` is made real in S0. Today `parity_all.sh` never reads
+  the variable (only `harness_skipped` in cli_run.rs:298 does, and gate.sh:731 advertises it), treats every
+  skip as success, and enforces only `EXPECT_MIN_PASS=40`. S0 adds: with `AXON_HARNESS_STRICT=1`, a
+  skipped harness fails the run unless `scripts/parity_allowed_skips.txt` lists it with a reason. The list
+  is seeded with the two harnesses that skip on the compilebench host (measured 2026-10-09 at the
+  revision-7 commit: 52 passed, 2 skipped of 54): `android_compute_parity` (no Android NDK) and
+  `browser_compute_parity` (opt-in, `BROWSER_PARITY=1`). Without the variable the script behaves as today.
+  CHANGELOG entry with S0.
 - The pooled closure call (S4) and the allocation-free `call_mut` (S5) change cost only.
 
 Each slice is a revertible commit series with its own gate. S6 flips the default to `vm` in one commit;
@@ -599,9 +612,9 @@ the reference code, gaps cost speed, never correctness.
 
 | Node | Depends-on / blocked-by | Gate (named test or script) | Status |
 |---|---|---|---|
-| R50.S0 selector (`AXON_ENGINE`, `axon_set_engine`), trace (body and `tree-op` lines), `run_body`, `FnEntry.compiled`, every body = one `Tree` op; extract `dispatch_call`, `bind_let`, `call_mut`; tree-walker scope-leak fix; `vm_parity.sh`; `vm_perf_gate.sh`; `vm_wasm_depth.sh` and `tests/fixtures/vm_depth/` | — | `cargo test -p axon-core --test cli_run vm_engine_` (incl. `vm_engine_scope_leak`) + `scripts/vm_parity.sh` (empty lowered list) + `scripts/vm_wasm_depth.sh` + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` (tree engine; §11) | todo |
+| R50.S0 selector (`AXON_ENGINE`, `axon_set_engine`), trace (body and `tree-op` lines), `run_body`, `FnEntry.compiled`, every body = one `Tree` op; extract `dispatch_call`, `bind_let`, `call_mut`; tree-walker scope-leak fix; `AXON_HARNESS_STRICT` in `parity_all.sh` with `scripts/parity_allowed_skips.txt` (§11); `vm_parity.sh`; `vm_perf_gate.sh`; `vm_wasm_depth.sh` and `tests/fixtures/vm_depth/` | — | `cargo test -p axon-core --test cli_run vm_engine_` (incl. `vm_engine_scope_leak`) + `scripts/vm_parity.sh` (empty lowered list) + `scripts/vm_wasm_depth.sh` + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` (tree engine; §11) | todo |
 | R50.S1 scalar core and calls; `AssignInPlace` (AX-31 shapes); operand-stack pool | R50.S0 | `cli_run vm_scalar_` (incl. `vm_scalar_fib_no_tree_nodes`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (S1 rows) + `vm_wasm_depth.sh` | todo |
-| R50.S2 aggregates, index/field reads, place writes (`AssignTo`); extract `index_in_place`, `index_value`, `field_in_place`, `finish_record`, `place_index`, `write_place` | R50.S1 | `cli_run vm_aggregate_` (incl. `vm_aggregate_part_no_tree_nodes`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (S1 and `part.ax` rows) + `vm_wasm_depth.sh` | todo |
+| R50.S2 aggregates, index/field reads, place writes (`AssignTo`); extract `index_in_place`, `index_value`, `index_int`, `field_in_place`, `finish_record`, `place_index`, `write_place` | R50.S1 | `cli_run vm_aggregate_` (incl. `vm_aggregate_part_no_tree_nodes`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (S1 and `part.ax` rows) + `vm_wasm_depth.sh` | todo |
 | R50.S3 match, patterns, enums, methods; extract `chan_method`, `impl_method` | R50.S1 | `cli_run vm_match_` (incl. `vm_match_option_no_tree_nodes`) + `vm_parity.sh` + `vm_wasm_depth.sh` | todo |
 | R50.S4 lambdas; extract `make_closure`; `ClosureCode.compiled`; allocation-free builtin → closure call on the lent path (`Rc::strong_count(cv) == private_refs`, interp.rs:4054), the one `fold.ax` and arr-sum take: `arr_fold`/`arr_map`/... take argument buffers from `arg_bufs`, `call_closure_owned_by` drains its arguments into the params and hands the buffer to `recycle_args` (today `zip(args)` consumes it, interp.rs:4067), and its `Env` gets a pooled `marks` Vec (today `vec![acc, x.clone()]` per element, builtins.rs:1847, and `Env::from_snapshot` starts with an empty `marks`, so `env.push()` allocates, interp.rs:749-754, 4058-4066). The copied path (a closure with other references, e.g. `let f = \|..\| ..; arr_fold(xs, 0, f)`) keeps its per-call `Vec::with_capacity` (interp.rs:4061-4064) | R50.S1 | `cli_run vm_closure_` (incl. `vm_closure_fold_no_tree_nodes`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (S1 and `fold.ax` rows) + `vm_wasm_depth.sh` | todo |
 | R50.S5 fast calls; allocation-free `call_mut` and `CallMut` op | R50.S2, R50.S3, R50.S4 | `cli_run vm_fastcall_` (incl. `vm_fastcall_mutcall_no_tree_nodes`, `vm_fastcall_slow_<flag>`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (all rows) + `vm_wasm_depth.sh` | todo |
@@ -711,7 +724,7 @@ in revision 7. It confirmed all twelve fifth-review resolutions against code and
 
 | Finding | Resolution |
 |---|---|
-| [must-fix] per-run absolute state paths make `persistent_learner.ax` differ between two tree runs (it prints the path, line 91) | `AXON_LEARNER_STATE=learner.state`, `AXON_BANDIT_STATE=bandit.state`, relative to each run's fresh cwd (§8); the review measured all 295 runnable files stable that way |
+| [must-fix] per-run absolute state paths make `persistent_learner.ax` differ between two tree runs (it prints the path, line 91) | `AXON_LEARNER_STATE=learner.state`, `AXON_BANDIT_STATE=bandit.state`, relative to each run's fresh cwd (§8); the sixth review measured its corpus stable that way, and the seventh re-ran revision 7's corpus (144 examples: 157 with `main` minus 13 listed; 124 fixtures; 268 files) twice under the tree with no difference and no timeout |
 | [must-fix] `vm_parity.sh` binary unnamed; the `vm_perf` fixtures exceed 30 s in debug | It builds the §10 release binary (§8) |
 | [must-fix] no S2 helper for `StructLit`, `AssignTo`, in-place `Index`/`FieldAccess` | Six S2 helpers in the §4 table with their arms' order and texts (`index_in_place`, `index_value`, `field_in_place`, `finish_record`, `place_index`, `write_place`), named in the S2 DAG row; "S0/S3" replaced by the DAG's slices |
 | [must-fix] a `has_ref_mut` fast-path test cannot be written (E0605) | Flag tests exclude `has_ref_mut`; a unit test asserts such an entry is not fast-call eligible (§4 S5, §8) |
@@ -722,3 +735,14 @@ in revision 7. It confirmed all twelve fifth-review resolutions against code and
 | fixture corpus filter and root | `crates/axon-core/tests/fixtures`, check-accepted with `main`; the check-rejection failure applies to examples only (§8) |
 | citations: `axon_search_dirs` span, `SendValue` closure site, `call_mut` tier | lib.rs:517-544; `SendValue::into_value` (interp.rs:1945) on the reply at builtins.rs:3120, 3136; `call_mut` takes `tier` (eval.rs:1253) |
 | S6 gate lacks `vm_parity.sh` and the interp↔codegen harnesses; compilebench rerun is not a named check | Both added to the S6 gate and §9; the compilebench rerun moved to §11 as a follow-up |
+
+Seventh review (2026-10-09, `reviewer`, verdict "incorrect": 0 blockers, 2 must-fix, 3 smaller), answered
+in revision 8. It confirmed the other revision-7 resolutions against code and runs.
+
+| Finding | Resolution |
+|---|---|
+| [must-fix] `parity_all.sh` never reads `AXON_HARNESS_STRICT`; skips pass while 40 harnesses pass | S0 implements strict mode with an allow-list seeded from a measured host run (§11, S0 DAG row) |
+| [must-fix] `AssignTo` contract omits places not rooted at a local (`f()[i] = v`) | Value, reachable indexes, then `invalid assignment target`, root never evaluated (§4 helper row, re-run at `886aae53`: prints `v`, `i`, exit 101); behaviour row added |
+| lambda trace names for module-scope and uncompiled codes; `<fn>` in §8 | `<module>::lambda#<i>` and `vm: tree <lambda>: unresolved lambda` (§3); §8 uses `<name>` |
+| `finish_record` places the `empty` test after field evaluation; in-place index conversion has no helper | `empty` emitted as a constant at compile time; `index_int` (from `eval_int`) added to S2 (§4, DAG) |
+| §2 quote not verbatim; no Integration bullet; corpus count | REQUIREMENTS acceptance quoted verbatim; Integration bullet (§8); sixth-review row gives the measured 268 |
