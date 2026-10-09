@@ -2699,6 +2699,8 @@ ATTACK_MARKERS.update({
     'M3042': 'ATTACK:\\ <builtin\\ arr_contains\\ over\\ \\[tainted\\ dict\\]>\\ completed',
     'M3041': 'ATTACK:\\ <native:\\ a\\ surface\\ the\\ candidate\\ presented>\\ completed',
 
+})
+
 ATTACK_MARKERS.update({
     'M3080': 'ATTACK: ns_run mounted and unshared before it validated OPKIT_SCRATCH',
     'M3081': 'ATTACK: opkit_ns_isolate worked in a scratch directory the environment named',
