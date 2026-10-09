@@ -81,6 +81,8 @@ KEYSTASH=$STASHDIR/keys
 [ -z "${OPKIT_DESTS_FOR_TEST:-}${OPKIT_NS_PID_FOR_TEST:-}${OPKIT_VIEW_PID_FOR_TEST:-}" ] || { echo "REFUSE: an OPKIT_*_FOR_TEST override is set; the kit test proves the REAL destinations"; exit 2; }
 # Amendment 101: the namespace's root is read-only (deny by default); the only host directories a step may
 # write are the two this test made for it.
+# Amendment 109: ns_run refuses a socket on fds 0-2; an ssh-driven run can hand this script one for stdin (nothing below reads it).
+[ ! -S /proc/self/fd/0 ] || exec </dev/null
 export OPKIT_LIB=$HERE/lib/opkit_ns.sh OPKIT_SCRATCH=$WORK/scratch OPKIT_RW="$WORK $STASHDIR"
 mkdir "$OPKIT_SCRATCH" || exit 2
 . "$OPKIT_LIB"

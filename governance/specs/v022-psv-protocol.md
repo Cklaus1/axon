@@ -5942,8 +5942,7 @@ are untouched. The inventory below is the same one the reviewer read; every clai
    building a COMMAND STRING out of the kit, `--apply` or a build verb is refused where it is made; `--apply` under ANY
    unlisted wrapper is refused; a variable assigned a real destination is a destination when a mutator names it; a
    redirection into a real destination is a write EVEN ON AN `ns_run` COMMAND (the outer shell opens it before any wrapper
-   runs); python write literals under a real destination are refused unless wrapped. `--selftest` now plants 48 must-flag
-   shapes (the 17 of amendment 97, the nine above and the wrappers `nice ionice stdbuf chrt taskset timeout env setsid sudo
+   runs); python write literals under a real destination are refused unless wrapped. `--selftest` now plants its must-flag shapes (the count is derived, amendment 111; the 17 of amendment 97, the nine above and the wrappers `nice ionice stdbuf chrt taskset timeout env setsid sudo
    command exec nohup xargs su systemd-run`, `bash -c`, chained aliases, an alias of the file name) and 13 controls
    (wrapped aliases, read-only mentions, wrapped redirects to scratch). Rows M2637-M2644, each killed by its own named shape.
    Known false positive, conservative: a quoted kit command spread over several physical lines is judged line by line
@@ -6578,7 +6577,9 @@ guards of the helper have no cargo row (`TMPDIR=/tmp`, the `/tmp` tmpfs); the ki
      fast path's arm has no row (unreachable). `dstore_*` and `to_str` of a container are not driven by a test. The dispatch and width taint rules have no runner
      leg (item 9). The matrix numbering is for the integrator.
 
-## Amendment 105: a read-only root is a mount flag, not a boundary; the drift gate denies by default; service-account discovery reads every shape (C9 round 11, buildenv7)
+## Amendment 105: a read-only root is a mount flag, not a boundary; the drift gate lists the shapes it flags (best effort); service-account discovery reads the listed shapes and fails closed on the rest (C9 round 11, buildenv7)
+
+> **Corrected by amendment 109 (round 12).** This title and item 3 originally said the drift gate "denies by default" and that service-account discovery "reads every shape". Neither was true: a reviewer ran 14 further shapes past the gate (each ran a stub kit with `--apply`) and found service-account shapes the reader silently missed. The gate is a BEST-EFFORT SECOND LAYER that flags the shapes it lists; the boundary that matters is the namespace and the helper's proof. Item 2's descriptor sentences are also made exact below. Amendment 109 has the facts.
 
 The round-11 FIELD-ORIGIN reviewer (`/var/tmp/c9r11-findings-FIELD-ORIGIN.json`; probes in `/var/tmp/c9r11-FO-logs/`) executed
 four routes out of amendment 101's read-only root and ten more shapes past its drift gate, and found three descriptor gaps and
@@ -6628,15 +6629,17 @@ claimed. Mutation ids M2880-M2909, matrix rows A232-A238 (renumbered at integrat
    pre-opened WRITABLE regular file stayed writable from inside (a write reached the host file). `opkit_ns_sanitize_fds`
    (before the command starts): fds 0-2 are refused (97, the command never runs) if a directory, a block device, a character
    device other than null/zero/full/random/urandom/tty/console/ptmx/vt/serial/pts, or a WRITABLE regular file outside the
-   caller's named scratch (`OPKIT_RW`, `OPKIT_SCRATCH`); every other inherited descriptor is closed (`OPKIT_KEEP_FDS` names
-   those kept, each held to the same check). A caller that redirects the whole run to a LOG FILE therefore pipes it
+   caller's named scratch (`OPKIT_RW`, `OPKIT_SCRATCH`); a DIRECTORY descriptor above stderr makes the run refuse (97), every other
+   inherited descriptor above stderr is closed (`OPKIT_KEEP_FDS` names those kept, each held to the same check). (Amendment 109:
+   "every other inherited descriptor is closed" and the header's "no inherited descriptor above stderr" over-stated this, and the
+   character-device list below includes the console, the virtual terminals and the serial ports, which amendment 109 removes.) A caller that redirects the whole run to a LOG FILE therefore pipes it
    (`... | tee log`) or puts the log under `OPKIT_RW`. (Found while doing this: a check written as `$(readlink /proc/self/fd/N)`
    looks at the READLINK process's descriptors; the helper uses `$BASHPID`.) `OPKIT_RW` was accepted unvalidated (`OPKIT_RW=/opt`
    gave the command the host's `/opt`): `opkit_rw_validate`, called by `ns_run` before anything is mounted, refuses an entry that
    is not an existing directory, is not canonical (a symlink, `..`, a double slash), is a system path, is not strictly below a
-   temp root (`/tmp`, `/var/tmp`, `$TMPDIR`), is not owned by the caller or is group- or other-writable (a shared `/var/tmp`
+   temp root (`/tmp`, `/var/tmp`; and `$TMPDIR`, which amendment 109 removes: the environment named a temp root, and `TMPDIR=/home/x OPKIT_RW=/home/x/w` was accepted), is not owned by the caller or is group- or other-writable (a shared `/var/tmp`
    is 1777).
-3. **The drift gate denies by default.** The round-10 gate listed shapes; the reviewer ran ten more past it (each against a stub
+3. **The drift gate flags more shapes (it does NOT deny by default; see amendment 109).** The round-10 gate listed shapes; the reviewer ran ten more past it (each against a stub
    kit, which printed `STUB-RAN --apply`). `check_text` now refuses, for a command that is not `ns_run`/`kit`/`inns`: `python3 -`
    reading the kit (no first-word exemption any more), a kit named by a glob, a copy of the kit (`cp/mv/ln/install` of a
    mention records the destination as the kit), `--apply` anywhere in the command text or carried in a variable, `trap`,
@@ -6655,9 +6658,8 @@ claimed. Mutation ids M2880-M2909, matrix rows A232-A238 (renumbered at integrat
    outside the fixture's line, `OPKIT_RW` naming a non-scratch path and the helper's internal knobs are refused in any test
    script but `test_opkit_ns.sh`; the self-test's own `--child` block is the one exempt region. Real changes to the tests the
    gate now forces: `ns_run python3 - "$KIT"` (the drift test of amendment 90), the `.sig` fixture written by the python that
-   writes the record, no `rm` of a canary in `/opt`. `--selftest`: 48 + 40 must-flag shapes (every shape of the finding plus the
-   others above), 13 + 9 controls.
-4. **Service-account discovery, outside the shipped deployment.** Fail-closed additions: TOML, YAML, env and `key value` files
+   writes the record, no `rm` of a canary in `/opt`. `--selftest`: every shape of the finding plus the others above is a must-flag shape, and the controls are listed (counts derived, amendment 111).
+4. **Service-account discovery, outside the shipped deployment.** It reads the LISTED shapes and fails closed on the rest (amendment 109 adds the shapes a reviewer found it missed). Fail-closed additions: TOML, YAML, env and `key value` files
    under `/etc/axon` (every `key = value`, `key: value`, `KEY=value` and `- item` line is read with the same key classes; a text
    file that mentions `uid`/`gid` and yields no identity REFUSES); JSON keys `user owner run_as principal id group` ... (soft keys:
    a number, a decimal string or an account name, resolved) and `euid egid`; a symlinked sub-directory (followed, each real
@@ -6852,3 +6854,204 @@ row), and the `_text_ids` / `_unit_ids` / `_regular_text` guards beyond those th
      carried no "corroboration" label; the claim quoted am102 as M2700-M2763 and am106 as M2910-M2939 (unit-only ranges, unlabelled). `scripts/pci_delta.py --check` now derives
      the note's amendment -> matrix-row mapping from the amendment's own text and the matrix, the mutation-id ranges (am102, am106, am108) and the list of interpreter rows
      from the registry, the gate-row table from the gate script (rows + the sweep), and fails when a tagged row's test is run by no gate row.
+## Amendment 109: the drift gate is a best-effort second layer; the helper's roots are its own; descriptors and service-account keys are stated exactly (C9 round 12, buildenv8)
+
+The round-12 FIELD-ORIGIN part-2 reviewer (`/var/tmp/c9r12-findings-FIELD-ORIGIN-2.json`; probes in `/var/tmp/c9r12-FO2-logs/`) found one
+MAJOR-ADJACENT item and four MINOR ones against amendment 105: fourteen text shapes that run a stub kit with `--apply` past
+`opkit_ns_drift.py`; `OPKIT_RW`/`OPKIT_SCRATCH` trusting the environment; the fd 0-2 allowlist; service-account keys the reader
+silently missed; and header wording. Mutation ids M3080-M3109, matrix rows A252-A256 (the integrator renumbers; A249-A251 belong to
+other branches). Base `915054b8` (integrate11). `crates/axon-core/src` is untouched.
+
+1. **The drift gate is NOT deny-by-default, and says so.** Amendment 105 item 3 called it that; the reviewer ran 14 shapes past it
+   (an alias made by `K=$(echo $KIT)` with `--ap""ply`, run directly or in a function; `command -p bash`; `alias`; `${P@P}`; a
+   printf-built command string passed to `eval`; `eval "$(echo <base64> | base64 -d)"` and `bash -c "$(echo <base64> | base64 -d)"`;
+   a script written by an unwrapped `printf ... >$W/s.sh` and then run; a function file written and then sourced; a fake heredoc
+   marker in an assignment, `X="<<EOF"`). All 14 are now flagged and are `--selftest` must-flag shapes; the gate now carries more must-flag shapes and controls than amendment 105 or the matrix row A236 quoted (those numbers had gone stale; no document quotes a count except amendment 111, and a test compares it) and the real scripts stay clean. What `check_text` adds, in a file
+   that mentions the helper, the kit, `--apply` or a build verb, for a command that is not itself `ns_run`/`kit`/`inns`:
+   - **normalisation first**: the text is also judged with quote tricks inside a word removed (`--ap""ply`, `-"-"apply`, `--a\pply`)
+     and ANSI-C strings decoded (`$'--apply'`), so `--apply` held in a variable is `--apply`;
+   - **the kit under another name by a command substitution** (`K=$(echo $KIT)`) is the kit;
+   - **`eval` / `source` / `.` / `bash -c` / `sh -c` / `exec` / `command` / `builtin` / `alias`** whose operand is not a plain literal
+     is refused (a literal given to `eval` is judged command by command; `command -v` stays read-only; the one exception is the
+     result of an `$(ns_run ...)`, which is the namespace's own output);
+   - **an expansion in the command word** (`"$I" "$K"`), **`${x@P}`** (prompt expansion executes the substitutions in its value) and
+     `${!x}` / `${x@Q}` / `${x@E}` handed to an interpreter;
+   - **a decoding utility** (`base64 -d`, `xxd -r`, `openssl enc -d`, `uudecode`, `printf %b`) on a line that also feeds a shell, `eval`
+     or an interpreter, and `eval`/`source`/`sh -c` given an unquoted substitution;
+   - **a file the script wrote** (redirection, `tee`, `cp`/`mv`/`install`, `cat <<`) **that it later executes or sources**;
+   - **heredocs by real syntax only**: `<<` outside every quote, not `<<<`, in a command that has a word of its own. `X="<<EOF"`,
+     `echo "<<EOF"` and `X='<<EOF'` are no longer heredocs, so the lines after them are judged as the commands they are.
+   Real changes this forced in `test_opkit_ns.sh` (the helper's own self-test, which owns the one exempt `--child` region): the python
+   that makes a socket or a pty for fd 0, and the `mknod` of a scratch node, live in `--child` modes.
+   **The wording is corrected everywhere it was wrong**: this gate is a BEST-EFFORT SECOND LAYER that flags the shapes it lists (`--selftest` prints the count of must-flag shapes), NOT a deny-by-default guarantee. *A test script that wants to evade
+   a textual gate can; the gate catches mistakes, not intent.* The boundary that matters is the namespace and the helper's proof.
+   Corrected in: amendment 105's title and item 3 (a "Corrected by amendment 109" note stands under the heading), the matrix row A236,
+   the `opkit_ns_drift.py` header, the `opkit_ns.sh` header and the operator runbook.
+2. **The helper's roots come from the helper, not the environment.** `TMPDIR=/home/x OPKIT_RW=/home/x/w` was accepted and the
+   command wrote the host (`$TMPDIR` was a temp root); `OPKIT_SCRATCH=/opt/x` made `ns_run` create `dev.$$`/`etc.$$` directories in the
+   host's `/opt` (it was not validated at all). Now: `opkit_scratch_check` is the one rule (a real directory, canonical, **strictly below
+   `/tmp` or `/var/tmp` by realpath**, owned by the caller, neither group- nor other-writable, not a system path); `OPKIT_RW`
+   entries and `OPKIT_SCRATCH` are held to it; `$TMPDIR` is **not a temp root and is IGNORED** (the helper never consults it: outside
+   the namespace it names `/var/tmp` and `/tmp` explicitly, inside it sets `TMPDIR=/tmp` itself). The brief allowed "ignore or refuse"
+   a caller-set `TMPDIR`; ignoring was chosen because the mutation harness (and any shell with `TMPDIR=/var/tmp/x` mode 1777) sets one
+   that is world-writable by design, and refusing it made the helper unusable there (measured: the harness baseline failed) while
+   protecting nothing once it is not consulted. A caller-set `OPKIT_SCRATCH` that is not such a directory is REFUSED (97) by `ns_run`
+   before anything is mounted or created; with no `OPKIT_SCRATCH` the helper makes its own (`mktemp -d` under `/var/tmp` or `/tmp`,
+   mode 0700) and removes the empty mount-point directories it left. `opkit_ns_isolate` checks the scratch again itself (the
+   primitive, not only its caller). The header sentence "never whatever the environment said" is replaced by what is true (above).
+   Tests (`test_opkit_ns.sh`, inside a throw-away mount namespace in which `/mnt` is a tmpfs, so nothing real is written; host
+   listings of `/opt /home /mnt /media /srv /usr/local /etc/axon /etc/systemd/system` before and after are compared in the test):
+   `TMPDIR=/mnt OPKIT_RW=/mnt/rw` (the reviewer's exact attack) refused 97 by the temp-root rule; `TMPDIR=/mnt` with a valid `OPKIT_RW` runs
+   (ignored); `OPKIT_SCRATCH=/mnt/scr` refused before anything is mounted and nothing created there; `OPKIT_SCRATCH` a symlink, a 0777
+   directory, `/var/tmp`, `/tmp`, a relative or a missing path: each 97 with the command not run; `opkit_rw_validate` called directly with
+   `TMPDIR` set; `opkit_ns_isolate` called directly on a scratch the environment named; controls (`TMPDIR=/var/tmp`, a valid scratch,
+   no scratch at all, and no `opkit-ns.*` directory left in `/var/tmp`).
+3. **Descriptors 0-2.** A unix socket on fd 0, 1 or 2 is refused (97): a write through it reaches the peer. The character-device
+   allowlist is `null zero full random urandom`, `/dev/tty` (5:0) and a pts slave (majors 136-143); `/dev/console` (5:1), the virtual
+   terminals (`/dev/tty0..`, major 4) and the serial ports (`/dev/ttyS*`, major 4:64..) are NOT accepted. A pipe stays accepted. A
+   caller that wants the run's output hands in a pipe or a pts. (An ssh-driven run can hand a script a SOCKET for stdin, so
+   `test_opkit_ns.sh` and `test_operator_deploy.sh` replace a socket stdin with `/dev/null` at the top; nothing below reads it.)
+4. **`service_ids` reads the listed shapes and fails closed on the rest** (the title of amendment 105 said "every shape"). A key is
+   now judged by its TOKENS, so `ownerUid`, `owner-uid`, `OWNER_UID`, `runAsUser`, `run-as-user`, `ServiceUid`, `username`, `groupName`
+   are each read, in JSON, TOML, YAML and env files; TOML inline tables (`run = { uid = 1, gid = 2 }`) and YAML flow maps
+   (`run: {uid: 3}`) are read entry by entry, a multi-line array (`uids = [` ... `]`) to its closing bracket, a value on the NEXT
+   line (`user:` then `1533`); and each failure is a REFUSAL, per key and not per file: a strict key (`uid gid euid ...`) that yields no
+   readable value, and, in JSON as well as text, a key that carries `uid`/`gid` in its name, is of no known class (`uidnumber`) and
+   holds a number (`guid`/`uuid`/`squid` are not identity keys). An unreadable drop-in directory raises `DiscoveryRefused`, not a
+   traceback. `build_uid`/`build-gid`/`buildUid` stay excluded in every spelling. The shipped `profiles/protected-host/*.json.example`
+   still read the same ids. Each shape is a case in `guest_build_env_guards/service_ids.py`; every one sits beside another readable
+   identity, so only the per-key reading can see it (93 cases; the amendment-105 version fails 20 of them).
+5. **Exact statements.** Directory descriptors above stderr are REFUSED (97), not closed; every other inherited descriptor above
+   stderr is closed. A host where the namespaces cannot be made (an ordinary uid, `unshare` failing) now returns 97 with the command
+   never run (it returned `unshare`'s own 1); an ordinary uid is stopped by a root check first. `nodev` on every tmpfs the helper
+   makes and on the `OPKIT_RW` bind is now EXECUTED: the test reads the per-mount options of `/tmp /etc /usr/local /var/lib /var/log
+   /var/spool /run /srv` and the `OPKIT_RW` bind inside `ns_run` (a node cannot be made to be refused: no capability is left to make
+   one). A setuid-root program inside the namespace getting no capability the bounding set took was already executed
+   (`capsh` copied with the set-id bit, run as uid 65534). The retained capabilities (chown, setuid/setgid, dac_override, fowner,
+   kill, setpcap, setfcap ...) are executed only as far as the write test goes: the default-capability root meets EROFS everywhere
+   unlisted. Not executed by anyone, and stated in the header: the retained capabilities as an escape attempt, a hostile
+   `CAP_SYS_ADMIN` step.
+
+**What is not done, stated.** (a) The drift gate remains a text matcher; its shapes are the ones known. (b) `service_ids` has no
+text-key row for the unclassified-key refusal (the JSON twin has M3108; the text one is observed by its case and exempted in
+`PY_EXEMPT`, `_text_ids` 1) and no row for the root check at the top of `ns_run` (an ordinary uid is refused by `unshare` in any
+case: the 97 is the same, so no test can tell them apart). (c) Rows for `peel` (`command`/`builtin`), a literal program given to
+`eval` and the `alias` keyword were written and then DROPPED for want of ids in the range: their shapes remain in `--selftest`, unrowed.
+(d) An ssh-driven stdin socket is replaced by the two test scripts, not handled by the helper.
+
+**Rows.** M3080-M3088 (helper), M3089, M3092, M3102, M3106-M3109 (service ids), M3090, M3091, M3093-M3101, M3103-M3105 (drift). The
+helper's rows are killed by the shell test (`ATTACK:` lines of `test_opkit_ns.sh`), the drift rows by `--selftest`
+(`selftest: the bypass shape '<shape>' was ACCEPTED`), the service rows by `ATTACK: gbe service ids <case>`. Ten earlier rows were re-anchored because
+this change moved or doubled the guard they remove: M2655 and M2906 (service ids: the drop-in loop and the soft-key set moved), M2891-M2893
+(`OPKIT_RW` rules, now in `opkit_scratch_check`), M2513 (its anchor line gained `note_writes`), and M2639, M2897, M2900, M2903 (the
+amendment-105 drift rules whose shape the new conservative layer now also refuses -- a guard that a SIBLING also covers is not killed by
+the old shape, so each got a shape only it catches: a command string assigned and not used, a heredoc written then run through a split
+spelling, a flag in a variable for a plain program, a copy of the kit run from a function defined before the copy). `PY_EXEMPT` re-keyed
+(`_id_fields` 2, `take` 1, `_text_ids` 3) with one new entry (`_text_ids` 1).
+
+**Evidence that is not in this text** (it lives in the workstream report): the namespace rows ran locally (the harness, root, real
+`ns_run`; gpumaster is not calibrated for the root-helper tests); the drift and service rows ran on gpumaster (21 of 21 killed by their
+own attack); the amendment-92..105 build-environment rows were re-run (53 locally, 52 on gpumaster) after the re-anchors. A baseline
+failure of `M2221` on gpumaster, and a failure of `the_build_uid_lock_is_root_owned_and_begin_holds_it` in 1 of 4 whole-binary runs, are
+the same cross-test/host interference: a process of build uid 4242 owned by a concurrent test or another session when the lock test
+counts them. Reproduced on the BASE commit `915054b8` (3 of 14 runs failed identically), so it is not this change; the lock test passes
+alone 6 of 6 and M2221 passes when re-run. It is a flaky test of the existing suite and is reported, not fixed here.
+
+## Amendment 111: the lock test cannot collide with a host process; the peel, literal-eval, alias and text-key guards are rowed; quoted counts are derived; the capability probes the header called unexecuted are executed (C9 round 12, buildenv9)
+
+111. **Source: the buildenv8 leftovers (amendment 109, "what is not done").** Branch `c9r12/buildenv9`, base `40f720fe`. Mutation ids
+M3180-M3196, matrix rows A257-A262 (the integrator renumbers). `crates/axon-core/src` is untouched; `v022_refusal_coverage.py` changed
+only by dropping one exemption that a new row now covers.
+
+1. **The flaky lock test, reproduced through its exact path and fixed at the test design.** `the_build_uid_lock_is_root_owned_and_begin_holds_it`
+   took the literal build uid 4242; `begin` refuses a build uid that "already owns running processes" by reading the HOST /proc
+   (`build_uid_pids`). Reproduced with `setpriv --reuid=4242 sleep 120` alive: `refused: AXON_GUEST_BUILD_UID 4242 may not be the build uid: it
+   already owns running processes [pid]` at the test's first control; with the sleeper killed it passes. Nothing in the `guest_build_env`
+   binary runs a process as 4242; the processes come from other binaries and runs on a shared host (`readiness.rs` `setpriv --reuid=4242`,
+   the guards binary's own `ids_user` case, which runs as 4242, and any concurrent agent). The lock test now takes its uid from
+   `crates/axon-fabric/tests/uid_claim/mod.rs` (the `UidClaim` that `guest_build_env.rs` already used for its other 37 tests, moved to one
+   module both binaries include): an exclusive flock on a root-owned file per candidate uid in 40000-59999, taken only if no process of
+   that uid exists. The guards binary's `ids_user` case runs as a claimed uid (`GBE_UID`) and its 30-second `sleep` as another
+   (`GBE_UID2`), instead of the literals 4242, 4243 and 4322. `no_test_gives_a_process_or_the_build_uid_a_literal_uid` refuses a
+   literal `--reuid=N` or `AXON_GUEST_BUILD_UID` N in `guest_build_env.rs`, `guest_build_env_guards.rs` and every case file (it plants the
+   shapes first, so a scan that sees nothing fails). The production guard (`foreign_process_problem`, M2659) and the lock rows
+   (M2507-M2510) are untouched. **Audit of every other uid literal in `crates/axon-fabric/tests/*.rs`:** the only code in the suite that
+   reads /proc by uid is `build_uid_pids`, reached only by `guest_build_env.rs` and the guards binary; the 4242/4243/65534 literals elsewhere
+   (`readiness.rs`, `privileged_launcher.rs`, `custodian.rs`, `observer_service.rs`, `psv_dispatch.rs`, `freeze_manifest.rs`,
+   `trust_root.rs`) are configuration values, ownership of scratch files, or short-lived `setpriv` children whose only observer was the
+   lock test; the remaining 4242 literals in `guest_build_env.rs` are file ownership in two forged-record tests (no process, no
+   `begin`). Nothing there checks "owns running processes", so none needed the claim. The `pkill -f` lines in `privileged_launcher.rs` match
+   a path under the test's own temp directory, not a uid.
+   **Proof:** 10 consecutive default-parallel runs of the three binaries (`guest_build_env` 38 tests, `guest_build_env_guards` 9, `operator_examples` 4)
+   locally through `c9-heavy.sh`: 30 of 30 rc 0; 5 on gpumaster from the committed branch: 15 of 15 rc 0. Both loops ran with a hostile
+   `sleep` as uid 4242 and another as uid 65534 alive for the whole loop (the exact condition that failed the test: with only the 4242 sleeper
+   and the old test, `refused: ... it already owns running processes [pid]`). An earlier local loop was discarded, not counted: it was killed at
+   iteration 8 because an operator_examples run executed `scripts/test_opkit_ns.sh` while I was still editing it (the loop runs the tree's
+   scripts); the failure was my unfinished edit, not the lock test.
+2. **Rows dropped for want of ids, now written (M3180-M3189).** M3180-M3182 remove `command`, `builtin`, `exec` from `PEEL`; M3183 the
+   `-p`/`--` skip after `command`; M3184 and M3185 the two places the wrappers are stripped (`peel()` and the token loop of the conservative
+   layer); M3186 the judgement of a literal `eval` operand; M3187 the refusal of `alias`; M3188 that of `shopt -s expand_aliases`; M3189
+   the text-key refusal of an unclassified uid/gid key in `service_ids` (the JSON twin is M3108; the `PY_EXEMPT` entry for it is dropped).
+   Each has a must-flag shape only it refuses: new `command -p eval of a variable`, `exec eval of a variable`, `an alias that shadows the
+   helper`, `alias expansion switched on`; the others use shapes already in `--selftest` (`command eval of a variable`, `builtin source of a
+   variable path`, `eval of a literal program that mounts`). Checked before the rows were written: with each edit applied to a copy, the
+   set of accepted shapes is exactly its own (M3181 -> only `builtin source...`, M3183 -> only `command -p eval...`, M3186 -> only
+   `eval of a literal program...`, M3187 -> only the alias shape, M3188 -> only the shopt shape; M3180 and M3184 also the sibling
+   `command` shapes they share, M3184 all four). `--selftest` now lists EVERY accepted shape instead of stopping at the first, so a row's
+   marker is its own shape and a coincidental failure shows beside it. The alias shapes are flagged at the definition because the
+   gate cannot see whether expansion is on (a sourced file, `bash -i`).
+3. **Counts are derived and drift-checked (M3190-M3196).** Amendment 105 and the row A236 quoted the self-test as 88 shapes and 22
+   controls when it had grown; row A252 and amendment 109 quoted 145 and 32. The text is fixed: no document quotes a count except this
+   amendment, and **the self-test carries 149 must-flag shapes and 32 controls at this commit** (`opkit_ns_drift.py --selftest`). `--check-quoted-counts`
+   compares every quote of "N must-flag shapes", "N controls" (after one) and "N shapes its `--selftest`" under `governance/`, `scripts/` and
+   `crates/` with the count derived from `BYPASSES`/`CONTROLS`; a sum ("48 + 40") is refused as unreadable. `--selftest` plants stale,
+   half-stale, summed, line-wrapped and differently-worded quotes and requires each refused. `every_quoted_selftest_count_is_the_selftests_own`
+   compares the derived numbers with what `--selftest` prints, requires at least one quote to have been read (a check that reads none checks
+   nothing), and plants a stale quote under each of `governance/`, `scripts/` and `crates/`. Adding a shape now fails this test until the number
+   above is updated, which is the point.
+4. **Running the kit's test over ssh.** The runbook states it: start `scripts/test_operator_deploy.sh` (and `test_opkit_ns.sh`) with `</dev/null` and pipe the
+   output (`2>&1 | tee log`). Measured while doing this: `> log` made the kit test exit 2 at once, because the helper refuses a WRITABLE
+   REGULAR FILE on fd 1-2 (`LEAK: descriptor 1 is a WRITABLE regular file`), as the header says; the sentence in the runbook names both halves.
+5. **Executed-evidence gaps.** Run inside `ns_run` as the default-capability root, canary effects only (`scripts/test_opkit_ns.sh`,
+   section amendment 111; the header of `opkit_ns.sh` is rewritten to say exactly what ran): the process's `CapEff` and `CapPrm` are
+   within its bounding set (`00000020b180cdfb`: chown, dac_override, fowner, fsetid, kill, setgid, setuid, setpcap, net_bind_service,
+   net_broadcast, ipc_lock, ipc_owner, sys_nice, sys_resource, lease, audit_write, setfcap, audit_read); each removed capability
+   reads 0 for `PR_CAPBSET_READ` and `PR_CAP_AMBIENT_RAISE` of it fails; `setpriv --inh-caps/--ambient-caps/--bounding-set` for sys_admin,
+   net_admin, mknod, dac_read_search each fail with the command never run; a setuid-root copy of `id` run as uid 65534 prints 0 (the control: the
+   bit works there) and a setuid-root copy of `grep` reads `CapEff = CapPrm = CapBnd =` the bounding set, none of what was removed; a copy
+   with `cap_sys_admin,cap_mknod,cap_dac_read_search+ep` cannot be executed (`Operation not permitted`). **A finding:** the existing
+   setuid probe ran in `/tmp`, which the helper mounts `nosuid`, so it could not have shown the bounding set at work (a setuid copy there
+   keeps uid 65534 and holds nothing); both probes now live in `/srv`, a shadow tmpfs that honours setuid. For the step handed
+   `OPKIT_CAPS_KEEP=sys_admin` only the benign check ran: CAP_SYS_ADMIN is in the bounding set, CAP_NET_ADMIN is not, nothing was done with
+   it, and `OPKIT_CAPS_KEEP=net_admin`, `sys_admin,net_admin`, `sys_admin net_admin`, `sys_ptrace`, `all` each refuse with 97.
+   **Not executed by anyone, and not authorised by the operator:** setns, chroot, a nested user namespace, `open_by_handle_at`, mounting a
+   setuid binary, bpf, init_module, reboot; and a hostile CAP_SYS_ADMIN step. The retained capabilities are therefore still not tried as an
+   escape beyond the write test. Before/after listings (`/etc/axon`, `/usr/local`, `/var/lib` names, `/etc/systemd/system`, `/opt`,
+   `/home`, `/mnt`, `/media`, `/srv`, users, groups, setuid files, enabled units) around every experiment are identical (empty diffs).
+6. **The root check at the top of `ns_run` (A262): a four-cell record, and a correction.** Amendment 109 said an ordinary uid is
+   "refused by `unshare` in any case: the 97 is the same". Executed (a copy of the helper with each check removed, run as uid 4999, canary
+   file in a directory that uid can write): base: 97, "not root", canary absent. Root check off: 97, "the namespaces cannot be created", absent
+   (refused by the `unshare` pre-check). `unshare` pre-check off: 97, "not root", absent (refused by the root check). Both off: the real
+   `unshare` refuses (`Operation not permitted`, rc **1**), absent. The same four cells for an ordinary uid holding every capability as
+   ambient capabilities: 97, 97 (`cannot mount a private /proc`, isolation not proved), 97, 97, absent in all four. So the command never
+   runs in any cell; the 97 is the same only while the `unshare` pre-check is there, and with both gone the exit code is 1. The check
+   is defence in depth and an exit-code contract, not a row: **equivalent for refusal, never counted killed** (`rootcheck-4cell.log`).
+7. **Checks** (all rc 0): `cargo fmt --all -- --check`; `cargo clippy -p axon-fabric --all-targets -- -D warnings`; `scripts/test_opkit_ns.sh` (inside the
+   helper's own namespaces; PASS with the amendment-111 section); `scripts/test_operator_deploy.sh` (the kit test inside `ns_run`, piped, `</dev/null`;
+   PASS, 5m41s); `scripts/test_trust_root_preflight.sh` (PASS); `python3 scripts/opkit_ns_drift.py` and `--selftest` and `--check-quoted-counts`;
+   `python3 scripts/v022_refusal_coverage.py` and `--freeze` (rc 0); `psv_matrix_check.py` reports only the rows A249-A251, which belong to other branches (as at the base);
+   `cargo test -p axon-core --no-default-features --test refusal_coverage_gate --test harness_integrity --test harness_binaries` (10, 43 and 49 passed).
+   Host listings before and after (`/etc/axon`, `/usr/local`, `/var/lib`, `/etc/systemd/system`, `/opt`, `/home`, `/mnt`, `/media`, `/srv`, users, groups, setuid files,
+   enabled units) around the helper test, the kit test and the four-cell experiment: empty diffs.
+
+**What is not done, stated.** (a) The 4242 literals that remain in `guest_build_env.rs` (two forged-record tests) are file ownership, not
+processes; they are outside the new scan only by not matching it, and a future `begin` there would need a claim. (b) The hostile routes of
+item 5 were not run. (c) The alias shapes cannot tell whether alias expansion is on. (d) The quoted-count check reads `.md .py .sh .rs .txt`
+under three trees; a count in another place (a JSON file, a commit message) is not seen.
+
+**Rows.** M3180-M3189 (drift: peel x6, literal eval, alias, shopt; service ids text key), M3190-M3196 (quoted counts: compare, the
+`shapes its` wording, the control capture, the failing exit, and the three trees). Re-run on the committed branch: ALL build-environment rows (M1473, M2221, M2265-M2269, M2500-M2515, M2540-M2553, M2570-M2576, M2630-M2659,
+M2880-M2909, M3080-M3109, M3180-M3196; 151 rows) on gpumaster, 150 of 151 killed by their own attack on the first run and the one weak row
+(M3194: the real-documents assertion of its test failed before the planted-governance one, so its marker did not match; REFUSED_ELSEWHERE is
+never a kill) fixed by planting before reading and re-run 7 of 7; the same 105 namespace rows locally (as root, the real `ns_run`; 105 of 106
+on the first run, M3194 again, then 7 of 7). Unexpected survivors 0, stale rows 0. M2659 and M2507-M2510 are among them and are killed by their own attacks.

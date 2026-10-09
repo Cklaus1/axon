@@ -19,9 +19,13 @@
 #[path = "../../axon-core/tests/script_spawn/mod.rs"]
 mod script_spawn;
 use script_spawn::repo_root;
+#[path = "uid_claim/mod.rs"]
+#[allow(dead_code)]
+mod uid_claim;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use uid_claim::UidClaim;
 
 /// Where scratch trees live: reachable by the unprivileged uids a case runs as.
 const TEST_ROOT: &str = "/var/lib";
@@ -125,6 +129,10 @@ def put(p, text="", mode=0o644, uid=0):
 /// Run `code` (after the prelude) in a private PID namespace, as root or as
 /// `uid`; the cases it prints as one JSON object.
 fn py(root: &Path, code: &str, uid: Option<u32>) -> Value {
+    // Amendment 111: no case names a uid of its own. `GBE_UID2` is a claimed, process-free uid for any
+    // case that starts a process as one (it is visible to every host-namespace observer); the uid a
+    // case RUNS as (`uid`) is a claim too, handed to the case as `GBE_UID`.
+    let spare = UidClaim::new();
     let mut c = Command::new("/usr/bin/unshare");
     c.args(["--pid", "--fork", "--mount-proc", "--kill-child"]);
     if let Some(u) = uid {
@@ -147,7 +155,9 @@ fn py(root: &Path, code: &str, uid: Option<u32>) -> Value {
     .env_clear()
     .env("PATH", "/usr/bin:/bin")
     .env("LC_ALL", "C")
-    .env("SCR", root);
+    .env("SCR", root)
+    .env("GBE_UID", uid.map(|u| u.to_string()).unwrap_or_default())
+    .env("GBE_UID2", spare.uid.to_string());
     let o: Output = c.output().unwrap();
     let t = String::from_utf8_lossy(&o.stdout).to_string();
     let line = t
@@ -179,6 +189,96 @@ fn all_hold(cases: &Value) {
     }
 }
 
+/// Amendment 111: where a test names a uid LITERALLY for something that runs as it, or hands it to the controlled build as the
+/// build uid. `begin` refuses a build uid that "already owns running processes" by reading the HOST /proc, so a literal uid is
+/// one any other test, binary or agent on the host can collide with (`the_build_uid_lock_is_root_owned_and_begin_holds_it` failed
+/// 3 of 14 whole-binary runs that way). Such a uid comes from `uid_claim` (a flock-claimed, process-free uid per test thread).
+fn literal_uid_sites(text: &str) -> Vec<String> {
+    let mut out = vec![];
+    let digit_after = |rest: &str| {
+        rest.trim_start_matches(|c: char| " \"'],=()".contains(c))
+            .starts_with(|c: char| c.is_ascii_digit())
+    };
+    for (i, _) in text.match_indices("--reuid=") {
+        if text[i + 8..].starts_with(|c: char| c.is_ascii_digit()) {
+            out.push(
+                text[i..(i + 24).min(text.len())]
+                    .lines()
+                    .next()
+                    .unwrap()
+                    .to_string(),
+            );
+        }
+    }
+    for (i, _) in text.match_indices("AXON_GUEST_BUILD_UID") {
+        if digit_after(&text[i + 20..]) {
+            out.push(
+                text[i..(i + 40).min(text.len())]
+                    .lines()
+                    .next()
+                    .unwrap()
+                    .to_string(),
+            );
+        }
+    }
+    out
+}
+
+#[test]
+fn no_test_gives_a_process_or_the_build_uid_a_literal_uid() {
+    // control: the shapes this refuses are seen
+    for planted in [
+        "setpriv --reuid=4242 --regid=4242",
+        "os.environ[\"AXON_GUEST_BUILD_UID\"] = \"4242\"",
+        ".env(\"AXON_GUEST_BUILD_UID\", \"4242\")",
+    ] {
+        assert!(
+            !literal_uid_sites(planted).is_empty(),
+            "setup: the literal-uid scan missed {planted:?}"
+        );
+    }
+    for fine in [
+        "setpriv --reuid=$BUID",
+        "\"--reuid=%d\" % X",
+        ".env(\"AXON_GUEST_BUILD_UID\", test_uid().to_string())",
+        "os.environ.pop(\"AXON_GUEST_BUILD_UID\", None)",
+        "os.environ[\"AXON_GUEST_BUILD_UID\"] = \"{uid}\"",
+    ] {
+        assert!(
+            literal_uid_sites(fine).is_empty(),
+            "setup: the literal-uid scan refused {fine:?}"
+        );
+    }
+    let t = repo_root().join("crates/axon-fabric/tests");
+    let mut files = vec![
+        t.join("guest_build_env.rs"),
+        t.join("guest_build_env_guards.rs"),
+    ];
+    for e in std::fs::read_dir(t.join("guest_build_env_guards")).unwrap() {
+        let p = e.unwrap().path();
+        // ids_root.py compares an ARGV VALUE (the command as_build_uid would run); it starts nothing
+        if p.extension().is_some_and(|x| x == "py") && !p.ends_with("ids_root.py") {
+            files.push(p);
+        }
+    }
+    let mut bad = vec![];
+    for f in &files {
+        let text = std::fs::read_to_string(f).unwrap();
+        // this test's own planted strings are not sites
+        let text = text
+            .split("fn no_test_gives_a_process_or_the_build_uid_a_literal_uid")
+            .next()
+            .unwrap();
+        for site in literal_uid_sites(text) {
+            bad.push(format!("{}: {site}", f.display()));
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "ATTACK: a test names a literal uid for a process or the build uid (use uid_claim): {bad:?}"
+    );
+}
+
 // ── the cases ───────────────────────────────────────────────────────────────
 
 macro_rules! cases {
@@ -197,10 +297,11 @@ fn run_cases(code: &str, uid: Option<u32>) {
     all_hold(&py(&r, code, uid));
 }
 
-/// `build_ids()`, `require_runner()`: who the build runs as (as uid 4242).
+/// `build_ids()`, `require_runner()`: who the build runs as (as a claimed uid).
 #[test]
 fn the_build_uid_is_unprivileged_and_not_the_builders_own() {
-    run_cases(cases!("ids_user.py"), Some(4242));
+    let me = UidClaim::new();
+    run_cases(cases!("ids_user.py"), Some(me.uid));
 }
 
 #[test]
@@ -250,7 +351,11 @@ fn the_constructed_environments_and_the_host_tool_identities_are_the_documented_
 /// and string uids, any letter case, subdirectories and non-.json names under /etc/axon, quoted and drop-in
 /// `User=`, units not named axon-* that run an axon binary, `Group=` and `*_gid` for the build GID), a file that
 /// cannot be read or parsed REFUSES instead of being skipped, `DynamicUser` refuses, and a build uid that already
-/// owns running processes is refused.
+/// owns running processes is refused. Amendment 109 adds the keys in any spelling (`ownerUid`, `owner-uid`,
+/// `runAsUser`, `username`), TOML inline tables and multi-line arrays, YAML flow maps and a value on the next
+/// line, a uid-named key of no known class holding a number, a strict key with no readable value, and an
+/// unreadable drop-in directory (a clean refusal, not a traceback): it reads the LISTED shapes and fails
+/// closed on the rest, not "every shape".
 #[test]
 fn the_service_accounts_are_found_in_every_shape_and_an_unreadable_file_refuses() {
     run_cases(cases!("service_ids.py"), None);

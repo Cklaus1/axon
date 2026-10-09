@@ -330,91 +330,10 @@ fn reachable_marker(name: &str) -> PathBuf {
     p
 }
 
-/// The build uid THIS test uses. Every test owns a distinct, unused uid, claimed for the life of the
-/// test thread, so the per-uid lock, the "already owns running processes" refusal (amendment 101) and the
-/// post-step reaper (which SIGKILLs every process of the build uid) can never cross from one test to
-/// another. They used to share 65534 (`nobody`): a host-namespace `begin` of one test saw (and refused)
-/// the transient or detached build-uid processes of another test's step, which is visible from the host
-/// /proc even from inside that test's PID namespace, so the suite failed a DIFFERENT 1..7 tests per run.
-/// The claim is an exclusive flock on a root-owned file per candidate uid, so concurrent test binaries
-/// (and other agents' runs) cannot pick the same uid either.
-struct UidClaim {
-    uid: u32,
-    _lock: std::fs::File,
-}
-
-const UID_CLAIM_DIR: &str = "/var/lib/axon-gbe-test-uids";
-
-fn owns_a_process(uid: u32) -> bool {
-    let Ok(rd) = std::fs::read_dir("/proc") else {
-        return true;
-    };
-    for e in rd.flatten() {
-        if !e
-            .file_name()
-            .to_string_lossy()
-            .bytes()
-            .all(|b| b.is_ascii_digit())
-        {
-            continue;
-        }
-        let Ok(tasks) = std::fs::read_dir(e.path().join("task")) else {
-            continue;
-        };
-        for t in tasks.flatten() {
-            if let Ok(st) = std::fs::read_to_string(t.path().join("status")) {
-                if st.lines().find(|l| l.starts_with("Uid:")).is_some_and(|l| {
-                    l.split_whitespace()
-                        .skip(1)
-                        .take(4)
-                        .any(|x| x == uid.to_string())
-                }) {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
-impl UidClaim {
-    fn new() -> UidClaim {
-        use std::os::unix::fs::PermissionsExt;
-        use std::os::unix::io::AsRawFd;
-        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-        std::fs::create_dir_all(UID_CLAIM_DIR).unwrap();
-        std::fs::set_permissions(UID_CLAIM_DIR, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let span = 20_000u32;
-        let start = std::process::id().wrapping_mul(2_654_435_761) % span;
-        for _ in 0..span {
-            let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            let uid = 40_000 + (start + n) % span;
-            let f = std::fs::OpenOptions::new()
-                .create(true)
-                .truncate(false)
-                .write(true)
-                .open(format!("{UID_CLAIM_DIR}/uid-{uid}"))
-                .unwrap();
-            if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-                continue;
-            }
-            if owns_a_process(uid) {
-                continue;
-            }
-            return UidClaim { uid, _lock: f };
-        }
-        panic!("setup: no unclaimed test build uid in 40000..60000");
-    }
-}
-
-thread_local! {
-    static TEST_UID: UidClaim = UidClaim::new();
-}
-
-/// This test's build uid (see `UidClaim`).
-fn test_uid() -> u32 {
-    TEST_UID.with(|c| c.uid)
-}
+#[path = "uid_claim/mod.rs"]
+#[allow(dead_code)]
+mod uid_claim;
+use uid_claim::test_uid;
 
 /// A begun controlled build of a fresh checkout under `d`: (repo, record path, record).
 fn begun(d: &Path) -> (PathBuf, PathBuf, Value) {
@@ -3037,7 +2956,7 @@ fn the_build_uid_lock_is_root_owned_and_begin_holds_it() {
 import fcntl, os, stat
 base = {base:?}
 os.makedirs(base, mode=0o755, exist_ok=True)
-os.environ["AXON_GUEST_BUILD_UID"] = "4242"
+os.environ["AXON_GUEST_BUILD_UID"] = "{uid}"
 def lock(dirname):
     g.LOCK_DIR = os.path.join(base, dirname)
     try:
@@ -3046,27 +2965,27 @@ def lock(dirname):
         return "refused: " + str(e)
 out = []
 out.append("CONTROL=" + lock("clean"))
-st = os.stat(os.path.join(base, "clean", "axon-guest-build-uid-4242.lock"))
+st = os.stat(os.path.join(base, "clean", "axon-guest-build-uid-{uid}.lock"))
 out.append("CONTROL_MODE=%o:%d" % (st.st_mode & 0o7777, st.st_uid))
 os.makedirs(os.path.join(base, "sticky"), mode=0o755); os.chmod(os.path.join(base, "sticky"), 0o1777)
 out.append("WORLD_WRITABLE_DIR=" + lock("sticky"))
 os.makedirs(os.path.join(base, "owned"), mode=0o755)
-f = os.path.join(base, "owned", "axon-guest-build-uid-4242.lock")
-open(f, "w").close(); os.chown(f, 4242, 4242); os.chmod(f, 0o600)
+f = os.path.join(base, "owned", "axon-guest-build-uid-{uid}.lock")
+open(f, "w").close(); os.chown(f, {uid}, {uid}); os.chmod(f, 0o600)
 out.append("LOCK_OWNED_BY_BUILD_UID=" + lock("owned"))
 os.makedirs(os.path.join(base, "loose"), mode=0o755)
-f = os.path.join(base, "loose", "axon-guest-build-uid-4242.lock")
+f = os.path.join(base, "loose", "axon-guest-build-uid-{uid}.lock")
 open(f, "w").close(); os.chmod(f, 0o666)
 out.append("LOCK_LOOSE_MODE=" + lock("loose"))
 os.makedirs(os.path.join(base, "lnk"), mode=0o755)
-os.symlink("/dev/null", os.path.join(base, "lnk", "axon-guest-build-uid-4242.lock"))
+os.symlink("/dev/null", os.path.join(base, "lnk", "axon-guest-build-uid-{uid}.lock"))
 out.append("LOCK_IS_SYMLINK=" + lock("lnk"))
 # begin holds the lock while it builds the trees
 g.LOCK_DIR = os.path.join(base, "held")
 seen = []
 def probe(record_path, host):
     os.makedirs(g.LOCK_DIR, mode=0o755, exist_ok=True)
-    fd = os.open(os.path.join(g.LOCK_DIR, "axon-guest-build-uid-4242.lock"), os.O_RDWR | os.O_CREAT, 0o600)
+    fd = os.open(os.path.join(g.LOCK_DIR, "axon-guest-build-uid-{uid}.lock"), os.O_RDWR | os.O_CREAT, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB); seen.append("free")
     except BlockingIOError:
@@ -3078,7 +2997,8 @@ g.begin("/nonexistent/rec.json")
 out.append("BEGIN_LOCK=" + ",".join(seen))
 print("\n".join(out))
 "#,
-        base = base.display().to_string()
+        base = base.display().to_string(),
+        uid = test_uid()
     );
     let o = py_driver(&r, &body);
     let res = text(&o);

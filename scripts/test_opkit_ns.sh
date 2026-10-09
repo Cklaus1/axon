@@ -17,6 +17,60 @@ if [ "${1:-}" = --child ]; then
   # amendment 105: the mechanisms on their own, in a throw-away mount namespace and with no proof in the way
   case "$mode" in
     nsrun) . "$LIB"; shift 3; ns_run "$@"; exit $? ;;       # ns_run with this script as the outermost one (the *_FOR_TEST overrides are honoured)
+    mnttmpfs)
+      # amendment 109: a tmpfs over the host's $4 (private to this throw-away namespace) is "a host directory outside every temp
+      # root" that can be made and written without a byte reaching the real one. $W/rw109 is the one valid scratch directory.
+      . "$LIB"; MNTD=$4; mount -t tmpfs -o mode=0755 tmpfs "$MNTD" || exit 90
+      mkdir -p "$MNTD/rw" "$MNTD/scr" "$MNTD/tmp1/x" "$W/rw109" "$W/scr109" || exit 90
+      M=$W/rw109/ran
+      tryrun() { # EXPECT(97|0) LABEL MARKER VAR=val... -> ns_run touch MARKER with those variables set
+        local want=$1 label=$2 mark=$3 o rc; shift 3
+        rm -f "$mark"
+        o=$(env "$@" OPKIT_LIB=$LIB bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$mark" 2>&1 </dev/null); rc=$?
+        if [ "$want" = 97 ]; then
+          { [ ! -e "$mark" ] && [ $rc = 97 ]; } || { echo "ATTACK: $label was accepted (rc $rc, marker $([ -e "$mark" ] && echo present || echo absent)): $o"; exit 1; }
+        else
+          { [ -e "$mark" ] && [ $rc = 0 ]; } || { echo "control: $label was refused (rc $rc): $o"; exit 1; }
+        fi
+        LASTOUT=$o
+      }
+      before=$(ls /var/tmp | grep -c '^opkit-ns\.' || true)
+      # TMPDIR is ignored (the helper never consults it): a TMPDIR naming a host directory changes nothing, and does not make one a temp root
+      tryrun 0 "TMPDIR=$MNTD (ignored: the helper never consults it)" "$M" TMPDIR="$MNTD" OPKIT_SCRATCH="$W/scr109" OPKIT_RW="$W/rw109"
+      tryrun 97 "TMPDIR=$MNTD OPKIT_RW=$MNTD/rw (the environment named a temp root and a directory under it)" "$MNTD/rw/ran" TMPDIR="$MNTD" OPKIT_RW="$MNTD/rw" OPKIT_SCRATCH="$W/scr109"
+      grep -q 'not strictly below /tmp or /var/tmp' <<<"$LASTOUT" || { echo "refused for another reason (the temp-root rule alone was to refuse it): $LASTOUT"; exit 1; }
+      tryrun 97 "OPKIT_SCRATCH=$MNTD/scr (not below a temp root)" "$M" OPKIT_SCRATCH="$MNTD/scr" OPKIT_RW="$W/rw109"
+      grep -q 'OPKIT_SCRATCH' <<<"$LASTOUT" || { echo "refused for another reason (OPKIT_SCRATCH alone was to refuse it): $LASTOUT"; exit 1; }
+      ! grep -q 'isolation not proved' <<<"$LASTOUT" || { echo "ATTACK: ns_run mounted and unshared before it validated OPKIT_SCRATCH (the namespace's own check refused it): $LASTOUT"; exit 1; }
+      [ -z "$(ls -A "$MNTD/scr")" ] || { echo "ATTACK: ns_run created $(ls -A "$MNTD/scr" | tr '\n' ' ') in a scratch directory the environment named"; exit 1; }
+      # each rule of the scratch check on its own (a directory only ONE of them refuses), for OPKIT_SCRATCH
+      mkdir -p "$W/scr-open" "$W/scr-real"; chmod 0777 "$W/scr-open"; ln -sfn "$W/scr-real" "$W/scr-link"
+      for badscr in "$W/scr-open" "$W/scr-link" /var/tmp /tmp relative/dir "$W/scr-missing"; do
+        tryrun 97 "OPKIT_SCRATCH='$badscr'" "$M" OPKIT_SCRATCH="$badscr" OPKIT_RW="$W/rw109"
+      done
+      # the primitive, called directly: opkit_rw_validate no longer trusts TMPDIR for a temp root; opkit_ns_isolate refuses a scratch the environment named
+      o=$(TMPDIR="$MNTD/tmp1" opkit_rw_validate "$MNTD/tmp1/x" 2>&1); rc=$?
+      { [ $rc = 1 ] && grep -q 'not strictly below /tmp or /var/tmp' <<<"$o"; } || { echo "ATTACK: opkit_rw_validate took \$TMPDIR for a temp root (rc $rc): $o"; exit 1; }
+      o=$(OPKIT_SCRATCH="$MNTD/scr" opkit_ns_isolate 2>&1); rc=$?
+      { [ $rc = 1 ] && [ -z "$(ls -A "$MNTD/scr")" ]; } || { echo "ATTACK: opkit_ns_isolate worked in a scratch directory the environment named (rc $rc, $(ls -A "$MNTD/scr" | tr '\n' ' ')): $o"; exit 1; }
+      # controls: /var/tmp itself is a fine TMPDIR; a scratch under it is fine; with no OPKIT_SCRATCH the helper makes its own and leaves nothing
+      tryrun 0 "TMPDIR=/var/tmp with a valid scratch and OPKIT_RW" "$M" TMPDIR=/var/tmp OPKIT_SCRATCH="$W/scr109" OPKIT_RW="$W/rw109"
+      tryrun 0 "no OPKIT_SCRATCH (the helper makes its own)" "$M" OPKIT_RW="$W/rw109"
+      after=$(ls /var/tmp | grep -c '^opkit-ns\.' || true)
+      [ "$before" = "$after" ] || { echo "ATTACK: ns_run left its own scratch root behind ($before -> $after opkit-ns.* directories in /var/tmp)"; exit 1; }
+      exit 0 ;;
+    sockfd)       # W FD MARKER: a unix socket end on descriptor FD, then ns_run (amendment 109)
+      python3 -c '
+import os, socket, sys
+a, b = socket.socketpair()
+os.dup2(a.fileno(), int(sys.argv[1])); a.close()
+os.execvp("bash", ["bash", "-c", ". \"$OPKIT_LIB\"; ns_run touch \"$1\"", "bash", sys.argv[2]])' "$4" "$5"; exit $? ;;
+    ptyfd)        # W MARKER: a pts slave on stdin, then ns_run
+      python3 -c '
+import os, pty, sys
+m, sl = pty.openpty(); os.dup2(sl, 0)
+os.execvp("bash", ["bash", "-c", ". \"$OPKIT_LIB\"; ns_run touch \"$1\"", "bash", sys.argv[1]])' "$4"; exit $? ;;
+    mknodc) mknod "$W/devs/$4" c "$5" "$6" 2>/dev/null; exit $? ;;       # W NAME MAJOR MINOR: a node in scratch, never under /dev
     devpriv)
       . "$LIB"; mkdir -p "$W/devmp" && opkit_ns_private_dev "$W/devmp" || exit 93
       echo "DEVLIST $(ls /dev | tr '\n' ' ')"
@@ -68,6 +122,9 @@ sys.exit(bad)' ;;
 fi
 
 [ "$(id -u)" = 0 ] && command -v unshare >/dev/null || { echo "SKIP: needs root and unshare"; exit 77; }
+# amendment 109: ns_run refuses a socket on fds 0-2 (a write through it reaches the peer). An ssh-driven run can hand a script
+# one for stdin; the tests' own commands do not read it, so it is replaced here, and the socket tests below hand their own.
+[ ! -S /proc/self/fd/0 ] || exec </dev/null
 W=$(mktemp -d "${TMPDIR:-/var/tmp}/axon-opkit-ns-test.XXXXXX") || exit 1
 trap 'rm -rf "$W"' EXIT
 mkdir -p "$W/a" "$W/b" "$W/scratch"
@@ -350,7 +407,7 @@ o=$(OPKIT_CAPS_KEEP=mknod nsrun touch "$M3" 2>&1); rc=$?
 { [ ! -e "$M3" ] && [ $rc = 97 ]; } || fail "ATTACK: OPKIT_CAPS_KEEP=mknod was honoured (rc $rc): $o"
 echo "ok: only sys_admin may be kept (anything else refuses, 97)"
 # a setuid-root program does not get back what the bounding set took
-o=$(nsrun bash -c 'cp /usr/bin/capsh /tmp/capsh-suid && chmod u+s /tmp/capsh-suid && setpriv --reuid=65534 --regid=65534 --clear-groups /tmp/capsh-suid --print 2>&1 | grep -i "^Bounding"; echo done' 2>&1)
+o=$(nsrun bash -c 'cp /usr/bin/capsh /srv/capsh-suid && chmod u+s /srv/capsh-suid && setpriv --reuid=65534 --regid=65534 --clear-groups /srv/capsh-suid --print 2>&1 | grep -i "^Bounding"; echo done' 2>&1)
 ! grep -qi 'cap_sys_admin' <<<"$o" || fail "ATTACK: a setuid-root program regained cap_sys_admin: $o"
 echo "ok: a setuid-root program inside the namespace gets no capability the bounding set took"
 # (5) descriptors: fds 0-2, a pre-opened writable file, and every inherited descriptor above stderr
@@ -400,7 +457,7 @@ for cand in /mnt /media; do [ -d "$cand" ] && [ ! -L "$cand" ] && [ "$(stat -c %
 if [ -n "${MNT:-}" ]; then
   o=$(OPKIT_RW="$MNT" OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$M5" 2>&1 </dev/null); rc=$?
   { [ ! -e "$M5" ] && [ $rc = 97 ]; } || fail "ATTACK: OPKIT_RW=$MNT (a host directory outside every temp root) was accepted (rc $rc): $o"
-  grep -q 'not below a temp root' <<<"$o" || fail "refused for another reason: $o"
+  grep -q 'not strictly below /tmp or /var/tmp' <<<"$o" || fail "refused for another reason: $o"
 else echo "SKIP: no /mnt or /media to try as a directory outside every temp root"; fi
 for cand in /usr/share/zoneinfo /usr/share/doc /usr/lib/systemd /usr/share/misc; do [ -d "$cand" ] && [ ! -L "$cand" ] && { SYS=$cand; break; }; done
 if [ -n "${SYS:-}" ]; then
@@ -417,4 +474,157 @@ echo "ok: OPKIT_RW refuses /, /opt, /home, /root, /usr, /etc, /var, a shared tem
 o=$(OPKIT_RW="$W/rw $W/sub" OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$M5" 2>&1 </dev/null); rc=$?
 { [ -e "$M5" ] && [ $rc = 0 ]; } || fail "control: scratch directories under a temp root were refused (rc $rc): $o"
 echo "ok: control: OPKIT_RW entries that are scratch below a temp root are accepted"
+
+# ── amendment 109 ───────────────────────────────────────────────────────────────────────────────────
+# (1) the temp roots are the helper's own: TMPDIR and OPKIT_SCRATCH are the environment's, and the environment does not
+# get to name a place the helper mounts over, creates directories in or hands the command as writable. The host
+# directory outside every temp root is /mnt (or /media) under a tmpfs of this throw-away namespace, so nothing real is written.
+hostlist() { ls -A /opt /home /mnt /media /srv /usr/local /etc/axon /etc/systemd/system 2>&1; }
+HL_BEFORE=$(hostlist)
+MNTD=""; for cand in /mnt /media; do [ -d "$cand" ] && [ ! -L "$cand" ] && { MNTD=$cand; break; }; done
+if [ -n "$MNTD" ]; then
+  o=$(unshare -m --propagation private bash "$SELF" --child mnttmpfs "$W" "$MNTD" 2>&1); rc=$?
+  [ $rc = 0 ] || fail "(rc $rc) $o"
+  echo "ok: TMPDIR is ignored and is no temp root; OPKIT_SCRATCH outside /tmp and /var/tmp is refused (97) before anything is mounted, nothing is created there; the helper's own scratch is removed"
+else echo "SKIP: no /mnt or /media to stand in for a host directory outside every temp root"; fi
+[ "$HL_BEFORE" = "$(hostlist)" ] || fail "ATTACK: the host listing changed during the TMPDIR/OPKIT_SCRATCH tests"
+# (2) descriptors 0-2: a socket, the console, the virtual terminals and serial ports are refused; a pipe and a pts are not
+M6=$W/scratch/ran6
+for fdn in 0 1 2; do
+  rm -f "$M6"
+  o=$(OPKIT_RW=$W/scratch OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash "$SELF" --child sockfd "$W" $fdn "$M6" 2>&1 </dev/null); rc=$?
+  { [ ! -e "$M6" ] && [ $rc = 97 ]; } || fail "ATTACK: a unix socket on fd $fdn was accepted (rc $rc): $o"
+  [ $fdn = 2 ] || grep -q 'is a socket' <<<"$o" || fail "refused for another reason (rc $rc): $o"     # (on fd 2 the message went to the socket)
+done
+rm -f "$M6"
+o=$(OPKIT_RW=$W/scratch OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; printf x | ns_run touch "$1"' bash "$M6" 2>&1); rc=$?
+{ [ -e "$M6" ] && [ $rc = 0 ]; } || fail "control: a pipe on stdin was refused (rc $rc): $o"
+rm -f "$M6"
+o=$(OPKIT_RW=$W/scratch OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash "$SELF" --child ptyfd "$W" "$M6" 2>&1); rc=$?
+{ [ -e "$M6" ] && [ $rc = 0 ]; } || fail "control: a pts slave on stdin was refused (rc $rc): $o"
+echo "ok: a unix socket on fd 0-2 is refused (97); a pipe and a pts slave are accepted"
+mkdir -p "$W/devs"; tested=0
+for spec in "console 5 1" "tty0 4 0" "tty1 4 1" "ttyS0 4 64"; do
+  set -- $spec
+  bash "$SELF" --child mknodc "$W" "$1" "$2" "$3" || continue
+  ( exec 8<"$W/devs/$1" ) 2>/dev/null || { echo "SKIP: $1 ($2:$3) cannot be opened here"; continue; }
+  rm -f "$M6"
+  o=$(OPKIT_RW=$W/scratch OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$M6" <"$W/devs/$1" 2>&1); rc=$?
+  { [ ! -e "$M6" ] && [ $rc = 97 ]; } || fail "ATTACK: the host console/terminal device $1 ($2:$3) on stdin was accepted (rc $rc): $o"
+  grep -q 'character device' <<<"$o" || fail "refused for another reason (rc $rc): $o"
+  tested=$((tested + 1))
+done
+[ $tested -gt 0 ] || echo "SKIP: no console or terminal device could be opened to hand over on stdin"
+for spec in "null 1 3" "zero 1 5"; do   # controls: the nodes the allowlist keeps
+  set -- $spec; bash "$SELF" --child mknodc "$W" "c$1" "$2" "$3" || continue
+  rm -f "$M6"
+  o=$(OPKIT_RW=$W/scratch OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$M6" <"$W/devs/c$1" 2>&1); rc=$?
+  { [ -e "$M6" ] && [ $rc = 0 ]; } || fail "control: $1 on stdin was refused (rc $rc): $o"
+done
+rm -f "$M6"
+echo "ok: the console, the virtual terminals and the serial ports on fd 0 are refused (97); null and zero are accepted"
+# (3) an ordinary uid cannot make the namespaces: 97 and the command never ran (it used to be unshare's own rc 1); a host
+# where unshare fails does the same
+LIBTXT=$(cat "$LIB")
+rm -f "$M6"
+o=$(LIBTXT=$LIBTXT setpriv --reuid 65534 --regid 65534 --clear-groups bash -c 'eval "$LIBTXT"; ns_run touch "$1"' bash "$W/ordinary-uid-ran" 2>&1); rc=$?
+{ [ ! -e "$W/ordinary-uid-ran" ] && [ $rc = 97 ]; } || fail "ATTACK: ns_run as an ordinary uid did not refuse with 97 (rc $rc): $o"
+mkdir -p "$W/fakebin"; printf '#!/bin/sh\nexit 1\n' >"$W/fakebin/unshare"; chmod 0755 "$W/fakebin/unshare"
+o=$(PATH=$W/fakebin:$PATH OPKIT_RW=$W/scratch OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$M6" 2>&1 </dev/null); rc=$?
+{ [ ! -e "$M6" ] && [ $rc = 97 ]; } || fail "ATTACK: a host that cannot unshare did not refuse with 97 (rc $rc, marker $([ -e "$M6" ] && echo present || echo absent)): $o"
+echo "ok: an ordinary uid, or a host where unshare fails, is refused with 97 and the command never runs"
+# (4) nodev, read from the mount flags inside ns_run: every tmpfs the helper makes and the OPKIT_RW bind carry it
+mkdir -p "$W/rw110"
+o=$(OPKIT_RW=$W/rw110 OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run awk -v rw="$1" '"'"'{ n = split($6, o, ","); nd = 0; for (i = 1; i <= n; i++) if (o[i] == "nodev") nd = 1
+      if ($5 == "/tmp" || $5 == "/etc" || $5 == "/usr/local" || $5 == "/var/lib" || $5 == "/run" || $5 == "/srv" || $5 == "/var/log" || $5 == "/var/spool" || $5 == rw) print (nd ? "nodev" : "NODEV-MISSING"), $5 }'"'"' /proc/self/mountinfo' bash "$W/rw110" 2>&1 </dev/null); rc=$?
+[ $rc = 0 ] && grep -q '^nodev /tmp$' <<<"$o" && grep -q "^\(nodev\|NODEV-MISSING\) $W/rw110\$" <<<"$o" || fail "setup: the mount-flag listing did not run (rc $rc): $o"
+! grep -q NODEV-MISSING <<<"$o" || fail "ATTACK: a tmpfs or bind the helper made lacks nodev: $(grep NODEV-MISSING <<<"$o" | tr '\n' ' ')"
+echo "ok: every tmpfs the helper makes (/tmp /etc /usr/local /var/lib /run /srv ...) and the OPKIT_RW bind carry nodev"
+# (amendment 111) The capabilities the bounding set removed cannot be got back from INSIDE, by the routes that need no escape
+# syscall. Executed here, as the default-capability root inside ns_run, with effects on a scratch file only: reading the sets,
+# asking for the removed capabilities back (setpriv --inh-caps / --ambient-caps / --bounding-set, prctl), a setuid-root copy of
+# a program and a file-capability copy of one. NOT executed by anyone, here or elsewhere: setns, chroot, a nested user
+# namespace, open_by_handle_at, mounting the setuid binary, bpf, init_module, reboot (the operator has not authorised them).
+CAPPROBE='
+import os, sys, ctypes
+names = {2: "dac_read_search", 12: "net_admin", 13: "net_raw", 16: "sys_module", 17: "sys_rawio", 19: "sys_ptrace", 21: "sys_admin",
+         22: "sys_boot", 25: "sys_time", 27: "mknod", 34: "syslog", 39: "bpf"}
+sets = {}
+for ln in open("/proc/self/status"):
+    for k in ("CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"):
+        if ln.startswith(k + ":"):
+            sets[k] = int(ln.split()[1], 16)
+for k, v in sorted(sets.items()):
+    print("SET", k, "%x" % v)
+libc = ctypes.CDLL(None, use_errno=True)
+for c, n in sorted(names.items()):
+    print("BND", n, libc.prctl(23, c, 0, 0, 0))                  # PR_CAPBSET_READ: 1 in the bounding set, 0 not
+    r = libc.prctl(47, 2, c, 0, 0)                                # PR_CAP_AMBIENT_RAISE: needs the capability permitted AND inheritable
+    print("AMB", n, r, ctypes.get_errno())
+print("done")
+'
+o=$(nsrun python3 -c "$CAPPROBE" 2>&1)
+grep -q '^done$' <<<"$o" || fail "setup: the capability probe did not run: $o"
+BND=$(sed -n 's/^SET CapBnd //p' <<<"$o"); EFF=$(sed -n 's/^SET CapEff //p' <<<"$o"); PRM=$(sed -n 's/^SET CapPrm //p' <<<"$o")
+[ -n "$BND" ] && [ -n "$EFF" ] && [ -n "$PRM" ] || fail "setup: the capability sets were not read: $o"
+[ $(( 0x$EFF & ~0x$BND )) = 0 ] && [ $(( 0x$PRM & ~0x$BND )) = 0 ] || fail "ATTACK: the process holds an effective or permitted capability that is not in its bounding set (eff $EFF prm $PRM bnd $BND)"
+for n in dac_read_search net_admin net_raw sys_module sys_rawio sys_ptrace sys_admin sys_boot sys_time mknod syslog bpf; do
+  grep -q "^BND $n 0\$" <<<"$o" || fail "ATTACK: cap_$n is in the command's bounding set: $(grep "^BND $n " <<<"$o")"
+  grep -q "^AMB $n -1 " <<<"$o" || fail "ATTACK: cap_$n could be raised to the ambient set: $(grep "^AMB $n " <<<"$o")"
+done
+echo "ok: CapEff and CapPrm are within the bounding set, and every removed capability reads 0 in it and cannot be raised ambient (prctl)"
+# setpriv asking for a removed capability back: each request must FAIL (rc != 0) and the command must not run
+for req in "--inh-caps +sys_admin" "--ambient-caps +sys_admin" "--inh-caps +net_admin --ambient-caps +net_admin" "--bounding-set +sys_admin" "--bounding-set +mknod,+dac_read_search"; do
+  rm -f "$W/scratch/cap-ran"
+  o=$(nsrun setpriv $req -- touch "$W/scratch/cap-ran" 2>&1); rc=$?
+  { [ ! -e "$W/scratch/cap-ran" ] && [ $rc != 0 ]; } || fail "ATTACK: setpriv $req was honoured inside the namespace (rc $rc): $o"
+done
+echo "ok: setpriv --inh-caps / --ambient-caps / --bounding-set for sys_admin, net_admin, mknod, dac_read_search is refused inside the namespace"
+# a setuid-root copy and a file-capability copy of a program: what each one holds is still inside the bounding set
+# (/tmp is nosuid, so a setuid copy there proves nothing: the probe lives in /srv, a shadow tmpfs that honours setuid, and a CONTROL
+# shows the setuid bit takes effect there -- a setuid-root `id -u` run as uid 65534 prints 0 -- and that the program holds exactly the set)
+# (the probe is a file the test writes and the namespace runs: the drift gate judges what is written under /srv by a command that
+# is not itself ns_run, and a quoted program is judged line by line)
+cat >"$W/suidprobe.sh" <<'EOF'
+G=$(command -v grep); I=$(command -v id)
+cp "$I" /srv/id-suid && chmod u+s /srv/id-suid
+echo "SUIDEUID $(setpriv --reuid=65534 --regid=65534 --clear-groups /srv/id-suid -u)"
+cp "$G" /srv/grep-suid && chmod u+s /srv/grep-suid
+setpriv --reuid=65534 --regid=65534 --clear-groups /srv/grep-suid -E "^Cap(Eff|Prm|Bnd)" /proc/self/status | sed "s/^/SUID /"
+cp "$G" /srv/grep-fcap && setcap cap_sys_admin,cap_mknod,cap_dac_read_search+ep /srv/grep-fcap 2>&1 | sed "s/^/SETCAP /"
+setpriv --reuid=65534 --regid=65534 --clear-groups /srv/grep-fcap -E "^Cap(Eff|Prm|Bnd)" /proc/self/status 2>&1 | sed "s/^/FCAP /"
+echo done
+EOF
+o=$(nsrun bash "$W/suidprobe.sh" 2>&1)
+grep -q '^done$' <<<"$o" || fail "setup: the setuid / file-capability probe did not run: $o"
+grep -q '^SUIDEUID 0$' <<<"$o" || fail "setup: the setuid bit did not take effect in /srv, so the probe would prove nothing: $o"
+grep -q '^SUID CapEff' <<<"$o" || fail "setup: the setuid-root copy printed no capability set: $o"
+EFFSUID=$(sed -n 's/^SUID CapEff:[[:space:]]*//p' <<<"$o"); BNDSUID=$(sed -n 's/^SUID CapBnd:[[:space:]]*//p' <<<"$o")
+python3 - "$EFFSUID" "$BNDSUID" <<'PY' || fail "ATTACK/setup: the setuid-root copy's CapEff $EFFSUID is empty or exceeds the bounding set $BNDSUID"
+import sys
+e, b = int(sys.argv[1], 16), int(sys.argv[2], 16)
+sys.exit(0 if e and not e & ~b else 1)
+PY
+python3 - "$o" <<'PY' || fail "ATTACK: a setuid-root or file-capability copy of a program gained a capability the bounding set removed"
+import sys
+removed = (1 << 21) | (1 << 27) | (1 << 2) | (1 << 12) | (1 << 17) | (1 << 16) | (1 << 34)
+for ln in sys.argv[1].splitlines():
+    p = ln.split()
+    if len(p) == 3 and p[0] in ("SUID", "FCAP") and p[1].rstrip(":") in ("CapEff", "CapPrm", "CapBnd"):
+        if int(p[2], 16) & removed:
+            print("held:", ln); sys.exit(1)
+PY
+echo "ok: a setuid-root copy and a file-capability copy of a program hold none of sys_admin, mknod, dac_read_search, net_admin, sys_rawio, sys_module, syslog"
+# the one kept capability: only sys_admin may be handed over; the benign check is that it is PRESENT and that net_admin is REFUSED
+o=$(OPKIT_CAPS_KEEP=sys_admin nsrun python3 -c "$CAPPROBE" 2>&1)
+grep -q '^BND sys_admin 1$' <<<"$o" || fail "setup: OPKIT_CAPS_KEEP=sys_admin did not leave CAP_SYS_ADMIN in the bounding set: $o"
+grep -q '^BND net_admin 0$' <<<"$o" || fail "ATTACK: OPKIT_CAPS_KEEP=sys_admin also left CAP_NET_ADMIN: $o"
+for k in net_admin "sys_admin,net_admin" "sys_admin net_admin" sys_ptrace all; do
+  rm -f "$W/scratch/cap-ran"
+  o=$(OPKIT_CAPS_KEEP=$k nsrun touch "$W/scratch/cap-ran" 2>&1); rc=$?
+  { [ ! -e "$W/scratch/cap-ran" ] && [ $rc = 97 ]; } || fail "ATTACK: OPKIT_CAPS_KEEP='$k' was honoured (rc $rc): $o"
+done
+echo "ok: OPKIT_CAPS_KEEP=sys_admin leaves exactly that one capability in the bounding set (nothing was done with it); net_admin and the other spellings are refused (97)"
+[ "$HL_BEFORE" = "$(hostlist)" ] || fail "ATTACK: the host listing changed during the amendment-109 tests"
+echo "ok: the host listing (/opt /home /mnt /media /srv /usr/local /etc/axon /etc/systemd/system) is the same before and after"
 echo "PASS: opkit namespace helper"
