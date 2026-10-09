@@ -39,7 +39,7 @@ def fake_log(key, n, family="value"):
     failing = f"a_test_for_entry_{n}"
     binary = f"-p axon-x --test t{n}"
     cmd = f"cargo test --no-fail-fast {binary}"
-    text = (f"$ {cmd}\nexit code: 101\n     Running tests/t{n}.rs (target/debug/deps/t{n}-0123456789abcdef)\n"
+    text = (f"$ {cmd}\nexit code: 101\n     Running tests/t{n}.rs (deps/t{n}-0123456789abcdef)\n"
             f"test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n"
             f"---- {failing} stdout ----\nthread '{failing}' panicked at tests/t{n}.rs:10:5:\n"
             f"ATTACK: the thing was accepted\n    `{binary}`\nerror: test failed, to rerun pass `{binary}`\n")
