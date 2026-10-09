@@ -18,6 +18,25 @@
 //! arm, a `SendValue` closure, a fn-value forwarder) cannot share an address
 //! with a pinned node, since both are live allocations. Its lookup misses and
 //! falls back to interning the name, so a hit never trusts a reused address.
+//!
+//! Local variables are also resolved to frame SLOTS here (AX-53). Every fn
+//! body and every lambda body cloned into the table is a frame; each binding
+//! it introduces (a parameter, `goal_met`, `let`/`own`/`ref`, a `for` or
+//! pattern binder, a captured variable) gets the index the binding occupies
+//! in the frame's `Env` at run time, and each name node that reads or assigns
+//! a local gets the slot of the binding it sees. The allocation mirrors the
+//! evaluator's scopes exactly: a block, a loop iteration, a match arm and a
+//! `while let`/`for` binder each push a scope whose slots start where the
+//! enclosing scope's live slots end, and are released when it pops, so a
+//! scope's slots are always at or above the env's length when it is entered.
+//! The env stores each binding's sym beside its value, so a slot access is
+//! checked against the expected sym, and any miss falls back to the by-name
+//! scan — a slot is a fast path, never a second source of truth.
+//!
+//! Code that runs in an env not laid out by this table keeps the by-name
+//! lookup ([`NAMED`]): module-level `let` initialisers, refinement and
+//! `@[verify]` predicates (evaluated in synthetic envs), handler arms (run on
+//! a snapshot of the defining env), and every node outside the table.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -61,6 +80,9 @@ pub(super) const SYM_CONFIDENCE: Sym = Sym(3);
 pub(super) const SYM_SOURCE_TAG: Sym = Sym(4);
 pub(super) const SYM_UNCERTAIN: Sym = Sym(5);
 pub(super) const SYM_TEMPORAL: Sym = Sym(6);
+/// The sym of an env slot that holds no binding (a slot below one defined out
+/// of order; see `Env::define_var`). Never interned, so it equals no name.
+pub(super) const SYM_NONE: Sym = Sym(u32::MAX);
 
 struct Interner {
     ids: FxHashMap<Rc<str>, Sym>,
@@ -164,6 +186,94 @@ impl Hasher for FxHasher {
 
 pub(super) type FxHashMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
 
+/// Slot of a name node that is resolved by name at run time: the env is
+/// scanned for the innermost binding of its sym (see the module docs).
+pub(super) const NAMED: u32 = u32::MAX;
+/// Slot of a name node in a slotted frame that names no local of the frame (a
+/// global, a fn, a builtin): the env holds no binding of it, so lookups skip
+/// the env entirely.
+pub(super) const NOT_LOCAL: u32 = u32::MAX - 1;
+
+/// A frame's static scope chain while its body is resolved: per scope, the
+/// slot it starts at and its bindings in binding order. Mirrors the `Env`
+/// the body runs in (see the module docs).
+struct Frame {
+    scopes: Vec<(u32, Vec<(Sym, u32)>)>,
+    next: u32,
+}
+
+impl Frame {
+    /// A frame whose base scope binds `names` to slots `0..`, in order.
+    fn with_base(names: impl IntoIterator<Item = Sym>) -> Frame {
+        let mut f = Frame {
+            scopes: vec![(0, Vec::new())],
+            next: 0,
+        };
+        names.into_iter().for_each(|s| f.bind_positional(s));
+        f
+    }
+
+    fn push(&mut self) {
+        self.scopes.push((self.next, Vec::new()));
+    }
+
+    fn pop(&mut self) {
+        let (start, _) = self.scopes.pop().expect("balanced scopes");
+        self.next = start;
+    }
+
+    /// The slot of the innermost visible binding of `s`.
+    fn lookup(&self, s: Sym) -> u32 {
+        for (_, names) in self.scopes.iter().rev() {
+            if let Some(&(_, slot)) = names.iter().rev().find(|(k, _)| *k == s) {
+                return slot;
+            }
+        }
+        NOT_LOCAL
+    }
+
+    /// Bind `s` in the current scope the way `Env::define` does: re-binding
+    /// a name of the same scope reuses its slot.
+    fn bind(&mut self, s: Sym) -> u32 {
+        let (_, names) = self.scopes.last_mut().expect("a frame has a scope");
+        if let Some(&(_, slot)) = names.iter().find(|(k, _)| *k == s) {
+            return slot;
+        }
+        let slot = self.next;
+        names.push((s, slot));
+        self.next += 1;
+        slot
+    }
+
+    /// Bind `s` to the next slot even if the scope binds it already: the
+    /// evaluator stores parameters (and `goal_met`) by position.
+    fn bind_positional(&mut self, s: Sym) {
+        let (_, names) = self.scopes.last_mut().expect("a frame has a scope");
+        names.push((s, self.next));
+        self.next += 1;
+    }
+}
+
+fn lookup(fr: &Option<Frame>, s: Sym) -> u32 {
+    fr.as_ref().map_or(NAMED, |f| f.lookup(s))
+}
+
+fn bind(fr: &mut Option<Frame>, s: Sym) -> u32 {
+    fr.as_mut().map_or(NAMED, |f| f.bind(s))
+}
+
+fn push(fr: &mut Option<Frame>) {
+    if let Some(f) = fr {
+        f.push();
+    }
+}
+
+fn pop(fr: &mut Option<Frame>) {
+    if let Some(f) = fr {
+        f.pop();
+    }
+}
+
 /// The code of a closure: its parameters and body. Shared (`Rc`) by every
 /// closure value made from the same lambda, so creating or cloning a closure
 /// never copies its body.
@@ -171,16 +281,23 @@ pub(super) type FxHashMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
 pub struct ClosureCode {
     pub(super) params: Box<[Sym]>,
     pub(super) body: Expr,
+    /// The slot of the first parameter when `body` is resolved as a slotted
+    /// frame (it follows the captured variables, slots `0..`); `None` when it
+    /// is resolved by name.
+    pub(super) param_base: Option<u32>,
 }
 
-/// A lambda node's resolution: its shared code, and the names its body may
-/// read or assign from the defining scope (its free variables, nested lambdas
-/// included). Creating the closure captures exactly those of them that are
-/// bound in the defining environment (AX-40); a free name that is not bound
-/// there is a global, a fn or a builtin, reached the same way at call time.
+/// A lambda node's resolution: its shared code, and the variables of the
+/// defining scope its body may read or assign (its free variables, nested
+/// lambdas included) with their slots there. Creating the closure captures
+/// exactly those of them that are bound in the defining environment (AX-40);
+/// a free name that is not bound there is a global, a fn or a builtin,
+/// reached the same way at call time. In a slotted frame only the free names
+/// that are locals of the frame are listed, and they become the closure
+/// frame's slots `0..` in this order.
 pub(super) struct LambdaInfo {
     pub(super) code: Rc<ClosureCode>,
-    pub(super) free: Box<[Sym]>,
+    pub(super) captures: Box<[(Sym, u32)]>,
 }
 
 impl LambdaInfo {
@@ -190,8 +307,12 @@ impl LambdaInfo {
             code: Rc::new(ClosureCode {
                 params: params.iter().map(|p| intern(&p.name)).collect(),
                 body: body.clone(),
+                param_base: None,
             }),
-            free: free_vars(params, body),
+            captures: free_vars(params, body)
+                .iter()
+                .map(|&s| (s, NAMED))
+                .collect(),
         }
     }
 }
@@ -206,23 +327,89 @@ fn free_vars(params: &[LambdaParam], body: &Expr) -> Box<[Sym]> {
     syms.into_boxed_slice()
 }
 
-/// A user fn or impl method, with its parameter syms resolved once.
+/// A user fn or impl method, with everything a call decides from its
+/// declaration resolved once (AX-18, AX-54): parameter syms, per-parameter
+/// argument coercion and the attribute-driven per-activation steps.
 pub(super) struct FnEntry<'p> {
     pub(super) def: &'p FnDef,
     pub(super) params: Box<[Sym]>,
+    /// Per parameter: whether its declared type is NOT `Uncertain`/`Temporal`
+    /// (so a soft argument unwraps to its inner value), and the sized-int
+    /// width an argument is coerced to (R19).
+    pub(super) param_coerce: Box<[(bool, Option<IntWidth>)]>,
     /// Some parameter is `&mut` (see `Interp::call_fn`).
     pub(super) has_ref_mut: bool,
+    /// `def.name`, installed as `Interp::current_fn` per activation without
+    /// copying the string.
+    pub(super) name: Rc<str>,
+    /// `@[agent]`: the enclosing agent for everything it calls (R4/I-13).
+    pub(super) is_agent: bool,
+    /// The fn the `current_fn` readers find under this name carries
+    /// `@[ai(...)]`, so an `ai_complete` in this activation may meter against
+    /// `Interp::ai_calls_this_fn` (R3c). Without it the counter is never read
+    /// or written while this fn is current, so its save/reset/restore is inert.
+    pub(super) ai_metered: bool,
+    /// `@[corrigible]` (R9).
+    pub(super) corrigible: bool,
+    /// `@[adaptive]` (R4 zone).
+    pub(super) adaptive: bool,
+    /// `@[experiment(label)]`'s label (R4 zone).
+    pub(super) experiment: Option<String>,
+    /// Has a `@[goal(...)]` attribute (R5).
+    pub(super) has_goal: bool,
+    /// The declared return type is a plain scalar (`i64`/`i32`/`f64`/`bool`),
+    /// so a soft result unwraps at the return boundary.
+    pub(super) ret_is_scalar: bool,
+    /// Named `main` (the binding-dump capture applies to it).
+    pub(super) is_main: bool,
+    /// Has a zone (`adaptive`/`experiment`) or `@[verify]` step after the
+    /// body (`Interp::finish_call_cold`).
+    pub(super) has_epilogue: bool,
 }
 
 impl<'p> FnEntry<'p> {
-    pub(super) fn new(def: &'p FnDef) -> Self {
+    /// `fns` is the interpreter's by-name fn map, which the `current_fn`
+    /// readers (`Interp::current_ai_budget` & co.) consult.
+    pub(super) fn new(def: &'p FnDef, fns: &HashMap<String, &FnDef>) -> Self {
+        use crate::ast::AxonType;
+        let has_attr = |name: &str| def.attrs.iter().any(|a| a.name == name);
         FnEntry {
             def,
             params: def.params.iter().map(|p| intern(&p.name)).collect(),
+            param_coerce: def
+                .params
+                .iter()
+                .map(|p| {
+                    let soft = matches!(
+                        &p.ty,
+                        AxonType::Generic { base, .. } if base == "Uncertain" || base == "Temporal"
+                    );
+                    (!soft, super::axon_type_to_width(&p.ty))
+                })
+                .collect(),
             has_ref_mut: def
                 .params
                 .iter()
-                .any(|p| matches!(p.ty, crate::ast::AxonType::RefMut(_))),
+                .any(|p| matches!(p.ty, AxonType::RefMut(_))),
+            name: Rc::from(def.name.as_str()),
+            is_agent: has_attr("agent"),
+            ai_metered: fns
+                .get(&def.name)
+                .is_some_and(|f| f.attrs.iter().any(|a| a.name == "ai")),
+            corrigible: has_attr("corrigible"),
+            adaptive: has_attr("adaptive"),
+            experiment: def
+                .attrs
+                .iter()
+                .find(|a| a.name == "experiment")
+                .map(|a| a.args.first().cloned().unwrap_or_default()),
+            has_goal: has_attr("goal"),
+            ret_is_scalar: matches!(
+                &def.return_type,
+                Some(AxonType::Named(n)) if matches!(n.as_str(), "i64" | "i32" | "f64" | "bool")
+            ),
+            is_main: def.name == "main",
+            has_epilogue: has_attr("adaptive") || has_attr("experiment") || def.verify.is_some(),
         }
     }
 }
@@ -240,8 +427,8 @@ const TAG_MASK: u32 = 3 << 30;
 const LAMBDA_TAG: u32 = 1 << 30;
 /// Indexes `Resolution::records` (a struct literal or a struct pattern).
 const RECORD_TAG: u32 = 2 << 30;
-/// Indexes `Resolution::strs` (a string literal).
-const STR_TAG: u32 = 3 << 30;
+/// Indexes `Resolution::lits` (a string or decimal literal).
+const LIT_TAG: u32 = 3 << 30;
 
 /// What a struct literal or struct pattern names. A `::`-qualified name is
 /// an enum variant, any other a struct.
@@ -390,15 +577,20 @@ enum Record {
 /// Open addressing with linear probing over a power-of-two slot array at most
 /// half full; address 0 marks an empty slot (no node lives there). Built once
 /// and never mutated, so a lookup is a multiply, a shift and usually one
-/// compare, with no `RefCell` borrow.
+/// compare, with no `RefCell` borrow. Each entry is `(node address, payload,
+/// frame slot)`; the slot is only meaningful for a name node (an untagged
+/// payload) and is [`NAMED`] for every other node.
 pub(super) struct Resolution {
-    slots: Box<[(usize, u32)]>,
+    slots: Box<[(usize, u32, u32)]>,
     shift: u32,
     lambdas: Vec<LambdaInfo>,
     records: Vec<Record>,
-    /// String literals' values, made once (AX-47): evaluating one clones an
-    /// `Rc` instead of allocating and copying the text.
-    strs: Vec<Rc<String>>,
+    /// The values of the literals whose `Value` owns an allocation (strings,
+    /// AX-47; decimals, AX-55), made once: evaluating one clones an `Rc`
+    /// instead of allocating (and copying the text). Int, float and bool
+    /// literals are built in place by the evaluator, which is cheaper than a
+    /// probe of this table.
+    lits: Vec<Value>,
 }
 
 impl Resolution {
@@ -417,50 +609,50 @@ impl Resolution {
             entries: Vec::new(),
             lambdas: Vec::new(),
             records: Vec::new(),
-            strs: Vec::new(),
+            lits: Vec::new(),
         };
         for item in &program.items {
             match item {
                 Item::FnDef(f) => b.add_fn(f),
                 Item::ImplBlock(blk) => blk.methods.iter().for_each(|m| b.add_fn(m)),
-                Item::LetDef { value, .. } => b.add_root(value),
-                Item::RefineDef(r) => b.add_root(&r.predicate),
+                Item::LetDef { value, .. } => b.expr(value, &mut None),
+                Item::RefineDef(r) => b.expr(&r.predicate, &mut None),
                 Item::TypeDef(t) => {
                     if let Some(p) = &t.refinement {
-                        b.add_root(p);
+                        b.expr(p, &mut None);
                     }
                 }
                 Item::EnumDef(_) | Item::ModDecl(_) | Item::UseDecl(_) | Item::TraitDef(_) => {}
             }
         }
         let cap = (b.entries.len() * 2).next_power_of_two().max(16);
-        let mut slots = vec![(0usize, 0u32); cap].into_boxed_slice();
+        let mut slots = vec![(0usize, 0u32, NAMED); cap].into_boxed_slice();
         let shift = 64 - cap.trailing_zeros();
-        for (key, payload) in b.entries {
-            let mut i = slot_of(key, shift);
+        for entry in b.entries {
+            let mut i = slot_of(entry.0, shift);
             while slots[i].0 != 0 {
-                debug_assert!(slots[i].0 != key, "every node is resolved once");
+                debug_assert!(slots[i].0 != entry.0, "every node is resolved once");
                 i = (i + 1) & (cap - 1);
             }
-            slots[i] = (key, payload);
+            slots[i] = entry;
         }
         Resolution {
             slots,
             shift,
             lambdas: b.lambdas,
             records: b.records,
-            strs: b.strs,
+            lits: b.lits,
         }
     }
 
     #[inline]
-    fn get(&self, key: usize) -> Option<u32> {
+    fn get(&self, key: usize) -> Option<(u32, u32)> {
         let mask = self.slots.len() - 1;
         let mut i = slot_of(key, self.shift);
         loop {
-            let (k, payload) = self.slots[i];
+            let (k, payload, slot) = self.slots[i];
             if k == key {
-                return Some(payload);
+                return Some((payload, slot));
             }
             if k == 0 {
                 return None;
@@ -473,7 +665,7 @@ impl Resolution {
     #[inline]
     fn tagged(&self, key: usize, tag: u32) -> Option<usize> {
         match self.get(key) {
-            Some(p) if p & TAG_MASK == tag => Some((p & !TAG_MASK) as usize),
+            Some((p, _)) if p & TAG_MASK == tag => Some((p & !TAG_MASK) as usize),
             _ => None,
         }
     }
@@ -489,12 +681,24 @@ impl Resolution {
         }
     }
 
-    /// [`Resolution::sym`] for a binding pattern `Pattern::Ident(name)`.
+    /// The sym and frame slot of the variable name node `e` carries (`name`,
+    /// passed by the caller, which has already matched the node): a slot
+    /// index, [`NOT_LOCAL`], or [`NAMED`] (also for a node outside the
+    /// table, whose name is interned here).
     #[inline]
-    pub(super) fn pat_sym(&self, p: &Pattern, name: &str) -> Sym {
-        match self.tagged(p as *const Pattern as usize, 0) {
-            Some(s) => Sym(s as u32),
-            None => intern(name),
+    pub(super) fn var(&self, e: &Expr, name: &str) -> (Sym, u32) {
+        match self.get(e as *const Expr as usize) {
+            Some((s, slot)) if s & TAG_MASK == 0 => (Sym(s), slot),
+            _ => (intern(name), NAMED),
+        }
+    }
+
+    /// [`Resolution::var`] for a binding pattern `Pattern::Ident(name)`.
+    #[inline]
+    pub(super) fn pat_var(&self, p: &Pattern, name: &str) -> (Sym, u32) {
+        match self.get(p as *const Pattern as usize) {
+            Some((s, slot)) if s & TAG_MASK == 0 => (Sym(s), slot),
+            _ => (intern(name), NAMED),
         }
     }
 
@@ -529,11 +733,11 @@ impl Resolution {
         }
     }
 
-    /// The value of string literal node `e`, if it is in the table.
+    /// The value of string or decimal literal node `e`, if it is in the table.
     #[inline]
-    pub(super) fn str_lit(&self, e: &Expr) -> Option<&Rc<String>> {
-        self.tagged(e as *const Expr as usize, STR_TAG)
-            .map(|i| &self.strs[i])
+    pub(super) fn lit(&self, e: &Expr) -> Option<&Value> {
+        self.tagged(e as *const Expr as usize, LIT_TAG)
+            .map(|i| &self.lits[i])
     }
 }
 
@@ -545,132 +749,259 @@ fn slot_of(key: usize, shift: u32) -> usize {
 struct Builder<'a, 'd> {
     structs: &'a HashMap<String, &'d TypeDef>,
     enums: &'a HashMap<String, &'d EnumDef>,
-    entries: Vec<(usize, u32)>,
+    entries: Vec<(usize, u32, u32)>,
     lambdas: Vec<LambdaInfo>,
     records: Vec<Record>,
-    strs: Vec<Rc<String>>,
+    lits: Vec<Value>,
 }
 
 impl Builder<'_, '_> {
+    /// A fn body is a slotted frame: `call_fn_in` binds the parameters by
+    /// position, then `goal_met`, then evaluates the body. A `@[verify]`
+    /// predicate runs in a synthetic env, so it is resolved by name.
     fn add_fn(&mut self, f: &FnDef) {
-        self.add_root(&f.body);
+        let base = f
+            .params
+            .iter()
+            .map(|p| intern(&p.name))
+            .chain([SYM_GOAL_MET]);
+        self.expr(&f.body, &mut Some(Frame::with_base(base)));
         if let Some(v) = &f.verify {
-            self.add_root(&v.predicate);
+            self.expr(&v.predicate, &mut None);
         }
     }
 
-    /// Record the name nodes, string literals and struct literals under
-    /// `root`; give each outermost lambda under it its own cloned code, and
-    /// resolve that clone the same way. A lambda nested in another one runs
-    /// only from its parent's clone, so cloning it again here would only make
-    /// the clones nest exponentially. Match guards (which `walk_expr` does not
-    /// enter) are resolved as roots of their own.
-    fn add_root(&mut self, root: &Expr) {
-        let mut lambdas: Vec<&Expr> = Vec::new();
-        let mut guards: Vec<&Expr> = Vec::new();
-        let mut patterns: Vec<&Pattern> = Vec::new();
-        let mut records: Vec<&Expr> = Vec::new();
-        crate::ast::walk_expr(root, &mut |e| {
-            let name = match e {
-                Expr::Ident(n)
-                | Expr::Let { name: n, .. }
-                | Expr::Own { name: n, .. }
-                | Expr::RefBind { name: n, .. }
-                | Expr::Assign { name: n, .. }
-                | Expr::For { var: n, .. }
-                | Expr::FieldAccess { field: n, .. } => n,
-                Expr::Literal(Literal::Str(s)) => {
-                    let idx = tagged_index(self.strs.len(), STR_TAG);
-                    self.strs.push(Rc::new(s.clone()));
-                    self.entries.push((e as *const Expr as usize, idx));
-                    return;
-                }
-                Expr::StructLit { .. } => {
-                    records.push(e);
-                    return;
-                }
-                Expr::Lambda { .. } => {
-                    lambdas.push(e);
-                    return;
-                }
-                Expr::Match { arms, .. } => {
-                    for a in arms {
-                        patterns.push(&a.pattern);
-                        guards.extend(a.guard.as_ref());
+    fn name(&mut self, e: &Expr, name: &str, slot: u32) {
+        self.entries
+            .push((e as *const Expr as usize, table_sym(name), slot));
+    }
+
+    fn stmts(&mut self, stmts: &[crate::ast::Stmt], fr: &mut Option<Frame>) {
+        stmts.iter().for_each(|s| self.expr(&s.expr, fr));
+    }
+
+    /// `stmts` run as a loop body: one scope per iteration (`run_loop_body`).
+    fn loop_body(&mut self, stmts: &[crate::ast::Stmt], fr: &mut Option<Frame>) {
+        push(fr);
+        self.stmts(stmts, fr);
+        pop(fr);
+    }
+
+    /// Record the name nodes, string literals, struct literals and binding
+    /// patterns under `e`, with the slots of the variables they bind or name
+    /// when `fr` is a slotted frame (`None`: resolved by name). Scopes are
+    /// pushed and bindings made where the evaluator makes them, in
+    /// evaluation order. Each lambda gets its own cloned code, resolved as a
+    /// frame of its own; a lambda nested in another one runs only from its
+    /// parent's clone, so the original's body is not resolved.
+    fn expr(&mut self, e: &Expr, fr: &mut Option<Frame>) {
+        match e {
+            Expr::Ident(n) => {
+                let slot = lookup(fr, intern(n));
+                self.name(e, n, slot);
+            }
+            Expr::Let { name, value, .. }
+            | Expr::Own { name, value, .. }
+            | Expr::RefBind { name, value, .. } => {
+                self.expr(value, fr);
+                let slot = bind(fr, intern(name));
+                self.name(e, name, slot);
+            }
+            Expr::Assign { name, value } => {
+                self.expr(value, fr);
+                let slot = lookup(fr, intern(name));
+                self.name(e, name, slot);
+            }
+            Expr::AssignTo { place, value } => {
+                self.expr(value, fr);
+                self.expr(place, fr);
+            }
+            Expr::FieldAccess { receiver, field } => {
+                self.expr(receiver, fr);
+                self.name(e, field, NAMED);
+            }
+            Expr::Literal(lit @ (Literal::Str(_) | Literal::Decimal(_))) => {
+                let idx = tagged_index(self.lits.len(), LIT_TAG);
+                self.lits.push(super::lit_to_val(lit));
+                self.entries.push((e as *const Expr as usize, idx, NAMED));
+            }
+            Expr::Literal(_)
+            | Expr::None
+            | Expr::Break
+            | Expr::Continue
+            | Expr::InlineAsm { .. } => {}
+            Expr::StructLit { name, fields } => {
+                fields.iter().for_each(|(_, v)| self.expr(v, fr));
+                let idx = tagged_index(self.records.len(), RECORD_TAG);
+                let lit = RecordLit::of(name, fields, self.structs, self.enums);
+                self.records.push(Record::Lit(lit));
+                self.entries.push((e as *const Expr as usize, idx, NAMED));
+            }
+            Expr::Lambda { params, body, .. } => self.lambda(e, params, body, fr),
+            Expr::Block(stmts) => {
+                push(fr);
+                self.stmts(stmts, fr);
+                pop(fr);
+            }
+            Expr::Match { subject, arms } => {
+                self.expr(subject, fr);
+                for a in arms {
+                    push(fr);
+                    self.pattern(&a.pattern, fr);
+                    if let Some(g) = &a.guard {
+                        self.expr(g, fr);
                     }
-                    return;
+                    self.expr(&a.body, fr);
+                    pop(fr);
                 }
-                Expr::WhileLet { pattern, .. } => {
-                    patterns.push(pattern);
-                    return;
-                }
-                Expr::WithHandler { handler, .. } => {
-                    if let HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
-                        for a in arms.iter().chain(return_arm.as_deref()) {
-                            patterns.push(&a.binding);
-                        }
+            }
+            Expr::While { cond, body } => {
+                self.expr(cond, fr);
+                self.loop_body(body, fr);
+            }
+            Expr::WhileLet {
+                pattern,
+                expr,
+                body,
+            } => {
+                self.expr(expr, fr);
+                push(fr);
+                self.pattern(pattern, fr);
+                self.loop_body(body, fr);
+                pop(fr);
+            }
+            Expr::For {
+                var,
+                start,
+                end,
+                body,
+                ..
+            } => {
+                self.expr(start, fr);
+                self.expr(end, fr);
+                push(fr);
+                let slot = bind(fr, intern(var));
+                self.name(e, var, slot);
+                self.loop_body(body, fr);
+                pop(fr);
+            }
+            // Handler arms run on a snapshot of the defining env (the arms
+            // themselves on run-time clones), so they are resolved by name;
+            // the handled body runs in this frame.
+            Expr::WithHandler { handler, body } => {
+                if let HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
+                    for a in arms.iter().chain(return_arm.as_deref()) {
+                        self.pattern(&a.binding, &mut None);
+                        self.expr(&a.body, &mut None);
                     }
-                    return;
                 }
-                _ => return,
-            };
-            self.entries
-                .push((e as *const Expr as usize, table_sym(name)));
+                self.expr(body, fr);
+            }
+            Expr::Select(arms) => {
+                for a in arms {
+                    self.expr(&a.recv, fr);
+                    self.expr(&a.body, fr);
+                }
+            }
+            Expr::If { cond, then, else_ } => {
+                self.expr(cond, fr);
+                self.expr(then, fr);
+                if let Some(b) = else_ {
+                    self.expr(b, fr);
+                }
+            }
+            Expr::Call { callee, args, .. } => {
+                self.expr(callee, fr);
+                args.iter().for_each(|a| self.expr(a, fr));
+            }
+            Expr::MethodCall { receiver, args, .. } => {
+                self.expr(receiver, fr);
+                args.iter().for_each(|a| self.expr(a, fr));
+            }
+            Expr::BinOp { left, right, .. } => {
+                self.expr(left, fr);
+                self.expr(right, fr);
+            }
+            Expr::Index { receiver, index } => {
+                self.expr(receiver, fr);
+                self.expr(index, fr);
+            }
+            Expr::UnaryOp { operand: b, .. }
+            | Expr::Question(b)
+            | Expr::Spawn(b)
+            | Expr::Comptime(b)
+            | Expr::Ok(b)
+            | Expr::Err(b)
+            | Expr::Some(b) => self.expr(b, fr),
+            Expr::Return(inner) => {
+                if let Some(b) = inner {
+                    self.expr(b, fr);
+                }
+            }
+            Expr::Tuple(xs) | Expr::Array(xs) => xs.iter().for_each(|x| self.expr(x, fr)),
+            Expr::FmtStr { parts } => {
+                for p in parts {
+                    if let crate::ast::FmtPart::Expr(inner) = p {
+                        self.expr(inner, fr);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Give lambda node `e` its cloned code and capture list. In a slotted
+    /// frame the clone's body is a frame of its own, laid out the way
+    /// `call_closure_owned_by` builds its env: the captured variables (slots
+    /// `0..`, the capture cell) as the base scope, then a scope holding the
+    /// parameters by position.
+    fn lambda(&mut self, e: &Expr, params: &[LambdaParam], body: &Expr, fr: &mut Option<Frame>) {
+        let free = free_vars(params, body);
+        let param_syms: Box<[Sym]> = params.iter().map(|p| intern(&p.name)).collect();
+        let (captures, mut inner): (Box<[(Sym, u32)]>, Option<Frame>) = match fr {
+            Some(f) => {
+                let captures: Box<[(Sym, u32)]> = free
+                    .iter()
+                    .map(|&s| (s, f.lookup(s)))
+                    .filter(|&(_, slot)| slot != NOT_LOCAL)
+                    .collect();
+                let mut inner = Frame::with_base(captures.iter().map(|&(s, _)| s));
+                inner.push();
+                param_syms.iter().for_each(|&s| inner.bind_positional(s));
+                (captures, Some(inner))
+            }
+            None => (free.iter().map(|&s| (s, NAMED)).collect(), None),
+        };
+        let param_base = inner
+            .as_ref()
+            .map(|_| u32::try_from(captures.len()).expect("fewer than 2^32 captures"));
+        let code = Rc::new(ClosureCode {
+            params: param_syms,
+            body: body.clone(),
+            param_base,
         });
-        for p in patterns {
-            self.add_pattern(p);
-        }
-        for e in records {
-            let Expr::StructLit { name, fields } = e else {
-                unreachable!("collected as a struct literal")
-            };
-            let idx = tagged_index(self.records.len(), RECORD_TAG);
-            let lit = RecordLit::of(name, fields, self.structs, self.enums);
-            self.records.push(Record::Lit(lit));
-            self.entries.push((e as *const Expr as usize, idx));
-        }
-        for g in guards {
-            self.add_root(g);
-        }
-        let mut nested: HashSet<usize> = HashSet::new();
-        for l in &lambdas {
-            if let Expr::Lambda { body, .. } = l {
-                crate::ast::walk_expr(body, &mut |e| {
-                    if matches!(e, Expr::Lambda { .. }) {
-                        nested.insert(e as *const Expr as usize);
-                    }
-                });
-            }
-        }
-        for l in lambdas {
-            let key = l as *const Expr as usize;
-            if nested.contains(&key) {
-                continue;
-            }
-            let Expr::Lambda { params, body, .. } = l else {
-                unreachable!("collected as a lambda")
-            };
-            let info = LambdaInfo::of(params, body);
-            self.add_root(&info.code.body);
-            let idx = tagged_index(self.lambdas.len(), LAMBDA_TAG);
-            self.lambdas.push(info);
-            self.entries.push((key, idx));
-        }
+        self.expr(&code.body, &mut inner);
+        let idx = tagged_index(self.lambdas.len(), LAMBDA_TAG);
+        self.lambdas.push(LambdaInfo { code, captures });
+        self.entries.push((e as *const Expr as usize, idx, NAMED));
     }
 
-    /// Record every binding `Pattern::Ident` and every struct pattern in `p`.
-    fn add_pattern(&mut self, p: &Pattern) {
+    /// Record every binding `Pattern::Ident` (bound in the current scope of
+    /// `fr`, in the order `match_pattern` binds) and every struct pattern.
+    fn pattern(&mut self, p: &Pattern, fr: &mut Option<Frame>) {
         let key = p as *const Pattern as usize;
         match p {
-            Pattern::Ident(n) => self.entries.push((key, table_sym(n))),
-            Pattern::Some(q) | Pattern::Ok(q) | Pattern::Err(q) => self.add_pattern(q),
+            Pattern::Ident(n) => {
+                let slot = bind(fr, intern(n));
+                self.entries.push((key, table_sym(n), slot));
+            }
+            Pattern::Some(q) | Pattern::Ok(q) | Pattern::Err(q) => self.pattern(q, fr),
             Pattern::Struct { name, fields } => {
                 let idx = tagged_index(self.records.len(), RECORD_TAG);
                 self.records.push(Record::Pat(RecordPat::of(name, fields)));
-                self.entries.push((key, idx));
-                fields.iter().for_each(|(_, q)| self.add_pattern(q));
+                self.entries.push((key, idx, NAMED));
+                fields.iter().for_each(|(_, q)| self.pattern(q, fr));
             }
-            Pattern::Tuple(ps) => ps.iter().for_each(|q| self.add_pattern(q)),
+            Pattern::Tuple(ps) => ps.iter().for_each(|q| self.pattern(q, fr)),
             Pattern::Wildcard | Pattern::Literal(_) | Pattern::None => {}
         }
     }

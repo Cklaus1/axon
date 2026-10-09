@@ -16225,6 +16225,71 @@ fn main() -> i64 { let _ = bad()  0 }
 }
 
 #[test]
+fn ai_budget_is_per_activation_through_unmetered_helpers() {
+    // R3c / AX-54: only a fn that can meter saves and resets the call count, so
+    // an unmetered helper between two metered fns must neither reset the
+    // caller's count nor let the callees' calls leak into it. `outer` makes 2
+    // calls around a helper whose callees each make 2: within every budget.
+    // A third `outer` call is then the (N+1)th of ITS activation: E1301.
+    let two = r#"
+@[ai(policy(budget: 2))]
+fn inner() -> i64 {
+    let _a = match ai_complete("i1") { Ok(s) => s  Err(_) => "" }
+    let _b = match ai_complete("i2") { Ok(s) => s  Err(_) => "" }
+    1
+}
+fn helper() -> i64 { inner() + inner() }
+@[ai(policy(budget: 2))]
+fn outer() -> i64 {
+    let _a = match ai_complete("o1") { Ok(s) => s  Err(_) => "" }
+    let n = helper()
+    let _b = match ai_complete("o2") { Ok(s) => s  Err(_) => "" }
+    THIRD
+    n
+}
+fn main() -> i64 { println(to_str(outer() + helper()))  0 }
+"#;
+    let cache = std::env::temp_dir().join(format!("axon_r3cn_{}", std::process::id()));
+    let run = |tag: &str, third: &str| {
+        let f = tmp_ax(tag, &two.replace("THIRD", third));
+        let out = axon()
+            .args(["run", f.to_str().unwrap()])
+            .env("AXON_AI_MOCK", "1")
+            .env("XDG_CACHE_HOME", &cache)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&f);
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout).trim().to_string(),
+            msg,
+        )
+    };
+    let (code, stdout, msg) = run("r3c_nested_ok", "");
+    assert_eq!(
+        code,
+        Some(0),
+        "every activation is within its budget: {msg}"
+    );
+    assert_eq!(stdout, "4", "{msg}");
+    let (code, _, msg) = run(
+        "r3c_nested_over",
+        r#"let _c = match ai_complete("o3") { Ok(s) => s  Err(_) => "" }"#,
+    );
+    let _ = std::fs::remove_dir_all(&cache);
+    assert_ne!(code, Some(0), "outer's 3rd call is over its budget: {msg}");
+    assert!(
+        msg.contains("E1301") && msg.contains("`outer`"),
+        "E1301 names `outer`: {msg}"
+    );
+}
+
+#[test]
 fn ai_call_prompt_hash_is_deterministic_and_distinguishes_prompts() {
     // R3 §4.5: provenance is deterministic — the same prompt yields the same
     // prompt_hash across runs (the replay/memo key), and DIFFERENT prompts
@@ -33856,6 +33921,139 @@ fn main() -> i64 {
 }
 
 #[test]
+fn interp_frame_slots_keep_scoping_capture_and_place_semantics() {
+    // AX-53: locals are read and written through frame slots assigned at
+    // resolution time. Every way a slot layout could disagree with the
+    // evaluator's scopes must still bind and read the right binding:
+    // parameters shadowed by lets, re-binding in one scope, match arms whose
+    // pattern binds then fails, guards, sibling blocks reusing slots, a loop
+    // var shadowing an outer name, `while let` binders, closures capturing
+    // slotted locals (a param shadowing a capture, own lets, nested), place
+    // and `&mut` writes, deep recursion, and the scalar operand path (AX-55).
+    let src = r#"type P = { a: i64, b: i64 }
+
+fn shadow_param(x: i64) -> i64 {
+    let y = x + 1
+    let x = y * 10
+    let x = x + 1
+    x
+}
+
+fn classify(v: Option<i64>) -> i64 {
+    match v {
+        Some(n) if n > 10 => n * 2,
+        Some(m) => m + 1,
+        None => 0,
+    }
+}
+
+fn pick(t: (i64, i64)) -> i64 {
+    match t {
+        (a, 1) => a,
+        (b, c) => b * 100 + c,
+    }
+}
+
+fn depth(n: i64) -> i64 {
+    let a = n
+    if n == 0 { 0 } else {
+        let b = depth(n - 1)
+        a + b
+    }
+}
+
+fn bump(xs: &mut [i64], k: i64) {
+    xs[0] = xs[0] + k
+}
+
+fn nxt(i: i64) -> Option<i64> {
+    if i < 3 { Some(i + 1) } else { None }
+}
+
+fn main() -> i64 {
+    println(to_str(shadow_param(4)))
+    println(to_str(classify(Some(20))) + " " + to_str(classify(Some(3))) + " " + to_str(classify(None)))
+    println(to_str(pick((5, 1))) + " " + to_str(pick((5, 2))))
+    println(to_str(depth(200)))
+
+    // Sibling blocks reuse slots under different names.
+    let total = 0
+    if true {
+        let p = 1
+        let q = 2
+        total = total + p + q
+    }
+    if true {
+        let r = 10
+        total = total + r
+    }
+    let s = 100
+    println(to_str(total) + " " + to_str(s))
+
+    // A loop var shadows an outer name; the outer one is untouched.
+    let i = 7
+    let acc = 0
+    for i in 0..4 {
+        let sq = i * i
+        acc = acc + sq
+    }
+    println(to_str(acc) + " " + to_str(i))
+
+    // while let binders, nested lets each iteration.
+    let w = 0
+    let sum = 0
+    while let Some(v) = nxt(w) {
+        let d = v * 2
+        sum = sum + d
+        w = v
+    }
+    println(to_str(sum) + " " + to_str(w))
+
+    // Closures: capture slotted locals, shadow a capture with a param, keep
+    // their own lets, persist writes to captures, nest.
+    let k = 3
+    let n = 10
+    let f = |n: i64| {
+        let t = n + k
+        t * 2
+    }
+    let cnt = 0
+    let inc = || {
+        cnt = cnt + k
+        cnt
+    }
+    inc()
+    inc()
+    let outer = |a: i64| {
+        let z = a + n
+        let g = |b: i64| b + z + k
+        g(1)
+    }
+    println(to_str(f(1)) + " " + to_str(inc()) + " " + to_str(cnt) + " " + to_str(outer(5)))
+
+    // Place assignment and &mut on slotted locals.
+    let xs = [1, 2, 3]
+    xs[1] = 20
+    let pt = P { a: 1, b: 2 }
+    pt.b = 9
+    bump(&mut xs, 5)
+    println(to_str(xs[0]) + " " + to_str(xs[1]) + " " + to_str(pt.a + pt.b))
+
+    // Floats and mixed operands through the binop operand path.
+    let fx = 1.5
+    let fy = fx * 2.0 + 0.25
+    let str_s = "ab" + "cd"
+    println(to_str(fy) + " " + str_s + " " + to_str(fx < fy) + " " + to_str(3 == 3))
+    0
+}
+"#;
+    assert_eq!(
+        interp_stdout("ax53_slots", src),
+        "51\n40 4 0\n5 502\n20100\n13 100\n14 7\n12 3\n8 9 0 19\n6 20 10\n3.25 abcd true true"
+    );
+}
+
+#[test]
 fn interp_builtin_closure_writing_a_captured_array_is_linear() {
     // AX-40: `arr_fold` lends a lambda literal's capture cell, so a captured
     // array written by the lambda is uniquely owned and written in place. A
@@ -33864,6 +34062,71 @@ fn interp_builtin_closure_writing_a_captured_array_is_linear() {
     // and must not be captured or copied either.
     let src = "fn main() -> i64 {\n let n = 200000\n let p1 = [1, 2, 3]\n let p2 = \"pad\"\n let p3 = arr_repeat(1, 1000)\n let zs = arr_repeat(0, n)\n let k = arr_fold(arr_range(0, n), 0, |acc: i64, i: i64| {\n  zs[i] = i + 1\n  acc + zs[i] + zs[i / 2]\n })\n println(to_str(k) + \" \" + to_str(zs[n - 1]) + \" \" + to_str(len(p1) + len(p2) + len(p3)))\n 0\n}\n";
     assert_eq!(interp_stdout("ax40_fold_lend", src), "30000200000 0 1006");
+}
+
+#[test]
+fn interp_reused_call_frames_keep_call_semantics() {
+    // AX-54: a user-fn call reuses a finished call's frame and argument
+    // buffer instead of allocating them. Nothing a frame held may survive into
+    // the next call: closures keep the parameter they captured after their
+    // frame is reused, recursion deeper than the reuse pool works, early
+    // `return` and shadowing in nested blocks behave as before, and calls
+    // made from inside a builtin's closure (arguments nested in arguments)
+    // see their own frames.
+    let src = r#"fn depth(n: i64) -> i64 {
+    if n == 0 { 0 } else { 1 + depth(n - 1) }
+}
+
+fn make(n: i64) -> (i64) -> i64 {
+    let _unused = n * 3
+    |k: i64| k + n
+}
+
+fn early(n: i64) -> i64 {
+    let a = n * 2
+    if a > 10 {
+        let inner = a + 100
+        return inner
+    }
+    let b = a + 1
+    b
+}
+
+fn shadow(n: i64) -> i64 {
+    let n = n + 1
+    let m = {
+        let n = n * 10
+        n
+    }
+    m + n
+}
+
+fn pick(xs: [i64], i: i64) -> i64 {
+    xs[i]
+}
+
+fn main() -> i64 {
+    let fs = []
+    for i in 0..100 {
+        fs = arr_push(fs, make(i))
+    }
+    println(to_str(depth(300)))
+    let total = 0
+    for i in 0..100 {
+        total = total + fs[i](1)
+    }
+    println(to_str(total) + " " + to_str(fs[7](0)) + " " + to_str(fs[99](1)))
+    println(to_str(early(3)) + " " + to_str(early(6)) + " " + to_str(shadow(1)))
+    let g = make(5)
+    println(to_str(arr_fold(arr_range(0, 4), 0, |acc: i64, v: i64| acc + g(v) + depth(v))))
+    println(to_str(pick([4, 5, 6], 2)) + " " + to_str(depth(2) + early(1)))
+    0
+}
+"#;
+    assert_eq!(
+        interp_stdout("ax54_frames", src),
+        "300\n5050 7 100\n7 112 22\n32\n6 5"
+    );
 }
 
 #[test]

@@ -622,15 +622,18 @@ fn ai_policy_err<T>(msg: impl Into<String>) -> Result<T, Flow> {
 /// pushed scope (the base scope starts at 0 and has no mark).
 ///
 /// Flat rather than one `HashMap` per scope because a call frame holds a
-/// handful of names: a reverse linear scan beats hashing the name once per
-/// scope on every lookup, and pushing a scope allocates nothing. Semantics are
+/// handful of names, and pushing a scope allocates nothing. Semantics are
 /// the per-scope-map ones exactly — `define` replaces a same-named binding in
 /// the CURRENT scope (so a loop re-binding a name does not grow the stack) and
 /// shadows outer ones; lookups see the innermost binding first.
 ///
-/// Bindings are keyed by interned [`Sym`] (AX-18), so the scan compares
-/// integers; the evaluator gets a node's sym from [`Resolution`] without
-/// hashing or comparing the name.
+/// Each call frame (a fn call, a closure call) has its own `Env`, and a
+/// binding's index in `vars` is the frame SLOT [`Resolution`] gave it (AX-53),
+/// so a resolved variable access is `vars[slot]` — one index and one sym
+/// compare, independent of how many locals are in scope. Every binding keeps
+/// its sym, which serves code resolved by name ([`NAMED`]: a reverse scan,
+/// the innermost binding first), [`Env::snapshot`], and the fallback when a
+/// slot does not hold the expected binding.
 struct Env {
     vars: Vec<(Sym, Value)>,
     marks: Vec<usize>,
@@ -657,6 +660,28 @@ impl Env {
             None => self.vars.push((name, val)),
         }
     }
+    /// Bind `name` at frame slot `slot` (see [`Resolution::var`]), or by name
+    /// for [`NAMED`]. A slot is in the current scope (`Resolution` allocates
+    /// a scope's slots above every live one when the scope is entered), so
+    /// writing it replaces a same-named binding of this scope as `define`
+    /// does. A slot holding another binding (an env not laid out the way the
+    /// table assumed) falls back to `define`; the reads' fallback finds it.
+    #[inline]
+    fn define_var(&mut self, name: Sym, slot: u32, val: Value) {
+        let i = slot as usize;
+        let start = self.marks.last().copied().unwrap_or(0);
+        if slot == NAMED || i < start {
+            return self.define(name, val);
+        }
+        match self.vars.get_mut(i) {
+            Some(b) if b.0 == name || b.0 == SYM_NONE => *b = (name, val),
+            Some(_) => self.define(name, val),
+            None => {
+                self.vars.resize_with(i, || (SYM_NONE, Value::Unit));
+                self.vars.push((name, val));
+            }
+        }
+    }
     fn get(&self, name: Sym) -> Option<&Value> {
         self.vars
             .iter()
@@ -664,11 +689,23 @@ impl Env {
             .find(|(k, _)| *k == name)
             .map(|(_, v)| v)
     }
-    /// Update the nearest existing binding; returns false if none exists.
-    fn assign(&mut self, name: Sym, val: Value) -> bool {
-        match self.get_mut(name) {
-            Some(slot) => {
-                *slot = val;
+    /// The binding variable `name` resolved to `slot` (see
+    /// [`Resolution::var`]) reads: the slot's, if it holds `name`; none for
+    /// [`NOT_LOCAL`]; else the innermost binding of `name`.
+    #[inline]
+    fn get_var(&self, name: Sym, slot: u32) -> Option<&Value> {
+        match self.vars.get(slot as usize) {
+            Some((k, v)) if *k == name => Some(v),
+            _ if slot == NOT_LOCAL => None,
+            _ => self.get(name),
+        }
+    }
+    /// Update the binding [`Env::get_var`] reads; returns false if none exists.
+    #[inline]
+    fn assign_var(&mut self, name: Sym, slot: u32, val: Value) -> bool {
+        match self.get_var_mut(name, slot) {
+            Some(b) => {
+                *b = val;
                 true
             }
             None => false,
@@ -682,12 +719,24 @@ impl Env {
             .find(|(k, _)| *k == name)
             .map(|(_, v)| v)
     }
+    /// Mutable reference to the binding [`Env::get_var`] reads.
+    #[inline]
+    fn get_var_mut(&mut self, name: Sym, slot: u32) -> Option<&mut Value> {
+        let i = slot as usize;
+        if i < self.vars.len() && self.vars[i].0 == name {
+            return Some(&mut self.vars[i].1);
+        }
+        if slot == NOT_LOCAL {
+            return None;
+        }
+        self.get_mut(name)
+    }
     /// All visible bindings, each name once (inner shadows outer). Used to
     /// snapshot the environment a handler arm or continuation replay runs in.
     fn snapshot(&self) -> Vec<(Sym, Value)> {
         let mut out = Vec::with_capacity(self.vars.len());
         for (i, (k, v)) in self.vars.iter().enumerate() {
-            if !self.vars[i + 1..].iter().any(|(inner, _)| inner == k) {
+            if *k != SYM_NONE && !self.vars[i + 1..].iter().any(|(inner, _)| inner == k) {
                 out.push((*k, v.clone()));
             }
         }
@@ -801,8 +850,9 @@ pub struct Interp<'p> {
     corrigible_halted: Cell<bool>,
     /// Name of the Axon function currently executing, for attributing builtin
     /// side effects (e.g. R3's `ai_call` provenance records) to their caller.
-    /// Set on entry to `call_fn`, restored on exit. Empty at top level.
-    current_fn: RefCell<String>,
+    /// Set on entry to `call_fn`, restored on exit. `None` at top level. An
+    /// `Rc` shared with the fn's [`FnEntry`], so a call copies no string (AX-54).
+    current_fn: RefCell<Option<Rc<str>>>,
     /// R4/I-13 — the nearest ENCLOSING `@[agent]` fn on the call stack (not just
     /// the immediate fn). Set when entering an `@[agent]` fn and INHERITED through
     /// non-agent helpers, so a capability builtin called inside a helper of an
@@ -841,9 +891,16 @@ pub struct Interp<'p> {
     /// lookup hashes nothing (AX-18).
     callees: RefCell<Vec<u32>>,
     /// R3c: count of `ai_complete` calls made by the current fn activation, used
-    /// to enforce `@[ai(policy(budget: N))]`. Reset on entry to `call_fn`,
-    /// restored on exit (so the budget is per-activation, not global).
+    /// to enforce `@[ai(policy(budget: N))]`. Reset on entry to a fn that may
+    /// meter (`FnEntry::ai_metered`), restored on exit (so the budget is
+    /// per-activation, not global).
     ai_calls_this_fn: Cell<u64>,
+    /// AX-54: emptied argument vectors of finished user-fn calls, reused by
+    /// `eval_call` so a call does not allocate one.
+    arg_bufs: RefCell<Vec<Vec<Value>>>,
+    /// AX-54: emptied frames of finished user-fn calls, reused by
+    /// `call_fn_entry` so a call does not allocate its bindings and marks.
+    env_pool: RefCell<Vec<Env>>,
     /// Phase-7 `cost_meter` / F4: cumulative AI spend across the whole run, in
     /// integer micro-dollars (µ$). Every `ai_complete` adds `tier.cost_micro(est
     /// tokens)` — the real per-token cost, stamped into the `ai_call` provenance
@@ -1120,12 +1177,12 @@ impl Drop for DepthGuard<'_> {
 /// effects (R3 `ai_call` provenance) are attributed to the nearest enclosing
 /// Axon function even across nested calls.
 struct FnNameGuard<'a> {
-    cell: &'a RefCell<String>,
-    prev: String,
+    cell: &'a RefCell<Option<Rc<str>>>,
+    prev: Option<Rc<str>>,
 }
 impl Drop for FnNameGuard<'_> {
     fn drop(&mut self) {
-        *self.cell.borrow_mut() = std::mem::take(&mut self.prev);
+        *self.cell.borrow_mut() = self.prev.take();
     }
 }
 
@@ -1888,6 +1945,7 @@ impl SendValue {
                 code: Rc::new(ClosureCode {
                     params: params.iter().map(|p| intern(p)).collect(),
                     body: *body,
+                    param_base: None,
                 }),
                 // A closure that crossed the host boundary gets a FRESH capture
                 // cell: the SendValue path is a deep clone by construction (a
@@ -2984,7 +3042,7 @@ impl<'p> Interp<'p> {
                     fn_of_sym.insert(intern(&f.name), idx);
                 }
                 fn_of_def.insert(f as *const FnDef as usize, idx);
-                fn_table.push(FnEntry::new(f));
+                fn_table.push(FnEntry::new(f, &fns));
             }
         }
 
@@ -3017,10 +3075,12 @@ impl<'p> Interp<'p> {
                     .unwrap_or_else(|| "root".to_string()),
             ),
             goal_constraint: RefCell::new(None),
-            current_fn: RefCell::new(String::new()),
+            current_fn: RefCell::new(None),
             current_call_tier: RefCell::new(None),
             callees: RefCell::new(Vec::new()),
             ai_calls_this_fn: Cell::new(0),
+            arg_bufs: RefCell::new(Vec::new()),
+            env_pool: RefCell::new(Vec::new()),
             ai_cost_micro: Cell::new(0),
             w1310_warned: RefCell::new(std::collections::HashSet::new()),
             tokens_used: Cell::new(0),
@@ -3094,8 +3154,7 @@ impl<'p> Interp<'p> {
     /// model is compiled in, there is no offline fallback path, so it is dead there.
     #[cfg_attr(feature = "asi-runtime", allow(dead_code))]
     fn current_ai_fallback(&self) -> Option<String> {
-        let name = self.current_fn.borrow().clone();
-        let f = self.fns.get(name.as_str())?;
+        let f = self.current_fn_def()?;
         let ai = f.attrs.iter().find(|a| a.name == "ai")?;
         for arg in &ai.args {
             if let Some(rest) = arg.strip_prefix("fallback:") {
@@ -3111,8 +3170,8 @@ impl<'p> Interp<'p> {
     /// value is malformed (in which case a `W1311` is emitted once and the fn
     /// runs unmetered — a bad budget must never silently enforce a wrong number).
     fn current_ai_budget(&self) -> Option<u64> {
-        let name = self.current_fn.borrow().clone();
-        let f = self.fns.get(name.as_str())?;
+        let f = self.current_fn_def()?;
+        let name = &f.name;
         // Parsed by the SHARED `budget_from_attrs`, so "is this fn metered?" has
         // exactly one answer here and in the native codegen refusal (F141).
         match crate::ai_routing::budget_from_attrs(&f.attrs)? {
@@ -3165,11 +3224,16 @@ impl<'p> Interp<'p> {
     /// Used for W1310: a live/mock AI call from a fn with no policy is allowed
     /// but un-metered and un-pinned, so it warns (R3 §6).
     fn current_fn_has_ai_policy(&self) -> bool {
-        let name = self.current_fn.borrow().clone();
-        self.fns
-            .get(name.as_str())
+        self.current_fn_def()
             .map(|f| f.attrs.iter().any(|a| a.name == "ai"))
             .unwrap_or(false)
+    }
+
+    /// The fn named like the currently-executing one in the by-name fn map —
+    /// the policy source for the `current_ai_*` readers.
+    fn current_fn_def(&self) -> Option<&'p FnDef> {
+        let name = self.current_fn.borrow();
+        self.fns.get(name.as_deref()?).copied()
     }
 
     /// R3 §4.2 — resolve the AI tier for the current call from the enclosing
@@ -3198,8 +3262,7 @@ impl<'p> Interp<'p> {
         // Steps 2-3: the enclosing @[ai(policy(tier:))], else the default —
         // resolved via the shared `ai_routing::tier_from_attrs` so the interp and
         // the native codegen refusal agree on a fn's tier exactly.
-        let name = self.current_fn.borrow().clone();
-        let Some(f) = self.fns.get(name.as_str()) else {
+        let Some(f) = self.current_fn_def() else {
             return Ok(DEFAULT_TIER);
         };
         crate::ai_routing::tier_from_attrs(&f.attrs).map_err(|raw| {
@@ -3249,10 +3312,7 @@ impl<'p> Interp<'p> {
     fn call_fn(&self, f: &FnDef, args: Vec<Value>) -> R {
         match self.fn_of_def.get(&(f as *const FnDef as usize)) {
             Some(&i) => self.call_fn_entry(&self.fn_table[i as usize], args),
-            None => {
-                let entry = FnEntry::new(f);
-                self.call_fn_entry(&entry, args)
-            }
+            None => self.call_fn_entry(&FnEntry::new(f, &self.fns), args),
         }
     }
 
@@ -3268,16 +3328,42 @@ impl<'p> Interp<'p> {
                 f.def.name, f.def.name
             ));
         }
-        let mut env = Env::new();
-        self.call_fn_in(f.def, &f.params, args, &mut env)
+        // AX-54: the frame comes from a pool of finished calls' frames, so a
+        // call does not allocate its bindings and scope marks. Emptied here
+        // (dropping the bindings exactly where dropping the frame did); a
+        // frame that grew unusually large is not kept.
+        let mut env = self.env_pool.borrow_mut().pop().unwrap_or_else(Env::new);
+        let result = self.call_fn_in(f, args, &mut env);
+        env.vars.clear();
+        env.marks.clear();
+        let mut pool = self.env_pool.borrow_mut();
+        if pool.len() < 64 && env.vars.capacity() <= 1024 {
+            pool.push(env);
+        }
+        result
     }
 
-    /// The parameter syms of `f`: resolved once in `fn_table` for every fn
-    /// and method of the program, interned here for any other `FnDef`.
-    fn param_syms(&self, f: &FnDef) -> std::borrow::Cow<'_, [Sym]> {
-        match self.fn_of_def.get(&(f as *const FnDef as usize)) {
-            Some(&i) => std::borrow::Cow::Borrowed(&self.fn_table[i as usize].params),
-            None => std::borrow::Cow::Owned(f.params.iter().map(|p| intern(&p.name)).collect()),
+    /// AX-54: an empty argument vector with room for `n`, reusing one that a
+    /// finished call handed back to [`Interp::recycle_args`].
+    fn take_args(&self, n: usize) -> Vec<Value> {
+        match self.arg_bufs.borrow_mut().pop() {
+            Some(mut v) => {
+                v.reserve(n);
+                v
+            }
+            None => Vec::with_capacity(n),
+        }
+    }
+
+    /// Keep an emptied argument vector for [`Interp::take_args`]. Buffers are
+    /// only created while the pool is empty, so it holds at most as many as
+    /// were outstanding at once (argument lists nested in argument lists);
+    /// the cap bounds what deep recursion through such nesting leaves behind.
+    fn recycle_args(&self, args: Vec<Value>) {
+        debug_assert!(args.is_empty());
+        let mut pool = self.arg_bufs.borrow_mut();
+        if args.capacity() != 0 && pool.len() < 64 {
+            pool.push(args);
         }
     }
 
@@ -3287,9 +3373,17 @@ impl<'p> Interp<'p> {
     /// caller to move back — on every outcome, including `return` / `?` /
     /// error unwinds, so the caller's binding is never left hollow.
     pub(super) fn call_fn_mut(&self, f: &FnDef, args: Vec<Value>) -> (R, Vec<Value>) {
+        let owned;
+        let entry = match self.fn_of_def.get(&(f as *const FnDef as usize)) {
+            Some(&i) => &self.fn_table[i as usize],
+            None => {
+                owned = FnEntry::new(f, &self.fns);
+                &owned
+            }
+        };
         let mut env = Env::new();
-        let params = self.param_syms(f);
-        let result = self.call_fn_in(f, &params, args, &mut env);
+        let params = &entry.params;
+        let result = self.call_fn_in(entry, args, &mut env);
         // The body's block scopes are popped by now (on `return`/`?` too), so
         // each name resolves to the parameter binding itself.
         let outs = f
@@ -3306,8 +3400,9 @@ impl<'p> Interp<'p> {
         (result, outs)
     }
 
-    /// `params` are `f`'s parameter syms (see [`Interp::param_syms`]).
-    fn call_fn_in(&self, f: &FnDef, params: &[Sym], args: Vec<Value>, env: &mut Env) -> R {
+    fn call_fn_in(&self, entry: &FnEntry<'_>, mut args: Vec<Value>, env: &mut Env) -> R {
+        let f = entry.def;
+        let params = &entry.params;
         // Bound recursion: a graceful panic instead of a process-aborting stack
         // overflow on runaway/infinite recursion. `_guard` restores the depth on
         // any return path (including `?`).
@@ -3325,14 +3420,14 @@ impl<'p> Interp<'p> {
         // attribute their records to the caller; restored on return.
         let _fn_guard = FnNameGuard {
             cell: &self.current_fn,
-            prev: self.current_fn.replace(f.name.clone()),
+            prev: self.current_fn.replace(Some(entry.name.clone())),
         };
         // R4/I-13: if THIS fn is an `@[agent]`, it becomes the enclosing agent for
         // everything it transitively calls; otherwise the caller's enclosing agent
         // is inherited unchanged. Restored on return so sibling calls aren't
         // wrongly attributed. The agent action log reads this (not just the
         // immediate fn) so an agent can't escape the audit by calling a helper.
-        let _agent_guard = if f.attrs.iter().any(|a| a.name == "agent") {
+        let _agent_guard = if entry.is_agent {
             Some(FnNameOptGuard {
                 cell: &self.enclosing_agent,
                 prev: self.enclosing_agent.replace(Some(f.name.clone())),
@@ -3341,11 +3436,12 @@ impl<'p> Interp<'p> {
             None
         };
         // R3c: each fn activation meters its own ai_complete calls — reset to 0
-        // on entry, restore the caller's count on exit.
-        let _ai_budget_guard = AiBudgetGuard {
+        // on entry, restore the caller's count on exit. Only a fn that may meter
+        // touches the counter, so for any other the reset/restore is inert.
+        let _ai_budget_guard = entry.ai_metered.then(|| AiBudgetGuard {
             cell: &self.ai_calls_this_fn,
             prev: self.ai_calls_this_fn.replace(0),
-        };
+        });
 
         if f.params.len() != args.len() {
             return panic(format!(
@@ -3361,7 +3457,7 @@ impl<'p> Interp<'p> {
         // never happen, and the latch never clears — the function cannot resist
         // or reverse its own shutdown. Keyed on the annotation, enforced by the
         // engine, so a user cannot write a corrigible fn that ignores the halt.
-        if self.corrigible_halted.get() && f.attrs.iter().any(|a| a.name == "corrigible") {
+        if entry.corrigible && self.corrigible_halted.get() {
             return Err(Flow::Halted(
                 format!(
                     "`{}` refused: corrigibility kill-switch is latched \
@@ -3378,7 +3474,7 @@ impl<'p> Interp<'p> {
         // both populate the right store; we choose the right one based on
         // the fn's signature in `run_goal`. Only an `@[adaptive]` fn records
         // them, so every other call skips the two allocations.
-        let is_adaptive_zone = f.attrs.iter().any(|a| a.name == "adaptive");
+        let is_adaptive_zone = entry.adaptive;
         let (input_args, input_args_f64): (Vec<i64>, Vec<f64>) = if is_adaptive_zone {
             (
                 args.iter()
@@ -3399,17 +3495,19 @@ impl<'p> Interp<'p> {
             Some(Value::Int(n)) => Some(*n),
             _ => None,
         };
-        for ((p, a), s) in f.params.iter().zip(args).zip(params.iter()) {
+        for (i, ((&(unwrap_soft, width), a), s)) in entry
+            .param_coerce
+            .iter()
+            .zip(args.drain(..))
+            .zip(params.iter())
+            .enumerate()
+        {
             // Soft typing: `Uncertain<T>` is compatible with a plain-`T` parameter
             // (the checker allows it). If the declared param type is NOT itself a
             // soft wrapper but the argument IS one, unwrap to the inner value so
             // the body sees a plain `T` (else `x * 2` on the struct silently
             // produced 0). Confidence/horizon dropped at this T-typed boundary.
-            let param_is_soft = matches!(
-                &p.ty,
-                crate::ast::AxonType::Generic { base, .. } if base == "Uncertain" || base == "Temporal"
-            );
-            let a = if !param_is_soft {
+            let a = if unwrap_soft {
                 value::soft_inner(&a).unwrap_or(a)
             } else {
                 a
@@ -3417,13 +3515,15 @@ impl<'p> Interp<'p> {
             // R19 Slice B: coerce Int→SizedInt when the declared param type is a
             // non-i64 integer width — ensures arithmetic inside the callee's body
             // uses width-correct ops (completeness, I-9).
-            let a = if let Some(width) = axon_type_to_width(&p.ty) {
+            let a = if let Some(width) = width {
                 coerce_to_sized(a, width)
             } else {
                 a
             };
-            env.define(*s, a);
+            // Parameter `i` lives in frame slot `i` (AX-53).
+            env.define_var(*s, i as u32, a);
         }
+        self.recycle_args(args);
         // Phase 5: refinement-type PRECONDITIONS. A parameter `p: T where P`
         // desugars to a synthetic named refinement; the checker discharges P
         // statically only for compile-time-CONSTANT args (E1209). For a
@@ -3468,8 +3568,90 @@ impl<'p> Interp<'p> {
         // — i.e. on the WORST (minimum) score — so a fn cannot pass by
         // overfitting one point. With no held-out set, fall back to the best
         // observed training score.
+        let goal_met = if entry.has_goal {
+            self.call_fn_goal(f)?
+        } else {
+            0
+        };
+        // `goal_met` follows the parameters (its slot in `Resolution`).
+        env.define_var(SYM_GOAL_MET, params.len() as u32, Value::Int(goal_met));
+        // PROTOTYPE (RLM session option 2): when dumping bindings, run main's
+        // top-level statements WITHOUT the extra block scope (eval_block pops
+        // its scope before returning, discarding the locals), then capture the
+        // frame's final locals for the dump.
+        let capture = entry.is_main
+            && self.call_depth.get() == 1
+            && (session_capture()
+                || std::env::var("AXON_DUMP_BINDINGS").is_ok()
+                || std::env::var("AXON_DUMP_SHAPES").is_ok());
+        let body_result = if capture {
+            if let Expr::Block(stmts) = &f.body {
+                let mut last = Ok(Value::Unit);
+                for stmt in &stmts[..] {
+                    match self.eval(&stmt.expr, env) {
+                        Ok(v) => last = Ok(v),
+                        Err(e) => {
+                            last = Err(e);
+                            break;
+                        }
+                    }
+                }
+                last
+            } else {
+                self.eval(&f.body, env)
+            }
+        } else {
+            self.eval(&f.body, env)
+        };
+        if capture && !matches!(body_result, Err(ref e) if !matches!(e, Flow::Return(_))) {
+            // `goal_met` is injected by call_fn, not a user binding.
+            let snap = env
+                .snapshot()
+                .into_iter()
+                .filter(|(k, _)| *k != SYM_GOAL_MET)
+                .map(|(k, v)| (sym_name(k).to_string(), v))
+                .collect();
+            *self.main_locals.borrow_mut() = snap;
+        }
+        let mut result = match body_result {
+            Ok(v) => v,
+            Err(Flow::Return(v)) => v,
+            Err(other) => return Err(other),
+        };
+        // Soft typing at the RETURN boundary: a fn declared `-> T` (a plain
+        // scalar) whose body produces an `Uncertain<T>`/`Temporal<T>` unwraps to
+        // the inner value — the same rule as a plain-T parameter. Without this,
+        // `fn f() -> i64 { uncertain }` leaked the struct and `f() + 1` silently
+        // produced 0. A fn declared `-> Uncertain<T>`/`-> Temporal<T>` keeps it.
+        // Only unwrap when the declared return is a plain SCALAR (i64/i32/
+        // f64/bool); a str/struct/tuple/soft-wrapper return is left untouched.
+        if entry.ret_is_scalar {
+            if let Some(inner) = value::soft_inner(&result) {
+                result = inner;
+            }
+        }
+
+        if entry.has_epilogue || !self.refine_preds.is_empty() {
+            return self.finish_call_cold(
+                entry,
+                result,
+                env,
+                input_arg,
+                input_args,
+                input_args_f64,
+            );
+        }
+
+        Ok(result)
+    }
+
+    /// R5 `@[goal(...)]` sugar for [`Interp::call_fn_in`]: whether the goal is
+    /// met. Out of line so the common call's frame does not carry it (AX-54).
+    #[inline(never)]
+    fn call_fn_goal(&self, f: &FnDef) -> Result<i64, Flow> {
         let mut goal_met: i64 = 0;
-        if let Some(spec) = self.goal_spec_of(f) {
+        let goal_spec = self.goal_spec_of(f);
+        if let Some(spec) = goal_spec {
             // Dispatch on the selected strategy (PRD L889-899). All run the
             // metric and accumulate provenance the same way; they differ only in
             // HOW they explore. The held-out gate below is strategy-agnostic.
@@ -3534,72 +3716,26 @@ impl<'p> Interp<'p> {
             };
             goal_met = if s >= spec.target { 1i64 } else { 0i64 };
         }
-        env.define(SYM_GOAL_MET, Value::Int(goal_met));
-        // PROTOTYPE (RLM session option 2): when dumping bindings, run main's
-        // top-level statements WITHOUT the extra block scope (eval_block pops
-        // its scope before returning, discarding the locals), then capture the
-        // frame's final locals for the dump.
-        let capture = f.name == "main"
-            && self.call_depth.get() == 1
-            && (session_capture()
-                || std::env::var("AXON_DUMP_BINDINGS").is_ok()
-                || std::env::var("AXON_DUMP_SHAPES").is_ok());
-        let body_result = if capture {
-            if let Expr::Block(stmts) = &f.body {
-                let mut last = Ok(Value::Unit);
-                for stmt in &stmts[..] {
-                    match self.eval(&stmt.expr, env) {
-                        Ok(v) => last = Ok(v),
-                        Err(e) => {
-                            last = Err(e);
-                            break;
-                        }
-                    }
-                }
-                last
-            } else {
-                self.eval(&f.body, env)
-            }
-        } else {
-            self.eval(&f.body, env)
-        };
-        if capture && !matches!(body_result, Err(ref e) if !matches!(e, Flow::Return(_))) {
-            // `goal_met` is injected by call_fn, not a user binding.
-            let snap = env
-                .snapshot()
-                .into_iter()
-                .filter(|(k, _)| *k != SYM_GOAL_MET)
-                .map(|(k, v)| (sym_name(k).to_string(), v))
-                .collect();
-            *self.main_locals.borrow_mut() = snap;
-        }
-        let mut result = match body_result {
-            Ok(v) => v,
-            Err(Flow::Return(v)) => v,
-            Err(other) => return Err(other),
-        };
-        // Soft typing at the RETURN boundary: a fn declared `-> T` (a plain
-        // scalar) whose body produces an `Uncertain<T>`/`Temporal<T>` unwraps to
-        // the inner value — the same rule as a plain-T parameter. Without this,
-        // `fn f() -> i64 { uncertain }` leaked the struct and `f() + 1` silently
-        // produced 0. A fn declared `-> Uncertain<T>`/`-> Temporal<T>` keeps it.
-        {
-            // Only unwrap when the declared return is a plain SCALAR (i64/i32/
-            // f64/bool); a str/struct/tuple/soft-wrapper return is left untouched.
-            let ret_is_scalar = matches!(
-                &f.return_type,
-                Some(crate::ast::AxonType::Named(n))
-                    if matches!(n.as_str(), "i64" | "i32" | "f64" | "bool")
-            );
-            if ret_is_scalar {
-                if let Some(inner) = value::soft_inner(&result) {
-                    result = inner;
-                }
-            }
-        }
+        Ok(goal_met)
+    }
 
+    /// The steps after the body that only a refined, zoned (`@[adaptive]` /
+    /// `@[experiment]`) or `@[verify]` fn takes, for [`Interp::call_fn_in`].
+    /// Out of line so the common call's frame does not carry them (AX-54).
+    #[inline(never)]
+    fn finish_call_cold(
+        &self,
+        entry: &FnEntry<'_>,
+        result: Value,
+        env: &mut Env,
+        input_arg: Option<i64>,
+        input_args: Vec<i64>,
+        input_args_f64: Vec<f64>,
+    ) -> R {
+        let f = entry.def;
+        let is_adaptive_zone = entry.adaptive;
         // Phase 5: refinement-type POSTCONDITION — the dual of the entry-time
-        // precondition check above. A fn declared `-> T where P` must produce a
+        // precondition check in `call_fn_in`. A fn declared `-> T where P` must produce a
         // value satisfying `P`. The checker discharges a CONSTANT return (E1209)
         // and the SMT backend proves some non-constant cases (`axon verify`); for
         // a non-constant return in the default build the predicate becomes a
@@ -3650,11 +3786,7 @@ impl<'p> Interp<'p> {
         //                        third zone real instead of a synonym.
         // Both still log to the JSONL, so a zoned fn that executes always
         // leaves a provenance record.
-        let experiment_label = f
-            .attrs
-            .iter()
-            .find(|a| a.name == "experiment")
-            .map(|a| a.args.first().cloned().unwrap_or_default());
+        let experiment_label = &entry.experiment;
         if is_adaptive_zone || experiment_label.is_some() {
             if let Some(score) = numeric_score(&result) {
                 // The in-memory best store feeds `goal_run` — adaptive only.
@@ -3932,8 +4064,9 @@ impl<'p> Interp<'p> {
             vars
         });
         env.push();
-        for (p, a) in code.params.iter().zip(args) {
-            env.define(*p, a);
+        for (i, (p, a)) in code.params.iter().zip(args).enumerate() {
+            let slot = code.param_base.map_or(NAMED, |b| b + i as u32);
+            env.define_var(*p, slot, a);
         }
         let out = match self.eval(&code.body, &mut env) {
             Ok(v) => Ok(v),
@@ -3997,14 +4130,19 @@ impl<'p> Interp<'p> {
     }
 
     /// Flatten a place expression (`base.f[i].g …`) into the root variable's
-    /// sym and a base-to-leaf list of steps, evaluating any index expressions
-    /// now (so the later mutable walk holds no other borrow of `env`).
-    fn flatten_place(&self, place: &Expr, env: &mut Env) -> Result<(Sym, Vec<PlaceStep>), Flow> {
+    /// sym and frame slot and a base-to-leaf list of steps, evaluating any
+    /// index expressions now (so the later mutable walk holds no other borrow
+    /// of `env`).
+    fn flatten_place(
+        &self,
+        place: &Expr,
+        env: &mut Env,
+    ) -> Result<((Sym, u32), Vec<PlaceStep>), Flow> {
         let mut steps = Vec::new();
         let mut cur = place;
         let base = loop {
             match cur {
-                Expr::Ident(name) => break self.res.sym(cur, name),
+                Expr::Ident(name) => break self.res.var(cur, name),
                 Expr::FieldAccess { receiver, field } => {
                     steps.push(PlaceStep::Field(self.res.sym(cur, field)));
                     cur = receiver.as_ref();

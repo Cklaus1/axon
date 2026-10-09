@@ -1,5 +1,16 @@
 # Axon Changelog
 
+## Cheaper variables, calls and literals in `axon run` (compilebench AX-53…AX-55)
+
+Interpreter-cost fixes from compilebench's `AXON_FINDINGS.md`. They change speed only: output is byte-identical on every program measured, and the full suite passes with and without `codegen`.
+
+**Interpreter**
+- **A variable read is an index into a frame slot** (AX-53). Every read hashed the node to find its name, then scanned the whole environment backwards, so its cost grew with the number of locals: a loop reading one of 64 locals cost 4,864 instructions per iteration. The resolver now gives each binding (parameters, `let`, pattern and loop binders, captures) a slot in its function's or lambda's frame. That loop now costs 1,255, the same as with 16 locals.
+- **A call decides its function's attributes once** (AX-54). Each call cloned the function name, scanned its attributes for `@[agent]`, `@[ai]`, `@[goal]` and the rest, and allocated a new argument vector and environment. The function table now stores those answers, and frames and argument buffers are reused.
+- **Numeric literals are built once** (AX-55). `Int`, `Float` and `Bool` literals are read inline instead of rebuilt per evaluation, and binary operators on plain variables and literals no longer clone their operands.
+
+Instructions (`perf stat`, release build) on the compilebench programs, before → after: `fib-recursive` 16.22 G → 12.56 G, `collatz` 81.02 G → 69.23 G, `mandelbrot` 54.49 G → 49.47 G, `arr-sum` 63.60 G → 59.98 G, `qsort` 114.54 G → 103.61 G. `axon run` still retires several times the instructions of CPython 3.14 on these programs. The remaining cost is per-node recursion and dispatch spread across the tree-walker (AX-18 stays open), which `governance/specs/R50-register-vm.md` addresses.
+
 ## Nested tuples and struct interpolation natively, honest `--version`, race-free parity tests (compilebench AX-48…AX-52)
 
 Fixes for the fourth batch of defects compilebench recorded in its `AXON_FINDINGS.md`.

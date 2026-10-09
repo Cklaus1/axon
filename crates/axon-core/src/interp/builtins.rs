@@ -5781,7 +5781,7 @@ impl<'p> Interp<'p> {
             "ai_complete" => {
                 want(1)?;
                 let prompt = as_str(&args[0])?.to_string();
-                let caller = self.current_fn.borrow().clone();
+                let caller = self.current_fn.borrow().as_deref().unwrap_or("").to_string();
                 let params = "max_tokens=default;temperature=default";
                 // R3 §4.2: resolve the tier from the enclosing @[ai(policy(tier))]
                 // (default balanced); an unknown tier name is E1302. The resolved
