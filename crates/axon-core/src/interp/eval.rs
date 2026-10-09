@@ -212,15 +212,14 @@ fn fn_value(name: &str, arity: usize) -> Value {
     let params: Vec<String> = (0..arity).map(|i| format!("#{i}")).collect();
     let args = params.iter().map(|p| Expr::Ident(p.clone())).collect();
     Value::Closure(Rc::new(ClosureVal {
-        code: Rc::new(ClosureCode {
-            params: params.iter().map(|p| intern(p)).collect(),
-            body: Expr::Call {
+        code: Rc::new(ClosureCode::unresolved(
+            params.iter().map(|p| intern(p)).collect(),
+            Expr::Call {
                 callee: Box::new(Expr::Ident(name.to_string())),
                 args,
                 tier: None,
             },
-            param_base: None,
-        }),
+        )),
         captured: std::cell::RefCell::new(Vec::new()),
     }))
 }
@@ -783,31 +782,7 @@ impl<'p> Interp<'p> {
                 Ok(Value::Str(Rc::new(s)))
             }
 
-            Expr::Lambda { params, body, .. } => {
-                // A lambda inside an AST clone made at run time (a handler
-                // arm, a continuation replay) is not in the resolution table.
-                let unresolved;
-                let info = match self.res.lambda(expr) {
-                    Some(info) => info,
-                    None => {
-                        unresolved = LambdaInfo::of(params, body);
-                        &unresolved
-                    }
-                };
-                // AX-40: capture only the free variables bound here — not the
-                // whole environment. A free name that is not bound here (a
-                // global, a fn, a builtin) is reached the same way at call time.
-                let captured: Vec<(Sym, Value)> = info
-                    .captures
-                    .iter()
-                    .filter_map(|&(s, slot)| env.get_var(s, slot).map(|v| (s, v.clone())))
-                    .collect();
-                // T40: a SHARED, persistent capture cell — see Value::Closure.
-                Ok(Value::Closure(Rc::new(ClosureVal {
-                    code: Rc::clone(&info.code),
-                    captured: std::cell::RefCell::new(captured),
-                })))
-            }
+            Expr::Lambda { .. } => Ok(self.make_closure(expr, env)),
 
             Expr::Comptime(inner) => self.eval(inner, env),
 
@@ -848,6 +823,37 @@ impl<'p> Interp<'p> {
                 panic("select: no channel was ready (cooperative interpreter — send before select)")
             }
         }
+    }
+
+    /// The closure value of lambda node `expr` evaluated in `env`. Shared by
+    /// the `eval` arm and the bytecode engine (R50).
+    pub(super) fn make_closure(&self, expr: &Expr, env: &Env) -> Value {
+        // A lambda inside an AST clone made at run time (a handler
+        // arm, a continuation replay) is not in the resolution table.
+        let unresolved;
+        let info = match self.res.lambda(expr) {
+            Some(info) => info,
+            None => {
+                let Expr::Lambda { params, body, .. } = expr else {
+                    unreachable!("make_closure on a non-lambda node")
+                };
+                unresolved = LambdaInfo::of(params, body);
+                &unresolved
+            }
+        };
+        // AX-40: capture only the free variables bound here — not the
+        // whole environment. A free name that is not bound here (a
+        // global, a fn, a builtin) is reached the same way at call time.
+        let captured: Vec<(Sym, Value)> = info
+            .captures
+            .iter()
+            .filter_map(|&(s, slot)| env.get_var(s, slot).map(|v| (s, v.clone())))
+            .collect();
+        // T40: a SHARED, persistent capture cell — see Value::Closure.
+        Value::Closure(Rc::new(ClosureVal {
+            code: Rc::clone(&info.code),
+            captured: std::cell::RefCell::new(captured),
+        }))
     }
 
     /// Bind the evaluated value `v` of a `let`/`own`/`ref` (all three behave

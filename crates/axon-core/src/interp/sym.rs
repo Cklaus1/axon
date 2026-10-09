@@ -276,8 +276,9 @@ fn pop(fr: &mut Option<Frame>) {
 
 /// The code of a closure: its parameters and body. Shared (`Rc`) by every
 /// closure value made from the same lambda, so creating or cloning a closure
-/// never copies its body.
-#[derive(Debug)]
+/// never copies its body. Only ever built inside an `Rc` and never moved out
+/// of it, so the nodes of `body` stay put for as long as the code lives (the
+/// resolution table and `compiled` rely on that).
 pub struct ClosureCode {
     pub(super) params: Box<[Sym]>,
     pub(super) body: Expr,
@@ -285,6 +286,40 @@ pub struct ClosureCode {
     /// frame (it follows the captured variables, slots `0..`); `None` when it
     /// is resolved by name.
     pub(super) param_base: Option<u32>,
+    /// R50 S4: the body compiled for the bytecode engine, filled on its
+    /// first run under `AXON_ENGINE=vm`. `Some` only for the codes the
+    /// resolution table builds ([`Resolution::lambda`]); `None` for
+    /// [`LambdaInfo::of`] codes, `fn_value` forwarders and `SendValue` deep
+    /// copies, whose bodies run on the tree-walker.
+    pub(super) compiled: Option<super::vm::LambdaBody>,
+    /// R50 S4: `vm: tree <anon>: unresolved lambda` was printed for this
+    /// code (one with `compiled: None`; spec §3, once per code instance).
+    pub(super) traced: std::cell::Cell<bool>,
+}
+
+impl ClosureCode {
+    /// The code of a closure whose body runs on the tree-walker under both
+    /// engines (`compiled: None`).
+    pub(super) fn unresolved(params: Box<[Sym]>, body: Expr) -> ClosureCode {
+        ClosureCode {
+            params,
+            body,
+            param_base: None,
+            compiled: None,
+            traced: std::cell::Cell::new(false),
+        }
+    }
+}
+
+// Written out so the R50 fields leave the output as it was.
+impl std::fmt::Debug for ClosureCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClosureCode")
+            .field("params", &self.params)
+            .field("body", &self.body)
+            .field("param_base", &self.param_base)
+            .finish()
+    }
 }
 
 /// A lambda node's resolution: its shared code, and the variables of the
@@ -304,11 +339,10 @@ impl LambdaInfo {
     /// Resolve a lambda node that is not in a [`Resolution`] table.
     pub(super) fn of(params: &[LambdaParam], body: &Expr) -> LambdaInfo {
         LambdaInfo {
-            code: Rc::new(ClosureCode {
-                params: params.iter().map(|p| intern(&p.name)).collect(),
-                body: body.clone(),
-                param_base: None,
-            }),
+            code: Rc::new(ClosureCode::unresolved(
+                params.iter().map(|p| intern(&p.name)).collect(),
+                body.clone(),
+            )),
             captures: free_vars(params, body)
                 .iter()
                 .map(|&s| (s, NAMED))
@@ -625,16 +659,26 @@ impl Resolution {
             lambdas: Vec::new(),
             records: Vec::new(),
             lits: Vec::new(),
+            owner: String::new(),
+            next_lambda: 0,
         };
+        // R50 §3: lambdas reached through module items are `<module>`'s,
+        // numbered across those items in source order.
+        let mut module_lambdas = 0;
         for item in &program.items {
             match item {
-                Item::FnDef(f) => b.add_fn(f),
-                Item::ImplBlock(blk) => blk.methods.iter().for_each(|m| b.add_fn(m)),
-                Item::LetDef { value, .. } => b.expr(value, &mut None),
-                Item::RefineDef(r) => b.expr(&r.predicate, &mut None),
+                Item::FnDef(f) => b.add_fn(f, f.name.clone()),
+                Item::ImplBlock(blk) => {
+                    let ty = super::type_name_of(&blk.for_type);
+                    for m in &blk.methods {
+                        b.add_fn(m, format!("{ty}::{}", m.name));
+                    }
+                }
+                Item::LetDef { value, .. } => b.module_item(value, &mut module_lambdas),
+                Item::RefineDef(r) => b.module_item(&r.predicate, &mut module_lambdas),
                 Item::TypeDef(t) => {
                     if let Some(p) = &t.refinement {
-                        b.expr(p, &mut None);
+                        b.module_item(p, &mut module_lambdas);
                     }
                 }
                 Item::EnumDef(_) | Item::ModDecl(_) | Item::UseDecl(_) | Item::TraitDef(_) => {}
@@ -768,22 +812,42 @@ struct Builder<'a, 'd> {
     lambdas: Vec<LambdaInfo>,
     records: Vec<Record>,
     lits: Vec<Value>,
+    /// R50 §3: the owner of the lambdas being resolved (a fn's trace name,
+    /// `<fn>::verify`, `<module>`), and the 0-based source (pre-)order
+    /// position of the owner's next lambda, nested ones included.
+    owner: String,
+    next_lambda: u32,
 }
 
 impl Builder<'_, '_> {
     /// A fn body is a slotted frame: `call_fn_in` binds the parameters by
     /// position, then `goal_met`, then evaluates the body. A `@[verify]`
-    /// predicate runs in a synthetic env, so it is resolved by name.
-    fn add_fn(&mut self, f: &FnDef) {
+    /// predicate runs in a synthetic env, so it is resolved by name. `name`
+    /// is the fn's trace name (`Type::method` for an impl method).
+    fn add_fn(&mut self, f: &FnDef, name: String) {
         let base = f
             .params
             .iter()
             .map(|p| intern(&p.name))
             .chain([SYM_GOAL_MET]);
+        self.next_lambda = 0;
+        self.owner = name;
         self.expr(&f.body, &mut Some(Frame::with_base(base)));
         if let Some(v) = &f.verify {
+            self.next_lambda = 0;
+            self.owner.push_str("::verify");
             self.expr(&v.predicate, &mut None);
         }
+    }
+
+    /// A module item's expression (a module `let`, a `refine` predicate, a
+    /// type's refinement), resolved by name; its lambdas are `<module>`'s,
+    /// `count` being the number already seen in earlier module items.
+    fn module_item(&mut self, e: &Expr, count: &mut u32) {
+        "<module>".clone_into(&mut self.owner);
+        self.next_lambda = *count;
+        self.expr(e, &mut None);
+        *count = self.next_lambda;
     }
 
     fn name(&mut self, e: &Expr, name: &str, slot: u32) {
@@ -989,10 +1053,15 @@ impl Builder<'_, '_> {
         let param_base = inner
             .as_ref()
             .map(|_| u32::try_from(captures.len()).expect("fewer than 2^32 captures"));
+        // Numbered before the body is resolved: source pre-order.
+        let name = format!("{}::lambda#{}", self.owner, self.next_lambda);
+        self.next_lambda += 1;
         let code = Rc::new(ClosureCode {
             params: param_syms,
             body: body.clone(),
             param_base,
+            compiled: Some(super::vm::LambdaBody::new(name)),
+            traced: std::cell::Cell::new(false),
         });
         self.expr(&code.body, &mut inner);
         let idx = tagged_index(self.lambdas.len(), LAMBDA_TAG);

@@ -93,6 +93,7 @@ fn kinds(body: &Body<'_>) -> Vec<&'static str> {
             Op::FmtLit(_) => "fmt-lit",
             Op::FmtPush => "fmt-push",
             Op::Call { .. } => "call",
+            Op::Lambda(_) => "lambda",
         })
         .collect()
 }
