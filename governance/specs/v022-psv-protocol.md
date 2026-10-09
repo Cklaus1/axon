@@ -7347,8 +7347,7 @@ Logs: `/var/tmp/c9r13-be10-evidence/`.
 as the brief allowed, and it is the only place they ran. The new primitive tests run in a throwaway private mount namespace as root: a primitive whose guard regressed
 damages that namespace and not the host; they do not run in the host's mount namespace. The refusal of the host's own namespace is therefore shown by the PURE precondition
 (it mounts nothing) called on the host's shell, not by a destructive primitive called there.
-**Unfinished, stated.** (a) The axon-core gates (`refusal_coverage_gate`, `harness_integrity`, `harness_binaries`) were run on gm at `9b5ee4af` (52, 43, 10 passed) and are re-run
-at the commit that adds this text; the commits between touch scripts and the registry the gate reads. (b) A forged `OPKIT_HOST_NS` from a caller that is PID 1 of its own
+**Unfinished, stated.** (a) The axon-core gates (`refusal_coverage_gate`, `harness_integrity`, `harness_binaries`): gm, `0e974b29` (the commit that adds this text before this sentence was edited), rc 0: 52, 43 and 10 passed; the only change since is this sentence. (b) A forged `OPKIT_HOST_NS` from a caller that is PID 1 of its own
 PID namespace passes the precondition (recorded as a control, above). (c) The NUL rule reads a file as UTF-16/32 only when the result is >= 90% ASCII printable; UTF-16 text
 in which that does not hold, and a UTF-16 file larger than the 64 KiB read cap, are not covered (the cap already refuses the second). (d) The matrix numbers A274-A280 are
 renumbered at integration. (e) The `IDENTICAL` host listing is of this host only.
