@@ -787,3 +787,60 @@ fn float_fast_agrees_with_float_binop() {
         }
     }
 }
+
+// -- S5: fast calls ----------------------------------------------------------
+
+/// R50 §4 S5 (§8 unit row): an `FnEntry` with `has_ref_mut` set is never a
+/// fast-call candidate; a plain fn with no refinement in the program is.
+#[test]
+fn has_ref_mut_entry_is_not_fast_call_eligible() {
+    let prog = crate::parse_source(
+        "fn t(a: &mut [i64]) { a[0] = 1 }\nfn p(x: i64) -> i64 { x }\n\
+         fn main() -> i64 { let a = [0]\n t(&mut a)\n p(1) }",
+    )
+    .expect("parses");
+    let interp = Interp::build(&prog);
+    let entry = |name: &str| interp.fn_table.iter().find(|e| e.def.name == name).unwrap();
+    assert!(entry("t").has_ref_mut);
+    assert_eq!(
+        compile::fast_call_blocker(entry("t"), true),
+        Some("has_ref_mut")
+    );
+    assert_eq!(compile::fast_call_blocker(entry("p"), true), None);
+    assert_eq!(
+        compile::fast_call_blocker(entry("p"), false),
+        Some("refine_preds")
+    );
+}
+
+/// R50 §4 S5: a fast call keeps `call_fn_in`'s order: the depth check
+/// before the arity check, each with the tree's panic. The body runs three
+/// times: the first call goes through `dispatch_named` (which proves the
+/// name), the next two through the fast path, the last one at the depth
+/// limit.
+#[test]
+fn fast_call_checks_depth_before_arity() {
+    let prog = crate::parse_source("fn f(x: i64) -> i64 { x }\nfn g() -> i64 { f(1, 2) }")
+        .expect("parses");
+    let interp = Interp::build(&prog);
+    let g = body_of(&interp, "g");
+    let body = compile(&interp, g);
+    assert!(kinds(&body).contains(&"call-fast"), "{:?}", kinds(&body));
+    let both = || {
+        let mut env = Env::new();
+        env.push();
+        let tree = format!("{:?}", interp.eval(g, &mut env));
+        let mut env = Env::new();
+        env.push();
+        let vm = format!("{:?}", interp.exec(&body, &mut env));
+        assert_eq!(vm, tree);
+        vm
+    };
+    for _ in 0..2 {
+        assert!(both().contains("f: expected 1 args, got 2"));
+    }
+    let depth = interp.call_depth.replace(interp.max_depth);
+    let at_limit = both();
+    interp.call_depth.set(depth);
+    assert!(at_limit.contains("recursion limit exceeded"), "{at_limit}");
+}
