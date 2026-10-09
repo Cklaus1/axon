@@ -591,7 +591,13 @@ impl<'p> Interp<'p> {
                     // R13 native FFI: a native `M::fn(...)` call dispatches to the
                     // in-process mock shim (one impl, two engines — I-2).
                     if crate::native::is_native_call(name) {
-                        return self.eval_native_call(name, args, env);
+                        let r = self.eval_native_call(name, args, env);
+                        // A native handle names state in a registry every frame
+                        // shares: the call is `World` (amendment 108).
+                        if T {
+                            self.t_native_call();
+                        }
+                        return r;
                     }
                 }
                 self.eval_call::<T>(callee, args, tier.as_deref(), env)
@@ -671,7 +677,10 @@ impl<'p> Interp<'p> {
                     self.t_check_dispatch(f, &argv[0], rt, &tn)?;
                     self.call_fn(f, argv)
                 } else {
-                    panic(format!("no method `{method}` on type `{tn}`"))
+                    // A sealed caller is told what it is told for an operator
+                    // method it may not use (`seal_method`): the miss and the
+                    // refusal read the same (existence oracle, amendment 108).
+                    self.no_such_fn(method, format!("no method `{method}` on type `{tn}`"))
                 }
             }
 
@@ -1811,6 +1820,16 @@ impl<'p> Interp<'p> {
         let r = self.eval_t::<T>(right, env)?;
         let rt = self.tl::<T>();
         self.seal_width(op, left, right, &l, &r)?;
+        // A comparison READS the content of every shared object (dict, channel)
+        // inside either operand, however deep (`d == e`, `[d] == [e]`, a struct
+        // or tuple holding one): the answer is a function of what sealed code
+        // wrote there (amendment 108).
+        if T && matches!(
+            op,
+            BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq
+        ) {
+            self.t_touch(self.t_obj_deep(&l) | self.t_obj_deep(&r));
+        }
         if T && (lt | rt) & taint::TYP != 0
             && !matches!(
                 op,

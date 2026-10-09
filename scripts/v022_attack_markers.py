@@ -2630,3 +2630,18 @@ ATTACK_MARKERS.update({
     'M2908': 'ATTACK: gbe service ids a unit that is not named axon\\-\\* and runs no axon binary still names an account',
     'M2909': "ATTACK: gbe service ids a .socket unit's SocketUser=",
 })
+ATTACK_MARKERS.update({
+    'M3030': 'ATTACK:\\ <eq:\\ a\\ dict\\ the\\ candidate\\ filled>\\ completed',
+    'M3031': 'ATTACK:\\ <eq\\ reversed:\\ a\\ dict\\ the\\ candidate\\ filled>\\ completed',
+    'M3032': 'ATTACK:\\ <eq\\ nested\\ dict:\\ a\\ dict\\ the\\ candidate\\ filled>\\ completed',
+    'M3033': 'ATTACK: sealed code selected operator code \\(comparison: \\[d\\] == \\[e\\]\\)',
+    'M3034': 'ATTACK:\\ <builtin\\ arr_contains\\ over\\ \\[tainted\\ dict\\]>\\ completed',
+    'M3035': 'ATTACK: sealed code selected operator code \\(comparison: arr_contains\\)',
+    'M3036': 'DRIFT:\\ BinOp::Lt\\ is\\ not\\ routed\\ through\\ t_obj_deep',
+    'M3037': 'missing-method verdict is not the sealed refusal|method forms differ',
+    'M3038': '3\\.\\{N\\}\\(\\): \\[score\\]',
+    'M3039': 'ATTACK:\\ <native:\\ a\\ surface\\ the\\ candidate\\ presented>\\ completed',
+    'M3040': 'ATTACK:\\ <native:\\ a\\ surface\\ the\\ candidate\\ presented>\\ completed',
+    'M3042': 'ATTACK:\\ <builtin\\ arr_contains\\ over\\ \\[tainted\\ dict\\]>\\ completed',
+    'M3041': 'ATTACK:\\ <native:\\ a\\ surface\\ the\\ candidate\\ presented>\\ completed',
+})

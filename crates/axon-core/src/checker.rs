@@ -475,6 +475,11 @@ pub struct CheckCtx {
     /// `check_program`; used to tell a genuine method call `p.m()` from calling
     /// a DATA field `p.x()` (E0403).
     type_methods: HashMap<String, HashSet<String>>,
+    /// The subset of `type_methods` defined by SEALED impls (the candidate's
+    /// own). A call from a sealed module is judged against this set alone, so an
+    /// operator-defined method and a missing one get the same E0403 (existence
+    /// oracle, amendment 108).
+    sealed_type_methods: HashMap<String, HashSet<String>>,
     /// Per-function generic bounds: fn_name → Vec<(param_name, trait_names)>.
     /// Built from `FnDef.generic_bounds` during `check_program` for E0504.
     fn_bounds: HashMap<String, Vec<(String, Vec<String>)>>,
@@ -580,6 +585,7 @@ impl CheckCtx {
             trait_defs: HashMap::new(),
             impl_table: HashMap::new(),
             type_methods: HashMap::new(),
+            sealed_type_methods: HashMap::new(),
             fn_bounds: HashMap::new(),
             current_span: crate::span::Span::dummy(),
             confidence_observed: HashSet::new(),
@@ -690,6 +696,15 @@ impl CheckCtx {
                     // Record every method name defined on this type (trait AND
                     // inherent impls) so `p.method()` can be told from calling a
                     // data field `p.x()` (E0403).
+                    if crate::resolver::span_in_sealed(
+                        blk.span,
+                        &crate::resolver::sealed_module_dirs(),
+                    ) {
+                        let sm = self.sealed_type_methods.entry(ty_name.clone()).or_default();
+                        for m in &blk.methods {
+                            sm.insert(m.name.clone());
+                        }
+                    }
                     let methods = self.type_methods.entry(ty_name).or_default();
                     for m in &blk.methods {
                         methods.insert(m.name.clone());
@@ -3564,10 +3579,18 @@ impl CheckCtx {
                 let method_key = method_key.filter(|k| !self.current_generic_params.contains(k));
                 if let Some(key) = method_key {
                     let key = key.as_str();
-                    let has_method = self
-                        .type_methods
-                        .get(key)
-                        .is_some_and(|ms| ms.contains(method));
+                    let sealed_site = {
+                        let dirs = crate::resolver::sealed_module_dirs();
+                        !dirs.is_empty()
+                            && crate::resolver::span_in_sealed(self.current_span, &dirs)
+                    };
+                    let has_method = if sealed_site {
+                        &self.sealed_type_methods
+                    } else {
+                        &self.type_methods
+                    }
+                    .get(key)
+                    .is_some_and(|ms| ms.contains(method));
                     if !has_method {
                         let file = self.file.clone();
                         // Tailor the message + hint to the receiver shape.

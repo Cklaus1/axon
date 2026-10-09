@@ -1415,3 +1415,256 @@ fn a_sealed_caller_cannot_tell_an_operator_name_from_a_missing_one_on_any_path()
         diffs.join("\n")
     );
 }
+
+// ── Amendment 108: the existence oracle, on the METHOD path ───────────────────
+
+/// Receiver kinds for a method call from sealed code: (kind, the candidate's
+/// own items it needs, the receiver expression or a call that reaches the
+/// method with `{N}` as its name).
+const METHOD_FORMS: &[(&str, &str, &str)] = &[
+    ("i64", "", "3.{N}()"),
+    ("str", "", "\"a\".{N}()"),
+    ("array", "", "[1].{N}()"),
+    ("dict", "", "dict_new().{N}()"),
+    ("struct", "type CS = { k: i64 }\n", "(CS { k: 1 }).{N}()"),
+    ("enum", "type CE = X | Y\n", "CE::X.{N}()"),
+    ("generic", "fn gen<T>(x: T) -> i64 { x.{N}() }\n", "gen(3)"),
+    ("dyn", "fn dy(x: dyn Sc) -> i64 { x.{N}() }\n", "dy(3)"),
+    ("chained", "", "3.{N}().{N}()"),
+    ("on_call", "fn one() -> i64 { 1 }\n", "one().{N}()"),
+];
+
+/// A sealed caller's refusal for a METHOD does not say whether the operator
+/// defines it: for every receiver kind, the text for an operator method is the
+/// text for a missing one, modulo the name.
+#[test]
+fn a_sealed_caller_cannot_tell_an_operator_method_from_a_missing_one() {
+    let su = "trait Sc {\n    fn score(self) -> i64\n}\nimpl Sc for i64 {\n    fn score(self: i64) -> i64 { 41 }\n}\nimpl Sc for str {\n    fn score(self: str) -> i64 { 41 }\n}\nimpl Sc for [i64] {\n    fn score(self: [i64]) -> i64 { 41 }\n}\nimpl Sc for Dict {\n    fn score(self: Dict) -> i64 { 41 }\n}\nimpl Sc for CS {\n    fn score(self: CS) -> i64 { 41 }\n}\nimpl Sc for CE {\n    fn score(self: CE) -> i64 { 41 }\n}\n";
+    let body = "    assert_eq(solve(), 41)";
+    let verdict = |name: &str, items: &str, form: &str| -> String {
+        let cand = format!(
+            "{}fn solve() -> i64 {{ {} }}\n",
+            items.replace("{N}", name),
+            form.replace("{N}", name)
+        );
+        // The operator's impls name the candidate's own types: one program.
+        let c = case(
+            "method-oracle",
+            su,
+            body,
+            &format!("{LAUNDER8}{cand}"),
+            Expect::Ok,
+        );
+        let out = run(&suite_of(&c), &c.cand, Rules::Both);
+        format!("{out:?}")
+            .split("\\n")
+            .next()
+            .unwrap_or("")
+            .replace(name, "@")
+    };
+    let mut diffs: Vec<String> = Vec::new();
+    for (kind, items, form) in METHOD_FORMS {
+        let a = verdict("score", items, form);
+        let b = verdict("zzscore", items, form);
+        if a != b {
+            diffs.push(format!("{kind} [score] {a}  ||  [zzscore] {b}"));
+        }
+        // The two must be refusals at all: a pair that agrees by both SUCCEEDING
+        // would prove nothing.
+        assert!(
+            b.contains("sealed code") || b.contains("no such"),
+            "{kind}: the missing-method verdict is not the sealed refusal: {b}"
+        );
+    }
+    assert!(
+        diffs.is_empty(),
+        "ORACLE: {} of {} method forms differ:\n{}",
+        diffs.len(),
+        METHOD_FORMS.len(),
+        diffs.join("\n")
+    );
+}
+
+// ── Amendment 108: structural comparison and native registries ────────────────
+
+const CMP_REF: &str = "fn reference(x: i64) -> i64 { x * 2 }\nfn lax(x: i64) -> i64 { 0 }\n";
+const CMP_OPS: &str = "    let ops = [reference, lax]\n";
+
+/// Every operation that can OBSERVE the content of a dict (or channel) a sealed
+/// frame wrote, and a selection built on the answer. `{E}` is the expression
+/// over `d` (the dict sealed code filled) and `e` (an operator dict with the
+/// same content when the candidate writes 1).
+fn compare_cases() -> Vec<Case> {
+    use Expect::*;
+    let fill = "pub fn dummy() {}\nfn put(d: Dict) { dict_set(d, \"k\", 1) }\n";
+    let sel = |setup: &str, cond: &str| {
+        format!(
+            "{CMP_OPS}    let d = dict_new()\n    put(d)\n    let e = dict_new()\n    dict_set(e, \"k\", 1)\n{setup}    let f = if {cond} {{ ops[0] }} else {{ ops[1] }}\n    assert(f(21) >= 0)"
+        )
+    };
+    let honest = |setup: &str, cond: &str| {
+        format!(
+            "{CMP_OPS}    let d = dict_new()\n    dict_set(d, \"k\", 1)\n    let e = dict_new()\n    dict_set(e, \"k\", 1)\n{setup}    let f = if {cond} {{ ops[0] }} else {{ ops[1] }}\n    assert(f(21) >= 0)"
+        )
+    };
+    let pre = format!(
+        "{CMP_REF}type W = {{ d: Dict, n: i64 }}\ntype Sh = A {{ d: Dict }} | B {{ n: i64 }}\n"
+    );
+    let forms: &[(&'static str, &'static str, &'static str)] = &[
+        ("eq", "", "d == e"),
+        ("ne", "", "d != e"),
+        ("eq reversed", "", "e == d"),
+        ("eq array", "", "[d] == [e]"),
+        ("eq tuple", "", "(d, 1) == (e, 1)"),
+        ("eq struct", "    let w1 = W { d: d, n: 0 }\n    let w2 = W { d: e, n: 0 }\n", "w1 == w2"),
+        ("eq enum", "    let s1 = Sh::A { d: d }\n    let s2 = Sh::A { d: e }\n", "s1 == s2"),
+        ("eq nested dict", "    let h = dict_new()\n    dict_set(h, \"in\", d)\n    let g = dict_new()\n    dict_set(g, \"in\", e)\n", "h == g"),
+        ("arr_contains", "", "arr_contains([d], e)"),
+        ("arr_index_of", "", "match arr_index_of([d], e) { Some(i) => true  None => false }"),
+        ("arr_unique", "", "len(arr_unique([d, e])) == 1"),
+        ("assert_eq as a bool", "", "dict_len(d) == 1 && d == e"),
+    ];
+    let mut v = Vec::new();
+    for (name, setup, cond) in forms {
+        let leak: &'static str =
+            Box::leak(format!("{name}: a dict the candidate filled").into_boxed_str());
+        let ok: &'static str =
+            Box::leak(format!("{name}: the operator's own dicts").into_boxed_str());
+        v.push(case(leak, &pre, &sel(setup, cond), fill, Refused));
+        v.push(case(ok, &pre, &honest(setup, cond), fill, Ok));
+    }
+    v
+}
+
+#[test]
+fn comparing_or_searching_a_dict_the_candidate_wrote_is_a_read_of_it() {
+    let cases = compare_cases();
+    check(&cases, Rules::TaintOnly);
+    attacks_are_live(&cases);
+}
+
+/// Table-driven over the builtins: every builtin that takes a container and can
+/// read its content is run on `[d]` / a struct holding `d`, where `d` is a dict
+/// sealed code wrote, and its result must carry the taint (selecting an
+/// operator fn by it is refused). Driven off the builtin table, so a new one is
+/// covered without being listed.
+#[test]
+fn every_builtin_that_can_read_a_container_of_a_tainted_dict_taints_its_result() {
+    let pre = CMP_REF.to_string();
+    let mut cases = Vec::new();
+    // (builtin call over `xs = [d]`, `d`, `e`) — each a different reader.
+    let calls: &[(&str, &str)] = &[
+        ("arr_contains", "arr_contains(xs, e)"),
+        (
+            "arr_index_of",
+            "match arr_index_of(xs, e) { Some(i) => true  None => false }",
+        ),
+        ("arr_unique", "len(arr_unique(xs)) == 1"),
+        ("arr_concat", "len(arr_concat(xs, xs)) == 2"),
+        ("arr_reverse", "len(arr_reverse(xs)) == 1"),
+        ("arr_sort_by", "len(arr_sort_by(xs, |a| 0)) == 1"),
+        ("arr_filter", "len(arr_filter(xs, |a| true)) == 1"),
+        ("arr_take", "len(arr_take(xs, 1)) == 1"),
+    ];
+    for (name, cond) in calls {
+        let body = format!(
+            "{CMP_OPS}    let d = dict_new()\n    put(d)\n    let e = dict_new()\n    dict_set(e, \"k\", 1)\n    let xs = [d]\n    let f = if {cond} {{ ops[0] }} else {{ ops[1] }}\n    assert(f(21) >= 0)"
+        );
+        let nm: &'static str =
+            Box::leak(format!("builtin {name} over [tainted dict]").into_boxed_str());
+        cases.push(case(
+            nm,
+            &pre,
+            &body,
+            "fn put(d: Dict) { dict_set(d, \"k\", 1) }\n",
+            Expect::Refused,
+        ));
+    }
+    // The honest control: counting what a container holds is not a read of the
+    // content of the dict inside it (`len` is a SHALLOW_FIRST_ARG builtin).
+    let body = format!(
+        "{CMP_OPS}    let d = dict_new()\n    put(d)\n    let xs = [d]\n    let f = if len(xs) == 1 {{ ops[0] }} else {{ ops[1] }}\n    assert(f(21) >= 0)"
+    );
+    cases.push(case(
+        "builtin len over [tainted dict] counts and reads nothing",
+        &pre,
+        &body,
+        "fn put(d: Dict) { dict_set(d, \"k\", 1) }\n",
+        Expect::Ok,
+    ));
+    check(&cases, Rules::TaintOnly);
+    attacks_are_live(&cases);
+}
+
+/// A drift gate on the SOURCE: every evaluator arm that observes content goes
+/// through the deep walk. `eval_binop` takes the taint of both operands of every
+/// comparison BinOp variant, and `t_builtin_in` takes it for EVERY argument
+/// (no table of builtins).
+#[test]
+fn every_comparison_and_every_builtin_argument_is_walked_deep() {
+    let ev = sources()
+        .into_iter()
+        .find(|(f, _)| *f == "interp/eval.rs")
+        .unwrap()
+        .1;
+    let at = ev.find("pub(super) fn eval_binop").expect("eval_binop");
+    let body = &ev[at..at + 6000];
+    let m = body
+        .find("self.t_obj_deep(&l) | self.t_obj_deep(&r)")
+        .expect("deep walk of both operands");
+    let guard = &body[m.saturating_sub(400)..m];
+    for op in ["Eq", "NotEq", "Lt", "Gt", "LtEq", "GtEq"] {
+        // The variant as a whole token (`Lt` is a prefix of `LtEq`).
+        let pat = format!("BinOp::{op}");
+        let named = guard.match_indices(&pat).any(|(i, _)| {
+            !guard[i + pat.len()..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_alphanumeric())
+        });
+        assert!(named, "DRIFT: BinOp::{op} is not routed through t_obj_deep");
+    }
+    let tt = sources()
+        .into_iter()
+        .find(|(f, _)| *f == "interp/taint.rs")
+        .unwrap()
+        .1;
+    let at = tt.find("pub(super) fn t_builtin_in").expect("t_builtin_in");
+    let body = &tt[at..at + 1200];
+    // Every argument is walked deep, except the FIRST argument of the few builtins that
+    // only count, key into or append to it (fail-closed: unlisted means deep).
+    assert!(
+        body.contains("for (i, a) in args.iter().enumerate()")
+            && body.contains("i == 0 && SHALLOW_FIRST_ARG.contains(&name)")
+            && body.contains("else {\n                self.t_touch(self.t_obj_deep(a));"),
+        "DRIFT: a builtin's arguments must ALL be walked deep, bar the first argument of SHALLOW_FIRST_ARG"
+    );
+    for n in super::taint::SHALLOW_FIRST_ARG {
+        assert!(
+            crate::builtins::BUILTINS.iter().any(|b| b.name == *n),
+            "DRIFT: SHALLOW_FIRST_ARG names `{n}`, which is not a builtin"
+        );
+    }
+}
+
+/// A native call (`gfx::present` on a surface) writes a registry every frame
+/// shares: what a sealed call did is something the candidate decided.
+#[test]
+fn a_native_registry_a_sealed_frame_wrote_taints_what_the_operator_reads_back() {
+    use Expect::*;
+    let ops = "    let ops = [lax, reference]\n".to_string();
+    let leak = format!("{ops}    let w = gfx::window_open(8, 8, \"a\")\n    let s = gfx::surface(w)\n    spin(s)\n    let f = ops[gfx::frame_count(s)]\n    assert(f(21) >= 0)");
+    let own = format!("{ops}    let w = gfx::window_open(8, 8, \"a\")\n    let s = gfx::surface(w)\n    gfx::present(s)\n    let f = ops[gfx::frame_count(s)]\n    assert(f(21) >= 0)");
+    let cases = vec![
+        case(
+            "native: a surface the candidate presented",
+            CMP_REF,
+            &leak,
+            "fn spin(s: Surface) { gfx::present(s) }\n",
+            Refused,
+        ),
+        case("native: the operator's own presents", CMP_REF, &own, "", Ok),
+    ];
+    check(&cases, Rules::TaintOnly);
+    attacks_are_live(&cases);
+}

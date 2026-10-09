@@ -83,9 +83,9 @@ ROWS=(
   # Amendment 100 (round 10): a handler arm runs under the pin owner of the fn that INSTALLED it, and a name a
   # name-resolving builtin runs must be one the operator chose.
   "am100 handler arm pin owner|axon-core|lib|interp::tests::a_handler_arm_dispatch_runs_under_the_installers_pin_owner interp::tests::a_handler_arm_replay_runs_under_the_installers_pin_owner interp::tests::a_handler_arm_arithmetic_runs_under_the_installers_pin_owner interp::tests::a_closure_made_in_a_handler_arm_is_judged_by_the_installing_fn interp::tests::identical_site_text_in_two_fns_gets_two_verdicts interp::tests::every_frame_that_runs_stored_operator_code_sets_its_owner"
-  "am100 handler arm pin owner|axon-psv|sealed_frames|a_handler_arm_dispatch_is_judged_by_the_fn_that_installed_it a_handler_arm_replay_is_judged_by_the_fn_that_installed_it a_handler_arm_arithmetic_is_judged_by_the_fn_that_installed_it"
+  "am100 handler arm pin owner (runner leg: corroboration only, the unit rows are the evidence)|axon-psv|sealed_frames|a_handler_arm_dispatch_is_judged_by_the_fn_that_installed_it a_handler_arm_replay_is_judged_by_the_fn_that_installed_it a_handler_arm_arithmetic_is_judged_by_the_fn_that_installed_it"
   "am100 name sinks|axon-core|lib|interp::tests::a_function_name_the_candidate_chose_never_selects_an_operator_fn interp::tests::scheduler_spawn_takes_no_function_name_the_candidate_chose interp::tests::goal_eval_takes_no_function_name_the_candidate_chose interp::tests::a_goal_constraint_and_a_kernel_goal_take_no_function_name_the_candidate_chose interp::tests::every_name_resolving_lookup_is_a_listed_sink"
-  "am100 name sinks|axon-psv|sealed_frames|sandbox_run_runs_no_function_name_the_candidate_chose scheduler_spawn_runs_no_function_name_the_candidate_chose goal_eval_runs_no_function_name_the_candidate_chose"
+  "am100 name sinks (runner leg: corroboration only, the unit rows are the evidence)|axon-psv|sealed_frames|sandbox_run_runs_no_function_name_the_candidate_chose scheduler_spawn_runs_no_function_name_the_candidate_chose goal_eval_runs_no_function_name_the_candidate_chose"
   "am100 existence oracle|axon-core|lib|interp::tests::a_sealed_caller_cannot_tell_an_operator_fn_from_a_missing_one"
   "am100 drift: any globals mention, any runner of user code|axon-core|lib|interp::tests::every_global_read_goes_through_global_ref interp::tests::every_builtin_that_runs_user_code_is_classified"
   # Amendment 102: the runtime taint. Each attack runs with the STATIC pin analysis OFF (only the
@@ -103,6 +103,12 @@ ROWS=(
   "am106 the existence oracle on every path|axon-core|lib|interp::taint_tests::a_sealed_caller_cannot_tell_an_operator_name_from_a_missing_one_on_any_path"
   "am106 drift: channel methods, dict and kernel builtins, text-rendering builtins|axon-core|lib|interp::taint_tests::every_channel_method_goes_through_the_one_access_helper interp::taint_tests::every_dict_builtin_has_a_taint_routing_row interp::taint_tests::every_kernel_builtin_is_a_tested_getter_or_stated_not_one interp::taint_tests::every_builtin_that_renders_a_value_to_text_is_a_stringifier_or_an_emitter"
   "am106 shared state and the existence oracle (runner leg)|axon-psv|sealed_frames|a_channel_the_candidate_touched_never_selects_operator_code the_taint_name_rule_refuses_what_the_static_name_analysis_lets_through a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one"
+  # Amendment 108 (round 12): a comparison and every builtin argument read the content of the shared objects
+  # inside them; the method existence oracle; a native registry is world state.
+  "am108 comparisons and builtins read the shared objects inside their operands|axon-core|lib|interp::taint_tests::comparing_or_searching_a_dict_the_candidate_wrote_is_a_read_of_it interp::taint_tests::every_builtin_that_can_read_a_container_of_a_tainted_dict_taints_its_result interp::taint_tests::every_comparison_and_every_builtin_argument_is_walked_deep"
+  "am108 the existence oracle on the method path|axon-core|lib|interp::taint_tests::a_sealed_caller_cannot_tell_an_operator_method_from_a_missing_one"
+  "am108 a native registry a sealed frame wrote is tainted|axon-core|lib|interp::taint_tests::a_native_registry_a_sealed_frame_wrote_taints_what_the_operator_reads_back"
+  "am108 comparison and method oracle (runner leg)|axon-psv|sealed_frames|comparing_a_dict_the_candidate_filled_never_selects_operator_code a_sealed_method_call_is_refused_in_the_same_words_for_an_operator_method_and_a_missing_one"
 )
 
 for row in "${ROWS[@]}"; do

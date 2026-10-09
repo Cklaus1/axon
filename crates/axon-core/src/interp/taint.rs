@@ -436,12 +436,32 @@ pub(crate) const PURE_BUILTINS: &[&str] = &[
 /// Builtins whose RESULT is the text of their argument: a channel prints its
 /// length and a dict its contents, wherever they sit in the value, so the
 /// result carries the taint of every shared object inside it.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const STRINGIFIERS: &[&str] = &["to_str", "dict_to_str"];
 
 /// Builtins that render a value to a stream and return nothing the program
 /// can read back (named for the drift test that classifies every renderer).
 #[cfg(test)]
 pub(crate) const EMITTERS: &[&str] = &["print", "println", "eprint", "eprintln"];
+
+/// Builtins whose FIRST argument is only counted, keyed into or appended to: they
+/// never look at what the entries hold, so a big dict or array they touch in a
+/// loop is not walked end to end on every call (a million `dict_set`s would
+/// otherwise be quadratic). The entries are read by their own routes: a value
+/// taken out carries its holder's taint, and a shared object inside it its own.
+/// Fail-closed: a builtin NOT listed here walks every argument deep.
+pub(crate) const SHALLOW_FIRST_ARG: &[&str] = &[
+    "dict_set",
+    "dict_remove",
+    "dict_inc",
+    "dict_get",
+    "dict_get_or",
+    "dict_has",
+    "dict_len",
+    "dict_keys",
+    "len",
+    "arr_push",
+];
 
 pub(crate) const DICT_WRITERS: &[&str] = &["dict_set", "dict_remove", "dict_inc"];
 
@@ -831,11 +851,15 @@ impl<'p> Interp<'p> {
     /// Before a builtin runs: the taint of the state it reads goes into the
     /// result. Called with the arguments evaluated and their taint in `acc`.
     pub(super) fn t_builtin_in(&self, name: &str, args: &[Value]) {
-        for a in args {
-            self.t_touch(self.t_obj(a));
-        }
-        if STRINGIFIERS.contains(&name) {
-            for a in args {
+        // Every argument is walked DEEP: a builtin that compares, searches,
+        // sorts, hashes or prints a container reads the content of every shared
+        // object inside it, so there is no table of such builtins. The one table
+        // is the opposite, fail-closed: the few that only count, key into or append
+        // to their first argument (amendment 108).
+        for (i, a) in args.iter().enumerate() {
+            if i == 0 && SHALLOW_FIRST_ARG.contains(&name) {
+                self.t_touch(self.t_obj(a));
+            } else {
                 self.t_touch(self.t_obj_deep(a));
             }
         }
@@ -850,6 +874,21 @@ impl<'p> Interp<'p> {
             // Not a builtin of the table (a name `call_builtin` answers that
             // `BUILTINS` does not list): a function of its arguments.
             None => {}
+        }
+    }
+
+    /// A `native::M::fn(..)` call (gfx surface, modbus/fhir/fix session ...):
+    /// the call reads and writes a registry shared by every frame, which no
+    /// value taint can follow through an integer-like handle. It is `World`
+    /// state like a file: a sealed call marks it ALL, an operator call reads it
+    /// back into the result (amendment 108).
+    pub(super) fn t_native_call(&self) {
+        let w = &self.taint.world;
+        if self.frame_sealed.get() {
+            w.set(w.get() | ALL);
+        } else {
+            self.t_touch(w.get());
+            w.set(w.get() | self.t_stored(self.taint.acc.get()));
         }
     }
 

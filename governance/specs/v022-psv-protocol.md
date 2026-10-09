@@ -6762,3 +6762,93 @@ row), and the `_text_ids` / `_unit_ids` / `_regular_text` guards beyond those th
       that is not Rust or that file.
 
 **Renumbering at integration (round 12, integrate11).** Four branches built in parallel numbered their matrix rows apart (amendment 105 A232-A238; amendment 106 A240-A245; amendment 107 A250-A253); the integration made the matrix contiguous: amendment 106's rows are now A239-A244 and amendment 107's are A245-A248. The text of those amendments was rewritten to the new ids.
+
+## Amendment 108: a comparison reads what it compares, every builtin argument is read deep, the method path of the existence oracle, native registries are world state (C9 round 12, PSV1V)
+
+108. **Source: the round-12 PSV-1 and SENTINEL reviewers** (`/var/tmp/c9r12-findings-PSV-1.json`, `/var/tmp/c9r12-findings-SENTINEL.json`, plus the PSV-3
+     REGISTER note on the delta note's text). Mutation ids M3030-M3042 (M3033, M3035, M3038 are runner legs), matrix rows A249-A253 (the integrator renumbers).
+     Base `c9r12/integrate11` (`915054b8`). `crates/axon-core/src/{interp/eval.rs, interp/taint.rs, checker.rs}` changed; classified in `scripts/pci_delta.py` as
+     narrowing. Amendment 102's class ("a path on which taint is dropped") is the one this closes further.
+
+     **1. The blocker (PSV-1, executed): structural equality read a dict the candidate filled, untainted.** `d == e` on a dict (and on an array, a struct, an enum, a
+     tuple or an outer dict that holds one) and the builtins that compare an array of dicts (`arr_contains([d], e)`) read the dict's CONTENT with no taint:
+     `let f = if d == e { lenient } else { strict }; assert(f(cand()))` with a WRONG answer accepted when the candidate wrote 1 and refused when it wrote 2, and
+     `nm = if d == e {"lax"} else {"ref1"}; sandbox_run(sb, nm, 21)` chose the NAME. Cause: object taint was consulted by builtin dispatch (`t_builtin_in` -> `t_obj`,
+     three deep, arrays not scanned) and by the stringifiers (`t_obj_deep`), and the binary `==`/`!=` arm called neither. Fixed at the two primitives every read goes
+     through: (a) `eval_binop` takes `t_obj_deep` of BOTH operands of every comparison variant (`==`, `!=`, `<`, `>`, `<=`, `>=`) into the result, inside `if T`; (b)
+     `t_builtin_in` walks EVERY argument of EVERY builtin deep, with no table of builtins that read (the two-name `STRINGIFIERS` table is kept only for the drift test that
+     classifies text renderers). The one table is the fail-closed opposite, `SHALLOW_FIRST_ARG` (`dict_set`, `dict_remove`, `dict_inc`, `dict_get`, `dict_get_or`, `dict_has`,
+     `dict_len`, `dict_keys`, `len`, `arr_push`): the FIRST argument of a builtin that only counts, keys into or appends to a container is not walked, because the first form of
+     this fix walked it and made a loop of a million `dict_set`s quadratic (the suite hung at `a_dict_over_the_snapshot_bound_is_refused_not_skipped`, found by running the
+     full axon-core suite; M3042 puts `arr_contains` in the list and its attack gets through). A channel compares by identity and never leaked its content; the deep walk now taints it too, which is conservative.
+     Executed before and after (probes `/var/tmp/c9r12-p1v/w/`, scripts `batch2.sh`..`batch12.sh`): f1/f2, f4, f5, g1, g3, g6, i1 were accepted at `915054b8` and are refused by
+     the taint at the fix; every honest control (the operator's own dicts compared) still passes.
+
+     **2. The hunt: every way operator code can OBSERVE the content of a shared mutable object a sealed frame wrote.** Reproduced through the runner flags
+     (`axon test --seal`, the `run.sh` pattern), each with a candidate that writes V=1 or V=2 and a strict/lenient selector:
+
+     | route | result |
+     |---|---|
+     | `==`, `!=`, `e == d` on dicts; `[d] == [e]`; `(d, 1) == (e, 1)`; a struct, an enum, an outer dict holding `d` | OPEN at base, CLOSED (A249) |
+     | `<` on dicts | not a route: the interpreter refuses `cannot apply Lt to dict`; the walk covers the arm anyway (M3036) |
+     | `arr_contains`, `arr_index_of`, `arr_unique` over `[d]` | OPEN at base, CLOSED (A250) |
+     | `dict_to_json`, `dict_map_values`, `dict_to_pairs`, `dict_filter`, `dict_merge`, `dict_each` | CLOSED (already routed by the builtin arguments' taint; executed) |
+     | a dict sent through a channel and received (`c.recv()`) | CLOSED (executed) |
+     | a closure capture cell the candidate wrote through a closure the operator handed it (`n = n + x`, then the operator calls `inc(0)`) | CLOSED (executed, refused) |
+     | a struct field of a struct holding `d`, an element of an array of structs (`ws[0].d == e`) | CLOSED (executed) |
+     | a bool computed from `d == e` stored in an array/dict and indexed | CLOSED (executed) |
+     | an array or a struct passed to a candidate fn that writes its parameter | not a route: arrays and structs are values, the write stays in the callee (executed: strict both times); a `&mut` array is amendment 106's M2937 |
+     | `match` on a dict-bearing value | not a route: no pattern observes a dict's content (a literal pattern is a scalar, a struct pattern binds fields and the dict is then read by a routed builtin) |
+     | iteration: `for` is a range; iterating a dict is `dict_keys`/`dict_each` | CLOSED (builtins) |
+     | sort/min/max/hash over containers of dicts | CLOSED by the every-argument-deep rule (`arr_sort_by` in the table test; the others by the same line) |
+     | JSON/serialisation of a container | CLOSED (`dict_to_json`; `json_*` take text) |
+     | regex / string ops over text built from content | the text is built by a stringifier or an interpolation (amendment 106, deep to 32) and then carries its taint |
+     | `assert_eq` failure message, a panic or an error message built from content | not a route: a failing assert ends the test, there is no builtin that catches a panic (`sandbox_run` returns an `i64` and a panic in the sealed fn ends the test: executed, `n1`/`n2`), so the text reaches no operator code |
+     | dict iteration ORDER | BTreeMap order is by key, observable only through `dict_keys`/`dict_each`, both routed |
+     | `Option<Dict>` / `Result<Dict, _>` equality | not a route: the type checker refuses `==` on them (E0301); the deep walk looks through them anyway |
+     | native `gfx`/`axon-domain` registries | OPEN at base (in the tests, which bypass the type checker), CLOSED (A252) |
+     | `Uncertain`/`Temporal` holding a dict, session-like state, kernel/world state beyond the coarse classes | NOT EXAMINED (the kernel/world classes are amendment 106's; no probe of the others was written) |
+
+     **3. The method path of the existence oracle (SENTINEL, MINOR, executed).** With an operator `impl Sc for i64 { fn score }`, a sealed `3.score()` passed the
+     checker and failed at run time with "cannot use `score`: no such function or value is visible to it", while a sealed `3.zzscore()` was refused at check time by
+     E0403 (and, with the checker bypassed, by "no method `zzscore` on type `i64`"). Two differences, closed at both: the checker judges a method call made from a SEALED
+     module against the methods SEALED impls define (`sealed_type_methods`), so an operator method and a missing one are the same E0403; the run-time miss arm of
+     `Expr::MethodCall` goes through `no_such_fn` like every other miss. The 120-pair test used plain fns, which are not in `methods`; the new test covers ten receiver
+     forms (i64, str, array, dict, struct, enum, generic, dyn, a chained call, a call result) x existing/missing. **Correction of amendment 106's wording:** its item 4
+     and the claim said the oracle was one text "on every path"; it was one text on every path TESTED (20 forms x 6 kinds of definition). The claim now says so, and
+     amendment 108 adds the method path to the tested set. The statement is still not "every path": nothing enumerates the evaluator's name-miss sites except the
+     tests and the drift scans already present.
+
+     **4. The native registries (SENTINEL, FUTURE, decided: cheap, done).** A `native::M::fn(..)` call goes through `eval_native_call` and never through
+     `call_builtin`, so it had no taint class. A handle is an integer-like token naming a slot in a registry every frame shares, so no value taint follows it. The call is
+     now `World` state at its one call site (`Interp::t_native_call`): a sealed call marks the world taint ALL, an operator call reads it back into its result and records
+     what it ran under. Cost: an operator that uses `native::` after any sealed frame also used one gets a tainted result. The test runs at the interpreter level only (the
+     type checker keeps a candidate from naming a handle type in a signature, so the runner cannot reach the shape; the SENTINEL probe was a unit test as well), stated.
+
+     **5. Evidence.** Tested at `9a95c9ce` (the last commit that changes `crates/axon-core/src` is `8abeb02b`; later commits are text). (1) Mutation rows, gpumaster, clean clones of the
+     committed tree, `v022_g01_mutations.py --scope=all --only=<ids>`, two shards (`p1v-F0`, `p1v-F1`): **ALL 316 active rows whose target is under `crates/axon-core/src`
+     (the registry minus RETIRED, equivalents, sibling-only and library-primitive rows) KILLED by their own attack: 158/158 + 158/158, 0 REFUSED_ELSEWHERE, 0 survivors,
+     0 stale or unapplied** (this includes am102 M2700-M2767, am106 M2910-M2946 and am108 M3030-M3042). An earlier run at `ee1c7056` killed the 12 first-form am108 rows and
+     found M2724/M2924/M2932 unapplied (their old text was the line this amendment replaced), which were re-anchored. (2) `cargo test --locked -p axon-core
+     --no-default-features` on gpumaster: exit 0 (lib 829 passed, 1 ignored; every integration binary ok). The FIRST form of the fix hung this suite
+     (`a_dict_over_the_snapshot_bound_is_refused_not_skipped`: a million `dict_set`s, each walking the whole dict) and was corrected by `SHALLOW_FIRST_ARG` before the
+     suite passed; no pass was claimed for that form. (3) `cargo test --locked -p axon-psv` (local): exit 0, every binary ok. (4) `scripts/v022_pci_gates.sh` (gpumaster):
+     71 rows, exit 0, including the sweep step. (5) `scripts/v022_refusal_coverage.py` plain: exit 0; `--freeze`: exit 0; `scripts/psv_matrix_check.py`: PASS (253 rows);
+     `scripts/pci_delta.py --check`: PASS; `cargo fmt --check`: 0; `cargo clippy -p axon-core -p axon-psv --all-targets --no-default-features -- -D warnings`: 0
+     (the workspace-wide clippy fails on `axon-guest-kernel`, a freestanding crate this change does not touch; the gate runs clippy per runtime crate).
+
+     **6. Cost.** Release build, min of 5 to 7 runs, base `915054b8` against this tree, `axon run` on a shared host: a 20M-iteration `while` 2651 ms -> 2627 ms, `fib(32)`
+     1926 -> 1911 ms, a `arr_map` loop 1040 -> 1045 ms: inside the noise; every new hook is behind `if T`. A SEALED run whose operator frame compares two arrays
+     300000 times: 638/640 ms -> 672/663 ms (+3.6 to +5.3%), the cost of the deep walk where it is paid. A million `dict_set`s in a sealed run are linear (the
+     first form was quadratic: see item 1).
+
+     **7. Not covered and stated.** The claim about the verdict table and omission (amendment 106) is unchanged and must not be read to cover dict `==`: that WAS a taintable
+     presence case and is now closed. The deep walk is an over-approximation: an honest suite that compares or searches a container holding a dict the candidate
+     touched gets a tainted bool, which it may assert on (a sink) but not pick an operator fn by. Integer HANDLES of kernel objects, paths, URLs, prompts and native
+     codegen stay outside. The amendment text deliberately lists what was not examined.
+
+     **Documentation drift closed in the same change (PSV-3 REGISTER).** The delta note gave amendment 106 the rows A240-A245 (the matrix and this file say A239-A244); it
+     has no production-pair coverage sentence; its table did not cover the five am106 gate rows and nothing drift-checked its count; the am100 runner gate rows
+     carried no "corroboration" label; the claim quoted am102 as M2700-M2763 and am106 as M2910-M2939 (unit-only ranges, unlabelled). `scripts/pci_delta.py --check` now derives
+     the note's amendment -> matrix-row mapping from the amendment's own text and the matrix, the mutation-id ranges (am102, am106, am108) and the list of interpreter rows
+     from the registry, the gate-row table from the gate script (rows + the sweep), and fails when a tagged row's test is run by no gate row.

@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 1a75557b45bd62cf119166b9d79cc6631979f44f
+generated-at: 8abeb02bba54b259d5356d2a9307c8670e4c9841
 
-`git diff --numstat 31413ca7..1a75557b -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..8abeb02b -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -25,7 +25,7 @@ generated-at: 1a75557b45bd62cf119166b9d79cc6631979f44f
 | `crates/axon-core/src/builtins.rs` | 2 | 2 |
 | `crates/axon-core/src/cache.rs` | 70 | 2 |
 | `crates/axon-core/src/capabilities.rs` | 18 | 1 |
-| `crates/axon-core/src/checker.rs` | 209 | 57 |
+| `crates/axon-core/src/checker.rs` | 236 | 61 |
 | `crates/axon-core/src/codegen/asi.rs` | 8 | 0 |
 | `crates/axon-core/src/codegen/build_wrappers.rs` | 15 | 1 |
 | `crates/axon-core/src/codegen/builtins.rs` | 6 | 0 |
@@ -46,12 +46,12 @@ generated-at: 1a75557b45bd62cf119166b9d79cc6631979f44f
 | `crates/axon-core/src/interp.rs` | 6698 | 1216 |
 | `crates/axon-core/src/interp/builtins.rs` | 424 | 325 |
 | `crates/axon-core/src/interp/conform.rs` | 1789 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 822 | 180 |
+| `crates/axon-core/src/interp/eval.rs` | 843 | 182 |
 | `crates/axon-core/src/interp/goal.rs` | 27 | 26 |
 | `crates/axon-core/src/interp/pin.rs` | 944 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 35 | 15 |
-| `crates/axon-core/src/interp/taint.rs` | 1058 | 0 |
-| `crates/axon-core/src/interp/taint_tests.rs` | 1417 | 0 |
+| `crates/axon-core/src/interp/taint.rs` | 1097 | 0 |
+| `crates/axon-core/src/interp/taint_tests.rs` | 1670 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 15 | 7 |
 | `crates/axon-core/src/kernel.rs` | 2 | 2 |
 | `crates/axon-core/src/lib.rs` | 114 | 13 |
@@ -60,9 +60,9 @@ generated-at: 1a75557b45bd62cf119166b9d79cc6631979f44f
 | `crates/axon-core/src/mut_borrow.rs` | 800 | 0 |
 | `crates/axon-core/src/parser.rs` | 39 | 1 |
 | `crates/axon-core/src/resolver.rs` | 334 | 64 |
-| total | 18277 | 2822 |
+| total | 18617 | 2828 |
 
-`git log --reverse 31413ca7..1a75557b -- crates/axon-core/src`:
+`git log --reverse 31413ca7..8abeb02b -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -131,10 +131,11 @@ generated-at: 1a75557b45bd62cf119166b9d79cc6631979f44f
 | c62e9b02 | amendment 102 | a runtime taint: a value sealed code produced carries a taint every operation of the evaluator propagates (an accumulator around `eval`, a taint per binding, per shared object and per module-level let, an early-exit taint for a fn result and for stores), and an operator frame refuses to use a tainted value to SELECT operator code: the name given to a name-resolving builtin, an operator closure the candidate picked (out of a table by a key, index or branch) and then called, the impl a method call dispatches to (receiver type), and the width of fixed-width arithmetic; the static pin analysis is kept underneath; a plain `axon run` is unchanged (one branch per eval); drift tests for builtin classes, dict writers, dispatch sites, value holders and swept files: narrowing, no widening |
 | 83175bed | amendment 106 | a channel is one shared object with one taint: every channel method and every `select` arm examined takes it into the result, and a sealed frame's mutating access (send, recv, try_recv) marks it; a kernel or world write stores the control taint it ran under; a builtin runs its callbacks under the control taint of its arguments; string interpolation and the stringifying builtins take the taint of every shared object they print; a sealed caller is refused in ONE text on every path (a name, a global, a field or index, `goal_run`, a goal constraint, `kernel_goal_create`: `goal_run` of an operator fn no longer completes); routing and drift tests for every dict, kernel and array reader, 38 hunted programs: narrowing, no widening |
 | 1a75557b | amendment 106 | test only (the oracle test reads the verdict as Debug text; no production change) |
-| 65 commits | | |
+| ee1c7056 | amendment 108 | a comparison (`==`, `!=`, ordering) takes the taint of every shared object (dict, channel) inside either operand, however deep, and every builtin argument is walked deep (no table of names): `if d == e {lenient} else {strict}` over a dict the candidate filled is refused like `dict_get_or`; a sealed method call is judged by the methods sealed impls define and a run-time method miss reads like an operator method (existence oracle, method path); a `native::` call is World state (a sealed call marks it, an operator call reads it back); drift and routing tests, 12 rows: narrowing, no widening |
+| b8f176d9 | amendment 108 | test only (a clippy `useless_format` in a taint test): no production change |
+| 8abeb02b | amendment 108 | builtin arguments are walked deep EXCEPT the first argument of ten builtins that only count, key into or append (`SHALLOW_FIRST_ARG`, fail-closed: unlisted is deep), which keeps a loop of a million `dict_set`s linear; tests: narrowing, no widening beyond amendment 108's first form |
+| 68 commits | | |
 <!-- END MECHANICAL -->
-<!-- END MECHANICAL -->
-
 
 
 What is BY THEME (the `theme` and `what it does` columns; these are the commit messages' own
@@ -181,9 +182,9 @@ account and are NOT mechanically verified; the files and commits above are):
 
 ## (b) Coverage: PCI gate rows, and the mutation rows
 
-`scripts/v022_pci_gates.sh` has 67 rows at this head: the original 18 (surfaces 1-21), ten
+`scripts/v022_pci_gates.sh` has 71 rows at this head: the original 18 (surfaces 1-21), ten
 added by amendment 84, one group per delta amendment (53, 60, 72 incl. its dict snapshot, 78), two for
-amendment 83's dispatch rule (integration), and six for amendment 94 (the `&mut` edge-back cast, the `&mut` operand in the dispatch analysis, the fn-value seal edge and the Rc/copy-on-write observation, each unit and runner where both exist), nine for amendment 96 (sandbox_run's cast, the one global-read edge, the fn-value mark, the unary width arm, the classified user-code builtins and the handler-expression cost), and six for amendment 100 (a handler arm's pin owner, the name sinks, the existence oracle and the drift tests), and seven for amendment 102 (the runtime taint: the closure picks, the names, the impl and width, the carriers, an ordinary run, the drift tests and the runner leg; plus the sweep step that runs every rule-on interpreter test with only the taint on), and five for amendment 106 (channel state and the areas not hunted before, every reader of shared state after a sealed write, the existence oracle on every path, the drift tests, and the runner leg), each with
+amendment 83's dispatch rule (integration), and six for amendment 94 (the `&mut` edge-back cast, the `&mut` operand in the dispatch analysis, the fn-value seal edge and the Rc/copy-on-write observation, each unit and runner where both exist), nine for amendment 96 (sandbox_run's cast, the one global-read edge, the fn-value mark, the unary width arm, the classified user-code builtins and the handler-expression cost), and six for amendment 100 (a handler arm's pin owner, the name sinks, the existence oracle and the drift tests), and seven for amendment 102 (the runtime taint: the closure picks, the names, the impl and width, the carriers, an ordinary run, the drift tests and the runner leg; plus the sweep step that runs every rule-on interpreter test with only the taint on), and five for amendment 106 (channel state and the areas not hunted before, every reader of shared state after a sealed write, the existence oracle on every path TESTED, the drift tests, and the runner leg), and four for amendment 108 (comparisons and builtin arguments read the shared objects inside them, the existence oracle on the method path, a native registry as world state, and the runner leg), each with
 unit tests in `interp.rs`/`conform.rs` AND a real-runner test (`axon_psv::runner::run`, in
 `crates/axon-psv/tests/sealed_frames.rs`). The gate fails if a named test is absent (grep), renamed,
 filtered out or `#[ignore]`d (the passed count must equal the named count). Verified to discriminate:
@@ -246,9 +247,9 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am96 user-code builtins classified | axon-core/lib | PASS 2/2 |
 | am96 handler-expression value is undetermined (stated cost) | axon-core/lib | PASS 1/1 |
 | am100 handler arm pin owner | axon-core/lib | PASS 6/6 |
-| am100 handler arm pin owner | axon-psv/sealed_frames | PASS 3/3 |
+| am100 handler arm pin owner (runner leg: corroboration only, the unit rows are the evidence) | axon-psv/sealed_frames | PASS 3/3 |
 | am100 name sinks | axon-core/lib | PASS 5/5 |
-| am100 name sinks | axon-psv/sealed_frames | PASS 3/3 |
+| am100 name sinks (runner leg: corroboration only, the unit rows are the evidence) | axon-psv/sealed_frames | PASS 3/3 |
 | am100 existence oracle | axon-core/lib | PASS 1/1 |
 | am100 drift: any globals mention, any runner of user code | axon-core/lib | PASS 2/2 |
 | am102 runtime taint: closure picks | axon-core/lib | PASS 1/1 |
@@ -263,9 +264,13 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am106 the existence oracle on every path | axon-core/lib | PASS 1/1 |
 | am106 drift: channel methods, dict and kernel builtins, text-rendering builtins | axon-core/lib | PASS 4/4 |
 | am106 shared state and the existence oracle (runner leg) | axon-psv/sealed_frames | PASS 3/3 |
+| am108 comparisons and builtins read the shared objects inside their operands | axon-core/lib | PASS 3/3 |
+| am108 the existence oracle on the method path | axon-core/lib | PASS 1/1 |
+| am108 a native registry a sealed frame wrote is tainted | axon-core/lib | PASS 1/1 |
+| am108 comparison and method oracle (runner leg) | axon-psv/sealed_frames | PASS 2/2 |
 | am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 303 rows at this head, recomputed from the script): M59, M61-M62, M65, M67-M70, M72-M79, M82-M83, M85-M88, M90-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2946 (but M2929, never issued). Per delta:
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 316 rows at this head, recomputed from the script): M59, M61-M62, M65, M67-M70, M72-M79, M82-M83, M85-M88, M90-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3042 Per delta:
 
 | delta | rows (named in the amendment's own text) |
 |---|---|
@@ -281,12 +286,25 @@ Mutation rows whose target is `crates/axon-core/src` and which are not retired (
 | amendment 96 | M2470-M2480, matrix A190-A194 |
 | amendment 100 | M2600-M2602, M2606, M2608-M2624 (M2603-M2605 and M2607, the runner-leg duplicates, withdrawn by amendment 102), matrix A208-A212 |
 | amendment 102 | M2700-M2767, matrix A219-A224 |
-| amendment 106 | M2910-M2946 (M2929 not issued; M2940-M2946 runner legs), matrix A240-A245 |
+| amendment 106 | M2910-M2946 (M2929 not issued; M2940-M2946 runner legs), matrix A239-A244 |
+| amendment 108 | M3030-M3042 (M3033, M3035, M3038 runner legs), matrix A249-A253 |
 
 FREEZE OBLIGATION, not a present fact: the claims spec says these rows are re-run at the frozen head.
 What the freeze procedure must show is a joined paired-disable run at the frozen head in which each of
 the rows above is killed by its own attack (or retired with its four cells). This task and note have
 re-run, at c9r10/psv1h e0f9acd8 on gpumaster (clean clone, two shards, `v022_g01_mutations.py --scope=all --only=<ids>`), all 203 active rows above: 203/203 KILLED by their own attack (101 + 102), 0 REFUSED_ELSEWHERE, 0 stale. That is a sample run (`--only`), not the scope run the freeze requires, and it re-ran no retired row; the gate rows (the gate script, 55 rows now) ran on gpumaster and passed. Per-amendment kill evidence is in each amendment's text.
+
+Coverage of the PRODUCTION PAIR (the static layer plus the taint, as shipped): it is covered only by the
+`Both` columns of amendment 102's tests, the runner legs and the gate's sweep step. A static guard removed
+from the production route ALONE is not observable, because the unit-test switch `TAINT_FORCE_ON` is
+`cfg(test)` and no shipped binary has the taint off; so the runner rows of amendment 100 (`axon-psv`; four
+of its five duplicates were withdrawn by amendment 102) and the runner legs of amendments 96 and 100 are CORROBORATION of the
+unit rows, and are labelled so in the gate script. The same holds for amendment 108's runner legs
+(M3033, M3035, M3038): the production route refuses those attacks by the taint first (M3038 by the checker's
+E0403), so each unit row is the evidence and the runner row is a second witness.
+
+Round 12 (c9r12/psv1v, `9a95c9ce`, gpumaster, `--only=<ids>`, two shards): all 316 active rows whose target is `crates/axon-core/src` were re-run, 316/316 KILLED by their own
+attack, 0 REFUSED_ELSEWHERE, 0 stale. Still a sample run (`--only`), not the scope run the freeze requires.
 
 ## (c) Surfaces 18 and 19, and what the protected profile does with a non-empty ceiling
 
