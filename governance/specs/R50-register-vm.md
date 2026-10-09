@@ -1,7 +1,7 @@
 # R50 — Bytecode engine for `axon run`
 
 **Spec ID:** `R50-register-vm`
-**Status:** Implementing (S0 landed). Reviewed at revision 10 after nine adversarial reviews (2026-10-09, `reviewer`). The first eight,
+**Status:** Implementing (S0, S1 landed). Reviewed at revision 10 after nine adversarial reviews (2026-10-09, `reviewer`). The first eight,
 verdict "incorrect" (first 2 blockers and 11 must-fix, second 4 must-fix and 8 smaller, third 6 must-fix
 and 6 smaller, fourth 7 must-fix and 5 smaller, fifth 5 must-fix and 7 smaller, sixth 5 must-fix and 6
 smaller, seventh 2 must-fix and 3 smaller, eighth 2 must-fix and 2 smaller), and the ninth, verdict
@@ -628,7 +628,7 @@ the reference code, gaps cost speed, never correctness.
 | Node | Depends-on / blocked-by | Gate (named test or script) | Status |
 |---|---|---|---|
 | R50.S0 selector (`AXON_ENGINE`, `axon_set_engine`), trace (body and `tree-op` lines), `run_body`, `FnEntry.compiled`, every body = one `Tree` op; extract `dispatch_call`, `bind_let`, `call_mut`; tree-walker scope-leak fix; `AXON_HARNESS_STRICT` in `parity_all.sh` with `scripts/parity_allowed_skips.txt` (§11); wasm harnesses forward the engine (§8 wasm); `vm_parity.sh`; `vm_perf_gate.sh`; `vm_wasm_depth.sh` and `tests/fixtures/vm_depth/` | — | `cargo test -p axon-core --test cli_run vm_engine_` (incl. `vm_engine_scope_leak`) + `scripts/vm_parity.sh` (empty lowered list) + `scripts/vm_wasm_depth.sh` + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` (tree engine; §11) | done (`99b8b099`, `e3b2d35b`) |
-| R50.S1 scalar core and calls; `AssignInPlace` (AX-31 shapes); extract `cond_bool`, `strict_int`; operand-stack pool | R50.S0 | `cli_run vm_scalar_` (incl. `vm_scalar_fib_no_tree_nodes`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (S1 rows) + `vm_wasm_depth.sh` | todo |
+| R50.S1 scalar core and calls; `AssignInPlace` (AX-31 shapes); extract `cond_bool`, `strict_int`; operand-stack pool | R50.S0 | `cli_run vm_scalar_` (incl. `vm_scalar_fib_no_tree_nodes`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (S1 rows) + `vm_wasm_depth.sh` | done (`cc23fb17`) |
 | R50.S2 aggregates, index/field reads, place writes (`AssignTo`); extract `index_in_place`, `index_value`, `field_in_place`, `finish_record`, `place_index`, `write_place` | R50.S1 | `cli_run vm_aggregate_` (incl. `vm_aggregate_part_no_tree_nodes`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (S1 and `part.ax` rows) + `vm_wasm_depth.sh` | todo |
 | R50.S3 match, patterns, enums, methods; extract `chan_method`, `impl_method` | R50.S1 | `cli_run vm_match_` (incl. `vm_match_option_no_tree_nodes`) + `vm_parity.sh` + `vm_wasm_depth.sh` | todo |
 | R50.S4 lambdas; extract `make_closure`; `ClosureCode.compiled`; allocation-free builtin → closure call on the lent path (`Rc::strong_count(cv) == private_refs`, interp.rs:4054), the one `fold.ax` and arr-sum take: `arr_fold`/`arr_map`/... take argument buffers from `arg_bufs`, `call_closure_owned_by` drains its arguments into the params and hands the buffer to `recycle_args` (today `zip(args)` consumes it, interp.rs:4067), and its `Env` gets a pooled `marks` Vec (today `vec![acc, x.clone()]` per element, builtins.rs:1847, and `Env::from_snapshot` starts with an empty `marks`, so `env.push()` allocates, interp.rs:749-754, 4058-4066). The copied path (a closure with other references, e.g. `let f = \|..\| ..; arr_fold(xs, 0, f)`) keeps its per-call `Vec::with_capacity` (interp.rs:4061-4064) | R50.S1 | `cli_run vm_closure_` (incl. `vm_closure_fold_no_tree_nodes`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (S1 and `fold.ax` rows) + `vm_wasm_depth.sh` | todo |
@@ -642,6 +642,10 @@ the reference code, gaps cost speed, never correctness.
 | S0 parity: both engines identical on the corpus | `scripts/vm_parity.sh` | `284 files, 1761 bodies, 0 lowered ops, 1761 tree ops, 0 differ` | `e3b2d35b` @ 2026-10-09 | PASS |
 | S0 wasm depth: 585 in the linear stack, 450 panic, both engines and profiles | `scripts/vm_wasm_depth.sh` | exit 0; default stack VM below tree on all chains (debug plain 213 vs 230), reported only | `e3b2d35b` @ 2026-10-09 | PASS |
 | S0 suite: both feature sets × both engines; strict parity under tree | `cargo test -p axon-core`; `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` | all green; 53 passed, 2 allowed skips of 55 | `e3b2d35b` @ 2026-10-09 | PASS |
+| S1 parity | `VM_PARITY_SLICE=S1 scripts/vm_parity.sh` | `284 files, 1761 bodies, 25090 lowered ops, 1966 tree ops, 0 differ` | `cc23fb17` @ 2026-10-09 | PASS |
+| S1 repros: loop ≤ 300, one-argument call ≤ 800 | `scripts/vm_perf_gate.sh --repros S1` | exit 0; loop 228.2, call 790.1 (tree at `cc23fb17`: about 1,149 and 909) | `cc23fb17` @ 2026-10-09 | PASS |
+| S1 wasm depth | `scripts/vm_wasm_depth.sh` | exit 0 | `cc23fb17` @ 2026-10-09 | PASS |
+| S1 suite: both feature sets × both engines; strict parity under tree | `cargo test -p axon-core`; `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` | all green; 53 passed, 2 allowed skips of 55 | `cc23fb17` @ 2026-10-09 | PASS |
 
 ### 15. Review resolution (2026-10-09)
 

@@ -1,5 +1,15 @@
 # Axon Changelog
 
+## `AXON_ENGINE=vm` compiles the scalar core of fn bodies to bytecode (R50 S1)
+
+Second slice of the bytecode engine (`governance/specs/R50-register-vm.md`). Speed only: no behaviour change under either engine, and `tree` stays the default.
+
+**Interpreter**
+- **Under `AXON_ENGINE=vm`, fn bodies made of the scalar core run as flat ops** instead of one tree-walk: literals, identifier reads, blocks, `let`/`own`/`ref` (typed ones through the same `bind_let`), `=` to a local (AX-31 in-place appends first, as before), binary and unary operators (`&mut` aside), `if`, `while`, `for` over integer ranges, `return`/`break`/`continue`, `?`, `Some`/`None`/`Ok`/`Err`, string interpolation, and calls by name without `&mut` arguments. Every other node still runs on the tree-walker as one op. Comparisons in `if`/`while` conditions fuse with the branch; `x = l op r` and `while i < n` over locals and int literals are single ops that skip `Value` construction for int/float operands. An activation's operand stack lives in its pooled call frame. `vm: <fn> <n> ops, <k> tree nodes` (`AXON_VM_TRACE=1`) now reports the lowering: `fib` compiles with 0 tree nodes. The tree-walker's `If`/`While`/`For`/index arms now share `cond_bool` and `strict_int` with the engine (no change in what they do).
+- A block, `while` iteration or `for` body that binds nothing (no `let`/`own`/`ref` anywhere below it) runs without its own scope under `vm`: that scope would stay empty, so it is unobservable.
+- `scripts/vm_parity.sh` knows slice `S1` (its default): 284 files, 1,761 bodies, 25,090 lowered ops, 1,966 tree ops, 0 differ. `--repros S1`: `while` loop iteration 228 instructions (tree 1,150); a one-argument call 790 (budget 800; tree ≈ 910, was 1,072 and ≈ 1,106). A call by name resolves its callee once at compile time (`dispatch_named`), and `call_fn_in` binds parameters by index instead of draining the argument vector (cost only, both engines).
+- **The shared call path is cheaper, cost only** (both engines; no change in what any call does). Call frames pool as `Box<Env>` and are cleared without drop glue for scalar bindings; `call_mut` takes its frame from that pool; the executing fn is a `Cell<Option<&FnDef>>` restored, with the call depth, by one guard; `call_fn_in` runs the common call (no attribute-driven step, no refinements) on a short path and pushes parameters and `goal_met` straight into the empty frame; under `vm` a call by name leaves its arguments on the operand stack, where a user-fn callee binds them from.
+
 ## Engine selector for `axon run`, and a `match` guard no longer leaks its scope (R50 S0, compilebench AX-57)
 
 First slice of the bytecode engine (`governance/specs/R50-register-vm.md`). It adds the plumbing and one fix to the reference interpreter; nothing is lowered yet, so `AXON_ENGINE=vm` runs every body through the tree-walker and behaves exactly like `tree`.

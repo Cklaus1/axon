@@ -84,7 +84,11 @@ pub(super) fn run_property_test_inner(
 
 /// Run the property fn once with `args`; Ok(()) if it passed (no panic),
 /// Err(message) if an assert/panic fired.
-pub(super) fn run_once(interp: &Interp, f: &FnDef, args: &[Value]) -> Result<(), String> {
+pub(super) fn run_once<'p>(
+    interp: &Interp<'p>,
+    f: &'p FnDef,
+    args: &[Value],
+) -> Result<(), String> {
     match interp.call_fn(f, args.to_vec()) {
         Ok(_) => Ok(()),
         Err(Flow::Panic(m)) | Err(Flow::VerifyFailed(m)) => Err(m.into()),
@@ -98,9 +102,9 @@ pub(super) fn run_once(interp: &Interp, f: &FnDef, args: &[Value]) -> Result<(),
 /// failing at `a >= 50` shrinks to exactly `a = 50`, not just "some smaller
 /// failing value"); strings truncate; bool flips true→false. Returns the
 /// minimal failing args + the message from that minimal case.
-pub(super) fn shrink(
-    interp: &Interp,
-    f: &FnDef,
+pub(super) fn shrink<'p>(
+    interp: &Interp<'p>,
+    f: &'p FnDef,
     gens: &[PropGen],
     start: Vec<Value>,
     start_msg: String,
