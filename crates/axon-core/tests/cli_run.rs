@@ -35232,8 +35232,8 @@ fn vm_engine_trace_names_each_compiled_body_once_under_vm_only() {
         "vm: main 9 ops, 2 tree nodes\n\
          vm: tree-op main StructLit\n\
          vm: tree-op main MethodCall\n\
-         vm: fib 14 ops, 0 tree nodes\n\
-         vm: P::get 3 ops, 1 tree nodes\n\
+         vm: fib 8 ops, 0 tree nodes\n\
+         vm: P::get 1 ops, 1 tree nodes\n\
          vm: tree-op P::get FieldAccess\n"
     );
     let tree = vm_run("trace", VM_FIB_SRC, "tree", true);
@@ -35262,7 +35262,7 @@ fn vm_engine_main_under_binding_capture_runs_on_the_tree() {
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.starts_with("vm: tree main: binding capture\n"), "{err}");
-    assert!(err.contains("vm: fib 14 ops, 0 tree nodes\n"), "{err}");
+    assert!(err.contains("vm: fib 8 ops, 0 tree nodes\n"), "{err}");
 }
 
 #[test]

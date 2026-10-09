@@ -142,11 +142,12 @@ pub(super) struct Loop {
     pub(super) height: u32,
     /// Where `break` continues: the loop's exit.
     pub(super) brk: u32,
-    /// Where `continue` continues: the condition (`while`), the
+    /// Where `continue` continues: the back edge (`while`), the
     /// [`Op::ForNext`] that ends the iteration (`for`).
     pub(super) cont: u32,
-    /// The scopes still pushed where `continue` continues: `scopes` for a
-    /// `while`, one more for a `for` (its `ForNext` pops the iteration's).
+    /// The scopes still pushed where `continue` continues: the ones that op
+    /// pops are still there (the iteration's, when it has one; a `for`'s
+    /// variable scope).
     pub(super) cont_scopes: u32,
 }
 
@@ -342,19 +343,22 @@ pub(super) enum Op<'p> {
     StrictInt,
     /// `for` head over the counter and bound on top of the stack: past the
     /// bound, jump to `exit`; else, as the `For` arm and `run_loop_body` do,
-    /// `env.push()`, define the variable, `env.push()` (the body's scope).
+    /// `env.push()`, define the variable, `env.push()` (the body's scope,
+    /// only when `scoped`: a body that binds nothing leaves it empty).
     ForTest {
         var: Var<'p>,
         inclusive: bool,
+        scoped: bool,
         exit: u32,
     },
-    /// The end of a `for` iteration: `env.pop()` twice (the body's scope,
-    /// the variable's), counter `+= 1`, then the test and pushes of
-    /// [`Op::ForTest`]; past the bound it falls through to the exit, else it
-    /// jumps to `first`.
+    /// The end of a `for` iteration: `env.pop()` of the body's scope (when
+    /// `scoped`) and of the variable's, counter `+= 1`, then the test and
+    /// pushes of [`Op::ForTest`]; past the bound it falls through to the
+    /// exit, else it jumps to `first`.
     ForNext {
         var: Var<'p>,
         inclusive: bool,
+        scoped: bool,
         first: u32,
     },
     /// Pop the body's result and end the body.
@@ -457,13 +461,16 @@ fn for_bounds(st: &[Value]) -> (i64, i64) {
 }
 
 /// Enter a `for` iteration as the `For` arm does: `env.push()`, the loop
-/// variable, then `run_loop_body`'s `env.push()`.
+/// variable, then `run_loop_body`'s `env.push()` when the body is `scoped`.
 #[inline(always)]
-fn for_enter(env: &mut Env, scopes: &mut u32, var: &Var<'_>, i: i64) {
+fn for_enter(env: &mut Env, scopes: &mut u32, var: &Var<'_>, i: i64, scoped: bool) {
     env.push();
     env.define_var(var.s, var.slot, Value::Int(i));
-    env.push();
-    *scopes += 2;
+    *scopes += 1;
+    if scoped {
+        env.push();
+        *scopes += 1;
+    }
 }
 
 /// `l op r` without building an [`Operand`]: when both operands are ints and
@@ -746,7 +753,12 @@ impl<'p> Interp<'p> {
         loop {
             let Some(op) = ops.get(pc) else {
                 *scopes_out = *scopes;
-                return Ok(st.pop().unwrap_or(Value::Unit));
+                // Not `unwrap_or(Value::Unit)`: that builds and drops a
+                // `Unit` (a drop-glue call) on every body exit.
+                return Ok(match st.pop() {
+                    Some(v) => v,
+                    None => Value::Unit,
+                });
             };
             pc += 1;
             match op {
@@ -931,11 +943,12 @@ impl<'p> Interp<'p> {
                 Op::ForTest {
                     var,
                     inclusive,
+                    scoped,
                     exit,
                 } => {
                     let (i, e) = for_bounds(st);
                     if if *inclusive { i <= e } else { i < e } {
-                        for_enter(env, scopes, var, i);
+                        for_enter(env, scopes, var, i, *scoped);
                     } else {
                         pc = *exit as usize;
                     }
@@ -943,9 +956,12 @@ impl<'p> Interp<'p> {
                 Op::ForNext {
                     var,
                     inclusive,
+                    scoped,
                     first,
                 } => {
-                    pop_scope(env, scopes);
+                    if *scoped {
+                        pop_scope(env, scopes);
+                    }
                     pop_scope(env, scopes);
                     let n = st.len();
                     let Some(Value::Int(i)) = st.get_mut(n.wrapping_sub(2)) else {
@@ -954,7 +970,7 @@ impl<'p> Interp<'p> {
                     *i += 1;
                     let (i, e) = for_bounds(st);
                     if if *inclusive { i <= e } else { i < e } {
-                        for_enter(env, scopes, var, i);
+                        for_enter(env, scopes, var, i, *scoped);
                         pc = *first as usize;
                     }
                 }

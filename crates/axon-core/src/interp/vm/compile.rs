@@ -6,9 +6,13 @@
 //!
 //! Every lowered construct emits its ops in `eval`'s evaluation order, and a
 //! `ScopePush`/`ScopePop` exactly where `eval` calls `env.push()`/`env.pop()`
-//! (block, loop iteration, `for`). The compiler tracks the operand-stack
-//! height and the scope depth statically: [`Compiler::expr`] leaves one value
-//! more on the stack, [`Compiler::stmt`] none.
+//! (block, loop iteration, `for`), except around statements that bind
+//! nothing ([`binds`]): there the scope would stay empty, and an empty scope
+//! is unobservable (no slot moves, no lookup sees it, `base_scope` and
+//! `snapshot` read the same bindings), so the push and the pop are elided.
+//! The compiler tracks the operand-stack height and the scope depth
+//! statically: [`Compiler::expr`] leaves one value more on the stack,
+//! [`Compiler::stmt`] none.
 
 use super::{Body, Cond, Loop, Op, Opnd, Var};
 use crate::ast::{BinOp, Expr, FmtPart, Literal, Stmt, UnaryOp};
@@ -204,10 +208,13 @@ impl<'p> Compiler<'_, 'p> {
         }
     }
 
-    /// A block: a scope around its statements; the last one's value (unit
-    /// for an empty block) when `value`.
+    /// A block: a scope around its statements (elided when they bind
+    /// nothing); the last one's value (unit for an empty block) when `value`.
     fn block(&mut self, stmts: &'p [Stmt], value: bool) {
-        self.scope_push();
+        let scoped = binds(stmts);
+        if scoped {
+            self.scope_push();
+        }
         match stmts.split_last() {
             Some((last, init)) if value => {
                 for s in init {
@@ -224,7 +231,9 @@ impl<'p> Compiler<'_, 'p> {
                 }
             }
         }
-        self.scope_pop();
+        if scoped {
+            self.scope_pop();
+        }
     }
 
     /// `if cond { then } else { else_ }`, pushing its value when `value`.
@@ -257,19 +266,26 @@ impl<'p> Compiler<'_, 'p> {
 
     /// `while cond { body }`: the condition, then one iteration in its own
     /// scope, as `run_loop_body` runs it. The condition op pushes the
-    /// iteration's scope when it does not exit; the back edge pops it.
+    /// iteration's scope when it does not exit; the back edge pops it. A
+    /// body that binds nothing runs without the scope.
     fn while_(&mut self, cond: &'p Expr, body: &'p [Stmt]) {
+        let scoped = binds(body);
         let (scopes, height) = (self.scopes, self.height);
         let head = self.here();
-        let branch = self.branch(cond, Cond::While, true);
-        self.scopes += 1;
+        let branch = self.branch(cond, Cond::While, scoped);
+        let inner = scopes + scoped as u32;
+        self.scopes = inner;
         let start = self.here();
         for s in body {
             self.stmt(&s.expr);
         }
         let end = self.here();
-        self.emit(Op::PopJump(head), 0, 0);
-        self.scopes -= 1;
+        if scoped {
+            self.emit(Op::PopJump(head), 0, 0);
+        } else {
+            self.emit(Op::Jump(head), 0, 0);
+        }
+        self.scopes = scopes;
         let exit = self.here();
         self.patch(branch);
         self.loops.push(Loop {
@@ -279,15 +295,15 @@ impl<'p> Compiler<'_, 'p> {
             height,
             brk: exit,
             cont: end,
-            cont_scopes: scopes + 1,
+            cont_scopes: inner,
         });
     }
 
     /// `for var in start..end` (`..=` when `inclusive`): the bounds through
     /// `strict_int`, `start` before `end` runs, kept on the stack as the
     /// counter and the bound; then per iteration the test, `env.push()`, the
-    /// variable, `env.push()` (`run_loop_body`'s), the body, `env.pop()`
-    /// twice, the increment (spec §4 `strict_int`).
+    /// variable, `env.push()` (`run_loop_body`'s, elided when the body binds
+    /// nothing), the body, the pops, the increment (spec §4 `strict_int`).
     fn for_(
         &mut self,
         e: &'p Expr,
@@ -302,17 +318,20 @@ impl<'p> Compiler<'_, 'p> {
         self.expr(end);
         self.emit(Op::StrictInt, 1, 1);
         let (scopes, height) = (self.scopes, self.height);
+        let scoped = binds(body);
+        let inner = scopes + 1 + scoped as u32;
         let var = self.var(e, var);
         let head = self.emit(
             Op::ForTest {
                 var,
                 inclusive,
+                scoped,
                 exit: 0,
             },
             0,
             0,
         );
-        self.scopes += 2;
+        self.scopes = inner;
         let first = self.here();
         for s in body {
             self.stmt(&s.expr);
@@ -321,12 +340,13 @@ impl<'p> Compiler<'_, 'p> {
             Op::ForNext {
                 var,
                 inclusive,
+                scoped,
                 first,
             },
             0,
             0,
         );
-        self.scopes -= 2;
+        self.scopes = scopes;
         let exit = self.here();
         if let Op::ForTest { exit: x, .. } = &mut self.ops[head as usize] {
             *x = exit;
@@ -340,7 +360,7 @@ impl<'p> Compiler<'_, 'p> {
             height,
             brk: exit,
             cont: next,
-            cont_scopes: scopes + 2,
+            cont_scopes: inner,
         });
     }
 
@@ -557,6 +577,24 @@ fn store_bin<'p>(
             r,
         },
     }
+}
+
+/// Whether running `stmts` in a scope of their own can bind anything in that
+/// scope. `eval` binds into the current scope only in the `let`/`own`/`ref`
+/// arm (`bind_let`); `for`, match arms, `while let` and lambdas push their
+/// own scope (or frame) first. A `let` anywhere below, nested blocks
+/// included, counts, so an unsure case keeps the scope.
+fn binds(stmts: &[Stmt]) -> bool {
+    let mut hit = false;
+    for s in stmts {
+        crate::ast::walk_expr(&s.expr, &mut |e| {
+            hit |= matches!(
+                e,
+                Expr::Let { .. } | Expr::Own { .. } | Expr::RefBind { .. }
+            );
+        });
+    }
+    hit
 }
 
 /// A compare-and-branch (target patched later), specialized as

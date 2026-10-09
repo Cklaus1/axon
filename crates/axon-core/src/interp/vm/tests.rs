@@ -78,8 +78,10 @@ fn kinds(body: &Body<'_>) -> Vec<&'static str> {
                 "branch-cmp"
             }
             Op::StrictInt => "strict-int",
-            Op::ForTest { .. } => "for-test",
-            Op::ForNext { .. } => "for-next",
+            Op::ForTest { scoped: true, .. } => "for-test+body",
+            Op::ForTest { scoped: false, .. } => "for-test",
+            Op::ForNext { scoped: true, .. } => "for-next+body",
+            Op::ForNext { scoped: false, .. } => "for-next",
             Op::Return => "return",
             Op::Break => "break",
             Op::Continue => "continue",
@@ -226,20 +228,31 @@ fn block_pushes_one_scope_around_its_statements() {
 }
 
 #[test]
-fn if_arms_are_blocks_with_their_own_scopes() {
+fn a_block_that_binds_nothing_has_no_scope_ops() {
+    // An empty scope is unobservable, so `id`'s body is one load, and the
+    // `if` arms (blocks without a `let`) push nothing either.
+    assert_eq!(kinds_of("fn id(x: i64) -> i64 { x }", "id"), ["load"]);
     let k = kinds_of("fn f(n: i64) -> i64 { if n < 2 { n } else { 0 } }", "f");
+    assert_eq!(k, ["branch-cmp", "load", "jump", "const"]);
+    // A `let` anywhere below keeps the scope, nested blocks included.
+    let k = kinds_of(
+        "fn f(n: i64) -> i64 { if n < 2 { { let a = n }\n n } else { 0 } }",
+        "f",
+    );
     assert_eq!(
         k,
         [
             "push",
             "branch-cmp",
             "push",
+            "push",
+            "load",
+            "define",
+            "pop",
             "load",
             "pop",
             "jump",
-            "push",
             "const",
-            "pop",
             "pop",
         ]
     );
@@ -271,9 +284,31 @@ fn while_pushes_one_scope_per_iteration_after_the_condition() {
 }
 
 #[test]
+fn while_without_a_binding_runs_its_iterations_unscoped() {
+    let k = kinds_of(
+        "fn f() -> i64 { let i = 0\n while i < 3 { i = i + 1 }\n i }",
+        "f",
+    );
+    assert_eq!(
+        k,
+        [
+            "push",
+            "const",
+            "define",
+            "branch-cmp",
+            "store-bin",
+            "jump",
+            "load",
+            "pop"
+        ]
+    );
+}
+
+#[test]
 fn for_converts_both_bounds_then_pushes_per_iteration() {
-    // `for-test`/`for-next` push the variable's scope and the body's, and
-    // `for-next` pops both before the increment.
+    // `for-test`/`for-next` push the variable's scope and (`+body`) the
+    // body's, and `for-next` pops them before the increment; a body that
+    // binds nothing gets no scope of its own.
     let k = kinds_of(
         "fn f() -> i64 { let s = 0\n for i in 0..3 { s = s + i }\n s }",
         "f",
@@ -297,6 +332,12 @@ fn for_converts_both_bounds_then_pushes_per_iteration() {
             "pop",
         ]
     );
+    let k = kinds_of(
+        "fn f() -> i64 { let s = 0\n for i in 0..3 { let t = i\n s = s + t }\n s }",
+        "f",
+    );
+    assert_eq!(&k[7..11], ["for-test+body", "load", "define", "store-bin"]);
+    assert_eq!(k[11], "for-next+body");
 }
 
 #[test]
@@ -414,6 +455,34 @@ fn break_outside_loop() -> i64 {
     { let b = 2
         break }
 }
+fn mixed_scopes() -> i64 {
+    let s = 0
+    for i in 0..4 {
+        let j = 0
+        while j < 4 {
+            j = j + 1
+            if j == 2 { continue }
+            if j == 4 { break }
+            for k in 0..3 { if k == 1 { continue }
+                s = s + k + j }
+            for k in 0..3 { if k == 1 { break }
+                s = s + 1 } }
+        if i == 2 { break } }
+    s
+}
+fn unscoped_return() -> i64 {
+    let n = 3
+    while true {
+        if n > 1 { { return n * 2 } }
+        break }
+    0
+}
+fn unscoped_panic() -> i64 {
+    let n = 0
+    for i in 0..3 { while true { if i == 1 { n / 0 }
+        break } }
+    n
+}
 ";
 
 /// Run fn `f` of [`EXITS`] on both engines in a frame whose base scope binds
@@ -467,6 +536,16 @@ fn exec_pops_every_pushed_scope_when_an_op_errs() {
     assert!(matches!(&r, Err(Flow::Panic(_))), "{r:?}");
     // A `break` outside any loop of this body propagates unchanged.
     assert!(matches!(run_both("break_outside_loop"), Err(Flow::Break)));
+}
+
+#[test]
+fn exec_exits_through_elided_scopes() {
+    // Loops and blocks that bind nothing push no scope; every exit still
+    // leaves the frame as it was, mixed with scoped ones around them.
+    assert!(matches!(run_both("mixed_scopes"), Ok(Value::Int(42))));
+    assert!(matches!(run_both("unscoped_return"), Ok(Value::Int(6))));
+    let r = run_both("unscoped_panic");
+    assert!(matches!(&r, Err(Flow::Panic(_))), "{r:?}");
 }
 
 #[test]
