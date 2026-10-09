@@ -6839,19 +6839,32 @@ three are closed here; the rest of this amendment is what was changed, what was 
   now cover): **the REMAINDER grew because the gate now sees more, not because anything weakened**; computed sink arguments 46 -> 45
   (23 true at amendment 107; 45 now includes the new signing sinks' computed arguments, each counted once); computed defaults counted, not
   sites: 113; bare const uses defined in several files, not followed: 2 -> 1 (`PROTECTED_PROFILE` has one definition now).
-- **Survey tables** (`scripts/v022_value_survey.py`, amendment-110 forms; each site's edit and its suite). Signing inputs: all 15 + 7 constants
-  are rowed (M3110-M3134; M3129-M3133 were already killed by the loop's protected-evaluation tests and are recorded as rows with their own
-  markers; M3134 survived the whole axon-fabric suite until `sign_execution_attestation` and its test). Defaults, 113 sites by crate and
-  suite: axon-psv 9 (4 KILLED, 5 SURVIVED the crate's whole suite); axon-loop-contracts 2 (0 / 2); axon-loop 23 (7 / 16); axon-fabric
-  library files 67 against the LIB tests alone (0 killed: unit tests do not reach them), the 20 binary-file sites against 15 fast integration
-  binaries (1 killed), and the security-relevant 19 against the targeted slow binaries (`observer_service`+`custodian`, `psv_dispatch`+
-  `submit`, `custodian`, `protected_host`, `privileged_launcher`: 0 killed, 2 of them then given tests and rows: the nonce record's issue time,
-  M3162/M3163). The dozen sites that decide a mode, a class, a count or a cap have tests and rows (M3135-M3146, M3140, M3141, M3162).
-  **What is NOT claimed:** a default in axon-fabric that survived only the lib tests or the targeted binaries was NOT run against the whole
-  24-minute axon-fabric suite one site at a time (the first attempt, 3 parallel whole-suite surveys, timed out at its 2400 s baseline on a
-  loaded host): such a site is a counted REMAINDER whose reason says which suite it survived, and the five judged `text` / `platform` kinds
-  say why the default decides nothing (an error text, a serialization that cannot fail, an `fstat` that cannot fail). They are measurements
-  of a narrower suite, not proofs of absence.
+- **Survey tables** (`scripts/v022_value_survey.py`, amendment-110 forms; site counts are what each suite was run against).
+  Signing inputs: all 15 + 7 constants are rowed (M3110-M3134; M3129-M3133 were already killed by the loop's protected-evaluation tests
+  and are recorded as rows with their own markers; M3134 survived the WHOLE axon-fabric suite until `sign_execution_attestation` and its
+  test). Defaults, 113 sites: axon-psv 9 (4 KILLED, 5 SURVIVED the crate's whole suite); axon-loop-contracts 2 (0 / 2); axon-loop 23
+  (7 / 16); axon-guest-init 3 (0 / 3); axon-fabric 67 survey records: 47 in library files against the LIB tests alone (0 killed: unit
+  tests do not reach them), 20 in the binaries against 15 of the fast integration binaries (1 killed); of these, 16 security-relevant sites
+  were re-run against the targeted slow binaries (`observer_service`+`custodian`, `psv_dispatch`+`submit`, `custodian`, `protected_host`:
+  0 killed), two of which (the nonce record's issue time, M3162, and its prune by mtime, M3163) were then given tests and rows; the two
+  `privileged_launcher.rs` sites could not be concluded (that binary hangs on a loaded host at `a_callers_scheduling_state_never_reaches_
+  the_root_launch`, FLAKY in the re-survey, passes in 1 s on an idle one) and say so. The sites that decide a mode, a class, a count or a
+  cap have tests and rows (M3135-M3146, M3162). **What is NOT claimed:** a default in axon-fabric was NOT run, one site at a time, against
+  the whole 24-minute axon-fabric suite (the first attempt, three parallel whole-suite surveys, timed out at its 2400 s baseline on a loaded
+  host): such a site is a counted REMAINDER whose reason names the narrower suite it survived, and the `text` / `platform` / `closed` /
+  `recorded` judgements say why the default decides nothing (an error text, a serialization or `fstat` that cannot fail, a digest recorded
+  and compared by nobody). Those judgements are reasoning, not tests; they are measurements of a narrower suite, not proofs of absence.
 - **Rows** M3110-M3163, matrix rows A256-A264, mutation ids inside M3110-M3179. `python3 scripts/v022_g01_mutations.py --scope=all
-  --only=M3110-M3163` (run on a quiet tree: the runner refuses an interpreter rebuilt during the run, as it did when a cargo of mine shared
+  --only=M3110,...,M3163` (run on a quiet tree: the runner refuses an interpreter rebuilt during the run, as it did when a cargo of mine shared
   its target).
+- **Evidence** (head `4266398688`, rc-checked): all 54 rows M3110-M3163 KILLED by their own attack on the local host, in three runs on a quiet tree
+  (a first batch whose M3133/M3134/M3144-M3154 were repeated after a cargo of mine shared the runner's target and tripped its
+  interpreter-rebuilt check; M3149 (the job drive swapped made the control fail before the value assertion: the control now follows the
+  value assertions), M3155 (a marker regex), M3160 (the row edited the wrong one of two `computed` lines) were corrected and re-run: 7 rows
+  repeated, 7 KILLED). `cargo test -p axon-fabric` 874 passed / 0 failed both with `--test-threads=1` and default-parallel on gpumaster
+  (the one test skipped there, `a_callers_scheduling_state_never_reaches_the_root_launch`, hangs on a loaded host and passes in 1 s on the
+  idle local one); axon-psv, axon-loop-contracts, axon-loop, axon-cortex whole suites rc 0 (69 binaries ok); axon-core
+  `refusal_coverage_gate` 52, `harness_integrity` 43, `harness_binaries` 10 passed (rc 0); clippy `-D warnings` on axon-fabric and axon-core
+  rc 0; `scripts/test_v022_resurvey.py` and `scripts/test_v022_value_survey.py` PASS; `psv_matrix_check.py` lists only the A249-A255
+  placeholders of other workstreams. The committed `governance/status/v022-resurvey.json` is for an earlier gate digest and is REFUSED by
+  `--check` now (the digest changed, as it must): the record is made at the freeze head, last.
