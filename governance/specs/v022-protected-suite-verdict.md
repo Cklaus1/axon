@@ -146,7 +146,8 @@ Each clause names what must hold. The negative matrix below names how each one f
   REFUSES to use a tainted value, or to act under a tainted control decision, as one of four SELECTORS:
   (1) the NAME given to a name-resolving builtin (`sandbox_run`, `scheduler_spawn`, `kernel_goal_create`, the `goal_*`
   family); (2) an operator CLOSURE (or fn value) the candidate picked out of a container by a key, an index or a branch and
-  then CALLED; (3) the IMPL a method call dispatches to, when the receiver's runtime TYPE was the candidate's; (4) the
+  then CALLED; (3) the IMPL a method call dispatches to, when the receiver's runtime TYPE was the candidate's (a receiver of a type the
+  OPERATOR defines is exempt: see *Not claimed*); (4) the
   WIDTH of fixed-width arithmetic whose operand's width was the candidate's, including a width carried inside an
   `Uncertain`/`Temporal`. The claim is that a candidate cannot choose WHICH operator code runs, or which operator impl or
   width answers, **through the constructs and value routes the two lists below name**; the lists, not this sentence, are the
@@ -186,7 +187,9 @@ Each clause names what must hold. The negative matrix below names how each one f
   refused, a table of verdicts is not); a branch on candidate data into a weaker check; integer HANDLES of kernel objects and
   authority values (effect lists, budgets), a path, URL or `ai_complete` prompt a tainted value supplies; native codegen
   (`axon build`); an operator-built class holding hidden state that is not yet classed `World` or `Kernel`; existence-oracle
-  text on any path or position the runner test does not list; the coverage of the sealed-only static check beyond the
+  text on any path or position the runner test does not list (among them: a candidate that DEFINES a name the operator defines, a
+  fn, type, enum, constant, trait or impl method, is refused E0002 where a fresh name is accepted, an oracle readable from source
+  that cannot shadow anything); the coverage of the sealed-only static check beyond the
   positions it lists. The taint is an over-approximation (coarse per binding, per dict and per channel), and its cost to an
   honest suite is listed in amendments 102 and 106. **Findings of the round-14 loop decided NARROW-CLAIM** (each entry names the
   finding's signature, `governance/notes/v022-psv1-loop-triage.md` holds the table and the loop's evidence path, and
