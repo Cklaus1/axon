@@ -7816,3 +7816,48 @@ The one thing this work left on the host was a `/var/tmp/opkit-ns.*` scratch dir
         The wording of amendment 102's "WHAT IS ENFORCED, EXACTLY" and `interp/taint.rs`'s header are brought in line.
      6. **Cost.** See the evidence section below; the interpreter outside a sealed run takes the same branches it took (the new work is
         behind `seal.active`, a `const T` parameter or a `Cell` the unsealed run never writes).
+
+## Amendment 119: round-15 integration of buildenv11 and psv1x (integrate14): the matrix ids are contiguous again; nothing else changed (C9 round 15, INTEG14)
+
+**Reconciliation.** `c9r15/integrate14` is `c9r14/integrate13` (`27697781`) + `c9r14/buildenv11` + `c9r14/psv1x`. The two branches were written against the same base and collided in exactly one place that mattered: the matrix ids (buildenv11
+A291-A292, psv1x A291-A300). The registry and marker unions of the merge commit were checked, not trusted: the mutation registry imports; there is no duplicate id (2377 rows); no active row lacks an attack marker and no marker lacks a row; every
+active row's `old` text is present exactly once in its file (the two branches re-anchored disjoint rows: the sets of rows each branch edited intersect in nothing); every id M3300-M3351 (less M3308, M3324, M3350, never issued) and M3400-M3419 is present.
+No Rust source was changed. No row was re-anchored or added by this round.
+
+**Renumbering (round 15).** `governance/specs/v022-psv-negative-matrix.md` is contiguous after A290, psv1x first:
+
+| Amendment | Branch-local rows | Rows now |
+|---|---|---|
+| 117 (psv1x) | A291-A300 | A291-A300 (unchanged) |
+| 118 (buildenv11) | A291, A292 | A301, A302 |
+
+Amendment 118's "Rows" line was rewritten; amendment 117 and `governance/notes/v022-psv1-loop-triage.md` already carried A291-A300 and did not change. `git grep` for A291/A292/A301 outside the matrix finds only the two amendment lines
+named here. `psv_matrix_check.py` PASS (302 rows, 955 test citations, no placeholders); `pci_delta.py --check` PASS (the note's amendment table lists claim amendments only, so amendment 118 has no entry there).
+
+**Counts.** Matrix rows 302 (A1-A302). Mutation registry 2377 rows (2308 + 49 psv1x + 20 buildenv11): 2220 active, 147 retired EQUIVALENT (four-cell records unchanged), 1 STALE_REFACTORED, 9 SIBLING_ONLY. PCI gate rows 85 (78 + 7 of amendment 117).
+Refusal coverage: REMAINDER 208, OBSERVED-NOT-ROWED 252, DEFAULTS NOT FOLLOWED 113, all unchanged by the merge; no BAD, no exemption outlived, no moved row.
+
+**Evidence.** Code commit `b8e1ddf3` (the renumbering); this amendment changes governance text only. Heavy jobs ran on gpumaster (`gm`, three slots, clean clones of `b8e1ddf3`); `local` is this host, as root.
+
+| Check | Where | Result |
+|---|---|---|
+| `cargo fmt --all -- --check`; clippy `-D warnings`: axon-core `--no-default-features --tests` and default features `--tests`; axon-fabric, axon-psv, axon-cortex, axon-loop, axon-loop-contracts, axon-ledger `--all-targets` | local | rc 0 for each (9 commands) |
+| `cargo test --locked -p axon-core --no-default-features --no-fail-fast` | gm | rc 0: 1879 passed, 0 failed, 1 ignored (includes `refusal_coverage_gate`, `harness_integrity`, `harness_binaries`, `pci_delta_note`) |
+| `cargo test --locked --workspace --exclude axon-core --exclude axon-fabric --exclude axon-guest-kernel --no-fail-fast` | gm | rc 0: 1566 passed, 0 failed, 4 ignored (includes axon-ledger `attribution_integrity`, 6 passed) |
+| `cargo test --locked -p axon-fabric --no-fail-fast`, default-parallel and `-- --test-threads=1`, both skipping the two namespace-dependent tests | gm | rc 0 and rc 0: 883 passed each, 0 failed, 2 ignored |
+| `a_callers_scheduling_state_never_reaches_the_root_launch` (`--test privileged_launcher`) and `a_narrowing_list_the_verifier_cannot_stat_is_not_read_as_absent` (`--test readiness`), as root | local | rc 0, 1 passed each |
+| `guest_build_env` x3 (default-parallel), `guest_build_env_guards`, `operator_examples`, `freeze_manifest` | local | rc 0 each: 38, 38, 38, 9, 4, 26 passed |
+| `scripts/test_opkit_ns.sh`; `scripts/test_operator_deploy.sh` (output piped) | local | rc 0 (PASS: opkit namespace helper); rc 0 (PASS: operator deployment kit; the host listing identical before and after) |
+| `scripts/opkit_ns_drift.py` / `--selftest` / `--check-quoted-counts` | local | rc 0 / 0 (149 must-flag shapes, 32 controls, 20 primitive shapes, 11 diagnostic-channel shapes) / 0 |
+| `scripts/test_v022_resurvey.py`, `test_v022_value_survey.py`, `test_v022_paired_disable_join.py`, `test_v022_paired_disable_selection.py` | local | rc 0 each |
+| `psv_matrix_check.py`; `pci_delta.py --check`; `scripts/v022_pci_gates.sh`; `v022_refusal_coverage.py` plain and `--freeze` | local | PASS (302 rows, 955 citations); PASS; PASS (85 rows); rc 0 and rc 0 |
+| `scripts/wasm_parity.sh` | local | rc 0: 30 passed, 0 differ (`temporal_new`/`temporal_is_valid` joined the host-builtin exclusion list with psv1x) |
+| `axon check` over `examples/*.ax`, `examples/stdlib/*.ax`, `examples/asi/*.ax` (AXON_PATH=examples/stdlib); `axon test` over every file with a `@[test]` in `examples/` and `examples/stdlib/`; `axon run` of `examples/temporal_decay.ax` and `examples/asi/ad_optimizer.ax` (AI mock) | local | 119 of 120 check clean; the one refusal is `examples/asi/contained_violation.ax`, E1001 by design; 41/41 test files rc 0; both runs rc 0 |
+| cost: release `axon run` of a 3M-iteration `while` loop, `fib(32)`, `arr_map` 20 x 20000, a 2M-iteration `&&`/`||` loop; 5 runs each, `c9r14/integrate13` vs this tree | local | medians 0.43/0.42 s, 2.2/2.1 s (one noisy first series 2.2 vs 2.5; three alternating series of five: minima 2.08-2.17 s for both), 0.16/0.17 s, 0.52/0.51 s: within noise |
+| mutation runs `--scope=all --only=<1250 rows>` in three interleaved lists of 417/417/416 at `b8e1ddf3` (every active row whose target is under `crates/axon-core/src`, `scripts/v022_refusal_coverage.py`, `scripts/opkit_ns_drift.py`, `scripts/lib/opkit_ns.sh`, `scripts/guest_build_env.py`, `crates/axon-fabric/src/{psv,backend,readiness,git_data,signing}.rs`, `crates/axon-loop-contracts/src/schema.rs`, and every row with id >= M2170) | gm | 1250/1250 rows printed `OK ... baseline=passed killed` (the harness prints OK only for a row killed by its OWN attack marker); the id set of each log equals its list; no BAD, no REFUSED_ELSEWHERE, no stale, no survivor line |
+| the 130 namespace-dependent rows (every row targeting `scripts/opkit_ns_drift.py` or `scripts/lib/opkit_ns.sh`), `--only=` over all of them, as root | local | rc 0: 130/130 KILLED by their own attack, 0 REFUSED_ELSEWHERE, 0 unexpected survivors, 0 stale |
+
+**Unfinished, stated.** (a) The three gm mutation runs wrote their JSON and final summary to a path that does not exist on gpumaster (`FileNotFoundError` after the last row, rc 1): the JSON (and its commit/registry-blob record) and the summary block do not
+exist for them; the evidence is the per-row `OK` lines and the set equality with the requested lists, kept in `/var/tmp/ig14/logs/mut{0,1,2}.log`. The local namespace run produced its JSON and summary. A freeze needs a joined run with JSON at the frozen head in any case. (b) The attribution_integrity tests of axon-ledger
+fail on THIS host only because `/etc/passwd` is damaged (amendment 116 item 9; not repaired); they pass on gpumaster (6 passed, inside the workspace run above). (c) `governance/status/v022-psv-paired-disable.json` and `v022-resurvey.json` are not remade (freeze head, last).
+(d) The mutation runs ran at `b8e1ddf3`; the commit that adds this amendment changes governance text only (checked: the matrix, `pci_delta.py --check` and the docs-reading gates re-run after it).
