@@ -2420,6 +2420,90 @@ fn a_default_read_as_a_value_in_a_protected_crate_is_a_site() {
     let _ = std::fs::remove_dir_all(&r2);
 }
 
+/// Amendment 115 (C9 round 13): the ABSENT arm of a combinator, a `matches!` over `None`/`Err(_)`, a
+/// `None | Err(_) => <literal | variant>` match arm and a `let .. else { <literal> }` are DEFAULTS no
+/// `unwrap_or`-shaped rule reads. `w.expires.is_none_or(|t| now >= t)` -> `is_some_and` kept the whole
+/// axon-fabric suite (1058 tests) green. Each form below is a site in a protected crate; the look-alikes that
+/// decide nothing by absence, a default computed at the site and a `#[cfg(test)]` item are not.
+const ABSENT_PROBE: &str = "pub fn ab_run(ab_w: Option<i64>, ab_r: Result<u8, String>, ab_o: Option<u8>, ab_t: Option<Mode>) -> i64 {\n    let _a = ab_w.is_none_or(|ab_x| 5 >= ab_x);\n    let _b = ab_w.is_some_and(|ab_x| ab_x > 2);\n    let _c = ab_r.clone().is_ok_and(|ab_v| ab_v > 1);\n    let _d = ab_r.clone().is_err_and(|ab_e| ab_e.is_empty());\n    let _e = ab_o.map_or_else(|| 3, |ab_v| ab_v);\n    let _f = matches!(ab_o, None | Some(0));\n    let _g = ab_o.or_else(|| Some(9191));\n    let _h = match ab_t { Some(ab_m) => ab_m, None => Mode::AbDev };\n    let _i = match ab_r { Ok(ab_v) => ab_v, Err(_) => 7373 };\n    let Some(_j) = ab_o else { return 4242; };\n    let _k = matches!(ab_o, Some(1));\n    let _l = match ab_t { Some(ab_m) => ab_m, None => ab_default(ab_w) };\n    let _m = match ab_r { Ok(ab_v) => ab_v, Err(_) => ab_w };\n    let _n = if ab_w.is_some() { 1 } else { 2 };\n    let Some(_p) = ab_o else { return Err(ab_w) };\n    0\n}\n\n#[cfg(test)]\nfn ab_test_only(ab_t: Option<u8>) {\n    let _ = ab_t.is_none_or(|ab_x| ab_x > 6161);\n    let _ = match ab_t { Some(ab_v) => ab_v, None => 6262 };\n}\n";
+
+#[test]
+fn an_absent_arm_decision_is_a_site_in_a_protected_crate() {
+    let r = tree("absent-arm-sites");
+    add_code(&r, SCANNED, ABSENT_PROBE);
+    for (label, frag) in [
+        ("val_comb", ".is_none_or(|ab_x| 5 >= ab_x)"),
+        ("val_comb", ".is_some_and(|ab_x| ab_x > 2)"),
+        ("val_comb", ".is_ok_and(|ab_v| ab_v > 1)"),
+        ("val_comb", ".is_err_and(|ab_e| ab_e.is_empty())"),
+        ("val_comb", ".map_or_else(|| 3, |ab_v| ab_v)"),
+        ("val_comb", "matches!(ab_o, None | Some(0))"),
+        ("val_comb", "9191"),
+        ("val_arm", "Mode::AbDev"),
+        ("val_arm", "7373"),
+        ("val_arm", "4242"),
+    ] {
+        names_value(
+            &r,
+            label,
+            frag,
+            &format!("the absent-arm form {frag} was not a site"),
+        );
+    }
+    let t = text(&gate(&r, &[]));
+    for (frag, why) in [
+        (
+            "matches!(ab_o, Some(1))",
+            "a matches! with no absent pattern was read as a default",
+        ),
+        (
+            "ab_default(ab_w)",
+            "a match-arm default computed at the site was read as a literal",
+        ),
+        (
+            "ab_w.is_some()",
+            "a plain is_some() was read as an absent-arm combinator",
+        ),
+        (
+            "Err(ab_w)",
+            "a let-else that returns an Err value was read as a literal default",
+        ),
+        (
+            "6161",
+            "an absent-arm combinator inside #[cfg(test)] was read as a site",
+        ),
+        (
+            "6262",
+            "a match-arm default inside #[cfg(test)] was read as a site",
+        ),
+    ] {
+        not_names_value(&r, frag, why);
+    }
+    assert!(
+        t.lines().any(|l| l.contains("[fn ab_run~comb #")) && t.lines().any(|l| l.contains("[fn ab_run~arm #")),
+        "ATTACK: the new forms are not numbered under their own ~comb / ~arm suffixes (an earlier exemption would renumber): {t}"
+    );
+    for kind in [
+        "VALUE SITES (amendment 115 ABSENT-ARM COMBINATORS and matches!, protected crates)",
+        "VALUE SITES (amendment 115 MATCH-ARM and let-else DEFAULTS, protected crates)",
+    ] {
+        assert!(
+            t.lines().any(|l| l.starts_with(kind)),
+            "ATTACK: the gate does not count the sites of `{kind}`: {t}"
+        );
+    }
+    // outside the protected crates the forms are not applied
+    let r2 = tree("absent-arm-sites-out");
+    add_code(&r2, "crates/axon-os/src/approval.rs", ABSENT_PROBE);
+    not_names_value(
+        &r2,
+        "Mode::AbDev",
+        "an absent-arm default outside the protected crates was read as a site",
+    );
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(&r2);
+}
+
 /// The count of arguments the gate could not follow is of DISTINCT arguments: round 12 found 46 where the
 /// true number was 23, because two passes over the same files incremented one counter.
 #[test]
