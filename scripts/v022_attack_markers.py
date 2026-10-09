@@ -2083,7 +2083,9 @@ ATTACK_MARKERS.update({
     'M2308': 'ATTACK: the root launcher inherited descriptors the helper opened for itself',
     'M2309': "ATTACK: the check child inherited the runner's environment",
     'M2310': 'ATTACK: the check child did not run in the suite directory',
-    'M2311': 'ATTACK: the check child lacks AXON_PATH_EXCLUSIVE',
+    # Re-anchored at integration 12: eqgate6 gave the test value assertions with these messages; the
+    # old markers named "lacks ..." texts nothing prints, so both rows read REFUSED_ELSEWHERE.
+    'M2311': "ATTACK: the check child's module path is not exclusive",
     'M2312': "ATTACK: the check child inherited the launcher's environment",
     'M2313': 'ATTACK: the check child did not run under the effect ceiling',
     'M2314': 'ATTACK: the check child did not get the environment it was given',
@@ -2112,7 +2114,7 @@ ATTACK_MARKERS.update({
     'M2336': 'ATTACK: pass_pidfd did not arm SO_PASSPIDFD',
     'M2337': 'two writers on one journal',
     'M2338': 'ATTACK: an exemption inside a site a row covers was accepted as still needed',
-    'M2339': 'ATTACK: the check child lacks AXON_PATH:',
+    'M2339': 'ATTACK: AXON_PATH is not `<suite>:<candidate>`',
 })
 ATTACK_MARKERS['M2271'] = 'ATTACK: an exemption citing a row the registry does not hold was accepted'
 ATTACK_MARKERS.update({
