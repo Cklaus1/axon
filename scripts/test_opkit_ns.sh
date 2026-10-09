@@ -524,7 +524,7 @@ for cand in /mnt /media; do [ -d "$cand" ] && [ ! -L "$cand" ] && [ "$(stat -c %
 if [ -n "${MNT:-}" ]; then
   o=$(OPKIT_RW="$MNT" OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$M5" 2>&1 </dev/null); rc=$?
   { [ ! -e "$M5" ] && [ $rc = 97 ]; } || fail "ATTACK: OPKIT_RW=$MNT (a host directory outside every temp root) was accepted (rc $rc): $o"
-  grep -q 'not strictly below /var/tmp:' <<<"$o" || fail "refused for another reason: $o"
+  grep -q 'not strictly below /var/tmp:' <<<"$o" || fail "ATTACK: OPKIT_RW=$MNT was refused, but not by the /var/tmp-only temp-root rule (its root list is wrong, or another rule refused it): $o"
 else echo "SKIP: no /mnt or /media to try as a directory outside every temp root"; fi
 for cand in /usr/share/zoneinfo /usr/share/doc /usr/lib/systemd /usr/share/misc; do [ -d "$cand" ] && [ ! -L "$cand" ] && { SYS=$cand; break; }; done
 if [ -n "${SYS:-}" ]; then

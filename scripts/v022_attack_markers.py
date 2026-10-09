@@ -2763,7 +2763,7 @@ ATTACK_MARKERS.update({
     'M3205': 'ATTACK: bare opkit_ns_isolate\\s+created something in the scratch directory before refusing',
     'M3206': 'ATTACK: the precondition accepted a process whose mount namespace IS the stand-in host',
     'M3207': "ATTACK: a forged OPKIT_HOST_NS on the host's own shell was accepted by the precondition",
-    'M3208': 'ATTACK: OPKIT_RW under /tmp was validated and failed later',
+    'M3208': 'ATTACK: (?:OPKIT_RW=\\S+ was refused, but not by the /var/tmp\\-only temp\\-root rule|OPKIT_RW under /tmp was validated and failed later)',
     'M3209': "selftest: the primitive shape 'a primitive in a bash \\-c string' was ACCEPTED",
     'M3210': "selftest: the primitive shape 'a bare opkit_ns_isolate' was ACCEPTED",
     'M3211': 'selftest: a helper with a new function that mounts, with no precondition was ACCEPTED',
