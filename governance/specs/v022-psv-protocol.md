@@ -6832,3 +6832,26 @@ three are closed here; the rest of this amendment is what was changed, what was 
   holds, recorded by the stand-in launcher) and `--policy` (M3147-M3151). The survey harness limitation (an entry naming two test binaries
   run as one) is fixed in `v022_value_survey.py` (`--cmd` repeated, every command run until one kills; `run_commands`, tested in
   `scripts/test_v022_value_survey.py`); the re-survey already ran every named binary (`commands_for`, now tested).
+- **Counts, before -> after** (`python3 scripts/v022_refusal_coverage.py`, rc 0, and `--freeze` rc 0): amendment-103 value sites 228 -> 228
+  (unchanged); amendment-107 flow sites 59 -> 67 (the 7 signing-domain constants' initialisers, which the sink walk now reaches, plus one);
+  NEW amendment-110 signing inputs 0 -> 15, all rowed; NEW amendment-110 defaults 0 -> 113 (9 rowed, 12 OBSERVED, 5 DOMINATED, 1 NOTROUTE,
+  86 REMAINDER); OBSERVED-NOT-ROWED 216 -> 227; REMAINDER 142 -> 220 (the 86 defaults, less 8 `const_tag` entries and others the new rows
+  now cover): **the REMAINDER grew because the gate now sees more, not because anything weakened**; computed sink arguments 46 -> 45
+  (23 true at amendment 107; 45 now includes the new signing sinks' computed arguments, each counted once); computed defaults counted, not
+  sites: 113; bare const uses defined in several files, not followed: 2 -> 1 (`PROTECTED_PROFILE` has one definition now).
+- **Survey tables** (`scripts/v022_value_survey.py`, amendment-110 forms; each site's edit and its suite). Signing inputs: all 15 + 7 constants
+  are rowed (M3110-M3134; M3129-M3133 were already killed by the loop's protected-evaluation tests and are recorded as rows with their own
+  markers; M3134 survived the whole axon-fabric suite until `sign_execution_attestation` and its test). Defaults, 113 sites by crate and
+  suite: axon-psv 9 (4 KILLED, 5 SURVIVED the crate's whole suite); axon-loop-contracts 2 (0 / 2); axon-loop 23 (7 / 16); axon-fabric
+  library files 67 against the LIB tests alone (0 killed: unit tests do not reach them), the 20 binary-file sites against 15 fast integration
+  binaries (1 killed), and the security-relevant 19 against the targeted slow binaries (`observer_service`+`custodian`, `psv_dispatch`+
+  `submit`, `custodian`, `protected_host`, `privileged_launcher`: 0 killed, 2 of them then given tests and rows: the nonce record's issue time,
+  M3162/M3163). The dozen sites that decide a mode, a class, a count or a cap have tests and rows (M3135-M3146, M3140, M3141, M3162).
+  **What is NOT claimed:** a default in axon-fabric that survived only the lib tests or the targeted binaries was NOT run against the whole
+  24-minute axon-fabric suite one site at a time (the first attempt, 3 parallel whole-suite surveys, timed out at its 2400 s baseline on a
+  loaded host): such a site is a counted REMAINDER whose reason says which suite it survived, and the five judged `text` / `platform` kinds
+  say why the default decides nothing (an error text, a serialization that cannot fail, an `fstat` that cannot fail). They are measurements
+  of a narrower suite, not proofs of absence.
+- **Rows** M3110-M3163, matrix rows A256-A264, mutation ids inside M3110-M3179. `python3 scripts/v022_g01_mutations.py --scope=all
+  --only=M3110-M3163` (run on a quiet tree: the runner refuses an interpreter rebuilt during the run, as it did when a cargo of mine shared
+  its target).
