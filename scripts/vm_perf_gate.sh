@@ -28,10 +28,11 @@
 #         --repros S1,part             S2 gate: S1 rows plus part
 #         --repros S1,part,fold,S5     S5 gate
 #         --repros S1,part,fold,foldmod  S7 gate
+#         (no SEL: every row)          S8 gate; `swap` is its red check
 #       Rows (cost = (prog - base) / units; `loop` has no base). From S7
 #       `loop.ax` is a `PureLoop`, so the call rows subtract loop_generic.ax
-#       (loop.ax plus a never-taken `if`, which call1.ax and mutcall.ax carry
-#       too, so it cancels):
+#       (loop.ax plus a never-taken `if`, which call1.ax, mutcall.ax and
+#       swapcall.ax carry too, so it cancels):
 #         row       slice  prog      base          units  budget
 #         loop      S1     loop      -             1M     300   per iteration
 #         call      S1     call1     loop_generic  1M     800   one-arg call via dispatch_call -> call_fn_in
@@ -40,6 +41,7 @@
 #         fastcall  S5     call1     loop_generic  1M     300   one-arg fast call
 #         mutcall   S5     mutcall   loop_generic  1M     600   one-&mut-arg call via call_mut
 #         foldmod   S7     foldmod   fold_base     10M    200   per element, arr-sum's body `acc + x % m`
+#         swap      S8     swapcall  loop_generic  1M     730   per `swap(&mut a, 0, 1)` call, body included
 #       A row passes when (prog - base) <= budget * units, compared exactly.
 #
 # Exit: 0 every selected median within budget and every output golden;
@@ -72,6 +74,7 @@ REPROS=(
   "fastcall  S5    call1    loop_generic  1000000   300"
   "mutcall   S5    mutcall  loop_generic  1000000   600"
   "foldmod   S7    foldmod  fold_base     10000000  200"
+  "swap      S8    swapcall loop_generic  1000000   730"
 )
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -87,7 +90,7 @@ while [ $# -gt 0 ]; do
       MODE=repros
       if [ $# -gt 1 ] && [[ "$2" != --* ]]; then SEL="$2"; shift; fi ;;
     --repros=*) MODE=repros; SEL="${1#--repros=}" ;;
-    -h|--help) sed -n '2,48p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,50p' "$0"; exit 0 ;;
     *) echo "vm_perf_gate: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
@@ -196,7 +199,7 @@ else
         if [ "$t" = "$name" ] || [ "$t" = "$slice" ]; then want[$name]=1; hit=1; fi
       done
       if [ "$hit" = 0 ]; then
-        echo "vm_perf_gate: --repros: '$t' is neither a row (loop call part fold fastcall mutcall foldmod) nor a slice with rows (S1 S2 S4 S5 S7)" >&2
+        echo "vm_perf_gate: --repros: '$t' is neither a row (loop call part fold fastcall mutcall foldmod swap) nor a slice with rows (S1 S2 S4 S5 S7 S8)" >&2
         exit 2
       fi
     done
