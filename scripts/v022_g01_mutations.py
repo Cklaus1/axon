@@ -10557,6 +10557,21 @@ MUTATIONS += [
      'axon-core', '--test pci_delta_note', 'a_test_the_gate_runs_under_another_package_or_name_is_no_gate'),
 ]
 
+# Amendment 114 turned the guard of M3038 into defence in depth: the diagnostics about a sealed file now come from
+# a check over the sealed items alone (M3243 keeps the merged check's instead), which has no operator impl to find.
+EQUIV_RECORD["M3038"] = {
+    "property": "a sealed call of a method an operator impl defines is refused at check time in the words of a missing method",
+    "subsumed_by": ["M3243"], "killer": "joint:M3038+M3243",
+    "all_paths": "the method-call arm of the checker is the only place E0403 for a method is decided, and its table is "
+                 "built from the impl blocks of the program it runs over: the merged check (where M3038 picks the "
+                 "sealed impls' methods for a sealed call site) and the sealed-only check run by "
+                 "run_check_pipeline_located, whose program holds no operator impl at all, so the operator's method is "
+                 "absent there whatever the merged check says; the merged check's diagnostics about a sealed file are "
+                 "used only when the sealed-only check found no error (M3243 puts them in its place, and then M3038's "
+                 "guard is the one that refuses)"}
+EQUIVALENT_DID |= {"M3038"}
+RETIRED |= {"M3038"}
+
 
 if __name__ == "__main__":
     main()

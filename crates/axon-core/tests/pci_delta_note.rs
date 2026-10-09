@@ -81,11 +81,35 @@ fn check_with_plant(plant: &str) -> (bool, String) {
     (o.status.success(), out)
 }
 
+/// A planted failure means something only if the unplanted check passes: otherwise a note that
+/// drifted for another reason would make every control below pass without judging its plant.
+fn the_unplanted_check_passes() {
+    let r = repo_root();
+    let o = script(
+        "python3",
+        r.join("scripts/pci_delta.py"),
+        Bins::NoWorkspaceBinary,
+    )
+    .arg("--check")
+    .current_dir(&r)
+    .env("PYTHONDONTWRITEBYTECODE", "1")
+    .env_remove("PYTHONPATH")
+    .output()
+    .unwrap();
+    assert!(
+        o.status.success(),
+        "the unplanted check fails, so no plant can be judged:\n{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+}
+
 /// The note's gate table is compared with the gate script on label, package/target AND the
 /// result each row prints, not on labels alone (round-13 PSV-3: `PASS 1/1` -> `PASS 2/2`, and
 /// `axon-core/lib` -> `axon-psv/lib` on an am108 row, both passed the check that read labels).
 #[test]
 fn a_wrong_result_or_target_in_the_notes_gate_table_is_refused() {
+    the_unplanted_check_passes();
     let row =
         "| am108 a native registry a sealed frame wrote is tainted | axon-core/lib | PASS 1/1 |";
     for (what, new) in [
@@ -104,6 +128,7 @@ fn a_wrong_result_or_target_in_the_notes_gate_table_is_refused() {
 /// delta list, or naming only am100 and am102 as the amendments whose arms are verified, fails.
 #[test]
 fn a_stale_amendment_list_in_the_claim_is_refused() {
+    the_unplanted_check_passes();
     for (key, plant, fragment) in [
         (
             "the delta list",
@@ -129,6 +154,7 @@ fn a_stale_amendment_list_in_the_claim_is_refused() {
 /// wrong package, is no gate.
 #[test]
 fn a_test_the_gate_runs_under_another_package_or_name_is_no_gate() {
+    the_unplanted_check_passes();
     let name = "operator_side_control_flow_on_candidate_data_never_selects_operator_code";
     let right = format!("|axon-psv|sealed_frames|{name}\"");
     for (what, wrong) in [

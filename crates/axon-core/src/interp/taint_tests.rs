@@ -484,6 +484,13 @@ fn hook_cases() -> Vec<Case> {
         case("hook: tail value", &format!("{REF}fn pick() -> str {{ entry() }}\n"), &named("pick()"), ENT, Refused),
         case("hook: return value", &format!("{REF}fn pick() -> str {{ return entry() }}\n"), &named("pick()"), ENT, Refused),
         case("hook: question value", &format!("{REF}fn pick() -> Result<str, str> {{\n    let s = word()?\n    Ok(\"double\")\n}}\n"), &with("    let r = pick()\n    let nm = match r { Ok(s) => s  Err(e) => e }\n", "nm"), "fn word() -> Result<str, str> { Err(\"reference\") }\nfn double(x: i64) -> i64 { 0 }\n", Refused),
+        case(
+            "hook: question type",
+            "",
+            "    let g = || {\n        let v = wordn()?\n        Ok(1)\n    }\n    match g() { Ok(x) => assert(true)  Err(e) => assert(e.ok()) }",
+            "fn wordn() -> Result<i64, u8> { Err(narrow(4)) }\n",
+            Refused,
+        ),
         case("hook: parameter", &format!("{REF}fn go(sb: i64, n: str) -> i64 {{ sandbox_run(sb, n, 21) }}\n"), &format!("{SB}    let got = go(sb, entry())\n    assert(got == reference(21))"), ENT, Refused),
         case("hook: closure parameter", REF, &with("    let f = |s| s\n", "f(entry())"), ENT, Refused),
         case("hook: typed closure parameter keeps the value", REF, &with("    let f = |s: str| s\n", "f(entry())"), ENT, Refused),
