@@ -7159,3 +7159,73 @@ three are closed here; the rest of this amendment is what was changed, what was 
   rc 0; `scripts/test_v022_resurvey.py` and `scripts/test_v022_value_survey.py` PASS; `psv_matrix_check.py` listed only the A249-A255
   placeholders of other workstreams (branch-local numbering). The committed `governance/status/v022-resurvey.json` is for an earlier gate digest and is REFUSED by
   `--check` now (the digest changed, as it must): the record is made at the freeze head, last.
+
+**Renumbering at integration (round 13, integrate12).** Four branches of round 12 numbered their matrix rows apart and the union of their text collided (psv1v A249-A253; buildenv8 A252-A256; buildenv9, which contains buildenv8, A257-A262; eqgate8 A256-A264). The matrix is contiguous again, A1..A273, assigned in the order psv1v, buildenv8, buildenv9, eqgate8: psv1v keeps A249-A253; buildenv8's five rows are now A254-A258; buildenv9's six are A259-A264; eqgate8's nine are A265-A273. Map (branch-local -> integrated): buildenv8 A252..A256 -> A254..A258; buildenv9 A257..A262 -> A259..A264; eqgate8 A256..A264 -> A265..A273. The ids inside amendments 109, 110 and 111 were rewritten (a line that quotes a branch-local id in EVIDENCE about what a branch run showed, such as "placeholders A249-A255", keeps the branch's numbering and says so). Amendments 105, 106 and 107 and the integrate11 paragraph above remain true (A239-A248 are unchanged). The rows A216 and A236, edited by buildenv8 and again by buildenv9, are one text (buildenv9 contains buildenv8's edit).
+
+## Amendment 112: the round-12 integration is one matrix, one registry and one body of evidence (C9 round 13, integrate12)
+
+112. **Source: c9r13/integrate12 = c9r12/integrate11 (`915054b8`) + psv1v (amendment 108) + buildenv8/9 (109, 111) + eqgate8 (110).** The merge took
+     unions of conflicting hunks; this amendment records what was then reconciled. No production source under `crates/*/src` was changed except
+     `rustfmt` (below); everything else is test design, a row anchor, a marker, or text.
+     - **Matrix.** Renumbered (map above). `psv_matrix_check.py`: PASS, 273 rows, 901 citations, no placeholders.
+     - **Registries.** The mutation registry has 2222 rows (2108 at integrate11: +114 = M3030-M3042, M3080-M3109, M3110-M3163, M3180-M3196), 2064
+       active, 149 retired (148 equivalent, 1 stale, M176); no duplicate id; every active row has a marker and no marker is without a row; every
+       row's old text occurs exactly once (the one exception is the retired stale M176). The marker file's repaired junction was checked by
+       comparing, branch by branch, every marker the branch added or changed with the integrated dict (psv1v 13, buildenv8 34, buildenv9 51,
+       eqgate8 54: no mismatch), and the rows the branches edited (M322, M1068, M2513, M2655, M2724, M2891-M2893, M2906, M2924, M2932) each
+       equal exactly one branch's version.
+     - **Refusal coverage.** `v022_refusal_coverage.py` plain and `--freeze`: rc 0 with no BAD line before and after my edits. Counts at this
+       commit: amendment-103 value sites 228 (11 DOMINATED, 22 NOTROUTE, 96 OBSERVED, 5 REMAINDER, 94 row); amendment-107 flow sites 67 (43
+       OBSERVED, 24 row); amendment-110 signing inputs 15 (all row); amendment-110 defaults 113 (5 DOMINATED, 1 NOTROUTE, 12 OBSERVED, 86
+       REMAINDER, 9 row); OBSERVED-NOT-ROWED 227; REMAINDER 220 (Rust 209, `py_guard` 11); `scripts/guest_build_env.py` 62 covered by a row and 77
+       exempt (Python guards). Nothing needed a new exemption or a re-key beyond M322 below; the merge had already re-keyed buildenv8/9's.
+     - **What did not die, and why (the measured causes).**
+       1. M1944 (O_EXCL), M2120 (a mode), M2121 (set_permissions / set_mode), M2122 (chmod/chown), M2123 (mkdirat/umask), M2127 (privilege drop):
+          the planted line carried a SECOND form (a `0o777` literal, a uid `0`, a `libc::open(..)` call with a mode) that eqgate6/7's per-value
+          rules name by themselves, so the form's own regex could be deleted with the site still named. Each probe line now carries only its form
+          (mode, uid and count come from parameters; `O_CREAT | O_EXCL` is a bare constant expression, as `RENAME_NOREPLACE` already was).
+       2. M2273 (git `-c` / `GIT_*`): the probes were `cmd.args([..])`/`cmd.arg(..)` whose literal arguments the amendment-107 sink walk names;
+          they are bare string literals now. M2423 (`drop:`) and M2554 (absolute path field): the probe struct literals were named `Cfg` / `GpCfg`,
+          a type name amendment 107 treats as a configuration literal; renamed (`GvBox`, `GpBox`). The three rows read REFUSED_ELSEWHERE because
+          the control line (`the unedited copy: the gate must hold`) failed after the mutation, not on the attack.
+       3. M2311 and M2339: eqgate6 gave `the_check_child_runs_in_the_suite_with_only_its_own_environment_and_stdio` value assertions with new
+          messages and the markers kept the old "lacks ..." text, so the attack fired and could not be recognised. Markers re-anchored to the
+          messages the test prints.
+       4. M732 (the caller's RUSTUP_HOME): since buildenv8/9 the build learns the host triple and reads cargo's structured config BEFORE it records
+          a compiler; the planted `rustc`/`cargo` answered neither, so the build was refused there and the row failed on the control line. The
+          plants now answer `-vV` and `config get --format json`; the ATTACK assertion is reached and fires.
+       5. M2261 (the build uid's processes are killed after a step): it SURVIVED at integrate10, integrate11 and integrate12 alike. Since amendment 97
+          the step runs in its own PID namespace and the kernel kills a detached descendant when the namespace's init exits; the reaper is the
+          verification and the backstop, so removing it ALONE changes nothing. The row now removes the PID namespace AND the reaper at the cargo
+          step's call site (one contiguous edit). Either layer alone is redundant and is NOT counted killed; the joint edit reopens the attack
+          (SURVIVORS>=1) and is KILLED by its own marker. This is a joint row, not a four-cell retirement: no paired-disable record was made.
+       6. M322 re-anchored: `rustfmt` joined two lines of `submit.rs` that eqgate8 had left unformatted.
+     - **rustfmt.** `cargo fmt --all` had drift from eqgate8 (nine files; six production files of axon-fabric: `backend.rs`, `custodian.rs`,
+       `observer.rs`, `psv.rs`, `submit.rs`, formatting only). Applied so that `cargo fmt --check` is rc 0; the only row it moved was M322.
+     - **Evidence** (every line rc-checked; hosts: `gm` = gpumaster; `local` = this host as root; commits abbreviated):
+
+       | Check | Where, at | Result |
+       |---|---|---|
+       | `cargo fmt --all -- --check` | local, `927dad0b` | rc 0 |
+       | clippy `-D warnings`: axon-core `--no-default-features --tests`; axon-fabric, axon-psv, axon-cortex, axon-loop, axon-loop-contracts `--all-targets` | local, `927dad0b` | rc 0 each |
+       | `cargo test --locked -p axon-core --no-default-features --no-fail-fast` | gm, `927dad0b` | rc 0: 1864 passed, 0 failed, 1 ignored, 25 binaries |
+       | `cargo test --locked --workspace --exclude axon-core --exclude axon-fabric --exclude axon-guest-kernel --no-fail-fast` | gm, `2a29d2e8` | rc 0: 1555 passed, 0 failed, 4 ignored, 147 binaries (later commits touch only axon-core and axon-fabric tests and scripts) |
+       | `cargo test --locked -p axon-fabric --no-fail-fast`, default-parallel and `--test-threads=1` | local, `2a29d2e8` | rc 0 and rc 0: 877 passed, 0 failed, 2 ignored, 48 binaries each (the loaded-host test ran locally and passed) |
+       | `guest_build_env` x3 consecutive default-parallel, `guest_build_env_guards`, `operator_examples` | local, `927dad0b` | rc 0 each: 38, 38, 38, 4, 9 passed |
+       | `scripts/test_opkit_ns.sh` | local, `927dad0b` | rc 0 |
+       | `scripts/test_operator_deploy.sh` (the kit, its apply inside `ns_run`) | local, `927dad0b` | rc 0, "the namespace apply left the host untouched" |
+       | `opkit_ns_drift.py` plain, `--selftest`, `--check-quoted-counts` | local | ok (149 must-flag shapes, 32 controls) |
+       | `test_v022_resurvey.py`, `test_v022_value_survey.py`, the paired-disable join/selection tests, `test_protected_verifier_ready.py` | local | PASS, PASS, rc 0 x3 |
+       | `psv_matrix_check.py`; refusal coverage plain and `--freeze`; `pci_delta.py --check`; `v022_pci_gates.sh` | local | PASS (273 rows); rc 0; rc 0; PASS; PASS (71 rows) |
+       | Mutation rows: every active row whose target is under `crates/axon-core/src`, `scripts/v022_refusal_coverage.py`, `scripts/opkit_ns_drift.py`, `scripts/lib/opkit_ns.sh`, `scripts/guest_build_env.py`, and every row with id >= M2170: 911 rows, `--scope=all --only=... --shard=K/4` | shards 0-2 gm at `2a29d2e8`, shard 3 local at `fb8c5739` | 224/227 + 226/228 + 229/231 + 225/225 KILLED by their own attack; the 7 that were not (REFUSED_ELSEWHERE: M2273 M2311 M2339 M732 M2423 M2554; survivor: M2261) are the rows of items 1-5 above, each fixed and re-run (next rows), 0 other survivors, 0 stale |
+       | The 228 namespace-dependent rows again, locally as root | local, `42f698bf` | 227/228 KILLED, 0 REFUSED_ELSEWHERE; the one survivor was M2261 (the old edit) |
+       | The rows touched by the fixes: M732, M2261, M2270, M2273, M2275, M2277, M2311, M2339, M2420-M2427, M2554 (17) | gm, `927dad0b` | 17/17 KILLED by their own attack, 0 REFUSED_ELSEWHERE, 0 survivors, 0 stale |
+       | Host listing (`/etc/axon`, `/usr/local`, `/var/lib` names, `/etc/systemd/system`, `/opt`, `/home`, users, groups, setuid files, enabled units) | local, before vs after the whole run | identical |
+
+       (`refusal_coverage_gate`, `harness_integrity` and `harness_binaries` are inside the axon-core run above, at the final code commit.)
+     - **Unfinished, stated.** (a) `governance/status/v022-resurvey.json` and `governance/status/v022-psv-paired-disable.json` are NOT remade: the re-survey
+       record is for an earlier gate digest and every paired-disable record is stale under the currency rule (59 of 59), as at integrate11; both are
+       made at the freeze head, last. (b) The shards 0-2 ran at `2a29d2e8`, not at the final commit; the commits since touch the test probes, the guest_build_env
+       plant, M2261 and two markers, and every row those can affect was re-run at `927dad0b` (17 rows) or locally (228). (c) axon-fabric's whole suite and the
+       workspace remainder were not re-run after `2a29d2e8`: nothing under their sources changed. (d) M2261 is a joint row; the single-layer
+       property is not claimed killed and has no four-cell record. (e) The `IDENTICAL` host listing is of this host only.
