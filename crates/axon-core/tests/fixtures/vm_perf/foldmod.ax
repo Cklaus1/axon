@@ -1,0 +1,12 @@
+// R50 §10 --repros (S7): fold.ax with arr-sum's closure body `acc + x % m`
+// over a captured `m`. (instructions - fold_base.ax's) / 10M = one element.
+fn main() -> i64 {
+    let xs = arr_range(0, 1000000)
+    let m = 7
+    let total = 0
+    for rep in 0..10 {
+        total = total + arr_fold(xs, 0, |acc: i64, x: i64| acc + x % m)
+    }
+    println(to_str(total))
+    0
+}
