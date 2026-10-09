@@ -35165,9 +35165,9 @@ fn vm_engine_scope_leak() {
     assert_eq!(stdout, "3\n", "stderr: {stderr}");
     let traced = vm_run("scope_leak", VM_SCOPE_LEAK_SRC, "vm", true);
     let err = String::from_utf8_lossy(&traced.stderr);
-    // S1: only the `match` stays on the tree in `f`.
-    assert!(err.contains("vm: f 5 ops, 1 tree nodes\n"), "{err}");
-    assert!(err.contains("vm: tree-op f Match\n"), "{err}");
+    // S3: the `match`, its guard's `?` included, runs compiled in `f`.
+    assert_eq!(vm_tree_nodes(&err, "f"), 0, "{err}");
+    assert!(!err.contains("vm: tree-op f "), "{err}");
 }
 
 #[test]
@@ -35225,16 +35225,13 @@ fn vm_engine_trace_names_each_compiled_body_once_under_vm_only() {
     assert_eq!(String::from_utf8_lossy(&vm.stdout), "55\n");
     let err = String::from_utf8_lossy(&vm.stderr);
     // Each body's lines come once, on its first run, though `fib` runs 177
-    // times. Through S1 the struct literal, method call and field read stay
-    // `Tree` ops.
+    // times. Every node of every body compiles (S2 the struct literal, S3
+    // the method call).
     assert_eq!(
         err,
-        "vm: main 9 ops, 2 tree nodes\n\
-         vm: tree-op main StructLit\n\
-         vm: tree-op main MethodCall\n\
+        "vm: main 13 ops, 0 tree nodes\n\
          vm: fib 8 ops, 0 tree nodes\n\
-         vm: P::get 1 ops, 1 tree nodes\n\
-         vm: tree-op P::get FieldAccess\n"
+         vm: P::get 1 ops, 0 tree nodes\n"
     );
     let tree = vm_run("trace", VM_FIB_SRC, "tree", true);
     assert_eq!(tree.status.code(), Some(0), "{tree:?}");
@@ -35423,15 +35420,15 @@ fn vm_scalar_refined_let_violation_exits_6() {
 }
 
 /// R50 §4 Execution: shadowing in nested blocks, nested loops with `break`
-/// and `continue` (caught by the innermost loop, also out of a callee's
-/// `match` that stays on the tree), and an early `return` out of loops.
+/// and `continue` (caught by the innermost loop, also around a callee's
+/// `match`), and an early `return` out of loops.
 #[test]
 fn vm_scalar_scopes_loops_and_early_return() {
     let src = "fn first_over(lim: i64) -> i64 {\n    for i in 0..100 {\n        let j = 0\n        while j < 100 {\n            if i * j > lim { return i * 1000 + j }\n            j = j + 1\n        }\n    }\n    -1\n}\nfn pick(v: Option<i64>) -> i64 {\n    match v { Some(x) => x, None => 0 }\n}\nfn main() -> i64 {\n    let x = 1\n    {\n        let x = 2\n        println(to_str(x))\n    }\n    println(to_str(x))\n    let total = 0\n    for i in 0..5 {\n        if i == 1 { continue }\n        let k = 0\n        while true {\n            k = k + 1\n            if k > i { break }\n            if k == 2 { continue }\n            total = total + pick(Some(k))\n        }\n        if i == 3 { break }\n    }\n    println(to_str(total))\n    println(to_str(first_over(50)))\n    for i in 0..=2 { let x = i * 10\n        println(to_str(x)) }\n    0\n}\n";
     let (code, stdout, stderr) = vm_scalar_case(
         "scopes",
         src,
-        &[("first_over", 0), ("pick", 1), ("main", 0)],
+        &[("first_over", 0), ("pick", 0), ("main", 0)],
     );
     assert_eq!(code, Some(0), "{stderr}");
     assert!(stdout.starts_with("2\n1\n"), "{stdout}");
@@ -35458,6 +35455,143 @@ fn vm_scalar_recursion_limit() {
     assert!(stderr.contains("recursion"), "{stderr}");
 }
 
+/// R50 S4 red test (§8): `fold.ax`'s `main` and its lambda use only S1
+/// constructs and a lambda, so both compile with no `Tree` op (on S1 the
+/// lambda is one `Tree` op and its body runs on the tree). The fixture runs
+/// at a thousandth of its size here.
+#[test]
+fn vm_closure_fold_no_tree_nodes() {
+    let src = std::fs::read_to_string(fixture("vm_perf/fold.ax"))
+        .expect("read fold.ax")
+        .replace("arr_range(0, 1000000)", "arr_range(0, 1000)");
+    let (code, stdout, stderr) =
+        vm_scalar_case("closure_fold", &src, &[("main", 0), ("main::lambda#0", 0)]);
+    assert_eq!((code, stdout.as_str()), (Some(0), "4995000\n"), "{stderr}");
+}
+
+/// R50 S4: a lambda captures by value at creation (later assignments to the
+/// captured local do not reach it), an assignment to a captured variable
+/// persists in the closure's capture cell across calls (T40) but not back to
+/// the defining scope, and a parameter shadows a captured name.
+#[test]
+fn vm_closure_capture_semantics() {
+    let src = "fn main() -> i64 {\n    let a = 1\n    let b = 10\n    let f = |x: i64| x + a + b\n    a = 100\n    println(to_str(f(1)))\n    let n = 0\n    let inc = || {\n        n = n + 1\n        n\n    }\n    println(to_str(inc()))\n    println(to_str(inc()))\n    println(to_str(n))\n    let g = |a: i64| a * b\n    println(to_str(g(3)))\n    let k = |x: i64| {\n        let a = x + 1\n        a\n    }\n    println(to_str(k(4)))\n    println(to_str(a))\n    0\n}\n";
+    let (code, stdout, _) = vm_scalar_case(
+        "closure_capture",
+        src,
+        &[
+            ("main", 0),
+            ("main::lambda#0", 0),
+            ("main::lambda#1", 0),
+            ("main::lambda#2", 0),
+            ("main::lambda#3", 0),
+        ],
+    );
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "12\n1\n2\n0\n30\n5\n100\n")
+    );
+}
+
+/// R50 S4: closures calling closures (a captured closure, a nested lambda
+/// capturing its enclosing lambda's parameter), recursion through a closure
+/// that calls its enclosing fn, and a lambda passed to a user fn.
+#[test]
+fn vm_closure_calls_and_recursion() {
+    let src = "fn apply(f: fn(i64) -> i64, n: i64) -> i64 { f(n) }\nfn r(n: i64) -> i64 {\n    let g = |k: i64| if k == 0 { 0 } else { r(k - 1) + 1 }\n    g(n)\n}\nfn main() -> i64 {\n    let add = |p: i64, q: i64| p + q\n    let dbl = |x: i64| add(x, x)\n    println(to_str(dbl(21)))\n    let outer = |x: i64| {\n        let inner = |y: i64| y * x\n        inner(2)\n    }\n    println(to_str(outer(5)))\n    println(to_str(r(50)))\n    println(to_str(apply(|z: i64| z * 3, 7)))\n    0\n}\n";
+    let (code, stdout, _) = vm_scalar_case(
+        "closure_calls",
+        src,
+        &[
+            ("main", 0),
+            ("main::lambda#0", 0),
+            ("main::lambda#1", 0),
+            ("main::lambda#2", 0),
+            ("main::lambda#3", 0),
+            ("main::lambda#4", 0),
+            ("r", 0),
+            ("r::lambda#0", 0),
+            ("apply", 0),
+        ],
+    );
+    assert_eq!((code, stdout.as_str()), (Some(0), "42\n10\n50\n21\n"));
+}
+
+/// R50 S4: a closure with other references (bound to a local, then passed to
+/// a builtin) takes the copied path, and a builtin's closure panicking or
+/// returning the wrong type fails the same way under both engines.
+#[test]
+fn vm_closure_copied_path_and_errors() {
+    let src = "fn main() -> i64 {\n    let xs = arr_range(0, 100)\n    let c = 0\n    let g = |acc: i64, x: i64| {\n        c = c + 1\n        acc + x * 2\n    }\n    println(to_str(arr_fold(xs, 0, g)))\n    println(to_str(arr_fold(xs, 1, g)))\n    println(to_str(len(arr_map(xs, |x: i64| x + c))))\n    println(to_str(arr_count_if(xs, |x: i64| x % 3 == 0)))\n    println(to_str(arr_fold(xs, 0, |acc: i64, x: i64| acc + 10 / (50 - x))))\n    0\n}\n";
+    let (code, stdout, stderr) = vm_scalar_case(
+        "closure_copied",
+        src,
+        &[("main", 0), ("main::lambda#0", 0), ("main::lambda#3", 0)],
+    );
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(101), "9900\n9901\n100\n34\n"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("integer division by zero"), "{stderr}");
+}
+
+/// R50 S4: a lambda in a `@[verify]` predicate is `<fn>::verify::lambda#<i>`,
+/// numbered apart from the body's lambdas, and the failed postcondition
+/// exits 3 the same way under both engines.
+#[test]
+fn vm_closure_in_verify_predicate() {
+    let src = "@[verify(arr_all([value, value + 1], |x: i64| x >= 0))]\nfn mk(n: i64) -> i64 {\n    let f = |k: i64| k * 2 - 3\n    f(n)\n}\nfn main() -> i64 {\n    println(to_str(mk(5)))\n    println(to_str(mk(1)))\n    0\n}\n";
+    let (code, stdout, stderr) = vm_scalar_case(
+        "closure_verify",
+        src,
+        &[
+            ("main", 0),
+            ("mk", 0),
+            ("mk::lambda#0", 0),
+            ("mk::verify::lambda#0", 0),
+        ],
+    );
+    assert_eq!((code, stdout.as_str()), (Some(3), "7\n"), "{stderr}");
+    assert!(stderr.contains("verify failed in `mk`"), "{stderr}");
+}
+
+/// R50 §3 lambda trace names: `<owner>::lambda#<i>` in source pre-order
+/// (nested lambdas included), `Type::method` owners, `<module>` for module
+/// items numbered across them, each body's line printed once however often
+/// it runs, and one `vm: tree <anon>: unresolved lambda` line per code
+/// instance of a fn-value forwarder.
+#[test]
+fn vm_closure_trace_names() {
+    let src = "fn neg(x: i64) -> i64 { 0 - x }\ntrait Scale { fn scaled(self: Box2, k: i64) -> i64 }\ntype Box2 = { w: i64 }\nimpl Scale for Box2 {\n    fn scaled(self: Box2, k: i64) -> i64 {\n        let f = |x: i64| x * k\n        f(self.w)\n    }\n}\nlet OFF = |x: i64| x + 1\nlet TWO = |x: i64| x + 2\nfn main() -> i64 {\n    let b = Box2 { w: 3 }\n    println(to_str(b.scaled(4)))\n    let outer = |x: i64| {\n        let inner = |y: i64| y * x\n        inner(2)\n    }\n    let last = |x: i64| x - 1\n    println(to_str(outer(5) + outer(1) + last(OFF(1)) + TWO(0)))\n    let h = neg\n    println(to_str(h(7) + h(1)))\n    0\n}\n";
+    let (code, stdout, stderr) = vm_same_both_engines("closure_names", src);
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "12\n15\n-8\n"),
+        "{stderr}"
+    );
+    let traced = vm_run("closure_names", src, "vm", true);
+    let err = String::from_utf8_lossy(&traced.stderr);
+    for name in [
+        "Box2::scaled::lambda#0",
+        "main::lambda#0",
+        "main::lambda#1",
+        "main::lambda#2",
+        "<module>::lambda#0",
+        "<module>::lambda#1",
+    ] {
+        let head = format!("vm: {name} ");
+        let lines = err.lines().filter(|l| l.starts_with(&head)).count();
+        assert_eq!(lines, 1, "`{name}`:\n{err}");
+        assert_eq!(vm_tree_nodes(&err, name), 0, "`{name}`:\n{err}");
+    }
+    let anon = err
+        .lines()
+        .filter(|l| *l == "vm: tree <anon>: unresolved lambda")
+        .count();
+    assert_eq!(anon, 1, "{err}");
+}
+
 /// R50 §4 (AX-31): `s = s + t` and `x = arr_push(x, v)` in a 100k-iteration
 /// loop append in place under the vm too (a copying engine would take
 /// quadratic time here: 100k appends of up to 100k elements).
@@ -35465,7 +35599,7 @@ fn vm_scalar_recursion_limit() {
 fn vm_scalar_in_place_append_stays_linear() {
     let src = "fn main() -> i64 {\n    let s = \"\"\n    let x = []\n    let i = 0\n    while i < 100000 {\n        s = s + \"ab\"\n        x = arr_push(x, i)\n        i = i + 1\n    }\n    println(to_str(len(s)))\n    println(to_str(len(x)))\n    0\n}\n";
     let start = std::time::Instant::now();
-    let (code, stdout, stderr) = vm_scalar_case("append", src, &[("main", 1)]);
+    let (code, stdout, stderr) = vm_scalar_case("append", src, &[("main", 0)]);
     assert_eq!(
         (code, stdout.as_str()),
         (Some(0), "200000\n100000\n"),
@@ -35475,5 +35609,435 @@ fn vm_scalar_in_place_append_stays_linear() {
         start.elapsed() < std::time::Duration::from_secs(60),
         "{:?}",
         start.elapsed()
+    );
+}
+
+// ── R50 S2: aggregates, index and field reads, place writes (`vm_aggregate_`) ─
+
+/// R50 S2 red test (§8): `part.ax` (qsort's partition loop: a `for`, an `if`
+/// on `a[j] < pivot`, an int store) uses only S1 and S2 constructs, so `main`
+/// compiles with no `Tree` op. On S1 the `a[j]` read is one. The loop bound
+/// is cut from 1M to 1000 for the tree-walker's run.
+#[test]
+fn vm_aggregate_part_no_tree_nodes() {
+    let src = include_str!("fixtures/vm_perf/part.ax").replace("1000000", "1000");
+    let (code, stdout, stderr) = vm_scalar_case("agg_part", &src, &[("main", 0)]);
+    assert_eq!((code, stdout.as_str()), (Some(0), "1000\n"), "{stderr}");
+}
+
+/// R50 §4 S2 rows: array, tuple, struct and enum literals (fields given out
+/// of order, a sized field coerced, a refined struct that holds), index reads
+/// on a local, a global and a computed receiver (receiver before index),
+/// nested indexes, `.N`, and field reads on a local, a global and a call.
+#[test]
+fn vm_aggregate_literals_and_reads() {
+    let src = r#"type P = { x: i64, y: i64 }
+type W = { a: i32, b: i64 }
+type R = { lo: i64, hi: i64 } where _.lo <= _.hi
+enum Shape { Dot, Circle { r: i64 } }
+let G = [10, 20, 30]
+let GP = P { x: 7, y: 8 }
+fn mk() -> [i64] {
+    println("mk")
+    [4, 5, 6]
+}
+fn pt() -> P { P { y: 2, x: 1 } }
+fn main() -> i64 {
+    let xs = [1, 2, 3]
+    let t = (xs[0], "two", 3.5)
+    let p = P { x: xs[1], y: 9 }
+    let g = [[1, 2], [3, 4]]
+    let i = 1
+    println(to_str(xs[i]))
+    println(to_str(xs[i + 1]))
+    println(to_str(g[1][0]))
+    println(to_str(G[2]))
+    println(to_str(G[i]))
+    println(to_str(GP.y))
+    println(t.1)
+    println(to_str(t.2))
+    println(to_str(p.x + pt().y + pt().x))
+    println(to_str(mk()[i]))
+    let w = W { a: 5, b: 6 }
+    println(to_str(w.a))
+    let r = R { lo: i, hi: 2 }
+    println(to_str(r.hi))
+    let s = Shape::Circle { r: 4 }
+    let d = Shape::Dot
+    println("{s} {d} {p} {t} {xs}")
+    let e = []
+    println(to_str(len(e)))
+    if xs[i] < 3 { println("lt") }
+    if xs[i] == i { println("eq") } else { println("ne") }
+    0
+}
+"#;
+    let (code, stdout, stderr) =
+        vm_scalar_case("agg_reads", src, &[("main", 0), ("pt", 0), ("mk", 0)]);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(
+        stdout,
+        "2\n3\n3\n30\n20\n8\ntwo\n3.5\n5\nmk\n5\n5\n2\n\
+         Shape::Circle { r: 4 } Shape::Dot P { x: 2, y: 9 } (1, two, 3.5) [1, 2, 3]\n0\nlt\nne\n"
+    );
+}
+
+/// R50 §4 `index_in_place`/`index_value` rows: a negative or out-of-bounds
+/// index, a non-array receiver, and a sized-int index (`strict_int`: a read
+/// panics `expected i64, got i32`), on a local receiver, in a fused
+/// compare, and on a computed receiver (evaluated before the index).
+#[test]
+fn vm_aggregate_index_read_panics() {
+    let cases: [(&str, &str, &str, &str); 7] = [
+        (
+            "neg",
+            "let i = 0 - 1\n    println(to_str(xs[i]))",
+            "",
+            "index -1 out of bounds (len 3)",
+        ),
+        (
+            "oob",
+            "let i = 5\n    println(to_str(xs[i + 0]))",
+            "",
+            "index 5 out of bounds (len 3)",
+        ),
+        (
+            "oob_cmp",
+            "let i = 7\n    let lim = 2\n    if xs[i] < lim { println(\"no\") }",
+            "",
+            "index 7 out of bounds (len 3)",
+        ),
+        (
+            "non_array",
+            "let d = dict_new()\n    println(to_str(d[0]))",
+            "",
+            "indexing non-array (dict)",
+        ),
+        (
+            "sized",
+            "let k: i32 = 1\n    println(to_str(xs[k]))",
+            "",
+            "expected i64, got i32",
+        ),
+        (
+            "sized_cmp",
+            "let k: i32 = 1\n    if xs[k] == 2 { println(\"no\") }",
+            "",
+            "expected i64, got i32",
+        ),
+        (
+            "computed",
+            "let k: i32 = 1\n    println(to_str(mk()[k]))",
+            "mk\n",
+            "expected i64, got i32",
+        ),
+    ];
+    for (tag, body, out, msg) in cases {
+        let src = format!("fn mk() -> [i64] {{\n    println(\"mk\")\n    [4, 5, 6]\n}}\nfn main() -> i64 {{\n    let xs = [1, 2, 3]\n    {body}\n    0\n}}\n");
+        let bodies: &[(&str, usize)] = if out.is_empty() {
+            &[("main", 0)]
+        } else {
+            &[("main", 0), ("mk", 0)]
+        };
+        let (code, stdout, stderr) = vm_scalar_case(&format!("agg_idx_{tag}"), &src, bodies);
+        assert_eq!(
+            (code, stdout.as_str()),
+            (Some(101), out),
+            "[{tag}] {stderr}"
+        );
+        assert!(stderr.contains(msg), "[{tag}] {stderr}");
+    }
+}
+
+/// R50 §4 `field_in_place` row: a field read on a value that is not a
+/// record (`field_of`'s panics), on a local and on a computed receiver.
+#[test]
+fn vm_aggregate_field_read_panics() {
+    let cases: [(&str, &str, &str); 3] = [
+        (
+            "non_struct",
+            "let d = dict_new()\n    println(to_str(d.x))",
+            "field access on non-struct (dict)",
+        ),
+        (
+            "computed",
+            "println(to_str(dict_new().x))",
+            "field access on non-struct (dict)",
+        ),
+        (
+            "missing",
+            "let u = uncertain_new(1, 0.5)\n    println(to_str(u.x))",
+            "no field `x`",
+        ),
+    ];
+    for (tag, body, msg) in cases {
+        let src = format!("fn main() -> i64 {{\n    println(\"before\")\n    {body}\n    0\n}}\n");
+        let (code, stdout, stderr) =
+            vm_scalar_case(&format!("agg_field_{tag}"), &src, &[("main", 0)]);
+        assert_eq!(
+            (code, stdout.as_str()),
+            (Some(101), "before\n"),
+            "[{tag}] {stderr}"
+        );
+        assert!(stderr.contains(msg), "[{tag}] {stderr}");
+    }
+}
+
+/// R50 §4 `place_index`/`write_place` rows: field and index chains, the
+/// value evaluated before the index expressions, which run outermost first
+/// (`o.rows[i][j] = v` evaluates `j` before `i`), copy-on-write (a value
+/// read out before the write keeps its contents), and the panic of the last
+/// write in a chain.
+#[test]
+fn vm_aggregate_place_write_chains() {
+    let src = r#"type In = { v: [i64], n: i64 }
+type Out = { inner: In, rows: [[i64]] }
+fn idx(k: i64) -> i64 {
+    println("idx {k}")
+    k
+}
+fn val(k: i64) -> i64 {
+    println("val {k}")
+    k
+}
+fn main() -> i64 {
+    let o = Out { inner: In { v: [1, 2, 3], n: 0 }, rows: [[0, 0], [0, 0]] }
+    let alias = o.inner
+    o.inner.v[idx(1)] = val(50)
+    o.inner.n = 4
+    o.rows[idx(1)][idx(0)] = val(7)
+    println("{o} {alias}")
+    let g = [[1, 2], [3, 4]]
+    g[1][1] = 99
+    let i = 0
+    g[i][i + 1] = g[1][1] + 1
+    println("{g}")
+    o.rows[5][0] = 1
+    0
+}
+"#;
+    let (code, stdout, stderr) =
+        vm_scalar_case("agg_chains", src, &[("main", 0), ("idx", 0), ("val", 0)]);
+    assert_eq!(
+        (code, stdout.as_str()),
+        (
+            Some(101),
+            "val 50\nidx 1\nval 7\nidx 0\nidx 1\n\
+             Out { inner: In { n: 4, v: [1, 50, 3] }, rows: [[0, 0], [7, 0]] } In { n: 0, v: [1, 2, 3] }\n\
+             [[1, 100], [3, 99]]\n"
+        ),
+        "{stderr}"
+    );
+    assert!(stderr.contains("index 5 out of bounds (len 2)"), "{stderr}");
+}
+
+/// R50 §4 `place_index`/`write_place` panics and the sized-int asymmetry: a
+/// negative or out-of-bounds index and a non-array/non-struct place panic
+/// with the tree's texts; a sized-int index writes (`as_int`) although a read
+/// with it panics; `f()[i] = v` evaluates the value, then the index, then
+/// panics `invalid assignment target` without evaluating `f()`.
+#[test]
+fn vm_aggregate_place_write_panics() {
+    let cases: [(&str, &str, Option<i32>, &str, &str); 6] = [
+        (
+            "neg",
+            "let a = [1, 2]\n    let i = 0 - 1\n    a[i] = 5",
+            Some(101),
+            "",
+            "negative index -1",
+        ),
+        (
+            "oob",
+            "let a = [1, 2]\n    a[5] = 5",
+            Some(101),
+            "",
+            "index 5 out of bounds (len 2)",
+        ),
+        (
+            "dict_index",
+            "let d = dict_new()\n    d[0] = 5",
+            Some(101),
+            "",
+            "cannot index/field-assign into dict",
+        ),
+        (
+            "dict_field",
+            "let d = dict_new()\n    d.x = 5",
+            Some(101),
+            "",
+            "cannot index/field-assign into dict",
+        ),
+        (
+            "sized_write",
+            "let ys = [1, 2, 3]\n    let i: i32 = 1\n    ys[i] = 9\n    println(to_str(ys[1]))",
+            Some(0),
+            "9\n",
+            "",
+        ),
+        (
+            "invalid_target",
+            "mk()[pr(1)] = pr(2)",
+            Some(101),
+            "2\n1\n",
+            "invalid assignment target",
+        ),
+    ];
+    for (tag, body, want, out, msg) in cases {
+        let src = format!("fn mk() -> [i64] {{\n    println(\"mk\")\n    [1, 2, 3]\n}}\nfn pr(x: i64) -> i64 {{\n    println(to_str(x))\n    x\n}}\nfn main() -> i64 {{\n    {body}\n    0\n}}\n");
+        let (code, stdout, stderr) =
+            vm_scalar_case(&format!("agg_write_{tag}"), &src, &[("main", 0)]);
+        assert_eq!((code, stdout.as_str()), (want, out), "[{tag}] {stderr}");
+        assert!(stderr.contains(msg), "[{tag}] {stderr}");
+    }
+}
+
+/// R50 §4 `finish_record` row: a struct literal whose whole-struct `where`
+/// or field refinement fails exits 6 with the tree's message.
+#[test]
+fn vm_aggregate_struct_refinement_exits_6() {
+    let cases: [(&str, &str, &str); 2] = [
+        (
+            "whole",
+            "type R = { lo: i64, hi: i64 } where _.lo <= _.hi\nfn main() -> i64 {\n    let a = 9\n    let r = R { lo: a, hi: 2 }\n    println(to_str(r.lo))\n    0\n}\n",
+            "violates its struct refinement",
+        ),
+        (
+            "field",
+            "type Pos = i64 where _ > 0\ntype S = { p: Pos }\nfn main() -> i64 {\n    let a = 0 - 3\n    let s = S { p: a }\n    println(to_str(s.p))\n    0\n}\n",
+            "field `p` of `S` (= -3) violates the refinement `Pos`",
+        ),
+    ];
+    for (tag, src, msg) in cases {
+        let (code, stdout, stderr) =
+            vm_scalar_case(&format!("agg_refine_{tag}"), src, &[("main", 0)]);
+        assert_eq!((code, stdout.as_str()), (Some(6), ""), "[{tag}] {stderr}");
+        assert!(stderr.contains(msg), "[{tag}] {stderr}");
+    }
+}
+
+// ── R50 S3: match, while let, methods (`vm_match_`) ─────────────────────────
+
+/// The S3 parity programs, `tests/fixtures/vm_match/<name>.ax` (also in the
+/// `vm_parity.sh` corpus).
+macro_rules! vm_match_src {
+    ($name:literal) => {
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/vm_match/",
+            $name,
+            ".ax"
+        ))
+    };
+}
+
+/// R50 S3 red test (§8): a fn matching an `Option<i64>` with a guard, and a
+/// `while let`, compile with 0 tree nodes. Without S3 both are `Tree` ops.
+#[test]
+fn vm_match_option_no_tree_nodes() {
+    let (code, stdout, stderr) = vm_scalar_case(
+        "match_option",
+        vm_match_src!("option"),
+        &[("classify", 0), ("next", 0), ("main", 0)],
+    );
+    assert_eq!((code, stdout.as_str()), (Some(0), "88\n0\n"), "{stderr}");
+}
+
+/// R50 §4 condition rules: a match guard is true only for `Value::Bool(true)`;
+/// an `Uncertain<bool>` guard is false with no panic, so the next arm runs
+/// (eval.rs `Match` arm). Arm bindings shadow the enclosing `y` only inside
+/// the arm. A `?` failing in a guard pops the arm's scope before the fn
+/// returns (the S0 AX-57 fix), so the caller's loop keeps its bindings.
+#[test]
+fn vm_match_guard_true_only_for_bool_true() {
+    let (code, stdout, stderr) = vm_scalar_case(
+        "match_guard",
+        vm_match_src!("guard"),
+        &[
+            ("guarded", 0),
+            ("shadow", 0),
+            ("soft", 0),
+            ("fail", 0),
+            ("main", 0),
+        ],
+    );
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "wild\nno\n0\nno\n7\nno\n14\n4\n901\n9000\n-1\n"),
+        "{stderr}"
+    );
+}
+
+/// R50 §4 Execution: `while let` pushes the pattern's scope per iteration
+/// and the body's inside it; `break`/`continue` at either nesting level and
+/// an early `return` pop them as `run_loop_body` and the `WhileLet` arm do.
+#[test]
+fn vm_match_while_let_break_continue() {
+    let (code, stdout, stderr) = vm_scalar_case(
+        "match_while_let",
+        vm_match_src!("whilelet"),
+        &[("nested", 0), ("first_ok", 0), ("unscoped", 0), ("main", 0)],
+    );
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "222\n300\n-1\n10\n"),
+        "{stderr}"
+    );
+}
+
+/// R50 §4: a match no arm matches panics `no match arm matched`, exit 101,
+/// after the output of the earlier calls.
+#[test]
+fn vm_match_non_exhaustive_panics() {
+    let (code, stdout, stderr) = vm_scalar_case(
+        "match_nomatch",
+        vm_match_src!("nomatch"),
+        &[("pick", 0), ("main", 0)],
+    );
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(101), "one\ntwo\n"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("no match arm matched"), "{stderr}");
+}
+
+/// R50 §4 `chan_method` (Behaviour table): on a channel receiver `send`
+/// evaluates only its first argument, and `recv`/`len`/`try_recv`/`clone`
+/// none; `use_chan` runs them with no `Tree` op.
+#[test]
+fn vm_match_chan_method_argument_order() {
+    let (code, stdout, stderr) = vm_scalar_case(
+        "match_chan",
+        vm_match_src!("chan"),
+        &[("use_chan", 0), ("log", 0), ("main", 0)],
+    );
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "send-0\n2\n0\n1\n41\nempty\n0\n"),
+        "{stderr}"
+    );
+}
+
+/// R50 §4 `impl_method`: a method call on a record or enum receiver
+/// evaluates the receiver, then the arguments left to right, then calls the
+/// impl method for the receiver's type; a `match` on enum variants inside
+/// an impl method compiles too.
+#[test]
+fn vm_match_impl_methods() {
+    let (code, stdout, stderr) = vm_scalar_case(
+        "match_methods",
+        vm_match_src!("methods"),
+        &[
+            ("use_p", 0),
+            ("areas", 0),
+            ("Shape::area", 0),
+            ("logp", 0),
+            ("main", 0),
+        ],
+    );
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "recv\nk\nm\n23\n21\n"),
+        "{stderr}"
     );
 }

@@ -1,0 +1,52 @@
+// R50 S3 (`vm_match_while_let_*`): `while let` with `break` and `continue`
+// at both nesting levels, an early `return` out of one, and a pattern that
+// binds nothing.
+fn step(i: i64) -> Option<i64> {
+    if i < 10 { Some(i) } else { None }
+}
+
+fn check(k: i64) -> Result<i64, str> {
+    if k < 5 { Ok(k) } else { Err("stop") }
+}
+
+fn nested() -> i64 {
+    let s = 0
+    let i = 0
+    while let Some(v) = step(i) {
+        i = i + 1
+        let w = v * 2
+        if v == 2 { continue }
+        if v == 7 { break }
+        let j = 0
+        while let Some(u) = step(j) {
+            j = j + 1
+            if u > v { break }
+            if u == 1 { continue }
+            s = s + u + w
+        }
+    }
+    s
+}
+
+fn first_ok(n: i64) -> i64 {
+    let k = 0
+    while let Ok(x) = check(k) {
+        if x == n { return x * 100 }
+        k = k + 1
+    }
+    -1
+}
+
+fn unscoped() -> i64 {
+    let i = 0
+    while let Some(_) = step(i) { i = i + 1 }
+    i
+}
+
+fn main() -> i64 {
+    println(to_str(nested()))
+    println(to_str(first_ok(3)))
+    println(to_str(first_ok(8)))
+    println(to_str(unscoped()))
+    0
+}

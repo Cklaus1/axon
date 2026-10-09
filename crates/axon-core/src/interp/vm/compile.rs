@@ -8,14 +8,15 @@
 //! `ScopePush`/`ScopePop` exactly where `eval` calls `env.push()`/`env.pop()`
 //! (block, loop iteration, `for`), except around statements that bind
 //! nothing ([`binds`]): there the scope would stay empty, and an empty scope
-//! is unobservable (no slot moves, no lookup sees it, `base_scope` and
-//! `snapshot` read the same bindings), so the push and the pop are elided.
+//! is unobservable (no slot moves, no lookup sees it, a closure's write-back
+//! and `snapshot` read the same bindings), so the push and the pop are elided.
 //! The compiler tracks the operand-stack height and the scope depth
 //! statically: [`Compiler::expr`] leaves one value more on the stack,
 //! [`Compiler::stmt`] none.
 
 use super::{Body, Cond, Loop, Op, Opnd, Var};
-use crate::ast::{BinOp, Expr, FmtPart, Literal, Stmt, UnaryOp};
+use crate::ast::{BinOp, Expr, FmtPart, Literal, MatchArm, Pattern, Stmt, UnaryOp};
+use crate::interp::PlaceStep;
 use crate::interp::{lit_to_val, Interp, Resolution, Value};
 
 /// Compile the fn body `body`; `res` is the program's resolution table (the
@@ -66,7 +67,9 @@ impl<'p> Compiler<'_, 'p> {
             | Expr::Own { .. }
             | Expr::RefBind { .. }
             | Expr::Assign { .. }
+            | Expr::AssignTo { .. }
             | Expr::While { .. }
+            | Expr::WhileLet { .. }
             | Expr::For { .. } => {
                 self.stmt(e);
                 self.emit(Op::Const(Value::Unit), 0, 1);
@@ -142,21 +145,42 @@ impl<'p> Compiler<'_, 'p> {
                     self.tree(e);
                 }
             }
-            Expr::MethodCall { .. } => self.tree(e),
-            Expr::Match { .. } => self.tree(e),
+            Expr::MethodCall {
+                receiver,
+                method,
+                args,
+            } => self.method_call(receiver, method, args),
+            Expr::Match { subject, arms } => self.match_(subject, arms),
             Expr::Spawn(_) => self.tree(e),
             Expr::Select(_) => self.tree(e),
             Expr::Comptime(_) => self.tree(e),
             Expr::InlineAsm { .. } => self.tree(e),
-            Expr::Lambda { .. } => self.tree(e),
-            Expr::FieldAccess { .. } => self.tree(e),
-            Expr::Index { .. } => self.tree(e),
-            Expr::Tuple(_) => self.tree(e),
-            Expr::Array(_) => self.tree(e),
-            Expr::StructLit { .. } => self.tree(e),
-            Expr::WhileLet { .. } => self.tree(e),
+            Expr::Lambda { .. } => {
+                self.emit(Op::Lambda(e), 0, 1);
+            }
+            Expr::FieldAccess { receiver, field } => self.field(e, receiver, field),
+            Expr::Index { .. } if tree_shape(e).is_some() => self.tree(e),
+            Expr::Index { receiver, index } => self.index(receiver, index),
+            Expr::Tuple(elems) => {
+                let n = self.exprs(elems.iter());
+                self.emit(Op::MakeTuple(n), n, 1);
+            }
+            Expr::Array(elems) => {
+                let n = self.exprs(elems.iter());
+                self.emit(Op::MakeArray(n), n, 1);
+            }
+            Expr::StructLit { fields, .. } => {
+                match self.res.record_lit(e).and_then(|lit| lit.empty.as_ref()) {
+                    Some(v) => {
+                        self.emit(Op::Const(v.clone()), 0, 1);
+                    }
+                    None => {
+                        let n = self.exprs(fields.iter().map(|(_, x)| x));
+                        self.emit(Op::Record(e), n, 1);
+                    }
+                }
+            }
             Expr::WithHandler { .. } => self.tree(e),
-            Expr::AssignTo { .. } => self.tree(e),
         }
     }
 
@@ -176,7 +200,13 @@ impl<'p> Compiler<'_, 'p> {
                 self.emit(op, 1, 0);
             }
             Expr::Assign { name, value } => self.assign(e, name, value),
+            Expr::AssignTo { place, value } => self.assign_to(place, value),
             Expr::While { cond, body } => self.while_(cond, body),
+            Expr::WhileLet {
+                pattern,
+                expr,
+                body,
+            } => self.while_let(pattern, expr, body),
             Expr::For {
                 var,
                 start,
@@ -409,6 +439,228 @@ impl<'p> Compiler<'_, 'p> {
         }
     }
 
+    /// Push the values of `elems` left to right; returns how many.
+    fn exprs(&mut self, elems: impl Iterator<Item = &'p Expr>) -> u32 {
+        let mut n = 0;
+        for x in elems {
+            self.expr(x);
+            n += 1;
+        }
+        n
+    }
+
+    /// `receiver.field` (`.N` included): an identifier receiver is read in
+    /// place (`field_in_place`), any other is evaluated, then `field_of`.
+    fn field(&mut self, e: &'p Expr, receiver: &'p Expr, field: &'p String) {
+        let f = self.res.sym(e, field);
+        if let Expr::Ident(name) = receiver {
+            let var = self.var(receiver, name);
+            self.emit(Op::FieldLocal { var, f, field }, 0, 1);
+        } else {
+            self.expr(receiver);
+            self.emit(Op::Field { f, field }, 1, 1);
+        }
+    }
+
+    /// `receiver[index]` (not `E[..]`/`Var[..]`, which stay on the tree), in
+    /// the `Index` arm's two paths: an identifier receiver is tested for a
+    /// binding before the index runs ([`Op::IndexLocal`] in one op when the
+    /// index is inline, else [`Op::IndexTest`] .. [`Op::IndexIdent`]); any
+    /// other receiver is evaluated, then the index ([`Op::IndexValue`]).
+    fn index(&mut self, receiver: &'p Expr, index: &'p Expr) {
+        if let Expr::Ident(name) = receiver {
+            let arr = self.var(receiver, name);
+            if let Some(idx) = self.inline(index) {
+                self.emit(Op::IndexLocal { arr, idx }, 0, 1);
+            } else {
+                self.emit(Op::IndexTest(arr), 0, 1);
+                self.expr(index);
+                self.emit(Op::IndexIdent(arr), 2, 1);
+            }
+            return;
+        }
+        self.expr(receiver);
+        self.expr(index);
+        self.emit(Op::IndexValue, 2, 1);
+    }
+
+    /// `place = value`, as the `AssignTo` arm: the value, then the index
+    /// expressions in `flatten_place`'s order (the outermost node first,
+    /// walking toward the root), each through `place_index`, then
+    /// `write_place`. A root that is not an identifier ends in the
+    /// `invalid assignment target` panic and is never evaluated.
+    fn assign_to(&mut self, place: &'p Expr, value: &'p Expr) {
+        self.expr(value);
+        if let Expr::Index { receiver, index } = place {
+            if let (Expr::Ident(name), Some(idx)) = (receiver.as_ref(), self.inline(index)) {
+                let base = self.var(receiver, name);
+                self.emit(Op::WriteIndexLocal { base, idx }, 1, 0);
+                return;
+            }
+        }
+        let mut steps = Vec::new();
+        let mut nidx = 0;
+        let mut cur = place;
+        let base = loop {
+            match cur {
+                Expr::Ident(name) => break Some(self.var(cur, name)),
+                Expr::FieldAccess { receiver, field } => {
+                    steps.push(PlaceStep::Field(self.res.sym(cur, field)));
+                    cur = receiver;
+                }
+                Expr::Index { receiver, index } => {
+                    self.expr(index);
+                    self.emit(Op::PlaceIndex, 1, 1);
+                    steps.push(PlaceStep::Index(0));
+                    nidx += 1;
+                    cur = receiver;
+                }
+                _ => break None,
+            }
+        };
+        match base {
+            Some(base) => {
+                steps.reverse();
+                let steps = steps.into_boxed_slice();
+                self.emit(Op::WritePlace { base, steps, nidx }, 1 + nidx, 0);
+            }
+            None => {
+                self.emit(Op::PlaceInvalid, 1 + nidx, 0);
+            }
+        }
+    }
+
+    /// `match subject { arms }`, as the `Match` arm runs it: the subject
+    /// first (kept on the stack under each arm), then per arm the scope,
+    /// `match_pattern`, the guard (true only for a plain `true`) and the
+    /// body; the arm's scope is popped on every way out of it. No arm taken:
+    /// the `no match arm matched` panic. An arm whose pattern, guard and
+    /// body bind nothing runs without the scope ([`binds`]).
+    fn match_(&mut self, subject: &'p Expr, arms: &'p [MatchArm]) {
+        self.expr(subject);
+        let mut ends = Vec::with_capacity(arms.len());
+        for arm in arms {
+            let scoped = pattern_binds(&arm.pattern)
+                || arm.guard.as_ref().is_some_and(expr_binds)
+                || expr_binds(&arm.body);
+            let head = self.emit(
+                Op::MatchArm {
+                    pat: &arm.pattern,
+                    scoped,
+                    next: 0,
+                },
+                0,
+                0,
+            );
+            self.scopes += scoped as u32;
+            let guard = arm.guard.as_ref().map(|g| {
+                self.expr(g);
+                self.emit(Op::Guard { scoped, next: 0 }, 1, 0)
+            });
+            self.expr(&arm.body);
+            self.scopes -= scoped as u32;
+            ends.push(self.emit(Op::MatchEnd { scoped, end: 0 }, 2, 1));
+            // The next arm starts with the subject alone on top again.
+            let next = self.here();
+            for at in std::iter::once(head).chain(guard) {
+                self.patch_to(at, next);
+            }
+        }
+        // `panic` never yields; the static height is the match's value's.
+        self.emit(Op::NoMatch, 1, 1);
+        let end = self.here();
+        for at in ends {
+            self.patch_to(at, end);
+        }
+    }
+
+    /// `while let pat = expr { body }`, as the `WhileLet` arm runs it: per
+    /// iteration the value, the pattern's scope and `match_pattern`, then
+    /// the body in a scope of its own (`run_loop_body`'s), both popped at
+    /// the end of the iteration. A pattern that binds nothing, or a body
+    /// that binds nothing, runs without that scope.
+    fn while_let(&mut self, pat: &'p Pattern, expr: &'p Expr, body: &'p [Stmt]) {
+        let scoped = pattern_binds(pat);
+        let body_scoped = binds(body);
+        let (scopes, height) = (self.scopes, self.height);
+        let head = self.here();
+        self.expr(expr);
+        let test = self.emit(
+            Op::WhileLet {
+                pat,
+                scoped,
+                body: body_scoped,
+                exit: 0,
+            },
+            1,
+            0,
+        );
+        let inner = scopes + scoped as u32 + body_scoped as u32;
+        self.scopes = inner;
+        let start = self.here();
+        for s in body {
+            self.stmt(&s.expr);
+        }
+        let end = self.emit(
+            Op::WhileLetNext {
+                scoped,
+                body: body_scoped,
+                head,
+            },
+            0,
+            0,
+        );
+        self.scopes = scopes;
+        let exit = self.here();
+        self.patch_to(test, exit);
+        self.loops.push(Loop {
+            start,
+            end,
+            scopes,
+            height,
+            brk: exit,
+            cont: end,
+            cont_scopes: inner,
+        });
+    }
+
+    /// `receiver.method(args)`, as the `MethodCall` arm: the receiver first;
+    /// a channel takes `chan_method` with the argument nodes
+    /// ([`Op::MethodRecv`]), any other receiver the compiled arguments, left
+    /// to right, and `impl_method`.
+    fn method_call(&mut self, receiver: &'p Expr, method: &'p str, args: &'p [Expr]) {
+        self.expr(receiver);
+        let recv = self.emit(
+            Op::MethodRecv {
+                method,
+                args,
+                done: 0,
+            },
+            0,
+            0,
+        );
+        for a in args {
+            self.expr(a);
+        }
+        let argc = args.len() as u32;
+        self.emit(Op::MethodCall { method, argc }, argc + 1, 1);
+        let done = self.here();
+        self.patch_to(recv, done);
+    }
+
+    /// Point the S3 op at `at` (an arm's or `while let`'s exit, a channel
+    /// method's skip) to `to`.
+    fn patch_to(&mut self, at: u32, to: u32) {
+        match &mut self.ops[at as usize] {
+            Op::MatchArm { next: t, .. }
+            | Op::Guard { next: t, .. }
+            | Op::MatchEnd { end: t, .. }
+            | Op::WhileLet { exit: t, .. }
+            | Op::MethodRecv { done: t, .. } => *t = to,
+            _ => unreachable!("vm: patching a non-S3 op"),
+        }
+    }
+
     /// `left op right`, pushing the result.
     fn binop(&mut self, op: &'p BinOp, left: &'p Expr, right: &'p Expr) {
         if matches!(op, BinOp::And | BinOp::Or) {
@@ -434,6 +686,9 @@ impl<'p> Compiler<'_, 'p> {
     fn branch(&mut self, cond: &'p Expr, kind: Cond, push: bool) -> u32 {
         if let Expr::BinOp { op, left, right } = cond {
             if !matches!(op, BinOp::And | BinOp::Or) {
+                if let Some(op) = self.branch_index(op, left, right, kind, push) {
+                    return op;
+                }
                 let (l, r, popped) = self.operands(left, right);
                 let op = op.clone();
                 return self.emit(branch_cmp(op, l, r, kind, push), popped, 0);
@@ -449,6 +704,55 @@ impl<'p> Compiler<'_, 'p> {
             1,
             0,
         )
+    }
+
+    /// [`Op::BranchIndexLocal`] or [`Op::BranchIndexInt`] for a condition
+    /// `name[i] op r` with `i` a local and `r` a local or an int literal (not
+    /// an `E[..]`/`Var[..]` read, which stays on the tree).
+    fn branch_index(
+        &mut self,
+        op: &BinOp,
+        left: &'p Expr,
+        right: &'p Expr,
+        cond: Cond,
+        push: bool,
+    ) -> Option<u32> {
+        let Expr::Index { receiver, index } = left else {
+            return None;
+        };
+        let (Expr::Ident(name), Some(Opnd::Local(idx))) = (receiver.as_ref(), self.inline(index))
+        else {
+            return None;
+        };
+        if tree_shape(left).is_some() {
+            return None;
+        }
+        let arr = self.var(receiver, name);
+        let op = op.clone();
+        let op = match self.inline(right)? {
+            Opnd::Local(r) => Op::BranchIndexLocal {
+                op,
+                arr,
+                idx,
+                r,
+                target: 0,
+                cond,
+                push,
+            },
+            Opnd::Int(r) => Op::BranchIndexInt {
+                op,
+                arr,
+                idx,
+                r,
+                target: 0,
+                cond,
+                push,
+            },
+            _ => return None,
+        };
+        // The slow path pushes the element, then pops it.
+        self.max_height = self.max_height.max(self.height + 1);
+        Some(self.emit(op, 0, 0))
     }
 
     /// The operands of a binary operation, left to right, and how many of
@@ -539,7 +843,9 @@ impl<'p> Compiler<'_, 'p> {
             | Op::BranchFalse { target: t, .. }
             | Op::BranchCmp { target: t, .. }
             | Op::BranchLocalInt { target: t, .. }
-            | Op::BranchLocalLocal { target: t, .. } => *t = here,
+            | Op::BranchLocalLocal { target: t, .. }
+            | Op::BranchIndexLocal { target: t, .. }
+            | Op::BranchIndexInt { target: t, .. } => *t = here,
             _ => unreachable!("vm: patching a non-branch op"),
         }
     }
@@ -595,6 +901,31 @@ fn binds(stmts: &[Stmt]) -> bool {
         });
     }
     hit
+}
+
+/// [`binds`] for one expression run in a scope of its own (a match arm's
+/// guard or body).
+fn expr_binds(e: &Expr) -> bool {
+    let mut hit = false;
+    crate::ast::walk_expr(e, &mut |e| {
+        hit |= matches!(
+            e,
+            Expr::Let { .. } | Expr::Own { .. } | Expr::RefBind { .. }
+        );
+    });
+    hit
+}
+
+/// Whether `match_pattern` can bind a name for `pat`: it binds only through
+/// an identifier pattern, nested ones included.
+fn pattern_binds(pat: &Pattern) -> bool {
+    match pat {
+        Pattern::Ident(_) => true,
+        Pattern::Wildcard | Pattern::Literal(_) | Pattern::None => false,
+        Pattern::Some(p) | Pattern::Ok(p) | Pattern::Err(p) => pattern_binds(p),
+        Pattern::Struct { fields, .. } => fields.iter().any(|(_, p)| pattern_binds(p)),
+        Pattern::Tuple(ps) => ps.iter().any(pattern_binds),
+    }
 }
 
 /// A compare-and-branch (target patched later), specialized as

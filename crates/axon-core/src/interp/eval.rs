@@ -212,15 +212,14 @@ fn fn_value(name: &str, arity: usize) -> Value {
     let params: Vec<String> = (0..arity).map(|i| format!("#{i}")).collect();
     let args = params.iter().map(|p| Expr::Ident(p.clone())).collect();
     Value::Closure(Rc::new(ClosureVal {
-        code: Rc::new(ClosureCode {
-            params: params.iter().map(|p| intern(p)).collect(),
-            body: Expr::Call {
+        code: Rc::new(ClosureCode::unresolved(
+            params.iter().map(|p| intern(p)).collect(),
+            Expr::Call {
                 callee: Box::new(Expr::Ident(name.to_string())),
                 args,
                 tier: None,
             },
-            param_base: None,
-        }),
+        )),
         captured: std::cell::RefCell::new(Vec::new()),
     }))
 }
@@ -291,60 +290,12 @@ impl<'p> Interp<'p> {
             // nested) chain of index / field accesses rooted at a variable —
             // e.g. `xs[i] = v`, `s.field = v`, `grid[i][j] = v`, `cfg.row[i] = v`.
             // Phase 1 flattens the place to (base ident, steps), evaluating index
-            // expressions; phase 2 walks the binding mutably and sets the leaf.
+            // expressions; phase 2 (`write_place`) walks the binding mutably and
+            // sets the leaf.
             Expr::AssignTo { place, value } => {
                 let v = self.eval(value, env)?;
                 let ((base, base_slot), steps) = self.flatten_place(place, env)?;
-                let mut slot = env.get_var_mut(base, base_slot).ok_or_else(|| {
-                    Flow::Panic(format!("assignment to undefined variable `{}`", sym_name(base)).into())
-                })?;
-                let (last, prefix) = steps
-                    .split_last()
-                    .ok_or_else(|| Flow::Panic("invalid assignment target".into()))?;
-                for step in prefix {
-                    slot = match (step, slot) {
-                        (PlaceStep::Field(f), Value::Struct(s)) => Rc::make_mut(s)
-                            .fields
-                            .get_mut(*f)
-                            .ok_or_else(|| {
-                                Flow::Panic(format!("no field `{}`", sym_name(*f)).into())
-                            })?,
-                        (PlaceStep::Index(i), Value::Array(items)) => {
-                            let n = items.len();
-                            // Copy-on-write: copies only if this array is shared
-                            // with another binding; a uniquely owned one is
-                            // written in place.
-                            Rc::make_mut(items).get_mut(*i).ok_or_else(|| {
-                                Flow::Panic(format!("index {i} out of bounds (len {n})").into())
-                            })?
-                        }
-                        (_, other) => {
-                            return panic(format!(
-                                "cannot index/field-assign into {}",
-                                other.type_name()
-                            ));
-                        }
-                    };
-                }
-                match (last, slot) {
-                    (PlaceStep::Field(f), Value::Struct(s)) => {
-                        // Copy-on-write, as for arrays: copies only if this
-                        // record is shared with another binding.
-                        Rc::make_mut(s).fields.insert(*f, v)
-                    }
-                    (PlaceStep::Index(i), Value::Array(items)) => {
-                        if *i >= items.len() {
-                            return panic(format!("index {i} out of bounds (len {})", items.len()));
-                        }
-                        Rc::make_mut(items)[*i] = v;
-                    }
-                    (_, other) => {
-                        return panic(format!(
-                            "cannot index/field-assign into {}",
-                            other.type_name()
-                        ));
-                    }
-                }
+                write_place(base, base_slot, &steps, v, env)?;
                 Ok(Value::Unit)
             }
 
@@ -525,51 +476,15 @@ impl<'p> Interp<'p> {
                 args,
             } => {
                 let recv = self.eval(receiver, env)?;
-                // Channel methods (cooperative, single-threaded): send pushes to
-                // the shared queue, recv pops from it, clone shares the handle.
                 if let Value::Chan(q) = &recv {
-                    return match method.as_str() {
-                        "send" => {
-                            let v = self.eval(&args[0], env)?;
-                            q.borrow_mut().push_back(v);
-                            Ok(Value::Unit)
-                        }
-                        "recv" => q.borrow_mut().pop_front().ok_or_else(|| {
-                            Flow::Panic(
-                                "recv on an empty channel — the interpreter runs `spawn` bodies \
-                                 eagerly, so a value must be sent before it is received"
-                                    .into(),
-                            )
-                        }),
-                        // Non-blocking pop. Returns `Some(v)` when a value is
-                        // available, `None` otherwise. Lets ASI loops poll a
-                        // channel without panicking on the empty case — useful
-                        // for fan-out workers where the consumer races the
-                        // producers and needs to know when results have stopped
-                        // coming, not just block on the first miss.
-                        "try_recv" => Ok(match q.borrow_mut().pop_front() {
-                            Some(v) => Value::Some(Box::new(v)),
-                            None => Value::None,
-                        }),
-                        // How many values are queued and unread. Useful with
-                        // try_recv for "drain everything available" loops, or
-                        // as a "did the workers do any work?" probe.
-                        "len" => Ok(Value::Int(q.borrow().len() as i64)),
-                        "clone" => Ok(Value::Chan(q.clone())),
-                        other => panic(format!("no method `{other}` on a channel")),
-                    };
+                    return self.chan_method(q, method, args, env);
                 }
                 let mut argv = Vec::with_capacity(args.len() + 1);
                 argv.push(recv);
                 for a in args {
                     argv.push(self.eval(a, env)?);
                 }
-                let tn = argv[0].type_name();
-                if let Some(f) = self.methods.get(&(tn.clone(), method.clone())) {
-                    self.call_fn(f, argv)
-                } else {
-                    panic(format!("no method `{method}` on type `{tn}`"))
-                }
+                self.impl_method(method, argv)
             }
 
             Expr::FieldAccess { receiver, field } => {
@@ -579,14 +494,7 @@ impl<'p> Interp<'p> {
                 let f = self.res.sym(expr, field);
                 if let Expr::Ident(name) = receiver.as_ref() {
                     let (s, slot) = self.res.var(receiver, name);
-                    let v = match env.get_var(s, slot) {
-                        Some(v) => v,
-                        None => match self.globals.get(&s) {
-                            Some(v) => v,
-                            None => return panic(format!("undefined identifier `{name}`")),
-                        },
-                    };
-                    return field_of(v, f, field);
+                    return self.field_in_place(s, slot, name, f, field, env);
                 }
                 let v = self.eval(receiver, env)?;
                 field_of(&v, f, field)
@@ -618,29 +526,12 @@ impl<'p> Interp<'p> {
                     let (s, slot) = self.res.var(receiver, name);
                     if env.get_var(s, slot).is_some() || self.globals.contains_key(&s) {
                         let idx = strict_int(self.eval(index, env)?)?;
-                        let arr = env.get_var(s, slot).or_else(|| self.globals.get(&s));
-                        return match arr {
-                            Some(Value::Array(items)) => {
-                                items.get(idx as usize).cloned().ok_or_else(|| {
-                                    Flow::Panic(format!("index {idx} out of bounds (len {})",
-                                    items.len()).into())
-                                })
-                            }
-                            Some(other) => {
-                                panic(format!("indexing non-array ({})", other.type_name()))
-                            }
-                            None => panic(format!("undefined identifier `{name}`")),
-                        };
+                        return self.index_in_place(s, slot, name, idx, env);
                     }
                 }
                 let arr = self.eval(receiver, env)?;
                 let idx = strict_int(self.eval(index, env)?)?;
-                match arr {
-                    Value::Array(items) => items.get(idx as usize).cloned().ok_or_else(|| {
-                        Flow::Panic(format!("index {idx} out of bounds (len {})", items.len()).into())
-                    }),
-                    other => panic(format!("indexing non-array ({})", other.type_name())),
-                }
+                index_value(arr, idx)
             }
 
             Expr::Array(elems) => {
@@ -666,101 +557,16 @@ impl<'p> Interp<'p> {
                 if let Some(v) = &lit.empty {
                     return Ok(v.clone());
                 }
-                // Fields are evaluated in source order; each value lands in
-                // its slot of the definition's order. R19 Slice B: a field
-                // declared as a non-i64 integer width is coerced to SizedInt.
-                let mut vals: Vec<(Sym, Value)> = Vec::with_capacity(lit.names.len());
-                if lit.in_order {
-                    for ((_, fexpr), &(_, width)) in fields.iter().zip(lit.slots.iter()) {
-                        let v = self.eval(fexpr, env)?;
-                        let v = match width {
-                            Some(w) => coerce_to_sized(v, w),
-                            None => v,
-                        };
-                        vals.push((lit.names[vals.len()], v));
-                    }
-                } else {
-                    let mut slots: Vec<Option<Value>> = vec![None; lit.names.len()];
-                    for ((_, fexpr), &(idx, width)) in fields.iter().zip(lit.slots.iter()) {
-                        let v = self.eval(fexpr, env)?;
-                        slots[idx as usize] = Some(match width {
-                            Some(w) => coerce_to_sized(v, w),
-                            None => v,
-                        });
-                    }
-                    vals.extend(
-                        lit.names
-                            .iter()
-                            .zip(slots)
-                            .map(|(&n, v)| (n, v.expect("every named field is given"))),
-                    );
+                // Fields are evaluated in source order; `finish_record` builds
+                // the value.
+                let mut vals = self.take_args(fields.len());
+                for (_, fexpr) in fields {
+                    vals.push(self.eval(fexpr, env)?);
                 }
-                let fields = Fields(vals);
-                let (sname, fields) = match lit.kind {
-                    RecordKind::Enum(enum_name, variant) => {
-                        return Ok(Value::Enum(Rc::new(EnumVal {
-                            enum_name,
-                            variant,
-                            fields,
-                        })));
-                    }
-                    RecordKind::Struct(sname) => (sname, fields),
-                };
-                // Phase 5: refinement obligations at struct CONSTRUCTION (the
-                // dual of the param/return checks), for non-constant values the
-                // checker (E1209) only discharges for constants. Two checks,
-                // both reusing the refinement-predicate evaluator with `_`
-                // bound to the relevant value. A whole-struct `where` lives on
-                // the TypeDef (not a RefineDef), so gate on the TypeDef having
-                // a refinement OR the program having named refinements (for
-                // refined fields), not on `refine_preds` alone.
-                if let Some(td) = self.structs.get(name.as_str()).copied() {
-                    if td.refinement.is_some() || !self.refine_preds.is_empty() {
-                        // (1) per-FIELD refinement: each field whose declared
-                        // type is a refinement must satisfy that predicate.
-                        for tf in &td.fields {
-                            if let crate::ast::AxonType::Named(rn) = &tf.ty {
-                                if let Some(pred) = self.refine_preds.get(rn.as_str()).copied() {
-                                    if let Some(fv) = fields.named(&tf.name) {
-                                        let mut pe = Env::new();
-                                        pe.define(SYM_UNDERSCORE, fv.clone());
-                                        if let Value::Bool(false) = self.eval(pred, &mut pe)? {
-                                            return Err(Flow::RefineViolation(
-                                                format!(
-                                                    "field `{}` of `{}` (= {}) violates the refinement \
-                                                     `{}` — the value does not satisfy the type's predicate",
-                                                    tf.name,
-                                                    name,
-                                                    display(fv),
-                                                    rn
-                                                )
-                                                .into(),
-                                            ));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        // (2) WHOLE-STRUCT refinement: `_` binds to the whole
-                        // instance and `_.field` projects, so build it first.
-                        if let Some(pred) = &td.refinement {
-                            let sv = Value::record(sname, fields);
-                            let mut pe = Env::new();
-                            pe.define(SYM_UNDERSCORE, sv.clone());
-                            if let Value::Bool(false) = self.eval(pred, &mut pe)? {
-                                return Err(Flow::RefineViolation(
-                                    format!(
-                                        "the constructed `{name}` violates its struct refinement \
-                                         — the value does not satisfy the type's predicate"
-                                    )
-                                    .into(),
-                                ));
-                            }
-                            return Ok(sv);
-                        }
-                    }
-                }
-                Ok(Value::record(sname, fields))
+                let v = self.finish_record(lit, name, &mut vals);
+                vals.clear();
+                self.recycle_args(vals);
+                v
             }
 
             Expr::Ok(e) => Ok(Value::Ok(Box::new(self.eval(e, env)?))),
@@ -783,31 +589,7 @@ impl<'p> Interp<'p> {
                 Ok(Value::Str(Rc::new(s)))
             }
 
-            Expr::Lambda { params, body, .. } => {
-                // A lambda inside an AST clone made at run time (a handler
-                // arm, a continuation replay) is not in the resolution table.
-                let unresolved;
-                let info = match self.res.lambda(expr) {
-                    Some(info) => info,
-                    None => {
-                        unresolved = LambdaInfo::of(params, body);
-                        &unresolved
-                    }
-                };
-                // AX-40: capture only the free variables bound here — not the
-                // whole environment. A free name that is not bound here (a
-                // global, a fn, a builtin) is reached the same way at call time.
-                let captured: Vec<(Sym, Value)> = info
-                    .captures
-                    .iter()
-                    .filter_map(|&(s, slot)| env.get_var(s, slot).map(|v| (s, v.clone())))
-                    .collect();
-                // T40: a SHARED, persistent capture cell — see Value::Closure.
-                Ok(Value::Closure(Rc::new(ClosureVal {
-                    code: Rc::clone(&info.code),
-                    captured: std::cell::RefCell::new(captured),
-                })))
-            }
+            Expr::Lambda { .. } => Ok(self.make_closure(expr, env)),
 
             Expr::Comptime(inner) => self.eval(inner, env),
 
@@ -848,6 +630,37 @@ impl<'p> Interp<'p> {
                 panic("select: no channel was ready (cooperative interpreter — send before select)")
             }
         }
+    }
+
+    /// The closure value of lambda node `expr` evaluated in `env`. Shared by
+    /// the `eval` arm and the bytecode engine (R50).
+    pub(super) fn make_closure(&self, expr: &Expr, env: &Env) -> Value {
+        // A lambda inside an AST clone made at run time (a handler
+        // arm, a continuation replay) is not in the resolution table.
+        let unresolved;
+        let info = match self.res.lambda(expr) {
+            Some(info) => info,
+            None => {
+                let Expr::Lambda { params, body, .. } = expr else {
+                    unreachable!("make_closure on a non-lambda node")
+                };
+                unresolved = LambdaInfo::of(params, body);
+                &unresolved
+            }
+        };
+        // AX-40: capture only the free variables bound here — not the
+        // whole environment. A free name that is not bound here (a
+        // global, a fn, a builtin) is reached the same way at call time.
+        let captured: Vec<(Sym, Value)> = info
+            .captures
+            .iter()
+            .filter_map(|&(s, slot)| env.get_var(s, slot).map(|v| (s, v.clone())))
+            .collect();
+        // T40: a SHARED, persistent capture cell — see Value::Closure.
+        Value::Closure(Rc::new(ClosureVal {
+            code: Rc::clone(&info.code),
+            captured: std::cell::RefCell::new(captured),
+        }))
     }
 
     /// Bind the evaluated value `v` of a `let`/`own`/`ref` (all three behave
@@ -944,6 +757,65 @@ impl<'p> Interp<'p> {
         }
         env.pop();
         Ok(LoopStep::Continue)
+    }
+
+    /// A method call on a channel receiver (R50 S3: extracted from the
+    /// `MethodCall` arm, which the vm's `MethodRecv` op shares). The argument
+    /// nodes are evaluated here, exactly as the arm always did: `send`
+    /// evaluates only `args[0]`, every other method none of them.
+    /// Cooperative and single-threaded: `send` pushes to the shared queue,
+    /// `recv` pops from it, `clone` shares the handle.
+    pub(super) fn chan_method(
+        &self,
+        q: &Rc<RefCell<VecDeque<Value>>>,
+        method: &str,
+        args: &[Expr],
+        env: &mut Env,
+    ) -> R {
+        match method {
+            "send" => {
+                let v = self.eval(&args[0], env)?;
+                q.borrow_mut().push_back(v);
+                Ok(Value::Unit)
+            }
+            "recv" => q.borrow_mut().pop_front().ok_or_else(|| {
+                Flow::Panic(
+                    "recv on an empty channel — the interpreter runs `spawn` bodies \
+                     eagerly, so a value must be sent before it is received"
+                        .into(),
+                )
+            }),
+            // Non-blocking pop. Returns `Some(v)` when a value is
+            // available, `None` otherwise. Lets ASI loops poll a
+            // channel without panicking on the empty case — useful
+            // for fan-out workers where the consumer races the
+            // producers and needs to know when results have stopped
+            // coming, not just block on the first miss.
+            "try_recv" => Ok(match q.borrow_mut().pop_front() {
+                Some(v) => Value::Some(Box::new(v)),
+                None => Value::None,
+            }),
+            // How many values are queued and unread. Useful with
+            // try_recv for "drain everything available" loops, or
+            // as a "did the workers do any work?" probe.
+            "len" => Ok(Value::Int(q.borrow().len() as i64)),
+            "clone" => Ok(Value::Chan(q.clone())),
+            other => panic(format!("no method `{other}` on a channel")),
+        }
+    }
+
+    /// A method call on any receiver but a channel, after the receiver
+    /// (`argv`'s first value) and then the arguments were evaluated left to
+    /// right (R50 S3: extracted from the `MethodCall` arm, shared with the
+    /// vm): the impl method registered for the receiver's type name, else
+    /// the no-method panic.
+    pub(super) fn impl_method(&self, method: &str, mut argv: impl CallArgs) -> R {
+        let tn = argv.values()[0].type_name();
+        if let Some(f) = self.methods.get(&(tn.clone(), method.to_string())) {
+            self.call_fn(f, argv)
+        } else {
+            panic(format!("no method `{method}` on type `{tn}`"))
+        }
     }
 
     /// R13 native FFI: dispatch a `M::fn(...)` call to the in-process native
@@ -1794,6 +1666,145 @@ impl<'p> Interp<'p> {
         }
     }
 
+    /// `name[idx]` on a variable bound locally or in `globals`, read in place
+    /// (R50 S2, the `Index` arm's in-place path): evaluating the variable
+    /// first would copy the whole array per element read, which makes
+    /// in-place algorithms over `&mut [T]` (AX-08) quadratic. The caller made
+    /// the existence test, then evaluated and converted the index
+    /// (`strict_int`).
+    pub(super) fn index_in_place(&self, s: Sym, slot: u32, name: &str, idx: i64, env: &Env) -> R {
+        match env.get_var(s, slot).or_else(|| self.globals.get(&s)) {
+            Some(Value::Array(items)) => items.get(idx as usize).cloned().ok_or_else(|| {
+                Flow::Panic(format!("index {idx} out of bounds (len {})", items.len()).into())
+            }),
+            Some(other) => panic(format!("indexing non-array ({})", other.type_name())),
+            None => panic(format!("undefined identifier `{name}`")),
+        }
+    }
+
+    /// `name.field` (`f` is `field` interned) on a variable receiver, read in
+    /// place (R50 S2, the `FieldAccess` arm's `Ident` path): only the field is
+    /// cloned, not the whole record. `get_var`, then `globals`, then the
+    /// undefined-identifier panic (no fn-as-value step), then `field_of`.
+    pub(super) fn field_in_place(
+        &self,
+        s: Sym,
+        slot: u32,
+        name: &str,
+        f: Sym,
+        field: &str,
+        env: &Env,
+    ) -> R {
+        let v = match env.get_var(s, slot) {
+            Some(v) => v,
+            None => match self.globals.get(&s) {
+                Some(v) => v,
+                None => return panic(format!("undefined identifier `{name}`")),
+            },
+        };
+        field_of(v, f, field)
+    }
+
+    /// The rest of a non-empty struct or enum literal `name { .. }` once its
+    /// field values are evaluated (R50 S2, the `StructLit` arm after field
+    /// evaluation): `vals` holds them in source order and is left holding
+    /// units. Each value lands in its slot of the definition's order, a field
+    /// declared as a non-i64 integer width is coerced to `SizedInt` (R19
+    /// Slice B), then an enum variant is built, or a struct after its
+    /// per-field and whole-struct refinement checks.
+    pub(super) fn finish_record(&self, lit: &RecordLit, name: &str, vals: &mut [Value]) -> R {
+        let take = |v: &mut Value, width: Option<IntWidth>| {
+            let v = std::mem::replace(v, Value::Unit);
+            match width {
+                Some(w) => coerce_to_sized(v, w),
+                None => v,
+            }
+        };
+        let mut out: Vec<(Sym, Value)> = Vec::with_capacity(lit.names.len());
+        if lit.in_order {
+            for (v, &(_, width)) in vals.iter_mut().zip(lit.slots.iter()) {
+                out.push((lit.names[out.len()], take(v, width)));
+            }
+        } else {
+            let mut slots: Vec<Option<Value>> = vec![None; lit.names.len()];
+            for (v, &(idx, width)) in vals.iter_mut().zip(lit.slots.iter()) {
+                slots[idx as usize] = Some(take(v, width));
+            }
+            out.extend(
+                lit.names
+                    .iter()
+                    .zip(slots)
+                    .map(|(&n, v)| (n, v.expect("every named field is given"))),
+            );
+        }
+        let fields = Fields(out);
+        let (sname, fields) = match lit.kind {
+            RecordKind::Enum(enum_name, variant) => {
+                return Ok(Value::Enum(Rc::new(EnumVal {
+                    enum_name,
+                    variant,
+                    fields,
+                })));
+            }
+            RecordKind::Struct(sname) => (sname, fields),
+        };
+        // Phase 5: refinement obligations at struct CONSTRUCTION (the
+        // dual of the param/return checks), for non-constant values the
+        // checker (E1209) only discharges for constants. Two checks,
+        // both reusing the refinement-predicate evaluator with `_`
+        // bound to the relevant value. A whole-struct `where` lives on
+        // the TypeDef (not a RefineDef), so gate on the TypeDef having
+        // a refinement OR the program having named refinements (for
+        // refined fields), not on `refine_preds` alone.
+        if let Some(td) = self.structs.get(name).copied() {
+            if td.refinement.is_some() || !self.refine_preds.is_empty() {
+                // (1) per-FIELD refinement: each field whose declared
+                // type is a refinement must satisfy that predicate.
+                for tf in &td.fields {
+                    if let crate::ast::AxonType::Named(rn) = &tf.ty {
+                        if let Some(pred) = self.refine_preds.get(rn.as_str()).copied() {
+                            if let Some(fv) = fields.named(&tf.name) {
+                                let mut pe = Env::new();
+                                pe.define(SYM_UNDERSCORE, fv.clone());
+                                if let Value::Bool(false) = self.eval(pred, &mut pe)? {
+                                    return Err(Flow::RefineViolation(
+                                                format!(
+                                                    "field `{}` of `{}` (= {}) violates the refinement \
+                                                     `{}` — the value does not satisfy the type's predicate",
+                                                    tf.name,
+                                                    name,
+                                                    display(fv),
+                                                    rn
+                                                )
+                                                .into(),
+                                            ));
+                                }
+                            }
+                        }
+                    }
+                }
+                // (2) WHOLE-STRUCT refinement: `_` binds to the whole
+                // instance and `_.field` projects, so build it first.
+                if let Some(pred) = &td.refinement {
+                    let sv = Value::record(sname, fields);
+                    let mut pe = Env::new();
+                    pe.define(SYM_UNDERSCORE, sv.clone());
+                    if let Value::Bool(false) = self.eval(pred, &mut pe)? {
+                        return Err(Flow::RefineViolation(
+                            format!(
+                                "the constructed `{name}` violates its struct refinement \
+                                         — the value does not satisfy the type's predicate"
+                            )
+                            .into(),
+                        ));
+                    }
+                    return Ok(sv);
+                }
+            }
+        }
+        Ok(Value::record(sname, fields))
+    }
+
     /// The rest of an identifier read once `get_var` found no local: a
     /// module-level `let`, then a top-level fn as a value, then the
     /// undefined-identifier panic. Shared by the `Ident` arm and the bytecode
@@ -2027,9 +2038,20 @@ fn eval_dist_cdf(dist: &Value, k: f64) -> Option<f64> {
     }
 }
 
+/// `arr[idx]` on an evaluated receiver (R50 S2, the `Index` arm's general
+/// path, after the index went through `strict_int`).
+pub(super) fn index_value(arr: Value, idx: i64) -> R {
+    match arr {
+        Value::Array(items) => items.get(idx as usize).cloned().ok_or_else(|| {
+            Flow::Panic(format!("index {idx} out of bounds (len {})", items.len()).into())
+        }),
+        other => panic(format!("indexing non-array ({})", other.type_name())),
+    }
+}
+
 /// `v.field` (`f` is `field` interned) for a struct/enum field or a tuple's
 /// `.N`: clones only the selected component.
-fn field_of(v: &Value, f: Sym, field: &str) -> R {
+pub(super) fn field_of(v: &Value, f: Sym, field: &str) -> R {
     let fields = match v {
         Value::Struct(s) => &s.fields,
         Value::Enum(e) => &e.fields,

@@ -21,6 +21,7 @@
 use super::eval::{
     binop_operands, cond_bool, logic_rhs, question, short_circuits, strict_int, Operand,
 };
+use super::eval::{field_of, index_value};
 use super::*;
 use crate::ast::{AxonType, UnaryOp};
 
@@ -126,7 +127,82 @@ impl Body<'_> {
     }
 }
 
-/// A `while` or `for` loop of a [`Body`]: where `break`/`continue` land.
+/// R50 S4: a lambda body's compiled code, kept in its `ClosureCode`
+/// (`compiled`) so it lives exactly as long as the body it was compiled from.
+/// No compiled code is stored in the `Interp`.
+pub(super) struct LambdaBody {
+    /// The trace name, `<owner>::lambda#<i>` (spec §3).
+    name: Box<str>,
+    /// Filled on the body's first run under `AXON_ENGINE=vm`. Its ops point
+    /// into the owning `ClosureCode::body` (`Tree` nodes, names, operands):
+    /// `'static` stands for that borrow, which [`LambdaBody::get`] hands out
+    /// only for as long as the code is borrowed. Dropping a `Body` reads
+    /// none of those pointers.
+    body: std::cell::OnceCell<Body<'static>>,
+}
+
+impl LambdaBody {
+    pub(super) fn new(name: String) -> LambdaBody {
+        LambdaBody {
+            name: name.into_boxed_str(),
+            body: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// The compiled body, once its first run compiled it.
+    #[inline(always)]
+    fn compiled(&self) -> Option<&Body<'_>> {
+        self.body.get()
+    }
+
+    /// The compiled body of `code`, whose `compiled` this is, compiled by
+    /// `init` on the first call.
+    fn get<'a>(
+        &'a self,
+        code: &'a ClosureCode,
+        init: impl FnOnce(&'a Expr) -> Body<'a>,
+    ) -> &'a Body<'a> {
+        debug_assert!(code
+            .compiled
+            .as_ref()
+            .is_some_and(|c| std::ptr::eq(c, self)));
+        self.body.get_or_init(|| {
+            let body = init(&code.body);
+            // SAFETY: `body` borrows only `code.body`, the body of the
+            // `ClosureCode` that owns `self`. A `ClosureCode` is only ever
+            // built inside an `Rc` and never moved out of it or mutated
+            // (sym.rs), so those nodes stay where they are until the code is
+            // dropped, and `self.body` is dropped with it. The extended
+            // lifetime never escapes: `get` returns the body at `'a` again,
+            // and `Body` is covariant in its lifetime.
+            unsafe { std::mem::transmute::<Body<'a>, Body<'static>>(body) }
+        })
+    }
+}
+
+impl Body<'_> {
+    /// R50 S4: the value of a lambda body that is one int or float operation
+    /// on locals and literals (`|acc, x| acc + x`), computed without an
+    /// activation of the op loop by the scalar fast path its `Bin` op tries
+    /// first (cost only). `None` for any other body, and wherever that fast
+    /// path declines (another operand type, overflow, a zero divisor); the
+    /// op loop then runs the body, panic included.
+    #[inline(always)]
+    fn leaf_value(&self, env: &Env) -> Option<Value> {
+        let [Op::Bin { op, l, r }] = &*self.ops else {
+            return None;
+        };
+        // A one-op body has no stack operand; `scalar_at` declines one.
+        let v = match (scalar_at(l, env, &[], 0)?, scalar_at(r, env, &[], 0)?) {
+            (Scalar::Int(a), Scalar::Int(b)) => int_fast(op, a, b)?,
+            (Scalar::Float(a), Scalar::Float(b)) => float_fast(op, a, b)?,
+            _ => return None,
+        };
+        Some(v.value())
+    }
+}
+
+/// A `while`, `while let` or `for` loop of a [`Body`]: where `break`/`continue` land.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Loop {
     /// Ops `start..end` are one iteration's statements (inside the scope the
@@ -387,6 +463,153 @@ pub(super) enum Op<'p> {
         argc: u32,
         tier: Option<&'p str>,
     },
+    // ── S2: aggregates, index and field reads, place writes ──
+    /// Pop `n` values (pushed left to right), push them as an array.
+    MakeArray(u32),
+    /// Pop `n` values (pushed left to right), push them as a tuple.
+    MakeTuple(u32),
+    /// A non-empty struct or enum literal (the `StructLit` node) after its
+    /// field values (pushed in source order): pop them into `finish_record`.
+    /// A literal whose resolution is `empty` compiles to [`Op::Const`].
+    Record(&'p Expr),
+    /// `name.field` on an identifier: `field_in_place`, push.
+    FieldLocal {
+        var: Var<'p>,
+        f: Sym,
+        field: &'p String,
+    },
+    /// Pop a receiver, push its `.field` (`field_of`).
+    Field {
+        f: Sym,
+        field: &'p String,
+    },
+    /// `name[i]` with an inline index (an identifier or a literal), as the
+    /// `Index` arm runs it: when `name` is bound locally or in `globals`, the
+    /// index (`strict_int`), then `index_in_place`; otherwise the `Ident`
+    /// chain's value for `name`, then the index, then `index_value`.
+    IndexLocal {
+        arr: Var<'p>,
+        idx: Opnd<'p>,
+    },
+    /// The head of `name[<index>]` with an index that needs ops of its own:
+    /// push a unit when `name` is bound locally or in `globals` (read in
+    /// place by [`Op::IndexIdent`]), else the `Ident` chain's value for it.
+    IndexTest(Var<'p>),
+    /// Pop the index (`strict_int`) and what [`Op::IndexTest`] pushed; push
+    /// `index_in_place` for a unit, else `index_value` of that value.
+    IndexIdent(Var<'p>),
+    /// Pop the index (`strict_int`) and the receiver; push `index_value`.
+    IndexValue,
+    /// Pop an index of a place being written, push it through `place_index`.
+    PlaceIndex,
+    /// A place write `base.. = v`: pop the indices [`Op::PlaceIndex`] pushed
+    /// (the base-most on top) and the value below them, then `write_place`
+    /// along `steps` (base to leaf; an `Index` step's number is a
+    /// placeholder filled from the stack). `nidx` counts the `Index` steps.
+    WritePlace {
+        base: Var<'p>,
+        steps: Box<[PlaceStep]>,
+        nidx: u32,
+    },
+    /// `base[i] = v` with an inline index: pop the value, read the index
+    /// (`place_index`), then `write_place` with that one step.
+    WriteIndexLocal {
+        base: Var<'p>,
+        idx: Opnd<'p>,
+    },
+    /// A place whose root is not an identifier, after its value and index
+    /// expressions: the `invalid assignment target` panic.
+    PlaceInvalid,
+    /// [`Op::BranchCmp`] on `name[i] op r` with `i` and `r` locals (`if a[j]
+    /// < pivot`): the read as [`Op::IndexLocal`] does it, then the compare.
+    /// An int element against an int compares without building a `Value`;
+    /// anything else pushes the element and takes `BranchCmp`'s path with a
+    /// stack left operand.
+    BranchIndexLocal {
+        op: BinOp,
+        arr: Var<'p>,
+        idx: Var<'p>,
+        r: Var<'p>,
+        target: u32,
+        cond: Cond,
+        push: bool,
+    },
+    /// [`Op::BranchIndexLocal`] with an int literal right operand (`if a[j]
+    /// == 0`).
+    BranchIndexInt {
+        op: BinOp,
+        arr: Var<'p>,
+        idx: Var<'p>,
+        r: i64,
+        target: u32,
+        cond: Cond,
+        push: bool,
+    },
+
+    // ── S3: match, while let, method calls ──
+    /// A `match` arm's head, the subject on top of the stack (it stays
+    /// there for the later arms): `env.push()` for the arm (when `scoped`),
+    /// then `match_pattern` binds into it; on no match, `env.pop()` and jump
+    /// to `next`, the next arm. A pattern error propagates with the arm's
+    /// scope counted, so it is popped as the `Match` arm pops it.
+    MatchArm {
+        pat: &'p Pattern,
+        scoped: bool,
+        next: u32,
+    },
+    /// Pop a match guard's value. Only a plain `true` takes the arm (no
+    /// unwrap, no panic: an `Uncertain<bool>` is false); otherwise
+    /// `env.pop()` of the arm's scope (when `scoped`) and jump to `next`.
+    Guard {
+        scoped: bool,
+        next: u32,
+    },
+    /// The end of a taken arm: `env.pop()` (when `scoped`), drop the subject
+    /// below the arm's value, jump to `end`.
+    MatchEnd {
+        scoped: bool,
+        end: u32,
+    },
+    /// No arm matched: the `no match arm matched` panic.
+    NoMatch,
+    /// A `while let` head after its value: pop it, `env.push()` (when
+    /// `scoped`), `match_pattern`; on no match `env.pop()` and jump to
+    /// `exit`, else `env.push()` for the body as `run_loop_body` does (when
+    /// `body`).
+    WhileLet {
+        pat: &'p Pattern,
+        scoped: bool,
+        body: bool,
+        exit: u32,
+    },
+    /// The end of a `while let` iteration: `env.pop()` of the body's scope
+    /// and then of the pattern's (each when pushed), jump to `head`.
+    WhileLetNext {
+        scoped: bool,
+        body: bool,
+        head: u32,
+    },
+    /// A method call after its receiver: a channel receiver is popped and
+    /// `chan_method` runs with the argument nodes (evaluating them as the
+    /// tree does), its value pushed, and control jumps to `done`, past the
+    /// arguments and [`Op::MethodCall`]. Any other receiver stays, and the
+    /// compiled arguments follow.
+    MethodRecv {
+        method: &'p str,
+        args: &'p [Expr],
+        done: u32,
+    },
+    /// Pop the receiver and `argc` arguments (pushed in that order) and call
+    /// `impl_method` with them in place on the stack.
+    MethodCall {
+        method: &'p str,
+        argc: u32,
+    },
+
+    // ── S4: lambdas ──
+    /// Push the closure a lambda node makes in this env (`make_closure`,
+    /// S4).
+    Lambda(&'p Expr),
 }
 
 /// The operand stack is malformed: the compiler pushed fewer values than an
@@ -470,6 +693,27 @@ fn for_enter(env: &mut Env, scopes: &mut u32, var: &Var<'_>, i: i64, scoped: boo
     if scoped {
         env.push();
         *scopes += 1;
+    }
+}
+
+/// The next `for` iteration's `env.pop()`, `env.push()` and loop-variable
+/// define in one write, when together they would change nothing but the
+/// variable's value: the variable's scope holds only the variable, an int,
+/// at the slot `define_var` would bind it to. `false` (nothing done) else.
+#[inline(always)]
+fn for_rebind(env: &mut Env, var: &Var<'_>, i: i64) -> bool {
+    let Some(&m) = env.marks.last() else {
+        return false;
+    };
+    if env.vars.len() != m + 1 || var.slot as usize != m {
+        return false;
+    }
+    match env.vars.last_mut() {
+        Some((s, Value::Int(n))) if *s == var.s => {
+            *n = i;
+            true
+        }
+        _ => false,
     }
 }
 
@@ -613,6 +857,92 @@ fn locals_fast(op: &BinOp, l: &Var<'_>, r: &Var<'_>, env: &Env) -> Option<Scalar
     }
 }
 
+/// The stack index of the first of the top `n` values.
+#[inline(always)]
+fn tail(st: &[Value], n: u32) -> usize {
+    match st.len().checked_sub(n as usize) {
+        Some(at) => at,
+        None => malformed(),
+    }
+}
+
+/// The int `arr[idx]` holds when the local `arr` holds an array, the local
+/// `idx` an int in its bounds, and the element is an int: what
+/// [`index_fast`] would read. `None` in every other case (nothing read out).
+#[inline(always)]
+fn index_int(env: &Env, arr: &Var<'_>, idx: &Var<'_>) -> Option<i64> {
+    let Value::Array(items) = env.get_var(arr.s, arr.slot)? else {
+        return None;
+    };
+    match items.get(local_int(env, idx)? as usize)? {
+        Value::Int(n) => Some(*n),
+        _ => None,
+    }
+}
+
+/// [`Op::IndexLocal`] when the local holds an array and the index is an int
+/// literal or a local holding an int that is in bounds: the element, as
+/// `index_in_place` reads it. `None` in every other case (nothing was read
+/// out); the slow path then runs the arm's whole protocol.
+#[inline(always)]
+fn index_fast(env: &Env, arr: &Var<'_>, idx: &Opnd<'_>) -> Option<Value> {
+    let Value::Array(items) = env.get_var(arr.s, arr.slot)? else {
+        return None;
+    };
+    let i = match idx {
+        Opnd::Int(n) => *n,
+        Opnd::Local(v) => match env.get_var(v.s, v.slot)? {
+            Value::Int(n) => *n,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    Some(match items.get(i as usize)? {
+        Value::Int(n) => Value::Int(*n),
+        Value::Float(f) => Value::Float(*f),
+        v => v.clone(),
+    })
+}
+
+/// [`Op::WritePlace`]: the steps with the indices on the stack filled in
+/// (the base-most index on top), then `write_place` with the value below
+/// them.
+#[inline(never)]
+fn write_place_op(
+    base: &Var<'_>,
+    steps: &[PlaceStep],
+    nidx: u32,
+    env: &mut Env,
+    st: &mut Vec<Value>,
+) -> Result<(), Flow> {
+    let at = tail(st, nidx + 1);
+    let mut top = st.len();
+    let mut fill = |s: &PlaceStep| match s {
+        PlaceStep::Index(_) => {
+            top -= 1;
+            match st[top] {
+                Value::Int(i) => PlaceStep::Index(i as usize),
+                _ => malformed(),
+            }
+        }
+        f => *f,
+    };
+    let mut small = [PlaceStep::Index(0); 8];
+    let large: Vec<PlaceStep>;
+    let filled: &[PlaceStep] = if steps.len() <= small.len() {
+        for (d, s) in small.iter_mut().zip(steps) {
+            *d = fill(s);
+        }
+        &small[..steps.len()]
+    } else {
+        large = steps.iter().map(fill).collect();
+        &large
+    };
+    let v = std::mem::replace(&mut st[at], Value::Unit);
+    st.truncate(at);
+    write_place(base.s, base.slot, filled, v, env)
+}
+
 impl<'p> Interp<'p> {
     /// Run a fn body: compiled under [`Engine::Vm`] for a fn-table entry, on
     /// the tree otherwise. `call_fn_in` is the only caller, at the point where
@@ -642,6 +972,53 @@ impl<'p> Interp<'p> {
         self.exec(body, env)
     }
 
+    /// Run a lambda body (S4): compiled under [`Engine::Vm`] for a code the
+    /// resolution table built, on the tree otherwise. `call_closure_owned_by`
+    /// is the only caller, with the env it built (captures, then the
+    /// parameters' scope); everything before and after the body stays there.
+    /// A `Flow::Return(v)` out of the body is its value `Ok(v)`.
+    #[inline(always)]
+    pub(super) fn run_lambda(&self, code: &ClosureCode, env: &mut Env) -> R {
+        if self.engine == Engine::Vm {
+            if let Some(body) = code.compiled.as_ref().and_then(|lb| lb.compiled()) {
+                if let Some(v) = body.leaf_value(env) {
+                    return Ok(v);
+                }
+                return self.exec(body, env);
+            }
+        }
+        self.run_lambda_cold(code, env)
+    }
+
+    /// [`Interp::run_lambda`] on the tree, or for a body's first run.
+    #[inline(never)]
+    fn run_lambda_cold(&self, code: &ClosureCode, env: &mut Env) -> R {
+        let out = match (self.engine, &code.compiled) {
+            (Engine::Tree, _) => self.eval(&code.body, env),
+            (Engine::Vm, None) => {
+                // No name and no compiled body: one line per code instance.
+                if self.vm_trace && !code.traced.replace(true) {
+                    eprintln!("vm: tree <anon>: unresolved lambda");
+                }
+                self.eval(&code.body, env)
+            }
+            (Engine::Vm, Some(lb)) => {
+                let body = lb.get(code, |src| {
+                    let body = compile(&self.res, src);
+                    if self.vm_trace {
+                        self.vm_trace_named(&lb.name, &body);
+                    }
+                    body
+                });
+                return self.exec(body, env);
+            }
+        };
+        match out {
+            Err(Flow::Return(v)) => Ok(v),
+            out => out,
+        }
+    }
+
     /// Execute `body` against `env` on an operand stack of its own (the
     /// frame's `Env::stack`, empty for a nested activation on the same frame).
     /// A `Flow::Break`/`Flow::Continue` out of an op in a
@@ -653,7 +1030,9 @@ impl<'p> Interp<'p> {
     /// name afterwards, spec §4 Execution). `Flow::Return(v)` ends the body
     /// with `Ok(v)`, which `call_fn_in` treats exactly as the
     /// `Err(Flow::Return(v))` the tree-walker's body yields; every other
-    /// `Flow` propagates unchanged.
+    /// `Flow` propagates unchanged. Inlined into each caller, so a fn call
+    /// does not pay a call into it (cost only).
+    #[inline(always)]
     pub(super) fn exec(&self, body: &Body<'_>, env: &mut Env) -> R {
         // A pooled frame's stack keeps the capacity it grew to; a new one
         // starts at the body's height so it does not regrow while the body
@@ -961,14 +1340,22 @@ impl<'p> Interp<'p> {
                     if *scoped {
                         pop_scope(env, scopes);
                     }
-                    pop_scope(env, scopes);
-                    let n = st.len();
-                    let Some(Value::Int(i)) = st.get_mut(n.wrapping_sub(2)) else {
+                    let [.., Value::Int(i), Value::Int(e)] = &mut st[..] else {
                         malformed()
                     };
                     *i += 1;
-                    let (i, e) = for_bounds(st);
-                    if if *inclusive { i <= e } else { i < e } {
+                    let (i, e) = (*i, *e);
+                    let more = if *inclusive { i <= e } else { i < e };
+                    if !more {
+                        pop_scope(env, scopes);
+                    } else if for_rebind(env, var, i) {
+                        if *scoped {
+                            env.push();
+                            *scopes += 1;
+                        }
+                        pc = *first as usize;
+                    } else {
+                        pop_scope(env, scopes);
                         for_enter(env, scopes, var, i, *scoped);
                         pc = *first as usize;
                     }
@@ -1031,6 +1418,212 @@ impl<'p> Interp<'p> {
                     let v = pop(st);
                     fmt_top(st).push_str(&display(&v));
                 }
+                Op::MakeArray(n) => {
+                    let at = tail(st, *n);
+                    let items: Vec<Value> = st.drain(at..).collect();
+                    st.push(Value::Array(Rc::new(items)));
+                }
+                Op::MakeTuple(n) => {
+                    let at = tail(st, *n);
+                    let items: Vec<Value> = st.drain(at..).collect();
+                    st.push(Value::tuple(items));
+                }
+                Op::Record(e) => {
+                    let v = tri!(self.record_op(e, st));
+                    st.push(v);
+                }
+                Op::FieldLocal { var, f, field } => {
+                    let v = tri!(self.field_in_place(var.s, var.slot, var.name, *f, field, env));
+                    st.push(v);
+                }
+                Op::Field { f, field } => {
+                    let r = pop(st);
+                    st.push(tri!(field_of(&r, *f, field)));
+                }
+                Op::IndexLocal { arr, idx } => {
+                    let v = match index_fast(env, arr, idx) {
+                        Some(v) => v,
+                        None => tri!(self.index_local_slow(arr, idx, env)),
+                    };
+                    st.push(v);
+                }
+                Op::IndexTest(var) => {
+                    let v = if self.bound_in_place(var, env) {
+                        Value::Unit
+                    } else {
+                        tri!(self.ident_unbound(var.name, var.s))
+                    };
+                    st.push(v);
+                }
+                Op::IndexIdent(var) => {
+                    let i = pop(st);
+                    let recv = pop(st);
+                    let i = tri!(strict_int(i));
+                    let v = match recv {
+                        Value::Unit => self.index_in_place(var.s, var.slot, var.name, i, env),
+                        recv => index_value(recv, i),
+                    };
+                    st.push(tri!(v));
+                }
+                Op::IndexValue => {
+                    let i = pop(st);
+                    let recv = pop(st);
+                    let i = tri!(strict_int(i));
+                    st.push(tri!(index_value(recv, i)));
+                }
+                Op::PlaceIndex => {
+                    let v = pop(st);
+                    let i = tri!(place_index(&v));
+                    st.push(Value::Int(i as i64));
+                }
+                Op::WritePlace { base, steps, nidx } => {
+                    tri!(write_place_op(base, steps, *nidx, env, st));
+                }
+                Op::WriteIndexLocal { base, idx } => {
+                    let v = pop(st);
+                    let i = tri!(self.place_index_opnd(idx, env));
+                    tri!(write_place(
+                        base.s,
+                        base.slot,
+                        &[PlaceStep::Index(i)],
+                        v,
+                        env
+                    ));
+                }
+                Op::PlaceInvalid => tri!(Err(Flow::Panic("invalid assignment target".into()))),
+                Op::BranchIndexLocal {
+                    op,
+                    arr,
+                    idx,
+                    r,
+                    target,
+                    cond,
+                    push,
+                } => {
+                    let fast =
+                        index_int(env, arr, idx).and_then(|a| int_fast(op, a, local_int(env, r)?));
+                    let b = match fast {
+                        Some(Scalar::Bool(b)) => b,
+                        Some(s) => tri!(cond_bool(s.value(), cond.word())),
+                        None => {
+                            let (idx, r) = (Opnd::Local(*idx), Opnd::Local(*r));
+                            tri!(self.branch_index_slow(op, arr, &idx, &r, *cond, env, st))
+                        }
+                    };
+                    if !b {
+                        pc = *target as usize;
+                    } else if *push {
+                        env.push();
+                        *scopes += 1;
+                    }
+                }
+                Op::BranchIndexInt {
+                    op,
+                    arr,
+                    idx,
+                    r,
+                    target,
+                    cond,
+                    push,
+                } => {
+                    let b = match index_int(env, arr, idx).and_then(|a| int_fast(op, a, *r)) {
+                        Some(Scalar::Bool(b)) => b,
+                        Some(s) => tri!(cond_bool(s.value(), cond.word())),
+                        None => {
+                            let (idx, r) = (Opnd::Local(*idx), Opnd::Int(*r));
+                            tri!(self.branch_index_slow(op, arr, &idx, &r, *cond, env, st))
+                        }
+                    };
+                    if !b {
+                        pc = *target as usize;
+                    } else if *push {
+                        env.push();
+                        *scopes += 1;
+                    }
+                }
+                Op::MatchArm { pat, scoped, next } => {
+                    if *scoped {
+                        env.push();
+                        *scopes += 1;
+                    }
+                    let Some(v) = st.last() else { malformed() };
+                    if !tri!(self.match_pattern(pat, v, env)) {
+                        if *scoped {
+                            pop_scope(env, scopes);
+                        }
+                        pc = *next as usize;
+                    }
+                }
+                Op::Guard { scoped, next } => {
+                    if !matches!(pop(st), Value::Bool(true)) {
+                        if *scoped {
+                            pop_scope(env, scopes);
+                        }
+                        pc = *next as usize;
+                    }
+                }
+                Op::MatchEnd { scoped, end } => {
+                    if *scoped {
+                        pop_scope(env, scopes);
+                    }
+                    let Some(at) = st.len().checked_sub(2) else {
+                        malformed()
+                    };
+                    drop(st.swap_remove(at));
+                    pc = *end as usize;
+                }
+                Op::NoMatch => {
+                    tri!(panic("no match arm matched"));
+                }
+                Op::WhileLet {
+                    pat,
+                    scoped,
+                    body,
+                    exit,
+                } => {
+                    let v = pop(st);
+                    if *scoped {
+                        env.push();
+                        *scopes += 1;
+                    }
+                    if tri!(self.match_pattern(pat, &v, env)) {
+                        if *body {
+                            env.push();
+                            *scopes += 1;
+                        }
+                    } else {
+                        if *scoped {
+                            pop_scope(env, scopes);
+                        }
+                        pc = *exit as usize;
+                    }
+                }
+                Op::WhileLetNext { scoped, body, head } => {
+                    if *body {
+                        pop_scope(env, scopes);
+                    }
+                    if *scoped {
+                        pop_scope(env, scopes);
+                    }
+                    pc = *head as usize;
+                }
+                Op::MethodRecv { method, args, done } => {
+                    if let Some(Value::Chan(_)) = st.last() {
+                        let Value::Chan(q) = pop(st) else { malformed() };
+                        st.push(tri!(self.chan_method(&q, method, args, env)));
+                        pc = *done as usize;
+                    }
+                }
+                Op::MethodCall { method, argc } => {
+                    let Some(at) = st.len().checked_sub(*argc as usize + 1) else {
+                        malformed()
+                    };
+                    // The receiver and arguments stay on the stack: the
+                    // callee's binder moves them from there.
+                    let v = self.impl_method(method, StackTail { st: &mut *st, at });
+                    st.push(tri!(v));
+                }
+                Op::Lambda(e) => st.push(self.make_closure(e, env)),
             }
         }
     }
@@ -1120,6 +1713,108 @@ impl<'p> Interp<'p> {
         })
     }
 
+    /// The `Index` arm's existence test: `name` is bound locally or in
+    /// `globals`, so `name[i]` reads it in place.
+    #[inline(always)]
+    fn bound_in_place(&self, var: &Var<'_>, env: &Env) -> bool {
+        env.get_var(var.s, var.slot).is_some() || self.globals.contains_key(&var.s)
+    }
+
+    /// The value an inline operand evaluates to, as `eval` evaluates its
+    /// node (an identifier through the `Ident` arm's whole chain).
+    fn opnd_value(&self, o: &Opnd<'_>, env: &Env) -> R {
+        match o {
+            Opnd::Local(var) => match env.get_var(var.s, var.slot) {
+                Some(v) => Ok(v.clone()),
+                None => self.ident_unbound(var.name, var.s),
+            },
+            Opnd::Int(n) => Ok(Value::Int(*n)),
+            Opnd::Float(f) => Ok(Value::Float(*f)),
+            Opnd::Const(v) => Ok(v.clone()),
+            Opnd::Stack => malformed(),
+        }
+    }
+
+    /// [`Op::BranchIndexLocal`] and [`Op::BranchIndexInt`] off their fast
+    /// path: push the element as [`Op::IndexLocal`] reads it, then
+    /// [`Op::BranchCmp`]'s path with a stack left operand.
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn branch_index_slow(
+        &self,
+        op: &BinOp,
+        arr: &Var<'_>,
+        idx: &Opnd<'_>,
+        r: &Opnd<'_>,
+        cond: Cond,
+        env: &Env,
+        st: &mut Vec<Value>,
+    ) -> Result<bool, Flow> {
+        let v = match index_fast(env, arr, idx) {
+            Some(v) => v,
+            None => self.index_local_slow(arr, idx, env)?,
+        };
+        st.push(v);
+        let l = Opnd::Stack;
+        match scalar_fast(op, &l, r, env, st) {
+            Some(Scalar::Bool(b)) => Ok(b),
+            Some(s) => cond_bool(s.value(), cond.word()),
+            None => self.cmp_slow(op, &l, r, cond, env, st),
+        }
+    }
+
+    /// [`Op::IndexLocal`] when [`index_fast`] declined: the `Index` arm's
+    /// two paths with the index node evaluated where the arm evaluates it.
+    #[inline(never)]
+    fn index_local_slow(&self, arr: &Var<'_>, idx: &Opnd<'_>, env: &Env) -> R {
+        if self.bound_in_place(arr, env) {
+            let i = strict_int(self.opnd_value(idx, env)?)?;
+            self.index_in_place(arr.s, arr.slot, arr.name, i, env)
+        } else {
+            let recv = self.ident_unbound(arr.name, arr.s)?;
+            let i = strict_int(self.opnd_value(idx, env)?)?;
+            index_value(recv, i)
+        }
+    }
+
+    /// An inline index of a place being written, through `place_index`.
+    #[inline(always)]
+    fn place_index_opnd(&self, o: &Opnd<'_>, env: &Env) -> Result<usize, Flow> {
+        match o {
+            Opnd::Int(n) if *n >= 0 => Ok(*n as usize),
+            Opnd::Local(var) => match env.get_var(var.s, var.slot) {
+                Some(v) => place_index(v),
+                None => place_index(&self.ident_unbound(var.name, var.s)?),
+            },
+            o => place_index(&self.opnd_value(o, env)?),
+        }
+    }
+
+    /// [`Op::Record`]: the literal's resolution (else resolved now, as the
+    /// `StructLit` arm does for a node outside the table), then its `empty`
+    /// value or `finish_record` over the field values on top of the stack.
+    #[inline(never)]
+    fn record_op(&self, e: &Expr, st: &mut Vec<Value>) -> R {
+        let Expr::StructLit { name, fields } = e else {
+            malformed()
+        };
+        let at = tail(st, fields.len() as u32);
+        let unresolved;
+        let lit = match self.res.record_lit(e) {
+            Some(lit) => lit,
+            None => {
+                unresolved = RecordLit::of(name, fields, &self.structs, &self.enums);
+                &unresolved
+            }
+        };
+        let v = match &lit.empty {
+            Some(v) => Ok(v.clone()),
+            None => self.finish_record(lit, name, &mut st[at..]),
+        };
+        st.truncate(at);
+        v
+    }
+
     /// `vm: tree <name>: <reason>` under `AXON_ENGINE=vm AXON_VM_TRACE=1`: a
     /// whole fn body runs on the tree-walker.
     pub(super) fn vm_trace_tree(&self, entry: &FnEntry<'_>, reason: &str) {
@@ -1131,7 +1826,12 @@ impl<'p> Interp<'p> {
     /// The per-body trace line and one `tree-op` line per `Tree` op, printed
     /// when a body is compiled (its first run).
     fn vm_trace_compiled(&self, entry: &FnEntry<'_>, body: &Body<'_>) {
-        let name = self.vm_body_name(entry);
+        self.vm_trace_named(&self.vm_body_name(entry), body);
+    }
+
+    /// [`Interp::vm_trace_compiled`] for the body named `name` (a fn's or a
+    /// lambda's, spec §3).
+    fn vm_trace_named(&self, name: &str, body: &Body<'_>) {
         eprintln!(
             "vm: {name} {} ops, {} tree nodes",
             body.ops.len(),

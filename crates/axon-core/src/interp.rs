@@ -666,18 +666,19 @@ impl Env {
     #[inline]
     fn clear(&mut self) {
         while let Some((_, v)) = self.vars.pop() {
-            match v {
-                Value::Int(_)
-                | Value::SizedInt { .. }
-                | Value::Float(_)
-                | Value::Bool(_)
-                | Value::Unit
-                | Value::None => std::mem::forget(v),
-                v => drop(v),
-            }
+            forget_scalar(v);
         }
         if !self.marks.is_empty() {
             self.marks.clear();
+        }
+    }
+    /// Drop the bindings from index `len` on, as `vars.truncate(len)` does,
+    /// forgetting scalars as [`Env::clear`] does (R50 S4, cost only).
+    #[inline]
+    fn release_to(&mut self, len: usize) {
+        while self.vars.len() > len {
+            let Some((_, v)) = self.vars.pop() else { break };
+            forget_scalar(v);
         }
     }
     fn define(&mut self, name: Sym, val: Value) {
@@ -788,10 +789,20 @@ impl Env {
             stack: Vec::new(),
         }
     }
-    /// The bindings of the base (outermost) scope.
-    fn base_scope(&self) -> &[(Sym, Value)] {
-        let end = self.marks.first().copied().unwrap_or(self.vars.len());
-        &self.vars[..end]
+}
+
+/// Drop a binding's value, forgetting a scalar (nothing to drop) instead of
+/// running `Value`'s drop glue on it (cost only).
+#[inline(always)]
+fn forget_scalar(v: Value) {
+    match v {
+        Value::Int(_)
+        | Value::SizedInt { .. }
+        | Value::Float(_)
+        | Value::Bool(_)
+        | Value::Unit
+        | Value::None => std::mem::forget(v),
+        v => drop(v),
     }
 }
 
@@ -1298,6 +1309,55 @@ impl CallArgs for StackTail<'_> {
     }
 }
 
+/// R50 S4: the arguments of a closure call, which
+/// [`Interp::call_closure_owned_by`] moves into the parameters' scope: a
+/// call's vector is drained (its owner reuses it), and a builtin's array of
+/// one or two values goes into the frame with no vector in between, so a
+/// builtin -> closure call allocates no argument vector (cost only).
+pub(super) trait ClosureArgs {
+    fn count(&self) -> usize;
+    /// Hand each argument, in order and with its index, to `bind`.
+    fn bind(self, bind: impl FnMut(usize, Value));
+}
+
+impl ClosureArgs for &mut Vec<Value> {
+    #[inline(always)]
+    fn count(&self) -> usize {
+        self.len()
+    }
+    #[inline(always)]
+    fn bind(self, mut bind: impl FnMut(usize, Value)) {
+        for (i, v) in self.drain(..).enumerate() {
+            bind(i, v);
+        }
+    }
+}
+
+impl ClosureArgs for [Value; 1] {
+    #[inline(always)]
+    fn count(&self) -> usize {
+        1
+    }
+    #[inline(always)]
+    fn bind(self, mut bind: impl FnMut(usize, Value)) {
+        let [a] = self;
+        bind(0, a);
+    }
+}
+
+impl ClosureArgs for [Value; 2] {
+    #[inline(always)]
+    fn count(&self) -> usize {
+        2
+    }
+    #[inline(always)]
+    fn bind(self, mut bind: impl FnMut(usize, Value)) {
+        let [a, b] = self;
+        bind(0, a);
+        bind(1, b);
+    }
+}
+
 /// The panic of a call to `f` with `got` arguments for a different number of
 /// parameters.
 #[cold]
@@ -1309,6 +1369,21 @@ fn arity_mismatch(f: &FnDef, got: usize) -> R {
         f.params.len(),
         got
     ))
+}
+
+/// The panic of calling `c`, a value that is not a closure.
+#[cold]
+#[inline(never)]
+fn not_callable(c: &Value) -> R {
+    panic(format!("value of type {} is not callable", c.type_name()))
+}
+
+/// The panic of a call to a lambda of `want` parameters with `got`
+/// arguments.
+#[cold]
+#[inline(never)]
+fn lambda_arity_mismatch(want: usize, got: usize) -> R {
+    panic(format!("lambda: expected {want} args, got {got}"))
 }
 
 /// Soft typing at the RETURN boundary: a fn declared `-> T` (a plain
@@ -2085,11 +2160,10 @@ impl SendValue {
                 body,
                 captured,
             } => Value::Closure(Rc::new(ClosureVal {
-                code: Rc::new(ClosureCode {
-                    params: params.iter().map(|p| intern(p)).collect(),
-                    body: *body,
-                    param_base: None,
-                }),
+                code: Rc::new(ClosureCode::unresolved(
+                    params.iter().map(|p| intern(p)).collect(),
+                    *body,
+                )),
                 // A closure that crossed the host boundary gets a FRESH capture
                 // cell: the SendValue path is a deep clone by construction (a
                 // shared cell is exactly what it cannot carry), so the two sides
@@ -3457,7 +3531,7 @@ impl<'p> Interp<'p> {
         }
     }
 
-    fn call_fn(&self, f: &'p FnDef, args: Vec<Value>) -> R {
+    fn call_fn(&self, f: &'p FnDef, args: impl CallArgs) -> R {
         match self.fn_of_def.get(&(f as *const FnDef as usize)) {
             Some(&i) => self.call_fn_entry(&self.fn_table[i as usize], args),
             None => self.call_fn_entry(&FnEntry::new(f, &self.fns), args),
@@ -4158,23 +4232,29 @@ impl<'p> Interp<'p> {
         Ok(result)
     }
 
-    fn call_closure(&self, c: Value, args: Vec<Value>) -> R {
-        self.call_closure_owned_by(&c, args, 1)
+    fn call_closure(&self, c: Value, mut args: Vec<Value>) -> R {
+        let out = self.call_closure_owned_by(&c, &mut args, 1);
+        self.recycle_args(args);
+        out
     }
 
     /// `f(..)` where `f` names a closure in the caller's env, `c` being a clone
     /// of that binding: the binding is the one reference to the capture cell
     /// besides `c` that the body can never reach (see `call_closure_owned_by`).
-    fn call_local_closure(&self, c: Value, args: Vec<Value>) -> R {
-        self.call_closure_owned_by(&c, args, 2)
+    fn call_local_closure(&self, c: Value, mut args: Vec<Value>) -> R {
+        let out = self.call_closure_owned_by(&c, &mut args, 2);
+        self.recycle_args(args);
+        out
     }
 
-    /// A builtin calling the closure it was passed: `c` is borrowed from the
-    /// builtin's argument slice, which nothing the body runs can reach, so a
-    /// closure that only that slot holds (a lambda written at the call) lends
-    /// its capture cell on every call (AX-40). Builtins must call through the
-    /// borrowed argument, not a clone of it, or the clone defeats the lend.
-    pub(super) fn call_closure_arg(&self, c: &Value, args: Vec<Value>) -> R {
+    /// A builtin calling the closure it was passed with arguments `args`:
+    /// `c` is borrowed from the builtin's argument slice, which nothing the
+    /// body runs can reach, so a closure that only that slot holds (a lambda
+    /// written at the call) lends its capture cell on every call (AX-40).
+    /// Builtins must call through the borrowed argument, not a clone of it,
+    /// or the clone defeats the lend.
+    #[inline]
+    pub(super) fn call_closure_arg(&self, c: &Value, args: impl ClosureArgs) -> R {
         self.call_closure_owned_by(c, args, 1)
     }
 
@@ -4183,17 +4263,23 @@ impl<'p> Interp<'p> {
     /// caller's binding for a call by local name — an `Env` is only ever
     /// visible to the frame evaluating it, since closures, fns, handler arms
     /// and continuation replays all run on their own (snapshot) envs.
-    fn call_closure_owned_by(&self, c: &Value, args: Vec<Value>, private_refs: usize) -> R {
+    ///
+    /// The arguments move into the parameters ([`ClosureArgs`]) and the env
+    /// is a pooled frame (its bindings, scope marks and operand stack keep
+    /// their capacity), so a call on the lent path allocates nothing (R50
+    /// S4, cost only). The body runs on the engine the `Interp` was built
+    /// with ([`Interp::run_lambda`]).
+    fn call_closure_owned_by(&self, c: &Value, args: impl ClosureArgs, private_refs: usize) -> R {
         let Value::Closure(cv) = c else {
-            return panic(format!("value of type {} is not callable", c.type_name()));
+            args.bind(|_, v| drop(v));
+            return not_callable(c);
         };
-        let (code, captured) = (&cv.code, &cv.captured);
-        if code.params.len() != args.len() {
-            return panic(format!(
-                "lambda: expected {} args, got {}",
-                code.params.len(),
-                args.len()
-            ));
+        let (code, captured) = (&*cv.code, &cv.captured);
+        let n = code.params.len();
+        if args.count() != n {
+            let got = args.count();
+            args.bind(|_, v| drop(v));
+            return lambda_arity_mismatch(n, got);
         }
         // Base scope = captured bindings; a fresh scope holds the parameters.
         // Assignments land in the base scope and are written back below, which
@@ -4209,47 +4295,52 @@ impl<'p> Interp<'p> {
         // a re-entrant call must see the cell as it stood before this call, and
         // this call's in-place writes would otherwise destroy that state.
         let lend = Rc::strong_count(cv) == private_refs;
-        // Lent, the cell's vector itself becomes the env (it comes back below
-        // with its capacity, so steady-state calls allocate nothing); copied,
-        // the env is sized for the params up front.
-        let mut env = Env::from_snapshot(if lend {
-            std::mem::take(&mut *captured.borrow_mut())
+        let mut env = self.take_frame();
+        if lend {
+            // The cell's vector becomes the frame's bindings and the frame's
+            // empty one waits in the cell; they swap back below, so both keep
+            // their capacity.
+            std::mem::swap(&mut env.vars, &mut *captured.borrow_mut());
         } else {
             let cell = captured.borrow();
-            let mut vars = Vec::with_capacity(cell.len() + code.params.len());
-            vars.extend_from_slice(&cell);
-            vars
-        });
-        env.push();
-        for (i, (p, a)) in code.params.iter().zip(args).enumerate() {
-            let slot = code.param_base.map_or(NAMED, |b| b + i as u32);
-            env.define_var(*p, slot, a);
+            env.vars.reserve(cell.len() + n);
+            env.vars.extend_from_slice(&cell);
         }
-        let out = match self.eval(&code.body, &mut env) {
-            Ok(v) => Ok(v),
-            Err(Flow::Return(v)) => Ok(v),
-            Err(other) => Err(other),
-        };
+        // The base scope (the cell's bindings) ends at `base`; a fresh scope
+        // holds the parameters. Slotted parameters are the next bindings, so
+        // they are pushed in place, as `define_var` would (cost only).
+        let base = env.vars.len();
+        env.push();
+        if code.param_base.map(|b| b as usize) == Some(base) {
+            let vars = &mut env.vars;
+            vars.reserve(n);
+            args.bind(|i, v| vars.push((code.params[i], v)));
+        } else {
+            let frame = &mut *env;
+            args.bind(|i, v| {
+                let slot = code.param_base.map_or(NAMED, |b| b + i as u32);
+                frame.define_var(code.params[i], slot, v);
+            });
+        }
+        let out = self.run_lambda(code, &mut env);
         // The base scope holds exactly the cell's bindings, in the cell's
         // order: a `let` introduced inside the body lives in a pushed scope and
         // must not leak into the capture, and a parameter shadowing a captured
         // name must not overwrite it either, which is why the params live in
         // their own pushed scope above.
-        {
+        if lend {
+            // The cell holds the frame's empty vector; swap the bindings back.
+            env.release_to(base);
+            std::mem::swap(&mut env.vars, &mut *captured.borrow_mut());
+        } else {
+            // A re-entrant call may have written the cell meanwhile; this
+            // call's write-back wins, as it always has.
             let mut cell = captured.borrow_mut();
-            if lend {
-                // The cell is empty; move the bindings back.
-                let base = env.base_scope().len();
-                env.vars.truncate(base);
-                *cell = std::mem::take(&mut env.vars);
-            } else {
-                // A re-entrant call may have written the cell meanwhile; this
-                // call's write-back wins, as it always has.
-                for ((_, slot), (_, v)) in cell.iter_mut().zip(env.base_scope()) {
-                    *slot = v.clone();
-                }
+            for ((_, slot), (_, v)) in cell.iter_mut().zip(&env.vars[..base]) {
+                *slot = v.clone();
             }
         }
+        self.give_frame(env);
         out
     }
 
@@ -4305,11 +4396,8 @@ impl<'p> Interp<'p> {
                     cur = receiver.as_ref();
                 }
                 Expr::Index { receiver, index } => {
-                    let idx = as_int(&self.eval(index, env)?)?;
-                    if idx < 0 {
-                        return Err(Flow::Panic(format!("negative index {idx}").into()));
-                    }
-                    steps.push(PlaceStep::Index(idx as usize));
+                    let idx = place_index(&self.eval(index, env)?)?;
+                    steps.push(PlaceStep::Index(idx));
                     cur = receiver.as_ref();
                 }
                 _ => return Err(Flow::Panic("invalid assignment target".into())),
@@ -4356,9 +4444,75 @@ fn type_name_of(ty: &crate::ast::AxonType) -> String {
 }
 
 /// One step of a flattened place expression (for nested place assignment).
+#[derive(Clone, Copy)]
 enum PlaceStep {
     Field(Sym),
     Index(usize),
+}
+
+/// An index of a place being written (`flatten_place`; R50 S2): any integer,
+/// a sized one included (`as_int`), and not negative.
+fn place_index(v: &Value) -> Result<usize, Flow> {
+    let idx = as_int(v)?;
+    if idx < 0 {
+        return Err(Flow::Panic(format!("negative index {idx}").into()));
+    }
+    Ok(idx as usize)
+}
+
+/// Phase 2 of a place assignment (the `AssignTo` arm; R50 S2): walk the
+/// binding of `base` along `steps` (base to leaf) mutably and set the leaf to
+/// `v`. Arrays and records are copy-on-write: a uniquely owned one is written
+/// in place, one shared with another binding is copied first.
+fn write_place(
+    base: Sym,
+    base_slot: u32,
+    steps: &[PlaceStep],
+    v: Value,
+    env: &mut Env,
+) -> Result<(), Flow> {
+    let mut slot = env.get_var_mut(base, base_slot).ok_or_else(|| {
+        Flow::Panic(format!("assignment to undefined variable `{}`", sym_name(base)).into())
+    })?;
+    let (last, prefix) = steps
+        .split_last()
+        .ok_or_else(|| Flow::Panic("invalid assignment target".into()))?;
+    for step in prefix {
+        slot = match (step, slot) {
+            (PlaceStep::Field(f), Value::Struct(s)) => Rc::make_mut(s)
+                .fields
+                .get_mut(*f)
+                .ok_or_else(|| Flow::Panic(format!("no field `{}`", sym_name(*f)).into()))?,
+            (PlaceStep::Index(i), Value::Array(items)) => {
+                let n = items.len();
+                Rc::make_mut(items).get_mut(*i).ok_or_else(|| {
+                    Flow::Panic(format!("index {i} out of bounds (len {n})").into())
+                })?
+            }
+            (_, other) => {
+                return panic(format!(
+                    "cannot index/field-assign into {}",
+                    other.type_name()
+                ));
+            }
+        };
+    }
+    match (last, slot) {
+        (PlaceStep::Field(f), Value::Struct(s)) => Rc::make_mut(s).fields.insert(*f, v),
+        (PlaceStep::Index(i), Value::Array(items)) => {
+            if *i >= items.len() {
+                return panic(format!("index {i} out of bounds (len {})", items.len()));
+            }
+            Rc::make_mut(items)[*i] = v;
+        }
+        (_, other) => {
+            return panic(format!(
+                "cannot index/field-assign into {}",
+                other.type_name()
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn as_int(v: &Value) -> Result<i64, Flow> {
