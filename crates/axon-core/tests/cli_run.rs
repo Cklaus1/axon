@@ -35100,6 +35100,27 @@ fn native_interpolation_refuses_a_type_it_cannot_render_with_e0910() {
 
 // ── R50: bytecode engine (`AXON_ENGINE`) ────────────────────────────────────
 
+/// R50: set `AXON_ENGINE` for `engine`: `tree`; `vm`, with `AXON_VM_EAGER=1`
+/// so every body runs compiled from its first entry (what the `vm_` tests
+/// pin: a body called once is still the compiled code under test); or
+/// `vm-default`, the shipping engine, which runs a body's first entry on the
+/// tree unless it holds a long loop (S9). Any other value is passed through
+/// as `AXON_ENGINE` itself, so the invalid-value test reaches the CLI check.
+fn vm_engine_env(c: &mut Command, engine: &str) {
+    let (name, eager) = match engine {
+        "tree" => ("tree", false),
+        "vm" => ("vm", true),
+        "vm-default" => ("vm", false),
+        other => (other, false),
+    };
+    c.env("AXON_ENGINE", name);
+    if eager {
+        c.env("AXON_VM_EAGER", "1");
+    } else {
+        c.env_remove("AXON_VM_EAGER");
+    }
+}
+
 /// R50: `axon run` on `src` under `engine` (`AXON_ENGINE`), with the VM trace
 /// on or off. Neither variable is inherited from the test's environment, so a
 /// suite run under an exported `AXON_ENGINE` exercises what each test names.
@@ -35108,7 +35129,8 @@ fn native_interpolation_refuses_a_type_it_cannot_render_with_e0910() {
 fn vm_run(tag: &str, src: &str, engine: &str, trace: bool) -> std::process::Output {
     let f = tmp_ax(&format!("vm_{tag}"), src);
     let mut c = axon();
-    c.arg("run").arg(&f).env("AXON_ENGINE", engine);
+    c.arg("run").arg(&f);
+    vm_engine_env(&mut c, engine);
     if trace {
         c.env("AXON_VM_TRACE", "1");
     } else {
@@ -35134,7 +35156,17 @@ fn vm_same_both_engines(tag: &str, src: &str) -> (Option<i32>, String, String) {
         String::from_utf8_lossy(&vm.stdout).into_owned(),
         String::from_utf8_lossy(&vm.stderr).into_owned(),
     );
-    assert_eq!(t, v, "[{tag}] AXON_ENGINE=tree vs AXON_ENGINE=vm");
+    assert_eq!(t, v, "[{tag}] AXON_ENGINE=tree vs AXON_ENGINE=vm (eager)");
+    let d = vm_run(tag, src, "vm-default", false);
+    let d = (
+        d.status.code(),
+        String::from_utf8_lossy(&d.stdout).into_owned(),
+        String::from_utf8_lossy(&d.stderr).into_owned(),
+    );
+    assert_eq!(
+        t, d,
+        "[{tag}] AXON_ENGINE=tree vs AXON_ENGINE=vm (default, S9)"
+    );
     t
 }
 
@@ -36250,9 +36282,9 @@ fn vm_fastcall_run(tag: &str, src: &str, engine: &str, trace: bool) -> std::proc
     let mut c = axon();
     c.arg("run")
         .arg(&f)
-        .env("AXON_ENGINE", engine)
         .env("AXON_AI_MOCK", "1")
         .env("XDG_CACHE_HOME", &cache);
+    vm_engine_env(&mut c, engine);
     if trace {
         c.env("AXON_VM_TRACE", "1");
     } else {
@@ -36278,7 +36310,9 @@ fn vm_fastcall_case(tag: &str, src: &str, slow: &[&str]) -> (Option<i32>, String
     };
     let tree = text(&vm_fastcall_run(tag, src, "tree", false));
     let vm = text(&vm_fastcall_run(tag, src, "vm", false));
-    assert_eq!(vm, tree, "[{tag}] engines differ");
+    assert_eq!(vm, tree, "[{tag}] engines differ (vm eager)");
+    let lazy = text(&vm_fastcall_run(tag, src, "vm-default", false));
+    assert_eq!(lazy, tree, "[{tag}] engines differ (vm default, S9)");
     let traced = text(&vm_fastcall_run(tag, src, "vm", true)).2;
     let got: Vec<&str> = traced
         .lines()
@@ -36648,4 +36682,101 @@ fn vm_superop_fib_overflow() {
             "[{tag}]"
         );
     }
+}
+
+// ── R50 S9: deferred compile (`vm_defer_`) ──────────────────────────────────
+
+/// R50 §4 S9: the default engine's trace on `src` as (bodies whose first
+/// entry ran on the tree, bodies compiled), in trace order.
+fn vm_defer_trace(tag: &str, src: &str) -> (Vec<String>, Vec<String>) {
+    let out = vm_run(tag, src, "vm-default", true);
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    let mut deferred = Vec::new();
+    let mut compiled = Vec::new();
+    for l in err.lines() {
+        if let Some(name) = l.strip_prefix("vm: defer ") {
+            deferred.push(name.to_string());
+        } else if let Some(rest) = l.strip_prefix("vm: ") {
+            if let Some((name, tail)) = rest.split_once(' ') {
+                if tail.ends_with(" tree nodes") {
+                    compiled.push(name.to_string());
+                }
+            }
+        }
+    }
+    (deferred, compiled)
+}
+
+/// R50 S9 red test (§8): a body with no long loop compiles on its second
+/// entry, its first running on the tree; a `while`, a `for` over a computed
+/// range or more than 32 iterations, or nested loops compile on the first.
+/// Before S9 every body compiled on its first entry and no `vm: defer` line
+/// existed.
+#[test]
+fn vm_defer_compiles_on_second_entry_unless_hot() {
+    let src = "fn once(n: i64) -> i64 { n + 1 }\n\
+               fn twice(n: i64) -> i64 { n * 2 }\n\
+               fn spin(n: i64) -> i64 {\n    let s = 0\n    let i = 0\n    while i < n {\n        s = s + i\n        i = i + 1\n    }\n    s\n}\n\
+               fn edge32() -> i64 {\n    let s = 0\n    for i in 0..32 { s = s + i }\n    s\n}\n\
+               fn edge33() -> i64 {\n    let s = 0\n    for i in 0..=32 { s = s + i }\n    s\n}\n\
+               fn ranged(n: i64) -> i64 {\n    let s = 0\n    for i in 0..n { s = s + i }\n    s\n}\n\
+               fn nested() -> i64 {\n    let s = 0\n    for i in 0..3 {\n        for j in 0..3 { s = s + i * j }\n    }\n    s\n}\n\
+               fn main() -> i64 {\n    println(to_str(once(1)))\n    println(to_str(twice(2) + twice(3)))\n    \
+               println(to_str(spin(10)))\n    println(to_str(edge32()))\n    println(to_str(edge33()))\n    \
+               println(to_str(ranged(4)))\n    println(to_str(nested()))\n    0\n}\n";
+    let (code, stdout, stderr) = vm_same_both_engines("defer_rule", src);
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "2\n10\n45\n496\n528\n6\n9\n"),
+        "{stderr}"
+    );
+    let (deferred, compiled) = vm_defer_trace("defer_rule", src);
+    assert_eq!(deferred, ["main", "once", "twice", "edge32"]);
+    assert_eq!(compiled, ["twice", "spin", "edge33", "ranged", "nested"]);
+    // `AXON_VM_EAGER=1` restores compile-on-first-entry for every body.
+    let eager = vm_run("defer_rule", src, "vm", true);
+    let err = String::from_utf8_lossy(&eager.stderr);
+    assert!(!err.contains("vm: defer "), "{err}");
+    for name in [
+        "main", "once", "twice", "spin", "edge32", "edge33", "ranged", "nested",
+    ] {
+        assert_eq!(vm_tree_nodes(&err, name), 0, "`{name}`:\n{err}");
+    }
+}
+
+/// R50 §4 S9: lambda bodies defer the same way, and `arr_fold` offers
+/// `fold_leaf` again after the second element, whose call compiled the body
+/// the first element ran on the tree.
+#[test]
+fn vm_defer_lambda_and_fold_leaf() {
+    let src = "fn main() -> i64 {\n    let inc = |x| x + 1\n    println(to_str(inc(1)))\n    \
+               let xs = arr_range(0, 10)\n    println(to_str(arr_fold(xs, 0, |acc: i64, x: i64| acc + x)))\n    0\n}\n";
+    let (code, stdout, stderr) = vm_same_both_engines("defer_lambda", src);
+    assert_eq!((code, stdout.as_str()), (Some(0), "2\n45\n"), "{stderr}");
+    let (deferred, compiled) = vm_defer_trace("defer_lambda", src);
+    assert_eq!(deferred, ["main", "main::lambda#0", "main::lambda#1"]);
+    assert_eq!(compiled, ["main::lambda#1"]);
+    let out = vm_run("defer_lambda", src, "vm-default", true);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.lines().any(|l| l == "vm: fold-leaf main::lambda#1"),
+        "{err}"
+    );
+}
+
+/// R50 §4 S9 with S8: a `&mut` call whose callee's first entry ran on the
+/// tree resolves its moves form only once the callee is compiled, and the
+/// array the callee writes is the caller's on every call.
+#[test]
+fn vm_defer_mutcall_after_tree_entry() {
+    let src = format!(
+        "{VM_SWAP_FN}fn main() -> i64 {{\n    let a = [1, 2, 3, 4]\n    let i = 0\n    while i < 5 {{\n        \
+         swap(&mut a, i % 4, (i + 1) % 4)\n        i = i + 1\n    }}\n    \
+         println(\"{{to_str(a[0])}} {{to_str(a[1])}} {{to_str(a[2])}} {{to_str(a[3])}}\")\n    0\n}}\n"
+    );
+    let (code, stdout, stderr) = vm_same_both_engines("defer_mutcall", &src);
+    assert_eq!((code, stdout.as_str()), (Some(0), "3 1 4 2\n"), "{stderr}");
+    let (deferred, compiled) = vm_defer_trace("defer_mutcall", &src);
+    assert_eq!(deferred, ["swap"]);
+    assert_eq!(compiled, ["main", "swap"]);
 }

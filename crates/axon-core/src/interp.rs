@@ -916,6 +916,9 @@ pub struct Interp<'p> {
     /// R50: `AXON_VM_TRACE=1`, read once at build. Only consulted under
     /// [`Engine::Vm`].
     vm_trace: bool,
+    /// R50 S9: `AXON_VM_EAGER=1`, read once at build: compile every body on
+    /// its first entry. Only consulted under [`Engine::Vm`].
+    vm_eager: bool,
     /// R9 corrigibility latch. `corrigible_halt()` sets this to `true`; once
     /// set it never clears (there is intentionally no resume builtin). While
     /// set, every call to an `@[corrigible]` fn is refused — its body never
@@ -3300,6 +3303,7 @@ impl<'p> Interp<'p> {
 
         // AX-18: fns and methods with their parameter syms, indexed by name
         // sym (fns only — a method is never called by bare name) and by def.
+        let res = Resolution::build(program, &structs, &enums);
         let mut fn_table = Vec::new();
         let mut fn_of_sym = FxHashMap::default();
         let mut fn_of_def = FxHashMap::default();
@@ -3322,6 +3326,7 @@ impl<'p> Interp<'p> {
                 // R50: a table entry is the only kind whose body is compiled.
                 fn_table.push(FnEntry {
                     compiled: Some(std::cell::OnceCell::new()),
+                    hot: res.hot_fn(f),
                     ..FnEntry::new(f, &fns)
                 });
             }
@@ -3331,7 +3336,7 @@ impl<'p> Interp<'p> {
         // and the active-handle field below are derived from it.
         let ambient = ambient_sandbox();
         Interp {
-            res: Resolution::build(program, &structs, &enums),
+            res,
             fn_table,
             fn_of_sym,
             fn_of_def,
@@ -3348,6 +3353,7 @@ impl<'p> Interp<'p> {
             max_depth: resolve_max_depth(),
             engine: vm::engine_at_build(),
             vm_trace: vm::trace_at_build(),
+            vm_eager: vm::eager_at_build(),
             corrigible_halted: Cell::new(false),
             enclosing_agent: RefCell::new(None),
             current_goal: RefCell::new(None),

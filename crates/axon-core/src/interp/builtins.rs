@@ -1853,13 +1853,15 @@ impl<'p> Interp<'p> {
                     };
                     acc = self.call_closure_arg(f, [acc, x])?;
                     i += 1;
-                    if i == 1 {
+                    if i <= 2 {
                         // R50 S7: under `AXON_ENGINE=vm`, the elements
-                        // after the first in registers when the closure's
+                        // after this one in registers when the closure's
                         // body is one pure tree, up to the first that
                         // declines; it and the rest take the call above
-                        // (cost only).
-                        i += self.fold_leaf(f, &xs[1..], &mut acc);
+                        // (cost only). Offered after the first element and
+                        // again after the second, whose call compiles a body
+                        // the first ran on the tree (S9).
+                        i += self.fold_leaf(f, &xs[i..], &mut acc);
                     }
                 }
                 ok!(acc);

@@ -12,7 +12,7 @@
 # crates/axon-core/tests/fixtures/vm_parity_skip.txt. An unlisted example that
 # `axon check` rejects fails the gate.
 #
-# Per file, four runs, each in a fresh working directory (always the same path
+# Per file, five runs, each in a fresh working directory (always the same path
 # per file, recreated empty, so path strings agree between runs) with its own
 # TMPDIR, XDG_CACHE_HOME (so its own provenance.jsonl) and AXON_AUDIT_LEDGER,
 # AXON_LEARNER_STATE=learner.state, AXON_BANDIT_STATE=bandit.state (relative),
@@ -21,12 +21,18 @@
 # absolute AXON_PATH (examples/stdlib:asi:modular:domain):
 #   1. AXON_ENGINE=tree, 2. AXON_ENGINE=tree — must agree, else the file keeps
 #      state the isolation does not reach (fail);
-#   3. AXON_ENGINE=vm — diffed against run 1: stdout, stderr, exit code, audit
-#      ledger and provenance.jsonl. The one normalisation: the `ts_ms` and
-#      `run_id` keys are dropped from every provenance row (wall-clock values
-#      the virtual clock does not reach);
-#   4. AXON_ENGINE=vm AXON_VM_TRACE=1 — not diffed (trace lines go to stderr);
-#      its `vm: ...` lines give the coverage counts and the lowered-list check.
+#   3. AXON_ENGINE=vm AXON_VM_EAGER=1 — every body compiled on its first entry
+#      (S9), so the compiled code of a body called once is exercised too;
+#      diffed against run 1: stdout, stderr, exit code, audit ledger and
+#      provenance.jsonl. The one normalisation: the `ts_ms` and `run_id` keys
+#      are dropped from every provenance row (wall-clock values the virtual
+#      clock does not reach);
+#   4. AXON_ENGINE=vm — the default deferred compile (S9: a body's first entry
+#      on the tree unless it holds a long loop); diffed against run 1 the same
+#      way;
+#   5. AXON_ENGINE=vm AXON_VM_EAGER=1 AXON_VM_TRACE=1 — not diffed (trace lines
+#      go to stderr); its `vm: ...` lines give the coverage counts and the
+#      lowered-list check.
 # Any run hitting the time limit fails the gate.
 #
 # Lowered-list check: a `vm: tree-op <name> <Variant>[(<shape>)]` line whose
@@ -55,7 +61,7 @@ cd "$ROOT"
 # of all its ancestors. Shapes that stay `Tree` permanently (`Call(struct-lit)`,
 # `Call(P)`, `Call(computed)`, `Index(E|Var)`) are never listed; a variant
 # listed bare does not cover its shapes, because tokens compare exactly.
-SLICES=(S0 S1 S2 S3 S4 S5 S7 S8) # landing order; the last one is the default
+SLICES=(S0 S1 S2 S3 S4 S5 S7 S8 S9) # landing order; the last one is the default
 declare -A SLICE_DEPS=(
   [S0]=""
   [S1]="S0"
@@ -65,6 +71,7 @@ declare -A SLICE_DEPS=(
   [S5]="S4"
   [S7]="S5" # §13: S4; it lands after S5, so S5's row applies too
   [S8]="S7" # §13: S5 and S7
+  [S9]="S8" # §13: S6 and S8
 )
 declare -A SLICE_LOWERED=(
   [S0]="" # S0 lowers nothing: every compiled body is exactly one Tree op
@@ -91,6 +98,10 @@ declare -A SLICE_LOWERED=(
   # `BranchReturn`, the frame-free `&mut` moves call) over already lowered
   # variants; no new variant.
   [S8]=""
+  # S9: deferred compile (a body's first entry on the tree unless it holds a
+  # long loop). It changes when a body compiles, not what it lowers; run 4
+  # above diffs the deferred path. Its `vm: defer` lines are not body lines.
+  [S9]=""
 )
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -164,17 +175,18 @@ normalise_provenance() {
   sed -E 's/^\{"ts_ms":-?[0-9]+,/{/; s/,"run_id":"([^"\\]|\\.)*"//'
 }
 
-# run_once <src> <base> <tag> <engine> [trace] — one isolated run into <base>/<tag>.
+# run_once <src> <base> <tag> <engine> [trace] [eager] — one isolated run into <base>/<tag>.
 run_once() {
-  local src="$1" base="$2" tag="$3" engine="$4" trace="${5:-}"
+  local src="$1" base="$2" tag="$3" engine="$4" trace="${5:-}" eager="${6:-}"
   local run="$base/run" out="$base/$tag"
   rm -rf "$run" "$out"
   mkdir -p "$run/tmp" "$run/cache" "$out"
   local -a extra=()
-  [ -n "$trace" ] && extra=(AXON_VM_TRACE=1)
+  [ -n "$trace" ] && extra+=(AXON_VM_TRACE=1)
+  [ -n "$eager" ] && extra+=(AXON_VM_EAGER=1)
   (
     cd "$run" &&
-      env -u AXON_VM_TRACE -u AXON_DUMP_BINDINGS -u AXON_DUMP_SHAPES -u AXON_RECORD -u AXON_REPLAY \
+      env -u AXON_VM_TRACE -u AXON_VM_EAGER -u AXON_DUMP_BINDINGS -u AXON_DUMP_SHAPES -u AXON_RECORD -u AXON_REPLAY \
         TMPDIR="$run/tmp" XDG_CACHE_HOME="$run/cache" AXON_AUDIT_LEDGER="$run/audit.ledger" \
         AXON_LEARNER_STATE=learner.state AXON_BANDIT_STATE=bandit.state \
         AXON_AI_MOCK=1 AXON_SEED=42 AXON_CLOCK=0:1 AXON_AUDIT_DETERMINISTIC=1 \
@@ -232,14 +244,21 @@ check_one() {
       first_diff "$base/A" "$base/B" "$d"; } >"$res"
     rm -rf "$base"; return
   fi
-  run_once "$src" "$base" V vm
-  if timed_out "$base/V"; then echo "FAIL timeout $rel: vm run hit the 30 s limit" >"$res"; rm -rf "$base"; return; fi
+  run_once "$src" "$base" V vm "" eager
+  if timed_out "$base/V"; then echo "FAIL timeout $rel: vm (eager) run hit the 30 s limit" >"$res"; rm -rf "$base"; return; fi
   d="$(differs "$base/A" "$base/V")"
   if [ -n "$d" ]; then
-    { echo "FAIL differ $rel: tree and vm differ ($d)"; first_diff "$base/A" "$base/V" "$d"; } >"$res"
+    { echo "FAIL differ $rel: tree and vm (eager) differ ($d)"; first_diff "$base/A" "$base/V" "$d"; } >"$res"
     rm -rf "$base"; return
   fi
-  run_once "$src" "$base" T vm trace
+  run_once "$src" "$base" D vm
+  if timed_out "$base/D"; then echo "FAIL timeout $rel: vm (default) run hit the 30 s limit" >"$res"; rm -rf "$base"; return; fi
+  d="$(differs "$base/A" "$base/D")"
+  if [ -n "$d" ]; then
+    { echo "FAIL differ $rel: tree and vm (default, deferred compile) differ ($d)"; first_diff "$base/A" "$base/D" "$d"; } >"$res"
+    rm -rf "$base"; return
+  fi
+  run_once "$src" "$base" T vm trace eager
   if timed_out "$base/T"; then echo "FAIL timeout $rel: vm trace run hit the 30 s limit" >"$res"; rm -rf "$base"; return; fi
   { echo "PASS"; grep '^vm: ' "$base/T/stderr"; } >"$res"
   rm -rf "$base"
