@@ -622,15 +622,18 @@ fn ai_policy_err<T>(msg: impl Into<String>) -> Result<T, Flow> {
 /// pushed scope (the base scope starts at 0 and has no mark).
 ///
 /// Flat rather than one `HashMap` per scope because a call frame holds a
-/// handful of names: a reverse linear scan beats hashing the name once per
-/// scope on every lookup, and pushing a scope allocates nothing. Semantics are
+/// handful of names, and pushing a scope allocates nothing. Semantics are
 /// the per-scope-map ones exactly — `define` replaces a same-named binding in
 /// the CURRENT scope (so a loop re-binding a name does not grow the stack) and
 /// shadows outer ones; lookups see the innermost binding first.
 ///
-/// Bindings are keyed by interned [`Sym`] (AX-18), so the scan compares
-/// integers; the evaluator gets a node's sym from [`Resolution`] without
-/// hashing or comparing the name.
+/// Each call frame (a fn call, a closure call) has its own `Env`, and a
+/// binding's index in `vars` is the frame SLOT [`Resolution`] gave it (AX-53),
+/// so a resolved variable access is `vars[slot]` — one index and one sym
+/// compare, independent of how many locals are in scope. Every binding keeps
+/// its sym, which serves code resolved by name ([`NAMED`]: a reverse scan,
+/// the innermost binding first), [`Env::snapshot`], and the fallback when a
+/// slot does not hold the expected binding.
 struct Env {
     vars: Vec<(Sym, Value)>,
     marks: Vec<usize>,
@@ -657,6 +660,28 @@ impl Env {
             None => self.vars.push((name, val)),
         }
     }
+    /// Bind `name` at frame slot `slot` (see [`Resolution::var`]), or by name
+    /// for [`NAMED`]. A slot is in the current scope (`Resolution` allocates
+    /// a scope's slots above every live one when the scope is entered), so
+    /// writing it replaces a same-named binding of this scope as `define`
+    /// does. A slot holding another binding (an env not laid out the way the
+    /// table assumed) falls back to `define`; the reads' fallback finds it.
+    #[inline]
+    fn define_var(&mut self, name: Sym, slot: u32, val: Value) {
+        let i = slot as usize;
+        let start = self.marks.last().copied().unwrap_or(0);
+        if slot == NAMED || i < start {
+            return self.define(name, val);
+        }
+        match self.vars.get_mut(i) {
+            Some(b) if b.0 == name || b.0 == SYM_NONE => *b = (name, val),
+            Some(_) => self.define(name, val),
+            None => {
+                self.vars.resize_with(i, || (SYM_NONE, Value::Unit));
+                self.vars.push((name, val));
+            }
+        }
+    }
     fn get(&self, name: Sym) -> Option<&Value> {
         self.vars
             .iter()
@@ -664,11 +689,23 @@ impl Env {
             .find(|(k, _)| *k == name)
             .map(|(_, v)| v)
     }
-    /// Update the nearest existing binding; returns false if none exists.
-    fn assign(&mut self, name: Sym, val: Value) -> bool {
-        match self.get_mut(name) {
-            Some(slot) => {
-                *slot = val;
+    /// The binding variable `name` resolved to `slot` (see
+    /// [`Resolution::var`]) reads: the slot's, if it holds `name`; none for
+    /// [`NOT_LOCAL`]; else the innermost binding of `name`.
+    #[inline]
+    fn get_var(&self, name: Sym, slot: u32) -> Option<&Value> {
+        match self.vars.get(slot as usize) {
+            Some((k, v)) if *k == name => Some(v),
+            _ if slot == NOT_LOCAL => None,
+            _ => self.get(name),
+        }
+    }
+    /// Update the binding [`Env::get_var`] reads; returns false if none exists.
+    #[inline]
+    fn assign_var(&mut self, name: Sym, slot: u32, val: Value) -> bool {
+        match self.get_var_mut(name, slot) {
+            Some(b) => {
+                *b = val;
                 true
             }
             None => false,
@@ -682,12 +719,24 @@ impl Env {
             .find(|(k, _)| *k == name)
             .map(|(_, v)| v)
     }
+    /// Mutable reference to the binding [`Env::get_var`] reads.
+    #[inline]
+    fn get_var_mut(&mut self, name: Sym, slot: u32) -> Option<&mut Value> {
+        let i = slot as usize;
+        if i < self.vars.len() && self.vars[i].0 == name {
+            return Some(&mut self.vars[i].1);
+        }
+        if slot == NOT_LOCAL {
+            return None;
+        }
+        self.get_mut(name)
+    }
     /// All visible bindings, each name once (inner shadows outer). Used to
     /// snapshot the environment a handler arm or continuation replay runs in.
     fn snapshot(&self) -> Vec<(Sym, Value)> {
         let mut out = Vec::with_capacity(self.vars.len());
         for (i, (k, v)) in self.vars.iter().enumerate() {
-            if !self.vars[i + 1..].iter().any(|(inner, _)| inner == k) {
+            if *k != SYM_NONE && !self.vars[i + 1..].iter().any(|(inner, _)| inner == k) {
                 out.push((*k, v.clone()));
             }
         }
@@ -1888,6 +1937,7 @@ impl SendValue {
                 code: Rc::new(ClosureCode {
                     params: params.iter().map(|p| intern(p)).collect(),
                     body: *body,
+                    param_base: None,
                 }),
                 // A closure that crossed the host boundary gets a FRESH capture
                 // cell: the SendValue path is a deep clone by construction (a
@@ -3399,7 +3449,7 @@ impl<'p> Interp<'p> {
             Some(Value::Int(n)) => Some(*n),
             _ => None,
         };
-        for ((p, a), s) in f.params.iter().zip(args).zip(params.iter()) {
+        for (i, ((p, a), s)) in f.params.iter().zip(args).zip(params.iter()).enumerate() {
             // Soft typing: `Uncertain<T>` is compatible with a plain-`T` parameter
             // (the checker allows it). If the declared param type is NOT itself a
             // soft wrapper but the argument IS one, unwrap to the inner value so
@@ -3422,7 +3472,8 @@ impl<'p> Interp<'p> {
             } else {
                 a
             };
-            env.define(*s, a);
+            // Parameter `i` lives in frame slot `i` (AX-53).
+            env.define_var(*s, i as u32, a);
         }
         // Phase 5: refinement-type PRECONDITIONS. A parameter `p: T where P`
         // desugars to a synthetic named refinement; the checker discharges P
@@ -3534,7 +3585,8 @@ impl<'p> Interp<'p> {
             };
             goal_met = if s >= spec.target { 1i64 } else { 0i64 };
         }
-        env.define(SYM_GOAL_MET, Value::Int(goal_met));
+        // `goal_met` follows the parameters (its slot in `Resolution`).
+        env.define_var(SYM_GOAL_MET, params.len() as u32, Value::Int(goal_met));
         // PROTOTYPE (RLM session option 2): when dumping bindings, run main's
         // top-level statements WITHOUT the extra block scope (eval_block pops
         // its scope before returning, discarding the locals), then capture the
@@ -3932,8 +3984,9 @@ impl<'p> Interp<'p> {
             vars
         });
         env.push();
-        for (p, a) in code.params.iter().zip(args) {
-            env.define(*p, a);
+        for (i, (p, a)) in code.params.iter().zip(args).enumerate() {
+            let slot = code.param_base.map_or(NAMED, |b| b + i as u32);
+            env.define_var(*p, slot, a);
         }
         let out = match self.eval(&code.body, &mut env) {
             Ok(v) => Ok(v),
@@ -3997,14 +4050,19 @@ impl<'p> Interp<'p> {
     }
 
     /// Flatten a place expression (`base.f[i].g …`) into the root variable's
-    /// sym and a base-to-leaf list of steps, evaluating any index expressions
-    /// now (so the later mutable walk holds no other borrow of `env`).
-    fn flatten_place(&self, place: &Expr, env: &mut Env) -> Result<(Sym, Vec<PlaceStep>), Flow> {
+    /// sym and frame slot and a base-to-leaf list of steps, evaluating any
+    /// index expressions now (so the later mutable walk holds no other borrow
+    /// of `env`).
+    fn flatten_place(
+        &self,
+        place: &Expr,
+        env: &mut Env,
+    ) -> Result<((Sym, u32), Vec<PlaceStep>), Flow> {
         let mut steps = Vec::new();
         let mut cur = place;
         let base = loop {
             match cur {
-                Expr::Ident(name) => break self.res.sym(cur, name),
+                Expr::Ident(name) => break self.res.var(cur, name),
                 Expr::FieldAccess { receiver, field } => {
                     steps.push(PlaceStep::Field(self.res.sym(cur, field)));
                     cur = receiver.as_ref();
