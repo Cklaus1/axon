@@ -236,15 +236,16 @@ g.pwd, g.grp = _pwd, _grp
 # a build uid that already owns running processes
 reset()
 import subprocess as sp
-child = sp.Popen(["/usr/bin/setpriv", "--reuid=4322", "--regid=4322", "--clear-groups", "/usr/bin/sleep", "30"])
+SLEEPER = int(os.environ["GBE_UID2"])
+child = sp.Popen(["/usr/bin/setpriv", "--reuid=%d" % SLEEPER, "--regid=%d" % SLEEPER, "--clear-groups", "/usr/bin/sleep", "30"])
 import time
 for _ in range(100):
-    if g.build_uid_pids(4322):
+    if g.build_uid_pids(SLEEPER):
         break
     time.sleep(0.05)
-chk("foreign processes: a build uid that already owns processes is refused", g.foreign_process_problem(4322), "already owns running processes")
+chk("foreign processes: a build uid that already owns processes is refused", g.foreign_process_problem(SLEEPER), "already owns running processes")
 g.LOCK_DIR = os.path.join(S, "svc-locks")
-os.environ["AXON_GUEST_BUILD_UID"] = "4322"
+os.environ["AXON_GUEST_BUILD_UID"] = str(SLEEPER)
 def lock_refused():
     r = run(g.build_uid_lock)
     if isinstance(r, int):
@@ -253,9 +254,9 @@ def lock_refused():
 chk("foreign processes: the per-uid lock refuses a build uid that already owns processes", lock_refused(), "already owns running processes")
 child.kill(); child.wait()
 for _ in range(100):
-    if not g.build_uid_pids(4322):
+    if not g.build_uid_pids(SLEEPER):
         break
     time.sleep(0.05)
-chk("foreign processes: control, none left", g.foreign_process_problem(4322), "")
+chk("foreign processes: control, none left", g.foreign_process_problem(SLEEPER), "")
 chk("foreign processes: control, the per-uid lock is taken once the uid owns none", lock_refused(), "locked")
 os.environ.pop("AXON_GUEST_BUILD_UID", None)

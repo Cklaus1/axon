@@ -5942,8 +5942,7 @@ are untouched. The inventory below is the same one the reviewer read; every clai
    building a COMMAND STRING out of the kit, `--apply` or a build verb is refused where it is made; `--apply` under ANY
    unlisted wrapper is refused; a variable assigned a real destination is a destination when a mutator names it; a
    redirection into a real destination is a write EVEN ON AN `ns_run` COMMAND (the outer shell opens it before any wrapper
-   runs); python write literals under a real destination are refused unless wrapped. `--selftest` now plants 48 must-flag
-   shapes (the 17 of amendment 97, the nine above and the wrappers `nice ionice stdbuf chrt taskset timeout env setsid sudo
+   runs); python write literals under a real destination are refused unless wrapped. `--selftest` now plants its must-flag shapes (the count is derived, amendment 111; the 17 of amendment 97, the nine above and the wrappers `nice ionice stdbuf chrt taskset timeout env setsid sudo
    command exec nohup xargs su systemd-run`, `bash -c`, chained aliases, an alias of the file name) and 13 controls
    (wrapped aliases, read-only mentions, wrapped redirects to scratch). Rows M2637-M2644, each killed by its own named shape.
    Known false positive, conservative: a quoted kit command spread over several physical lines is judged line by line
@@ -6659,8 +6658,7 @@ claimed. Mutation ids M2880-M2909, matrix rows A232-A238 (renumbered at integrat
    outside the fixture's line, `OPKIT_RW` naming a non-scratch path and the helper's internal knobs are refused in any test
    script but `test_opkit_ns.sh`; the self-test's own `--child` block is the one exempt region. Real changes to the tests the
    gate now forces: `ns_run python3 - "$KIT"` (the drift test of amendment 90), the `.sig` fixture written by the python that
-   writes the record, no `rm` of a canary in `/opt`. `--selftest`: 48 + 40 must-flag shapes (every shape of the finding plus the
-   others above), 13 + 9 controls.
+   writes the record, no `rm` of a canary in `/opt`. `--selftest`: every shape of the finding plus the others above is a must-flag shape, and the controls are listed (counts derived, amendment 111).
 4. **Service-account discovery, outside the shipped deployment.** It reads the LISTED shapes and fails closed on the rest (amendment 109 adds the shapes a reviewer found it missed). Fail-closed additions: TOML, YAML, env and `key value` files
    under `/etc/axon` (every `key = value`, `key: value`, `KEY=value` and `- item` line is read with the same key classes; a text
    file that mentions `uid`/`gid` and yields no identity REFUSES); JSON keys `user owner run_as principal id group` ... (soft keys:
@@ -6779,8 +6777,7 @@ other branches). Base `915054b8` (integrate11). `crates/axon-core/src` is untouc
    (an alias made by `K=$(echo $KIT)` with `--ap""ply`, run directly or in a function; `command -p bash`; `alias`; `${P@P}`; a
    printf-built command string passed to `eval`; `eval "$(echo <base64> | base64 -d)"` and `bash -c "$(echo <base64> | base64 -d)"`;
    a script written by an unwrapped `printf ... >$W/s.sh` and then run; a function file written and then sourced; a fake heredoc
-   marker in an assignment, `X="<<EOF"`). All 14 are now flagged and are `--selftest` must-flag shapes; the gate now carries
-   **145 must-flag shapes and 32 controls** (it carried 96 and 23; amendment 105 and the matrix row A236 quote an older 88) and the real scripts stay clean. What `check_text` adds, in a file
+   marker in an assignment, `X="<<EOF"`). All 14 are now flagged and are `--selftest` must-flag shapes; the gate now carries more must-flag shapes and controls than amendment 105 or the matrix row A236 quoted (those numbers had gone stale; no document quotes a count except amendment 111, and a test compares it) and the real scripts stay clean. What `check_text` adds, in a file
    that mentions the helper, the kit, `--apply` or a build verb, for a command that is not itself `ns_run`/`kit`/`inns`:
    - **normalisation first**: the text is also judged with quote tricks inside a word removed (`--ap""ply`, `-"-"apply`, `--a\pply`)
      and ANSI-C strings decoded (`$'--apply'`), so `--apply` held in a variable is `--apply`;
@@ -6797,8 +6794,7 @@ other branches). Base `915054b8` (integrate11). `crates/axon-core/src` is untouc
      `echo "<<EOF"` and `X='<<EOF'` are no longer heredocs, so the lines after them are judged as the commands they are.
    Real changes this forced in `test_opkit_ns.sh` (the helper's own self-test, which owns the one exempt `--child` region): the python
    that makes a socket or a pty for fd 0, and the `mknod` of a scratch node, live in `--child` modes.
-   **The wording is corrected everywhere it was wrong**: this gate is a BEST-EFFORT SECOND LAYER that flags the shapes it lists (145
-   must-flag shapes at this commit; `--selftest` prints the count), NOT a deny-by-default guarantee. *A test script that wants to evade
+   **The wording is corrected everywhere it was wrong**: this gate is a BEST-EFFORT SECOND LAYER that flags the shapes it lists (`--selftest` prints the count of must-flag shapes), NOT a deny-by-default guarantee. *A test script that wants to evade
    a textual gate can; the gate catches mistakes, not intent.* The boundary that matters is the namespace and the helper's proof.
    Corrected in: amendment 105's title and item 3 (a "Corrected by amendment 109" note stands under the heading), the matrix row A236,
    the `opkit_ns_drift.py` header, the `opkit_ns.sh` header and the operator runbook.
@@ -6847,7 +6843,7 @@ other branches). Base `915054b8` (integrate11). `crates/axon-core/src` is untouc
    unlisted. Not executed by anyone, and stated in the header: the retained capabilities as an escape attempt, a hostile
    `CAP_SYS_ADMIN` step.
 
-**What is not done, stated.** (a) The drift gate remains a text matcher; the 145 shapes are the ones known. (b) `service_ids` has no
+**What is not done, stated.** (a) The drift gate remains a text matcher; its shapes are the ones known. (b) `service_ids` has no
 text-key row for the unclassified-key refusal (the JSON twin has M3108; the text one is observed by its case and exempted in
 `PY_EXEMPT`, `_text_ids` 1) and no row for the root check at the top of `ns_run` (an ordinary uid is refused by `unshare` in any
 case: the 97 is the same, so no test can tell them apart). (c) Rows for `peel` (`command`/`builtin`), a literal program given to
@@ -6871,3 +6867,87 @@ failure of `M2221` on gpumaster, and a failure of `the_build_uid_lock_is_root_ow
 the same cross-test/host interference: a process of build uid 4242 owned by a concurrent test or another session when the lock test
 counts them. Reproduced on the BASE commit `915054b8` (3 of 14 runs failed identically), so it is not this change; the lock test passes
 alone 6 of 6 and M2221 passes when re-run. It is a flaky test of the existing suite and is reported, not fixed here.
+
+## Amendment 111: the lock test cannot collide with a host process; the peel, literal-eval, alias and text-key guards are rowed; quoted counts are derived; the capability probes the header called unexecuted are executed (C9 round 12, buildenv9)
+
+111. **Source: the buildenv8 leftovers (amendment 109, "what is not done").** Branch `c9r12/buildenv9`, base `40f720fe`. Mutation ids
+M3180-M3196, matrix rows A257-A262 (the integrator renumbers). `crates/axon-core/src` is untouched; `v022_refusal_coverage.py` changed
+only by dropping one exemption that a new row now covers.
+
+1. **The flaky lock test, reproduced through its exact path and fixed at the test design.** `the_build_uid_lock_is_root_owned_and_begin_holds_it`
+   took the literal build uid 4242; `begin` refuses a build uid that "already owns running processes" by reading the HOST /proc
+   (`build_uid_pids`). Reproduced with `setpriv --reuid=4242 sleep 120` alive: `refused: AXON_GUEST_BUILD_UID 4242 may not be the build uid: it
+   already owns running processes [pid]` at the test's first control; with the sleeper killed it passes. Nothing in the `guest_build_env`
+   binary runs a process as 4242; the processes come from other binaries and runs on a shared host (`readiness.rs` `setpriv --reuid=4242`,
+   the guards binary's own `ids_user` case, which runs as 4242, and any concurrent agent). The lock test now takes its uid from
+   `crates/axon-fabric/tests/uid_claim/mod.rs` (the `UidClaim` that `guest_build_env.rs` already used for its other 37 tests, moved to one
+   module both binaries include): an exclusive flock on a root-owned file per candidate uid in 40000-59999, taken only if no process of
+   that uid exists. The guards binary's `ids_user` case runs as a claimed uid (`GBE_UID`) and its 30-second `sleep` as another
+   (`GBE_UID2`), instead of the literals 4242, 4243 and 4322. `no_test_gives_a_process_or_the_build_uid_a_literal_uid` refuses a
+   literal `--reuid=N` or `AXON_GUEST_BUILD_UID` N in `guest_build_env.rs`, `guest_build_env_guards.rs` and every case file (it plants the
+   shapes first, so a scan that sees nothing fails). The production guard (`foreign_process_problem`, M2659) and the lock rows
+   (M2507-M2510) are untouched. **Audit of every other uid literal in `crates/axon-fabric/tests/*.rs`:** the only code in the suite that
+   reads /proc by uid is `build_uid_pids`, reached only by `guest_build_env.rs` and the guards binary; the 4242/4243/65534 literals elsewhere
+   (`readiness.rs`, `privileged_launcher.rs`, `custodian.rs`, `observer_service.rs`, `psv_dispatch.rs`, `freeze_manifest.rs`,
+   `trust_root.rs`) are configuration values, ownership of scratch files, or short-lived `setpriv` children whose only observer was the
+   lock test; the remaining 4242 literals in `guest_build_env.rs` are file ownership in two forged-record tests (no process, no
+   `begin`). Nothing there checks "owns running processes", so none needed the claim. The `pkill -f` lines in `privileged_launcher.rs` match
+   a path under the test's own temp directory, not a uid.
+   **Proof:** <LOOPLOCAL>
+2. **Rows dropped for want of ids, now written (M3180-M3189).** M3180-M3182 remove `command`, `builtin`, `exec` from `PEEL`; M3183 the
+   `-p`/`--` skip after `command`; M3184 and M3185 the two places the wrappers are stripped (`peel()` and the token loop of the conservative
+   layer); M3186 the judgement of a literal `eval` operand; M3187 the refusal of `alias`; M3188 that of `shopt -s expand_aliases`; M3189
+   the text-key refusal of an unclassified uid/gid key in `service_ids` (the JSON twin is M3108; the `PY_EXEMPT` entry for it is dropped).
+   Each has a must-flag shape only it refuses: new `command -p eval of a variable`, `exec eval of a variable`, `an alias that shadows the
+   helper`, `alias expansion switched on`; the others use shapes already in `--selftest` (`command eval of a variable`, `builtin source of a
+   variable path`, `eval of a literal program that mounts`). Checked before the rows were written: with each edit applied to a copy, the
+   set of accepted shapes is exactly its own (M3181 -> only `builtin source...`, M3183 -> only `command -p eval...`, M3186 -> only
+   `eval of a literal program...`, M3187 -> only the alias shape, M3188 -> only the shopt shape; M3180 and M3184 also the sibling
+   `command` shapes they share, M3184 all four). `--selftest` now lists EVERY accepted shape instead of stopping at the first, so a row's
+   marker is its own shape and a coincidental failure shows beside it. The alias shapes are flagged at the definition because the
+   gate cannot see whether expansion is on (a sourced file, `bash -i`).
+3. **Counts are derived and drift-checked (M3190-M3196).** Amendment 105 and the row A236 quoted the self-test as 88 shapes and 22
+   controls when it had grown; row A252 and amendment 109 quoted 145 and 32. The text is fixed: no document quotes a count except this
+   amendment, and **the self-test carries 149 must-flag shapes and 32 controls at this commit** (`opkit_ns_drift.py --selftest`). `--check-quoted-counts`
+   compares every quote of "N must-flag shapes", "N controls" (after one) and "N shapes its `--selftest`" under `governance/`, `scripts/` and
+   `crates/` with the count derived from `BYPASSES`/`CONTROLS`; a sum ("48 + 40") is refused as unreadable. `--selftest` plants stale,
+   half-stale, summed, line-wrapped and differently-worded quotes and requires each refused. `every_quoted_selftest_count_is_the_selftests_own`
+   compares the derived numbers with what `--selftest` prints, requires at least one quote to have been read (a check that reads none checks
+   nothing), and plants a stale quote under each of `governance/`, `scripts/` and `crates/`. Adding a shape now fails this test until the number
+   above is updated, which is the point.
+4. **Running the kit's test over ssh.** The runbook states it: start `scripts/test_operator_deploy.sh` (and `test_opkit_ns.sh`) with `</dev/null` and pipe the
+   output (`2>&1 | tee log`). Measured while doing this: `> log` made the kit test exit 2 at once, because the helper refuses a WRITABLE
+   REGULAR FILE on fd 1-2 (`LEAK: descriptor 1 is a WRITABLE regular file`), as the header says; the sentence in the runbook names both halves.
+5. **Executed-evidence gaps.** Run inside `ns_run` as the default-capability root, canary effects only (`scripts/test_opkit_ns.sh`,
+   section amendment 111; the header of `opkit_ns.sh` is rewritten to say exactly what ran): the process's `CapEff` and `CapPrm` are
+   within its bounding set (`00000020b180cdfb`: chown, dac_override, fowner, fsetid, kill, setgid, setuid, setpcap, net_bind_service,
+   net_broadcast, ipc_lock, ipc_owner, sys_nice, sys_resource, lease, audit_write, setfcap, audit_read); each removed capability
+   reads 0 for `PR_CAPBSET_READ` and `PR_CAP_AMBIENT_RAISE` of it fails; `setpriv --inh-caps/--ambient-caps/--bounding-set` for sys_admin,
+   net_admin, mknod, dac_read_search each fail with the command never run; a setuid-root copy of `id` run as uid 65534 prints 0 (the control: the
+   bit works there) and a setuid-root copy of `grep` reads `CapEff = CapPrm = CapBnd =` the bounding set, none of what was removed; a copy
+   with `cap_sys_admin,cap_mknod,cap_dac_read_search+ep` cannot be executed (`Operation not permitted`). **A finding:** the existing
+   setuid probe ran in `/tmp`, which the helper mounts `nosuid`, so it could not have shown the bounding set at work (a setuid copy there
+   keeps uid 65534 and holds nothing); both probes now live in `/srv`, a shadow tmpfs that honours setuid. For the step handed
+   `OPKIT_CAPS_KEEP=sys_admin` only the benign check ran: CAP_SYS_ADMIN is in the bounding set, CAP_NET_ADMIN is not, nothing was done with
+   it, and `OPKIT_CAPS_KEEP=net_admin`, `sys_admin,net_admin`, `sys_admin net_admin`, `sys_ptrace`, `all` each refuse with 97.
+   **Not executed by anyone, and not authorised by the operator:** setns, chroot, a nested user namespace, `open_by_handle_at`, mounting a
+   setuid binary, bpf, init_module, reboot; and a hostile CAP_SYS_ADMIN step. The retained capabilities are therefore still not tried as an
+   escape beyond the write test. Before/after listings (`/etc/axon`, `/usr/local`, `/var/lib` names, `/etc/systemd/system`, `/opt`,
+   `/home`, `/mnt`, `/media`, `/srv`, users, groups, setuid files, enabled units) around every experiment are identical (empty diffs).
+6. **The root check at the top of `ns_run` (A262): a four-cell record, and a correction.** Amendment 109 said an ordinary uid is
+   "refused by `unshare` in any case: the 97 is the same". Executed (a copy of the helper with each check removed, run as uid 4999, canary
+   file in a directory that uid can write): base: 97, "not root", canary absent. Root check off: 97, "the namespaces cannot be created", absent
+   (refused by the `unshare` pre-check). `unshare` pre-check off: 97, "not root", absent (refused by the root check). Both off: the real
+   `unshare` refuses (`Operation not permitted`, rc **1**), absent. The same four cells for an ordinary uid holding every capability as
+   ambient capabilities: 97, 97 (`cannot mount a private /proc`, isolation not proved), 97, 97, absent in all four. So the command never
+   runs in any cell; the 97 is the same only while the `unshare` pre-check is there, and with both gone the exit code is 1. The check
+   is defence in depth and an exit-code contract, not a row: **equivalent for refusal, never counted killed** (`rootcheck-4cell.log`).
+7. **Checks** (all rc 0): <CHECKS>
+
+**What is not done, stated.** (a) The 4242 literals that remain in `guest_build_env.rs` (two forged-record tests) are file ownership, not
+processes; they are outside the new scan only by not matching it, and a future `begin` there would need a claim. (b) The hostile routes of
+item 5 were not run. (c) The alias shapes cannot tell whether alias expansion is on. (d) The quoted-count check reads `.md .py .sh .rs .txt`
+under three trees; a count in another place (a JSON file, a commit message) is not seen.
+
+**Rows.** M3180-M3189 (drift: peel x6, literal eval, alias, shopt; service ids text key), M3190-M3196 (quoted counts: compare, the
+`shapes its` wording, the control capture, the failing exit, and the three trees). <ROWS>

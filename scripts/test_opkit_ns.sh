@@ -407,7 +407,7 @@ o=$(OPKIT_CAPS_KEEP=mknod nsrun touch "$M3" 2>&1); rc=$?
 { [ ! -e "$M3" ] && [ $rc = 97 ]; } || fail "ATTACK: OPKIT_CAPS_KEEP=mknod was honoured (rc $rc): $o"
 echo "ok: only sys_admin may be kept (anything else refuses, 97)"
 # a setuid-root program does not get back what the bounding set took
-o=$(nsrun bash -c 'cp /usr/bin/capsh /tmp/capsh-suid && chmod u+s /tmp/capsh-suid && setpriv --reuid=65534 --regid=65534 --clear-groups /tmp/capsh-suid --print 2>&1 | grep -i "^Bounding"; echo done' 2>&1)
+o=$(nsrun bash -c 'cp /usr/bin/capsh /srv/capsh-suid && chmod u+s /srv/capsh-suid && setpriv --reuid=65534 --regid=65534 --clear-groups /srv/capsh-suid --print 2>&1 | grep -i "^Bounding"; echo done' 2>&1)
 ! grep -qi 'cap_sys_admin' <<<"$o" || fail "ATTACK: a setuid-root program regained cap_sys_admin: $o"
 echo "ok: a setuid-root program inside the namespace gets no capability the bounding set took"
 # (5) descriptors: fds 0-2, a pre-opened writable file, and every inherited descriptor above stderr
@@ -540,6 +540,91 @@ o=$(OPKIT_RW=$W/rw110 OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT
 [ $rc = 0 ] && grep -q '^nodev /tmp$' <<<"$o" && grep -q "^\(nodev\|NODEV-MISSING\) $W/rw110\$" <<<"$o" || fail "setup: the mount-flag listing did not run (rc $rc): $o"
 ! grep -q NODEV-MISSING <<<"$o" || fail "ATTACK: a tmpfs or bind the helper made lacks nodev: $(grep NODEV-MISSING <<<"$o" | tr '\n' ' ')"
 echo "ok: every tmpfs the helper makes (/tmp /etc /usr/local /var/lib /run /srv ...) and the OPKIT_RW bind carry nodev"
+# (amendment 111) The capabilities the bounding set removed cannot be got back from INSIDE, by the routes that need no escape
+# syscall. Executed here, as the default-capability root inside ns_run, with effects on a scratch file only: reading the sets,
+# asking for the removed capabilities back (setpriv --inh-caps / --ambient-caps / --bounding-set, prctl), a setuid-root copy of
+# a program and a file-capability copy of one. NOT executed by anyone, here or elsewhere: setns, chroot, a nested user
+# namespace, open_by_handle_at, mounting the setuid binary, bpf, init_module, reboot (the operator has not authorised them).
+CAPPROBE='
+import os, sys, ctypes
+names = {2: "dac_read_search", 12: "net_admin", 13: "net_raw", 16: "sys_module", 17: "sys_rawio", 19: "sys_ptrace", 21: "sys_admin",
+         22: "sys_boot", 25: "sys_time", 27: "mknod", 34: "syslog", 39: "bpf"}
+sets = {}
+for ln in open("/proc/self/status"):
+    for k in ("CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"):
+        if ln.startswith(k + ":"):
+            sets[k] = int(ln.split()[1], 16)
+for k, v in sorted(sets.items()):
+    print("SET", k, "%x" % v)
+libc = ctypes.CDLL(None, use_errno=True)
+for c, n in sorted(names.items()):
+    print("BND", n, libc.prctl(23, c, 0, 0, 0))                  # PR_CAPBSET_READ: 1 in the bounding set, 0 not
+    r = libc.prctl(47, 2, c, 0, 0)                                # PR_CAP_AMBIENT_RAISE: needs the capability permitted AND inheritable
+    print("AMB", n, r, ctypes.get_errno())
+print("done")
+'
+o=$(nsrun python3 -c "$CAPPROBE" 2>&1)
+grep -q '^done$' <<<"$o" || fail "setup: the capability probe did not run: $o"
+BND=$(sed -n 's/^SET CapBnd //p' <<<"$o"); EFF=$(sed -n 's/^SET CapEff //p' <<<"$o"); PRM=$(sed -n 's/^SET CapPrm //p' <<<"$o")
+[ -n "$BND" ] && [ -n "$EFF" ] && [ -n "$PRM" ] || fail "setup: the capability sets were not read: $o"
+[ $(( 0x$EFF & ~0x$BND )) = 0 ] && [ $(( 0x$PRM & ~0x$BND )) = 0 ] || fail "ATTACK: the process holds an effective or permitted capability that is not in its bounding set (eff $EFF prm $PRM bnd $BND)"
+for n in dac_read_search net_admin net_raw sys_module sys_rawio sys_ptrace sys_admin sys_boot sys_time mknod syslog bpf; do
+  grep -q "^BND $n 0\$" <<<"$o" || fail "ATTACK: cap_$n is in the command's bounding set: $(grep "^BND $n " <<<"$o")"
+  grep -q "^AMB $n -1 " <<<"$o" || fail "ATTACK: cap_$n could be raised to the ambient set: $(grep "^AMB $n " <<<"$o")"
+done
+echo "ok: CapEff and CapPrm are within the bounding set, and every removed capability reads 0 in it and cannot be raised ambient (prctl)"
+# setpriv asking for a removed capability back: each request must FAIL (rc != 0) and the command must not run
+for req in "--inh-caps +sys_admin" "--ambient-caps +sys_admin" "--inh-caps +net_admin --ambient-caps +net_admin" "--bounding-set +sys_admin" "--bounding-set +mknod,+dac_read_search"; do
+  rm -f "$W/scratch/cap-ran"
+  o=$(nsrun setpriv $req -- touch "$W/scratch/cap-ran" 2>&1); rc=$?
+  { [ ! -e "$W/scratch/cap-ran" ] && [ $rc != 0 ]; } || fail "ATTACK: setpriv $req was honoured inside the namespace (rc $rc): $o"
+done
+echo "ok: setpriv --inh-caps / --ambient-caps / --bounding-set for sys_admin, net_admin, mknod, dac_read_search is refused inside the namespace"
+# a setuid-root copy and a file-capability copy of a program: what each one holds is still inside the bounding set
+# (/tmp is nosuid, so a setuid copy there proves nothing: the probe lives in /srv, a shadow tmpfs that honours setuid, and a CONTROL
+# shows the setuid bit takes effect there -- a setuid-root `id -u` run as uid 65534 prints 0 -- and that the program holds exactly the set)
+# (the probe is a file the test writes and the namespace runs: the drift gate judges what is written under /srv by a command that
+# is not itself ns_run, and a quoted program is judged line by line)
+cat >"$W/suidprobe.sh" <<'EOF'
+G=$(command -v grep); I=$(command -v id)
+cp "$I" /srv/id-suid && chmod u+s /srv/id-suid
+echo "SUIDEUID $(setpriv --reuid=65534 --regid=65534 --clear-groups /srv/id-suid -u)"
+cp "$G" /srv/grep-suid && chmod u+s /srv/grep-suid
+setpriv --reuid=65534 --regid=65534 --clear-groups /srv/grep-suid -E "^Cap(Eff|Prm|Bnd)" /proc/self/status | sed "s/^/SUID /"
+cp "$G" /srv/grep-fcap && setcap cap_sys_admin,cap_mknod,cap_dac_read_search+ep /srv/grep-fcap 2>&1 | sed "s/^/SETCAP /"
+setpriv --reuid=65534 --regid=65534 --clear-groups /srv/grep-fcap -E "^Cap(Eff|Prm|Bnd)" /proc/self/status 2>&1 | sed "s/^/FCAP /"
+echo done
+EOF
+o=$(nsrun bash "$W/suidprobe.sh" 2>&1)
+grep -q '^done$' <<<"$o" || fail "setup: the setuid / file-capability probe did not run: $o"
+grep -q '^SUIDEUID 0$' <<<"$o" || fail "setup: the setuid bit did not take effect in /srv, so the probe would prove nothing: $o"
+grep -q '^SUID CapEff' <<<"$o" || fail "setup: the setuid-root copy printed no capability set: $o"
+EFFSUID=$(sed -n 's/^SUID CapEff:[[:space:]]*//p' <<<"$o"); BNDSUID=$(sed -n 's/^SUID CapBnd:[[:space:]]*//p' <<<"$o")
+python3 - "$EFFSUID" "$BNDSUID" <<'PY' || fail "ATTACK/setup: the setuid-root copy's CapEff $EFFSUID is empty or exceeds the bounding set $BNDSUID"
+import sys
+e, b = int(sys.argv[1], 16), int(sys.argv[2], 16)
+sys.exit(0 if e and not e & ~b else 1)
+PY
+python3 - "$o" <<'PY' || fail "ATTACK: a setuid-root or file-capability copy of a program gained a capability the bounding set removed"
+import sys
+removed = (1 << 21) | (1 << 27) | (1 << 2) | (1 << 12) | (1 << 17) | (1 << 16) | (1 << 34)
+for ln in sys.argv[1].splitlines():
+    p = ln.split()
+    if len(p) == 3 and p[0] in ("SUID", "FCAP") and p[1].rstrip(":") in ("CapEff", "CapPrm", "CapBnd"):
+        if int(p[2], 16) & removed:
+            print("held:", ln); sys.exit(1)
+PY
+echo "ok: a setuid-root copy and a file-capability copy of a program hold none of sys_admin, mknod, dac_read_search, net_admin, sys_rawio, sys_module, syslog"
+# the one kept capability: only sys_admin may be handed over; the benign check is that it is PRESENT and that net_admin is REFUSED
+o=$(OPKIT_CAPS_KEEP=sys_admin nsrun python3 -c "$CAPPROBE" 2>&1)
+grep -q '^BND sys_admin 1$' <<<"$o" || fail "setup: OPKIT_CAPS_KEEP=sys_admin did not leave CAP_SYS_ADMIN in the bounding set: $o"
+grep -q '^BND net_admin 0$' <<<"$o" || fail "ATTACK: OPKIT_CAPS_KEEP=sys_admin also left CAP_NET_ADMIN: $o"
+for k in net_admin "sys_admin,net_admin" "sys_admin net_admin" sys_ptrace all; do
+  rm -f "$W/scratch/cap-ran"
+  o=$(OPKIT_CAPS_KEEP=$k nsrun touch "$W/scratch/cap-ran" 2>&1); rc=$?
+  { [ ! -e "$W/scratch/cap-ran" ] && [ $rc = 97 ]; } || fail "ATTACK: OPKIT_CAPS_KEEP='$k' was honoured (rc $rc): $o"
+done
+echo "ok: OPKIT_CAPS_KEEP=sys_admin leaves exactly that one capability in the bounding set (nothing was done with it); net_admin and the other spellings are refused (97)"
 [ "$HL_BEFORE" = "$(hostlist)" ] || fail "ATTACK: the host listing changed during the amendment-109 tests"
 echo "ok: the host listing (/opt /home /mnt /media /srv /usr/local /etc/axon /etc/systemd/system) is the same before and after"
 echo "PASS: opkit namespace helper"

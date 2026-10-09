@@ -202,6 +202,113 @@ fn no_test_script_runs_the_operator_kit_outside_the_namespace_helper() {
     );
 }
 
+/// Amendment 111: a count of the drift gate's must-flag shapes or controls typed into a document goes stale (amendment 105 and
+/// the matrix row A236 quoted 88 and 22 long after the self-test carried more). Every such quote under governance/, scripts/ and
+/// crates/ must now equal what `--selftest` prints, and `--check-quoted-counts` is the check: it must hold on the real tree
+/// (and read at least one quote, or it checks nothing), and it must REFUSE a stale quote planted in each of the three trees.
+#[test]
+fn every_quoted_selftest_count_is_the_selftests_own() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let run = |args: &[&str], at: &Path| {
+        script(
+            "python3",
+            root.join("scripts/opkit_ns_drift.py"),
+            Bins::NoWorkspaceBinary,
+        )
+        .args(args)
+        .arg(at)
+        .output()
+        .unwrap()
+    };
+    let o = run(&["--selftest"], &root);
+    let out = String::from_utf8_lossy(&o.stdout).to_string();
+    assert!(o.status.success(), "setup: --selftest: {out}");
+    // "selftest: ok (<N> must-flag shapes refused, <M> controls accepted, ...)"
+    let num_before = |hay: &str, what: &str| -> u64 {
+        let at = hay
+            .find(what)
+            .unwrap_or_else(|| panic!("setup: no {what:?} in {hay:?}"));
+        hay[..at]
+            .trim_end()
+            .rsplit(|c: char| !c.is_ascii_digit())
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap_or_else(|_| panic!("setup: no number before {what:?} in {hay:?}"))
+    };
+    let (must, ctl) = (
+        num_before(&out, " must-flag shapes refused"),
+        num_before(&out, " controls accepted"),
+    );
+    assert!(must > 0 && ctl > 0, "setup: {out}");
+    // the real documents
+    let o = run(&["--check-quoted-counts"], &root);
+    let out = String::from_utf8_lossy(&o.stdout).to_string();
+    assert!(
+        o.status.success(),
+        "ATTACK: a document quotes a must-flag or control count that is not the self-test's ({must} and {ctl}):\n{out}"
+    );
+    assert!(
+        out.contains(&format!("{must} must-flag shapes, {ctl} controls")),
+        "ATTACK: --check-quoted-counts derived other counts than --selftest prints ({must}, {ctl}): {out}"
+    );
+    let quotes: u64 = out
+        .rsplit("; ")
+        .next()
+        .and_then(|t| t.split(' ').next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0);
+    assert!(
+        quotes >= 1,
+        "ATTACK: --check-quoted-counts read no quote at all, so it checked nothing: {out}"
+    );
+    // a stale quote planted in each tree is refused, by name; the right numbers are accepted
+    for (rel, tree) in [
+        ("governance/specs/x.md", "governance"),
+        ("scripts/y.sh", "scripts"),
+        ("crates/z/tests/w.rs", "crates"),
+    ] {
+        for (doc, stale) in [
+            (
+                format!(
+                    "it carries {} must-flag shapes and {ctl} controls",
+                    must - 1
+                ),
+                true,
+            ),
+            (
+                format!(
+                    "it carries {must} must-flag shapes and {} controls",
+                    ctl + 1
+                ),
+                true,
+            ),
+            (
+                format!("it carries {must} must-flag shapes and {ctl} controls"),
+                false,
+            ),
+        ] {
+            let d = tempfile::tempdir().unwrap();
+            let f = d.path().join(rel);
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            std::fs::write(&f, format!("# {doc}\n")).unwrap();
+            let o = run(&["--check-quoted-counts"], d.path());
+            let out = String::from_utf8_lossy(&o.stdout).to_string();
+            if stale {
+                assert!(
+                    !o.status.success() && out.contains(rel),
+                    "ATTACK: a stale quoted count under {tree}/ ({doc:?}) was accepted by --check-quoted-counts: {out}"
+                );
+            } else {
+                assert!(
+                    o.status.success(),
+                    "control: the self-test's own counts quoted under {tree}/ were refused: {out}"
+                );
+            }
+        }
+    }
+}
+
 /// Amendment 92 (M2266-M2269): the helper REFUSES when its proof fails: a destination that is not a
 /// tmpfs, the host's own mount namespace, a canary that shows through to the host, and `ns_run`
 /// starting its command anyway. Every attack points the assertion at scratch directories.

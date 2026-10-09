@@ -6031,8 +6031,6 @@ PY_EXEMPT += [
      "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py, amendment 101): removing this guard fails the case(s) 'service ids a .json that cannot be opened refuses (it is not skipped)' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
     ("scripts/guest_build_env.py", 'take', 1, 'raise DiscoveryRefused(f"{where}: {key} holds {v!r}', 'OBSERVED',
      "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py, amendment 105): removing this guard fails the case(s) 'service ids a strict uid key in a text config that is not a number refuses' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
-    ("scripts/guest_build_env.py", '_text_ids', 1, 'raise DiscoveryRefused(f"{where}: {key} looks like a uid or gid key', 'OBSERVED',
-     "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py, amendment 109): removing this guard fails the case(s) 'service ids a text key that carries uid in its name, of no known class, holding a number refuses' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own (the JSON twin has M3108)"),
     ("scripts/guest_build_env.py", '_text_ids', 3, 'raise DiscoveryRefused(f"{where} mentions a uid or gid', 'OBSERVED',
      "OBSERVED-NOT-ROWED (survey, scripts/v022_py_guard_survey.py, amendment 105): removing this guard fails the case(s) 'service ids a text file that mentions uid and yields no identity refuses (fail closed)' of crates/axon-fabric/tests/guest_build_env_guards.rs; no row of its own"),
     ("scripts/guest_build_env.py", '_unit_ids', 1, 'raise DiscoveryRefused(f"{where}: {m.group(1)}={u} uses a specifier', 'OBSERVED',

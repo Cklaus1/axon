@@ -45,7 +45,7 @@ PROVED before the command starts). This gate keeps it the usual door:
   5. `--selftest` plants the bypass shapes in scratch copies and requires every one refused, and requires the real scripts
      and the controls to pass.
 
-Exit 0 clean, 1 a violation.  Usage: opkit_ns_drift.py [--selftest] [ROOT]
+Exit 0 clean, 1 a violation.  Usage: opkit_ns_drift.py [--selftest | --check-quoted-counts] [ROOT]
 """
 import codecs, fnmatch, os, re, shlex, sys
 
@@ -1230,6 +1230,11 @@ BYPASSES = [
     ("prompt expansion of a plain value", '. scripts/lib/opkit_ns.sh\nP=\'$(true)\'\n: "${P@P}"\n'),
     ("an alias of a host verb", '. scripts/lib/opkit_ns.sh\nshopt -s expand_aliases\nalias m=mount\nm --bind a b\n'),
     ("a multi-line quoted bash -c that runs the kit", '. scripts/lib/opkit_ns.sh\nbash -c \'\nbash "$KIT" --apply\n\'\n'),
+    # amendment 111: one shape per guard of the peel / alias rules, so each is refused by its own guard alone
+    ("command -p eval of a variable", '. scripts/lib/opkit_ns.sh\nx=true\ncommand -p eval "$x"\n'),
+    ("exec eval of a variable", '. scripts/lib/opkit_ns.sh\nx=true\nexec eval "$x"\n'),
+    ("an alias that shadows the helper", '. scripts/lib/opkit_ns.sh\nalias ns_run=env\n'),
+    ("alias expansion switched on", '. scripts/lib/opkit_ns.sh\nshopt -s expand_aliases\n'),
 ]
 CONTROLS = [
     ('. scripts/lib/opkit_ns.sh\nns_run bash "$KIT" --from c --apply\n'),
@@ -1268,6 +1273,57 @@ CONTROLS = [
 ]
 
 
+# ── amendment 111: the counts the documents quote are DERIVED, and a stale quote is a failure ────────────────────────
+# Amendment 105 and the matrix row A236 quoted a must-flag/control count long after the self-test had grown past it: a number
+# typed into a document is not tied to anything. Every quote of the form "N must-flag shapes" (and the
+# "M controls" that follows it) anywhere under governance/, scripts/ and crates/ must now equal the count this file derives
+# from BYPASSES and CONTROLS, which is the count `--selftest` prints. A quote that cannot be read as one number ("48 + 40")
+# is refused too: write the number `--selftest` prints, or none.
+QUOTE_SKIP_DIRS = {"target", ".git", "node_modules", "__pycache__"}
+QUOTE_SUFFIXES = (".md", ".py", ".sh", ".rs", ".txt")
+MUST_QUOTE = re.compile(r"(\d+(?: \+ \d+)*) (?:must-flag shapes?|shapes its `--selftest`)")
+CTL_QUOTE = re.compile(r"(?:(?!must-flag)[^.;|]){0,90}?\b(\d+(?: \+ \d+)*) controls?\b")
+
+
+def quoted_count_problems(texts, n_must, n_ctl):
+    """`texts`: {label: text}. Every quoted must-flag / control count that is not exactly (n_must, n_ctl) is a problem."""
+    bad, seen = [], 0
+    for label, raw in sorted(texts.items()):
+        t = re.sub(r"\s+", " ", raw)
+        for m in MUST_QUOTE.finditer(t):
+            seen += 1
+            for what, quote, want, start in [("must-flag shapes", m.group(1), n_must, m.start(1))] + (
+                    [("controls", c.group(1), n_ctl, 0)] if (c := CTL_QUOTE.match(t[m.end():m.end() + 100])) else []):
+                if quote.strip() != str(want):
+                    bad.append(f"{label}: quotes {quote} {what}, the self-test carries {want}: {t[max(0, m.start() - 40):m.end() + 60]!r}")
+    return bad, seen
+
+
+def quote_texts(root):
+    out = {}
+    for top in ("governance", "scripts", "crates"):
+        for d, dirs, fs in os.walk(os.path.join(root, top)):
+            dirs[:] = [x for x in dirs if x not in QUOTE_SKIP_DIRS]
+            for f in fs:
+                if f.endswith(QUOTE_SUFFIXES):
+                    p = os.path.join(d, f)
+                    try:
+                        out[os.path.relpath(p, root)] = open(p, errors="replace").read()
+                    except OSError:
+                        pass
+    return out
+
+
+def check_quoted_counts(root):
+    n_must, n_ctl = len(BYPASSES) + 1, len(CONTROLS)
+    bad, seen = quoted_count_problems(quote_texts(root), n_must, n_ctl)
+    if bad:
+        print("opkit_ns_drift: a quoted self-test count is stale (the self-test carries %d must-flag shapes and %d controls):\n%s" % (n_must, n_ctl, "\n".join(bad)))
+        return 1
+    print(f"opkit_ns_drift: quoted counts ok ({n_must} must-flag shapes, {n_ctl} controls; {seen} quotes checked)")
+    return 0
+
+
 def selftest(root):
     src = open(os.path.join(root, "scripts", "test_operator_deploy.sh")).read()
     base = check_text("real", src)
@@ -1281,9 +1337,13 @@ def selftest(root):
     assert attack != src, "selftest: attack line not found"
     if not check_text("attack", attack):
         print("selftest: an unwrapped kit --apply was ACCEPTED"); return 1
-    for label, text in BYPASSES:
-        if not check_text("bypass", text):
-            print(f"selftest: the bypass shape '{label}' was ACCEPTED"); return 1
+    # EVERY accepted shape is reported (amendment 111), not only the first: a guard removed from the gate shows as the
+    # shapes only IT refused, by name, so a mutation row is killed by its own shape and a coincidental failure is visible
+    accepted = [label for label, text in BYPASSES if not check_text("bypass", text)]
+    if accepted:
+        for label in accepted:
+            print(f"selftest: the bypass shape '{label}' was ACCEPTED")
+        return 1
     for i, text in enumerate(CONTROLS):
         got = check_text("control", text)
         if got:
@@ -1313,12 +1373,31 @@ def selftest(root):
                          ("act_install under /etc/systemd", 'act_install "$x" /etc/systemd/system/axon-new.service root root 0644\n')]:
         if destination_problems(root, kit + "\n" + extra):
             print(f"selftest: a kit write inside the shadowed destinations was REFUSED ({label})"); return 1
+    # the quoted-count check refuses a stale quote, an unreadable one, and accepts the derived numbers and a quote with none
+    nm, nc = len(BYPASSES) + 1, len(CONTROLS)
+    for label, doc in [
+        ("a stale must-flag count", f"the gate carries {nm - 1} must-flag shapes and {nc} controls"),
+        ("a stale control count", f"the gate carries {nm} must-flag shapes and {nc + 1} controls"),
+        ("a stale count with no controls", f"carries {nm + 3} must-flag shapes at this commit"),
+        ("a sum instead of one number", f"{nm - 40} + {40} must-flag shapes"),
+        ("a stale count across a line wrap", f"carries {nm - 1} must-flag\nshapes and {nc} controls"),
+        ("a stale count in the shapes-its-selftest wording", f"flags the {nm - 1} shapes its `--selftest` lists"),
+    ]:
+        if not quoted_count_problems({"planted.md": doc}, nm, nc)[0]:
+            print(f"selftest: a stale quoted count was ACCEPTED ({label})"); return 1
+    for label, doc in [("the derived counts", f"**{nm} must-flag shapes and {nc} controls**"),
+                       ("no number at all", "the must-flag shapes of the self-test, and its controls"),
+                       ("an unrelated controls number", f"{nm} must-flag shapes. 57 controls tracked elsewhere")]:
+        if quoted_count_problems({"planted.md": doc}, nm, nc)[0]:
+            print(f"selftest: the derived quoted count was REFUSED ({label})"); return 1
     print(f"selftest: ok ({len(BYPASSES) + 1} must-flag shapes refused, {len(CONTROLS)} controls accepted, plus the kit-destination shapes)"); return 0
 
 
 if __name__ == "__main__":
-    a = [x for x in sys.argv[1:] if x != "--selftest"]
+    a = [x for x in sys.argv[1:] if x not in ("--selftest", "--check-quoted-counts")]
     root = a[0] if a else os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    if "--check-quoted-counts" in sys.argv:
+        sys.exit(check_quoted_counts(root))
     if "--selftest" in sys.argv:
         sys.exit(selftest(root))
     bad = check(root)

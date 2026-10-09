@@ -73,9 +73,19 @@
 # bind carrying nodev (read from the mount flags in /proc/self/mountinfo: no capability is left to make a
 # node, so a node is not created to be refused), the descriptor rules above, OPKIT_RW/TMPDIR/OPKIT_SCRATCH
 # validation with host listings before and after, and an ordinary uid, which cannot unshare (97, not run).
-# NOT executed by anyone: the retained capabilities (chown, setuid/setgid, dac_override, fowner, kill,
-# setpcap, setfcap ...) as an escape attempt beyond the write test, which runs as the default-capability
-# root and meets EROFS everywhere unlisted; a hostile CAP_SYS_ADMIN step (it would write the host).
+# Amendment 111 EXECUTED, in the same tests and as the default-capability root inside ns_run (canary files only): the process's
+# CapEff and CapPrm are within its bounding set; every removed capability reads 0 in the bounding set and cannot be raised to the
+# ambient set (prctl); `setpriv --inh-caps / --ambient-caps / --bounding-set` for sys_admin, net_admin, mknod and dac_read_search
+# each FAIL and the command never runs; a setuid-root copy of a program (in /srv, a shadow tmpfs that honours setuid -- /tmp is
+# nosuid, so a setuid copy there proves nothing, and the earlier probe that used it now lives in /srv) holds exactly the bounding
+# set and none of what was removed; a file-capability copy (cap_sys_admin, cap_mknod, cap_dac_read_search +ep) cannot be
+# executed at all (EPERM); and for the step handed OPKIT_CAPS_KEEP=sys_admin the benign check only: CAP_SYS_ADMIN is present in the
+# bounding set, CAP_NET_ADMIN is not, and OPKIT_CAPS_KEEP=net_admin (or any other spelling) is refused (97). NOTHING was done WITH a
+# kept CAP_SYS_ADMIN.
+# NOT executed by anyone, and not authorised: the escape routes themselves -- setns, chroot, a nested user namespace,
+# open_by_handle_at, mounting a setuid binary, bpf, init_module, reboot -- and a hostile CAP_SYS_ADMIN step (it would write the
+# host). The retained capabilities (chown, setuid/setgid, dac_override, fowner, kill, setpcap, setfcap ...) are therefore still
+# not tried as an escape beyond the write test, which runs as the default-capability root and meets EROFS everywhere unlisted.
 # WHAT REMAINS. A step that is handed CAP_SYS_ADMIN (OPKIT_CAPS_KEEP=sys_admin, used ONLY by the controlled
 # build fixture, whose unshare --pid needs it) is NOT contained against a root that means to escape: it can
 # `mount -o remount,rw /` and write the host. Nor is any root user namespace-less root against the host
