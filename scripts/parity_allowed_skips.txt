@@ -1,0 +1,7 @@
+# Harnesses that scripts/parity_all.sh may SKIP under AXON_HARNESS_STRICT=1 (R50 §11).
+# One entry per line: `<harness-name> <reason>`. The reason is required; an entry
+# without one makes parity_all.sh exit 2. Any skip of a harness not listed here
+# fails a strict run. Add an entry only for a harness that cannot run on the gate
+# host by construction, never to hide a harness that stopped running.
+android_compute_parity needs the Android NDK, which the gate host does not have
+browser_compute_parity opt-in: runs only with BROWSER_PARITY=1 (headless Chrome + wasm-bindgen-test)

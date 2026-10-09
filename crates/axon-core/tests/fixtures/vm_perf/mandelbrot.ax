@@ -1,0 +1,24 @@
+fn main() -> i64 {
+    let w = 600
+    let h = 400
+    let max_iter = 200
+    let total = 0
+    for py in 0..h {
+        let ci = -1.2 + (2.4 * i64_to_f64(py)) / i64_to_f64(h)
+        for px in 0..w {
+            let cr = -2.0 + (3.0 * i64_to_f64(px)) / i64_to_f64(w)
+            let zr = 0.0
+            let zi = 0.0
+            let i = 0
+            while i < max_iter && zr * zr + zi * zi <= 4.0 {
+                let t = zr * zr - zi * zi + cr
+                zi = 2.0 * zr * zi + ci
+                zr = t
+                i = i + 1
+            }
+            total = total + i
+        }
+    }
+    println(to_str(total))
+    0
+}

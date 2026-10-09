@@ -1,0 +1,39 @@
+fn swap(a: &mut [i64], i: i64, j: i64) {
+    let t = a[i]
+    a[i] = a[j]
+    a[j] = t
+}
+
+// Lomuto partition, middle element as pivot (moved to hi first).
+fn quicksort(a: &mut [i64], lo: i64, hi: i64) {
+    if lo >= hi { return }
+    swap(&mut a, (lo + hi) / 2, hi)
+    let pivot = a[hi]
+    let i = lo
+    for j in lo..hi {
+        if a[j] < pivot {
+            swap(&mut a, i, j)
+            i = i + 1
+        }
+    }
+    swap(&mut a, i, hi)
+    quicksort(&mut a, lo, i - 1)
+    quicksort(&mut a, i + 1, hi)
+}
+
+fn main() -> i64 {
+    let n = 1000000
+    let a = arr_repeat(0, n)
+    let x = 1
+    for i in 0..n {
+        x = (x * 48271) % 2147483647
+        a[i] = x
+    }
+    quicksort(&mut a, 0, n - 1)
+    let cs = 0
+    for i in 0..n {
+        cs = (cs * 31 + a[i]) % 1000000007
+    }
+    println("{to_str(a[0])} {to_str(a[n - 1])} {to_str(cs)}")
+    0
+}
