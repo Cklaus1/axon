@@ -7310,7 +7310,7 @@ refusals and not for defaults.
 |---|---|---|
 | `python3 scripts/v022_refusal_coverage.py` plain and `--freeze` | local | rc 0 and rc 0 (the counts above) |
 | rows M3280-M3283, M3285-M3299 and M186 (reinstated) and every other row anchored in `psv.rs` (47 rows, `--scope=all --only=... --shard=0/2,1/2`) | gm | 22/22 and 25/25 KILLED by their own attack, 0 REFUSED_ELSEWHERE, 0 survivors, 0 stale. M3280, M3281, M3283 and M3285 were first anchored to text that also occurs in a doc comment or message of the new tests (`2 matches`) or failed on a marker (M3285) and were re-anchored and re-run (local, 4/4 KILLED) |
-| the old text of every other row in the files touched (a count before vs after at `e8b8b48a`) | local | 0 rows changed their occurrence count; the touched files' other rows were therefore not re-run (a first attempt to run all 418 was stopped at 36 OK, 0 BAD after ~25 minutes) |
+| the old text of every other row in the files touched (a count before vs after at `e8b8b48a`) | local | 0 rows changed their occurrence count; the touched files' other rows were therefore not re-run (a first attempt to run all 418 was stopped at 50 OK, 0 BAD after ~25 minutes, to free the slots) |
 | `cargo test -p axon-core --no-default-features --test refusal_coverage_gate --test harness_integrity --test harness_binaries` | local | rc 0: 53 passed (721 s), 43 passed, 10 passed |
 | `cargo test --locked -p axon-fabric --no-fail-fast`, default-parallel and `--test-threads=1` (the one loaded-host test skipped, concluded locally in earlier rounds) | gm | rc 0 and rc 0 |
 | `cargo test --locked -p axon-loop`, `-p axon-loop-contracts`, `-p axon-psv`, `-p axon-cortex` (`--no-fail-fast`) | gm | rc 0 each; 2538 tests passed across the six runs, 0 failed |
