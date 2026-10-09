@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 3cecb0c71f31b74a08d870363fd4140cf0c61289
+generated-at: c4ea5684a475d71a1ae40c4249b23a1cc4935517
 
-`git diff --numstat 31413ca7..3cecb0c7 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..c4ea5684 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -47,11 +47,11 @@ generated-at: 3cecb0c71f31b74a08d870363fd4140cf0c61289
 | `crates/axon-core/src/interp/builtins.rs` | 482 | 341 |
 | `crates/axon-core/src/interp/conform.rs` | 1789 | 0 |
 | `crates/axon-core/src/interp/eval.rs` | 962 | 182 |
-| `crates/axon-core/src/interp/goal.rs` | 73 | 30 |
+| `crates/axon-core/src/interp/goal.rs` | 69 | 30 |
 | `crates/axon-core/src/interp/pin.rs` | 955 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 35 | 15 |
-| `crates/axon-core/src/interp/taint.rs` | 1350 | 0 |
-| `crates/axon-core/src/interp/taint_tests.rs` | 2712 | 0 |
+| `crates/axon-core/src/interp/taint.rs` | 1347 | 0 |
+| `crates/axon-core/src/interp/taint_tests.rs` | 2713 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 15 | 7 |
 | `crates/axon-core/src/kernel.rs` | 89 | 23 |
 | `crates/axon-core/src/lib.rs` | 114 | 13 |
@@ -60,9 +60,9 @@ generated-at: 3cecb0c71f31b74a08d870363fd4140cf0c61289
 | `crates/axon-core/src/mut_borrow.rs` | 800 | 0 |
 | `crates/axon-core/src/parser.rs` | 39 | 1 |
 | `crates/axon-core/src/resolver.rs` | 420 | 65 |
-| total | 20744 | 2880 |
+| total | 20738 | 2880 |
 
-`git log --reverse 31413ca7..3cecb0c7 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..c4ea5684 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -138,7 +138,8 @@ generated-at: 3cecb0c71f31b74a08d870363fd4140cf0c61289
 | 5d333913 | amendment 114 | test and registry only (a taint test for the type a `?` carries, plant controls for the note check): no production change |
 | 2e68236b | amendment 114 | the sealed-only check holds the operator's `mod` of a candidate module (found by the fabric suite), so a candidate whose module uses its own helper resolves; an operator module the candidate does not ship is still missing: narrowing relative to the first form of amendment 114, no widening of what base accepted |
 | 3849fadb | amendment 117 | the clear, localized members of the round-14 find-until-dry loop (44 of 53 findings): `temporal_new`/`temporal_is_valid` are World and Time (a clock reader is no Pure builtin); a match guard, every `while`/`while let` condition evaluation after the first, every builtin callback after the first (`call_cb`) and every Rust loop that runs operator code (`t_loop_pc`: goal searches, the scheduler pass) run under the control taint of what decided them; an operator pop and the channel a `select` looked at are marked; an abort-capable `with` body treats a branch on tainted data as a possible exit and sealed code that ran in it raises the sticky taint, as does a scheduler fiber that ran sealed code and failed; a resume value keeps its taint; `dstore_*` is World, a zoned call's provenance push is kernel state and its append is world state; a refinement type pins what its base pins; a width inside an `Uncertain`/`Temporal` is a width; `sandbox_run` copies the operator's sandbox entry into the sealed kernel for the call; the principal token stream is per registry; the sealed-only check resolves `dyn`, array/tuple elements, refinement/`where`/`@[verify]`/whole-struct predicates and the exact deferred type names, and the goal variants and `goal_eval` give a sealed caller the missing-name text: narrowing, no widening (the claim itself is NARROWED to what is enforced) |
-| 72 commits | | |
+| c4ea5684 | amendment 117 | follow-up to 3849fadb found by the full mutation run: two guards that proved redundant are removed (a sealed-caller check after goal_name_is_known; the operator-pop branch of t_chan_access, covered by t_chan_choice) and a test case for an aborting arm's value: no change in what is refused |
+| 73 commits | | |
 <!-- END MECHANICAL -->
 
 

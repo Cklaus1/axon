@@ -10801,7 +10801,7 @@ MUTATIONS += [
      '            let c = self.t_stored(rt & VAL);', '            let c = self.t_stored(0);',
      'axon-core', '--lib', 'interp::taint_tests::operator_side_control_flow_on_candidate_data_carries_its_taint_into_what_it_runs'),
     ('M3319', 'CONTROL (am117): an operator pop is not a write to the channel', 'crates/axon-core/src/interp/taint.rs',
-     '        } else if !self.frame_sealed.get() && matches!(method, "recv" | "try_recv") {', '        } else if false {',
+     '        if !self.frame_sealed.get() {\n            let c = self.t_stored(rt & VAL);', '        if false && !self.frame_sealed.get() {\n            let c = self.t_stored(rt & VAL);',
      'axon-core', '--lib', 'interp::taint_tests::operator_side_control_flow_on_candidate_data_carries_its_taint_into_what_it_runs'),
     ('M3320', 'STATE (am117): the in-memory provenance a zoned call records is not marked as kernel state', 'crates/axon-core/src/interp/taint.rs',
      '        if in_memory {\n            kernel.set(kernel.get() | a);\n        }', '        let _ = in_memory;',
