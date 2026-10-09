@@ -50,6 +50,35 @@ enum AppendOp {
     Add,
 }
 
+/// An evaluated operand of a binary operation (AX-55): an int or a float as
+/// the scalar itself, so the int/float fast path never builds or drops a
+/// `Value`; any other value as is.
+enum Operand {
+    Int(i64),
+    Float(f64),
+    Val(Value),
+}
+
+impl Operand {
+    #[inline]
+    fn of(v: Value) -> Operand {
+        match v {
+            Value::Int(n) => Operand::Int(n),
+            Value::Float(f) => Operand::Float(f),
+            v => Operand::Val(v),
+        }
+    }
+
+    #[inline]
+    fn into_value(self) -> Value {
+        match self {
+            Operand::Int(n) => Value::Int(n),
+            Operand::Float(f) => Value::Float(f),
+            Operand::Val(v) => v,
+        }
+    }
+}
+
 /// AX-25: the closure value of the top-level fn `name` (arity `arity`): the
 /// capture-free forwarding lambda `|#0, #1, ..| name(#0, #1, ..)`. The `#n`
 /// parameter names cannot be written in source, so they never shadow a name the
@@ -65,6 +94,7 @@ fn fn_value(name: &str, arity: usize) -> Value {
                 args,
                 tier: None,
             },
+            param_base: None,
         }),
         captured: std::cell::RefCell::new(Vec::new()),
     }))
@@ -75,18 +105,22 @@ impl<'p> Interp<'p> {
 
     pub(super) fn eval(&self, expr: &Expr, env: &mut Env) -> R {
         match expr {
-            // AX-47: a string literal's value is made once, at resolution; an
-            // evaluation clones the `Rc`. A node outside the table (an AST
-            // clone made at run time) builds it.
-            Expr::Literal(Literal::Str(s)) => Ok(Value::Str(match self.res.str_lit(expr) {
-                Some(v) => Rc::clone(v),
-                None => Rc::new(s.clone()),
-            })),
-            Expr::Literal(lit) => Ok(lit_to_val(lit)),
+            // AX-55: int, float and bool literals are built in place (no call,
+            // no table probe). A string or decimal literal's value owns an
+            // `Rc`, made once at resolution (AX-47); an evaluation clones the
+            // `Rc`. A node outside the table (an AST clone made at run time)
+            // builds it.
+            Expr::Literal(Literal::Int(n)) => Ok(Value::Int(*n)),
+            Expr::Literal(Literal::Float(f)) => Ok(Value::Float(*f)),
+            Expr::Literal(Literal::Bool(b)) => Ok(Value::Bool(*b)),
+            Expr::Literal(lit) => Ok(match self.res.lit(expr) {
+                Some(v) => v.clone(),
+                None => lit_to_val(lit),
+            }),
 
             Expr::Ident(name) => {
-                let s = self.res.sym(expr, name);
-                if let Some(v) = env.get(s) {
+                let (s, slot) = self.res.var(expr, name);
+                if let Some(v) = env.get_var(s, slot) {
                     Ok(v.clone())
                 } else if let Some(v) = self.globals.get(&s) {
                     Ok(v.clone())
@@ -123,6 +157,7 @@ impl<'p> Interp<'p> {
             | Expr::Own { name, value, ty }
             | Expr::RefBind { name, value, ty } => {
                 let v = self.eval(value, env)?;
+                let (s, slot) = self.res.var(expr, name);
                 // Phase 5: a `let/own/ref p: T where P = …` annotation is a
                 // refinement obligation — check the bound value against the
                 // predicate (the non-constant case the checker defers; constant is
@@ -135,7 +170,7 @@ impl<'p> Interp<'p> {
                             let mut pe = Env::new();
                             pe.define(SYM_UNDERSCORE, v.clone());
                             // Also bind the bound name for inline `let x: T where E[x] > k`.
-                            pe.define(self.res.sym(expr, name), v.clone());
+                            pe.define(s, v.clone());
                             if let Value::Bool(false) = self.eval(pred, &mut pe)? {
                                 return Err(Flow::RefineViolation(format!("the value bound to `{}` (= {}) violates the refinement `{}` \
                                  — the value does not satisfy the type's predicate",
@@ -156,17 +191,17 @@ impl<'p> Interp<'p> {
                 } else {
                     v
                 };
-                env.define(self.res.sym(expr, name), v);
+                env.define_var(s, slot, v);
                 Ok(Value::Unit)
             }
 
             Expr::Assign { name, value } => {
-                let s = self.res.sym(expr, name);
-                if self.assign_in_place(s, name, value, env)? {
+                let (s, slot) = self.res.var(expr, name);
+                if self.assign_in_place(s, slot, name, value, env)? {
                     return Ok(Value::Unit);
                 }
                 let v = self.eval(value, env)?;
-                if env.assign(s, v) {
+                if env.assign_var(s, slot, v) {
                     Ok(Value::Unit)
                 } else {
                     panic(format!("assignment to undefined variable `{name}`"))
@@ -180,8 +215,8 @@ impl<'p> Interp<'p> {
             // expressions; phase 2 walks the binding mutably and sets the leaf.
             Expr::AssignTo { place, value } => {
                 let v = self.eval(value, env)?;
-                let (base, steps) = self.flatten_place(place, env)?;
-                let mut slot = env.get_mut(base).ok_or_else(|| {
+                let ((base, base_slot), steps) = self.flatten_place(place, env)?;
+                let mut slot = env.get_var_mut(base, base_slot).ok_or_else(|| {
                     Flow::Panic(format!("assignment to undefined variable `{}`", sym_name(base)).into())
                 })?;
                 let (last, prefix) = steps
@@ -345,14 +380,14 @@ impl<'p> Interp<'p> {
                 let s = self.eval_int(start, env)?;
                 let e = self.eval_int(end, env)?;
                 let mut i = s;
-                let var = self.res.sym(expr, var);
+                let (var, slot) = self.res.var(expr, var);
                 loop {
                     let cont = if *inclusive { i <= e } else { i < e };
                     if !cont {
                         break;
                     }
                     env.push();
-                    env.define(var, Value::Int(i));
+                    env.define_var(var, slot, Value::Int(i));
                     let step = self.run_loop_body(body, env);
                     env.pop();
                     match step? {
@@ -474,8 +509,8 @@ impl<'p> Interp<'p> {
                 // lookup is the `Expr::Ident` arm's, verbatim.
                 let f = self.res.sym(expr, field);
                 if let Expr::Ident(name) = receiver.as_ref() {
-                    let s = self.res.sym(receiver, name);
-                    let v = match env.get(s) {
+                    let (s, slot) = self.res.var(receiver, name);
+                    let v = match env.get_var(s, slot) {
                         Some(v) => v,
                         None => match self.globals.get(&s) {
                             Some(v) => v,
@@ -511,10 +546,10 @@ impl<'p> Interp<'p> {
                 // `xs` first would copy the whole array per element read, which
                 // makes in-place algorithms over `&mut [T]` (AX-08) quadratic.
                 if let Expr::Ident(name) = receiver.as_ref() {
-                    let s = self.res.sym(receiver, name);
-                    if env.get(s).is_some() || self.globals.contains_key(&s) {
+                    let (s, slot) = self.res.var(receiver, name);
+                    if env.get_var(s, slot).is_some() || self.globals.contains_key(&s) {
                         let idx = self.eval_int(index, env)?;
-                        let arr = env.get(s).or_else(|| self.globals.get(&s));
+                        let arr = env.get_var(s, slot).or_else(|| self.globals.get(&s));
                         return match arr {
                             Some(Value::Array(items)) => {
                                 items.get(idx as usize).cloned().ok_or_else(|| {
@@ -694,9 +729,9 @@ impl<'p> Interp<'p> {
                 // whole environment. A free name that is not bound here (a
                 // global, a fn, a builtin) is reached the same way at call time.
                 let captured: Vec<(Sym, Value)> = info
-                    .free
+                    .captures
                     .iter()
-                    .filter_map(|s| env.get(*s).map(|v| (*s, v.clone())))
+                    .filter_map(|&(s, slot)| env.get_var(s, slot).map(|v| (s, v.clone())))
                     .collect();
                 // T40: a SHARED, persistent capture cell — see Value::Closure.
                 Ok(Value::Closure(Rc::new(ClosureVal {
@@ -1122,9 +1157,9 @@ impl<'p> Interp<'p> {
         *self.current_call_tier.borrow_mut() = tier.map(|t| t.to_string());
 
         if let Expr::Ident(name) = callee {
-            let s = self.res.sym(callee, name);
+            let (s, slot) = self.res.var(callee, name);
             // 1. A local/captured variable holding a closure.
-            if let Some(c @ Value::Closure { .. }) = env.get(s) {
+            if let Some(c @ Value::Closure { .. }) = env.get_var(s, slot) {
                 let c = c.clone();
                 return self.call_local_closure(c, argv);
             }
@@ -1192,7 +1227,7 @@ impl<'p> Interp<'p> {
                 _ => self.eval(a, env)?,
             });
         }
-        let mut borrowed: Vec<(usize, Sym)> = Vec::new();
+        let mut borrowed: Vec<(usize, Sym, u32)> = Vec::new();
         for (i, a) in args.iter().enumerate() {
             if let Expr::UnaryOp {
                 op: UnaryOp::RefMut,
@@ -1202,19 +1237,19 @@ impl<'p> Interp<'p> {
                 let Expr::Ident(name) = operand.as_ref() else {
                     return panic("`&mut` of something other than a local variable".to_string());
                 };
-                let s = self.res.sym(operand, name);
-                let Some(slot) = env.get_mut(s) else {
+                let (s, slot) = self.res.var(operand, name);
+                let Some(b) = env.get_var_mut(s, slot) else {
                     return panic(format!("`&mut {name}`: `{name}` is not a local variable"));
                 };
-                argv[i] = std::mem::replace(slot, Value::Unit);
-                borrowed.push((i, s));
+                argv[i] = std::mem::replace(b, Value::Unit);
+                borrowed.push((i, s, slot));
             }
         }
         *self.current_call_tier.borrow_mut() = tier.map(|t| t.to_string());
         let (result, mut outs) = self.call_fn_mut(f, argv);
-        for (i, s) in borrowed {
-            if let Some(slot) = env.get_mut(s) {
-                *slot = std::mem::replace(&mut outs[i], Value::Unit);
+        for (i, s, slot) in borrowed {
+            if let Some(b) = env.get_var_mut(s, slot) {
+                *b = std::mem::replace(&mut outs[i], Value::Unit);
             }
         }
         result
@@ -1449,19 +1484,43 @@ impl<'p> Interp<'p> {
             _ => {}
         }
 
-        let l = self.eval(left, env)?;
-        let r = self.eval(right, env)?;
+        let l = self.operand(left, env)?;
+        let r = self.operand(right, env)?;
         // AX-46: two plain ints or floats (the hot case) skip the general
         // dispatch; same helpers, so the same semantics, as `eval_binop_vals`.
         let fast = match (&l, &r) {
-            (Value::Int(a), Value::Int(b)) => int_binop(op, *a, *b),
-            (Value::Float(a), Value::Float(b)) => float_binop(op, *a, *b),
+            (Operand::Int(a), Operand::Int(b)) => int_binop(op, *a, *b),
+            (Operand::Float(a), Operand::Float(b)) => float_binop(op, *a, *b),
             _ => None,
         };
         match fast {
             Some(res) => res,
-            None => eval_binop_vals(op, l, r),
+            None => eval_binop_vals(op, l.into_value(), r.into_value()),
         }
+    }
+
+    /// Evaluate binary-operation operand `e` (AX-55). A local or a numeric
+    /// literal is read in place: an int or float is copied out of its slot or
+    /// literal without building, cloning or dropping a `Value`. Anything else
+    /// is evaluated as usual. Reading a local is what `eval` does for it.
+    #[inline]
+    fn operand(&self, e: &Expr, env: &mut Env) -> Result<Operand, Flow> {
+        match e {
+            Expr::Ident(name) => {
+                let (s, slot) = self.res.var(e, name);
+                if let Some(v) = env.get_var(s, slot) {
+                    return Ok(match v {
+                        Value::Int(n) => Operand::Int(*n),
+                        Value::Float(f) => Operand::Float(*f),
+                        v => Operand::Val(v.clone()),
+                    });
+                }
+            }
+            Expr::Literal(Literal::Int(n)) => return Ok(Operand::Int(*n)),
+            Expr::Literal(Literal::Float(f)) => return Ok(Operand::Float(*f)),
+            _ => {}
+        }
+        self.eval(e, env).map(Operand::of)
     }
 
     /// AX-31: `x = arr_push(x, v)`, `x = arr_concat(x, ys)` and `x = x + y` on a
@@ -1486,6 +1545,7 @@ impl<'p> Interp<'p> {
     fn assign_in_place(
         &self,
         s: Sym,
+        slot: u32,
         name: &str,
         value: &Expr,
         env: &mut Env,
@@ -1510,22 +1570,22 @@ impl<'p> Interp<'p> {
                 };
                 match args.as_slice() {
                     [Expr::Ident(x), operand] if x == name => {
-                        (op, operand, Some((f, tier, self.res.sym(callee, f))))
+                        (op, operand, Some((f, tier, self.res.var(callee, f))))
                     }
                     _ => return Ok(false),
                 }
             }
             _ => return Ok(false),
         };
-        if !matches!(env.get(s), Some(Value::Str(_) | Value::Array(_)))
+        if !matches!(env.get_var(s, slot), Some(Value::Str(_) | Value::Array(_)))
             || mentions_var(operand, name)
         {
             return Ok(false);
         }
-        if let Some((f, _, fs)) = call {
+        if let Some((f, _, (fs, fslot))) = call {
             // `eval_call` would run a local closure of that name instead, or take
             // the `&mut` path; the operand must not be able to change which.
-            if matches!(env.get(fs), Some(Value::Closure { .. }))
+            if matches!(env.get_var(fs, fslot), Some(Value::Closure { .. }))
                 || matches!(
                     operand,
                     Expr::UnaryOp {
@@ -1542,7 +1602,7 @@ impl<'p> Interp<'p> {
         if let Some((_, tier, _)) = call {
             *self.current_call_tier.borrow_mut() = tier.clone();
         }
-        let Some(slot) = env.get_mut(s) else {
+        let Some(slot) = env.get_var_mut(s, slot) else {
             unreachable!("the operand does not mention `{name}`, so it is still bound")
         };
         match (op, slot, y) {
@@ -1586,7 +1646,8 @@ impl<'p> Interp<'p> {
         match pat {
             Pattern::Wildcard => Ok(true),
             Pattern::Ident(name) => {
-                env.define(self.res.pat_sym(pat, name), val.clone());
+                let (s, slot) = self.res.pat_var(pat, name);
+                env.define_var(s, slot, val.clone());
                 Ok(true)
             }
             Pattern::Literal(lit) => Ok(values_equal(&lit_to_val(lit), val)),
