@@ -193,7 +193,8 @@ Each clause names what must hold. The negative matrix below names how each one f
   positions it lists. The taint is an over-approximation (coarse per binding, per dict and per channel), and its cost to an
   honest suite is listed in amendments 102 and 106. **Findings of the round-14 loop decided NARROW-CLAIM** (each entry names the
   finding's signature, `governance/notes/v022-psv1-loop-triage.md` holds the table and the loop's evidence path, and
-  `scripts/pci_delta.py --check` fails if an entry is missing or stale):
+  `scripts/pci_delta.py --check` fails if an entry is missing or stale). Every non-claim here, with the follow-up it needs, is carried by `governance/specs/post-c9-hardening.md`
+  (non-normative; `scripts/check_postc9_spec.py` holds it to this list):
 <!-- BEGIN PSV-1 NON-CLAIMS (scripts/pci_delta.py checks this list against governance/notes/v022-psv1-loop-triage.md) -->
   * Operator-typed values with impls (cluster h). The impl a method call on a value of an operator-DEFINED type answers is not
     refused when the candidate chose WHICH operator value reached the call, because a struct has no identity the taint can tell

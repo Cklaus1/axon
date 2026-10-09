@@ -306,6 +306,8 @@ bash scripts/test_trust_root_preflight.sh || fail "v0.22 trust-root preflight me
 # PSV negative matrix: every row A1..A21 cites tests that exist (a renamed or
 # deleted test fails here, rather than leaving a row claiming coverage).
 python3 -B scripts/psv_matrix_check.py || fail "v0.22 PSV negative matrix"
+# The non-normative post-C9 backlog carries every finding of the PSV-1 loop triage and every item, and the PSV-1 non-claims point at it.
+python3 -B scripts/check_postc9_spec.py || fail "post-C9 hardening spec traceability"
 python3 -B scripts/opkit_ns_drift.py || fail "no test script may run the operator kit outside ns_run (amendment 92)"
 python3 -B scripts/opkit_ns_drift.py --selftest || fail "opkit_ns_drift selftest"
 # Every refusal site in the protected helper files (decision A/D) has a
