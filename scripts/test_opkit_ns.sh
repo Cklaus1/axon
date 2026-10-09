@@ -489,10 +489,117 @@ rm -f "$M4"
 HOSTLOG=$W/notscratch.log
 o=$(OPKIT_RW=$W/scratch OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$M4" >"$HOSTLOG" 2>&1 </dev/null); rc=$?
 { [ ! -e "$M4" ] && [ $rc = 97 ]; } || fail "ATTACK: a writable file outside the named scratch on fd 1 was accepted (rc $rc)"
-grep -q 'WRITABLE regular file' "$HOSTLOG" || fail "refused for another reason: $(cat "$HOSTLOG")"
+[ ! -s "$HOSTLOG" ] || fail "ATTACK: the helper wrote its refusal into the writable file it had just refused (amendment 118): $(cat "$HOSTLOG")"
 o=$(OPKIT_RW="$W/rw2" OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$W/rw2/ran4" >"$W/rw2/log" 2>&1 </dev/null); rc=$?
 { [ -e "$W/rw2/ran4" ] && [ $rc = 0 ]; } || fail "control: a log file under OPKIT_RW on fd 1 was refused (rc $rc): $(cat "$W/rw2/log")"
 rm -f "$M4" "$W/rw2/ran4"
+# ── amendment 118: the helper never writes its refusal through a descriptor it has just refused ───────────────────────────
+# Incident 2026-10-09 01:14:46: fd 2 was the real /etc/passwd opened READ-WRITE without truncation; the helper refused (correct)
+# and wrote its refusal text over the file's first lines. Replayed here on FILES THIS SCRIPT MADE under $W, never a host file.
+# run118 SPECS SNIPPET [VAR=val ...]: SPECS = FD:MODE:FILE[,FD:MODE:FILE...]; each FILE is opened (MODE: rdwr = O_RDWR without
+# truncation, append = O_WRONLY|O_APPEND, rdwr_append) and handed over as that fd of `bash -c '. LIB; SNIPPET'`; the other
+# descriptors among 0-2 are a PIPE (stdin /dev/null), so a message written ANYWHERE else is seen; no controlling terminal (new
+# session), so the tty fallback cannot print. Prints RC=<rc> then everything that came out of the pipe.
+run118() {
+  python3 - "$@" <<'PY'
+import os, subprocess, sys
+specs, snippet = sys.argv[1:3]
+extra = dict(a.split("=", 1) for a in sys.argv[3:])
+flags = {"rdwr": os.O_RDWR, "append": os.O_WRONLY | os.O_APPEND, "rdwr_append": os.O_RDWR | os.O_APPEND}
+r, w = os.pipe()
+std = {0: subprocess.DEVNULL, 1: w, 2: w}
+for sp in specs.split(","):
+    fd, mode, f = sp.split(":", 2)
+    std[int(fd)] = os.open(f, flags[mode])
+env = dict(os.environ, OPKIT_LIB=os.environ["LIB118"], **extra)
+p = subprocess.Popen(["bash", "-c", '. "$OPKIT_LIB"; ' + snippet, "bash"], stdin=std[0], stdout=std[1], stderr=std[2], env=env, start_new_session=True)
+os.close(w)
+rc = p.wait()
+data = b""
+while True:
+    b = os.read(r, 65536)
+    if not b: break
+    data += b
+sys.stdout.write("RC=%d\n" % rc); sys.stdout.flush(); sys.stdout.buffer.write(data)
+PY
+}
+H118=$W/h118; mkdir -p "$H118/fakebin" "$H118/fakebin2"; M118=$H118/ran
+ORIG118=$'root:x:0:0:root:/root:/bin/bash\ndaemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\nbin:x:2:2:bin:/bin:/usr/sbin/nologin\nsys:x:3:3:sys:/dev:/usr/sbin/nologin\nsync:x:4:65534:sync:/bin:/bin/sync\nrest-of-file\n'
+printf '#!/bin/sh\ntouch "%s/unshare-called"\nexit 1\n' "$H118" >"$H118/fakebin/unshare"; chmod 0755 "$H118/fakebin/unshare"
+printf '#!/bin/sh\necho TOOL-STDERR-118 >&2\nexec %s "$@"\n' "$(command -v realpath)" >"$H118/fakebin2/realpath"; chmod 0755 "$H118/fakebin2/realpath"
+mkvictim() { printf '%s' "$ORIG118" >"$1"; }
+for fdn in 0 1 2; do
+  for mode in rdwr append rdwr_append; do
+    [ "$fdn" = 0 ] && [ "$mode" != rdwr ] && continue
+    F=$H118/victim-$fdn-$mode; mkvictim "$F"; rm -f "$M118"
+    h0=$(sha256sum <"$F"); s0=$(stat -c '%s:%Y' "$F")
+    o=$(LIB118=$LIB OPKIT_RW=$W/scratch OPKIT_SCRATCH=$W/scratch run118 "$fdn:$mode:$F" 'ns_run touch '"$M118")
+    [ "$h0" = "$(sha256sum <"$F")" ] || fail "ATTACK: fd $fdn ($mode) a file ns_run refused was WRITTEN (sha256 changed): $(head -c 300 "$F")"
+    [ "$s0" = "$(stat -c '%s:%Y' "$F")" ] || fail "ATTACK: fd $fdn ($mode) the refused file's size or mtime changed"
+    head -1 <<<"$o" | grep -qx 'RC=97' || fail "ATTACK: fd $fdn ($mode) a writable regular file was not refused with 97: $o"
+    [ ! -e "$M118" ] || fail "ATTACK: the command ran with a writable regular file on fd $fdn ($mode)"
+    case "$fdn" in
+      2) [ "$(wc -c <<<"$o")" -le 7 ] || fail "ATTACK: fd 2 was the refused file, and the helper still said something on the other descriptor: $o" ;;
+      *) grep -q "descriptor $fdn is a WRITABLE regular file" <<<"$o" || fail "refused for another reason (fd $fdn $mode): $o" ;;
+    esac
+  done
+done
+echo "ok: a writable regular file on fd 0, 1 or 2 (O_RDWR without truncation, O_APPEND, both) is refused with 97 and its bytes (sha256), size and mtime are UNCHANGED; on fd 2 nothing at all is said, on fd 0/1 the reason goes to the vetted fd 2"
+# a file whose path merely BEGINS with the scratch path (scratch-118x next to scratch) is not under the scratch
+F=$W/scratch-118x; mkvictim "$F"; h0=$(sha256sum <"$F")
+o=$(LIB118=$LIB OPKIT_RW=$W/scratch OPKIT_SCRATCH=$W/scratch run118 "2:rdwr:$F" 'ns_run touch '"$M118")
+head -1 <<<"$o" | grep -qx 'RC=97' || fail "ATTACK: a file whose path merely begins with the scratch path was accepted as scratch: $o"
+[ "$h0" = "$(sha256sum <"$F")" ] || fail "ATTACK: a file whose path merely begins with the scratch path was written"
+# the fds are classified BEFORE ns_run unshares (a fake unshare records that it was reached): all three at once, then each alone
+for f in 0 1 2; do mkvictim "$H118/u$f"; done
+rm -f "$H118/unshare-called"
+o=$(LIB118=$LIB OPKIT_RW=$W/scratch OPKIT_SCRATCH=$W/scratch run118 "0:rdwr:$H118/u0,1:rdwr:$H118/u1,2:rdwr:$H118/u2" 'ns_run touch '"$M118" PATH="$H118/fakebin:$PATH")
+[ ! -e "$H118/unshare-called" ] || fail "ATTACK: ns_run reached unshare with writable regular files on fds 0, 1 and 2 at once"
+head -1 <<<"$o" | grep -qx 'RC=97' || fail "ATTACK: three writable regular files on fds 0-2 were not refused with 97: $o"
+for fdn in 0 1 2; do
+  rm -f "$H118/unshare-called"
+  o=$(LIB118=$LIB OPKIT_RW=$W/scratch OPKIT_SCRATCH=$W/scratch run118 "$fdn:rdwr:$H118/u$fdn" 'ns_run touch '"$M118" PATH="$H118/fakebin:$PATH")
+  [ ! -e "$H118/unshare-called" ] || fail "ATTACK: ns_run reached unshare with a writable regular file on fd $fdn"
+  head -1 <<<"$o" | grep -qx 'RC=97' || fail "ATTACK: a writable regular file on fd $fdn alone was not refused with 97: $o"
+done
+# control: with only safe descriptors the fake unshare IS reached (the test would otherwise pass for any reason)
+rm -f "$H118/unshare-called"; : >"$W/scratch/log118c"
+o=$(LIB118=$LIB OPKIT_RW=$W/scratch OPKIT_SCRATCH=$W/scratch run118 "1:rdwr:$W/scratch/log118c" 'ns_run touch '"$M118" PATH="$H118/fakebin:$PATH")
+rm -f "$W/scratch/log118c"
+[ -e "$H118/unshare-called" ] || fail "control: ns_run never reached unshare with a log file under OPKIT_RW on fd 1 (the unshare-ordering probe is blind)"
+echo "ok: ns_run classifies fds 0, 1 and 2 before it unshares or creates anything (a fake unshare is not reached); with a log under OPKIT_RW it is"
+# a TOOL the pre-checks run writes its own stderr (realpath here): captured, never through a writable file on fd 2
+mkvictim "$H118/victim-tool"; h0=$(sha256sum <"$H118/victim-tool")
+o=$(LIB118=$LIB OPKIT_RW=$W/scratch OPKIT_SCRATCH=$W/scratch run118 "2:rdwr:$H118/victim-tool" 'ns_run touch '"$M118" PATH="$H118/fakebin2:$PATH")
+[ "$h0" = "$(sha256sum <"$H118/victim-tool")" ] || fail "ATTACK: a tool the pre-checks ran wrote its stderr through the writable regular file on fd 2: $(head -c 200 "$H118/victim-tool")"
+grep -qx 'RC=97' <<<"$(head -1 <<<"$o")" || fail "ATTACK: the tool-stderr probe was not refused with 97: $o"
+# the pre-namespace refusals (invalid OPKIT_RW, invalid OPKIT_SCRATCH, not-a-directory) say why only after fds 0-2 pass, and a root
+# the helper refused counts for nothing: OPKIT_RW=/var/tmp is refused, so a victim under /var/tmp is not "the caller's scratch"
+for bad in OPKIT_RW=/etc OPKIT_RW=/nonexistent-118 OPKIT_SCRATCH=/etc OPKIT_SCRATCH=relative OPKIT_RW=/var/tmp OPKIT_SCRATCH=/var/tmp; do
+  F=$H118/victim-pre; mkvictim "$F"; h0=$(sha256sum <"$F")
+  o=$(LIB118=$LIB run118 "2:rdwr:$F" 'ns_run touch '"$M118" "$bad"); rc=$(head -1 <<<"$o")
+  [ "$rc" = RC=97 ] || fail "ATTACK: $bad with a writable file on fd 2 was not refused with 97: $o"
+  [ "$h0" = "$(sha256sum <"$F")" ] || fail "ATTACK: the refusal for $bad was written into the file on fd 2: $(head -c 300 "$F")"
+  [ "$(wc -c <<<"$o")" -le 7 ] || fail "ATTACK: output for $bad on the other descriptor: $o"
+done
+# the library functions called directly (the kit and the tests call them), refusing, with fd 2 a writable file
+for snip in 'opkit_scratch_check X /nonexistent-118' 'opkit_rw_validate /etc' 'opkit_ns_fd_ok 2' 'opkit_ns_std_fds_ok' 'opkit_say hello'; do   # (pure ones only: nothing here mounts or creates)
+  F=$H118/victim-lib; mkvictim "$F"; h0=$(sha256sum <"$F")
+  o=$(LIB118=$LIB run118 "2:rdwr:$F" "$snip")
+  [ "$h0" = "$(sha256sum <"$F")" ] || fail "ATTACK: '$snip' wrote through a writable regular file on fd 2: $(head -c 300 "$F")"
+  [ "$(wc -c <<<"$o")" -le 7 ] || fail "ATTACK: '$snip' wrote to the other descriptor: $o"
+done
+# control: the same calls with a pipe on fd 2 DO say why (the message is not lost for a legitimate caller)
+o=$(OPKIT_LIB=$LIB bash -c '. "$OPKIT_LIB"; opkit_scratch_check X /nonexistent-118' 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q "is not a directory" <<<"$o"; } || fail "control: the refusal was not said on a pipe (rc $rc): $o"
+# control: a log under OPKIT_RW on fd 2 is an accepted log: the run goes ahead, and a refusal for ANOTHER reason (a directory on fd 0) reaches it
+F=$W/scratch/log118; : >"$F"
+o=$(LIB118=$LIB OPKIT_RW=$W/scratch OPKIT_SCRATCH=$W/scratch run118 "2:rdwr:$F" 'ns_run touch '"$W/scratch/ran118")
+{ head -1 <<<"$o" | grep -qx 'RC=0' && [ -e "$W/scratch/ran118" ]; } || fail "control: a log file under OPKIT_RW on fd 2 was refused: $o"
+rm -f "$W/scratch/ran118"
+o=$(cd / && LIB118=$LIB OPKIT_RW=$W/scratch OPKIT_SCRATCH=$W/scratch bash -c '. "$LIB118"; ns_run touch "$1"' bash "$W/scratch/ran118" </ 2>>"$F"); rc=$?
+{ [ $rc = 97 ] && grep -q 'descriptor 0 is a directory' "$F"; } || fail "control: the refusal was not delivered to a legitimate log under OPKIT_RW (rc $rc): $(cat "$F")"
+echo "ok: the pre-namespace refusals and the library functions called directly never write through a writable regular file on fd 2; a pipe still gets the reason"
 # a block device, or a character device that is not a null/zero/tty/random one, on stdin (opened read-only, never read)
 BLK=""; for cand in "$(findmnt -no SOURCE / 2>/dev/null)" /dev/sda /dev/sdb /dev/vda /dev/nvme0n1 /dev/loop0; do [ -b "$cand" ] && { BLK=$cand; break; }; done
 if [ -n "$BLK" ]; then

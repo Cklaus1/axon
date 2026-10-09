@@ -2852,3 +2852,27 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M3299': r'ATTACK: an object with a key conformed to a schema that declares no property and forbids additions',
 })
+
+# BUILDENV11 (amendment 118; M3400-M3419)
+ATTACK_MARKERS.update({
+    'M3400': r'ATTACK: the helper wrote its refusal into the writable file it had just refused',
+    'M3401': r'ATTACK: ns_run reached unshare with writable regular files on fds 0, 1 and 2 at once',
+    'M3402': r'ATTACK: a tool the pre-checks ran wrote its stderr through the writable regular file on fd 2',
+    'M3403': r'ATTACK: the refusal for OPKIT_RW=/var/tmp was written into the file on fd 2',
+    'M3404': r'ATTACK: ns_run reached unshare with a writable regular file on fd 1\b',
+    'M3405': r'ATTACK: ns_run reached unshare with a writable regular file on fd 0\b',
+    'M3406': r'ATTACK: ns_run reached unshare with a writable regular file on fd 2\b',
+    'M3407': r'ATTACK: fd 0 \(rdwr\) a writable regular file was not refused with 97',
+    'M3408': r'ATTACK: a file whose path merely begins with the scratch path was accepted as scratch',
+    'M3409': r"selftest: the diagnostic shape 'a bare >&2 in a function' was ACCEPTED",
+    'M3410': r"selftest: the diagnostic shape '1>&2' was ACCEPTED",
+    'M3411': r"selftest: the diagnostic shape 'printf to /dev/stderr' was ACCEPTED",
+    'M3412': r"selftest: the diagnostic shape 'echo to /proc/self/fd/2' was ACCEPTED",
+    'M3413': r"selftest: the diagnostic shape 'python writing sys.stderr' was ACCEPTED",
+    'M3414': r"selftest: the diagnostic shape 'a bare echo on stdout in a non-value function' was ACCEPTED",
+    'M3415': r"selftest: the diagnostic shape 'opkit_say that writes without classifying fd 2' was ACCEPTED",
+    'M3416': r"selftest: the diagnostic shape 'ns_run that unshares before it classifies fds 0-2' was ACCEPTED",
+    'M3417': r"selftest: the diagnostic shape 'ns_run pre-checks with stderr not captured' was ACCEPTED",
+    'M3418': r"selftest: the diagnostic shape 'the in-namespace shell mounts before it classifies fds' was ACCEPTED",
+    'M3419': r'selftest: check\(\) on a tree whose helper writes to fd 2 directly was ACCEPTED',
+})
