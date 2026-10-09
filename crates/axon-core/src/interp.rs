@@ -669,6 +669,14 @@ impl Env {
     #[inline]
     fn define_var(&mut self, name: Sym, slot: u32, val: Value) {
         let i = slot as usize;
+        // The common case: the slot is the next binding (a parameter, a
+        // `let` in a fresh scope). `i == len` implies `i >= start` and
+        // `slot != NAMED`, so this is the `None` arm below with nothing to
+        // fill (cost only, AX-53).
+        if i == self.vars.len() {
+            self.vars.push((name, val));
+            return;
+        }
         let start = self.marks.last().copied().unwrap_or(0);
         if slot == NAMED || i < start {
             return self.define(name, val);
@@ -3362,6 +3370,7 @@ impl<'p> Interp<'p> {
 
     /// AX-54: an empty argument vector with room for `n`, reusing one that a
     /// finished call handed back to [`Interp::recycle_args`].
+    #[inline]
     fn take_args(&self, n: usize) -> Vec<Value> {
         match self.arg_bufs.borrow_mut().pop() {
             Some(mut v) => {
@@ -3376,6 +3385,7 @@ impl<'p> Interp<'p> {
     /// only created while the pool is empty, so it holds at most as many as
     /// were outstanding at once (argument lists nested in argument lists);
     /// the cap bounds what deep recursion through such nesting leaves behind.
+    #[inline]
     fn recycle_args(&self, args: Vec<Value>) {
         debug_assert!(args.is_empty());
         let mut pool = self.arg_bufs.borrow_mut();
@@ -3479,13 +3489,13 @@ impl<'p> Interp<'p> {
             Some(Value::Int(n)) => Some(*n),
             _ => None,
         };
-        for (i, ((&(unwrap_soft, width), a), s)) in entry
-            .param_coerce
-            .iter()
-            .zip(args.drain(..))
-            .zip(params.iter())
-            .enumerate()
-        {
+        // The arity check above makes `args`, `params` and `param_coerce` the
+        // same length. Each argument is moved out of its slot (leaving a
+        // `Unit`), so the buffer is emptied without a `Drain` (cost only).
+        for (i, a) in args.iter_mut().enumerate() {
+            let a = std::mem::replace(a, Value::Unit);
+            let (unwrap_soft, width) = entry.param_coerce[i];
+            let s = &params[i];
             // Soft typing: `Uncertain<T>` is compatible with a plain-`T` parameter
             // (the checker allows it). If the declared param type is NOT itself a
             // soft wrapper but the argument IS one, unwrap to the inner value so
@@ -3507,6 +3517,7 @@ impl<'p> Interp<'p> {
             // Parameter `i` lives in frame slot `i` (AX-53).
             env.define_var(*s, i as u32, a);
         }
+        args.clear();
         self.recycle_args(args);
         // Phase 5: refinement-type PRECONDITIONS. A parameter `p: T where P`
         // desugars to a synthetic named refinement; the checker discharges P

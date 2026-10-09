@@ -373,9 +373,13 @@ pub(super) enum Op<'p> {
     /// Pop a value and append its display to the interpolation below it.
     FmtPush,
     /// A call by name: pop `argc` arguments (pushed left to right) into a
-    /// pooled argument buffer and `dispatch_call`.
+    /// pooled argument buffer and dispatch them as `dispatch_call` does, the
+    /// callee resolved at compile time (`dispatch_named`; `resume`, the one
+    /// name `dispatch_call` handles before resolving, goes to
+    /// `dispatch_resume`).
     Call {
-        callee: &'p Expr,
+        callee: Var<'p>,
+        resume: bool,
         argc: u32,
         tier: Option<&'p str>,
     },
@@ -893,7 +897,12 @@ impl<'p> Interp<'p> {
                         *scopes += 1;
                     }
                 }
-                Op::Call { callee, argc, tier } => {
+                Op::Call {
+                    callee,
+                    resume,
+                    argc,
+                    tier,
+                } => {
                     let mut argv = self.take_args(*argc as usize);
                     match *argc {
                         0 => {}
@@ -903,7 +912,12 @@ impl<'p> Interp<'p> {
                             argv.extend(st.drain(at..));
                         }
                     }
-                    st.push(tri!(self.dispatch_call(callee, argv, *tier, env)));
+                    let v = if *resume {
+                        self.dispatch_resume(argv)
+                    } else {
+                        self.dispatch_named(callee.name, callee.s, callee.slot, argv, *tier, env)
+                    };
+                    st.push(tri!(v));
                 }
                 Op::Store(var) => {
                     let v = pop(st);

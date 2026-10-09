@@ -119,14 +119,15 @@ impl<'p> Compiler<'_, 'p> {
             Expr::Call { callee, args, tier } => {
                 // An `Ident` callee without `P(x)` or a `&mut` argument
                 // (spec §4: every other callee stays on the tree for good).
-                if matches!(callee.as_ref(), Expr::Ident(_)) && tree_shape(e).is_none() {
+                if let (Expr::Ident(name), None) = (callee.as_ref(), tree_shape(e)) {
                     for a in args {
                         self.expr(a);
                     }
                     let argc = args.len() as u32;
                     self.emit(
                         Op::Call {
-                            callee,
+                            callee: self.var(callee, name),
+                            resume: name == "resume",
                             argc,
                             tier: tier.as_deref(),
                         },

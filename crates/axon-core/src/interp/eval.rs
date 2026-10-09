@@ -1258,92 +1258,115 @@ impl<'p> Interp<'p> {
     pub(super) fn dispatch_call(
         &self,
         callee: &Expr,
-        mut argv: Vec<Value>,
+        argv: Vec<Value>,
         tier: Option<&str>,
         env: &mut Env,
     ) -> R {
-        // Phase 6: `resume(v)` inside a handler arm carries `v` back to the
-        // intercepted operation as a `Flow::Resume`. It is caught at the
-        // builtin-interception site (`run_handler_arm`). `resume` with no arg
-        // resumes with Unit. (The resolver only binds `resume` inside an arm, so
-        // a `resume` here is genuinely a handler resume, not a user fn named
-        // `resume` — and the builtin/user-fn lookups never define one.)
         if let Expr::Ident(name) = callee {
             if name == "resume" {
-                let v = argv.into_iter().next().unwrap_or(Value::Unit);
-                // Phase 6 multi-shot: if a handler arm is currently servicing a
-                // suspended computation (`resume_ctx` non-empty) AND we are not
-                // already inside a replay (no nested-replay re-entrancy), reify
-                // the continuation by REPLAYING the body with `v` fed at the
-                // intercepted op, and return its value to the arm. This lets the
-                // arm use `resume`'s result (`let a = resume(2)`) and resume again
-                // (multi-shot) — without a CPS rewrite. When there is no ctx (or
-                // we're mid-replay), fall back to the single-shot `Flow::Resume`
-                // unwind, which the interception site catches tail-resumptively
-                // (byte-identical to the pre-multishot fast path).
-                let in_replay = self.resume_replay.borrow().is_some();
-                let has_ctx = !self.resume_ctx.borrow().is_empty();
-                if has_ctx && !in_replay {
-                    return self.replay_continuation(v);
-                }
-                return Err(Flow::Resume(v));
+                return self.dispatch_resume(argv);
             }
-        }
-
-        // R3b: make the per-call `tier:` (if any) visible to the builtin dispatch
-        // for the duration of this call (read by `current_ai_tier`). A call with
-        // no `tier:` leaves an already-clear slot alone (AX-54).
-        if tier.is_some() || self.current_call_tier.borrow().is_some() {
-            *self.current_call_tier.borrow_mut() = tier.map(|t| t.to_string());
-        }
-
-        if let Expr::Ident(name) = callee {
             let (s, slot) = self.res.var(callee, name);
-            // 1. A local/captured variable holding a closure.
-            if let Some(c @ Value::Closure { .. }) = env.get_var(s, slot) {
-                let c = c.clone();
-                return self.call_local_closure(c, argv);
-            }
-            // 2. A builtin — skipped for a name already proven not to be one
-            //    (see `callees`), which also caches step 3's lookup.
-            let known = self.callees.borrow().get(s.index()).copied();
-            let resolved = match known {
-                Some(r) if r != CALLEE_UNKNOWN => r,
-                _ => {
-                    if let Some(v) = self.call_builtin(name, &argv)? {
-                        argv.clear();
-                        self.recycle_args(argv);
-                        return Ok(v);
-                    }
-                    let r = match self.fn_of_sym.get(&s) {
-                        Some(&i) => CALLEE_FN + i,
-                        None => CALLEE_NOT_FN,
-                    };
-                    if super::builtins::builtin_dispatch_is_inert(name) {
-                        let mut callees = self.callees.borrow_mut();
-                        if callees.len() <= s.index() {
-                            callees.resize(s.index() + 1, CALLEE_UNKNOWN);
-                        }
-                        callees[s.index()] = r;
-                    }
-                    r
-                }
-            };
-            // 3. A user-defined function.
-            if resolved >= CALLEE_FN {
-                return self.call_fn_entry(&self.fn_table[(resolved - CALLEE_FN) as usize], argv);
-            }
-            // 4. A module-level closure constant.
-            if let Some(c @ Value::Closure { .. }) = self.globals.get(&s) {
-                return self.call_closure(c.clone(), argv);
-            }
-            return panic(format!("call to unknown function `{name}`"));
+            return self.dispatch_named(name, s, slot, argv, tier, env);
         }
-
+        self.set_call_tier(tier);
         // Callee is an expression that should evaluate to a closure
         // (e.g. `make_adder(1)(2)` or an array element).
         let c = self.eval(callee, env)?;
         self.call_closure(c, argv)
+    }
+
+    /// Phase 6: `resume(v)` inside a handler arm carries `v` back to the
+    /// intercepted operation as a `Flow::Resume`. It is caught at the
+    /// builtin-interception site (`run_handler_arm`). `resume` with no arg
+    /// resumes with Unit. (The resolver only binds `resume` inside an arm, so
+    /// a `resume` here is genuinely a handler resume, not a user fn named
+    /// `resume` — and the builtin/user-fn lookups never define one.) Shared
+    /// by [`Interp::dispatch_call`] and the bytecode engine (R50).
+    #[cold]
+    pub(super) fn dispatch_resume(&self, argv: Vec<Value>) -> R {
+        let v = argv.into_iter().next().unwrap_or(Value::Unit);
+        // Phase 6 multi-shot: if a handler arm is currently servicing a
+        // suspended computation (`resume_ctx` non-empty) AND we are not
+        // already inside a replay (no nested-replay re-entrancy), reify
+        // the continuation by REPLAYING the body with `v` fed at the
+        // intercepted op, and return its value to the arm. This lets the
+        // arm use `resume`'s result (`let a = resume(2)`) and resume again
+        // (multi-shot) — without a CPS rewrite. When there is no ctx (or
+        // we're mid-replay), fall back to the single-shot `Flow::Resume`
+        // unwind, which the interception site catches tail-resumptively
+        // (byte-identical to the pre-multishot fast path).
+        let in_replay = self.resume_replay.borrow().is_some();
+        let has_ctx = !self.resume_ctx.borrow().is_empty();
+        if has_ctx && !in_replay {
+            return self.replay_continuation(v);
+        }
+        Err(Flow::Resume(v))
+    }
+
+    /// R3b: make the per-call `tier:` (if any) visible to the builtin dispatch
+    /// for the duration of this call (read by `current_ai_tier`). A call with
+    /// no `tier:` leaves an already-clear slot alone (AX-54).
+    #[inline(always)]
+    fn set_call_tier(&self, tier: Option<&str>) {
+        if tier.is_some() || self.current_call_tier.borrow().is_some() {
+            *self.current_call_tier.borrow_mut() = tier.map(|t| t.to_string());
+        }
+    }
+
+    /// [`Interp::dispatch_call`] for an identifier callee `name` other than
+    /// `resume`, already resolved to `(s, slot)` (the bytecode engine resolves
+    /// it at compile time, R50): the per-call `tier:`, then a local closure, a
+    /// builtin, a user fn, a module-level closure, the unknown-function panic.
+    pub(super) fn dispatch_named(
+        &self,
+        name: &str,
+        s: Sym,
+        slot: u32,
+        mut argv: Vec<Value>,
+        tier: Option<&str>,
+        env: &mut Env,
+    ) -> R {
+        self.set_call_tier(tier);
+        // 1. A local/captured variable holding a closure.
+        if let Some(c @ Value::Closure { .. }) = env.get_var(s, slot) {
+            let c = c.clone();
+            return self.call_local_closure(c, argv);
+        }
+        // 2. A builtin — skipped for a name already proven not to be one
+        //    (see `callees`), which also caches step 3's lookup.
+        let known = self.callees.borrow().get(s.index()).copied();
+        let resolved = match known {
+            Some(r) if r != CALLEE_UNKNOWN => r,
+            _ => {
+                if let Some(v) = self.call_builtin(name, &argv)? {
+                    argv.clear();
+                    self.recycle_args(argv);
+                    return Ok(v);
+                }
+                let r = match self.fn_of_sym.get(&s) {
+                    Some(&i) => CALLEE_FN + i,
+                    None => CALLEE_NOT_FN,
+                };
+                if super::builtins::builtin_dispatch_is_inert(name) {
+                    let mut callees = self.callees.borrow_mut();
+                    if callees.len() <= s.index() {
+                        callees.resize(s.index() + 1, CALLEE_UNKNOWN);
+                    }
+                    callees[s.index()] = r;
+                }
+                r
+            }
+        };
+        // 3. A user-defined function.
+        if resolved >= CALLEE_FN {
+            return self.call_fn_entry(&self.fn_table[(resolved - CALLEE_FN) as usize], argv);
+        }
+        // 4. A module-level closure constant.
+        if let Some(c @ Value::Closure { .. }) = self.globals.get(&s) {
+            return self.call_closure(c.clone(), argv);
+        }
+        panic(format!("call to unknown function `{name}`"))
     }
 
     /// AX-08: `f(.., &mut a, ..)`. The checker (E0605/E0606) guarantees the
