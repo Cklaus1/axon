@@ -35225,13 +35225,12 @@ fn vm_engine_trace_names_each_compiled_body_once_under_vm_only() {
     assert_eq!(String::from_utf8_lossy(&vm.stdout), "55\n");
     let err = String::from_utf8_lossy(&vm.stderr);
     // Each body's lines come once, on its first run, though `fib` runs 177
-    // times. Through S1 the struct literal, method call and field read stay
-    // `Tree` ops.
+    // times. The struct literal and the field read stay `Tree` ops; S3
+    // compiles the method call.
     assert_eq!(
         err,
-        "vm: main 9 ops, 2 tree nodes\n\
+        "vm: main 11 ops, 1 tree nodes\n\
          vm: tree-op main StructLit\n\
-         vm: tree-op main MethodCall\n\
          vm: fib 8 ops, 0 tree nodes\n\
          vm: P::get 1 ops, 1 tree nodes\n\
          vm: tree-op P::get FieldAccess\n"
@@ -35538,12 +35537,7 @@ fn vm_match_while_let_break_continue() {
     let (code, stdout, stderr) = vm_scalar_case(
         "match_while_let",
         vm_match_src!("whilelet"),
-        &[
-            ("nested", 0),
-            ("first_ok", 0),
-            ("unscoped", 0),
-            ("main", 0),
-        ],
+        &[("nested", 0), ("first_ok", 0), ("unscoped", 0), ("main", 0)],
     );
     assert_eq!(
         (code, stdout.as_str()),
@@ -35556,9 +35550,16 @@ fn vm_match_while_let_break_continue() {
 /// after the output of the earlier calls.
 #[test]
 fn vm_match_non_exhaustive_panics() {
-    let (code, stdout, stderr) =
-        vm_scalar_case("match_nomatch", vm_match_src!("nomatch"), &[("pick", 0), ("main", 0)]);
-    assert_eq!((code, stdout.as_str()), (Some(101), "one\ntwo\n"), "{stderr}");
+    let (code, stdout, stderr) = vm_scalar_case(
+        "match_nomatch",
+        vm_match_src!("nomatch"),
+        &[("pick", 0), ("main", 0)],
+    );
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(101), "one\ntwo\n"),
+        "{stderr}"
+    );
     assert!(stderr.contains("no match arm matched"), "{stderr}");
 }
 

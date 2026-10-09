@@ -525,51 +525,15 @@ impl<'p> Interp<'p> {
                 args,
             } => {
                 let recv = self.eval(receiver, env)?;
-                // Channel methods (cooperative, single-threaded): send pushes to
-                // the shared queue, recv pops from it, clone shares the handle.
                 if let Value::Chan(q) = &recv {
-                    return match method.as_str() {
-                        "send" => {
-                            let v = self.eval(&args[0], env)?;
-                            q.borrow_mut().push_back(v);
-                            Ok(Value::Unit)
-                        }
-                        "recv" => q.borrow_mut().pop_front().ok_or_else(|| {
-                            Flow::Panic(
-                                "recv on an empty channel — the interpreter runs `spawn` bodies \
-                                 eagerly, so a value must be sent before it is received"
-                                    .into(),
-                            )
-                        }),
-                        // Non-blocking pop. Returns `Some(v)` when a value is
-                        // available, `None` otherwise. Lets ASI loops poll a
-                        // channel without panicking on the empty case — useful
-                        // for fan-out workers where the consumer races the
-                        // producers and needs to know when results have stopped
-                        // coming, not just block on the first miss.
-                        "try_recv" => Ok(match q.borrow_mut().pop_front() {
-                            Some(v) => Value::Some(Box::new(v)),
-                            None => Value::None,
-                        }),
-                        // How many values are queued and unread. Useful with
-                        // try_recv for "drain everything available" loops, or
-                        // as a "did the workers do any work?" probe.
-                        "len" => Ok(Value::Int(q.borrow().len() as i64)),
-                        "clone" => Ok(Value::Chan(q.clone())),
-                        other => panic(format!("no method `{other}` on a channel")),
-                    };
+                    return self.chan_method(q, method, args, env);
                 }
                 let mut argv = Vec::with_capacity(args.len() + 1);
                 argv.push(recv);
                 for a in args {
                     argv.push(self.eval(a, env)?);
                 }
-                let tn = argv[0].type_name();
-                if let Some(f) = self.methods.get(&(tn.clone(), method.clone())) {
-                    self.call_fn(f, argv)
-                } else {
-                    panic(format!("no method `{method}` on type `{tn}`"))
-                }
+                self.impl_method(method, argv)
             }
 
             Expr::FieldAccess { receiver, field } => {
@@ -944,6 +908,65 @@ impl<'p> Interp<'p> {
         }
         env.pop();
         Ok(LoopStep::Continue)
+    }
+
+    /// A method call on a channel receiver (R50 S3: extracted from the
+    /// `MethodCall` arm, which the vm's `MethodRecv` op shares). The argument
+    /// nodes are evaluated here, exactly as the arm always did: `send`
+    /// evaluates only `args[0]`, every other method none of them.
+    /// Cooperative and single-threaded: `send` pushes to the shared queue,
+    /// `recv` pops from it, `clone` shares the handle.
+    pub(super) fn chan_method(
+        &self,
+        q: &Rc<RefCell<VecDeque<Value>>>,
+        method: &str,
+        args: &[Expr],
+        env: &mut Env,
+    ) -> R {
+        match method {
+            "send" => {
+                let v = self.eval(&args[0], env)?;
+                q.borrow_mut().push_back(v);
+                Ok(Value::Unit)
+            }
+            "recv" => q.borrow_mut().pop_front().ok_or_else(|| {
+                Flow::Panic(
+                    "recv on an empty channel — the interpreter runs `spawn` bodies \
+                     eagerly, so a value must be sent before it is received"
+                        .into(),
+                )
+            }),
+            // Non-blocking pop. Returns `Some(v)` when a value is
+            // available, `None` otherwise. Lets ASI loops poll a
+            // channel without panicking on the empty case — useful
+            // for fan-out workers where the consumer races the
+            // producers and needs to know when results have stopped
+            // coming, not just block on the first miss.
+            "try_recv" => Ok(match q.borrow_mut().pop_front() {
+                Some(v) => Value::Some(Box::new(v)),
+                None => Value::None,
+            }),
+            // How many values are queued and unread. Useful with
+            // try_recv for "drain everything available" loops, or
+            // as a "did the workers do any work?" probe.
+            "len" => Ok(Value::Int(q.borrow().len() as i64)),
+            "clone" => Ok(Value::Chan(q.clone())),
+            other => panic(format!("no method `{other}` on a channel")),
+        }
+    }
+
+    /// A method call on any receiver but a channel, after the receiver
+    /// (`argv`'s first value) and then the arguments were evaluated left to
+    /// right (R50 S3: extracted from the `MethodCall` arm, shared with the
+    /// vm): the impl method registered for the receiver's type name, else
+    /// the no-method panic.
+    pub(super) fn impl_method(&self, method: &str, mut argv: impl CallArgs) -> R {
+        let tn = argv.values()[0].type_name();
+        if let Some(f) = self.methods.get(&(tn.clone(), method.to_string())) {
+            self.call_fn(f, argv)
+        } else {
+            panic(format!("no method `{method}` on type `{tn}`"))
+        }
     }
 
     /// R13 native FFI: dispatch a `M::fn(...)` call to the in-process native

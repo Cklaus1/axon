@@ -126,7 +126,7 @@ impl Body<'_> {
     }
 }
 
-/// A `while` or `for` loop of a [`Body`]: where `break`/`continue` land.
+/// A `while`, `while let` or `for` loop of a [`Body`]: where `break`/`continue` land.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Loop {
     /// Ops `start..end` are one iteration's statements (inside the scope the
@@ -386,6 +386,64 @@ pub(super) enum Op<'p> {
         resume: bool,
         argc: u32,
         tier: Option<&'p str>,
+    },
+    /// A `match` arm's head, the subject on top of the stack (it stays
+    /// there for the later arms): `env.push()` for the arm (when `scoped`),
+    /// then `match_pattern` binds into it; on no match, `env.pop()` and jump
+    /// to `next`, the next arm. A pattern error propagates with the arm's
+    /// scope counted, so it is popped as the `Match` arm pops it.
+    MatchArm {
+        pat: &'p Pattern,
+        scoped: bool,
+        next: u32,
+    },
+    /// Pop a match guard's value. Only a plain `true` takes the arm (no
+    /// unwrap, no panic: an `Uncertain<bool>` is false); otherwise
+    /// `env.pop()` of the arm's scope (when `scoped`) and jump to `next`.
+    Guard {
+        scoped: bool,
+        next: u32,
+    },
+    /// The end of a taken arm: `env.pop()` (when `scoped`), drop the subject
+    /// below the arm's value, jump to `end`.
+    MatchEnd {
+        scoped: bool,
+        end: u32,
+    },
+    /// No arm matched: the `no match arm matched` panic.
+    NoMatch,
+    /// A `while let` head after its value: pop it, `env.push()` (when
+    /// `scoped`), `match_pattern`; on no match `env.pop()` and jump to
+    /// `exit`, else `env.push()` for the body as `run_loop_body` does (when
+    /// `body`).
+    WhileLet {
+        pat: &'p Pattern,
+        scoped: bool,
+        body: bool,
+        exit: u32,
+    },
+    /// The end of a `while let` iteration: `env.pop()` of the body's scope
+    /// and then of the pattern's (each when pushed), jump to `head`.
+    WhileLetNext {
+        scoped: bool,
+        body: bool,
+        head: u32,
+    },
+    /// A method call after its receiver: a channel receiver is popped and
+    /// `chan_method` runs with the argument nodes (evaluating them as the
+    /// tree does), its value pushed, and control jumps to `done`, past the
+    /// arguments and [`Op::MethodCall`]. Any other receiver stays, and the
+    /// compiled arguments follow.
+    MethodRecv {
+        method: &'p str,
+        args: &'p [Expr],
+        done: u32,
+    },
+    /// Pop the receiver and `argc` arguments (pushed in that order) and call
+    /// `impl_method` with them in place on the stack.
+    MethodCall {
+        method: &'p str,
+        argc: u32,
     },
 }
 
@@ -1030,6 +1088,88 @@ impl<'p> Interp<'p> {
                 Op::FmtPush => {
                     let v = pop(st);
                     fmt_top(st).push_str(&display(&v));
+                }
+                Op::MatchArm { pat, scoped, next } => {
+                    if *scoped {
+                        env.push();
+                        *scopes += 1;
+                    }
+                    let Some(v) = st.last() else { malformed() };
+                    if !tri!(self.match_pattern(pat, v, env)) {
+                        if *scoped {
+                            pop_scope(env, scopes);
+                        }
+                        pc = *next as usize;
+                    }
+                }
+                Op::Guard { scoped, next } => {
+                    if !matches!(pop(st), Value::Bool(true)) {
+                        if *scoped {
+                            pop_scope(env, scopes);
+                        }
+                        pc = *next as usize;
+                    }
+                }
+                Op::MatchEnd { scoped, end } => {
+                    if *scoped {
+                        pop_scope(env, scopes);
+                    }
+                    let Some(at) = st.len().checked_sub(2) else {
+                        malformed()
+                    };
+                    drop(st.swap_remove(at));
+                    pc = *end as usize;
+                }
+                Op::NoMatch => {
+                    tri!(panic("no match arm matched"));
+                }
+                Op::WhileLet {
+                    pat,
+                    scoped,
+                    body,
+                    exit,
+                } => {
+                    let v = pop(st);
+                    if *scoped {
+                        env.push();
+                        *scopes += 1;
+                    }
+                    if tri!(self.match_pattern(pat, &v, env)) {
+                        if *body {
+                            env.push();
+                            *scopes += 1;
+                        }
+                    } else {
+                        if *scoped {
+                            pop_scope(env, scopes);
+                        }
+                        pc = *exit as usize;
+                    }
+                }
+                Op::WhileLetNext { scoped, body, head } => {
+                    if *body {
+                        pop_scope(env, scopes);
+                    }
+                    if *scoped {
+                        pop_scope(env, scopes);
+                    }
+                    pc = *head as usize;
+                }
+                Op::MethodRecv { method, args, done } => {
+                    if let Some(Value::Chan(_)) = st.last() {
+                        let Value::Chan(q) = pop(st) else { malformed() };
+                        st.push(tri!(self.chan_method(&q, method, args, env)));
+                        pc = *done as usize;
+                    }
+                }
+                Op::MethodCall { method, argc } => {
+                    let Some(at) = st.len().checked_sub(*argc as usize + 1) else {
+                        malformed()
+                    };
+                    // The receiver and arguments stay on the stack: the
+                    // callee's binder moves them from there.
+                    let v = self.impl_method(method, StackTail { st: &mut *st, at });
+                    st.push(tri!(v));
                 }
             }
         }

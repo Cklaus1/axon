@@ -3457,7 +3457,7 @@ impl<'p> Interp<'p> {
         }
     }
 
-    fn call_fn(&self, f: &'p FnDef, args: Vec<Value>) -> R {
+    fn call_fn(&self, f: &'p FnDef, args: impl CallArgs) -> R {
         match self.fn_of_def.get(&(f as *const FnDef as usize)) {
             Some(&i) => self.call_fn_entry(&self.fn_table[i as usize], args),
             None => self.call_fn_entry(&FnEntry::new(f, &self.fns), args),
