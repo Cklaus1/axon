@@ -77,6 +77,7 @@ fn kinds(body: &Body<'_>) -> Vec<&'static str> {
             Op::BranchCmp { .. } | Op::BranchLocalInt { .. } | Op::BranchLocalLocal { .. } => {
                 "branch-cmp"
             }
+            Op::BranchIndexLocal { .. } | Op::BranchIndexInt { .. } => "branch-index",
             Op::StrictInt => "strict-int",
             Op::ForTest { scoped: true, .. } => "for-test+body",
             Op::ForTest { scoped: false, .. } => "for-test",
@@ -93,6 +94,15 @@ fn kinds(body: &Body<'_>) -> Vec<&'static str> {
             Op::FmtLit(_) => "fmt-lit",
             Op::FmtPush => "fmt-push",
             Op::Call { .. } => "call",
+            Op::MakeArray(_) => "array",
+            Op::MakeTuple(_) => "tuple",
+            Op::Record(_) => "record",
+            Op::FieldLocal { .. } | Op::Field { .. } => "field",
+            Op::IndexLocal { .. } | Op::IndexIdent(_) | Op::IndexValue => "index",
+            Op::IndexTest(_) => "index-test",
+            Op::PlaceIndex => "place-index",
+            Op::WritePlace { .. } | Op::WriteIndexLocal { .. } => "write-place",
+            Op::PlaceInvalid => "place-invalid",
         })
         .collect()
 }
@@ -118,7 +128,7 @@ fn s1_leaves_only_unlowered_variants_on_the_tree() {
             _ => None,
         })
         .collect();
-    assert_eq!(trees, ["Array", "Index", "Match"]);
+    assert_eq!(trees, ["Match"]);
 }
 
 #[test]
@@ -134,10 +144,7 @@ fn s1_every_expr_node_compiles_to_a_balanced_body() {
         crate::ast::walk_expr(&f.body, &mut |e| {
             let body = compile(&interp.res, e);
             let root_is_tree = matches!(&body.ops[..], [Op::Tree(t)] if std::ptr::eq(*t, e));
-            let lowered = !matches!(
-                e,
-                Expr::Array(_) | Expr::Index { .. } | Expr::Match { .. } | Expr::FieldAccess { .. }
-            );
+            let lowered = !matches!(e, Expr::Match { .. });
             assert_eq!(root_is_tree, !lowered, "{}", compile::variant_name(e));
             seen.insert(compile::variant_name(e));
         });
@@ -147,6 +154,35 @@ fn s1_every_expr_node_compiles_to_a_balanced_body() {
     ] {
         assert!(seen.contains(v), "{v} not exercised: {seen:?}");
     }
+}
+
+/// R50 S2 (§4 rows `place_index`/`write_place`, Lowered set): every place
+/// write lowers; a place rooted at a call compiles to its value and index,
+/// then `PlaceInvalid`, with the root never evaluated (no call op); an
+/// `E[..]` read stays one `Tree` op; a fused index compare is one op.
+#[test]
+fn s2_place_writes_lower_and_e_index_stays_on_the_tree() {
+    let src = "\
+fn mk() -> [i64] { [1] }
+fn f(xs: [i64], g: [[i64]], i: i64) -> i64 {
+    xs[i] = 1
+    g[i][i + 1] = 2
+    mk()[i + 1] = 3
+    let a = E[xs]
+    if xs[i] < i { 1 } else { 0 }
+}
+";
+    let prog = crate::parse_source(src).expect("parses");
+    let interp = Interp::build(&prog);
+    let body = compile(&interp.res, body_of(&interp, "f"));
+    let k = kinds(&body);
+    let count = |name: &str| k.iter().filter(|&&x| x == name).count();
+    assert_eq!(count("write-place"), 2, "{k:?}");
+    assert_eq!(count("place-index"), 3, "{k:?}");
+    assert_eq!(count("place-invalid"), 1, "{k:?}");
+    assert_eq!(count("call"), 0, "{k:?}");
+    assert_eq!(count("branch-index"), 1, "{k:?}");
+    assert_eq!(body.tree_nodes(), 1, "{k:?}");
 }
 
 #[test]
@@ -359,7 +395,7 @@ fn ax31_shaped_assign_runs_assign_in_place_first() {
         "fn f() -> [i64] { let x = [0]\n x = arr_push(x, 1 + 2)\n x }",
         "f",
     );
-    assert_eq!(&k[3..8], ["in-place", "load", "bin", "call", "store"]);
+    assert_eq!(&k[4..9], ["in-place", "load", "bin", "call", "store"]);
     // Not AX-31-shaped: no `assign_in_place` call at all.
     let prog = crate::parse_source("fn f() -> i64 { let i = 0\n i = 1 + i\n i }").unwrap();
     let interp = Interp::build(&prog);
