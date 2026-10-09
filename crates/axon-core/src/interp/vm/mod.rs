@@ -113,6 +113,40 @@ pub(super) struct Body<'p> {
     /// R50 S7: the body as one pure tree, when it is one (a lambda body
     /// such as `acc + x % m`), for [`Interp::fold_leaf`].
     pub(super) leaf: Option<Box<PureExpr<'p>>>,
+    /// R50 S8: the body as element moves within one array, when it is
+    /// (qsort's `swap`), for [`Interp::call_moves`].
+    pub(super) moves: Option<Box<Moves<'p>>>,
+}
+
+/// R50 S8: a body whose statements are all `let t = a[i]` (untyped),
+/// `a[i] = a[j]` and `a[i] = v` on one array local `arr`, every index a
+/// local that no statement defines or an int literal, `v` such a local, a
+/// literal or a `let` before it, its value `()`, each `let` in the body's
+/// own scope. An `&mut` call to it that borrows `arr` can run the moves on
+/// the borrowed array where it is, once every index is known to be in
+/// bounds and the array to be uniquely owned ([`Interp::call_moves`]).
+pub(super) struct Moves<'p> {
+    pub(super) arr: Var<'p>,
+    pub(super) steps: Box<[Move<'p>]>,
+}
+
+/// One statement of a [`Moves`] body.
+pub(super) enum Move<'p> {
+    /// `let t = arr[idx]`: the element into register `dst`.
+    Read { dst: u8, idx: Src<'p> },
+    /// `arr[idx] = arr[sidx]`.
+    Copy { idx: Src<'p>, sidx: Src<'p> },
+    /// `arr[idx] = val`.
+    Write { idx: Src<'p>, val: Src<'p> },
+}
+
+/// An operand of a [`Move`]: a local no statement defines (a parameter,
+/// checked at the call), an int literal, or a `let`'s register.
+#[derive(Clone, Copy)]
+pub(super) enum Src<'p> {
+    Param(Var<'p>),
+    Int(i64),
+    Reg(u8),
 }
 
 impl Body<'_> {
@@ -715,6 +749,61 @@ pub(super) enum Op<'p> {
         stacked: u32,
         refs: Box<[MutRef<'p>]>,
         discard: bool,
+    },
+
+    // -- S8: qsort and fib superops (spec §4 S8) --
+    /// `let var = arr[idx]` (untyped `let`, inline index) in one op: the
+    /// read as [`Op::IndexLocal`] does it, then [`Op::Define`]'s
+    /// `define_var`, without the operand stack.
+    IndexDefine {
+        var: Var<'p>,
+        arr: Var<'p>,
+        idx: Opnd<'p>,
+    },
+    /// `base[idx] = src[sidx]` (both indexes inline) in one op: the value
+    /// read as [`Op::IndexLocal`] reads `src[sidx]`, then the target index
+    /// and the write as [`Op::WriteIndexLocal`] does them (S2's order),
+    /// without the operand stack.
+    WriteIndexIndex {
+        base: Var<'p>,
+        idx: Opnd<'p>,
+        src: Var<'p>,
+        sidx: Opnd<'p>,
+    },
+    /// [`Op::Bin`] with both operands on the stack (`fib(n - 1) + fib(n -
+    /// 2)`): two ints with `int_fast`'s value replace themselves on the
+    /// stack, else `Bin`'s path.
+    BinStack(BinOp),
+    /// [`Op::CallFast`] to a one-parameter fn whose argument is `l op r`, a
+    /// local and an int literal (`fib(n - 1)`), once `proven`: the argument
+    /// computed by `int_fast` on the local's int (the `local ± literal`
+    /// op), the callee's leading [`Op::BranchReturn`] taken without a frame
+    /// when it returns ([`Interp::leaf_arm`]), else the argument bound
+    /// straight into the frame ([`Interp::call_fast_arg`]). Wherever
+    /// `int_fast` declines or the callee is not `proven`, the argument is
+    /// computed on `Bin`'s path and pushed, and the call is
+    /// [`Op::CallFast`]'s with that stack argument.
+    CallFastLocalInt {
+        callee: Var<'p>,
+        entry: u32,
+        op: BinOp,
+        l: Var<'p>,
+        r: i64,
+        proven: Cell<bool>,
+    },
+    /// A body's leading `if l op r { val } else { .. }` whose `then` arm
+    /// ends the body (the [`Op::BranchLocalInt`] it replaces, then `val`'s
+    /// `Load`/`Const` and a `Jump` to the end): when the compare is a plain
+    /// `true` and `val` reads an int, the body ends with that value as
+    /// [`Op::Return`] ends it; otherwise [`Op::BranchLocalInt`]'s steps,
+    /// the `then` arm continuing at the next op. The leaf arm a fast call
+    /// can take without a frame ([`Interp::leaf_arm`]).
+    BranchReturn {
+        op: BinOp,
+        l: Var<'p>,
+        r: i64,
+        val: Opnd<'p>,
+        target: u32,
     },
 }
 
@@ -1545,6 +1634,96 @@ impl<'p> Interp<'p> {
                         st.push(v);
                     }
                 }
+                Op::IndexDefine { var, arr, idx } => {
+                    let v = match index_fast(env, arr, idx) {
+                        Some(v) => v,
+                        None => tri!(self.index_local_slow(arr, idx, env)),
+                    };
+                    env.define_var(var.s, var.slot, v);
+                }
+                Op::WriteIndexIndex {
+                    base,
+                    idx,
+                    src,
+                    sidx,
+                } => {
+                    let v = match index_fast(env, src, sidx) {
+                        Some(v) => v,
+                        None => tri!(self.index_local_slow(src, sidx, env)),
+                    };
+                    tri!(self.write_index_local(base, idx, v, env));
+                }
+                Op::BinStack(op) => {
+                    let n = st.len();
+                    let fast = match st.get(n.wrapping_sub(2)..) {
+                        Some([Value::Int(a), Value::Int(b)]) => int_fast(op, *a, *b),
+                        _ => None,
+                    };
+                    match fast {
+                        Some(s) => {
+                            // Two ints: nothing to drop.
+                            std::mem::forget(st.pop());
+                            let Some(top) = st.last_mut() else {
+                                malformed()
+                            };
+                            std::mem::forget(std::mem::replace(top, s.value()));
+                        }
+                        None => {
+                            let v = tri!(self.bin_slow(op, &Opnd::Stack, &Opnd::Stack, env, st));
+                            st.push(v);
+                        }
+                    }
+                }
+                Op::CallFastLocalInt {
+                    callee,
+                    entry,
+                    op,
+                    l,
+                    r,
+                    proven,
+                } => {
+                    let v = match local_int(env, l).and_then(|a| int_fast(op, a, *r)) {
+                        Some(Scalar::Int(a)) if proven.get() => {
+                            let entry = &self.fn_table[*entry as usize];
+                            match self.leaf_arm(entry, a) {
+                                Some(v) => Ok(v),
+                                None => self.call_fast_arg(entry, Value::Int(a), st),
+                            }
+                        }
+                        _ => self
+                            .call_fast_local_int_slow(callee, *entry, op, l, *r, proven, env, st),
+                    };
+                    st.push(tri!(v));
+                }
+                Op::BranchReturn {
+                    op,
+                    l,
+                    r,
+                    val,
+                    target,
+                } => {
+                    let b = match local_int(env, l).and_then(|a| int_fast(op, a, *r)) {
+                        Some(Scalar::Bool(b)) => b,
+                        Some(s) => tri!(cond_bool(s.value(), Cond::If.word())),
+                        None => {
+                            let (l, r) = (Opnd::Local(*l), Opnd::Int(*r));
+                            tri!(self.cmp_slow(op, &l, &r, Cond::If, env, st))
+                        }
+                    };
+                    if !b {
+                        pc = *target as usize;
+                    } else {
+                        let n = match val {
+                            Opnd::Int(n) => Some(*n),
+                            Opnd::Local(v) => local_int(env, v),
+                            _ => None,
+                        };
+                        if let Some(n) = n {
+                            *scopes_out = *scopes;
+                            return Ok(Value::Int(n));
+                        }
+                    }
+                }
                 Op::Store(var) => {
                     let v = pop(st);
                     tri!(store(env, var, v));
@@ -1933,6 +2112,26 @@ impl<'p> Interp<'p> {
         }
     }
 
+    /// [`Op::Bin`]'s steps, for an S8 op whose int fast path declined: the
+    /// scalar fast path, else the general operands and `binop_operands`.
+    #[inline(never)]
+    fn bin_slow(
+        &self,
+        op: &BinOp,
+        l: &Opnd<'_>,
+        r: &Opnd<'_>,
+        env: &Env,
+        st: &mut Vec<Value>,
+    ) -> R {
+        match scalar_fast(op, l, r, env, st) {
+            Some(s) => Ok(s.value()),
+            None => {
+                let (l, r) = self.operands(l, r, env, st)?;
+                binop_operands(op, l, r)
+            }
+        }
+    }
+
     /// Read the operands of a binary op, the left one first (a `Stack` right
     /// operand was pushed last, so it is popped first).
     #[inline(always)]
@@ -2215,6 +2414,89 @@ impl<'p> Interp<'p> {
         out
     }
 
+    /// [`Op::CallFastLocalInt`] once its argument `a` is computed:
+    /// [`Interp::call_fast`]'s steps with `a` as the one stack argument,
+    /// bound straight into the frame (the compiler proved the callee takes
+    /// one parameter, so the arity check cannot fail).
+    #[inline(never)]
+    fn call_fast_arg(&self, entry: &FnEntry<'p>, a: Value, st: &mut Vec<Value>) -> R {
+        debug_assert!(compile::fast_call_blocker(entry, self.refine_preds.is_empty()).is_none());
+        debug_assert_eq!(entry.params.len(), 1);
+        self.set_call_tier(None);
+        let mut frame = self.take_frame();
+        let out = match self.enter_fn(entry.def) {
+            Ok(_guard) => {
+                frame.vars.push((entry.params[0], param_value(entry, 0, a)));
+                self.fast_body(entry, &mut frame, st)
+            }
+            Err(flow) => Err(flow),
+        };
+        self.give_frame(frame);
+        out
+    }
+
+    /// [`Op::CallFastLocalInt`] when `int_fast` declined or the callee is
+    /// not proven yet: the argument on `Bin`'s path, pushed, then
+    /// [`Op::CallFast`]'s steps with that stack argument.
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn call_fast_local_int_slow(
+        &self,
+        callee: &Var<'_>,
+        entry: u32,
+        op: &BinOp,
+        l: &Var<'_>,
+        r: i64,
+        proven: &Cell<bool>,
+        env: &mut Env,
+        st: &mut Vec<Value>,
+    ) -> R {
+        let a = self.bin_slow(op, &Opnd::Local(*l), &Opnd::Int(r), env, st)?;
+        st.push(a);
+        if proven.get() || self.fast_call_proven(callee, entry, proven) {
+            let at = st.len() - 1;
+            self.call_fast(&self.fn_table[entry as usize], st, at)
+        } else {
+            self.call_unproven(callee, 1, &[], env, st)
+        }
+    }
+
+    /// S8: a one-parameter fast call with the int argument `a` whose body
+    /// leads with an [`Op::BranchReturn`], without a frame: when the
+    /// compare reads the parameter and is a plain `true` and the value is
+    /// the parameter or an int literal, that value (what the body returns;
+    /// an int needs no scalar-return unwrap). As [`Interp::leaf_call`],
+    /// nothing runs in the callee that could observe the frame, `goal_met`
+    /// or `current_fn`, and the `tier:` clear stays. `None`, with nothing
+    /// changed, wherever the full path could differ: a body not compiled
+    /// yet or not leading with the op, the depth limit reached (the full
+    /// path panics there), a sized parameter (it binds a `SizedInt`), a
+    /// name other than the parameter's slot or `goal_met`, a compare that
+    /// declines or is false.
+    #[inline(always)]
+    fn leaf_arm(&self, entry: &FnEntry<'p>, a: i64) -> Option<Value> {
+        let body = entry.compiled.as_ref()?.get()?;
+        let Some(Op::BranchReturn { op, l, r, val, .. }) = body.ops.first() else {
+            return None;
+        };
+        let p = *entry.params.first()?;
+        let param = |v: &Var<'_>| v.slot == 0 && v.s == p && v.s != SYM_GOAL_MET;
+        if !param(l)
+            || entry.param_coerce[0].1.is_some()
+            || self.call_depth.get() >= self.max_depth
+            || !matches!(int_fast(op, a, *r)?, Scalar::Bool(true))
+        {
+            return None;
+        }
+        let v = match val {
+            Opnd::Int(n) => *n,
+            Opnd::Local(v) if param(v) => a,
+            _ => return None,
+        };
+        self.set_call_tier(None);
+        Some(Value::Int(v))
+    }
+
     /// [`Op::CallFast`] once proven, its arguments inline operands (as many
     /// as `entry` has parameters, so the arity check cannot fail). They are
     /// read first, as the tree evaluates them before the dispatch, and bound
@@ -2416,6 +2698,12 @@ impl<'p> Interp<'p> {
         if !entry.plain || !self.refine_preds.is_empty() || entry.params.len() != argc {
             return self.call_mut_general(entry, arg_nodes, args, tier.as_deref(), env, st, at);
         }
+        if self
+            .call_moves(entry, args, refs, tier.as_deref(), env, st, at)
+            .is_some()
+        {
+            return Ok(Value::Unit);
+        }
         let mut frame = self.take_frame();
         frame.vars.reserve(argc + 1);
         let mut next_plain = at;
@@ -2494,6 +2782,123 @@ impl<'p> Interp<'p> {
         }
         self.give_frame(frame);
         result
+    }
+
+    /// S8: an `&mut` call on `call_fn_in`'s common path to a [`Moves`] body
+    /// that borrows the body's array, without a frame: the moves run on
+    /// the borrowed binding where it is. Moving a uniquely owned array into
+    /// the frame and back changes nothing an in-place write does not, and
+    /// nothing in the body can observe the frame, `goal_met` or
+    /// `current_fn`. `None`, with nothing changed, wherever the full path
+    /// could differ or fail: a body not compiled yet or not [`Moves`], not
+    /// exactly one `&mut` argument, its value not moving back, a parameter
+    /// read that is not an unsized int parameter, an unbound argument, a
+    /// borrowed binding that is not a uniquely owned array, an index out of
+    /// bounds, the depth limit reached. On success the `tier:` slot is set
+    /// and the stack arguments dropped, as the full path does.
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    fn call_moves(
+        &self,
+        entry: &FnEntry<'p>,
+        args: &[Opnd<'_>],
+        refs: &[MutRef<'_>],
+        tier: Option<&str>,
+        env: &mut Env,
+        st: &mut Vec<Value>,
+        at: usize,
+    ) -> Option<()> {
+        let m = entry.compiled.as_ref()?.get()?.moves.as_deref()?;
+        let [r] = refs else { return None };
+        let k = r.arg as usize;
+        if !r.back
+            || m.arr.slot as usize != k
+            || entry.params.get(k) != Some(&m.arr.s)
+            || entry.param_coerce[k].1.is_some()
+            || args.len() > 8
+            || m.steps.len() > 8
+            || self.call_depth.get() >= self.max_depth
+        {
+            return None;
+        }
+        // Each plain argument's int as it binds (`None`: not an int).
+        let mut ints = [None::<i64>; 8];
+        let mut next = at;
+        for (i, o) in args.iter().enumerate() {
+            ints[i] = match o {
+                Opnd::Int(n) => Some(*n),
+                Opnd::Local(v) => match env.get_var(v.s, v.slot)? {
+                    Value::Int(n) => Some(*n),
+                    _ => None,
+                },
+                Opnd::Stack => {
+                    next += 1;
+                    match st.get(next - 1)? {
+                        Value::Int(n) => Some(*n),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+        }
+        let int = |s: &Src<'_>| -> Option<i64> {
+            match s {
+                Src::Int(n) => Some(*n),
+                Src::Param(v) => {
+                    let p = v.slot as usize;
+                    if p == k
+                        || v.s == SYM_GOAL_MET
+                        || entry.params.get(p) != Some(&v.s)
+                        || entry.param_coerce[p].1.is_some()
+                    {
+                        return None;
+                    }
+                    ints[p]
+                }
+                Src::Reg(_) => None,
+            }
+        };
+        let Some(Value::Array(items)) = env.get_var_mut(r.var.s, r.var.slot) else {
+            return None;
+        };
+        let items = Rc::get_mut(items)?;
+        let n = items.len();
+        let pos = |s: &Src<'_>| {
+            int(s)
+                .and_then(|i| usize::try_from(i).ok())
+                .filter(|&i| i < n)
+        };
+        // Every index (and an int-parameter value) resolved before any move.
+        let mut at_ = [(0usize, 0i64); 8];
+        for (slot, step) in at_.iter_mut().zip(m.steps.iter()) {
+            *slot = match step {
+                Move::Read { idx, .. } => (pos(idx)?, 0),
+                Move::Copy { idx, sidx } => (pos(idx)?, pos(sidx)? as i64),
+                Move::Write { idx, val } => (
+                    pos(idx)?,
+                    match val {
+                        Src::Reg(_) => 0,
+                        v => int(v)?,
+                    },
+                ),
+            };
+        }
+        let mut regs = [const { Value::Unit }; 8];
+        for (&(i, x), step) in at_.iter().zip(m.steps.iter()) {
+            match step {
+                Move::Read { dst, .. } => regs[*dst as usize] = items[i].clone(),
+                Move::Copy { .. } => items[i] = items[x as usize].clone(),
+                Move::Write { val, .. } => {
+                    items[i] = match val {
+                        Src::Reg(r) => regs[*r as usize].clone(),
+                        _ => Value::Int(x),
+                    }
+                }
+            }
+        }
+        self.set_call_tier(tier);
+        st.truncate(at);
+        Some(())
     }
 
     /// [`Op::CallMut`] for a fn off `call_fn_in`'s common path: the plain

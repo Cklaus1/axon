@@ -68,16 +68,17 @@ fn kinds(body: &Body<'_>) -> Vec<&'static str> {
             | Op::StoreLocalInt { .. }
             | Op::StoreLocalLocal { .. }
             | Op::StoreLocalStack { .. } => "store-bin",
-            Op::Bin { .. } => "bin",
+            Op::Bin { .. } | Op::BinStack(_) => "bin",
             Op::ShortCircuit { .. } => "short",
             Op::Logic(_) => "logic",
             Op::Unary(_) => "unary",
             Op::Jump(_) => "jump",
             Op::PopJump(_) => "pop-jump",
             Op::BranchFalse { .. } => "branch",
-            Op::BranchCmp { .. } | Op::BranchLocalInt { .. } | Op::BranchLocalLocal { .. } => {
-                "branch-cmp"
-            }
+            Op::BranchCmp { .. }
+            | Op::BranchLocalInt { .. }
+            | Op::BranchLocalLocal { .. }
+            | Op::BranchReturn { .. } => "branch-cmp",
             Op::BranchIndexLocal { .. } | Op::BranchIndexInt { .. } => "branch-index",
             Op::StrictInt => "strict-int",
             Op::ForTest { scoped: true, .. } => "for-test+body",
@@ -100,9 +101,12 @@ fn kinds(body: &Body<'_>) -> Vec<&'static str> {
             Op::Record(_) => "record",
             Op::FieldLocal { .. } | Op::Field { .. } => "field",
             Op::IndexLocal { .. } | Op::IndexIdent(_) | Op::IndexValue => "index",
+            Op::IndexDefine { .. } => "index-define",
             Op::IndexTest(_) => "index-test",
             Op::PlaceIndex => "place-index",
-            Op::WritePlace { .. } | Op::WriteIndexLocal { .. } => "write-place",
+            Op::WritePlace { .. } | Op::WriteIndexLocal { .. } | Op::WriteIndexIndex { .. } => {
+                "write-place"
+            }
             Op::PlaceInvalid => "place-invalid",
             Op::MatchArm { scoped: true, .. } => "arm+scope",
             Op::MatchArm { scoped: false, .. } => "arm",
@@ -124,6 +128,7 @@ fn kinds(body: &Body<'_>) -> Vec<&'static str> {
             Op::PureLoop { .. } => "pure-loop",
             Op::CallFast { args, .. } if args.is_empty() => "call-fast",
             Op::CallFast { .. } => "call-fast-inline",
+            Op::CallFastLocalInt { .. } => "call-fast-local-int",
             Op::CallMut { .. } => "call-mut",
         })
         .collect()
@@ -697,6 +702,7 @@ fn exec_runs_hand_built_ops_with_balanced_scopes() {
         loops: Box::new([]),
         max_stack: 1,
         leaf: None,
+        moves: None,
     };
     let r = interp.exec(&body, &mut env);
     assert!(matches!(r, Ok(Value::Int(7))), "{r:?}");
@@ -707,6 +713,7 @@ fn exec_runs_hand_built_ops_with_balanced_scopes() {
         loops: Box::new([]),
         max_stack: 0,
         leaf: None,
+        moves: None,
     };
     assert!(matches!(interp.exec(&empty, &mut env), Ok(Value::Unit)));
 }
