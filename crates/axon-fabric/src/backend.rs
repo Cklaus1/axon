@@ -1831,20 +1831,31 @@ mod tests {
         edit(&mut ev);
         match accept(&ev) {
             Ok(_) => panic!("ATTACK: b263 default: {what} was accepted"),
-            Err(e) => assert!(e.contains(want), "ATTACK: b263 default: {what}: refused for another reason: {e}"),
+            Err(e) => assert!(
+                e.contains(want),
+                "ATTACK: b263 default: {what}: refused for another reason: {e}"
+            ),
         }
     }
 
     #[test]
     fn accept_b263_defaults_are_observed_and_fail_closed() {
         let a = accept(&b263()).expect("control: the genuine record");
-        assert_eq!((a.host.as_str(), a.end.as_str()), ("build-host-1", B263_END));
+        assert_eq!(
+            (a.host.as_str(), a.end.as_str()),
+            ("build-host-1", B263_END)
+        );
         assert_eq!(a.caveat, "the boundary excludes the host kernel");
         assert_eq!(a.firecracker_sha256, "a".repeat(64));
         assert_eq!(a.jailer_sha256, "b".repeat(64));
         assert!(a.waived.is_empty() && !a.guest_policy_channel);
         // the PASS count: absent, null, zero and a string all read as "no PASS assertion"
-        for (what, v) in [("absent", None), ("null", Some(serde_json::Value::Null)), ("zero", Some(0.into())), ("a string", Some("1".into()))] {
+        for (what, v) in [
+            ("absent", None),
+            ("null", Some(serde_json::Value::Null)),
+            ("zero", Some(0.into())),
+            ("a string", Some("1".into())),
+        ] {
             refused_with(
                 |e| match v.clone() {
                     None => {
@@ -1857,16 +1868,32 @@ mod tests {
             );
         }
         // the result: absent is the empty string, said as such
-        refused_with(|e| {
-            e.as_object_mut().unwrap().remove("result");
-        }, "evidence result is \"\"", "a record with no result");
-        refused_with(|e| e["result"] = 7.into(), "evidence result is \"\"", "a result that is not a string");
+        refused_with(
+            |e| {
+                e.as_object_mut().unwrap().remove("result");
+            },
+            "evidence result is \"\"",
+            "a record with no result",
+        );
+        refused_with(
+            |e| e["result"] = 7.into(),
+            "evidence result is \"\"",
+            "a result that is not a string",
+        );
         // the end time: absent is the empty string, said as such
-        refused_with(|e| {
-            e.as_object_mut().unwrap().remove("end");
-        }, "evidence end \"\" is not", "a record with no end time");
+        refused_with(
+            |e| {
+                e.as_object_mut().unwrap().remove("end");
+            },
+            "evidence end \"\" is not",
+            "a record with no end time",
+        );
         // the host and the caveat: absent, empty and not-a-string are all "states no ..."
-        for (what, v) in [("absent", None), ("empty", Some("".into())), ("a number", Some(5.into()))] {
+        for (what, v) in [
+            ("absent", None),
+            ("empty", Some("".into())),
+            ("a number", Some(5.into())),
+        ] {
             refused_with(
                 |e| match v.clone() {
                     None => {
@@ -1889,11 +1916,19 @@ mod tests {
             );
         }
         // a record whose tree state is not the boolean false
-        refused_with(|e| {
-            e["source"].as_object_mut().unwrap().remove("tree_dirty");
-        }, "dirty (or unstated)", "a record that does not state its tree state");
+        refused_with(
+            |e| {
+                e["source"].as_object_mut().unwrap().remove("tree_dirty");
+            },
+            "dirty (or unstated)",
+            "a record that does not state its tree state",
+        );
         // an engine digest that is not 64 hex
-        refused_with(|e| e["engine"]["jailer_sha256"] = "zz".into(), "lacks engine.firecracker_sha256", "a jailer digest that is not hex");
+        refused_with(
+            |e| e["engine"]["jailer_sha256"] = "zz".into(),
+            "lacks engine.firecracker_sha256",
+            "a jailer digest that is not hex",
+        );
     }
 
     /// Amendment 107: `read_regular`'s size bound is 256 MiB exactly (the sum of every file the

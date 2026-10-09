@@ -816,17 +816,38 @@ mod tests {
     /// near-miss refuses instead of reading as ANY mode.
     #[test]
     fn a_reply_names_a_mode_this_build_knows_or_is_refused() {
-        for (s, want) in [("protected", Mode::Protected), ("test", Mode::Test), ("dev", Mode::Dev)] {
+        for (s, want) in [
+            ("protected", Mode::Protected),
+            ("test", Mode::Test),
+            ("dev", Mode::Dev),
+        ] {
             assert_eq!(Mode::from_reply(s), Ok(want), "reply mode {s:?}");
-            assert_eq!(Mode::from_reply(want.as_str()), Ok(want), "{want:?} round-trips");
+            assert_eq!(
+                Mode::from_reply(want.as_str()),
+                Ok(want),
+                "{want:?} round-trips"
+            );
         }
-        for bad in ["", "x", "Protected", "PROTECTED", " protected", "protected ", "protected\n", "prod", "devx"] {
+        for bad in [
+            "",
+            "x",
+            "Protected",
+            "PROTECTED",
+            " protected",
+            "protected ",
+            "protected\n",
+            "prod",
+            "devx",
+        ] {
             let got = Mode::from_reply(bad);
             assert!(
                 got.is_err(),
                 "ATTACK: reply mode default: {bad:?} read as {got:?} instead of a refusal"
             );
-            assert!(got.unwrap_err().contains("none of protected, test, dev"), "{bad:?}");
+            assert!(
+                got.unwrap_err().contains("none of protected, test, dev"),
+                "{bad:?}"
+            );
         }
     }
 

@@ -93,13 +93,41 @@ fn kat(what: &str, got: &str, want: &str) {
 /// Every string that scopes a signature or a MAC to one protocol: (name, value, documented literal).
 fn domains() -> Vec<(&'static str, &'static str, &'static str)> {
     vec![
-        ("CLEARANCE_DOMAIN", CLEARANCE_DOMAIN, "axon.loop.trial-safety/1"),
-        ("EXECUTION_DOMAIN", EXECUTION_DOMAIN, "axon.fabric-execution/1"),
-        ("CONTEXT_DOMAIN", CONTEXT_DOMAIN, "axon.closed-loop.context/1"),
-        ("DOCUMENT_SIGNATURE_SCHEMA", DOCUMENT_SIGNATURE_SCHEMA, "axon-document-signature/1"),
-        ("ATTESTATION_SCHEMA", ATTESTATION_SCHEMA, "acf-receipt-attestation/2"),
-        ("EVIDENCE_SIGNATURE_SCHEMA", EVIDENCE_SIGNATURE_SCHEMA, "axon-evidence-signature/2"),
-        ("COMPLETION_SCHEME", COMPLETION_SCHEME, "axon-guest-completion/1"),
+        (
+            "CLEARANCE_DOMAIN",
+            CLEARANCE_DOMAIN,
+            "axon.loop.trial-safety/1",
+        ),
+        (
+            "EXECUTION_DOMAIN",
+            EXECUTION_DOMAIN,
+            "axon.fabric-execution/1",
+        ),
+        (
+            "CONTEXT_DOMAIN",
+            CONTEXT_DOMAIN,
+            "axon.closed-loop.context/1",
+        ),
+        (
+            "DOCUMENT_SIGNATURE_SCHEMA",
+            DOCUMENT_SIGNATURE_SCHEMA,
+            "axon-document-signature/1",
+        ),
+        (
+            "ATTESTATION_SCHEMA",
+            ATTESTATION_SCHEMA,
+            "acf-receipt-attestation/2",
+        ),
+        (
+            "EVIDENCE_SIGNATURE_SCHEMA",
+            EVIDENCE_SIGNATURE_SCHEMA,
+            "axon-evidence-signature/2",
+        ),
+        (
+            "COMPLETION_SCHEME",
+            COMPLETION_SCHEME,
+            "axon-guest-completion/1",
+        ),
     ]
 }
 
@@ -121,7 +149,13 @@ fn signing_domains_are_pairwise_distinct_and_golden() {
     let names: Vec<_> = TrustAuthority::ALL.iter().map(|a| a.dir_name()).collect();
     assert_eq!(
         names,
-        ["qualification", "observer", "verifier", "admission", "monitor"],
+        [
+            "qualification",
+            "observer",
+            "verifier",
+            "admission",
+            "monitor"
+        ],
         "the trust authorities (the evidence signature's domain) are not the documented five"
     );
     for (i, a) in names.iter().enumerate() {
@@ -170,7 +204,10 @@ fn a_signature_for_one_domain_never_verifies_under_another() {
         .collect();
     for (i, a) in msgs.iter().enumerate() {
         for b in &msgs[i + 1..] {
-            assert_ne!(a, b, "signing domain collapse: two authorities sign the same evidence bytes");
+            assert_ne!(
+                a, b,
+                "signing domain collapse: two authorities sign the same evidence bytes"
+            );
         }
     }
 }
@@ -179,10 +216,13 @@ fn a_signature_for_one_domain_never_verifies_under_another() {
 fn fabric_signs_an_execution_attestation_in_the_execution_domain_and_no_other() {
     let k = fixed_key();
     let pk = public_hex(&k);
-    let att = axon_fabric::signing::sign_execution_attestation(&k, &issuer(), &req(), &rc()).expect("sign");
+    let att = axon_fabric::signing::sign_execution_attestation(&k, &issuer(), &req(), &rc())
+        .expect("sign");
     let doc = execution_document(&req(), &rc()).expect("execution document");
     verify_document(&att, EXECUTION_DOMAIN, &issuer(), &doc, &pk).unwrap_or_else(|e| {
-        panic!("ATTACK: Fabric's execution attestation does not verify in the execution domain: {e}")
+        panic!(
+            "ATTACK: Fabric's execution attestation does not verify in the execution domain: {e}"
+        )
     });
     for (name, domain, _) in domains() {
         if domain == EXECUTION_DOMAIN {
@@ -214,10 +254,18 @@ fn known_answer_document_signature_per_domain() {
         ("CLEARANCE_DOMAIN", CLEARANCE_DOMAIN, KAT_CLEARANCE),
         ("EXECUTION_DOMAIN", EXECUTION_DOMAIN, KAT_EXECUTION),
         ("CONTEXT_DOMAIN", CONTEXT_DOMAIN, KAT_CONTEXT),
-        ("generic domain (pins DOCUMENT_SIGNATURE_SCHEMA)", "dom/1", KAT_GENERIC),
+        (
+            "generic domain (pins DOCUMENT_SIGNATURE_SCHEMA)",
+            "dom/1",
+            KAT_GENERIC,
+        ),
     ] {
         let s = sign_document(&k, domain, &issuer(), &doc).expect("sign");
-        kat(&format!("document signature {name}"), &signature_of(&s), want);
+        kat(
+            &format!("document signature {name}"),
+            &signature_of(&s),
+            want,
+        );
     }
 }
 
@@ -225,7 +273,11 @@ fn known_answer_document_signature_per_domain() {
 fn known_answer_receipt_attestation() {
     let k = fixed_key();
     let a = sign(&k, &issuer(), &req(), &rc(), 1_000).expect("attest");
-    kat("receipt attestation (pins ATTESTATION_SCHEMA)", &signature_of(&a), KAT_ATTESTATION);
+    kat(
+        "receipt attestation (pins ATTESTATION_SCHEMA)",
+        &signature_of(&a),
+        KAT_ATTESTATION,
+    );
 }
 
 #[test]
@@ -307,21 +359,37 @@ fn manifest() -> LaunchManifest {
 fn known_answer_completion_key_and_outcome_tokens() {
     let m = manifest();
     let key = completion_key(&[3u8; 32], &m);
-    kat("completion key (pins COMPLETION_SCHEME in the key message and the binding)", &hex(&key), KAT_COMPLETION_KEY);
+    kat(
+        "completion key (pins COMPLETION_SCHEME in the key message and the binding)",
+        &hex(&key),
+        KAT_COMPLETION_KEY,
+    );
     let pass = outcome_token(&key, "t_ok", true);
     let fail = outcome_token(&key, "t_ok", false);
     assert_ne!(
         pass, fail,
         "signing domain collapse: the PASS and FAILED outcome contexts produce the same token"
     );
-    kat("outcome token, passed (pins axon-test-completion/1)", &pass, KAT_PASS_TOKEN);
-    kat("outcome token, failed (pins axon-test-failed/1)", &fail, KAT_FAIL_TOKEN);
+    kat(
+        "outcome token, passed (pins axon-test-completion/1)",
+        &pass,
+        KAT_PASS_TOKEN,
+    );
+    kat(
+        "outcome token, failed (pins axon-test-failed/1)",
+        &fail,
+        KAT_FAIL_TOKEN,
+    );
 }
 
 #[test]
 fn known_answer_ledger_key_derivation() {
     let k = axon_loop::store::LedgerKey::derive(b"0123456789abcdef0123").expect("key");
-    kat("ledger key derivation label", &hex(&k.mac(b"x")), KAT_LEDGER_MAC);
+    kat(
+        "ledger key derivation label",
+        &hex(&k.mac(b"x")),
+        KAT_LEDGER_MAC,
+    );
 }
 
 // golden values, computed from the implementation at the head that introduced this file

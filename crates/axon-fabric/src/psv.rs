@@ -698,8 +698,14 @@ mod class_tests {
         let p = format!("{EVIDENCE_CLASS_PREFIX}protected");
         for (what, got) in [
             ("no receipt", EvidenceClass::of_outcome(None)),
-            ("a receipt naming no class", EvidenceClass::of_outcome(Some(&receipt(&[])))),
-            ("two class refs", EvidenceClass::of_outcome(Some(&receipt(&[&p, &p])))),
+            (
+                "a receipt naming no class",
+                EvidenceClass::of_outcome(Some(&receipt(&[]))),
+            ),
+            (
+                "two class refs",
+                EvidenceClass::of_outcome(Some(&receipt(&[&p, &p]))),
+            ),
             (
                 "a class this build does not know",
                 EvidenceClass::of_outcome(Some(&receipt(&["evidence-class:quantum"]))),

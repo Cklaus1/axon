@@ -1598,9 +1598,8 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
                     // absent, the bundle carries none and intake's guest-verdict
                     // join (M299) refuses it: fail closed, not a silent second
                     // gate.
-                    let final_class = crate::psv::EvidenceClass::of_outcome(
-                        out.as_ref().ok().map(|(r, _, _)| r),
-                    );
+                    let final_class =
+                        crate::psv::EvidenceClass::of_outcome(out.as_ref().ok().map(|(r, _, _)| r));
                     if let (Some(o), crate::psv::EvidenceClass::Protected) =
                         (&observation, final_class)
                     {
@@ -2120,14 +2119,23 @@ mod tests {
     fn a_cost_limit_over_the_grants_budget_is_refused_including_one_that_overflows_i64() {
         assert!(!super::exceeds_budget(0, 0), "zero against a zero budget");
         assert!(!super::exceeds_budget(1000, 1000), "equal to the budget");
-        assert!(super::exceeds_budget(1001, 1000), "ATTACK: one micro over the budget was admitted");
+        assert!(
+            super::exceeds_budget(1001, 1000),
+            "ATTACK: one micro over the budget was admitted"
+        );
         assert!(!super::exceeds_budget(999, 1000));
         assert!(
             super::exceeds_budget(i64::MAX as u64 + 1, i64::MAX),
             "ATTACK: a cost limit that does not fit an i64 was admitted"
         );
-        assert!(super::exceeds_budget(u64::MAX, i64::MAX), "ATTACK: u64::MAX against the largest budget");
-        assert!(!super::exceeds_budget(i64::MAX as u64, i64::MAX), "the largest representable, equal");
+        assert!(
+            super::exceeds_budget(u64::MAX, i64::MAX),
+            "ATTACK: u64::MAX against the largest budget"
+        );
+        assert!(
+            !super::exceeds_budget(i64::MAX as u64, i64::MAX),
+            "the largest representable, equal"
+        );
     }
 
     use super::*;

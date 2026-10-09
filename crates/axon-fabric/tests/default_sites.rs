@@ -82,17 +82,32 @@ fn a_replys_mode_is_read_only_through_mode_from_reply() {
 #[test]
 fn the_protected_profile_name_has_one_definition() {
     let mut files = Vec::new();
-    rs_files(&root().join("..").join("axon-fabric").join("src"), &mut files);
+    rs_files(
+        &root().join("..").join("axon-fabric").join("src"),
+        &mut files,
+    );
     rs_files(&root().join("..").join("axon-psv").join("src"), &mut files);
-    rs_files(&root().join("..").join("axon-loop-contracts").join("src"), &mut files);
+    rs_files(
+        &root().join("..").join("axon-loop-contracts").join("src"),
+        &mut files,
+    );
     let mut defs = Vec::new();
     for f in &files {
         let text = std::fs::read_to_string(f).unwrap();
         for (n, l) in production(&text) {
             if l.contains("const PROTECTED_PROFILE:") {
                 let _ = n;
-                defs.push(f.components().rev().take(3).collect::<Vec<_>>().iter().rev()
-                    .map(|c| c.as_os_str().to_string_lossy().to_string()).collect::<Vec<_>>().join("/"));
+                defs.push(
+                    f.components()
+                        .rev()
+                        .take(3)
+                        .collect::<Vec<_>>()
+                        .iter()
+                        .rev()
+                        .map(|c| c.as_os_str().to_string_lossy().to_string())
+                        .collect::<Vec<_>>()
+                        .join("/"),
+                );
             }
         }
     }
@@ -102,7 +117,10 @@ fn the_protected_profile_name_has_one_definition() {
         "ATTACK: the protected profile's name is defined more than once (it was in readiness.rs and psv)"
     );
     assert_eq!(axon_psv::PROTECTED_PROFILE, "linux-microvm-protected");
-    assert_eq!(axon_fabric::readiness::PROTECTED_PROFILE, axon_psv::PROTECTED_PROFILE);
+    assert_eq!(
+        axon_fabric::readiness::PROTECTED_PROFILE,
+        axon_psv::PROTECTED_PROFILE
+    );
     assert_eq!(
         axon_loop_contracts::PROTECTED_PROFILES,
         [axon_psv::PROTECTED_PROFILE],

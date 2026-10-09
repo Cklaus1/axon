@@ -2344,13 +2344,25 @@ fn an_input_to_a_signing_or_mac_primitive_is_a_site_of_its_own() {
             &format!("{frag} handed to a signing primitive was not a site"),
         );
     }
-    not_names_value(&r, "\"sg.never-signed/1\"", "a const nothing signs was read as a site");
-    not_names_value(&r, "sg_d", "a computed buffer was read as a signing literal");
+    not_names_value(
+        &r,
+        "\"sg.never-signed/1\"",
+        "a const nothing signs was read as a site",
+    );
+    not_names_value(
+        &r,
+        "sg_d",
+        "a computed buffer was read as a signing literal",
+    );
     // the gate PRINTS them: a reader sees which constants are signing inputs, not only a count
     let t = text(&gate(&r, &[]));
     assert!(
-        t.lines().any(|l| l.starts_with("VALUE SITES (amendment 110 INPUTS TO A SIGNING / VERIFICATION / MAC PRIMITIVE)"))
-            && t.lines().any(|l| l.starts_with("SIGNING INPUT crates/axon-loop/src/tasks.rs:") && l.contains("fn sg_sign")),
+        t.lines().any(|l| l.starts_with(
+            "VALUE SITES (amendment 110 INPUTS TO A SIGNING / VERIFICATION / MAC PRIMITIVE)"
+        )) && t.lines().any(
+            |l| l.starts_with("SIGNING INPUT crates/axon-loop/src/tasks.rs:")
+                && l.contains("fn sg_sign")
+        ),
         "ATTACK: the gate does not list the signing inputs it found: {t}"
     );
     let _ = std::fs::remove_dir_all(&r);
@@ -2365,7 +2377,14 @@ const DEFAULT_PROBE: &str = "pub fn df_run(df_mode: Option<Mode>, df_n: Option<u
 fn a_default_read_as_a_value_in_a_protected_crate_is_a_site() {
     let r = tree("default-sites");
     add_code(&r, SCANNED, DEFAULT_PROBE);
-    for frag in ["Mode::DfDev", ".unwrap_or_default()", "7701", "true", "7702", "Default::default()"] {
+    for frag in [
+        "Mode::DfDev",
+        ".unwrap_or_default()",
+        "7701",
+        "true",
+        "7702",
+        "Default::default()",
+    ] {
         names_value(
             &r,
             "val_default",
@@ -2373,17 +2392,30 @@ fn a_default_read_as_a_value_in_a_protected_crate_is_a_site() {
             &format!("the default {frag} was not a site"),
         );
     }
-    not_names_value(&r, "df_w.len()", "a default computed at the site was read as a literal");
-    not_names_value(&r, "7799", "a default inside #[cfg(test)] was read as a site");
+    not_names_value(
+        &r,
+        "df_w.len()",
+        "a default computed at the site was read as a literal",
+    );
+    not_names_value(
+        &r,
+        "7799",
+        "a default inside #[cfg(test)] was read as a site",
+    );
     let t = text(&gate(&r, &[]));
     assert!(
-        t.lines().any(|l| l.starts_with("VALUE SITES (amendment 110 DEFAULTS read as a value, protected crates)")),
+        t.lines().any(|l| l
+            .starts_with("VALUE SITES (amendment 110 DEFAULTS read as a value, protected crates)")),
         "ATTACK: the gate does not count the defaults it found: {t}"
     );
     // outside the protected crates the form is not applied (axon-os is scanned for refusals, not defaults)
     let r2 = tree("default-sites-out");
     add_code(&r2, "crates/axon-os/src/approval.rs", DEFAULT_PROBE);
-    not_names_value(&r2, "Mode::DfDev", "a default outside the protected crates was read as a site");
+    not_names_value(
+        &r2,
+        "Mode::DfDev",
+        "a default outside the protected crates was read as a site",
+    );
     let _ = std::fs::remove_dir_all(&r);
     let _ = std::fs::remove_dir_all(&r2);
 }

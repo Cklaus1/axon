@@ -2019,11 +2019,15 @@ fn fabric_runs_its_direct_launcher_and_its_observer_with_exactly_their_flags_and
     // suite, or a secret job drive handed as the candidate, kept the name check green). The inputs sit in
     // one Fabric-private directory <out_root>/<jail id>.psv-inputs, and the manifest digest is the sha256
     // of the launch manifest the job drive holds.
-    let inputs = lx
-        .out_root
-        .join(format!("{}.psv-inputs", axon_fabric::backend::jail_id("op-direct-dump")));
+    let inputs = lx.out_root.join(format!(
+        "{}.psv-inputs",
+        axon_fabric::backend::jail_id("op-direct-dump")
+    ));
     for (flag, want) in [
-        ("--psv-candidate", inputs.join("candidate").display().to_string()),
+        (
+            "--psv-candidate",
+            inputs.join("candidate").display().to_string(),
+        ),
         ("--psv-suite", inputs.join("check").display().to_string()),
         ("--psv-job", inputs.join("job").display().to_string()),
         ("--policy", inputs.join("policy.json").display().to_string()),
@@ -2037,7 +2041,11 @@ fn fabric_runs_its_direct_launcher_and_its_observer_with_exactly_their_flags_and
     // the digest is the sha256 of the manifest on the job drive the launcher was handed (read by the
     // recording launcher from the --psv-job it received, so a wrong job drive is the assertion above)
     let manifest_sha = read(&rec.join("jobsha-launch")).trim().to_string();
-    assert_eq!(manifest_sha.len(), 64, "setup: the recording launcher saw the job drive's manifest");
+    assert_eq!(
+        manifest_sha.len(),
+        64,
+        "setup: the recording launcher saw the job drive's manifest"
+    );
     let got = value("--psv-manifest-sha");
     assert!(
         got == manifest_sha,
