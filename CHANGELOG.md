@@ -1,5 +1,12 @@
 # Axon Changelog
 
+## `AXON_HARNESS_STRICT=1` makes `parity_all.sh` fail on unexplained skips (R50 S0)
+
+**Gates**
+- **`AXON_HARNESS_STRICT=1 scripts/parity_all.sh` fails a run in which a harness skipped without an allow-list entry** (R50 §11). `parity_all.sh` never read the variable: every skip counted as success and only `EXPECT_MIN_PASS=40` stood between a green run and a suite that had quietly stopped running harnesses. Under the variable, a skipped harness (a `PARITY_SKIP_WASM=1` skip included) fails the run unless `scripts/parity_allowed_skips.txt` lists it with a reason; an entry without a reason exits 2. The list starts with `android_compute_parity` (no Android NDK on the gate host) and `browser_compute_parity` (opt-in, `BROWSER_PARITY=1`). Without the variable the script behaves as before.
+- **The wasm parity harnesses run the engine the caller selects.** `wasm_parity.sh`, `wasm_fs_parity.sh` and `wasm_host_await_parity.sh` pass `--env AXON_ENGINE=…` to wasmtime when `AXON_ENGINE` is set, and `wasm_browser_interp_parity.sh`'s driver forwards it to the `axon_set_engine` export before `axon_eval` (R50 §8).
+- **New R50 gate scripts**: `scripts/vm_parity.sh` (both engines byte-identical over the example and fixture corpus), `scripts/vm_perf_gate.sh` (instruction budgets, `--repros` per-construct mode) and `scripts/vm_wasm_depth.sh` (wasm32 recursion depth under both engines), with fixtures in `crates/axon-core/tests/fixtures/vm_depth/`, `vm_perf/` and `vm_parity_skip.txt`.
+
 ## Cheaper variables, calls and literals in `axon run` (compilebench AX-53…AX-55)
 
 Interpreter-cost fixes from compilebench's `AXON_FINDINGS.md`. They change speed only: output is byte-identical on every program measured, and the full suite passes with and without `codegen`.

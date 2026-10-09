@@ -24,13 +24,52 @@
 #   scripts/parity_all.sh           # run all; exit 1 if any harness FAILS
 #   scripts/parity_all.sh --quiet   # only print the per-harness status + summary
 #   PARITY_SKIP_WASM=1 scripts/parity_all.sh   # skip the 7 wasm_* harnesses
+#   AXON_HARNESS_STRICT=1 scripts/parity_all.sh  # a skip fails unless allow-listed
 #
-# Exit 0 iff no harness FAILED (skips are fine).
+# Exit 0 iff no harness FAILED (skips are fine), and, under
+# AXON_HARNESS_STRICT=1, no harness skipped that scripts/parity_allowed_skips.txt
+# does not list with a reason (R50 §11).
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 . "$ROOT/scripts/lib/harness_skip.sh"
+
+# ── AXON_HARNESS_STRICT (R50 §11) ───────────────────────────────────────────
+# Without it every skip counts as success, so a harness that silently stops
+# running (a toolchain probe gone wrong, a build that now "skips") vanishes from
+# the suite while the run stays green. With AXON_HARNESS_STRICT=1 a skipped
+# harness — including one skipped by PARITY_SKIP_WASM — fails the run unless
+# scripts/parity_allowed_skips.txt lists it. Each entry is
+# `<harness-name> <reason>`; an entry without a reason is itself an error,
+# because an unexplained exemption is what this mode exists to prevent.
+STRICT="${AXON_HARNESS_STRICT:-0}"
+ALLOWED_SKIPS_FILE="$ROOT/scripts/parity_allowed_skips.txt"
+declare -A allowed_skip=()
+if [ "$STRICT" = 1 ]; then
+  if [ ! -f "$ALLOWED_SKIPS_FILE" ]; then
+    echo "parity_all: AXON_HARNESS_STRICT=1 but $ALLOWED_SKIPS_FILE is missing" >&2
+    exit 2
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|'#'*) continue ;; esac
+    read -r _name _reason <<<"$line"
+    if [ -z "${_reason:-}" ]; then
+      echo "parity_all: $ALLOWED_SKIPS_FILE: entry '$_name' has no reason" >&2
+      exit 2
+    fi
+    allowed_skip["$_name"]="$_reason"
+  done <"$ALLOWED_SKIPS_FILE"
+fi
+strict_skip_names=""
+# note_skip <name> — under AXON_HARNESS_STRICT=1, record a skip the allow-list
+# does not cover.
+note_skip() {
+  [ "$STRICT" = 1 ] || return 0
+  [ -n "${allowed_skip[$1]+x}" ] && return 0
+  echo "        ^ not in scripts/parity_allowed_skips.txt: fails under AXON_HARNESS_STRICT=1"
+  strict_skip_names="$strict_skip_names $1"
+}
 
 # ── THE skip rule ────────────────────────────────────────────────────────────
 # Kept byte-for-byte in step with `harness_skipped` in
@@ -82,6 +121,7 @@ for h in scripts/*_parity.sh; do
   if [ "${PARITY_SKIP_WASM:-0}" = 1 ] && [[ "$name" == wasm* ]]; then
     printf "  SKIP  %-30s (PARITY_SKIP_WASM=1)\n" "$name"
     skip=$((skip+1))
+    note_skip "$name"
     continue
   fi
 
@@ -116,6 +156,7 @@ for h in scripts/*_parity.sh; do
     reason="$(echo "$last_line" | sed "s/^$name: *//" | cut -c1-58)"
     printf "  SKIP  %-30s (%s)\n" "$name" "${reason:-reason not stated}"
     skip=$((skip+1))
+    note_skip "$name"
   else
     printf "  PASS  %-30s\n" "$name"
     pass=$((pass+1))
@@ -127,6 +168,10 @@ echo ""
 echo "parity_all: $pass passed, $skip skipped, $fail failed (of $((pass+skip+fail)) harnesses)"
 if [ "$fail" -ne 0 ]; then
   echo "parity_all: FAILED —$failed_names"
+  exit 1
+fi
+if [ -n "$strict_skip_names" ]; then
+  echo "parity_all: FAILED — AXON_HARNESS_STRICT=1 and these harnesses skipped without an entry in scripts/parity_allowed_skips.txt:$strict_skip_names"
   exit 1
 fi
 

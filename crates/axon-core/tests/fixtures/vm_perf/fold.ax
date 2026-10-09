@@ -1,0 +1,11 @@
+// R50 §10 --repros: arr-sum's shape with a one-op closure body.
+// (instructions - fold_base.ax's) / 10M = one element (builtin -> closure call).
+fn main() -> i64 {
+    let xs = arr_range(0, 1000000)
+    let total = 0
+    for rep in 0..10 {
+        total = total + arr_fold(xs, 0, |acc: i64, x: i64| acc + x)
+    }
+    println(to_str(total))
+    0
+}

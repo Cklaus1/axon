@@ -1,0 +1,10 @@
+fn main() -> i64 {
+    let xs = arr_range(0, 5000000)
+    let total = 0
+    for rep in 0..10 {
+        let m = rep + 7
+        total = total + arr_fold(xs, 0, |acc: i64, x: i64| acc + x % m)
+    }
+    println(to_str(total))
+    0
+}

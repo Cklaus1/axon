@@ -1,0 +1,17 @@
+let DEPTH = 100
+// R50 §4 Recursion, chain 2: fn -> closure -> fn. Each level of g calls a
+// closure that calls g again (closure activations have no depth guard).
+// scripts/vm_wasm_depth.sh rewrites the first line per probe.
+fn g(n: i64) -> i64 {
+    if n == 0 {
+        0
+    } else {
+        let c = |k: i64| g(k)
+        1 + c(n - 1)
+    }
+}
+
+fn main() -> i64 {
+    println(to_str(g(DEPTH)))
+    0
+}

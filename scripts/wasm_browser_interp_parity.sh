@@ -52,6 +52,9 @@ cargo build -q -p axon-wasm --target wasm32-unknown-unknown --release 2>/dev/nul
 need_axon wasm_browser_interp_parity
 WASM="target/wasm32-unknown-unknown/release/axon_wasm.wasm"
 NATIVE="$AXON"
+# R50 §8: the driver forwards AXON_ENGINE (tree=0, vm=1) to the cdylib's
+# `axon_set_engine` export before `axon_eval`; the native leg reads it directly,
+# so both legs run the same engine.
 DRIVER="scripts/wasm_interp_driver.js"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 

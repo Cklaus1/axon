@@ -1,0 +1,11 @@
+let DEPTH = 100
+// R50 §4 Recursion, chain 1: plain fn recursion. scripts/vm_wasm_depth.sh
+// rewrites the first line per probe; f recurses DEPTH levels below main.
+fn f(n: i64) -> i64 {
+    if n == 0 { 0 } else { 1 + f(n - 1) }
+}
+
+fn main() -> i64 {
+    println(to_str(f(DEPTH)))
+    0
+}

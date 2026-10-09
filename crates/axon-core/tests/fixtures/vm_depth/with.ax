@@ -1,0 +1,17 @@
+let DEPTH = 100
+// R50 §4 Recursion, chain 4: recursion inside a `with` body (with bodies stay
+// Tree ops). scripts/vm_wasm_depth.sh rewrites the first line per probe.
+fn w(n: i64) -> i64 {
+    if n == 0 {
+        0
+    } else {
+        with handler { on Net(e) => 0 } {
+            1 + w(n - 1)
+        }
+    }
+}
+
+fn main() -> i64 {
+    println(to_str(w(DEPTH)))
+    0
+}
