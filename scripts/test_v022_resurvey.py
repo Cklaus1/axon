@@ -27,21 +27,46 @@ TREE = "7" * 40
 LOGS = tempfile.mkdtemp(prefix="resurvey-test-")
 
 
-def fake_log(key, n):
-    """What `log_block` writes for a re-measured entry: the command, the exit code, the binary and the failing test."""
+def write_log(rel, text):
+    os.makedirs(os.path.dirname(os.path.join(LOGS, rel)), exist_ok=True)
+    open(os.path.join(LOGS, rel), "w").write(text)
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def fake_log(key, n, family="value"):
+    """What `log_block` writes for a re-measured entry: the command, the exit code, the runner's own lines
+    (`Running`, `test result: FAILED`, the `---- NAME stdout ----` header and panic) and the failed binary."""
     failing = f"a_test_for_entry_{n}"
     binary = f"-p axon-x --test t{n}"
     cmd = f"cargo test --no-fail-fast {binary}"
-    text = f"$ {cmd}\nexit code: 101\n     Running tests/t{n}.rs\n---- {failing} stdout ----\npanicked\n    `{binary}`\n"
-    rel = f"{rs.LOG_DIR}/{HEAD[:12]}/{n:03d}-t.log"
-    os.makedirs(os.path.dirname(os.path.join(LOGS, rel)), exist_ok=True)
-    open(os.path.join(LOGS, rel), "w").write(text)
+    text = (f"$ {cmd}\nexit code: 101\n     Running tests/t{n}.rs (deps/t{n}-0123456789abcdef)\n"
+            f"test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n"
+            f"---- {failing} stdout ----\nthread '{failing}' panicked at tests/t{n}.rs:10:5:\n"
+            f"ATTACK: the thing was accepted\n    `{binary}`\nerror: test failed, to rerun pass `{binary}`\n")
+    rel = f"{rs.LOG_DIR}/{HEAD[:12]}/{n:03d}-{family}.log"
+    if family == "py":      # what py_family writes: the survey's own row, and an exit code of 0 for a good run
+        cmd = "scripts/v022_py_guard_survey.py --json"
+        text = (f"$ python3 scripts/v022_py_guard_survey.py --json OUT {n}\nexit code: 0\n"
+                + '{"cases": ["%s"], "function": "f", "n": %d, "verdict": "KILLED"}' % (failing, n) + "\n" + "x" * 40)
+        return {"key": key, "result": "KILLED", "failing": [failing], "binaries": ["scripts/v022_py_guard_survey.py"],
+                "ran": [{"cmd": cmd, "failing": [failing], "base": [], "rc": 0}],
+                "log": rel, "log_sha256": write_log(rel, text)}
     return {"key": key, "result": "KILLED", "failing": [failing], "binaries": [f"tests/t{n}.rs", binary],
             "ran": [{"cmd": cmd, "failing": [failing], "base": [], "rc": 101}],
-            "log": rel, "log_sha256": hashlib.sha256(text.encode()).hexdigest()}
+            "log": rel, "log_sha256": write_log(rel, text)}
 
 
-def build(salt=None, pct=25, mark=None, with_logs=True):
+def self_written(key, n, family="value", rc=101, failing="exit", where=None):
+    """A record entry a person typed: a three-line log, whatever it claims (the forged shapes of round 13)."""
+    cmd = "cargo test --no-fail-fast -p axon-x"
+    text = f"$ {cmd}\nexit code: {rc}\n{failing}\n"
+    rel = where or f"{rs.LOG_DIR}/{HEAD[:12]}/{n:03d}-{family}.log"
+    return {"key": key, "result": "KILLED", "failing": [failing], "binaries": [],
+            "ran": [{"cmd": cmd, "failing": [failing], "base": [], "rc": rc}],
+            "log": rel, "log_sha256": write_log(rel, text)}
+
+
+def build(salt=None, pct=25, mark=None, with_logs=True, maker=None):
     """A record as the tool would write it (every drawn entry KILLED), for the stated salt."""
     gate = rs.gate_sha()
     salt = salt or rs.derive_salt(HEAD, gate)
@@ -52,9 +77,10 @@ def build(salt=None, pct=25, mark=None, with_logs=True):
         rows = []
         for key in keys[k]:
             n += 1
-            r = fake_log(key, n) if with_logs else {"key": key, "result": "KILLED", "failing": ["x"], "binaries": [],
-                                                    "ran": [{"cmd": "c", "failing": ["x"], "base": [], "rc": 101}],
-                                                    "log": f"{rs.LOG_DIR}/none/{n}.log", "log_sha256": "0" * 64}
+            r = (maker or fake_log)(key, n, k) if with_logs else {
+                "key": key, "result": "KILLED", "failing": ["x"], "binaries": [],
+                "ran": [{"cmd": "c", "failing": ["x"], "base": [], "rc": 101}],
+                "log": f"{rs.LOG_DIR}/{HEAD[:12]}/{n:03d}-{k}.log", "log_sha256": "0" * 64}
             r["family"] = k
             if mark:
                 r = mark(r)
@@ -74,6 +100,17 @@ def build(salt=None, pct=25, mark=None, with_logs=True):
 
 def problems(doc, head=HEAD):
     return rs.problems(doc, head, rc, mut, now=NOW, logs_root=LOGS, tree_fn=lambda c: TREE)
+
+
+def iso(fn):
+    """Run `fn` with its own empty log root, so a case that links, moves or rewrites log files cannot disturb
+    the records the other cases hold."""
+    global LOGS
+    old, LOGS = LOGS, tempfile.mkdtemp(prefix="resurvey-iso-")
+    try:
+        return fn()
+    finally:
+        LOGS = old
 
 
 def attack(name, edit, want, doc=None):
@@ -135,7 +172,6 @@ def main():
     bad += attack("a ground draw under the honest salt's name", lambda d: None,
                   "not the ones the rule draws", swapped)
     # 2. a NEVER-RUN record: every entry KILLED, no log was ever written
-    bad += attack("an all-KILLED record nobody ran (no logs)", lambda d: None, "is missing", build(with_logs=False))
     # 3. every drawn entry NOT RE-MEASURED
     def unmeasured(r):
         return {"key": r["key"], "family": r["family"], "result": "NOT RE-MEASURED (no mutation rule for this value)"}
@@ -144,7 +180,7 @@ def main():
     bad += attack("... and above the NOT RE-MEASURED cap", lambda d: None, "NOT RE-MEASURED; the cap is", allnot)
 
     def drop_some(d):
-        for r in d["entries"][:15]:
+        for r in d["entries"][:int(rs.NOT_REMEASURED_MAX * len(d["entries"])) + 1]:
             r["result"] = "NOT RE-MEASURED (no mutation rule for this value)"
         recount(d)
     bad += attack("too many NOT RE-MEASURED", drop_some, "the cap is")
@@ -168,6 +204,105 @@ def main():
                   "has no log under", fresh)
     bad += attack("a KILLED entry that names no failing test", lambda d: d["entries"][0].update(failing=[]),
                   "names no failing test", fresh)
+
+    # ── round 13 (amendment 115): the shapes a person can type, each planted and each refused ────────
+    # (each in its own empty log root: a case that links or moves files cannot disturb the others)
+    def forged(name, want, maker=None, edit=None, with_logs=True, pre=None):
+        def go():
+            doc = build(maker=maker, with_logs=with_logs)
+            if pre:
+                pre(doc)
+            return attack(name, edit or (lambda d: None), want, doc)
+        return iso(go)
+
+    sw = lambda key, n, k: self_written(key, n, k)
+    # a never-run record: 69 KILLED entries with three-line self-written logs naming failing=['exit']
+    bad += forged("KILLED entries with three-line self-written logs", "too short", maker=sw)
+    bad += forged("... which carry no runner header for the failing test", "has no `---- exit stdout ----` header", maker=sw)
+    bad += forged("... and no `test result: FAILED` line", "test result: FAILED", maker=sw)
+    bad += forged("an all-KILLED record nobody ran (the logs were never written)", "is missing", with_logs=False)
+
+    # a KILLED entry whose command exited 0 (the log says so too)
+    def zero(d):
+        e = d["entries"][0]
+        e["ran"][0]["rc"] = 0
+        path = os.path.join(LOGS, e["log"])
+        t = open(path).read().replace("exit code: 101", "exit code: 0")
+        open(path, "w").write(t)
+        e["log_sha256"] = hashlib.sha256(t.encode()).hexdigest()
+    bad += forged("a KILLED entry whose command exited 0", "exited non-zero", edit=zero)
+
+    # logs filed under another commit's directory
+    def other_dir(key, n, k):
+        r = fake_log(key, n, k)
+        rel = r["log"].replace(HEAD[:12], "0" * 12)
+        r["log_sha256"] = write_log(rel, open(os.path.join(LOGS, r["log"])).read())
+        r["log"] = rel
+        return r
+    bad += forged("logs filed under another commit's directory", "the directory is named by the record's own commit", maker=other_dir)
+
+    # ONE shared log for every entry
+    bad += forged("one shared log for all entries", "share a log",
+                  maker=lambda key, n, k: dict(fake_log(key, 1, "value"), family=k))
+
+    # the log directory is a symlink to elsewhere (the files in it are genuine-looking)
+    def link_dir(d):
+        ld = os.path.join(LOGS, rs.LOG_DIR, HEAD[:12])
+        elsewhere = tempfile.mkdtemp(prefix="resurvey-elsewhere-")
+        for f in os.listdir(ld):
+            os.replace(os.path.join(ld, f), os.path.join(elsewhere, f))
+        os.rmdir(ld)
+        os.symlink(elsewhere, ld)
+    bad += forged("a symlinked log directory", "symlink", edit=link_dir)
+
+    # one log file that is itself a symlink to a genuine log elsewhere
+    def link_file(d):
+        e = d["entries"][0]
+        real = os.path.join(tempfile.mkdtemp(prefix="resurvey-elsewhere-"), "real.log")
+        os.replace(os.path.join(LOGS, e["log"]), real)
+        os.symlink(real, os.path.join(LOGS, e["log"]))
+    bad += forged("a log that is itself a symlink", "symlink", edit=link_file)
+
+    bad += forged("an empty failing-test name", "empty or not a string", edit=lambda d: d["entries"][0].update(failing=[""]))
+    bad += forged("a failing-test name that is not a string", "empty or not a string",
+                  edit=lambda d: d["entries"][0].update(failing=[7]))
+
+    def misname(d):
+        e = d["entries"][0]
+        e["family"] = "guard" if e["family"] != "guard" else "py"
+    bad += forged("a log that is not named for its family", "is not named", edit=misname)
+
+    # a log with the right words but no runner lines: the recorded failing test appears only in prose
+    def prose(key, n, k):
+        r = fake_log(key, n, k)
+        t = (f"$ cargo test --no-fail-fast -p axon-x --test t{n}\nexit code: 101\n     Running tests/t{n}.rs\n"
+             f"the test {r['failing'][0]} failed, honest ({'x' * 300})\n    `-p axon-x --test t{n}`\n")
+        r["log_sha256"] = write_log(r["log"], t)
+        r["ran"][0]["cmd"] = f"cargo test --no-fail-fast -p axon-x --test t{n}"
+        return r
+    bad += forged("a log that names the failing test only in prose", "has no `---- ",
+                  maker=lambda key, n, k: prose(key, n, k) if k != "py" else fake_log(key, n, k))
+
+    def no_result(key, n, k):
+        r = fake_log(key, n, k)
+        if k == "py":
+            return r
+        t = open(os.path.join(LOGS, r["log"])).read().replace("test result: FAILED", "test result: fine")
+        r["log_sha256"] = write_log(r["log"], t)
+        return r
+    bad += forged("a log with no `test result: FAILED` line", "test result: FAILED", maker=no_result)
+
+    def wrong_cmd(key, n, k):
+        r = fake_log(key, n, k)
+        t = open(os.path.join(LOGS, r["log"])).read().replace("exit code: 101", "exit code: 101 ").replace("exit code: 0", "exit code: 0 ")
+        r["log_sha256"] = write_log(r["log"], t)
+        return r
+    bad += forged("a log whose exit line does not follow its command", "followed directly by", maker=wrong_cmd)
+
+    def pass_fail(d):
+        e = d["entries"][0]
+        e["ran"].insert(0, {"cmd": "cargo test --no-fail-fast -p axon-x", "failing": ["t"], "base": [], "rc": 0})
+    bad += forged("a command that exited 0 and lists failing tests", "exited 0", edit=pass_fail)
 
     # the sample is a function of (salt, key, pct): the same head draws the same entries, another head another
     a = [k for k, _ in rs.plan(rc, "25", "a" * 40)[1]["value"]]

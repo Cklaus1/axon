@@ -235,7 +235,7 @@ ATTACK_MARKERS = {
     'M184': 'left: (Passed|Failed)\\s*\\n\\s*right: Unknown',
     # C9 round 1b (fabric): only-guard: the verdict moved off Failed
     'M185': r"ATTACK: the guest's claim of a pass steered a failing test's verdict.*\n\s*left: (Unknown|Passed|NotRun)",
-    'M186': 'left: "protected"\\s*\\n\\s*right: "guest-unobserved"',
+    'M186': r'ATTACK: a verdict made without an observation was classed Protected',
     # C9 round 1b (fabric): EQUIVALENT (four-cell with M400); the expect panic is now a structured refusal
     'M187': r'ATTACK: a candidate file was launched as a check on the protected profile',
     'M188': 'left: Passed\\s*\\n\\s*right: Passed',
@@ -2824,4 +2824,30 @@ ATTACK_MARKERS.update({
     'M3225': 'ATTACK: gbe service ids a\\ second\\ byte\\-order\\ mark\\ is\\ ambiguous',
     'M3226': 'ATTACK: gbe service ids a\\ unit\\ file\\ led\\ by\\ a\\ byte\\-order\\ mark\\ is\\ read',
     'M3227': 'ATTACK: gbe service ids a\\ drop\\-in\\ led\\ by\\ a\\ byte\\-order\\ mark\\ is\\ read',
+    # C9 round 13, EQGATE9 (amendment 115)
+    'M3280': r'ATTACK: a signed waiver with no expiry waived a BLOCKED assertion',
+    'M3281': r'ATTACK: a signed waiver with an expiry AT the decision time waived a BLOCKED assertion',
+    'M3282': r'ATTACK: a signed waiver with no expiry waived a BLOCKED assertion',
+    'M3283': r'ATTACK: a certification whose suite id is absent was not refused as unnamed',
+    'M3285': r'ATTACK: an observed verdict did not name its observation',
+    'M3286': r'ATTACK: the trial-safety clearance domain is not its documented literal',
+    'M3287': r'ATTACK: signing domain collapse: CLEARANCE_DOMAIN == CONTEXT_DOMAIN',
+    'M3288': r'ATTACK: signing domain collapse: EXECUTION_DOMAIN == axon-loop CONTEXT_DOMAIN',
+    'M3289': r'ATTACK: signing domain collapse: EXECUTION_DOMAIN == DOCUMENT_SIGNATURE_SCHEMA',
+    'M3290': r'ATTACK: signing domain collapse: CLEARANCE_DOMAIN == DOCUMENT_SIGNATURE_SCHEMA',
+    'M3291': r'ATTACK: signing domain EXECUTION_DOMAIN is not its documented literal',
+})
+ATTACK_MARKERS.update({
+    'M3292': r'ATTACK: a tracked file replaced by a symlink to a copy of itself was not reported',
+    'M3293': r'ATTACK: a registered check with an empty argv \(no suite named\) was signed',
+    'M3294': r'ATTACK: is_hex of a number \(length 64\) answered true',
+    'M3295': r'ATTACK: a tracked file that is gone was not reported',
+})
+ATTACK_MARKERS.update({
+    'M3296': r'ATTACK: a clearance naming a monitor signature that is not stored cleared the trial',
+    'M3297': r'ATTACK: an execution attested by a verifier with no pin at all counted as a protected execution',
+    'M3298': r'ATTACK: a usage with no episode status was counted as a non-completed record',
+})
+ATTACK_MARKERS.update({
+    'M3299': r'ATTACK: an object with a key conformed to a schema that declares no property and forbids additions',
 })

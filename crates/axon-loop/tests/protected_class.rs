@@ -1243,6 +1243,50 @@ fn a_forged_unsigned_clearance_clears_nothing() {
     let _ = protected_accepted("fc-ok");
 }
 
+/// Amendment 115 (eqgate9): clearances forged into the ledger that NAME a stored monitor signature which is
+/// not in the store clear nothing. `clearance_verifies` answers false for a signature it cannot read; flipped to
+/// true the clearance counted without `verify_document` ever running, and the whole axon-loop and axon-fabric
+/// suites stayed green (the other forged-clearance test names NO signature at all).
+/// Control: `protected_accepted`, whose clearances are genuinely signed.
+#[test]
+fn a_clearance_whose_stored_signature_is_missing_clears_nothing() {
+    let w = world();
+    protect(&w.s);
+    pin_protected_backend(&w.s);
+    trust_monitor(&w.s);
+    freeze_plan(&w.s, "fm", &w.inc_ref, &w.cand_ref, |_| {}).unwrap();
+    assign_specs(&w.s, "fm", &specs_for(&w));
+    let mut v = evl_request("fm", &w.inc, &w.cand, &specs_for(&w), &EvlOpts::default());
+    on_protected_backend(&mut v);
+    assert!(intake_all(&w.s, &v).is_empty(), "the bundle intakes");
+    let kid = axon_loop_contracts::attestation::key_id_of_hex(&monitor_key().1);
+    for t in v["trials"].as_array().unwrap() {
+        let report: axon_loop::safety::SafetyReport =
+            serde_json::from_value(safety_report(t, "clear", None, MONITOR)).unwrap();
+        forged_append(
+            w.s.root(),
+            axon_loop::ledger::Event::SafetyReport {
+                scope: scope(),
+                report: Box::new(report),
+                key_id: kid.clone(),
+                signature_ref: Some(r('9')),
+            },
+        );
+    }
+    let (_, e) = evaluate(&w.s, &v).unwrap();
+    match admit(&w.s, "fm", &e, ADMITTER, false) {
+        Err(e) => assert!(e.to_string().contains("no longer cleared"), "{e}"),
+        Ok((adm, _)) => assert_ne!(
+            adm.decision,
+            Decision::Accept,
+            "ATTACK: a clearance naming a monitor signature that is not stored cleared the trial: {:?}",
+            adm.reasons
+        ),
+    }
+    // Control: protected_accepted's genuinely signed clearances ACCEPT.
+    let _ = protected_accepted("fm-ok");
+}
+
 /// PSV-7: the evaluation's class is the frozen plan's. A DEVELOPMENT plan's
 /// evaluation (here even with genuinely protected documents) relabelled
 /// protected after the scope was protected is refused.
@@ -2018,6 +2062,38 @@ fn a_revoked_verifiers_execution_attestation_counts_nothing() {
             );
         }
     }
+}
+
+/// Amendment 115 (eqgate9): a verifier the operator trusts, under an operator-rooted key, with NO pin at all
+/// attests a protected execution. Having no pin is not being qualified: `verifier_pins.get(..).is_some_and(..)`
+/// flipped to `is_none_or` counted it, and every test pinned the second verifier for SOME profile.
+#[test]
+fn an_execution_attested_by_a_verifier_with_no_pin_at_all_counts_nothing() {
+    let w = protected_world();
+    let k = second_verifier(&w, true, &[PROTECTED]);
+    let mut cfg = w.s.config().unwrap();
+    assert!(
+        cfg.verifier_pins
+            .remove(&OpaqueRef::new(EXEC_VERIFIER).unwrap())
+            .is_some(),
+        "setup: the second verifier was pinned"
+    );
+    w.s.write_config(&cfg).unwrap();
+    let (arm, _) = evaluated_with_exec_signer(&w, "np", &k);
+    drop_second_verifier_key();
+    assert_eq!(
+        arm.verified_pass, 0,
+        "ATTACK: an execution attested by a verifier with no pin at all counted as a protected \
+         execution: {:?}",
+        arm.trials
+    );
+    assert!(
+        arm.trials
+            .iter()
+            .all(|t| t.reason.contains("is not qualified")),
+        "{:?}",
+        arm.trials
+    );
 }
 
 /// Admission (`reverify_protected`): the execution attester trusted when the

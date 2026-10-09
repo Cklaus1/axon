@@ -10,7 +10,7 @@ KILL (the value is observed: the survey records the test names, which is an
 OBSERVED entry, not a row). A green suite is a SURVIVOR: it needs a test and a row.
 A build that breaks, or a value the survey cannot edit by rule, is reported MANUAL.
 
-    python3 scripts/v022_value_survey.py OUT.json PKG [--shard I/N] [--only SUBSTR] [--lines A-B] [--survivors-of PREV.json] [--skip-done A.json,B.json] [--tier1 CMD] [--again]
+    python3 scripts/v022_value_survey.py OUT.json PKG [--shard I/N] [--only SUBSTR] [--lines A-B] [--survivors-of PREV.json] [--skip-done A.json,B.json] [--tier1 CMD] [--again] [--remainder]
         [--cmd "cargo test -p axon-fabric --test cortex_via_fabric"] -- cargo-test-args
 
 --cmd replaces the default `cargo test -p PKG --no-fail-fast` (a value of one crate that another crate's
@@ -68,6 +68,8 @@ def mutate(label, frag, before):
         return "0"
     if label == "val_default":
         return mutate_default(frag)
+    if label in ("val_comb", "val_arm"):
+        return mutate_absent(frag)
     if label in ("flow_argv", "flow_env", "flow_const", "flow_sign"):
         # Amendment 107 flow sites: a string is spelled differently, a bare const name is replaced by
         # a different string, a number is moved by one.
@@ -147,6 +149,44 @@ def mutate_default(frag):
     return None
 
 
+# Amendment 115: the ABSENT arm of a combinator flipped to the other answer, or a `matches!` over None/Err(_) made
+# to stop matching the absent case, or a match-arm / let-else literal moved.
+COMB_FLIPS = {
+    ".is_none_or(": ".is_some_and(",      # None: true -> false
+    ".is_some_and(": ".is_none_or(",      # None: false -> true
+}
+
+
+def mutate_absent(frag):
+    """The replacement for a `val_comb` / `val_arm` site (see `_comb_sites` in the gate); None when no rule applies."""
+    f = frag.strip()
+    for k, v in COMB_FLIPS.items():
+        if f.startswith(k):
+            return v + f[len(k):]
+    m = re.fullmatch(r"\.(is_ok_and|is_err_and)\((.*)\)", f, re.S)
+    if m:       # the Err / Ok arm answered the other way: Err -> true, resp. Ok -> true
+        return (f".map_or(true, {m.group(2)})" if m.group(1) == "is_ok_and"
+                else f".map_or_else({m.group(2)}, |_| true)")
+    m = re.fullmatch(r"\.map_or_else\(\s*(\|[^|]*\|\s*)(.*?),\s*(\|.*)\)", f, re.S)
+    if m:       # the default closure's value moved
+        inner = mutate_default(m.group(2).strip())
+        return None if inner is None else f".map_or_else({m.group(1)}{inner}, {m.group(3)})"
+    if f.startswith("matches!("):
+        # drop the absent alternative; a lone `None` / `Err(_)` / `Ok(_)` pattern becomes its opposite
+        inner = f[len("matches!("):-1]
+        i = inner.find(",")
+        if i < 0:
+            return None
+        expr, pat = inner[:i], inner[i + 1:].strip()
+        alts = [a.strip() for a in pat.split("|")]
+        keep = [a for a in alts if a not in ("None", "Err(_)", "Err(..)")]
+        if keep and len(keep) < len(alts):
+            return f"matches!({expr}, {' | '.join(keep)})"
+        return {"None": f"matches!({expr}, Some(_))", "Err(_)": f"matches!({expr}, Ok(_))",
+                "Ok(_)": f"matches!({expr}, Err(_))"}.get(pat)
+    return mutate_default(f)
+
+
 def run_commands(cmds, runner):
     """Run EVERY command of an entry until one fails a test, returning (any_new_failing, per-command results).
     Round 12: a survey script ran only the last of two named binaries and reported SURVIVED for a value that
@@ -160,7 +200,7 @@ def run_commands(cmds, runner):
     return set(), results
 
 
-def candidates(pkg, only, again=False):
+def candidates(pkg, only, again=False, remainder=False):
     rows = rc.load_rows()
     out = []
     for f in rc.in_scope_files():
@@ -169,7 +209,10 @@ def candidates(pkg, only, again=False):
         text = open(os.path.join(rc.ROOT, f)).read()
         rs = [(r[0], rc.edit_ranges(text, r[3], r[4])) for r in rows if r[2] == f and text.count(r[3]) == 1]
         # `again`: re-measure what an OBSERVED entry already claims (a survey is a measurement, and goes stale)
-        ex = {(e[1], e[2]) for e in rc.VALUE_EXEMPT if e[0] == f and not (again and e[4] == "OBSERVED")}
+        # `remainder` (amendment 115): also re-measure the REMAINDER entries of the default / absent-arm forms
+        # against THIS suite (round 12 measured them against a narrower one, so they were counted, not concluded)
+        ex = {(e[1], e[2]) for e in rc.VALUE_EXEMPT if e[0] == f and not (again and e[4] == "OBSERVED")
+              and not (remainder and e[4] == "REMAINDER" and e[1].endswith(("~dflt", "~comb", "~arm")))}
         for a, b, label, fn, n in rc.value_sites(text, rc.scope_regions(f, rc.code_lines(text), text, []), file=f):
             if any(rc._ranges_hit(rg, a, b) for _, rg in rs) or (fn, n) in ex:
                 continue
@@ -185,6 +228,7 @@ def main():
     shard, only, lines, cmd, surv, tier1, done = (0, 1), None, None, None, None, None, set()
     cmds = []   # every --cmd, in order: an entry that names two test binaries names two commands
     again = "--again" in opts
+    remainder = "--remainder" in opts
     for i, o in enumerate(opts):
         if o == "--lines":
             a, b = opts[i + 1].split("-")
@@ -250,7 +294,7 @@ def main():
     if tier1:
         r1, tail1, base_failing1 = run(tier1 + cargo)
         print("tier-1 baseline rc", r1.returncode, "failing", sorted(base_failing1), flush=True)
-    for idx, (f, a, b, label, fn, n) in enumerate(candidates(pkg, only, again)):
+    for idx, (f, a, b, label, fn, n) in enumerate(candidates(pkg, only, again, remainder)):
         if idx % shard[1] != shard[0] or (surv is not None and (f, fn, n) not in surv) or (f, fn, n) in done:
             continue
         path = os.path.join(rc.ROOT, f)

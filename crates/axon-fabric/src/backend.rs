@@ -1931,6 +1931,60 @@ mod tests {
         );
     }
 
+    /// Amendment 115 (eqgate9): RULE:waiver-expiry, one expiry at a time, through `parse_waivers` (the
+    /// signed file's bytes) and `accept_b263`. The guard is `w.expires.is_none_or(|t| now >= t)`; flipped to
+    /// `is_some_and` it accepted a signed waiver with NO parseable expiry forever, and the whole suite
+    /// stayed green because the only expiry test turned the guard off wholesale (M1030). The result of each
+    /// shape is exact: fail closed for an absent, garbage, non-string, past and at-the-decision expiry; open
+    /// only for an expiry strictly after the decision time.
+    #[test]
+    fn a_waiver_without_a_parseable_future_expiry_waives_nothing() {
+        let ev_sha = "e".repeat(64);
+        let now = parse_utc(B263_END).unwrap() + 60; // 2026-10-01T00:01:00Z
+        let expired = "the waiver for a2 has expired (or states no parseable expiry)";
+        let accept_with = |expires: Option<serde_json::Value>| {
+            let mut w = serde_json::json!({"assertion": "a2", "reason": "operator decision D2"});
+            if let Some(x) = expires {
+                w["expires"] = x;
+            }
+            let file = serde_json::json!({
+                "schema": WAIVER_SCHEMA, "evidence_sha256": ev_sha, "waivers": [w],
+            });
+            let waivers = parse_waivers(&serde_json::to_vec(&file).unwrap(), &ev_sha)?;
+            let mut ev = b263();
+            ev["assertions"] = serde_json::json!([
+                {"name": "a1", "status": "PASS"}, {"name": "a2", "status": "BLOCKED"}
+            ]);
+            ev["counts"] = serde_json::json!({"PASS": 1, "FAIL": 0, "BLOCKED": 1});
+            ev["result"] = "PASS_WITH_BLOCKED".into();
+            accept_b263(&ev, "key-1", now, 3600, || Ok(waivers))
+        };
+        for (what, expires) in [
+            ("no expiry", None),
+            ("an expiry that is garbage", Some("garbage".into())),
+            ("an empty expiry", Some("".into())),
+            ("an expiry that is a number", Some(20261231.into())),
+            ("an expiry that is null", Some(serde_json::Value::Null)),
+            ("an expiry in the past", Some("2026-10-01T00:00:59Z".into())),
+            (
+                "an expiry AT the decision time",
+                Some("2026-10-01T00:01:00Z".into()),
+            ),
+        ] {
+            assert_eq!(
+                accept_with(expires)
+                    .map(|a| a.waived)
+                    .err()
+                    .unwrap_or_default(),
+                expired,
+                "ATTACK: a signed waiver with {what} waived a BLOCKED assertion"
+            );
+        }
+        let a = accept_with(Some("2026-10-01T00:01:01Z".into()))
+            .expect("control: an expiry one second after the decision waives the assertion");
+        assert_eq!(a.waived, vec!["a2".to_string()], "control");
+    }
+
     /// Amendment 107: `read_regular`'s size bound is 256 MiB exactly (the sum of every file the
     /// evidence path reads is bounded by it). Round 11's survey moved it by one MiB with the suite
     /// green. A SPARSE file one byte over it is refused; one at it is read (a hole, no disk).

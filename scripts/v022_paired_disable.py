@@ -970,7 +970,6 @@ GUARD_SETS = {
     # the hashed ancestry walk; M453 vs the common-dir rule; M602 vs the
     # protected custodian's spend rule, with the production helper and
     # custodian.
-    "M186": {"siblings": ["M606", "M620"], "kind": "set"},
     "M286": {"siblings": ["M581"], "kind": "pair"},
     "M453": {"siblings": ["M580"], "kind": "pair"},
     "M459": {"siblings": ["M581"], "kind": "pair"},

@@ -278,6 +278,19 @@ fn usage(state: UsageState, cost: Option<u64>, liab: u64, attempt: char) -> Usag
     }
 }
 
+/// Amendment 115 (eqgate9): a usage whose episode status is NOT KNOWN (an execution component carries none) is not
+/// a non-completed record. `status.is_some_and(..)` flipped to `is_none_or` counted every one of them.
+#[test]
+fn tel_does_not_count_a_usage_with_no_episode_status_as_non_completed() {
+    let a = usage(UsageState::Final, Some(10), 0, '1');
+    let b = usage(UsageState::Final, Some(5), 0, '2');
+    let s = tel::summarize([(&a, None), (&b, Some(EpisodeStatus::Completed))]).unwrap();
+    assert_eq!(
+        s.by_currency[0].non_completed_records, 0,
+        "ATTACK: a usage with no episode status was counted as a non-completed record"
+    );
+}
+
 #[test]
 fn tel_keeps_unknown_unknown_and_counts_failures() {
     let a = usage(UsageState::Final, Some(10), 0, '1');

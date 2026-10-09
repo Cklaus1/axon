@@ -787,7 +787,7 @@ MUTATIONS = [
     ('M183', "M2/A11/A12: the token verifies under Fabric's own key", 'crates/axon-fabric/src/psv.rs', '.any(|(n, t)| n == test && *t == want)', '.any(|(n, _t)| n == test)', 'axon-fabric', '--test psv_dispatch', 'a_previous_attempts_genuine_pass_does_not_replay'),
     ('M184', 'M2: a pass needs exit 0', 'crates/axon-fabric/src/psv.rs', 'if v.exit_code != Some(0) {', 'if false && v.exit_code != Some(0) {', 'axon-fabric', '--test psv_dispatch', 'a_valid_token_with_a_failing_run_is_not_a_pass'),
     ('M185', "M2: the certified parser decides, never the guest's claim", 'crates/axon-fabric/src/psv.rs', 'let verification = match report.verdict(test) {', 'let verification = match (if v.status == GuestStatus::Passed { CheckVerdict::Passed } else { report.verdict(test) }) {', 'axon-fabric', '--test psv_dispatch', 'a_failing_test_is_failed_whatever_the_guest_claims'),
-    ('M186', 'M2/A14: without an observation a guest verdict is guest-unobserved', 'crates/axon-fabric/src/psv.rs', '        None => EvidenceClass::GuestUnobserved,\n    };', '        None => EvidenceClass::Protected,\n    };', 'axon-fabric', '--test psv_dispatch', 'an_operator_suite_passes_through_the_guest_path_as_guest_unobserved'),
+    ('M186', 'M2/A14: without an observation a guest verdict is guest-unobserved (amendment 115: reinstated, the class decision is a function with its own test)', 'crates/axon-fabric/src/psv.rs', '        None => EvidenceClass::GuestUnobserved,\n    }\n}', '        None => EvidenceClass::Protected,\n    }\n}', 'axon-fabric', '--lib', 'psv::class_tests::a_passed_verdict_with_no_observation_is_guest_unobserved_and_names_none'),
     ('M187', 'M2: the protected profile runs only operator suites', 'crates/axon-fabric/src/submit.rs', '&& (target.suite.is_none() || target.filter.is_none())', '&& false', 'axon-fabric', '--test psv_dispatch', 'only_an_operator_suite_runs_on_the_protected_profile'),
     ('M188', 'M2: an inadmissible launch has no verdict', 'crates/axon-fabric/src/submit.rs', 'let launched_ok = matches!(res.outcome, backend::LinuxOutcome::Ok { .. });', 'let launched_ok = true;', 'axon-fabric', '--test psv_dispatch', 'a_valid_verdict_from_an_unbound_launch_counts_for_nothing'),
     ('M189', 'M2/A13: a local run is development evidence', 'crates/axon-fabric/src/submit.rs', '            r.evidence_refs.insert(\n                0,\n                opaque(crate::psv::EvidenceClass::Development.evidence_ref()),\n            );', '', 'axon-fabric', '--test psv_dispatch', 'a_local_check_is_development_evidence'),
@@ -2652,19 +2652,6 @@ EQUIV_RECORD["M597"] = {
 # run were re-attacked on the route where their guard IS alone (M72 through
 # an operator helper, M194/M201/M204/M310 on the direct route, M284 on the
 # development lineage).
-EQUIV_RECORD["M186"] = {
-    "property": "a guest verdict made without a verified observation is never classed protected",
-    "subsumed_by": ["M606", "M620"], "killer": "joint:M186+M606+M620",
-    "all_paths": "derive has one caller (submit's protected-profile arm) and receives no observation "
-                 "exactly when the config has no observer (observe returns a verified observation or "
-                 "Err, and Err launches nothing: M204). Its class reaches the receipt only through "
-                 "psv_receipt, which re-labels guest-unobserved every launch that is not admissible "
-                 "on a route that attests protected: the DIRECT route never attests (M606, "
-                 "attests_protected), and on the PRIVILEGED route an admissible launch needs the "
-                 "helper to launch, which it never does without a verified observation (M620; its "
-                 "refusal is not launched_ok, which M323's clause downgrades). HostVerdict.class "
-                 "itself has no reader. So a verdict with no observation is guest-unobserved on "
-                 "every route whatever derive's None arm says. Executed on the direct route"}
 EQUIV_RECORD["M286"] = {
     "property": "readiness never certifies a tree whose ancestry an info/grafts file rewrites",
     "subsumed_by": ["M581"], "killer": "joint:M286+M581",
@@ -10691,6 +10678,79 @@ EQUIV_RECORD["M3038"] = {
                  "guard is the one that refuses)"}
 EQUIVALENT_DID |= {"M3038"}
 RETIRED |= {"M3038"}
+
+
+# ── C9 round 13, workstream EQGATE9 (amendment 115; M3280-M3339) ─────────────────────────────────────
+MUTATIONS += [
+    ('M3280', 'WAIVER EXPIRY (eq9): a signed waiver with no parseable expiry is accepted (is_none_or -> is_some_and)', 'crates/axon-fabric/src/backend.rs',
+     '|w| w.expires.is_none_or(|t| now >= t))', '|w| w.expires.is_some_and(|t| now >= t))',
+     'axon-fabric', '--lib', 'backend::tests::a_waiver_without_a_parseable_future_expiry_waives_nothing'),
+    ('M3281', 'WAIVER EXPIRY (eq9): a waiver is still good AT its expiry second', 'crates/axon-fabric/src/backend.rs',
+     '|w| w.expires.is_none_or(|t| now >= t))', '|w| w.expires.is_none_or(|t| now > t))',
+     'axon-fabric', '--lib', 'backend::tests::a_waiver_without_a_parseable_future_expiry_waives_nothing'),
+    ('M3282', 'WAIVER EXPIRY (eq9): an absent or garbage expiry is parsed as never', 'crates/axon-fabric/src/backend.rs',
+     'expires: x["expires"].as_str().and_then(parse_utc),', 'expires: x["expires"].as_str().and_then(parse_utc).or(Some(i64::MAX)),',
+     'axon-fabric', '--lib', 'backend::tests::a_waiver_without_a_parseable_future_expiry_waives_nothing'),
+    ('M3283', 'CERTIFICATION SUITE (eq9): a certification whose suite lacks a field is accepted (is_none_or -> is_some_and)', 'crates/axon-fabric/src/readiness.rs',
+     'is_none_or(str::is_empty))\n    {\n        return Err(format!(\n            "{component}: suite must name', 'is_some_and(str::is_empty))\n    {\n        return Err(format!(\n            "{component}: suite must name',
+     'axon-fabric', '--lib', 'readiness::tests::a_certification_whose_suite_does_not_name_all_five_fields_is_refused'),
+    ('M3285', 'EVIDENCE CLASS (eq9): an observed verdict does not name its observation', 'crates/axon-fabric/src/psv.rs',
+     '            evidence.push(format!("preflight-observation-sha256:{}", o.sha256));\n            EvidenceClass::Protected\n        }\n        None =>',
+     '            let _ = o;\n            EvidenceClass::Protected\n        }\n        None =>',
+     'axon-fabric', '--lib', 'psv::class_tests::a_passed_verdict_with_no_observation_is_guest_unobserved_and_names_none'),
+    ('M3286', 'SIGNING DOMAIN (eq9, axon-loop alone): the trial-safety clearance domain is the context domain\'s literal', 'crates/axon-loop/src/safety.rs',
+     'pub const CLEARANCE_DOMAIN: &str = "axon.loop.trial-safety/1";', 'pub const CLEARANCE_DOMAIN: &str = "axon.closed-loop.context/1";',
+     'axon-loop', '--test signing_domain_pins', 'this_crates_signing_domains_are_their_documented_literals'),
+    ('M3287', 'SIGNING DOMAIN (eq9, axon-loop alone): the context domain is the clearance domain\'s literal', 'crates/axon-loop/src/evl.rs',
+     'pub const CONTEXT_DOMAIN: &str = "axon.closed-loop.context/1";', 'pub const CONTEXT_DOMAIN: &str = "axon.loop.trial-safety/1";',
+     'axon-loop', '--test signing_domain_pins', 'this_crates_signing_domains_are_distinct_from_every_domain_they_share_a_protocol_with'),
+    ('M3288', 'SIGNING DOMAIN (eq9, axon-loop-contracts alone): the execution domain is the context domain\'s literal', 'crates/axon-loop-contracts/src/attestation.rs',
+     'pub const EXECUTION_DOMAIN: &str = "axon.fabric-execution/1";', 'pub const EXECUTION_DOMAIN: &str = "axon.closed-loop.context/1";',
+     'axon-loop-contracts', '--test signing_domain_pins', 'this_crates_signing_domains_are_distinct_from_each_other_and_from_the_sibling_crates_domains'),
+    ('M3289', 'SIGNING DOMAIN (eq9, axon-loop-contracts alone): the execution domain is the document-signature schema', 'crates/axon-loop-contracts/src/attestation.rs',
+     'pub const EXECUTION_DOMAIN: &str = "axon.fabric-execution/1";', 'pub const EXECUTION_DOMAIN: &str = "axon-document-signature/1";',
+     'axon-loop-contracts', '--test signing_domain_pins', 'this_crates_signing_domains_are_distinct_from_each_other_and_from_the_sibling_crates_domains'),
+    ('M3290', 'SIGNING DOMAIN (eq9, axon-loop alone): the clearance domain is the document-signature schema', 'crates/axon-loop/src/safety.rs',
+     'pub const CLEARANCE_DOMAIN: &str = "axon.loop.trial-safety/1";', 'pub const CLEARANCE_DOMAIN: &str = "axon-document-signature/1";',
+     'axon-loop', '--test signing_domain_pins', 'this_crates_signing_domains_are_distinct_from_every_domain_they_share_a_protocol_with'),
+    ('M3291', 'SIGNING DOMAIN (eq9, axon-loop-contracts alone): the execution domain is versioned differently', 'crates/axon-loop-contracts/src/attestation.rs',
+     'pub const EXECUTION_DOMAIN: &str = "axon.fabric-execution/1";', 'pub const EXECUTION_DOMAIN: &str = "axon.fabric-execution/2";',
+     'axon-loop-contracts', '--test signing_domain_pins', 'this_crates_signing_domains_are_their_documented_literals'),
+]
+
+MUTATIONS += [
+    ('M3292', 'TREE PROVENANCE (eq9): a tracked file of another kind or mode reads as unchanged (is_none_or -> is_some_and)', 'crates/axon-fabric/src/git_data.rs',
+     '            body.is_none_or(|b| object_id("blob", &b) != *oid)', '            body.is_some_and(|b| object_id("blob", &b) != *oid)',
+     'axon-fabric', '--lib', 'git_data::tests::a_tracked_path_of_another_kind_or_mode_or_gone_differs'),
+    ('M3293', 'ATTESTATION (eq9): a registered check with an empty argv names a suite (is_some_and -> is_none_or)', 'crates/axon-fabric/src/signing.rs',
+     '    if !req.argv.first().is_some_and(|a| a.starts_with("check:")) {', '    if !req.argv.first().is_none_or(|a| a.starts_with("check:")) {',
+     'axon-fabric', '--lib', 'signing::tests::a_registered_check_naming_no_suite_at_all_is_not_signed'),
+    ('M3294', 'CERTIFICATION SHAPE (eq9): a digest field that is not a string passes is_hex (is_some_and -> is_none_or)', 'crates/axon-fabric/src/readiness.rs',
+     '    v.as_str().is_some_and(|s| {\n        s.len() == n', '    v.as_str().is_none_or(|s| {\n        s.len() == n',
+     'axon-fabric', '--lib', 'readiness::tests::a_digest_field_that_is_not_a_string_of_the_right_length_is_not_hex'),
+    ('M3295', 'TREE PROVENANCE (eq9): a tracked path that is gone reads as unchanged', 'crates/axon-fabric/src/git_data.rs',
+     '            let Ok(md) = std::fs::symlink_metadata(&p) else {\n                return true;\n            };', '            let Ok(md) = std::fs::symlink_metadata(&p) else {\n                return false;\n            };',
+     'axon-fabric', '--lib', 'git_data::tests::a_tracked_path_of_another_kind_or_mode_or_gone_differs'),
+]
+
+MUTATIONS += [
+    ('M3296', 'CLEARANCE (eq9): a clearance whose stored monitor signature cannot be read is verified', 'crates/axon-loop/src/admission.rs',
+     '        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())\n    else {\n        return false;\n    };',
+     '        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())\n    else {\n        return true;\n    };',
+     'axon-loop', '--test protected_class', 'a_clearance_whose_stored_signature_is_missing_clears_nothing'),
+    ('M3297', 'EXECUTION ATTESTER (eq9): a verifier with no pin at all is qualified for the backend (is_some_and -> is_none_or)', 'crates/axon-loop/src/evl.rs',
+     'let qualified = config.verifier_pins.get(&issuer).is_some_and(|pin| {', 'let qualified = config.verifier_pins.get(&issuer).is_none_or(|pin| {',
+     'axon-loop', '--test protected_class', 'an_execution_attested_by_a_verifier_with_no_pin_at_all_counts_nothing'),
+    ('M3298', 'ECONOMICS (eq9): a usage with no episode status is counted non-completed (is_some_and -> is_none_or)', 'crates/axon-loop/src/tel.rs',
+     '        if status.is_some_and(|s| s != EpisodeStatus::Completed) {', '        if status.is_none_or(|s| s != EpisodeStatus::Completed) {',
+     'axon-loop', '--test plan_evo_tel', 'tel_does_not_count_a_usage_with_no_episode_status_as_non_completed'),
+]
+
+MUTATIONS += [
+    ('M3299', 'CONTRACT SCHEMA (eq9): an object with a key conforms to a schema that declares no property and forbids additions (is_some_and -> is_none_or)', 'crates/axon-loop-contracts/src/schema.rs',
+     '                if !props.is_some_and(|p| p.contains_key(k)) {', '                if !props.is_none_or(|p| p.contains_key(k)) {',
+     'axon-loop-contracts', '--lib', 'schema::tests::an_object_schema_without_properties_that_forbids_additions_admits_no_key'),
+]
 
 
 if __name__ == "__main__":
