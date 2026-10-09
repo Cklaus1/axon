@@ -67,7 +67,13 @@ fn check(suite: &str, files: &[(&str, &str)], candidate: &str, test: &str) -> Se
     std::fs::write(cand.join("sol.ax"), candidate).unwrap();
     std::fs::write(suite_dir.join("main.ax"), suite).unwrap();
     for (name, body) in files {
-        std::fs::write(suite_dir.join(name), body).unwrap();
+        // `cand/<path>`: a further file of the CANDIDATE's tree.
+        let p = match name.strip_prefix("cand/") {
+            Some(rest) => cand.join(rest),
+            None => suite_dir.join(name),
+        };
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, body).unwrap();
     }
     let secret: [u8; 32] = std::array::from_fn(|i| (i as u8).wrapping_mul(37).wrapping_add(11));
     let sp = job.join("completion-secret");
@@ -2089,4 +2095,36 @@ fn operator_side_control_flow_on_candidate_data_never_selects_operator_code() {
         }
     }
     all_refused(fails);
+}
+
+/// Amendment 114: the sealed-only check holds the operator's `mod f` when `f` is one of the
+/// CANDIDATE's modules (the suite declares the candidate's module names), so a candidate whose
+/// module uses its own helper (`use f::h`) resolves, while an operator module the candidate
+/// does not ship is still a module nothing declares. Found by the fabric suite
+/// (`a_check_loads_no_module_from_outside_the_suite_and_the_candidate`) after the first form.
+#[test]
+fn a_module_the_operator_declares_for_the_candidate_resolves_the_candidates_own_helper() {
+    let suite = "mod f\nmod opmod\nuse f.{double}\n@[test]\nfn accept() {\n  assert_eq(double(21), 42)\n}\n";
+    let files: &[(&str, &str)] = &[
+        (
+            "cand/f.ax",
+            "use f::h\n\nfn double(n: i64) -> i64 { d2(n) }\n",
+        ),
+        ("cand/f/h.ax", "fn d2(n: i64) -> i64 { n * 2 }\n"),
+    ];
+    let s = check(suite, files, "pub fn unused() -> i64 { 0 }\n", "accept");
+    passed(&s, "a candidate module with its own helper");
+    // The operator's other module is no module of the candidate's.
+    let s = check(
+        suite,
+        &files[..],
+        "use opmod.{a}\npub fn unused() -> i64 { 0 }\n",
+        "accept",
+    );
+    assert!(
+        refused_unkeyed(&s) && candidate_visible(&s).contains("`opmod` not found"),
+        "ATTACK or wrong text: {:?} {}",
+        s.status,
+        candidate_visible(&s)
+    );
 }

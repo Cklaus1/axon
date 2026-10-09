@@ -2333,6 +2333,9 @@ pub fn set_sealed_module_dirs(dirs: &[std::path::PathBuf]) {
 pub struct SealedDecls {
     pub mods: std::collections::HashSet<String>,
     pub uses: std::collections::HashSet<(Vec<String>, Vec<String>)>,
+    /// The stems of the module files (and directories) under the sealed set: a `mod f` the
+    /// OPERATOR wrote names the candidate's module when `f.ax` or `f/` is one of them.
+    pub stems: std::collections::HashSet<String>,
 }
 
 /// Whether `item` belongs to the sealed set: a span in a sealed file, or (for
@@ -2346,7 +2349,7 @@ pub fn item_in_sealed(item: &Item, sealed: &[std::path::PathBuf], decls: &Sealed
         Item::ImplBlock(b) => b.span,
         Item::RefineDef(r) => r.span,
         Item::LetDef { span, .. } => *span,
-        Item::ModDecl(m) => return decls.mods.contains(&m.name),
+        Item::ModDecl(m) => return decls.mods.contains(&m.name) || decls.stems.contains(&m.name),
         Item::UseDecl(u) => {
             return decls.uses.contains(&(u.path.clone(), u.items.clone()));
         }

@@ -117,6 +117,7 @@ ROWS=(
   "am114 control taint: every conditional, repeated or exiting form, attack and control|axon-core|lib|interp::taint_tests::operator_side_control_flow_on_candidate_data_carries_its_taint_into_what_it_runs"
   "am114 drift: every Expr variant and both short-circuits have a row in the control table|axon-core|lib|interp::taint_tests::every_conditional_evaluation_form_in_the_ast_has_a_row_with_an_attack"
   "am114 control taint (runner leg, corroboration)|axon-psv|sealed_frames|operator_side_control_flow_on_candidate_data_never_selects_operator_code"
+  "am114 a module the operator declares for the candidate resolves the candidate's own helper|axon-psv|sealed_frames|a_module_the_operator_declares_for_the_candidate_resolves_the_candidates_own_helper"
   "am114 the note's checks refuse a wrong result, target, claim list or gate package|axon-core|pci_delta_note|a_wrong_result_or_target_in_the_notes_gate_table_is_refused a_stale_amendment_list_in_the_claim_is_refused a_test_the_gate_runs_under_another_package_or_name_is_no_gate"
   "am114 the existence oracle on the static path, every position the test lists, text and accept/refuse (runner: the only witness)|axon-psv|sealed_frames|a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one"
 )

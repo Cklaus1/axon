@@ -6549,6 +6549,11 @@ fn sealed_module_decls(sealed: &[PathBuf]) -> axon_core::resolver::SealedDecls {
         };
         for e in rd.flatten() {
             let p = e.path();
+            if let Some(stem) = p.file_stem().and_then(|x| x.to_str()) {
+                if p.is_dir() || p.extension().is_some_and(|x| x == "ax") {
+                    d.stems.insert(stem.to_string());
+                }
+            }
             if p.is_dir() {
                 walk(&p, d, depth + 1);
             } else if p.extension().is_some_and(|x| x == "ax") {

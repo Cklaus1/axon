@@ -10537,6 +10537,9 @@ MUTATIONS += [
     ('M3269', 'ORACLE (am114, runner): no item belongs to the sealed-only program', 'crates/axon-core/src/resolver.rs',
      '    span_in_sealed(span, sealed)\n}\n\n/// The sealed directories currently in force', '    let _ = (span, sealed);\n    false\n}\n\n/// The sealed directories currently in force',
      'axon-psv', '--test sealed_frames', 'a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one'),
+    ('M3270', 'ORACLE (am114, runner): the sealed-only check lacks the operator\'s `mod` of a candidate module, so the candidate\'s own helper is not found', 'crates/axon-core/src/resolver.rs',
+     '        Item::ModDecl(m) => return decls.mods.contains(&m.name) || decls.stems.contains(&m.name),', '        Item::ModDecl(m) => return decls.mods.contains(&m.name),',
+     'axon-psv', '--test sealed_frames', 'a_module_the_operator_declares_for_the_candidate_resolves_the_candidates_own_helper'),
     ('M3261', 'NOTE CHECK (am114): the gate table of the note is compared without the result each row prints', 'scripts/pci_delta.py',
      '        if tab != want:\n            only_t', '        if [t[:2] for t in tab] != [w[:2] for w in want]:\n            only_t',
      'axon-core', '--test pci_delta_note', 'a_wrong_result_or_target_in_the_notes_gate_table_is_refused'),
@@ -10553,7 +10556,7 @@ MUTATIONS += [
      '            if (pkg, tgt, full) not in runs:', '            if full not in {n for _, _, _, ns in grows for n in ns}:',
      'axon-core', '--test pci_delta_note', 'a_test_the_gate_runs_under_another_package_or_name_is_no_gate'),
     ('M3266', "NOTE CHECK (am114): a mutation row's test counts as run by a gate row whose test NAME merely contains it", 'scripts/pci_delta.py',
-     '            if (pkg, tgt, full) not in runs:', '            if not any(full in n for _, _, _, ns in grows for n in ns):',
+     '            if (pkg, tgt, full) not in runs:', '            if not any((p, sl) == (pkg, tgt) and full in n for p, sl, n in runs):',
      'axon-core', '--test pci_delta_note', 'a_test_the_gate_runs_under_another_package_or_name_is_no_gate'),
 ]
 

@@ -2793,4 +2793,5 @@ ATTACK_MARKERS.update({
     'M3267': 'ACCEPT/REFUSE differs',
     'M3268': 'verify predicate: ACCEPT/REFUSE differs',
     'M3269': 'the text differs|ACCEPT/REFUSE differs|both texts are EMPTY',
+    'M3270': 'control a candidate module with its own helper',
 })
