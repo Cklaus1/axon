@@ -2674,7 +2674,7 @@ ATTACK_MARKERS.update({
     'M3152': 'linux-microvm-protectedx',
     'M3153': "the loop's list of protected backends is the PSV profile, no other",
     'M3154': "ATTACK: the protected profile's name is defined more than once",
-    'M3155': r'ATTACK: b"sg-context/1\0"\.to_vec\(\) handed to a signing primitive was not a site',
+    'M3155': r'ATTACK: b"sg-context/1\\0"\.to_vec\(\) handed to a signing primitive was not a site',
     'M3156': 'SG_DOMAIN handed to a signing primitive was not a site',
     'M3157': 'the default \\.unwrap_or_default\\(\\) was not a site|the default Default::default\\(\\) was not a site',
     'M3158': 'the default Mode::DfDev was not a site',
