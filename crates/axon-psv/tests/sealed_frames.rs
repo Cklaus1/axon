@@ -1778,7 +1778,7 @@ fn candidate_visible(s: &Seen) -> String {
 /// ACCEPT/REFUSE.
 #[test]
 fn a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one() {
-    let su = "mod sol\nmod opmod\nuse sol.{solve}\ntrait Sc {\n    fn score(self) -> i64\n}\nimpl Sc for i64 {\n    fn score(self: i64) -> i64 { 41 }\n}\ntype OT = { k: i64 }\ntype OE = P | Q\nlet OG = 5\nlet TABLE = [41, 42]\nfn ofn(x: i64) -> i64 { x }\nfn secret() -> i64 { 41 }\nfn nonadapt(n: i64) -> i64 { n }\n@[test]\nfn accept() {\n  assert_eq(solve(), 41)\n}\n";
+    let su = "mod sol\nmod opmod\nuse sol.{solve}\ntrait Sc {\n    fn score(self) -> i64\n}\nimpl Sc for i64 {\n    fn score(self: i64) -> i64 { 41 }\n}\ntype OT = { k: i64 }\ntype OE = P | Q\ntype DictTable = { k: i64 }\nlet OG = 5\nlet TABLE = [41, 42]\nfn ofn(x: i64) -> i64 { x }\nfn secret() -> i64 { 41 }\nfn nonadapt(n: i64) -> i64 { n }\n@[test]\nfn accept() {\n  assert_eq(solve(), 41)\n}\n";
     // (position, body naming the operator's, body naming the same shape of a
     // missing name, item before `solve` naming the operator's, ... the missing's)
     let forms: &[(&str, &str, &str, &str, &str)] = &[
@@ -1819,6 +1819,31 @@ fn a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missi
         ("use of a module", "41", "41", "use opmod.{a}\n", "use zmod.{a}\n"),
         ("goal_run name", "let r = goal_run(\"nonadapt\", 100.0, 5)\n 41", "let r = goal_run(\"zznosuch\", 100.0, 5)\n 41", "", ""),
         ("kernel_goal_create name", "let g = kernel_goal_create(0, \"nonadapt\", 100.0)\n 41", "let g = kernel_goal_create(0, \"zznosuch\", 100.0)\n 41", "", ""),
+        // Amendment 117 (PSV-1 loop findings 4, 5, 8, 9, 25, 50): positions the sealed-only check skipped.
+        ("goal_run_categorical name", "let r = goal_run_categorical(\"nonadapt\", 3, 100.0, 5)\n 41", "let r = goal_run_categorical(\"zznosuch\", 3, 100.0, 5)\n 41", "", ""),
+        ("goal_run_random name", "let r = goal_run_random(\"nonadapt\", 100.0, 5, 0, 10)\n 41", "let r = goal_run_random(\"zznosuch\", 100.0, 5, 0, 10)\n 41", "", ""),
+        ("goal_run_multistart name", "let r = goal_run_multistart(\"nonadapt\", 100.0, 2, 3, 0, 10)\n 41", "let r = goal_run_multistart(\"zznosuch\", 100.0, 2, 3, 0, 10)\n 41", "", ""),
+        ("goal_eval name", "let r = goal_eval(\"nonadapt\", 3)\n 41", "let r = goal_eval(\"zznosuch\", 3)\n 41", "", ""),
+        ("struct refinement predicate", "41", "41", "type CS = { a: i64 } where _.a > ofn(0)\n", "type CS = { a: i64 } where _.a > zfn(0)\n"),
+        ("dyn param", "41", "41", "fn dd(x: dyn Sc) -> i64 { 1 }\n", "fn dd(x: dyn ZC) -> i64 { 1 }\n"),
+        ("dyn let", "let d: dyn Sc = mk()\n 41", "let d: dyn ZC = mk()\n 41", "", ""),
+        ("dyn array", "let d: [dyn Sc] = []\n 41", "let d: [dyn ZC] = []\n 41", "", ""),
+        ("dyn option", "let d: Option<dyn Sc> = None\n 41", "let d: Option<dyn ZC> = None\n 41", "", ""),
+        ("dyn struct field", "41", "41", "type CD = { a: dyn Sc }\n", "type CD = { a: dyn ZC }\n"),
+        ("dyn lambda parameter", "let f = |x: dyn Sc| 1\n 41", "let f = |x: dyn ZC| 1\n 41", "", ""),
+        ("array element: struct literal", "let t = [OT { k: 1 }]\n 41", "let t = [ZT { k: 1 }]\n 41", "", ""),
+        ("tuple element: struct literal", "let t = (OT { k: 1 }, 2)\n 41", "let t = (ZT { k: 1 }, 2)\n 41", "", ""),
+        ("array element: enum path", "let t = [OE::P]\n 41", "let t = [ZE::P]\n 41", "", ""),
+        ("array element: type path", "let t = [OT::new()]\n 41", "let t = [ZT::new()]\n 41", "", ""),
+        ("array element: lambda", "let t = [|x: i64| OT { k: x }]\n 41", "let t = [|x: i64| ZT { k: x }]\n 41", "", ""),
+        ("predicate: struct literal", "41", "41", "type RP = i64 where _ > len([OT { k: 1 }])\n", "type RP = i64 where _ > len([ZT { k: 1 }])\n"),
+        ("predicate: enum path", "41", "41", "type RP = i64 where _ > len([OE::P])\n", "type RP = i64 where _ > len([ZE::P])\n"),
+        ("verify predicate: struct literal", "41", "41", "@[verify(len([OT { k: 1 }]) > 0)]\nfn cv() -> i64 { 41 }\n", "@[verify(len([ZT { k: 1 }]) > 0)]\nfn cv() -> i64 { 41 }\n"),
+        ("param refinement: struct literal", "41", "41", "fn pr(x: i64 where _ > len([OT { k: 1 }])) -> i64 { x }\n", "fn pr(x: i64 where _ > len([ZT { k: 1 }])) -> i64 { x }\n"),
+        ("struct where: struct literal", "41", "41", "type CS2 = { a: i64 } where _.a > len([OT { k: 1 }])\n", "type CS2 = { a: i64 } where _.a > len([ZT { k: 1 }])\n"),
+        ("deferred-prefix type", "41", "41", "fn pt(x: DictTable) -> i64 { 1 }\n", "fn pt(x: DictTableZ9) -> i64 { 1 }\n"),
+        ("deferred-prefix struct literal", "let t = DictTable { k: 1 }\n 41", "let t = DictTableZ9 { k: 1 }\n 41", "", ""),
+        ("deferred-prefix generic bound", "41", "41", "fn pt<T: DictTable>(x: T) -> i64 { 1 }\n", "fn pt<T: DictTableZ9>(x: T) -> i64 { 1 }\n"),
     ];
     let swaps = [
         ("zznosuch", "nonadapt"),
@@ -1829,6 +1854,7 @@ fn a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missi
         ("ZE", "OE"),
         ("ZC", "Sc"),
         ("zmod", "opmod"),
+        ("DictTableZ9", "DictTable"),
     ];
     let run_one = |body: &str, extra: &str| {
         let cand = format!("fn mk() -> i64 {{ 1 }}\n{extra}pub fn solve() -> i64 {{ {body} }}\n");
@@ -1999,10 +2025,10 @@ fn a_sealed_method_call_is_refused_in_the_same_words_for_an_operator_method_and_
 
 #[test]
 fn operator_side_control_flow_on_candidate_data_never_selects_operator_code() {
-    let cand = "pub fn cand() -> i64 { 4 }\npub fn candr() -> Result<i64, str> { Ok(4) }\npub fn fill(d: Dict) { dict_set(d, \"k\", 1) }\npub fn drain(c: Chan<i64>) { let x = c.recv() }\n";
+    let cand = "pub fn cand() -> i64 { 4 }\npub fn candr() -> Result<i64, str> { Ok(4) }\npub fn fill(d: Dict) { dict_set(d, \"k\", 1) }\npub fn drain(c: Chan<i64>) { let x = c.recv() }\npub fn crd() -> i64 {\n  if cand() == 5 {\n    match read_file(\"/nonexistent/c9r14\") { Ok(s) => 1  Err(e) => 2 }\n  } else { 0 }\n}\n";
     let pre = "fn strict(x: i64) -> bool { x == 9 }\nfn lenient(x: i64) -> bool { true }\nlet TBL = [lenient, strict]\nfn mark(op: Dict) -> bool {\n  dict_set(op, \"x\", 1)\n  true\n}\nfn bump(op: Dict, x: i64) -> i64 {\n  dict_set(op, to_str(x), 1)\n  x\n}\nfn okr() -> Result<i64, str> { Ok(4) }\nfn tq(op: Dict) -> Result<i64, str> {\n  let v = candr()?\n  let u = mark(op)\n  Ok(v)\n}\nfn tq_ok(op: Dict) -> Result<i64, str> {\n  let v = okr()?\n  let u = mark(op)\n  Ok(v)\n}\n";
     let suite = |body: &str| {
-        format!("mod sol\nuse sol.{{cand, candr, fill, drain}}\n{pre}@[test]\nfn accept() {{\n  let op = dict_new()\n{body}\n}}\n")
+        format!("mod sol\nuse sol.{{cand, candr, fill, drain, crd}}\n{pre}@[test]\nfn accept() {{\n  let op = dict_new()\n{body}\n}}\n")
     };
     let sel = "  let f = TBL[1 - dict_len(op)]\n  assert(f(cand()))";
     let sel2 = "  let f = TBL[2 - dict_len(op)]\n  assert(f(cand()))";
@@ -2073,6 +2099,49 @@ fn operator_side_control_flow_on_candidate_data_never_selects_operator_code() {
             "  let r = arr_find([1, 2, 3], |x| { let u = bump(op, x)\n    x == 4 - 2 })".to_string(),
             sel2,
         ),
+        // Amendment 117 (PSV-1 loop findings 2, 26, 3/10/18/49, 20, 17, 31/32/34).
+        (
+            "a match guard run because the candidate's answer matched the pattern",
+            "  let q = match cand() { 4 if mark(op) => 1  _ => 0 }".to_string(),
+            "  let q = match 4 { 4 if mark(op) => 1  _ => 0 }".to_string(),
+            sel,
+        ),
+        (
+            "a while condition evaluated a number of times the candidate's answer chose",
+            "  let i = 0\n  let c = cand()\n  let g = || { let u = dict_inc(op, \"c\")\n    true }\n  while g() && i < c - 3 { i = i + 1 }".to_string(),
+            "  let i = 0\n  let c = 4\n  let g = || { let u = dict_inc(op, \"c\")\n    true }\n  while g() && i < c - 3 { i = i + 1 }".to_string(),
+            "  let f = TBL[min_i64(max_i64(dict_get_or(op, \"c\", 0) - 2, 0), 1)]\n  assert(f(cand()))",
+        ),
+        (
+            "a parameter-free store in an arr_any callback stopped by the candidate's answer",
+            "  let r = arr_any([1, 2, 3], |x| { let u = dict_inc(op, \"c\")\n    x == cand() - 2 })".to_string(),
+            "  let r = arr_any([1, 2, 3], |x| { let u = dict_inc(op, \"c\")\n    x == 4 - 2 })".to_string(),
+            "  let f = TBL[min_i64(max_i64(dict_get_or(op, \"c\", 0) - 2, 0), 1)]\n  assert(f(cand()))",
+        ),
+        (
+            "an arr_sort_by comparator whose call count the candidate's answers decide",
+            "  let r = arr_sort_by([3, 1, 2], |a, b| { let u = dict_inc(op, \"c\")\n    (a - b) * (cand() - 3) })".to_string(),
+            "  let r = arr_sort_by([3, 1, 2], |a, b| { let u = dict_inc(op, \"c\")\n    (a - b) * (4 - 3) })".to_string(),
+            "  let f = TBL[min_i64(max_i64(dict_get_or(op, \"c\", 0) - 3, 0), 1)]\n  assert(f(cand()))",
+        ),
+        (
+            "a select arm that fired because the candidate chose which channel to look at",
+            "  let a = chan<i64>()\n  let e = chan<i64>()\n  let b = chan<i64>()\n  a.send(7)\n  b.send(7)\n  let c = if cand() == 4 { a } else { e }\n  let s = select { c.recv() => { let u = mark(op)\n    1 }  b.recv() => 0 }".to_string(),
+            "  let a = chan<i64>()\n  let e = chan<i64>()\n  let b = chan<i64>()\n  a.send(7)\n  b.send(7)\n  let c = if 1 == 1 { a } else { e }\n  let s = select { c.recv() => { let u = mark(op)\n    1 }  b.recv() => 0 }".to_string(),
+            sel,
+        ),
+        (
+            "an operator channel popped because the candidate's answer was 4",
+            "  let ch = chan<i64>()\n  ch.send(0)\n  ch.send(1)\n  if cand() == 4 { let u = ch.recv() }\n  let k = ch.recv()".to_string(),
+            "  let ch = chan<i64>()\n  ch.send(0)\n  ch.send(1)\n  if 1 == 1 { let u = ch.recv() }\n  let k = ch.recv()".to_string(),
+            "  let f = TBL[1 - k]\n  assert(f(cand()))",
+        ),
+        (
+            "what follows candidate code that could have aborted an operator with body",
+            "  let r = with handler { on IO(p) => 5 } {\n    let a = crd()\n    let u = mark(op)\n    7\n  }".to_string(),
+            "  let r = with handler { on IO(p) => 5 } {\n    let a = 3\n    let u = mark(op)\n    7\n  }".to_string(),
+            sel,
+        ),
     ];
     let mut fails = Vec::new();
     for (what, attack, control, selector) in &cases {
@@ -2127,4 +2196,35 @@ fn a_module_the_operator_declares_for_the_candidate_resolves_the_candidates_own_
         s.status,
         candidate_visible(&s)
     );
+}
+
+/// Amendment 117 (PSV-1 loop findings 0, 1, 11, 13): `temporal_new` and
+/// `temporal_is_valid` read the one process clock while classed Pure and outside
+/// the Time effect, so a candidate could advance a clock the operator read back
+/// through a "pure" builtin, and a run that refused `now_ms` still had a clock
+/// reader. They are World, and Time: under the runner's ceiling (no Time) a
+/// candidate that calls either is refused, as one that calls `now_ms` is. (A candidate
+/// cannot build a `Temporal` for `temporal_is_valid` without `temporal_new`, so that
+/// builtin's Time row is pinned in the interpreter unit test
+/// `no_arm_of_a_pure_builtin_reads_or_advances_ambient_state`.)
+#[test]
+fn a_candidate_cannot_read_or_drive_the_clock_through_the_temporal_builtins() {
+    let suite = "mod sol\nuse sol.{solve}\n@[test]\nfn accept() {\n  assert_eq(solve(), 42)\n}\n";
+    let honest = "pub fn solve() -> i64 { 42 }\n";
+    passed(&check(suite, &[], honest, "accept"), "an honest candidate");
+    for (what, body) in [
+        ("now_ms", "let t = now_ms()\n  42"),
+        ("temporal_now", "let t = temporal_now()\n  42"),
+        ("temporal_new", "let t = temporal_new(0, 1000, 0.5)\n  42"),
+    ] {
+        let cand = format!("pub fn solve() -> i64 {{\n  {body}\n}}\n");
+        let s = check(suite, &[], &cand, "accept");
+        assert!(
+            refused_unkeyed(&s),
+            "ATTACK: the candidate used the clock through `{what}`: {:?} {:?} {}",
+            s.status,
+            s.host,
+            s.stdout
+        );
+    }
 }

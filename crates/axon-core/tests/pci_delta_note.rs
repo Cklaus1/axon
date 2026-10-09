@@ -132,12 +132,12 @@ fn a_stale_amendment_list_in_the_claim_is_refused() {
     for (key, plant, fragment) in [
         (
             "the delta list",
-            "verdict:/102/106/108/114 (the delta=>/102/106 (the delta",
+            "verdict:/102/106/108/114/117 (the delta=>/102/106 (the delta",
             "delta amendment list",
         ),
         (
             "the arms list",
-            "verdict:am100, am102, am106, am108 and am114 (=>am100 and am102 (",
+            "verdict:am100, am102, am106, am108, am114 and am117 (=>am100 and am102 (",
             "amendments whose arms are verified",
         ),
     ] {
@@ -171,6 +171,37 @@ fn a_test_the_gate_runs_under_another_package_or_name_is_no_gate() {
         assert!(
             !ok && out.contains("is run by no gate row"),
             "ATTACK: a gate row with {what} counted as running the test:\n{out}"
+        );
+    }
+}
+
+/// Amendment 117: the claim's list of what is NOT claimed names every finding the loop's triage
+/// table decided NARROW-CLAIM, and only those. Dropping one entry, narrowing one more finding in
+/// the table, or un-narrowing one the claim still lists, each fails.
+#[test]
+fn every_narrow_claim_finding_of_the_loop_is_in_the_non_claim_list_and_no_other_is() {
+    the_unplanted_check_passes();
+    for (what, plant, fragment) in [
+        (
+            "an entry dropped from the claim",
+            "verdict:    - `dispatch-operator-type-exempt-via-sort-order`\n=>",
+            "is not in the claim's non-claim list",
+        ),
+        (
+            "a finding narrowed in the table only",
+            "triage:| FIX | b. control-taint gaps | a match guard=>| NARROW-CLAIM | b. control-taint gaps | a match guard",
+            "is not in the claim's non-claim list",
+        ),
+        (
+            "a finding un-narrowed in the table only",
+            "triage:| NARROW-CLAIM | h. operator-type receiver exemption | same root as 21: an operator CTOR=>| FIX | h. operator-type receiver exemption | same root as 21: an operator CTOR",
+            "which the triage table does not mark NARROW-CLAIM",
+        ),
+    ] {
+        let (ok, out) = check_with_plant(plant);
+        assert!(
+            !ok && out.contains(fragment),
+            "ATTACK: {what} was accepted by the claim drift check:\n{out}"
         );
     }
 }

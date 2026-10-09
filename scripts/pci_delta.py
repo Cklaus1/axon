@@ -23,6 +23,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NOTE = os.path.join(ROOT, "governance/notes/v022-pci-delta.md")
+TRIAGE = os.path.join(ROOT, "governance/notes/v022-psv1-loop-triage.md")
 BASE = "31413ca7"
 PATHSPEC = "crates/axon-core/src"
 BEGIN = "<!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->"
@@ -105,10 +106,11 @@ THEMES = {
     "5d333913": ("amendment 114", "test and registry only (a taint test for the type a `?` carries, plant controls for the note check): no production change"),
     "2e68236b": ("amendment 114", "the sealed-only check holds the operator's `mod` of a candidate module (found by the fabric suite), so a candidate whose module uses its own helper resolves; an operator module the candidate does not ship is still missing: narrowing relative to the first form of amendment 114, no widening of what base accepted"),
     "da68ec7e": ("amendment 114", "test only (the module test loads sol.ax): no production change"),
+    "3849fadb": ("amendment 117", "the clear, localized members of the round-14 find-until-dry loop (44 of 53 findings): `temporal_new`/`temporal_is_valid` are World and Time (a clock reader is no Pure builtin); a match guard, every `while`/`while let` condition evaluation after the first, every builtin callback after the first (`call_cb`) and every Rust loop that runs operator code (`t_loop_pc`: goal searches, the scheduler pass) run under the control taint of what decided them; an operator pop and the channel a `select` looked at are marked; an abort-capable `with` body treats a branch on tainted data as a possible exit and sealed code that ran in it raises the sticky taint, as does a scheduler fiber that ran sealed code and failed; a resume value keeps its taint; `dstore_*` is World, a zoned call's provenance push is kernel state and its append is world state; a refinement type pins what its base pins; a width inside an `Uncertain`/`Temporal` is a width; `sandbox_run` copies the operator's sandbox entry into the sealed kernel for the call; the principal token stream is per registry; the sealed-only check resolves `dyn`, array/tuple elements, refinement/`where`/`@[verify]`/whole-struct predicates and the exact deferred type names, and the goal variants and `goal_eval` give a sealed caller the missing-name text: narrowing, no widening (the claim itself is NARROWED to what is enforced)"),
 }
 
 
-# `--plant KEY:OLD=>NEW` (KEY: note | verdict | gates | spec | matrix) changes the text of one input IN MEMORY before
+# `--plant KEY:OLD=>NEW` (KEY: note | verdict | gates | spec | matrix | triage) changes the text of one input IN MEMORY before
 # `--check` judges it: the control that shows a wrong table row, a wrong result, a wrong package or a wrong
 # claim list is REFUSED (crates/axon-core/tests/pci_delta_note.rs). A plant that matches nothing is an error, so
 # a control cannot pass because it planted nothing.
@@ -282,6 +284,36 @@ def doc_drift():
     got = sorted(int(x) for x in re.findall(r"am(\d+)", m.group(1))) if m else None
     if got != arms:
         bad.append("the claim's list of amendments whose arms are verified is not am100 plus the registry's: expected " + ", ".join(f"am{x}" for x in arms) + ", the claim says " + (m.group(1) if m else "nothing"))
+    # The PSV-1 claim's list of what is NOT claimed names every finding the loop's triage table decided
+    # NARROW-CLAIM (amendment 117), and nothing else: a finding cannot be narrowed in the table and
+    # silently dropped from the claim, and the claim cannot keep an entry the table no longer narrows.
+    tri = read("triage", TRIAGE)
+    tm = re.search(r"<!-- BEGIN TRIAGE.*?-->\n(.*?)\n<!-- END TRIAGE -->", tri, re.S)
+    if not tm:
+        bad.append("the triage table has no BEGIN TRIAGE / END TRIAGE markers")
+        narrowed, decided = set(), {}
+    else:
+        decided = {}
+        for line in tm.group(1).splitlines():
+            c = [x.strip() for x in line.strip().strip("|").split("|")]
+            if len(c) >= 4 and c[0].isdigit():
+                decided[c[1].strip("`")] = c[3]
+        narrowed = {sig for sig, dec in decided.items() if dec == "NARROW-CLAIM"}
+        for sig, dec in decided.items():
+            if dec not in ("FIX", "NARROW-CLAIM", "NOT-A-RUBRIC-ISSUE"):
+                bad.append(f"the triage table gives finding `{sig}` the decision {dec!r}")
+        if len(decided) < 53:
+            bad.append(f"the triage table has {len(decided)} findings, the loop confirmed 53")
+    nm = re.search(r"<!-- BEGIN PSV-1 NON-CLAIMS.*?-->\n(.*?)\n<!-- END PSV-1 NON-CLAIMS -->", verdict, re.S)
+    if not nm:
+        bad.append("the claim has no BEGIN PSV-1 NON-CLAIMS / END PSV-1 NON-CLAIMS list")
+        listed = set()
+    else:
+        listed = set(re.findall(r"^\s+- `([a-z0-9_-]+)`\s*$", nm.group(1), re.M))
+    for sig in sorted(narrowed - listed):
+        bad.append(f"the finding `{sig}` is NARROW-CLAIM in the triage table and is not in the claim's non-claim list")
+    for sig in sorted(listed - narrowed):
+        bad.append(f"the claim's non-claim list names `{sig}`, which the triage table does not mark NARROW-CLAIM")
     # The list of non-retired rows whose target is the interpreter, with its count.
     sys.path.insert(0, os.path.join(ROOT, "scripts"))
     import v022_g01_mutations as regm  # noqa: E402
@@ -305,8 +337,8 @@ def main():
         spec = args[i + 1]
         key, _, rest = spec.partition(":")
         old, sep, new = rest.partition("=>")
-        if not sep or key not in ("note", "verdict", "gates", "spec", "matrix"):
-            print("pci_delta: --plant KEY:OLD=>NEW with KEY in note|verdict|gates|spec|matrix", file=sys.stderr)
+        if not sep or key not in ("note", "verdict", "gates", "spec", "matrix", "triage"):
+            print("pci_delta: --plant KEY:OLD=>NEW with KEY in note|verdict|gates|spec|matrix|triage", file=sys.stderr)
             return 2
         PLANTS.setdefault(key, []).append((old, new))
         del args[i : i + 2]
