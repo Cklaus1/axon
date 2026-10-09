@@ -213,17 +213,6 @@ for pr in isolate make_ro fresh_proc private_dev drop_host_fd; do bare_try "$pr"
 for pr in isolate make_ro fresh_proc private_dev drop_host_fd; do bare_try "$pr" forged; done
 [ "$HM_BEFORE" = "$(hostmounts)" ] || fail "ATTACK: the host's mount table changed during the amendment-113 primitive tests"
 echo "ok: each destructive primitive called with no proof (and with a forged OPKIT_HOST_NS) refuses 97 by the precondition, changes no mount, creates nothing in its scratch and closes no descriptor; the host's mount table is unchanged"
-# OPKIT_RW is strictly below /var/tmp: an entry under /tmp validated and then failed to bind (/tmp is a fresh tmpfs by then)
-TMPRW=$(mktemp -d /tmp/opkit-rw113.XXXXXX) || fail "setup: no directory under /tmp"
-M7=$W/scratch/ran7
-o=$(OPKIT_RW=$TMPRW OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$M7" 2>&1 </dev/null); rc=$?
-{ [ ! -e "$M7" ] && [ $rc = 97 ]; } || fail "ATTACK: OPKIT_RW under /tmp was accepted (rc $rc): $o"
-grep -q 'not strictly below /var/tmp:' <<<"$o" || fail "ATTACK: OPKIT_RW under /tmp was validated and failed later instead of being refused by its own rule: $o"
-! grep -q 'isolation not proved\|cannot make' <<<"$o" || fail "ATTACK: OPKIT_RW under /tmp got past the validation and failed inside the namespace: $o"
-o=$(OPKIT_RW=$W/scratch OPKIT_LIB=$LIB OPKIT_SCRATCH=$TMPRW bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$M7" 2>&1 </dev/null); rc=$?
-{ [ -e "$M7" ] && [ $rc = 0 ]; } || fail "control: a scratch root under /tmp (OPKIT_SCRATCH) with OPKIT_RW under /var/tmp was refused (rc $rc): $o"
-rm -f "$M7"; rm -rf "$TMPRW"
-echo "ok: OPKIT_RW under /tmp is refused by its own rule (97, before anything is mounted); a scratch root under /tmp with OPKIT_RW under /var/tmp runs"
 # Runs the assertion in a fresh private namespace with $W/a (and $W/b when TMPFS_B=1) a tmpfs.
 assert_in_ns() { # VIEW NSPID -> prints stderr, exits with the assertion's rc
   VIEW=$1 NSPID=$2 TMPFS_B=${TMPFS_B:-1} unshare -m --propagation private bash "$SELF" --child assert "$W" 2>&1
@@ -545,6 +534,17 @@ if [ -n "${SYS:-}" ]; then
   o=$(OPKIT_RW_ROOTS_FOR_TEST=/nonexistent OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash "$SELF" --child nsrun "$W" true 2>&1 </dev/null); rc=$?
   [ $rc = 0 ] || fail "control: an extra temp root with nothing under it refused the run (rc $rc): $o"
 else echo "SKIP: no system directory to try"; fi
+# OPKIT_RW is strictly below /var/tmp: an entry under /tmp validated and then failed to bind (/tmp is a fresh tmpfs by then)
+TMPRW=$(mktemp -d /tmp/opkit-rw113.XXXXXX) || fail "setup: no directory under /tmp"
+M7=$W/scratch/ran7
+o=$(OPKIT_RW=$TMPRW OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$M7" 2>&1 </dev/null); rc=$?
+{ [ ! -e "$M7" ] && [ $rc = 97 ]; } || fail "ATTACK: OPKIT_RW under /tmp was accepted (rc $rc): $o"
+grep -q 'not strictly below /var/tmp:' <<<"$o" || fail "ATTACK: OPKIT_RW under /tmp was validated and failed later instead of being refused by its own rule: $o"
+! grep -q 'isolation not proved\|cannot make' <<<"$o" || fail "ATTACK: OPKIT_RW under /tmp got past the validation and failed inside the namespace: $o"
+o=$(OPKIT_RW=$W/scratch OPKIT_LIB=$LIB OPKIT_SCRATCH=$TMPRW bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$M7" 2>&1 </dev/null); rc=$?
+{ [ -e "$M7" ] && [ $rc = 0 ]; } || fail "control: a scratch root under /tmp (OPKIT_SCRATCH) with OPKIT_RW under /var/tmp was refused (rc $rc): $o"
+rm -f "$M7"; rm -rf "$TMPRW"
+echo "ok: OPKIT_RW under /tmp is refused by its own rule (97, before anything is mounted); a scratch root under /tmp with OPKIT_RW under /var/tmp runs"
 # the override is the self-test's alone
 o=$(OPKIT_RW_ROOTS_FOR_TEST=/usr/share OPKIT_RW="/usr/share/doc" OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run true' bash 2>&1 </dev/null); rc=$?
 [ $rc = 97 ] || fail "ATTACK: an OPKIT_RW_ROOTS_FOR_TEST override from another script was honoured (rc $rc): $o"
