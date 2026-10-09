@@ -159,7 +159,19 @@ Each clause names what must hold. The negative matrix below names how each one f
   and every builtin argument read the content of the dicts and channels inside their operands, however deep, so
   `if d == e { lenient } else { strict }` over a dict the candidate filled is refused like `dict_get_or(d, ..)`; a
   `native::` call is state every frame shares, so a native handle a sealed frame used taints what the operator reads
-  back from the registry. Not covered: integer HANDLES of kernel
+  back from the registry. Also enforced (amendment 114): the taint of a CONDITION reaches whatever runs under it, in every
+  conditional, repeated or exiting form of the language (`if`, `match` with its guards, `while`, `while let`, `for`, `&&`, `||`, `?`,
+  `select`, an effect-handler arm, a spawned or called closure, `break`/`continue`/`return`, and the callbacks of the
+  short-circuiting `arr_*` builtins): what such a branch STORES, and what runs after an exit out of it, is tainted, so
+  `(d == e) && mark(op)` followed by a table index by the size of `op` is refused like the same code with `if`. The list is a
+  table (`taint::CONTROL_TABLE`) drift-tested against the `Expr` enum, so a construct added to the language cannot ship without a
+  row, an attack and a control. A branch NOT taken stores nothing to taint: that is the omission case above. The sealed files'
+  check-time diagnostics come from a check that never saw the operator's definitions, so an operator name and a name nothing
+  defines get the same text AND the same accept/refuse in every position the runner test lists (fn, global, struct literal,
+  type, enum, trait, enum pattern, annotation, cast, lambda parameter, generic bound, refinement base, refinement and `@[verify]`
+  predicate: tested, not enumerated from the evaluator). Residual: a candidate that DEFINES a name the operator defines (a fn,
+  type, enum, constant, trait or impl method) is refused E0002 where a fresh name is accepted, an existence oracle readable
+  from source that cannot shadow anything. Not covered: integer HANDLES of kernel
   objects and authority values (effect lists, budgets) a tainted value supplies, a path, URL or
   `ai_complete` prompt a tainted value supplies, native codegen (`axon build`); the taint is an over-approximation (coarse per binding, per dict and
   per channel), and its cost to an honest suite is listed in amendments 102 and 106 (among them: folding or
@@ -181,7 +193,7 @@ Each clause names what must hold. The negative matrix below names how each one f
   runs only if the candidate calls it, so a suite must assert after the call.
 - Sealing, containment and per-provenance kernels run in the guest interpreter as certified at
   `31413ca7` (`governance/proofs/v022-pci/CERTIFICATION.md`, local backend, EMPTY effect ceiling)
-  plus amendments 53/60/72/78/83/88/94/96/100/102/106 (the delta, listed from git in `governance/notes/v022-pci-delta.md`).
+  plus amendments 53/60/72/78/83/88/94/96/100/102/106/108/114 (the delta, listed from git in `governance/notes/v022-pci-delta.md`).
   origin/main's 13 commits under `crates/axon-core/src` were MERGED WITHOUT PCI REVIEW; only 5 of the 13
   change the interpreter (Rc arrays and cheaper calls, shared strings with lent closure captures,
   `&mut` write-through, first-class fns, the `arr_sort_by` rewrite) and the other 8 change no interpreter
@@ -220,10 +232,10 @@ Each clause names what must hold. The negative matrix below names how each one f
   by `scripts/pci_delta.py --check`). Arms verified to fail a gate row when their code is removed:
   the declared-return cast, the dict edges, the `()` coercion of an absent return type, channel
   stamping at creation, strict closure arguments at a crossing, the am83 arithmetic arm, and the arms of
-  am100 and am102 (the name sinks, the existence-oracle text, the closure pick, the taint of a binding, a
-  shared object, the kernel and the world: each removal is a mutation row KILLED by its own attack, and the test that
-  row fails is itself a test a gate row runs: checked for every row of am100 (M2600-M2629, by reading the registry) and of am102 (M2700-M2767), am106 (M2910-M2946) and am108 (M3030-M3042), by
-  `scripts/pci_delta.py --check`, which derives those ranges from the registry and fails when a row's test is run by no gate row). The runner rows of am100 (`axon-psv`, M2603-M2607) are CORROBORATION of
+  am100, am102, am106, am108 and am114 (the name sinks, the existence-oracle text, the closure pick, the taint of a binding, a
+  shared object, the kernel and the world, a comparison's and a builtin's deep read, the control taint of a short-circuit, a refused guard, a `?` and a `select`, the sealed-only check: each removal is a mutation row KILLED by its own attack, and the test that
+  row fails is itself a test a gate row runs, by package, target and exact name: checked for every row of am100 (M2600-M2629, by reading the registry) and of am102 (M2700-M2767), am106 (M2910-M2946), am108 (M3030-M3042) and am114 (M3230-M3270), by
+  `scripts/pci_delta.py --check`, which derives those ranges AND both amendment lists of this paragraph from the registry and the note, and fails when a row's test is run by no gate row). The runner rows of am100 (`axon-psv`, M2603-M2607) are CORROBORATION of
   the unit rows, as am96's are: with the taint on, the production route refuses those attacks by the taint
   first, so four of them were withdrawn (amendment 102) and the static guards are evidenced at unit level
   only. The production pair (the static layer plus the taint) is covered only by the `Both` columns of

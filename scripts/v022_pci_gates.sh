@@ -102,13 +102,24 @@ ROWS=(
   "am106 every reader of shared state is tainted after a sealed write|axon-core|lib|interp::taint_tests::a_dict_reader_is_tainted_after_a_sealed_write_and_clean_after_the_operators interp::taint_tests::a_kernel_getter_is_tainted_after_a_write_the_candidate_steered interp::taint_tests::a_shared_array_is_tainted_after_a_sealed_write"
   "am106 the existence oracle on every path|axon-core|lib|interp::taint_tests::a_sealed_caller_cannot_tell_an_operator_name_from_a_missing_one_on_any_path"
   "am106 drift: channel methods, dict and kernel builtins, text-rendering builtins|axon-core|lib|interp::taint_tests::every_channel_method_goes_through_the_one_access_helper interp::taint_tests::every_dict_builtin_has_a_taint_routing_row interp::taint_tests::every_kernel_builtin_is_a_tested_getter_or_stated_not_one interp::taint_tests::every_builtin_that_renders_a_value_to_text_is_a_stringifier_or_an_emitter"
-  "am106 shared state and the existence oracle (runner leg)|axon-psv|sealed_frames|a_channel_the_candidate_touched_never_selects_operator_code the_taint_name_rule_refuses_what_the_static_name_analysis_lets_through a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one"
+  "am106 shared state and the name rule (runner leg, corroboration)|axon-psv|sealed_frames|a_channel_the_candidate_touched_never_selects_operator_code the_taint_name_rule_refuses_what_the_static_name_analysis_lets_through"
   # Amendment 108 (round 12): a comparison and every builtin argument read the content of the shared objects
   # inside them; the method existence oracle; a native registry is world state.
   "am108 comparisons and builtins read the shared objects inside their operands|axon-core|lib|interp::taint_tests::comparing_or_searching_a_dict_the_candidate_wrote_is_a_read_of_it interp::taint_tests::every_builtin_that_can_read_a_container_of_a_tainted_dict_taints_its_result interp::taint_tests::every_comparison_and_every_builtin_argument_is_walked_deep"
   "am108 the existence oracle on the method path|axon-core|lib|interp::taint_tests::a_sealed_caller_cannot_tell_an_operator_method_from_a_missing_one"
   "am108 a native registry a sealed frame wrote is tainted|axon-core|lib|interp::taint_tests::a_native_registry_a_sealed_frame_wrote_taints_what_the_operator_reads_back"
-  "am108 comparison and method oracle (runner leg)|axon-psv|sealed_frames|comparing_a_dict_the_candidate_filled_never_selects_operator_code a_sealed_method_call_is_refused_in_the_same_words_for_an_operator_method_and_a_missing_one"
+  "am108 comparison (runner leg, corroboration)|axon-psv|sealed_frames|comparing_a_dict_the_candidate_filled_never_selects_operator_code"
+  "am108 the existence oracle on the method path, at check time (runner: the only witness of the checker path)|axon-psv|sealed_frames|a_sealed_method_call_is_refused_in_the_same_words_for_an_operator_method_and_a_missing_one"
+  # Amendment 114 (round 13): operator-side control flow on candidate data (the right operand of && and ||,
+  # a refused match guard, `?`, a select arm), swept over every conditional, repeated or exiting form
+  # (taint::CONTROL_TABLE, drift-tested against ast.rs); and ONE check for the sealed files, so an operator
+  # name is a name nothing defines at check time, in every position the runner tests.
+  "am114 control taint: every conditional, repeated or exiting form, attack and control|axon-core|lib|interp::taint_tests::operator_side_control_flow_on_candidate_data_carries_its_taint_into_what_it_runs"
+  "am114 drift: every Expr variant and both short-circuits have a row in the control table|axon-core|lib|interp::taint_tests::every_conditional_evaluation_form_in_the_ast_has_a_row_with_an_attack"
+  "am114 control taint (runner leg, corroboration)|axon-psv|sealed_frames|operator_side_control_flow_on_candidate_data_never_selects_operator_code"
+  "am114 a module the operator declares for the candidate resolves the candidate's own helper|axon-psv|sealed_frames|a_module_the_operator_declares_for_the_candidate_resolves_the_candidates_own_helper"
+  "am114 the note's checks refuse a wrong result, target, claim list or gate package|axon-core|pci_delta_note|a_wrong_result_or_target_in_the_notes_gate_table_is_refused a_stale_amendment_list_in_the_claim_is_refused a_test_the_gate_runs_under_another_package_or_name_is_no_gate"
+  "am114 the existence oracle on the static path, every position the test lists, text and accept/refuse (runner: the only witness)|axon-psv|sealed_frames|a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one"
 )
 
 for row in "${ROWS[@]}"; do

@@ -7200,8 +7200,8 @@ three are closed here; the rest of this amendment is what was changed, what was 
           step's call site (one contiguous edit). Either layer alone is redundant and is NOT counted killed; the joint edit reopens the attack
           (SURVIVORS>=1) and is KILLED by its own marker. This is a joint row, not a four-cell retirement: no paired-disable record was made.
        6. M322 re-anchored: `rustfmt` joined two lines of `submit.rs` that eqgate8 had left unformatted.
-     - **rustfmt.** `cargo fmt --all` had drift from eqgate8 (nine files; six production files of axon-fabric: `backend.rs`, `custodian.rs`,
-       `observer.rs`, `psv.rs`, `submit.rs`, formatting only). Applied so that `cargo fmt --check` is rc 0; the only row it moved was M322.
+     - **rustfmt.** `cargo fmt --all` had drift from eqgate8 (nine files; five production files of axon-fabric: `backend.rs`, `custodian.rs`,
+       `observer.rs`, `psv.rs`, `submit.rs`, formatting only; the count read "six" until amendment 114). Applied so that `cargo fmt --check` is rc 0; the only row it moved was M322.
      - **Evidence** (every line rc-checked; hosts: `gm` = gpumaster; `local` = this host as root; commits abbreviated):
 
        | Check | Where, at | Result |
@@ -7229,3 +7229,138 @@ three are closed here; the rest of this amendment is what was changed, what was 
        plant, M2261 and two markers, and every row those can affect was re-run at `927dad0b` (17 rows) or locally (228). (c) axon-fabric's whole suite and the
        workspace remainder were not re-run after `2a29d2e8`: nothing under their sources changed. (d) M2261 is a joint row; the single-layer
        property is not claimed killed and has no four-cell record. (e) The `IDENTICAL` host listing is of this host only.
+
+114. **Source: the round-13 PSV-1, SENTINEL and PSV-3 reviewers** (`/var/tmp/c9r13-findings-PSV-1.json`, `/var/tmp/c9r13-findings-SENTINEL.json`,
+     `/var/tmp/c9r13-findings-PSV-3.json`), workstream c9r13/psv1w. Mutation ids M3230-M3270 (M3252 not issued; M3242-M3253, M3260, M3267-M3270 are runner rows of the
+     static path, M3256-M3259 are runner legs of the control taint, M3261-M3266 mutate `scripts/pci_delta.py`), matrix rows A280-A284 (written A280-A284 on the branch;
+     renumbered at integration). Base `c9r13/integrate12` (`e8b8b48a`). `crates/axon-core/src/{interp/eval.rs, interp/taint.rs, checker.rs, resolver.rs, main.rs}`
+     changed; classified in `scripts/pci_delta.py` as narrowing (one new refusal path per item; nothing is accepted that was refused, except where item 3 says an
+     accepted shape became a refusal for the missing name as well). Amendment 102's class ("a path on which taint is dropped") is the one this closes further, and
+     amendment 106's wording of control flow ("a callback run a candidate-chosen number of times") is the part this amendment makes a table.
+
+     **1. The blocker (PSV-1, executed): the right operand of `&&` and `||` ran under no control taint.** `let ok = (d == e) && mark(op)`, then
+     `let f = TBL[1 - dict_len(op)]`, then `assert(f(cand()))`, with `d` a dict the candidate fills with V and a WRONG answer (4): V=1 ran the lenient closure and
+     passed, V=2 ran the strict one and failed, silently, so the candidate's data chose which operator closure ran. No dict is needed (`(cand() == 4) && mark(op)`),
+     and the same held for a local assigned in the right operand (`{ k = 1; true }`), inside a closure and inside an `arr_any` callback. Controls were already refused
+     (`if`, `match`, `while ... && ...`, a `?` early exit, a loop sized by `dict_len(d)`). Cause: the `And`/`Or` arms of `eval_binop` evaluated the right operand
+     conditionally and never raised the control taint of the left. Fix: `short_circuit_tainted` (a cold, never-inlined function the sealed run's `&&`/`||` goes
+     through; the ordinary run's arms are the code they always were): the right operand runs under `t_branch(left taint)`, exactly as the taken arm of an `if` does, the
+     left's taint reaches the result, and when the right operand can exit (`taint::has_exit`) whatever runs after is control-dependent on the left too, whether or not
+     the right operand ran (a SKIPPED right operand raises the sticky taint as an untaken `if` that contains a `return` does). V=1 is now refused by the taint; V=2
+     is a plain failure, as the control with `if` always was.
+
+     **2. The class sweep (the sixth round in which PSV-1 found a member of "operator-side control flow or evaluation that depends on candidate data carries no control
+     taint"; stop fixing by instance).** `taint::CONTROL_TABLE` lists every `Expr` variant of `ast.rs` (37) and the two short-circuit `BinOp`s, by kind (conditional,
+     repeated, exit, straight-line), where the control taint is raised, and a tag; each conditional, repeated or exiting construct has an ATTACK and a CONTROL
+     in `taint_tests::control_flow_cases` (attack: candidate data decides whether a side effect on an operator selector runs, then a table index by the size of the
+     marked dict picks the right or the wrong closure; it COMPLETES with the rule off, which the test checks, and is REFUSED with it on; control: an operator-written condition,
+     which completes under both). The drift test `every_conditional_evaluation_form_in_the_ast_has_a_row_with_an_attack` reads the `Expr` and `BinOp` enums out of
+     `ast.rs`, fails when a variant has no row, when a row names no variant, when a conditional/repeated/exit row has no attack or no control case, when a case
+     names no row, and when `eval_binop` short-circuits an operator the table does not list: a NEW construct cannot ship unhandled. Reproduced through the runner
+     flags (the `run.sh` pattern, `/var/tmp/c9r13-p1w/logs/`), every construct, at base and at the fix:
+
+     | construct | where the taint is raised | at base | now |
+     |---|---|---|---|
+     | `if` / `else` | `t_branch(cond)`; sticky when an arm can exit | CLOSED | CLOSED (control rows) |
+     | `match` subject and the TAKEN guard | `t_branch(subject, guard)` | CLOSED | CLOSED |
+     | `match`: an arm taken because an EARLIER GUARD REFUSED, and a later guard evaluated because of it | the taint of every refused guard accumulates (`lost`) | **OPEN** (`ctl[match]`, executed: `match 1 { x if cand() == 5 => 0, _ => { mark(op); 1 } }` ran the operator's side effect untainted) | CLOSED (M3235-M3237, M3257) |
+     | `while`, `while let`, `for` (range bounds, loop variable) | `t_branch(cond / scrutinee / bound)` around each body | CLOSED (executed: counter, array counter, recursion depth, `len` of an array) | CLOSED |
+     | `break`, `continue`, `return` | `exits` of the enclosing `t_branch` raises sticky | CLOSED | CLOSED |
+     | `&&`, `||` | `short_circuit_tainted` | **OPEN** (item 1) | CLOSED (M3230-M3234, M3256) |
+     | `?` (early exit chosen by the operand) | sticky |= operand taint; `has_exit` counts `?` | **OPEN** (executed: `let v = cr()?; mark(op)` and `if cand() == 4 { let w = r? }; mark(op)` ran the side effect untainted; the sibling `return` was closed) | CLOSED (M3240, M3241, M3258) |
+     | `select` (the arm that fired, and the arms skipped because a queue was empty) | `t_branch(taint of every channel looked at up to the arm)` | **OPEN** (executed: the arm body ran untainted, the result of the select was already tainted) | CLOSED (M3238, M3239, M3259) |
+     | `with handler` arm (runs only where the body performs the effect) | the arm runs under the pc of the perform site | CLOSED (executed) | CLOSED (control rows) |
+     | `spawn` body | runs eagerly and once at the spawn site, under the pc there | CLOSED (executed) | CLOSED (control rows) |
+     | a closure called conditionally | call under the pc of the call | CLOSED | CLOSED |
+     | callbacks of `arr_any/all/find/take_while/drop_while` (a candidate-dependent number of calls) | the 2nd call on runs after the 1st result, under the accumulated taint like a loop body after its condition | CLOSED from the 2nd call (executed); see "stated" | CLOSED (control rows) |
+     | `assert`, `assert_eq` (an assertion that may not execute) | not a state change: a failing assert ENDS the test, and nothing catches a panic (`sandbox_run` returns an `i64`) | by design: the verdict | by design |
+     | ternary-like forms, `unless`/`when`, comprehensions, `defer` | the language has none (`ast.rs`) | n/a | the drift test fails if one is added without a row |
+     | `Comptime` | a transparent no-op under the interpreter | n/a | n/a |
+
+     **Stated, not changed (the same standard as `if`).** A branch NOT taken stores nothing to taint: `if cand() == 5 { mark(op) }; TBL[dict_len(op)]` is silent for
+     a candidate that answers 4 and refused for 5, as it always was for `if`; this is the omission case amendment 106 states, not a new one. The FIRST callback of
+     `arr_any(xs, f)` is the first iteration of a loop over the operator's array: it runs unconditionally, so its stores are untainted, exactly as the first iteration
+     of `for x in xs { ... if p(x) { break } }` is (executed: `arr_any` and the `for`/`break` spelling agree at count 1 and at count 2). A first form of this fix raised
+     the control taint around EVERY callback of the short-circuiting builtins; it was built and WITHDRAWN before this amendment, because it makes every store an operator callback
+     makes carry the taint by construction (an honest `arr_any(xs, |x| { bump(op, x); x == 1 })` would refuse the next table index by the dict it filled), which is more than the
+     `for`/`break` standard asks for.
+     **The REPEATED class** (a loop count the candidate chose, then an operator counter, dict or array length used as a selector): `for`, `while`, `while let`, recursion depth,
+     a local counter, an array slot counter, `len` of an array the candidate built: executed, all REFUSED at base and now. **The EXCEPTION/early-exit class** (a panic or
+     `return` inside a branch the candidate's data skips): `return`, `break`, `continue` CLOSED; `?` was the one OPEN member (above); a panic ends the test and is the verdict.
+     **Not examined:** `native::` modules other than `gfx` (amendment 108's registry rule covers the call site, nothing is known per module); the effect handler's `return(v)` arm.
+
+     **3. The static path of the existence oracle (SENTINEL, MINOR, executed; amendments 106 and 108 closed it at run time and for methods).** An operator name in a candidate
+     position was refused by the resolver with "a sealed module ... cannot use `X`, which the operator's code defines" (E0004) where a missing name was refused with
+     "cannot find name" / "unknown type" / "no type or module", one text per position; and two positions differed in ACCEPT/REFUSE, not only in text: the struct literal
+     `OT { k: 1 }` of an operator type was refused while `ZT { k: 1 }` of a missing type was ACCEPTED, and the pattern `OE::P` of an operator enum was accepted and ran while
+     `OE::Z` was refused. The shipped twin `a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one` passed only because it read test-STDOUT and a
+     check-time refusal goes to test-STDERR (two empty strings); with stderr included it failed on two of five forms. The sealed check is now ONE check that never saw the
+     operator's definitions: `run_check_pipeline_located` runs the pipeline twice under `axon test --seal` and splits the diagnostics by FILE: the merged program's diagnostics
+     about files outside the sealed set (the operator's), and the diagnostics about the sealed files from a second run over the SEALED items alone (`resolver::item_in_sealed`; the
+     spanless `mod`/`use` declarations are the ones the sealed files themselves make), where an operator name is a name nothing defines. A sealed file's warnings are printed once.
+     The merged check's own diagnostics about a sealed file are kept only when the sealed-only check found no error (E0004 stays as the backstop: it still refuses, and can
+     only read differently where a position accepts a missing name). To make the missing name refused wherever the operator's was, the checker now checks, in SEALED items only:
+     a struct literal's type, a lambda parameter's annotation, an enum field's type, a trait method's parameter and return types, a refinement's base type and a generic bound
+     (all with the annotation check's own text, `unknown type`), and the resolver resolves a sealed `@[verify]` predicate and a sealed refinement predicate. The candidate's own `use`
+     declarations are set aside for the merged check (and put back after it), so a module the operator declares reads like one nothing declares.
+     The runner twin now reads stderr and stdout, normalises the temp directory and the durations, requires non-empty texts, and compares the text AND the accept/refuse of 37
+     positions (fn call, fn value, global, global index and field, assignment, struct literal and its field, let/own annotations, cast, option/array/fn-type annotations, lambda parameter,
+     param and return types, struct and enum field types, trait method types, refinement base and predicate, `@[verify]` predicate, generic bound, `impl ... for`, enum type path,
+     enum variant literal, match pattern, guard, `for` bound, interpolation, trait path, type path call, `use` of a module, `goal_run` and `kernel_goal_create` names), and an honest
+     control: a candidate's own struct, enum, refinement, trait with an impl, generic fn with a bound, constant, fn, lambda and a warning, all passing keyed with the warning printed once.
+     **Residual, stated precisely (FUTURE, SENTINEL item 2, and its generalisation):** a candidate that DEFINES a name the operator defines is refused E0002 ("defined more
+     than once") where a fresh name is accepted. Executed for a fn, a type, an enum, a constant, a trait, a module (`mod opmod`) and an impl method. It is an existence oracle readable
+     from source, and it cannot shadow anything (the duplicate is refused program-wide, so the candidate cannot replace an operator definition); it needs the operator's names to be
+     guessed, one run each, and is the same class as "names are readable from suite source under an IO grant" (accepted). Not changed: the refusal is the safety, and the
+     two spellings of it cannot be made equal without accepting the duplicate. **Not examined:** native module names (`modbus`, `fhir`, `fix`), the effect handler's effect name
+     (an unresolved named handler is inert, both spellings were accepted and ran identically).
+
+     **4. The PSV-3 minors (the note and the claim).** (1) The claim's delta sentence now reads `53/60/72/78/83/88/94/96/100/102/106/108/114`, and its arms-verified sentence names
+     am100, am102, am106, am108 and am114; both lists are DERIVED by `pci_delta.py --check` (the first from the note's amendment table, bar amendment 74, whose rows are the test
+     CLI's and not an evaluation delta; the second from am100 and the registry's tagged amendments) and a stale list fails. (2) The check of the note's gate table compared row
+     LABELS only (planted: `PASS 1/1` -> `PASS 2/2`, and `axon-core/lib` -> `axon-psv/lib` on an am108 row, both passed). It now compares label, package/target and the result each
+     row prints (`PASS n/n`, n the number of named tests) with the script's, and "the test of a mutation row is run by a gate row" parses the script's ROWS (and checks the cargo
+     invocation line still has the shape it parses) instead of searching it for a substring: a test counts only under the same package, the same cargo target and its exact name.
+     `pci_delta.py --check --plant KEY:OLD=>NEW` changes one input in memory (a plant that matches nothing is an error), and `crates/axon-core/tests/pci_delta_note.rs` plants the
+     reviewer's changes and both gate-row mistakes (another package; a name that only contains the test's) and requires each to FAIL, with rows M3261-M3266 mutating the checks.
+     (3) The am106 and am108 runner rows are labelled `(runner leg, corroboration)` like am96's and am100's, and the note says so; the two runner rows that are NOT corroboration
+     (the method oracle at check time, am108, and the static names twin, am114) are separate rows and say that the checker path has no other witness. (4) The "six axon-fabric
+     production files" in amendment 112 is five (`backend.rs`, `custodian.rs`, `observer.rs`, `psv.rs`, `submit.rs`); the count was a labelling error and the commit is formatting only.
+
+     **5. Evidence.** Source commits (the ones that change `crates/axon-core/src`): `65d407d8` (the fix), `5d333913` (a taint test, test-only) and `2e68236b` (the operator's `mod` of a candidate module,
+     found by the fabric suite); `da68ec7e` and later change tests and text only. (1) Mutation rows, gpumaster, clean clones of committed trees, `v022_g01_mutations.py --scope=all
+     --only=<ids>`: at `65d407d8` ALL 355 ids (every active row whose target is under `crates/axon-core/src`, the note's rows, plus M3230-M3269) in two shards: shard A 177/177 KILLED; shard B
+     172/178, the six that were not being: M2758 (survived: the old `?` guard became redundant for the VALUE bit behind the new sticky taint; a case for the TYPE it carries, `hook: question type`,
+     now kills it), M2946 (REFUSED_ELSEWHERE: the twin's failure message changed; marker re-derived), M3038 (survived: behind the sealed-only check its guard is redundant, retired below), M3261, M3262
+     (survived: the note was not yet committed, so the planted controls passed on a note that was failing anyway; each control now first requires the UNPLANTED check to pass) and M3266 (REFUSED_ELSEWHERE:
+     the substring mutation also let the wrong-package plant through, so it reported the other attack; it now keeps package and target). Re-run at `1f3d6a16` after those fixes and the `mod` fix:
+     the 64 rows whose target is `main.rs` or `resolver.rs` or whose id is in M3230-M3270, plus M2758 and M2946: **66/66 KILLED by their own attack, 0 REFUSED_ELSEWHERE, 0 survivors, 0 stale or
+     unapplied**. Rows whose target file did not change between the two runs were not re-run after `65d407d8`; `taint_tests.rs` gained one case and no production line of
+     `eval.rs`/`taint.rs`/`checker.rs` changed between them. (2) M3038 (am108, runner: the checker judges a sealed call against the sealed impls' methods) is RETIRED with a four-cell
+     record against M3243: the registry now carries its `EQUIV_RECORD` and a `GUARD_SETS` entry (`scripts/v022_paired_disable.py`). Executed (`v022_paired_disable.py --only=M3038`), twice: gpumaster at `88e5a606` and
+     this host (root) at `1f3d6a16`, same four cells both times: base ATTACK_REFUSED, M3038 off ATTACK_REFUSED, M3243 off ATTACK_REFUSED, both off ATTACK_SUCCEEDS (the method twin fails on its
+     own marker). **NOT shown, stated: the full-suite condition.** On gpumaster the cell was BASELINE_BROKEN by my own module test (fixed since) and, at `1f3d6a16`, the `axon-fabric` consumer suite
+     hangs in `privileged_launcher` (a root-helper test, host not calibrated for it; the run was stopped by me after 70 minutes); locally the owner and row package suites passed (1076 s) and the
+     run ended CONSUMER_BASELINE_BROKEN for one consumer whose name the harness does not print (its timing table lists axon-loop at 377 s among sixteen consumers). So M3038 is retired on the
+     four cells and NOT on the full-suite condition: until a clean full-suite run exists it must be treated as an unproven retirement, never counted killed. (3) `cargo test --locked -p axon-core --no-default-features --no-fail-fast` on gpumaster at `1f3d6a16`: exit 0, 1869 passed, 0 failed, 1 ignored (includes the
+     refusal-coverage gate, `harness_integrity`, `harness_binaries`, `pci_delta_note` with its three planted-change controls). (4) `cargo test --locked -p axon-psv` at `ad9bc587`: exit 0 (sealed_frames
+     34 passed, protocol 29, runner 2). axon-cortex, axon-loop, axon-loop-contracts at `2e68236b`: exit 0 each. axon-fabric at `2e68236b`: 876 passed, 1 failed
+     (`readiness::a_narrowing_list_the_verifier_cannot_stat_is_not_read_as_absent`: `unshare`/`setpriv` namespace setup on gpumaster, which the brief says is not calibrated; the same test PASSES run
+     locally on this tree, exit 0; the fabric suite had caught the `mod` regression above, `check_effects::a_check_loads_no_module_from_outside_the_suite_and_the_candidate`, which the axon-core and
+     axon-psv suites had not). (5) `scripts/v022_pci_gates.sh` at `1f3d6a16`, gpumaster: PASS, 78 rows, exit 0, including the sweep. (6) Local, final tree: `cargo fmt --all -- --check` 0; clippy
+     `-D warnings`: axon-core `--no-default-features --tests` 0, `--bin axon` 0, axon-psv `--all-targets` 0 (after one `redundant_slicing` fix in the new test); `scripts/v022_refusal_coverage.py` plain
+     0 and `--freeze` 0; `scripts/pci_delta.py --check` PASS (and the six planted changes each FAIL: result, target, delta list, arms list, gate package, gate name); `scripts/psv_matrix_check.py` PASS (284 rows,
+     916 citations) with placeholder rows A274-A279 standing in for the other workstreams' rows (removed again: this branch carries A280-A284 only, and the check fails on the gap until integration).
+     (7) The 280 cases of the round-13 PSV-1 reviewer replayed through the runner flags with this tree (`/var/tmp/c9r13-p1w/replay.sh`): 274 give the same line as at the reviewer's tree; 6 (`c9r11/b1`-`b5`,
+     `b7`, operator-type names in a candidate) give a different STATIC refusal text (the missing-name text, amendment 114 item 3), refused as before.
+
+     **6. Cost.** Release builds, min of 7 runs, base `e8b8b48a` against this tree, `axon run` on a loaded shared host, the ordinary run (no `--seal`): a 20M-iteration `while` 2311 / 2287 ms -> 2302 / 2313 ms; `fib(32)`
+     2080 / 2168 -> 1951 / 1972 ms; an `arr_map` loop 615 / 631 -> 623 / 617 ms; a 10M-iteration loop heavy in `&&` and `||` 2703 / 2704 -> 2696 / 2726 ms: inside the noise. The first form of the `&&`/`||`
+     fix, written inline in `eval_binop`, cost +4.3% on that last loop (2670 -> 2785 ms, three repeats); it is now a cold, never-inlined function the sealed run calls, and the ordinary run's arms are
+     the code they were. A SEALED `axon test --seal` run pays a second pass of the check pipeline over the sealed items, a few milliseconds for a candidate of a few hundred lines.
+
+     **7. Not covered and stated, and the cost to an honest suite.** An operator fn that applies `?` to a candidate's `Result` and afterwards stores something in the same fn that it then uses to pick an operator closure (the taint stays raised to the end of the fn, as it does after a `return` in a tainted branch) is refused; a right operand of `&&`/`||` that stores something an operator selector later reads is refused when the left is the candidate's. A suite that compares the candidate's value with an expected one and never selects by state it wrote under that condition is unaffected (the controls). The claim about omission and precomputed verdict tables (amendment 106) is unchanged and must not be read to cover the untaken branch of a
+     condition on candidate data; the first callback of a short-circuiting builtin is untainted as the first iteration of a loop is; the E0002 duplicate-definition oracle (item 3);
+     the control table is a table of the language's constructs, so it covers only constructs `ast.rs` has, and a builtin that runs a callback in a new way (a new short-circuiting
+     `arr_*`) is covered by the accumulated-taint rule and by the every-builtin-that-runs-user-code classification (`every_builtin_that_runs_user_code_is_classified`), not by a row of its
+     own. The sealed-only check costs a second pass of the checker pipeline over the sealed items in an `axon test --seal` run (not in any other verb).
