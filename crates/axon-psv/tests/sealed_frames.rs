@@ -2117,7 +2117,7 @@ fn a_module_the_operator_declares_for_the_candidate_resolves_the_candidates_own_
     // The operator's other module is no module of the candidate's.
     let s = check(
         suite,
-        &files[..],
+        files,
         "use opmod.{a}\npub fn unused() -> i64 { 0 }\n",
         "accept",
     );
