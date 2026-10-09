@@ -4305,11 +4305,8 @@ impl<'p> Interp<'p> {
                     cur = receiver.as_ref();
                 }
                 Expr::Index { receiver, index } => {
-                    let idx = as_int(&self.eval(index, env)?)?;
-                    if idx < 0 {
-                        return Err(Flow::Panic(format!("negative index {idx}").into()));
-                    }
-                    steps.push(PlaceStep::Index(idx as usize));
+                    let idx = place_index(&self.eval(index, env)?)?;
+                    steps.push(PlaceStep::Index(idx));
                     cur = receiver.as_ref();
                 }
                 _ => return Err(Flow::Panic("invalid assignment target".into())),
@@ -4356,9 +4353,75 @@ fn type_name_of(ty: &crate::ast::AxonType) -> String {
 }
 
 /// One step of a flattened place expression (for nested place assignment).
+#[derive(Clone, Copy)]
 enum PlaceStep {
     Field(Sym),
     Index(usize),
+}
+
+/// An index of a place being written (`flatten_place`; R50 S2): any integer,
+/// a sized one included (`as_int`), and not negative.
+fn place_index(v: &Value) -> Result<usize, Flow> {
+    let idx = as_int(v)?;
+    if idx < 0 {
+        return Err(Flow::Panic(format!("negative index {idx}").into()));
+    }
+    Ok(idx as usize)
+}
+
+/// Phase 2 of a place assignment (the `AssignTo` arm; R50 S2): walk the
+/// binding of `base` along `steps` (base to leaf) mutably and set the leaf to
+/// `v`. Arrays and records are copy-on-write: a uniquely owned one is written
+/// in place, one shared with another binding is copied first.
+fn write_place(
+    base: Sym,
+    base_slot: u32,
+    steps: &[PlaceStep],
+    v: Value,
+    env: &mut Env,
+) -> Result<(), Flow> {
+    let mut slot = env.get_var_mut(base, base_slot).ok_or_else(|| {
+        Flow::Panic(format!("assignment to undefined variable `{}`", sym_name(base)).into())
+    })?;
+    let (last, prefix) = steps
+        .split_last()
+        .ok_or_else(|| Flow::Panic("invalid assignment target".into()))?;
+    for step in prefix {
+        slot = match (step, slot) {
+            (PlaceStep::Field(f), Value::Struct(s)) => Rc::make_mut(s)
+                .fields
+                .get_mut(*f)
+                .ok_or_else(|| Flow::Panic(format!("no field `{}`", sym_name(*f)).into()))?,
+            (PlaceStep::Index(i), Value::Array(items)) => {
+                let n = items.len();
+                Rc::make_mut(items).get_mut(*i).ok_or_else(|| {
+                    Flow::Panic(format!("index {i} out of bounds (len {n})").into())
+                })?
+            }
+            (_, other) => {
+                return panic(format!(
+                    "cannot index/field-assign into {}",
+                    other.type_name()
+                ));
+            }
+        };
+    }
+    match (last, slot) {
+        (PlaceStep::Field(f), Value::Struct(s)) => Rc::make_mut(s).fields.insert(*f, v),
+        (PlaceStep::Index(i), Value::Array(items)) => {
+            if *i >= items.len() {
+                return panic(format!("index {i} out of bounds (len {})", items.len()));
+            }
+            Rc::make_mut(items)[*i] = v;
+        }
+        (_, other) => {
+            return panic(format!(
+                "cannot index/field-assign into {}",
+                other.type_name()
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn as_int(v: &Value) -> Result<i64, Flow> {

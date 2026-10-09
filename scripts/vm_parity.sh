@@ -55,16 +55,20 @@ cd "$ROOT"
 # of all its ancestors. Shapes that stay `Tree` permanently (`Call(struct-lit)`,
 # `Call(P)`, `Call(computed)`, `Index(E|Var)`) are never listed; a variant
 # listed bare does not cover its shapes, because tokens compare exactly.
-SLICES=(S0 S1) # landing order; the last one is the default
+SLICES=(S0 S1 S2) # landing order; the last one is the default
 declare -A SLICE_DEPS=(
   [S0]=""
   [S1]="S0"
+  [S2]="S1"
 )
 declare -A SLICE_LOWERED=(
   [S0]="" # S0 lowers nothing: every compiled body is exactly one Tree op
   # S1: the scalar core. `Call` is an `Ident` callee with no `&mut` argument;
   # its permanent-Tree shapes print as `Call(<shape>)` and stay unlisted.
   [S1]="Literal Ident Block Let Own RefBind Assign BinOp UnaryOp If While For Return Break Continue Question Some None Ok Err FmtStr Call"
+  # S2: aggregates, index and field reads (`.N` is a `FieldAccess`), place
+  # writes. `Index(E|Var)` stays `Tree` permanently and stays unlisted.
+  [S2]="Array Tuple StructLit Index FieldAccess AssignTo"
 )
 # ────────────────────────────────────────────────────────────────────────────
 

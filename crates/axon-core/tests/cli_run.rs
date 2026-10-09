@@ -35225,16 +35225,13 @@ fn vm_engine_trace_names_each_compiled_body_once_under_vm_only() {
     assert_eq!(String::from_utf8_lossy(&vm.stdout), "55\n");
     let err = String::from_utf8_lossy(&vm.stderr);
     // Each body's lines come once, on its first run, though `fib` runs 177
-    // times. Through S1 the struct literal, method call and field read stay
-    // `Tree` ops.
+    // times. Through S2 the method call stays a `Tree` op.
     assert_eq!(
         err,
-        "vm: main 9 ops, 2 tree nodes\n\
-         vm: tree-op main StructLit\n\
+        "vm: main 11 ops, 1 tree nodes\n\
          vm: tree-op main MethodCall\n\
          vm: fib 8 ops, 0 tree nodes\n\
-         vm: P::get 1 ops, 1 tree nodes\n\
-         vm: tree-op P::get FieldAccess\n"
+         vm: P::get 1 ops, 0 tree nodes\n"
     );
     let tree = vm_run("trace", VM_FIB_SRC, "tree", true);
     assert_eq!(tree.status.code(), Some(0), "{tree:?}");
@@ -35465,7 +35462,7 @@ fn vm_scalar_recursion_limit() {
 fn vm_scalar_in_place_append_stays_linear() {
     let src = "fn main() -> i64 {\n    let s = \"\"\n    let x = []\n    let i = 0\n    while i < 100000 {\n        s = s + \"ab\"\n        x = arr_push(x, i)\n        i = i + 1\n    }\n    println(to_str(len(s)))\n    println(to_str(len(x)))\n    0\n}\n";
     let start = std::time::Instant::now();
-    let (code, stdout, stderr) = vm_scalar_case("append", src, &[("main", 1)]);
+    let (code, stdout, stderr) = vm_scalar_case("append", src, &[("main", 0)]);
     assert_eq!(
         (code, stdout.as_str()),
         (Some(0), "200000\n100000\n"),
@@ -35476,4 +35473,307 @@ fn vm_scalar_in_place_append_stays_linear() {
         "{:?}",
         start.elapsed()
     );
+}
+
+// ── R50 S2: aggregates, index and field reads, place writes (`vm_aggregate_`) ─
+
+/// R50 S2 red test (§8): `part.ax` (qsort's partition loop: a `for`, an `if`
+/// on `a[j] < pivot`, an int store) uses only S1 and S2 constructs, so `main`
+/// compiles with no `Tree` op. On S1 the `a[j]` read is one. The loop bound
+/// is cut from 1M to 1000 for the tree-walker's run.
+#[test]
+fn vm_aggregate_part_no_tree_nodes() {
+    let src = include_str!("fixtures/vm_perf/part.ax").replace("1000000", "1000");
+    let (code, stdout, stderr) = vm_scalar_case("agg_part", &src, &[("main", 0)]);
+    assert_eq!((code, stdout.as_str()), (Some(0), "1000\n"), "{stderr}");
+}
+
+/// R50 §4 S2 rows: array, tuple, struct and enum literals (fields given out
+/// of order, a sized field coerced, a refined struct that holds), index reads
+/// on a local, a global and a computed receiver (receiver before index),
+/// nested indexes, `.N`, and field reads on a local, a global and a call.
+#[test]
+fn vm_aggregate_literals_and_reads() {
+    let src = r#"type P = { x: i64, y: i64 }
+type W = { a: i32, b: i64 }
+type R = { lo: i64, hi: i64 } where _.lo <= _.hi
+enum Shape { Dot, Circle { r: i64 } }
+let G = [10, 20, 30]
+let GP = P { x: 7, y: 8 }
+fn mk() -> [i64] {
+    println("mk")
+    [4, 5, 6]
+}
+fn pt() -> P { P { y: 2, x: 1 } }
+fn main() -> i64 {
+    let xs = [1, 2, 3]
+    let t = (xs[0], "two", 3.5)
+    let p = P { x: xs[1], y: 9 }
+    let g = [[1, 2], [3, 4]]
+    let i = 1
+    println(to_str(xs[i]))
+    println(to_str(xs[i + 1]))
+    println(to_str(g[1][0]))
+    println(to_str(G[2]))
+    println(to_str(G[i]))
+    println(to_str(GP.y))
+    println(t.1)
+    println(to_str(t.2))
+    println(to_str(p.x + pt().y + pt().x))
+    println(to_str(mk()[i]))
+    let w = W { a: 5, b: 6 }
+    println(to_str(w.a))
+    let r = R { lo: i, hi: 2 }
+    println(to_str(r.hi))
+    let s = Shape::Circle { r: 4 }
+    let d = Shape::Dot
+    println("{s} {d} {p} {t} {xs}")
+    let e = []
+    println(to_str(len(e)))
+    if xs[i] < 3 { println("lt") }
+    if xs[i] == i { println("eq") } else { println("ne") }
+    0
+}
+"#;
+    let (code, stdout, stderr) =
+        vm_scalar_case("agg_reads", src, &[("main", 0), ("pt", 0), ("mk", 0)]);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(
+        stdout,
+        "2\n3\n3\n30\n20\n8\ntwo\n3.5\n5\nmk\n5\n5\n2\n\
+         Shape::Circle { r: 4 } Shape::Dot P { x: 2, y: 9 } (1, two, 3.5) [1, 2, 3]\n0\nlt\nne\n"
+    );
+}
+
+/// R50 §4 `index_in_place`/`index_value` rows: a negative or out-of-bounds
+/// index, a non-array receiver, and a sized-int index (`strict_int`: a read
+/// panics `expected i64, got i32`), on a local receiver, in a fused
+/// compare, and on a computed receiver (evaluated before the index).
+#[test]
+fn vm_aggregate_index_read_panics() {
+    let cases: [(&str, &str, &str, &str); 7] = [
+        (
+            "neg",
+            "let i = 0 - 1\n    println(to_str(xs[i]))",
+            "",
+            "index -1 out of bounds (len 3)",
+        ),
+        (
+            "oob",
+            "let i = 5\n    println(to_str(xs[i + 0]))",
+            "",
+            "index 5 out of bounds (len 3)",
+        ),
+        (
+            "oob_cmp",
+            "let i = 7\n    let lim = 2\n    if xs[i] < lim { println(\"no\") }",
+            "",
+            "index 7 out of bounds (len 3)",
+        ),
+        (
+            "non_array",
+            "let d = dict_new()\n    println(to_str(d[0]))",
+            "",
+            "indexing non-array (dict)",
+        ),
+        (
+            "sized",
+            "let k: i32 = 1\n    println(to_str(xs[k]))",
+            "",
+            "expected i64, got i32",
+        ),
+        (
+            "sized_cmp",
+            "let k: i32 = 1\n    if xs[k] == 2 { println(\"no\") }",
+            "",
+            "expected i64, got i32",
+        ),
+        (
+            "computed",
+            "let k: i32 = 1\n    println(to_str(mk()[k]))",
+            "mk\n",
+            "expected i64, got i32",
+        ),
+    ];
+    for (tag, body, out, msg) in cases {
+        let src = format!("fn mk() -> [i64] {{\n    println(\"mk\")\n    [4, 5, 6]\n}}\nfn main() -> i64 {{\n    let xs = [1, 2, 3]\n    {body}\n    0\n}}\n");
+        let bodies: &[(&str, usize)] = if out.is_empty() {
+            &[("main", 0)]
+        } else {
+            &[("main", 0), ("mk", 0)]
+        };
+        let (code, stdout, stderr) = vm_scalar_case(&format!("agg_idx_{tag}"), &src, bodies);
+        assert_eq!(
+            (code, stdout.as_str()),
+            (Some(101), out),
+            "[{tag}] {stderr}"
+        );
+        assert!(stderr.contains(msg), "[{tag}] {stderr}");
+    }
+}
+
+/// R50 §4 `field_in_place` row: a field read on a value that is not a
+/// record (`field_of`'s panics), on a local and on a computed receiver.
+#[test]
+fn vm_aggregate_field_read_panics() {
+    let cases: [(&str, &str, &str); 3] = [
+        (
+            "non_struct",
+            "let d = dict_new()\n    println(to_str(d.x))",
+            "field access on non-struct (dict)",
+        ),
+        (
+            "computed",
+            "println(to_str(dict_new().x))",
+            "field access on non-struct (dict)",
+        ),
+        (
+            "missing",
+            "let u = uncertain_new(1, 0.5)\n    println(to_str(u.x))",
+            "no field `x`",
+        ),
+    ];
+    for (tag, body, msg) in cases {
+        let src = format!("fn main() -> i64 {{\n    println(\"before\")\n    {body}\n    0\n}}\n");
+        let (code, stdout, stderr) =
+            vm_scalar_case(&format!("agg_field_{tag}"), &src, &[("main", 0)]);
+        assert_eq!(
+            (code, stdout.as_str()),
+            (Some(101), "before\n"),
+            "[{tag}] {stderr}"
+        );
+        assert!(stderr.contains(msg), "[{tag}] {stderr}");
+    }
+}
+
+/// R50 §4 `place_index`/`write_place` rows: field and index chains, the
+/// value evaluated before the index expressions, which run outermost first
+/// (`o.rows[i][j] = v` evaluates `j` before `i`), copy-on-write (a value
+/// read out before the write keeps its contents), and the panic of the last
+/// write in a chain.
+#[test]
+fn vm_aggregate_place_write_chains() {
+    let src = r#"type In = { v: [i64], n: i64 }
+type Out = { inner: In, rows: [[i64]] }
+fn idx(k: i64) -> i64 {
+    println("idx {k}")
+    k
+}
+fn val(k: i64) -> i64 {
+    println("val {k}")
+    k
+}
+fn main() -> i64 {
+    let o = Out { inner: In { v: [1, 2, 3], n: 0 }, rows: [[0, 0], [0, 0]] }
+    let alias = o.inner
+    o.inner.v[idx(1)] = val(50)
+    o.inner.n = 4
+    o.rows[idx(1)][idx(0)] = val(7)
+    println("{o} {alias}")
+    let g = [[1, 2], [3, 4]]
+    g[1][1] = 99
+    let i = 0
+    g[i][i + 1] = g[1][1] + 1
+    println("{g}")
+    o.rows[5][0] = 1
+    0
+}
+"#;
+    let (code, stdout, stderr) =
+        vm_scalar_case("agg_chains", src, &[("main", 0), ("idx", 0), ("val", 0)]);
+    assert_eq!(
+        (code, stdout.as_str()),
+        (
+            Some(101),
+            "val 50\nidx 1\nval 7\nidx 0\nidx 1\n\
+             Out { inner: In { n: 4, v: [1, 50, 3] }, rows: [[0, 0], [7, 0]] } In { n: 0, v: [1, 2, 3] }\n\
+             [[1, 100], [3, 99]]\n"
+        ),
+        "{stderr}"
+    );
+    assert!(stderr.contains("index 5 out of bounds (len 2)"), "{stderr}");
+}
+
+/// R50 §4 `place_index`/`write_place` panics and the sized-int asymmetry: a
+/// negative or out-of-bounds index and a non-array/non-struct place panic
+/// with the tree's texts; a sized-int index writes (`as_int`) although a read
+/// with it panics; `f()[i] = v` evaluates the value, then the index, then
+/// panics `invalid assignment target` without evaluating `f()`.
+#[test]
+fn vm_aggregate_place_write_panics() {
+    let cases: [(&str, &str, Option<i32>, &str, &str); 6] = [
+        (
+            "neg",
+            "let a = [1, 2]\n    let i = 0 - 1\n    a[i] = 5",
+            Some(101),
+            "",
+            "negative index -1",
+        ),
+        (
+            "oob",
+            "let a = [1, 2]\n    a[5] = 5",
+            Some(101),
+            "",
+            "index 5 out of bounds (len 2)",
+        ),
+        (
+            "dict_index",
+            "let d = dict_new()\n    d[0] = 5",
+            Some(101),
+            "",
+            "cannot index/field-assign into dict",
+        ),
+        (
+            "dict_field",
+            "let d = dict_new()\n    d.x = 5",
+            Some(101),
+            "",
+            "cannot index/field-assign into dict",
+        ),
+        (
+            "sized_write",
+            "let ys = [1, 2, 3]\n    let i: i32 = 1\n    ys[i] = 9\n    println(to_str(ys[1]))",
+            Some(0),
+            "9\n",
+            "",
+        ),
+        (
+            "invalid_target",
+            "mk()[pr(1)] = pr(2)",
+            Some(101),
+            "2\n1\n",
+            "invalid assignment target",
+        ),
+    ];
+    for (tag, body, want, out, msg) in cases {
+        let src = format!("fn mk() -> [i64] {{\n    println(\"mk\")\n    [1, 2, 3]\n}}\nfn pr(x: i64) -> i64 {{\n    println(to_str(x))\n    x\n}}\nfn main() -> i64 {{\n    {body}\n    0\n}}\n");
+        let (code, stdout, stderr) =
+            vm_scalar_case(&format!("agg_write_{tag}"), &src, &[("main", 0)]);
+        assert_eq!((code, stdout.as_str()), (want, out), "[{tag}] {stderr}");
+        assert!(stderr.contains(msg), "[{tag}] {stderr}");
+    }
+}
+
+/// R50 §4 `finish_record` row: a struct literal whose whole-struct `where`
+/// or field refinement fails exits 6 with the tree's message.
+#[test]
+fn vm_aggregate_struct_refinement_exits_6() {
+    let cases: [(&str, &str, &str); 2] = [
+        (
+            "whole",
+            "type R = { lo: i64, hi: i64 } where _.lo <= _.hi\nfn main() -> i64 {\n    let a = 9\n    let r = R { lo: a, hi: 2 }\n    println(to_str(r.lo))\n    0\n}\n",
+            "violates its struct refinement",
+        ),
+        (
+            "field",
+            "type Pos = i64 where _ > 0\ntype S = { p: Pos }\nfn main() -> i64 {\n    let a = 0 - 3\n    let s = S { p: a }\n    println(to_str(s.p))\n    0\n}\n",
+            "field `p` of `S` (= -3) violates the refinement `Pos`",
+        ),
+    ];
+    for (tag, src, msg) in cases {
+        let (code, stdout, stderr) =
+            vm_scalar_case(&format!("agg_refine_{tag}"), src, &[("main", 0)]);
+        assert_eq!((code, stdout.as_str()), (Some(6), ""), "[{tag}] {stderr}");
+        assert!(stderr.contains(msg), "[{tag}] {stderr}");
+    }
 }
