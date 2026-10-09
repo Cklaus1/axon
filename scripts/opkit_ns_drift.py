@@ -1166,6 +1166,48 @@ def destination_problems(root, kit_text=None, label="operator_deploy_protected_h
     return bad
 
 
+# ── amendment 118: diagnostics never go through a descriptor the helper has not vetted ──────────────────────────────────
+# Incident 2026-10-09: ns_run classified fd 2 as a writable regular file (the real /etc/passwd, opened read-write by a caller) and
+# then wrote its refusal into it. The rule, held over scripts/lib/opkit_ns.sh: (a) NO line writes to fd 1 or fd 2 (`>&2`, `1>&2`,
+# /dev/stderr, /dev/stdout, /proc/self/fd/1|2, /dev/fd/1|2, sys.stderr, a bare echo/printf) except opkit_say, whose first act is
+# the classifier on fd 2, and the VALUE functions below, whose stdout is a command substitution's input; (b) ns_run classifies
+# fds 0-2 (opkit_ns_std_fds_ok) before it unshares, makes a directory or opens a handle, and runs its pre-checks with their
+# stderr captured; (c) the in-namespace shell classifies them again before it mounts anything.
+VALUE_FUNCTIONS = {"opkit_overrides", "opkit_ns_ids", "opkit_bounding_arg", "opkit_rw_extra_roots", "opkit_ns_prephase"}
+_FD_WRITE = re.compile(r'(?<![\w<])[12]?>&2|>\s*/dev/(?:stderr|stdout)\b|>\s*/(?:proc/self|dev)/fd/[12]\b|sys\.(?:stderr|stdout)')
+_PRINTS = re.compile(r'\b(?:echo|printf)\b')
+_REDIRECTED = re.compile(r'(?<![<])>')   # any redirection: >&2 and 1>&2 belong to _FD_WRITE alone, not to a second rule
+
+
+def diagnostic_problems(text, label="scripts/lib/opkit_ns.sh"):
+    bad, fns = [], helper_functions(text)
+    for name, body in fns.items():
+        for n, l in body:
+            code = re.sub(r"""\s#\s.*$""", "", l)
+            if not code.strip():
+                continue
+            if _FD_WRITE.search(code) and name != "opkit_say":
+                bad.append(f"{label}:{n}: {name} writes to fd 1 or fd 2 directly (use opkit_say): {code.strip()[:90]}")
+            elif _PRINTS.search(code) and "opkit_say" not in code.split("echo")[0] and name not in VALUE_FUNCTIONS | {"opkit_say"} \
+                    and not _REDIRECTED.search(code) and not re.search(r'\$\([^)]*\b(?:echo|printf)\b', code):
+                bad.append(f"{label}:{n}: {name} prints to its stdout, which may be an unvetted descriptor: {code.strip()[:90]}")
+    say = [l for _, l in fns.get("opkit_say", []) if l.strip()]
+    if not say or not re.match(r'\s*if opkit_ns_fd_why 2\b', say[0]):
+        bad.append(f"{label}: opkit_say must begin by classifying fd 2 (`if opkit_ns_fd_why 2 ...`)")
+    run = "\n".join(l for _, l in fns.get("ns_run", []))
+    std = run.find("opkit_ns_std_fds_ok")
+    first = [run.find(w) for w in ("unshare ", "mktemp", "exec {hfd}", "opkit_say \"REFUSE(ns_run)")]
+    if std < 0 or any(i >= 0 and i < std for i in first):
+        bad.append(f"{label}: ns_run must classify fds 0-2 (opkit_ns_std_fds_ok) before it unshares, makes a directory or says anything")
+    if not re.search(r'\$\(opkit_ns_prephase 2>&1\)', run):
+        bad.append(f"{label}: ns_run must run its pre-checks with stderr captured (`$(opkit_ns_prephase 2>&1)`)")
+    i_std = text.find("opkit_ns_std_fds_ok $OPKIT_DIAG_ROOTS || exit 97")
+    i_iso = text.find("\n    opkit_ns_isolate || {")
+    if i_std < 0 or i_iso < 0 or i_iso < i_std:
+        bad.append(f"{label}: the in-namespace shell must classify fds 0-2 (exit 97) before opkit_ns_isolate")
+    return bad
+
+
 def check(root):
     bad = []
     for p in test_scripts(root):
@@ -1177,6 +1219,7 @@ def check(root):
             bad.append(f"{fx}: an in-namespace script must call opkit_ns_assert in its first lines")
     bad += destination_problems(root)
     bad += primitive_problems(root)
+    bad += diagnostic_problems(open(os.path.join(root, "scripts", "lib", "opkit_ns.sh")).read())
     return bad
 
 
@@ -1448,6 +1491,22 @@ PRIM_CONTROLS = [
     ("an assertion inside ns_run", 'ns_run bash -c \'. "$OPKIT_LIB"; opkit_ns_assert\'\n'),
 ]
 
+# (label, anchor in the real helper, replacement): each planted text must be flagged by diagnostic_problems
+DIAG_SHAPES = [
+    ("a bare >&2 in a function", '  [ -e "$p" ] || return 0\n', '  [ -e "$p" ] || return 0\n  echo "x" >&2\n'),
+    ("1>&2", '  [ -e "$p" ] || return 0\n', '  [ -e "$p" ] || return 0\n  echo "x" 1>&2\n'),
+    ("printf to /dev/stderr", '  [ -e "$p" ] || return 0\n', '  [ -e "$p" ] || return 0\n  printf x >/dev/stderr\n'),
+    ("echo to /proc/self/fd/2", '  [ -e "$p" ] || return 0\n', '  [ -e "$p" ] || return 0\n  echo x >/proc/self/fd/2\n'),
+    ("a bare echo on stdout in a non-value function", '  [ -e "$p" ] || return 0\n', '  [ -e "$p" ] || return 0\n  echo LEAK\n'),
+    ("python writing sys.stderr", '    sys.exit(1)   # (amendment 118', '    sys.stderr.write("x"); sys.exit(1)   # (amendment 118'),
+    ("opkit_say that writes without classifying fd 2", "  if opkit_ns_fd_why 2 $OPKIT_DIAG_ROOTS; then printf '%s\\n' \"$*\" >&2; return 0; fi\n", "  printf '%s\\n' \"$*\" >&2; return 0\n"),
+    ("ns_run that unshares before it classifies fds 0-2", '  opkit_ns_std_fds_ok $OPKIT_DIAG_ROOTS || return 97\n', '  unshare --mount true\n  opkit_ns_std_fds_ok $OPKIT_DIAG_ROOTS || return 97\n'),
+    ("ns_run that never classifies fds 0-2", '  opkit_ns_std_fds_ok $OPKIT_DIAG_ROOTS || return 97\n', ''),
+    ("ns_run pre-checks with stderr not captured", 'pre=$(opkit_ns_prephase 2>&1)', 'pre=$(opkit_ns_prephase)'),
+    ("the in-namespace shell mounts before it classifies fds", '    opkit_ns_std_fds_ok $OPKIT_DIAG_ROOTS || exit 97\n', ''),
+]
+
+
 def selftest(root):
     src = open(os.path.join(root, "scripts", "test_operator_deploy.sh")).read()
     base = check_text("real", src)
@@ -1497,6 +1556,21 @@ def selftest(root):
                          ("act_install under /etc/systemd", 'act_install "$x" /etc/systemd/system/axon-new.service root root 0644\n')]:
         if destination_problems(root, kit + "\n" + extra):
             print(f"selftest: a kit write inside the shadowed destinations was REFUSED ({label})"); return 1
+    # amendment 118: diagnostics never go through an unvetted descriptor. The real helper is clean; each planted shape is flagged by name.
+    helper = open(os.path.join(root, "scripts", "lib", "opkit_ns.sh")).read()
+    if diagnostic_problems(helper):
+        print("selftest: the real helper writes to an unvetted descriptor:\n" + "\n".join(diagnostic_problems(helper))); return 1
+    diag_accepted = []          # EVERY accepted shape is reported, so a guard removed from the gate shows as the shapes only IT refused
+    for label, old, new in DIAG_SHAPES:
+        planted_h = helper.replace(old, new, 1)
+        if planted_h == helper:
+            print(f"selftest: the diagnostic shape '{label}' did not apply (its anchor is gone from the helper)"); return 1
+        if not diagnostic_problems(planted_h):
+            diag_accepted.append(label)
+    if diag_accepted:
+        for label in diag_accepted:
+            print(f"selftest: the diagnostic shape '{label}' was ACCEPTED")
+        return 1
     # the quoted-count check refuses a stale quote, an unreadable one, and accepts the derived numbers and a quote with none
     nm, nc = len(BYPASSES) + 1, len(CONTROLS)
     for label, doc in [
@@ -1577,10 +1651,14 @@ def selftest(root):
             fh.write(hp.replace(first, "", 1))
         if not check(tmp):
             print("selftest: check() on a tree whose helper has no precondition in opkit_ns_make_ro was ACCEPTED"); return 1
+        with open(os.path.join(tmp, "scripts", "lib", "opkit_ns.sh"), "w") as fh:
+            fh.write(hp.replace('  [ -e "$p" ] || return 0\n', '  [ -e "$p" ] || return 0\n  echo x >&2\n', 1))
+        if not check(tmp):
+            print("selftest: check() on a tree whose helper writes to fd 2 directly was ACCEPTED"); return 1
     finally:
         shutil.rmtree(tmp)
     print(f"selftest: ok ({len(BYPASSES) + 1} must-flag shapes refused, {len(CONTROLS)} controls accepted, plus the kit-destination shapes and "
-          f"{len(PRIM_SHAPES) + len(planted) + 1} primitive shapes)"); return 0
+          f"{len(PRIM_SHAPES) + len(planted) + 1} primitive shapes and {len(DIAG_SHAPES)} diagnostic-channel shapes)"); return 0
 
 
 if __name__ == "__main__":
