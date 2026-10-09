@@ -35229,7 +35229,7 @@ fn vm_engine_trace_names_each_compiled_body_once_under_vm_only() {
     // the method call).
     assert_eq!(
         err,
-        "vm: main 13 ops, 0 tree nodes\n\
+        "vm: main 12 ops, 0 tree nodes\n\
          vm: fib 8 ops, 0 tree nodes\n\
          vm: P::get 1 ops, 0 tree nodes\n"
     );

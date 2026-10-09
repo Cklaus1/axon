@@ -14,16 +14,21 @@
 //! statically: [`Compiler::expr`] leaves one value more on the stack,
 //! [`Compiler::stmt`] none.
 
+use std::cell::Cell;
+
 use super::{Body, Cond, Loop, Op, Opnd, Var};
 use crate::ast::{BinOp, Expr, FmtPart, Literal, MatchArm, Pattern, Stmt, UnaryOp};
+use crate::interp::sym::{FnEntry, NOT_LOCAL};
 use crate::interp::PlaceStep;
 use crate::interp::{lit_to_val, Interp, Resolution, Value};
 
-/// Compile the fn body `body`; `res` is the program's resolution table (the
-/// `(sym, slot)` of every name node, the string and decimal literals).
-pub(in crate::interp) fn compile<'p>(res: &Resolution, body: &'p Expr) -> Body<'p> {
+/// Compile the fn body `body` against `ix`'s program: its resolution table
+/// (the `(sym, slot)` of every name node, the string and decimal literals)
+/// and, for the S5 call ops, its fn table.
+pub(in crate::interp) fn compile<'p>(ix: &Interp<'_>, body: &'p Expr) -> Body<'p> {
     let mut c = Compiler {
-        res,
+        res: &ix.res,
+        ix,
         ops: Vec::new(),
         loops: Vec::new(),
         height: 0,
@@ -39,8 +44,9 @@ pub(in crate::interp) fn compile<'p>(res: &Resolution, body: &'p Expr) -> Body<'
     }
 }
 
-struct Compiler<'r, 'p> {
+struct Compiler<'r, 'i, 'p> {
     res: &'r Resolution,
+    ix: &'r Interp<'i>,
     ops: Vec<Op<'p>>,
     loops: Vec<Loop>,
     /// Operand-stack height after the ops emitted so far.
@@ -50,7 +56,7 @@ struct Compiler<'r, 'p> {
     scopes: u32,
 }
 
-impl<'p> Compiler<'_, 'p> {
+impl<'p> Compiler<'_, '_, 'p> {
     /// Emit the ops that evaluate `e` and push its value.
     fn expr(&mut self, e: &'p Expr) {
         match e {
@@ -124,25 +130,16 @@ impl<'p> Compiler<'_, 'p> {
                 }
             }
             Expr::Call { callee, args, tier } => {
-                // An `Ident` callee without `P(x)` or a `&mut` argument
-                // (spec §4: every other callee stays on the tree for good).
-                if let (Expr::Ident(name), None) = (callee.as_ref(), tree_shape(e)) {
-                    for a in args {
-                        self.expr(a);
-                    }
-                    let argc = args.len() as u32;
-                    self.emit(
-                        Op::Call {
-                            callee: self.var(callee, name),
-                            resume: name == "resume",
-                            argc,
-                            tier: tier.as_deref(),
-                        },
-                        argc,
-                        1,
-                    );
-                } else {
+                // Spec §4: a `StructLit` callee, `P(x)` and a computed callee
+                // without a `&mut` argument stay on the tree for good.
+                if tree_shape(e).is_some() {
                     self.tree(e);
+                } else if has_ref_mut_arg(args) {
+                    self.call_mut(e, callee, args);
+                } else if let Expr::Ident(name) = callee.as_ref() {
+                    self.call(callee, name, args, tier.as_deref());
+                } else {
+                    unreachable!("a computed callee without `&mut` has a tree shape")
                 }
             }
             Expr::MethodCall {
@@ -624,6 +621,161 @@ impl<'p> Compiler<'_, 'p> {
         });
     }
 
+    /// `name(args)`: the arguments left to right, then the call. A
+    /// [`Op::CallFast`] (S5) when the callee is statically a fn-table entry
+    /// that nothing else can claim (no `resume`, no `tier:`, no local of the
+    /// name, not a builtin) and [`fast_call_blocker`] finds no flag, its
+    /// arguments inline when [`Compiler::fast_inline_args`] has them; else
+    /// an [`Op::Call`] over `dispatch_named` (S1), which names the flag that
+    /// kept a fn-table callee off the fast path for the trace.
+    fn call(
+        &mut self,
+        callee: &'p Expr,
+        name: &'p String,
+        args: &'p [Expr],
+        tier: Option<&'p str>,
+    ) {
+        let argc = args.len() as u32;
+        let var = self.var(callee, name);
+        let resume = name == "resume";
+        let target = match self.fast_target(var, name, tier) {
+            Some(i) => {
+                let refine_preds_empty = self.ix.refine_preds.is_empty();
+                match fast_call_blocker(&self.ix.fn_table[i as usize], refine_preds_empty) {
+                    None => Ok(i),
+                    Some(flag) => Err(Some(flag)),
+                }
+            }
+            None => Err(None),
+        };
+        let (op, popped) = match target {
+            Ok(entry) => {
+                let inline = self.fast_inline_args(entry, args);
+                let popped = if inline.is_empty() {
+                    for a in args {
+                        self.expr(a);
+                    }
+                    argc
+                } else {
+                    // Until it is proven, the op pushes its inline arguments.
+                    self.max_height = self.max_height.max(self.height + argc);
+                    0
+                };
+                let op = Op::CallFast {
+                    callee: var,
+                    entry,
+                    argc,
+                    args: inline,
+                    proven: Cell::new(false),
+                };
+                (op, popped)
+            }
+            Err(slow) => {
+                for a in args {
+                    self.expr(a);
+                }
+                let op = Op::Call {
+                    callee: var,
+                    resume,
+                    argc,
+                    tier,
+                    slow,
+                };
+                (op, argc)
+            }
+        };
+        self.emit(op, popped, 1);
+    }
+
+    /// The fn-table entry a call by `name` reaches when nothing else can
+    /// claim the name: no `resume`, no `tier:`, no local of the name, not a
+    /// builtin. Flags are [`fast_call_blocker`]'s.
+    fn fast_target(&self, var: Var<'p>, name: &str, tier: Option<&str>) -> Option<u32> {
+        match self.ix.fn_of_sym.get(&var.s) {
+            Some(&i)
+                if name != "resume"
+                    && tier.is_none()
+                    && var.slot == NOT_LOCAL
+                    && !crate::builtins::is_builtin(name) =>
+            {
+                Some(i)
+            }
+            _ => None,
+        }
+    }
+
+    /// The arguments of a fast call to `fn_table[entry]` as inline operands
+    /// when every one is an identifier or a literal and there are as many
+    /// as the fn has parameters (so no code runs between their reads and
+    /// the call, and its arity check cannot fail); empty otherwise.
+    fn fast_inline_args(&self, entry: u32, args: &'p [Expr]) -> Box<[Opnd<'p>]> {
+        if args.is_empty() || args.len() != self.ix.fn_table[entry as usize].params.len() {
+            return Box::default();
+        }
+        args.iter()
+            .map(|a| self.inline(a))
+            .collect::<Option<Box<[_]>>>()
+            .unwrap_or_default()
+    }
+
+    /// Whether `e` compiles to an [`Op::CallFast`] with inline arguments:
+    /// the call runs in its own frame and reads nothing but those operands
+    /// before it, so it cannot write a local of this frame.
+    fn is_fast_inline_call(&self, e: &'p Expr) -> bool {
+        let Expr::Call { callee, args, tier } = e else {
+            return false;
+        };
+        let Expr::Ident(name) = callee.as_ref() else {
+            return false;
+        };
+        if tree_shape(e).is_some() {
+            return false;
+        }
+        let var = self.var(callee, name);
+        let Some(entry) = self.fast_target(var, name, tier.as_deref()) else {
+            return false;
+        };
+        fast_call_blocker(
+            &self.ix.fn_table[entry as usize],
+            self.ix.refine_preds.is_empty(),
+        )
+        .is_none()
+            && !self.fast_inline_args(entry, args).is_empty()
+    }
+
+    /// `f(.., &mut a, ..)` (S5): the plain arguments left to right with a
+    /// `Unit` in each `&mut` position, then [`Op::CallMut`] over
+    /// `call_mut_with`. A callee that is not a fn panics before any argument
+    /// runs, as `call_mut` does, so it compiles to the op alone.
+    fn call_mut(&mut self, e: &'p Expr, callee: &'p Expr, args: &'p [Expr]) {
+        let entry = match callee {
+            Expr::Ident(name) => self.ix.fn_of_sym.get(&self.res.sym(callee, name)).copied(),
+            _ => None,
+        };
+        let argc = match entry {
+            Some(_) => {
+                for a in args {
+                    if is_ref_mut(a) {
+                        self.emit(Op::Const(Value::Unit), 0, 1);
+                    } else {
+                        self.expr(a);
+                    }
+                }
+                args.len() as u32
+            }
+            None => 0,
+        };
+        self.emit(
+            Op::CallMut {
+                call: e,
+                entry,
+                argc,
+            },
+            argc,
+            1,
+        );
+    }
+
     /// `receiver.method(args)`, as the `MethodCall` arm: the receiver first;
     /// a channel takes `chan_method` with the argument nodes
     /// ([`Op::MethodRecv`]), any other receiver the compiled arguments, left
@@ -758,7 +910,11 @@ impl<'p> Compiler<'_, 'p> {
     /// The operands of a binary operation, left to right, and how many of
     /// them are on the stack. The left one is inline only when the right one
     /// is too, so nothing runs between the tree's read of the left operand
-    /// and the op's.
+    /// and the op's; or (S5) when the left one is a literal or a slotted
+    /// local and the right one a fast call with inline arguments
+    /// ([`Compiler::is_fast_inline_call`]): that call runs in its own frame
+    /// and cannot write a local of this one, so reading the left operand
+    /// after it reads the same value.
     fn operands(&mut self, left: &'p Expr, right: &'p Expr) -> (Opnd<'p>, Opnd<'p>, u32) {
         if let Some(r) = self.inline(right) {
             if let Some(l) = self.inline(left) {
@@ -766,6 +922,16 @@ impl<'p> Compiler<'_, 'p> {
             }
             self.expr(left);
             return (Opnd::Stack, r, 1);
+        }
+        if let Some(l) = self.inline(left) {
+            let slotted = match &l {
+                Opnd::Local(v) => v.slot < NOT_LOCAL,
+                _ => true,
+            };
+            if slotted && self.is_fast_inline_call(right) {
+                self.expr(right);
+                return (l, Opnd::Stack, 1);
+            }
         }
         self.expr(left);
         self.expr(right);
@@ -1007,22 +1173,12 @@ pub(super) fn variant_name(e: &Expr) -> &'static str {
 pub(super) fn tree_shape(e: &Expr) -> Option<&'static str> {
     match e {
         // In `eval`'s order: the `StructLit` callee forms, then `P(..)`, then
-        // the `&mut` protocol, then a callee that is not an identifier.
+        // the `&mut` protocol (lowered to `CallMut` from S5), then a callee
+        // that is not an identifier.
         Expr::Call { callee, args, .. } => match callee.as_ref() {
             Expr::StructLit { .. } => Some("struct-lit"),
             Expr::Ident(n) if n == "P" && args.len() == 1 => Some("P"),
-            _ if args.iter().any(|a| {
-                matches!(
-                    a,
-                    Expr::UnaryOp {
-                        op: UnaryOp::RefMut,
-                        ..
-                    }
-                )
-            }) =>
-            {
-                Some("&mut")
-            }
+            _ if has_ref_mut_arg(args) => None,
             Expr::Ident(_) => None,
             _ => Some("computed"),
         },
@@ -1031,4 +1187,46 @@ pub(super) fn tree_shape(e: &Expr) -> Option<&'static str> {
         }
         _ => None,
     }
+}
+
+/// Some argument is `&mut x`: the call takes `eval_call`'s `call_mut` path.
+fn has_ref_mut_arg(args: &[Expr]) -> bool {
+    args.iter().any(is_ref_mut)
+}
+
+fn is_ref_mut(a: &Expr) -> bool {
+    matches!(
+        a,
+        Expr::UnaryOp {
+            op: UnaryOp::RefMut,
+            ..
+        }
+    )
+}
+
+/// R50 S5 (spec §4 "Fast calls"): why a call by name to `entry` may not
+/// skip `dispatch_named` → `call_fn_in`, as the `vm: slow <fn>: <flag>`
+/// trace line names it: the first set flag of the spec's list, then
+/// `refine_preds` when the program declares refinements (`call_fn_in` sends
+/// every call of such a program to `call_fn_in_general`). `None`: eligible.
+pub(super) fn fast_call_blocker(
+    entry: &FnEntry<'_>,
+    refine_preds_empty: bool,
+) -> Option<&'static str> {
+    let flags = [
+        (entry.is_agent, "is_agent"),
+        (entry.ai_metered, "ai_metered"),
+        (entry.corrigible, "corrigible"),
+        (entry.adaptive, "adaptive"),
+        (entry.experiment.is_some(), "experiment"),
+        (entry.has_goal, "has_goal"),
+        (entry.has_ref_mut, "has_ref_mut"),
+        (entry.is_main, "is_main"),
+        (entry.has_epilogue, "has_epilogue"),
+        (!refine_preds_empty, "refine_preds"),
+    ];
+    flags
+        .into_iter()
+        .find(|(set, _)| *set)
+        .map(|(_, flag)| flag)
 }

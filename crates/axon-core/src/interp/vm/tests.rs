@@ -119,6 +119,9 @@ fn kinds(body: &Body<'_>) -> Vec<&'static str> {
             Op::MethodRecv { .. } => "method-recv",
             Op::MethodCall { .. } => "method",
             Op::Lambda(_) => "lambda",
+            Op::CallFast { args, .. } if args.is_empty() => "call-fast",
+            Op::CallFast { .. } => "call-fast-inline",
+            Op::CallMut { .. } => "call-mut",
         })
         .collect()
 }
@@ -127,7 +130,7 @@ fn kinds(body: &Body<'_>) -> Vec<&'static str> {
 fn s1_compiles_fib_without_tree_ops() {
     let prog = program();
     let interp = Interp::build(&prog);
-    let body = compile(&interp.res, body_of(&interp, "fib"));
+    let body = compile(&interp, body_of(&interp, "fib"));
     assert_eq!(body.tree_nodes(), 0, "{:?}", kinds(&body));
 }
 
@@ -135,7 +138,7 @@ fn s1_compiles_fib_without_tree_ops() {
 fn s1_leaves_only_unlowered_variants_on_the_tree() {
     let prog = program();
     let interp = Interp::build(&prog);
-    let body = compile(&interp.res, body_of(&interp, "main"));
+    let body = compile(&interp, body_of(&interp, "main"));
     let trees: Vec<&str> = body
         .ops
         .iter()
@@ -158,7 +161,7 @@ fn s1_every_expr_node_compiles_to_a_balanced_body() {
             continue;
         };
         crate::ast::walk_expr(&f.body, &mut |e| {
-            let body = compile(&interp.res, e);
+            let body = compile(&interp, e);
             let root_is_tree = matches!(&body.ops[..], [Op::Tree(t)] if std::ptr::eq(*t, e));
             // Every node of the program lowers: none compiles to a root `Tree`.
             assert!(!root_is_tree, "{}", compile::variant_name(e));
@@ -190,7 +193,7 @@ fn f(xs: [i64], g: [[i64]], i: i64) -> i64 {
 ";
     let prog = crate::parse_source(src).expect("parses");
     let interp = Interp::build(&prog);
-    let body = compile(&interp.res, body_of(&interp, "f"));
+    let body = compile(&interp, body_of(&interp, "f"));
     let k = kinds(&body);
     let count = |name: &str| k.iter().filter(|&&x| x == name).count();
     assert_eq!(count("write-place"), 2, "{k:?}");
@@ -263,7 +266,7 @@ fn engine_parse_accepts_only_vm_and_tree() {
 fn kinds_of(src: &str, f: &str) -> Vec<&'static str> {
     let prog = crate::parse_source(src).expect("parses");
     let interp = Interp::build(&prog);
-    kinds(&compile(&interp.res, body_of(&interp, f)))
+    kinds(&compile(&interp, body_of(&interp, f)))
 }
 
 #[test]
@@ -397,16 +400,14 @@ fn while_let_pushes_the_pattern_scope_then_the_body_scope() {
         [
             "push",
             "const",
-            "define", // let n = 0
-            "load",
-            "call",
+            "define",           // let n = 0
+            "call-fast-inline", // S5: the argument is read by the call
             "while-let+scope+body",
             "load",
             "define",
             "store-bin",
             "while-let-next",
-            "load",
-            "call",
+            "call-fast-inline",
             "while-let",
             "store-bin",
             "while-let-next",
@@ -458,7 +459,7 @@ fn ax31_shaped_assign_runs_assign_in_place_first() {
     let prog =
         crate::parse_source("fn f() -> str { let s = \"\"\n s = s + \"x\"\n s }").expect("parses");
     let interp = Interp::build(&prog);
-    let body = compile(&interp.res, body_of(&interp, "f"));
+    let body = compile(&interp, body_of(&interp, "f"));
     assert!(body.ops.iter().any(|op| matches!(
         op,
         Op::StoreBin {
@@ -475,7 +476,7 @@ fn ax31_shaped_assign_runs_assign_in_place_first() {
     // Not AX-31-shaped: no `assign_in_place` call at all.
     let prog = crate::parse_source("fn f() -> i64 { let i = 0\n i = 1 + i\n i }").unwrap();
     let interp = Interp::build(&prog);
-    let body = compile(&interp.res, body_of(&interp, "f"));
+    let body = compile(&interp, body_of(&interp, "f"));
     assert!(body.ops.iter().all(|op| !matches!(
         op,
         Op::AssignInPlace { .. }
@@ -622,7 +623,7 @@ fn run_both(f: &str) -> R {
     };
     check(&env, "tree");
     let mut env = frame();
-    let vm = interp.exec(&compile(&interp.res, body), &mut env);
+    let vm = interp.exec(&compile(&interp, body), &mut env);
     check(&env, "vm");
     assert_eq!(format!("{vm:?}"), format!("{tree:?}"), "{f}");
     vm

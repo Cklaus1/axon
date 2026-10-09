@@ -1403,6 +1403,28 @@ fn scalar_return(entry: &FnEntry<'_>, result: Value) -> Value {
     result
 }
 
+/// Argument `a` as `entry`'s parameter `i` binds it. Soft typing:
+/// `Uncertain<T>` is compatible with a plain-`T` parameter (the checker
+/// allows it). If the declared param type is NOT itself a soft wrapper but
+/// the argument IS one, unwrap to the inner value so the body sees a plain
+/// `T` (else `x * 2` on the struct silently produced 0). Confidence/horizon
+/// dropped at this T-typed boundary. R19 Slice B: coerce Int→SizedInt when
+/// the declared param type is a non-i64 integer width, so arithmetic inside
+/// the callee's body uses width-correct ops (completeness, I-9).
+#[inline(always)]
+fn param_value(entry: &FnEntry<'_>, i: usize, a: Value) -> Value {
+    let (unwrap_soft, width) = entry.param_coerce[i];
+    let a = if unwrap_soft {
+        value::soft_inner(&a).unwrap_or(a)
+    } else {
+        a
+    };
+    match width {
+        Some(width) => coerce_to_sized(a, width),
+        None => a,
+    }
+}
+
 /// Like `CallGuard`'s `current_fn` restore but for an `Option<String>` cell —
 /// used for the `enclosing_agent` save/restore (R4/I-13 transitive agent
 /// attribution).
@@ -3605,26 +3627,8 @@ impl<'p> Interp<'p> {
         }
     }
 
-    fn call_fn_in(&self, entry: &FnEntry<'p>, mut args: impl CallArgs, env: &mut Env) -> R {
-        let f = entry.def;
-        // Bound recursion: a graceful panic instead of a process-aborting stack
-        // overflow on runaway/infinite recursion. `_guard` restores the depth on
-        // any return path (including `?`), and the caller's `current_fn`: the
-        // executing fn is tracked so builtins (R3 ai_call provenance) can
-        // attribute their records to the caller.
-        let depth = self.call_depth.get() + 1;
-        if depth > self.max_depth {
-            return panic(format!(
-                "recursion limit exceeded ({}) in `{}` — infinite or excessively deep recursion? \
-                 (raise with AXON_MAX_DEPTH if this recursion is legitimate)",
-                self.max_depth, f.name
-            ));
-        }
-        self.call_depth.set(depth);
-        let _guard = CallGuard {
-            interp: self,
-            prev_fn: self.current_fn.replace(Some(f)),
-        };
+    fn call_fn_in(&self, entry: &FnEntry<'p>, args: impl CallArgs, env: &mut Env) -> R {
+        let _guard = self.enter_fn(entry.def)?;
         // A fn with an attribute-driven step around its body, and every fn of
         // a program that declares refinements, takes the general path. The
         // common call is the steps below and nothing else; the rest stays out
@@ -3632,6 +3636,46 @@ impl<'p> Interp<'p> {
         if !entry.plain || !self.refine_preds.is_empty() {
             return self.call_fn_in_general(entry, args.into_vec(self), env);
         }
+        self.call_fn_common(entry, args, env)
+    }
+
+    /// The depth check and the `current_fn` swap of every call. Bound
+    /// recursion: a graceful panic instead of a process-aborting stack
+    /// overflow on runaway/infinite recursion. The guard restores the depth
+    /// on any return path (including `?`), and the caller's `current_fn`:
+    /// the executing fn is tracked so builtins (R3 ai_call provenance) can
+    /// attribute their records to the caller.
+    #[inline(always)]
+    fn enter_fn(&self, f: &'p FnDef) -> Result<CallGuard<'_, 'p>, Flow> {
+        let depth = self.call_depth.get() + 1;
+        if depth > self.max_depth {
+            return Err(self.depth_exceeded(f));
+        }
+        self.call_depth.set(depth);
+        Ok(CallGuard {
+            interp: self,
+            prev_fn: self.current_fn.replace(Some(f)),
+        })
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn depth_exceeded(&self, f: &FnDef) -> Flow {
+        Flow::Panic(
+            format!(
+                "recursion limit exceeded ({}) in `{}` — infinite or excessively deep recursion? \
+                 (raise with AXON_MAX_DEPTH if this recursion is legitimate)",
+                self.max_depth, f.name
+            )
+            .into(),
+        )
+    }
+
+    /// [`Interp::call_fn_in`]'s common path, after the guards: the arity
+    /// check, the parameters, `goal_met`, the body and the scalar return.
+    #[inline(always)]
+    fn call_fn_common(&self, entry: &FnEntry<'p>, mut args: impl CallArgs, env: &mut Env) -> R {
+        let f = entry.def;
         if f.params.len() != args.count() {
             return arity_mismatch(f, args.count());
         }
@@ -3852,27 +3896,7 @@ impl<'p> Interp<'p> {
         debug_assert!(env.vars.is_empty() && env.marks.is_empty());
         for (i, a) in args.iter_mut().enumerate() {
             let a = std::mem::replace(a, Value::Unit);
-            let (unwrap_soft, width) = entry.param_coerce[i];
-            let s = &entry.params[i];
-            // Soft typing: `Uncertain<T>` is compatible with a plain-`T` parameter
-            // (the checker allows it). If the declared param type is NOT itself a
-            // soft wrapper but the argument IS one, unwrap to the inner value so
-            // the body sees a plain `T` (else `x * 2` on the struct silently
-            // produced 0). Confidence/horizon dropped at this T-typed boundary.
-            let a = if unwrap_soft {
-                value::soft_inner(&a).unwrap_or(a)
-            } else {
-                a
-            };
-            // R19 Slice B: coerce Int→SizedInt when the declared param type is a
-            // non-i64 integer width — ensures arithmetic inside the callee's body
-            // uses width-correct ops (completeness, I-9).
-            let a = if let Some(width) = width {
-                coerce_to_sized(a, width)
-            } else {
-                a
-            };
-            env.vars.push((*s, a));
+            env.vars.push((entry.params[i], param_value(entry, i, a)));
         }
     }
 

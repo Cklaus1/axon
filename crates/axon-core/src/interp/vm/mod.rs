@@ -181,21 +181,31 @@ impl LambdaBody {
 }
 
 impl Body<'_> {
-    /// R50 S4: the value of a lambda body that is one int or float operation
-    /// on locals and literals (`|acc, x| acc + x`), computed without an
+    /// R50 S4: the value of a body that is one int or float operation on
+    /// locals and literals (`|acc, x| acc + x`), computed without an
     /// activation of the op loop by the scalar fast path its `Bin` op tries
-    /// first (cost only). `None` for any other body, and wherever that fast
-    /// path declines (another operand type, overflow, a zero divisor); the
-    /// op loop then runs the body, panic included.
+    /// first (cost only). S5: also a body that reads one bound local
+    /// (`fn id(x: i64) -> i64 { x }`), the value its `Load` op pushes. `None`
+    /// for any other body, and wherever that fast path declines (another
+    /// operand type, overflow, a zero divisor, an unbound name); the op loop
+    /// then runs the body, panic included.
     #[inline(always)]
     fn leaf_value(&self, env: &Env) -> Option<Value> {
-        let [Op::Bin { op, l, r }] = &*self.ops else {
-            return None;
-        };
-        // A one-op body has no stack operand; `scalar_at` declines one.
-        let v = match (scalar_at(l, env, &[], 0)?, scalar_at(r, env, &[], 0)?) {
-            (Scalar::Int(a), Scalar::Int(b)) => int_fast(op, a, b)?,
-            (Scalar::Float(a), Scalar::Float(b)) => float_fast(op, a, b)?,
+        let v = match &*self.ops {
+            [Op::Bin { op, l, r }] => {
+                // A one-op body has no stack operand; `scalar_at` declines one.
+                match (scalar_at(l, env, &[], 0)?, scalar_at(r, env, &[], 0)?) {
+                    (Scalar::Int(a), Scalar::Int(b)) => int_fast(op, a, b)?,
+                    (Scalar::Float(a), Scalar::Float(b)) => float_fast(op, a, b)?,
+                    _ => return None,
+                }
+            }
+            [Op::Load(var)] => {
+                return Some(match env.get_var(var.s, var.slot)? {
+                    Value::Int(n) => Value::Int(*n),
+                    v => v.clone(),
+                })
+            }
             _ => return None,
         };
         Some(v.value())
@@ -456,12 +466,14 @@ pub(super) enum Op<'p> {
     /// pooled argument buffer and dispatch them as `dispatch_call` does, the
     /// callee resolved at compile time (`dispatch_named`; `resume`, the one
     /// name `dispatch_call` handles before resolving, goes to
-    /// `dispatch_resume`).
+    /// `dispatch_resume`). `slow`: the flag that keeps this fn-table callee
+    /// off [`Op::CallFast`] (S5), for the `vm: slow` trace line.
     Call {
         callee: Var<'p>,
         resume: bool,
         argc: u32,
         tier: Option<&'p str>,
+        slow: Option<&'static str>,
     },
     // ── S2: aggregates, index and field reads, place writes ──
     /// Pop `n` values (pushed left to right), push them as an array.
@@ -610,6 +622,33 @@ pub(super) enum Op<'p> {
     /// Push the closure a lambda node makes in this env (`make_closure`,
     /// S4).
     Lambda(&'p Expr),
+
+    // -- S5: call costs --
+    /// A fast VM→VM call (spec §4 S5) to `fn_table[entry]`: `call_fast`,
+    /// once `proven`. The arguments are `args` when it is not empty: inline
+    /// operands (every argument an identifier or a literal, as many as the
+    /// fn has parameters), read when the op runs as the `Ident`/`Literal`
+    /// arms read them, and nothing is on the stack. Otherwise they are the
+    /// top `argc` of the stack, as for [`Op::Call`]. The compiler has proven
+    /// everything `dispatch_named` decides but whether `call_builtin` claims
+    /// the name; its `callees` cache records that (`CALLEE_FN + entry`:
+    /// proven not a builtin) after the first call by the name, which until
+    /// then this op makes through `dispatch_named`.
+    CallFast {
+        callee: Var<'p>,
+        entry: u32,
+        argc: u32,
+        args: Box<[Opnd<'p>]>,
+        proven: Cell<bool>,
+    },
+    /// `f(.., &mut a, ..)` (S5): pop `argc` arguments (a `Unit` in each
+    /// `&mut` position) and run `call_mut_with` with `fn_table[entry]`;
+    /// with no entry (the callee is not a fn) `call_mut`, which panics.
+    CallMut {
+        call: &'p Expr,
+        entry: Option<u32>,
+        argc: u32,
+    },
 }
 
 /// The operand stack is malformed: the compiler pushed fewer values than an
@@ -963,7 +1002,7 @@ impl<'p> Interp<'p> {
             return self.eval(&entry.def.body, env);
         };
         let body = cell.get_or_init(|| {
-            let body = compile(&self.res, &entry.def.body);
+            let body = compile(self, &entry.def.body);
             if self.vm_trace {
                 self.vm_trace_compiled(entry, &body);
             }
@@ -1004,7 +1043,7 @@ impl<'p> Interp<'p> {
             }
             (Engine::Vm, Some(lb)) => {
                 let body = lb.get(code, |src| {
-                    let body = compile(&self.res, src);
+                    let body = compile(self, src);
                     if self.vm_trace {
                         self.vm_trace_named(&lb.name, &body);
                     }
@@ -1293,6 +1332,7 @@ impl<'p> Interp<'p> {
                     resume,
                     argc,
                     tier,
+                    ..
                 } => {
                     let Some(at) = st.len().checked_sub(*argc as usize) else {
                         malformed()
@@ -1307,6 +1347,32 @@ impl<'p> Interp<'p> {
                         let argv = StackTail { st: &mut *st, at };
                         self.dispatch_named(callee.name, callee.s, callee.slot, argv, *tier, env)
                     };
+                    st.push(tri!(v));
+                }
+                Op::CallFast {
+                    callee,
+                    entry,
+                    argc,
+                    args,
+                    proven,
+                } => {
+                    let v = if proven.get() || self.fast_call_proven(callee, *entry, proven) {
+                        let entry = &self.fn_table[*entry as usize];
+                        if args.is_empty() {
+                            let Some(at) = st.len().checked_sub(*argc as usize) else {
+                                malformed()
+                            };
+                            self.call_fast(entry, st, at)
+                        } else {
+                            self.call_fast_inline(entry, args, env)
+                        }
+                    } else {
+                        self.call_unproven(callee, *argc, args, env, st)
+                    };
+                    st.push(tri!(v));
+                }
+                Op::CallMut { call, entry, argc } => {
+                    let v = self.call_mut_op(call, *entry, *argc, env, st);
                     st.push(tri!(v));
                 }
                 Op::Store(var) => {
@@ -1815,6 +1881,179 @@ impl<'p> Interp<'p> {
         v
     }
 
+    /// [`Op::CallFast`] before its first fast call: whether `call_builtin`
+    /// is proven not to claim `callee` (`dispatch_named` cached it as
+    /// `fn_table[entry]`, which only an inert non-builtin name gets). Once
+    /// it is, `proven` keeps it: the cache entry never changes.
+    #[inline(never)]
+    fn fast_call_proven(&self, callee: &Var<'_>, entry: u32, proven: &Cell<bool>) -> bool {
+        let known = self.callees.borrow().get(callee.s.index()).copied();
+        let ok = known == Some(CALLEE_FN + entry);
+        proven.set(ok);
+        ok
+    }
+
+    /// [`Op::CallFast`] before `proven`: the arguments on the stack (inline
+    /// ones pushed now, in order, as the `Ident`/`Literal` arms evaluate
+    /// them), then `dispatch_named`, which caches the callee.
+    #[inline(never)]
+    fn call_unproven(
+        &self,
+        callee: &Var<'_>,
+        argc: u32,
+        args: &[Opnd<'_>],
+        env: &mut Env,
+        st: &mut Vec<Value>,
+    ) -> R {
+        let base = st.len();
+        for a in args {
+            match self.opnd_value(a, env) {
+                Ok(v) => st.push(v),
+                Err(flow) => {
+                    st.truncate(base);
+                    return Err(flow);
+                }
+            }
+        }
+        let Some(at) = st.len().checked_sub(argc as usize) else {
+            malformed()
+        };
+        let argv = StackTail { st, at };
+        self.dispatch_named(callee.name, callee.s, callee.slot, argv, None, env)
+    }
+
+    /// [`Op::CallFast`] once proven (spec §4 S5): `call_fn_entry` →
+    /// `call_fn_in`'s common path for `entry` without the dispatch, its
+    /// arguments the top of `st` from `at`. In the tree's order: the `tier:`
+    /// clear `dispatch_call` makes before the call, a pooled frame, the depth
+    /// check and the `current_fn` swap, the arity check, each parameter
+    /// moved off the stack (soft unwrap, sized coercion), then
+    /// [`Interp::fast_body`]. The arguments leave the stack on every path;
+    /// `CallGuard` and `give_frame` restore the rest.
+    #[inline(never)]
+    fn call_fast(&self, entry: &FnEntry<'p>, st: &mut Vec<Value>, at: usize) -> R {
+        debug_assert!(compile::fast_call_blocker(entry, self.refine_preds.is_empty()).is_none());
+        self.set_call_tier(None);
+        let mut frame = self.take_frame();
+        let out = match self.enter_fn(entry.def) {
+            Ok(_guard) => {
+                let argc = st.len() - at;
+                if entry.params.len() != argc {
+                    st.truncate(at);
+                    arity_mismatch(entry.def, argc)
+                } else {
+                    let env = &mut *frame;
+                    debug_assert!(env.vars.is_empty() && env.marks.is_empty());
+                    if argc == 1 {
+                        let a = pop(st);
+                        env.vars.push((entry.params[0], param_value(entry, 0, a)));
+                    } else {
+                        for (i, a) in st.drain(at..).enumerate() {
+                            env.vars.push((entry.params[i], param_value(entry, i, a)));
+                        }
+                    }
+                    self.fast_body(entry, env)
+                }
+            }
+            Err(flow) => {
+                st.truncate(at);
+                Err(flow)
+            }
+        };
+        self.give_frame(frame);
+        out
+    }
+
+    /// [`Op::CallFast`] once proven, its arguments inline operands (as many
+    /// as `entry` has parameters, so the arity check cannot fail). They are
+    /// read first, as the tree evaluates them before the dispatch, and bound
+    /// straight into the pooled frame (soft unwrap, sized coercion: pure, so
+    /// doing it before the depth check is unobservable); then the `tier:`
+    /// clear, the depth check and the `current_fn` swap, and
+    /// [`Interp::fast_body`].
+    #[inline(never)]
+    fn call_fast_inline(&self, entry: &FnEntry<'p>, args: &[Opnd<'_>], env: &Env) -> R {
+        debug_assert!(compile::fast_call_blocker(entry, self.refine_preds.is_empty()).is_none());
+        debug_assert_eq!(args.len(), entry.params.len());
+        let mut frame = self.take_frame();
+        for (i, a) in args.iter().enumerate() {
+            let v = match a {
+                Opnd::Local(var) => match env.get_var(var.s, var.slot) {
+                    Some(Value::Int(n)) => Value::Int(*n),
+                    Some(v) => v.clone(),
+                    None => match self.ident_unbound(var.name, var.s) {
+                        Ok(v) => v,
+                        Err(flow) => {
+                            self.give_frame(frame);
+                            return Err(flow);
+                        }
+                    },
+                },
+                Opnd::Int(n) => Value::Int(*n),
+                Opnd::Float(f) => Value::Float(*f),
+                Opnd::Const(v) => v.clone(),
+                Opnd::Stack => malformed(),
+            };
+            frame.vars.push((entry.params[i], param_value(entry, i, v)));
+        }
+        self.set_call_tier(None);
+        let out = match self.enter_fn(entry.def) {
+            Ok(_guard) => self.fast_body(entry, &mut frame),
+            Err(flow) => Err(flow),
+        };
+        self.give_frame(frame);
+        out
+    }
+
+    /// The rest of a fast call once the parameters are bound, as
+    /// `call_fn_common` does it: `goal_met`, the body (a one-op body without
+    /// an activation of the op loop), the scalar return.
+    #[inline(always)]
+    fn fast_body(&self, entry: &FnEntry<'p>, env: &mut Env) -> R {
+        // `goal_met` follows the parameters, as in `call_fn_common`.
+        env.vars.push((SYM_GOAL_MET, Value::Int(0)));
+        let out = match entry.compiled.as_ref().and_then(std::cell::OnceCell::get) {
+            Some(body) => match body.leaf_value(env) {
+                Some(v) => Ok(v),
+                None => self.exec(body, env),
+            },
+            None => self.run_body_vm(entry, env),
+        };
+        match out {
+            Ok(v) | Err(Flow::Return(v)) => Ok(scalar_return(entry, v)),
+            Err(other) => Err(other),
+        }
+    }
+
+    /// [`Op::CallMut`]: the arguments are the top `argc` of `st`.
+    #[inline(never)]
+    fn call_mut_op(
+        &self,
+        call: &Expr,
+        entry: Option<u32>,
+        argc: u32,
+        env: &mut Env,
+        st: &mut Vec<Value>,
+    ) -> R {
+        let Expr::Call { callee, args, tier } = call else {
+            unreachable!("`CallMut` is compiled from a call")
+        };
+        let Some(entry) = entry else {
+            return self.call_mut(callee, args, tier.as_deref(), env);
+        };
+        let Some(at) = st.len().checked_sub(argc as usize) else {
+            malformed()
+        };
+        let argv = StackTail { st, at };
+        self.call_mut_with(
+            &self.fn_table[entry as usize],
+            args,
+            argv,
+            tier.as_deref(),
+            env,
+        )
+    }
+
     /// `vm: tree <name>: <reason>` under `AXON_ENGINE=vm AXON_VM_TRACE=1`: a
     /// whole fn body runs on the tree-walker.
     pub(super) fn vm_trace_tree(&self, entry: &FnEntry<'_>, reason: &str) {
@@ -1823,7 +2062,8 @@ impl<'p> Interp<'p> {
         }
     }
 
-    /// The per-body trace line and one `tree-op` line per `Tree` op, printed
+    /// The per-body trace line, one `tree-op` line per `Tree` op and one
+    /// `slow` line per call a flag keeps off the fast path (S5), printed
     /// when a body is compiled (its first run).
     fn vm_trace_compiled(&self, entry: &FnEntry<'_>, body: &Body<'_>) {
         self.vm_trace_named(&self.vm_body_name(entry), body);
@@ -1838,12 +2078,20 @@ impl<'p> Interp<'p> {
             body.tree_nodes()
         );
         for op in body.ops.iter() {
-            if let Op::Tree(e) = op {
-                let variant = compile::variant_name(e);
-                match compile::tree_shape(e) {
-                    Some(shape) => eprintln!("vm: tree-op {name} {variant}({shape})"),
-                    None => eprintln!("vm: tree-op {name} {variant}"),
+            match op {
+                Op::Tree(e) => {
+                    let variant = compile::variant_name(e);
+                    match compile::tree_shape(e) {
+                        Some(shape) => eprintln!("vm: tree-op {name} {variant}({shape})"),
+                        None => eprintln!("vm: tree-op {name} {variant}"),
+                    }
                 }
+                Op::Call {
+                    callee,
+                    slow: Some(flag),
+                    ..
+                } => eprintln!("vm: slow {}: {flag}", callee.name),
+                _ => {}
             }
         }
     }
