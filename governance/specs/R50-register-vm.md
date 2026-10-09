@@ -19,7 +19,7 @@ supersedes: none
 related: R2a-type-map-threading, R0-interp-module-split, R44-accumulating-session, R7-targets
 conflicts-with: none
 reserves: none (no new diagnostic or exit codes; env vars AXON_ENGINE and AXON_VM_TRACE are registered in env_registry.rs at S0)
-evidence: none
+evidence: scripts/vm_parity.sh; scripts/vm_perf_gate.sh; scripts/vm_wasm_depth.sh (planned, land with S0; spec review evidence is §15)
 ```
 
 R47–R49 are named as planned in `R46-in-flight-operations.md` §2 (that file is untracked in the main
