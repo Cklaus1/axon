@@ -36041,3 +36041,187 @@ fn vm_match_impl_methods() {
         "{stderr}"
     );
 }
+
+// -- R50 S7: pure scalar regions (`vm_pure_`) --------------------------------
+
+/// R50 §3: the `vm: pure <name> <p> exprs, <q> loops` line of body `name`, as
+/// `(p, q)`. The line must follow the body's own `vm: <name> <n> ops, <k>
+/// tree nodes` line directly; panics when it does not.
+fn vm_pure_counts(trace: &str, name: &str) -> (usize, usize) {
+    let body = format!("vm: {name} ");
+    let pure = format!("vm: pure {name} ");
+    let lines: Vec<&str> = trace.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.starts_with(&body) && l.ends_with(" tree nodes"))
+        .unwrap_or_else(|| panic!("no compiled-body trace line for `{name}`:\n{trace}"));
+    let rest = lines
+        .get(at + 1)
+        .and_then(|l| l.strip_prefix(&pure))
+        .unwrap_or_else(|| panic!("no `vm: pure {name}` line after its body line:\n{trace}"));
+    let parsed = rest
+        .split_once(" exprs, ")
+        .and_then(|(p, q)| Some((p.parse().ok()?, q.strip_suffix(" loops")?.parse().ok()?)));
+    parsed.unwrap_or_else(|| panic!("malformed `vm: pure` line `{rest}`:\n{trace}"))
+}
+
+/// R50 S7: [`vm_scalar_case`], then the `(p, q)` of body `name`'s `vm: pure`
+/// line under `AXON_ENGINE=vm AXON_VM_TRACE=1`.
+fn vm_pure_case(
+    tag: &str,
+    src: &str,
+    bodies: &[(&str, usize)],
+    name: &str,
+) -> (Option<i32>, String, String, (usize, usize)) {
+    let (code, stdout, stderr) = vm_scalar_case(tag, src, bodies);
+    let traced = vm_run(tag, src, "vm", true);
+    let err = String::from_utf8_lossy(&traced.stderr).into_owned();
+    (code, stdout, stderr, vm_pure_counts(&err, name))
+}
+
+/// R50 S7 red test (§8): mandelbrot's `main` holds a `PureLoop` for its inner
+/// `while` and `Pure` ops for that loop's condition, `let t = ..` and `zi =
+/// ..`. S4 prints no `vm: pure` line.
+#[test]
+fn vm_pure_mandel_loop() {
+    let src = std::fs::read_to_string(fixture("vm_perf/mandelbrot.ax"))
+        .expect("read mandelbrot.ax")
+        .replace("let w = 600", "let w = 60")
+        .replace("let h = 400", "let h = 40");
+    let (code, stdout, stderr, counts) = vm_pure_case("pure_mandel", &src, &[("main", 0)], "main");
+    assert_eq!((code, stdout.as_str()), (Some(0), "112833\n"), "{stderr}");
+    assert_eq!(counts, (3, 1));
+}
+
+/// R50 S7 red test (§8): arr-sum's `|acc, x| acc + x % m` runs in registers
+/// from its second element on, and the trace says so once for the code. S4
+/// prints no `vm: fold-leaf` line.
+#[test]
+fn vm_pure_fold_leaf() {
+    let src = std::fs::read_to_string(fixture("vm_perf/arr-sum.ax"))
+        .expect("read arr-sum.ax")
+        .replace("arr_range(0, 5000000)", "arr_range(0, 1000)");
+    let (code, stdout, stderr) = vm_scalar_case(
+        "pure_fold_leaf",
+        &src,
+        &[("main", 0), ("main::lambda#0", 0)],
+    );
+    assert_eq!((code, stdout.as_str()), (Some(0), "52385\n"), "{stderr}");
+    let traced = vm_run("pure_fold_leaf", &src, "vm", true);
+    let err = String::from_utf8_lossy(&traced.stderr);
+    let leaf: Vec<&str> = err
+        .lines()
+        .filter(|l| l.starts_with("vm: fold-leaf "))
+        .collect();
+    assert_eq!(leaf, ["vm: fold-leaf main::lambda#0"], "{err}");
+}
+
+/// R50 S7: an `i64` overflow in the third iteration of a `PureLoop` declines,
+/// and the generic loop re-runs that iteration from the registers written
+/// back: the tree's panic text (which names the operands) and exit 101, and
+/// the `println` after the loop never runs.
+#[test]
+fn vm_pure_overflow_replays() {
+    let src = "fn main() -> i64 {\n    println(\"start\")\n    let x = 1\n    let i = 0\n    while i < 10 {\n        x = x * 1073741824\n        i = i + 1\n    }\n    println(to_str(x))\n    0\n}\n";
+    let (code, stdout, stderr, counts) = vm_pure_case("pure_overflow", src, &[("main", 0)], "main");
+    assert_eq!((code, stdout.as_str()), (Some(101), "start\n"), "{stderr}");
+    assert_eq!(
+        stderr,
+        "axon: panic: integer overflow: 1152921504606846976 * 1073741824 exceeds i64\n"
+    );
+    assert_eq!(counts, (0, 1));
+}
+
+/// R50 S7: an `i32` local read by a pure loop and its `Pure` ops declines
+/// them (a `SizedInt` is no register kind); the generic ops give the tree's
+/// output.
+#[test]
+fn vm_pure_sized_declines() {
+    let src = "fn main() -> i64 {\n    let x: i32 = 1\n    let y = 2\n    let i = 0\n    while i < 5 {\n        x = x * 3 + 1\n        y = y * 2 - 1\n        i = i + 1\n    }\n    println(to_str(x))\n    println(to_str(y))\n    0\n}\n";
+    let (code, stdout, stderr, counts) = vm_pure_case("pure_sized", src, &[("main", 0)], "main");
+    assert_eq!((code, stdout.as_str()), (Some(0), "364\n33\n"), "{stderr}");
+    assert_eq!(counts, (2, 1));
+}
+
+/// R50 S7: `&&`/`||` in a `let` value and an `if` condition: a decided left
+/// side never lets the right side's `/ 0` panic, as on the tree.
+#[test]
+fn vm_pure_short_circuit() {
+    let src = "fn main() -> i64 {\n    let a = 10\n    let b = 0\n    let r = b != 0 && a / b > 1\n    println(to_str(r))\n    if b != 0 && a / b > 1 { println(\"big\") } else { println(\"small\") }\n    let c = 2\n    let s = c == 0 || a / c > 1\n    println(to_str(s))\n    if c == 0 || a / c > 6 { println(\"big\") } else { println(\"small\") }\n    0\n}\n";
+    let (code, stdout, stderr, counts) = vm_pure_case("pure_short", src, &[("main", 0)], "main");
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "false\nsmall\ntrue\nsmall\n"),
+        "{stderr}"
+    );
+    assert_eq!(counts, (4, 0));
+}
+
+/// R50 S7: `Bool` operands through untyped lambda parameters. `==`/`||` on
+/// `Bool`s compute; `<` on `Bool`s, and an `if`/`while` condition that is an
+/// `Int`, decline, and the generic ops panic as the tree does (exit 101).
+#[test]
+fn vm_pure_bool_ops() {
+    let cases: [(&str, &str, &str, &str, (usize, usize)); 3] = [
+        (
+            "pure_bool_lt",
+            "    let f = |a, b| {\n        let d = a == b || a != b\n        println(to_str(d))\n        let c = a < b && b < a\n        c\n    }\n    println(to_str(f(true, false)))",
+            "true\n",
+            "axon: panic: cannot apply Lt to bool / bool\n",
+            (2, 0),
+        ),
+        (
+            "pure_bool_if",
+            "    let f = |a, b| {\n        if a + b * a { 1 } else { 2 }\n    }\n    println(to_str(f(2, 3)))",
+            "",
+            "axon: panic: if condition must be bool, got i64\n",
+            (1, 0),
+        ),
+        (
+            "pure_bool_while",
+            "    let f = |a, b| {\n        let n = 0\n        while a + b * a {\n            n = n + 1\n        }\n        n\n    }\n    println(to_str(f(2, 3)))",
+            "",
+            "axon: panic: while condition must be bool, got i64\n",
+            (1, 1),
+        ),
+    ];
+    for (tag, body, out, err, want) in cases {
+        let src = format!("fn main() -> i64 {{\n{body}\n    0\n}}\n");
+        let (code, stdout, stderr, counts) = vm_pure_case(
+            tag,
+            &src,
+            &[("main", 0), ("main::lambda#0", 0)],
+            "main::lambda#0",
+        );
+        assert_eq!(
+            (code, stdout.as_str(), stderr.as_str()),
+            (Some(101), out, err),
+            "[{tag}]"
+        );
+        assert_eq!(counts, want, "[{tag}]");
+    }
+}
+
+/// R50 S7: `fold_leaf` runs elements 2-4 in registers (the trace line comes
+/// at element 2), declines at element 5's `% 0`, and the general call gives
+/// the tree's panic.
+#[test]
+fn vm_pure_fold_decline() {
+    let src = "fn main() -> i64 {\n    let xs = [1, 2, 3, 4, 0, 6]\n    let total = arr_fold(xs, 0, |acc: i64, x: i64| acc + 100 % x)\n    println(to_str(total))\n    0\n}\n";
+    let (code, stdout, stderr) = vm_scalar_case(
+        "pure_fold_decline",
+        src,
+        &[("main", 0), ("main::lambda#0", 0)],
+    );
+    assert_eq!(
+        (code, stdout.as_str(), stderr.as_str()),
+        (Some(101), "", "axon: panic: integer remainder by zero\n")
+    );
+    let traced = vm_run("pure_fold_decline", src, "vm", true);
+    let err = String::from_utf8_lossy(&traced.stderr);
+    let leaf: Vec<&str> = err
+        .lines()
+        .filter(|l| l.starts_with("vm: fold-leaf "))
+        .collect();
+    assert_eq!(leaf, ["vm: fold-leaf main::lambda#0"], "{err}");
+}
