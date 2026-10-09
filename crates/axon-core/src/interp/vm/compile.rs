@@ -16,6 +16,7 @@
 
 use std::cell::Cell;
 
+use super::pure::{Pure, PureExpr, PureLoop, PureOp, PureStmt, Sink};
 use super::{Body, Cond, Loop, MutRef, Op, Opnd, Var};
 use crate::ast::{BinOp, Expr, FmtPart, Literal, MatchArm, Pattern, Stmt, UnaryOp};
 use crate::interp::sym::{FnEntry, NOT_LOCAL};
@@ -34,13 +35,18 @@ pub(in crate::interp) fn compile<'p>(ix: &Interp<'_>, body: &'p Expr) -> Body<'p
         height: 0,
         max_height: 0,
         scopes: 0,
+        twins: Vec::new(),
     };
     c.expr(body);
     debug_assert_eq!((c.height, c.scopes), (1, 0), "a body leaves one value");
+    let leaf = c
+        .pure_tree(body, &mut 0)
+        .map(|t| Box::new(PureExpr::new(t)));
     Body {
         ops: c.ops.into_boxed_slice(),
         loops: c.loops.into_boxed_slice(),
         max_stack: c.max_height as usize,
+        leaf,
     }
 }
 
@@ -54,6 +60,10 @@ struct Compiler<'r, 'i, 'p> {
     max_height: u32,
     /// Scopes pushed by the ops emitted so far.
     scopes: u32,
+    /// `(branch, pure)`: the generic branch op of an `if`/`while` condition
+    /// and the [`Op::Pure`] before it, whose `Sink::Branch` target
+    /// [`Compiler::patch`] sets with the branch's.
+    twins: Vec<(u32, u32)>,
 }
 
 impl<'p> Compiler<'_, '_, 'p> {
@@ -188,13 +198,18 @@ impl<'p> Compiler<'_, '_, 'p> {
             Expr::Let { name, value, ty }
             | Expr::Own { name, value, ty }
             | Expr::RefBind { name, value, ty } => {
-                self.expr(value);
                 let var = self.var(e, name);
+                let pure = match (e, ty) {
+                    (Expr::Let { .. }, None) => self.try_pure(value, Sink::Define(var)),
+                    _ => None,
+                };
+                self.expr(value);
                 let op = match ty {
                     None => Op::Define(var),
                     Some(ty) => Op::Let { var, ty },
                 };
                 self.emit(op, 1, 0);
+                self.end_pure(pure);
             }
             Expr::Assign { name, value } => self.assign(e, name, value),
             Expr::AssignTo { place, value } => self.assign_to(place, value),
@@ -300,6 +315,7 @@ impl<'p> Compiler<'_, '_, 'p> {
     /// body that binds nothing runs without the scope.
     fn while_(&mut self, cond: &'p Expr, body: &'p [Stmt]) {
         let scoped = binds(body);
+        let pure = self.pure_loop(cond, body);
         let (scopes, height) = (self.scopes, self.height);
         let head = self.here();
         let branch = self.branch(cond, Cond::While, scoped);
@@ -318,6 +334,11 @@ impl<'p> Compiler<'_, '_, 'p> {
         self.scopes = scopes;
         let exit = self.here();
         self.patch(branch);
+        if let Some(at) = pure {
+            if let Op::PureLoop { exit: x, .. } = &mut self.ops[at as usize] {
+                *x = exit;
+            }
+        }
         self.loops.push(Loop {
             start,
             end,
@@ -397,15 +418,21 @@ impl<'p> Compiler<'_, '_, 'p> {
     /// `name = value` to a local, as the `Assign` arm: `assign_in_place`
     /// first when the statement has an AX-31 shape, then the value and
     /// `assign_var`. A binary-operation value stores in the same op
-    /// ([`Op::StoreBin`]).
+    /// ([`Op::StoreBin`]). A pure tree of two or more operators that is not
+    /// AX-31-shaped gets an [`Op::Pure`] first (spec §4 S7).
     fn assign(&mut self, e: &'p Expr, name: &'p String, value: &'p Expr) {
         let var = self.var(e, name);
         let shaped = Interp::assign_in_place_shaped(name, value);
+        let pure = match shaped {
+            false => self.try_pure(value, Sink::Store(var)),
+            true => None,
+        };
         if let Expr::BinOp { op, left, right } = value {
             if !matches!(op, BinOp::And | BinOp::Or) {
                 if let (Some(l), Some(r)) = (self.inline(left), self.inline(right)) {
                     let in_place = shaped.then_some(value);
                     self.emit(store_bin(var, in_place, op.clone(), l, r), 0, 0);
+                    self.end_pure(pure);
                     return;
                 }
             }
@@ -437,6 +464,7 @@ impl<'p> Compiler<'_, '_, 'p> {
                 *d = done;
             }
         }
+        self.end_pure(pure);
     }
 
     /// Push the values of `elems` left to right; returns how many.
@@ -889,10 +917,108 @@ impl<'p> Compiler<'_, '_, 'p> {
     }
 
     /// Emit an `if`/`while` condition and the branch taken when it is false;
-    /// returns the branch op, for [`Compiler::patch`]. A binary operation
-    /// other than `&&`/`||` fuses into one compare-and-branch. With `push`
-    /// (a `while`), the op pushes the iteration's scope when it falls through.
+    /// returns the branch op, for [`Compiler::patch`]. A pure tree of two
+    /// or more operators gets an [`Op::Pure`] first, its twin the generic
+    /// condition below (spec §4 S7).
     fn branch(&mut self, cond: &'p Expr, kind: Cond, push: bool) -> u32 {
+        let pure = self.try_pure(cond, Sink::Branch { target: 0, push });
+        let branch = self.branch_generic(cond, kind, push);
+        if let Some(at) = pure {
+            self.twins.push((branch, at));
+        }
+        self.end_pure(pure);
+        branch
+    }
+
+    /// `e` as a [`Pure`] tree, or `None` when it is not one (spec §4 S7);
+    /// `n` counts its operator nodes. An identifier is a leaf only when
+    /// resolution binds it to a local slot.
+    fn pure_tree(&self, e: &'p Expr, n: &mut u32) -> Option<Pure<'p>> {
+        Some(match e {
+            Expr::Ident(name) => {
+                let var = self.var(e, name);
+                if var.slot >= NOT_LOCAL {
+                    return None;
+                }
+                Pure::Local(var)
+            }
+            Expr::Literal(Literal::Int(v)) => Pure::Int(*v),
+            Expr::Literal(Literal::Float(v)) => Pure::Float(*v),
+            Expr::Literal(Literal::Bool(v)) => Pure::Bool(*v),
+            Expr::BinOp { op, left, right } => {
+                let k = Box::new([self.pure_tree(left, n)?, self.pure_tree(right, n)?]);
+                *n += 1;
+                match op {
+                    BinOp::And => Pure::And(k),
+                    BinOp::Or => Pure::Or(k),
+                    op => Pure::Bin(op.clone(), k),
+                }
+            }
+            _ => return None,
+        })
+    }
+
+    /// An [`Op::Pure`] for `e` into `sink` when `e` is a pure tree of two or
+    /// more operators; the caller emits the twin next, then
+    /// [`Compiler::end_pure`].
+    fn try_pure(&mut self, e: &'p Expr, sink: Sink<'p>) -> Option<u32> {
+        let mut n = 0;
+        let tree = self.pure_tree(e, &mut n)?;
+        if n < 2 {
+            return None;
+        }
+        let op = PureOp {
+            e: PureExpr::new(tree),
+            sink,
+            skip: 0,
+        };
+        Some(self.emit(Op::Pure(Box::new(op)), 0, 0))
+    }
+
+    /// Point the [`Op::Pure`] at `at` past its twin, which ends here.
+    fn end_pure(&mut self, at: Option<u32>) {
+        let Some(at) = at else { return };
+        let here = self.here();
+        if let Op::Pure(p) = &mut self.ops[at as usize] {
+            p.skip = here;
+        }
+    }
+
+    /// An [`Op::PureLoop`] ahead of the generic loop of `while cond { body
+    /// }` when `cond` is a pure tree and every statement is an untyped
+    /// `let x = <pure>` or an `x = <pure>` to a local (spec §4 S7); its exit
+    /// is patched by [`Compiler::while_`].
+    fn pure_loop(&mut self, cond: &'p Expr, body: &'p [Stmt]) -> Option<u32> {
+        let n = &mut 0;
+        let cond = self.pure_tree(cond, n)?;
+        let mut stmts = Vec::with_capacity(body.len());
+        for s in body {
+            let e = &s.expr;
+            let (name, value, is_let) = match e {
+                Expr::Let {
+                    name,
+                    value,
+                    ty: None,
+                } => (name, value, true),
+                Expr::Assign { name, value } => (name, value, false),
+                _ => return None,
+            };
+            let var = self.var(e, name);
+            if var.slot >= NOT_LOCAL {
+                return None;
+            }
+            let value = self.pure_tree(value, n)?;
+            stmts.push(PureStmt { var, is_let, value });
+        }
+        let lp = Box::new(PureLoop::new(cond, stmts));
+        Some(self.emit(Op::PureLoop { lp, exit: 0 }, 0, 0))
+    }
+
+    /// The generic condition and branch of [`Compiler::branch`]. A binary
+    /// operation other than `&&`/`||` fuses into one compare-and-branch.
+    /// With `push` (a `while`), the op pushes the iteration's scope when it
+    /// falls through.
+    fn branch_generic(&mut self, cond: &'p Expr, kind: Cond, push: bool) -> u32 {
         if let Expr::BinOp { op, left, right } = cond {
             if !matches!(op, BinOp::And | BinOp::Or) {
                 if let Some(op) = self.branch_index(op, left, right, kind, push) {
@@ -1058,9 +1184,18 @@ impl<'p> Compiler<'_, '_, 'p> {
         self.max_height = self.max_height.max(self.height);
     }
 
-    /// Point the branch at `at` to the next op.
+    /// Point the branch at `at` to the next op, and the [`Op::Pure`] twin of
+    /// a condition branch with it.
     fn patch(&mut self, at: u32) {
         let here = self.here();
+        if let Some(i) = self.twins.iter().position(|(b, _)| *b == at) {
+            let (_, pure) = self.twins.swap_remove(i);
+            if let Op::Pure(p) = &mut self.ops[pure as usize] {
+                if let Sink::Branch { target, .. } = &mut p.sink {
+                    *target = here;
+                }
+            }
+        }
         match &mut self.ops[at as usize] {
             Op::Jump(t)
             | Op::BranchFalse { target: t, .. }

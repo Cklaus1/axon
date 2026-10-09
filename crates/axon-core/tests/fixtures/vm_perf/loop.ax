@@ -1,5 +1,6 @@
 // R50 §10 --repros baseline: the bare 1M-iteration loop. Per-iteration cost =
-// instructions / 1M; call1.ax and mutcall.ax are measured against it.
+// instructions / 1M (a `PureLoop` from S7; the call rows subtract
+// loop_generic.ax instead).
 fn main() -> i64 {
     let s = 0
     let i = 0

@@ -12,27 +12,34 @@
 # (crates/axon-core/tests/fixtures/vm_perf/<prog>.golden).
 #
 # Modes:
-#   scripts/vm_perf_gate.sh
+#   scripts/vm_perf_gate.sh [--programs SEL]
 #       The five compilebench programs (verbatim copies of compilebench's
 #       benchmarks/<b>/axon/main.ax in tests/fixtures/vm_perf/). Budget: the
 #       CPython 3.14.4 median from compilebench run 20261008T142344Z. A median
-#       passes when it is at or below the budget; no rounding.
+#       passes when it is at or below the budget; no rounding. SEL is a
+#       comma-separated subset of the programs; without it, all five run.
+#         --programs mandelbrot,arr-sum,collatz   S7 gate
 #
 #   scripts/vm_perf_gate.sh --repros [SEL]
 #       Per-construct repro rows. SEL is a comma-separated list of slice names
 #       and/or row names; a slice name selects every row of that slice. Without
 #       SEL, every row runs. Examples (the §13 DAG gates):
-#         --repros S1         S1 gate: loop, call
-#         --repros S1,part    S2 gate: S1 rows plus part
-#         --repros            S5 gate: all rows
-#       Rows (cost = (prog - base) / units; `loop` has no base):
-#         row       slice  prog      base       units  budget
-#         loop      S1     loop      -          1M     300   per iteration
-#         call      S1     call1     loop       1M     800   one-arg call via dispatch_call -> call_fn_in
-#         part      S2     part      part_base  1M     250   per partition iteration
-#         fold      S4     fold      fold_base  10M    350   per element, builtin -> closure call
-#         fastcall  S5     call1     loop       1M     300   one-arg fast call
-#         mutcall   S5     mutcall   loop       1M     600   one-&mut-arg call via call_mut
+#         --repros S1                  S1 gate: loop, call
+#         --repros S1,part             S2 gate: S1 rows plus part
+#         --repros S1,part,fold,S5     S5 gate
+#         --repros S1,part,fold,foldmod  S7 gate
+#       Rows (cost = (prog - base) / units; `loop` has no base). From S7
+#       `loop.ax` is a `PureLoop`, so the call rows subtract loop_generic.ax
+#       (loop.ax plus a never-taken `if`, which call1.ax and mutcall.ax carry
+#       too, so it cancels):
+#         row       slice  prog      base          units  budget
+#         loop      S1     loop      -             1M     300   per iteration
+#         call      S1     call1     loop_generic  1M     800   one-arg call via dispatch_call -> call_fn_in
+#         part      S2     part      part_base     1M     250   per partition iteration
+#         fold      S4     fold      fold_base     10M    350   per element, builtin -> closure call
+#         fastcall  S5     call1     loop_generic  1M     300   one-arg fast call
+#         mutcall   S5     mutcall   loop_generic  1M     600   one-&mut-arg call via call_mut
+#         foldmod   S7     foldmod   fold_base     10M    200   per element, arr-sum's body `acc + x % m`
 #       A row passes when (prog - base) <= budget * units, compared exactly.
 #
 # Exit: 0 every selected median within budget and every output golden;
@@ -56,14 +63,15 @@ PROGRAMS=(
   "arr-sum       23624147901"
   "qsort         18967575334"
 )
-# row       slice prog     base       units     budget
+# row       slice prog     base          units     budget
 REPROS=(
-  "loop      S1    loop     -          1000000   300"
-  "call      S1    call1    loop       1000000   800"
-  "part      S2    part     part_base  1000000   250"
-  "fold      S4    fold     fold_base  10000000  350"
-  "fastcall  S5    call1    loop       1000000   300"
-  "mutcall   S5    mutcall  loop       1000000   600"
+  "loop      S1    loop     -             1000000   300"
+  "call      S1    call1    loop_generic  1000000   800"
+  "part      S2    part     part_base     1000000   250"
+  "fold      S4    fold     fold_base     10000000  350"
+  "fastcall  S5    call1    loop_generic  1000000   300"
+  "mutcall   S5    mutcall  loop_generic  1000000   600"
+  "foldmod   S7    foldmod  fold_base     10000000  200"
 )
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -71,11 +79,15 @@ MODE=programs
 SEL=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    --programs)
+      MODE=programs
+      if [ $# -gt 1 ] && [[ "$2" != --* ]]; then SEL="$2"; shift; fi ;;
+    --programs=*) MODE=programs; SEL="${1#--programs=}" ;;
     --repros)
       MODE=repros
       if [ $# -gt 1 ] && [[ "$2" != --* ]]; then SEL="$2"; shift; fi ;;
     --repros=*) MODE=repros; SEL="${1#--repros=}" ;;
-    -h|--help) sed -n '2,45p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,48p' "$0"; exit 0 ;;
     *) echo "vm_perf_gate: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
@@ -148,8 +160,24 @@ group() { # 1234567 -> 1,234,567
 }
 
 if [ "$MODE" = programs ]; then
+  declare -A pick=()
+  if [ -n "$SEL" ]; then
+    IFS=, read -ra toks <<<"$SEL"
+    for t in "${toks[@]}"; do
+      hit=0
+      for row in "${PROGRAMS[@]}"; do
+        read -r prog _ <<<"$row"
+        if [ "$t" = "$prog" ]; then pick[$prog]=1; hit=1; fi
+      done
+      if [ "$hit" = 0 ]; then
+        echo "vm_perf_gate: --programs: '$t' is not a program (fib-recursive collatz mandelbrot arr-sum qsort)" >&2
+        exit 2
+      fi
+    done
+  fi
   for row in "${PROGRAMS[@]}"; do
     read -r prog budget <<<"$row"
+    [ -z "$SEL" ] || [ -n "${pick[$prog]+x}" ] || continue
     measure "$prog"
     m="${MEDIAN[$prog]}"
     if [ "$m" -le "$budget" ]; then v="PASS"; else v="OVER"; fails=$((fails + 1)); fi
@@ -168,7 +196,7 @@ else
         if [ "$t" = "$name" ] || [ "$t" = "$slice" ]; then want[$name]=1; hit=1; fi
       done
       if [ "$hit" = 0 ]; then
-        echo "vm_perf_gate: --repros: '$t' is neither a row (loop call part fold fastcall mutcall) nor a slice with rows (S1 S2 S4 S5)" >&2
+        echo "vm_perf_gate: --repros: '$t' is neither a row (loop call part fold fastcall mutcall foldmod) nor a slice with rows (S1 S2 S4 S5 S7)" >&2
         exit 2
       fi
     done
