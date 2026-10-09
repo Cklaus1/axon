@@ -17,13 +17,21 @@ const SIBLING_CONTEXT_DOMAIN: &str = "axon.closed-loop.context/1";
 #[test]
 fn this_crates_signing_domains_are_their_documented_literals() {
     for (name, got, want) in [
-        ("EXECUTION_DOMAIN", EXECUTION_DOMAIN, "axon.fabric-execution/1"),
+        (
+            "EXECUTION_DOMAIN",
+            EXECUTION_DOMAIN,
+            "axon.fabric-execution/1",
+        ),
         (
             "DOCUMENT_SIGNATURE_SCHEMA",
             DOCUMENT_SIGNATURE_SCHEMA,
             "axon-document-signature/1",
         ),
-        ("ATTESTATION_SCHEMA", ATTESTATION_SCHEMA, "acf-receipt-attestation/2"),
+        (
+            "ATTESTATION_SCHEMA",
+            ATTESTATION_SCHEMA,
+            "acf-receipt-attestation/2",
+        ),
         (
             "EVIDENCE_SIGNATURE_SCHEMA",
             EVIDENCE_SIGNATURE_SCHEMA,

@@ -787,7 +787,7 @@ MUTATIONS = [
     ('M183', "M2/A11/A12: the token verifies under Fabric's own key", 'crates/axon-fabric/src/psv.rs', '.any(|(n, t)| n == test && *t == want)', '.any(|(n, _t)| n == test)', 'axon-fabric', '--test psv_dispatch', 'a_previous_attempts_genuine_pass_does_not_replay'),
     ('M184', 'M2: a pass needs exit 0', 'crates/axon-fabric/src/psv.rs', 'if v.exit_code != Some(0) {', 'if false && v.exit_code != Some(0) {', 'axon-fabric', '--test psv_dispatch', 'a_valid_token_with_a_failing_run_is_not_a_pass'),
     ('M185', "M2: the certified parser decides, never the guest's claim", 'crates/axon-fabric/src/psv.rs', 'let verification = match report.verdict(test) {', 'let verification = match (if v.status == GuestStatus::Passed { CheckVerdict::Passed } else { report.verdict(test) }) {', 'axon-fabric', '--test psv_dispatch', 'a_failing_test_is_failed_whatever_the_guest_claims'),
-    ('M186', 'M2/A14: without an observation a guest verdict is guest-unobserved', 'crates/axon-fabric/src/psv.rs', '        None => EvidenceClass::GuestUnobserved,\n    };', '        None => EvidenceClass::Protected,\n    };', 'axon-fabric', '--test psv_dispatch', 'an_operator_suite_passes_through_the_guest_path_as_guest_unobserved'),
+    ('M186', 'M2/A14: without an observation a guest verdict is guest-unobserved (amendment 115: reinstated, the class decision is a function with its own test)', 'crates/axon-fabric/src/psv.rs', '        None => EvidenceClass::GuestUnobserved,\n    }\n}', '        None => EvidenceClass::Protected,\n    }\n}', 'axon-fabric', '--lib', 'psv::class_tests::a_passed_verdict_with_no_observation_is_guest_unobserved_and_names_none'),
     ('M187', 'M2: the protected profile runs only operator suites', 'crates/axon-fabric/src/submit.rs', '&& (target.suite.is_none() || target.filter.is_none())', '&& false', 'axon-fabric', '--test psv_dispatch', 'only_an_operator_suite_runs_on_the_protected_profile'),
     ('M188', 'M2: an inadmissible launch has no verdict', 'crates/axon-fabric/src/submit.rs', 'let launched_ok = matches!(res.outcome, backend::LinuxOutcome::Ok { .. });', 'let launched_ok = true;', 'axon-fabric', '--test psv_dispatch', 'a_valid_verdict_from_an_unbound_launch_counts_for_nothing'),
     ('M189', 'M2/A13: a local run is development evidence', 'crates/axon-fabric/src/submit.rs', '            r.evidence_refs.insert(\n                0,\n                opaque(crate::psv::EvidenceClass::Development.evidence_ref()),\n            );', '', 'axon-fabric', '--test psv_dispatch', 'a_local_check_is_development_evidence'),
@@ -2652,19 +2652,6 @@ EQUIV_RECORD["M597"] = {
 # run were re-attacked on the route where their guard IS alone (M72 through
 # an operator helper, M194/M201/M204/M310 on the direct route, M284 on the
 # development lineage).
-EQUIV_RECORD["M186"] = {
-    "property": "a guest verdict made without a verified observation is never classed protected",
-    "subsumed_by": ["M606", "M620"], "killer": "joint:M186+M606+M620",
-    "all_paths": "derive has one caller (submit's protected-profile arm) and receives no observation "
-                 "exactly when the config has no observer (observe returns a verified observation or "
-                 "Err, and Err launches nothing: M204). Its class reaches the receipt only through "
-                 "psv_receipt, which re-labels guest-unobserved every launch that is not admissible "
-                 "on a route that attests protected: the DIRECT route never attests (M606, "
-                 "attests_protected), and on the PRIVILEGED route an admissible launch needs the "
-                 "helper to launch, which it never does without a verified observation (M620; its "
-                 "refusal is not launched_ok, which M323's clause downgrades). HostVerdict.class "
-                 "itself has no reader. So a verdict with no observation is guest-unobserved on "
-                 "every route whatever derive's None arm says. Executed on the direct route"}
 EQUIV_RECORD["M286"] = {
     "property": "readiness never certifies a tree whose ancestry an info/grafts file rewrites",
     "subsumed_by": ["M581"], "killer": "joint:M286+M581",
@@ -10451,9 +10438,6 @@ MUTATIONS += [
     ('M3283', 'CERTIFICATION SUITE (eq9): a certification whose suite lacks a field is accepted (is_none_or -> is_some_and)', 'crates/axon-fabric/src/readiness.rs',
      'is_none_or(str::is_empty))\n    {\n        return Err(format!(\n            "{component}: suite must name', 'is_some_and(str::is_empty))\n    {\n        return Err(format!(\n            "{component}: suite must name',
      'axon-fabric', '--lib', 'readiness::tests::a_certification_whose_suite_does_not_name_all_five_fields_is_refused'),
-    ('M3284', 'EVIDENCE CLASS (eq9): a passed verdict with no observation is classed protected', 'crates/axon-fabric/src/psv.rs',
-     '        None => EvidenceClass::GuestUnobserved,\n    }\n}', '        None => EvidenceClass::Protected,\n    }\n}',
-     'axon-fabric', '--lib', 'psv::class_tests::a_passed_verdict_with_no_observation_is_guest_unobserved_and_names_none'),
     ('M3285', 'EVIDENCE CLASS (eq9): an observed verdict does not name its observation', 'crates/axon-fabric/src/psv.rs',
      '            evidence.push(format!("preflight-observation-sha256:{}", o.sha256));\n            EvidenceClass::Protected\n        }\n        None =>',
      '            let _ = o;\n            EvidenceClass::Protected\n        }\n        None =>',
@@ -10504,6 +10488,12 @@ MUTATIONS += [
     ('M3298', 'ECONOMICS (eq9): a usage with no episode status is counted non-completed (is_some_and -> is_none_or)', 'crates/axon-loop/src/tel.rs',
      '        if status.is_some_and(|s| s != EpisodeStatus::Completed) {', '        if status.is_none_or(|s| s != EpisodeStatus::Completed) {',
      'axon-loop', '--test plan_evo_tel', 'tel_does_not_count_a_usage_with_no_episode_status_as_non_completed'),
+]
+
+MUTATIONS += [
+    ('M3299', 'CONTRACT SCHEMA (eq9): an object with a key conforms to a schema that declares no property and forbids additions (is_some_and -> is_none_or)', 'crates/axon-loop-contracts/src/schema.rs',
+     '                if !props.is_some_and(|p| p.contains_key(k)) {', '                if !props.is_none_or(|p| p.contains_key(k)) {',
+     'axon-loop-contracts', '--lib', 'schema::tests::an_object_schema_without_properties_that_forbids_additions_admits_no_key'),
 ]
 
 

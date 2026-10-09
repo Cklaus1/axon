@@ -329,6 +329,28 @@ mod tests {
         assert!(validate_against(&s, &json!("x")).is_err());
     }
 
+    /// Amendment 115 (eqgate9): `additionalProperties: false` over an object schema that declares NO
+    /// `properties` leaves every key unknown. `!props.is_some_and(..)` flipped to `is_none_or` allowed any key
+    /// there, and every contract schema in the tree declares properties, so no test noticed.
+    #[test]
+    fn an_object_schema_without_properties_that_forbids_additions_admits_no_key() {
+        let closed = json!({"type": "object", "additionalProperties": false});
+        assert!(
+            validate_against(&closed, &json!({})).is_ok(),
+            "control: the empty object conforms"
+        );
+        let got = validate_against(&closed, &json!({"a": 1}));
+        assert!(
+            matches!(got, Err(Refusal::Strict(_))),
+            "ATTACK: an object with a key conformed to a schema that declares no property and forbids additions: {got:?}"
+        );
+        let open = json!({"type": "object"});
+        assert!(
+            validate_against(&open, &json!({"a": 1})).is_ok(),
+            "control: additions are free unless forbidden"
+        );
+    }
+
     #[test]
     fn structural_rules() {
         let obj = json!({"type":"object","additionalProperties":false,

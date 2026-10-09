@@ -235,7 +235,7 @@ ATTACK_MARKERS = {
     'M184': 'left: (Passed|Failed)\\s*\\n\\s*right: Unknown',
     # C9 round 1b (fabric): only-guard: the verdict moved off Failed
     'M185': r"ATTACK: the guest's claim of a pass steered a failing test's verdict.*\n\s*left: (Unknown|Passed|NotRun)",
-    'M186': 'left: "protected"\\s*\\n\\s*right: "guest-unobserved"',
+    'M186': r'ATTACK: a verdict made without an observation was classed Protected',
     # C9 round 1b (fabric): EQUIVALENT (four-cell with M400); the expect panic is now a structured refusal
     'M187': r'ATTACK: a candidate file was launched as a check on the protected profile',
     'M188': 'left: Passed\\s*\\n\\s*right: Passed',
@@ -2759,7 +2759,6 @@ ATTACK_MARKERS.update({
     'M3281': r'ATTACK: a signed waiver with an expiry AT the decision time waived a BLOCKED assertion',
     'M3282': r'ATTACK: a signed waiver with no expiry waived a BLOCKED assertion',
     'M3283': r'ATTACK: a certification whose suite id is absent was not refused as unnamed',
-    'M3284': r'ATTACK: a verdict made without an observation was classed Protected',
     'M3285': r'ATTACK: an observed verdict did not name its observation',
     'M3286': r'ATTACK: the trial-safety clearance domain is not its documented literal',
     'M3287': r'ATTACK: signing domain collapse: CLEARANCE_DOMAIN == CONTEXT_DOMAIN',
@@ -2778,4 +2777,7 @@ ATTACK_MARKERS.update({
     'M3296': r'ATTACK: a clearance naming a monitor signature that is not stored cleared the trial',
     'M3297': r'ATTACK: an execution attested by a verifier with no pin at all counted as a protected execution',
     'M3298': r'ATTACK: a usage with no episode status was counted as a non-completed record',
+})
+ATTACK_MARKERS.update({
+    'M3299': r'ATTACK: an object with a key conformed to a schema that declares no property and forbids additions',
 })
