@@ -6768,7 +6768,7 @@ row), and the `_text_ids` / `_unit_ids` / `_regular_text` guards beyond those th
 ## Amendment 108: a comparison reads what it compares, every builtin argument is read deep, the method path of the existence oracle, native registries are world state (C9 round 12, PSV1V)
 
 108. **Source: the round-12 PSV-1 and SENTINEL reviewers** (`/var/tmp/c9r12-findings-PSV-1.json`, `/var/tmp/c9r12-findings-SENTINEL.json`, plus the PSV-3
-     REGISTER note on the delta note's text). Mutation ids M3030-M3042 (M3033, M3035, M3038 are runner legs), matrix rows A249-A253 (the integrator renumbers).
+     REGISTER note on the delta note's text). Mutation ids M3030-M3042 (M3033, M3035, M3038 are runner legs), matrix rows A249-A253 (unchanged at the round-13 integration).
      Base `c9r12/integrate11` (`915054b8`). `crates/axon-core/src/{interp/eval.rs, interp/taint.rs, checker.rs}` changed; classified in `scripts/pci_delta.py` as
      narrowing. Amendment 102's class ("a path on which taint is dropped") is the one this closes further.
 
@@ -6859,8 +6859,7 @@ row), and the `_text_ids` / `_unit_ids` / `_regular_text` guards beyond those th
 The round-12 FIELD-ORIGIN part-2 reviewer (`/var/tmp/c9r12-findings-FIELD-ORIGIN-2.json`; probes in `/var/tmp/c9r12-FO2-logs/`) found one
 MAJOR-ADJACENT item and four MINOR ones against amendment 105: fourteen text shapes that run a stub kit with `--apply` past
 `opkit_ns_drift.py`; `OPKIT_RW`/`OPKIT_SCRATCH` trusting the environment; the fd 0-2 allowlist; service-account keys the reader
-silently missed; and header wording. Mutation ids M3080-M3109, matrix rows A252-A256 (the integrator renumbers; A249-A251 belong to
-other branches). Base `915054b8` (integrate11). `crates/axon-core/src` is untouched.
+silently missed; and header wording. Mutation ids M3080-M3109, matrix rows A254-A258 (written A252-A256 on the branch; renumbered at integration, round 13). Base `915054b8` (integrate11). `crates/axon-core/src` is untouched.
 
 1. **The drift gate is NOT deny-by-default, and says so.** Amendment 105 item 3 called it that; the reviewer ran 14 shapes past it
    (an alias made by `K=$(echo $KIT)` with `--ap""ply`, run directly or in a function; `command -p bash`; `alias`; `${P@P}`; a
@@ -6960,7 +6959,7 @@ alone 6 of 6 and M2221 passes when re-run. It is a flaky test of the existing su
 ## Amendment 111: the lock test cannot collide with a host process; the peel, literal-eval, alias and text-key guards are rowed; quoted counts are derived; the capability probes the header called unexecuted are executed (C9 round 12, buildenv9)
 
 111. **Source: the buildenv8 leftovers (amendment 109, "what is not done").** Branch `c9r12/buildenv9`, base `40f720fe`. Mutation ids
-M3180-M3196, matrix rows A257-A262 (the integrator renumbers). `crates/axon-core/src` is untouched; `v022_refusal_coverage.py` changed
+M3180-M3196, matrix rows A259-A264 (written A257-A262 on the branch; renumbered at integration, round 13). `crates/axon-core/src` is untouched; `v022_refusal_coverage.py` changed
 only by dropping one exemption that a new row now covers.
 
 1. **The flaky lock test, reproduced through its exact path and fixed at the test design.** `the_build_uid_lock_is_root_owned_and_begin_holds_it`
@@ -7001,7 +7000,7 @@ only by dropping one exemption that a new row now covers.
    marker is its own shape and a coincidental failure shows beside it. The alias shapes are flagged at the definition because the
    gate cannot see whether expansion is on (a sourced file, `bash -i`).
 3. **Counts are derived and drift-checked (M3190-M3196).** Amendment 105 and the row A236 quoted the self-test as 88 shapes and 22
-   controls when it had grown; row A252 and amendment 109 quoted 145 and 32. The text is fixed: no document quotes a count except this
+   controls when it had grown; row A254 (branch-local A252) and amendment 109 quoted 145 and 32. The text is fixed: no document quotes a count except this
    amendment, and **the self-test carries 149 must-flag shapes and 32 controls at this commit** (`opkit_ns_drift.py --selftest`). `--check-quoted-counts`
    compares every quote of "N must-flag shapes", "N controls" (after one) and "N shapes its `--selftest`" under `governance/`, `scripts/` and
    `crates/` with the count derived from `BYPASSES`/`CONTROLS`; a sum ("48 + 40") is refused as unreadable. `--selftest` plants stale,
@@ -7028,7 +7027,7 @@ only by dropping one exemption that a new row now covers.
    setuid binary, bpf, init_module, reboot; and a hostile CAP_SYS_ADMIN step. The retained capabilities are therefore still not tried as an
    escape beyond the write test. Before/after listings (`/etc/axon`, `/usr/local`, `/var/lib` names, `/etc/systemd/system`, `/opt`,
    `/home`, `/mnt`, `/media`, `/srv`, users, groups, setuid files, enabled units) around every experiment are identical (empty diffs).
-6. **The root check at the top of `ns_run` (A262): a four-cell record, and a correction.** Amendment 109 said an ordinary uid is
+6. **The root check at the top of `ns_run` (A264; branch-local A262): a four-cell record, and a correction.** Amendment 109 said an ordinary uid is
    "refused by `unshare` in any case: the 97 is the same". Executed (a copy of the helper with each check removed, run as uid 4999, canary
    file in a directory that uid can write): base: 97, "not root", canary absent. Root check off: 97, "the namespaces cannot be created", absent
    (refused by the `unshare` pre-check). `unshare` pre-check off: 97, "not root", absent (refused by the root check). Both off: the real
@@ -7039,7 +7038,7 @@ only by dropping one exemption that a new row now covers.
 7. **Checks** (all rc 0): `cargo fmt --all -- --check`; `cargo clippy -p axon-fabric --all-targets -- -D warnings`; `scripts/test_opkit_ns.sh` (inside the
    helper's own namespaces; PASS with the amendment-111 section); `scripts/test_operator_deploy.sh` (the kit test inside `ns_run`, piped, `</dev/null`;
    PASS, 5m41s); `scripts/test_trust_root_preflight.sh` (PASS); `python3 scripts/opkit_ns_drift.py` and `--selftest` and `--check-quoted-counts`;
-   `python3 scripts/v022_refusal_coverage.py` and `--freeze` (rc 0); `psv_matrix_check.py` reports only the rows A249-A251, which belong to other branches (as at the base);
+   `python3 scripts/v022_refusal_coverage.py` and `--freeze` (rc 0); `psv_matrix_check.py` reported only the rows A249-A251 (branch-local numbering), which belonged to other branches (as at the base);
    `cargo test -p axon-core --no-default-features --test refusal_coverage_gate --test harness_integrity --test harness_binaries` (10, 43 and 49 passed).
    Host listings before and after (`/etc/axon`, `/usr/local`, `/var/lib`, `/etc/systemd/system`, `/opt`, `/home`, `/mnt`, `/media`, `/srv`, users, groups, setuid files,
    enabled units) around the helper test, the kit test and the four-cell experiment: empty diffs.
@@ -7146,7 +7145,7 @@ three are closed here; the rest of this amendment is what was changed, what was 
   host): such a site is a counted REMAINDER whose reason names the narrower suite it survived, and the `text` / `platform` / `closed` /
   `recorded` judgements say why the default decides nothing (an error text, a serialization or `fstat` that cannot fail, a digest recorded
   and compared by nobody). Those judgements are reasoning, not tests; they are measurements of a narrower suite, not proofs of absence.
-- **Rows** M3110-M3163, matrix rows A256-A264, mutation ids inside M3110-M3179. `python3 scripts/v022_g01_mutations.py --scope=all
+- **Rows** M3110-M3163, matrix rows A265-A273 (written A256-A264 on the branch; renumbered at integration, round 13), mutation ids inside M3110-M3179. `python3 scripts/v022_g01_mutations.py --scope=all
   --only=M3110,...,M3163` (run on a quiet tree: the runner refuses an interpreter rebuilt during the run, as it did when a cargo of mine shared
   its target).
 - **Evidence** (head `4266398688`, rc-checked): all 54 rows M3110-M3163 KILLED by their own attack on the local host, in three runs on a quiet tree
@@ -7157,6 +7156,6 @@ three are closed here; the rest of this amendment is what was changed, what was 
   (the one test skipped there, `a_callers_scheduling_state_never_reaches_the_root_launch`, hangs on a loaded host and passes in 1 s on the
   idle local one); axon-psv, axon-loop-contracts, axon-loop, axon-cortex whole suites rc 0 (69 binaries ok); axon-core
   `refusal_coverage_gate` 52, `harness_integrity` 43, `harness_binaries` 10 passed (rc 0); clippy `-D warnings` on axon-fabric and axon-core
-  rc 0; `scripts/test_v022_resurvey.py` and `scripts/test_v022_value_survey.py` PASS; `psv_matrix_check.py` lists only the A249-A255
-  placeholders of other workstreams. The committed `governance/status/v022-resurvey.json` is for an earlier gate digest and is REFUSED by
+  rc 0; `scripts/test_v022_resurvey.py` and `scripts/test_v022_value_survey.py` PASS; `psv_matrix_check.py` listed only the A249-A255
+  placeholders of other workstreams (branch-local numbering). The committed `governance/status/v022-resurvey.json` is for an earlier gate digest and is REFUSED by
   `--check` now (the digest changed, as it must): the record is made at the freeze head, last.
