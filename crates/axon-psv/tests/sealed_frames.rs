@@ -1771,17 +1771,18 @@ fn candidate_visible(s: &Seen) -> String {
     out
 }
 
-/// Amendment 106 / 114: a sealed caller's refusal does not say whether the operator
-/// defines a name. Run through the runner with the check-time text included, the
-/// refusal for an operator fn, global, type, enum, trait, struct literal, pattern,
-/// annotation... and for a name nothing defines is the same text, and the same
-/// ACCEPT/REFUSE.
-#[test]
-fn a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one() {
-    let su = "mod sol\nmod opmod\nuse sol.{solve}\ntrait Sc {\n    fn score(self) -> i64\n}\nimpl Sc for i64 {\n    fn score(self: i64) -> i64 { 41 }\n}\ntype OT = { k: i64 }\ntype OE = P | Q\ntype DictTable = { k: i64 }\nlet OG = 5\nlet TABLE = [41, 42]\nfn ofn(x: i64) -> i64 { x }\nfn secret() -> i64 { 41 }\nfn nonadapt(n: i64) -> i64 { n }\n@[test]\nfn accept() {\n  assert_eq(solve(), 41)\n}\n";
-    // (position, body naming the operator's, body naming the same shape of a
-    // missing name, item before `solve` naming the operator's, ... the missing's)
-    let forms: &[(&str, &str, &str, &str, &str)] = &[
+/// The positions of the existence-oracle twin: (position, body naming the
+/// operator's, body naming the same shape of a missing name, item before `solve`
+/// naming the operator's, ... the missing's). A position the sealed walk in
+/// `Resolver::check_sealed` visits has a row here (`every_position_the_sealed_walk_visits_has_a_twin_row`).
+fn existence_forms() -> Vec<(
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+)> {
+    vec![
         ("fn call", "ofn(1)", "zfn(1)", "", ""),
         ("fn value", "let g = ofn\n 41", "let g = zfn\n 41", "", ""),
         ("global", "OG", "ZG", "", ""),
@@ -1792,6 +1793,7 @@ fn a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missi
         ("field of a struct literal", "(OT { k: 1 }).k", "(ZT { k: 1 }).k", "", ""),
         ("let annotation", "let t: OT = mk()\n 41", "let t: ZT = mk()\n 41", "", ""),
         ("own annotation", "own t: OT = mk()\n 41", "own t: ZT = mk()\n 41", "", ""),
+        ("ref annotation", "ref t: OT = mk()\n 41", "ref t: ZT = mk()\n 41", "", ""),
         ("cast", "mk() as OT", "mk() as ZT", "", ""),
         ("option annotation", "let a: Option<OT> = None\n 41", "let a: Option<ZT> = None\n 41", "", ""),
         ("array annotation", "let a: [OT] = []\n 41", "let a: [ZT] = []\n 41", "", ""),
@@ -1844,7 +1846,64 @@ fn a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missi
         ("deferred-prefix type", "41", "41", "fn pt(x: DictTable) -> i64 { 1 }\n", "fn pt(x: DictTableZ9) -> i64 { 1 }\n"),
         ("deferred-prefix struct literal", "let t = DictTable { k: 1 }\n 41", "let t = DictTableZ9 { k: 1 }\n 41", "", ""),
         ("deferred-prefix generic bound", "41", "41", "fn pt<T: DictTable>(x: T) -> i64 { 1 }\n", "fn pt<T: DictTableZ9>(x: T) -> i64 { 1 }\n"),
-    ];
+        // Round 15 (amendment 121): the predicate positions with a NAME that is not a fn call, a
+        // top-level `let`, and the other expression shapes inside a predicate.
+        ("refinement predicate: global", "41", "41", "type CP = i64 where _ > OG\n", "type CP = i64 where _ > ZG\n"),
+        ("struct predicate: global", "41", "41", "type CS3 = { a: i64 } where _.a > OG\n", "type CS3 = { a: i64 } where _.a > ZG\n"),
+        ("predicate: index", "41", "41", "type CP2 = i64 where _ > TABLE[0]\n", "type CP2 = i64 where _ > ZTABLE[0]\n"),
+        ("predicate: field", "41", "41", "type CP6 = i64 where _ > TABLE.k\n", "type CP6 = i64 where _ > ZTABLE.k\n"),
+        ("struct predicate: index", "41", "41", "type CS4 = { a: i64 } where _.a > TABLE[0]\n", "type CS4 = { a: i64 } where _.a > ZTABLE[0]\n"),
+        ("predicate: interpolation", "41", "41", "type CP3 = i64 where len(\"{OG}\") > 0\n", "type CP3 = i64 where len(\"{ZG}\") > 0\n"),
+        ("predicate: match guard", "41", "41", "type CP4 = i64 where match _ { x if OG > 1 => true  _ => true }\n", "type CP4 = i64 where match _ { x if ZG > 1 => true  _ => true }\n"),
+        ("predicate: closure body", "41", "41", "type CP5 = i64 where len([|y: i64| OG]) > 0\n", "type CP5 = i64 where len([|y: i64| ZG]) > 0\n"),
+        ("verify predicate: global", "41", "41", "@[verify(OG > 0)]\nfn cv() -> i64 { 41 }\n", "@[verify(ZG > 0)]\nfn cv() -> i64 { 41 }\n"),
+        ("top-level let: global", "41", "41", "let CV = OG\n", "let CV = ZG\n"),
+        ("top-level let: fn call", "41", "41", "let CV = ofn(1)\n", "let CV = zfn(1)\n"),
+        ("top-level let: struct literal", "41", "41", "let CV = OT { k: 1 }\n", "let CV = ZT { k: 1 }\n"),
+        ("top-level let: enum path", "41", "41", "let CV = OE::P\n", "let CV = ZE::P\n"),
+        ("top-level let: array element", "41", "41", "let CV = [OT { k: 1 }]\n", "let CV = [ZT { k: 1 }]\n"),
+        ("top-level let: lambda body", "41", "41", "let CV = |x: i64| OG\n", "let CV = |x: i64| ZG\n"),
+        ("top-level let: match arm", "41", "41", "let CV = match 1 { 1 => OG  _ => 0 }\n", "let CV = match 1 { 1 => ZG  _ => 0 }\n"),
+    ]
+}
+
+/// Where the item under test sits in the candidate's file (round 15). The
+/// existence oracle held when a `fn` came first and failed when it did not: the
+/// resolver located a predicate's diagnostics at the PREVIOUS statement, and the
+/// parser gave an item that ends the file the dummy span `0..0`, so a diagnostic
+/// about it was filed under the operator's entry file. (name, text before the
+/// item under test, `pub ` or not for `solve`, text after `solve`). `mk` is a
+/// helper the bodies call; it follows when it does not come first.
+fn existence_placements() -> Vec<(&'static str, &'static str, &'static str, &'static str)> {
+    const MK: &str = "fn mk() -> i64 { 1 }\n";
+    vec![
+        ("first in the file (bare fn at byte 0)", "", "", MK),
+        ("after a fn", MK, "pub ", ""),
+        (
+            "after a pub fn",
+            "pub fn other() -> i64 { 2 }\n",
+            "pub ",
+            MK,
+        ),
+        ("after a type", "type Qx1 = { q: i64 }\n", "pub ", MK),
+        ("after a let", "let qx2 = 1\n", "pub ", MK),
+        ("after a comment", "// a comment\n", "pub ", MK),
+        ("after a blank line", "\n", "pub ", MK),
+        ("after a mod", "mod inner\n", "pub ", MK),
+    ]
+}
+
+/// Amendment 106 / 114: a sealed caller's refusal does not say whether the operator
+/// defines a name. Run through the runner with the check-time text included, the
+/// refusal for an operator fn, global, type, enum, trait, struct literal, pattern,
+/// annotation... and for a name nothing defines is the same text, and the same
+/// ACCEPT/REFUSE.
+#[test]
+fn a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one() {
+    let su = "mod sol\nmod opmod\nuse sol.{solve}\ntrait Sc {\n    fn score(self) -> i64\n}\nimpl Sc for i64 {\n    fn score(self: i64) -> i64 { 41 }\n}\ntype OT = { k: i64 }\ntype OE = P | Q\ntype DictTable = { k: i64 }\nlet OG = 5\nlet TABLE = [41, 42]\nfn ofn(x: i64) -> i64 { x }\nfn secret() -> i64 { 41 }\nfn nonadapt(n: i64) -> i64 { n }\n@[test]\nfn accept() {\n  assert_eq(solve(), 41)\n}\n";
+    // (position, body naming the operator's, body naming the same shape of a
+    // missing name, item before `solve` naming the operator's, ... the missing's)
+    let forms = existence_forms();
     let swaps = [
         ("zznosuch", "nonadapt"),
         ("ZTABLE", "TABLE"),
@@ -1856,8 +1915,8 @@ fn a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missi
         ("zmod", "opmod"),
         ("DictTableZ9", "DictTable"),
     ];
-    let run_one = |body: &str, extra: &str| {
-        let cand = format!("fn mk() -> i64 {{ 1 }}\n{extra}pub fn solve() -> i64 {{ {body} }}\n");
+    let run_one = |body: &str, extra: &str, before: &str, vis: &str, after: &str| {
+        let cand = format!("{before}{extra}{vis}fn solve() -> i64 {{ {body} }}\n{after}");
         let s = check(su, &[], &cand, "accept");
         let mut text = candidate_visible(&s);
         for (miss, op) in swaps {
@@ -1865,33 +1924,54 @@ fn a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missi
         }
         (refused_unkeyed(&s), s.status, s.host, text)
     };
-    let mut fails = Vec::new();
-    for (pos, eb, mb, ee, me) in forms {
-        let a = run_one(eb, ee);
-        let b = run_one(mb, me);
-        if (a.0, a.1, a.2) != (b.0, b.1, b.2) {
-            fails.push(format!(
-                "{pos}: ACCEPT/REFUSE differs: operator name {:?}/{:?} vs missing name {:?}/{:?}",
-                a.1, a.2, b.1, b.2
-            ));
-        } else if a.3 != b.3 {
-            fails.push(format!(
-                "{pos}: the text differs:\n  operator name: {:?}\n  missing name : {:?}",
-                a.3, b.3
-            ));
-        } else if a.3.trim().is_empty() {
-            fails.push(format!(
-                "{pos}: both texts are EMPTY, so nothing was compared"
-            ));
-        } else if !a.0 {
-            fails.push(format!(
-                "{pos}: both were ACCEPTED (a candidate may not name these)"
-            ));
-        }
-    }
+    // Every position x every placement. The placements run side by side (one thread
+    // each); a failure names both.
+    let placements = existence_placements();
+    let mut fails: Vec<String> = std::thread::scope(|sc| {
+        let hs: Vec<_> = placements
+            .iter()
+            .map(|(pname, before, vis, after)| {
+                let (forms, run_one) = (&forms, &run_one);
+                sc.spawn(move || {
+                    let mut fails = Vec::new();
+                    for (pos, eb, mb, ee, me) in forms {
+                        let pos = format!("[{pname}] {pos}");
+                        let a = run_one(eb, ee, before, vis, after);
+                        let b = run_one(mb, me, before, vis, after);
+                        if (a.0, a.1, a.2) != (b.0, b.1, b.2) {
+                            fails.push(format!(
+                                "ATTACK: {pos}: ACCEPT/REFUSE differs: operator name {:?}/{:?} vs missing name {:?}/{:?}",
+                                a.1, a.2, b.1, b.2
+                            ));
+                        } else if a.3 != b.3 {
+                            fails.push(format!(
+                                "ATTACK: {pos}: the text differs:\n  operator name: {:?}\n  missing name : {:?}",
+                                a.3, b.3
+                            ));
+                        } else if a.3.trim().is_empty() {
+                            fails.push(format!(
+                                "{pos}: both texts are EMPTY, so nothing was compared"
+                            ));
+                        } else if !a.0 {
+                            fails.push(format!(
+                                "{pos}: both were ACCEPTED (a candidate may not name these)"
+                            ));
+                        } else if a.3.contains("which the operator's code defines") {
+                            fails.push(format!(
+                                "ATTACK: {pos}: the backstop's text reached the candidate: {:?}",
+                                a.3
+                            ));
+                        }
+                    }
+                    fails
+                })
+            })
+            .collect();
+        hs.into_iter().flat_map(|h| h.join().unwrap()).collect()
+    });
     all_refused(std::mem::take(&mut fails));
     // Honest controls: the candidate's OWN names of the same shapes pass, keyed.
-    let own = "type CT = { k: i64 }\ntype CE = A | B | C { n: i64 }\ntype CPos = i64 where _ > 0\ntrait Cm {\n    fn m(self) -> i64\n    fn plus(self, x: CT) -> i64\n}\nimpl Cm for CT {\n    fn m(self: CT) -> i64 { self.k }\n    fn plus(self: CT, x: CT) -> i64 { self.k + x.k }\n}\nlet CG = 5\nfn cfn(x: i64) -> i64 { x }\nfn gm<T: Cm>(x: T) -> i64 { x.m() }\nfn pos(x: CPos) -> i64 { x }\npub fn solve() -> i64 {\n  let t = CT { k: 1 }\n  let e = CE::A\n  let f = |x: CT| x.k\n  let m = match e { CE::A => cfn(CG) + f(t) + gm(t) - t.plus(t)  CE::B => 0  CE::C { n } => n }\n  let spare = 1\n  m + 36 + pos(1) - 1\n}\n";
+    let own = "type CT = { k: i64 }\ntype CE = A | B | C { n: i64 }\ntype CPos = i64 where _ > 0\ntrait Cm {\n    fn m(self) -> i64\n    fn plus(self, x: CT) -> i64\n}\nimpl Cm for CT {\n    fn m(self: CT) -> i64 { self.k }\n    fn plus(self: CT, x: CT) -> i64 { self.k + x.k }\n}\nlet CG = 5\nfn cfn(x: i64) -> i64 { x }\nfn gm<T: Cm>(x: T) -> i64 { x.m() }\nfn pos(x: CPos) -> i64 { x }\nfn lim(n: i64 where n >= 0) -> i64 { n }\npub fn solve() -> i64 {\n  let t = CT { k: 1 }\n  let e = CE::A\n  let f = |x: CT| x.k\n  let m = match e { CE::A => cfn(CG) + f(t) + gm(t) - t.plus(t)  CE::B => 0  CE::C { n } => n }\n  let spare = 1\n  m + 36 + pos(1) - 1 + lim(0)\n}\n";
     let seen = check(su, &[], own, "accept");
     passed(&seen, "own names of every shape");
     // A sealed file's diagnostics come from ONE check (the sealed-only one): the
@@ -1902,6 +1982,166 @@ fn a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missi
         "the candidate's warning is printed {once} times: {}",
         seen.stderr
     );
+    all_refused(fails);
+}
+
+/// Which twin rows cover each construct the sealed walk in `Resolver::check_sealed`
+/// visits (the `Item::` arms that pick an item's expressions and types, and the
+/// `Expr::` arms of the walker). The walk is the place a position is added; a
+/// construct it learns that has no row here fails `every_position_the_sealed_walk_visits_has_a_twin_row`.
+const WALK_ROWS: &[(&str, &[&str])] = &[
+    (
+        "Item::FnDef",
+        &[
+            "fn call",
+            "param type",
+            "return type",
+            "generic bound",
+            "verify predicate: global",
+        ],
+    ),
+    ("Item::ImplBlock", &["impl for"]),
+    (
+        "Item::RefineDef",
+        &[
+            "refinement base",
+            "refinement predicate",
+            "refinement predicate: global",
+        ],
+    ),
+    (
+        "Item::TypeDef",
+        &[
+            "struct field type",
+            "struct refinement predicate",
+            "struct predicate: global",
+        ],
+    ),
+    ("Item::EnumDef", &["enum field type"]),
+    ("Item::TraitDef", &["trait method type"]),
+    (
+        "Item::LetDef",
+        &[
+            "top-level let: global",
+            "top-level let: fn call",
+            "top-level let: struct literal",
+            "top-level let: enum path",
+        ],
+    ),
+    ("Item::ModDecl", &["use of a module"]),
+    ("Item::UseDecl", &["use of a module"]),
+    ("Expr::Ident", &["global", "fn value"]),
+    ("Expr::Assign", &["assign"]),
+    ("Expr::StructLit", &["struct literal"]),
+    ("Expr::Let", &["let annotation"]),
+    ("Expr::Own", &["own annotation"]),
+    ("Expr::RefBind", &["ref annotation"]),
+    ("Expr::Lambda", &["lambda parameter"]),
+];
+
+/// Round 15 (amendment 121): the existence-oracle twin is a table of positions x
+/// placements; a source scan fails if a construct the resolver's sealed walk
+/// visits has no row in it, or a row names a position the table does not have.
+#[test]
+fn every_position_the_sealed_walk_visits_has_a_twin_row() {
+    let src = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../axon-core/src/resolver.rs"
+    ))
+    .unwrap();
+    let a = src.find("fn check_sealed(").expect("check_sealed");
+    let b = src[a..].find("// ── Pass 2").expect("end of check_sealed") + a;
+    let walk = &src[a..b];
+    let mut seen: std::collections::BTreeSet<String> = Default::default();
+    for pre in ["Item::", "Expr::"] {
+        let mut rest = walk;
+        while let Some(i) = rest.find(pre) {
+            let tail = &rest[i + pre.len()..];
+            let n = tail
+                .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .unwrap_or(tail.len());
+            seen.insert(format!("{pre}{}", &tail[..n]));
+            rest = &tail[n..];
+        }
+    }
+    let have: std::collections::BTreeSet<String> =
+        WALK_ROWS.iter().map(|(k, _)| k.to_string()).collect();
+    let missing: Vec<_> = seen.difference(&have).collect();
+    let stale: Vec<_> = have.difference(&seen).collect();
+    assert!(
+        missing.is_empty() && stale.is_empty(),
+        "ATTACK: the sealed walk visits constructs with no twin row {missing:?} (add rows to \
+         `existence_forms` and `WALK_ROWS`), or WALK_ROWS names constructs it no longer visits {stale:?}"
+    );
+    let names: std::collections::BTreeSet<&str> = existence_forms().iter().map(|f| f.0).collect();
+    for (k, rows) in WALK_ROWS {
+        assert!(!rows.is_empty(), "{k} has no rows");
+        for r in *rows {
+            assert!(
+                names.contains(r),
+                "ATTACK: {k} names the row `{r}`, which `existence_forms` lacks"
+            );
+        }
+    }
+    // The placements the oracle is held at: the item first (bare, at byte 0), after
+    // each kind of item, a comment and a blank line.
+    let pl: Vec<&str> = existence_placements().iter().map(|p| p.0).collect();
+    for want in ["first", "fn", "type", "let", "comment", "mod"] {
+        assert!(
+            pl.iter().any(|p| p.contains(want)),
+            "ATTACK: no placement `{want}` in the existence twin: {pl:?}"
+        );
+    }
+}
+
+/// Round 15 (amendment 121): the operator-typed receiver is no longer exempt when
+/// the candidate PICKED the value. The registry pattern the reviewers executed
+/// (`dict_get_or(d, key(), ..)` over a dict of operator structs with a strict and
+/// a lenient impl) follows the candidate's key no longer: the verdict is refused
+/// for both keys. The honest shapes that build an operator struct from the
+/// candidate's data (`Sq { s: val() }.area()`, a factory fn, a registry the operator
+/// filled and reads by its own key) pass keyed.
+#[test]
+fn an_operator_value_the_candidate_picked_is_refused_through_the_runner() {
+    let su = |body: &str| {
+        format!("mod sol\nuse sol.{{key, val, pickb}}\ntype A = {{ v: i64 }}\ntype B = {{ v: i64 }}\ntype Sq = {{ s: i64 }}\ntype Ci = {{ r: i64 }}\ntrait Rub {{\n    fn rub(self) -> bool\n}}\nimpl Rub for A {{\n    fn rub(self: A) -> bool {{ self.v == 9 }}\n}}\nimpl Rub for B {{\n    fn rub(self: B) -> bool {{ true }}\n}}\ntrait Area {{\n    fn area(self) -> i64\n}}\nimpl Area for Sq {{\n    fn area(self: Sq) -> i64 {{ self.s * self.s }}\n}}\nimpl Area for Ci {{\n    fn area(self: Ci) -> i64 {{ self.r * 3 }}\n}}\nfn mka() -> A {{ A {{ v: 1 }} }}\nfn mkb() -> B {{ B {{ v: 1 }} }}\nfn mk_sq(n: i64) -> Sq {{ Sq {{ s: n }} }}\n@[test]\nfn accept() {{\n{body}\n}}\n")
+    };
+    let cand = |k: &str| {
+        format!("pub fn key() -> str {{ \"{k}\" }}\npub fn val() -> i64 {{ 3 }}\npub fn pickb<T>(a: fn() -> T, b: fn() -> T) -> T {{ b() }}\n")
+    };
+    let reg = "  let d = dict_new()\n  dict_set(d, \"a\", A { v: 1 })\n  dict_set(d, \"b\", B { v: 1 })\n";
+    let mut fails = Vec::new();
+    // Attacks: both keys are refused (the verdict does not follow the key).
+    for (what, body) in [
+        (
+            "a dict of operator structs read by the candidate's key",
+            format!("{reg}  let r = dict_get_or(d, key(), A {{ v: 1 }})\n  assert(r.rub())"),
+        ),
+        (
+            "a sealed generic handing one of two operator ctors' values back",
+            "  let r = pickb(mka, mkb)\n  assert(r.rub())".to_string(),
+        ),
+    ] {
+        for k in ["a", "b"] {
+            fails.extend(taint_attack(
+                &format!("{what}, key {k}"),
+                &su(&body),
+                &cand(k),
+            ));
+        }
+    }
+    // Honest controls: the operator's own key; an operator struct built from the candidate's number.
+    for (what, body) in [
+        ("the operator's own key into a table of operator values", format!("{reg}  assert(dict_get_or(d, \"b\", A {{ v: 1 }}).rub())")),
+        ("an operator struct holding the candidate's number", "  assert(Sq { s: val() }.area() == 9)".to_string()),
+        ("a factory fn given the candidate's number", "  assert(mk_sq(val()).area() == 9)".to_string()),
+        ("a registry the operator filled from the candidate's data, read by its own key", "  let reg = dict_new()\n  dict_set(reg, \"sq\", Sq { s: val() })\n  dict_set(reg, \"ci\", Ci { r: val() })\n  assert(dict_get_or(reg, \"sq\", Sq { s: 1 }).area() == 9)".to_string()),
+    ] {
+        let s = check(&su(&body), &[], &cand("b"), "accept");
+        if (s.status, s.host) != (GuestStatus::Passed, Some(true)) {
+            fails.push(format!("CONTROL REFUSED ({what}): {}", s.stdout));
+        }
+    }
     all_refused(fails);
 }
 

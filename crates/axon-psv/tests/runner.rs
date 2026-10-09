@@ -549,8 +549,12 @@ fn a_planted_helper_cannot_steer_the_suite_to_pass() {
     );
 }
 
-/// The candidate runs SEALED (PCI, E0004): a candidate module that reads the
-/// suite's answer is refused, so the cheat never passes.
+/// The candidate runs SEALED (PCI): a candidate module that reads the suite's
+/// answer is refused, so the cheat never passes. The refusal is the sealed-only
+/// check's (E0001, the name is one nothing the candidate can see defines); the
+/// merged check's E0004 is the backstop and is NOT printed beside it, because
+/// printing it only for an operator's name would say whether the operator
+/// defines it (C9 round 15, amendment 121).
 #[test]
 fn a_sealed_candidate_cannot_read_the_suites_answer() {
     let fx = fixture_at("seal.ax", "t_seal", false);
@@ -558,7 +562,14 @@ fn a_sealed_candidate_cannot_read_the_suites_answer() {
 
     assert_ne!(v.status, GuestStatus::Passed, "{v:?}");
     let err = std::fs::read_to_string(fx.cfg.out.join("test-stderr")).unwrap();
-    assert!(err.contains("E0004"), "refused for another reason: {err}");
+    assert!(
+        err.contains("E0001") && err.contains("cannot find name `expected`"),
+        "refused for another reason: {err}"
+    );
+    assert!(
+        !err.contains("E0004") && !err.contains("which the operator's code defines"),
+        "ATTACK: the refusal said the operator defines `expected`: {err}"
+    );
 }
 
 /// If the interpreter dies before writing its own line, the output can hold a

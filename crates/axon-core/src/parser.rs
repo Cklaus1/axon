@@ -374,12 +374,32 @@ impl Parser {
     }
 
     fn current_span(&self) -> Span {
-        self.spans.get(self.pos).copied().unwrap_or(Span::dummy())
+        self.spans
+            .get(self.pos)
+            .copied()
+            .unwrap_or_else(|| self.eof_span())
+    }
+
+    /// The span "at" the end of input: zero-width, at the end of the last token,
+    /// in this file. It used to be `Span::dummy()` (0..0), so an item that ends
+    /// at end of file took `end = 0`, and one that ALSO starts at byte 0 (a bare
+    /// `fn` as the file's only or first-and-last item) was a DUMMY span: every
+    /// diagnostic about it was filed under the operator's entry file at line 0
+    /// (C9 round 15, amendment 121 -- the sealed/operator split in
+    /// `run_check_pipeline_located` reads the file off the span).
+    fn eof_span(&self) -> Span {
+        match self.spans.iter().rev().find(|s| !s.is_dummy()) {
+            Some(last) => Span::with_source(last.end, last.end, self.source),
+            None => Span::dummy(),
+        }
     }
 
     #[allow(dead_code)]
     fn span_at(&self, pos: usize) -> Span {
-        self.spans.get(pos).copied().unwrap_or(Span::dummy())
+        self.spans
+            .get(pos)
+            .copied()
+            .unwrap_or_else(|| self.eof_span())
     }
 
     /// Returns `true` if the token at the current position was preceded by a

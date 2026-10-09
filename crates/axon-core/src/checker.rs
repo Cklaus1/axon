@@ -1260,6 +1260,14 @@ impl CheckCtx {
                 }
                 self.current_generic_params = prev;
             }
+            // A sealed module-level `let`: its initializer is walked as a predicate is
+            // (round 15, amendment 121; loop finding 7). Nothing walked it, so a struct
+            // literal, an enum path or a type path in it that names an OPERATOR type was
+            // refused by the merged check's backstop (E0004) while the same shape naming a
+            // type nothing defines was accepted: an accept/refuse oracle.
+            Item::LetDef { name, value, span } if self.sealed_at(*span) => {
+                self.check_sealed_predicate(value, &format!("#let_{name}"), *span);
+            }
             Item::EnumDef(_)
             | Item::ModDecl(_)
             | Item::UseDecl(_)

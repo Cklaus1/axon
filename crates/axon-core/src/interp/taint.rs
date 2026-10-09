@@ -57,6 +57,14 @@ pub(crate) const VAL: u8 = 1;
 pub(crate) const TYP: u8 = 2;
 /// Everything a sealed frame produces.
 pub(crate) const ALL: u8 = VAL | TYP;
+/// The value is a struct or enum only the OPERATOR defines (or holds one) and sealed
+/// code SELECTED it: out of a container by a key or index, by a branch, by being
+/// handed back from a sealed frame, or by the order a sealed callback gave
+/// (C9 round 15, amendment 121). It is the struct/enum counterpart of the closure
+/// "pick" ([`Interp::t_note`]): a value carries it only while it IS or HOLDS an
+/// operator-typed value, so field data from sealed code (`Sq { s: val() }`) never
+/// raises it. The dispatch rule no longer exempts a receiver that carries it.
+pub(crate) const PICK: u8 = 4;
 /// Capture-cell key prefix of a binding's taint companion. Starts with NUL, so
 /// no source identifier can name or shadow it.
 pub(crate) const CAP_T: &str = "\u{0}t\u{0}";
@@ -1034,7 +1042,14 @@ impl<'p> Interp<'p> {
             }
             _ => {}
         }
-        let mine = tn.acc.get();
+        let mut mine = tn.acc.get();
+        if let Ok(v) = &r {
+            // The mark lives only while the value is or holds an operator-typed
+            // value (field data from sealed code is not a pick of the value).
+            if mine & PICK != 0 && !self.t_holds_op(v) {
+                mine &= !PICK;
+            }
+        }
         tn.last.set(mine);
         if let Ok(v) = &r {
             if mine != 0 {
@@ -1043,6 +1058,126 @@ impl<'p> Interp<'p> {
         }
         tn.acc.set(saved | mine);
         r
+    }
+
+    /// Whether `v` is, or holds (through options, results, tuples, arrays, records,
+    /// enum payloads and dict values, to a small depth), a struct or enum only the
+    /// operator defines.
+    pub(super) fn t_holds_op(&self, v: &Value) -> bool {
+        let mut budget = 256u32;
+        self.t_op_values(v, 4, &mut budget, &mut |_| true)
+    }
+
+    /// Walk `v` for operator-typed values; `f` returns true to stop.
+    fn t_op_values(
+        &self,
+        v: &Value,
+        d: u8,
+        budget: &mut u32,
+        f: &mut dyn FnMut(&Value) -> bool,
+    ) -> bool {
+        if *budget == 0 {
+            return false;
+        }
+        *budget -= 1;
+        match v {
+            Value::Struct { name, fields } => {
+                if self.pins.is_operator_type(name) && f(v) {
+                    return true;
+                }
+                d > 0
+                    && fields
+                        .values()
+                        .any(|x| self.t_op_values(x, d - 1, budget, f))
+            }
+            Value::Enum {
+                enum_name, fields, ..
+            } => {
+                if self.pins.is_operator_type(enum_name) && f(v) {
+                    return true;
+                }
+                d > 0
+                    && fields
+                        .values()
+                        .any(|x| self.t_op_values(x, d - 1, budget, f))
+            }
+            Value::Some(b) | Value::Ok(b) | Value::Err(b) if d > 0 => {
+                self.t_op_values(b, d - 1, budget, f)
+            }
+            Value::Tuple(xs) if d > 0 => xs.iter().any(|x| self.t_op_values(x, d - 1, budget, f)),
+            Value::Array(xs) if d > 0 => xs.iter().any(|x| self.t_op_values(x, d - 1, budget, f)),
+            Value::Dict(m) if d > 0 => m
+                .borrow()
+                .values()
+                .any(|x| self.t_op_values(x, d - 1, budget, f)),
+            _ => false,
+        }
+    }
+
+    /// A builtin returned an operator-typed value that was already in its
+    /// arguments (it read it out of a container, filtered or sorted it out of an
+    /// array), while the arguments carried sealed code's choice (a key, an index, a
+    /// predicate's answers): the value is a pick. A value the operator's own
+    /// callback built inside the builtin (`arr_map(xs, |v| Sq { s: v })`) is not in
+    /// the arguments and is not.
+    pub(super) fn t_builtin_picks(&self, args: &[Value], res: &Value) -> bool {
+        let mut got: Vec<Value> = Vec::new();
+        let mut budget = 256u32;
+        self.t_op_values(res, 4, &mut budget, &mut |x| {
+            got.push(x.clone());
+            false
+        });
+        if got.is_empty() {
+            return false;
+        }
+        let mut hit = false;
+        for a in args {
+            let mut budget = 256u32;
+            hit |= self.t_op_values(a, 4, &mut budget, &mut |x| {
+                got.iter().any(|g| values_equal(g, x))
+            });
+        }
+        hit
+    }
+
+    /// An element was read out of an array at an index of taint `it`: an
+    /// operator-typed value in it was picked when sealed code chose the index.
+    #[inline(always)]
+    pub(super) fn t_pick_index(&self, it: u8, el: &Value) {
+        if it & VAL != 0 && self.t_holds_op(el) {
+            self.t_touch(PICK);
+        }
+    }
+
+    /// Whether the control the code now running is under is sealed code's choice.
+    pub(super) fn t_ctl_val(&self) -> bool {
+        (self.taint.pc.get() | self.taint.sticky.get()) & VAL != 0
+    }
+
+    /// A branch on sealed code's data (`ct`) yielded `r`: an operator-typed value
+    /// it yielded was picked by that data.
+    #[inline(always)]
+    pub(super) fn t_pick_branch(&self, ct: u8, r: &R) {
+        if ct & VAL != 0 {
+            if let Ok(v) = r {
+                if self.t_holds_op(v) {
+                    self.t_touch(PICK);
+                }
+            }
+        }
+    }
+
+    /// The taint a store of `v` keeps: [`Interp::t_stored`], plus the pick when the
+    /// store ran under sealed code's control and `v` is an operator-typed value
+    /// (`if cand() { x = A {..} } else { x = B {..} }`).
+    #[inline(always)]
+    pub(super) fn t_stored_v(&self, value_taint: u8, v: &Value) -> u8 {
+        let t = self.t_stored(value_taint);
+        if self.t_ctl_val() && self.t_holds_op(v) {
+            t | PICK
+        } else {
+            t
+        }
     }
 
     /// Before a builtin runs: the taint of the state it reads goes into the
@@ -1181,6 +1316,30 @@ impl<'p> Interp<'p> {
         }
     }
 
+    /// An operator-typed value a builtin read out of its arguments, on a SELECTOR
+    /// sealed code chose, is a pick (see [`PICK`]). A selector is an argument that
+    /// carries sealed code's choice and holds no operator-typed value itself (a
+    /// key, an index, a predicate or comparator closure): the container the value
+    /// was read from is excluded, because a dict the operator filled with values
+    /// built from sealed code's data (`dict_set(reg, "sq", Sq { s: val() })`) carries
+    /// that data's taint and is read by a key the operator wrote. Sealed code that ran
+    /// inside the builtin (`ran_sealed`) counts as a selector too.
+    pub(super) fn t_builtin_pick(&self, args: &[Value], ats: &[u8], ran_sealed: bool, res: &Value) {
+        if self.frame_sealed.get() {
+            return;
+        }
+        // Sealed code ran inside the builtin (a comparator or predicate callback
+        // that called it): the order or the survivors are its answers.
+        let selector = ran_sealed
+            || args
+                .iter()
+                .zip(ats)
+                .any(|(a, t)| t & VAL != 0 && !self.t_holds_op(a));
+        if selector && self.t_builtin_picks(args, res) {
+            self.t_touch(PICK);
+        }
+    }
+
     /// The NAME rule at run time: operator code gives a name-resolving builtin
     /// only a name sealed code had no hand in. `ats[i]` is the taint of
     /// argument `i`.
@@ -1259,7 +1418,7 @@ impl<'p> Interp<'p> {
         recv_taint: u8,
         tn: &str,
     ) -> Result<(), Flow> {
-        if recv_taint & TYP == 0 {
+        if recv_taint & (TYP | PICK) == 0 {
             return Ok(());
         }
         self.t_check_dispatch_tainted(f, recv, recv_taint, tn)
@@ -1277,7 +1436,7 @@ impl<'p> Interp<'p> {
             || self.frame_sealed.get()
             || self.fn_is_sealed(f)
             || !self.t_rules()
-            || recv_taint & TYP == 0
+            || recv_taint & (TYP | PICK) == 0
             || !self.pins.selects_between_impls(&f.name)
         {
             return Ok(());
@@ -1288,7 +1447,20 @@ impl<'p> Interp<'p> {
             _ => false,
         };
         if operator_value {
-            return Ok(());
+            // A value only the operator defines has a type the operator chose,
+            // unless sealed code PICKED the value (out of a table by a key, by a
+            // branch, by being handed back): then which impl answers is its choice.
+            if recv_taint & PICK == 0 {
+                return Ok(());
+            }
+            return panic(format!(
+                "operator code dispatched `{}` on a value of an operator type that the candidate \
+                 picked (out of a table by a key or index it chose, by a branch on a value it \
+                 chose, or by handing it back) — the candidate would choose which impl answers \
+                 (here `{tn}`); name the value with a literal or build it from data instead of \
+                 selecting it by the candidate's answer",
+                f.name
+            ));
         }
         panic(format!(
             "operator code dispatched `{}` on a value whose type nothing on the operator side \
