@@ -915,18 +915,17 @@ impl<'p> Interp<'p> {
                     argc,
                     tier,
                 } => {
-                    let mut argv = self.take_args(*argc as usize);
-                    match *argc {
-                        0 => {}
-                        1 => argv.push(pop(st)),
-                        n => {
-                            let at = st.len() - n as usize;
-                            argv.extend(st.drain(at..));
-                        }
-                    }
+                    let Some(at) = st.len().checked_sub(*argc as usize) else {
+                        malformed()
+                    };
                     let v = if *resume {
+                        let mut argv = self.take_args(*argc as usize);
+                        argv.extend(st.drain(at..));
                         self.dispatch_resume(argv)
                     } else {
+                        // The arguments stay on the stack: a call that binds
+                        // them to a fn's parameters moves them from there.
+                        let argv = StackTail { st: &mut *st, at };
                         self.dispatch_named(callee.name, callee.s, callee.slot, argv, *tier, env)
                     };
                     st.push(tri!(v));

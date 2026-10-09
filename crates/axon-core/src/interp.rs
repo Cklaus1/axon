@@ -1221,6 +1221,76 @@ impl Drop for CallGuard<'_, '_> {
     }
 }
 
+/// The evaluated arguments of a call, in order, as the call path
+/// ([`Interp::dispatch_named`], [`Interp::call_fn_entry`]) consumes them:
+/// a `Vec` from [`Interp::take_args`] (the tree-walker), or the top of a
+/// bytecode activation's operand stack ([`StackTail`]), which a call that
+/// binds them to a fn's parameters reads in place (cost only, AX-54).
+trait CallArgs {
+    fn count(&self) -> usize;
+    /// The arguments; a binder moves each out, leaving a `Unit`.
+    fn values(&mut self) -> &mut [Value];
+    /// Finished with the arguments: drop what is left of them and release
+    /// the storage.
+    fn done(self, interp: &Interp<'_>);
+    /// The arguments as an owned vector (for a callee that takes one).
+    fn into_vec(self, interp: &Interp<'_>) -> Vec<Value>;
+}
+
+impl CallArgs for Vec<Value> {
+    #[inline(always)]
+    fn count(&self) -> usize {
+        self.len()
+    }
+    #[inline(always)]
+    fn values(&mut self) -> &mut [Value] {
+        self
+    }
+    #[inline(always)]
+    fn done(mut self, interp: &Interp<'_>) {
+        self.clear();
+        interp.recycle_args(self);
+    }
+    #[inline(always)]
+    fn into_vec(self, _: &Interp<'_>) -> Vec<Value> {
+        self
+    }
+}
+
+/// The arguments of a call as the values of `st` from index `at` on (R50:
+/// the operand stack of the calling activation). Dropping it truncates `st`
+/// to `at`, dropping them where dropping their vector did.
+struct StackTail<'a> {
+    st: &'a mut Vec<Value>,
+    at: usize,
+}
+
+impl Drop for StackTail<'_> {
+    #[inline(always)]
+    fn drop(&mut self) {
+        self.st.truncate(self.at);
+    }
+}
+
+impl CallArgs for StackTail<'_> {
+    #[inline(always)]
+    fn count(&self) -> usize {
+        self.st.len() - self.at
+    }
+    #[inline(always)]
+    fn values(&mut self) -> &mut [Value] {
+        &mut self.st[self.at..]
+    }
+    #[inline(always)]
+    fn done(self, _: &Interp<'_>) {}
+    #[inline]
+    fn into_vec(self, interp: &Interp<'_>) -> Vec<Value> {
+        let mut v = interp.take_args(self.count());
+        v.extend(self.st.drain(self.at..));
+        v
+    }
+}
+
 /// The panic of a call to `f` with `got` arguments for a different number of
 /// parameters.
 #[cold]
@@ -3390,7 +3460,7 @@ impl<'p> Interp<'p> {
 
     /// [`Interp::call_fn`] with the callee already resolved (AX-18: a call
     /// by name reaches its `fn_table` entry without hashing).
-    fn call_fn_entry(&self, f: &FnEntry<'p>, args: Vec<Value>) -> R {
+    fn call_fn_entry(&self, f: &FnEntry<'p>, args: impl CallArgs) -> R {
         // A `&mut` param must be moved back to the caller (`call_mut`); a
         // path that cannot do that (a fn reached by name string, a method)
         // would silently drop the callee's writes — refuse instead.
@@ -3455,7 +3525,7 @@ impl<'p> Interp<'p> {
         }
     }
 
-    fn call_fn_in(&self, entry: &FnEntry<'p>, mut args: Vec<Value>, env: &mut Env) -> R {
+    fn call_fn_in(&self, entry: &FnEntry<'p>, mut args: impl CallArgs, env: &mut Env) -> R {
         let f = entry.def;
         // Bound recursion: a graceful panic instead of a process-aborting stack
         // overflow on runaway/infinite recursion. `_guard` restores the depth on
@@ -3480,13 +3550,13 @@ impl<'p> Interp<'p> {
         // common call is the steps below and nothing else; the rest stays out
         // of its frame (cost only, AX-54).
         if !entry.plain || !self.refine_preds.is_empty() {
-            return self.call_fn_in_general(entry, args, env);
+            return self.call_fn_in_general(entry, args.into_vec(self), env);
         }
-        if f.params.len() != args.len() {
-            return arity_mismatch(f, args.len());
+        if f.params.len() != args.count() {
+            return arity_mismatch(f, args.count());
         }
-        self.bind_params(entry, &mut args, env);
-        self.recycle_args(args);
+        self.bind_params(entry, args.values(), env);
+        args.done(self);
         // `goal_met` follows the parameters (its slot in `Resolution`, the
         // next one: see `bind_params`); it is 0 for a fn without `@[goal]`.
         env.vars.push((SYM_GOAL_MET, Value::Int(0)));
@@ -3574,6 +3644,7 @@ impl<'p> Interp<'p> {
             _ => None,
         };
         self.bind_params(entry, &mut args, env);
+        args.clear();
         self.recycle_args(args);
         // Phase 5: refinement-type PRECONDITIONS. A parameter `p: T where P`
         // desugars to a synthetic named refinement; the checker discharges P
@@ -3689,17 +3760,16 @@ impl<'p> Interp<'p> {
     }
 
     /// Bind the arguments of a call to `entry` to its parameters in the
-    /// empty frame `env`; `args` is left empty. The caller has checked that
-    /// `args`, `entry.params` and `entry.param_coerce` have the same length.
+    /// empty frame `env`, moving each out of `args` (leaving a `Unit`). The
+    /// caller has checked that `args`, `entry.params` and
+    /// `entry.param_coerce` have the same length.
     /// Parameter `i` lives in frame slot `i` (AX-53): the frame starts empty
     /// (`call_fn_in`'s callers take it from `take_frame`), so each parameter
     /// is the next binding and is pushed, which is what `Env::define_var`
     /// does for a slot equal to the frame's length (cost only).
     #[inline(always)]
-    fn bind_params(&self, entry: &FnEntry<'p>, args: &mut Vec<Value>, env: &mut Env) {
+    fn bind_params(&self, entry: &FnEntry<'p>, args: &mut [Value], env: &mut Env) {
         debug_assert!(env.vars.is_empty() && env.marks.is_empty());
-        // Each argument is moved out of its slot (leaving a `Unit`), so the
-        // buffer is emptied without a `Drain` (cost only).
         for (i, a) in args.iter_mut().enumerate() {
             let a = std::mem::replace(a, Value::Unit);
             let (unwrap_soft, width) = entry.param_coerce[i];
@@ -3724,7 +3794,6 @@ impl<'p> Interp<'p> {
             };
             env.vars.push((*s, a));
         }
-        args.clear();
     }
 
     /// R5 `@[goal(...)]` sugar for [`Interp::call_fn_in`]: whether the goal is

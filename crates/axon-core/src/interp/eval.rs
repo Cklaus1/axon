@@ -1323,7 +1323,7 @@ impl<'p> Interp<'p> {
         name: &str,
         s: Sym,
         slot: u32,
-        mut argv: Vec<Value>,
+        mut argv: impl CallArgs,
         tier: Option<&str>,
         env: &mut Env,
     ) -> R {
@@ -1331,7 +1331,7 @@ impl<'p> Interp<'p> {
         // 1. A local/captured variable holding a closure.
         if let Some(c @ Value::Closure { .. }) = env.get_var(s, slot) {
             let c = c.clone();
-            return self.call_local_closure(c, argv);
+            return self.call_local_closure(c, argv.into_vec(self));
         }
         // 2. A builtin — skipped for a name already proven not to be one
         //    (see `callees`), which also caches step 3's lookup.
@@ -1339,9 +1339,8 @@ impl<'p> Interp<'p> {
         let resolved = match known {
             Some(r) if r != CALLEE_UNKNOWN => r,
             _ => {
-                if let Some(v) = self.call_builtin(name, &argv)? {
-                    argv.clear();
-                    self.recycle_args(argv);
+                if let Some(v) = self.call_builtin(name, argv.values())? {
+                    argv.done(self);
                     return Ok(v);
                 }
                 let r = match self.fn_of_sym.get(&s) {
@@ -1364,7 +1363,7 @@ impl<'p> Interp<'p> {
         }
         // 4. A module-level closure constant.
         if let Some(c @ Value::Closure { .. }) = self.globals.get(&s) {
-            return self.call_closure(c.clone(), argv);
+            return self.call_closure(c.clone(), argv.into_vec(self));
         }
         panic(format!("call to unknown function `{name}`"))
     }
