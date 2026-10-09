@@ -180,7 +180,7 @@ def main():
     bad += attack("... and above the NOT RE-MEASURED cap", lambda d: None, "NOT RE-MEASURED; the cap is", allnot)
 
     def drop_some(d):
-        for r in d["entries"][:15]:
+        for r in d["entries"][:int(rs.NOT_REMEASURED_MAX * len(d["entries"])) + 1]:
             r["result"] = "NOT RE-MEASURED (no mutation rule for this value)"
         recount(d)
     bad += attack("too many NOT RE-MEASURED", drop_some, "the cap is")
