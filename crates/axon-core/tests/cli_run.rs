@@ -35097,3 +35097,193 @@ fn native_interpolation_refuses_a_type_it_cannot_render_with_e0910() {
         "must not blame type erasure or crash in LLVM:\n{log}"
     );
 }
+
+// ── R50: bytecode engine (`AXON_ENGINE`) ────────────────────────────────────
+
+/// R50: `axon run` on `src` under `engine` (`AXON_ENGINE`), with the VM trace
+/// on or off. Neither variable is inherited from the test's environment, so a
+/// suite run under an exported `AXON_ENGINE` exercises what each test names.
+/// The source path depends only on `tag`, so diagnostics naming the file are
+/// the same under both engines (a test's runs are sequential).
+fn vm_run(tag: &str, src: &str, engine: &str, trace: bool) -> std::process::Output {
+    let f = tmp_ax(&format!("vm_{tag}"), src);
+    let mut c = axon();
+    c.arg("run").arg(&f).env("AXON_ENGINE", engine);
+    if trace {
+        c.env("AXON_VM_TRACE", "1");
+    } else {
+        c.env_remove("AXON_VM_TRACE");
+    }
+    let out = c.output().expect("spawn axon run");
+    let _ = std::fs::remove_file(&f);
+    out
+}
+
+/// R50 §4: both engines give identical stdout, stderr and exit code on `src`;
+/// returns that `(exit, stdout, stderr)`.
+fn vm_same_both_engines(tag: &str, src: &str) -> (Option<i32>, String, String) {
+    let tree = vm_run(tag, src, "tree", false);
+    let vm = vm_run(tag, src, "vm", false);
+    let t = (
+        tree.status.code(),
+        String::from_utf8_lossy(&tree.stdout).into_owned(),
+        String::from_utf8_lossy(&tree.stderr).into_owned(),
+    );
+    let v = (
+        vm.status.code(),
+        String::from_utf8_lossy(&vm.stdout).into_owned(),
+        String::from_utf8_lossy(&vm.stderr).into_owned(),
+    );
+    assert_eq!(t, v, "[{tag}] AXON_ENGINE=tree vs AXON_ENGINE=vm");
+    t
+}
+
+/// compilebench AX-57: a `?` failing in a match guard returns from `f` while
+/// the arm's scope is still pushed. Before the R50 S0 fix that left one scope
+/// mark too many, so `call_fn_mut`'s read-back found the body's `let a = 99`
+/// instead of the `&mut` param and the caller got `99` back as its array.
+const VM_SCOPE_LEAK_SRC: &str = r#"fn fail() -> Result<i64, str> { Err("no") }
+fn f(a: &mut [i64]) -> Result<i64, str> {
+    let a = 99
+    match Some(5) {
+        Some(b) if fail()? > b => Ok(a),
+        _ => Ok(2),
+    }
+}
+fn main() -> i64 {
+    let a = [7, 8, 9]
+    let _r = f(&mut a)
+    println(to_str(len(a)))
+    0
+}
+"#;
+
+#[test]
+fn vm_engine_scope_leak() {
+    let (code, stdout, stderr) = vm_same_both_engines("scope_leak", VM_SCOPE_LEAK_SRC);
+    assert_eq!(code, Some(0), "stderr: {stderr}");
+    assert_eq!(stdout, "3\n", "stderr: {stderr}");
+    let traced = vm_run("scope_leak", VM_SCOPE_LEAK_SRC, "vm", true);
+    let err = String::from_utf8_lossy(&traced.stderr);
+    assert!(err.contains("vm: f 1 ops, 1 tree nodes\n"), "{err}");
+}
+
+#[test]
+fn vm_engine_bogus_value_exits_2_before_the_program_runs() {
+    let src = "fn main() -> i64 {\n    println(\"ran\")\n    0\n}\n";
+    let out = vm_run("bogus", src, "bogus", false);
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "",
+        "the program must not run"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        "AXON_ENGINE must be \"vm\" or \"tree\" (got \"bogus\")\n"
+    );
+    // `axon test` builds its interpreter the same way.
+    let f = tmp_ax("vm_bogus_test", "@[test]\nfn t() {\n    assert(true)\n}\n");
+    let t = axon()
+        .arg("test")
+        .arg(&f)
+        .env("AXON_ENGINE", "bogus")
+        .output()
+        .expect("spawn axon test");
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(t.status.code(), Some(2), "{t:?}");
+    assert!(
+        String::from_utf8_lossy(&t.stderr)
+            .contains("AXON_ENGINE must be \"vm\" or \"tree\" (got \"bogus\")"),
+        "{t:?}"
+    );
+}
+
+const VM_FIB_SRC: &str = r#"fn fib(n: i64) -> i64 {
+    if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+}
+type P = { x: i64 }
+trait Get {
+    fn get(self) -> i64
+}
+impl Get for P {
+    fn get(self: P) -> i64 { self.x }
+}
+fn main() -> i64 {
+    let p = P { x: fib(10) }
+    println(to_str(p.get()))
+    0
+}
+"#;
+
+#[test]
+fn vm_engine_trace_names_each_compiled_body_once_under_vm_only() {
+    let vm = vm_run("trace", VM_FIB_SRC, "vm", true);
+    assert_eq!(vm.status.code(), Some(0), "{vm:?}");
+    assert_eq!(String::from_utf8_lossy(&vm.stdout), "55\n");
+    let err = String::from_utf8_lossy(&vm.stderr);
+    // S0: every body is one `Tree` op over its root block; each body's lines
+    // come once, on its first run, though `fib` runs 177 times.
+    assert_eq!(
+        err,
+        "vm: main 1 ops, 1 tree nodes\n\
+         vm: tree-op main Block\n\
+         vm: fib 1 ops, 1 tree nodes\n\
+         vm: tree-op fib Block\n\
+         vm: P::get 1 ops, 1 tree nodes\n\
+         vm: tree-op P::get Block\n"
+    );
+    let tree = vm_run("trace", VM_FIB_SRC, "tree", true);
+    assert_eq!(tree.status.code(), Some(0), "{tree:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&tree.stderr),
+        "",
+        "no trace under tree"
+    );
+}
+
+#[test]
+fn vm_engine_main_under_binding_capture_runs_on_the_tree() {
+    let dump = std::env::temp_dir().join(format!("axon_vm_dump_{}.json", std::process::id()));
+    let f = tmp_ax("vm_capture", VM_FIB_SRC);
+    let out = axon()
+        .arg("run")
+        .arg(&f)
+        .env("AXON_ENGINE", "vm")
+        .env("AXON_VM_TRACE", "1")
+        .env("AXON_DUMP_BINDINGS", &dump)
+        .output()
+        .expect("spawn axon run");
+    let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_file(&dump);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.starts_with("vm: tree main: binding capture\n"), "{err}");
+    assert!(err.contains("vm: fib 1 ops, 1 tree nodes\n"), "{err}");
+}
+
+#[test]
+fn vm_engine_both_engines_agree_on_output_panics_and_exit_codes() {
+    let progs: [(&str, &str); 3] = [
+        ("ok", VM_FIB_SRC),
+        (
+            "panic",
+            "fn f(xs: [i64], i: i64) -> i64 { xs[i] }\nfn main() -> i64 {\n    eprintln(\"before\")\n    println(to_str(f([1, 2], 5)))\n    0\n}\n",
+        ),
+        (
+            "exit",
+            "fn g(n: i64) -> i64 {\n    let m = n * 2\n    if m > 4 { return m }\n    0\n}\nfn main() -> i64 {\n    println(to_str(g(21)))\n    g(21)\n}\n",
+        ),
+    ];
+    for (tag, src) in progs {
+        let (code, stdout, stderr) = vm_same_both_engines(&format!("agree_{tag}"), src);
+        match tag {
+            "ok" => assert_eq!((code, stdout.as_str()), (Some(0), "55\n")),
+            "panic" => {
+                assert_eq!(code, Some(101), "{stderr}");
+                assert!(stderr.contains("out of bounds"), "{stderr}");
+            }
+            _ => assert_eq!((code, stdout.as_str()), (Some(42), "42\n"), "{stderr}"),
+        }
+    }
+}

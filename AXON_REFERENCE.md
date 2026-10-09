@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 25 CLI verbs, 344 builtins, 24 attributes, 145 diagnostic codes (132 live, 13 reserved), 55 environment variables.
+The complete surface of this build — 25 CLI verbs, 344 builtins, 24 attributes, 145 diagnostic codes (132 live, 13 reserved), 57 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -68,7 +68,7 @@ Run `axon <verb> --help` for flags and long-form help.
 - `@[bpf]`
 - `@[enclave]`
 
-## Environment variables (55)
+## Environment variables (57)
 
 Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so a variable that quietly does nothing cannot appear here, and one that changes behaviour cannot be left out.
 
@@ -76,6 +76,8 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 |---|---|
 | `AXON_SEED` | seed the RNG (u64) so `random_*` runs reproduce |
 | `AXON_MAX_DEPTH` | recursion-depth ceiling (default 6000, clamped to 1,000,000); the interpreter thread stack scales with it |
+| `AXON_ENGINE` | engine for fn bodies under `axon run`/`axon-run`/`axon test`/`axon goal`: `tree` (default, the reference tree-walker) or `vm` (R50 bytecode engine, compiled on first run, same observable behaviour); any other value exits 2 before the program runs |
+| `AXON_VM_TRACE` | `1`: under AXON_ENGINE=vm, print one `vm: ...` stderr line per compiled body (op and tree-fallback counts) and per fallback; never changes stdout or the exit code |
 | `AXON_CLOCK` | deterministic virtual clock `<start_ms>[:<tick_ms>]`; `sleep_ms` advances it without really sleeping |
 | `AXON_PATH` | colon-separated module search path for `mod`/`use` imports |
 | `AXON_STRICT` | promote advisory hazard diagnostics to errors (today E0302, an unused Result); `axon deploy` sets it itself |

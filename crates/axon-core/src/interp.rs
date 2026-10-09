@@ -841,6 +841,12 @@ pub struct Interp<'p> {
     /// or `AXON_MAX_DEPTH` (clamped) when set. Resolved once at build time so
     /// every `call_fn` sees a consistent value.
     max_depth: usize,
+    /// R50: which engine runs fn bodies (`AXON_ENGINE`, or `set_engine` on a
+    /// target without an environment). Read once, at build.
+    engine: Engine,
+    /// R50: `AXON_VM_TRACE=1`, read once at build. Only consulted under
+    /// [`Engine::Vm`].
+    vm_trace: bool,
     /// R9 corrigibility latch. `corrigible_halt()` sets this to `true`; once
     /// set it never clears (there is intentionally no resume builtin). While
     /// set, every call to an `@[corrigible]` fn is refused — its body never
@@ -3042,7 +3048,11 @@ impl<'p> Interp<'p> {
                     fn_of_sym.insert(intern(&f.name), idx);
                 }
                 fn_of_def.insert(f as *const FnDef as usize, idx);
-                fn_table.push(FnEntry::new(f, &fns));
+                // R50: a table entry is the only kind whose body is compiled.
+                fn_table.push(FnEntry {
+                    compiled: Some(std::cell::OnceCell::new()),
+                    ..FnEntry::new(f, &fns)
+                });
             }
         }
 
@@ -3065,6 +3075,8 @@ impl<'p> Interp<'p> {
             provenance_inputs_f64: RefCell::new(HashMap::new()),
             call_depth: Cell::new(0),
             max_depth: resolve_max_depth(),
+            engine: vm::engine_at_build(),
+            vm_trace: vm::trace_at_build(),
             corrigible_halted: Cell::new(false),
             enclosing_agent: RefCell::new(None),
             current_goal: RefCell::new(None),
@@ -3319,7 +3331,7 @@ impl<'p> Interp<'p> {
     /// [`Interp::call_fn`] with the callee already resolved (AX-18: a call
     /// by name reaches its `fn_table` entry without hashing).
     fn call_fn_entry(&self, f: &FnEntry<'_>, args: Vec<Value>) -> R {
-        // A `&mut` param must be moved back to the caller (`call_fn_mut`); a
+        // A `&mut` param must be moved back to the caller (`call_mut`); a
         // path that cannot do that (a fn reached by name string, a method)
         // would silently drop the callee's writes — refuse instead.
         if f.has_ref_mut {
@@ -3365,39 +3377,6 @@ impl<'p> Interp<'p> {
         if args.capacity() != 0 && pool.len() < 64 {
             pool.push(args);
         }
-    }
-
-    /// AX-08: call `f` with its `&mut` arguments already MOVED out of the
-    /// caller's bindings (no copy). Returns the call's result and, per param
-    /// index, the param's final value (`Unit` for non-`&mut` params) for the
-    /// caller to move back — on every outcome, including `return` / `?` /
-    /// error unwinds, so the caller's binding is never left hollow.
-    pub(super) fn call_fn_mut(&self, f: &FnDef, args: Vec<Value>) -> (R, Vec<Value>) {
-        let owned;
-        let entry = match self.fn_of_def.get(&(f as *const FnDef as usize)) {
-            Some(&i) => &self.fn_table[i as usize],
-            None => {
-                owned = FnEntry::new(f, &self.fns);
-                &owned
-            }
-        };
-        let mut env = Env::new();
-        let params = &entry.params;
-        let result = self.call_fn_in(entry, args, &mut env);
-        // The body's block scopes are popped by now (on `return`/`?` too), so
-        // each name resolves to the parameter binding itself.
-        let outs = f
-            .params
-            .iter()
-            .zip(params.iter())
-            .map(|(p, s)| match (&p.ty, env.get_mut(*s)) {
-                (crate::ast::AxonType::RefMut(_), Some(slot)) => {
-                    std::mem::replace(slot, Value::Unit)
-                }
-                _ => Value::Unit,
-            })
-            .collect();
-        (result, outs)
     }
 
     fn call_fn_in(&self, entry: &FnEntry<'_>, mut args: Vec<Value>, env: &mut Env) -> R {
@@ -3585,6 +3564,8 @@ impl<'p> Interp<'p> {
                 || std::env::var("AXON_DUMP_BINDINGS").is_ok()
                 || std::env::var("AXON_DUMP_SHAPES").is_ok());
         let body_result = if capture {
+            // R50: `main` under binding capture always runs on the tree.
+            self.vm_trace_tree(entry, "binding capture");
             if let Expr::Block(stmts) = &f.body {
                 let mut last = Ok(Value::Unit);
                 for stmt in &stmts[..] {
@@ -3601,7 +3582,7 @@ impl<'p> Interp<'p> {
                 self.eval(&f.body, env)
             }
         } else {
-            self.eval(&f.body, env)
+            self.run_body(entry, env)
         };
         if capture && !matches!(body_result, Err(ref e) if !matches!(e, Flow::Return(_))) {
             // `goal_met` is injected by call_fn, not a user binding.
@@ -4296,6 +4277,12 @@ use sym::*;
 // blocks, so this file's call sites (and eval's calls to call_builtin/call_fn)
 // are unchanged.
 mod eval;
+// R50: the bytecode engine for fn bodies (`AXON_ENGINE=vm`): engine selection,
+// the compiler and the op loop, in interp/vm/. Compiled code runs against the
+// same `Env` the tree-walker uses, and every node it does not lower is a `Tree`
+// op that calls `eval`.
+mod vm;
+pub use vm::{set_engine, Engine};
 // The builtin dispatch (`call_builtin`, the ~2400-line `match name`) extracted to
 // interp/builtins.rs (R0 slice 6). Moved as ONE method into a second `impl Interp`
 // block; its function-local `want`/`ok!` travel with it. eval.rs's call to
