@@ -7229,3 +7229,97 @@ three are closed here; the rest of this amendment is what was changed, what was 
        plant, M2261 and two markers, and every row those can affect was re-run at `927dad0b` (17 rows) or locally (228). (c) axon-fabric's whole suite and the
        workspace remainder were not re-run after `2a29d2e8`: nothing under their sources changed. (d) M2261 is a joint row; the single-layer
        property is not claimed killed and has no four-cell record. (e) The `IDENTICAL` host listing is of this host only.
+
+## Amendment 115: an absent-value decision is a site in whatever combinator spells it; the waiver expiry, the observed-class arm, the tracked-path kind and the clearance reads are tested; each crate pins its own signing domains; the re-survey logs must look like logs (C9 round 13, eqgate9)
+
+The round-13 equivalence reviewer REGISTERED the claim as written but found a family the default form of amendment 110 did not name: a decision made by the
+ABSENT arm of a combinator that carries no literal. This amendment closes it as a class (a gate form plus a survey of every site it newly sees), fixes the five
+findings that were defects, and says what the new form still does not see.
+
+- **Finding 1 (MAJOR-ADJACENT): `is_none_or` and its family hide defaults.** `w.expires.is_none_or(|t| now >= t)` in `accept_b263` flipped to `is_some_and` accepted a
+  signed waiver with no parseable expiry forever, and the whole axon-fabric suite (1058 tests) stayed green: the only expiry test (M1030) turns the whole guard off, so
+  the `None` arm was observed by no test. **Tests:** `backend::tests::a_waiver_without_a_parseable_future_expiry_waives_nothing` drives `parse_waivers` and
+  `accept_b263` with a waiver carrying NO `expires`, an empty one, `"garbage"`, a number, `null`, a past one, one AT the decision second (expired: `now >= t`) and one a
+  second later (the control, accepted), and requires the exact refusal `the waiver for a2 has expired (or states no parseable expiry)` in each (rows M3280 `is_none_or` ->
+  `is_some_and`, M3281 `>=` -> `>`, M3282 the parse made to read an absent or garbage expiry as never). The same flip at `readiness.rs` (the certification's `suite`
+  must name id, version, entry, test and digest) is NOT dominated by a later join (the join only runs on the launch route): `readiness::tests::a_certification_whose_suite_does_not_name_all_five_fields_is_refused`
+  asserts the exact message for each field absent, empty, a number and `null`, and for a suite that is `null` or an array (M3283), and
+  `a_digest_field_that_is_not_a_string_of_the_right_length_is_not_hex` pins `is_hex` (M3294: a digest that was a number passed the shape check). **Gate form:**
+  `~comb` sites (`_COMB_CALL` in `scripts/v022_refusal_coverage.py`): the call `.is_none_or(..)`, `.is_some_and(..)`, `.is_ok_and(..)`, `.is_err_and(..)`, `.map_or_else(..)`
+  (the span is the whole call), `.or_else(|| Some(<literal>))` (the literal) and `matches!(x, .. None ..)` / `Err(_)` / `Ok(_)` (the whole macro), in the files of the seven
+  protected crates, numbered under their own suffix so no earlier exemption is renumbered. 38 sites; 29 were uncovered when the form was added. The value survey flips
+  the combinator to the opposite answer for its absent arm (`COMB_FLIPS`, `mutate_absent`), `is_ok_and` to `map_or(true, ..)`, `is_err_and` to `map_or_else(.., |_| true)`, and drops
+  `| None` from a `matches!`.
+- **Finding 2 (MAJOR-ADJACENT): match-arm defaults.** `None => EvidenceClass::GuestUnobserved` in `psv::derive` flipped to `Protected` survived because `psv_receipt`'s downgrade of a route that does
+  not attest holds the class on the direct route, and M186 was retired against it (four-cell record, round 3: `HostVerdict.class` has no reader). The decision is now ONE function,
+  `observed_class(observation, &mut evidence)`, with a unit test of both arms and of the observation reference it names (`psv::class_tests::a_passed_verdict_with_no_observation_is_guest_unobserved_and_names_none`).
+  M186 is therefore REINSTATED as an active row on the new text (killed by that test); its `EQUIV_RECORD` and its paired-disable entry are removed, because a retirement of a row
+  that a direct test kills is a false statement (M3285 removes the observation reference from the observed arm). `derive` itself is still not tested end to end: building a `Launch` needs a
+  real profile manifest, a materialised candidate and suite and a completion secret, which only the dispatch tests have; the extraction is the honest alternative to claiming a derive-level test.
+  **Gate form:** `~arm` sites: a `None | Err(_) | Err(..) => <literal | variant>,` arm and a `let .. else { [return] <literal | variant> }`; the span is the value. 8 sites, 7 uncovered at first.
+- **Finding 3 (MINOR): `submit.rs` `guest_verdict.unwrap_or_default()`.** Judged DOMINATED with the reason as a checkable fact (the exemption states it): `derive` returns
+  `guest_verdict: Some(..)` only on its last return, where the class is Protected exactly when an observation exists; every other `HostVerdict` is built by `unknown(..)` with `None` and class
+  guest-unobserved; `psv_receipt` can only lower a class; and should the bytes ever be absent the bundle carries none and intake's guest-verdict join (M299) refuses it.
+- **Finding 4 (MINOR): the re-survey record.** `_log_problems` now also requires: the log lies in the directory named by the RECORD'S OWN commit
+  (`governance/status/v022-resurvey-logs/<commit12>/NNN-<family>.log`), reached through no symlink (realpath of the directory and of the file are compared with the derived path);
+  every KILLED entry has a log of its own (distinct path AND distinct sha256); a plausible size (300 bytes for a cargo log); failing-test names that are non-empty strings; for a cargo log
+  the runner's own `---- NAME stdout ----` header for EVERY named failing test, a `test result: FAILED. N passed; M failed;` line with M >= 1 and a `Running <binary>` line; each recorded command
+  directly above its recorded `exit code: N`; at least one command that exited non-zero, and no command that exited 0 listing failing tests; for a python guard the survey's own `"verdict": "KILLED"`.
+  `scripts/test_v022_resurvey.py` plants each forged shape (three-line self-written logs, `exit code: 0` on a KILLED entry, logs under another commit's directory, one shared log, a symlinked
+  log directory, a symlinked log file, `failing=['']`, a non-string name, a log that names the test only in prose, a log without a `test result: FAILED` line, an exit line that does not follow
+  its command) and requires each refused for its own reason. **Residual, unchanged and stated:** a whole log can still be FABRICATED by the person running the freeze; this is self-consistency of a
+  record against shapes a runner produces, not authentication, and a record nobody re-runs proves only that it is consistent.
+- **Finding 5 (MINOR): domain-collapse kills depended on an axon-fabric test.** Run against axon-loop alone, or axon-loop-contracts alone, every collapse survived. Each crate now carries its own pins
+  (`crates/axon-loop/tests/signing_domain_pins.rs`, `crates/axon-loop-contracts/tests/signing_domain_pins.rs`): its domain constants equal their documented literals and are pairwise distinct from every
+  domain they share a signing protocol with (axon-loop-contracts, which cannot import axon-loop's, writes the sibling literals out and axon-loop pins the same literals from its side). Rows M3286-M3291,
+  each killed by the owning crate's suite alone.
+- **Finding 6 (not measured, disclosed): defaults one site at a time against the FULL suite.** Done on gpumaster (the full axon-fabric suite takes about five minutes there once the target is warm,
+  not 24: the 24 minutes were a loaded host). 121 survey records: every `~dflt` REMAINDER entry and every new `~comb` / `~arm` site, each edited alone (`scripts/v022_value_survey.py --remainder`,
+  `--tier1 'cargo test -p axon-fabric --lib'` then every named suite): axon-fabric 85 sites (the full suite, `a_callers_scheduling_state_never_reaches_the_root_launch` skipped), axon-loop 24 (the
+  axon-loop suite, then the full axon-fabric suite), axon-loop-contracts 5, axon-psv 5, axon-guest-init 2 (each crate's suite, then the full axon-fabric suite). `privileged_launcher.rs`'s two default
+  sites were also run locally on an idle window against `--test privileged_launcher` and `--test psv_dispatch` (survived both; judged below). Result: 27 KILLED (recorded OBSERVED), 93 SURVIVED, 1 without a mutation rule.
+  Every survivor was READ. **Fail-open and on the protected route, with a test and a row each (M3292-M3299):** a tracked file replaced by a symlink to a copy of itself, made executable or gone read as
+  unchanged (`worktree_differs`: M3292, M3295); an empty argv was a suite for the signing decision (M3293); a clearance naming a stored monitor signature that is not in the store was verified
+  (M3296); a verifier with no pin at all was qualified to attest an execution (M3297); a usage with no episode status counted as non-completed (M3298); an object schema forbidding additions and
+  declaring no property admitted every key (M3299). **DOMINATED with a checkable fact:** the waiver reason's `get(name)` (the key was checked three lines above), `psv::prepare`'s `unknown` verifier digest
+  (the digest loop below refuses a non-sha256), the `guest_verdict` default, the class string default, `running_caller`'s empty uid list (`uids.len() != 4`), `writable_by_me`'s NUL path,
+  `clearance_verifies`' two `return false` arms (its sole caller checks the same rooted key first; serialising a report cannot fail), `judge`'s and `propose`'s absent issuer (episode validation refuses a
+  passed verification without one), `bind_episode`'s, `check_owned_chain`'s and `protected_evidence::walk`'s. **The rest stay counted REMAINDER with the suite they survived and the category:**
+  text (an error or reason string), closed (the default is the empty trust set or an empty value compared with a non-empty one), config (a path with no parent), clock, platform (an infallible
+  serialisation), standin (the test guest), offroute (`axon-provenance`), store (a prune), cli, accounting, recorded.
+
+**Counts, before -> after** (`python3 scripts/v022_refusal_coverage.py`, rc 0, and `--freeze` rc 0): amendment-110 defaults 113 sites: 9 row, 12 OBSERVED, 5 DOMINATED, 1 NOTROUTE, 86 REMAINDER -> 9 row,
+22 OBSERVED, 11 DOMINATED, 1 NOTROUTE, 70 REMAINDER. NEW amendment-115 absent-arm combinators and `matches!` 0 -> 38: 16 row, 14 OBSERVED, 5 DOMINATED, 3 REMAINDER. NEW match-arm and let-else
+defaults 0 -> 8: 3 row, 1 OBSERVED, 3 DOMINATED, 1 REMAINDER. OBSERVED-NOT-ROWED 227 -> 252. REMAINDER 220 -> 208 (the 86 -> 70 `val_default`, and 4 `val_comb`/`val_arm` that did not exist). The 113 defaults
+and the 113 computed defaults of the previous count are two different sets that happen to be equal in size (`DEFAULTS NOT FOLLOWED` counts defaults computed at the site, which are not sites); the gate
+prints both and their sets differ.
+
+**Rows** M3280-M3299, with M186 reinstated (M3284 was folded into it): `python3 scripts/v022_g01_mutations.py --scope=all --only=...`, matrix rows A290-A294 (renumbered at integration), mutation ids inside M3280-M3339.
+Planted-form test: `crates/axon-core/tests/refusal_coverage_gate.rs::an_absent_arm_decision_is_a_site_in_a_protected_crate` (every form is a site; the look-alikes, a computed default, an outside-crate file
+and a `#[cfg(test)]` item are not; the sites carry their own suffixes).
+
+**What the gate still cannot see** (also printed as `STILL BLIND`): an absent-value decision spelled other than as one of the combinators above, the `matches!` / arm / let-else forms: an `if let None/Err(_) = x { .. }`
+block, a match arm whose body is a block or a computed value, `filter(..)` turning a `Some` into `None`, `ok_or(..)` / `ok_or_else(..)` supplying a default, `.get(..).copied().unwrap_or(<computed>)`, an arm bound to a
+name (`Err(e) => false`), a `_ =>` arm, the same decision made through a helper the sites call; a site is a SPELLING and round 13 found two unmatched ones, so there may be a third. A row on a site covers THAT edit, not every
+sub-predicate of the guard it sits in. The REMAINDER judgements above are reasoning plus a measurement against the stated suites, not proofs of absence. Everything outside the seven protected crates' files is scanned for
+refusals and not for defaults.
+
+**Evidence** (every line rc-checked; `gm` = gpumaster, `local` = this host as root; head `2fb18561` for code, the commit after it adds only this amendment and the matrix rows):
+
+| Check | Where | Result |
+|---|---|---|
+| `python3 scripts/v022_refusal_coverage.py` plain and `--freeze` | local | rc 0 and rc 0 (the counts above) |
+| rows M3280-M3283, M3285-M3299 and M186 (reinstated) and every other row anchored in `psv.rs` (47 rows, `--scope=all --only=... --shard=0/2,1/2`) | gm | 22/22 and 25/25 KILLED by their own attack, 0 REFUSED_ELSEWHERE, 0 survivors, 0 stale. M3280, M3281, M3283 and M3285 were first anchored to text that also occurs in a doc comment or message of the new tests (`2 matches`) or failed on a marker (M3285) and were re-anchored and re-run (local, 4/4 KILLED) |
+| the old text of every other row in the files touched (a count before vs after at `e8b8b48a`) | local | 0 rows changed their occurrence count; the touched files' other rows were therefore not re-run (a first attempt to run all 418 was stopped at 36 OK, 0 BAD after ~25 minutes) |
+| `cargo test -p axon-core --no-default-features --test refusal_coverage_gate --test harness_integrity --test harness_binaries` | local | rc 0: 53 passed (721 s), 43 passed, 10 passed |
+| `cargo test --locked -p axon-fabric --no-fail-fast`, default-parallel and `--test-threads=1` (the one loaded-host test skipped, concluded locally in earlier rounds) | gm | rc 0 and rc 0 |
+| `cargo test --locked -p axon-loop`, `-p axon-loop-contracts`, `-p axon-psv`, `-p axon-cortex` (`--no-fail-fast`) | gm | rc 0 each; 2538 tests passed across the six runs, 0 failed |
+| clippy `-D warnings`: axon-core `--no-default-features --tests`; axon-fabric, axon-loop, axon-loop-contracts, axon-psv, axon-cortex `--all-targets`; `cargo fmt --all -- --check` | local | rc 0; rc 0; rc 0 |
+| `test_v022_resurvey.py` (the forged shapes), `test_v022_value_survey.py`, the paired-disable join and selection tests | local | PASS, PASS, PASS (20 cases), rc 0 |
+| `psv_matrix_check.py` | local | lists only the A274-A289 placeholders of other workstreams (branch-local numbering); A290-A294 resolve |
+| the value survey (121 records) | gm | 85 + 24 + 5 + 5 + 2 records, results above; the full-suite baseline of axon-fabric rc 0 in 4 min 52 s on a warm target |
+
+**Unfinished, stated.** (a) `governance/status/v022-resurvey.json` is not remade (the gate digest changed; it is made at the freeze head, last), nor the paired-disable records (M186's cell is
+obsolete: it is an active row again). (b) The rows of the touched files other than `psv.rs` and the new ones were not re-run (their old text and the code they edit are unchanged). (c) The survey judgements of
+the 70 `val_default` REMAINDER entries are reasoning plus a measurement against the stated suites. (d) `psv_dispatch.rs` still says derive's None arm and `psv_receipt`'s downgrade "each hold it alone": the
+statement is true of the full receipt path and false of the arm now that it is a function with a test. (e) The five findings fixed here are of the SPELLINGS the reviewer found; see what the gate still cannot see.
