@@ -2760,7 +2760,7 @@ ATTACK_MARKERS.update({
     'M3282': r'ATTACK: a signed waiver with no expiry waived a BLOCKED assertion',
     'M3283': r'ATTACK: a certification whose suite id is absent was not refused as unnamed',
     'M3284': r'ATTACK: a verdict made without an observation was classed Protected',
-    'M3285': r'left: None\s+right: Some\("preflight-observation-sha256:',
+    'M3285': r'ATTACK: an observed verdict did not name its observation',
     'M3286': r'ATTACK: the trial-safety clearance domain is not its documented literal',
     'M3287': r'ATTACK: signing domain collapse: CLEARANCE_DOMAIN == CONTEXT_DOMAIN',
     'M3288': r'ATTACK: signing domain collapse: EXECUTION_DOMAIN == axon-loop CONTEXT_DOMAIN',

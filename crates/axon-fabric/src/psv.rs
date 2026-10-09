@@ -766,7 +766,7 @@ mod class_tests {
         assert_eq!(
             evidence.last().map(String::as_str),
             Some(format!("preflight-observation-sha256:{}", "c".repeat(64)).as_str()),
-            "control"
+            "ATTACK: an observed verdict did not name its observation"
         );
     }
 }
