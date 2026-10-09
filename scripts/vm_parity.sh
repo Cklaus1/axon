@@ -55,7 +55,7 @@ cd "$ROOT"
 # of all its ancestors. Shapes that stay `Tree` permanently (`Call(struct-lit)`,
 # `Call(P)`, `Call(computed)`, `Index(E|Var)`) are never listed; a variant
 # listed bare does not cover its shapes, because tokens compare exactly.
-SLICES=(S0 S1 S2 S3 S4 S5 S7) # landing order; the last one is the default
+SLICES=(S0 S1 S2 S3 S4 S5 S7 S8) # landing order; the last one is the default
 declare -A SLICE_DEPS=(
   [S0]=""
   [S1]="S0"
@@ -64,6 +64,7 @@ declare -A SLICE_DEPS=(
   [S4]="S3"
   [S5]="S4"
   [S7]="S5" # §13: S4; it lands after S5, so S5's row applies too
+  [S8]="S7" # §13: S5 and S7
 )
 declare -A SLICE_LOWERED=(
   [S0]="" # S0 lowers nothing: every compiled body is exactly one Tree op
@@ -86,6 +87,10 @@ declare -A SLICE_LOWERED=(
   # lowered `BinOp`/`Ident`/literal trees in registers; no new variant. Its
   # `vm: pure` and `vm: fold-leaf` trace lines are not body lines.
   [S7]=""
+  # S8: qsort and fib superops (fused index ops, `CallFastLocalInt`,
+  # `BranchReturn`, the frame-free `&mut` moves call) over already lowered
+  # variants; no new variant.
+  [S8]=""
 )
 # ────────────────────────────────────────────────────────────────────────────
 
