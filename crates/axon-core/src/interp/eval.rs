@@ -53,7 +53,7 @@ enum AppendOp {
 /// An evaluated operand of a binary operation (AX-55): an int or a float as
 /// the scalar itself, so the int/float fast path never builds or drops a
 /// `Value`; any other value as is.
-enum Operand {
+pub(super) enum Operand {
     Int(i64),
     Float(f64),
     Val(Value),
@@ -61,11 +61,22 @@ enum Operand {
 
 impl Operand {
     #[inline]
-    fn of(v: Value) -> Operand {
+    pub(super) fn of(v: Value) -> Operand {
         match v {
             Value::Int(n) => Operand::Int(n),
             Value::Float(f) => Operand::Float(f),
             v => Operand::Val(v),
+        }
+    }
+
+    /// The operand a local's current value `v` gives, copied out of the slot
+    /// for an int or a float.
+    #[inline]
+    pub(super) fn of_ref(v: &Value) -> Operand {
+        match v {
+            Value::Int(n) => Operand::Int(*n),
+            Value::Float(f) => Operand::Float(*f),
+            v => Operand::Val(v.clone()),
         }
     }
 
@@ -76,6 +87,101 @@ impl Operand {
             Operand::Float(f) => Value::Float(f),
             Operand::Val(v) => v,
         }
+    }
+}
+
+/// `l op r` for every operator but `&&`/`||`, on evaluated operands. AX-46: two
+/// plain ints or floats (the hot case) skip the general dispatch; same
+/// helpers, so the same semantics, as `eval_binop_vals`. Shared by
+/// `eval_binop` and the bytecode engine (R50).
+#[inline]
+pub(super) fn binop_operands(op: &BinOp, l: Operand, r: Operand) -> R {
+    let fast = match (&l, &r) {
+        (Operand::Int(a), Operand::Int(b)) => int_binop(op, *a, *b),
+        (Operand::Float(a), Operand::Float(b)) => float_binop(op, *a, *b),
+        _ => None,
+    };
+    match fast {
+        Some(res) => res,
+        None => eval_binop_vals(op, l.into_value(), r.into_value()),
+    }
+}
+
+/// Whether `&&`/`||` (`op`) is decided by its left operand `lv` alone:
+/// `false && _` and `true || _`. An `Uncertain<bool>` operand never
+/// short-circuits (the confidences must combine). Shared by `eval_binop` and
+/// the bytecode engine (R50).
+#[inline]
+pub(super) fn short_circuits(op: &BinOp, lv: &Value) -> bool {
+    matches!(
+        (op, lv),
+        (BinOp::And, Value::Bool(false)) | (BinOp::Or, Value::Bool(true))
+    )
+}
+
+/// `lv && rv` / `lv || rv` once [`short_circuits`] said the right operand
+/// runs. A plain-bool left operand needs a bool (or an `Uncertain`) right
+/// operand; any other left operand (an `Uncertain<bool>`) takes the
+/// value-level path, which propagates uncertainty or errs.
+pub(super) fn logic_rhs(op: &BinOp, lv: Value, rv: Value) -> R {
+    if let Value::Bool(_) = lv {
+        return match rv {
+            Value::Bool(b) => Ok(Value::Bool(b)),
+            other if uncertain_parts(&other).is_some() => eval_binop_vals(op, lv, other),
+            other => {
+                let sym = if matches!(op, BinOp::And) { "&&" } else { "||" };
+                panic(format!(
+                    "`{sym}` rhs must be bool, got {}",
+                    other.type_name()
+                ))
+            }
+        };
+    }
+    eval_binop_vals(op, lv, rv)
+}
+
+/// An `if` or `while` condition (`what` is `"if"` or `"while"`): an
+/// `Uncertain<bool>` or `Temporal<bool>` branches on its inner bool
+/// (confidence is irrelevant to control flow); any other non-bool panics.
+/// Not used for match guards, which are true only for a plain `true`. Shared
+/// by the `If`/`While` arms and the bytecode engine (R50).
+pub(super) fn cond_bool(v: Value, what: &str) -> Result<bool, Flow> {
+    let v = match soft_inner(&v) {
+        Some(inner) => inner,
+        None => v,
+    };
+    match v {
+        Value::Bool(b) => Ok(b),
+        other => panic(format!(
+            "{what} condition must be bool, got {}",
+            other.type_name()
+        )),
+    }
+}
+
+/// A `for` bound or an index read: an `Int` only; anything else, a sized int
+/// included, panics. Shared by the `For`/`Index` arms and the bytecode engine
+/// (R50).
+pub(super) fn strict_int(v: Value) -> Result<i64, Flow> {
+    match v {
+        Value::Int(n) => Ok(n),
+        other => panic(format!("expected i64, got {}", other.type_name())),
+    }
+}
+
+/// `v?`: the payload of an `Ok`/`Some`; an `Err`/`None` returns from the fn;
+/// anything else panics. Shared by the `Question` arm and the bytecode engine
+/// (R50).
+pub(super) fn question(v: Value) -> R {
+    match v {
+        Value::Ok(x) => Ok(*x),
+        Value::Some(x) => Ok(*x),
+        Value::Err(e) => Err(Flow::Return(Value::Err(e))),
+        Value::None => Err(Flow::Return(Value::None)),
+        other => panic(format!(
+            "`?` applied to non-Result/Option ({})",
+            other.type_name()
+        )),
     }
 }
 
@@ -120,22 +226,9 @@ impl<'p> Interp<'p> {
 
             Expr::Ident(name) => {
                 let (s, slot) = self.res.var(expr, name);
-                if let Some(v) = env.get_var(s, slot) {
-                    Ok(v.clone())
-                } else if let Some(v) = self.globals.get(&s) {
-                    Ok(v.clone())
-                } else if let Some(&i) = self.fn_of_sym.get(&s) {
-                    let f = self.fn_table[i as usize].def;
-                    // AX-25: a top-level fn named in VALUE position (`let g = f`,
-                    // `[f, h]`, `apply(f, x)`) is a first-class closure. It is the
-                    // forwarding lambda `|a0, ..| f(a0, ..)` with no captures, so a
-                    // call through the value re-enters `eval_call` by NAME and takes
-                    // exactly the path a direct `f(..)` call takes — contracts,
-                    // `@[verify]` gates, effect/capability gates and provenance
-                    // included. The resolver refuses builtins and generic fns here.
-                    Ok(fn_value(name, f.params.len()))
-                } else {
-                    panic(format!("undefined identifier `{name}`"))
+                match env.get_var(s, slot) {
+                    Some(v) => Ok(v.clone()),
+                    None => self.ident_unbound(name, s),
                 }
             }
 
@@ -244,25 +337,16 @@ impl<'p> Interp<'p> {
             }
 
             Expr::If { cond, then, else_ } => {
-                let cv = self.eval(cond, env)?;
                 // An `Uncertain<bool>` condition (e.g. `if a > 5` where `a` is
                 // Uncertain — the comparison stays Uncertain) branches on its
-                // inner bool; confidence is irrelevant to control flow. Unwrap it
-                // to the inner value before the bool match.
-                let cv = match soft_inner(&cv) {
-                    Some(inner) => inner,
-                    None => cv,
-                };
-                match cv {
-                    Value::Bool(true) => self.eval(then, env),
-                    Value::Bool(false) => match else_ {
+                // inner bool; confidence is irrelevant to control flow.
+                if cond_bool(self.eval(cond, env)?, "if")? {
+                    self.eval(then, env)
+                } else {
+                    match else_ {
                         Some(e) => self.eval(e, env),
                         None => Ok(Value::Unit),
-                    },
-                    other => panic(format!(
-                        "if condition must be bool, got {}",
-                        other.type_name()
-                    )),
+                    }
                 }
             }
 
@@ -304,24 +388,9 @@ impl<'p> Interp<'p> {
             }
 
             Expr::While { cond, body } => {
-                loop {
-                    let cv = self.eval(cond, env)?;
-                    // An `Uncertain<bool>` condition branches on its inner bool
-                    // (confidence is irrelevant to control flow) — same as `if`.
-                    let cv = match soft_inner(&cv) {
-                        Some(inner) => inner,
-                        None => cv,
-                    };
-                    match cv {
-                        Value::Bool(true) => {}
-                        Value::Bool(false) => break,
-                        other => {
-                            return panic(format!(
-                                "while condition must be bool, got {}",
-                                other.type_name()
-                            ))
-                        }
-                    }
+                // An `Uncertain<bool>` condition branches on its inner bool
+                // (confidence is irrelevant to control flow) — same as `if`.
+                while cond_bool(self.eval(cond, env)?, "while")? {
                     match self.run_loop_body(body, env)? {
                         LoopStep::Break => break,
                         LoopStep::Continue => {}
@@ -367,8 +436,8 @@ impl<'p> Interp<'p> {
                 inclusive,
                 body,
             } => {
-                let s = self.eval_int(start, env)?;
-                let e = self.eval_int(end, env)?;
+                let s = strict_int(self.eval(start, env)?)?;
+                let e = strict_int(self.eval(end, env)?)?;
                 let mut i = s;
                 let (var, slot) = self.res.var(expr, var);
                 loop {
@@ -399,16 +468,7 @@ impl<'p> Interp<'p> {
             Expr::Break => Err(Flow::Break),
             Expr::Continue => Err(Flow::Continue),
 
-            Expr::Question(inner) => match self.eval(inner, env)? {
-                Value::Ok(x) => Ok(*x),
-                Value::Some(x) => Ok(*x),
-                Value::Err(e) => Err(Flow::Return(Value::Err(e))),
-                Value::None => Err(Flow::Return(Value::None)),
-                other => panic(format!(
-                    "`?` applied to non-Result/Option ({})",
-                    other.type_name()
-                )),
-            },
+            Expr::Question(inner) => question(self.eval(inner, env)?),
 
             Expr::Call { callee, args, tier } => {
                 // `chan<T>()` lowers to a call whose callee is `chan::<T>`.
@@ -538,7 +598,7 @@ impl<'p> Interp<'p> {
                 if let Expr::Ident(name) = receiver.as_ref() {
                     let (s, slot) = self.res.var(receiver, name);
                     if env.get_var(s, slot).is_some() || self.globals.contains_key(&s) {
-                        let idx = self.eval_int(index, env)?;
+                        let idx = strict_int(self.eval(index, env)?)?;
                         let arr = env.get_var(s, slot).or_else(|| self.globals.get(&s));
                         return match arr {
                             Some(Value::Array(items)) => {
@@ -555,7 +615,7 @@ impl<'p> Interp<'p> {
                     }
                 }
                 let arr = self.eval(receiver, env)?;
-                let idx = self.eval_int(index, env)?;
+                let idx = strict_int(self.eval(index, env)?)?;
                 match arr {
                     Value::Array(items) => items.get(idx as usize).cloned().ok_or_else(|| {
                         Flow::Panic(format!("index {idx} out of bounds (len {})", items.len()).into())
@@ -1535,58 +1595,18 @@ impl<'p> Interp<'p> {
         // Short-circuit boolean operators. An `Uncertain<bool>` operand can't
         // short-circuit (we must combine confidences), so it falls through to
         // the value-level path which propagates uncertainty.
-        match op {
-            BinOp::And => {
-                let lv = self.eval(left, env)?;
-                if let Value::Bool(false) = lv {
-                    return Ok(Value::Bool(false));
-                }
-                if let Value::Bool(true) = lv {
-                    return match self.eval(right, env)? {
-                        Value::Bool(b) => Ok(Value::Bool(b)),
-                        other if uncertain_parts(&other).is_some() => {
-                            eval_binop_vals(op, lv, other)
-                        }
-                        other => panic(format!("`&&` rhs must be bool, got {}", other.type_name())),
-                    };
-                }
-                // lv is Uncertain (or other) — value-level path handles/errors.
-                let rv = self.eval(right, env)?;
-                return eval_binop_vals(op, lv, rv);
+        if matches!(op, BinOp::And | BinOp::Or) {
+            let lv = self.eval(left, env)?;
+            if short_circuits(op, &lv) {
+                return Ok(lv);
             }
-            BinOp::Or => {
-                let lv = self.eval(left, env)?;
-                if let Value::Bool(true) = lv {
-                    return Ok(Value::Bool(true));
-                }
-                if let Value::Bool(false) = lv {
-                    return match self.eval(right, env)? {
-                        Value::Bool(b) => Ok(Value::Bool(b)),
-                        other if uncertain_parts(&other).is_some() => {
-                            eval_binop_vals(op, lv, other)
-                        }
-                        other => panic(format!("`||` rhs must be bool, got {}", other.type_name())),
-                    };
-                }
-                let rv = self.eval(right, env)?;
-                return eval_binop_vals(op, lv, rv);
-            }
-            _ => {}
+            let rv = self.eval(right, env)?;
+            return logic_rhs(op, lv, rv);
         }
 
         let l = self.operand(left, env)?;
         let r = self.operand(right, env)?;
-        // AX-46: two plain ints or floats (the hot case) skip the general
-        // dispatch; same helpers, so the same semantics, as `eval_binop_vals`.
-        let fast = match (&l, &r) {
-            (Operand::Int(a), Operand::Int(b)) => int_binop(op, *a, *b),
-            (Operand::Float(a), Operand::Float(b)) => float_binop(op, *a, *b),
-            _ => None,
-        };
-        match fast {
-            Some(res) => res,
-            None => eval_binop_vals(op, l.into_value(), r.into_value()),
-        }
+        binop_operands(op, l, r)
     }
 
     /// Evaluate binary-operation operand `e` (AX-55). A local or a numeric
@@ -1599,11 +1619,7 @@ impl<'p> Interp<'p> {
             Expr::Ident(name) => {
                 let (s, slot) = self.res.var(e, name);
                 if let Some(v) = env.get_var(s, slot) {
-                    return Ok(match v {
-                        Value::Int(n) => Operand::Int(*n),
-                        Value::Float(f) => Operand::Float(*f),
-                        v => Operand::Val(v.clone()),
-                    });
+                    return Ok(Operand::of_ref(v));
                 }
             }
             Expr::Literal(Literal::Int(n)) => return Ok(Operand::Int(*n)),
@@ -1632,7 +1648,7 @@ impl<'p> Interp<'p> {
     /// `call_builtin` skips no gate, audit row or handler. Returns `Ok(false)`,
     /// having evaluated nothing, for any other statement shape or when `x` is
     /// not a str/array local.
-    fn assign_in_place(
+    pub(super) fn assign_in_place(
         &self,
         s: Sym,
         slot: u32,
@@ -1716,10 +1732,44 @@ impl<'p> Interp<'p> {
         Ok(true)
     }
 
-    pub(super) fn eval_int(&self, expr: &Expr, env: &mut Env) -> Result<i64, Flow> {
-        match self.eval(expr, env)? {
-            Value::Int(n) => Ok(n),
-            other => panic(format!("expected i64, got {}", other.type_name())),
+    /// Whether `x = value` (`name` is `x`) has one of the shapes
+    /// [`Interp::assign_in_place`] matches by syntax; for any other shape it
+    /// returns `Ok(false)` without reading or evaluating anything, so the
+    /// bytecode engine (R50) does not call it.
+    pub(super) fn assign_in_place_shaped(name: &str, value: &Expr) -> bool {
+        match value {
+            Expr::BinOp {
+                op: BinOp::Add,
+                left,
+                ..
+            } => matches!(left.as_ref(), Expr::Ident(x) if x == name),
+            Expr::Call { callee, args, .. } => {
+                matches!(callee.as_ref(), Expr::Ident(f) if f == "arr_push" || f == "arr_concat")
+                    && matches!(args.as_slice(), [Expr::Ident(x), _] if x == name)
+            }
+            _ => false,
+        }
+    }
+
+    /// The rest of an identifier read once `get_var` found no local: a
+    /// module-level `let`, then a top-level fn as a value, then the
+    /// undefined-identifier panic. Shared by the `Ident` arm and the bytecode
+    /// engine's local reads (R50).
+    pub(super) fn ident_unbound(&self, name: &str, s: Sym) -> R {
+        if let Some(v) = self.globals.get(&s) {
+            Ok(v.clone())
+        } else if let Some(&i) = self.fn_of_sym.get(&s) {
+            let f = self.fn_table[i as usize].def;
+            // AX-25: a top-level fn named in VALUE position (`let g = f`,
+            // `[f, h]`, `apply(f, x)`) is a first-class closure. It is the
+            // forwarding lambda `|a0, ..| f(a0, ..)` with no captures, so a
+            // call through the value re-enters `eval_call` by NAME and takes
+            // exactly the path a direct `f(..)` call takes — contracts,
+            // `@[verify]` gates, effect/capability gates and provenance
+            // included. The resolver refuses builtins and generic fns here.
+            Ok(fn_value(name, f.params.len()))
+        } else {
+            panic(format!("undefined identifier `{name}`"))
         }
     }
 

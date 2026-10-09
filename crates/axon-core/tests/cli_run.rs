@@ -35165,7 +35165,9 @@ fn vm_engine_scope_leak() {
     assert_eq!(stdout, "3\n", "stderr: {stderr}");
     let traced = vm_run("scope_leak", VM_SCOPE_LEAK_SRC, "vm", true);
     let err = String::from_utf8_lossy(&traced.stderr);
-    assert!(err.contains("vm: f 1 ops, 1 tree nodes\n"), "{err}");
+    // S1: only the `match` stays on the tree in `f`.
+    assert!(err.contains("vm: f 5 ops, 1 tree nodes\n"), "{err}");
+    assert!(err.contains("vm: tree-op f Match\n"), "{err}");
 }
 
 #[test]
@@ -35222,16 +35224,17 @@ fn vm_engine_trace_names_each_compiled_body_once_under_vm_only() {
     assert_eq!(vm.status.code(), Some(0), "{vm:?}");
     assert_eq!(String::from_utf8_lossy(&vm.stdout), "55\n");
     let err = String::from_utf8_lossy(&vm.stderr);
-    // S0: every body is one `Tree` op over its root block; each body's lines
-    // come once, on its first run, though `fib` runs 177 times.
+    // Each body's lines come once, on its first run, though `fib` runs 177
+    // times. Through S1 the struct literal, method call and field read stay
+    // `Tree` ops.
     assert_eq!(
         err,
-        "vm: main 1 ops, 1 tree nodes\n\
-         vm: tree-op main Block\n\
-         vm: fib 1 ops, 1 tree nodes\n\
-         vm: tree-op fib Block\n\
-         vm: P::get 1 ops, 1 tree nodes\n\
-         vm: tree-op P::get Block\n"
+        "vm: main 9 ops, 2 tree nodes\n\
+         vm: tree-op main StructLit\n\
+         vm: tree-op main MethodCall\n\
+         vm: fib 14 ops, 0 tree nodes\n\
+         vm: P::get 3 ops, 1 tree nodes\n\
+         vm: tree-op P::get FieldAccess\n"
     );
     let tree = vm_run("trace", VM_FIB_SRC, "tree", true);
     assert_eq!(tree.status.code(), Some(0), "{tree:?}");
@@ -35259,7 +35262,7 @@ fn vm_engine_main_under_binding_capture_runs_on_the_tree() {
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.starts_with("vm: tree main: binding capture\n"), "{err}");
-    assert!(err.contains("vm: fib 1 ops, 1 tree nodes\n"), "{err}");
+    assert!(err.contains("vm: fib 14 ops, 0 tree nodes\n"), "{err}");
 }
 
 #[test]
@@ -35286,4 +35289,191 @@ fn vm_engine_both_engines_agree_on_output_panics_and_exit_codes() {
             _ => assert_eq!((code, stdout.as_str()), (Some(42), "42\n"), "{stderr}"),
         }
     }
+}
+
+// ── R50 S1: scalar core and calls (`vm_scalar_`) ────────────────────────────
+
+/// R50 §8: the `vm: <name> <n> ops, <k> tree nodes` line of body `name` in an
+/// `AXON_VM_TRACE=1` stderr, as `<k>`; panics when the body has no line.
+fn vm_tree_nodes(trace: &str, name: &str) -> usize {
+    let head = format!("vm: {name} ");
+    trace
+        .lines()
+        .filter_map(|l| l.strip_prefix(&head))
+        .find_map(|rest| {
+            let (_, k) = rest.split_once(" ops, ")?;
+            k.strip_suffix(" tree nodes")?.parse().ok()
+        })
+        .unwrap_or_else(|| panic!("no compiled-body trace line for `{name}`:\n{trace}"))
+}
+
+/// R50 §8 CLI row: `src` gives identical stdout, stderr and exit code under
+/// both engines, and under `AXON_ENGINE=vm AXON_VM_TRACE=1` each `(body, k)`
+/// in `bodies` compiled with exactly `k` tree nodes, so the parity is not
+/// vacuous. Returns the shared `(exit, stdout, stderr)`.
+fn vm_scalar_case(tag: &str, src: &str, bodies: &[(&str, usize)]) -> (Option<i32>, String, String) {
+    let same = vm_same_both_engines(tag, src);
+    let traced = vm_run(tag, src, "vm", true);
+    let err = String::from_utf8_lossy(&traced.stderr).into_owned();
+    for &(name, k) in bodies {
+        assert_eq!(vm_tree_nodes(&err, name), k, "[{tag}] `{name}`:\n{err}");
+    }
+    same
+}
+
+/// R50 S1 red test (§8): `fib` uses only S1 constructs (`if`, compare,
+/// arithmetic, calls by name), so it compiles with no `Tree` op. On S0 every
+/// body is one `Tree` op.
+#[test]
+fn vm_scalar_fib_no_tree_nodes() {
+    let src = "fn fib(n: i64) -> i64 {\n    if n < 2 { n } else { fib(n - 1) + fib(n - 2) }\n}\nfn main() -> i64 {\n    println(to_str(fib(20)))\n    0\n}\n";
+    let (code, stdout, stderr) = vm_scalar_case("fib", src, &[("fib", 0), ("main", 0)]);
+    assert_eq!((code, stdout.as_str()), (Some(0), "6765\n"), "{stderr}");
+    let traced = vm_run("fib", src, "vm", true);
+    let err = String::from_utf8_lossy(&traced.stderr);
+    assert!(
+        err.lines()
+            .any(|l| l.starts_with("vm: fib ") && l.ends_with(" ops, 0 tree nodes")),
+        "{err}"
+    );
+}
+
+/// R50 §4 Behaviour table, integer rows: overflow, division and remainder by
+/// zero and `MIN / -1` panic with the tree-walker's message and exit 101 from
+/// a body the vm runs with no `Tree` op.
+#[test]
+fn vm_scalar_int_panics() {
+    let cases: [(&str, &str, &str); 4] = [
+        (
+            "add_overflow",
+            "let x = 9223372036854775807\n    let y = x + 1",
+            "integer overflow",
+        ),
+        (
+            "div_zero",
+            "let x = 7\n    let z = 0\n    let y = x / z",
+            "integer division by zero",
+        ),
+        (
+            "rem_zero",
+            "let x = 7\n    let z = 0\n    let y = x % z",
+            "integer remainder by zero",
+        ),
+        (
+            "min_div",
+            "let m = -9223372036854775807 - 1\n    let y = m / -1",
+            "integer overflow",
+        ),
+    ];
+    for (tag, body, msg) in cases {
+        let src = format!("fn f() -> i64 {{\n    {body}\n    y\n}}\nfn main() -> i64 {{\n    println(\"before\")\n    println(to_str(f()))\n    0\n}}\n");
+        let (code, stdout, stderr) = vm_scalar_case(tag, &src, &[("f", 0), ("main", 0)]);
+        assert_eq!(
+            (code, stdout.as_str()),
+            (Some(101), "before\n"),
+            "[{tag}] {stderr}"
+        );
+        assert!(stderr.contains(msg), "[{tag}] {stderr}");
+    }
+}
+
+/// R50 §4: float arithmetic and printing (whole floats, inf, NaN, mixed
+/// compares) agree, through the float fast path and the general one.
+#[test]
+fn vm_scalar_float_printing() {
+    let src = "fn main() -> i64 {\n    let a = 0.1\n    let b = 0.2\n    println(to_str(a + b))\n    println(to_str(1.0 * 3.0))\n    let big = 1e300\n    println(to_str(big * big))\n    println(to_str(-(big * big)))\n    let z = 0.0\n    println(to_str(z / z))\n    println(to_str(a < b))\n    println(to_str(7.5 % 2.0))\n    println(\"{a} and {b}\")\n    0\n}\n";
+    let (code, stdout, stderr) = vm_scalar_case("float", src, &[("main", 0)]);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert!(stdout.starts_with("0.3\n3\ninf\n-inf\n"), "{stdout}");
+}
+
+/// R50 §4 `cond_bool` row: an `Uncertain<bool>` condition branches on its
+/// inner bool in `if` and `while` (`a = uncertain_new(10, 0.9): if a > 5 /
+/// while a > 5`), and an `Uncertain` operand propagates through arithmetic.
+#[test]
+fn vm_scalar_uncertain_conditions_and_operands() {
+    let src = "fn main() -> i64 {\n    let a = uncertain_new(10, 0.9)\n    if a > 5 { println(\"big\") } else { println(\"small\") }\n    let n = 0\n    while a > 5 {\n        n = n + 1\n        if n > 3 { break }\n    }\n    println(to_str(n))\n    let b = a + 1\n    if b > 10 { println(\"b\") }\n    let c = a * 2 > 15\n    if c { println(\"c\") }\n    0\n}\n";
+    let (code, stdout, stderr) = vm_scalar_case("uncertain", src, &[("main", 0)]);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "big\n4\nb\nc\n");
+}
+
+/// R50 §4: sized ints in typed `let`s and params (`bind_let`, `param_coerce`)
+/// and the `strict_int` row: a `for` bound of type `i32` panics `expected
+/// i64, got i32` under both engines.
+#[test]
+fn vm_scalar_sized_ints_and_strict_int() {
+    let src = "fn g(x: i32) -> i32 { x + 1 }\nfn main() -> i64 {\n    let a: i32 = 5\n    let b: u8 = 200\n    println(to_str(g(a)))\n    println(to_str(b))\n    0\n}\n";
+    let (code, stdout, stderr) = vm_scalar_case("sized", src, &[("g", 0), ("main", 0)]);
+    assert_eq!((code, stdout.as_str()), (Some(0), "6\n200\n"), "{stderr}");
+
+    let src = "fn f(i: i32) -> i64 {\n    let s = 0\n    for k in 0..i { s = s + 1 }\n    s\n}\nfn main() -> i64 {\n    let n: i32 = 3\n    println(to_str(f(n)))\n    0\n}\n";
+    let (code, _, stderr) = vm_scalar_case("strict_int", src, &[("f", 0), ("main", 0)]);
+    assert_eq!(code, Some(101), "{stderr}");
+    assert!(stderr.contains("expected i64, got i32"), "{stderr}");
+}
+
+/// R50 §4: a refined `let` whose value violates its predicate exits 6 under
+/// both engines.
+#[test]
+fn vm_scalar_refined_let_violation_exits_6() {
+    let src = "fn main() -> i64 {\n    let x = 3\n    let y: i64 where _ > 0 = x - 5\n    println(to_str(y))\n    0\n}\n";
+    let (code, stdout, stderr) = vm_scalar_case("refined", src, &[("main", 0)]);
+    assert_eq!((code, stdout.as_str()), (Some(6), ""), "{stderr}");
+}
+
+/// R50 §4 Execution: shadowing in nested blocks, nested loops with `break`
+/// and `continue` (caught by the innermost loop, also out of a callee's
+/// `match` that stays on the tree), and an early `return` out of loops.
+#[test]
+fn vm_scalar_scopes_loops_and_early_return() {
+    let src = "fn first_over(lim: i64) -> i64 {\n    for i in 0..100 {\n        let j = 0\n        while j < 100 {\n            if i * j > lim { return i * 1000 + j }\n            j = j + 1\n        }\n    }\n    -1\n}\nfn pick(v: Option<i64>) -> i64 {\n    match v { Some(x) => x, None => 0 }\n}\nfn main() -> i64 {\n    let x = 1\n    {\n        let x = 2\n        println(to_str(x))\n    }\n    println(to_str(x))\n    let total = 0\n    for i in 0..5 {\n        if i == 1 { continue }\n        let k = 0\n        while true {\n            k = k + 1\n            if k > i { break }\n            if k == 2 { continue }\n            total = total + pick(Some(k))\n        }\n        if i == 3 { break }\n    }\n    println(to_str(total))\n    println(to_str(first_over(50)))\n    for i in 0..=2 { let x = i * 10\n        println(to_str(x)) }\n    0\n}\n";
+    let (code, stdout, stderr) = vm_scalar_case(
+        "scopes",
+        src,
+        &[("first_over", 0), ("pick", 1), ("main", 0)],
+    );
+    assert_eq!(code, Some(0), "{stderr}");
+    assert!(stdout.starts_with("2\n1\n"), "{stdout}");
+}
+
+/// R50 §4 calls by name through `dispatch_call`: a builtin, a user fn, and a
+/// local bound to a fn value (`let f = twice; f(x)`). (`let max = 3; max(a,
+/// b)` itself is rejected by the checker, E0306, so no run reaches it.)
+#[test]
+fn vm_scalar_call_dispatch_by_name() {
+    let src = "fn twice(x: i64) -> i64 { x * 2 }\nfn main() -> i64 {\n    let m = 3\n    println(to_str(max_i64(4, m)))\n    println(to_str(twice(m)))\n    let f = twice\n    println(to_str(f(5)))\n    0\n}\n";
+    let (code, stdout, stderr) = vm_scalar_case("dispatch", src, &[("twice", 0), ("main", 0)]);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "4\n6\n10\n");
+}
+
+/// R50 §4: recursion past the depth limit panics with the same message and
+/// exit 101 under both engines.
+#[test]
+fn vm_scalar_recursion_limit() {
+    let src = "fn r(n: i64) -> i64 { if n < 0 { 0 } else { r(n + 1) + 1 } }\nfn main() -> i64 {\n    println(to_str(r(0)))\n    0\n}\n";
+    let (code, stdout, stderr) = vm_scalar_case("recursion", src, &[("r", 0), ("main", 0)]);
+    assert_eq!((code, stdout.as_str()), (Some(101), ""), "{stderr}");
+    assert!(stderr.contains("recursion"), "{stderr}");
+}
+
+/// R50 §4 (AX-31): `s = s + t` and `x = arr_push(x, v)` in a 100k-iteration
+/// loop append in place under the vm too (a copying engine would take
+/// quadratic time here: 100k appends of up to 100k elements).
+#[test]
+fn vm_scalar_in_place_append_stays_linear() {
+    let src = "fn main() -> i64 {\n    let s = \"\"\n    let x = []\n    let i = 0\n    while i < 100000 {\n        s = s + \"ab\"\n        x = arr_push(x, i)\n        i = i + 1\n    }\n    println(to_str(len(s)))\n    println(to_str(len(x)))\n    0\n}\n";
+    let start = std::time::Instant::now();
+    let (code, stdout, stderr) = vm_scalar_case("append", src, &[("main", 1)]);
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "200000\n100000\n"),
+        "{stderr}"
+    );
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(60),
+        "{:?}",
+        start.elapsed()
+    );
 }

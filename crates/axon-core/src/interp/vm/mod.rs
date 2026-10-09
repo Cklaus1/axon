@@ -5,13 +5,24 @@
 //! same `Env` the tree-walker would use (spec §4 Fork 1), so params, `goal_met`,
 //! `&mut` read-back, postconditions and closure capture see the bindings where
 //! they always were. A node the compiler does not lower is one [`Op::Tree`],
-//! which calls [`Interp::eval`] on it (§4 Fork 2). Through slice S0 nothing is
-//! lowered: every body is exactly one `Tree` op over the whole body.
+//! which calls [`Interp::eval`] on it (§4 Fork 2). Slice S1 lowers the scalar
+//! core: literals, local reads, blocks, `let`, `=` to a local, operators,
+//! `if`/`while`/`for`, `return`/`break`/`continue`/`?`, `Some`/`None`/`Ok`/
+//! `Err`, string interpolation and calls by name (§4 "Lowered set per slice").
+//!
+//! Values flow through an operand stack owned by the activation (pooled in
+//! `Interp::vm_stacks`). An op that reads a local or a literal directly takes
+//! it as an inline [`Opnd`] instead of a stack slot, and an assignment whose
+//! value is a binary operation on two such operands is one [`Op::StoreBin`].
 //!
 //! The tree-walker stays the reference engine (I-2). `AXON_ENGINE=tree` (the
 //! default) never compiles anything.
 
+use super::eval::{
+    binop_operands, cond_bool, logic_rhs, question, short_circuits, strict_int, Operand,
+};
 use super::*;
+use crate::ast::{AxonType, UnaryOp};
 
 mod compile;
 #[cfg(test)]
@@ -87,10 +98,15 @@ pub(super) fn trace_at_build() -> bool {
 }
 
 /// A compiled fn body. It borrows the nodes of the program it was compiled
-/// from (`Tree` ops), so it lives in that fn's `FnEntry::compiled` and never
-/// outlives the program.
+/// from (`Tree` ops, names, operators), so it lives in that fn's
+/// `FnEntry::compiled` and never outlives the program.
 pub(super) struct Body<'p> {
     pub(super) ops: Box<[Op<'p>]>,
+    /// The body's loops, each loop listed before every loop enclosing it, so
+    /// the first one whose iteration range holds an op is the innermost.
+    pub(super) loops: Box<[Loop]>,
+    /// The operand-stack height the body reaches at most.
+    pub(super) max_stack: usize,
 }
 
 impl Body<'_> {
@@ -101,24 +117,489 @@ impl Body<'_> {
             .filter(|op| matches!(op, Op::Tree(_)))
             .count()
     }
+
+    /// The innermost loop of this body whose iteration holds op `at`: the
+    /// one a `Flow::Break`/`Flow::Continue` out of that op belongs to, as
+    /// `run_loop_body` catches them on the tree.
+    fn loop_at(&self, at: u32) -> Option<&Loop> {
+        self.loops.iter().find(|l| l.start <= at && at < l.end)
+    }
 }
 
-/// One instruction. Every op runs against the activation's `Env`; a
-/// value-producing op yields the `Result<Value, Flow>` the tree-walker would
-/// have yielded there.
+/// A `while` or `for` loop of a [`Body`]: where `break`/`continue` land.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Loop {
+    /// Ops `start..end` are one iteration's statements (inside the scope the
+    /// iteration pushes). The condition and the `for` bounds are outside: a
+    /// `break` there belongs to an enclosing loop, as on the tree.
+    pub(super) start: u32,
+    pub(super) end: u32,
+    /// Scopes the activation has pushed outside the iteration; a caught
+    /// `break` pops back to this many, one at a time.
+    pub(super) scopes: u32,
+    /// Operand-stack height outside the iteration (a `for` keeps its counter
+    /// and bound there).
+    pub(super) height: u32,
+    /// Where `break` continues: the loop's exit.
+    pub(super) brk: u32,
+    /// Where `continue` continues: the condition (`while`), the
+    /// [`Op::ForNext`] that ends the iteration (`for`).
+    pub(super) cont: u32,
+    /// The scopes still pushed where `continue` continues: `scopes` for a
+    /// `while`, one more for a `for` (its `ForNext` pops the iteration's).
+    pub(super) cont_scopes: u32,
+}
+
+/// A local (or a name the resolver left to `globals`/fns) as an op names it:
+/// the `(sym, slot)` the resolver gave the node, and its source name for the
+/// slow paths' messages.
+#[derive(Clone, Copy)]
+pub(super) struct Var<'p> {
+    pub(super) s: Sym,
+    pub(super) slot: u32,
+    pub(super) name: &'p String,
+}
+
+/// An operand of [`Op::Bin`], [`Op::StoreBin`] and [`Op::BranchCmp`]. Inline
+/// operands are read when the op runs; the compiler only makes the left one
+/// inline when the right one is too, so no code runs between where the tree
+/// reads the left operand and where the op reads it.
+pub(super) enum Opnd<'p> {
+    /// An identifier, read as the `Ident` arm reads it.
+    Local(Var<'p>),
+    /// An int literal.
+    Int(i64),
+    /// A float literal.
+    Float(f64),
+    /// Any other literal's value, built at compile time.
+    Const(Value),
+    /// The value the preceding ops pushed (popped).
+    Stack,
+}
+
+/// An int, float or bool result of the scalar fast path: a plain copy, so
+/// computing, testing and dropping it costs no `Value` drop glue.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Scalar {
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+}
+
+impl Scalar {
+    #[inline(always)]
+    pub(super) fn value(self) -> Value {
+        match self {
+            Scalar::Int(n) => Value::Int(n),
+            Scalar::Float(f) => Value::Float(f),
+            Scalar::Bool(b) => Value::Bool(b),
+        }
+    }
+}
+
+/// Which condition an `if`/`while` branch tests (its panic text).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Cond {
+    If,
+    While,
+}
+
+impl Cond {
+    fn word(self) -> &'static str {
+        match self {
+            Cond::If => "if",
+            Cond::While => "while",
+        }
+    }
+}
+
+/// One instruction. Every op runs against the activation's `Env` and operand
+/// stack; "push"/"pop" below are operand-stack operations. Jump targets are op
+/// indices.
 pub(super) enum Op<'p> {
-    /// Evaluate the node on the tree-walker; its value becomes the body's
-    /// current value. `eval` pops every scope it pushes on every outcome, so
-    /// the scope count is the same after the op as before it.
+    /// Evaluate the node on the tree-walker and push its value. `eval` pops
+    /// every scope it pushes on every outcome, so the scope count is the same
+    /// after the op as before it.
     Tree(&'p Expr),
-    /// `env.push()`, where `eval` pushes a scope (block, loop iteration, match
-    /// arm, while-let, `for`). Emitted by the lowering slices (S1 on); S0
-    /// compiles every body to a single `Tree` op.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// `env.push()`, where `eval` pushes a scope (block, loop iteration).
     ScopePush,
     /// `env.pop()` of the innermost scope this activation pushed.
-    #[cfg_attr(not(test), allow(dead_code))]
     ScopePop,
+    /// Push a literal's value (built at compile time).
+    Const(Value),
+    /// Push an identifier's value: `get_var`, then `globals`, then a fn as a
+    /// value, then the undefined-identifier panic.
+    Load(Var<'p>),
+    /// Pop and discard (a statement's unused value).
+    Drop,
+    /// Pop into an untyped `let`/`own`/`ref`: `define_var`.
+    Define(Var<'p>),
+    /// Pop into a typed `let`/`own`/`ref`: `bind_let` (refinement check,
+    /// sized-int coercion, define).
+    Let {
+        var: Var<'p>,
+        ty: &'p AxonType,
+    },
+    /// `x = value` in an AX-31 shape: `assign_in_place` first; when it did
+    /// the assignment, jump to `done`, past the value and its store. It can
+    /// only act when `x` holds a str or array, so it is not called otherwise.
+    AssignInPlace {
+        var: Var<'p>,
+        value: &'p Expr,
+        done: u32,
+    },
+    /// Pop into `x = value`: `assign_var`, else the undefined-variable panic.
+    Store(Var<'p>),
+    /// `x = l op r` in one op ([`Op::Bin`], then [`Op::Store`]). `in_place`
+    /// is the value node when the statement has an AX-31 shape and both
+    /// operands are inline: `assign_in_place` runs first, as
+    /// [`Op::AssignInPlace`] does, unless the int/float fast path took the
+    /// operands (then `x`, the left one, holds no str or array, and
+    /// `assign_in_place` would have done nothing). With a stack operand, a
+    /// separate `AssignInPlace` op precedes the operands instead.
+    StoreBin {
+        var: Var<'p>,
+        in_place: Option<&'p Expr>,
+        op: BinOp,
+        l: Opnd<'p>,
+        r: Opnd<'p>,
+    },
+    /// [`Op::StoreBin`] with a local left operand and an int literal right
+    /// one (`i = i + 1`), so the int fast path decodes no operand kinds.
+    StoreLocalInt {
+        var: Var<'p>,
+        in_place: Option<&'p Expr>,
+        op: BinOp,
+        l: Var<'p>,
+        r: i64,
+    },
+    /// [`Op::StoreBin`] with two local operands (`s = s + i`).
+    StoreLocalLocal {
+        var: Var<'p>,
+        in_place: Option<&'p Expr>,
+        op: BinOp,
+        l: Var<'p>,
+        r: Var<'p>,
+    },
+    /// Push `l op r` (any operator but `&&`/`||`).
+    Bin {
+        op: BinOp,
+        l: Opnd<'p>,
+        r: Opnd<'p>,
+    },
+    /// `&&`/`||` after its left operand: when that decides the result, leave
+    /// it as the value and jump to `end`.
+    ShortCircuit {
+        op: &'p BinOp,
+        end: u32,
+    },
+    /// `&&`/`||` after its right operand: pop both, push the result.
+    Logic(&'p BinOp),
+    /// Pop, apply a unary operator other than `&mut`, push.
+    Unary(&'p UnaryOp),
+    Jump(u32),
+    /// `env.pop()`, then jump: the end of a `while` iteration.
+    PopJump(u32),
+    /// Pop an `if`/`while` condition (`cond_bool`); jump to `target` when
+    /// false. Otherwise, when `push` (a `while`), `env.push()` for the
+    /// iteration.
+    BranchFalse {
+        target: u32,
+        cond: Cond,
+        push: bool,
+    },
+    /// A fused compare-and-branch: `l op r` as [`Op::Bin`] computes it, then
+    /// as [`Op::BranchFalse`] (`cond_bool` whenever the result is not a
+    /// plain bool).
+    BranchCmp {
+        op: BinOp,
+        l: Opnd<'p>,
+        r: Opnd<'p>,
+        target: u32,
+        cond: Cond,
+        push: bool,
+    },
+    /// [`Op::BranchCmp`] with a local left operand and an int literal right
+    /// one (`while i < 1000000`).
+    BranchLocalInt {
+        op: BinOp,
+        l: Var<'p>,
+        r: i64,
+        target: u32,
+        cond: Cond,
+        push: bool,
+    },
+    /// [`Op::BranchCmp`] with two local operands (`while i < n`).
+    BranchLocalLocal {
+        op: BinOp,
+        l: Var<'p>,
+        r: Var<'p>,
+        target: u32,
+        cond: Cond,
+        push: bool,
+    },
+    /// The value on top must be an `Int` (`strict_int`, a `for` bound).
+    StrictInt,
+    /// `for` head over the counter and bound on top of the stack: past the
+    /// bound, jump to `exit`; else, as the `For` arm and `run_loop_body` do,
+    /// `env.push()`, define the variable, `env.push()` (the body's scope).
+    ForTest {
+        var: Var<'p>,
+        inclusive: bool,
+        exit: u32,
+    },
+    /// The end of a `for` iteration: `env.pop()` twice (the body's scope,
+    /// the variable's), counter `+= 1`, then the test and pushes of
+    /// [`Op::ForTest`]; past the bound it falls through to the exit, else it
+    /// jumps to `first`.
+    ForNext {
+        var: Var<'p>,
+        inclusive: bool,
+        first: u32,
+    },
+    /// Pop the body's result and end the body.
+    Return,
+    Break,
+    Continue,
+    /// Pop and apply `?`.
+    Question,
+    WrapSome,
+    WrapOk,
+    WrapErr,
+    /// Push an empty string for an interpolation.
+    FmtNew,
+    /// Append literal text to the interpolation on top.
+    FmtLit(&'p String),
+    /// Pop a value and append its display to the interpolation below it.
+    FmtPush,
+    /// A call by name: pop `argc` arguments (pushed left to right) into a
+    /// pooled argument buffer and `dispatch_call`.
+    Call {
+        callee: &'p Expr,
+        argc: u32,
+        tier: Option<&'p str>,
+    },
+}
+
+/// The operand stack is malformed: the compiler pushed fewer values than an
+/// op pops. A host bug (spec §6), never a user-reachable state.
+#[cold]
+#[inline(never)]
+fn malformed() -> ! {
+    unreachable!("vm: malformed op stream (operand stack underflow)")
+}
+
+#[inline(always)]
+fn pop(st: &mut Vec<Value>) -> Value {
+    match st.pop() {
+        Some(v) => v,
+        None => malformed(),
+    }
+}
+
+/// `x = v` to a binding [`Env::get_var`] reads, as the `Assign` arm does
+/// (`assign_var`). An int over an int is written in place: dropping the old
+/// int is a no-op, so this skips only the drop glue.
+#[inline(always)]
+fn store(env: &mut Env, var: &Var<'_>, v: Value) -> Result<(), Flow> {
+    match env.get_var_mut(var.s, var.slot) {
+        Some(b) => {
+            match (b, v) {
+                (Value::Int(d), Value::Int(n)) => *d = n,
+                (b, v) => *b = v,
+            }
+            Ok(())
+        }
+        None => panic(format!("assignment to undefined variable `{}`", var.name)),
+    }
+}
+
+/// The string an interpolation builds, on top of the stack ([`Op::FmtNew`]).
+fn fmt_top(st: &mut [Value]) -> &mut String {
+    match st.last_mut() {
+        Some(Value::Str(s)) => Rc::make_mut(s),
+        _ => malformed(),
+    }
+}
+
+/// Whether `x` holds a str or an array. `assign_in_place` acts on nothing
+/// else and checks that before it reads or evaluates anything, so the engine
+/// skips the call otherwise.
+#[inline(always)]
+fn appendable(env: &Env, var: &Var<'_>) -> bool {
+    matches!(
+        env.get_var(var.s, var.slot),
+        Some(Value::Str(_) | Value::Array(_))
+    )
+}
+
+/// `env.pop()` of the innermost scope this activation pushed.
+#[inline(always)]
+fn pop_scope(env: &mut Env, scopes: &mut u32) {
+    let Some(n) = scopes.checked_sub(1) else {
+        malformed()
+    };
+    env.pop();
+    *scopes = n;
+}
+
+/// A `for` loop's counter and bound, the two values on top of the stack.
+#[inline(always)]
+fn for_bounds(st: &[Value]) -> (i64, i64) {
+    match st {
+        [.., Value::Int(i), Value::Int(e)] => (*i, *e),
+        _ => malformed(),
+    }
+}
+
+/// Enter a `for` iteration as the `For` arm does: `env.push()`, the loop
+/// variable, then `run_loop_body`'s `env.push()`.
+#[inline(always)]
+fn for_enter(env: &mut Env, scopes: &mut u32, var: &Var<'_>, i: i64) {
+    env.push();
+    env.define_var(var.s, var.slot, Value::Int(i));
+    env.push();
+    *scopes += 2;
+}
+
+/// `l op r` without building an [`Operand`]: when both operands are ints and
+/// [`int_fast`] has the value, or both are floats and [`float_fast`] has it.
+/// The operands are read in place and a stack operand is popped only then.
+/// `None` in every other case, every panic included: nothing was read out or
+/// popped, and the caller takes the general path (`operands`, then
+/// `binop_operands`), which produces the value or the panic `eval_binop`
+/// would. Never called for `&&`/`||`.
+#[inline(always)]
+fn scalar_fast(
+    op: &BinOp,
+    l: &Opnd<'_>,
+    r: &Opnd<'_>,
+    env: &Env,
+    st: &mut Vec<Value>,
+) -> Option<Scalar> {
+    let n = st.len();
+    let r_stacked = matches!(r, Opnd::Stack) as usize;
+    let stacked = r_stacked + matches!(l, Opnd::Stack) as usize;
+    let v = match (
+        scalar_at(l, env, st, n.wrapping_sub(1 + r_stacked))?,
+        scalar_at(r, env, st, n.wrapping_sub(1))?,
+    ) {
+        (Scalar::Int(a), Scalar::Int(b)) => int_fast(op, a, b)?,
+        (Scalar::Float(a), Scalar::Float(b)) => float_fast(op, a, b)?,
+        _ => return None,
+    };
+    for _ in 0..stacked {
+        // An int or a float: nothing to drop.
+        std::mem::forget(st.pop());
+    }
+    Some(v)
+}
+
+/// The int or float operand `o` reads; `at` is its stack index when it is
+/// on the stack. `None` for any other value and for an unbound identifier.
+#[inline(always)]
+fn scalar_at(o: &Opnd<'_>, env: &Env, st: &[Value], at: usize) -> Option<Scalar> {
+    let v = match o {
+        Opnd::Int(n) => return Some(Scalar::Int(*n)),
+        Opnd::Float(f) => return Some(Scalar::Float(*f)),
+        Opnd::Local(var) => env.get_var(var.s, var.slot)?,
+        Opnd::Stack => st.get(at)?,
+        Opnd::Const(_) => return None,
+    };
+    match v {
+        Value::Int(n) => Some(Scalar::Int(*n)),
+        Value::Float(f) => Some(Scalar::Float(*f)),
+        _ => None,
+    }
+}
+
+/// `a op b` on `i64`s when [`int_binop`] yields `Ok`: the same value. `None`
+/// when it panics (overflow, division or remainder by zero) or has no arm
+/// (`&&`/`||`). The int half of [`scalar_fast`]; the unit test
+/// `int_fast_agrees_with_int_binop` pins it to `int_binop`.
+#[inline(always)]
+pub(super) fn int_fast(op: &BinOp, a: i64, b: i64) -> Option<Scalar> {
+    use BinOp::*;
+    use Scalar::{Bool, Int};
+    Some(match op {
+        Add => Int(a.checked_add(b)?),
+        Sub => Int(a.checked_sub(b)?),
+        Mul => Int(a.checked_mul(b)?),
+        Div => Int(a.checked_div(b)?),
+        Rem if b == 0 => return None,
+        Rem => Int(a.wrapping_rem(b)),
+        Eq => Bool(a == b),
+        NotEq => Bool(a != b),
+        Lt => Bool(a < b),
+        Gt => Bool(a > b),
+        LtEq => Bool(a <= b),
+        GtEq => Bool(a >= b),
+        BitAnd => Int(a & b),
+        BitOr => Int(a | b),
+        BitXor => Int(a ^ b),
+        Shl => Int(a.wrapping_shl(b as u32)),
+        Shr => Int(a.wrapping_shr(b as u32)),
+        And | Or => return None,
+    })
+}
+
+/// `a op b` on `f64`s when [`float_binop`] has an arm: the same value. The
+/// float half of [`scalar_fast`]; `float_fast_agrees_with_float_binop` pins
+/// it to `float_binop`.
+#[inline(always)]
+pub(super) fn float_fast(op: &BinOp, a: f64, b: f64) -> Option<Scalar> {
+    use BinOp::*;
+    use Scalar::{Bool, Float};
+    Some(match op {
+        Add => Float(a + b),
+        Sub => Float(a - b),
+        Mul => Float(a * b),
+        Div => Float(a / b),
+        Rem => Float(a % b),
+        Eq => Bool(a == b),
+        NotEq => Bool(a != b),
+        Lt => Bool(a < b),
+        Gt => Bool(a > b),
+        LtEq => Bool(a <= b),
+        GtEq => Bool(a >= b),
+        And | Or | BitAnd | BitOr | BitXor | Shl | Shr => return None,
+    })
+}
+
+/// `x = s` for a scalar fast-path result, as [`store`] does: an int over an
+/// int or a float over a float is written in place.
+#[inline(always)]
+fn store_scalar(env: &mut Env, var: &Var<'_>, s: Scalar) -> Result<(), Flow> {
+    match env.get_var_mut(var.s, var.slot) {
+        Some(b) => {
+            match (b, s) {
+                (Value::Int(d), Scalar::Int(n)) => *d = n,
+                (Value::Float(d), Scalar::Float(f)) => *d = f,
+                (b, s) => *b = s.value(),
+            }
+            Ok(())
+        }
+        None => panic(format!("assignment to undefined variable `{}`", var.name)),
+    }
+}
+
+/// The int a local holds; `None` for any other value or an unbound name.
+#[inline(always)]
+fn local_int(env: &Env, var: &Var<'_>) -> Option<i64> {
+    match env.get_var(var.s, var.slot)? {
+        Value::Int(n) => Some(*n),
+        _ => None,
+    }
+}
+
+/// [`scalar_fast`] over two locals.
+#[inline(always)]
+fn locals_fast(op: &BinOp, l: &Var<'_>, r: &Var<'_>, env: &Env) -> Option<Scalar> {
+    match (env.get_var(l.s, l.slot)?, env.get_var(r.s, r.slot)?) {
+        (Value::Int(a), Value::Int(b)) => int_fast(op, *a, *b),
+        (Value::Float(a), Value::Float(b)) => float_fast(op, *a, *b),
+        _ => None,
+    }
 }
 
 impl<'p> Interp<'p> {
@@ -141,7 +622,7 @@ impl<'p> Interp<'p> {
             return self.eval(&entry.def.body, env);
         };
         let body = cell.get_or_init(|| {
-            let body = compile(&entry.def.body);
+            let body = compile(&self.res, &entry.def.body);
             if self.vm_trace {
                 self.vm_trace_compiled(entry, &body);
             }
@@ -150,51 +631,436 @@ impl<'p> Interp<'p> {
         self.exec(body, env)
     }
 
-    /// Execute `body` against `env`. On every exit, normal or `Err`, the
-    /// scopes this activation pushed are popped one at a time, innermost
-    /// first (never truncated to a recorded depth: `call_mut` reads `&mut`
-    /// params back by name afterwards, spec §4 Execution). `Flow::Return(v)`
-    /// ends the body with `Ok(v)`, which `call_fn_in` treats exactly as the
+    /// Execute `body` against `env` on an operand stack of its own (from the
+    /// `vm_stacks` pool). A `Flow::Break`/`Flow::Continue` out of an op in a
+    /// loop's iteration, a callee or a `Tree` op included, is caught by the
+    /// innermost such loop: its iteration's scopes are popped and its stack
+    /// temporaries dropped. On every exit, normal or `Err`, the scopes this
+    /// activation pushed are popped one at a time, innermost first (never
+    /// truncated to a recorded depth: `call_mut` reads `&mut` params back by
+    /// name afterwards, spec §4 Execution). `Flow::Return(v)` ends the body
+    /// with `Ok(v)`, which `call_fn_in` treats exactly as the
     /// `Err(Flow::Return(v))` the tree-walker's body yields; every other
     /// `Flow` propagates unchanged.
     pub(super) fn exec(&self, body: &Body<'_>, env: &mut Env) -> R {
-        // The value of the last value-producing op: the body's value when the
-        // ops run out. S1 adds the pooled operand stack (spec §4 Execution);
-        // through S0 one register suffices and a call allocates nothing.
-        let mut acc = Value::Unit;
-        let mut scopes = 0usize;
+        let mut st = self.vm_stacks.borrow_mut().pop().unwrap_or_default();
+        st.reserve(body.max_stack);
+        let mut scopes = 0u32;
         let mut pc = 0usize;
-        let outcome: Result<(), Flow> = loop {
-            let Some(op) = body.ops.get(pc) else {
-                break Ok(());
-            };
-            pc += 1;
-            match op {
-                Op::Tree(e) => match self.eval(e, env) {
-                    Ok(v) => acc = v,
-                    Err(flow) => break Err(flow),
-                },
-                Op::ScopePush => {
-                    env.push();
-                    scopes += 1;
-                }
-                Op::ScopePop => {
-                    let Some(n) = scopes.checked_sub(1) else {
-                        unreachable!("vm: ScopePop with no scope pushed (malformed op stream)")
+        let out = loop {
+            match self.run(body, env, &mut st, &mut scopes, &mut pc) {
+                Err(flow @ (Flow::Break | Flow::Continue)) => {
+                    // `pc` is one past the op that failed.
+                    let Some(l) = body.loop_at(pc as u32 - 1) else {
+                        break Err(flow);
                     };
-                    env.pop();
-                    scopes = n;
+                    let (keep, to) = match flow {
+                        Flow::Break => (l.scopes, l.brk),
+                        _ => (l.cont_scopes, l.cont),
+                    };
+                    while scopes > keep {
+                        env.pop();
+                        scopes -= 1;
+                    }
+                    st.truncate(l.height as usize);
+                    pc = to as usize;
                 }
+                out => break out,
             }
         };
         for _ in 0..scopes {
             env.pop();
         }
-        match outcome {
-            Ok(()) => Ok(acc),
-            Err(Flow::Return(v)) => Ok(v),
-            Err(flow) => Err(flow),
+        st.clear();
+        let mut pool = self.vm_stacks.borrow_mut();
+        if pool.len() < 64 && st.capacity() <= 4096 {
+            pool.push(st);
         }
+        drop(pool);
+        match out {
+            Err(Flow::Return(v)) => Ok(v),
+            out => out,
+        }
+    }
+
+    /// The op loop: runs from `*pc` until the body's value is ready (the ops
+    /// ran out, or [`Op::Return`]) or an op errs. On `Err`, `*pc` is one past
+    /// the failing op. On every exit `*scopes` counts the scopes still
+    /// pushed (kept in a local while the loop runs).
+    fn run(
+        &self,
+        body: &Body<'_>,
+        env: &mut Env,
+        st: &mut Vec<Value>,
+        scopes_out: &mut u32,
+        pc_out: &mut usize,
+    ) -> R {
+        let ops = &body.ops[..];
+        let mut pc = *pc_out;
+        let mut scope_count = *scopes_out;
+        let scopes = &mut scope_count;
+        macro_rules! tri {
+            ($e:expr) => {
+                match $e {
+                    Ok(v) => v,
+                    Err(flow) => {
+                        *pc_out = pc;
+                        *scopes_out = *scopes;
+                        return Err(flow);
+                    }
+                }
+            };
+        }
+        loop {
+            let Some(op) = ops.get(pc) else {
+                *scopes_out = *scopes;
+                return Ok(st.pop().unwrap_or(Value::Unit));
+            };
+            pc += 1;
+            match op {
+                Op::StoreBin {
+                    var,
+                    in_place,
+                    op,
+                    l,
+                    r,
+                } => match scalar_fast(op, l, r, env, st) {
+                    Some(s) => tri!(store_scalar(env, var, s)),
+                    None => tri!(self.store_bin_slow(var, *in_place, op, l, r, env, st)),
+                },
+                Op::StoreLocalInt {
+                    var,
+                    in_place,
+                    op,
+                    l,
+                    r,
+                } => match local_int(env, l).and_then(|a| int_fast(op, a, *r)) {
+                    Some(s) => tri!(store_scalar(env, var, s)),
+                    None => {
+                        let (l, r) = (Opnd::Local(*l), Opnd::Int(*r));
+                        tri!(self.store_bin_slow(var, *in_place, op, &l, &r, env, st))
+                    }
+                },
+                Op::StoreLocalLocal {
+                    var,
+                    in_place,
+                    op,
+                    l,
+                    r,
+                } => match locals_fast(op, l, r, env) {
+                    Some(s) => tri!(store_scalar(env, var, s)),
+                    None => {
+                        let (l, r) = (Opnd::Local(*l), Opnd::Local(*r));
+                        tri!(self.store_bin_slow(var, *in_place, op, &l, &r, env, st))
+                    }
+                },
+                Op::BranchCmp {
+                    op,
+                    l,
+                    r,
+                    target,
+                    cond,
+                    push,
+                } => {
+                    let b = match scalar_fast(op, l, r, env, st) {
+                        Some(Scalar::Bool(b)) => b,
+                        Some(s) => tri!(cond_bool(s.value(), cond.word())),
+                        None => tri!(self.cmp_slow(op, l, r, *cond, env, st)),
+                    };
+                    if !b {
+                        pc = *target as usize;
+                    } else if *push {
+                        env.push();
+                        *scopes += 1;
+                    }
+                }
+                Op::BranchLocalInt {
+                    op,
+                    l,
+                    r,
+                    target,
+                    cond,
+                    push,
+                } => {
+                    let b = match local_int(env, l).and_then(|a| int_fast(op, a, *r)) {
+                        Some(Scalar::Bool(b)) => b,
+                        Some(s) => tri!(cond_bool(s.value(), cond.word())),
+                        None => {
+                            let (l, r) = (Opnd::Local(*l), Opnd::Int(*r));
+                            tri!(self.cmp_slow(op, &l, &r, *cond, env, st))
+                        }
+                    };
+                    if !b {
+                        pc = *target as usize;
+                    } else if *push {
+                        env.push();
+                        *scopes += 1;
+                    }
+                }
+                Op::BranchLocalLocal {
+                    op,
+                    l,
+                    r,
+                    target,
+                    cond,
+                    push,
+                } => {
+                    let b = match locals_fast(op, l, r, env) {
+                        Some(Scalar::Bool(b)) => b,
+                        Some(s) => tri!(cond_bool(s.value(), cond.word())),
+                        None => {
+                            let (l, r) = (Opnd::Local(*l), Opnd::Local(*r));
+                            tri!(self.cmp_slow(op, &l, &r, *cond, env, st))
+                        }
+                    };
+                    if !b {
+                        pc = *target as usize;
+                    } else if *push {
+                        env.push();
+                        *scopes += 1;
+                    }
+                }
+                Op::Bin { op, l, r } => {
+                    let v = match scalar_fast(op, l, r, env, st) {
+                        Some(s) => s.value(),
+                        None => {
+                            let (l, r) = tri!(self.operands(l, r, env, st));
+                            tri!(binop_operands(op, l, r))
+                        }
+                    };
+                    st.push(v);
+                }
+                Op::Load(var) => {
+                    let v = match env.get_var(var.s, var.slot) {
+                        Some(Value::Int(n)) => Value::Int(*n),
+                        Some(Value::Float(f)) => Value::Float(*f),
+                        Some(v) => v.clone(),
+                        None => tri!(self.ident_unbound(var.name, var.s)),
+                    };
+                    st.push(v);
+                }
+                Op::Const(v) => st.push(match v {
+                    Value::Int(n) => Value::Int(*n),
+                    v => v.clone(),
+                }),
+                Op::ScopePush => {
+                    env.push();
+                    *scopes += 1;
+                }
+                Op::ScopePop => pop_scope(env, scopes),
+                Op::Jump(t) => pc = *t as usize,
+                Op::PopJump(t) => {
+                    pop_scope(env, scopes);
+                    pc = *t as usize;
+                }
+                Op::BranchFalse { target, cond, push } => {
+                    let b = match pop(st) {
+                        Value::Bool(b) => b,
+                        v => tri!(cond_bool(v, cond.word())),
+                    };
+                    if !b {
+                        pc = *target as usize;
+                    } else if *push {
+                        env.push();
+                        *scopes += 1;
+                    }
+                }
+                Op::Call { callee, argc, tier } => {
+                    let mut argv = self.take_args(*argc as usize);
+                    match *argc {
+                        0 => {}
+                        1 => argv.push(pop(st)),
+                        n => {
+                            let at = st.len() - n as usize;
+                            argv.extend(st.drain(at..));
+                        }
+                    }
+                    st.push(tri!(self.dispatch_call(callee, argv, *tier, env)));
+                }
+                Op::Store(var) => {
+                    let v = pop(st);
+                    tri!(store(env, var, v));
+                }
+                Op::Define(var) => {
+                    let v = pop(st);
+                    env.define_var(var.s, var.slot, v);
+                }
+                Op::Drop => drop(pop(st)),
+                Op::ForTest {
+                    var,
+                    inclusive,
+                    exit,
+                } => {
+                    let (i, e) = for_bounds(st);
+                    if if *inclusive { i <= e } else { i < e } {
+                        for_enter(env, scopes, var, i);
+                    } else {
+                        pc = *exit as usize;
+                    }
+                }
+                Op::ForNext {
+                    var,
+                    inclusive,
+                    first,
+                } => {
+                    pop_scope(env, scopes);
+                    pop_scope(env, scopes);
+                    let n = st.len();
+                    let Some(Value::Int(i)) = st.get_mut(n.wrapping_sub(2)) else {
+                        malformed()
+                    };
+                    *i += 1;
+                    let (i, e) = for_bounds(st);
+                    if if *inclusive { i <= e } else { i < e } {
+                        for_enter(env, scopes, var, i);
+                        pc = *first as usize;
+                    }
+                }
+                Op::Return => {
+                    *scopes_out = *scopes;
+                    return Ok(pop(st));
+                }
+                Op::Tree(e) => st.push(tri!(self.eval(e, env))),
+                Op::Let { var, ty } => {
+                    let v = pop(st);
+                    tri!(self.bind_let(var.name, var.s, var.slot, Some(ty), v, env));
+                }
+                Op::AssignInPlace { var, value, done } => {
+                    if appendable(env, var)
+                        && tri!(self.assign_in_place(var.s, var.slot, var.name, value, env))
+                    {
+                        pc = *done as usize;
+                    }
+                }
+                Op::ShortCircuit { op, end } => {
+                    if short_circuits(op, st.last().unwrap_or_else(|| malformed())) {
+                        pc = *end as usize;
+                    }
+                }
+                Op::Logic(op) => {
+                    let rv = pop(st);
+                    let lv = pop(st);
+                    st.push(tri!(logic_rhs(op, lv, rv)));
+                }
+                Op::Unary(op) => {
+                    let v = pop(st);
+                    st.push(tri!(eval_unary(op, v)));
+                }
+                Op::StrictInt => {
+                    let n = tri!(strict_int(pop(st)));
+                    st.push(Value::Int(n));
+                }
+                Op::Break => tri!(Err(Flow::Break)),
+                Op::Continue => tri!(Err(Flow::Continue)),
+                Op::Question => {
+                    let v = tri!(question(pop(st)));
+                    st.push(v);
+                }
+                Op::WrapSome => {
+                    let v = pop(st);
+                    st.push(Value::Some(Box::new(v)));
+                }
+                Op::WrapOk => {
+                    let v = pop(st);
+                    st.push(Value::Ok(Box::new(v)));
+                }
+                Op::WrapErr => {
+                    let v = pop(st);
+                    st.push(Value::Err(Box::new(v)));
+                }
+                Op::FmtNew => st.push(Value::Str(Rc::new(String::new()))),
+                Op::FmtLit(t) => fmt_top(st).push_str(t),
+                Op::FmtPush => {
+                    let v = pop(st);
+                    fmt_top(st).push_str(&display(&v));
+                }
+            }
+        }
+    }
+
+    /// `x = l op r` when the scalar fast path declined: `assign_in_place`
+    /// first for an AX-31 shape (the fast path declining leaves that order
+    /// intact: it read nothing out), then the general operands and
+    /// `binop_operands`, then the store.
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn store_bin_slow(
+        &self,
+        var: &Var<'_>,
+        in_place: Option<&Expr>,
+        op: &BinOp,
+        l: &Opnd<'_>,
+        r: &Opnd<'_>,
+        env: &mut Env,
+        st: &mut Vec<Value>,
+    ) -> Result<(), Flow> {
+        if let Some(value) = in_place {
+            if appendable(env, var)
+                && self.assign_in_place(var.s, var.slot, var.name, value, env)?
+            {
+                return Ok(());
+            }
+        }
+        let (l, r) = self.operands(l, r, env, st)?;
+        let v = binop_operands(op, l, r)?;
+        store(env, var, v)
+    }
+
+    /// An `if`/`while` compare when the scalar fast path declined: the
+    /// general operands and `binop_operands`, then `cond_bool` unless the
+    /// result is a plain bool.
+    #[inline(never)]
+    fn cmp_slow(
+        &self,
+        op: &BinOp,
+        l: &Opnd<'_>,
+        r: &Opnd<'_>,
+        cond: Cond,
+        env: &Env,
+        st: &mut Vec<Value>,
+    ) -> Result<bool, Flow> {
+        let (l, r) = self.operands(l, r, env, st)?;
+        match binop_operands(op, l, r)? {
+            Value::Bool(b) => Ok(b),
+            v => cond_bool(v, cond.word()),
+        }
+    }
+
+    /// Read the operands of a binary op, the left one first (a `Stack` right
+    /// operand was pushed last, so it is popped first).
+    #[inline(always)]
+    fn operands(
+        &self,
+        l: &Opnd<'_>,
+        r: &Opnd<'_>,
+        env: &Env,
+        st: &mut Vec<Value>,
+    ) -> Result<(Operand, Operand), Flow> {
+        let rv = match r {
+            Opnd::Stack => Some(pop(st)),
+            _ => None,
+        };
+        let lo = self.operand_of(l, env, st)?;
+        let ro = match rv {
+            Some(v) => Operand::of(v),
+            None => self.operand_of(r, env, st)?,
+        };
+        Ok((lo, ro))
+    }
+
+    /// One operand, as `eval_binop`'s `operand` reads it.
+    #[inline(always)]
+    fn operand_of(&self, o: &Opnd<'_>, env: &Env, st: &mut Vec<Value>) -> Result<Operand, Flow> {
+        Ok(match o {
+            Opnd::Local(var) => match env.get_var(var.s, var.slot) {
+                Some(v) => Operand::of_ref(v),
+                None => Operand::of(self.ident_unbound(var.name, var.s)?),
+            },
+            Opnd::Int(n) => Operand::Int(*n),
+            Opnd::Float(f) => Operand::Float(*f),
+            Opnd::Const(v) => Operand::of_ref(v),
+            Opnd::Stack => Operand::of(pop(st)),
+        })
     }
 
     /// `vm: tree <name>: <reason>` under `AXON_ENGINE=vm AXON_VM_TRACE=1`: a

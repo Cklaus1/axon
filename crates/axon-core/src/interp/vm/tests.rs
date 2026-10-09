@@ -1,6 +1,8 @@
-//! R50 S0 unit tests (spec §8 unit row, the parts S0 has): the S0 compiler's
-//! one-`Tree`-op bodies, the `FnEntry::compiled` discriminator, and the op
-//! loop's scope discipline on every exit path.
+//! R50 unit tests (spec §8 unit row): the S1 compiler's lowered set, the
+//! `ScopePush`/`ScopePop` placement of every scoped construct, the
+//! `FnEntry::compiled` discriminator, and the op loop's scope discipline on
+//! every exit path (normal, caught `break`/`continue`, propagated error,
+//! `return`), each checked against the tree-walker.
 
 use super::*;
 use crate::ast::Literal;
@@ -37,40 +39,109 @@ fn fib_index(interp: &Interp<'_>) -> usize {
         .expect("fib is in the fn table")
 }
 
-#[test]
-fn s0_compiles_every_fn_body_to_one_tree_op_over_the_root() {
-    let prog = program();
-    let interp = Interp::build(&prog);
-    assert!(!interp.fn_table.is_empty());
-    for entry in &interp.fn_table {
-        let body = compile(&entry.def.body);
-        assert_eq!(body.ops.len(), 1, "{}", entry.def.name);
-        assert_eq!(body.tree_nodes(), 1, "{}", entry.def.name);
-        match &body.ops[0] {
-            Op::Tree(e) => assert!(std::ptr::eq(*e, &entry.def.body), "{}", entry.def.name),
-            _ => panic!("{}: expected a Tree op", entry.def.name),
-        }
-    }
+fn body_of<'p>(interp: &Interp<'p>, name: &str) -> &'p Expr {
+    &interp
+        .fn_table
+        .iter()
+        .find(|e| e.def.name == name)
+        .unwrap_or_else(|| panic!("{name} is in the fn table"))
+        .def
+        .body
+}
+
+/// The op kinds of `body`, for placement checks.
+fn kinds(body: &Body<'_>) -> Vec<&'static str> {
+    body.ops
+        .iter()
+        .map(|op| match op {
+            Op::Tree(_) => "tree",
+            Op::ScopePush => "push",
+            Op::ScopePop => "pop",
+            Op::Const(_) => "const",
+            Op::Load(_) => "load",
+            Op::Drop => "drop",
+            Op::Define(_) => "define",
+            Op::Let { .. } => "let",
+            Op::AssignInPlace { .. } => "in-place",
+            Op::Store(_) => "store",
+            Op::StoreBin { .. } | Op::StoreLocalInt { .. } | Op::StoreLocalLocal { .. } => {
+                "store-bin"
+            }
+            Op::Bin { .. } => "bin",
+            Op::ShortCircuit { .. } => "short",
+            Op::Logic(_) => "logic",
+            Op::Unary(_) => "unary",
+            Op::Jump(_) => "jump",
+            Op::PopJump(_) => "pop-jump",
+            Op::BranchFalse { .. } => "branch",
+            Op::BranchCmp { .. } | Op::BranchLocalInt { .. } | Op::BranchLocalLocal { .. } => {
+                "branch-cmp"
+            }
+            Op::StrictInt => "strict-int",
+            Op::ForTest { .. } => "for-test",
+            Op::ForNext { .. } => "for-next",
+            Op::Return => "return",
+            Op::Break => "break",
+            Op::Continue => "continue",
+            Op::Question => "?",
+            Op::WrapSome => "some",
+            Op::WrapOk => "ok",
+            Op::WrapErr => "err",
+            Op::FmtNew => "fmt",
+            Op::FmtLit(_) => "fmt-lit",
+            Op::FmtPush => "fmt-push",
+            Op::Call { .. } => "call",
+        })
+        .collect()
 }
 
 #[test]
-fn s0_every_expr_node_falls_back_to_one_tree_op() {
+fn s1_compiles_fib_without_tree_ops() {
     let prog = program();
+    let interp = Interp::build(&prog);
+    let body = compile(&interp.res, body_of(&interp, "fib"));
+    assert_eq!(body.tree_nodes(), 0, "{:?}", kinds(&body));
+}
+
+#[test]
+fn s1_leaves_only_unlowered_variants_on_the_tree() {
+    let prog = program();
+    let interp = Interp::build(&prog);
+    let body = compile(&interp.res, body_of(&interp, "main"));
+    let trees: Vec<&str> = body
+        .ops
+        .iter()
+        .filter_map(|op| match op {
+            Op::Tree(e) => Some(compile::variant_name(e)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(trees, ["Array", "Index", "Match"]);
+}
+
+#[test]
+fn s1_every_expr_node_compiles_to_a_balanced_body() {
+    // `compile` checks (debug) that a body leaves one value and no scope.
+    let prog = program();
+    let interp = Interp::build(&prog);
     let mut seen = std::collections::HashSet::new();
     for item in &prog.items {
         let crate::ast::Item::FnDef(f) = item else {
             continue;
         };
         crate::ast::walk_expr(&f.body, &mut |e| {
-            let body = compile(e);
-            assert_eq!(body.ops.len(), 1);
-            assert!(matches!(body.ops[0], Op::Tree(t) if std::ptr::eq(t, e)));
+            let body = compile(&interp.res, e);
+            let root_is_tree = matches!(&body.ops[..], [Op::Tree(t)] if std::ptr::eq(*t, e));
+            let lowered = !matches!(
+                e,
+                Expr::Array(_) | Expr::Index { .. } | Expr::Match { .. } | Expr::FieldAccess { .. }
+            );
+            assert_eq!(root_is_tree, !lowered, "{}", compile::variant_name(e));
             seen.insert(compile::variant_name(e));
         });
     }
-    // The walk reached a spread of variants, not just the roots.
     for v in [
-        "Block", "If", "BinOp", "Call", "Let", "For", "While", "Match", "Index",
+        "Block", "If", "BinOp", "Call", "Let", "For", "While", "Match", "Index", "Assign",
     ] {
         assert!(seen.contains(v), "{v} not exercised: {seen:?}");
     }
@@ -132,94 +203,395 @@ fn engine_parse_accepts_only_vm_and_tree() {
     assert!(Engine::parse("VM").is_err());
 }
 
-// ── Op loop: scopes pop on every exit path ──────────────────────────────────
+// ── Scope placement: a push/pop exactly where `eval` has one ────────────────
 
-fn int(n: i64) -> Expr {
-    Expr::Literal(Literal::Int(n))
+/// The op kinds of fn `f`'s body in `src`.
+fn kinds_of(src: &str, f: &str) -> Vec<&'static str> {
+    let prog = crate::parse_source(src).expect("parses");
+    let interp = Interp::build(&prog);
+    kinds(&compile(&interp.res, body_of(&interp, f)))
 }
 
-/// Run `ops` against a frame whose base scope binds `a = 1` and one pushed
-/// scope binds `a = 2`; checks the frame is exactly as it was afterwards (the
-/// same marks, and `a` still reads the inner binding), and returns the result.
-fn run_ops(ops: Vec<Op<'_>>) -> R {
+#[test]
+fn block_pushes_one_scope_around_its_statements() {
+    let k = kinds_of("fn f() -> i64 { let a = 1\n { let b = 2 }\n a }", "f");
+    assert_eq!(
+        k,
+        [
+            "push", "const", "define", // let a = 1
+            "push", "const", "define", "pop", // { let b = 2 } as a statement
+            "load", "pop",
+        ]
+    );
+}
+
+#[test]
+fn if_arms_are_blocks_with_their_own_scopes() {
+    let k = kinds_of("fn f(n: i64) -> i64 { if n < 2 { n } else { 0 } }", "f");
+    assert_eq!(
+        k,
+        [
+            "push",
+            "branch-cmp",
+            "push",
+            "load",
+            "pop",
+            "jump",
+            "push",
+            "const",
+            "pop",
+            "pop",
+        ]
+    );
+}
+
+#[test]
+fn while_pushes_one_scope_per_iteration_after_the_condition() {
+    // The fused condition pushes the iteration's scope when it holds; the
+    // back edge pops it.
+    let k = kinds_of(
+        "fn f() -> i64 { let i = 0\n while i < 3 { let t = 1\n i = i + t }\n i }",
+        "f",
+    );
+    assert_eq!(
+        k,
+        [
+            "push",
+            "const",
+            "define", // let i = 0
+            "branch-cmp",
+            "const",
+            "define",
+            "store-bin",
+            "pop-jump", // while
+            "load",
+            "pop",
+        ]
+    );
+}
+
+#[test]
+fn for_converts_both_bounds_then_pushes_per_iteration() {
+    // `for-test`/`for-next` push the variable's scope and the body's, and
+    // `for-next` pops both before the increment.
+    let k = kinds_of(
+        "fn f() -> i64 { let s = 0\n for i in 0..3 { s = s + i }\n s }",
+        "f",
+    );
+    assert_eq!(
+        k,
+        [
+            "push",
+            "const",
+            "define",
+            "const",
+            "strict-int",
+            "const",
+            "strict-int",
+            "for-test",
+            "store-bin",
+            "for-next",
+            "drop",
+            "drop",
+            "load",
+            "pop",
+        ]
+    );
+}
+
+#[test]
+fn ax31_shaped_assign_runs_assign_in_place_first() {
+    // Both operands inline: one fused op that runs `assign_in_place` first.
+    let prog =
+        crate::parse_source("fn f() -> str { let s = \"\"\n s = s + \"x\"\n s }").expect("parses");
+    let interp = Interp::build(&prog);
+    let body = compile(&interp.res, body_of(&interp, "f"));
+    assert!(body.ops.iter().any(|op| matches!(
+        op,
+        Op::StoreBin {
+            in_place: Some(_),
+            ..
+        }
+    )));
+    // A computed operand: an `AssignInPlace` op before the value.
+    let k = kinds_of(
+        "fn f() -> [i64] { let x = [0]\n x = arr_push(x, 1 + 2)\n x }",
+        "f",
+    );
+    assert_eq!(&k[3..8], ["in-place", "load", "bin", "call", "store"]);
+    // Not AX-31-shaped: no `assign_in_place` call at all.
+    let prog = crate::parse_source("fn f() -> i64 { let i = 0\n i = 1 + i\n i }").unwrap();
+    let interp = Interp::build(&prog);
+    let body = compile(&interp.res, body_of(&interp, "f"));
+    assert!(body.ops.iter().all(|op| !matches!(
+        op,
+        Op::AssignInPlace { .. }
+            | Op::StoreBin {
+                in_place: Some(_),
+                ..
+            }
+    )));
+}
+
+// ── Op loop: scopes pop on every exit path ──────────────────────────────────
+
+const EXITS: &str = "\
+fn stop() -> i64 { break }
+fn brk_nested() -> i64 {
+    let s = 0
+    while true { let t = 1
+        { let u = 2
+            if s > 2 { break } }
+        s = s + t }
+    s
+}
+fn cont_for() -> i64 {
+    let s = 0
+    for i in 0..5 { let t = i
+        { let u = 0
+            if i == 2 { continue } }
+        s = s + t + u_free() }
+    s
+}
+fn cont_while() -> i64 {
+    let i = 0
+    let s = 0
+    while i < 5 { let t = i
+        i = i + 1
+        { let u = 0
+            if t == 2 { continue } }
+        s = s + t }
+    s
+}
+fn u_free() -> i64 { 0 }
+fn brk_inner_only() -> i64 {
+    let n = 0
+    for i in 0..3 { let a = i
+        for j in 0..10 { let b = j
+            if j == 2 { break }
+            n = n + 1 }
+        n = n + 100 }
+    n
+}
+fn brk_from_tree_op() -> i64 {
+    let n = 0
+    while true { let a = 1
+        n = n + 1
+        match n { 3 => { let z = 0
+            break }, _ => 0 } }
+    n
+}
+fn brk_from_callee() -> i64 {
+    let n = 0
+    while true { let a = 1
+        n = n + 1
+        if n == 4 { stop() } }
+    n
+}
+fn panics_in_loop() -> i64 {
+    let n = 0
+    while true { let a = 1
+        { let b = 2
+            let c = a / 0 } }
+    n
+}
+fn returns_from_loop() -> i64 {
+    for i in 0..10 { let a = i
+        while true { let b = a
+            { let c = b
+                if c == 3 { return c * 10 } }
+            break } }
+    0
+}
+fn question_none() -> Option<i64> {
+    let o = None
+    { let a = 1
+        let v = o?
+        Some(v + a) }
+}
+fn break_outside_loop() -> i64 {
+    let a = 1
+    { let b = 2
+        break }
+}
+";
+
+/// Run fn `f` of [`EXITS`] on both engines in a frame whose base scope binds
+/// a sentinel; checks each frame is exactly as it was afterwards (one mark,
+/// one binding), and that both engines agree. Returns the vm's result.
+fn run_both(f: &str) -> R {
+    let prog = crate::parse_source(EXITS).expect("parses");
+    let interp = Interp::build(&prog);
+    let body = body_of(&interp, f);
+    let sentinel = intern("sentinel");
+    let frame = || {
+        let mut env = Env::new();
+        env.define(sentinel, Value::Int(-1));
+        env.push();
+        env
+    };
+    let check = |env: &Env, engine: &str| {
+        assert_eq!(env.marks.len(), 1, "{f} ({engine}): scopes left pushed");
+        assert_eq!(env.vars.len(), 1, "{f} ({engine}): bindings left behind");
+    };
+    let mut env = frame();
+    let tree = match interp.eval(body, &mut env) {
+        Err(Flow::Return(v)) => Ok(v),
+        r => r,
+    };
+    check(&env, "tree");
+    let mut env = frame();
+    let vm = interp.exec(&compile(&interp.res, body), &mut env);
+    check(&env, "vm");
+    assert_eq!(format!("{vm:?}"), format!("{tree:?}"), "{f}");
+    vm
+}
+
+#[test]
+fn exec_catches_break_and_continue_in_the_innermost_loop() {
+    assert!(matches!(run_both("brk_nested"), Ok(Value::Int(3))));
+    assert!(matches!(run_both("cont_for"), Ok(Value::Int(8))));
+    assert!(matches!(run_both("cont_while"), Ok(Value::Int(8))));
+    assert!(matches!(run_both("brk_inner_only"), Ok(Value::Int(306))));
+}
+
+#[test]
+fn exec_catches_break_out_of_a_tree_op_and_a_callee() {
+    assert!(matches!(run_both("brk_from_tree_op"), Ok(Value::Int(3))));
+    assert!(matches!(run_both("brk_from_callee"), Ok(Value::Int(4))));
+}
+
+#[test]
+fn exec_pops_every_pushed_scope_when_an_op_errs() {
+    let r = run_both("panics_in_loop");
+    assert!(matches!(&r, Err(Flow::Panic(_))), "{r:?}");
+    // A `break` outside any loop of this body propagates unchanged.
+    assert!(matches!(run_both("break_outside_loop"), Err(Flow::Break)));
+}
+
+#[test]
+fn exec_turns_return_into_the_body_value_after_popping() {
+    assert!(matches!(run_both("returns_from_loop"), Ok(Value::Int(30))));
+    assert!(matches!(run_both("question_none"), Ok(Value::None)));
+}
+
+#[test]
+fn exec_runs_hand_built_ops_with_balanced_scopes() {
     let prog = program();
     let interp = Interp::build(&prog);
     let a = intern("a");
     let mut env = Env::new();
     env.define(a, Value::Int(1));
-    env.push();
-    env.define(a, Value::Int(2));
-    let body = Body {
-        ops: ops.into_boxed_slice(),
-    };
-    let r = interp.exec(&body, &mut env);
-    assert_eq!(
-        env.marks.len(),
-        1,
-        "scopes pushed by the body must all be popped"
-    );
-    assert_eq!(env.vars.len(), 2, "bindings of popped scopes must be gone");
-    assert!(matches!(env.get(a), Some(Value::Int(2))));
-    r
-}
-
-fn shadow_a() -> Expr {
-    Expr::Let {
+    let shadow = Expr::Let {
         name: "a".into(),
         ty: None,
-        value: Box::new(int(99)),
+        value: Box::new(Expr::Literal(Literal::Int(99))),
+    };
+    let body = Body {
+        ops: vec![
+            Op::ScopePush,
+            Op::Tree(&shadow),
+            Op::Drop,
+            Op::ScopePush,
+            Op::Const(Value::Int(7)),
+            Op::Return,
+        ]
+        .into_boxed_slice(),
+        loops: Box::new([]),
+        max_stack: 1,
+    };
+    let r = interp.exec(&body, &mut env);
+    assert!(matches!(r, Ok(Value::Int(7))), "{r:?}");
+    assert_eq!(env.marks.len(), 0);
+    assert!(matches!(env.get(a), Some(Value::Int(1))));
+    let empty = Body {
+        ops: Box::new([]),
+        loops: Box::new([]),
+        max_stack: 0,
+    };
+    assert!(matches!(interp.exec(&empty, &mut env), Ok(Value::Unit)));
+}
+
+/// The vm's int fast path yields exactly `int_binop`'s `Ok` value, and
+/// declines (`None`) exactly where `int_binop` panics or has no arm, so the
+/// general path it falls back to produces the same panic.
+#[test]
+fn int_fast_agrees_with_int_binop() {
+    use crate::ast::BinOp::*;
+    let ops = [
+        Add, Sub, Mul, Div, Rem, Eq, NotEq, Lt, Gt, LtEq, GtEq, And, Or, BitAnd, BitOr, BitXor,
+        Shl, Shr,
+    ];
+    let vals = [
+        i64::MIN,
+        i64::MIN + 1,
+        -65,
+        -64,
+        -7,
+        -2,
+        -1,
+        0,
+        1,
+        2,
+        3,
+        7,
+        63,
+        64,
+        65,
+        i64::MAX - 1,
+        i64::MAX,
+    ];
+    for op in &ops {
+        for &a in &vals {
+            for &b in &vals {
+                let fast = int_fast(op, a, b).map(Scalar::value);
+                match int_binop(op, a, b) {
+                    Some(Ok(v)) => assert_eq!(
+                        fast.as_ref().map(display),
+                        Some(display(&v)),
+                        "{op:?} {a} {b}"
+                    ),
+                    Some(Err(_)) | None => assert!(fast.is_none(), "{op:?} {a} {b}"),
+                }
+            }
+        }
     }
 }
 
+/// The vm's float fast path yields exactly `float_binop`'s value, and
+/// declines exactly where `float_binop` has no arm.
 #[test]
-fn exec_normal_exit_keeps_scopes_balanced_and_yields_the_last_value() {
-    let (l, v) = (shadow_a(), int(7));
-    let r = run_ops(vec![
-        Op::ScopePush,
-        Op::Tree(&l),
-        Op::Tree(&v),
-        Op::ScopePop,
-    ]);
-    assert!(matches!(r, Ok(Value::Int(7))), "{r:?}");
-}
-
-#[test]
-fn exec_pops_every_pushed_scope_when_an_op_errs() {
-    let (l, brk) = (shadow_a(), Expr::Break);
-    let r = run_ops(vec![
-        Op::ScopePush,
-        Op::Tree(&l),
-        Op::ScopePush,
-        Op::Tree(&l),
-        Op::Tree(&brk),
-        Op::ScopePop,
-        Op::ScopePop,
-    ]);
-    // A `break` outside any loop of this body propagates unchanged.
-    assert!(matches!(r, Err(Flow::Break)), "{r:?}");
-
-    let undefined = Expr::Ident("no_such_name".into());
-    let r = run_ops(vec![Op::ScopePush, Op::Tree(&l), Op::Tree(&undefined)]);
-    assert!(
-        matches!(&r, Err(Flow::Panic(m)) if m.contains("undefined identifier `no_such_name`")),
-        "{r:?}"
-    );
-}
-
-#[test]
-fn exec_turns_return_into_the_body_value_after_popping() {
-    let (l, ret) = (shadow_a(), Expr::Return(Some(Box::new(int(42)))));
-    let r = run_ops(vec![
-        Op::ScopePush,
-        Op::Tree(&l),
-        Op::ScopePush,
-        Op::Tree(&ret),
-    ]);
-    assert!(matches!(r, Ok(Value::Int(42))), "{r:?}");
-}
-
-#[test]
-fn exec_of_an_empty_body_is_unit() {
-    let r = run_ops(Vec::new());
-    assert!(matches!(r, Ok(Value::Unit)), "{r:?}");
+fn float_fast_agrees_with_float_binop() {
+    use crate::ast::BinOp::*;
+    let ops = [
+        Add, Sub, Mul, Div, Rem, Eq, NotEq, Lt, Gt, LtEq, GtEq, And, Or, BitAnd, BitOr, BitXor,
+        Shl, Shr,
+    ];
+    let vals = [
+        f64::NEG_INFINITY,
+        f64::MIN,
+        -1.5,
+        -0.0,
+        0.0,
+        0.1,
+        1.0,
+        f64::MAX,
+        f64::INFINITY,
+        f64::NAN,
+    ];
+    for op in &ops {
+        for &a in &vals {
+            for &b in &vals {
+                let fast = float_fast(op, a, b).map(Scalar::value);
+                match float_binop(op, a, b) {
+                    Some(Ok(v)) => assert_eq!(
+                        fast.as_ref().map(display),
+                        Some(display(&v)),
+                        "{op:?} {a} {b}"
+                    ),
+                    Some(Err(_)) | None => assert!(fast.is_none(), "{op:?} {a} {b}"),
+                }
+            }
+        }
+    }
 }

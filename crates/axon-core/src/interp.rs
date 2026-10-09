@@ -907,6 +907,10 @@ pub struct Interp<'p> {
     /// AX-54: emptied frames of finished user-fn calls, reused by
     /// `call_fn_entry` so a call does not allocate its bindings and marks.
     env_pool: RefCell<Vec<Env>>,
+    /// R50 S1: emptied operand stacks of finished bytecode-engine activations,
+    /// reused by `vm::exec` so an activation does not allocate one (spec §4
+    /// Execution, Re-entrancy: each activation owns its stack).
+    vm_stacks: RefCell<Vec<Vec<Value>>>,
     /// Phase-7 `cost_meter` / F4: cumulative AI spend across the whole run, in
     /// integer micro-dollars (µ$). Every `ai_complete` adds `tier.cost_micro(est
     /// tokens)` — the real per-token cost, stamped into the `ai_call` provenance
@@ -3093,6 +3097,7 @@ impl<'p> Interp<'p> {
             ai_calls_this_fn: Cell::new(0),
             arg_bufs: RefCell::new(Vec::new()),
             env_pool: RefCell::new(Vec::new()),
+            vm_stacks: RefCell::new(Vec::new()),
             ai_cost_micro: Cell::new(0),
             w1310_warned: RefCell::new(std::collections::HashSet::new()),
             tokens_used: Cell::new(0),
