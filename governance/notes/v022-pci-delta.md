@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: c4ea5684a475d71a1ae40c4249b23a1cc4935517
+generated-at: 62e2adc5d7ed5b9d6e75f93e2bb252b390c5f312
 
-`git diff --numstat 31413ca7..c4ea5684 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..62e2adc5 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -25,7 +25,7 @@ generated-at: c4ea5684a475d71a1ae40c4249b23a1cc4935517
 | `crates/axon-core/src/builtins.rs` | 8 | 3 |
 | `crates/axon-core/src/cache.rs` | 70 | 2 |
 | `crates/axon-core/src/capabilities.rs` | 18 | 1 |
-| `crates/axon-core/src/checker.rs` | 398 | 74 |
+| `crates/axon-core/src/checker.rs` | 406 | 74 |
 | `crates/axon-core/src/codegen/asi.rs` | 8 | 0 |
 | `crates/axon-core/src/codegen/build_wrappers.rs` | 15 | 1 |
 | `crates/axon-core/src/codegen/builtins.rs` | 6 | 0 |
@@ -43,26 +43,27 @@ generated-at: c4ea5684a475d71a1ae40c4249b23a1cc4935517
 | `crates/axon-core/src/error.rs` | 20 | 11 |
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 6750 | 1211 |
+| `crates/axon-core/src/interp.rs` | 6771 | 1207 |
 | `crates/axon-core/src/interp/builtins.rs` | 482 | 341 |
 | `crates/axon-core/src/interp/conform.rs` | 1789 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 962 | 182 |
+| `crates/axon-core/src/interp/eval.rs` | 995 | 185 |
 | `crates/axon-core/src/interp/goal.rs` | 69 | 30 |
 | `crates/axon-core/src/interp/pin.rs` | 955 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 35 | 15 |
-| `crates/axon-core/src/interp/taint.rs` | 1347 | 0 |
-| `crates/axon-core/src/interp/taint_tests.rs` | 2713 | 0 |
+| `crates/axon-core/src/interp/taint.rs` | 1523 | 0 |
+| `crates/axon-core/src/interp/taint_tests.rs` | 2832 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 15 | 7 |
 | `crates/axon-core/src/kernel.rs` | 89 | 23 |
-| `crates/axon-core/src/lib.rs` | 114 | 13 |
-| `crates/axon-core/src/main.rs` | 407 | 94 |
+| `crates/axon-core/src/lib.rs` | 115 | 13 |
+| `crates/axon-core/src/main.rs` | 422 | 94 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
 | `crates/axon-core/src/mut_borrow.rs` | 800 | 0 |
-| `crates/axon-core/src/parser.rs` | 39 | 1 |
-| `crates/axon-core/src/resolver.rs` | 420 | 65 |
-| total | 20738 | 2880 |
+| `crates/axon-core/src/parser.rs` | 61 | 3 |
+| `crates/axon-core/src/resolver.rs` | 530 | 65 |
+| `crates/axon-core/src/seal_split.rs` | 85 | 0 |
+| total | 21328 | 2881 |
 
-`git log --reverse 31413ca7..c4ea5684 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..62e2adc5 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -139,7 +140,10 @@ generated-at: c4ea5684a475d71a1ae40c4249b23a1cc4935517
 | 2e68236b | amendment 114 | the sealed-only check holds the operator's `mod` of a candidate module (found by the fabric suite), so a candidate whose module uses its own helper resolves; an operator module the candidate does not ship is still missing: narrowing relative to the first form of amendment 114, no widening of what base accepted |
 | 3849fadb | amendment 117 | the clear, localized members of the round-14 find-until-dry loop (44 of 53 findings): `temporal_new`/`temporal_is_valid` are World and Time (a clock reader is no Pure builtin); a match guard, every `while`/`while let` condition evaluation after the first, every builtin callback after the first (`call_cb`) and every Rust loop that runs operator code (`t_loop_pc`: goal searches, the scheduler pass) run under the control taint of what decided them; an operator pop and the channel a `select` looked at are marked; an abort-capable `with` body treats a branch on tainted data as a possible exit and sealed code that ran in it raises the sticky taint, as does a scheduler fiber that ran sealed code and failed; a resume value keeps its taint; `dstore_*` is World, a zoned call's provenance push is kernel state and its append is world state; a refinement type pins what its base pins; a width inside an `Uncertain`/`Temporal` is a width; `sandbox_run` copies the operator's sandbox entry into the sealed kernel for the call; the principal token stream is per registry; the sealed-only check resolves `dyn`, array/tuple elements, refinement/`where`/`@[verify]`/whole-struct predicates and the exact deferred type names, and the goal variants and `goal_eval` give a sealed caller the missing-name text: narrowing, no widening (the claim itself is NARROWED to what is enforced) |
 | c4ea5684 | amendment 117 | follow-up to 3849fadb found by the full mutation run: two guards that proved redundant are removed (a sealed-caller check after goal_name_is_known; the operator-pop branch of t_chan_access, covered by t_chan_choice) and a test case for an aborting arm's value: no change in what is refused |
-| 73 commits | | |
+| b7aaa9c1 | amendment 121 | the existence oracle at every placement and the operator-typed value the candidate picked (first cut): the parser's end-of-input span is no longer the dummy `0..0`; the resolver locates a type, a refinement and a top-level `let` at its item and keeps the run's own sealed set (an HONEST `fn lim(n: i64 where n >= 0)` is no longer refused for naming its parameter); a merged diagnostic with no line joins the backstop; a sealed top-level `let` initializer is name-checked; a third taint bit, `PICK`, marks an operator-typed value (or one holding it) that sealed code selected (an index, a builtin's read on a selector it chose, a branch, a store under its control, an exit it decided, a hand-back from a sealed fn or closure) and the dispatch rule refuses a receiver that carries it: narrowing, no widening |
+| d7574f7d | amendment 121 | the split moves to `seal_split.rs` (library, so a gate row runs its test), the honest-registry control is made to bind the candidate's taint, doc and test wording: no change in what is refused beyond b7aaa9c1 |
+| 45347cb7 | amendment 121 | the backstop's first branch no longer appends the sealed-only diagnostics (empty there); three older rows re-anchored; the refusal-coverage exemption of the observer prune dropped (that file is not under crates/axon-core/src; the commit touches main.rs only by removing one line): no change in what is refused |
+| 76 commits | | |
 <!-- END MECHANICAL -->
 
 
