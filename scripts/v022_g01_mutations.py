@@ -10787,6 +10787,8 @@ MUTATIONS += [
      "    if i_std < 0 or i_iso < 0 or i_iso < i_std:", "    if False:", *_DR11),
     ('M3419', "NS-DIAG (118): check() applies the diagnostic-channel rule to the helper of the tree it is given", 'scripts/opkit_ns_drift.py',
      '    bad += diagnostic_problems(open(os.path.join(root, "scripts", "lib", "opkit_ns.sh")).read())\n    return bad\n', '    return bad\n', *_DR11),
+]
+
 # ── C9 round 14, workstream PSV1X (amendment 117; M3300-M3399): the fixed members of the six-pass loop's seven clusters ──
 MUTATIONS += [
     ('M3300', 'CONTROL (am117): a match guard runs under no control taint from its subject', 'crates/axon-core/src/interp/eval.rs',

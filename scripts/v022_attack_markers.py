@@ -2875,6 +2875,8 @@ ATTACK_MARKERS.update({
     'M3417': r"selftest: the diagnostic shape 'ns_run pre-checks with stderr not captured' was ACCEPTED",
     'M3418': r"selftest: the diagnostic shape 'the in-namespace shell mounts before it classifies fds' was ACCEPTED",
     'M3419': r'selftest: check\(\) on a tree whose helper writes to fd 2 directly was ACCEPTED',
+})
+
 # C9 round 14, PSV1X (amendment 117)
 ATTACK_MARKERS.update({
     'M3300': "ATTACK: <ctl\\[match\\]\\ attack:\\ a\\ guard's\\ side\\ effect,\\ run\\ because\\ the\\ candidate's\\ answer\\ matched\\ the\\ pattern>",
