@@ -1083,8 +1083,8 @@ impl<'p> Interp<'p> {
             return self.eval_call_mut(callee, args, tier, env);
         }
 
-        // Evaluate arguments left-to-right.
-        let mut argv = Vec::with_capacity(args.len());
+        // Evaluate arguments left-to-right, into a reused buffer (AX-54).
+        let mut argv = self.take_args(args.len());
         for a in args {
             argv.push(self.eval(a, env)?);
         }
@@ -1118,8 +1118,11 @@ impl<'p> Interp<'p> {
         }
 
         // R3b: make the per-call `tier:` (if any) visible to the builtin dispatch
-        // for the duration of this call (read by `current_ai_tier`).
-        *self.current_call_tier.borrow_mut() = tier.map(|t| t.to_string());
+        // for the duration of this call (read by `current_ai_tier`). A call with
+        // no `tier:` leaves an already-clear slot alone (AX-54).
+        if tier.is_some() || self.current_call_tier.borrow().is_some() {
+            *self.current_call_tier.borrow_mut() = tier.map(|t| t.to_string());
+        }
 
         if let Expr::Ident(name) = callee {
             let s = self.res.sym(callee, name);
@@ -1135,6 +1138,8 @@ impl<'p> Interp<'p> {
                 Some(r) if r != CALLEE_UNKNOWN => r,
                 _ => {
                     if let Some(v) = self.call_builtin(name, &argv)? {
+                        argv.clear();
+                        self.recycle_args(argv);
                         return Ok(v);
                     }
                     let r = match self.fn_of_sym.get(&s) {
