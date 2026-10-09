@@ -327,23 +327,89 @@ fn free_vars(params: &[LambdaParam], body: &Expr) -> Box<[Sym]> {
     syms.into_boxed_slice()
 }
 
-/// A user fn or impl method, with its parameter syms resolved once.
+/// A user fn or impl method, with everything a call decides from its
+/// declaration resolved once (AX-18, AX-54): parameter syms, per-parameter
+/// argument coercion and the attribute-driven per-activation steps.
 pub(super) struct FnEntry<'p> {
     pub(super) def: &'p FnDef,
     pub(super) params: Box<[Sym]>,
+    /// Per parameter: whether its declared type is NOT `Uncertain`/`Temporal`
+    /// (so a soft argument unwraps to its inner value), and the sized-int
+    /// width an argument is coerced to (R19).
+    pub(super) param_coerce: Box<[(bool, Option<IntWidth>)]>,
     /// Some parameter is `&mut` (see `Interp::call_fn`).
     pub(super) has_ref_mut: bool,
+    /// `def.name`, installed as `Interp::current_fn` per activation without
+    /// copying the string.
+    pub(super) name: Rc<str>,
+    /// `@[agent]`: the enclosing agent for everything it calls (R4/I-13).
+    pub(super) is_agent: bool,
+    /// The fn the `current_fn` readers find under this name carries
+    /// `@[ai(...)]`, so an `ai_complete` in this activation may meter against
+    /// `Interp::ai_calls_this_fn` (R3c). Without it the counter is never read
+    /// or written while this fn is current, so its save/reset/restore is inert.
+    pub(super) ai_metered: bool,
+    /// `@[corrigible]` (R9).
+    pub(super) corrigible: bool,
+    /// `@[adaptive]` (R4 zone).
+    pub(super) adaptive: bool,
+    /// `@[experiment(label)]`'s label (R4 zone).
+    pub(super) experiment: Option<String>,
+    /// Has a `@[goal(...)]` attribute (R5).
+    pub(super) has_goal: bool,
+    /// The declared return type is a plain scalar (`i64`/`i32`/`f64`/`bool`),
+    /// so a soft result unwraps at the return boundary.
+    pub(super) ret_is_scalar: bool,
+    /// Named `main` (the binding-dump capture applies to it).
+    pub(super) is_main: bool,
+    /// Has a zone (`adaptive`/`experiment`) or `@[verify]` step after the
+    /// body (`Interp::finish_call_cold`).
+    pub(super) has_epilogue: bool,
 }
 
 impl<'p> FnEntry<'p> {
-    pub(super) fn new(def: &'p FnDef) -> Self {
+    /// `fns` is the interpreter's by-name fn map, which the `current_fn`
+    /// readers (`Interp::current_ai_budget` & co.) consult.
+    pub(super) fn new(def: &'p FnDef, fns: &HashMap<String, &FnDef>) -> Self {
+        use crate::ast::AxonType;
+        let has_attr = |name: &str| def.attrs.iter().any(|a| a.name == name);
         FnEntry {
             def,
             params: def.params.iter().map(|p| intern(&p.name)).collect(),
+            param_coerce: def
+                .params
+                .iter()
+                .map(|p| {
+                    let soft = matches!(
+                        &p.ty,
+                        AxonType::Generic { base, .. } if base == "Uncertain" || base == "Temporal"
+                    );
+                    (!soft, super::axon_type_to_width(&p.ty))
+                })
+                .collect(),
             has_ref_mut: def
                 .params
                 .iter()
-                .any(|p| matches!(p.ty, crate::ast::AxonType::RefMut(_))),
+                .any(|p| matches!(p.ty, AxonType::RefMut(_))),
+            name: Rc::from(def.name.as_str()),
+            is_agent: has_attr("agent"),
+            ai_metered: fns
+                .get(&def.name)
+                .is_some_and(|f| f.attrs.iter().any(|a| a.name == "ai")),
+            corrigible: has_attr("corrigible"),
+            adaptive: has_attr("adaptive"),
+            experiment: def
+                .attrs
+                .iter()
+                .find(|a| a.name == "experiment")
+                .map(|a| a.args.first().cloned().unwrap_or_default()),
+            has_goal: has_attr("goal"),
+            ret_is_scalar: matches!(
+                &def.return_type,
+                Some(AxonType::Named(n)) if matches!(n.as_str(), "i64" | "i32" | "f64" | "bool")
+            ),
+            is_main: def.name == "main",
+            has_epilogue: has_attr("adaptive") || has_attr("experiment") || def.verify.is_some(),
         }
     }
 }
