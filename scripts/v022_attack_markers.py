@@ -2681,4 +2681,6 @@ ATTACK_MARKERS.update({
     'M3159': 'a default computed at the site was read as a literal',
     'M3160': 'one computed signing argument moved the count',
     'M3161': 'the gate does not list the signing inputs it found',
+    'M3162': r'ATTACK: nonce default: .* read as FUTURE, not ancient',
+    'M3163': r'ATTACK: prune kept or dropped the wrong records',
 })
