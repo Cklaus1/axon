@@ -102,6 +102,7 @@ THEMES = {
     "b8f176d9": ("amendment 108", "test only (a clippy `useless_format` in a taint test): no production change"),
     "8abeb02b": ("amendment 108", "builtin arguments are walked deep EXCEPT the first argument of ten builtins that only count, key into or append (`SHALLOW_FIRST_ARG`, fail-closed: unlisted is deep), which keeps a loop of a million `dict_set`s linear; tests: narrowing, no widening beyond amendment 108's first form"),
     "65d407d8": ("amendment 114", "the right operand of `&&`/`||` runs under the left's control taint (sealed runs, a cold function), a refused match guard, a `?` and a `select` arm raise theirs, `?` counts as an exit, the sealed files are checked by a second pipeline over the sealed items alone with the checker refusing the missing name wherever the operator's was (struct literal, lambda parameter, enum/trait/refinement types, generic bound, verify and refinement predicates); taint::CONTROL_TABLE drift-tested against ast.rs: narrowing, no widening"),
+    "5d333913": ("amendment 114", "test and registry only (a taint test for the type a `?` carries, plant controls for the note check): no production change"),
 }
 
 
