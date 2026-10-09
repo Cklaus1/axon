@@ -1,0 +1,8 @@
+// R50 §10 --repros baseline for part.ax: the same program without the `for` loop.
+fn main() -> i64 {
+    let a = arr_repeat(0, 1000000)
+    let pivot = 1
+    let i = 0
+    println(to_str(i))
+    0
+}

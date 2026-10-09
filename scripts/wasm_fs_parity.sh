@@ -32,6 +32,12 @@ done
 if [ -z "$WASMRT" ]; then
   echo "wasm_fs_parity: no wasm runtime — skipping"; exit 0
 fi
+
+# R50 §8: forward AXON_ENGINE of the caller to the wasip1 interpreter (wasmtime
+# passes no host environment through; the native leg inherits it).
+ENGINE_ENV=()
+[ -n "${AXON_ENGINE:-}" ] && ENGINE_ENV=(--env "AXON_ENGINE=$AXON_ENGINE")
+
 # A skip must prove its own reason. The previous probe piped rustup
 # into grep, discarding rustup's exit status and stderr, so a MISSING
 # rustup concluded "target not installed" — reporting a fact it never
@@ -68,7 +74,7 @@ trap 'rm -rf "$WORK"' EXIT
 n_out="$(cd "$WORK" && "$NATIVE" "$ROOT/$PROG" 2>/dev/null)"; n_code=$?
 # wasmtime needs the file path and a dir grant for both the program's reads and
 # its /tmp writes.
-w_out="$("$WASMRT" --dir / --dir /tmp "$WASM" "$ROOT/$PROG" 2>/dev/null)"; w_code=$?
+w_out="$("$WASMRT" --dir / --dir /tmp "${ENGINE_ENV[@]}" "$WASM" "$ROOT/$PROG" 2>/dev/null)"; w_code=$?
 
 echo "  native: [$n_out] (exit $n_code)"
 echo "  wasm:   [$w_out] (exit $w_code)"
@@ -96,7 +102,7 @@ fn main() -> i64 {
 }
 AX
 en_out="$(AXON_WASM_PARITY=wasiworks "$NATIVE" "$ENVPROG" 2>/dev/null)"; en_code=$?
-ew_out="$("$WASMRT" --dir / --env AXON_WASM_PARITY=wasiworks "$WASM" "$ENVPROG" 2>/dev/null)"; ew_code=$?
+ew_out="$("$WASMRT" --dir / --env AXON_WASM_PARITY=wasiworks "${ENGINE_ENV[@]}" "$WASM" "$ENVPROG" 2>/dev/null)"; ew_code=$?
 echo "  native env: [$en_out] (exit $en_code)"
 echo "  wasm   env: [$ew_out] (exit $ew_code)"
 if [ "$en_code" != "$ew_code" ] || [ "$en_out" != "$ew_out" ]; then

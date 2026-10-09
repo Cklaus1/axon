@@ -38,6 +38,13 @@ if [ -z "$WASMRT" ]; then
   echo "wasm_parity: no wasm runtime (wasmtime) found — skipping (install: curl https://wasmtime.dev/install.sh | bash)"
   exit 0
 fi
+
+# R50 §8: the wasip1 interpreter reads AXON_ENGINE like native, but wasmtime
+# passes no host environment through unless asked. Forward the engine of the
+# caller so both legs run the same one (the native leg inherits it).
+ENGINE_ENV=()
+[ -n "${AXON_ENGINE:-}" ] && ENGINE_ENV=(--env "AXON_ENGINE=$AXON_ENGINE")
+
 # A skip must prove its own reason. The previous probe piped rustup
 # into grep, discarding rustup's exit status and stderr, so a MISSING
 # rustup concluded "target not installed" — reporting a fact it never
@@ -114,7 +121,7 @@ for name in "${CORPUS[@]}"; do
   # Native.
   n_out="$("$NATIVE" "$f" 2>/dev/null)"; n_code=$?
   # wasm (wasmtime needs an absolute path and a dir grant to read the file).
-  w_out="$("$WASMRT" --dir / "$WASM" "$ROOT/$f" 2>/dev/null)"; w_code=$?
+  w_out="$("$WASMRT" --dir / "${ENGINE_ENV[@]}" "$WASM" "$ROOT/$f" 2>/dev/null)"; w_code=$?
 
   # AUDIT T36 (finding GATE-02). Two legs that BOTH fail before producing any
   # output "agree" trivially — identical empty stdout, identical non-zero exit —

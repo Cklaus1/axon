@@ -1,7 +1,7 @@
 # R50 — Bytecode engine for `axon run`
 
 **Spec ID:** `R50-register-vm`
-**Status:** Reviewed (revision 10). Nine adversarial reviews (2026-10-09, `reviewer`). The first eight,
+**Status:** Implementing (S0 landed). Reviewed at revision 10 after nine adversarial reviews (2026-10-09, `reviewer`). The first eight,
 verdict "incorrect" (first 2 blockers and 11 must-fix, second 4 must-fix and 8 smaller, third 6 must-fix
 and 6 smaller, fourth 7 must-fix and 5 smaller, fifth 5 must-fix and 7 smaller, sixth 5 must-fix and 6
 smaller, seventh 2 must-fix and 3 smaller, eighth 2 must-fix and 2 smaller), and the ninth, verdict
@@ -11,7 +11,7 @@ smaller, seventh 2 must-fix and 3 smaller, eighth 2 must-fix and 2 smaller), and
 
 ```spec-meta
 id: R50-register-vm
-status-claim: Reviewed
+status-claim: Implementing
 depends-on: none
 blocks: none
 blocked-by: none
@@ -19,7 +19,7 @@ supersedes: none
 related: R2a-type-map-threading, R0-interp-module-split, R44-accumulating-session, R7-targets
 conflicts-with: none
 reserves: none (no new diagnostic or exit codes; env vars AXON_ENGINE and AXON_VM_TRACE are registered in env_registry.rs at S0)
-evidence: scripts/vm_parity.sh; scripts/vm_perf_gate.sh; scripts/vm_wasm_depth.sh (planned, land with S0; spec review evidence is §15)
+evidence: scripts/vm_parity.sh; scripts/vm_wasm_depth.sh; scripts/vm_perf_gate.sh (budgets met from S6); spec review evidence is §15
 ```
 
 R47–R49 are named as planned in `R46-in-flight-operations.md` §2 (that file is untracked in the main
@@ -236,7 +236,8 @@ index reads take `Int` only (`strict_int`, below), while place writes also accep
     `axon-run` at `886aae53` on `wasm32-wasip1` under wasmtime 49.0.0, with the host's native stack and the
     guard both lifted (`-W max-wasm-stack=4294967295`, `AXON_MAX_DEPTH=1000000`), the deepest depth the
     tree-walker completes before a memory fault is, debug / release: plain fn recursion 1,226 / 12,085;
-    fn → closure → fn 1,011 / 9,574; `&mut` recursion (qsort's shape) 1,884 / 18,638; recursion inside a
+    fn → closure → fn 1,011 / 9,574; `&mut` recursion (qsort's shape) 1,884 / 18,638 (the committed
+    `vm_depth/mut.ax`, which recurses at the top level as qsort does, completes 2,789 / 25,571); recursion inside a
     `with` body 889 / 9,018. The tightest margin over 450 is 1.98× (`with`, debug). The requirement: under
     `AXON_ENGINE=vm`, in both profiles, every chain completes depth 585 (1.3 × 450) under that
     configuration, and with the guard in place (`-W max-wasm-stack=4294967295`, `AXON_MAX_DEPTH` unset)
@@ -626,7 +627,7 @@ the reference code, gaps cost speed, never correctness.
 
 | Node | Depends-on / blocked-by | Gate (named test or script) | Status |
 |---|---|---|---|
-| R50.S0 selector (`AXON_ENGINE`, `axon_set_engine`), trace (body and `tree-op` lines), `run_body`, `FnEntry.compiled`, every body = one `Tree` op; extract `dispatch_call`, `bind_let`, `call_mut`; tree-walker scope-leak fix; `AXON_HARNESS_STRICT` in `parity_all.sh` with `scripts/parity_allowed_skips.txt` (§11); wasm harnesses forward the engine (§8 wasm); `vm_parity.sh`; `vm_perf_gate.sh`; `vm_wasm_depth.sh` and `tests/fixtures/vm_depth/` | — | `cargo test -p axon-core --test cli_run vm_engine_` (incl. `vm_engine_scope_leak`) + `scripts/vm_parity.sh` (empty lowered list) + `scripts/vm_wasm_depth.sh` + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` (tree engine; §11) | todo |
+| R50.S0 selector (`AXON_ENGINE`, `axon_set_engine`), trace (body and `tree-op` lines), `run_body`, `FnEntry.compiled`, every body = one `Tree` op; extract `dispatch_call`, `bind_let`, `call_mut`; tree-walker scope-leak fix; `AXON_HARNESS_STRICT` in `parity_all.sh` with `scripts/parity_allowed_skips.txt` (§11); wasm harnesses forward the engine (§8 wasm); `vm_parity.sh`; `vm_perf_gate.sh`; `vm_wasm_depth.sh` and `tests/fixtures/vm_depth/` | — | `cargo test -p axon-core --test cli_run vm_engine_` (incl. `vm_engine_scope_leak`) + `scripts/vm_parity.sh` (empty lowered list) + `scripts/vm_wasm_depth.sh` + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` (tree engine; §11) | done (`99b8b099`, `e3b2d35b`) |
 | R50.S1 scalar core and calls; `AssignInPlace` (AX-31 shapes); extract `cond_bool`, `strict_int`; operand-stack pool | R50.S0 | `cli_run vm_scalar_` (incl. `vm_scalar_fib_no_tree_nodes`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (S1 rows) + `vm_wasm_depth.sh` | todo |
 | R50.S2 aggregates, index/field reads, place writes (`AssignTo`); extract `index_in_place`, `index_value`, `field_in_place`, `finish_record`, `place_index`, `write_place` | R50.S1 | `cli_run vm_aggregate_` (incl. `vm_aggregate_part_no_tree_nodes`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (S1 and `part.ax` rows) + `vm_wasm_depth.sh` | todo |
 | R50.S3 match, patterns, enums, methods; extract `chan_method`, `impl_method` | R50.S1 | `cli_run vm_match_` (incl. `vm_match_option_no_tree_nodes`) + `vm_parity.sh` + `vm_wasm_depth.sh` | todo |
@@ -638,7 +639,9 @@ the reference code, gaps cost speed, never correctness.
 
 | Claim | Verify command | Expected | Last verified (commit @ date) | Result |
 |---|---|---|---|---|
-| (none yet) | | | | |
+| S0 parity: both engines identical on the corpus | `scripts/vm_parity.sh` | `284 files, 1761 bodies, 0 lowered ops, 1761 tree ops, 0 differ` | `e3b2d35b` @ 2026-10-09 | PASS |
+| S0 wasm depth: 585 in the linear stack, 450 panic, both engines and profiles | `scripts/vm_wasm_depth.sh` | exit 0; default stack VM below tree on all chains (debug plain 213 vs 230), reported only | `e3b2d35b` @ 2026-10-09 | PASS |
+| S0 suite: both feature sets × both engines; strict parity under tree | `cargo test -p axon-core`; `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` | all green; 53 passed, 2 allowed skips of 55 | `e3b2d35b` @ 2026-10-09 | PASS |
 
 ### 15. Review resolution (2026-10-09)
 

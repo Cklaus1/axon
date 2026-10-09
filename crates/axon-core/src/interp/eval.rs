@@ -158,40 +158,7 @@ impl<'p> Interp<'p> {
             | Expr::RefBind { name, value, ty } => {
                 let v = self.eval(value, env)?;
                 let (s, slot) = self.res.var(expr, name);
-                // Phase 5: a `let/own/ref p: T where P = …` annotation is a
-                // refinement obligation — check the bound value against the
-                // predicate (the non-constant case the checker defers; constant is
-                // E1209). All three binding forms enforce it identically so native
-                // codegen (which shares one Let/Own/RefBind arm) stays in lock-step
-                // (I-2).
-                if !self.refine_preds.is_empty() {
-                    if let Some(crate::ast::AxonType::Named(rn)) = ty {
-                        if let Some(pred) = self.refine_preds.get(rn.as_str()).copied() {
-                            let mut pe = Env::new();
-                            pe.define(SYM_UNDERSCORE, v.clone());
-                            // Also bind the bound name for inline `let x: T where E[x] > k`.
-                            pe.define(s, v.clone());
-                            if let Value::Bool(false) = self.eval(pred, &mut pe)? {
-                                return Err(Flow::RefineViolation(format!("the value bound to `{}` (= {}) violates the refinement `{}` \
-                                 — the value does not satisfy the type's predicate",
-                                name,
-                                display(&v),
-                                rn).into()));
-                            }
-                        }
-                    }
-                }
-                // R19 Slice B: if the annotation names a non-i64 integer type, coerce
-                // the stored value to SizedInt so downstream arithmetic is width-correct.
-                // Completeness requirement: EVERY static-type-introduction site must
-                // coerce so no SizedInt value is left as a bare Int at any missed site,
-                // which would silently compute in i64 (I-9).
-                let v = if let Some(width) = ty.as_ref().and_then(axon_type_to_width) {
-                    coerce_to_sized(v, width)
-                } else {
-                    v
-                };
-                env.define_var(s, slot, v);
+                self.bind_let(name, s, slot, ty.as_ref(), v, env)?;
                 Ok(Value::Unit)
             }
 
@@ -303,9 +270,25 @@ impl<'p> Interp<'p> {
                 let v = self.eval(subject, env)?;
                 for arm in arms {
                     env.push();
-                    if self.match_pattern(&arm.pattern, &v, env)? {
+                    // R50 S0 (AX-57): an `Err` out of the pattern or the guard
+                    // pops the arm's scope before propagating, so the
+                    // enclosing scope's single pop removes its own mark.
+                    let matched = match self.match_pattern(&arm.pattern, &v, env) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            env.pop();
+                            return Err(e);
+                        }
+                    };
+                    if matched {
                         if let Some(guard) = &arm.guard {
-                            let ok = matches!(self.eval(guard, env)?, Value::Bool(true));
+                            let ok = match self.eval(guard, env) {
+                                Ok(g) => matches!(g, Value::Bool(true)),
+                                Err(e) => {
+                                    env.pop();
+                                    return Err(e);
+                                }
+                            };
                             if !ok {
                                 env.pop();
                                 continue;
@@ -355,7 +338,14 @@ impl<'p> Interp<'p> {
                 loop {
                     let v = self.eval(expr, env)?;
                     env.push();
-                    let matched = self.match_pattern(pattern, &v, env)?;
+                    // R50 S0: pop the iteration's scope on a pattern error too.
+                    let matched = match self.match_pattern(pattern, &v, env) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            env.pop();
+                            return Err(e);
+                        }
+                    };
                     if !matched {
                         env.pop();
                         break;
@@ -781,6 +771,61 @@ impl<'p> Interp<'p> {
         }
     }
 
+    /// Bind the evaluated value `v` of a `let`/`own`/`ref` (all three behave
+    /// identically) to `name` (`s` at frame slot `slot`) with the optional
+    /// annotation `ty`: the refinement check, the sized-int coercion, then the
+    /// define. Shared by the `eval` arm and the bytecode engine (R50).
+    pub(super) fn bind_let(
+        &self,
+        name: &str,
+        s: Sym,
+        slot: u32,
+        ty: Option<&crate::ast::AxonType>,
+        v: Value,
+        env: &mut Env,
+    ) -> Result<(), Flow> {
+        // Phase 5: a `let/own/ref p: T where P = …` annotation is a
+        // refinement obligation — check the bound value against the
+        // predicate (the non-constant case the checker defers; constant is
+        // E1209). All three binding forms enforce it identically so native
+        // codegen (which shares one Let/Own/RefBind arm) stays in lock-step
+        // (I-2).
+        if !self.refine_preds.is_empty() {
+            if let Some(crate::ast::AxonType::Named(rn)) = ty {
+                if let Some(pred) = self.refine_preds.get(rn.as_str()).copied() {
+                    let mut pe = Env::new();
+                    pe.define(SYM_UNDERSCORE, v.clone());
+                    // Also bind the bound name for inline `let x: T where E[x] > k`.
+                    pe.define(s, v.clone());
+                    if let Value::Bool(false) = self.eval(pred, &mut pe)? {
+                        return Err(Flow::RefineViolation(
+                            format!(
+                                "the value bound to `{}` (= {}) violates the refinement `{}` \
+                                 — the value does not satisfy the type's predicate",
+                                name,
+                                display(&v),
+                                rn
+                            )
+                            .into(),
+                        ));
+                    }
+                }
+            }
+        }
+        // R19 Slice B: if the annotation names a non-i64 integer type, coerce
+        // the stored value to SizedInt so downstream arithmetic is width-correct.
+        // Completeness requirement: EVERY static-type-introduction site must
+        // coerce so no SizedInt value is left as a bare Int at any missed site,
+        // which would silently compute in i64 (I-9).
+        let v = if let Some(width) = ty.and_then(axon_type_to_width) {
+            coerce_to_sized(v, width)
+        } else {
+            v
+        };
+        env.define_var(s, slot, v);
+        Ok(())
+    }
+
     pub(super) fn eval_block(&self, stmts: &[Stmt], env: &mut Env) -> R {
         env.push();
         let mut last = Value::Unit;
@@ -1115,7 +1160,7 @@ impl<'p> Interp<'p> {
                 }
             )
         }) {
-            return self.eval_call_mut(callee, args, tier, env);
+            return self.call_mut(callee, args, tier, env);
         }
 
         // Evaluate arguments left-to-right, into a reused buffer (AX-54).
@@ -1123,7 +1168,21 @@ impl<'p> Interp<'p> {
         for a in args {
             argv.push(self.eval(a, env)?);
         }
+        self.dispatch_call(callee, argv, tier, env)
+    }
 
+    /// Dispatch a call whose arguments `argv` are already evaluated: `resume`,
+    /// the per-call `tier:`, then a local closure, a builtin, a user fn, a
+    /// module-level closure, the unknown-function panic; a callee that is not
+    /// an identifier is evaluated (after the arguments) and called as a
+    /// closure. Shared by `eval_call` and the bytecode engine (R50).
+    pub(super) fn dispatch_call(
+        &self,
+        callee: &Expr,
+        mut argv: Vec<Value>,
+        tier: Option<&str>,
+        env: &mut Env,
+    ) -> R {
         // Phase 6: `resume(v)` inside a handler arm carries `v` back to the
         // intercepted operation as a `Flow::Resume`. It is caught at the
         // builtin-interception site (`run_handler_arm`). `resume` with no arg
@@ -1210,11 +1269,21 @@ impl<'p> Interp<'p> {
 
     /// AX-08: `f(.., &mut a, ..)`. The checker (E0605/E0606) guarantees the
     /// callee is a free fn whose matching params are `&mut [T]`, every `&mut`
-    /// operand is a whole local, and no other argument mentions it.
-    fn eval_call_mut(&self, callee: &Expr, args: &[Expr], tier: Option<&str>, env: &mut Env) -> R {
-        let f = match callee {
+    /// operand is a whole local, and no other argument mentions it. Each
+    /// borrowed value is MOVED out of the caller's binding into the callee (no
+    /// copy) and the param's final value is moved back on every outcome,
+    /// including `return` / `?` / error unwinds, so the caller's binding is
+    /// never left hollow. Shared by `eval_call` and the bytecode engine (R50).
+    pub(super) fn call_mut(
+        &self,
+        callee: &Expr,
+        args: &[Expr],
+        tier: Option<&str>,
+        env: &mut Env,
+    ) -> R {
+        let entry = match callee {
             Expr::Ident(name) => match self.fn_of_sym.get(&self.res.sym(callee, name)) {
-                Some(&i) => self.fn_table[i as usize].def,
+                Some(&i) => &self.fn_table[i as usize],
                 None => return panic(format!("`&mut` argument passed to `{name}`, which is not a function taking `&mut` parameters")),
             },
             _ => return panic("`&mut` argument passed to a computed callee".to_string()),
@@ -1251,7 +1320,23 @@ impl<'p> Interp<'p> {
             }
         }
         *self.current_call_tier.borrow_mut() = tier.map(|t| t.to_string());
-        let (result, mut outs) = self.call_fn_mut(f, argv);
+        let mut frame = Env::new();
+        let result = self.call_fn_in(entry, argv, &mut frame);
+        // The body's block scopes are popped by now (on `return`/`?` too), so
+        // each name resolves to the parameter binding itself. Per param, its
+        // final value (`Unit` for a non-`&mut` param).
+        let mut outs: Vec<Value> = entry
+            .def
+            .params
+            .iter()
+            .zip(entry.params.iter())
+            .map(|(p, s)| match (&p.ty, frame.get_mut(*s)) {
+                (crate::ast::AxonType::RefMut(_), Some(slot)) => {
+                    std::mem::replace(slot, Value::Unit)
+                }
+                _ => Value::Unit,
+            })
+            .collect();
         for (i, s, slot) in borrowed {
             if let Some(b) = env.get_var_mut(s, slot) {
                 *b = std::mem::replace(&mut outs[i], Value::Unit);

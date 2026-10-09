@@ -1,5 +1,19 @@
 # Axon Changelog
 
+## Engine selector for `axon run`, and a `match` guard no longer leaks its scope (R50 S0, compilebench AX-57)
+
+First slice of the bytecode engine (`governance/specs/R50-register-vm.md`). It adds the plumbing and one fix to the reference interpreter; nothing is lowered yet, so `AXON_ENGINE=vm` runs every body through the tree-walker and behaves exactly like `tree`.
+
+**Interpreter**
+- **A `match` arm whose pattern or guard fails with `?` pops its scope** (AX-57, behaviour change). An `Err` out of an arm's guard (`Some(b) if fail()? > b`) or pattern, or out of a `while let` pattern, skipped the arm's `env.pop()`. The enclosing block then popped the arm's scope instead of its own, so the caller's bindings were shadowed by the callee's locals: after `f(&mut a)` returned through such a guard, a `let a = 99` inside `f` replaced the caller's array and `len(a)` panicked `expected str/array/dict, got i64`. The scope is now popped before the `Err` propagates.
+- **`AXON_ENGINE=tree|vm` selects the engine for fn bodies** under `axon run`, `axon-run`, `axon test` and `axon goal`. The default is `tree`. Under `vm` each function in the function table compiles on its first run; through this slice every body compiles to a single fallback op over the tree-walker. Any other value exits 2 with `AXON_ENGINE must be "vm" or "tree" (got "<v>")` before the program runs. `AXON_VM_TRACE=1` prints one `vm: …` line per compiled body to stderr. The browser build (`axon-wasm`) exports `axon_set_engine(0 = tree, 1 = vm)` in place of the variable.
+- The call dispatch, `let` binding and `&mut` call steps are now shared helpers (`dispatch_call`, `bind_let`, `call_mut`) so the engine can reuse them. No behaviour change.
+
+**Gates**
+- **`AXON_HARNESS_STRICT=1 scripts/parity_all.sh` fails a run in which a harness skipped without an allow-list entry** (R50 §11). `parity_all.sh` never read the variable: every skip counted as success and only `EXPECT_MIN_PASS=40` stood between a green run and a suite that had quietly stopped running harnesses. Under the variable, a skipped harness (a `PARITY_SKIP_WASM=1` skip included) fails the run unless `scripts/parity_allowed_skips.txt` lists it with a reason; an entry without a reason exits 2. The list starts with `android_compute_parity` (no Android NDK on the gate host) and `browser_compute_parity` (opt-in, `BROWSER_PARITY=1`). Without the variable the script behaves as before.
+- **The wasm parity harnesses run the engine the caller selects.** `wasm_parity.sh`, `wasm_fs_parity.sh` and `wasm_host_await_parity.sh` pass `--env AXON_ENGINE=…` to wasmtime when `AXON_ENGINE` is set, and `wasm_browser_interp_parity.sh`'s driver forwards it to the `axon_set_engine` export before `axon_eval` (R50 §8).
+- **New R50 gate scripts**: `scripts/vm_parity.sh` (both engines byte-identical over the example and fixture corpus), `scripts/vm_perf_gate.sh` (instruction budgets, `--repros` per-construct mode) and `scripts/vm_wasm_depth.sh` (wasm32 recursion depth under both engines), with fixtures in `crates/axon-core/tests/fixtures/vm_depth/`, `vm_perf/` and `vm_parity_skip.txt`.
+
 ## Cheaper variables, calls and literals in `axon run` (compilebench AX-53…AX-55)
 
 Interpreter-cost fixes from compilebench's `AXON_FINDINGS.md`. They change speed only: output is byte-identical on every program measured, and the full suite passes with and without `codegen`.

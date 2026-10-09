@@ -365,6 +365,11 @@ pub(super) struct FnEntry<'p> {
     /// Has a zone (`adaptive`/`experiment`) or `@[verify]` step after the
     /// body (`Interp::finish_call_cold`).
     pub(super) has_epilogue: bool,
+    /// R50: the body compiled for the bytecode engine, filled on its first
+    /// run under `AXON_ENGINE=vm`. `Some` only for the entries
+    /// `Interp::build` puts in `fn_table`; an owned entry built per call (a
+    /// def missing from `fn_of_def`) is `None` and runs on the tree-walker.
+    pub(super) compiled: Option<std::cell::OnceCell<super::vm::Body<'p>>>,
 }
 
 impl<'p> FnEntry<'p> {
@@ -410,6 +415,7 @@ impl<'p> FnEntry<'p> {
             ),
             is_main: def.name == "main",
             has_epilogue: has_attr("adaptive") || has_attr("experiment") || def.verify.is_some(),
+            compiled: None,
         }
     }
 }

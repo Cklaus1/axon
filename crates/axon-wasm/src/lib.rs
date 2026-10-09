@@ -15,6 +15,11 @@
 //!                                   captures the program's stdout for read-back
 //!   axon_output_ptr() -> ptr      — start of the captured output (valid until the
 //!   axon_output_len() -> len        next axon_eval)
+//!   axon_set_engine(e) -> i32     — R50: engine for later axon_evals, 0 = tree
+//!                                   (default), 1 = vm; 0 on success, 1 (and no
+//!                                   change) for any other value. The browser has
+//!                                   no environment, so this stands in for
+//!                                   AXON_ENGINE
 //!
 //! Typical JS:
 //!   const p = inst.exports.axon_alloc(bytes.length);
@@ -29,6 +34,21 @@ thread_local! {
     /// The captured stdout of the most recent `axon_eval`, held so JS can read it
     /// back via `axon_output_ptr`/`axon_output_len` after the call returns.
     static LAST_OUTPUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+}
+
+/// R50: select the engine every later `axon_eval` runs fn bodies with (`0` =
+/// tree, the default; `1` = vm), the counterpart of `AXON_ENGINE` for a host
+/// without an environment. Returns 0 on success; any other value returns 1 and
+/// changes nothing.
+#[no_mangle]
+pub extern "C" fn axon_set_engine(engine: u32) -> i32 {
+    let engine = match engine {
+        0 => axon_core::interp::Engine::Tree,
+        1 => axon_core::interp::Engine::Vm,
+        _ => return 1,
+    };
+    axon_core::interp::set_engine(engine);
+    0
 }
 
 /// Reserve `len` bytes of linear memory and hand JS the pointer. JS fills it with

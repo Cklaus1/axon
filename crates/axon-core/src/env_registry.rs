@@ -23,6 +23,8 @@ pub const ALL_ENV_VARS: &[(&str, &str)] = &[
     // ── Determinism & execution ──────────────────────────────────────────
     ("AXON_SEED", "seed the RNG (u64) so `random_*` runs reproduce"),
     ("AXON_MAX_DEPTH", "recursion-depth ceiling (default 6000, clamped to 1,000,000); the interpreter thread stack scales with it"),
+    ("AXON_ENGINE", "engine for fn bodies under `axon run`/`axon-run`/`axon test`/`axon goal`: `tree` (default, the reference tree-walker) or `vm` (R50 bytecode engine, compiled on first run, same observable behaviour); any other value exits 2 before the program runs"),
+    ("AXON_VM_TRACE", "`1`: under AXON_ENGINE=vm, print one `vm: ...` stderr line per compiled body (op and tree-fallback counts) and per fallback; never changes stdout or the exit code"),
     ("AXON_CLOCK", "deterministic virtual clock `<start_ms>[:<tick_ms>]`; `sleep_ms` advances it without really sleeping"),
     ("AXON_PATH", "colon-separated module search path for `mod`/`use` imports"),
     ("AXON_STRICT", "promote advisory hazard diagnostics to errors (today E0302, an unused Result); `axon deploy` sets it itself"),

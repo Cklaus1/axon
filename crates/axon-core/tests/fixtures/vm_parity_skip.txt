@@ -1,0 +1,22 @@
+# Files scripts/vm_parity.sh does not run (R50 §8). One entry per line:
+# `<repo-relative path> <reason>`. The reason is required. A listed file is not
+# run at all; every other example with `fn main` and every check-accepted fixture
+# with `fn main` must pass. Checked 2026-10-09 with `axon check` under the
+# script's AXON_PATH (examples/stdlib:asi:modular:domain).
+#
+# Rejected by `axon check` by design: capability-violation demos.
+examples/asi/contained_violation.ax rejected by check by design (E1001 @[contained] violation demo)
+examples/flagship/agent_task_evil.ax rejected by check by design (flagship capability-violation demo)
+examples/flagship/agent_task_llm_generated.ax rejected by check by design (flagship capability-violation demo)
+examples/flagship/agent_task_secrets.ax rejected by check by design (flagship capability-violation demo)
+examples/flagship/agent_task_subtle.ax rejected by check by design (flagship capability-violation demo)
+examples/flagship/cve/CVE-2024-2624/file_store_traversal.ax rejected by check by design (CVE capability-violation demo)
+examples/flagship/cve/CVE-2024-2771/escalation_exfil.ax rejected by check by design (CVE capability-violation demo)
+examples/flagship/cve/CVE-2024-32964/proxy_ssrf.ax rejected by check by design (CVE capability-violation demo)
+examples/flagship/cve/CVE-2024-34359/model_loader_ssti.ax rejected by check by design (CVE capability-violation demo)
+examples/flagship/cve/CVE-2024-5314/list_records_injection.ax rejected by check by design (CVE capability-violation demo)
+#
+# Do not finish without a host, or by design.
+examples/jobs/runaway.ax intentional infinite loop (the job-kill demo)
+examples/r27/killable_agent.ax 1e9 iterations by design (the kill-switch demo); exceeds the 30 s limit
+examples/mobile/lifecycle.ax host_await lifecycle with no host driver; never finishes on stdin /dev/null

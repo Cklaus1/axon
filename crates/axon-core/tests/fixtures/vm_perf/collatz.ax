@@ -1,0 +1,18 @@
+fn main() -> i64 {
+    let best_n = 1
+    let best_steps = 0
+    for n in 1..300001 {
+        let x = n
+        let steps = 0
+        while x != 1 {
+            x = if x % 2 == 0 { x / 2 } else { 3 * x + 1 }
+            steps = steps + 1
+        }
+        if steps > best_steps {
+            best_steps = steps
+            best_n = n
+        }
+    }
+    println("{to_str(best_n)} {to_str(best_steps)}")
+    0
+}
