@@ -167,7 +167,7 @@ identity, handles and native registries. Do not claim more than the verdict clai
 ## Part B. The refusal-site gate
 
 Gate: `scripts/v022_refusal_coverage.py`; tests `refusal_coverage_gate` (axon-core). Counts below are from `--remainder` at this branch's base (integrate13 + the docs merge):
-REMAINDER 208, OBSERVED-NOT-ROWED 252, DEFAULTS NOT FOLLOWED 113, VALUE FLOWS NOT FOLLOWED 45 (+1 cross-file const). The claim is true only relative to gate-visible forms; these are the invisible ones.
+REMAINDER 207 (208 at `b974655d`: amendment 121 rowed the observer prune, M3480-M3482), OBSERVED-NOT-ROWED 252, DEFAULTS NOT FOLLOWED 113, VALUE FLOWS NOT FOLLOWED 45 (+1 cross-file const). The claim is true only relative to gate-visible forms; these are the invisible ones.
 
 #### PH-B1. STILL BLIND: values built by computation
 Source: gate STILL BLIND line 1; amendment 107; r10 EQUIVALENCE MAJOR-ADJACENT (REMAINDER is a lower bound); r12 (46 -> 23 double count corrected). 45 sink arguments computed (a `format!` of variables, a path joined at run time, a value through two locals or a parameter).
@@ -193,10 +193,10 @@ Source: STILL BLIND line 6; amendment 110 (15 signing inputs rowed). `SIGN_SINKS
 #### PH-B7. STILL BLIND: uid or mode as operand of a comparison; cross-file consts; non-Option<u32> parameters
 Source: STILL BLIND lines 7 and 8; r11 EQUIVALENCE MINOR (constants that are decisions). A literal compared inside a refusal; a const used at a sink in another file written bare through `use`; a `u32` uid or `&str` flag passed down is followed only at the inner sink.
 
-#### PH-B8. REMAINDER by category (208 guard sites no test observes alone)
-Source: `--remainder`, amendments 98, 103, 110, 115. Counted, not claimed covered. Counts at base: `val_default` 70, `const_tag` 36, `okor_unjudged` 16, `okor_nodefault` 12, `const_path` 11, `py_guard` 11, `const_bound` 8, `other` 8, `const_table` 7, `const_text` 7, `okor_closed` 4, `const_exit` 3, `const_other` 3, `val_comb` 3, `val_field` 3, `okor_offroute` 2, `val_stdio` 2, `unlink_job` 1, `val_arm` 1 (sum 208).
+#### PH-B8. REMAINDER by category (207 guard sites no test observes alone)
+Source: `--remainder`, amendments 98, 103, 110, 115. Counted, not claimed covered. Counts now: `val_default` 70, `const_tag` 36, `okor_unjudged` 16, `okor_nodefault` 12, `const_path` 11, `py_guard` 11, `const_bound` 8, `other` 8, `const_table` 7, `const_text` 7, `okor_closed` 4, `const_exit` 3, `const_other` 3, `val_comb` 2, `val_field` 3, `okor_offroute` 2, `val_stdio` 2, `unlink_job` 1, `val_arm` 1 (sum 208).
 Disposition per category (propose, then execute one by one): `val_default` (70, highest risk: fail-open on protected routes, "survey-only evidence", r13 EQUIVALENCE MINOR) get a flip test each; `const_tag`/`const_path`/`const_text`/`const_table`/`const_bound`/`const_exit`/`const_other` (75) are constants that are decisions: pin the value in a test that reads the production constant (not a copy);
-`okor_*` (34) see PH-B9; `py_guard` PH-B10; `other`/`val_comb`/`val_field`/`val_stdio`/`val_arm`/`unlink_job` (18) individually. Closing test: REMAINDER count falls with every row, the gate's printed count equals this table (the checker does not require it; the next review does).
+`okor_*` (34) see PH-B9; `py_guard` PH-B10; `other`/`val_comb`/`val_field`/`val_stdio`/`val_arm`/`unlink_job` (17) individually. Closing test: REMAINDER count falls with every row, the gate's printed count equals this table (the checker does not require it; the next review does).
 
 #### PH-B9. `ok_or` / `ok_or_else` / `map_err` refusals; the okor_offroute label
 Sources: r8 EQUIVALENCE MAJOR-ADJACENT (~150 single-line `ok_or(..)?` refusals are not sites), r9, r10/r11 (the `okor_offroute` label was false for protected-route code: `parse_check_suite_ref`, `CheckRegistry::load`; "3 of 6 sites remain" at r11; not re-verified after amendment 115).
@@ -353,7 +353,7 @@ Order is risk reduction per effort, highest first. Effort: S under a day, M a fe
 | PH-B3 | Struct literals by type name | STILL BLIND 3 | MINOR | any literal with refusal-read fields | M | |
 | PH-B5 | Absent-value spellings | STILL BLIND 5 | MAJOR-ADJACENT | classify by effect | L | |
 | PH-B7 | uid/mode comparison, cross-file consts | STILL BLIND 7-8 | MINOR | extend scan | M | |
-| PH-B8 | REMAINDER by category (208) | `--remainder` | MAJOR-ADJACENT | count falls per row | L | PH-B13 |
+| PH-B8 | REMAINDER by category (207) | `--remainder` | MAJOR-ADJACENT | count falls per row | L | PH-B13 |
 | PH-B9 | `ok_or` refusals and offroute label | r8-r11 | MAJOR-ADJACENT | call-graph derived label; flip test | M | |
 | PH-B10 | Python/shell guards, dropped rows | amendments 98, 111 | MINOR | rows for peel/eval/alias; scan scripts | M | |
 | PH-B11 | Decision constants, liveness bounds | r8, r9, r11 | MINOR | boundary tests | M | |

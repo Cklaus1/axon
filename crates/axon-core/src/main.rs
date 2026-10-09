@@ -6516,7 +6516,6 @@ fn run_check_pipeline_located(
         // arise and are not in this list): anything the merged check said about a
         // sealed file is the backstop (E0004), kept so it still refuses.
         diags.extend(dropped_merged.into_iter().filter(|d| d.severity == "error"));
-        diags.append(&mut iso_diags);
     } else {
         diags.append(&mut iso_diags);
     }
