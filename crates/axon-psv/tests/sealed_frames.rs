@@ -2104,7 +2104,7 @@ fn operator_side_control_flow_on_candidate_data_never_selects_operator_code() {
 /// (`a_check_loads_no_module_from_outside_the_suite_and_the_candidate`) after the first form.
 #[test]
 fn a_module_the_operator_declares_for_the_candidate_resolves_the_candidates_own_helper() {
-    let suite = "mod f\nmod opmod\nuse f.{double}\n@[test]\nfn accept() {\n  assert_eq(double(21), 42)\n}\n";
+    let suite = "mod f\nmod opmod\nmod sol\nuse sol.{unused}\nuse f.{double}\n@[test]\nfn accept() {\n  assert_eq(double(21), 42)\n}\n";
     let files: &[(&str, &str)] = &[
         (
             "cand/f.ax",
