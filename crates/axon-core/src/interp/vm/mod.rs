@@ -114,39 +114,59 @@ pub(super) struct Body<'p> {
     /// such as `acc + x % m`), for [`Interp::fold_leaf`].
     pub(super) leaf: Option<Box<PureExpr<'p>>>,
     /// R50 S8: the body as element moves within one array, when it is
-    /// (qsort's `swap`), for [`Interp::call_moves`].
+    /// (qsort's `swap`), for [`Interp::moves_call`].
     pub(super) moves: Option<Box<Moves<'p>>>,
 }
 
-/// R50 S8: a body whose statements are all `let t = a[i]` (untyped),
-/// `a[i] = a[j]` and `a[i] = v` on one array local `arr`, every index a
-/// local that no statement defines or an int literal, `v` such a local, a
-/// literal or a `let` before it, its value `()`, each `let` in the body's
-/// own scope. An `&mut` call to it that borrows `arr` can run the moves on
-/// the borrowed array where it is, once every index is known to be in
-/// bounds and the array to be uniquely owned ([`Interp::call_moves`]).
+/// R50 S8: a body whose statements (at most four) are all `let t = a[i]`
+/// (untyped, at most two), `a[i] = a[j]` and `a[i] = v` on one array local
+/// `arr`, every index a local that no statement defines or an int literal,
+/// `v` such a local, a literal or a `let` before it, its value `()`, each
+/// `let` in the body's own scope. An `&mut` call to it that borrows `arr`
+/// can run the moves on the borrowed array where it is, once every index is
+/// known to be in bounds and the array to be uniquely owned
+/// ([`Interp::run_moves`]).
 pub(super) struct Moves<'p> {
     pub(super) arr: Var<'p>,
-    pub(super) steps: Box<[Move<'p>]>,
+    pub(super) steps: Box<[Move]>,
 }
 
 /// One statement of a [`Moves`] body.
-pub(super) enum Move<'p> {
+#[derive(Clone, Copy)]
+pub(super) enum Move {
     /// `let t = arr[idx]`: the element into register `dst`.
-    Read { dst: u8, idx: Src<'p> },
+    Read { dst: u8, idx: Src },
     /// `arr[idx] = arr[sidx]`.
-    Copy { idx: Src<'p>, sidx: Src<'p> },
+    Copy { idx: Src, sidx: Src },
     /// `arr[idx] = val`.
-    Write { idx: Src<'p>, val: Src<'p> },
+    Write { idx: Src, val: Src },
+    /// The whole body `let t = arr[a]; arr[a] = arr[b]; arr[b] = t`: the
+    /// two elements trade places.
+    Swap { a: Src, b: Src },
 }
 
-/// An operand of a [`Move`]: a local no statement defines (a parameter,
-/// checked at the call), an int literal, or a `let`'s register.
-#[derive(Clone, Copy)]
-pub(super) enum Src<'p> {
-    Param(Var<'p>),
+/// An operand of a [`Move`]. In a [`Moves`] body: a local no statement
+/// defines (`(sym, slot)`, a parameter, checked when the call is resolved),
+/// an int literal, or a `let`'s register. In a [`MovesCall`] each parameter
+/// is replaced by the caller's operand for it: a literal, a caller local,
+/// or a stack slot. No borrowed names, so the cache in [`Op::CallMut`]
+/// keeps `Op` covariant.
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum Src {
+    Param(Sym, u32),
     Int(i64),
     Reg(u8),
+    Local(Sym, u32),
+    /// The `n`th stacked argument of the call.
+    Stack(u32),
+}
+
+/// R50 S8: an [`Op::CallMut`] to a [`Moves`] body, resolved once against
+/// the call's operands ([`Interp::moves_call`]).
+pub(super) struct MovesCall {
+    /// The caller's borrowed binding (the body's `arr`), `(sym, slot)`.
+    pub(super) arr: (Sym, u32),
+    pub(super) steps: Box<[Move]>,
 }
 
 impl Body<'_> {
@@ -741,7 +761,9 @@ pub(super) enum Op<'p> {
     /// compile time. With no entry (the callee is not a fn, or a `&mut`
     /// operand is not an identifier) `args` is empty and `call_mut` runs the
     /// whole call, panic included. A statement call (`discard`) drops its
-    /// value instead of pushing it.
+    /// value instead of pushing it. S8: `moves` caches, after the first
+    /// call, the call's [`MovesCall`] form when it has one; the op tries it
+    /// before anything else ([`Interp::run_moves`]).
     CallMut {
         call: &'p Expr,
         entry: Option<u32>,
@@ -749,6 +771,7 @@ pub(super) enum Op<'p> {
         stacked: u32,
         refs: Box<[MutRef<'p>]>,
         discard: bool,
+        moves: std::cell::OnceCell<Option<Box<MovesCall>>>,
     },
 
     // -- S8: qsort and fib superops (spec §4 S8) --
@@ -1626,8 +1649,19 @@ impl<'p> Interp<'p> {
                     stacked,
                     refs,
                     discard,
+                    moves,
                 } => {
-                    let v = tri!(self.call_mut_op(call, *entry, args, *stacked, refs, env, st));
+                    let v = match moves.get() {
+                        Some(Some(m)) if self.run_moves(m, call, *stacked, env, st) => Value::Unit,
+                        _ => {
+                            let v =
+                                tri!(self.call_mut_op(call, *entry, args, *stacked, refs, env, st));
+                            if let Some(e) = entry {
+                                moves.get_or_init(|| self.moves_call(*e, args, refs));
+                            }
+                            v
+                        }
+                    };
                     if *discard {
                         forget_scalar(v);
                     } else {
@@ -2698,12 +2732,6 @@ impl<'p> Interp<'p> {
         if !entry.plain || !self.refine_preds.is_empty() || entry.params.len() != argc {
             return self.call_mut_general(entry, arg_nodes, args, tier.as_deref(), env, st, at);
         }
-        if self
-            .call_moves(entry, args, refs, tier.as_deref(), env, st, at)
-            .is_some()
-        {
-            return Ok(Value::Unit);
-        }
         let mut frame = self.take_frame();
         frame.vars.reserve(argc + 1);
         let mut next_plain = at;
@@ -2784,121 +2812,184 @@ impl<'p> Interp<'p> {
         result
     }
 
-    /// S8: an `&mut` call on `call_fn_in`'s common path to a [`Moves`] body
-    /// that borrows the body's array, without a frame: the moves run on
-    /// the borrowed binding where it is. Moving a uniquely owned array into
-    /// the frame and back changes nothing an in-place write does not, and
-    /// nothing in the body can observe the frame, `goal_met` or
-    /// `current_fn`. `None`, with nothing changed, wherever the full path
-    /// could differ or fail: a body not compiled yet or not [`Moves`], not
-    /// exactly one `&mut` argument, its value not moving back, a parameter
-    /// read that is not an unsized int parameter, an unbound argument, a
-    /// borrowed binding that is not a uniquely owned array, an index out of
-    /// bounds, the depth limit reached. On success the `tier:` slot is set
-    /// and the stack arguments dropped, as the full path does.
-    #[inline(always)]
-    #[allow(clippy::too_many_arguments)]
-    fn call_moves(
+    /// S8: the [`MovesCall`] form of an [`Op::CallMut`] to `fn_table[entry]`
+    /// once its body is compiled: the callee is on `call_fn_in`'s common
+    /// path, its body is [`Moves`], its array is the call's one `&mut`
+    /// argument and moves back, and every parameter a move reads is an
+    /// unsized parameter other than the array, replaced by the caller's
+    /// operand for it. `None` when any of that fails.
+    fn moves_call(
         &self,
-        entry: &FnEntry<'p>,
+        entry: u32,
         args: &[Opnd<'_>],
         refs: &[MutRef<'_>],
-        tier: Option<&str>,
-        env: &mut Env,
-        st: &mut Vec<Value>,
-        at: usize,
-    ) -> Option<()> {
+    ) -> Option<Box<MovesCall>> {
+        let entry = &self.fn_table[entry as usize];
         let m = entry.compiled.as_ref()?.get()?.moves.as_deref()?;
         let [r] = refs else { return None };
         let k = r.arg as usize;
-        if !r.back
+        if !entry.plain
+            || !self.refine_preds.is_empty()
+            || entry.params.len() != args.len()
+            || !r.back
             || m.arr.slot as usize != k
             || entry.params.get(k) != Some(&m.arr.s)
             || entry.param_coerce[k].1.is_some()
-            || args.len() > 8
-            || m.steps.len() > 8
-            || self.call_depth.get() >= self.max_depth
         {
             return None;
         }
-        // Each plain argument's int as it binds (`None`: not an int).
-        let mut ints = [None::<i64>; 8];
-        let mut next = at;
-        for (i, o) in args.iter().enumerate() {
-            ints[i] = match o {
-                Opnd::Int(n) => Some(*n),
-                Opnd::Local(v) => match env.get_var(v.s, v.slot)? {
-                    Value::Int(n) => Some(*n),
-                    _ => None,
-                },
+        let mut stacked = 0;
+        let opnds: Vec<Option<Src>> = args
+            .iter()
+            .map(|o| match o {
+                Opnd::Int(n) => Some(Src::Int(*n)),
+                Opnd::Local(v) => Some(Src::Local(v.s, v.slot)),
                 Opnd::Stack => {
-                    next += 1;
-                    match st.get(next - 1)? {
-                        Value::Int(n) => Some(*n),
-                        _ => None,
-                    }
+                    stacked += 1;
+                    Some(Src::Stack(stacked - 1))
                 }
                 _ => None,
-            };
-        }
-        let int = |s: &Src<'_>| -> Option<i64> {
-            match s {
-                Src::Int(n) => Some(*n),
-                Src::Param(v) => {
-                    let p = v.slot as usize;
-                    if p == k
-                        || v.s == SYM_GOAL_MET
-                        || entry.params.get(p) != Some(&v.s)
-                        || entry.param_coerce[p].1.is_some()
-                    {
-                        return None;
-                    }
-                    ints[p]
+            })
+            .collect();
+        let arg = |s: Src| match s {
+            Src::Param(s, slot) => {
+                let p = slot as usize;
+                if p == k
+                    || s == SYM_GOAL_MET
+                    || entry.params.get(p) != Some(&s)
+                    || entry.param_coerce[p].1.is_some()
+                {
+                    return None;
                 }
-                Src::Reg(_) => None,
+                opnds[p]
             }
+            s => Some(s),
         };
-        let Some(Value::Array(items)) = env.get_var_mut(r.var.s, r.var.slot) else {
-            return None;
-        };
-        let items = Rc::get_mut(items)?;
-        let n = items.len();
-        let pos = |s: &Src<'_>| {
-            int(s)
-                .and_then(|i| usize::try_from(i).ok())
-                .filter(|&i| i < n)
-        };
-        // Every index (and an int-parameter value) resolved before any move.
-        let mut at_ = [(0usize, 0i64); 8];
-        for (slot, step) in at_.iter_mut().zip(m.steps.iter()) {
-            *slot = match step {
-                Move::Read { idx, .. } => (pos(idx)?, 0),
-                Move::Copy { idx, sidx } => (pos(idx)?, pos(sidx)? as i64),
-                Move::Write { idx, val } => (
-                    pos(idx)?,
-                    match val {
-                        Src::Reg(_) => 0,
-                        v => int(v)?,
+        let steps = m
+            .steps
+            .iter()
+            .map(|s| {
+                Some(match *s {
+                    Move::Read { dst, idx } => Move::Read {
+                        dst,
+                        idx: arg(idx)?,
                     },
-                ),
-            };
+                    Move::Copy { idx, sidx } => Move::Copy {
+                        idx: arg(idx)?,
+                        sidx: arg(sidx)?,
+                    },
+                    Move::Write { idx, val } => Move::Write {
+                        idx: arg(idx)?,
+                        val: arg(val)?,
+                    },
+                    Move::Swap { a, b } => Move::Swap {
+                        a: arg(a)?,
+                        b: arg(b)?,
+                    },
+                })
+            })
+            .collect::<Option<Box<[_]>>>()?;
+        Some(Box::new(MovesCall {
+            arr: (r.var.s, r.var.slot),
+            steps,
+        }))
+    }
+
+    /// S8: a [`MovesCall`] run on the caller's borrowed binding where it is,
+    /// without a frame. Moving a uniquely owned array into the callee's
+    /// frame and back changes nothing an in-place move does not, and nothing
+    /// in the body can observe the frame, `goal_met` or `current_fn`.
+    /// `false`, with nothing changed, wherever the full call could differ or
+    /// fail: the depth limit reached, an operand that is not a bound int, a
+    /// binding that is not a uniquely owned array, an index out of bounds
+    /// (every index is checked before any move). On `true` the call's
+    /// `tier:` slot is set and the stack arguments are dropped, as the full
+    /// call does.
+    #[inline(always)]
+    fn run_moves(
+        &self,
+        m: &MovesCall,
+        call: &Expr,
+        stacked: u32,
+        env: &mut Env,
+        st: &mut Vec<Value>,
+    ) -> bool {
+        if self.call_depth.get() >= self.max_depth {
+            return false;
         }
-        let mut regs = [const { Value::Unit }; 8];
-        for (&(i, x), step) in at_.iter().zip(m.steps.iter()) {
+        let Some(at) = st.len().checked_sub(stacked as usize) else {
+            malformed()
+        };
+        let int = |s: &Src| -> Option<i64> {
+            let v = match *s {
+                Src::Int(n) => return Some(n),
+                Src::Local(s, slot) => env.get_var(s, slot)?,
+                Src::Stack(o) => st.get(at + o as usize)?,
+                Src::Param(..) | Src::Reg(_) => return Some(0),
+            };
+            match v {
+                Value::Int(n) => Some(*n),
+                _ => None,
+            }
+        };
+        // Each step's index and second int (a source index, or the value
+        // written), read before the array is borrowed.
+        let mut ix = [(0i64, 0i64); 4];
+        for (slot, step) in ix.iter_mut().zip(m.steps.iter()) {
+            let got = match step {
+                Move::Read { idx, .. } => int(idx).map(|i| (i, 0)),
+                Move::Copy { idx: a, sidx: b } | Move::Swap { a, b } => int(a).zip(int(b)),
+                Move::Write { idx, val } => int(idx).zip(int(val)),
+            };
+            match got {
+                Some(p) => *slot = p,
+                None => return false,
+            }
+        }
+        let Some(Value::Array(items)) = env.get_var_mut(m.arr.0, m.arr.1) else {
+            return false;
+        };
+        let Some(items) = Rc::get_mut(items) else {
+            return false;
+        };
+        let n = items.len() as u64;
+        let ok = |i: i64| (i as u64) < n;
+        for (&(i, x), step) in ix.iter().zip(m.steps.iter()) {
+            let fits = match step {
+                Move::Copy { .. } | Move::Swap { .. } => ok(i) && ok(x),
+                Move::Read { .. } | Move::Write { .. } => ok(i),
+            };
+            if !fits {
+                return false;
+            }
+        }
+        let mut regs = [Value::Unit, Value::Unit];
+        for (&(i, x), step) in ix.iter().zip(m.steps.iter()) {
+            let (i, x) = (i as usize, x as usize);
             match step {
+                Move::Swap { .. } => items.swap(i, x),
                 Move::Read { dst, .. } => regs[*dst as usize] = items[i].clone(),
-                Move::Copy { .. } => items[i] = items[x as usize].clone(),
+                Move::Copy { .. } => {
+                    let v = items[x].clone();
+                    forget_scalar(std::mem::replace(&mut items[i], v));
+                }
                 Move::Write { val, .. } => {
-                    items[i] = match val {
+                    let v = match val {
                         Src::Reg(r) => regs[*r as usize].clone(),
-                        _ => Value::Int(x),
-                    }
+                        _ => Value::Int(x as i64),
+                    };
+                    forget_scalar(std::mem::replace(&mut items[i], v));
                 }
             }
         }
-        self.set_call_tier(tier);
-        st.truncate(at);
-        Some(())
+        let Expr::Call { tier, .. } = call else {
+            unreachable!("`CallMut` is compiled from a call")
+        };
+        self.set_call_tier(tier.as_deref());
+        if stacked != 0 {
+            st.truncate(at);
+        }
+        true
     }
 
     /// [`Op::CallMut`] for a fn off `call_fn_in`'s common path: the plain

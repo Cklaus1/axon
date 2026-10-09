@@ -924,6 +924,7 @@ impl<'p> Compiler<'_, '_, 'p> {
                 stacked,
                 refs: refs.into_boxed_slice(),
                 discard,
+                moves: std::cell::OnceCell::new(),
             },
             stacked,
             u32::from(!discard),
@@ -1497,7 +1498,7 @@ fn moves<'p>(ops: &[Op<'p>]) -> Option<Box<Moves<'p>>> {
         Opnd::Int(n) => Some(Src::Int(*n)),
         Opnd::Local(v) => Some(match lets.iter().rev().find(|(l, _)| same(l, v)) {
             Some(&(_, r)) => Src::Reg(r),
-            None => Src::Param(*v),
+            None => Src::Param(v.s, v.slot),
         }),
         _ => None,
     };
@@ -1509,7 +1510,7 @@ fn moves<'p>(ops: &[Op<'p>]) -> Option<Box<Moves<'p>>> {
     for op in inner {
         let step = match op {
             Op::IndexDefine { var, arr: a, idx } => {
-                let dst = u8::try_from(lets.len()).ok().filter(|&n| n < 8)?;
+                let dst = u8::try_from(lets.len()).ok().filter(|&n| n < 2)?;
                 let idx = index(idx, &lets)?;
                 if !the_arr(a) {
                     return None;
@@ -1546,8 +1547,17 @@ fn moves<'p>(ops: &[Op<'p>]) -> Option<Box<Moves<'p>>> {
     }
     let arr = arr?;
     // The array is a local no `let` here rebinds.
-    if (!scoped && !lets.is_empty()) || lets.iter().any(|(l, _)| same(l, &arr)) {
+    if (!scoped && !lets.is_empty()) || lets.iter().any(|(l, _)| same(l, &arr)) || steps.len() > 4 {
         return None;
+    }
+    if let [Move::Read { dst, idx: a }, Move::Copy { idx: a2, sidx: b }, Move::Write {
+        idx: b2,
+        val: Src::Reg(r),
+    }] = steps[..]
+    {
+        if dst == r && a == a2 && b == b2 {
+            steps = vec![Move::Swap { a, b }];
+        }
     }
     Some(Box::new(Moves {
         arr,
