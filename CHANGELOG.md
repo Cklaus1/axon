@@ -1,5 +1,11 @@
 # Axon Changelog
 
+## `axon run` executes fn bodies on the bytecode engine by default (R50 S6)
+
+`AXON_ENGINE` now defaults to `vm`; `AXON_ENGINE=tree` selects the reference tree-walker, which is unchanged. Same stdout, stderr, exit code, panic text and provenance under both (`scripts/vm_parity.sh`: 293 files, 1,899 bodies, 0 differ; `parity_all.sh` strict under each engine: 53 passed, 2 allowed skips). On wasm32-unknown-unknown `axon_set_engine` defaults to 1.
+
+Instructions retired (`perf stat -e instructions:u`, release, compilebench programs; CPython 3.14.4 median in brackets): fib-recursive 2.30 G [3.42 G], collatz 18.54 G [26.06 G], mandelbrot 5.07 G [15.02 G], arr-sum 4.88 G [23.62 G], qsort 11.43 G [18.97 G]. Under wasmtime's default stack the VM completes at least the tree's depth on every chain of `tests/fixtures/vm_depth/` (`vm_wasm_depth.sh --require-default-stack`).
+
 ## `AXON_ENGINE=vm` compiles the scalar core of fn bodies to bytecode (R50 S1)
 
 Second slice of the bytecode engine (`governance/specs/R50-register-vm.md`). Speed only: no behaviour change under either engine, and `tree` stays the default.

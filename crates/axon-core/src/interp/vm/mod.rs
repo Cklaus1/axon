@@ -43,8 +43,9 @@ pub enum Engine {
 }
 
 impl Engine {
-    /// The engine when nothing selects one.
-    pub const DEFAULT: Engine = Engine::Tree;
+    /// The engine when nothing selects one (R50 S6: the VM; `tree` stays the
+    /// reference and the escape hatch).
+    pub const DEFAULT: Engine = Engine::Vm;
 
     /// Parse an `AXON_ENGINE` value; the error is the message the CLI prints
     /// before exiting 2 (spec §3).
