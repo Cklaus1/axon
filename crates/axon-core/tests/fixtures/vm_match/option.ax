@@ -1,0 +1,26 @@
+// R50 S3 red test (`vm_match_option_no_tree_nodes`): a `match` on an
+// `Option<i64>` with a guard, and a `while let`, using only S1 and S3
+// constructs, so every body compiles with no `Tree` op under the vm.
+fn classify(v: Option<i64>) -> i64 {
+    match v {
+        Some(x) if x > 10 => x * 2,
+        Some(x) => x + 1,
+        None => 0,
+    }
+}
+
+fn next(i: i64) -> Option<i64> {
+    if i < 5 { Some(i) } else { None }
+}
+
+fn main() -> i64 {
+    let total = 0
+    let i = 0
+    while let Some(x) = next(i) {
+        total = total + classify(Some(x * 5))
+        i = i + 1
+    }
+    println(to_str(total))
+    println(to_str(classify(None)))
+    0
+}

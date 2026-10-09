@@ -1,0 +1,40 @@
+// R50 S3 (`vm_match_chan_*`): channel methods evaluate their arguments
+// exactly where the tree-walker does: `send` only its first, `recv`, `len`,
+// `try_recv` and `clone` none. `chan<i64>()` stays a `Tree` op for good
+// (`Call(struct-lit)`), so it lives in `mk` and `use_chan` has none.
+fn log(s: str) -> i64 {
+    println(s)
+    0
+}
+
+fn logs(s: str) -> str {
+    println(s)
+    s
+}
+
+fn mk() -> Chan<i64> {
+    chan<i64>()
+}
+
+fn use_chan(ch: Chan<i64>) -> i64 {
+    ch.send(log("send-0"), log("send-1"))
+    ch.send(41, log("send-2"))
+    println(to_str(ch.len(logs("len"))))
+    let c2 = ch.clone()
+    println(to_str(c2.recv(log("recv"))))
+    println(to_str(ch.len()))
+    match ch.try_recv() {
+        Some(v) => println(to_str(v)),
+        None => println("empty"),
+    }
+    match c2.try_recv() {
+        Some(v) => println(to_str(v)),
+        None => println("empty"),
+    }
+    ch.len()
+}
+
+fn main() -> i64 {
+    println(to_str(use_chan(mk())))
+    0
+}

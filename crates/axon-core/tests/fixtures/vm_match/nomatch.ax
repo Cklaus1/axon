@@ -1,0 +1,15 @@
+// R50 S3 (`vm_match_non_exhaustive_panics`): no arm matches, so the match
+// panics `no match arm matched` (exit 101) after the earlier output.
+fn pick(n: i64) -> str {
+    match n {
+        1 => "one",
+        2 => "two",
+    }
+}
+
+fn main() -> i64 {
+    println(pick(1))
+    println(pick(2))
+    println(pick(3))
+    0
+}

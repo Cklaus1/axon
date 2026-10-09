@@ -35165,9 +35165,9 @@ fn vm_engine_scope_leak() {
     assert_eq!(stdout, "3\n", "stderr: {stderr}");
     let traced = vm_run("scope_leak", VM_SCOPE_LEAK_SRC, "vm", true);
     let err = String::from_utf8_lossy(&traced.stderr);
-    // S1: only the `match` stays on the tree in `f`.
-    assert!(err.contains("vm: f 5 ops, 1 tree nodes\n"), "{err}");
-    assert!(err.contains("vm: tree-op f Match\n"), "{err}");
+    // S3: the `match`, its guard's `?` included, runs compiled in `f`.
+    assert_eq!(vm_tree_nodes(&err, "f"), 0, "{err}");
+    assert!(!err.contains("vm: tree-op f "), "{err}");
 }
 
 #[test]
@@ -35423,15 +35423,15 @@ fn vm_scalar_refined_let_violation_exits_6() {
 }
 
 /// R50 §4 Execution: shadowing in nested blocks, nested loops with `break`
-/// and `continue` (caught by the innermost loop, also out of a callee's
-/// `match` that stays on the tree), and an early `return` out of loops.
+/// and `continue` (caught by the innermost loop, also around a callee's
+/// `match`), and an early `return` out of loops.
 #[test]
 fn vm_scalar_scopes_loops_and_early_return() {
     let src = "fn first_over(lim: i64) -> i64 {\n    for i in 0..100 {\n        let j = 0\n        while j < 100 {\n            if i * j > lim { return i * 1000 + j }\n            j = j + 1\n        }\n    }\n    -1\n}\nfn pick(v: Option<i64>) -> i64 {\n    match v { Some(x) => x, None => 0 }\n}\nfn main() -> i64 {\n    let x = 1\n    {\n        let x = 2\n        println(to_str(x))\n    }\n    println(to_str(x))\n    let total = 0\n    for i in 0..5 {\n        if i == 1 { continue }\n        let k = 0\n        while true {\n            k = k + 1\n            if k > i { break }\n            if k == 2 { continue }\n            total = total + pick(Some(k))\n        }\n        if i == 3 { break }\n    }\n    println(to_str(total))\n    println(to_str(first_over(50)))\n    for i in 0..=2 { let x = i * 10\n        println(to_str(x)) }\n    0\n}\n";
     let (code, stdout, stderr) = vm_scalar_case(
         "scopes",
         src,
-        &[("first_over", 0), ("pick", 1), ("main", 0)],
+        &[("first_over", 0), ("pick", 0), ("main", 0)],
     );
     assert_eq!(code, Some(0), "{stderr}");
     assert!(stdout.starts_with("2\n1\n"), "{stdout}");
@@ -35475,5 +35475,130 @@ fn vm_scalar_in_place_append_stays_linear() {
         start.elapsed() < std::time::Duration::from_secs(60),
         "{:?}",
         start.elapsed()
+    );
+}
+
+// ── R50 S3: match, while let, methods (`vm_match_`) ─────────────────────────
+
+/// The S3 parity programs, `tests/fixtures/vm_match/<name>.ax` (also in the
+/// `vm_parity.sh` corpus).
+macro_rules! vm_match_src {
+    ($name:literal) => {
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/vm_match/",
+            $name,
+            ".ax"
+        ))
+    };
+}
+
+/// R50 S3 red test (§8): a fn matching an `Option<i64>` with a guard, and a
+/// `while let`, compile with 0 tree nodes. Without S3 both are `Tree` ops.
+#[test]
+fn vm_match_option_no_tree_nodes() {
+    let (code, stdout, stderr) = vm_scalar_case(
+        "match_option",
+        vm_match_src!("option"),
+        &[("classify", 0), ("next", 0), ("main", 0)],
+    );
+    assert_eq!((code, stdout.as_str()), (Some(0), "88\n0\n"), "{stderr}");
+}
+
+/// R50 §4 condition rules: a match guard is true only for `Value::Bool(true)`;
+/// an `Uncertain<bool>` guard is false with no panic, so the next arm runs
+/// (eval.rs `Match` arm). Arm bindings shadow the enclosing `y` only inside
+/// the arm. A `?` failing in a guard pops the arm's scope before the fn
+/// returns (the S0 AX-57 fix), so the caller's loop keeps its bindings.
+#[test]
+fn vm_match_guard_true_only_for_bool_true() {
+    let (code, stdout, stderr) = vm_scalar_case(
+        "match_guard",
+        vm_match_src!("guard"),
+        &[
+            ("guarded", 0),
+            ("shadow", 0),
+            ("soft", 0),
+            ("fail", 0),
+            ("main", 0),
+        ],
+    );
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "wild\nno\n0\nno\n7\nno\n14\n4\n901\n9000\n-1\n"),
+        "{stderr}"
+    );
+}
+
+/// R50 §4 Execution: `while let` pushes the pattern's scope per iteration
+/// and the body's inside it; `break`/`continue` at either nesting level and
+/// an early `return` pop them as `run_loop_body` and the `WhileLet` arm do.
+#[test]
+fn vm_match_while_let_break_continue() {
+    let (code, stdout, stderr) = vm_scalar_case(
+        "match_while_let",
+        vm_match_src!("whilelet"),
+        &[
+            ("nested", 0),
+            ("first_ok", 0),
+            ("unscoped", 0),
+            ("main", 0),
+        ],
+    );
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "222\n300\n-1\n10\n"),
+        "{stderr}"
+    );
+}
+
+/// R50 §4: a match no arm matches panics `no match arm matched`, exit 101,
+/// after the output of the earlier calls.
+#[test]
+fn vm_match_non_exhaustive_panics() {
+    let (code, stdout, stderr) =
+        vm_scalar_case("match_nomatch", vm_match_src!("nomatch"), &[("pick", 0), ("main", 0)]);
+    assert_eq!((code, stdout.as_str()), (Some(101), "one\ntwo\n"), "{stderr}");
+    assert!(stderr.contains("no match arm matched"), "{stderr}");
+}
+
+/// R50 §4 `chan_method` (Behaviour table): on a channel receiver `send`
+/// evaluates only its first argument, and `recv`/`len`/`try_recv`/`clone`
+/// none; `use_chan` runs them with no `Tree` op.
+#[test]
+fn vm_match_chan_method_argument_order() {
+    let (code, stdout, stderr) = vm_scalar_case(
+        "match_chan",
+        vm_match_src!("chan"),
+        &[("use_chan", 0), ("log", 0), ("main", 0)],
+    );
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "send-0\n2\n0\n1\n41\nempty\n0\n"),
+        "{stderr}"
+    );
+}
+
+/// R50 §4 `impl_method`: a method call on a record or enum receiver
+/// evaluates the receiver, then the arguments left to right, then calls the
+/// impl method for the receiver's type; a `match` on enum variants inside
+/// an impl method compiles too.
+#[test]
+fn vm_match_impl_methods() {
+    let (code, stdout, stderr) = vm_scalar_case(
+        "match_methods",
+        vm_match_src!("methods"),
+        &[
+            ("use_p", 0),
+            ("areas", 0),
+            ("Shape::area", 0),
+            ("logp", 0),
+            ("main", 0),
+        ],
+    );
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "recv\nk\nm\n23\n21\n"),
+        "{stderr}"
     );
 }
