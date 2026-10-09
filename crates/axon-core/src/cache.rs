@@ -304,8 +304,12 @@ mod tests {
 
     const ID: &str = "0.1.0+0123456789abcdef";
 
+    /// Each test gets its own directory: tests run in parallel threads of one
+    /// process, and the round-trip test counts `.tmp.` files beside its entry,
+    /// so a sibling's in-flight `write_axc` in a shared directory would fail it.
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("axon_cache_unit_{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("axon_cache_unit_{}_{name}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir.join(format!("{name}.axc"))
     }
