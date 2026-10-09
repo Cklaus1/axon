@@ -6,8 +6,8 @@ verdict "incorrect" (first 2 blockers and 11 must-fix, second 4 must-fix and 8 s
 and 6 smaller, fourth 7 must-fix and 5 smaller, fifth 5 must-fix and 7 smaller, sixth 5 must-fix and 6
 smaller, seventh 2 must-fix and 3 smaller, eighth 2 must-fix and 2 smaller), and the ninth, verdict
 "correct" (0 blockers, 0 must-fix, 4 nits), are answered in §15. Revision 11 adds slices S7 and S8
-because §12 Q3 came true at S4 (measured, §15 "Revision 11"); revision 12 answers the tenth review, an
-eleventh is pending, and S7 and S8 do not start before it passes.
+because §12 Q3 came true at S4 (measured, §15 "Revision 11"); revision 12 answers the tenth review and
+revision 13 the eleventh; a twelfth is pending, and S7 and S8 do not start before it passes.
 **Risk class:** Structural (a second execution path for the reference engine)
 **Author / date:** 2026-10-09, from compilebench AX-18 (interpreter cost) after AX-53..AX-55.
 
@@ -359,7 +359,7 @@ Evaluating one has no effect besides its value or its panic.
   in kind (`Int` with `Float`); when an `Int` or `Float` operator has no arm in `int_fast`/`float_fast`
   (overflow, `/ 0`, `% 0`, `MIN / -1`, `&&` on numbers); when `&&`/`||` gets a non-`Bool`; when an
   operator other than `&&`, `||`, `==` and `!=` gets two `Bool`s (the tree panics `cannot apply <Op> to
-  bool / bool`; `==`/`!=` on `Bool`s give `values_equal`'s result, value.rs:719-720); or when a branch
+  bool / bool`; `==`/`!=` on `Bool`s give `a == b`/`a != b`, `eval_binop_vals`, value.rs:719-720); or when a branch
   sink's value is not a `Bool` (the twin's `cond_bool` then panics). The same rules hold inside
   `PureLoop` and `fold_leaf`. Its results
   are `int_fast`/`float_fast`'s, which S1's unit tests pin to `int_binop`/`float_binop`. Its code may be
@@ -394,17 +394,21 @@ Evaluating one has no effect besides its value or its panic.
 `call1.ax`'s and `mutcall.ax`'s loops cannot, since their bodies call. From S7 the `call`, `fastcall`,
 `mutcall` and `swap` rows subtract `loop_generic.ax` instead of `loop.ax`: `loop.ax` with `if i < 0 { s
 = 0 }` appended to the body, a never-taken branch that makes the loop ineligible (it costs 50 per
-iteration on the S4 VM: `loop.ax` 229,167,352, `loop_generic.ax` 279,207,377). So that it cancels
-exactly, S7 appends the same `if` to the loop bodies of `call1.ax` and `mutcall.ax`, and `swapcall.ax`
-(S8) has it from the start.
+iteration on the S4 VM: `loop.ax` 229,167,352, `loop_generic.ax` 279,207,377). So that it cancels, S7
+appends the same `if` to the loop bodies of `call1.ax` and `mutcall.ax`, and `swapcall.ax` (S8) has it
+from the start (measured exact for `call1.ax` and `mutcall.ax`; `swapcall.ax`'s `if` costs about 10 more,
+which the row charges to the call, so the gate errs strict).
 
 Gate: red tests `vm_pure_mandel_loop` (mandelbrot's `main` prints `vm: pure main <p> exprs, 1 loops`)
 and `vm_pure_fold_leaf` (arr-sum prints `vm: fold-leaf main::lambda#0`), both failing on S4, which prints
-neither line; behaviour tests `vm_pure_overflow_replays` (an `i64` overflow in the third iteration of a
+neither line; every `vm_pure_*` behaviour test places its expression in a sink (an `Assign` value, an
+untyped `let` value, or an `if`/`while` condition) and asserts that the `vm: pure` line for that body is
+present, so it cannot pass without a `Pure` op; behaviour tests `vm_pure_overflow_replays` (an `i64` overflow in the third iteration of a
 `PureLoop` gives the tree's panic text and exit 101, and a `println` after the loop never runs), `vm_pure_sized_declines` (an `i32` local in a pure loop gives the tree's output),
-`vm_pure_short_circuit` (`b != 0 && a / b > 1` with `b = 0` prints what the tree prints),
-`vm_pure_bool_ops` (through untyped lambda parameters, which `axon check` accepts: `a < b && b < a` on
-`Bool`s, and `if`/`while` on `a + b * a` with `Int`s, each giving the tree's panic and exit 101) and
+`vm_pure_short_circuit` (`let r = b != 0 && a / b > 1` and `if b != 0 && a / b > 1` with `b = 0` print
+what the tree prints), `vm_pure_bool_ops` (through untyped lambda parameters, which `axon check` accepts:
+`let c = a < b && b < a` in the lambda body on `Bool`s, and `if`/`while` on `a + b * a` with `Int`s, each
+giving the tree's panic and exit 101) and
 `vm_pure_fold_decline` (`% 0` at element 5 of an `arr_fold` panics as the tree does);
 `vm_perf_gate.sh --programs mandelbrot,arr-sum,collatz` and `--repros S1,part,fold,foldmod`.
 
@@ -692,12 +696,13 @@ qsort is the gate's tightest program. Revision 5 split its 18.97 G with two esti
 | Term | Count | Per unit | Total |
 |---|---|---|---|
 | partition iterations (`part.ax`, measured 227; S2 budget 250) | 25,092,348 | 227 | 5.70 G |
-| `main` without `quicksort`'s work (measured) | — | — | 1.09 G |
-| `quicksort` prologues and the rest beyond its call (residual) [INFERENCE] | 1,333,559 | ≈ 1,000 | ≈ 1.34 G |
+| `main` without `quicksort`'s work (measured) | — | — | 1.094 G |
+| `quicksort` prologues and the rest beyond its call (residual) [INFERENCE] | 1,333,559 | ≈ 1,014 | ≈ 1.35 G |
 | `quicksort`'s own `&mut` calls at the S5 budget | 1,333,559 | 600 | 0.80 G |
 | `swap` calls, body included (the S8 `swap` row) | 13,670,662 | ≤ 730 | ≤ 9.98 G |
 
-The total is 18.91 G, about 0.06 G under budget, so the `swap` row's 730 is derived, not padded. The
+The total is 18.92 G, about 0.05 G under budget (residual computed with the `swap` row measured against
+`loop_generic.ax`, 2,638 per call at S4; against `loop.ax` it would be 19.06 G, over), so the `swap` row's 730 is derived, not padded. The
 slice budgets still do not by themselves prove qsort's gate; Q3 applies after S8.
 
 sieve is reported but not gated: CPython clears multiples with one slice assignment that runs in C.
@@ -944,4 +949,5 @@ printing the golden output:
 | collatz 20.12 G, within 26.06 G | Unchanged; in the S7 `--programs` gate because S7's `Pure` op takes its `if` condition `x % 2 == 0` (its `while` body holds an `if`, so no `PureLoop`). Prototype with `Pure`/`PureLoop` 20.02 G; with the S8 ops too, 18.57 G |
 | `loop.ax` becomes a `PureLoop` (229 → 92 per iteration), so rows that subtract it would charge the call for the loop's lost speed | `call`, `fastcall`, `mutcall`, `swap` subtract `loop_generic.ax` from S7, and their programs carry the same never-taken `if`, so it cancels (§4 S7) |
 | Tenth review (2026-10-09, `reviewer`, verdict "incorrect": 0 blockers, 1 must-fix, 1 gap, 1 nit), answered in revision 12: `loop_generic.ax`'s `if` measured 50 (47 stacked), crediting each `swap` call ≈ 0.68 G in total; `Pure` silent on `Bool` operands outside `&&`/`||` and non-`Bool` branch values; collatz row misattributed | The `if` is added to `call1.ax`, `mutcall.ax` and `swapcall.ax` so it cancels; decline rules and `vm_pure_bool_ops` added; collatz row corrected |
+| Eleventh review (2026-10-09, `reviewer`, verdict "incorrect": 0 blockers, 1 must-fix, 3 nits), answered in revision 13: `vm_pure_bool_ops`/`vm_pure_short_circuit` did not put the expression in a sink, so they could not fail; swap `if` cancels within ≈ 10; qsort split re-measured 18.922 G; value.rs:719-720 is `eval_binop_vals` | Tests use `let`/`if` sinks and assert the `vm: pure` line; cancellation stated as measured; split total 18.92 G with residual ≈ 1,014; citation renamed |
 | S5's gate named "all rows", which would include the S7 and S8 rows | S5 gate is `--repros S1,part,fold,S5` |
