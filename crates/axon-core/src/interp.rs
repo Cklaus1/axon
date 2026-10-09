@@ -634,9 +634,15 @@ fn ai_policy_err<T>(msg: impl Into<String>) -> Result<T, Flow> {
 /// its sym, which serves code resolved by name ([`NAMED`]: a reverse scan,
 /// the innermost binding first), [`Env::snapshot`], and the fallback when a
 /// slot does not hold the expected binding.
+///
+/// `stack` is the operand stack of a bytecode-engine activation running on
+/// this frame (R50): `vm::exec` takes it for the activation and hands it back
+/// emptied, so a pooled frame brings a grown stack with it. The tree-walker
+/// never touches it.
 struct Env {
     vars: Vec<(Sym, Value)>,
     marks: Vec<usize>,
+    stack: Vec<Value>,
 }
 
 impl Env {
@@ -644,6 +650,7 @@ impl Env {
         Env {
             vars: Vec::new(),
             marks: Vec::new(),
+            stack: Vec::new(),
         }
     }
     fn push(&mut self) {
@@ -778,6 +785,7 @@ impl Env {
         Env {
             vars: captured,
             marks: Vec::new(),
+            stack: Vec::new(),
         }
     }
     /// The bindings of the base (outermost) scope.
@@ -934,12 +942,9 @@ pub struct Interp<'p> {
     /// `eval_call` so a call does not allocate one.
     arg_bufs: RefCell<Vec<Vec<Value>>>,
     /// AX-54: emptied frames of finished user-fn calls, reused by
-    /// `call_fn_entry` so a call does not allocate its bindings and marks.
+    /// `call_fn_entry` so a call does not allocate its bindings, marks and
+    /// operand stack.
     env_pool: RefCell<Vec<Box<Env>>>,
-    /// R50 S1: emptied operand stacks of finished bytecode-engine activations,
-    /// reused by `vm::exec` so an activation does not allocate one (spec §4
-    /// Execution, Re-entrancy: each activation owns its stack).
-    vm_stacks: RefCell<Vec<Vec<Value>>>,
     /// Phase-7 `cost_meter` / F4: cumulative AI spend across the whole run, in
     /// integer micro-dollars (µ$). Every `ai_complete` adds `tier.cost_micro(est
     /// tokens)` — the real per-token cost, stamped into the `ai_call` provenance
@@ -3223,7 +3228,6 @@ impl<'p> Interp<'p> {
             ai_calls_this_fn: Cell::new(0),
             arg_bufs: RefCell::new(Vec::new()),
             env_pool: RefCell::new(Vec::new()),
-            vm_stacks: RefCell::new(Vec::new()),
             ai_cost_micro: Cell::new(0),
             w1310_warned: RefCell::new(std::collections::HashSet::new()),
             tokens_used: Cell::new(0),

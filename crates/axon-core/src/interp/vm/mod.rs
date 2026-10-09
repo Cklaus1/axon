@@ -10,8 +10,8 @@
 //! `if`/`while`/`for`, `return`/`break`/`continue`/`?`, `Some`/`None`/`Ok`/
 //! `Err`, string interpolation and calls by name (§4 "Lowered set per slice").
 //!
-//! Values flow through an operand stack owned by the activation (pooled in
-//! `Interp::vm_stacks`). An op that reads a local or a literal directly takes
+//! Values flow through an operand stack owned by the activation (kept in its
+//! frame, `Env::stack`). An op that reads a local or a literal directly takes
 //! it as an inline [`Opnd`] instead of a stack slot, and an assignment whose
 //! value is a binary operation on two such operands is one [`Op::StoreBin`].
 //!
@@ -642,8 +642,9 @@ impl<'p> Interp<'p> {
         self.exec(body, env)
     }
 
-    /// Execute `body` against `env` on an operand stack of its own (from the
-    /// `vm_stacks` pool). A `Flow::Break`/`Flow::Continue` out of an op in a
+    /// Execute `body` against `env` on an operand stack of its own (the
+    /// frame's `Env::stack`, empty for a nested activation on the same frame).
+    /// A `Flow::Break`/`Flow::Continue` out of an op in a
     /// loop's iteration, a callee or a `Tree` op included, is caught by the
     /// innermost such loop: its iteration's scopes are popped and its stack
     /// temporaries dropped. On every exit, normal or `Err`, the scopes this
@@ -654,12 +655,13 @@ impl<'p> Interp<'p> {
     /// `Err(Flow::Return(v))` the tree-walker's body yields; every other
     /// `Flow` propagates unchanged.
     pub(super) fn exec(&self, body: &Body<'_>, env: &mut Env) -> R {
-        // A pooled stack keeps the capacity it grew to; a new one starts at
-        // the body's height so it does not regrow while the body runs.
-        let mut st = match self.vm_stacks.borrow_mut().pop() {
-            Some(st) => st,
-            None => Vec::with_capacity(body.max_stack),
-        };
+        // A pooled frame's stack keeps the capacity it grew to; a new one
+        // starts at the body's height so it does not regrow while the body
+        // runs.
+        let mut st = std::mem::take(&mut env.stack);
+        if st.capacity() == 0 {
+            st.reserve_exact(body.max_stack);
+        }
         let mut scopes = 0u32;
         let mut pc = 0usize;
         let mut out = self.run(body, env, &mut st, &mut scopes, &mut pc);
@@ -669,14 +671,12 @@ impl<'p> Interp<'p> {
         for _ in 0..scopes {
             env.pop();
         }
-        if !st.is_empty() {
-            st.clear();
+        if st.capacity() <= 4096 {
+            if !st.is_empty() {
+                st.clear();
+            }
+            env.stack = st;
         }
-        let mut pool = self.vm_stacks.borrow_mut();
-        if pool.len() < 64 && st.capacity() <= 4096 {
-            pool.push(st);
-        }
-        drop(pool);
         match out {
             Err(Flow::Return(v)) => Ok(v),
             out => out,
