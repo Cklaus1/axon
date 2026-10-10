@@ -131,8 +131,8 @@ an invalid `AXON_ENGINE` value refuses like any other invalid value (exit 2).
 `exec`, `call_fast`, `call_fast_arg`, `call_fast_inline`/`leaf_call`, `leaf_arm`, `call_fast_local_int_slow`,
 `fast_body`/`leaf_value`/`leaf_store`/`exec_on`, `call_mut_op`/`call_mut_general`/`moves_call`/`run_moves`,
 `run_lambda`/`compile_lambda`, `fold_leaf`, deferred compile in S9) needs one. `compile` refuses (panics) while
-`ix.seal.active`: no `Body` can exist in a sealed run, at zero hot-path cost. The three engine gates
-(`run_body`, `run_lambda`, `fold_leaf`) are named in T1's drift test.
+`ix.seal.active`: no `Body` can exist in a sealed run, at zero hot-path cost. The engine gates (`run_body`,
+`run_lambda`, `fold_leaf`, and S0b's `@[test]`-frame twin `run_test_body`) are named in T1's drift test.
 
 [REVISED: added, reason: VmPin-4a.] **Under seal every call takes the general path.** The seal crossing check
 is the first statement of `call_fn_in`, before the `plain` split. The split condition becomes a build-time
@@ -245,8 +245,8 @@ Unknown, cortex to Err ("no summary"). T1 asserts all three.
     cell is empty; `compile` panics if called under seal.
   - T1c CLI: refusal message on stderr, exit 2, no summary line on stdout; with `env -i` (the production
     shape) a sealed run produces no `AXON_VM_TRACE=1` lines.
-  - T1d drift: the set of functions that read `.engine` equals {`run_body`, `run_lambda`, `fold_leaf`, the trace
-    read}; `vm/tests.rs` is the only writer of `.engine` after build; the callers of `compile` are exactly
+  - T1d drift: the set of functions that read `.engine` equals {`run_body`, `run_test_body`, `run_lambda`,
+    `fold_leaf`, the trace read}; `vm/tests.rs` is the only writer of `.engine` after build; the callers of `compile` are exactly
     `compile_entry` and `compile_lambda`; every caller of a VM entry point outside `vm/` is in the allow-list
     {`call_fn_common`, `call_fn_in_general`, `call_closure_owned_by`, builtins `arr_fold`}.
   - Sealed-state tests hold one lock that every `Interp::build` in the test binary respects (or the seal state

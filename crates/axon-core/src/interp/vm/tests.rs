@@ -1350,8 +1350,9 @@ fn r51_fns(sites: &[&R51Site<'_>]) -> Vec<String> {
     v
 }
 
-/// R51 T1d (1, 2): the `engine` field is read only at the three engine
-/// gates and the trace, and written after build only by `vm/tests.rs`.
+/// R51 T1d (1, 2): the `engine` field is read only at the four engine
+/// gates (`run_test_body` is S0b's `@[test]`-frame twin of `run_body`) and
+/// the trace, and written after build only by `vm/tests.rs`.
 #[test]
 fn r51_t1d_engine_is_read_only_at_the_gates() {
     let sources = r51_interp_sources();
@@ -1373,6 +1374,7 @@ fn r51_t1d_engine_is_read_only_at_the_gates() {
         [
             "interp/vm/mod.rs::run_body",
             "interp/vm/mod.rs::run_lambda",
+            "interp/vm/mod.rs::run_test_body",
             "interp/vm/mod.rs::vm_trace_tree",
             "interp/vm/pure.rs::fold_leaf",
         ],
@@ -1440,12 +1442,14 @@ fn r51_t1d_compile_has_two_callers() {
 /// call paths, the closure call and `arr_fold`'s fold leaf.
 #[test]
 fn r51_t1d_vm_entry_callers_outside_vm() {
-    const ENTRIES: [&str; 18] = [
+    const ENTRIES: [&str; 20] = [
         "run_body",
         "run_body_vm",
+        "run_test_body",
         "run_lambda",
         "fold_leaf",
         "exec",
+        "exec_raw",
         "exec_on",
         "fast_body",
         "call_fast",
