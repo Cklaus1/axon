@@ -2929,7 +2929,7 @@ ATTACK_MARKERS.update({
     'M3348': 'ATTACK: sealed code selected operator code \\(a select arm that fired because the candidate chose which channel',
     'M3349': 'ATTACK: sealed code selected operator code \\(what follows candidate code that could have aborted',
     # C9 round 15, PSV1Y (amendment 121): every marker is an ATTACK sentence the test prints
-    'M3450': 'ATTACK: the refusal said the operator defines `expected`',
+    'M3450': r"ATTACK: the refusal of the cheat is located outside the candidate's file",
     'M3451': '(?s)ATTACK: a diagnostic about a sealed item was not located in the sealed file:.*struct predicate \\[first\\]: located at',
     'M3452': '(?s)ATTACK: a diagnostic about a sealed item was not located in the sealed file:.*refinement predicate \\[first\\]: located at',
     'M3453': '(?s)ATTACK: a diagnostic about a sealed item was not located in the sealed file:.*top-level let \\[first\\]: located at',

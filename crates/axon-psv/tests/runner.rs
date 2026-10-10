@@ -570,6 +570,17 @@ fn a_sealed_candidate_cannot_read_the_suites_answer() {
         !err.contains("E0004") && !err.contains("which the operator's code defines"),
         "ATTACK: the refusal said the operator defines `expected`: {err}"
     );
+    // The refusal is located in the CANDIDATE's file, line 1: the cheat is the only item
+    // of g.ax and starts at byte 0, which was a dummy span (filed under the operator's
+    // entry file at no line) before the parser's end-of-input span was real.
+    let e0001 = err
+        .lines()
+        .find(|l| l.contains("\"code\":\"E0001\""))
+        .unwrap_or("");
+    assert!(
+        e0001.contains("g.ax\"") && e0001.contains("\"line\":1"),
+        "ATTACK: the refusal of the cheat is located outside the candidate's file (a sole item at byte 0 got a dummy span): {err}"
+    );
 }
 
 /// If the interpreter dies before writing its own line, the output can hold a
