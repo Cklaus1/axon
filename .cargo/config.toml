@@ -4,10 +4,13 @@
 # call frame, and wasm32's default linear-memory stack (~1 MiB) overflows after
 # only ~25 interpreter frames — a deep recursion would *trap* the module instead
 # of producing the graceful "recursion limit exceeded" panic that native gives.
-# Raising the wasm stack to 64 MiB pushes the overflow boundary to ~700 frames,
-# comfortably above the wasm `RECURSION_LIMIT` (450 in interp.rs) so the depth
-# guard fires first and the failure is identical in *kind* to native. See
-# governance/specs/R7-targets.md §4.3.
+# Raising the wasm stack to 64 MiB gives the linear-memory stack room for
+# 1.3 x the wasm `RECURSION_LIMIT` (128 in interp.rs) on every measured chain.
+# The engine's own native stack (wasmtime's default `max-wasm-stack`, 512 KiB)
+# is smaller still, so interp.rs also charges each guarded interpreter frame's
+# native bytes against a stack budget (`NEST_PER_DEPTH`, `nest_cost`) that panics the
+# same graceful way before it overflows (compilebench AX-56). See
+# governance/specs/R7-targets.md §4.3 and scripts/vm_wasm_depth.sh.
 #
 # Native builds are unaffected (this only applies to the wasm32 targets).
 

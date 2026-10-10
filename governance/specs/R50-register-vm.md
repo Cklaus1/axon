@@ -8,7 +8,30 @@ smaller, seventh 2 must-fix and 3 smaller, eighth 2 must-fix and 2 smaller), and
 "correct" (0 blockers, 0 must-fix, 4 nits), are answered in §15. Revision 11 adds slices S7 and S8
 because §12 Q3 came true at S4 (measured, §15 "Revision 11"); revisions 12-14 answer the tenth to twelfth
 reviews; the twelfth judged it ready once its four text fixes landed (revision 14), so the S7/S8
-additions are Reviewed at revision 14 and S7 and S8 may start.
+additions are Reviewed at revision 14 and S7 and S8 may start. Revision 15 adds slice S9 (deferred
+compile, compilebench AX-58; §4 S9, §15 "Revision 15"); revision 16 answers its review (2 must-fix,
+4 smaller; §15 "Revision 16") and records AX-56's wasm32 guard change (§4 Recursion); revision 17
+answers the fourteenth review (2 must-fix, 2 smaller; §15 "Revision 17") with AX-56's wasm32
+stack budget (§4 Recursion); revision 18 answers the fifteenth (2 must-fix, 2 smaller; §15
+"Revision 18") by charging measured frame bytes; revision 19 answers the sixteenth (2 blockers,
+1 must-fix; §15 "Revision 19") by guarding the whole recursive call-graph component and checking it
+mechanically; revision 20 answers the seventeenth (2 must-fix, 1 smaller; §15 "Revision 20") by
+narrowing the stack guarantee to interpreter recursion (data-depth recursion is compilebench AX-59)
+and re-deriving the code citations; revision 21 answers the eighteenth (1 blocker, 3 must-fix,
+1 smaller; §15 "Revision 21") by charging the bytecode compiler's recursion, classifying every
+other recursion reachable from `eval`, and giving each engine its own fn-body frame; revision 22
+answers the nineteenth (1 blocker, 1 must-fix, 1 smaller; §15 "Revision 22") by making run-time
+expression walks iterative, pointing handler frames into the source instead of cloning it,
+compiling a fn body in a frame that returns before the body runs, and checking each budget
+constant's guard site; revision 23 answers the twentieth (1 blocker, 1 must-fix; §15 "Revision
+23") by stating that source-depth recursion is outside the budget (compilebench AX-61) and charging
+the VM's op loop to the tree's fn level; revision 24 answers the twenty-first (1 must-fix, 2
+smaller; §15 "Revision 24") by catching a `break` without a second op-loop frame; revision 25
+answers the twenty-second (1 must-fix, 4 smaller; §15 "Revision 25") by compiling a lambda body in
+a frame that returns before it runs and charging the tree's lambda level the VM's op loop;
+revision 26 answers the twenty-third (verdict "correct": 0 blockers, 0 must-fix, 2 nits; §15
+"Revision 26") by checking the compile frames' constants. The twenty-third judged revision 25
+ready once its nits were fixed, so revision 26 is Reviewed and the AX-56 change it records lands.
 **Risk class:** Structural (a second execution path for the reference engine)
 **Author / date:** 2026-10-09, from compilebench AX-18 (interpreter cost) after AX-53..AX-55.
 
@@ -21,7 +44,7 @@ blocked-by: none
 supersedes: none
 related: R2a-type-map-threading, R0-interp-module-split, R44-accumulating-session, R7-targets
 conflicts-with: none
-reserves: none (no new diagnostic or exit codes; env vars AXON_ENGINE and AXON_VM_TRACE are registered in env_registry.rs at S0)
+reserves: none (no new diagnostic or exit codes; env vars AXON_ENGINE and AXON_VM_TRACE are registered in env_registry.rs at S0, AXON_VM_EAGER at S9)
 evidence: scripts/vm_parity.sh; scripts/vm_wasm_depth.sh; scripts/vm_perf_gate.sh; spec review evidence is §15
 ```
 
@@ -58,17 +81,23 @@ closing it needs a bytecode VM or similar".
 
 ### 3. Surface (what the user writes)
 
-No language change. Two environment variables:
+No language change. Three environment variables:
 
 | Var | Values | Effect |
 |---|---|---|
 | `AXON_ENGINE` | `tree` (default until S6), `vm` (default from S6) | Which engine runs fn and lambda bodies under every interpreter entry (`axon run`, `axon-run`, `axon test`, `axon goal`). On `wasm32-unknown-unknown`, which has no environment, the `axon_set_engine` export selects it instead (§4 Activation). Any other value: exit 2 with `AXON_ENGINE must be "vm" or "tree" (got "<v>")`. |
-| `AXON_VM_TRACE` | `1` | Five kinds of stderr line. Per fn or lambda body, the first time it runs: `vm: <name> <n> ops, <k> tree nodes`, or `vm: tree <name>: <reason>` when the whole body stays on the tree-walker. Per `Tree` op compiled into a body: `vm: tree-op <name> <Variant>[(<shape>)]`, where `<shape>` is one of `Call(struct-lit)`, `Call(P)`, `Call(computed)`, `Index(E\|Var)` and, through S4, `Call(&mut)` (§8). From S5, per call that a flag keeps off the fast path: `vm: slow <fn>: <flag>` (§4 S5). From S7, per body that holds S7 ops, right after its body line: `vm: pure <name> <p> exprs, <q> loops` (`<p>` `Pure` ops, `<q>` `PureLoop` ops); and per lambda code the first time `arr_fold` runs it in registers: `vm: fold-leaf <name>` (§4 S7). `<name>` is the fn's name (`Type::method` for an impl method) or, for a lambda body, `<owner>::lambda#<i>`. `<owner>` is the enclosing fn; `<fn>::verify` for a lambda inside fn `<fn>`'s `@[verify]` predicate (resolved after the body, sym.rs:769-771); or `<module>` for a lambda the resolver reaches through a module item (a module `let`, a `refine` predicate or a type's refinement; sym.rs:614-622). `<i>` is the lambda's 0-based position among its owner's lambdas in source (pre-)order, nested ones included; for `<module>` the count runs over those items in source order. A code with `compiled: None` (`LambdaInfo::of`, `fn_value`, `SendValue`) has no name and no first-run state (`LambdaInfo::of` builds a fresh code per evaluation, eval.rs:722-730): it prints the literal line `vm: tree <anon>: unresolved lambda` once per code instance, and `vm_parity.sh` excludes those lines from its body count. Off by default. It never changes stdout or the exit code. |
+| `AXON_VM_TRACE` | `1` | Six kinds of stderr line. Per fn or lambda body, the first time it is compiled (its first run, or from S9 its second; §4 S9): `vm: <name> <n> ops, <k> tree nodes`, or `vm: tree <name>: <reason>` when the whole body stays on the tree-walker. Per `Tree` op compiled into a body: `vm: tree-op <name> <Variant>[(<shape>)]`, where `<shape>` is one of `Call(struct-lit)`, `Call(P)`, `Call(computed)`, `Index(E\|Var)` and, through S4, `Call(&mut)` (§8). From S5, per call that a flag keeps off the fast path: `vm: slow <fn>: <flag>` (§4 S5). From S7, per body that holds S7 ops, right after its body line: `vm: pure <name> <p> exprs, <q> loops` (`<p>` `Pure` ops, `<q>` `PureLoop` ops); and per lambda code the first time `arr_fold` runs it in registers: `vm: fold-leaf <name>` (§4 S7). From S9, per body whose first entry runs on the tree-walker, at that entry: `vm: defer <name>` (§4 S9). `<name>` is the fn's name (`Type::method` for an impl method) or, for a lambda body, `<owner>::lambda#<i>`. `<owner>` is the enclosing fn; `<fn>::verify` for a lambda inside fn `<fn>`'s `@[verify]` predicate (resolved after the body, sym.rs:871-875); or `<module>` for a lambda the resolver reaches through a module item (a module `let`, a `refine` predicate or a type's refinement; sym.rs:691-697). `<i>` is the lambda's 0-based position among its owner's lambdas in source (pre-)order, nested ones included; for `<module>` the count runs over those items in source order. A code with `compiled: None` (`LambdaInfo::of`, `fn_value`, `SendValue`) has no name and no first-run state (`LambdaInfo::of` builds a fresh code per evaluation, eval.rs:644-650): it prints the literal line `vm: tree <anon>: unresolved lambda` once per code instance, and `vm_parity.sh` excludes those lines from its body count. Off by default. It never changes stdout or the exit code. |
+| `AXON_VM_EAGER` | `1` | From S9: under `AXON_ENGINE=vm`, compile every body on its first entry instead of deferring a body that is not hot on entry to its second (§4 S9). Read once, when the `Interp` is built; `wasm32-unknown-unknown` has no environment and never sets it. Same stdout, stderr and exit code either way, except on wasm32 near the stack budget (§4 Recursion): compiled and tree frames differ in size, so the depth at which the budget panic comes can move by many levels (a 130-fn chain with 40 parentheses per call: deferred 28, eager 126, debug). The `vm_` cli tests and `vm_parity.sh` use it so a body run once is still compiled code under test. |
 
 ```text
 $ AXON_ENGINE=vm AXON_VM_TRACE=1 axon run fib.ax
-vm: main 9 ops, 0 tree nodes
-vm: fib 11 ops, 0 tree nodes
+vm: defer main
+vm: defer fib
+vm: fib 6 ops, 0 tree nodes
+2178309
+$ AXON_ENGINE=vm AXON_VM_EAGER=1 AXON_VM_TRACE=1 axon run fib.ax
+vm: main 5 ops, 0 tree nodes
+vm: fib 6 ops, 0 tree nodes
 2178309
 $ AXON_ENGINE=vm AXON_VM_TRACE=1 AXON_DUMP_BINDINGS=/tmp/b.json axon run prog.ax
 vm: tree main: binding capture
@@ -81,7 +110,7 @@ vm: tree main: binding capture
 
 - (a) A separate register file per activation (first draft). **Rejected by review.** `call_fn_in`
   binds params and `goal_met` into its `Env`. `call_fn_mut` reads `&mut` params back out of that `Env`
-  (interp.rs `call_fn_mut`). Refinement postconditions evaluate against it. `main`'s binding capture
+  (interp.rs:3375-3401 `call_fn_mut` at `886aae53`). Refinement postconditions evaluate against it. `main`'s binding capture
   snapshots it. `match_pattern` binds into it. Closure capture reads it in `LambdaInfo` order. A register
   file would need a handoff in every one of those places, and every missed handoff is a silent divergence.
 - (b) **The compiled body runs against the same `&mut Env` the tree-walker would use. Chosen.** Since
@@ -126,24 +155,24 @@ in an `eval` arm that the engine also needs, the slice the §13 DAG names (S0–
 function the arm then calls (no behaviour change), and both engines call that function. The three
 condition rules differ and stay different: `if` and `while` unwrap an `Uncertain<bool>` or `Temporal<bool>` with `soft_inner`
 and panic on a non-bool (`cond_bool`, below); a match guard is true only for `Value::Bool(true)`, with no
-unwrap and no panic, so an `Uncertain<bool>` or any other value is false (eval.rs:308); `for` bounds and
+unwrap and no panic, so an `Uncertain<bool>` or any other value is false (eval.rs:341); `for` bounds and
 index reads take `Int` only (`strict_int`, below), while place writes also accept a sized int
 (`place_index`):
 
 | Extracted helper | From | Contents (in eval's order) |
 |---|---|---|
-| `dispatch_call(callee, argv, tier, env)` | `eval_call` after argument evaluation | `resume` handling (multi-shot replay or `Flow::Resume`); set or clear `current_call_tier` exactly as now; then 1. a local holding a `Value::Closure` *by runtime value* (`let max = 3; max(a, b)` still calls the builtin); 2. builtin (precedence over a same-named user fn), skipped through the `callees` memo for names already proven not to be builtins (eval.rs:1169-1190); 3. `call_fn_entry` (pooled frame, `has_ref_mut` refusal; interp.rs:3321-3343); 4. global closure; 5. the unknown-function panic |
-| `bind_let(kind, name, slot, ann, value, env)` | `Let`/`Own`/`RefBind` arms (eval.rs:156-197) | refinement predicate check in a fresh `Env` binding `_` and the name, then `Flow::RefineViolation` on false; then sized-int coercion; then `define_var` |
-| `chan_method(recv, method, args: &[Expr], env)` and `impl_method(recv, method, argv, env)` | `Expr::MethodCall` arm (eval.rs:453-505) | The arm evaluates the receiver first. For a `Value::Chan` receiver, `recv`/`try_recv`/`len`/`clone` and the unknown-method panic never evaluate the arguments, and `send` evaluates only `args[0]`; that path is `chan_method`, which takes the unevaluated argument nodes and evaluates them itself exactly as the arm does. Every other receiver evaluates all arguments left to right and then calls `impl_method`. The engine lowers a method call as: evaluate the receiver; op `MethodRecv` calls `chan_method` with the argument nodes when the receiver is a channel, and otherwise falls through to the compiled argument evaluation and `impl_method`. The receiver's type is known only at run time, so the branch is a run-time check. |
+| `dispatch_call(callee, argv, tier, env)` | `eval_call` after argument evaluation | `resume` handling (multi-shot replay or `Flow::Resume`); set or clear `current_call_tier` exactly as now; then 1. a local holding a `Value::Closure` *by runtime value* (`let max = 3; max(a, b)` still calls the builtin); 2. builtin (precedence over a same-named user fn), skipped through the `callees` memo for names already proven not to be builtins (eval.rs:1219-1242); 3. `call_fn_entry` (pooled frame, `has_ref_mut` refusal; interp.rs:3811-3826); 4. global closure; 5. the unknown-function panic |
+| `bind_let(kind, name, slot, ann, value, env)` | `Let`/`Own`/`RefBind` arms (eval.rs:268-275) | refinement predicate check in a fresh `Env` binding `_` and the name, then `Flow::RefineViolation` on false; then sized-int coercion; then `define_var` |
+| `chan_method(recv, method, args: &[Expr], env)` and `impl_method(recv, method, argv, env)` | `Expr::MethodCall` arm (eval.rs:474-489) | The arm evaluates the receiver first. For a `Value::Chan` receiver, `recv`/`try_recv`/`len`/`clone` and the unknown-method panic never evaluate the arguments, and `send` evaluates only `args[0]`; that path is `chan_method`, which takes the unevaluated argument nodes and evaluates them itself exactly as the arm does. Every other receiver evaluates all arguments left to right and then calls `impl_method`. The engine lowers a method call as: evaluate the receiver; op `MethodRecv` calls `chan_method` with the argument nodes when the receiver is a channel, and otherwise falls through to the compiled argument evaluation and `impl_method`. The receiver's type is known only at run time, so the branch is a run-time check. |
 | `make_closure(lambda_expr, env)` | `Expr::Lambda` arm | `res.lambda(expr)` (else `LambdaInfo::of`); captures built from `env` in `captures` order |
-| `assign_in_place(s, slot, name, value, env)` | `Assign` arm (eval.rs:198-209, 1550-1632) | already a function: it matches the AX-31 shapes by syntax, then returns `Ok(false)` without evaluating anything unless the local currently holds a `Str` or `Array`; the engine calls it first for every local `Assign`, exactly as the arm does (§4 lowered set) |
-| `call_mut(callee, args: &[Expr], tier, env)` | `eval_call_mut` + `call_fn_mut` (eval.rs:1214-1261, interp.rs:3375-3401) | the `&mut` move-out / call / move-back protocol, unchanged in behaviour, including the unconditional write of `tier` to `current_call_tier` (eval.rs:1253); S5 makes it allocation-free (pooled frame and buffers), which the tree-walker gets too |
-| `cond_bool(v, what)` (S1) | `If` and `While` arms (eval.rs:279-300, 323-348) | `soft_inner` unwrap of an `Uncertain` or `Temporal` (value.rs:41-44), then `Bool(b)` gives `b`; any other value panics `if condition must be bool, got <t>` or `while condition must be bool, got <t>` (`what` picks the word). The S1 fused compare-and-branch takes this path whenever the comparison does not yield a plain `Bool`. Not used for match guards |
-| `strict_int(v)` (S1) | `eval_int` (eval.rs:1634-1638) | `Int(n)` gives `n`; anything else, a `SizedInt` included, panics `expected i64, got <t>`. `for` (S1, eval.rs:373-400): evaluate `start` and pass it through `strict_int`, then evaluate `end` and pass it through `strict_int` (eval.rs:380-381; a bad `start` panics before `end` runs), before the variable is bound; then per iteration the `i <= e` (inclusive) or `i < e` test, `env.push()`, define the variable, the body as `run_loop_body` runs it, `env.pop()`, `i += 1` |
-| `index_in_place(s, slot, name, idx, env)` and `index_value(arr, idx)` (S2) | `Index` arm (eval.rs:548-574) | The arm's two paths stay two ops; both convert the index with `strict_int` (eval.rs:551, 568), so a `SizedInt` index panics on a read although `place_index` accepts it on a write. An `Ident` receiver that is bound locally or in `globals` is read in place: the engine evaluates the index only after that existence test, converts it, then calls `index_in_place`. Any other receiver, an unbound `Ident` included (which then runs the `Ident` op's chain: `fn_of_sym`, then the undefined-identifier panic), is evaluated first, then the index, converted, then `index_value` with the `i64`. Same bounds and non-array panic texts |
-| `field_in_place(s, slot, name, f, field, env)` (S2) | `FieldAccess` arm (eval.rs:506-524) | An `Ident` receiver: `get_var`, then `globals`, then the undefined-identifier panic (no `fn_of_sym` step, unlike the `Ident` arm), then `field_of`; any other receiver is evaluated, then `field_of` |
-| `finish_record(expr, name, vals, env)` (S2) | `StructLit` arm (eval.rs:585-695) | `res.record_lit(expr)` (else `RecordLit::of`) is known at compile time. When its `empty` is set (a literal with no fields and no whole-struct refinement, sym.rs:533-541) the engine emits that value as a constant and calls nothing. Otherwise the caller evaluates the field expressions in source order (the arm's order) into `vals`, and the helper does the rest exactly as the arm: slot placement, per-field sized-int coercion, enum versus struct, then the per-field and whole-struct refinement checks (`Flow::RefineViolation`, exit 6) |
-| `place_index(v)` and `write_place(base, slot, steps, value, env)` (S2) | `AssignTo` arm (eval.rs:216-270) and `flatten_place` (interp.rs:4136-4163) | The value is evaluated first. Then the index expressions of the place, in `flatten_place`'s order (outermost `Index` node first, walking toward the base: `g[i][j] = v` evaluates `j` before `i`), each converted by `place_index` (`as_int`, then the `negative index` panic). `write_place` is phase 2: `get_var_mut` with the undefined-variable panic, the copy-on-write walk and its panic texts. A place whose root is not an `Ident` (`f()[i] = v`, which `axon check` accepts; the parser takes any `Index`/`FieldAccess` as a place, parser.rs:1808-1817) compiles to the value, then the index expressions down to that root through `place_index`, then `Panic("invalid assignment target")` (`flatten_place`'s `_` arm, interp.rs:4158); the root is never evaluated. So every `AssignTo` lowers in S2 and none is a `Tree` op |
+| `assign_in_place(s, slot, name, value, env)` | `Assign` arm (eval.rs:277-288, 1619-1702) | already a function: it matches the AX-31 shapes by syntax, then returns `Ok(false)` without evaluating anything unless the local currently holds a `Str` or `Array`; the engine calls it first for every local `Assign`, exactly as the arm does (§4 lowered set) |
+| `call_mut(callee, args: &[Expr], tier, env)` | `eval_call_mut` + `call_fn_mut` (eval.rs:1214-1261, interp.rs:3375-3401 at `886aae53`) | the `&mut` move-out / call / move-back protocol, unchanged in behaviour, including the unconditional write of `tier` to `current_call_tier` (eval.rs:1253 at `886aae53`); S5 makes it allocation-free (pooled frame and buffers), which the tree-walker gets too |
+| `cond_bool(v, what)` (S1) | `If` and `While` arms (eval.rs:310-322, 361-371) | `soft_inner` unwrap of an `Uncertain` or `Temporal` (value.rs:45-60), then `Bool(b)` gives `b`; any other value panics `if condition must be bool, got <t>` or `while condition must be bool, got <t>` (`what` picks the word). The S1 fused compare-and-branch takes this path whenever the comparison does not yield a plain `Bool`. Not used for match guards |
+| `strict_int(v)` (S1) | `eval_int` (eval.rs:1634-1638 at `886aae53`; now `strict_int`, eval.rs:178-189) | `Int(n)` gives `n`; anything else, a `SizedInt` included, panics `expected i64, got <t>`. `for` (S1, eval.rs:403-430): evaluate `start` and pass it through `strict_int`, then evaluate `end` and pass it through `strict_int` (eval.rs:410-411; a bad `start` panics before `end` runs), before the variable is bound; then per iteration the `i <= e` (inclusive) or `i < e` test, `env.push()`, define the variable, the body as `run_loop_body` runs it, `env.pop()`, `i += 1` |
+| `index_in_place(s, slot, name, idx, env)` and `index_value(arr, idx)` (S2) | `Index` arm (eval.rs:523-536) | The arm's two paths stay two ops; both convert the index with `strict_int` (eval.rs:529, 534), so a `SizedInt` index panics on a read although `place_index` accepts it on a write. An `Ident` receiver that is bound locally or in `globals` is read in place: the engine evaluates the index only after that existence test, converts it, then calls `index_in_place`. Any other receiver, an unbound `Ident` included (which then runs the `Ident` op's chain: `fn_of_sym`, then the undefined-identifier panic), is evaluated first, then the index, converted, then `index_value` with the `i64`. Same bounds and non-array panic texts |
+| `field_in_place(s, slot, name, f, field, env)` (S2) | `FieldAccess` arm (eval.rs:491-502) | An `Ident` receiver: `get_var`, then `globals`, then the undefined-identifier panic (no `fn_of_sym` step, unlike the `Ident` arm), then `field_of`; any other receiver is evaluated, then `field_of` |
+| `finish_record(expr, name, vals, env)` (S2) | `StructLit` arm (eval.rs:546-571) | `res.record_lit(expr)` (else `RecordLit::of`) is known at compile time. When its `empty` is set (a literal with no fields and no whole-struct refinement, sym.rs:590-598) the engine emits that value as a constant and calls nothing. Otherwise the caller evaluates the field expressions in source order (the arm's order) into `vals`, and the helper does the rest exactly as the arm: slot placement, per-field sized-int coercion, enum versus struct, then the per-field and whole-struct refinement checks (`Flow::RefineViolation`, exit 6) |
+| `place_index(v)` and `write_place(base, slot, steps, value, env)` (S2) | `AssignTo` arm (eval.rs:296-301) and `flatten_place` (interp.rs:4727-4752) | The value is evaluated first. Then the index expressions of the place, in `flatten_place`'s order (outermost `Index` node first, walking toward the base: `g[i][j] = v` evaluates `j` before `i`), each converted by `place_index` (`as_int`, then the `negative index` panic). `write_place` is phase 2: `get_var_mut` with the undefined-variable panic, the copy-on-write walk and its panic texts. A place whose root is not an `Ident` (`f()[i] = v`, which `axon check` accepts; the parser takes any `Index`/`FieldAccess` as a place, parser.rs:1807-1817) compiles to the value, then the index expressions down to that root through `place_index`, then `Panic("invalid assignment target")` (`flatten_place`'s `_` arm, interp.rs:4747); the root is never evaluated. So every `AssignTo` lowers in S2 and none is a `Tree` op |
 
 #### Activation
 
@@ -155,21 +184,22 @@ index reads take `Int` only (`strict_int`, below), while place writes also accep
   result. Through S4 **every** call, VM→VM included, goes through `dispatch_call` → `call_fn_in`. S5's fast
   call is the only bypass, under the S5 conditions.
 - Compiled fn bodies live in `FnEntry`: it gains `compiled: Option<OnceCell<Body<'p>>>`, `Some` only for
-  the entries `Interp::build` (interp.rs:2982) pushes into `fn_table` (interp.rs:3045) and filled on first run. That costs no
+  the entries `Interp::build` (interp.rs:3458) pushes into `fn_table` (interp.rs:3523-3527) and filled on first
+  compile (the body's first entry, or from S9 its second; §4 S9). That costs no
   lookup per call, so AX-54's removal of the `fn_of_def` probe stays intact. `FnEntry::new` builds table
-  and owned entries the same way (sym.rs:373-414), so the `Option` is the discriminator: the owned
+  and owned entries the same way (sym.rs:419-471), so the `Option` is the discriminator: the owned
   `FnEntry::new(f, ..)` that `call_fn`/`call_fn_mut` build for a def missing from `fn_of_def`
-  (interp.rs:3315, 3380) gets `compiled: None` and its body runs on the tree. Fn bodies are `&'p Expr`, so
+  (interp.rs:3315, 3380 at `886aae53`) gets `compiled: None` and its body runs on the tree. Fn bodies are `&'p Expr`, so
   their `Tree` ops borrow the program.
 - Compiled lambda bodies live in their `ClosureCode`. The resolver owns the resolved copy of every lambda
-  body (sym.rs:957-985: `body: body.clone()`, resolved in the clone); the AST original is never resolved,
+  body (sym.rs:1079-1119: `body: body.clone()`, resolved in the clone); the AST original is never resolved,
   so only the clone has slots. `ClosureCode` gains `compiled: Option<OnceCell<Body>>`. It is `Some` only for
   codes built by `Resolution::lambda`, and `None` for `LambdaInfo::of` codes (run-time AST clones),
-  `fn_value` forwarders and `SendValue` deep copies (built by `SendValue::into_value`, interp.rs:1945, on
-  the reply of `host_await_val`/`host_await_val_opt`, builtins.rs:3120, 3136), whose bodies run on the tree. A compiled lambda body
+  `fn_value` forwarders and `SendValue` deep copies (built by `SendValue::into_value`, interp.rs:2377, on
+  the reply of `host_await_val`/`host_await_val_opt`, builtins.rs:3140, 3156), whose bodies run on the tree. A compiled lambda body
   refers to nodes of that same `ClosureCode.body` by raw `*const Expr` (for `Tree` ops and literal
   operands), not by `&'p Expr`. This is sound because `ClosureCode` is only ever built inside an `Rc`
-  (interp.rs:1945, eval.rs:90, sym.rs:307 and 977), its `body` is never mutated or moved afterwards, and
+  (interp.rs:2422, eval.rs:215, sym.rs:342 and 1102), its `body` is never mutated or moved afterwards, and
   `compiled` is dropped with it. No
   compiled code is stored in `Interp`, and `call_closure_owned_by` holds the closure's `Rc<ClosureCode>`
   for the whole activation. `call_closure_owned_by` runs the
@@ -186,7 +216,7 @@ index reads take `Int` only (`strict_int`, below), while place writes also accep
   module `let`s, handler arms, refinement predicates, goal-metric expressions and continuation replays.
 - Engine selection: `AXON_ENGINE` is read once, when the `Interp` is built. On `wasm32-unknown-unknown`
   there is no environment (`axon-wasm` exposes only `axon_alloc`/`axon_eval`/output getters,
-  crates/axon-wasm/src/lib.rs:38-150), so S0 adds an exported `axon_set_engine(engine: u32)` (0 = tree,
+  crates/axon-wasm/src/lib.rs:57-172), so S0 adds an exported `axon_set_engine(engine: u32)` (0 = tree,
   1 = vm). It is set before `axon_eval` and defaults to the build default. The wasm parity harness calls it
   for both engines. `wasm32-wasip1` reads `AXON_ENGINE` like native.
 
@@ -196,15 +226,15 @@ index reads take `Int` only (`strict_int`, below), while place writes also accep
   `env.pop()`: block, loop iteration, match arm, while-let, `for`. The resolver's slot numbering assumes
   those points. On **every** exit from a scope, whether normal, a caught `Break`/`Continue`, or an error
   propagating out of the body, the engine pops the scopes it pushed one at a time, innermost first, as
-  `eval_block` and `run_loop_body` do on every `Err` (eval.rs:784-823). It never truncates to a recorded
+  `eval_block` and `run_loop_body` do on every `Err` (eval.rs:723-764). It never truncates to a recorded
   `marks.len()`. `call_fn_mut` depends on this: it reads `&mut` params back by reverse name scan after the
-  body returns on any outcome (interp.rs:3387-3399), so a callee that left a shadowing `let a` scope in
+  body returns on any outcome (interp.rs:3387-3399 at `886aae53`), so a callee that left a shadowing `let a` scope in
   place would hand the caller the shadow.
   Two later exceptions leave the `Env` in the state the pushes and pops would have: S7's `PureLoop` does
   not execute the iteration scope of a loop nothing in which can observe the `Env`, and S8's `ForNext`
   overwrites the loop variable instead of popping and re-pushing a scope that holds only it (§4 S7, S8).
 - The tree-walker today leaks one mark when `match_pattern` or a guard returns `Err` inside a match arm,
-  and when `match_pattern` errs in `while let` (eval.rs:306, 308, 358: `?` before `env.pop()`). The
+  and when `match_pattern` errs in `while let` (eval.rs:306, 308, 358 at `886aae53`: `?` before `env.pop()`). The
   enclosing scope's single pop on that `Err` removes the arm's mark instead of its own, so the enclosing
   scope's bindings stay visible. compilebench AX-57 shows it: in a fn whose body shadows its `&mut` param
   with `let a = 99`, a `?` failing in a match guard makes `call_fn_mut` read the shadow back, so `axon run`
@@ -237,7 +267,7 @@ index reads take `Int` only (`strict_int`, below), while place writes also accep
   `call_closure_*`, `call_mut`, `eval`). Nested runs each have their own activation: a builtin calling a
   compiled closure, a handler arm calling a compiled fn, `goal_run`, scheduler fibers.
 - Recursion: a compiled fn body is entered only through `call_fn_in` (or S5's fast call), which keeps the
-  depth guard (`AXON_MAX_DEPTH`, default 6,000; 450 on wasm32). Lambda activations have no depth guard on
+  depth guard (`AXON_MAX_DEPTH`, default 6,000; 128 on wasm32 since AX-56, 450 before). Lambda activations have no depth guard on
   either engine (`call_closure_owned_by` never touches `call_depth`). Their Rust frames sit between guarded
   fn calls, as they do on the tree. The engine cannot use less stack than the tree everywhere: wherever a
   call is made inside a `Tree` op (S0 bodies, `&mut` calls through S4, calls inside `with` bodies), the
@@ -249,37 +279,137 @@ index reads take `Int` only (`strict_int`, below), while place writes also accep
     tree-walker completes before a memory fault is, debug / release: plain fn recursion 1,226 / 12,085;
     fn → closure → fn 1,011 / 9,574; `&mut` recursion (qsort's shape) 1,884 / 18,638 (the committed
     `vm_depth/mut.ax`, which recurses at the top level as qsort does, completes 2,789 / 25,571); recursion inside a
-    `with` body 889 / 9,018. The tightest margin over 450 is 1.98× (`with`, debug). The requirement: under
-    `AXON_ENGINE=vm`, in both profiles, every chain completes depth 585 (1.3 × 450) under that
-    configuration, and with the guard in place (`-W max-wasm-stack=4294967295`, `AXON_MAX_DEPTH` unset)
-    reports the exit-101 depth panic at 450.
-  - The wasm engine's own native stack. Under wasmtime's default `max-wasm-stack` the tree-walker already
-    traps before 450 on all four chains (deepest completed 136–318; compilebench AX-56). R50 does not fix
-    that, and must not make it worse once the VM is the default. Before S6 the script only *reports* each
-    chain's deepest completed VM depth under the default configuration next to the tree's, and a shortfall
-    there does not fail a slice: at S0 every level of every chain runs `run_body` and the exec loop on top
-    of the tree's own `eval` frames (the tree completes 260 on `plain.ax` in debug), so the VM starts
-    below the tree until lowered ops replace `eval` frames. S6 does not flip the default while any VM
-    depth is below the tree's: the S6 gate runs the script with `--require-default-stack`, which fails on
-    any such chain (§13; §12 Q4 if it cannot be met).
+    `with` body 889 / 9,018. The requirement: under both engines, in both profiles, every chain
+    completes 1.3 × the wasm32 guard under that configuration (585 while the guard was 450, 167 since
+    AX-56).
+  - The wasm engine's own native stack, reached first. Under wasmtime's default `max-wasm-stack`
+    (512 KiB) the tree-walker trapped before 450 on all four chains (deepest completed 136–318 at
+    `886aae53`; compilebench AX-56). One level is several interpreter frames of up to 704 bytes each (`eval`
+    272 + 16 per frame and several per level on the tree; `run` 512 + 16 and `call_fast_arg` 256 + 16 per
+    plain VM level, release, from `wasmtime compile` prologues; `call_builtin` 688 + 16). Through S0–S8 the script only
+    *reported* each chain's default-stack VM depth next to the tree's, and S6 required VM ≥ tree
+    (`--require-default-stack`; §12 Q4). After S9, AX-56 lowered the wasm32 guard to 128
+    (interp.rs `RECURSION_LIMIT`). Measured 2026-10-09 with the stack budget below in place and
+    `AXON_MAX_DEPTH` raised, the shallowest depth a chain completes before a trap is 157 (tree,
+    fn → closure → fn, debug), so the recursion-limit panic comes before a trap on every chain, engine
+    and profile, and the script requires every default-stack depth to reach 1.2 × the guard (154).
+    Under the default depth limit the budget, which charges the tree's fn and lambda levels what a VM
+    level costs, panics before the guard on some chains: the tree completes the closure chain to 104
+    (debug) / 93 (release) and the release `with` chain to 124, the VM 126 on all four
+    (`scripts/vm_wasm_depth.sh`'s `reach` configuration gates VM ≥ tree there too).
 
   `scripts/vm_wasm_depth.sh` checks both. It builds `axon-run` for `wasm32-wasip1` in both profiles from
   the commit under test, runs the four chain programs in `tests/fixtures/vm_depth/` (`plain.ax`,
   `closure.ax`, `mut.ax`, `with.ax`; each recurses to the depth in its first line, `let DEPTH = 100`, which
   the script rewrites in a temporary copy per probe) under both engines of that same build, bisects the
-  deepest completed depth in each configuration, checks the panic at 450, and prints one line per
-  (profile, engine, chain, configuration). It fails when a chain misses 585 in the linear stack or the 450
-  panic is wrong, and with `--require-default-stack` also when a default-stack VM depth is below the
-  tree's. There is no run-time refusal: a slice that fails the script does not land.
-  `wasm32-unknown-unknown` runs the same code with the same linear-stack setting; its native stack belongs
-  to the browser and is AX-56's, not this gate's.
+  deepest completed depth in each configuration, checks the depth panic at the guard under the default
+  stack (`AXON_MAX_DEPTH` unset), and prints one line per (profile, engine, chain, configuration). It
+  fails when a chain misses 1.3 × the guard in the linear stack or 1.2 × the guard under the default
+  stack, or the guard panic is wrong (a trap included), and with `--require-default-stack` also when a
+  default-stack VM depth is below the tree's. There is no run-time refusal: a change that fails the
+  script does not land. `wasm32-unknown-unknown` runs the same code with the same guard; its native
+  stack belongs to the browser and is not measured here.
+
+  The call-depth guard counts fn calls, but stack per level grows with how deeply the recursive call
+  sits inside expressions, `with` bodies, handler arms, builtin callbacks and lambdas. The fourteenth
+  review trapped `w(127)` nested in nine parentheses inside a `with` body; the fifteenth trapped the
+  tree-walker at depth 57 through five nested lambdas per step and at 39-42 through six nested
+  `arr_fold` callbacks; the sixteenth trapped it through ten nested `for` loops (uncosted
+  `run_loop_body`) and trapped the default VM through `call_fast` and `exec_catching`. So on wasm32
+  the budget is `max_depth × NEST_PER_DEPTH` bytes (3,584; 448 KiB at the default guard, leaving
+  64 KiB of wasmtime's 512 KiB for the run's base frames and the bounded leaf work above the deepest
+  guarded frame; interp.rs `NEST_PER_DEPTH`, `nest_cost`, `nest_guard!`, `Interp::enter_nest`), and every
+  recursion is charged against it by construction, not by a list of observed shapes. The recursive
+  part of the interpreter is the strongly connected component holding `Interp::eval` in the module's
+  call graph (79 functions debug, 58 release, measured 2026-10-09); the bytecode compiler's
+  recursion (`Compiler::expr`/`stmt` and their helpers, 34 functions debug, 9 release) is a second
+  component. 54 functions carry `nest_guard!` or `Compiler::nest` (52 in the interpreter, the two
+  compiler entries), chosen so the unguarded part of each component has no cycle; each guarded
+  function's `nest_cost` constant, per profile, covers its own Cranelift x86-64 frame (`sub rsp`
+  plus return address and frame pointer, the largest over its instances, `0` where the profile
+  inlines it) plus the deepest chain of unguarded functions it can call before the next guarded one.
+  A constant defined as a sum of others (`RUN_BODY_TREE = RUN_BODY_VM + RUN`) charges their bytes,
+  which must cover its own function's frame and tail: the tree's fn level charges what a VM level
+  does above its own frame (the VM's fn body `run_body_vm`, which inlines `exec`, plus the op loop
+  `run`, which a level whose call sits in a `Tree` op of a compiled body passes through), although
+  the tree's `run_body_tree` frame is smaller than either. Likewise a lambda level: a compiled
+  lambda body runs from `run_lambda`, inlined into `call_closure_owned_by`, through `exec` into
+  `run`, and the tree's `run_lambda_tree` charges `RUN_LAMBDA_TREE = RUN`. The compiler
+  gives up when the budget is spent and the body runs on the tree that time (`compile` returns
+  `None`). A fn body is compiled in a frame of its own (`Interp::compile_body`, guarded by
+  `COMPILE_BODY`), and so is a lambda body (`Interp::compile_lambda`, `COMPILE_LAMBDA`, which also
+  applies S9's first-entry rule); each returns before the body runs, so the entry that compiles a
+  body, and a body that never compiles (one too large for the budget left at its depth, retried on
+  every entry), leave no compile frame live under the recursion. Their constants cover the compile
+  frame and its unguarded tail (`compile` and the `Vec` growth under it: 1,504 / 1,024 bytes for a fn
+  body, 1,616 / 976 for a lambda, debug / release), live only while that one compile runs. So every
+  recursion step through
+  the interpreter or the compiler charges at least the stack
+  it uses, whatever the shape. Exceeding the budget gives the same `recursion limit exceeded
+  (<max_depth>)` panic, exit 101. Any other recursion reachable from `eval` is outside the budget and
+  must be classified in `wasm_stack_budget.py`'s `ALLOW` list: a fixed depth (`PURE_DEPTH` for pure
+  trees, numeric helpers that recurse once), std's log-n algorithms, the panic path, or the depth of
+  the source or of a value. Recursion over the depth of a value (dropping, comparing or formatting a
+  deeply nested value) runs in the 64 KiB margin, and a deep enough value traps: dropping a
+  3,000-node enum list traps the debug build with no call recursion, and a 600-node list dropped at
+  depth 120 traps it too (compilebench AX-59, open). Recursion over source depth (cloning, dropping
+  or matching one construct) is outside the budget as well. The front end bounds it only loosely: it
+  traps on nesting the parser recurses on at 273 levels in release, and the checker on a
+  left-associative operator chain (which the parser builds in a loop) at 1,301 terms in debug and
+  832 in release (compilebench AX-60, open), so a chain it accepts can be deeper than the margin
+  holds. Copying a 700-term lambda for `host_await_val` (`SendValue::from_value_at`) at the bottom of
+  a recursion with a `with` and nine parentheses per level traps at depth 67-77 under both engines
+  and profiles (compilebench AX-61, open). The interpreter walks expressions without recursion
+  (`ast::walk_expr` keeps its own stack, so `mentions_var` and the compiler's `binds` are flat), and
+  a handler frame points into the source instead of cloning the arms and the `with` body on every
+  entry. Four nesting probes hold a 700-term chain at the bottom of the recursion: an `Assign`
+  operand, a body compiled there, a `with` body, and a body too large to compile within the budget
+  (`assign_chain`, `compile_chain`, `with_chain`, `fail_compile`).
+  `scripts/wasm_stack_budget.py`, run by `vm_wasm_depth.sh` on both builds under test (`wasmtime
+  compile`, `objdump -d`, `c++filt`, `wasm-objdump`), recomputes the components, frames and tails and
+  fails when a constant is too small (for the guarded functions in a checked component, and for
+  those reachable from `eval` outside one, `compile_body` and `compile_lambda`), a constant is not
+  charged by exactly one guard site in the function it is named after, an unguarded cycle exists,
+  adding every `call_indirect` edge
+  (to each table function of the call's type; the entry `main` excepted) widens a component, or a
+  recursion reachable from `eval` is neither checked nor in `ALLOW`
+  [INFERENCE: the check is exact for the x86-64 code wasmtime emits on the gate host; other hosts'
+  frames are not measured]. The script runs the 31 committed probes in
+  `tests/fixtures/vm_depth/nest/` (`assign_chain`, `break_fast` (a two-argument call through three
+  lambdas after a `break` out of a `with` body), `builtin`, `compile_chain`, `compile_deep` (a
+  240-deep expression compiled on a deferred second entry at full depth), `distinct` (160 distinct
+  fns, each entered once per level: the VM's first entry, §4 S9), `expr` (40 levels),
+  `fail_compile`, `fold`, `fold10` (ten nested `arr_fold` callbacks), `handler_arm`, `interp`,
+  `lambda`, `lambda10` (ten nested lambdas), `lambda_break` (six chained lambdas, each catching a
+  `break` out of a `with` before the next call), `lambda_chain` (130 lambdas in a dict cycle, each
+  compiled at depth), `lambda_self` (one lambda recursing through a dict, no fn level), `let_with`
+  (a `let` and one `with`: the recursion
+  runs in a `Tree` op through the op loop), `loop_for` (ten nested `for` loops), `loop_while_let`
+  (ten nested `while let` loops), `loop_with` (six nested `for` loops inside a `with` body), `map`,
+  `match`, `method`, `mixed6`, `mut_with3` (`&mut` recursion inside three `with` bodies),
+  `question`, `refined`, `with_body` (a fn whose whole body is one `with`, so one `Tree` op),
+  `with_chain`, `with_expr`) deep under the default stack; each must give the
+  recursion-limit panic, not a trap, under both engines and in both profiles. It also bisects each
+  probe's deepest exit-0 depth under the guard, and with `--require-default-stack` the VM's must be
+  ≥ the tree's on every probe, as on every chain. A body the VM runs on the tree (an S9 first entry,
+  or a body compiled to one `Tree` op, `Body::lone_tree`) runs as `run_body_vm` → `eval`, the
+  tree-walker's own frames plus one, and a body whose recursion runs in a `Tree` op of a compiled
+  body adds the op loop `run`; `run_body_tree` charges both (`RUN_BODY_VM + RUN`), so such a level
+  costs the VM no more budget than the tree. The depth at which the budget panics depends on
+  which frames each engine and compile mode keeps live, and can differ by many levels. Measured
+  2026-10-09 on the revision-24 builds, deepest exit-0 depth under the default stack: `expr` tree 27,
+  VM 126 (debug; 31 / 126 release); `lambda10` 23 / 49 (debug; 22 / 35 release); a 130-fn `distinct`
+  chain with 40 parentheses per call, tree 27, deferred VM 28, `AXON_VM_EAGER=1` 126 (debug; 31 / 32
+  / 126 release). The only
+  gated relation is deferred VM ≥ tree, on every chain and probe.
+  Native has no such budget: its interpreter thread stack is sized from `max_depth`.
 
 #### Lowered set per slice (anything else is a `Tree` op)
 
 | Construct | Slice |
 |---|---|
-| Int/Float/Bool/Str/Decimal literals (constants built at compile time); every `Ident` read, as one op that runs `eval`'s whole chain: `get_var` with the op's slot, then `globals`, then `fn_of_sym` (a fn as a value, `fn_value`), then the undefined-identifier panic (eval.rs:121-141); block, untyped `let`/`own`/`ref`, typed ones through `bind_let` | S1 |
-| `=` to a local: an `AssignInPlace` op calls `assign_in_place` with the value node first, exactly as the arm does (eval.rs:198-209). It returns `Ok(false)` after a syntactic match and one `get_var`, without evaluating anything, unless the local holds a `Str` or `Array`, so `i = i + 1` and `s = s + i` on ints fall through to the compiled value and `assign_var`. A non-AX-31-shaped `Assign` skips the op | S1 |
+| Int/Float/Bool/Str/Decimal literals (constants built at compile time); every `Ident` read, as one op that runs `eval`'s whole chain: `get_var` with the op's slot, then `globals`, then `fn_of_sym` (a fn as a value, `fn_value`), then the undefined-identifier panic (eval.rs:246-252, 1867-1883); block, untyped `let`/`own`/`ref`, typed ones through `bind_let` | S1 |
+| `=` to a local: an `AssignInPlace` op calls `assign_in_place` with the value node first, exactly as the arm does (eval.rs:277-288). It returns `Ok(false)` after a syntactic match and one `get_var`, without evaluating anything, unless the local holds a `Str` or `Array`, so `i = i + 1` and `s = s + i` on ints fall through to the compiled value and `assign_var`. A non-AX-31-shaped `Assign` skips the op | S1 |
 | `BinOp` (`&&`/`\|\|` short-circuit as eval does, the Uncertain paths through `eval_binop_vals`), `UnaryOp` other than `RefMut`, fused compare-and-branch for `if`/`while` conditions | S1 |
 | `if`, `while`, `for` (integer ranges; the only `for` form, ast.rs:400-410), `return`, `break`, `continue`, `?`, `Some`/`None`/`Ok`/`Err`, `FmtStr` | S1 |
 | calls without `&mut` arguments whose callee is an `Ident`, through `dispatch_call` (other callees: see the last row) | S1 |
@@ -289,7 +419,7 @@ index reads take `Int` only (`strict_int`, below), while place writes also accep
 | fast VM→VM calls; `CallMut` through an allocation-free `call_mut` | S5 |
 | no new `Expr` variant: `Pure` ops for pure scalar trees, `PureLoop` for pure `while` loops, `fold_leaf` in `arr_fold` (§4 S7) | S7 |
 | no new `Expr` variant: in-place and fused index ops, `for` scope reuse, frames sized for body `let`s, fib-shaped arithmetic and call ops (§4 S8) | S8 |
-| `with` handlers, `spawn`, `select`, `asm`, `resume` (only inside `with` arms, which are `Tree` ops as a whole); an `Index` whose receiver is the identifier `E` or `Var` (eval.rs:536-545, the whole node, so both the moment path and its fall-through stay the tree's); any `Call` whose callee is a `StructLit` (`Chan::new(n)`, `chan::<T>`, native `M::fn`; eval.rs:423-452); `P(..)` (intercepted before argument evaluation, eval.rs:1098); any `Call` whose callee is neither an `Ident` nor a `StructLit` | `Tree`, permanently |
+| `with` handlers, `spawn`, `select`, `asm`, `resume` (only inside `with` arms, which are `Tree` ops as a whole); an `Index` whose receiver is the identifier `E` or `Var` (eval.rs:515-522, the whole node, so both the moment path and its fall-through stay the tree's); any `Call` whose callee is a `StructLit` (`Chan::new(n)`, `chan::<T>`, native `M::fn`; eval.rs:446-470); `P(..)` (intercepted before argument evaluation, eval.rs:1102); any `Call` whose callee is neither an `Ident` nor a `StructLit` | `Tree`, permanently |
 
 The compiler's `match` over `Expr` is exhaustive, with an explicit `Tree` arm for each variant that is not
 lowered, so a new `Expr` variant does not compile until someone decides how to lower it.
@@ -308,13 +438,13 @@ the name is not a builtin, and there is no `tier:`. In addition, every one of th
 be clear: `is_agent`, `ai_metered`, `corrigible`, `adaptive`, `experiment`, `has_goal`, `has_ref_mut`,
 `is_main`, `has_epilogue`. `refine_preds` must also be empty program-wide, the same test `call_fn_in` uses
 for preconditions and for routing to `finish_call_cold`, where the return-type postcondition is checked
-(interp.rs:3532-3561, 3634, 3750-3772). A fast call still performs, in
-the order of `call_fn_entry` → `call_fn_in` (interp.rs:3321, 3403):
+(interp.rs:4087-4113, 4175, 4316-4340). A fast call still performs, in
+the order of `call_fn_entry` → `call_fn_in` (interp.rs:3811, 3895):
 
 1. a pooled frame `Env`;
-2. the depth check, with the same message (interp.rs:3409-3416);
+2. the depth check, with the same message (interp.rs:3916-3919, 3965-3974);
 3. the `current_fn` swap;
-4. the arity check, with the same panic (interp.rs:3446-3453); it comes after the depth check, so a
+4. the arity check, with the same panic (interp.rs:3981-3983, 1591-1598); it comes after the depth check, so a
    too-deep call with the wrong arity reports the depth limit, as now;
 5. per-parameter soft unwrap and sized-int coercion from `param_coerce`;
 6. the `goal_met` slot define, except for a leaf body (one `Load`, one `Bin`, or one `a[i] = v`) that
@@ -363,7 +493,7 @@ Evaluating one has no effect besides its value or its panic.
   in kind (`Int` with `Float`); when an `Int` or `Float` operator has no arm in `int_fast`/`float_fast`
   (overflow, `/ 0`, `% 0`, `MIN / -1`, `&&` on numbers); when `&&`/`||` gets a non-`Bool`; when an
   operator other than `&&`, `||`, `==` and `!=` gets two `Bool`s (the tree panics `cannot apply <Op> to
-  bool / bool`; `==`/`!=` on `Bool`s give `a == b`/`a != b`, `eval_binop_vals`, value.rs:719-720); or when a branch
+  bool / bool`; `==`/`!=` on `Bool`s give `a == b`/`a != b`, `eval_binop_vals`, value.rs:731-732); or when a branch
   sink's value is not a `Bool` (the twin's `cond_bool` then panics). The same rules hold inside
   `PureLoop` and `fold_leaf`. Its results
   are `int_fast`/`float_fast`'s, which S1's unit tests pin to `int_binop`/`float_binop`. Its code may be
@@ -381,9 +511,9 @@ Evaluating one has no effect besides its value or its panic.
   control jumps to the generic loop's condition, which re-runs that iteration and produces the panic or
   slow path exactly. Eliding the scope and the per-iteration writes is unobservable: nothing in the
   region can see the `Env` (no calls, no `Tree` ops, no closures, no snapshots), and the tree-walker's
-  `while` checks nothing per iteration besides its condition (eval.rs:360-370), so there is no kill,
+  `while` checks nothing per iteration besides its condition (eval.rs:361-371), so there is no kill,
   step or depth check to keep.
-- **`fold_leaf`.** In `arr_fold` (builtins.rs:1833-1856), after an element's general call, when the
+- **`fold_leaf`.** In `arr_fold` (builtins.rs:1835-1870), after an element's general call, when the
   engine is `vm` and the closure's compiled body (S4) is one pure tree over its two parameters, its
   captured bindings and literals (a single `Bin` included), later elements may run in registers: the
   captured values are read once (a pure body cannot write them), the accumulator stays in a register,
@@ -391,7 +521,7 @@ Evaluating one has no effect besides its value or its panic.
   call, which compiles the body. On a decline at element `i` (a kind outside the register kinds, overflow,
   `% 0`), element `i` and every later one take the general call, which produces the panic exactly.
   Skipping the closure frame is unobservable: a lambda call binds its parameters without coercion and has
-  no depth guard (interp.rs:4272-4345), and a pure body neither writes its captures nor calls out. Under
+  no depth guard (interp.rs:4612-4688), and a pure body neither writes its captures nor calls out. Under
   `AXON_ENGINE=tree` no compiled body exists, so `fold_leaf` never runs.
 
 **`--repros` base after S7.** `loop.ax` becomes a `PureLoop` (prototype: 229 → 92 per iteration), while
@@ -430,7 +560,7 @@ condition fails:
 
 - `a[i] = v` to a local array: when the index is an `Int` in bounds and the array is uniquely owned
   (`Rc::get_mut` succeeds, which also excludes weak references), the element is replaced in place, which
-  is what `write_place`'s `Rc::make_mut(items)[i] = v` does on such an array (interp.rs:4502-4506).
+  is what `write_place`'s `Rc::make_mut(items)[i] = v` does on such an array (interp.rs:4846-4851).
   Otherwise `place_index`, then `write_place`.
 - Fused forms without the operand stack: `a[i] = x` (`x` a local or literal), `a[i] = b[j]` and
   `let t = a[i]` (untyped), where `a` and `b` are locals and `i` and `j` are locals or literals. The value
@@ -454,6 +584,66 @@ write to an array another binding holds leaves that binding unchanged), `vm_supe
 (out-of-bounds, negative and non-`Int` indexes give the tree's texts, value evaluated before index),
 `vm_superop_for_shadow` (a `for` body `let` shadowing the loop variable) and
 `vm_superop_fib_overflow` (the `local ± literal` op at `i64::MAX` panics as the tree does).
+
+#### S9 — deferred compile (required; added in revision 15)
+
+S0–S8 compile every fn-table body and every resolved lambda body on its first entry, so a body entered
+once pays its compile and gains nothing. compilebench AX-58 measured that on `big-compile` (1,002 fns,
+each called once and holding a short literal `for`): run `20261009T115201Z` at `2a83e6ab` retired
+1.076× the instructions of the tree-walker at `886aae53`.
+
+- **Rule.** Under `AXON_ENGINE=vm`, a body that would be compiled (`compiled: Some`, no whole-body
+  exclusion) compiles on its **second** entry; its first entry runs the body on the tree-walker (`eval`)
+  inside the same `call_fn_in` or `call_closure_owned_by` activation. It still compiles on its first
+  entry when it is *hot on entry*: it holds a `while`, a `while let`, a `for` whose bounds are not both
+  integer literals or that runs more than 32 times (`long_for`, `COLD_FOR_MAX`, vm/mod.rs:114-132), or
+  a loop inside a loop; loops in lambda bodies inside it count too. The resolver works this out while it
+  walks the body anyway (`Builder`'s `loops`/`hot` counts, sym.rs:972-1010; a body is hot when `hot`
+  grows while it is resolved, sym.rs:866-870 and 1109-1115), into `FnEntry.hot` (set by `Interp::build`
+  from `Resolution::hot_fn`, interp.rs:3525) and `LambdaBody.hot`; an extra walk per first entry cost
+  `big-compile` ≈ 5.4 k instructions per fn (§15 "Revision 15"). Each body records its first entry in an
+  `entered: Cell<bool>` (`FnEntry`, sym.rs:409-410; `LambdaBody`, vm/mod.rs:252-253), set on that entry
+  whichever path runs it (vm/mod.rs:1322, 1412).
+- **Why it is unobservable.** Only the body step of the activation differs on a first entry: `eval`
+  instead of the compiled ops, and the tree-walker is the reference. Depth guard, arity check, coercions,
+  refinement checks, provenance and scope rules are the wrapper's, unchanged. Compiled code depends only on
+  its body, so compiling at the second entry builds the same `Body` the first would have. S7's `Pure`
+  ops re-check their leaf kinds on every run (§4 S7), so which run is first is cost only.
+  A first entry reached from compiled code goes through S5's fast frame (`call_fast`, `call_fast_arg`,
+  `call_mut_op`) into `fast_body`'s arm for an uncompiled or lone-`Tree` body, which runs it through
+  `run_body` inside that frame (vm/mod.rs:2881-2884); before S9 that arm always compiled first.
+  `call_mut_op` then reads `&mut` params back by slot when the frame holds no more than the params and
+  `goal_met` (vm/mod.rs:3002). That stays exact after a tree body: `eval_block` pops its scope on every exit
+  (eval.rs:723-738), so the body's own bindings are gone; a `define` at the base scope makes the frame
+  longer and the read-back falls to the name lookup. `vm_defer_mutcall_after_tree_entry` covers it.
+- **Consumers that assumed a compiled body after one entry.** `arr_fold` offers `fold_leaf` the rest
+  of the array after element 1 and again after element 2 (builtins.rs:1858-1867): when the closure's body
+  was deferred, element 2's call compiles it. `fold_leaf` folds nothing while the body is not compiled.
+  S8's `CallMut` resolves and caches its moves form (`MovesCall`) only once the callee's body is
+  compiled (vm/mod.rs:1850-1856); a call that finds it uncompiled takes `call_mut_op` and leaves the
+  cache empty, so a later call still finds the moves form. S5's `leaf_arm`/`leaf_call` and S7's caches
+  read the current compiled state on every call already.
+- **`AXON_VM_EAGER=1`** restores compile-on-first-entry for every body (§3). The `vm_` cli tests run
+  their VM leg with it, so a body called once is still compiled code under test, and
+  `vm_same_both_engines` and `vm_fastcall_case` also run the default (deferred) leg and compare it with
+  the tree. `vm_parity.sh` runs both legs (§8).
+- On compilebench's five gated programs the hot code compiles on its first entry (collatz, mandelbrot
+  and qsort `main`s hold `while` or computed-range `for` loops) or on its second (fib, arr-sum's fold
+  lambda); arr-sum's `main`, a 10-iteration literal `for`, and fib's `main` now run on the tree.
+
+Gate: red test `vm_defer_compiles_on_second_entry_unless_hot` (fails before S9: no `vm: defer` line,
+every body compiled on its first entry), with `vm_defer_lambda_and_fold_leaf` and
+`vm_defer_mutcall_after_tree_entry`; `vm_parity.sh` (slice S9: runs 3-5, §8); the whole suite under
+both feature sets with `AXON_ENGINE` unset (the deferred VM), `tree`, and `vm` with `AXON_VM_EAGER=1`
+(every body compiled on its first entry, so the bodies the suite's programs run once are compiled code
+under test); `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` under the same three, whose wasip1 legs
+(`wasm_parity.sh`, `wasm_fs_parity.sh`, `wasm_host_await_parity.sh`) forward `AXON_VM_EAGER` to
+wasmtime along with `AXON_ENGINE`. The `wasm32-unknown-unknown` leg has only `axon_set_engine` and
+runs deferred compile only. Also `vm_perf_gate.sh` (all five) and `--repros` (every row);
+`vm_wasm_depth.sh --require-default-stack` (chains and nesting probes); and
+`vm_perf_gate.sh --compile`: compilebench `big-compile` (a fixture copy), median of five, deferred
+≤ 1.01 × tree on the same binary and ≤ 0.95 × eager (the red check: eager is about 1.09 × tree). Run to
+run, the deferred and tree medians differ by under 0.2 %, so equality cannot be gated.
 
 #### Behaviour table
 
@@ -484,7 +674,7 @@ ledger under `AXON_ENGINE=vm` and `AXON_ENGINE=tree`.
 | `AXON_DUMP_BINDINGS`, `AXON_DUMP_SHAPES`, an R44 session cell | `main` runs on the tree (trace says `binding capture`); same dump |
 | `AXON_RECORD` under one engine, then `AXON_REPLAY` under the other | replay succeeds |
 | `axon test`, `axon goal`, proptest, R10 oracle | same results |
-| wasm32 (`axon-wasm`, `axon-run` on wasip1) | same as the native interpreter |
+| wasm32 (`axon-wasm`, `axon-run` on wasip1) | same as the native interpreter, except the depth at which the wasm32 stack budget panics, which can differ by many levels between engines and compile modes (§4 Recursion; deferred VM ≥ tree is gated) |
 | `AXON_ENGINE=bogus` | exit 2 with the §3 message |
 | `&mut` callee that shadows its param with an inner `let`, then panics, breaks out of the caller's loop, or returns early from the inner block | caller's binding gets the param, never the shadow; same output |
 | `ch.recv(log("x"))`, `ch.len(f())`, `ch.send(a, b())` on a channel receiver; the same calls on a struct receiver | arguments evaluated exactly where the tree evaluates them; same output |
@@ -518,9 +708,9 @@ Preserves:
 - **I-4:** fn activations keep the same depth guard. Lambda activations have no guard on either engine,
   and their Rust frames sit between guarded fn calls on both. The engine can use more stack per activation
   than the tree, so §4 Execution (Recursion) sets measured bounds instead, checked by
-  `scripts/vm_wasm_depth.sh`: on wasm32 the VM completes 1.3 × 450 on four chains in the linear stack at
-  every slice, and reports its default-native-stack depth next to the tree's; S6 does not flip the default
-  while any VM depth is below the tree's (§4).
+  `scripts/vm_wasm_depth.sh`: on wasm32 both engines complete 1.3 × the guard on four chains in the
+  linear stack at every slice; S6 does not flip the default while any default-native-stack VM depth is
+  below the tree's (§4); since AX-56 every default-stack depth must also reach 1.2 × the guard (128).
 - **I-8:** exit codes come from the same `Flow` mapping.
 - **I-9:** the same overflow and undefined-name errors.
 - **I-10:** the same evaluation order and RNG draws.
@@ -541,7 +731,7 @@ against the same frames, and the tree-walker is the reference for both.
   `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` (§11) exercise both engines through the real binary.
   Journey/red-team: N/A; the only user-facing surface is two environment variables.
 - [ ] S0 tree-walker fix: `match_pattern` / guard / `while let` errors pop their scope (eval.rs:306, 308,
-  358). Red test first: `vm_engine_scope_leak` runs AX-57's program (a `&mut [i64]` param shadowed by
+  358 at `886aae53`). Red test first: `vm_engine_scope_leak` runs AX-57's program (a `&mut [i64]` param shadowed by
   `let a = 99`, then a `?` failing in a match guard) and asserts the caller's `len(a)` prints `3`, as the
   native build does. It fails before the fix with `len: expected str/array/dict, got i64`.
 - [ ] CLI e2e (`tests/cli_run.rs`, prefix `vm_`): one test per behaviour row. Each runs the program under
@@ -572,11 +762,13 @@ against the same frames, and the tree-walker is the reference for both.
   `886aae53`), and the three that do not finish without a host or by design
   (`examples/jobs/runaway.ax`, an intentional infinite loop; `examples/r27/killable_agent.ax`, 1e9
   iterations; `examples/mobile/lifecycle.ax`, a `host_await` lifecycle with no host driver). The script
-  diffs stdout, stderr, exit code, the audit ledger and `provenance.jsonl`.
+  diffs stdout, stderr, exit code, the audit ledger and `provenance.jsonl`. From S9 the VM side is two
+  diffed runs: `AXON_ENGINE=vm AXON_VM_EAGER=1` (every body compiled on its first entry, so code run once
+  is still compiled code under test) and `AXON_ENGINE=vm` alone (the shipping deferred compile, §4 S9).
   Normalisation is one rule: drop the `ts_ms` and `run_id` keys from every provenance row. Both are
-  wall-clock values the virtual clock does not reach (`now_ms` in interp.rs:4267, `generate_run_id` in
+  wall-clock values the virtual clock does not reach (`now_ms` in interp.rs:4922, `generate_run_id` in
   main.rs:4329); every row has `ts_ms`, and the `run_start` row (provenance.rs:606-628) has `run_id`.
-  Coverage comes from a third, undiffed run per file under `AXON_ENGINE=vm AXON_VM_TRACE=1`. Besides the
+  Coverage comes from a last, undiffed run per file under `AXON_ENGINE=vm AXON_VM_EAGER=1 AXON_VM_TRACE=1`. Besides the
   per-body line (§3), the trace prints one `vm: tree-op <name> <Variant>[(<shape>)]` line per `Tree` op it
   compiles. `<shape>` names the exceptions inside a lowered variant: `Call(struct-lit)`, `Call(P)`,
   `Call(computed)` (a callee that is neither an `Ident` nor a `StructLit`), `Index(E|Var)`, and through S4
@@ -586,7 +778,8 @@ against the same frames, and the tree-walker is the reference for both.
   extended by each slice. The check is per op, not a total over the corpus, so adding or removing an
   example cannot fail it unless that example hits a construct the current slice claims to lower.
 - [ ] Whole suite: `cargo test -p axon-core` (both feature sets) with `AXON_ENGINE=vm` exported, so the
-  CLI children inherit it, and again with `AXON_ENGINE=tree`; both green.
+  CLI children inherit it, again with `AXON_ENGINE=tree`, and again with `AXON_ENGINE=vm
+  AXON_VM_EAGER=1` (every body compiled on its first entry, §4 S9); all three green.
 - [ ] Adversarial: recursion bombs (VM-only, tree-only, alternating fn → closure → fn); 1M-element
   arrays; deep block and loop nesting; big-compile's 20k-line source; the re-entrancy row.
 - [ ] Record/replay across engines on the existing replay-test programs.
@@ -602,8 +795,9 @@ against the same frames, and the tree-walker is the reference for both.
   wasmtime, and `wasm_browser_interp_parity.sh` call `axon_set_engine` from `AXON_ENGINE`, so the
   `parity_all.sh` runs in the S5 and S6 gates cover wasm32 too.
 - [ ] wasm depth: `scripts/vm_wasm_depth.sh` (§4 Execution, Recursion) gates every slice S0–S5, S7 and S8 on the
-  linear-stack bound and the 450 panic, comparing against the tree from the same commit; default-stack
-  depths are reported. S6 runs it with `--require-default-stack`.
+  linear-stack bound and the guard panic (450, 128 since AX-56), comparing against the tree from the
+  same commit; default-stack depths were reported until AX-56 made 1.2 × the guard required. S6 runs it
+  with `--require-default-stack`.
 - [ ] Red tests first, one per slice (all in `tests/cli_run.rs`, named under the slice's gate prefix so
   the gate runs them). The S2, S3 and S4 programs each use only S1 constructs and those of their own
   slice, so each fails on any build without that slice and passes once it lands, whatever order those
@@ -632,16 +826,19 @@ Every `tests/fixtures/` path in this spec is under `crates/axon-core/`.
 
 ### 9. Acceptance criteria
 
-- [ ] `scripts/vm_parity.sh` exits 0 with 0 differing files and no `tree-op` line of a variant or shape
-  the S8 list marks lowered (S7 and S8 lower no new variant, so it equals S5's).
+- [ ] `scripts/vm_parity.sh` exits 0 with 0 differing files (eager and deferred VM runs both diffed
+  against the tree) and no `tree-op` line of a variant or shape the S9 list marks lowered (S7, S8 and
+  S9 lower no new variant, so it equals S5's).
+- [ ] `scripts/vm_perf_gate.sh --compile` exits 0: compilebench `big-compile`, median of five, deferred
+  VM ≤ 1.01 × tree and ≤ 0.95 × `AXON_VM_EAGER=1` on the same binary (S9).
 - [ ] `scripts/vm_wasm_depth.sh --require-default-stack` exits 0.
-- [ ] `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` exits 0 under `AXON_ENGINE=vm` (the default) and
-  under `AXON_ENGINE=tree`.
+- [ ] `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` exits 0 under `AXON_ENGINE=vm` (the default),
+  under `AXON_ENGINE=tree`, and under `AXON_ENGINE=vm AXON_VM_EAGER=1`.
 - [ ] `vm_engine_scope_leak` and every per-slice red test (§8) pass.
-- [ ] `cargo test -p axon-core --no-default-features` and `--features codegen` green under both
-  `AXON_ENGINE` values.
+- [ ] `cargo test -p axon-core --no-default-features` and `--features codegen` green under
+  `AXON_ENGINE=vm`, `AXON_ENGINE=tree` and `AXON_ENGINE=vm AXON_VM_EAGER=1`.
 - [ ] `scripts/vm_perf_gate.sh` exits 0 on the compilebench host (not a skip; see §10).
-- [ ] `scripts/reference_gate.sh` in sync (two env vars registered).
+- [ ] `scripts/reference_gate.sh` in sync (three env vars registered).
 
 ### 10. Performance budget
 
@@ -721,8 +918,8 @@ Four changes touch the reference tree-walker, each with a CHANGELOG entry: the S
 offers `fold_leaf` the remaining elements (cost only; `fold_leaf` never runs under the tree).
 
 - The scope-leak fix is the one intended change to reference behaviour. Today an `Err` out of
-  `match_pattern` or a guard (eval.rs:306, 308, 358) skips the arm's `env.pop()`. The catcher's single
-  pop (`run_loop_body` or `eval_block`, eval.rs:784-822) then removes the arm's mark instead of its own,
+  `match_pattern` or a guard (eval.rs:306, 308, 358 at `886aae53`) skips the arm's `env.pop()`. The catcher's single
+  pop (`run_loop_body` or `eval_block`, eval.rs:723-764) then removes the arm's mark instead of its own,
   so one scope mark too many survives and the enclosing scope's bindings stay visible. When the error is
   caught in the same frame (`Break`/`Continue` by `run_loop_body`, `HandlerDone` by `eval_with_handler`),
   later `env.snapshot()`s see those bindings, and a `Flow::Return` out of a guard's `?` makes
@@ -732,7 +929,7 @@ offers `fold_leaf` the remaining elements (cost only; `fold_leaf` never runs und
   moves the interpreter onto codegen's behaviour. The S0 gate runs `AXON_HARNESS_STRICT=1
   scripts/parity_all.sh` under the tree engine to confirm no other case changes.
 - `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` is made real in S0. Today `parity_all.sh` never reads
-  the variable (only `harness_skipped` in cli_run.rs:298 does, and gate.sh:731 advertises it), treats every
+  the variable (only `note_harness_skip` at cli_run.rs:298 does, and gate.sh:731 advertises it), treats every
   skip as success, and enforces only `EXPECT_MIN_PASS=40`. S0 adds: with `AXON_HARNESS_STRICT=1`, a
   skipped harness fails the run unless `scripts/parity_allowed_skips.txt` lists it with a reason. The list
   is seeded with the two harnesses that skip on the compilebench host (measured 2026-10-09 at the
@@ -754,7 +951,7 @@ the reference code, gaps cost speed, never correctness.
 
 - Q1 (non-blocking): unboxed `i64`/`f64` slots. This needs R2a's node→type map and a static proof that a
   slot cannot hold a soft value. Revisit with S6 profiles.
-- Q2 (non-blocking): `call_builtin` is a `match name` (builtins.rs:800). If S6 profiles show it hot,
+- Q2 (non-blocking): `call_builtin` is a `match name` (builtins.rs:802). If S6 profiles show it hot,
   resolve builtins to an index at compile time. That is a `call_builtin` refactor shared with the
   tree-walker, specified separately.
 - Q3 (blocks R50.S6 only if it comes true): qsort, fib or arr-sum still misses its budget after S5 with
@@ -778,11 +975,12 @@ the reference code, gaps cost speed, never correctness.
 | R50.S1 scalar core and calls; `AssignInPlace` (AX-31 shapes); extract `cond_bool`, `strict_int`; operand-stack pool | R50.S0 | `cli_run vm_scalar_` (incl. `vm_scalar_fib_no_tree_nodes`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (S1 rows) + `vm_wasm_depth.sh` | done (`cc23fb17`) |
 | R50.S2 aggregates, index/field reads, place writes (`AssignTo`); extract `index_in_place`, `index_value`, `field_in_place`, `finish_record`, `place_index`, `write_place` | R50.S1 | `cli_run vm_aggregate_` (incl. `vm_aggregate_part_no_tree_nodes`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (S1 and `part.ax` rows) + `vm_wasm_depth.sh` | done (`2d10cf99`) |
 | R50.S3 match, patterns, enums, methods; extract `chan_method`, `impl_method` | R50.S1 | `cli_run vm_match_` (incl. `vm_match_option_no_tree_nodes`) + `vm_parity.sh` + `vm_wasm_depth.sh` | done (`765bb811`) |
-| R50.S4 lambdas; extract `make_closure`; `ClosureCode.compiled`; allocation-free builtin → closure call on the lent path (`Rc::strong_count(cv) == private_refs`, interp.rs:4054), the one `fold.ax` and arr-sum take: `arr_fold`/`arr_map`/... take argument buffers from `arg_bufs`, `call_closure_owned_by` drains its arguments into the params and hands the buffer to `recycle_args` (today `zip(args)` consumes it, interp.rs:4067), and its `Env` gets a pooled `marks` Vec (today `vec![acc, x.clone()]` per element, builtins.rs:1847, and `Env::from_snapshot` starts with an empty `marks`, so `env.push()` allocates, interp.rs:749-754, 4058-4066). The copied path (a closure with other references, e.g. `let f = \|..\| ..; arr_fold(xs, 0, f)`) keeps its per-call `Vec::with_capacity` (interp.rs:4061-4064) | R50.S1 | `cli_run vm_closure_` (incl. `vm_closure_fold_no_tree_nodes`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (S1 and `fold.ax` rows) + `vm_wasm_depth.sh` | done (`12713cbd`) |
+| R50.S4 lambdas; extract `make_closure`; `ClosureCode.compiled`; allocation-free builtin → closure call on the lent path (`Rc::strong_count(cv) == private_refs`, interp.rs:4640), the one `fold.ax` and arr-sum take: `arr_fold`/`arr_map`/... take argument buffers from `arg_bufs`, `call_closure_owned_by` drains its arguments into the params and hands the buffer to `recycle_args` (today `zip(args)` consumes it, interp.rs:4067 at `886aae53`), and its `Env` gets a pooled `marks` Vec (today `vec![acc, x.clone()]` per element, builtins.rs:1847 at `886aae53`, and `Env::from_snapshot` starts with an empty `marks`, so `env.push()` allocates, interp.rs:796-802; 4058-4066 at `886aae53`). The copied path (a closure with other references, e.g. `let f = \|..\| ..; arr_fold(xs, 0, f)`) keeps its per-call `Vec::with_capacity` (interp.rs:4061-4064 at `886aae53`) | R50.S1 | `cli_run vm_closure_` (incl. `vm_closure_fold_no_tree_nodes`) + `vm_parity.sh` + `vm_perf_gate.sh --repros` (S1 and `fold.ax` rows) + `vm_wasm_depth.sh` | done (`12713cbd`) |
 | R50.S5 fast calls; allocation-free `call_mut` and `CallMut` op | R50.S2, R50.S3, R50.S4 | `cli_run vm_fastcall_` (incl. `vm_fastcall_mutcall_no_tree_nodes`, `vm_fastcall_slow_<flag>`) + `vm_parity.sh` + `vm_perf_gate.sh --repros S1,part,fold,S5` + `vm_wasm_depth.sh` + `AXON_ENGINE=vm AXON_HARNESS_STRICT=1 scripts/parity_all.sh` | `3eb79f1a` |
 | R50.S7 pure scalar regions: `Pure`, `PureLoop`, `fold_leaf`; `pure`/`fold-leaf` trace lines; `loop_generic.ax`, `foldmod.ax`, `--programs` | R50.S4 | `cli_run vm_pure_` (incl. `vm_pure_mandel_loop`, `vm_pure_fold_leaf`) + `vm_parity.sh` + `vm_perf_gate.sh --programs mandelbrot,arr-sum,collatz` + `vm_perf_gate.sh --repros S1,part,fold,foldmod` + `vm_wasm_depth.sh` | `850036e3` |
 | R50.S8 qsort and fib superops (§4 S8); `swapcall.ax` | R50.S5, R50.S7 | `cli_run vm_superop_` + `vm_parity.sh` + `vm_perf_gate.sh` (all five) + `vm_perf_gate.sh --repros` (every row; `swap` is the red check) + `vm_wasm_depth.sh` + `AXON_ENGINE=vm AXON_HARNESS_STRICT=1 scripts/parity_all.sh` | `c048113e` |
 | R50.S6 default flip, docs | R50.S5, R50.S7, R50.S8; blocked-by Q3 or Q4 only if it comes true (neither did) | whole suite under both engines + `vm_parity.sh` (S8 list) + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` under each engine (VM default) + `vm_perf_gate.sh` + `reference_gate.sh` + `vm_wasm_depth.sh --require-default-stack` (default-stack VM depth ≥ tree on all four chains) | `a9176ce5` |
+| R50.S9 deferred compile (§4 S9); `AXON_VM_EAGER`; `vm: defer` trace line | R50.S6, R50.S8 | `cli_run vm_defer_` + `cli_run vm_` (eager and default legs) + whole suite with `AXON_ENGINE` unset, `tree` and `vm` + `AXON_VM_EAGER=1` + `vm_parity.sh` (S9 list; eager and default runs) + `vm_perf_gate.sh` (all five) + `--repros` (every row) + `--compile` + `reference_gate.sh` + `vm_wasm_depth.sh --require-default-stack` + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` under the same three | todo |
 
 ### 14. Evidence ledger
 
@@ -972,3 +1170,163 @@ printing the golden output:
 | Eleventh review (2026-10-09, `reviewer`, verdict "incorrect": 0 blockers, 1 must-fix, 3 nits), answered in revision 13: `vm_pure_bool_ops`/`vm_pure_short_circuit` did not put the expression in a sink, so they could not fail; swap `if` cancels within ≈ 10; qsort split re-measured 18.922 G; value.rs:719-720 is `eval_binop_vals` | Tests use `let`/`if` sinks and assert the `vm: pure` line; cancellation stated as measured; split total 18.92 G with residual ≈ 1,014; citation renamed |
 | Twelfth review (2026-10-09, `reviewer`, verdict "incorrect" pending four text fixes, then ready): `vm_pure_fold_decline` cannot assert a `vm: pure` line; `mutcall` `if` is +10 and `swapcall` bimodal; "19.06 G against `loop.ax`" contradicts the 2,641 swap figure; `PureLoop` tests should pin `1 loops` and the `Assign` sink is non-AX-31 only | Revision 14: fold test asserts `vm: fold-leaf`; cancellation restated as measured; base-bias sentence replaces the 19.06 G claim; `1 loops` and the AX-31 qualifier added |
 | S5's gate named "all rows", which would include the S7 and S8 rows | S5 gate is `--repros S1,part,fold,S5` |
+
+Revision 15 (2026-10-09): compilebench AX-58. At `2a83e6ab` (S0-S8, VM default) `big-compile`, 1,002
+fns each entered once, retired 1.076× the tree-walker's instructions at `886aae53`: every body paid a
+compile it never reused. Measured on the S9 branch (release, `--no-default-features`, `perf stat -e
+instructions:u`, core 6). With the hot test as a body walk on first entry (`-r 1`): `big-compile` eager
+841.0 M, deferred 775.4 M, tree 769.0 M; disabling the walk alone gave 770.0 M, so the walk cost
+≈ 5.4 k per fn. With hotness computed by the resolver (`-r 3`, same binary, `AXON_ENGINE=tree` /
+`vm`): `big-compile` 768.78 M / 768.33 M; hello 4.04 M / 4.04 M; fib-recursive 9.89 G / 2.30 G (its
+`main` defers, `fib` compiles on its second entry); collatz 59.72 G / 18.58 G; mandelbrot 41.11 G /
+5.07 G; arr-sum 34.73 G / 4.88 G (once `arr_fold` re-offers `fold_leaf` after element 2); qsort
+75.52 G / 11.40 G. All five stay under their CPython budgets (§10).
+
+| Finding | Resolution |
+|---|---|
+| A body entered once pays a compile it never reuses (`big-compile` 1.076× tree) | S9: compile on the second entry, unless hot on entry (a `while`, `while let`, a `for` over a non-literal or >32-iteration range, or nested loops) |
+| Compiling only on the second entry would leave once-run `main` loops on the tree (with `main` forced onto the tree under `AXON_ENGINE=vm` via `AXON_DUMP_BINDINGS`: collatz 59.48 G, mandelbrot 41.20 G, against 18.58 G / 5.07 G compiled) | Hot-on-entry bodies keep compiling on their first entry |
+| A body walk on first entry to test hotness cost ≈ 5.4 k per fn, leaving `big-compile` at 1.008× tree | The resolver computes hotness during the walk it already makes (sym.rs:972-1010); `big-compile` 768.33 M vs tree 768.78 M |
+| `arr_fold` offered `fold_leaf` once, after element 1, before a deferred lambda body is compiled | Offered again after element 2 (builtins.rs:1856-1865) |
+| S8's `CallMut` cached "no moves form" when the callee was not yet compiled, keeping qsort's `swap` on the slow path (12.02 G) | The cache fills only once the callee is compiled (vm/mod.rs:1733-1742): qsort 11.40 G |
+| `vm_` cli tests pin compile-on-first-run trace lines | `AXON_VM_EAGER=1` restores it for those legs; default-engine legs added to `vm_same_both_engines` and `vm_fastcall_case`; `vm_parity.sh` diffs both |
+
+Revision 16 (2026-10-09) answers the thirteenth review (`reviewer`, verdict "incorrect": 2 must-fix,
+4 smaller; no observable divergence or cost hole found in the S9 code) and records compilebench AX-56.
+
+| Finding | Resolution |
+|---|---|
+| [must-fix] "`big-compile` vm ≤ tree" sits inside run-to-run spread (default minus tree measured from +1.14 M to −0.83 M) and is checked by hand | `vm_perf_gate.sh --compile`: fixture copy of `big-compile`, median of five, deferred ≤ 1.01 × tree and ≤ 0.95 × eager (red check), in §4 S9 Gate, §9 and the §13 row. Measured on `5ea3398a`'s release binary: deferred 767,914,214, tree 768,523,096 (0.9992×), eager 841,046,867 (0.9130×) |
+| [must-fix] since S6 "unset" is `vm`, so the suite and `parity_all.sh` legs no longer compile once-run bodies | The `vm` leg runs with `AXON_VM_EAGER=1` in the whole suite and in `parity_all.sh` (§4 S9 Gate, §13 row) |
+| collatz 69 G / mandelbrot 49 G do not reproduce | Replaced with measured figures, configuration named (Revision 15 table) |
+| §3 trace example shows pre-S9 output | Shows the deferred output and the `AXON_VM_EAGER=1` output, measured |
+| S9's unobservability argument omits the fast-frame first entry | §4 S9 names `call_fast`/`call_fast_arg`/`call_mut_op` → `fast_body` and why `call_mut_op`'s positional read-back stays exact (eval.rs:721-735) |
+| drifted citations | vm/mod.rs:1320, 1733-1742; interp.rs:3269, 3334-3338 |
+| compilebench AX-56: on wasm32 under wasmtime's default 512 KiB native stack the tree-walker trapped at depth 136-318, below the 450 guard | Guard lowered to 128 on wasm32 (interp.rs `RECURSION_LIMIT`); `vm_wasm_depth.sh` requires 1.3 × the guard in the linear stack and 1.2 × the guard under the default stack (shallowest at `5ea3398a`: 162, tree closure chain, debug) (§4 Recursion, §7 I-4, §8) |
+
+Revision 17 (2026-10-09) answers the fourteenth review (`reviewer`, verdict "incorrect": 2 must-fix,
+2 smaller; every Revision 16 row and figure reproduced).
+
+| Finding | Resolution |
+|---|---|
+| [must-fix] AX-56 claims a graceful panic, but a recursive call nested in expressions (`w(127)` nine parentheses deep in a `with` body) still traps on wasm32 under the default stack, on both engines and profiles | On wasm32 each guarded interpreter frame charges a stack-unit budget of `max_depth × 400` (`eval` 40, `run` 100, closure 41, builtin 51, `call_fn_in` 80), fitted on 15 shapes; exceeding it gives the recursion-limit panic, exit 101. The review's program now exits 101 in both profiles under both engines. `vm_wasm_depth.sh` runs ten committed nesting probes (`tests/fixtures/vm_depth/nest/`), each of which must panic, not trap (§4 Recursion) |
+| [must-fix] the eager `parity_all.sh` leg never compiles once-run bodies on a wasm32 leg | `wasm_parity.sh`, `wasm_fs_parity.sh` and `wasm_host_await_parity.sh` forward `AXON_VM_EAGER`; §4 S9 Gate states that the `wasm32-unknown-unknown` leg covers deferred mode only |
+| §9 and §8 gate the suite and `parity_all.sh` without the eager leg | Third run `AXON_ENGINE=vm AXON_VM_EAGER=1` added to §8 Whole suite and both §9 bullets |
+| interp.rs:3329 shifted; `.cargo/config.toml` and AXON-COMPLETENESS still name 450 | interp.rs:3321, 3386-3390, 3388; `.cargo/config.toml` names 128 and the stack-unit budget; the `AXON_MAX_DEPTH` control row records AX-56 |
+
+Revision 18 (2026-10-09) answers the fifteenth review (`reviewer`, verdict "incorrect": 2 must-fix,
+2 smaller; Revision 17 rows 2-4 held).
+
+| Finding | Resolution |
+|---|---|
+| [must-fix] the fitted stack-unit weights still let the tree-walker trap with closures or callbacks nested several levels per recursion step (five lambdas at 60, six `arr_fold` callbacks at 45, ten of either) | The weights are gone: each of the 25 interpreter functions seen in a recursion cycle charges its measured Cranelift x86-64 frame, in bytes, per profile, against `max_depth × 3,584` (448 KiB at the default guard); `vm_wasm_depth.sh` re-measures the frames from the build under test and fails when one outgrew its constant. Probes `lambda10`, `fold10`, `mixed6`, `handler_arm` and `refined` added; all 16 probes exit 101 under both engines and profiles (§4 Recursion) |
+| [must-fix] the budget makes the VM panic on `&mut` recursion inside three `with` bodies at depths 111-126 that the tree completes | Byte charges replace the `run` 100 weight; probe `mut_with3` added; the script bisects every probe's deepest exit-0 depth under the guard and with `--require-default-stack` requires VM ≥ tree on every probe. Measured 2026-10-09: `mut_with3` reaches 126 on both engines and profiles, and the VM ≥ the tree on all 16 probes |
+| `vm_wasm_depth.sh --help` stops inside the lengthened header | `--help` prints through the line before `set -uo pipefail` |
+| the 162 shallowest-depth figure is stale and unpinned in CHANGELOG and AXON-COMPLETENESS | Remeasured with the byte budget and pinned to its date: 154 (tree closure chain, debug), equal to the 1.2 × guard requirement, in CHANGELOG, AXON-COMPLETENESS, R7-targets.md, REQUIREMENTS R7, interp.rs and §4 |
+
+Revision 19 (2026-10-09) answers the sixteenth review (`reviewer`, verdict "incorrect": 2 blockers,
+1 must-fix; it confirmed the frame check, the four chains, the 16 probes' panics, `--help`, the exit
+codes, 154 and 448 KiB).
+
+| Finding | Resolution |
+|---|---|
+| [blocker] `run_loop_body` is in the eval cycle but uncosted: ten nested `for` loops trap the tree at 103 (debug) / 84 (release), and loops inside a `with` body trap the VM | The costed set is no longer the functions seen in backtraces. `scripts/wasm_stack_budget.py` takes the strongly connected component holding `Interp::eval` in each build's call graph; 26 more functions got `nest_guard!` (51 in all), including `run_loop_body`, so the unguarded rest has no cycle, and each constant covers its frame plus its deepest unguarded tail (§4 Recursion). Probes `loop_for`, `loop_while_let` and `loop_with` added; all panic at the guard on both engines and profiles |
+| [blocker] `call_fast` and `exec_catching` stay live per VM level uncosted: a two-argument call through three lambdas after a `break` out of a `with` body traps the default VM (release) at 111 | Both are guarded (`CALL_FAST`, `EXEC_CATCHING`), and the hand-kept list is replaced by the mechanical component check, which `vm_wasm_depth.sh` runs on both builds before probing. It also adds every `call_indirect` edge (to each table function of the call's type, the entry `main` excepted) and fails if that widens the component; it does not, in either profile. Probe `break_fast` added (the review's program): panics at the guard; reach tree 75 / VM 126 (debug), 73 / 96 (release) |
+| [must-fix] a chain of distinct fns each called once makes the lazy VM panic below the tree's depth (94 vs 97 debug, 100 vs 105 release) | A deferred first entry now runs `run_body` → `eval` (the tree-walker's frames); `run_body_vm` with its charge is entered only for a compiled body or one compiled on this entry. Probe `distinct` added (160 distinct fns, nine parentheses deep, the last calling the first): reach 126 on both engines in both profiles |
+
+Revision 20 (2026-10-09) answers the seventeenth review (`reviewer`, verdict "incorrect": 2 must-fix,
+1 smaller; it confirmed every revision-19 resolution, the 80/58 component sizes, 51 guards, the
+indirect-edge check and the reach figures, and found no trap in 10 more interpreter-recursion shapes).
+
+| Finding | Resolution |
+|---|---|
+| [must-fix] leaf work above the deepest guard is unbounded: a depth-120 recursion that drops a 600-node enum list traps the debug VM (Rust drop glue recursing per list node) | Measured alone: dropping a 3,000-node list traps debug wasm32 and 8,000 traps release, with no call recursion; native drops 1,000,000. Filed as compilebench AX-59 (open; it predates AX-56). The guarantee is narrowed to recursion through the interpreter in §4 Recursion, the CHANGELOG, R7-targets, REQUIREMENTS R7, AXON-COMPLETENESS, `wasm_stack_budget.py` and the `NEST_PER_DEPTH` doc, each naming data-depth recursion (drop, compare, format) as outside the budget |
+| [must-fix] the byte budget makes `AXON_VM_EAGER` change the exit code at the budget's edge (`break_fast` release: deferred panics at 97, eager completes it) | §3's `AXON_VM_EAGER` row and §4 Recursion state the exception: on wasm32 at the budget's edge the panic depth can differ by a level between engines and between eager and deferred compile; the gate compares the deferred VM with the tree only |
+| code citations in §1-§14 drifted with this patch and earlier slices | 61 citations re-derived against the working tree by content and spot-checked; 10 that describe code a slice since replaced (`call_fn_mut`, `eval_int`, the S0 scope leak, the pre-S4 closure call) are pinned "at `886aae53`", where they were measured |
+| (found by the suite, not the review) revision 19's `run_body` split left `fast_body`'s uncompiled arm calling `run_body_vm` directly, which now compiles unconditionally, so a fast call's first entry skipped S9's deferral (`vm_defer_mutcall_after_tree_entry` failed under every engine) | That arm calls `run_body` (vm/mod.rs:2797), which applies the first-entry rule; `run_body_vm` has `run_body` as its only caller |
+
+Revision 21 (2026-10-09) answers the eighteenth review (`reviewer`, verdict "incorrect": 1 blocker,
+3 must-fix, 1 smaller; it re-checked 86 citations, all 12 pinned ones exact). Measurements are on the
+revision-21 `wasm32-wasip1` builds under wasmtime's default stack, guard 128.
+
+| Finding | Resolution |
+|---|---|
+| [blocker] the bytecode compiler's recursion (`Compiler::expr`/`operands`/`binop`, one level per level of source nesting) is outside the budget: a 240-deep expression compiled on a deferred second entry at depth 33-35 traps the default VM (`cdm240.ax`), and the checker passed 59 other recursive components without looking at them | `Compiler::expr`/`stmt` charge `COMPILE_EXPR`/`COMPILE_STMT` through `Compiler::nest`; when the budget is spent `compile` returns `None` and the body runs on the tree that time. `wasm_stack_budget.py` checks every recursive component reachable from `eval` that holds a guarded function (the compiler's: 34 functions debug, 9 release, 2 guarded) and fails on any other recursion that its `ALLOW` list does not classify (a fixed depth: `PURE_DEPTH` = 16 now caps pure trees, numeric helpers recurse once; std; the panic path; source depth; value depth). Source depth is bounded by the parser, which traps first at 273 levels in release: filed as compilebench AX-60. Probe `compile_deep` added. `cdm240.ax`: every engine panics at 127, deepest exit-0 tree 19, VM 40 / 29, eager 50 / 35 (debug / release) |
+| [must-fix] `RUN_BODY`'s release constant is too small after the `fast_body` edit (`run_body 80 <= 0`) | Constants re-fit to the checker's fixed point on both profiles; `run_body` is now a dispatcher inlined into `call_fn_in`, with `run_body_tree` and `run_body_vm` (`RUN_BODY_VM` 144 / 208) each guarded. The checker passes both profiles: eval component 81 / 60 functions, 60 / 49 guarded |
+| [must-fix] the default VM panics at depths the tree completes when a body compiles to one `Tree` op (`wb3.ax`, a body that is one `with`: release tree 120, VM 108) | A lone-`Tree` body (`Body::lone_tree`) runs as `run_body_vm` → `eval`, and `RUN_BODY_TREE` is defined as `RUN_BODY_VM`, so a fn level charges the same bytes under both engines (the checker accepts an alias only when its bytes cover both functions). Cost: on wasm32 the tree-walker's fn level now charges the VM's 208 bytes in release, so the tree panics earlier than before on deep fn recursion; every chain still completes ≥ 1.2 × the guard under the default stack (shallowest: closure, tree 154 debug). `wb3.ax`: tree 111 / 114, VM 111 / 114. Probe `with_body` added; `mut_with3` 126 / 126 |
+| [must-fix] "differs by a level" between engines and between eager and deferred compile is wrong by about 95 levels | §3's `AXON_VM_EAGER` row, §4 Recursion and the §4 behaviour-table wasm32 row now say the budget's panic depth can differ by many levels, with measurements (`expr` tree 28 / VM 126 debug; a 130-fn chain with 40 parentheses per call, deferred 28, eager 126 debug); the only gated relation is deferred VM ≥ tree |
+| [nit] stale citations: line 99 `call_fn_mut`, `harness_skipped` at cli_run.rs:298, vm/mod.rs `1346`, `2795-2798`, `2916`, `1764-1771` | Pinned `call_fn_mut` at `886aae53` (interp.rs:3375-3401); cli_run.rs:298 is in `note_harness_skip`; vm/mod.rs citations re-derived after this revision's code edits (1319, 1384; 2836-2839; 2957; 1802-1811), and the other §1-§14 citations into the files it changed re-checked |
+
+Revision 22 (2026-10-09) answers the nineteenth review (`reviewer`, verdict "incorrect": 1 blocker,
+1 must-fix, 1 smaller). It confirmed the revision-21 measurements (shallowest default-stack chain 154,
+`with_body` 111 / 114, `mut_with3` 126 / 126, the S9 citations).
+
+| Finding | Resolution |
+|---|---|
+| [blocker] uncharged source-depth walks still trap wasm32 at depth under both engines: a left-associative chain is built by the parser in a loop, so its depth is not bounded at 273, and `mentions_var` (via `assign_in_place`) and the compiler's `binds` walk it whole at the bottom of the recursion | `ast::walk_expr` is iterative (its own heap stack, same pre-order), so `mentions_var`, `binds`/`expr_binds` and every other walk through it are flat. A handler frame (`HandlerFrame`, `HandlerArmRt`, `ResumeCtx`) now holds a `SrcRef` into the source instead of deep-cloning the arms and the `with` body on every entry; each frame lives only inside the `eval_with_handler` call that borrows that source (interp.rs `SrcRef`). Before the change a `with` per level whose body holds an 800-term chain trapped debug at depth 88 under both engines; it now panics at the guard. The front-end bound is the checker, which traps on a chain of 1,301 terms (debug) / 832 (release) before the run (`CheckCtx::check_expr`, `concat_*`): added to compilebench AX-60. The `host_await_val` closure clone (`SendValue::from_value`) of a 1,250-term chain at depth 126 (debug) panics, not traps. §4 Recursion, the CHANGELOG, R7, REQUIREMENTS, AXON-COMPLETENESS, interp.rs `NEST_PER_DEPTH` and the checker's `ALLOW` comment state the front-end bound; `walk_expr` left `ALLOW`. Probes `assign_chain`, `compile_chain`, `with_chain` (700-term chains at the bottom of the recursion) added; all panic at the guard under both engines and profiles |
+| [must-fix] an abandoned compile makes the default VM panic below the tree (`gen_fail.py`, nine parentheses and a 600 / 720-term never-taken chain: tree 81 / VM 79 debug, tree 83 / VM 80 release) | The compile runs in `Interp::compile_body` (guarded by `COMPILE_BODY`), which returns before the body runs, so a body retried on every entry keeps no compile frame live under the recursion. Same repro now: tree 81 / VM 81 / eager 81 (debug), 83 / 83 / 84 (release). Probe `fail_compile` added: 76 / 76 debug, 79 / 79 release |
+| [nit] the checker counts a function as guarded by name only, so a deleted or moved guard goes unseen | `wasm_stack_budget.py` scans the sources for `nest_guard!(self, X)` and `nest::<{ nest_cost::X }>` sites and fails unless every non-alias constant is charged by exactly one site, in the function named after it (54 sites, one per constant). The constants are again at the checker's fixed point after this revision's frame changes (`RUN_HANDLER_ARM` 192 debug, `CALL_BUILTIN` 704 release, `RUN_BODY_VM` 160 debug) |
+
+`scripts/vm_wasm_depth.sh --require-default-stack` passes on the revision-22 builds: the shallowest
+default-stack chain is closure, tree 154 (debug); every chain and the 27 probes panic rather than
+trap, with VM ≥ tree. `cli_run` passes under both feature sets (787 tests), as do
+`handler_resume_parity.sh` and `suspend_resume_parity.sh`.
+
+Revision 23 (2026-10-09) answers the twentieth review (`reviewer`, verdict "incorrect": 1 blocker,
+1 must-fix).
+
+| Finding | Resolution |
+|---|---|
+| [blocker] source-depth `Expr::clone` still traps wasm32 below the guard: `SendValue::from_value_at` copies a closure body (`host_await_val`), and a 700-term chain the checker accepts, at the bottom of a recursion with a `with` and nine parentheses per level, traps at depth 67-77 | Reproduced on the revision-22 builds: traps at 67 (debug tree), 71 (debug VM), 74 (release tree), 77 (release VM), backtrace `<ast::Expr as Clone>::clone` repeated; native exits 0. The claim that the front end bounds source depth inside the margin was false and is withdrawn: §4, the checker's `ALLOW` comment, the `interp.rs` budget doc, the CHANGELOG, R7, REQUIREMENTS and AXON-COMPLETENESS now say source-depth recursion is outside the budget like value depth, filed as compilebench AX-61 (open) with this repro. It traps under both engines alike, so it is not an engine divergence |
+| [must-fix] the default VM panics below the tree when a body is a `let` plus one `with` (release tree 79, VM 76): the body is not `lone_tree`, so each level keeps the op loop `run` live on top of `run_body_vm` | `RUN_BODY_TREE = RUN_BODY_VM + RUN`: the tree's fn level charges a VM level's fn body plus its op loop; the checker accepts a sum alias and checks it against its own function's frame and tail. Probe `let_with` (the review's `s1`) added; `--require-default-stack` gates it: debug tree 70 / VM 74, release 72 / 76 |
+
+`scripts/vm_wasm_depth.sh --require-default-stack` passes on the revision-23 builds, with the
+constants at the checker's fixed point on both profiles: the shallowest default-stack chain is
+closure, tree 154 (debug); every chain and the 28 probes panic rather than trap, with VM ≥ tree.
+
+Revision 24 (2026-10-09) answers the twenty-first review (`reviewer`, verdict "incorrect": 1 must-fix,
+2 smaller).
+
+| Finding | Resolution |
+|---|---|
+| [must-fix] a lambda level that catches a `break` out of a `with` and then recurses keeps `exec_catching` and a second `run` live, so the deferred VM panics below the tree (release, six chained lambdas: tree 22 / VM 20) | Fixed in the engine, not by charging the tree more: `exec_catching` is replaced by `catch_flow` (vm/mod.rs), which only sets the scopes, stack height and `pc` of the catching loop and returns; `exec` and `exec_on` run the body on from there in their own frame, so a caught flow keeps no second frame live. `EXEC_CATCHING` and its guard are gone (53 guarded functions, 51 in the interpreter). Probe `lambda_break` (the six-lambda shape) added: before the fix release tree 20 / VM 18; after it debug 20 / 21, release 20 / 20. The review's other shapes on the revision-24 builds (tree / deferred VM / eager): one lambda release 75 / 78 / 79, three lambdas 36 / 36 / 37, two lambdas with three parentheses 48 / 50 / 50 |
+| [nit] revision 23's tree charge has an unrecorded cost: under the default depth limit the budget stops the tree's closure chain below the guard | Measured on the revision-24 builds, `AXON_MAX_DEPTH` unset: tree closure chain 109 (debug) / 99 (release), release `with` 124, every other chain and every VM chain 126. §4 now says the budget can stop the tree before the guard, and that 156 is the trap depth with the limit raised (154 is 1.2 × the guard) |
+| [nit] stale frame sizes (§4, interp.rs) and revision-21 depth figures | Frame sizes re-read from the checker (release `eval` 272 + 16, `run` 512 + 16, `call_fast_arg` 256 + 16, `call_builtin` 688 + 16; interp.rs "16–704 bytes"); the §4 depth examples re-measured on the revision-24 builds (`expr` tree 27 / VM 126 debug, 31 / 126 release; `lambda10` 23 / 49 debug, 22 / 35 release; `distinct` 130 × 40 parentheses tree 27, deferred 28, eager 126 debug) |
+
+`scripts/vm_wasm_depth.sh --require-default-stack` passes on the revision-24 builds, with the
+constants at the checker's fixed point on both profiles (`CALL_FAST_ARG` and `CALL_MUT_OP` re-fit):
+every chain and the 29 probes panic rather than trap, with VM ≥ tree.
+
+Revision 25 (2026-10-09) answers the twenty-second review (`reviewer`, verdict "incorrect": 1 must-fix,
+4 smaller).
+
+| Finding | Resolution |
+|---|---|
+| [must-fix] recursion through lambdas alone makes the deferred VM panic below the tree: `run_lambda_cold` keeps its frame live under `exec` on the entry that compiles a lambda, and in release a compiled lambda level costs `RUN` (528) while the tree pays 512 (one self-recursive lambda: release tree 119 / VM 118; 130 lambdas each compiled at depth: release 119 / 112, debug 122 / 121) | Fixed as revision 22 did for fn bodies. `run_lambda` (inlined into `call_closure_owned_by`) runs a compiled body through `exec` itself; S9's first-entry rule and the compile move into the cold `compile_lambda` (`COMPILE_LAMBDA`), which returns before the body runs; the tree's lambda level runs in `run_lambda_tree`, charged `RUN_LAMBDA_TREE = RUN` (§4 Recursion). The two repros are probes `lambda_self` and `lambda_chain`. Measured on the revision-25 builds (`reach`, tree / VM): `lambda_self` and `lambda_chain` debug 117 / 127, release 110 / 118. The tree now panics earlier on lambda recursion under the default limit, as revision 23 made it for fn levels |
+| [nit] the trap-depth figure is 154 in CHANGELOG, R7, interp.rs and the Revision 24 row, 156 in §4; the default-limit tree depths are only in §4 | Re-measured on the revision-25 builds: shallowest default-stack depth (limit raised) 157 (tree closure chain, debug), above 1.2 × the guard (154). CHANGELOG, R7, interp.rs and §4 say 157; the Revision 24 row says 156, its value then. CHANGELOG and R7 now carry the default-limit tree depths: closure chain 104 (debug) / 93 (release), VM 126 |
+| [nit] three §4 S9 citations into vm/mod.rs shifted by revision 24 | Re-derived by content after this revision's edits, with every other vm/mod.rs citation in §1–§14 |
+| [nit] `break_fast.ax` names the removed `exec_catching` | Names `catch_flow` |
+| [nit] the chains are compared VM ≥ tree only with `AXON_MAX_DEPTH` raised | `scripts/vm_wasm_depth.sh` runs the chains in its `reach` configuration too (limit unset, deepest exit-0 depth) and, with `--require-default-stack`, requires VM ≥ tree there: debug plain / closure / mut / with tree 126 / 104 / 126 / 126, release 126 / 93 / 126 / 124, VM 126 on all |
+
+`scripts/vm_wasm_depth.sh --require-default-stack` passes on the revision-25 builds, with the
+constants at the checker's fixed point on both profiles (no constant changed): every chain and the
+31 probes panic rather than trap, with VM ≥ tree on every chain (both configurations) and probe.
+54 functions carry a guard (52 in the interpreter, 2 in the compiler). `cli_run vm_` and the
+`interp::vm` unit tests pass under both feature sets; `scripts/vm_perf_gate.sh` passes in all three
+modes.
+
+Revision 26 (2026-10-09) answers the twenty-third review (`reviewer`, verdict "correct": 0 blockers,
+0 must-fix, 2 nits).
+
+| Finding | Resolution |
+|---|---|
+| [nit] `COMPILE_LAMBDA` (and `COMPILE_BODY`) is below its frame and tail: `compile_lambda` and `compile_body` are in no checked cycle, so `wasm_stack_budget.py` skips them | The checker now applies the frame-plus-unguarded-tail rule to every guarded function reachable from `eval` outside a checked component, the tail stopping at checked components and ALLOW recursions. It measured `compile` plus the `Vec` growth under it: `COMPILE_BODY` 144 / 208 -> 1,504 / 1,024, `COMPILE_LAMBDA` 160 / 224 -> 1,616 / 976 (debug / release), set at its fixed point. Constants with no instance in a profile (inlined) are reported as such. §4, interp.rs, the checker docstring and CHANGELOG say so |
+| [nit] AXON-COMPLETENESS says 154 for the shallowest default-stack depth | Both files say 157 with the limit raised, 154 as the 1.2 × guard requirement, and the default-limit depths (tree closure chain 104 / 93, VM 126) |
+
+`scripts/vm_wasm_depth.sh --require-default-stack` passes on the revision-26 builds with the
+constants at the checker's fixed point (two changed, above): shallowest default-stack depth 157
+(tree closure chain, debug), and under the default limit tree closure chain 104 / 93, VM 126 on every
+chain. The full gate passes: `cargo test -p axon-core` under both feature sets with `AXON_ENGINE`
+unset, `tree` and `AXON_VM_EAGER=1`; `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` in the same three
+modes (53 passed, 2 allowed skips); `reference_gate.sh`; clippy (both feature sets and wasm32) and
+fmt; the completeness check; the spec lint. `nest_cost` is wasm32-only, so native cost is unchanged.

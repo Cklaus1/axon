@@ -23,8 +23,9 @@ pub const ALL_ENV_VARS: &[(&str, &str)] = &[
     // ── Determinism & execution ──────────────────────────────────────────
     ("AXON_SEED", "seed the RNG (u64) so `random_*` runs reproduce"),
     ("AXON_MAX_DEPTH", "recursion-depth ceiling (default 6000, clamped to 1,000,000); the interpreter thread stack scales with it"),
-    ("AXON_ENGINE", "engine for fn bodies under `axon run`/`axon-run`/`axon test`/`axon goal`: `vm` (default; R50 bytecode engine, compiled on first run, same observable behaviour) or `tree` (the reference tree-walker); any other value exits 2 before the program runs"),
-    ("AXON_VM_TRACE", "`1`: under AXON_ENGINE=vm, print one `vm: ...` stderr line per compiled body (op and tree-fallback counts) and per fallback; never changes stdout or the exit code"),
+    ("AXON_ENGINE", "engine for fn bodies under `axon run`/`axon-run`/`axon test`/`axon goal`: `vm` (default; R50 bytecode engine, a body compiled on its second entry or on its first when it holds a loop that may run long, same observable behaviour) or `tree` (the reference tree-walker); any other value exits 2 before the program runs"),
+    ("AXON_VM_TRACE", "`1`: under AXON_ENGINE=vm, print one `vm: ...` stderr line per compiled body (op and tree-fallback counts), per fallback, and `vm: defer <name>` per body whose first entry runs on the tree; never changes stdout or the exit code"),
+    ("AXON_VM_EAGER", "`1`: under AXON_ENGINE=vm, compile every body on its first entry instead of deferring a body with no long loop to its second entry (R50 S9); never changes stdout or the exit code"),
     ("AXON_CLOCK", "deterministic virtual clock `<start_ms>[:<tick_ms>]`; `sleep_ms` advances it without really sleeping"),
     ("AXON_PATH", "colon-separated module search path for `mod`/`use` imports"),
     ("AXON_STRICT", "promote advisory hazard diagnostics to errors (today E0302, an unused Result); `axon deploy` sets it itself"),

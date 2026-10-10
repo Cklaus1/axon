@@ -461,6 +461,7 @@ impl<'p> Interp<'p> {
     /// propagates, and so does a POLICY stop (`VerifyFailed` exit 3 /
     /// `RefineViolation` exit 6) — only a per-fiber `Panic` is caught.
     pub(super) fn builtin_scheduler_run_once(&self) -> Result<i64, Flow> {
+        nest_guard!(self, BUILTIN_SCHEDULER_RUN_ONCE);
         let order = self.scheduler.borrow().ready_order();
         let mut completed: i64 = 0;
         for id in order {
@@ -687,6 +688,7 @@ impl<'p> Interp<'p> {
     /// Dispatch a builtin call. Returns `Ok(Some(v))` if `name` is a builtin,
     /// `Ok(None)` if it is not (caller should try user functions).
     pub(super) fn call_builtin(&self, name: &str, args: &[Value]) -> Result<Option<Value>, Flow> {
+        nest_guard!(self, CALL_BUILTIN);
         // Helpers --------------------------------------------------------------
         let want = |n: usize| -> Result<(), Flow> {
             if args.len() == n {
@@ -783,7 +785,7 @@ impl<'p> Interp<'p> {
                     .handlers
                     .borrow()
                     .iter()
-                    .any(|f| f.arms.iter().any(|a| a.effect == *eff));
+                    .any(|f| f.arms.iter().any(|a| a.effect() == *eff));
                 if !handled {
                     continue;
                 }
@@ -1853,13 +1855,15 @@ impl<'p> Interp<'p> {
                     };
                     acc = self.call_closure_arg(f, [acc, x])?;
                     i += 1;
-                    if i == 1 {
+                    if i <= 2 {
                         // R50 S7: under `AXON_ENGINE=vm`, the elements
-                        // after the first in registers when the closure's
+                        // after this one in registers when the closure's
                         // body is one pure tree, up to the first that
                         // declines; it and the rest take the call above
-                        // (cost only).
-                        i += self.fold_leaf(f, &xs[1..], &mut acc);
+                        // (cost only). Offered after the first element and
+                        // again after the second, whose call compiles a body
+                        // the first ran on the tree (S9).
+                        i += self.fold_leaf(f, &xs[i..], &mut acc);
                     }
                 }
                 ok!(acc);

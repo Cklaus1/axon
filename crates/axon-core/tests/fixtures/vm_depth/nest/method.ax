@@ -1,0 +1,16 @@
+let DEPTH = 100
+// AX-56 nesting probe: recursion through a trait method.
+// scripts/vm_wasm_depth.sh runs it deep under wasmtime's default stack
+// and requires the recursion-limit panic, not a trap.
+type P = { x: i64 }
+trait Down { fn down(self: P, n: i64) -> i64; }
+impl Down for P {
+    fn down(self: P, n: i64) -> i64 {
+        if n == 0 { self.x } else { let q = P { x: self.x + 1 }; q.down(n - 1) }
+    }
+}
+fn main() -> i64 {
+    let p = P { x: 0 };
+    println(to_str(p.down(DEPTH)))
+    0
+}

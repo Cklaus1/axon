@@ -191,6 +191,13 @@ pub(super) struct RIns {
     dst: u8,
 }
 
+/// The most operators a pure tree nests (`Compiler::pure_tree`): a deeper
+/// expression is compiled the generic way. AX-56: this bounds every
+/// recursion over a pure tree (building, [`specialize`], [`pure_eval`],
+/// `pure_locals`, dropping it), which the wasm32 stack budget does not
+/// charge.
+pub(super) const PURE_DEPTH: u32 = 16;
+
 /// Leaf registers of a [`Typed`] (locals and literals); temporaries follow.
 const LEAVES: u8 = 8;
 /// Temporaries (expression depth) of one expression.
@@ -861,7 +868,8 @@ impl LoopBuilder<'_> {
 
 impl Interp<'_> {
     /// R50 S7 `fold_leaf` (spec §4 S7): `arr_fold`'s later elements `xs`
-    /// (after the first, whose general call compiled the closure's body) in
+    /// (after the first or second, once a general call compiled the closure's
+    /// body; 0 while it is not compiled) in
     /// registers, when the engine is `vm` and `f` is a closure of two
     /// parameters whose compiled body is one pure tree over them, its
     /// captures and literals. The captures are read once (a pure body cannot

@@ -1,0 +1,41 @@
+let DEPTH = 100
+// AX-56 nesting probe: recursion through ten nested lambdas.
+// scripts/vm_wasm_depth.sh runs it deep under wasmtime's default stack
+// and requires the recursion-limit panic, not a trap.
+fn w(n: i64) -> i64 {
+    if n == 0 { 0 } else {
+        let l0 = |x0: i64| {
+            let l1 = |x1: i64| {
+                let l2 = |x2: i64| {
+                    let l3 = |x3: i64| {
+                        let l4 = |x4: i64| {
+                            let l5 = |x5: i64| {
+                                let l6 = |x6: i64| {
+                                    let l7 = |x7: i64| {
+                                        let l8 = |x8: i64| {
+                                            let l9 = |x9: i64| w(x9 - 1) + 1
+                                            l9(x8)
+                                        }
+                                        l8(x7)
+                                    }
+                                    l7(x6)
+                                }
+                                l6(x5)
+                            }
+                            l5(x4)
+                        }
+                        l4(x3)
+                    }
+                    l3(x2)
+                }
+                l2(x1)
+            }
+            l1(x0)
+        }
+        l0(n)
+    }
+}
+fn main() -> i64 {
+    println(to_str(w(DEPTH)))
+    0
+}

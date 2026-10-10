@@ -1,0 +1,45 @@
+let DEPTH = 100
+// AX-56 nesting probe: six chained lambdas per level, each catching a
+// `break` out of a `with` in a `for` before the next call, in a later
+// `with` (a caught flow must keep no second op-loop frame live).
+// scripts/vm_wasm_depth.sh runs it deep under wasmtime's default stack
+// and requires the recursion-limit panic, not a trap.
+fn w(n: i64) -> i64 {
+    with handler { on Net(e) => 0 } {
+        let g6 = |x: i64| {
+            let k = 0
+            for i in 0..2 { with handler { on Net(e) => 0 } { break } }
+            with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + w(x - 1) } }
+        }
+        let g5 = |x: i64| {
+            let k = 0
+            for i in 0..2 { with handler { on Net(e) => 0 } { break } }
+            with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + g6(x) } }
+        }
+        let g4 = |x: i64| {
+            let k = 0
+            for i in 0..2 { with handler { on Net(e) => 0 } { break } }
+            with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + g5(x) } }
+        }
+        let g3 = |x: i64| {
+            let k = 0
+            for i in 0..2 { with handler { on Net(e) => 0 } { break } }
+            with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + g4(x) } }
+        }
+        let g2 = |x: i64| {
+            let k = 0
+            for i in 0..2 { with handler { on Net(e) => 0 } { break } }
+            with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + g3(x) } }
+        }
+        let g1 = |x: i64| {
+            let k = 0
+            for i in 0..2 { with handler { on Net(e) => 0 } { break } }
+            with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + g2(x) } }
+        }
+        g1(n)
+    }
+}
+fn main() -> i64 {
+    println(to_str(w(DEPTH)))
+    0
+}

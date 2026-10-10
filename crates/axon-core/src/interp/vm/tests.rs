@@ -7,6 +7,11 @@
 use super::*;
 use crate::ast::Literal;
 
+/// [`compile::compile`], which gives up only on wasm32 (AX-56).
+fn compile<'p>(ix: &Interp<'_>, body: &'p crate::ast::Expr) -> Body<'p> {
+    compile::compile(ix, body).expect("compiles off wasm32")
+}
+
 const PROG: &str = "\
 fn fib(n: i64) -> i64 {
     if n < 2 { n } else { fib(n - 1) + fib(n - 2) }

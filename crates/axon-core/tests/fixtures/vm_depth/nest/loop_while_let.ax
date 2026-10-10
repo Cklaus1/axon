@@ -1,0 +1,55 @@
+let DEPTH = 100
+// AX-56 nesting probe: recursion inside ten nested `while let` loops.
+// scripts/vm_wasm_depth.sh runs it deep under wasmtime's default stack
+// and requires the recursion-limit panic, not a trap.
+fn w(n: i64) -> i64 {
+    if n == 0 { 0 } else {
+        let s = 0
+        let o0 = Some(1)
+        let o1 = Some(1)
+        let o2 = Some(1)
+        let o3 = Some(1)
+        let o4 = Some(1)
+        let o5 = Some(1)
+        let o6 = Some(1)
+        let o7 = Some(1)
+        let o8 = Some(1)
+        let o9 = Some(1)
+        while let Some(x0) = o0 {
+            o0 = None
+            while let Some(x1) = o1 {
+                o1 = None
+                while let Some(x2) = o2 {
+                    o2 = None
+                    while let Some(x3) = o3 {
+                        o3 = None
+                        while let Some(x4) = o4 {
+                            o4 = None
+                            while let Some(x5) = o5 {
+                                o5 = None
+                                while let Some(x6) = o6 {
+                                    o6 = None
+                                    while let Some(x7) = o7 {
+                                        o7 = None
+                                        while let Some(x8) = o8 {
+                                            o8 = None
+                                            while let Some(x9) = o9 {
+                                                o9 = None
+                                                s = s + w(n - 1) + 1
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        s
+    }
+}
+fn main() -> i64 {
+    println(to_str(w(DEPTH)))
+    0
+}

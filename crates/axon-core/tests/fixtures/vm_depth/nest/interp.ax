@@ -1,0 +1,11 @@
+let DEPTH = 100
+// AX-56 nesting probe: recursion whose result is interpolated.
+// scripts/vm_wasm_depth.sh runs it deep under wasmtime's default stack
+// and requires the recursion-limit panic, not a trap.
+fn w(n: i64) -> str {
+    if n == 0 { "" } else { let s = w(n - 1); "{len(s) % 7}" }
+}
+fn main() -> i64 {
+    println(w(DEPTH))
+    0
+}
