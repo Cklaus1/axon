@@ -1364,7 +1364,7 @@ pub(super) mod nest_cost {
     pub const RUN_GOAL_RANDOM: usize = b(208, 368);
     pub const RUN_GOAL_WARM: usize = b(656, 1024);
     pub const COMPILE_EXPR: usize = b(816, 688);
-    pub const COMPILE_STMT: usize = b(800, 656);
+    pub const COMPILE_STMT: usize = b(800, 672);
 }
 
 /// Hard ceiling on the configurable recursion limit. `AXON_MAX_DEPTH` is
