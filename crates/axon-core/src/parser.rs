@@ -342,9 +342,10 @@ const MAX_EXPR_DEPTH: usize = 4_000;
 const MAX_EXPR_DEPTH: usize = 224;
 
 /// AX-60: whether every recursive descent (`parse_expr`, `parse_primary`,
-/// `parse_pattern`, `parse_type_atom`, an `else if` link, a match subject or
-/// guard) charges [`MAX_EXPR_DEPTH`], and every root expression's AST height
-/// is checked against it (wasm32 only; native keeps its limits).
+/// `parse_pattern`, `parse_type_atom`, `parse_attr_atom`, an `else if`
+/// link, a match subject or guard) charges [`MAX_EXPR_DEPTH`], and every
+/// root expression's AST height is checked against it (wasm32 only; native
+/// keeps its limits).
 const NEST_ALL: bool = cfg!(target_arch = "wasm32");
 
 #[derive(Debug, thiserror::Error)]
@@ -985,7 +986,19 @@ impl Parser {
         }
     }
 
+    /// One attribute argument atom. A `-` or `[` atom nests another, so on
+    /// wasm32 each level charges [`MAX_EXPR_DEPTH`] (AX-60), as a type
+    /// atom does; out of line there for `scripts/wasm_stack_budget.py`.
+    #[cfg_attr(target_arch = "wasm32", inline(never))]
     fn parse_attr_atom(&mut self) -> Result<String> {
+        if NEST_ALL {
+            self.nested(Self::parse_attr_atom_inner)
+        } else {
+            self.parse_attr_atom_inner()
+        }
+    }
+
+    fn parse_attr_atom_inner(&mut self) -> Result<String> {
         match self.peek() {
             Some(Token::Ident(_)) => self.expect_ident(),
             Some(Token::Int(n)) => {

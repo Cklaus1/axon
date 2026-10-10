@@ -33,15 +33,22 @@ This script checks exactly that on the build under test:
   a fixed bound, a std algorithm's log n, or the panic path. Work outside
   those runs above the last guarded frame, in the headroom the budget leaves
   below the stack size; value and source depth are not bounded by it and can
-  still trap.
+  still trap;
+- the parser (compilebench AX-60): every recursive component reachable
+  from `Parser::parse_program` either holds a call that charges one
+  `MAX_EXPR_DEPTH` unit (PARSER_CHARGES), and the wasm32 limit times the
+  worst frame chain between two charges fits the budget, or holds no
+  parser method and is one ALLOW classifies.
 
 It fails when a `nest_cost` constant is not charged by exactly one guard
 site in the function it is named after, when indirect calls widen a checked
 component, when the unguarded part of one has a cycle (a recursion no guard
 sees), when a constant is smaller than the guarded function's frame plus the
 deepest unguarded chain it can call, when a recursion reachable from `eval`
-is neither checked nor in ALLOW, or when a cycle of `Value` drop glue
-avoids `drop_bounded`. Exit 0 ok, 1 failure, 2 bad input.
+is neither checked nor in ALLOW, when a cycle of `Value` drop glue avoids
+`drop_bounded`, or when a recursion reachable from `parse_program` with no
+charged call holds a parser method or is not in ALLOW. Exit 0 ok, 1
+failure, 2 bad input.
 """
 import os
 import re
@@ -63,7 +70,14 @@ from collections import defaultdict
 # "source": the nesting of one source construct (a pattern, a type, an
 # expression walked whole), walked by the same function under both
 # engines, at most the parser's wasm32 `MAX_EXPR_DEPTH` deep (compilebench
-# AX-60). "bounded":
+# AX-60); `parser::axon_type_to_str` renders one parsed `AxonType`, each
+# level of which a charged `parse_type_atom` built. "lexer": the
+# logos-generated `Token::lex` (the parser re-lexes each interpolation
+# slot). On release its one cycle is logos's skip re-entry (`lex.trivia();
+# Token::lex(lex)` after a skipped match), at most two deep: a whitespace
+# run is matched whole and a `//` comment runs to the newline, which is a
+# token. On debug its states also call themselves once per character of
+# one token, compilebench AX-65, out of scope (R50 §4 S12). "bounded":
 # a fixed depth (`PURE_DEPTH`; a numeric helper that recurses once). "std":
 # a std algorithm's log-n recursion. "panic": the panic path, which ends
 # the run.
@@ -76,7 +90,9 @@ ALLOW = [
     (r"serde_json|10serde_json|serde_core", "value"),
     (r"interp::regex|6interp5regex", "value"),
     (r"ast::(Expr|Pattern|AxonType|FmtPart|HandlerExpr|MatchArm)|3ast\d+[A-Z]|3ast4Ex"
-     r"|types::Type|5types4Type|resolver::collect|match_pattern|pattern_binds", "source"),
+     r"|types::Type|5types4Type|resolver::collect|match_pattern|pattern_binds"
+     r"|parser::axon_type_to_str|6parser16axon_type_to_str", "source"),
+    (r"token::Token as logos\S*::Logos>::lex|5Token\w*?5logos5Logos3lex", "lexer"),
     (r"vm::pure::|2vm4pure4Pure|compile_pure_(at|stmts|if)\b", "bounded (PURE_DEPTH)"),
     (r"gamma_sample|log_gamma|reg_inc_beta|beta_cdf|sub_timespec|slice_error_fail", "bounded (recurses once)"),
     (r"slice4sort|btree", "std"),
@@ -101,6 +117,7 @@ PARSER_CHARGES = [
     (None, "parse_primary"),
     (None, "parse_pattern"),
     (None, "parse_type_atom"),
+    (None, "parse_attr_atom"),
     ("parse_if", "parse_if"),
     ("parse_match|parse_match_operand", "parse_logical"),
 ]
@@ -540,17 +557,71 @@ def main() -> int:
     # chain of frames from one charged callee to the next charged call, and
     # the wasm32 limit times that chain fits the budget.
     pname = {f: m.group(1) for f, s in sym.items() if (m := PARSER_FN.match(s))}
+    # A PARSER_CHARGES entry counts only if parser.rs really charges it:
+    # `fn <e>` runs `self.nested(Self::<e>_inner)` (a `None` caller), or a
+    # function the caller pattern names runs `self.nested(Self::<e>)`. And
+    # every `nested` site has its entry.
+    psites, enclosing = set(), None
+    for line in parser_src.splitlines():
+        m = fn_re.match(line)
+        if m:
+            enclosing = m.group(1)
+        if line.lstrip().startswith("//"):
+            continue
+        for m in re.finditer(r"self\.nested\(Self::(\w+)\)", line):
+            e = m.group(1)
+            psites.add((None, enclosing) if e == f"{enclosing}_inner" else (enclosing, e))
+
+    def site_of(r, e, sr, se):
+        return e == se and (r is None) == (sr is None) and (r is None or re.fullmatch(r, sr))
+
+    charges = []
+    for r, e in PARSER_CHARGES:
+        if any(site_of(r, e, sr, se) for sr, se in psites):
+            charges.append((r, e))
+        else:
+            bad += 1
+            print(f"wasm_stack_budget: {profile:<7} FAIL parser charge ({r}, {e}) has no `nested` site in parser.rs")
+    for sr, se in sorted(psites, key=str):
+        if not any(site_of(r, e, sr, se) for r, e in PARSER_CHARGES):
+            bad += 1
+            print(f"wasm_stack_budget: {profile:<7} FAIL `nested` site ({sr}, {se}) in parser.rs not in PARSER_CHARGES")
 
     def charged(f, g):
         callee = pname.get(g)
         return callee is not None and any(
-            callee == e and (r is None or re.fullmatch(r, pname.get(f, ""))) for r, e in PARSER_CHARGES)
+            callee == e and (r is None or re.fullmatch(r, pname.get(f, ""))) for r, e in charges)
 
     heads = {g for f, gs in calls.items() for g in gs if charged(f, g)}
     if not any(pname.get(g) == "parse_expr" for g in heads):
         print("wasm_stack_budget: no charged `Parser::parse_expr` call in the disassembly", file=sys.stderr)
         return 2
+    starts = [f for f in sym if pname.get(f) == "parse_program"]
+    if not starts:
+        print("wasm_stack_budget: no `Parser::parse_program` in the disassembly", file=sys.stderr)
+        return 2
     pscc = set().union(*(members[comp[f]] for f in heads))
+    # Every recursion reachable from `parse_program` must pass a charged
+    # call (checked by `unit_tail` below), or be one ALLOW names that holds
+    # no parser method: a parser recursion with no charge is bounded by
+    # nothing, so the wasm32 front end traps on its nesting.
+    pkinds = defaultdict(int)
+    for r in sorted({comp[f] for f in reach(starts, calls)}):
+        ms = members[r]
+        if len(ms) == 1 and r not in calls.get(r, ()):
+            continue
+        if any(charged(f, g) for f in ms for g in calls.get(f, ()) if g in ms):
+            pscc |= ms
+            continue
+        full_names = [re.sub(r"axon_core\[[0-9a-f]+\]::", "", name_of(f) or sym.get(f) or names.get(f, str(f)))
+                      for f in ms]
+        why = next((w for p, w in ALLOW if any(re.search(p, s) for s in full_names)), None)
+        if why is None or any(f in pname for f in ms):
+            bad += 1
+            print(f"wasm_stack_budget: {profile:<7} FAIL parser recursion without a charge: "
+                  f"{sorted(label(f).replace('<parser::Parser>::', '') for f in ms)[:4]}")
+            continue
+        pkinds[why] += 1
     unit_of, pstate = {}, {}
 
     def unit_tail(f):
@@ -590,6 +661,8 @@ def main() -> int:
     print("\n".join(summary))
     print(f"wasm_stack_budget: {profile:<7} other recursion reachable from eval: "
           + ", ".join(f"{k} {v}" for k, v in sorted(kinds.items())))
+    print(f"wasm_stack_budget: {profile:<7} other recursion reachable from parse_program: "
+          + (", ".join(f"{k} {v}" for k, v in sorted(pkinds.items())) or "none"))
     return 1 if bad else 0
 
 

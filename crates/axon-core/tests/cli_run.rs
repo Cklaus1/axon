@@ -653,6 +653,34 @@ fn native_guard_write_unaliases() {
 }
 
 #[test]
+fn native_guard_w0002() {
+    // `children()` yields match guards (AX-60), so the resolver's W0002
+    // sees `x` read in a guard of `let x = match ..` and names the
+    // self-referencing re-declaration. Before, the guard was skipped and
+    // W0002 said only that `x` shadows the outer binding.
+    let src = "fn main() -> i64 {\n    \
+               let x = 5\n    \
+               let x = match 1 { n if x > 0 => 1, _ => 2 }\n    \
+               println(to_str(x))\n    \
+               0\n}\n";
+    let f = tmp_ax("guard_w0002", src);
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        msg.contains("W0002") && msg.contains("`let x = …` re-declares `x` from its own value"),
+        "want the self-referencing W0002: {msg}"
+    );
+}
+
+#[test]
 fn wasm_browser_host_await_round_trips_r7c() {
     // R15 §13 B1: host_await works in the BROWSER substrate — a suspending program
     // run by the axon-wasm interpreter gets its replies from an imported (JS)

@@ -30,7 +30,12 @@
 #         with native's syntax error instead. A `type` definition whose base
 #         type (an `Option<` 300 deep, with and without `where`, or a tuple
 #         element's `where` predicate in 300 parentheses) is too deep exits 2
-#         with the same E0000 on line 1, where the refusal happens.
+#         with the same E0000 on line 1, where the refusal happens; so do an
+#         attribute argument's `[` and `-` 300 deep and a top-level handler
+#         definition's `on` pattern 300 `Some(` deep (where each trips), and
+#         a 600-term chain in a tuple element's `where` in a `type`
+#         definition and in a fn parameter (at the token after that type).
+#         Native runs these five: exit 0, `ok`.
 #   ax61  `host_await_val` without a host driver: a closure whose body is a
 #         long chain, passed from depths around the finding's (1-130) under
 #         `with` frames, and a 100,000-node list payload exit 101 (`no host
@@ -362,6 +367,44 @@ EOF
   for e in "${RUNS[@]}"; do
     for spec in "tdef_where:$((10 + 7 * LIMIT))" "tdef_enum:$((10 + 7 * LIMIT))" \
       "tdef_tuple_pred:$((20 + LIMIT / 2))"; do
+      IFS=: read -r p col <<<"$spec"
+      wasm "$e" "$p.ax"
+      if [ "$RC" = 2 ] && grep -qF "\"code\":\"E0000\",\"file\":\"$p.ax\",\"line\":1,\"col\":$col,\"message\":\"$msg\"" err; then
+        echo "  ok  [ax60 $e $p] exit 2, E0000 at 1:$col"
+      else
+        fail "ax60 $e $p" "exit $RC (want exit 2, E0000 '$msg' at line 1, col $col)"
+      fi
+    done
+  done
+  # Source the parser reads outside any root expression is refused at the
+  # level where it trips: an attribute argument's `[` or `-` 300 deep (at
+  # the one past the limit), a top-level handler definition's `on` pattern
+  # (the `Some(` past the limit). A chain cut inside a type outside an
+  # expression (a `type` definition, a fn parameter) is refused at the
+  # token after the outermost type that holds it. The native interpreter
+  # (axon-run, which prints no warnings) runs each: `ok`, exit 0.
+  top() { printf '%s\nfn main() -> i64 { println("ok")\n 0 }\n' "$2" >"$1.ax"; }
+  top attr_bracket "@[foo(x: $(rep '[' 300)1$(rep ']' 300))]"
+  top attr_neg "@[foo(x: $(rep '-' 300)1)]"
+  top handler_pat "handler H = handler { on Net($(rep 'Some(' 300)x$(rep ')' 300)) => 0 }"
+  ty="(i64 where 1$(rep '+1' 599) > 0)"
+  top tdef_chain "type P = $ty where true"
+  top fn_param_chain "fn f(x: $ty) -> i64 { 0 }"
+  for p in attr_bracket attr_neg handler_pat tdef_chain fn_param_chain; do
+    for engine in tree vm; do
+      AXON_ENGINE=$engine "$INTERP" run "$p.ax" </dev/null >out 2>err
+      RC=$?
+      if [ "$RC" = 0 ] && [ "$(cat out)" = ok ]; then
+        echo "  ok  [ax60 native/$engine $p] exit 0, ok"
+      else
+        fail "ax60 native/$engine $p" "exit $RC (want exit 0, ok)"
+      fi
+    done
+  done
+  for e in "${RUNS[@]}"; do
+    for spec in "attr_bracket:$((10 + LIMIT))" "attr_neg:$((10 + LIMIT))" \
+      "handler_pat:$((30 + 5 * LIMIT))" "tdef_chain:$((9 + ${#ty} + 2))" \
+      "fn_param_chain:$((8 + ${#ty} + 1))"; do
       IFS=: read -r p col <<<"$spec"
       wasm "$e" "$p.ax"
       if [ "$RC" = 2 ] && grep -qF "\"code\":\"E0000\",\"file\":\"$p.ax\",\"line\":1,\"col\":$col,\"message\":\"$msg\"" err; then
