@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# wasm_nesting_parity.sh <ax59|ax60|ax61> — the wasm32 interpreter
+# wasm_nesting_parity.sh [ax59|ax60|ax61] — the wasm32 interpreter
 # (axon-run.wasm under wasmtime's default 512 KiB stack, both engines) neither
 # traps nor diverges from native on deep values and deep source
 # (compilebench AX-59, AX-60, AX-61). Exit 134 is `wasm trap: call stack
@@ -24,9 +24,27 @@
 #         is refused with the same message (and path) as native; a `str`
 #         payload still round-trips through stdin, byte-identical to native.
 #
+# With no argument (as parity_all.sh runs every harness) it runs all three.
 # Requires: rustup target wasm32-wasip1 + wasmtime on PATH. Skips if absent.
 set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib/harness_skip.sh"
+
+# No argument: each case in its own run, before the build lock below is taken
+# (each run takes it). A skip is environmental, the same for every case.
+if [ $# -eq 0 ]; then
+  rc=0
+  for c in ax59 ax60 ax61; do
+    out="$(bash "${BASH_SOURCE[0]}" "$c" 2>&1)"; r=$?
+    printf '%s\n' "$out"
+    case "$(printf '%s\n' "$out" | tail -n 1)" in
+      *": SKIP"*) [ "$r" -eq 0 ] && exit 0 ;;
+    esac
+    [ "$r" -eq 0 ] || rc=1
+  done
+  if [ "$rc" -ne 0 ]; then echo "wasm_nesting_parity: FAIL (all)"; exit 1; fi
+  echo "wasm_nesting_parity: PASS (all)"
+  exit 0
+fi
 
 # The shared wasm build lock (AUDIT O004), as in the other wasm harnesses.
 if command -v flock >/dev/null 2>&1; then exec 9>"${TMPDIR:-/tmp}/axon_wasm_parity.lock" && flock 9; fi
@@ -39,7 +57,7 @@ name=wasm_nesting_parity
 case="${1:-}"
 case "$case" in
   ax59|ax60|ax61) ;;
-  *) echo "usage: $0 <ax59|ax60|ax61>" >&2; exit 2 ;;
+  *) echo "usage: $0 [ax59|ax60|ax61]" >&2; exit 2 ;;
 esac
 
 rust_target_installed wasm32-wasip1; _rt=$?
