@@ -132,12 +132,12 @@ fn a_stale_amendment_list_in_the_claim_is_refused() {
     for (key, plant, fragment) in [
         (
             "the delta list",
-            "verdict:/102/106/108/114/117 (the delta=>/102/106 (the delta",
+            "verdict:/102/106/108/114/117/121 (the delta=>/102/106 (the delta",
             "delta amendment list",
         ),
         (
             "the arms list",
-            "verdict:am100, am102, am106, am108, am114 and am117 (=>am100 and am102 (",
+            "verdict:am100, am102, am106, am108, am114, am117 and am121 (=>am100 and am102 (",
             "amendments whose arms are verified",
         ),
     ] {
