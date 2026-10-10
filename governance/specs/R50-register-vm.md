@@ -38,7 +38,8 @@ and measured first; they are Draft until an adversarial review passes them. Revi
 twenty-fourth review of them (2 blockers, 6 must-fix, nits; §15 "Revision 28"); revision 29 answers
 the twenty-fifth (3 blockers, 2 must-fix, 4 nits; §15 "Revision 29"); revision 30 answers the
 twenty-sixth (3 must-fix, 1 nit; §15 "Revision 30"); revision 31 answers the twenty-seventh (2
-must-fix, 2 nits; §15 "Revision 31"); a twenty-eighth review is pending.
+must-fix, 2 nits; §15 "Revision 31"); revision 32 answers the twenty-eighth (2 must-fix, 1 nit;
+§15 "Revision 32"); a twenty-ninth review is pending.
 **Risk class:** Structural (a second execution path for the reference engine)
 **Author / date:** 2026-10-09, from compilebench AX-18 (interpreter cost) after AX-53..AX-55.
 
@@ -790,9 +791,15 @@ consumers are:
 - eval's `mentions_var`: the in-place append path no longer runs when the operand's guard assigns
   the target, so `axon run` output follows plain evaluation order (`s = s + match .. { n if { s = "zz"
   true } => "a", .. }` prints `starta`, before `zza`);
-- the VM's `binds`.
-The CHANGELOG records each, and cli tests `native_guard_borrow_e0606`, `native_guard_assign_in_place`
-and `native_guard_pure_e1207` cover them. Native costs are unchanged. Apart from these two changes,
+- the VM's `binds`;
+- native codegen: the E0910 per-call `tier:` refusal (codegen/mod.rs:1228), so `axon build` refuses a
+  guard that calls `ai_complete(.., tier: ..)`; `expr_calls` (the `goal_run` registry and the
+  `ai_complete` attribute-tier refusal); escape analysis `collect_binders`; and `written_place_roots`
+  (AX-08 copy-on-alias), so a guard that writes `a[0]` after `let b = a` no longer changes `b` in the
+  built binary (`1 9 1`, as `axon run` prints; before `9 9 1`).
+The CHANGELOG records each. The cli tests `native_guard_borrow_e0606`, `native_guard_assign_in_place`
+and `native_guard_pure_e1207` cover them, as do `native_guard_tier_e0910` and
+`native_guard_write_unaliases` (codegen). Native costs are unchanged. Apart from these two changes,
 the reference semantics are unchanged on both targets, except that wasm32 refuses source deeper than
 its nesting limit (below).
 
@@ -841,6 +848,10 @@ its nesting limit (below).
   error. That covers parenthesis, block, pattern, type or `else if` depth, and a match arm body or
   inline-refinement predicate taller than the limit without a cut. So is an error after the root
   ends (a later statement or item, the enclosing `}`, the rest of a fn signature or attribute).
+  A type outside an expression (a `type` definition, a fn signature, a field) has no root
+  expression; its refusal is reported at the type level where it trips (for `type P =` and 300
+  `Option<`, column 1,578). `parse_type_def`'s speculative base-type parse passes a wasm32
+  nesting refusal through instead of rewinding to the enum parse. Native keeps the rewind.
   Source that ran
   on wasm32 between the limit and its old trap point (in release, for example, a 224-819-term `+`
   chain) is now refused; the CHANGELOG states the limit.
@@ -1065,7 +1076,9 @@ against the same frames, and the tree-walker is the reference for both.
   - S12 `wasm_drops_deep_values_ax59`, `wasm_deep_source_gives_e0000_ax60` and
     `wasm_host_await_val_no_copy_ax61` (each traps, exit 134, on wasm32 before S12), and
     `native_guard_borrow_e0606` (exit 0, prints `5 5`), `native_guard_assign_in_place` (prints `zza`
-    and `3`) and `native_guard_pure_e1207` (exit 0, prints `1`), each natively before S12's guard walk.
+    and `3`), `native_guard_pure_e1207` (exit 0, prints `1`), `native_guard_tier_e0910` (`axon build`
+    succeeds) and `native_guard_write_unaliases` (the binary prints `9 9 1`), each natively before
+    S12's guard walk.
 
 Every `tests/fixtures/` path in this spec is under `crates/axon-core/`.
 
@@ -1168,7 +1181,9 @@ tier must cost nothing where it is not entered: every other program's median may
 above its S10 median, which `vm_perf_gate.sh` records as a `REF` column and checks on every run
 (median × 1000 > REF × 1005 fails). S10 medians (`944fe056` release, CPU 11): collatz
 18,366,495,062; mandelbrot 5,039,973,411; arr-sum 4,979,381,330; qsort 10,939,169,020; sieve
-24,568,573,662.
+24,568,573,662. fib-recursive's `REF` is its median at the S11 commit `2627dad7` (1,002,729,957,
+the gate's own `--no-default-features` release build, CPU 13), which S12 and later slices must stay
+within 0.5 % of; its budget stays 1,141,214,164.
 
 ### 11. Rollout & rollback
 
@@ -1243,7 +1258,7 @@ the reference code, gaps cost speed, never correctness.
 | R50.S9 deferred compile (§4 S9); `AXON_VM_EAGER`; `vm: defer` trace line | R50.S6, R50.S8 | `cli_run vm_defer_` + `cli_run vm_` (eager and default legs) + whole suite with `AXON_ENGINE` unset, `tree` and `vm` + `AXON_VM_EAGER=1` + `vm_parity.sh` (S9 list; eager and default runs) + `vm_perf_gate.sh` (all five) + `--repros` (every row) + `--compile` + `reference_gate.sh` + `vm_wasm_depth.sh --require-default-stack` + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` under the same three | `db2d2eee` |
 | R50.S10 array elements in pure loops (§4 S10); `PureFor`; `sieve.ax` and its `--programs` row; never-taken `if` in the repro bases made impure | R50.S9 | `cli_run vm_index_` (incl. `vm_index_sieve_loops`) + `vm_perf_gate.sh` (all six) + `--repros` (every row) + `vm_parity.sh` + `vm_wasm_depth.sh --require-default-stack` + whole suite under the S9 modes | code `944fe056`, which fails `vm_wasm_depth.sh` (`wasm_stack_budget.py`: `pure_stmts`/`pure_if` recursion not in `ALLOW`, `COMPILE_STMT` 16 bytes short in release); fixed with S11 |
 | R50.S11 pure-`i64` function tier (§4 S11); `vm: purefn` trace line; fib-recursive budget a third of CPython's | R50.S10 | `cli_run vm_purefn_` (incl. `vm_purefn_fib_in_registers`) + `purefn_build_validates` + `vm_perf_gate.sh` (all six; `REF` check: others at most 0.5 % above S10) + `--repros` (every row) + `vm_parity.sh` + `vm_wasm_depth.sh --require-default-stack` (`plain` on the tier, `plain_generic` off it) + whole suite under the S9 modes | code `2627dad7`; review fixes `faf25a22`, `e5f754ab` |
-| R50.S12 wasm32 traps (§4 S12): bounded drop of every `Value` container, front-end nesting limit 224 (interpolation slots included), no payload copy for `host_await_val`; `DictMap`/`Elems`/`VBox`/`Queue`/`Held`; nest probes; two `wasm_stack_budget.py` checks | R50.S10 | `cli_run wasm_drops_deep_values_ax59`, `wasm_deep_source_gives_e0000_ax60`, `native_nesting_limit_unchanged_ax60`, `wasm_host_await_val_no_copy_ax61` + `vm_wasm_depth.sh --require-default-stack` (debug and release; no probe exits 134) + `wasm_stack_budget.py` + native `instructions:u` within 0.5 % + whole suite under the S9 modes | code `a9c89e5e`, merged `e0f29182`; review fixes `91b13427`, `c33f521b`, `e5f754ab`, `fcd18f2b`, `2fdf7cc1` |
+| R50.S12 wasm32 traps (§4 S12): bounded drop of every `Value` container, front-end nesting limit 224 (interpolation slots included), no payload copy for `host_await_val`; `DictMap`/`Elems`/`VBox`/`Queue`/`Held`; nest probes; two `wasm_stack_budget.py` checks | R50.S10 | `cli_run wasm_drops_deep_values_ax59`, `wasm_deep_source_gives_e0000_ax60`, `native_nesting_limit_unchanged_ax60`, `native_guard_borrow_e0606`, `native_guard_assign_in_place`, `native_guard_pure_e1207`, `native_guard_tier_e0910`, `native_guard_write_unaliases`, `wasm_host_await_val_no_copy_ax61` + `wasm_nesting_parity.sh` (debug and release; `tdef_*` type-definition refusals) + `vm_wasm_depth.sh --require-default-stack` (debug and release; no probe exits 134) + `wasm_stack_budget.py` + `vm_perf_gate.sh` (every `REF` within 0.5 %, fib-recursive's from `2627dad7`) + whole suite under the S9 modes | code `a9c89e5e`, merged `e0f29182`; review fixes `91b13427`, `c33f521b`, `e5f754ab`, `fcd18f2b`, `2fdf7cc1`, `a875d2b8` |
 
 ### 14. Evidence ledger
 
@@ -1668,3 +1683,12 @@ interpreter code changed.
 | [must-fix] S12: the "other refusals" list missed height-checked arm bodies and predicates without a cut, and errors after the root that are not in a later statement | §4 S12 states the rule exactly: only a chain cut defers the refusal to its root's end; every other refusal, and any error after the root ends, gives E0000 at the root's start |
 | [nit] the native `instructions:u` clause had no script; fib-recursive had no `REF` | `vm_perf_gate.sh` gives fib-recursive the S11-commit median (`2627dad7`, 1,002,729,957, the gate's own `--no-default-features` build; the reviewer's 1,010,695,541 came from a default-features binary); measured at `fcd18f2b`: 1,002,729,327, -0.000 % |
 | [nit] `wasm_nesting_parity.sh` ran only the debug wasm | It runs every case on debug and release (216 ok lines, 108 each); an explicit `AXON_RUN_WASM` still runs one module |
+
+Revision 32 (2026-10-10) answers the twenty-eighth review (`reviewer`, verdict "incorrect": 0
+blockers, 2 must-fix, 1 nit). The code fix and tests are in `a875d2b8`.
+
+| Finding | Resolution |
+|---|---|
+| [must-fix] S12: the native-change list left out four codegen `walk_expr` consumers, two of them observable: `axon build` now refuses a guard `tier:` with E0910 (it built before), and a guard that writes `a[0]` after `let b = a` no longer changes `b` in the binary (`9 9 1` -> `1 9 1`, as `axon run` prints) | §4 S12 and the CHANGELOG list the E0910 refusal, `expr_calls`, `collect_binders` and `written_place_roots`. Codegen cli tests `native_guard_tier_e0910` and `native_guard_write_unaliases` were added, with before/after measured on `2627dad7` and `a875d2b8` |
+| [must-fix] S12: `parse_type_def` rewound on any error from its speculative base-type parse, so a type 300 `Option<` deep before `where` gave a false syntax error (1:16, `expected item`) on wasm32 instead of the refusal | On wasm32 a nesting refusal now passes through (`NEST_ALL && too_deep`), and native keeps the rewind. It is the only parse that rewinds on `Err`. `tdef_where`, `tdef_enum` and `tdef_tuple_pred` now give E0000 at the level that trips (1:1578, 1:1578, 1:132) on debug and release under both engines, and they are added to `wasm_nesting_parity.sh ax60`. §4 S12 states that a type outside an expression is refused at that level, not at a root's start |
+| [nit] §10 gave no `REF` for fib-recursive; the §13 S12 row omitted the guard tests, the parity script and the perf-gate `REF` | §10 states fib-recursive's `2627dad7` `REF`; the §13 row names them all |
