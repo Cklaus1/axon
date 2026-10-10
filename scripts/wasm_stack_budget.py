@@ -38,7 +38,12 @@ This script checks exactly that on the build under test:
   from `Parser::parse_program` either holds a call that charges one
   `MAX_EXPR_DEPTH` unit (PARSER_CHARGES), and the wasm32 limit times the
   worst frame chain between two charges fits the budget, or holds no
-  parser method and is one ALLOW classifies.
+  parser method and is one ALLOW classifies. Reachability includes the
+  `call_indirect` edges, and every recursion they give that holds a parser
+  method (generic instances and closures included) must be a component of
+  direct calls already, the one through the charged `parse_expr` among
+  them: a recursion through `nested`'s fn pointer or a `dyn` helper would
+  otherwise leave nothing to measure.
 
 It fails when a `nest_cost` constant is not charged by exactly one guard
 site in the function it is named after, when indirect calls widen a checked
@@ -46,9 +51,10 @@ component, when the unguarded part of one has a cycle (a recursion no guard
 sees), when a constant is smaller than the guarded function's frame plus the
 deepest unguarded chain it can call, when a recursion reachable from `eval`
 is neither checked nor in ALLOW, when a cycle of `Value` drop glue avoids
-`drop_bounded`, or when a recursion reachable from `parse_program` with no
-charged call holds a parser method or is not in ALLOW. Exit 0 ok, 1
-failure, 2 bad input.
+`drop_bounded`, when indirect calls widen a parser recursion or the charged
+`parse_expr` is in none, or when a recursion reachable from
+`parse_program` with no charged call holds a parser method or is not in
+ALLOW. Exit 0 ok, 1 failure, 2 bad input.
 """
 import os
 import re
@@ -110,8 +116,12 @@ WASM_STACK = 512 * 1024
 # A parser method's name, and the calls that charge one `MAX_EXPR_DEPTH`
 # unit (`Parser::nested`, inlined into its caller): (caller, callee), a
 # `None` caller meaning any. parser.rs keeps each callee out of line on
-# wasm32 so it is nameable here.
-PARSER_FN = re.compile(r"^<axon_core\[[0-9a-f]+\]::parser::Parser>::(\w+)$")
+# wasm32 so it is nameable here. PARSER_FN matches a demangled `Parser`
+# method, generic instances and closures included; PARSER_FN_V0 the v0
+# symbol c++filt leaves mangled (a long generic or closure name, cut short
+# by wasmtime).
+PARSER_FN = re.compile(r"^<axon_core\[[0-9a-f]+\]::parser::Parser>::(\w+)((?:::<.*>|::\{closure#\d+\})*)$")
+PARSER_FN_V0 = re.compile(r"^_R(\w*?)6parserNtB\w+?_6Parser(\d+)(\w+)$")
 PARSER_CHARGES = [
     (None, "parse_expr"),
     (None, "parse_primary"),
@@ -121,6 +131,22 @@ PARSER_CHARGES = [
     ("parse_if", "parse_if"),
     ("parse_match|parse_match_operand", "parse_logical"),
 ]
+
+
+def parser_fn(s):
+    """The name of the `Parser` method symbol `s` is, else None. A generic
+    instance, a closure or a shim gets `::<..>` or `::{closure}` appended,
+    so it never names a charged call."""
+    m = PARSER_FN.match(s)
+    if m:
+        return m.group(1) + ("" if not m.group(2) else "::{closure}" if "{closure#" in m.group(2) else "::<..>")
+    m = PARSER_FN_V0.match(s)
+    if not m or len(m.group(3)) < int(m.group(2)):
+        return None
+    n, rest = m.group(3)[: int(m.group(2))], m.group(3)[int(m.group(2)):]
+    if m.group(1).startswith("NvM") and re.fullmatch(r"(?:B\w*_)?", rest):
+        return n
+    return n + ("::{closure}" if m.group(1).startswith("NC") else "::<..>")
 
 
 def find_cycle(nodes, calls):
@@ -144,6 +170,44 @@ def find_cycle(nodes, calls):
                 path.append(w)
                 work.append(iter(sorted(g for g in calls.get(w, ()) if g in nodes)))
     return []
+
+
+def components(nodes, edges):
+    """Map each of `nodes` to the root of its strongly connected component
+    under `edges`. Tarjan, iterative."""
+    index, low, onst, st, comp, idx = {}, {}, set(), [], {}, 0
+    for v0 in sorted(nodes):
+        if v0 in index:
+            continue
+        index[v0] = low[v0] = idx
+        idx += 1
+        st.append(v0)
+        onst.add(v0)
+        work = [(v0, iter(sorted(edges.get(v0, ()))))]
+        while work:
+            u, it = work[-1]
+            w = next(it, None)
+            if w is not None:
+                if w not in index:
+                    index[w] = low[w] = idx
+                    idx += 1
+                    st.append(w)
+                    onst.add(w)
+                    work.append((w, iter(sorted(edges.get(w, ())))))
+                elif w in onst:
+                    low[u] = min(low[u], index[w])
+                continue
+            work.pop()
+            if work:
+                low[work[-1][0]] = min(low[work[-1][0]], low[u])
+            if low[u] == index[u]:
+                while True:
+                    x = st.pop()
+                    onst.discard(x)
+                    comp[x] = u
+                    if x == u:
+                        break
+    return comp
 
 
 def main() -> int:
@@ -310,40 +374,8 @@ def main() -> int:
             n = m.group(3)[: int(m.group(2))]
         return "compile_" + n if m.group(1) else n
 
-    # Tarjan, iterative.
     nodes = set(calls) | set(frame)
-    index, low, onst, st, comp, idx = {}, {}, set(), [], {}, 0
-    for v0 in sorted(nodes):
-        if v0 in index:
-            continue
-        index[v0] = low[v0] = idx
-        idx += 1
-        st.append(v0)
-        onst.add(v0)
-        work = [(v0, iter(sorted(calls.get(v0, ()))))]
-        while work:
-            u, it = work[-1]
-            w = next(it, None)
-            if w is not None:
-                if w not in index:
-                    index[w] = low[w] = idx
-                    idx += 1
-                    st.append(w)
-                    onst.add(w)
-                    work.append((w, iter(sorted(calls.get(w, ())))))
-                elif w in onst:
-                    low[u] = min(low[u], index[w])
-                continue
-            work.pop()
-            if work:
-                low[work[-1][0]] = min(low[work[-1][0]], low[u])
-            if low[u] == index[u]:
-                while True:
-                    x = st.pop()
-                    onst.discard(x)
-                    comp[x] = u
-                    if x == u:
-                        break
+    comp = components(nodes, calls)
 
     evals = [f for f in sym if name_of(f) == "eval"]
     if not evals:
@@ -556,7 +588,7 @@ def main() -> int:
     # `MAX_EXPR_DEPTH` unit (`nested`) the stack holds at most the worst
     # chain of frames from one charged callee to the next charged call, and
     # the wasm32 limit times that chain fits the budget.
-    pname = {f: m.group(1) for f, s in sym.items() if (m := PARSER_FN.match(s))}
+    pname = {f: n for f in set(sym) | set(names) if (n := parser_fn(sym.get(f, "")) or parser_fn(names.get(f, "")))}
     # A PARSER_CHARGES entry counts only if parser.rs really charges it:
     # `fn <e>` runs `self.nested(Self::<e>_inner)` (a `None` caller), or a
     # function the caller pattern names runs `self.nested(Self::<e>)`. And
@@ -600,18 +632,58 @@ def main() -> int:
     if not starts:
         print("wasm_stack_budget: no `Parser::parse_program` in the disassembly", file=sys.stderr)
         return 2
+    # The components and the unit chain below use direct calls only, so a
+    # parser recursion through a fn pointer or `dyn` (`nested` called out of
+    # line, or a helper taking `Self::<f>`) would leave no recursive
+    # component and pass with nothing to charge. So, as for `eval`, add
+    # every `call_indirect` -> same-type table function edge (`full`) and
+    # require every recursion it gives from `parse_program` that holds a
+    # parser method to be a component of direct calls already.
+    preach = reach(starts, full)
+    fcomp = components(nodes | set(full), full)
+    fmembers = defaultdict(set)
+    for f, r in fcomp.items():
+        fmembers[r].add(f)
+    pwide = 0
+    for r in sorted({fcomp[f] for f in preach}):
+        wide = fmembers[r]
+        held = sorted(pname[f] for f in wide if f in pname)
+        if not held or (len(wide) == 1 and r not in full.get(r, ())):
+            continue
+        scc = members.get(comp.get(r, r), {r})
+        if wide != scc:
+            pwide += 1
+            extra = sorted(wide - scc, key=lambda f: (f not in pname, label(f)))
+            print(f"wasm_stack_budget: {profile:<7} FAIL indirect calls add {len(wide - scc)} functions to a "
+                  f"parser recursion of {len(held)} parser methods: "
+                  f"{[label(f).replace('<parser::Parser>::', '') for f in extra[:8]]}")
+    # The charged `parse_expr` recurses through direct calls (parse_expr ->
+    # ... -> parse_primary -> parse_expr); a singleton means the recursion
+    # left the direct call graph and the unit below measures nothing.
+    for g in sorted(heads):
+        if pname.get(g) == "parse_expr" and len(members[comp[g]]) == 1 and g not in calls.get(g, ()):
+            pwide += 1
+            print(f"wasm_stack_budget: {profile:<7} FAIL the charged `Parser::parse_expr` is in no recursion "
+                  f"of direct calls")
+    bad += pwide
     pscc = set().union(*(members[comp[f]] for f in heads))
     # Every recursion reachable from `parse_program` must pass a charged
     # call (checked by `unit_tail` below), or be one ALLOW names that holds
     # no parser method: a parser recursion with no charge is bounded by
-    # nothing, so the wasm32 front end traps on its nesting.
+    # nothing, so the wasm32 front end traps on its nesting. Reachable over
+    # `full`, so a recursion entered through an indirect call counts too; a
+    # recursion only `full`'s over-approximated targets reach (most of the
+    # program) is held to this only if it holds a parser method.
     pkinds = defaultdict(int)
-    for r in sorted({comp[f] for f in reach(starts, calls)}):
+    direct = reach(starts, calls)
+    for r in sorted({comp[f] for f in preach if f in comp}):
         ms = members[r]
         if len(ms) == 1 and r not in calls.get(r, ()):
             continue
         if any(charged(f, g) for f in ms for g in calls.get(f, ()) if g in ms):
             pscc |= ms
+            continue
+        if r not in direct and not any(f in pname for f in ms):
             continue
         full_names = [re.sub(r"axon_core\[[0-9a-f]+\]::", "", name_of(f) or sym.get(f) or names.get(f, str(f)))
                       for f in ms]
@@ -656,8 +728,9 @@ def main() -> int:
     ok = expr_depth * unit <= budget
     bad += not ok
     print(f"wasm_stack_budget: {profile:<7} {'parser':<24} {expr_depth * unit:>6} <= {budget:<6} "
-          + ("ok" if ok else "FAIL")
-          + f"  (MAX_EXPR_DEPTH {expr_depth} x {unit} B per unit: {' + '.join(chain)})")
+          + ("ok" if ok and not pwide else "FAIL")
+          + f"  (MAX_EXPR_DEPTH {expr_depth} x {unit} B per unit: {' + '.join(chain)}"
+          + (", unsound: the recursion runs through indirect calls)" if pwide else ")"))
     print("\n".join(summary))
     print(f"wasm_stack_budget: {profile:<7} other recursion reachable from eval: "
           + ", ".join(f"{k} {v}" for k, v in sorted(kinds.items())))

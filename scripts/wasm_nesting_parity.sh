@@ -18,9 +18,10 @@
 #         string literals nested in each other's `{...}` slot with 110
 #         parentheses in each, a match guard of 300, 1,000 and 3,000 terms,
 #         an arm body of 3,000 terms, an or-pattern arm body of 5,000, a
-#         `let` inline-refinement predicate of 600 and 3,000 terms, and 100
-#         parentheses nested in each other's 50-term `*` and `+` chains (no
-#         chain past the limit, 10,000 levels together), and a 1,500-term
+#         `let` inline-refinement predicate of 600 and 3,000 terms and of
+#         300 parentheses, and 100 parentheses nested in each other's
+#         50-term `*` and `+` chains (no chain past the limit, 10,000
+#         levels together), and a 1,500-term
 #         chain in a string's `{...}` slot — each exits 2 with E0000
 #         `expression nesting too deep (limit N)` at line 2, col 5, where
 #         its root expression starts. A 100,000-term chain with a dangling
@@ -32,10 +33,14 @@
 #         element's `where` predicate in 300 parentheses) is too deep exits 2
 #         with the same E0000 on line 1, where the refusal happens; so do an
 #         attribute argument's `[` and `-` 300 deep and a top-level handler
-#         definition's `on` pattern 300 `Some(` deep (where each trips), and
-#         a 600-term chain in a tuple element's `where` in a `type`
-#         definition and in a fn parameter (at the token after that type).
-#         Native runs these five: exit 0, `ok`.
+#         definition's `on` pattern 300 `Some(` deep (where each trips), a
+#         600-term chain in a tuple element's `where` in a `type`
+#         definition and in a fn parameter (at the token after that type),
+#         and, at their own first token, the `where` predicate of a `type`
+#         definition and of a fn parameter's type, and a `@[verify(..)]`
+#         predicate, each 300 parentheses deep, and a top-level handler
+#         definition's 600-term arm body. Native runs these nine: exit 0,
+#         `ok`.
 #   ax61  `host_await_val` without a host driver: a closure whose body is a
 #         long chain, passed from depths around the finding's (1-130) under
 #         `with` frames, and a 100,000-node list payload exit 101 (`no host
@@ -274,6 +279,8 @@ ax60)
   src arm3000 "let r = match 3 { _ => 1$(rep ' + 1' 3000) }"
   src or_arm5000 "let r = match 1 { 1 | 2 => 1$(rep ' + 1' 5000), _ => 0 }"
   for n in 600 3000; do src "refine$n" "let x: i64 where _ > 0$(rep ' - 1' "$n") = 5"; done
+  # The predicate 300 parentheses deep: refused at the `let` as well.
+  src refine_paren300 "let x: i64 where $(rep '(' 300)_ > 0$(rep ')' 300) = 1"
   src strchain "let x = \"a\"$(rep ' + "a"' 999)"
   src some_pattern "let x = match 1 { $(rep 'Some(' 300)y$(rep ')' 300) => 1, _ => 0 }"
   src option_type "let x: $(rep 'Option<' 300)i64$(rep '>' 300) = None"
@@ -314,7 +321,7 @@ EOF
   for e in "${RUNS[@]}"; do
     for p in paren300 paren5000 chain chain10000 chain30000 chain100000 strchain some_pattern \
       option_type calls blocks interp guard300 guard1000 guard3000 arm3000 or_arm5000 \
-      refine600 refine3000 compound slot1500; do
+      refine600 refine3000 refine_paren300 compound slot1500; do
       wasm "$e" "$p.ax"
       if [ "$RC" = 2 ] && grep -qF "\"code\":\"E0000\",\"file\":\"$p.ax\",\"line\":2,\"col\":5,\"message\":\"$msg\"" err; then
         echo "  ok  [ax60 $e $p] exit 2, E0000 at 2:5"
@@ -381,8 +388,17 @@ EOF
   # the one past the limit), a top-level handler definition's `on` pattern
   # (the `Some(` past the limit). A chain cut inside a type outside an
   # expression (a `type` definition, a fn parameter) is refused at the
-  # token after the outermost type that holds it. The native interpreter
-  # (axon-run, which prints no warnings) runs each: `ok`, exit 0.
+  # token after the outermost type that holds it. An expression the parser
+  # starts outside every charged level is a root of its own, refused at its
+  # first token: the `where` predicate of a `type` definition or of an
+  # unwrapped fn parameter type, a `@[verify(..)]` predicate (each 300
+  # parentheses deep), a top-level handler definition's arm body (a
+  # 600-term chain). The native interpreter (axon-run, which prints no
+  # warnings) runs each: `ok`, exit 0. It runs on a 64 MiB main-thread
+  # stack: axon-run parses on the main thread, whose default 8 MiB a debug
+  # build overflows at about 200 parentheses (a release build at about
+  # 2,000), short of native's `MAX_EXPR_DEPTH` of 4,000, which is sized for
+  # the CLI's interpreter thread.
   top() { printf '%s\nfn main() -> i64 { println("ok")\n 0 }\n' "$2" >"$1.ax"; }
   top attr_bracket "@[foo(x: $(rep '[' 300)1$(rep ']' 300))]"
   top attr_neg "@[foo(x: $(rep '-' 300)1)]"
@@ -390,9 +406,15 @@ EOF
   ty="(i64 where 1$(rep '+1' 599) > 0)"
   top tdef_chain "type P = $ty where true"
   top fn_param_chain "fn f(x: $ty) -> i64 { 0 }"
-  for p in attr_bracket attr_neg handler_pat tdef_chain fn_param_chain; do
+  pred="$(rep '(' 300)true$(rep ')' 300)"
+  top tdef_pred "type P = i64 where $pred"
+  top fn_pred "fn f(x: i64 where $pred) -> i64 { 0 }"
+  top verify_pred "@[verify($pred)]"
+  top handler_body "handler H = handler { on Net(x) => 1$(rep ' + 1' 599) }"
+  for p in attr_bracket attr_neg handler_pat tdef_chain fn_param_chain tdef_pred fn_pred verify_pred \
+    handler_body; do
     for engine in tree vm; do
-      AXON_ENGINE=$engine "$INTERP" run "$p.ax" </dev/null >out 2>err
+      (ulimit -s 65536 && AXON_ENGINE=$engine exec "$INTERP" run "$p.ax") </dev/null >out 2>err
       RC=$?
       if [ "$RC" = 0 ] && [ "$(cat out)" = ok ]; then
         echo "  ok  [ax60 native/$engine $p] exit 0, ok"
@@ -404,7 +426,8 @@ EOF
   for e in "${RUNS[@]}"; do
     for spec in "attr_bracket:$((10 + LIMIT))" "attr_neg:$((10 + LIMIT))" \
       "handler_pat:$((30 + 5 * LIMIT))" "tdef_chain:$((9 + ${#ty} + 2))" \
-      "fn_param_chain:$((8 + ${#ty} + 1))"; do
+      "fn_param_chain:$((8 + ${#ty} + 1))" "tdef_pred:20" "fn_pred:19" "verify_pred:10" \
+      "handler_body:36"; do
       IFS=: read -r p col <<<"$spec"
       wasm "$e" "$p.ax"
       if [ "$RC" = 2 ] && grep -qF "\"code\":\"E0000\",\"file\":\"$p.ax\",\"line\":1,\"col\":$col,\"message\":\"$msg\"" err; then
