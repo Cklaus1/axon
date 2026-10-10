@@ -1,0 +1,16 @@
+// R51 S0b: a callee's `break` does not end the caller's loop. `stop(i + 1)`
+// compiles to `CallFastLocalInt`; from the second call on it runs on the
+// fast path. The escape is an error at the call, never a silent loop exit.
+fn stop(n: i64) -> i64 {
+    if n > 3 { break }
+    n
+}
+
+fn main() {
+    let i = 0
+    while i < 6 {
+        println(to_str(stop(i + 1)))
+        i = i + 1
+    }
+    println("unreachable: the loop ended silently")
+}

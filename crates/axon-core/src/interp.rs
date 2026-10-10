@@ -604,6 +604,93 @@ pub const RUNTIME_PANIC_EXIT_CODE: i32 = 101;
 
 type R = Result<Value, Flow>;
 
+/// The edge of a frame, named in [`contain_frame`]'s refusal.
+#[derive(Clone, Copy)]
+pub(crate) enum FrameEdge<'a> {
+    /// A named fn's call.
+    Fn(&'a str),
+    /// A closure's call.
+    Closure,
+    /// A refinement or `@[verify]` predicate.
+    Predicate,
+    /// An effect-handler arm.
+    HandlerArm,
+}
+
+impl std::fmt::Display for FrameEdge<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FrameEdge::Fn(name) => write!(f, "`{name}`"),
+            FrameEdge::Closure => f.write_str("a closure"),
+            FrameEdge::Predicate => f.write_str("a predicate"),
+            FrameEdge::HandlerArm => f.write_str("an effect-handler arm"),
+        }
+    }
+}
+
+/// A FRAME EDGE is an allowlist, not a list of known escapes (Protected Check
+/// Isolation 7/8/10/13). A call — named fn or closure — and a predicate
+/// evaluation may end only with a value or with an ABORTIVE flow that
+/// terminates or fails the program. Every flow that TRANSFERS control to some
+/// enclosing construct (`return`, `break`, `continue`, `resume`) is meaningful
+/// only inside the frame that raised it; leaving the frame is an error here,
+/// never a jump in whatever loop or fn the surrounding code is running.
+///
+/// Escapes used to be closed one at a time — `break` out of a callee (FG-063/
+/// 064), out of a predicate (FG-065), then `return` out of a predicate and a
+/// smuggled `resume` closure (PCI candidate-1 review): each ended the caller's
+/// loop or test early as a normal completion. A fn body's own `return` is its
+/// value before this runs. The work is in [`frame_edge`], off the `Ok` path.
+#[inline(always)]
+pub(crate) fn contain_frame(r: R, edge: FrameEdge<'_>) -> R {
+    match r {
+        Ok(v) => Ok(v),
+        Err(f) => Err(frame_edge(f, edge)),
+    }
+}
+
+/// [`contain_frame`]'s classification of a flow reaching a frame edge. The
+/// match has no wildcard, so a new `Flow` variant must be classified here
+/// before the crate compiles.
+#[cold]
+#[inline(never)]
+pub(crate) fn frame_edge(f: Flow, edge: FrameEdge<'_>) -> Flow {
+    let msg = match f {
+        // Transfers: meaningful only inside the frame that raised them.
+        Flow::Return(_) => format!("`return` escaped {edge}"),
+        Flow::Break | Flow::Continue => format!("`break`/`continue` outside a loop in {edge}"),
+        Flow::Resume(_) => format!("`resume` escaped {edge}"),
+        // Abortive: they end or fail the program, so they may cross.
+        // `HandlerDone` finishes the `with` whose arm raised it, which
+        // `eval_with_handler` catches.
+        Flow::Panic(_)
+        | Flow::VerifyFailed(_)
+        | Flow::Halted(_)
+        | Flow::AiPolicyUnreachable(_)
+        | Flow::Exit(_)
+        | Flow::HandlerDone(_)
+        | Flow::MultiShotUnsound(_)
+        | Flow::RefineViolation(_)
+        | Flow::GoalBudgetExhausted(_)
+        | Flow::SandboxViolation(_) => return f,
+    };
+    Flow::Panic(msg.into_boxed_str())
+}
+
+/// Loop control never leaves the frame it was written in: a `break`/`continue`
+/// reaching an effect-handler arm's edge has no loop of its own there and is an
+/// error AT that edge. The arm's other flows (`return`, `resume`, its value)
+/// are its caller's business (`run_handler_arm`). Without this, candidate code
+/// ended an operator test's loop before its assertions ran and the verdict was
+/// signed (v0.22 G01 final reviews, FG-063/064/065).
+#[inline(always)]
+pub(crate) fn contain_loop_control(r: R, edge: FrameEdge<'_>) -> R {
+    match r {
+        Err(Flow::Break) | Err(Flow::Continue) => Err(frame_edge(Flow::Break, edge)),
+        other => other,
+    }
+}
+
 fn panic<T>(msg: impl Into<String>) -> Result<T, Flow> {
     Err(Flow::Panic(msg.into().into_boxed_str()))
 }
@@ -926,6 +1013,12 @@ pub struct Interp<'p> {
     /// fails with a catchable panic rather than overflowing the (large but
     /// finite) interpreter thread stack and aborting the process.
     call_depth: Cell<usize>,
+    /// The call depth of the `@[test]` frame being run (`0` = none), and
+    /// whether THAT frame's body evaluated to its end. The one fact test
+    /// completion is decided on (C9 round 3, PSV-3): not the returned value's
+    /// tag, which a `?` on a type-confused `None` made read as a completion.
+    test_frame_depth: Cell<usize>,
+    test_body_finished: Cell<bool>,
     /// AX-56: on wasm32, the native-stack bytes the interpreter frames live
     /// right now have charged, bounded by `nest_limit` (see [`nest_cost`]).
     #[cfg(target_arch = "wasm32")]
@@ -1656,6 +1749,44 @@ fn scalar_return(entry: &FnEntry<'_>, result: Value) -> Value {
         }
     }
     result
+}
+
+/// [`scalar_return`] behind the `Result`/`Option` check every return boundary
+/// makes. A value whose constructor contradicts the declared `Result`/
+/// `Option` return type is a runtime type confusion (an untyped `dict_get`
+/// yields a free type variable, so a stored `None` type-checks as a
+/// `Result`): refused here, the one boundary every return crosses on both
+/// engines, instead of letting a caller's `?` read it as the other type
+/// (v0.22 C9 round 3, PSV-3).
+#[inline(always)]
+fn sum_return(entry: &FnEntry<'_>, result: Value) -> R {
+    if let Some(sum) = entry.ret_sum {
+        let confused = match sum {
+            RetSum::Result => matches!(result, Value::Some(_) | Value::None),
+            RetSum::Option => matches!(result, Value::Ok(_) | Value::Err(_)),
+        };
+        if confused {
+            return Err(sum_confusion(entry, sum, &result));
+        }
+    }
+    Ok(scalar_return(entry, result))
+}
+
+#[cold]
+#[inline(never)]
+fn sum_confusion(entry: &FnEntry<'_>, sum: RetSum, result: &Value) -> Flow {
+    let declared = match sum {
+        RetSum::Result => "Result",
+        RetSum::Option => "Option",
+    };
+    Flow::Panic(
+        format!(
+            "`{}` is declared to return {declared} but produced {} — a runtime type confusion",
+            entry.def.name,
+            value::display(result)
+        )
+        .into_boxed_str(),
+    )
 }
 
 /// Argument `a` as `entry`'s parameter `i` binds it. Soft typing:
@@ -3423,10 +3554,49 @@ fn run_program_inner(
 /// Returns `Ok(())` if it completed without panicking, or `Err(message)` on a
 /// runtime panic / non-zero `exit`. Used by `axon test` to run tests in-process.
 pub fn run_test_fn(program: &Program, name: &str) -> Result<(), String> {
+    run_test_fn_outcome(program, name).map(|_| ())
+}
+
+/// How a test that did not fail ENDED — the affirmative evidence Protected
+/// Check Isolation rests on. `Completed` means the test body itself returned
+/// normally, with a value that is not an `Err`. That is NOT evidence that every
+/// assertion ran: an assertion inside a closure handed to code that never calls
+/// it does not execute, and the test still completes (PSV-3; a suite must
+/// assert after the call). A
+/// test ended by `exit(0)` from below it, or one that returned `Err`, is
+/// `EndedEarly`: no completion evidence is issued for it, so a check that
+/// requires completion does not count it. `axon test` reports an early end
+/// on a failure value ([`TestEnd::failure_exit`]) as a failure, and any
+/// other early end as passing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TestEnd {
+    Completed,
+    EndedEarly(String),
+}
+
+/// [`TestEnd::EndedEarly`]'s reason for a test that ended on a failure value:
+/// it returned `Err`, or a `return`/`?` ended its body with `Err` or `None`.
+const TEST_ENDED_ON_FAILURE: &str =
+    "the test returned `Err` (or a `?` ended it on `Err`/`None`): it did not complete";
+
+impl TestEnd {
+    /// The reason, when the test ended early on a failure value — an `Err`
+    /// return, or a `?` exit — rather than through `exit(0)` or a plain
+    /// `return`. `axon test` fails such a test (R51 §3: a test passes only
+    /// if its body completed).
+    pub fn failure_exit(&self) -> Option<&str> {
+        match self {
+            TestEnd::EndedEarly(m) if m == TEST_ENDED_ON_FAILURE => Some(m),
+            _ => None,
+        }
+    }
+}
+
+pub fn run_test_fn_outcome(program: &Program, name: &str) -> Result<TestEnd, String> {
     on_deep_stack(|| run_test_fn_inner(program, name))
 }
 
-fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
+fn run_test_fn_inner(program: &Program, name: &str) -> Result<TestEnd, String> {
     let mut interp = Interp::build(program)?;
     if let Err(f) = interp.init_globals() {
         return Err(flow_to_msg(f));
@@ -3434,35 +3604,77 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
     let Some(f) = interp.fns.get(name).copied() else {
         return Err(format!("no function `{name}`"));
     };
-    match interp.call_fn(f, vec![]) {
-        Ok(_) => Ok(()),
-        Err(Flow::Panic(m)) => Err(m.into()),
-        // A verify failure inside a test is still a failure (drives
-        // `@[test(should_fail)]`); surface its message like a panic.
-        Err(Flow::VerifyFailed(m)) => Err(m.into()),
-        // A corrigibility halt inside a test is a failure too (lets
-        // `@[test(should_fail)]` assert the kill-switch latched).
-        Err(Flow::Halted(m)) => Err(m.into()),
-        // An AI-policy stop inside a test is a failure (surfaces like a panic;
-        // also lets `@[test(should_fail)]` assert the policy gate fired).
-        Err(Flow::AiPolicyUnreachable(m)) => Err(m.into()),
-        // A refinement-precondition violation inside a test is a failure too
-        // (lets `@[test(should_fail)]` assert a bad arg is caught).
-        Err(Flow::RefineViolation(m)) => Err(m.into()),
-        // A kernel-goal budget exhaustion inside a test is a failure too (lets
-        // `@[test(should_fail)]` assert the budget ceiling fired).
-        Err(Flow::GoalBudgetExhausted(m)) => Err(m.into()),
-        // A sandbox violation inside a test is a failure (lets
-        // `@[test(should_fail)]` assert the sandbox ceiling fired).
-        Err(Flow::SandboxViolation(m)) => Err(m.into()),
-        Err(Flow::Resume(_)) => Err("`resume` called outside an effect-handler arm".to_string()),
-        // E1314 multi-shot-unsound inside a test is a failure (lets
-        // `@[test(should_fail)]` assert the unsound-replay case is refused).
-        Err(Flow::MultiShotUnsound(m)) => Err(m.into()),
-        Err(Flow::Exit(0)) => Ok(()),
-        Err(Flow::Exit(n)) => Err(format!("exited with code {n}")),
-        // A stray return/break/continue escaping the fn — treat as clean.
-        Err(_) => Ok(()),
+    interp.test_outcome(f)
+}
+
+impl<'p> Interp<'p> {
+    /// Run the `@[test]` fn `f` (globals initialised) and classify how it
+    /// ended: [`run_test_fn_outcome`] after the build.
+    fn test_outcome(&self, f: &'p FnDef) -> Result<TestEnd, String> {
+        self.test_frame_depth.set(self.call_depth.get() + 1);
+        self.test_body_finished.set(false);
+        match self.call_test_fn(f) {
+            // COMPLETED is decided on one fact: the test's own body evaluated to
+            // its end (`call_fn_in_general` records it). A `return` or a `?` is
+            // an ordinary `Ok` at the test's frame, so the returned VALUE cannot
+            // say whether the assertions after it ran: a `?` on a type-confused
+            // `None` returned `None`, which read as a completion and was minted
+            // a token (C9 round 3, PSV-3).
+            Ok(Value::Err(_)) => Ok(TestEnd::EndedEarly(TEST_ENDED_ON_FAILURE.to_string())),
+            Ok(Value::None) if !self.test_body_finished.get() => {
+                Ok(TestEnd::EndedEarly(TEST_ENDED_ON_FAILURE.to_string()))
+            }
+            Ok(_) if !self.test_body_finished.get() => Ok(TestEnd::EndedEarly(
+                "the test body ended early (a `return`): it did not complete".to_string(),
+            )),
+            Ok(_) => Ok(TestEnd::Completed),
+            Err(Flow::Panic(m)) => Err(m.into()),
+            // A verify failure inside a test is still a failure (drives
+            // `@[test(should_fail)]`); surface its message like a panic.
+            Err(Flow::VerifyFailed(m)) => Err(m.into()),
+            // A corrigibility halt inside a test is a failure too (lets
+            // `@[test(should_fail)]` assert the kill-switch latched).
+            Err(Flow::Halted(m)) => Err(m.into()),
+            // An AI-policy stop inside a test is a failure (surfaces like a panic;
+            // also lets `@[test(should_fail)]` assert the policy gate fired).
+            Err(Flow::AiPolicyUnreachable(m)) => Err(m.into()),
+            // A refinement-precondition violation inside a test is a failure too
+            // (lets `@[test(should_fail)]` assert a bad arg is caught).
+            Err(Flow::RefineViolation(m)) => Err(m.into()),
+            // A kernel-goal budget exhaustion inside a test is a failure too (lets
+            // `@[test(should_fail)]` assert the budget ceiling fired).
+            Err(Flow::GoalBudgetExhausted(m)) => Err(m.into()),
+            // A sandbox violation inside a test is a failure (lets
+            // `@[test(should_fail)]` assert the sandbox ceiling fired).
+            Err(Flow::SandboxViolation(m)) => Err(m.into()),
+            Err(Flow::Resume(_)) => {
+                Err("`resume` called outside an effect-handler arm".to_string())
+            }
+            // E1314 multi-shot-unsound inside a test is a failure (lets
+            // `@[test(should_fail)]` assert the unsound-replay case is refused).
+            Err(Flow::MultiShotUnsound(m)) => Err(m.into()),
+            Err(Flow::Exit(0)) => Ok(TestEnd::EndedEarly(
+                "`exit(0)` ended the test before it completed".to_string(),
+            )),
+            Err(Flow::Exit(n)) => Err(format!("exited with code {n}")),
+            // Unreachable: the test's frame ends its own `return` (and
+            // `contain_frame` every other transfer). Kept so the match stays
+            // total; it grants nothing.
+            Err(Flow::Return(_)) => Err("`return` escaped the test's own frame".to_string()),
+            // A `break` / `continue` (or an effect-handler completion) that
+            // escapes a function unwinds the test BEFORE its assertions ran: the
+            // test did not complete, so it did not pass. It used to count as
+            // clean, which let a candidate's function end the operator's
+            // acceptance test early and have Fabric sign a pass (v0.22 G01 final
+            // re-audit, executed).
+            Err(Flow::Break) | Err(Flow::Continue) => Err(
+                "a `break`/`continue` escaped a function and unwound the test before it completed"
+                    .to_string(),
+            ),
+            Err(Flow::HandlerDone(_)) => {
+                Err("an effect handler completed outside its handled computation".to_string())
+            }
+        }
     }
 }
 
@@ -3596,6 +3808,8 @@ impl<'p> Interp<'p> {
             provenance_inputs: RefCell::new(HashMap::new()),
             provenance_inputs_f64: RefCell::new(HashMap::new()),
             call_depth: Cell::new(0),
+            test_frame_depth: Cell::new(0),
+            test_body_finished: Cell::new(false),
             #[cfg(target_arch = "wasm32")]
             nest: Cell::new(0),
             #[cfg(target_arch = "wasm32")]
@@ -3876,6 +4090,28 @@ impl<'p> Interp<'p> {
         result
     }
 
+    /// Run the `@[test]` fn `f` with no arguments, always on
+    /// [`Interp::call_fn_in_general`]: the one path that records whether the
+    /// test frame's body ran to its end (`test_body_finished`), so the
+    /// common call path carries no test check (cost only).
+    fn call_test_fn(&self, f: &'p FnDef) -> R {
+        let owned;
+        let entry = match self.fn_of_def.get(&(f as *const FnDef as usize)) {
+            Some(&i) => &self.fn_table[i as usize],
+            None => {
+                owned = FnEntry::new(f, &self.fns);
+                &owned
+            }
+        };
+        let mut env = self.take_frame();
+        let result = match self.enter_fn(f) {
+            Ok(_guard) => self.call_fn_in_general(entry, Vec::new(), &mut env),
+            Err(flow) => Err(flow),
+        };
+        self.give_frame(env);
+        result
+    }
+
     /// AX-54: an empty call frame from the pool of finished calls' frames, so
     /// a call does not allocate its bindings and scope marks. Boxed, so
     /// taking and returning one moves a pointer, not the frame.
@@ -4039,9 +4275,9 @@ impl<'p> Interp<'p> {
         env.vars.push((SYM_GOAL_MET, Value::Int(0)));
         let result = match self.run_body(entry, env) {
             Ok(v) | Err(Flow::Return(v)) => v,
-            Err(other) => return Err(other),
+            Err(other) => return Err(frame_edge(other, FrameEdge::Fn(&entry.def.name))),
         };
-        Ok(scalar_return(entry, result))
+        sum_return(entry, result)
     }
 
     /// [`Interp::call_fn_in`] for a fn with an attribute-driven step around
@@ -4145,7 +4381,9 @@ impl<'p> Interp<'p> {
                         // Also bind the parameter name (for inline refinements
                         // `p: T where E[p] > k` that use the param name directly).
                         pred_env.define(*s, val.clone());
-                        if let Value::Bool(false) = self.eval(pred, &mut pred_env)? {
+                        if let Value::Bool(false) =
+                            contain_frame(self.eval(pred, &mut pred_env), FrameEdge::Predicate)?
+                        {
                             return Err(Flow::RefineViolation(
                                 format!(
                                     "parameter `{}` of `{}` (= {}) violates the refinement `{}` — \
@@ -4203,6 +4441,12 @@ impl<'p> Interp<'p> {
             } else {
                 self.eval(&f.body, env)
             }
+        } else if self.call_depth.get() == self.test_frame_depth.get() {
+            // PSV-3: the test frame's completion is WHETHER ITS BODY RAN TO
+            // ITS END. A `return` or a `?` (whatever it carried) did not.
+            let r = self.run_test_body(entry, env);
+            self.test_body_finished.set(r.is_ok());
+            r
         } else {
             self.run_body(entry, env)
         };
@@ -4219,9 +4463,13 @@ impl<'p> Interp<'p> {
         let result = match body_result {
             Ok(v) => v,
             Err(Flow::Return(v)) => v,
-            Err(other) => return Err(other),
+            // Loop control never crosses a function boundary: a `break` or
+            // `continue` with no loop of its own in this body is an error
+            // HERE, not a jump in whatever loop the CALLER happens to be
+            // running (v0.22 G01 final re-audit of candidate 2, executed).
+            Err(other) => return Err(frame_edge(other, FrameEdge::Fn(&f.name))),
         };
-        let result = scalar_return(entry, result);
+        let result = sum_return(entry, result)?;
 
         if entry.has_epilogue || !self.refine_preds.is_empty() {
             return self.finish_call_cold(
@@ -4374,7 +4622,9 @@ impl<'p> Interp<'p> {
                     // `env` already holds the param bindings from the body; add
                     // `_` and evaluate against it instead of a bare env.
                     env.define(SYM_UNDERSCORE, result.clone());
-                    if let Value::Bool(false) = self.eval(pred, env)? {
+                    if let Value::Bool(false) =
+                        contain_frame(self.eval(pred, env), FrameEdge::Predicate)?
+                    {
                         return Err(Flow::RefineViolation(
                             format!(
                                 "the return value of `{}` (= {}) violates the refinement return \
@@ -4547,7 +4797,10 @@ impl<'p> Interp<'p> {
                         if let Some(s) = fields.get(SYM_SOURCE_TAG) {
                             pred_env.define(SYM_SOURCE_TAG, s.clone());
                         }
-                        let outcome = self.eval(&spec.predicate, &mut pred_env)?;
+                        let outcome = contain_frame(
+                            self.eval(&spec.predicate, &mut pred_env),
+                            FrameEdge::Predicate,
+                        )?;
                         if let Value::Bool(false) = outcome {
                             return Err(Flow::VerifyFailed(
                                 format!(
@@ -4604,7 +4857,10 @@ impl<'p> Interp<'p> {
                     // Composite predicate: bind `value` to the scalar and evaluate.
                     let mut pred_env = Env::new();
                     pred_env.define(SYM_VALUE, result.clone());
-                    let outcome = self.eval(&spec.predicate, &mut pred_env)?;
+                    let outcome = contain_frame(
+                        self.eval(&spec.predicate, &mut pred_env),
+                        FrameEdge::Predicate,
+                    )?;
                     if let Value::Bool(false) = outcome {
                         return Err(Flow::VerifyFailed(format!("verify failed in {}: composite predicate did not hold (value {}{})",
                         verify_fn_label(&f.name),
@@ -4716,7 +4972,9 @@ impl<'p> Interp<'p> {
                 frame.define_var(code.params[i], slot, v);
             });
         }
-        let out = self.run_lambda(code, &mut env);
+        // A closure's own `return` ends the closure (`run_lambda`); every
+        // other transfer is refused at its edge, as for a named fn.
+        let out = contain_frame(self.run_lambda(code, &mut env), FrameEdge::Closure);
         // The base scope holds exactly the cell's bindings, in the cell's
         // order: a `let` introduced inside the body lives in a pushed scope and
         // must not leak into the capture, and a parameter shadowing a captured
@@ -5270,13 +5528,21 @@ fn make_uncertain(value: Value, confidence: f64) -> Value {
     make_uncertain_tagged(value, confidence, SRC_TAG_USER)
 }
 
+/// An `Uncertain` whose value came from a MODEL (`ai_extract_uncertain_*`, on
+/// the mock, replay and live paths alike). Stamps 1, as codegen does. These
+/// paths used `make_uncertain` and so stamped 0 — a model's answer read as
+/// user-constructed under `axon run`, the fail-open direction for a provenance
+/// field (UPGRADE_V0_20.md D-014).
+fn make_uncertain_ai(value: Value, confidence: f64) -> Value {
+    make_uncertain_tagged(value, confidence, SRC_TAG_AI)
+}
+
 /// `source_tag` values, as stamped by codegen. These are OBSERVABLE — the
 /// checker lists `source_tag` as a field of `Uncertain<T>` and both engines
 /// let a program read `u.source_tag` — so the interpreter must stamp the same
 /// number codegen does, or a program that branches on provenance takes a
 /// different branch under `axon run` than under `axon build`.
 pub(crate) const SRC_TAG_USER: i64 = 0;
-#[allow(dead_code)] // codegen stamps 1; the interp AI path is E0910-refused natively
 pub(crate) const SRC_TAG_AI: i64 = 1;
 pub(crate) const SRC_TAG_RUNTIME: i64 = 2;
 
@@ -6480,6 +6746,283 @@ fn main() { }
         // so unix_socket_roundtrip is never invoked.
         let code = super::run_suspendable_hypercall(&prog);
         assert_eq!(code, 0);
+    }
+
+    // ── R51 S0b: veto's non-seal interpreter fixes, on every engine ────────
+
+    /// `name`'s outcome as [`run_test_fn_outcome`] reports it, on one engine
+    /// (`eager`: the VM compiles every body on its first entry).
+    fn outcome_on(
+        prog: &Program,
+        name: &str,
+        engine: Engine,
+        eager: bool,
+    ) -> Result<TestEnd, String> {
+        on_deep_stack(|| {
+            let mut ix = Interp::build(prog)?;
+            ix.engine = engine;
+            ix.vm_eager = eager;
+            if let Err(f) = ix.init_globals() {
+                return Err(flow_to_msg(f));
+            }
+            let Some(f) = ix.fns.get(name).copied() else {
+                return Err(format!("no function `{name}`"));
+            };
+            ix.test_outcome(f)
+        })
+    }
+
+    /// `name`'s outcome on the tree, which the eager VM and the default VM
+    /// must reproduce exactly (R51 §3: each fix holds on both engines).
+    fn outcome(prog: &Program, name: &str) -> Result<TestEnd, String> {
+        let tree = outcome_on(prog, name, Engine::Tree, false);
+        for eager in [true, false] {
+            assert_eq!(
+                outcome_on(prog, name, Engine::Vm, eager),
+                tree,
+                "{name}: the VM (eager: {eager}) disagrees with the tree"
+            );
+        }
+        tree
+    }
+
+    /// v0.22 G01 final re-audit: a `break` escaping a function called by a
+    /// test used to count as a clean pass, so candidate code could end an
+    /// acceptance test before its assertion ran. It is a failure now; a test
+    /// that completes still passes.
+    #[test]
+    fn an_escaped_break_or_continue_does_not_pass_a_test() {
+        let prog = crate::parse_source(
+            "fn stop(n: i64) -> i64 {\n    if n > 0 { break }\n    n\n}\n\
+             fn skip(n: i64) -> i64 {\n    if n > 0 { continue }\n    n\n}\n\
+             @[test]\nfn t_break() { assert_eq(stop(1), 99) }\n\
+             @[test]\nfn t_continue() { assert_eq(skip(1), 99) }\n\
+             @[test]\nfn t_ok() { assert_eq(stop(0), 0) }\n",
+        )
+        .expect("parses");
+        assert!(outcome(&prog, "t_break").is_err());
+        assert!(outcome(&prog, "t_continue").is_err());
+        assert!(outcome(&prog, "t_ok").is_ok());
+        // Candidate 2's blocker: the escape lands in a loop the TEST owns. It
+        // must not end that loop and skip the assertions (while, for, and
+        // through a closure).
+        let prog = crate::parse_source(
+            "fn stop(n: i64) -> i64 {\n    if n > 0 { break }\n    n\n}\n\
+             fn skip(n: i64) -> i64 {\n    if n > 0 { continue }\n    n\n}\n\
+             @[test]\nfn t_while() {\n    let i = 1\n    while i < 4 {\n        assert_eq(stop(i), 99)\n        i = i + 1\n    }\n}\n\
+             @[test]\nfn t_for() {\n    for i in 1..4 {\n        assert_eq(skip(i), 99)\n    }\n}\n\
+             @[test]\nfn t_closure() {\n    let g = |n: i64| { if n > 0 { break }  n }\n    for i in 1..4 {\n        assert_eq(g(i), 99)\n    }\n}\n\
+             @[test]\nfn t_own_loop_ok() {\n    let i = 0\n    while true {\n        i = i + 1\n        if i > 2 { break }\n    }\n    assert_eq(i, 3)\n}\n",
+        )
+        .expect("parses");
+        for t in ["t_while", "t_for", "t_closure"] {
+            assert!(outcome(&prog, t).is_err(), "{t} passed");
+        }
+        assert_eq!(
+            outcome(&prog, "t_own_loop_ok"),
+            Ok(TestEnd::Completed),
+            "a test's own break still works"
+        );
+        // The property-test runner had the same hole.
+        let prog = crate::parse_source(
+            "fn stop(n: i64) -> i64 {\n    break\n    n\n}\n\
+             @[test]\n@[forall]\nfn p(n: i64) { assert_eq(stop(n), 99) }\n",
+        )
+        .expect("parses");
+        assert!(
+            matches!(
+                proptest::run_property_test(&prog, "p", 5),
+                proptest::PropertyOutcome::Failed { .. }
+            ),
+            "an escaped break passed a property case"
+        );
+    }
+
+    /// M58's own property: a `break`/`continue` raised in a named FUNCTION
+    /// BODY does not escape into the caller's loop. Each caller loops, so on
+    /// the VM the later calls run through the fast call paths.
+    #[test]
+    fn an_escaped_break_or_continue_from_a_function_body_does_not_pass_a_test() {
+        let prog = crate::parse_source(
+            "fn stop(n: i64) -> i64 {\n    if n > 0 { break }\n    n\n}\n\
+             fn skip(n: i64) -> i64 {\n    if n > 0 { continue }\n    n\n}\n\
+             @[test]\nfn t_break() { assert_eq(stop(1), 99) }\n\
+             @[test]\nfn t_continue() { assert_eq(skip(1), 99) }\n\
+             @[test]\nfn t_while() {\n    let i = 1\n    while i < 4 {\n        assert_eq(stop(i), 99)\n        i = i + 1\n    }\n}\n\
+             @[test]\nfn t_for() {\n    for i in 1..4 {\n        assert_eq(skip(i), 99)\n    }\n}\n\
+             @[test]\nfn t_ok() { assert_eq(stop(0), 0) }\n",
+        )
+        .expect("parses");
+        for t in ["t_break", "t_continue", "t_while", "t_for"] {
+            assert!(
+                outcome(&prog, t).is_err(),
+                "ATTACK: `{t}` passed: a break/continue escaped a function body"
+            );
+        }
+        assert!(outcome(&prog, "t_ok").is_ok(), "control: t_ok");
+    }
+
+    /// Candidate 4's final-review blocker (executed): a `break` in a candidate
+    /// function's parameter/return refinement, `@[verify]` predicate, or a
+    /// candidate type's struct refinement escaped the call and ended the
+    /// operator test's loop. Loop control is contained at every frame edge now.
+    #[test]
+    fn loop_control_does_not_escape_through_a_predicate() {
+        let cases = [
+            (
+                "return refinement",
+                "fn solve(n: i64) -> (i64 where if n > 0 { break } else { true }) { 0 }\n",
+            ),
+            (
+                "param refinement",
+                "fn solve(n: i64 where if n > 0 { break } else { true }) -> i64 { 0 }\n",
+            ),
+            (
+                "verify",
+                "@[verify(if value == 0 { break } else { true })]\nfn solve(n: i64) -> i64 { 0 }\n",
+            ),
+        ];
+        let mut passed = Vec::new();
+        for (why, def) in cases {
+            let src = format!(
+                "{def}@[test]\nfn t() {{\n    let i = 1\n    while i < 4 {{\n        assert_eq(solve(i), 42)\n        i = i + 1\n    }}\n}}\n"
+            );
+            let prog = crate::parse_source(&src).expect("parses");
+            if outcome(&prog, "t").is_ok() {
+                passed.push(why);
+            }
+        }
+        let prog = crate::parse_source(
+            "type Arg = { n: i64 } where if _.n > 0 { break } else { true }\n\
+             @[test]\nfn t() {\n    for i in 1..4 {\n        let a = Arg { n: i }\n        assert_eq(a.n, 42)\n    }\n}\n",
+        )
+        .expect("parses");
+        if outcome(&prog, "t").is_ok() {
+            passed.push("struct refinement");
+        }
+        assert!(
+            passed.is_empty(),
+            "these escapes passed the test: {passed:?}"
+        );
+    }
+
+    /// PCI 11/12/13: the affirmative completion point. `run_test_fn_outcome`
+    /// reports the early ends as `EndedEarly`, never `Completed`; `axon test`
+    /// fails the ones that ended on a failure value (R51 §3, `t_err`/`t_q`).
+    #[test]
+    fn a_test_completes_only_when_its_body_returns_normally() {
+        let prog = crate::parse_source(
+            "fn bail(n: i64) -> i64 {\n    if n > 0 { exit(0) }\n    n\n}\n\
+             fn early(n: i64) -> i64 {\n    if n > 0 { return 5 }\n    n\n}\n\
+             @[test]\nfn t_done() { assert_eq(early(0), 0) }\n\
+             @[test]\nfn t_exit() { assert_eq(bail(1), 99) }\n\
+             @[test]\nfn t_err() -> Result<i64, str> { Err(\"no\") }\n\
+             @[test]\nfn t_q() -> Result<i64, str> {\n    let n = parse_int(\"x\")?\n    assert_eq(n, 99)\n    Ok(n)\n}\n\
+             @[test]\nfn t_ok() -> Result<i64, str> { Ok(1) }\n\
+             @[test]\nfn t_return() { assert_eq(early(1), 99) }\n\
+             @[test]\nfn t_closure_return() {\n    let g = |n: i64| { if n > 0 { return 5 }  n }\n    assert_eq(g(1), 99)\n}\n",
+        )
+        .expect("parses");
+        assert_eq!(outcome(&prog, "t_done"), Ok(TestEnd::Completed));
+        assert_eq!(outcome(&prog, "t_ok"), Ok(TestEnd::Completed));
+        for t in ["t_exit", "t_err", "t_q"] {
+            let end = outcome(&prog, t);
+            assert!(matches!(end, Ok(TestEnd::EndedEarly(_))), "{t}: {end:?}");
+        }
+        for t in ["t_err", "t_q"] {
+            let end = outcome(&prog, t).expect("ended");
+            assert!(end.failure_exit().is_some(), "{t}: {end:?}");
+        }
+        let exit = outcome(&prog, "t_exit").expect("ended");
+        assert!(exit.failure_exit().is_none(), "t_exit: {exit:?}");
+        // PCI 8: a callee's `return` ends the callee, never the test — the
+        // assertion after it still runs and fails.
+        for t in ["t_return", "t_closure_return"] {
+            let end = outcome(&prog, t);
+            assert!(end.is_err(), "{t}: {end:?}");
+        }
+        // A property case that `exit(0)`s did not complete either.
+        let prog = crate::parse_source(
+            "fn bail(n: i64) -> i64 {\n    exit(0)\n    n\n}\n\
+             @[test]\n@[forall]\nfn p(n: i64) { assert_eq(bail(n), 99) }\n",
+        )
+        .expect("parses");
+        assert!(
+            matches!(
+                proptest::run_property_test(&prog, "p", 5),
+                proptest::PropertyOutcome::Failed { .. }
+            ),
+            "an exit(0) property case passed"
+        );
+    }
+
+    /// C9 round 3, PSV-3: a test is COMPLETED only when its body evaluated to
+    /// its end. A `?` on a type-confused `None` returned `None` from the
+    /// test, which is not an `Err`, so the returned VALUE read as a
+    /// completion. `t_find` is the route where the completion rule is the
+    /// ONLY guard: an `Option`-returning test whose `?` meets an honest
+    /// `None` returns a well-typed `None`. (Veto ran the candidate sealed;
+    /// the rule is the interpreter's, so here suite and candidate are one
+    /// unsealed program.)
+    #[test]
+    fn a_test_ended_by_question_mark_is_never_completed() {
+        let suite = "@[test]\nfn t_solve() -> Result<i64, str> {\n    let f = solver()\n    let v = f(21)?\n    assert_eq(v, 42)\n    Ok(v)\n}\n\
+                     @[test]\nfn t_find() -> Option<i64> {\n    let v = find(21)?\n    assert_eq(v, 42)\n    Some(v)\n}\n";
+        let honest = "fn solver() -> fn(i64) -> Result<i64, str> { |x: i64| Ok(x * 2) }\nfn find(x: i64) -> Option<i64> { Some(x * 2) }\n";
+        let err = "fn solver() -> fn(i64) -> Result<i64, str> { |x: i64| Err(\"no\") }\nfn find(x: i64) -> Option<i64> { Some(x) }\n";
+        let confused = "fn solver() -> fn(i64) -> Result<i64, str> {\n    |x: i64| {\n        let d = dict_new()\n        let n: Option<i64> = None\n        dict_set(d, \"k\", n)\n        match dict_get(d, \"k\") { Some(v) => v  None => Err(\"u\") }\n    }\n}\nfn find(x: i64) -> Option<i64> { None }\n";
+        let run = |cand: &str, t: &str| {
+            let prog = crate::parse_source(&format!("{cand}{suite}")).expect("parses");
+            outcome(&prog, t)
+        };
+        for t in ["t_solve", "t_find"] {
+            assert_eq!(run(honest, t), Ok(TestEnd::Completed), "control: {t}");
+        }
+        assert!(
+            matches!(run(err, "t_solve"), Ok(TestEnd::EndedEarly(_))),
+            "control: an honest Err ends the test early"
+        );
+        assert!(run(err, "t_find").is_err(), "control: wrong fails");
+        for t in ["t_solve", "t_find"] {
+            let out = run(confused, t);
+            assert!(
+                out != Ok(TestEnd::Completed),
+                "ATTACK: a test that ended early at `?` was counted complete ({t}): {out:?}"
+            );
+        }
+    }
+
+    /// C9 round 3, PSV-3: a `fn` declared `-> Result` never hands its caller a
+    /// `None` (nor an `Option` fn an `Ok`/`Err`). An untyped `dict_get` gives
+    /// a free type variable, so a stored `None` type-checks as the `Result`.
+    /// Refused at the return boundary, the test FAILS on the confusion
+    /// instead of ending early.
+    #[test]
+    fn a_declared_result_fn_never_returns_an_option() {
+        let suite = "@[test]\nfn t_solve() -> Result<i64, str> {\n    let v = solve(21)?\n    assert_eq(v, 42)\n    Ok(v)\n}\n";
+        let confused = "fn solve(x: i64) -> Result<i64, str> {\n    let d = dict_new()\n    let n: Option<i64> = None\n    dict_set(d, \"k\", n)\n    match dict_get(d, \"k\") {\n        Some(v) => v\n        None => Err(\"unreachable\")\n    }\n}\n";
+        let honest = "fn solve(x: i64) -> Result<i64, str> { Ok(x * 2) }\n";
+        let run = |cand: &str, suite: &str, t: &str| {
+            let prog = crate::parse_source(&format!("{cand}{suite}")).expect("parses");
+            outcome(&prog, t)
+        };
+        assert_eq!(
+            run(honest, suite, "t_solve"),
+            Ok(TestEnd::Completed),
+            "control"
+        );
+        let out = run(confused, suite, "t_solve");
+        assert!(
+            matches!(&out, Err(m) if m.contains("runtime type confusion")),
+            "ATTACK: a fn declared -> Result returned a None across its boundary: {out:?}"
+        );
+        let opt = "@[test]\nfn t_find() -> Option<i64> {\n    let v = find(21)?\n    Some(v)\n}\n";
+        let confused_opt = "fn find(x: i64) -> Option<i64> {\n    let d = dict_new()\n    let e: Result<i64, str> = Ok(42)\n    dict_set(d, \"k\", e)\n    match dict_get(d, \"k\") { Some(v) => v  None => None }\n}\n";
+        let out = run(confused_opt, opt, "t_find");
+        assert!(
+            matches!(&out, Err(m) if m.contains("runtime type confusion")),
+            "an Option fn returned an Ok across its boundary: {out:?}"
+        );
     }
 }
 

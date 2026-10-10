@@ -1,9 +1,9 @@
 {
   "spec": "governance/specs/R51-sealed-engine-unification.md",
   "about": "Tests deferred by R51 S0 (merge with the refuse-all pin). Each carries #[ignore = \"R51 <slice>: <reason>\"]; `slice` is the slice that ports what the test exercises. Every sealed run is refused until S6 flips SEAL_RUNTIME_COMPLETE, so a test whose control is an honest sealed run re-enables at S6 at the earliest; S6 empties this list. crates/axon-core/tests/r51_deferred_tests.rs fails if this list and the ignored set differ.",
-  "count": 192,
+  "count": 188,
   "by_slice": {
-    "S0b": 18,
+    "S0b": 14,
     "S5": 2,
     "S2": 8,
     "S3": 78,
@@ -12,34 +12,10 @@
   },
   "tests": [
     {
-      "name": "ai_extract_uncertain_is_stamped_ai_sourced_on_mock_and_replay_paths",
-      "file": "crates/axon-core/tests/cli_run.rs",
-      "slice": "S0b",
-      "reason": "needs the interpreter to stamp ai_extract_uncertain_* results source_tag 1"
-    },
-    {
-      "name": "uncertain_arithmetic_keeps_the_least_trusted_source_tag",
-      "file": "crates/axon-core/tests/cli_run.rs",
-      "slice": "S0b",
-      "reason": "needs the interpreter's least-trusted-operand source_tag on Uncertain binops"
-    },
-    {
-      "name": "a_failure_is_keyed_in_its_own_domain",
-      "file": "crates/axon-core/tests/psv_test_selection.rs",
-      "slice": "S0b",
-      "reason": "its pass control needs a completion token (TestEnd / run_test_fn_outcome)"
-    },
-    {
       "name": "a_test_that_ends_early_at_question_mark_is_never_ok",
       "file": "crates/axon-core/tests/psv_test_selection.rs",
       "slice": "S0b",
       "reason": "completion token for an honest sealed pass needs TestEnd; its sealed control is also refused until S6"
-    },
-    {
-      "name": "only_a_completed_test_is_issued_a_completion_token",
-      "file": "crates/axon-core/tests/test_completion.rs",
-      "slice": "S0b",
-      "reason": "completion evidence needs TestEnd / run_test_fn_outcome; until then no pass carries a completion token"
     },
     {
       "name": "a_replay_is_never_signed_not_even_a_genuine_one",

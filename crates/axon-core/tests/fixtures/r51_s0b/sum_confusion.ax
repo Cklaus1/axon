@@ -1,0 +1,30 @@
+// R51 S0b: a fn declared `-> Result` never hands its caller a `None` (an
+// untyped `dict_get` makes a stored `None` type-check as the Result). The
+// fast path refuses it as the tree does.
+fn solve(x: i64) -> Result<i64, str> {
+    if x < 3 {
+        return Ok(x * 2)
+    }
+    let d = dict_new()
+    let n: Option<i64> = None
+    dict_set(d, "k", n)
+    match dict_get(d, "k") {
+        Some(v) => v
+        None => Err("unreachable")
+    }
+}
+
+fn run(x: i64) -> Result<i64, str> {
+    let v = solve(x)?
+    Ok(v + 1)
+}
+
+fn main() {
+    for i in 0..5 {
+        match run(i) {
+            Ok(v) => println(to_str(v))
+            Err(e) => println(e)
+        }
+    }
+    println("unreachable: the confusion crossed the boundary")
+}

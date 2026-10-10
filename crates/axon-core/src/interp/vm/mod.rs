@@ -1297,6 +1297,29 @@ impl<'p> Interp<'p> {
         }
     }
 
+    /// [`Interp::run_body`] for the `@[test]` frame (`call_fn_in_general`):
+    /// the same engine and first-entry choice, but a `return` or `?` out of
+    /// the body stays `Err(Flow::Return(v))` on both engines (the VM's
+    /// [`Interp::exec`] ends it as `Ok(v)`), so the test runner can tell a
+    /// body that ran to its end from one that ended early (`TestEnd`). Once
+    /// per test, so off the call path.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn run_test_body(&self, entry: &FnEntry<'_>, env: &mut Env) -> R {
+        nest_guard!(self, RUN_BODY_TREE);
+        if self.engine == Engine::Vm {
+            let body = match entry.compiled.as_ref().and_then(std::cell::OnceCell::get) {
+                Some(body) => Some(body),
+                None if !self.first_entry_on_tree(entry) => self.compile_body(entry)?,
+                None => None,
+            };
+            if let Some(body) = body.filter(|body| !body.lone_tree()) {
+                return self.exec_raw(body, env);
+            }
+        }
+        self.eval(&entry.def.body, env)
+    }
+
     /// Compile a fn-table body on the entry that compiles it (S9's second
     /// entry, or the first when hot or eager). `Ok(None)` when the compiler
     /// found the wasm32 stack budget spent; the caller then runs the body on
@@ -1449,6 +1472,17 @@ impl<'p> Interp<'p> {
     /// does not pay a call into it (cost only).
     #[inline(always)]
     pub(super) fn exec(&self, body: &Body<'_>, env: &mut Env) -> R {
+        match self.exec_raw(body, env) {
+            Err(Flow::Return(v)) => Ok(v),
+            out => out,
+        }
+    }
+
+    /// [`Interp::exec`] without ending a `Flow::Return(v)` at the body: the
+    /// `@[test]` frame's body ([`Interp::run_test_body`]) keeps it, as the
+    /// tree-walker's body does.
+    #[inline(always)]
+    fn exec_raw(&self, body: &Body<'_>, env: &mut Env) -> R {
         // A pooled frame's stack keeps the capacity it grew to; a new one
         // starts at the body's height so it does not regrow while the body
         // runs.
@@ -1488,10 +1522,7 @@ impl<'p> Interp<'p> {
                 std::mem::forget(old);
             }
         }
-        match out {
-            Err(Flow::Return(v)) => Ok(v),
-            out => out,
-        }
+        out
     }
 
     /// [`Interp::exec`] for a fast call (S5): the body runs on the caller's
@@ -2853,8 +2884,10 @@ impl<'p> Interp<'p> {
             },
             _ => return None,
         };
+        // A confused `Result`/`Option` declines: the full path refuses it.
+        let v = sum_return(entry, v).ok()?;
         self.set_call_tier(None);
-        Some(scalar_return(entry, v))
+        Some(v)
     }
 
     /// The rest of a fast call once the parameters are bound, as
@@ -2868,7 +2901,7 @@ impl<'p> Interp<'p> {
             // A leaf body never sees `goal_met` (it declines one that names
             // it), so it is not bound for one (cost only).
             Some(body) if !body.lone_tree() => match body.leaf_value(env, true) {
-                Some(v) => return Ok(scalar_return(entry, v)),
+                Some(v) => return sum_return(entry, v),
                 None => match self.leaf_store(body, env) {
                     Some(out) => out,
                     None => {
@@ -2884,8 +2917,10 @@ impl<'p> Interp<'p> {
             }
         };
         match out {
-            Ok(v) | Err(Flow::Return(v)) => Ok(scalar_return(entry, v)),
-            Err(other) => Err(other),
+            Ok(v) | Err(Flow::Return(v)) => sum_return(entry, v),
+            // Loop control never crosses a function boundary (as
+            // `call_fn_common`): every fast call ends here.
+            Err(other) => Err(frame_edge(other, FrameEdge::Fn(&entry.def.name))),
         }
     }
 
