@@ -2,9 +2,13 @@
   "schema": "axon-v022-release-claims/1",
   "purpose": "G29-r22-claim-separation: the repository's OWN v0.22 release claims, as three separate fields. Each is true only when it cites evidence of its own kind; absence of that evidence leaves it false. None implies another: an engineering qualification is not a policy activation, and neither is a measured improvement. Validated by scripts/v022_claim_separation.py (invoked by scripts/gate.sh).",
   "engineering_qualified": {
-    "claimed": false,
-    "evidence": null,
-    "note": "Requires a RELEASE-VERIFIED receipt (scripts/release_check.sh) at the claimed revision. Not yet: FG-042 open, B263 unsigned."
+    "claimed": true,
+    "evidence": {
+      "kind": "release_verified_receipt",
+      "revision": "d8e8206e3e730330e3589b68caa2b9276093b6a7",
+      "receipt": "gpumaster:/var/tmp/axon-evidence/jobs/ig15-strict2/clone/.axon-runs/strict-v022-20261010T070811Z-2160269 (gate.sh --strict via run_managed --snapshot; exited:0; 350 suites started and reported; 6236 passed, 0 failed; verify --for d8e8206e: CITABLE; scripts/release_check.sh d8e8206e: RELEASE-VERIFIED)"
+    },
+    "note": "Engineering qualification of the v0.22 DEV-profile candidate only. The protected path is built but uncertified (governance/specs/v022-ADR-003-protected-certification-deferral.md): no freeze, no signatures, no guest boot test, no certifying review. The strict gate skipped 9 harnesses that measured nothing on this host (Android x2, no-codegen axon build and to_str parity, two axon-vm cases, b263_qualify, loop_interop_gate, v022_micode_gates) and had no built guest image. Not merged with origin/main: main's R50 interpreter rewrite needs a port of the taint/seal machinery first (separate task)."
   },
   "policy_activated": {
     "claimed": false,
