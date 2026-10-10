@@ -1,3 +1,4 @@
+{ __opkit_so=$-; set +xvTE; } </dev/null >/dev/null 2>&1
 # opkit_ns.sh — the ONLY way a test may run the operator deployment kit
 # (scripts/operator_deploy_protected_host.sh), a controlled-build verb, or one of the mutating verbs the drift gate lists
 # (scripts/opkit_ns_drift.py: MUTATORS and HOST_VERBS) aimed at a real destination. Amendment 113: this used to say "any other
@@ -116,18 +117,41 @@
 # ── amendment 118: the refusal text is never written through a descriptor the helper has not vetted ──────────────────────
 # Incident 2026-10-09 01:14:46: a caller opened the real /etc/passwd READ-WRITE on fd 2 and ran ns_run. The helper classified
 # fd 2 as "a WRITABLE regular file outside the caller's scratch" -- and then wrote that verdict INTO IT (the first five lines of
-# /etc/passwd became two lines of refusal text). Fix at the source: NOTHING in this file writes to fd 1 or fd 2 except through
-# opkit_say, and opkit_say writes to fd 2 only if the SAME classifier that guards the command accepts fd 2 as a destination.
-# When it does not, the text goes to the controlling terminal if one opens, else NOWHERE: the exit code (97) is the signal.
-# The classifier (opkit_ns_fd_why) uses READS only (readlink, stat, /proc/PID/fdinfo) and sets OPKIT_FD_WHY; it never prints.
-# Order inside ns_run: classify fds 0-2 -> only then emit anything -> only then unshare, mount, run tools whose own stderr
-# would also land on fd 2. Value-returning functions write their value to stdout for a command substitution; the drift gate
-# (scripts/opkit_ns_drift.py, check_diagnostics) lists the functions allowed to do that and flags every other fd 1/2 write.
-OPKIT_DIAG_ROOTS=""   # the validated OPKIT_RW/OPKIT_SCRATCH: a writable regular file under one of them is an accepted log; empty before validation
+# /etc/passwd became two lines of refusal text). Fix at the source: no line of THIS FILE'S OWN CODE writes to fd 1 or fd 2 except
+# through opkit_say (the drift gate holds that), and opkit_say writes to fd 2 only if the SAME classifier that guards the command
+# accepts fd 2 as a destination. When it does not, the text goes to the controlling terminal if one opens, else NOWHERE: the exit
+# code (97) is the signal.
+#
+# ── amendment 120: that sentence was not the whole truth ─────────────────────────────────────────────────────────────────────
+# The helper's functions run IN THE CALLER'S SHELL, and bash itself writes to fd 2 on the caller's behalf: `set -x` (or an exported
+# SHELLOPTS=xtrace, a BASH_ENV file that says `set -x`, BASH_XTRACEFD=2) made bash print every command of this file, one trace
+# line each, to fd 2 BEFORE the classifier had looked at it -- so a refused read-write /etc/passwd on fd 2 was overwritten by the
+# trace of the helper's own code, exit 97, the command never run, the incident's outcome by another hand. What is TRUE now:
+#   * the helper disables the shell's own diagnostics that would write to a descriptor before it is classified, on EVERY entry:
+#     line 1 of this file (source time) and the first statement of EVERY function (the drift gate requires both) is
+#         { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+#     `local -` makes the option change local to the function (the caller's -x/-v/-T/-E come back when it returns, and at the end
+#     of this file for the source-time guard); the group's redirections send what bash prints about the guard ITSELF (the xtrace
+#     line of `local -`, a DEBUG trap the caller set, a PS4 command substitution) to /dev/null; +x +v stop xtrace and verbose, +T
+#     stops DEBUG/RETURN traps being inherited by the helper's functions, +E stops the caller's ERR trap being inherited;
+#   * the inner shell is `env -u SHELLOPTS -u BASH_ENV -u BASH_XTRACEFD -u BASHOPTS -u ENV -u PS4 -u BASH_COMPAT bash --noprofile
+#     --norc` and begins with `set +o xtrace +o verbose`, so nothing the caller exported steers it either;
+#   * the command the caller asked for also runs without those variables (the environment of a hermetic run is the helper's).
+# WHAT REMAINS, stated (each measured in scripts/test_opkit_ns.sh on scratch victims): (a) a caller that sets BASH_XTRACEFD to a
+# descriptor OTHER than 0-2 has named a trace channel of its own, and the guard cannot run before bash traces the guard's own
+# statements to it: two lines at source time (`++ __opkit_so=..`, `++ set +xvTE`) and two at the first entry of a function (`+ local -`,
+# `+ set +xvTE`); nothing of the helper's code beyond those. The classifier looks only at fds 0-2. (b) `set -v` in the SOURCING shell
+# makes bash echo each line it reads, so line 1 of this file (and no other: the guard is its first statement) is echoed to the
+# sourcing shell's fd 2 before any code of the helper runs. (c) A DEBUG or RETURN trap of a caller with `set -T`, an ERR trap of a
+# caller with `set -E`, runs the CALLER's code inside the helper's functions (a trap is inherited at function entry; the guard's +T/+E
+# cannot take it back for the function already entered); without -T/-E the traps are not inherited and nothing runs (measured). That
+# code is the caller's own, as a `echo x >&2` the caller wrote in its own script would be; it is not bash printing the helper's code.
+OPKIT_DIAG_ROOTS=()   # the validated OPKIT_RW/OPKIT_SCRATCH, ONE ELEMENT EACH (amendment 120: never expanded unquoted): a writable regular file under one of them is an accepted log; empty before validation
 
 # A descriptor the command would inherit that is a way around the shadows: sets OPKIT_FD_WHY and returns 1. Prints NOTHING.
 opkit_ns_fd_why() { # N [ROOTS...]  (a writable regular file is accepted only under one of ROOTS)
-  local n=$1 p=/proc/$BASHPID/fd/$1 flags acc t rt typ   # $BASHPID: "self" inside $( ) is the child
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  local n=$1 p=/proc/$BASHPID/fd/$1 flags acc t rt typ nl   # $BASHPID: "self" inside $( ) is the child
   shift
   OPKIT_FD_WHY=""
   [ -e "$p" ] || return 0
@@ -147,6 +171,11 @@ opkit_ns_fd_why() { # N [ROOTS...]  (a writable regular file is accepted only un
     [ -n "$flags" ] || { OPKIT_FD_WHY="LEAK: descriptor $n: its open mode cannot be read"; return 1; }
     acc=$(( 8#$flags & 3 ))
     if [ "$acc" != 0 ]; then
+      # amendment 120: classify by INODE, not only by name. A hard link to a host-style file, created INSIDE the caller's scratch,
+      # has a path under a root and the host file's inode: the name says "scratch", the inode is the host's. A second name for the
+      # inode is refused whatever its path (an unreadable count fails closed).
+      nl=$(stat -L -c '%h' -- "$p" 2>/dev/null)
+      case "$nl" in 1) ;; *) OPKIT_FD_WHY="LEAK: descriptor $n is a WRITABLE regular file with ${nl:-an unreadable number of} names (a hard link): its path says nothing about whose inode it is"; return 1 ;; esac
       t=$(readlink -f -- "$p" 2>/dev/null)
       for rt in "$@"; do
         [ -n "$rt" ] && case "$t" in "$rt"/*) return 0 ;; esac
@@ -157,15 +186,31 @@ opkit_ns_fd_why() { # N [ROOTS...]  (a writable regular file is accepted only un
   return 0
 }
 
+# Amendment 120: the roots are an ARRAY, one element per validated directory, never a string that is split again. Built only from
+# directories opkit_scratch_check accepted (which refuses whitespace and glob characters), with globbing off while it is built.
+opkit_diag_roots_set() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  local r
+  set -f
+  OPKIT_DIAG_ROOTS=()
+  for r in ${OPKIT_RW:-}; do
+    [ -z "$r" ] || OPKIT_DIAG_ROOTS+=("$r")
+  done
+  [ -z "${OPKIT_SCRATCH:-}" ] || OPKIT_DIAG_ROOTS+=("$OPKIT_SCRATCH")
+  return 0
+}
+
 # THE diagnostic channel. fd 2 if (and only if) the classifier accepts it; else the controlling terminal if one opens; else nothing.
 opkit_say() {
-  if opkit_ns_fd_why 2 $OPKIT_DIAG_ROOTS; then printf '%s\n' "$*" >&2; return 0; fi
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  if opkit_ns_fd_why 2 "${OPKIT_DIAG_ROOTS[@]}"; then printf '%s\n' "$*" >&2; return 0; fi
   { printf '%s\n' "$*" >/dev/tty; } 2>/dev/null || true
   return 0
 }
 
 # fds 0-2, classified with reads only; the reasons are emitted (through opkit_say) after ALL three are classified.
 opkit_ns_std_fds_ok() { # ROOTS...
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
   local n why="" bad=0
   for n in 0 1 2; do
     opkit_ns_fd_why "$n" "$@" || { bad=1; why+="${why:+$'\n'}$OPKIT_FD_WHY"; }
@@ -184,6 +229,7 @@ OPKIT_DEFAULT_DESTS="/etc /usr/local /var/lib /var/log /var/spool /var/mail /run
 # honoured ONLY when the outermost script of this shell is scripts/test_opkit_ns.sh itself; for any other
 # caller one that is set makes the proof REFUSE (it is never silently ignored, and never weakens it).
 opkit_selftest_caller() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
   local top self here
   top=${BASH_SOURCE[${#BASH_SOURCE[@]} - 1]:-}
   [ -n "$top" ] || return 1
@@ -194,6 +240,7 @@ opkit_selftest_caller() {
 }
 
 opkit_overrides() { # prints the effective "DESTS NS_PID VIEW_PID"; returns 1 (and says why) if overrides are not allowed
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
   if [ -n "${OPKIT_DESTS_FOR_TEST:-}${OPKIT_NS_PID_FOR_TEST:-}${OPKIT_VIEW_PID_FOR_TEST:-}" ]; then
     opkit_selftest_caller || { opkit_say "REFUSE(opkit_ns): an OPKIT_*_FOR_TEST override is set outside scripts/test_opkit_ns.sh"; return 1; }
     echo "${OPKIT_DESTS_FOR_TEST:-$OPKIT_DEFAULT_DESTS}|${OPKIT_NS_PID_FOR_TEST:-}|${OPKIT_VIEW_PID_FOR_TEST:-}"
@@ -217,6 +264,7 @@ opkit_overrides() { # prints the effective "DESTS NS_PID VIEW_PID"; returns 1 (a
 #      private PID namespace and forges OPKIT_HOST_NS is NOT stopped by this -- but that caller has root in a namespace it made,
 #      which is the case the primitives are for; what is stopped is a mistake, which is all a textual id can stop.
 opkit_ns_precondition() { # PRIMITIVE-NAME
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
   local who=${1:-?} ov nspid own hostmnt
   ov=$(opkit_overrides) || { opkit_say "REFUSE(opkit_ns): $who: not run (an override is not allowed here); nothing was changed"; return 97; }
   ov=${ov#*|}; nspid=${ov%%|*}
@@ -234,6 +282,7 @@ opkit_ns_precondition() { # PRIMITIVE-NAME
 }
 
 opkit_ns_assert() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
   local ov dests nspid viewpid view d c hostmnt own fs kv k v host_dev here_dev
   [ "$(id -u)" = 0 ] || { opkit_say "REFUSE(opkit_ns): not root, so no namespace to prove"; return 1; }
   ov=$(opkit_overrides) || return 1
@@ -292,6 +341,7 @@ opkit_ns_assert() {
 # Amendment 105: exactly one mount at /proc and one at /dev (a second, covered one is what `umount` would
 # reveal), and /dev is the private tmpfs.
 opkit_private_proof() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
   local probe n
   for probe in /proc /dev; do
     n=$(awk -v m="$probe" '$5 == m { c++ } END { print c + 0 }' /proc/self/mountinfo)
@@ -311,6 +361,7 @@ opkit_private_proof() {
 # Every mount of this namespace is read-only unless it lies under a shadowed destination, an OPKIT_RW
 # directory or /tmp; and a file cannot be created in the places no list names.
 opkit_ro_proof() { # DESTS
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
   local bad d probe
   bad=$(awk -v ok="$1 ${OPKIT_RW:-} /tmp /dev/shm /dev/pts /proc" 'BEGIN { n = split(ok, a, " ") }
     { mp = $5; skip = 0
@@ -331,8 +382,12 @@ opkit_ro_proof() { # DESTS
 # The proof writes this once it holds; a command inside the namespace re-asserts from it (the host
 # descriptor is gone by then). Content: our namespace ids and the host's.
 OPKIT_STAMP=/run/.opkit-ns-proved
-opkit_ns_ids() { echo "mnt=$(readlink /proc/self/ns/mnt),pid=$(readlink /proc/self/ns/pid),uts=$(readlink /proc/self/ns/uts),ipc=$(readlink /proc/self/ns/ipc)"; }
+opkit_ns_ids() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  echo "mnt=$(readlink /proc/self/ns/mnt),pid=$(readlink /proc/self/ns/pid),uts=$(readlink /proc/self/ns/uts),ipc=$(readlink /proc/self/ns/ipc)"
+}
 opkit_stamp_ok() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
   local s own host
   [ -f "$OPKIT_STAMP" ] && [ ! -L "$OPKIT_STAMP" ] && [ "$(stat -c %u "$OPKIT_STAMP")" = 0 ] || return 1
   s=$(cat "$OPKIT_STAMP") || return 1
@@ -343,6 +398,7 @@ opkit_stamp_ok() {
 
 # Make every mount of this namespace read-only in one recursive step. Refuses (1) if it cannot.
 opkit_ns_make_ro() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
   opkit_ns_precondition opkit_ns_make_ro || return 97
   python3 -S - <<'PY' || { opkit_say "REFUSE(opkit_ns): cannot make the root read-only (mount_setattr)"; return 1; }
 import ctypes, sys
@@ -358,6 +414,7 @@ PY
 
 # Any directory descriptor above stderr is a way out of the shadows; prints each and returns 1.
 opkit_ns_fd_leak() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
   local f n=0 t
   for f in /proc/self/fd/*; do
     case "${f##*/}" in 0|1|2) continue ;; esac
@@ -370,6 +427,7 @@ opkit_ns_fd_leak() {
 
 # Called once, after the proof: closes the host-root descriptor and checks nothing like it survives.
 opkit_ns_drop_host_fd() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
   opkit_ns_precondition opkit_ns_drop_host_fd || return 97
   if [ -n "${OPKIT_HOST_FD:-}" ]; then eval "exec $OPKIT_HOST_FD<&-"; unset OPKIT_HOST_FD; fi
   opkit_ns_fd_leak
@@ -380,6 +438,7 @@ opkit_ns_drop_host_fd() {
 # step is handed anyway; the ONLY one that may be named is sys_admin.
 OPKIT_DROP_CAPS="sys_admin sys_module sys_rawio sys_boot sys_time syslog mknod dac_read_search net_admin net_raw sys_ptrace bpf perfmon mac_admin mac_override audit_control linux_immutable sys_pacct sys_tty_config checkpoint_restore wake_alarm block_suspend sys_chroot"
 opkit_bounding_arg() { # prints the setpriv --bounding-set argument; returns 1 on a capability that may not be kept
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
   local c k out=""
   for c in $OPKIT_DROP_CAPS; do
     for k in $(tr ',' ' ' <<<"${OPKIT_CAPS_KEEP:-}"); do
@@ -398,13 +457,18 @@ opkit_bounding_arg() { # prints the setpriv --bounding-set argument; returns 1 o
 # OPKIT_RW_ROOTS_FOR_TEST: extra temp roots, honoured only for scripts/test_opkit_ns.sh (so its tests can reach the
 # system-path guard without a real host directory being involved); any other caller that sets it is refused.
 opkit_rw_extra_roots() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
   [ -n "${OPKIT_RW_ROOTS_FOR_TEST:-}" ] || return 0
   opkit_selftest_caller || { opkit_say "REFUSE(opkit_ns): OPKIT_RW_ROOTS_FOR_TEST is set outside scripts/test_opkit_ns.sh"; echo /nonexistent-refused; return 0; }
   echo "$OPKIT_RW_ROOTS_FOR_TEST"
 }
 opkit_scratch_check() { # LABEL DIR [ROOT...] : the one rule for every directory the caller names as scratch (default roots /tmp and /var/tmp)
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
   local what=$1 d=$2 r root ok=0 mode own roots
   shift 2; roots="$*"; [ -n "$roots" ] || roots="/tmp /var/tmp"
+  # amendment 120: a scratch path with whitespace or a glob character is refused. The roots used to be expanded unquoted, so
+  # '/var/tmp/s/a b' (one validated directory) became TWO roots, '/var/tmp/s/a' and 'b', neither validated.
+  case "$d" in *[[:space:]]*|*[\*\?\[\]\\]*) opkit_say "REFUSE(opkit_ns): $what entry '$d' contains whitespace or a glob character"; return 1 ;; esac
   [ -d "$d" ] || { opkit_say "REFUSE(opkit_ns): $what entry '$d' is not a directory"; return 1; }
   r=$(realpath -e -- "$d") || return 1
   # canonical: absolute, no symlink, no `..`, no double slash (one check for all of them)
@@ -426,6 +490,7 @@ opkit_scratch_check() { # LABEL DIR [ROOT...] : the one rule for every directory
   return 0
 }
 opkit_rw_validate() { # DIR...
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
   local d
   for d in "$@"; do opkit_scratch_check OPKIT_RW "$d" /var/tmp || return 1; done
   return 0
@@ -434,12 +499,14 @@ opkit_rw_validate() { # DIR...
 # it sets TMPDIR=/tmp itself, outside it names /var/tmp and /tmp explicitly), so nothing it does can be steered by it. A caller-set
 # OPKIT_SCRATCH must pass the scratch rule or the run is refused (97) before anything is mounted or created.
 opkit_env_roots_validate() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
   if [ -n "${OPKIT_SCRATCH:-}" ]; then opkit_scratch_check OPKIT_SCRATCH "$OPKIT_SCRATCH" || return 1; fi
   return 0
 }
 
 # One descriptor, reason said through opkit_say (never through an unvetted fd 2).
 opkit_ns_fd_ok() { # N [ROOTS...]
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
   opkit_ns_fd_why "$@" && return 0
   opkit_say "$OPKIT_FD_WHY"; return 1
 }
@@ -447,13 +514,15 @@ opkit_ns_fd_ok() { # N [ROOTS...]
 # fds 0-2 are checked, every other inherited descriptor is closed (OPKIT_KEEP_FDS names those kept, each
 # held to the same check). The caller's named scratch is OPKIT_RW and OPKIT_SCRATCH.
 opkit_ns_sanitize_fds() {
-  local f n bad=0 roots="${OPKIT_RW:-} ${OPKIT_SCRATCH:-}" keep=" $(tr ',' ' ' <<<"${OPKIT_KEEP_FDS:-}") "
-  for n in 0 1 2; do opkit_ns_fd_ok "$n" $roots || bad=1; done
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  local f n bad=0 keep=" $(tr ',' ' ' <<<"${OPKIT_KEEP_FDS:-}") "
+  opkit_diag_roots_set
+  for n in 0 1 2; do opkit_ns_fd_ok "$n" "${OPKIT_DIAG_ROOTS[@]}" || bad=1; done
   for f in /proc/self/fd/*; do
     n=${f##*/}
     case "$n" in 0|1|2) continue ;; esac
     [ -e "$f" ] || continue
-    case "$keep" in *" $n "*) opkit_ns_fd_ok "$n" $roots || bad=1; continue ;; esac
+    case "$keep" in *" $n "*) opkit_ns_fd_ok "$n" "${OPKIT_DIAG_ROOTS[@]}" || bad=1; continue ;; esac
     eval "exec $n<&-" 2>/dev/null || true
   done
   [ "$bad" = 0 ]
@@ -466,6 +535,7 @@ opkit_ns_sanitize_fds() {
 # uid_map write, which a nested user namespace needs). The masks are bind mounts: removing one takes
 # CAP_SYS_ADMIN, which the command does not have unless it was handed it.
 opkit_ns_fresh_proc() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
   opkit_ns_precondition opkit_ns_fresh_proc || return 97
   local f
   umount -l -R /proc 2>/dev/null || true       # the namespace's own proc mount, if any ...
@@ -492,6 +562,7 @@ opkit_ns_fresh_proc() {
 # scratch mount point (made before the root was read-only), then moved over /dev after the host's /dev
 # was detached. The device nodes are bind mounts taken while the host's /dev is still visible.
 opkit_ns_private_dev() { # MOUNTPOINT
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
   opkit_ns_precondition opkit_ns_private_dev || return 97
   local nd=$1 n
   mount -t tmpfs -o mode=0755,nosuid,noexec tmpfs "$nd" || return 1
@@ -509,6 +580,7 @@ opkit_ns_private_dev() { # MOUNTPOINT
 }
 
 opkit_ns_isolate() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
   opkit_ns_precondition opkit_ns_isolate || return 97     # amendment 113: before ANYTHING, including the scratch directories
   local d keysave=${OPKIT_SCRATCH:?OPKIT_SCRATCH must be a scratch directory} r devmp
   opkit_overrides >/dev/null || return 1
@@ -555,7 +627,11 @@ opkit_ns_isolate() {
 # The checks that need no namespace, run with their stderr CAPTURED (amendment 118): the tools they call (realpath, stat, id ...)
 # write their own diagnostics to fd 2, and at this point fd 2 has not been classified. stdout carries one line, BSET:<set>.
 opkit_ns_prephase() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
   local bset
+  # amendment 120: OPKIT_RW is split into words below (a list), so a glob character in the RAW string would be expanded to
+  # whatever it matches; the raw string is refused before anything splits it.
+  case "${OPKIT_RW:-}" in *[\*\?\[\]\\]*|*$'\n'*|*$'\t'*) opkit_say "REFUSE(ns_run): OPKIT_RW contains a glob character, a newline or a tab"; return 97 ;; esac
   [ "$(id -u)" = 0 ] || { opkit_say "REFUSE(ns_run): not root, so no namespace to prove; the command did not run"; return 97; }
   opkit_env_roots_validate || return 97
   opkit_rw_validate ${OPKIT_RW:-} || return 97
@@ -564,17 +640,18 @@ opkit_ns_prephase() {
 }
 
 ns_run() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
   [ "$#" -gt 0 ] || return 2
   local hfd hostns rc bset own="" scratch pre prerc diag
   # Amendment 118, the order: (1) the pre-checks, every byte they print captured; (2) fds 0-2 classified with reads only,
   # emitting only through opkit_say (which writes to fd 2 only if fd 2 itself passes); (3) only then the captured text; (4) only
   # then anything that mounts or runs a tool whose own stderr lands on fd 2.
-  OPKIT_DIAG_ROOTS=""
+  OPKIT_DIAG_ROOTS=()
   pre=$(opkit_ns_prephase 2>&1); prerc=$?
   bset=$(sed -n 's/^BSET://p' <<<"$pre" 2>/dev/null)
   diag=$(grep -v '^BSET:' <<<"$pre" 2>/dev/null)
-  [ "$prerc" = 0 ] && OPKIT_DIAG_ROOTS="${OPKIT_RW:-} ${OPKIT_SCRATCH:-}"
-  opkit_ns_std_fds_ok $OPKIT_DIAG_ROOTS || return 97
+  [ "$prerc" != 0 ] || opkit_diag_roots_set
+  opkit_ns_std_fds_ok "${OPKIT_DIAG_ROOTS[@]}" || return 97
   if [ "$prerc" != 0 ]; then [ -z "$diag" ] || opkit_say "$diag"; return "$prerc"; fi
   local netflag=--net
   [ "${OPKIT_NET:-private}" = host ] && netflag=
@@ -589,11 +666,13 @@ ns_run() {
   exec {hfd}</ || { opkit_say "REFUSE(ns_run): cannot open a handle on the host's root"; [ -z "$own" ] || rmdir "$own"; return 97; }
   hostns="mnt=$(readlink /proc/self/ns/mnt),pid=$(readlink /proc/self/ns/pid),uts=$(readlink /proc/self/ns/uts),ipc=$(readlink /proc/self/ns/ipc),net=$(readlink /proc/self/ns/net)"
   OPKIT_SCRATCH=$scratch OPKIT_LIB=${OPKIT_LIB:?OPKIT_LIB must name opkit_ns.sh} OPKIT_HOST_FD=$hfd OPKIT_HOST_NS=$hostns OPKIT_BSET=$bset \
-  unshare --mount --propagation private --pid --fork --kill-child --mount-proc --uts --ipc $netflag bash -c '
+  unshare --mount --propagation private --pid --fork --kill-child --mount-proc --uts --ipc $netflag \
+    env -u SHELLOPTS -u BASH_ENV -u BASH_XTRACEFD -u BASHOPTS -u ENV -u PS4 -u BASH_COMPAT bash --noprofile --norc -c '
+    set +o xtrace +o verbose
     . "$OPKIT_LIB"
     # Amendment 118: before the first mount (whose tools write to fd 2 themselves), fds 0-2 are classified again, silently
-    OPKIT_DIAG_ROOTS="${OPKIT_RW:-} ${OPKIT_SCRATCH:-}"
-    opkit_ns_std_fds_ok $OPKIT_DIAG_ROOTS || exit 97
+    opkit_diag_roots_set
+    opkit_ns_std_fds_ok "${OPKIT_DIAG_ROOTS[@]}" || exit 97
     opkit_ns_isolate || { opkit_say "REFUSE(ns_run): isolation not proved; the command did not run"; exit 97; }
     # Amendment 101: the descriptor on the host root served the proof; the command must not inherit it
     opkit_ns_drop_host_fd || { opkit_say "REFUSE(ns_run): a directory descriptor outlived the proof; the command did not run"; exit 97; }
@@ -610,3 +689,11 @@ ns_run() {
   fi
   return $rc
 }
+
+# Amendment 120: the source-time guard on line 1 turned the sourcing shell's xtrace/verbose/functrace/errtrace off for the top-level
+# statements above; the caller's own settings come back here, so sourcing this file changes nothing about the caller's shell.
+__opkit_f=${__opkit_so//[!xvTE]/}
+case $__opkit_f in
+  '') unset __opkit_so __opkit_f ;;
+  *) eval "unset __opkit_so __opkit_f; set -$__opkit_f" ;;      # the LAST statement: nothing below this line is traced
+esac

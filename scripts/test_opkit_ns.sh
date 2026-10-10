@@ -723,7 +723,7 @@ for sp in specs.split(","):
     fd, mode, f = sp.split(":", 2)
     std[int(fd)] = os.open(f, flags[mode])
 env = dict(os.environ, OPKIT_LIB=os.environ["LIB118"], **extra)
-p = subprocess.Popen(["bash", "-c", '. "$OPKIT_LIB"; ' + snippet, "bash"], stdin=std[0], stdout=std[1], stderr=std[2], env=env, start_new_session=True)
+p = subprocess.Popen(["bash", "-c", os.environ.get("PRELUDE118", "") + '. "$OPKIT_LIB"; ' + snippet, "bash"], stdin=std[0], stdout=std[1], stderr=std[2], env=env, start_new_session=True)
 os.close(w)
 rc = p.wait()
 data = b""
@@ -811,6 +811,161 @@ rm -f "$W/scratch/ran118"
 o=$(cd / && LIB118=$LIB OPKIT_RW=$W/scratch OPKIT_SCRATCH=$W/scratch bash -c '. "$LIB118"; ns_run touch "$1"' bash "$W/scratch/ran118" </ 2>>"$F"); rc=$?
 { [ $rc = 97 ] && grep -q 'descriptor 0 is a directory' "$F"; } || fail "control: the refusal was not delivered to a legitimate log under OPKIT_RW (rc $rc): $(cat "$F")"
 echo "ok: the pre-namespace refusals and the library functions called directly never write through a writable regular file on fd 2; a pipe still gets the reason"
+# ── amendment 120: bash's OWN diagnostics (xtrace, verbose), hard links, word splitting ─────────────────────────────────────────────
+# Round 15, FIELD-ORIGIN: with `set -x` in the caller (or SHELLOPTS=xtrace, a BASH_ENV file saying `set -x`, BASH_XTRACEFD=2) the helper,
+# which runs in the CALLER's shell, was traced by bash to fd 2 BEFORE the classifier had looked at it: exit 97, the command not run, and
+# the refused file overwritten with ~90 lines of the helper's own code. Replayed here on FILES THIS SCRIPT MADE under $W (never a host
+# file). chk120 FILE ALLOWED...: the file must be some of the ALLOWED lines (a trailing * is a prefix) at its head -- the CALLER's own
+# trace/echo of ITS commands, which no helper can prevent -- followed by the original bytes, untouched.
+H120=$W/h120; mkdir -p "$H120"; M120=$H120/ran; MR120=$W/scratch/ran120   # M120: a command that must NOT run (read-only inside); MR120: one that may
+ORIG120=$ORIG118
+allow120() { ALLOWED120=("$@"); }   # (a function, not an array assignment: the drift gate reads `(` as a command boundary)
+chk120() {
+  python3 - "$1" "$ORIG120" "${@:2}" <<'PY'
+import sys
+f, orig, allowed = sys.argv[1], sys.argv[2], sys.argv[3:]
+got = open(f, "rb").read().decode("latin1")
+def ok(ln):
+    return any(ln == a or (a.endswith("*") and ln.startswith(a[:-1])) for a in allowed)
+n = 0
+while True:
+    e = got.find("\n", n)
+    if e < 0 or not ok(got[n:e]): break
+    n = e + 1
+if got[n:] != orig[n:]:
+    print("the file is not 'allowed caller lines + the original': first foreign bytes: %r" % got[n:n + 200]); sys.exit(1)
+PY
+}
+# vec120 LABEL SNIPPET [VAR=val ...]: the snippet runs after the helper is sourced, with a writable regular file on fd 2 (O_RDWR, no truncation)
+# and the allowed caller lines in ALLOWED120; WANT=97 asks for the refusal and that the command did not run
+vec120() {
+  local label=$1 snip=$2 F o rc; shift 2
+  [ -z "${WRAP120:-}" ] || snip="set -x; $snip; set +x; exit 97"
+  F=$H120/victim-$((++V120)); printf '%s' "$ORIG120" >"$F"; rm -f "$M120"
+  o=$(LIB118=$LIB OPKIT_RW=$W/scratch OPKIT_SCRATCH=$W/scratch run118 "${FD120:-2}:rdwr:$F" "$snip" "$@")
+  if [ "${WANT120:-97}" = 97 ]; then
+    head -1 <<<"$o" | grep -qx 'RC=97' || fail "ATTACK: $label: ns_run was not refused with 97: $o"
+    [ ! -e "$M120" ] || fail "ATTACK: $label: the command ran with a writable regular file on fd 2"
+  fi
+  msg=$(chk120 "$F" "${ALLOWED120[@]}") || fail "ATTACK: $label: bash wrote the helper's own code into the file on fd 2 (the file ns_run had refused): $msg"
+  LAST120=$o
+  rm -f "$F"
+}
+V120=0
+TR="+ ns_run touch $M120"
+allow120 "$TR" '+ r=97' '+ set +x'
+vec120 "set -x in the caller" "set -x; ns_run touch $M120; r=\$?; set +x; exit \$r"
+allow120 "+ . $LIB" "$TR" '+ r=97' '+ exit 97'
+vec120 "an exported SHELLOPTS=xtrace" "ns_run touch $M120; r=\$?; exit \$r" SHELLOPTS=xtrace
+printf 'set -x\n' >"$H120/benv"
+vec120 "a BASH_ENV file that says set -x" "ns_run touch $M120; r=\$?; exit \$r" BASH_ENV="$H120/benv"
+allow120 "$TR" '+ r=97' '+ set +x'
+vec120 "BASH_XTRACEFD=2" "BASH_XTRACEFD=2; set -x; ns_run touch $M120; r=\$?; set +x; exit \$r"
+FD120=1 vec120 "BASH_XTRACEFD=1 with the refused file on fd 1" "BASH_XTRACEFD=1; set -x; ns_run touch $M120; r=\$?; set +x; exit \$r"
+FD120=0 vec120 "BASH_XTRACEFD=0 with the refused file on fd 0" "BASH_XTRACEFD=0; set -x; ns_run touch $M120; r=\$?; set +x; exit \$r"
+allow120 "$TR" '+ r=97' '+ set +x' 'PS4-RAN'
+vec120 "a PS4 with a command substitution" "PS4='\$(echo PS4-RAN >&2)+ '; set -x; ns_run touch $M120; r=\$?; set +x; exit \$r"
+# set -v echoes the lines the shell READS: the caller's own, not the helper's functions
+allow120 "ns_run touch $M120" 'r=$?' 'set +v'
+vec120 "set -v in the caller (after the helper was sourced)" "set -v
+ns_run touch $M120
+r=\$?
+set +v
+exit \$r"
+# sourcing the helper under xtrace / functrace: nothing of its top level is traced, and the caller's xtrace is back afterwards
+allow120 "+ . $LIB" "$TR" '+ r=97' '+ exit 97' '+ case $- in' '+ echo XON-AFTER-SOURCE'
+PRELUDE118='set -x; ' vec120 "sourcing the helper under set -x" "case \$- in *x*) echo XON-AFTER-SOURCE ;; esac; ns_run touch $M120; r=\$?; exit \$r"
+grep -q '^XON-AFTER-SOURCE$' <<<"$LAST120" || fail "ATTACK: sourcing the helper turned the caller's xtrace off: $LAST120"
+allow120 "$TR" '+ r=97' '+ case $- in' '+ echo XON-AFTER-RUN' '+ set +x'
+vec120 "ns_run under set -x" "set -x; ns_run touch $M120; r=\$?; case \$- in *x*) echo XON-AFTER-RUN ;; esac; set +x; exit \$r"
+grep -q '^XON-AFTER-RUN$' <<<"$LAST120" || fail "ATTACK: ns_run left the caller's xtrace switched off: $LAST120"
+# the traps of the caller are not inherited into the helper's functions unless the caller asked (-T / -E)
+allow120
+PRELUDE118="trap 'case \"\${FUNCNAME[0]:-}\" in opkit_*|ns_run) echo DBG >&2;; esac' DEBUG; " vec120 "a DEBUG trap writing to fd 2 inside the helper's functions" "ns_run touch $M120; r=\$?; exit \$r"
+PRELUDE118="trap 'case \"\${FUNCNAME[0]:-}\" in opkit_*|ns_run) echo ERR >&2;; esac' ERR; " vec120 "an ERR trap writing to fd 2 inside the helper's functions" "ns_run touch $M120; r=\$?; exit \$r"
+# STATED RESIDUAL (c): with set -T / set -E the CALLER's trap code runs inside the helper's functions. It is the caller's code (the
+# only lines in the file are the trap's own echo); what must NOT appear is bash's trace of the helper.
+allow120 DBG
+PRELUDE118="trap 'case \"\${FUNCNAME[0]:-}\" in opkit_*|ns_run) echo DBG >&2;; esac' DEBUG; set -T; " vec120 "residual: a DEBUG trap under set -T" "ns_run touch $M120; r=\$?; exit \$r"
+allow120 ERR '+ ns_run touch*' '+ r=*' '+ set +x'
+PRELUDE118="trap 'case \"\${FUNCNAME[0]:-}\" in opkit_*|ns_run) echo ERR >&2;; esac' ERR; set -E; " vec120 "residual: an ERR trap under set -E" "ns_run touch $M120; r=\$?; exit \$r"
+# the entry points called directly (the kit and the tests do): each begins by switching the shell's diagnostics off
+WANT120=any
+for snip in 'opkit_say hi' 'opkit_ns_fd_why 2' 'opkit_ns_fd_ok 2' 'opkit_ns_std_fds_ok' 'opkit_scratch_check X /nonexistent-120' 'opkit_rw_validate /nonexistent-120' 'opkit_diag_roots_set'; do
+  allow120 "+ $snip" '+ set +x'
+  WRAP120=1 vec120 "set -x around a direct call of ${snip%% *}" "$snip"
+done
+unset WANT120
+# residual (a): BASH_XTRACEFD naming a descriptor other than 0-2 (here a scratch file on fd 7): only the guard's own statements are traced to it
+F=$H120/victim-xfd; printf '%s' "$ORIG120" >"$F"; rm -f "$MR120"
+o=$(LIB118=$LIB OPKIT_RW=$W/scratch OPKIT_SCRATCH=$W/scratch OPKIT_LIB=$LIB bash -c 'exec 7<>"$1"; BASH_XTRACEFD=7; set -x; . "$OPKIT_LIB"; ns_run touch "$2"; r=$?; set +x; exit $r' bash "$F" "$MR120" 2>&1 </dev/null); rc=$?
+[ -e "$MR120" ] && [ $rc = 0 ] || fail "control: a pipe on fd 2 and a trace file on fd 7 refused the run (rc $rc): $o"
+allow120 "+ . $LIB" '++ __opkit_so=*' '++ set +xvTE' "+ ns_run touch $MR120" '+ local -' '+ set +xvTE' '+ r=0' '+ set +x'
+chk120 "$F" "${ALLOWED120[@]}" >/dev/null || fail "ATTACK: with BASH_XTRACEFD on a descriptor above stderr, more than the guard's own statements reached it: $(chk120 "$F" "${ALLOWED120[@]}"; head -c 400 "$F")"
+echo "ok: set -x / SHELLOPTS=xtrace / BASH_ENV / BASH_XTRACEFD=2 / a PS4 command substitution / set -v / DEBUG and ERR traps in the caller never put the helper's own code into the file ns_run refused (exit 97, command not run, sha256 and size unchanged but the caller's own trace lines); each entry point called directly is silent too; the caller's xtrace survives sourcing and ns_run; the stated residuals are bounded"
+# set -v BEFORE the helper is sourced: bash echoes the lines it reads, so line 1 (the guard, the file's first statement) is the only helper text that appears
+F=$H120/victim-v; printf '%s' "$ORIG120" >"$F"; rm -f "$MR120"
+allow120 "$(head -1 "$LIB")" ". \"\$OPKIT_LIB\"; ns_run touch $MR120; r=\$?; exit \$r"
+PRELUDE118='set -v
+' WANT120=any vec120 "residual: set -v before sourcing" "ns_run touch $MR120; r=\$?; exit \$r"
+# the environment of the shell inside the namespace, and of the command, is the helper's: nothing the caller exported steers it
+printf 'set -x\n' >"$H120/benv2"
+o=$(env SHELLOPTS=xtrace BASH_ENV="$H120/benv2" ENV=/dev/null PS4='+envtest ' BASH_COMPAT=51 BASHOPTS=extglob BASH_XTRACEFD=2 OPKIT_RW=$W/scratch OPKIT_SCRATCH=$W/scratch OPKIT_LIB=$LIB bash -c '. "$OPKIT_LIB"; ns_run sh -c "env | sort; echo ENV-LISTED"' 2>&1 </dev/null); rc=$?
+{ [ $rc = 0 ] && grep -q '^ENV-LISTED$' <<<"$o"; } || fail "control: the environment probe did not run (rc $rc): $(head -c 600 <<<"$o")"
+for v in SHELLOPTS BASH_ENV BASH_XTRACEFD BASHOPTS ENV PS4 BASH_COMPAT; do
+  ! grep -q "^$v=" <<<"$o" || fail "ATTACK: the caller's $v reached the shell inside the namespace / the command: $(grep "^$v=" <<<"$o")"
+done
+! grep -q 'opkit_diag_roots_set\|exec setpriv' <<<"$o" || fail "ATTACK: the shell inside the namespace was traced (SHELLOPTS=xtrace reached it): $(grep -m3 'opkit_diag_roots_set\|exec setpriv' <<<"$o")"
+echo "ok: the shell inside the namespace and the command get none of SHELLOPTS, BASH_ENV, BASH_XTRACEFD, BASHOPTS, ENV, PS4, BASH_COMPAT, and the inner shell is not traced"
+# a HARD LINK: the name says scratch, the inode is the host-style file's. $H120/hostlike plays the host role (it is NOT a validated root).
+mkdir -p "$H120/hostlike"; F=$H120/hostlike/victim-hl; printf '%s' "$ORIG120" >"$F"; ln "$F" "$W/scratch/linked-120"
+h0=$(sha256sum <"$F"); rm -f "$MR120"
+for fdn in 1 2; do
+  o=$(LIB118=$LIB OPKIT_RW=$W/scratch OPKIT_SCRATCH=$W/scratch run118 "$fdn:rdwr:$W/scratch/linked-120" 'ns_run touch '"$MR120")
+  head -1 <<<"$o" | grep -qx 'RC=97' || fail "ATTACK: a hard link to a host-style file, inside the caller's scratch, on fd $fdn was accepted as scratch: $o"
+  [ ! -e "$MR120" ] || fail "ATTACK: the command ran with a hard link to a host-style file on fd $fdn"
+  [ "$h0" = "$(sha256sum <"$F")" ] || fail "ATTACK: the host-style file was written through its hard link in the scratch (fd $fdn): $(head -c 200 "$F")"
+done
+[ "$(wc -c <<<"$o")" -le 7 ] || fail "ATTACK: fd 2 was the hard link, and the helper still said something on the other descriptor: $o"
+o=$(LIB118=$LIB OPKIT_RW=$W/scratch OPKIT_SCRATCH=$W/scratch run118 "1:rdwr:$W/scratch/linked-120" 'ns_run touch '"$MR120")
+grep -q 'WRITABLE regular file with 2 names (a hard link)' <<<"$o" || fail "ATTACK: the hard link was refused, but not for being a second name of an inode: $o"
+# control: with the other name gone the same file IS a log under the scratch
+rm -f "$F"; : >"$W/scratch/log-120"; ln "$W/scratch/log-120" "$H120/hostlike/other"; rm -f "$H120/hostlike/other"
+o=$(LIB118=$LIB OPKIT_RW=$W/scratch OPKIT_SCRATCH=$W/scratch run118 "2:rdwr:$W/scratch/log-120" 'ns_run touch '"$MR120")
+{ head -1 <<<"$o" | grep -qx 'RC=0' && [ -e "$MR120" ]; } || fail "control: a log under the scratch with ONE name was refused: $o"
+rm -f "$MR120" "$W/scratch/linked-120" "$W/scratch/log-120"
+echo "ok: a writable regular file with more than one name on fd 1 or 2 is refused (97) even when its path is under the scratch; the host-style file is unchanged; with one name it is an accepted log"
+# word splitting: '$W/sp/s $W/hostroot' is ONE directory (named 's ' with a long tail) that used to count as TWO roots, the second never validated
+mkdir -p "$W/hostroot" "$W/sp/s $W/hostroot"; F=$W/hostroot/victim-sp; printf '%s' "$ORIG120" >"$F"; rm -f "$MR120"
+o=$(LIB118=$LIB OPKIT_RW=$W/scratch OPKIT_SCRATCH="$W/sp/s $W/hostroot" run118 "2:rdwr:$F" 'ns_run touch '"$MR120")
+{ head -1 <<<"$o" | grep -qx 'RC=97' && [ ! -e "$MR120" ]; } || fail "ATTACK: a scratch path with a space made a second, unvalidated directory count as scratch (the command ran): $o"
+cmp -s "$F" <(printf '%s' "$ORIG120") || fail "ATTACK: the file in the second, unvalidated directory was written: $(head -c 200 "$F")"
+o=$(OPKIT_LIB=$LIB OPKIT_RW=$W/scratch OPKIT_SCRATCH="$W/sp/s $W/hostroot" bash -c '. "$OPKIT_LIB"; ns_run true' 2>&1 </dev/null)
+grep -q 'contains whitespace or a glob character' <<<"$o" || fail "ATTACK: a scratch path with a space was refused, but not by the character rule: $o"
+# the array, called directly: ONE element that holds a space is one root, never two
+F=$W/hostroot/victim-arr; printf '%s' "$ORIG120" >"$F"
+o=$(LIB118=$LIB run118 "2:rdwr:$F" 'OPKIT_DIAG_ROOTS=("'"$W/sp/s $W/hostroot"'"); opkit_say hello')
+cmp -s "$F" <(printf '%s' "$ORIG120") || fail "ATTACK: an array element holding a space was split into two roots, and opkit_say wrote into a file under the second: $(head -c 200 "$F")"
+F=$W/hostroot/victim-set; printf '%s' "$ORIG120" >"$F"
+o=$(LIB118=$LIB OPKIT_SCRATCH="$W/sp/s $W/hostroot" run118 "2:rdwr:$F" 'opkit_diag_roots_set; opkit_say hello')
+cmp -s "$F" <(printf '%s' "$ORIG120") || fail "ATTACK: opkit_diag_roots_set split a scratch path with a space into two roots, and opkit_say wrote into a file under the second: $(head -c 200 "$F")"
+# a scratch DIRECTORY whose name holds a glob character is refused (OPKIT_SCRATCH), by the character rule
+mkdir -p "$W/sp/gl*b"; rm -f "$MR120"
+o=$(OPKIT_RW=$W/scratch OPKIT_LIB=$LIB OPKIT_SCRATCH="$W/sp/gl*b" bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$MR120" 2>&1 </dev/null); rc=$?
+{ [ $rc = 97 ] && [ ! -e "$MR120" ]; } || fail "ATTACK: a scratch path with a glob character was accepted (rc $rc): $o"
+grep -q 'contains whitespace or a glob character' <<<"$o" || fail "ATTACK: a scratch path with a glob character was refused, but not by the character rule (rc $rc): $o"
+# a glob character in OPKIT_RW is refused whole (it would expand to every directory it matches)
+mkdir -p "$W/rwg1" "$W/rwg2"; rm -f "$MR120"
+F=$W/rwg1/victim-glob; printf '%s' "$ORIG120" >"$F"
+o=$(LIB118=$LIB run118 "2:rdwr:$F" 'opkit_diag_roots_set; opkit_say hello' OPKIT_RW="$W/rwg*")
+cmp -s "$F" <(printf '%s' "$ORIG120") || fail "ATTACK: opkit_diag_roots_set expanded a glob in OPKIT_RW into roots nobody validated, and opkit_say wrote into a file under one of them: $(head -c 200 "$F")"
+o=$(OPKIT_RW="$W/rwg*" OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$MR120" 2>&1 </dev/null); rc=$?
+{ [ $rc = 97 ] && [ ! -e "$MR120" ]; } || fail "ATTACK: OPKIT_RW with a glob character was expanded and accepted (rc $rc): $o"
+grep -q 'glob character' <<<"$o" || fail "ATTACK: OPKIT_RW with a glob character was refused, but not for that (rc $rc): $o"
+o=$(OPKIT_RW="$W/rwg1 $W/rwg2" OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$W/rwg1/ran120" 2>&1 </dev/null); rc=$?
+{ [ $rc = 0 ] && [ -e "$W/rwg1/ran120" ]; } || fail "control: two plain OPKIT_RW entries were refused (rc $rc): $o"
+rm -f "$W/rwg1/ran120"
+echo "ok: a scratch path with whitespace or a glob character is refused (97), the roots are an array (an element with a space is one root), and a glob in OPKIT_RW is not expanded"
 [ "$HL_BEFORE" = "$(hostlist)" ] || fail "ATTACK: the host listing changed during the amendment-109 tests"
 echo "ok: the host listing (/opt /home /mnt /media /srv /usr/local /etc/axon /etc/systemd/system) is the same before and after"
 echo "PASS: opkit namespace helper"

@@ -164,6 +164,21 @@ failed_on "signing key unreadable by the Fabric" "c['action']=='read-key' and c[
 fixture; chmod 0666 "$BASE/o1/launcher.sh"; run "$GUEST_OK"
 failed_on "writable pinned launcher (O1)" "c['action']=='open-write' and c['target'].endswith('launcher.sh')"
 
+# Amendment 120: the open-write probe used to be `exec 3<>file` (dash: O_RDWR|O_CREAT). A pinned file that is MISSING, in a directory the
+# actor can write, was CREATED by the probe, empty, and never removed. Now the probe has no O_CREAT and a missing file is a failure of its
+# own (observed `missing`). Every path here is under $BASE, a scratch tree this script made.
+for t in observer.sh launcher.sh; do      # (the files the CONFIG pins; a file the directory scan finds cannot be missing)
+  fixture; rm -f "$BASE/o1/$t"; chmod 0777 "$BASE/o1"; run "$GUEST_OK"
+  failed_on "a missing pinned file ($t) in a directory every actor can write" "c['action']=='open-write' and c['observed']=='missing' and c['target'].endswith('/$t')"
+  [ ! -e "$BASE/o1/$t" ] || fail "ATTACK: the open-write probe CREATED the missing file $t (an empty file nobody removes): $(ls -l "$BASE/o1/$t")"
+done
+# the probe attempted a write-open that really happened for an existing file (control: a writable one FAILS, so the probe is not blind)
+fixture; chmod 0666 "$BASE/o1/observer.sh"; run "$GUEST_OK"
+failed_on "a writable pinned file is still caught by the O_WRONLY probe" "c['action']=='open-write' and c['observed']=='SUCCEEDED' and c['target'].endswith('/observer.sh')"
+fixture; h0=$(sha256sum <"$BASE/o1/launcher.sh"); s0=$(stat -c '%s:%Y' "$BASE/o1/launcher.sh"); run "$GUEST_OK"
+[ "$h0" = "$(sha256sum <"$BASE/o1/launcher.sh")" ] && [ "$s0" = "$(stat -c '%s:%Y' "$BASE/o1/launcher.sh")" ] \
+  || fail "ATTACK: the open-write probe changed a pinned file (bytes, size or mtime)"
+
 fixture; chown $F "$BASE/o1"; run "$GUEST_OK"
 failed_on "Fabric-owned O1 directory" "c['action']=='create' and c['actor']=='fabric' and c['target'].endswith('/o1')"
 
