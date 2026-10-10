@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 62e2adc5d7ed5b9d6e75f93e2bb252b390c5f312
+generated-at: 529e768bdb629249fc7d00dc96f853e6d76a7d1d
 
-`git diff --numstat 31413ca7..62e2adc5 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..529e768b -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -58,12 +58,12 @@ generated-at: 62e2adc5d7ed5b9d6e75f93e2bb252b390c5f312
 | `crates/axon-core/src/main.rs` | 422 | 94 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
 | `crates/axon-core/src/mut_borrow.rs` | 800 | 0 |
-| `crates/axon-core/src/parser.rs` | 61 | 3 |
+| `crates/axon-core/src/parser.rs` | 84 | 3 |
 | `crates/axon-core/src/resolver.rs` | 530 | 65 |
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
-| total | 21328 | 2881 |
+| total | 21351 | 2881 |
 
-`git log --reverse 31413ca7..62e2adc5 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..529e768b -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -143,7 +143,8 @@ generated-at: 62e2adc5d7ed5b9d6e75f93e2bb252b390c5f312
 | b7aaa9c1 | amendment 121 | the existence oracle at every placement and the operator-typed value the candidate picked (first cut): the parser's end-of-input span is no longer the dummy `0..0`; the resolver locates a type, a refinement and a top-level `let` at its item and keeps the run's own sealed set (an HONEST `fn lim(n: i64 where n >= 0)` is no longer refused for naming its parameter); a merged diagnostic with no line joins the backstop; a sealed top-level `let` initializer is name-checked; a third taint bit, `PICK`, marks an operator-typed value (or one holding it) that sealed code selected (an index, a builtin's read on a selector it chose, a branch, a store under its control, an exit it decided, a hand-back from a sealed fn or closure) and the dispatch rule refuses a receiver that carries it: narrowing, no widening |
 | d7574f7d | amendment 121 | the split moves to `seal_split.rs` (library, so a gate row runs its test), the honest-registry control is made to bind the candidate's taint, doc and test wording: no change in what is refused beyond b7aaa9c1 |
 | 45347cb7 | amendment 121 | the backstop's first branch no longer appends the sealed-only diagnostics (empty there); three older rows re-anchored; the refusal-coverage exemption of the observer prune dropped (that file is not under crates/axon-core/src; the commit touches main.rs only by removing one line): no change in what is refused |
-| 76 commits | | |
+| 416a6683 | amendment 121 | the parser unit test that is M3450's own attack (`an_item_that_ends_the_file_has_a_real_span_in_its_own_file`); no production change in this commit (parser.rs gains a test only) |
+| 77 commits | | |
 <!-- END MECHANICAL -->
 
 
