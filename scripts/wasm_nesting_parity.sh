@@ -15,7 +15,8 @@
 #         parentheses 300 and 5,000 deep, `+` chains of 1,000, 10,000,
 #         30,000 and 100,000 terms, a 1,000-term string chain, a nested
 #         `Some` pattern, an `Option<` type, a parenthesised, a tuple and a
-#         `&` type 100,000 deep, nested calls and blocks, three
+#         `&` type 100,000 deep, an `else if` chain of 100,000 links,
+#         nested calls and blocks, three
 #         string literals nested in each other's `{...}` slot with 110
 #         parentheses in each, a match guard of 300, 1,000 and 3,000 terms,
 #         an arm body of 3,000 terms, an or-pattern arm body of 5,000, a
@@ -295,6 +296,8 @@ ax60)
   src paren_type "let x: $(rep '(' 100000)i64$(rep ')' 100000) = 1"
   src tuple_type "let x: $(rep '(i64, ' 100000)i64$(rep ')' 100000) = 1"
   src ref_type "let x: $(python3 -c 'print("& " * 100000, end="")')i64 = 1"
+  # An `else if` chain of 100,000 links: parse_if charges each link.
+  src elif100000 "let x = if false { 0 }$(rep ' else if false { 0 }' 100000) else { 1 }"
   src calls "let x = $(rep 'f(' 300)1$(rep ')' 300)"
   src blocks "let x = $(rep '{ ' 300)1$(rep ' }' 300)"
   # Each slot is parsed by a parser of its own: three slots of 110 each
@@ -331,7 +334,7 @@ EOF
   src slot1500 "let s = \"{1$(rep ' + 1' 1500)}\""
   for e in "${RUNS[@]}"; do
     for p in paren300 paren5000 chain chain10000 chain30000 chain100000 strchain some_pattern \
-      option_type paren_type tuple_type ref_type calls blocks interp guard300 guard1000 guard3000 \
+      option_type paren_type tuple_type ref_type elif100000 calls blocks interp guard300 guard1000 guard3000 \
       arm3000 or_arm5000 refine600 refine3000 refine_paren300 compound slot1500; do
       wasm "$e" "$p.ax"
       if [ "$RC" = 2 ] && grep -qF "\"code\":\"E0000\",\"file\":\"$p.ax\",\"line\":2,\"col\":5,\"message\":\"$msg\"" err; then
