@@ -7989,3 +7989,56 @@ on `ATTACK: ns_run left its own scratch root behind (N -> M ...)`, which is NOT 
 | cost: release `axon run`, three binaries alternating, seven runs each | local, host load 8 | item 7 above: all four differences inside the noise |
 
 **Unfinished, stated.** (a) The full paired-disable run for M3260 (`v022_paired_disable.py --only=M3260 /tmp/psv1y-pd.json`, gpumaster job `psv1y-pd`, started 21:02) wrote no record: after its last cell log at 21:46 it sat for 1 h 28 m inside the full-suite cell in a test child that spawned `privileged_launcher` (the gpumaster root-helper tests are among the things the calibration did NOT cover), and I killed that job's own process tree by verified PID at 23:26 (rc 143); the four cells above are executed, the record (the fifth, full-suite cell, and the digest) is not, and M3260's retirement therefore stands on an all-paths argument plus the four executed cells, not on the full record; `governance/status/v022-psv-paired-disable.json` and `v022-resurvey.json` are NOT remade by this branch (freeze head, last), so `--check-status` against the committed status will name M3260 until the freeze run adds it. (b) The 427-row run was made at `bab8806b`; the later commits changed `parser.rs` by a test only, `scripts/`, `governance/` and two plant strings in `pci_delta_note.rs`, and M3450, M3456 and M3457 were re-run at `b708386a`; the axon-psv and axon-fabric suites were run at `bab8806b` and not repeated (no production source changed after it). (c) A pick through an edge the PICK list does not name, the module-loader text, the dangling reference, the binding-name oracle and the emitters are NOT claimed (the 4 NARROW-CLAIM findings and PH-A1's residual). (d) The existence oracle was run at 8 placements; a placement not in the table (an item after a nested module block, after a doc attribute) is not claimed.
+
+## Amendment 122: integration 15 reconciles buildenv12 (120) and psv1y (121); v0.22 exits as a DEV-profile candidate with a strict-gate receipt (C9 round 16, `c9r16/integrate15`)
+
+122. **Context.** Under ADR-003 (`governance/specs/v022-ADR-003-protected-certification-deferral.md`) protected certification is deferred past v0.22: no freeze, no joined paired-disable record, no resurvey record, no guest boot test, no certifying review, no signatures. The exit is the repository's own release discipline (`governance/RELEASE.md`). This amendment writes none of those records and claims none of them.
+
+**Reconciliation.** `integrate15` = `c9r15/integrate14` (`b974655d`) + `c9r15/buildenv12` (120) + `c9r15/psv1y` (121) + `c9r15/adr003`. The branches were merged by union of docs-only conflicts. Two defects were found and fixed at integration:
+
+1. **Matrix ids collided** (buildenv12 wrote A303-A307, psv1y A303-A308). The matrix is now contiguous after A302: psv1y keeps A303-A308, buildenv12 is renumbered.
+
+| written on the branch | now | amendment |
+|---|---|---|
+| A303-A307 (buildenv12) | A309-A313 | 120 |
+| A303-A308 (psv1y) | A303-A308 (unchanged) | 121 |
+
+The rows were reordered (psv1y first), the id cited inside amendment 120 and the pointer in amendment 121 were rewritten, and `governance/notes/v022-pci-delta.md` (which cites A303-A308 for 121) needed no change. No mutation registry, marker or script comment cites an A303+ id. `psv_matrix_check.py` PASS (313 rows, 976 test citations), `pci_delta.py --check` PASS, `check_postc9_spec.py` PASS.
+
+2. **The completeness gate (`scripts/completeness.py`) failed at the first strict run (head `20e85732`)** and did so before this cycle: `axon-rt-ai` had no row, and the env registry declares `AXON_EQ_ALONE`, `AXON_EQ_GIT_ENV`, `AXON_EQ_HARDEN` (test-only re-exec markers) and `AXON_RUNTIME_DIR` with no control-matrix row. `AXON-COMPLETENESS.json` now carries three `test-fixture` control rows whose readers were re-verified in the source, an `AXON_RUNTIME_DIR` row marked `open` (interpreter n/a, native enforced, wasm and guest NOT assessed: unknown), and a `crates_excused` entry for `axon-rt-ai` saying NOT ASSESSED. No proof or mutation is claimed for any of them. `AXON-COMPLETENESS.md` regenerated.
+
+**Registries.** `v022_g01_mutations.py`: 2439 ids (2377 + M3420-M3449 buildenv12 + 32 psv1y ids M3450-M3482 minus the unissued M3459), no duplicates; retired 149 (148 EQUIVALENT + 1 STALE), ACTIVE 2290; every active row's old text occurs exactly once in its file; every id has an attack marker and every marker an id. Matrix rows 313.
+
+**M3260.** Retired EQUIVALENT against M3456 on FOUR executed cells only (base refused; M3260 off refused by M3456; M3456 off refused by M3260; both off the attack succeeds). The full paired-disable record was NOT made: certification is deferred (ADR-003), so no freeze or joined record exists and none is claimed. `EQUIV_RECORD["M3260"]["status"]` says so. No tool in the normal gate path (`gate.sh --strict`, `release_check.sh`, the harness tests) requires M3260 in a paired-disable status; only the freeze tooling (not run) would.
+
+**Refusal coverage.** `python3 scripts/v022_refusal_coverage.py` and `--freeze` both exit 0; REMAINDER 207 guard sites (counted, not claimed covered).
+
+**Evidence** (commit `c508d9fa`, which differs from the final commit only in this amendment; every command rc-checked). Hosts: gm = gpumaster, local = this host as root.
+
+| check | where | result |
+|---|---|---|
+| cargo fmt --check | gm | rc 0 |
+| clippy -D warnings: axon-core (no-default-features --tests, default --tests), axon-fabric, axon-psv, axon-cortex, axon-loop, axon-loop-contracts, axon-ledger | gm | rc 0 each |
+| axon-core suite (--no-default-features) | gm | rc 0, 1885 passed, 0 failed |
+| workspace excl. axon-core, axon-fabric, axon-guest-kernel | gm | rc 0, 1568 passed, 0 failed |
+| axon-fabric default-parallel, serial (two tests skipped on gm, see below) | gm | rc 0, rc 0 |
+| axon-fabric parallel and serial, nothing skipped | local, root | rc 0, rc 0 |
+| guest_build_env x3, guest_build_env_guards, operator_examples | local, root | rc 0 each |
+| test_opkit_ns.sh, test_operator_deploy.sh | local, root | rc 0, rc 0 |
+| opkit_ns_drift.py (+ --selftest), test_protected_verifier_ready, test_v022_resurvey, test_v022_value_survey, test_v022_paired_disable_join and _selection | local | rc 0 each |
+| wasm_parity.sh | local | rc 0 (30 passed, 0 differ) |
+| mutation, 863 ACTIVE rows (axon-core src, the four scripts named in the brief, ids >= M3200), 4 shards | gm | all KILLED by their own attack, 0 REFUSED_ELSEWHERE, 0 stale, 0 unexpected survivors, see below |
+| the 160 namespace rows | local, root | 160/160 KILLED, 0 REFUSED_ELSEWHERE |
+| `gate.sh --strict` from an immutable snapshot of `c508d9fa`, `run_managed` `--mem-max 40G --deadline 18000` | gm | child_exit 0, 350 suites started and reported, 6236 passed, 0 failed; `verify --for c508d9fa` CITABLE; `release_check.sh c508d9fa` RELEASE-VERIFIED |
+
+The strict gate on the FINAL commit is a separate run (a commit cannot cite its own receipt); its receipt directory is in the hand-off report, not in this text.
+
+The two fabric tests skipped on gpumaster (`a_callers_scheduling_state_never_reaches_the_root_launch`, `readiness::a_narrowing_list_the_verifier_cannot_stat_is_not_read_as_absent`) passed locally as root and inside the strict gate. The first runs a SCHED_IDLE process pinned to one CPU and starves for tens of minutes while that CPU is saturated by other jobs; it is environment-sensitive, not wrong.
+
+Mutation-run notes: 17 rows (M1949, M2120-M2131 and M2845, M3155, M3156, M3161) reported `BAD baseline=error` on the first pass: the baseline test process died with no output after "running 1 test" while three shards and the strict gate shared the host. They were re-run alone and all 17 rows are KILLED (baseline passed). They are counted killed only on the re-run, and the first-pass errors are recorded here rather than hidden.
+
+**Strict gate on the OLDER head `20e85732`** (run `strict-v022-20261010T004701Z-311371`): exited 1 after 68 minutes at the single stage "a completeness claim is not backed by evidence" (fixed above, pre-existing from the main merge: reported by the coordinator as reproduced on a pristine origin/main). Every earlier stage passed.
+
+**Host safety.** Nothing under `/etc`, `/usr/local`, `/opt`, `/home` or `/var/lib` was written; no operator kit run outside `ns_run`; before/after listings of `/etc/axon`, `/usr/local`, `/var/lib`, `/etc/systemd/system`, `/opt`, `/home`, users, groups, setuid files and enabled units are identical; `/etc/passwd` `5e12cc90...`, `/etc/group` `e75af478...`, `/etc/shadow` `40fd60f4...` before and after.
+
+**Not done / not claimed.** No freeze, no paired-disable record (M3260 included), no resurvey, no guest boot (the strict log records "SKIP: no built guest image"), no certifying review, no signatures. The strict gate SKIPS 9 harnesses that measured nothing (Android x2, no-codegen `axon build`, two axon-vm cases, `b263_qualify` (profile user missing), `loop_interop_gate` and `v022_micode_gates` (MiCode peer absent), a to_str native parity case); a green strict gate here is not a statement about them. `policy_activated` and `measured_improvement_supported` stay false.
