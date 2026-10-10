@@ -36723,6 +36723,26 @@ fn vm_index_decline_undoes_the_iteration() {
     assert_eq!(counts, (0, 2));
 }
 
+/// R50 S10: an iteration that writes one element twice (`a[i] = a[i] + 1`,
+/// then `a[i] = a[i] * 10`) and then declines undoes both writes last
+/// first, so the element is back to its value before the iteration (5, not
+/// the first write's 6) when the generic loop redoes it.
+#[test]
+fn vm_index_decline_undoes_a_double_write() {
+    let src = "fn main() -> i64 {\n    let t: i32 = 5\n    let xs = arr_repeat(1, 3)\n    xs[2] = t\n    \
+               let a = arr_repeat(5, 3)\n    let s = 0\n    for i in 0..3 {\n        a[i] = a[i] + 1\n        \
+               a[i] = a[i] * 10\n        s = s + xs[i]\n    }\n    \
+               println(to_str(s) + \" \" + to_str(a[0]) + \" \" + to_str(a[1]) + \" \" + to_str(a[2]))\n    0\n}\n";
+    let (code, stdout, stderr, counts) =
+        vm_pure_case("index_undo_twice", src, &[("main", 0)], "main");
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "7 60 60 60\n"),
+        "{stderr}"
+    );
+    assert_eq!(counts, (0, 1));
+}
+
 // ── R50 S5: call costs (`vm_fastcall_`) ─────────────────────────────────────
 
 /// R50 S5: `axon run` on `src` under `engine`, with the AI mock on and a
@@ -37383,21 +37403,30 @@ fn vm_purefn_panics_replay() {
 /// leaves past the call's own, so a pure chain completes at
 /// `AXON_MAX_DEPTH=N` and panics at `N - 1` exactly as the tree does,
 /// whether entered from `main` or from inside a generic recursion at depth
-/// 12.
+/// 12. A warm-up `d(1)` from the same caller first caches the callee, so
+/// the measured call is a proven `Op::CallFast` under eager compilation
+/// and enters the tier itself (`call_fast_inline` → `pure_try_opnds`) from
+/// `main` and from `wrap(0, ..)`; the first call to `d` is unproven and
+/// runs `dispatch_named`, which never enters the tier.
 #[test]
 fn vm_purefn_depth_boundary() {
     let d = "fn d(n: i64) -> i64 {\n    if n == 0 { 0 } else { d(n - 1) + 1 }\n}\n";
     // main (1) + d(48..0) (49) = 50 frames; main (1) + wrap(10..0) (11) +
-    // d(37..0) (38) = 50.
+    // d(37..0) (38) = 50. The warm-up `d(1)` needs 2 frames fewer.
     let progs = [
-        ("chain", format!("{d}fn main() -> i64 {{\n    println(to_str(d(48)))\n    0\n}}\n"), "48\n"),
+        (
+            "chain",
+            format!("{d}fn main() -> i64 {{\n    println(to_str(d(1)))\n    println(to_str(d(48)))\n    0\n}}\n"),
+            "1\n48\n",
+        ),
         (
             "nested",
             format!(
-                "{d}fn wrap(k: i64, n: i64) -> i64 {{\n    let m = k - 1\n    if k == 0 {{ d(n) }} else {{ wrap(m, n) }}\n}}\n\
+                "{d}fn wrap(k: i64, n: i64) -> i64 {{\n    let m = k - 1\n    \
+                 if k == 0 {{\n        println(to_str(d(1)))\n        d(n)\n    }} else {{ wrap(m, n) }}\n}}\n\
                  fn main() -> i64 {{\n    println(to_str(wrap(10, 37)))\n    0\n}}\n"
             ),
-            "37\n",
+            "1\n37\n",
         ),
     ];
     for (tag, src, out) in &progs {
@@ -37409,7 +37438,7 @@ fn vm_purefn_depth_boundary() {
                 assert_eq!(vm, tree, "[{tag}] {engine} AXON_MAX_DEPTH={depth}");
             }
             if depth == 49 {
-                assert_eq!((tree.0, tree.1.as_str()), (Some(101), ""), "[{tag}]");
+                assert_eq!((tree.0, tree.1.as_str()), (Some(101), "1\n"), "[{tag}]");
                 assert!(
                     tree.2.contains("recursion limit exceeded (49)"),
                     "[{tag}] {}",
