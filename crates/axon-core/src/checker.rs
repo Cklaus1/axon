@@ -188,7 +188,13 @@ fn type_contains_unresolved(ty: &Type) -> bool {
 ///
 /// `parse_type_str` (infer.rs) has no type-variable arm, so every one of these
 /// lands as `Deferred`; the name is the only thing that tells them apart.
-fn is_builtin_type_param_name(n: &str) -> bool {
+///
+/// Shared with `infer.rs`, which uses it to promote those slots to `TypeParam`
+/// so each call site instantiates fresh unification vars. The two passes MUST
+/// agree on which slots are generic — a private copy in each would let them
+/// drift, and inference would then solve a slot the checker still treats as a
+/// wildcard (or the reverse).
+pub(crate) fn is_builtin_type_param_name(n: &str) -> bool {
     !n.starts_with("fn(")
         && !DEFERRED_PREFIXES.iter().any(|p| n.starts_with(p))
         && !n.is_empty()
@@ -208,7 +214,12 @@ fn is_builtin_type_param_name(n: &str) -> bool {
 /// guess.
 fn collect_builtin_type_param_bindings(param: &Type, arg: &Type, out: &mut Vec<(String, Type)>) {
     match (param, arg) {
-        (Type::Deferred(n), a) if is_builtin_type_param_name(n) => {
+        // `TypeParam` and `Deferred` are the same slot seen at two stages:
+        // infer promotes a builtin's type-variable slots to `TypeParam` when it
+        // registers the signature, and this pass reads those same signatures.
+        // Matching only `Deferred` would silently stop binding `T` and let a
+        // mixed `arr_push` through.
+        (Type::TypeParam(n), a) | (Type::Deferred(n), a) if is_builtin_type_param_name(n) => {
             if !type_contains_unresolved(a) {
                 out.push((n.clone(), a.clone()));
             }
