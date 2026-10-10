@@ -22,10 +22,11 @@
 #       passes when it is at or below the budget; no rounding. SEL is a
 #       comma-separated subset of the programs; without it, all six run.
 #       Relative check (always on, R50 §10 S11 "every other program within
-#       0.5 % of S10"): a program with a REF median (third column of
-#       PROGRAMS, the S10 binary's median) also FAILs when its median exceeds
-#       REF * 1.005 (compared exactly: median * 1000 <= REF * 1005). A REF of
-#       `-` has no relative check.
+#       0.5 % of S10", §4 S12 "fib-recursive, arr-sum and qsort within 0.5 %
+#       of the commit S12 is built on"): a program with a REF median (third
+#       column of PROGRAMS) also FAILs when its median exceeds REF * 1.005
+#       (compared exactly: median * 1000 <= REF * 1005). A REF of `-` has no
+#       relative check.
 #         --programs mandelbrot,arr-sum,collatz   S7 gate
 #
 #   scripts/vm_perf_gate.sh --repros [SEL]
@@ -76,13 +77,15 @@ CPU="${VM_PERF_CPU:-6}"
 
 # ── Budgets (R50 §10, exact) ────────────────────────────────────────────────
 # program        CPython 3.14.4 median, run 20261008T142344Z (sieve: S10, see top)
-# REF: the S10 median (commit 944fe056, release build), measured with
-# `AXON_BIN=<S10 axon> VM_PERF_CPU=11 scripts/vm_perf_gate.sh`; fib-recursive
-# is S11's own target, so it has none.
+# REF: the median of the commit named, release build, measured with
+# `AXON_BIN=<that axon> VM_PERF_CPU=<cpu> scripts/vm_perf_gate.sh`: S10
+# (944fe056, CPU 11) for every program but fib-recursive, which is S11's own
+# target; its REF is the S11 commit S12 is built on (2627dad7, CPU 13; the
+# first of two gate runs, whose medians were 1002729957 and 1002729093).
 # program        budget        REF
 PROGRAMS=(
   # S11: a third of CPython's median, spec §10
-  "fib-recursive 1141214164    -"
+  "fib-recursive 1141214164    1002729957"
   "collatz       26058032109   18366495062"
   "mandelbrot    15023124683   5039973411"
   "arr-sum       23624147901   4979381330"
@@ -224,7 +227,7 @@ if [ "$MODE" = programs ]; then
     if [ "$ref" != "-" ]; then
       if [ $((m * 1000)) -le $((ref * 1005)) ]; then v="PASS"; else v="OVER"; fails=$((fails + 1)); fi
       pct="$(awk -v a="$m" -v b="$ref" 'BEGIN { printf "%+.3f", (a / b - 1) * 100 }')"
-      printf 'vm_perf_gate: %-14s median %16s  S10 ref %15s  %s %% (<= +0.5 %%)  %s\n' \
+      printf 'vm_perf_gate: %-14s median %16s  ref %19s  %s %% (<= +0.5 %%)  %s\n' \
         "$prog" "$(group "$m")" "$(group "$ref")" "$pct" "$v"
     fi
   done

@@ -35,6 +35,10 @@
 #         is refused with the same message (and path) as native; a `str`
 #         payload still round-trips through stdin, byte-identical to native.
 #
+# Every case runs on both the debug and the release axon-run.wasm, under
+# both engines; each output line names the run as `<profile>/<engine>`.
+# AXON_RUN_WASM=<path> runs only that module instead (named `given`).
+#
 # With no argument (as parity_all.sh runs every harness) it runs all three.
 # Requires: rustup target wasm32-wasip1 + wasmtime on PATH. Skips if absent.
 set -u
@@ -84,17 +88,32 @@ for c in wasmtime "$HOME/.wasmtime/bin/wasmtime"; do command -v "$c" >/dev/null 
 
 need_axon_run "$name"
 # AXON_RUN_WASM: an already-built axon-run.wasm to measure (nothing built).
+# Otherwise the debug and the release module, the release one built as
+# vm_wasm_depth.sh builds it (unstripped), so the two share one build.
+declare -A WASM_OF
 if [ -n "${AXON_RUN_WASM:-}" ]; then
-  WASM="$AXON_RUN_WASM"
+  WASM_OF[given]="$AXON_RUN_WASM"
+  PROFILES="given"
 else
-  echo "$name: building axon-run (wasm32-wasip1)…"
+  echo "$name: building axon-run (wasm32-wasip1, debug + release)…"
   if ! build_err="$(cargo build -q -p axon-core --no-default-features --bin axon-run --target wasm32-wasip1 2>&1)"; then
-    echo "$name: FAIL: wasm build failed"
+    echo "$name: FAIL: wasm debug build failed"
     printf '%s\n' "$build_err" | tail -20
     exit 1
   fi
-  WASM="$(_axon_target_dir)/wasm32-wasip1/debug/axon-run.wasm"
+  if ! build_err="$(CARGO_PROFILE_RELEASE_STRIP=none cargo build -q --release -p axon-core \
+    --no-default-features --bin axon-run --target wasm32-wasip1 2>&1)"; then
+    echo "$name: FAIL: wasm release build failed"
+    printf '%s\n' "$build_err" | tail -20
+    exit 1
+  fi
+  WASM_OF[debug]="$(_axon_target_dir)/wasm32-wasip1/debug/axon-run.wasm"
+  WASM_OF[release]="$(_axon_target_dir)/wasm32-wasip1/release/axon-run.wasm"
+  PROFILES="debug release"
 fi
+# RUNS: every `<profile>/<engine>` a case runs under.
+RUNS=()
+for prof in $PROFILES; do RUNS+=("$prof/tree" "$prof/vm"); done
 
 LIMIT="$(sed -n '/^#\[cfg(target_arch = "wasm32")\]$/{n;s/^const MAX_EXPR_DEPTH: usize = \([0-9_]*\);$/\1/p;}' \
   crates/axon-core/src/parser.rs | tr -d _)"
@@ -115,9 +134,11 @@ rep() {
   printf '%s' "${pad// /$1}"
 }
 
-# wasm <engine> <prog> [stdin] — run on wasm; exit code to RC, streams to out/err.
+# wasm <profile>/<engine> <prog> [stdin] — run on that profile's wasm module
+# under that engine; exit code to RC, streams to out/err.
 wasm() {
-  printf '%b' "${3:-}" | timeout -k 5 300 "$WASMTIME" run --dir . --env "AXON_ENGINE=$1" "$WASM" "$2" >out 2>err
+  printf '%b' "${3:-}" | timeout -k 5 300 "$WASMTIME" run --dir . --env "AXON_ENGINE=${1#*/}" \
+    "${WASM_OF[${1%/*}]}" "$2" >out 2>err
   RC=$?
 }
 
@@ -209,7 +230,7 @@ EOF
   chain deep_tuple '(v, i)' 100000
   chain deep_option 'Some(v)' 1000
   chain deep_result 'Ok(v)' 1000
-  for e in tree vm; do
+  for e in "${RUNS[@]}"; do
     for p in list dict closure deep_list array deep_array deep_tuple deep_option deep_result; do
       case "$p" in
         deep_option|deep_result) want=1000 ;;
@@ -282,7 +303,7 @@ EOF
   # A chain past the limit inside one interpolation slot (1,500 terms: the
   # debug lexer traps on a string literal of about 11,000 characters).
   src slot1500 "let s = \"{1$(rep ' + 1' 1500)}\""
-  for e in tree vm; do
+  for e in "${RUNS[@]}"; do
     for p in paren300 paren5000 chain chain10000 chain30000 chain100000 strchain some_pattern \
       option_type calls blocks interp guard300 guard1000 guard3000 arm3000 or_arm5000 \
       refine600 refine3000 compound slot1500; do
@@ -306,7 +327,7 @@ EOF
   src slot_unclosed "let s = to_str(\"{1$(rep ' + 1' 2000)}\""
   printf 'fn main() -> i64 {\n    let s = "{1%s}" +\n}\n' "$(rep ' + 1' 1500)" >slot_synerr.ax
   src slot_leftover "let s = \"{1$(rep ' + 1' 1500) 5}\""
-  for e in tree vm; do
+  for e in "${RUNS[@]}"; do
     for spec in "synerr100000:3:1:unexpected token: RBrace, expected expression" \
       "unclosed100000:4:1:unexpected token: Int(0), expected RParen" \
       "compound_open:4:1:unexpected token: Int(0), expected RParen" \
@@ -333,7 +354,7 @@ ax61)
   # reaches the builtin: exit 101. With the finding's own 700-term chain the
   # front end may refuse it (exit 2, E0000); neither may trap.
   probe="$ROOT/crates/axon-core/tests/fixtures/vm_depth/nest/host_await_closure.ax"
-  for e in tree vm; do
+  for e in "${RUNS[@]}"; do
     for d in 1 60 67 74 77 120 130; do
       { echo "let DEPTH = $d"; tail -n +2 "$probe"; } >closure.ax
       wasm "$e" closure.ax
@@ -394,7 +415,7 @@ EOF
   native_chan="$(grep -o 'host_await_val: payload cannot cross.*' native.err)"
   printf 'ada\n' | "$INTERP" run str.ax >native.out 2>/dev/null
   native_str_rc=$?
-  for e in tree vm; do
+  for e in "${RUNS[@]}"; do
     for p in list capture; do
       wasm "$e" "$p.ax"
       if [ "$RC" = 101 ] && grep -q "no host driver" err; then

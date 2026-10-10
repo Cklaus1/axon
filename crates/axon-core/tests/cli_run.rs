@@ -513,6 +513,77 @@ fn native_guard_borrow_e0606() {
 }
 
 #[test]
+fn native_guard_assign_in_place() {
+    // `walk_expr` visits match guards (AX-60), so eval's `mentions_var` sees
+    // a guard that assigns the target of `s = s + …` / `xs = arr_push(xs, …)`
+    // and skips the in-place append; the output follows plain evaluation
+    // order (the target is read before the guard runs). Before, the append
+    // ran on the guard's value: `zza` and `3`.
+    let cases = [
+        (
+            "guard_assign_str",
+            "fn main() {\n    \
+             let s = \"start\"\n    \
+             s = s + match 1 { n if { s = \"zz\"\n true } => \"a\", _ => \"b\" }\n    \
+             println(s)\n}\n",
+            "starta\n",
+        ),
+        (
+            "guard_assign_arr",
+            "fn main() {\n    \
+             let xs = [1]\n    \
+             xs = arr_push(xs, match 1 { n if { xs = [7, 7]\n true } => 2, _ => 3 })\n    \
+             println(to_str(len(xs)))\n}\n",
+            "2\n",
+        ),
+    ];
+    for (tag, src, want) in cases {
+        for engine in ["tree", "vm"] {
+            let out = vm_run(tag, src, engine, false);
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "[{tag} {engine}] {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&out.stdout),
+                want,
+                "[{tag} {engine}]"
+            );
+        }
+    }
+}
+
+#[test]
+fn native_guard_pure_e1207() {
+    // `walk_expr` visits match guards (AX-60), so the checker's purity pass
+    // sees a non-pure fn passed as a value in an `@[pure]` fn's guard.
+    // Before, the guard was skipped: the program ran and printed `1`.
+    let src = "fn noisy(x: i64) -> i64 { x }\n\
+               fn apply(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }\n\
+               @[pure]\n\
+               fn p(x: i64) -> i64 { match x { n if apply(noisy, n) > 0 => 1, _ => 0 } }\n\
+               fn main() {\n    \
+               println(to_str(p(1)))\n}\n";
+    for engine in ["tree", "vm"] {
+        let out = vm_run("guard_pure_e1207", src, engine, false);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "[{engine}] {stderr}");
+        assert!(
+            stderr.contains("\"code\":\"E1207\"")
+                && stderr.contains("`@[pure]` function `p` performs an impure operation: non-pure function `noisy`"),
+            "[{engine}] want E1207 naming `noisy`: {stderr}"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "",
+            "[{engine}] nothing runs"
+        );
+    }
+}
+
+#[test]
 fn wasm_browser_host_await_round_trips_r7c() {
     // R15 §13 B1: host_await works in the BROWSER substrate — a suspending program
     // run by the axon-wasm interpreter gets its replies from an imported (JS)
