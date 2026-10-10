@@ -3132,11 +3132,11 @@ impl<'p> Interp<'p> {
             // reconstructed back into a `Value`.
             "host_await_val" => {
                 want(1)?;
-                let req = crate::interp::SendValue::from_value(&args[0]).map_err(|e| {
+                let req = crate::interp::SendValue::request(&args[0]).map_err(|e| {
                     Flow::Panic(format!("host_await_val: payload cannot cross a suspend — it contains a channel (Chan) at {}, which is identity-shared mutable state (R15 Slice 2 refuses Chan payloads)",
                     e.path).into())
                 })?;
-                match crate::interp::host_await_yield(req) {
+                match req.map_or(Err(()), crate::interp::host_await_yield) {
                     Ok(Some(reply)) => ok!(reply.into_value()),
                     // EOF on the plain (non-opt) form collapses to Unit — there is no
                     // meaningful "any-typed default"; programs that care use `_opt`.
@@ -3148,11 +3148,11 @@ impl<'p> Interp<'p> {
             }
             "host_await_val_opt" => {
                 want(1)?;
-                let req = crate::interp::SendValue::from_value(&args[0]).map_err(|e| {
+                let req = crate::interp::SendValue::request(&args[0]).map_err(|e| {
                     Flow::Panic(format!("host_await_val_opt: payload cannot cross a suspend — it contains a channel (Chan) at {}, which is identity-shared mutable state (R15 Slice 2 refuses Chan payloads)",
                     e.path).into())
                 })?;
-                match crate::interp::host_await_yield(req) {
+                match req.map_or(Err(()), crate::interp::host_await_yield) {
                     Ok(Some(reply)) => ok!(Value::Some(Box::new(reply.into_value()))),
                     Ok(None) => ok!(Value::None),
                     Err(()) => Err(Flow::Panic(
@@ -5164,7 +5164,7 @@ impl<'p> Interp<'p> {
             "dict_new" => {
                 want(0)?;
                 ok!(Value::Dict(Rc::new(RefCell::new(
-                    std::collections::BTreeMap::new()
+                    std::collections::BTreeMap::new().into()
                 ))));
             }
             "dict_get" => {
@@ -5286,7 +5286,7 @@ impl<'p> Interp<'p> {
                     let nv = self.call_closure_arg(f, [v])?;
                     out.insert(k, nv);
                 }
-                ok!(Value::Dict(Rc::new(RefCell::new(out))));
+                ok!(Value::Dict(Rc::new(RefCell::new(out.into()))));
             }
             // `arr_enumerate(xs)` — turn `[a, b, c]` into `[(0, a), (1, b),
             // (2, c)]`. The "iterate with index" pattern's primitive
@@ -5430,7 +5430,7 @@ impl<'p> Interp<'p> {
                         }
                     }
                 }
-                ok!(Value::Dict(Rc::new(RefCell::new(out))));
+                ok!(Value::Dict(Rc::new(RefCell::new(out.into()))));
             }
             // `dict_to_pairs(d) -> [(str, V)]` — entries as a slice of
             // tuples in BTreeMap key order. The natural primitive for
@@ -5491,7 +5491,7 @@ impl<'p> Interp<'p> {
                     };
                     out.insert(k, pair[1].clone());
                 }
-                ok!(Value::Dict(Rc::new(RefCell::new(out))));
+                ok!(Value::Dict(Rc::new(RefCell::new(out.into()))));
             }
 
             // `dict_to_str(d) -> str` — serialize a `Dict<str, str>` to a
@@ -5559,7 +5559,7 @@ impl<'p> Interp<'p> {
                     }
                     // malformed (no '=') → skipped (lenient).
                 }
-                ok!(Value::Dict(Rc::new(RefCell::new(out))));
+                ok!(Value::Dict(Rc::new(RefCell::new(out.into()))));
             }
             // BUG_HUNT #31: strict variant — a malformed line is a recoverable
             // `Err(message)`, not a panic. The language's "Result, not
@@ -5583,7 +5583,7 @@ impl<'p> Interp<'p> {
                         }
                     }
                 }
-                ok!(Value::Ok(Box::new(Value::Dict(Rc::new(RefCell::new(out))))));
+                ok!(Value::Ok(Box::new(Value::Dict(Rc::new(RefCell::new(out.into()))))));
             }
 
             // `dict_merge(d1, d2) -> Dict` — union of two dicts. Right-
@@ -5609,11 +5609,11 @@ impl<'p> Interp<'p> {
                         ))
                     }
                 };
-                let mut out: std::collections::BTreeMap<String, Value> = d1.borrow().clone();
+                let mut out: std::collections::BTreeMap<String, Value> = d1.borrow().0.clone();
                 for (k, v) in d2.borrow().iter() {
                     out.insert(k.clone(), v.clone());
                 }
-                ok!(Value::Dict(Rc::new(RefCell::new(out))));
+                ok!(Value::Dict(Rc::new(RefCell::new(out.into()))));
             }
 
             // `arr_max_by(xs, key_fn)` / `arr_min_by(xs, key_fn)` —
@@ -5778,8 +5778,8 @@ impl<'p> Interp<'p> {
                     };
                     out.entry(key).or_default().push(x);
                 }
-                let map = out.into_iter().map(|(k, v)| (k, Value::Array(v.into()))).collect();
-                ok!(Value::Dict(Rc::new(RefCell::new(map))));
+                let map: std::collections::BTreeMap<String, Value> = out.into_iter().map(|(k, v)| (k, Value::Array(v.into()))).collect();
+                ok!(Value::Dict(Rc::new(RefCell::new(map.into()))));
             }
             // `dict_values(d) -> [V]` — values in key-sorted order.
             "dict_values" => {

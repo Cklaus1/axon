@@ -340,6 +340,146 @@ fn host_await_runs_identically_on_wasm_wasip1() {
 }
 
 #[test]
+fn wasm_drops_deep_values_ax59() {
+    // AX-59: dropping a 100,000-node enum list, a dict nested 100,000 deep and
+    // a 100,000-closure chain, and a 100,000-node list under 100 levels of
+    // recursion, used to trap wasmtime's default stack in the drop glue
+    // (exit 134). Each now exits 0 under both engines.
+    wasm_nesting_parity("ax59");
+}
+
+#[test]
+fn wasm_deep_source_gives_e0000_ax60() {
+    // AX-60: source nested past the wasm32 front-end limit (parentheses 300
+    // and 5,000 deep, 1,000-term `+` and string chains, a nested `Some`
+    // pattern, an `Option<` type, nested calls and blocks) used to run, or
+    // trap in the parser or a later walk. Each now exits 2 with E0000
+    // `expression nesting too deep (limit N)` at the expression's start.
+    wasm_nesting_parity("ax60");
+}
+
+#[test]
+fn wasm_host_await_val_no_copy_ax61() {
+    // AX-61: `host_await_val` deep-copied its payload before finding there is
+    // no host driver, and the copy of a long closure body or a 100,000-node
+    // list trapped. Now: exit 101 (`no host driver` or the recursion-limit
+    // panic), never a trap; a `Chan` payload's refusal names the same path as
+    // native; a `str` payload still round-trips byte-identically.
+    wasm_nesting_parity("ax61");
+}
+
+/// Run `scripts/wasm_nesting_parity.sh <case>` (compilebench AX-59/60/61:
+/// axon-run.wasm under wasmtime's default stack, both engines) and require
+/// its PASS. Skips, and records the skip, if the wasm target or wasmtime is
+/// unavailable.
+fn wasm_nesting_parity(case: &str) {
+    let script = format!(
+        "{}/../../scripts/wasm_nesting_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let out = harness(&script)
+        .arg(case)
+        .output()
+        .expect("run wasm_nesting_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if harness_skipped(&out, &stdout, &stderr, &script) {
+        eprintln!("wasm/wasmtime unavailable — wasm nesting {case} skipped:\n{stdout}{stderr}");
+        note_harness_skip(&format!("wasm/wasmtime unavailable — wasm nesting {case}"));
+        return;
+    }
+    assert!(
+        out.status.success() && stdout.contains("wasm_nesting_parity: PASS ("),
+        "wasm nesting {case} must pass:\n{stdout}{stderr}"
+    );
+}
+
+#[test]
+fn native_nesting_limit_unchanged_ax60() {
+    // AX-60 lowered the nesting limit on wasm32 only. Native keeps 4,000:
+    // source nested 300 deep and a 1,000-term chain run, and 5,000 nested
+    // parentheses are refused with the 4,000 limit, not 224.
+    let dir = std::env::temp_dir().join(format!("axon_native_nest_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |name: &str, line: String| {
+        let f = dir.join(format!("{name}.ax"));
+        std::fs::write(
+            &f,
+            format!("fn f(x: i64) -> i64 {{ x }}\nfn main() -> i64 {{\n    {line}\n    0\n}}\n"),
+        )
+        .unwrap();
+        axon().args(["run", f.to_str().unwrap()]).output().unwrap()
+    };
+    let nest = |open: &str, leaf: &str, close: &str, n: usize| {
+        format!("{}{leaf}{}", open.repeat(n), close.repeat(n))
+    };
+    let accepted = [
+        (
+            "paren300",
+            format!(
+                "let x = {}\n    println(to_str(x))",
+                nest("(", "1", ")", 300)
+            ),
+        ),
+        (
+            "chain",
+            format!("let x = 1{}\n    println(to_str(x))", " + 1".repeat(999)),
+        ),
+        (
+            "strchain",
+            format!(
+                "let x = \"a\"{}\n    println(to_str(str_len(x)))",
+                " + \"a\"".repeat(999)
+            ),
+        ),
+        (
+            "calls",
+            format!(
+                "let x = {}\n    println(to_str(x))",
+                nest("f(", "1", ")", 300)
+            ),
+        ),
+        (
+            "blocks",
+            format!(
+                "let x = {}\n    println(to_str(x))",
+                nest("{ ", "1", " }", 300)
+            ),
+        ),
+    ];
+    for (name, line) in accepted {
+        let out = run(name, line);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "native must accept {name}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let want = if name == "chain" || name == "strchain" {
+            "1000\n"
+        } else {
+            "1\n"
+        };
+        assert_eq!(String::from_utf8_lossy(&out.stdout), want, "{name} output");
+    }
+    let out = run(
+        "paren5000",
+        format!("let x = {}", nest("(", "1", ")", 5000)),
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "native refuses 5,000 parentheses: {stderr}"
+    );
+    assert!(
+        stderr.contains("expression nesting too deep (limit 4000)"),
+        "native keeps its 4,000 limit: {stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn wasm_browser_host_await_round_trips_r7c() {
     // R15 §13 B1: host_await works in the BROWSER substrate — a suspending program
     // run by the axon-wasm interpreter gets its replies from an imported (JS)

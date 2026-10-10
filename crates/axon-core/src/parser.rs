@@ -249,6 +249,10 @@ pub struct Parser {
     /// nested input (e.g. `((((…))))`) fails with a clean parse error instead of
     /// overflowing the parser's recursion and aborting the process.
     expr_depth: usize,
+    /// Set when a nesting refusal (`expression nesting too deep`) is raised,
+    /// so the root `parse_expr` on wasm32 can report it at the root
+    /// expression's start rather than wherever the refusal happened (AX-60).
+    too_deep: bool,
     /// Phase 5: inline anonymous refinements (`d: i64 where _ != 0`) are
     /// desugared at parse time into fresh synthetic named refinements collected
     /// here; `parse_program` appends them to the program's items. This reuses the
@@ -280,7 +284,24 @@ pub struct Parser {
 /// Max nested-expression depth before a graceful parse error. Far beyond any
 /// realistic (even generated) code, but below where the parser would overflow
 /// the large interpreter/CLI thread stack.
+#[cfg(not(target_arch = "wasm32"))]
 const MAX_EXPR_DEPTH: usize = 4_000;
+
+/// AX-60: wasm32 runs the front end on wasmtime's default 512 KiB native
+/// stack, inside the same 448 KiB budget as the interpreter, so there the
+/// limit is that budget over the worst frame chain between two charges
+/// (`scripts/wasm_stack_budget.py` checks it on each build), and
+/// [`NEST_ALL`] also bounds what native leaves unbounded: statement-level
+/// nesting, `else if` chains, patterns, types and the height of an operator
+/// chain the parser builds in a loop.
+#[cfg(target_arch = "wasm32")]
+const MAX_EXPR_DEPTH: usize = 224;
+
+/// AX-60: whether every recursive descent (`parse_expr`, `parse_primary`,
+/// `parse_pattern`, `parse_type_atom`, an `else if` link, a match subject or
+/// guard) charges [`MAX_EXPR_DEPTH`], and every root expression's AST height
+/// is checked against it (wasm32 only; native keeps its limits).
+const NEST_ALL: bool = cfg!(target_arch = "wasm32");
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
@@ -309,6 +330,7 @@ impl Parser {
             paren_depth: 0,
             shr_pending: false,
             expr_depth: 0,
+            too_deep: false,
             synthetic_refinements: Vec::new(),
             synthetic_refine_count: 0,
             surface_mode: false,
@@ -328,6 +350,7 @@ impl Parser {
             paren_depth: 0,
             shr_pending: false,
             expr_depth: 0,
+            too_deep: false,
             synthetic_refinements: Vec::new(),
             synthetic_refine_count: 0,
             surface_mode: false,
@@ -346,6 +369,7 @@ impl Parser {
             paren_depth: 0,
             shr_pending: false,
             expr_depth: 0,
+            too_deep: false,
             synthetic_refinements: Vec::new(),
             synthetic_refine_count: 0,
             surface_mode: false,
@@ -1289,7 +1313,18 @@ impl Parser {
             && matches!(self.tokens.get(self.pos + 1), Some(Token::LBrace))
     }
 
+    // Out of line on wasm32 so `scripts/wasm_stack_budget.py` can find each
+    // function that charges `MAX_EXPR_DEPTH` (likewise on the other three).
+    #[cfg_attr(target_arch = "wasm32", inline(never))]
     fn parse_type_atom(&mut self) -> Result<AxonType> {
+        if NEST_ALL {
+            self.nested(Self::parse_type_atom_inner)
+        } else {
+            self.parse_type_atom_inner()
+        }
+    }
+
+    fn parse_type_atom_inner(&mut self) -> Result<AxonType> {
         // `dyn Trait` — trait object type
         if self.eat(&Token::Dyn) {
             let name = self.expect_ident()?;
@@ -1750,7 +1785,37 @@ impl Parser {
 
     // ── Expressions ──────────────────────────────────────────────────────────
 
+    #[cfg_attr(target_arch = "wasm32", inline(never))]
     fn parse_expr(&mut self) -> Result<Expr> {
+        if !NEST_ALL {
+            return self.parse_expr_inner();
+        }
+        // AX-60: a root expression (a statement of a fn body, a contract, a
+        // constant) is checked for AST height, which bounds every later
+        // recursive walk over it, including the operator chains the parser
+        // builds in a loop. A refusal anywhere under a root is reported at the
+        // root's first token: the error span is the parser's position, and
+        // the token where the limit tripped (or the one after an over-tall
+        // chain) says nothing about which expression to split.
+        let root = self.expr_depth == 0;
+        if root {
+            self.too_deep = false;
+        }
+        let start = self.pos;
+        let r = self.nested(Self::parse_expr_inner).and_then(|e| {
+            if root && crate::ast::expr_height_exceeds(&e, MAX_EXPR_DEPTH) {
+                Err(self.too_deep())
+            } else {
+                Ok(e)
+            }
+        });
+        if root && r.is_err() && self.too_deep {
+            self.pos = start;
+        }
+        r
+    }
+
+    fn parse_expr_inner(&mut self) -> Result<Expr> {
         match self.peek() {
             Some(Token::Let) => self.parse_let(),
             Some(Token::Own) => self.parse_own(),
@@ -2267,7 +2332,7 @@ impl Parser {
 
     fn parse_match(&mut self) -> Result<Expr> {
         self.expect(&Token::Match)?;
-        let subject = self.parse_logical()?;
+        let subject = self.parse_match_operand()?;
         self.expect(&Token::LBrace)?;
         let mut arms = Vec::new();
         while !self.at(&Token::RBrace) {
@@ -2280,7 +2345,7 @@ impl Parser {
                 patterns.push(self.parse_pattern()?);
             }
             let guard = if self.eat(&Token::If) {
-                Some(self.parse_logical()?)
+                Some(self.parse_match_operand()?)
             } else {
                 None
             };
@@ -2302,13 +2367,31 @@ impl Parser {
         })
     }
 
+    /// A match subject or guard. AX-60: on wasm32 it is charged one
+    /// `MAX_EXPR_DEPTH` unit, so the `parse_match` frame between it and the
+    /// enclosing charge does not widen the worst frame chain per unit
+    /// (`scripts/wasm_stack_budget.py`).
+    fn parse_match_operand(&mut self) -> Result<Expr> {
+        if NEST_ALL {
+            self.nested(Self::parse_logical)
+        } else {
+            self.parse_logical()
+        }
+    }
+
     fn parse_if(&mut self) -> Result<Expr> {
         self.expect(&Token::If)?;
         let cond = self.parse_logical()?;
         let then = self.parse_block()?;
         let else_ = if self.eat(&Token::Else) {
             Some(Box::new(if self.at(&Token::If) {
-                self.parse_if()?
+                // AX-60: an `else if` chain recurses here once per link,
+                // past every other charge, so on wasm32 each link is one.
+                if NEST_ALL {
+                    self.nested(Self::parse_if)?
+                } else {
+                    self.parse_if()?
+                }
             } else {
                 self.parse_block()?
             }))
@@ -2489,6 +2572,7 @@ impl Parser {
 
     /// Lowest-precedence binary layer: `||` (logical OR). Binds looser than `&&`,
     /// so `a || b && c` parses as `a || (b && c)` (standard precedence).
+    #[cfg_attr(target_arch = "wasm32", inline(never))]
     fn parse_logical(&mut self) -> Result<Expr> {
         let mut left = self.parse_logical_and()?;
         loop {
@@ -2886,20 +2970,33 @@ impl Parser {
         Ok((args, tier))
     }
 
+    #[cfg_attr(target_arch = "wasm32", inline(never))]
     fn parse_primary(&mut self) -> Result<Expr> {
         // Bound expression nesting so adversarially deep input fails gracefully
-        // rather than overflowing the parser's recursion. The decrement runs on
-        // every path (the inner call's `?`s return into `r`, then we decrement).
+        // rather than overflowing the parser's recursion.
+        self.nested(Self::parse_primary_inner)
+    }
+
+    /// Run `f` one nesting level deeper, refusing past [`MAX_EXPR_DEPTH`].
+    /// The decrement runs on every path (`f`'s `?`s return into `r`).
+    #[inline(always)]
+    fn nested<T>(&mut self, f: fn(&mut Self) -> Result<T>) -> Result<T> {
         self.expr_depth += 1;
         if self.expr_depth > MAX_EXPR_DEPTH {
             self.expr_depth -= 1;
-            return Err(ParseError::Other(format!(
-                "expression nesting too deep (limit {MAX_EXPR_DEPTH})"
-            )));
+            return Err(self.too_deep());
         }
-        let r = self.parse_primary_inner();
+        let r = f(self);
         self.expr_depth -= 1;
         r
+    }
+
+    #[cold]
+    fn too_deep(&mut self) -> ParseError {
+        self.too_deep = true;
+        ParseError::Other(format!(
+            "expression nesting too deep (limit {MAX_EXPR_DEPTH})"
+        ))
     }
 
     fn parse_primary_inner(&mut self) -> Result<Expr> {
@@ -3225,7 +3322,16 @@ impl Parser {
 
     // ── Patterns ─────────────────────────────────────────────────────────────
 
+    #[cfg_attr(target_arch = "wasm32", inline(never))]
     fn parse_pattern(&mut self) -> Result<Pattern> {
+        if NEST_ALL {
+            self.nested(Self::parse_pattern_inner)
+        } else {
+            self.parse_pattern_inner()
+        }
+    }
+
+    fn parse_pattern_inner(&mut self) -> Result<Pattern> {
         match self.peek() {
             Some(Token::Ident(s)) if s == "_" => {
                 self.advance()?;

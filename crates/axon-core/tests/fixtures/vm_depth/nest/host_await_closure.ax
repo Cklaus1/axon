@@ -1,0 +1,24 @@
+let DEPTH = 100
+// vm_wasm_depth: sweep
+// AX-61 probe (the finding's repro, with a lambda the wasm32 front end
+// admits): each level is a `with` around a call nested in nine parentheses;
+// the bottom passes a lambda whose body is a 215-term `+` chain to
+// `host_await_val`. Copying the closure for the request cloned its body once
+// per term and trapped wasmtime's default stack at depths 67-77; on wasm32
+// the request is now refused before any copy (`SendValue::request`).
+// scripts/vm_wasm_depth.sh runs it at every DEPTH from 1 to past the guard
+// and requires exit 101 (`no host driver` or the recursion-limit panic),
+// never a trap.
+fn w(n: i64) -> i64 {
+    if n == 0 {
+        let f = |x: i64| x + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1
+        let r = host_await_val(f)
+        0
+    } else {
+        with handler { on Net(e) => 0 } { 1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (w(n - 1)))))))))) - 9 }
+    }
+}
+fn main() -> i64 {
+    println(to_str(w(DEPTH)))
+    0
+}

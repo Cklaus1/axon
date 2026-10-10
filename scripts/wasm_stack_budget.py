@@ -50,17 +50,23 @@ from collections import defaultdict
 
 # Unguarded recursions reachable from `eval`, each with why its depth is not
 # the program's call depth: (regex over a member's symbol, kind). First
-# match wins. "value": the depth of a run-time value or string (a nested
-# array, an `Uncertain` chain, JSON, a regex), outside the budget
-# (compilebench AX-59). "source": the nesting of one source construct (a
-# pattern, a type, an expression cloned or walked whole), walked by the
-# same function under both engines; the front end bounds it only loosely
-# (compilebench AX-60) and a deep copy near the budget's edge traps
-# (compilebench AX-61). "bounded":
+# match wins. "bounded (DROP_INLINE_DEPTH)": the drop glue of a nested
+# `Value`, which on wasm32 passes `bounded_drop` (interp.rs, compilebench
+# AX-59) and so holds at most `DROP_INLINE_DEPTH` levels of the component
+# at once; checked below against the headroom the budget leaves, and a
+# `Value` drop component without `bounded_drop` fails. "value": the depth
+# of a run-time value or string (a nested array, an `Uncertain` chain,
+# JSON, a regex) walked by something other than drop, outside the budget.
+# "source": the nesting of one source construct (a pattern, a type, an
+# expression walked whole), walked by the same function under both
+# engines, at most the parser's wasm32 `MAX_EXPR_DEPTH` deep (compilebench
+# AX-60). "bounded":
 # a fixed depth (`PURE_DEPTH`; a numeric helper that recurses once). "std":
 # a std algorithm's log-n recursion. "panic": the panic path, which ends
 # the run.
+DROP_CLASS = "bounded (DROP_INLINE_DEPTH)"
 ALLOW = [
+    (r"bounded_drop::|12bounded_drop", DROP_CLASS),
     (r"interp::Value as .*Clone|6interp5Value|Rc<interp::EnumVal>|interp::SendValue|9SendValue"
      r"|send_value_display|value::display|fields_display|values_equal|Fields>::equal"
      r"|numeric_score|eval_binop_vals", "value"),
@@ -68,10 +74,29 @@ ALLOW = [
     (r"interp::regex|6interp5regex", "value"),
     (r"ast::(Expr|Pattern|AxonType|FmtPart|HandlerExpr|MatchArm)|3ast\d+[A-Z]|3ast4Ex"
      r"|types::Type|5types4Type|resolver::collect|match_pattern|pattern_binds", "source"),
-    (r"vm::pure::|2vm4pure4Pure|compile_pure_(at|stmts|if)", "bounded (PURE_DEPTH)"),
+    (r"vm::pure::|2vm4pure4Pure|compile_pure_(at|stmts|if)\b", "bounded (PURE_DEPTH)"),
     (r"gamma_sample|log_gamma|reg_inc_beta|beta_cdf|sub_timespec|slice_error_fail", "bounded (recurses once)"),
     (r"slice4sort|btree", "std"),
     (r"backtrace|panicking|ThreadId>::new::exhausted", "panic"),
+]
+# The drop glue of an interpreter `Value` (the shared `EnumVal` cell, or the
+# `Value` enum itself): a component holding it must hold `bounded_drop`.
+VALUE_DROP = re.compile(r"Rc<interp::EnumVal>>::drop_slow|drop_glue::<interp::Value>"
+                        r"|drop_glue\w*?6interp5ValueE")
+# wasmtime's default `max-wasm-stack`, which the wasm32 budget is sized for.
+WASM_STACK = 512 * 1024
+# A parser method's name, and the calls that charge one `MAX_EXPR_DEPTH`
+# unit (`Parser::nested`, inlined into its caller): (caller, callee), a
+# `None` caller meaning any. parser.rs keeps each callee out of line on
+# wasm32 so it is nameable here.
+PARSER_FN = re.compile(r"^<axon_core\[[0-9a-f]+\]::parser::Parser>::(\w+)$")
+PARSER_CHARGES = [
+    (None, "parse_expr"),
+    (None, "parse_primary"),
+    (None, "parse_pattern"),
+    (None, "parse_type_atom"),
+    ("parse_if", "parse_if"),
+    ("parse_match|parse_match_operand", "parse_logical"),
 ]
 
 
@@ -81,6 +106,28 @@ def main() -> int:
         return 2
     src, profile, wasm_x, wasm_d, cdis = sys.argv[1:]
     text = open(src, encoding="utf-8").read()
+
+    def const(pat, where, txt):
+        m = re.search(pat, txt, re.S)
+        if not m:
+            print(f"wasm_stack_budget: no {where}", file=sys.stderr)
+            return None
+        return int(m.group(1).replace("_", ""))
+
+    # The budget the guards charge against (`RECURSION_LIMIT` x
+    # `NEST_PER_DEPTH` on wasm32), the headroom it leaves below the stack,
+    # the bounded drop's inline depth, and the parser's wasm32 limit.
+    parser_src = open(os.path.join(os.path.dirname(os.path.abspath(src)), "parser.rs"), encoding="utf-8").read()
+    limit = const(r'#\[cfg\(target_arch = "wasm32"\)\]\s*const RECURSION_LIMIT: usize = ([\d_]+);',
+                  "wasm32 `RECURSION_LIMIT` in interp.rs", text)
+    per_depth = const(r"const NEST_PER_DEPTH: usize = ([\d_]+);", "`NEST_PER_DEPTH` in interp.rs", text)
+    drop_depth = const(r"const DROP_INLINE_DEPTH: usize = ([\d_]+);", "`DROP_INLINE_DEPTH` in interp.rs", text)
+    expr_depth = const(r'#\[cfg\(target_arch = "wasm32"\)\]\s*const MAX_EXPR_DEPTH: usize = ([\d_]+);',
+                       "wasm32 `MAX_EXPR_DEPTH` in parser.rs", parser_src)
+    if None in (limit, per_depth, drop_depth, expr_depth):
+        return 2
+    budget = limit * per_depth
+    headroom = WASM_STACK - budget
     body = re.search(r"pub\(super\) mod nest_cost \{(.*?)\n\}", text, re.S)
     if not body:
         print("wasm_stack_budget: no `mod nest_cost` in interp.rs", file=sys.stderr)
@@ -421,12 +468,81 @@ def main() -> int:
         full_names = [re.sub(r"axon_core\[[0-9a-f]+\]::", "", name_of(f) or sym.get(f) or names.get(f, str(f)))
                       for f in ms]
         why = next((w for p, w in ALLOW if any(re.search(p, s) for s in full_names)), None)
+        if why != DROP_CLASS and any(VALUE_DROP.search(s) for s in full_names):
+            bad += 1
+            print(f"wasm_stack_budget: {profile:<7} FAIL Value drop recursion without `bounded_drop`: "
+                  f"{sorted(label(f) for f in ms)[:4]}")
+            continue
         if why is None:
             bad += 1
             print(f"wasm_stack_budget: {profile:<7} FAIL unguarded recursion not in ALLOW: "
                   f"{sorted(label(f) for f in ms)[:4]}")
-        else:
-            kinds[why] += 1
+            continue
+        kinds[why] += 1
+        if why == DROP_CLASS:
+            # `bounded_drop` defers past DROP_INLINE_DEPTH live drops, so at
+            # most that many passes through the component sit on the stack,
+            # each at most the component's summed frame, above the budget.
+            total = sum(frame.get(f, 16) for f in ms)
+            ok = drop_depth * total <= headroom
+            bad += not ok
+            print(f"wasm_stack_budget: {profile:<7} {'value drop':<24} {drop_depth * total:>5} <= {headroom:<5} "
+                  + ("ok" if ok else "FAIL")
+                  + f"  (DROP_INLINE_DEPTH {drop_depth} x {len(ms)} functions, {total} B)")
+
+    # The parser runs before the budget is charged, so its recursion must fit
+    # the budget by itself: between two calls that charge one
+    # `MAX_EXPR_DEPTH` unit (`nested`) the stack holds at most the worst
+    # chain of frames from one charged callee to the next charged call, and
+    # the wasm32 limit times that chain fits the budget.
+    pname = {f: m.group(1) for f, s in sym.items() if (m := PARSER_FN.match(s))}
+
+    def charged(f, g):
+        callee = pname.get(g)
+        return callee is not None and any(
+            callee == e and (r is None or re.fullmatch(r, pname.get(f, ""))) for r, e in PARSER_CHARGES)
+
+    heads = {g for f, gs in calls.items() for g in gs if charged(f, g)}
+    if not any(pname.get(g) == "parse_expr" for g in heads):
+        print("wasm_stack_budget: no charged `Parser::parse_expr` call in the disassembly", file=sys.stderr)
+        return 2
+    pscc = set().union(*(members[comp[f]] for f in heads))
+    unit_of, pstate = {}, {}
+
+    def unit_tail(f):
+        # Deepest frames from entering f to its next charged call.
+        nonlocal bad
+        if f in unit_of:
+            return unit_of[f][0]
+        if pstate.get(f) == 1:
+            bad += 1
+            print(f"wasm_stack_budget: {profile:<7} FAIL parser recursion without a charge through {label(f)}")
+            return 0
+        pstate[f] = 1
+        best, arg = 0, None
+        for g in sorted(calls.get(f, ())):
+            if g in pscc and not charged(f, g):
+                t = unit_tail(g)
+                if t > best:
+                    best, arg = t, g
+        pstate[f] = 2
+        unit_of[f] = (frame.get(f, 16) + best, arg)
+        return unit_of[f][0]
+
+    unit, worst_fn = 0, None
+    for f in sorted(heads & pscc):
+        u = unit_tail(f)
+        if u > unit:
+            unit, worst_fn = u, f
+    chain, g = [], worst_fn
+    while g is not None:
+        chain.append(f"{label(g).replace('<parser::Parser>::', '')} {frame.get(g, 16)}")
+        g = unit_of[g][1]
+    ok = expr_depth * unit <= budget
+    bad += not ok
+    print(f"wasm_stack_budget: {profile:<7} {'parser':<24} {expr_depth * unit:>6} <= {budget:<6} "
+          + ("ok" if ok else "FAIL")
+          + f"  (MAX_EXPR_DEPTH {expr_depth} x {unit} B per unit: {' + '.join(chain)})")
     print("\n".join(summary))
     print(f"wasm_stack_budget: {profile:<7} other recursion reachable from eval: "
           + ", ".join(f"{k} {v}" for k, v in sorted(kinds.items())))

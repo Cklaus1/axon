@@ -116,7 +116,7 @@ pub enum Value {
     /// the live state, matching the channel model. Keys are `str` only
     /// (not arbitrary `Value`) — covers 95% of ASI use cases without
     /// requiring `Hash + Eq` on the full Value enum.
-    Dict(Rc<RefCell<std::collections::BTreeMap<String, Value>>>),
+    Dict(Rc<RefCell<DictMap>>),
     /// R13 native FFI: an opaque, affine native handle — see [`HandleVal`].
     Handle(Rc<HandleVal>),
 }
@@ -279,6 +279,178 @@ impl std::fmt::Debug for Fields {
         f.debug_map()
             .entries(self.0.iter().map(|(k, v)| (sym_name(*k), v)))
             .finish()
+    }
+}
+
+/// A dict's map. A newtype only so that, on wasm32, it can carry the AX-59
+/// bounded `Drop` (a dict can hold a dict that holds another: `dict` values
+/// are untyped); it derefs to the map.
+#[derive(Debug, Clone, Default)]
+pub struct DictMap(std::collections::BTreeMap<String, Value>);
+
+impl std::ops::Deref for DictMap {
+    type Target = std::collections::BTreeMap<String, Value>;
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for DictMap {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl From<std::collections::BTreeMap<String, Value>> for DictMap {
+    #[inline]
+    fn from(m: std::collections::BTreeMap<String, Value>) -> DictMap {
+        DictMap(m)
+    }
+}
+
+/// AX-59 (wasm32): dropping a deeply nested value without recursing once per
+/// level of data nesting. Drop glue for a deep value (an 8,000-node enum list)
+/// otherwise recurses through `Rc<EnumVal>` -> `Fields` -> `Value` per level,
+/// outside every depth guard, and traps wasmtime's default 512 KiB stack.
+/// Native keeps plain drop glue: its interpreter thread's stack (sized from
+/// `max_depth`, at least 1 GiB) holds a million-level drop, and the hook costs
+/// a record drop ~37 instructions there.
+///
+/// Every cycle of drop glue the checker admits passes a `Fields`, a closure's
+/// capture cell or a [`DictMap`] (it refuses an infinite array/option type);
+/// each drops its contents through `drop_bounded`, which runs plain glue for
+/// the first `DROP_INLINE_DEPTH` levels and below that hands the contents to
+/// the outermost drop, which frees them after its own glue has returned.
+/// Drop order is not observable: no `Value` payload has a `Drop` with side
+/// effects. `scripts/wasm_stack_budget.py` checks the bound (class
+/// `bounded (DROP_INLINE_DEPTH)`).
+#[cfg(target_arch = "wasm32")]
+mod bounded_drop {
+    use super::{ClosureVal, DictMap, Fields, RefCell, Sym, Value};
+    use std::cell::Cell;
+    use std::collections::BTreeMap;
+
+    impl Drop for Fields {
+        #[inline]
+        fn drop(&mut self) {
+            drop_pairs(&mut self.0);
+        }
+    }
+
+    impl Drop for ClosureVal {
+        #[inline]
+        fn drop(&mut self) {
+            drop_pairs(self.captured.get_mut());
+        }
+    }
+
+    impl Drop for DictMap {
+        #[inline]
+        fn drop(&mut self) {
+            if !self.0.is_empty() {
+                drop_bounded(std::mem::take(&mut self.0));
+            }
+        }
+    }
+
+    /// Drop `pairs` through [`drop_bounded`] when one of them can hold
+    /// another level (by tag: a shared `Rc` would only be decremented);
+    /// scalars drop as plain glue.
+    #[inline]
+    fn drop_pairs(pairs: &mut Vec<(Sym, Value)>) {
+        if pairs.iter().any(|(_, v)| {
+            matches!(
+                v,
+                Value::Struct(_)
+                    | Value::Enum(_)
+                    | Value::Array(_)
+                    | Value::Tuple(_)
+                    | Value::Some(_)
+                    | Value::Ok(_)
+                    | Value::Err(_)
+                    | Value::Closure(_)
+                    | Value::Dict(_)
+                    | Value::Chan(_)
+            )
+        }) {
+            drop_bounded(std::mem::take(pairs));
+        }
+    }
+
+    /// How many levels of `Fields`/capture/dict drops run as plain glue
+    /// before the rest is deferred to the outermost drop. Sized so that this
+    /// many levels of the drop cycle (its summed frames, as
+    /// `scripts/wasm_stack_budget.py` reports them) fit the headroom
+    /// `NEST_PER_DEPTH` leaves above the deepest guarded frame; the script
+    /// reads this constant and asserts that.
+    const DROP_INLINE_DEPTH: usize = 16;
+
+    thread_local! {
+        /// Levels of [`drop_bounded`] live.
+        static DROP_DEPTH: Cell<usize> = const { Cell::new(0) };
+        /// Whether [`DROP_LATER`] holds anything.
+        static DROP_DEFERRED: Cell<bool> = const { Cell::new(false) };
+        /// Contents handed from a drop [`DROP_INLINE_DEPTH`] levels down to
+        /// the outermost one.
+        static DROP_LATER: RefCell<Vec<DropLater>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// A container's contents whose drop was deferred (held only to be
+    /// dropped).
+    #[allow(dead_code)]
+    enum DropLater {
+        Pairs(Vec<(Sym, Value)>),
+        Map(BTreeMap<String, Value>),
+    }
+
+    impl From<Vec<(Sym, Value)>> for DropLater {
+        fn from(p: Vec<(Sym, Value)>) -> DropLater {
+            DropLater::Pairs(p)
+        }
+    }
+
+    impl From<BTreeMap<String, Value>> for DropLater {
+        fn from(m: BTreeMap<String, Value>) -> DropLater {
+            DropLater::Map(m)
+        }
+    }
+
+    /// Drop `x` (a container's contents) as plain glue unless
+    /// [`DROP_INLINE_DEPTH`] drops are live; then defer it to the outermost
+    /// drop, which frees the deferred contents after its own glue returns,
+    /// each again at most [`DROP_INLINE_DEPTH`] levels deep. Never inlined,
+    /// so the budget checker can name the drop cycle it bounds.
+    #[inline(never)]
+    fn drop_bounded<T: Into<DropLater>>(x: T) {
+        let d = DROP_DEPTH.get();
+        if d >= DROP_INLINE_DEPTH {
+            drop_defer(x.into());
+            return;
+        }
+        DROP_DEPTH.set(d + 1);
+        drop(x);
+        if d == 0 && DROP_DEFERRED.get() {
+            drop_drain();
+        }
+        DROP_DEPTH.set(d);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn drop_defer(x: DropLater) {
+        DROP_LATER.with_borrow_mut(|l| l.push(x));
+        DROP_DEFERRED.set(true);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn drop_drain() {
+        while let Some(x) = DROP_LATER.with_borrow_mut(|l| l.pop()) {
+            drop(x);
+        }
+        DROP_DEFERRED.set(false);
     }
 }
 
@@ -1274,12 +1446,15 @@ const RECURSION_LIMIT: usize = 128;
 /// NEST_PER_DEPTH`: 448 KiB at the default depth limit, which leaves 64 KiB
 /// of wasmtime's default 512 KiB `max-wasm-stack` for the frames outside the
 /// recursion (the run's base frames, the bounded leaf work above the deepest
-/// guarded frame). Recursion over a value's depth (dropping a nested value)
-/// is outside the budget and can still trap (compilebench AX-59), as can
-/// recursion over one source construct's depth (copying a long closure body
-/// for `host_await_val`, compilebench AX-61) and the front end on deep source
-/// (compilebench AX-60: the parser on nesting, the checker on a long
-/// operator chain).
+/// guarded frame). Dropping a nested value is kept inside that headroom: it
+/// runs at most `DROP_INLINE_DEPTH` levels of drop glue (`bounded_drop`,
+/// compilebench AX-59), and `host_await_val` no longer copies its payload on
+/// wasm32 (`SendValue::request`, AX-61). Comparing or formatting a deep
+/// value still recurses per level outside the budget. The front end runs
+/// before the interpreter, on the same 448 KiB, with the parser's nesting
+/// limit sized to fit (`MAX_EXPR_DEPTH` 224, AX-60).
+/// `scripts/wasm_stack_budget.py` checks the drop and parser bounds against
+/// the frames of the build.
 #[cfg(target_arch = "wasm32")]
 const NEST_PER_DEPTH: usize = 3584;
 
@@ -2274,6 +2449,82 @@ impl SendValue {
         Self::from_value_at(v, String::new())
     }
 
+    /// The request `host_await_val`/`host_await_val_opt` hands the host:
+    /// `Ok(None)` when the run's substrate refuses `v` unsent (the builtin
+    /// then reports no host driver). A payload holding a `Chan` or a handle
+    /// is refused first, wherever it sits, with its path.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn request(v: &Value) -> Result<Option<SendValue>, UnsendablePayload> {
+        Self::from_value(v).map(Some)
+    }
+
+    /// AX-61: the wasm32 substrates carry only a `Str` (see
+    /// [`SendValue::as_str_payload`]), so any other payload is refused
+    /// without the deep copy `from_value` would make: copying a closure
+    /// clones its body once per level of source nesting, and the payload
+    /// once per level of data nesting, outside the stack budget. The `Chan`
+    /// check runs on an explicit stack in `from_value_at`'s order, so the
+    /// path it reports is the same.
+    #[cfg(target_arch = "wasm32")]
+    pub fn request(v: &Value) -> Result<Option<SendValue>, UnsendablePayload> {
+        if let Value::Str(s) = v {
+            return Ok(Some(SendValue::Str(String::clone(s))));
+        }
+        let mut stack: Vec<(Value, String)> = vec![(v.clone(), String::new())];
+        let mut kids: Vec<(Value, String)> = Vec::new();
+        while let Some((v, path)) = stack.pop() {
+            match &v {
+                Value::Chan(_) | Value::Handle { .. } => {
+                    let path = if path.is_empty() {
+                        "<root>".to_string()
+                    } else {
+                        path
+                    };
+                    return Err(UnsendablePayload { path });
+                }
+                Value::Array(xs) | Value::Tuple(xs) => kids.extend(
+                    xs.iter()
+                        .enumerate()
+                        .map(|(i, x)| (x.clone(), format!("{path}[{i}]"))),
+                ),
+                Value::Struct(s) => kids.extend(
+                    s.fields
+                        .by_name()
+                        .into_iter()
+                        .map(|(k, x)| (x.clone(), format!("{path}.{k}"))),
+                ),
+                Value::Enum(e) => kids.extend(
+                    e.fields
+                        .by_name()
+                        .into_iter()
+                        .map(|(k, x)| (x.clone(), format!("{path}.{k}"))),
+                ),
+                Value::Some(b) => kids.push(((**b).clone(), format!("{path}.Some"))),
+                Value::Ok(b) => kids.push(((**b).clone(), format!("{path}.Ok"))),
+                Value::Err(b) => kids.push(((**b).clone(), format!("{path}.Err"))),
+                Value::Closure(c) => {
+                    let snapshot = c.captured.borrow();
+                    let mut named: Vec<(Rc<str>, &Value)> =
+                        snapshot.iter().map(|(k, x)| (sym_name(*k), x)).collect();
+                    named.sort_by(|a, b| a.0.cmp(&b.0));
+                    kids.extend(
+                        named
+                            .into_iter()
+                            .map(|(k, x)| (x.clone(), format!("{path}.capture[{k}]"))),
+                    );
+                }
+                Value::Dict(d) => kids.extend(
+                    d.borrow()
+                        .iter()
+                        .map(|(k, x)| (x.clone(), format!("{path}.{k}"))),
+                ),
+                _ => {}
+            }
+            stack.extend(kids.drain(..).rev());
+        }
+        Ok(None)
+    }
+
     fn from_value_at(v: &Value, path: String) -> Result<SendValue, UnsendablePayload> {
         fn arr(xs: &[Value], path: &str) -> Result<Vec<SendValue>, UnsendablePayload> {
             xs.iter()
@@ -2451,7 +2702,7 @@ impl SendValue {
                     .into_iter()
                     .map(|(k, v)| (k, v.into_value()))
                     .collect();
-                Value::Dict(Rc::new(RefCell::new(map)))
+                Value::Dict(Rc::new(RefCell::new(map.into())))
             }
         }
     }
@@ -5833,7 +6084,7 @@ fn main() { }
         // an equal-shaped Value.
         let mut inner = std::collections::BTreeMap::new();
         inner.insert("k".to_string(), Value::Int(9));
-        let dict = Value::Dict(Rc::new(RefCell::new(inner)));
+        let dict = Value::Dict(Rc::new(RefCell::new(inner.into())));
         let s = Value::record(
             intern("S"),
             Fields::from_pairs([(intern("d"), dict), (intern("n"), Value::Int(1))]),
@@ -6560,7 +6811,7 @@ mod value_shape_leak_tests {
         for (k, v) in pairs {
             m.insert((*k).to_string(), v.clone());
         }
-        Value::Dict(Rc::new(RefCell::new(m)))
+        Value::Dict(Rc::new(RefCell::new(m.into())))
     }
 
     /// A dict built by GROUPING is keyed by the data. Printing that key set put
