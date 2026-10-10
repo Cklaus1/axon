@@ -1685,6 +1685,62 @@
       "evidence": "crates/axon-ledger/tests/maintenance_authorization.rs::claimed_identity_carries_authority_only_under_the_armed_dev_escape",
       "open": " CORRECTION to the reader set: not 'the axon-ledger CLI only'. It is also reached through Store::open_as -> Authority::resolve, which axon-signal's dashboard and MCP server and axon-ledger's own MCP server call. So the development escape also arms claim-as-authority in those SERVERS, not only in the CLI. Engine states unaffected (still no execution engine reads it); the stated scope of the escape was not.",
       "note": "Read by the axon-ledger CLI only, not by any Axon execution engine \u2014 hence not-applicable across all four engine columns rather than unknown. It is the explicit development-only escape that lets a CLAIMED identity (--as / AXON_PRINCIPAL) carry admin authority again; without it authority comes from the real uid via rbac.json authenticated_admins. Must be exactly `1`; `0`, `true`, `yes`, empty and `1 ` are all tested disarmed, so production is the default state."
+    },
+    {
+      "name": "AXON_EQ_ALONE",
+      "category": "test-fixture",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "crates/axon-fabric/src/observer_service.rs",
+      "note": "Test fixture only; not a runtime control.",
+      "open": " READER (verified at integration 15, not inherited): a TEST-ONLY re-exec marker read inside test code of axon-fabric observer_service, axon-guest-init, axon-psv tests/runner.rs and axon-cortex tests (check_executor, generator_cap): a test that forks re-runs itself in a fresh single-test process. No program run under any engine reads it."
+    },
+    {
+      "name": "AXON_EQ_GIT_ENV",
+      "category": "test-fixture",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "crates/axon-fabric/src/git_data.rs",
+      "note": "Test fixture only; not a runtime control.",
+      "open": " READER (verified at integration 15, not inherited): read only by the git_cmd environment test in axon-fabric git_data.rs, which re-runs the child in a process whose environment it controls. Not read by any program under any engine."
+    },
+    {
+      "name": "AXON_EQ_HARDEN",
+      "category": "test-fixture",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "crates/axon-fabric/src/privileged_launcher.rs",
+      "note": "Test fixture only; not a runtime control.",
+      "open": " READER (verified at integration 15, not inherited): read only by the harden() test in axon-fabric privileged_launcher.rs, which forks and so runs in a fresh single-test process. Not read by any program under any engine."
+    },
+    {
+      "name": "AXON_RUNTIME_DIR",
+      "category": "build-time",
+      "status": "open",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "enforced",
+        "wasm": "unknown",
+        "guest": "unknown"
+      },
+      "evidence": "crates/axon-core/src/codegen/link.rs",
+      "note": "Build-time input to `axon build`'s native link step: selects the directory of prebuilt runtime staticlibs.",
+      "open": " READER (verified at integration 15): codegen/link.rs (RUNTIME_DIR_VAR) only; when set it is the only place searched, and a cli_run test points it at a missing directory. `axon run` has no native build step and never reaches that code, so the interpreter never reads it. The wasm build's runtime lookup (AXON_WASM_RT, find_wasm_axon_rt) is a different variable; whether AXON_RUNTIME_DIR reaches it, and what the guest does, are NOT assessed: unknown, so this row stays open."
     }
   ],
   "false_greens": [
@@ -2618,5 +2674,8 @@
       "commit": "45ebcc19",
       "ported_from": "FG-042@origin/main (renumbered: v0.22 already uses FG-042)"
     }
-  ]
+  ],
+  "crates_excused": {
+    "axon-rt-ai": "NOT ASSESSED (recorded at integration 15): a 12-line staticlib (`extern crate axon_rt; extern crate axon_ai;`) that bundles axon-rt and axon-ai over one copy of std; codegen/link.rs selects it (Runtime::WithAi) for a program that calls an AI builtin, and gate.sh clippies it. No row claims its production proof or a mutation, deliberately."
+  }
 }

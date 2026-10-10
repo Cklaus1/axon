@@ -11114,6 +11114,9 @@ MUTATIONS += [
 EQUIV_RECORD["M3260"] = {
     "property": "a candidate's `use` of a module the operator declares reads like one of a missing module",
     "subsumed_by": ["M3456"], "killer": "joint:M3260+M3456",
+    "status": "four cells executed (C9 round 15, amendment 121); the full paired-disable record was NOT "
+              "made: protected certification is deferred past v0.22 (ADR-003), so no freeze and no joined record "
+              "exist, and none is claimed",
     "all_paths": "the only diagnostics a candidate `use` can give the merged check are the resolver's "
                  "module/name lookups (E0003 and the item lookups of `resolve_use`), and a UseDecl carries "
                  "no span: every one of them reaches `split_for_view` with line 0 in the entry file, which "
