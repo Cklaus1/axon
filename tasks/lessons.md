@@ -834,3 +834,6 @@ bare name. Third failure of the same pattern in one session; the fix that
 finally worked was to take the file:line list from the COMPILER and patch those
 lines, instead of guessing where literals are.
 - Mistake: edited with a relative path while the tool cwd was the main checkout (/home/cklaus/projects/axon), so the change landed in the wrong worktree. Rule: in lane worktrees, every read/edit/write path is absolute; check `git -C <main> status` after a batch of edits.
+- Mistake: committed the S0 merge with `git add -A crates governance/status tasks/...`, leaving a worktree edit to scripts/pci_delta.py out of the merge commit. Rule: before committing a merge, `git status --short` must list no ` M`/`??` path; stage by status, not by directory guess.
+- Mistake: read refusal_coverage_gate / harness_integrity failures during an uncommitted merge as real; they `git archive HEAD` and judge the committed tree. Rule: rerun HEAD-reading tests (refusal_coverage_gate, harness_integrity, pci_delta_note) after the commit before classifying them.
+- Mistake: `cargo check --workspace --all-targets` fails on axon-guest-kernel (no_std bin, duplicate panic_impl under the test harness) on main too. Rule: R51 acceptance check is `--workspace --all-targets --exclude axon-guest-kernel`; state the exclusion.
