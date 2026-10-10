@@ -18,6 +18,10 @@
 # Exit 0 clean, 1 on any violation.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+# `sort` and `comm` below must collate the same way. Under en_US.UTF-8 they
+# disagreed on the v0.22 Cortex fixture names (`minimal.np` vs `minimal-*`):
+# comm called its sorted input unsorted and reported text files as binaries.
+export LC_ALL=C
 
 ALLOW=scripts/artifact_admission_allowlist.txt
 MAX_BYTES=$((2 * 1024 * 1024))   # derived, not guessed: the largest legitimate
