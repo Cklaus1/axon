@@ -691,6 +691,25 @@ pub fn walk_expr<'a>(root: &'a Expr, f: &mut dyn FnMut(&'a Expr)) {
     }
 }
 
+/// Whether `root`'s height (nodes on its longest root-to-leaf path) exceeds
+/// `limit`. Iterative like [`walk_expr`]: the parser's AX-60 bound on wasm32
+/// uses it on the operator chains it builds in a loop, which no recursion of
+/// its own has bounded.
+pub fn expr_height_exceeds(root: &Expr, limit: usize) -> bool {
+    let mut stack: Vec<(&Expr, usize)> = Vec::new();
+    let mut kids: Vec<&Expr> = Vec::new();
+    let mut next = Some((root, 1));
+    while let Some((e, d)) = next {
+        if d > limit {
+            return true;
+        }
+        children(e, &mut kids);
+        stack.extend(kids.drain(..).map(|k| (k, d + 1)));
+        next = stack.pop();
+    }
+    false
+}
+
 /// `e`'s direct sub-expressions, in [`walk_expr`]'s visit order.
 fn children<'a>(e: &'a Expr, out: &mut Vec<&'a Expr>) {
     let ss = |ss: &'a [Stmt]| ss.iter().map(|s| &s.expr);

@@ -1,0 +1,12 @@
+let DEPTH = 100
+// vm_wasm_depth: front
+// AX-60 front-end probe: a long `+` chain (built by the parser in a loop).
+// A template: scripts/vm_wasm_depth.sh
+// expands each ⟪open¦leaf¦close⟫ to open×DEPTH leaf close×DEPTH, runs it at
+// DEPTH = the wasm32 nesting limit and 20× it, and requires exit 0 or the
+// E0000 `expression nesting too deep` refusal (exit 2) there, the refusal
+// at 20×, never a trap; it reports the deepest DEPTH that runs.
+fn main() -> i64 {
+    println(to_str(⟪1 + ¦1¦⟫))
+    0
+}
