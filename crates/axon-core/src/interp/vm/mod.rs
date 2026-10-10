@@ -77,23 +77,88 @@ pub fn set_engine(engine: Engine) {
     ENGINE_OVERRIDE.store(code, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// The engine an `Interp` being built runs with: [`set_engine`]'s choice, else
-/// `AXON_ENGINE`, else [`Engine::DEFAULT`]. An invalid `AXON_ENGINE` prints the
-/// spec §3 message and exits 2. `Interp::build` runs before any of the
-/// program does, under every entry (`axon run`, `axon-run`, `axon test`,
-/// `axon goal`), so this is the one place that check needs.
-pub(super) fn engine_at_build() -> Engine {
-    match ENGINE_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed) {
-        1 => return Engine::Tree,
-        2 => return Engine::Vm,
-        _ => {}
+/// Why an `Interp` is not built (R51 §4 Fork 1): the engine selection refused
+/// the run. Its `Display` is the message the CLI prints before exiting 2.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EngineRefusal {
+    /// A sealed run on a build whose runtime seal is incomplete
+    /// ([`SEALED_RUN_REFUSED`]).
+    SealIncomplete,
+    /// A sealed run with the VM requested, by `AXON_ENGINE=vm` or
+    /// [`set_engine`] ([`SEALED_RUN_VM_REFUSED`]).
+    SealedVm,
+    /// An `AXON_ENGINE` value that is neither `vm` nor `tree` (R50 §3).
+    Invalid(String),
+}
+
+impl std::fmt::Display for EngineRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EngineRefusal::SealIncomplete => f.write_str(SEALED_RUN_REFUSED),
+            EngineRefusal::SealedVm => f.write_str(SEALED_RUN_VM_REFUSED),
+            EngineRefusal::Invalid(msg) => f.write_str(msg),
+        }
     }
-    match std::env::var_os("AXON_ENGINE") {
-        None => Engine::DEFAULT,
-        Some(raw) => Engine::parse(&raw.to_string_lossy()).unwrap_or_else(|msg| {
+}
+
+/// The engine selection (R50 §3, R51 §4 Fork 1), as a pure function of its
+/// inputs: whether the run is `sealed`, whether this build's runtime seal is
+/// `complete`, [`set_engine`]'s choice and the `AXON_ENGINE` value.
+///
+/// A sealed run is decided first, so neither the override nor the variable
+/// can skip it: refused while the seal is incomplete, refused when the VM is
+/// requested (either way), refused on an invalid value, else the tree. No
+/// sealed run gets the VM, and an unset `AXON_ENGINE` (the production
+/// sealed child clears its environment) means the tree, not
+/// [`Engine::DEFAULT`]. An unsealed run: the override, else the variable,
+/// else [`Engine::DEFAULT`].
+pub(crate) fn engine_for(
+    sealed: bool,
+    complete: bool,
+    override_: Option<Engine>,
+    env: Option<&std::ffi::OsStr>,
+) -> Result<Engine, EngineRefusal> {
+    let parse = |raw: &std::ffi::OsStr| {
+        Engine::parse(&raw.to_string_lossy()).map_err(EngineRefusal::Invalid)
+    };
+    if sealed {
+        if !complete {
+            return Err(EngineRefusal::SealIncomplete);
+        }
+        if override_ == Some(Engine::Vm) {
+            return Err(EngineRefusal::SealedVm);
+        }
+        return match env.map(parse).transpose()? {
+            Some(Engine::Vm) => Err(EngineRefusal::SealedVm),
+            None | Some(Engine::Tree) => Ok(Engine::Tree),
+        };
+    }
+    if let Some(engine) = override_ {
+        return Ok(engine);
+    }
+    Ok(env.map(parse).transpose()?.unwrap_or(Engine::DEFAULT))
+}
+
+/// The engine an `Interp` being built runs with: [`engine_for`] over the live
+/// inputs ([`set_engine`]'s choice, `AXON_ENGINE`, [`SEAL_RUNTIME_COMPLETE`]).
+/// A sealed run's refusal is returned, for the run entry to report; an
+/// unsealed run's invalid `AXON_ENGINE` prints the R50 §3 message and exits
+/// 2. `Interp::build` runs before any of the program does, under every entry
+/// (`axon run`, `axon-run`, `axon test`, `axon goal`), so this is the one
+/// place that check needs.
+pub(super) fn engine_at_build(sealed: bool) -> Result<Engine, EngineRefusal> {
+    let override_ = match ENGINE_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => Some(Engine::Tree),
+        2 => Some(Engine::Vm),
+        _ => None,
+    };
+    let env = std::env::var_os("AXON_ENGINE");
+    match engine_for(sealed, SEAL_RUNTIME_COMPLETE, override_, env.as_deref()) {
+        Err(EngineRefusal::Invalid(msg)) if !sealed => {
             eprintln!("{msg}");
             std::process::exit(2)
-        }),
+        }
+        selected => selected,
     }
 }
 
