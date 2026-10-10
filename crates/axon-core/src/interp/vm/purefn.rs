@@ -38,8 +38,9 @@ pub(super) enum FOp {
     LoadK,
     /// `r[d] = r[a]`.
     Mov,
-    /// Call `fn_table[k]` (`t` registers) with its args in `r[a..]`; the
-    /// result lands in `r[a]` (`d == a`).
+    /// Call `fn_table[k]` with its args in `r[a..]`, in a window of the
+    /// 256 registers from `r[a]` (`t` unused); the result lands in `r[a]`
+    /// (`d == a`).
     Call,
     /// Return `r[a]`.
     Ret,
@@ -135,8 +136,7 @@ pub(super) enum PureOut {
 }
 
 /// `None`: never qualifies. `Some(None)`: not yet (a body not compiled, a
-/// call not proven). `Some(Some(_))`: its code, calls' register counts not
-/// yet patched.
+/// call not proven). `Some(Some(_))`: its code.
 type Built = Option<Option<PureFn>>;
 
 fn is_i64(t: &crate::ast::AxonType) -> bool {
@@ -484,10 +484,10 @@ impl<'p> Interp<'p> {
     /// Decide `fn_table[me]` together with every undecided fn its calls
     /// reach (the group): each member that cannot qualify on its own body is
     /// marked so, and the rest rebuilt without it, until every member
-    /// qualifies; then each call gets its callee's register count and every
-    /// member its code. `false`, with only never-qualifying members marked,
-    /// when a member is not ready yet (a body not compiled, a call not
-    /// proven).
+    /// qualifies; then each member gets its code, or, when that code is not
+    /// valid, is marked and the rest rebuilt. `false`, with only
+    /// never-qualifying members marked, when a member is not ready yet (a
+    /// body not compiled, a call not proven).
     fn pure_build_group(&self, me: u32) -> bool {
         loop {
             let mut group = vec![me];
@@ -510,21 +510,10 @@ impl<'p> Interp<'p> {
                 }
                 continue;
             }
-            let nregs: Vec<usize> = codes.iter().map(|c| c.nregs).collect();
-            let mut bad = None;
-            for (j, pf) in codes.iter_mut().enumerate() {
-                for c in pf.code.iter_mut().filter(|c| c.op == FOp::Call) {
-                    let idx = c.k as u32;
-                    let n = match group.iter().position(|&g| g == idx) {
-                        Some(at) => nregs[at],
-                        None => pure_code(&self.pure_slots, idx).map_or(0, |f| f.nregs),
-                    };
-                    c.t = n as u32;
-                }
-                if bad.is_none() && !pf.valid(self.fn_table.len()) {
-                    bad = Some(group[j]);
-                }
-            }
+            let bad = codes
+                .iter()
+                .position(|pf| !pf.valid(self.fn_table.len()))
+                .map(|j| group[j]);
             if let Some(g) = bad {
                 let _ = self.pure_slots[g as usize].code.set(None);
                 if g == me {
@@ -707,8 +696,8 @@ impl<'p> Interp<'p> {
 
 impl PureFn {
     /// Every register index is below `nregs`, every jump target is inside
-    /// the code, every call names one of `nfns` table fns with a nonzero
-    /// register count and `d == a`, and the code ends in `Ret` or `Jmp`.
+    /// the code, every call names one of `nfns` table fns with `d == a`, and
+    /// the code ends in `Ret` or `Jmp`.
     pub(super) fn valid(&self, nfns: usize) -> bool {
         let n = self.nregs;
         let len = self.code.len();
@@ -724,7 +713,7 @@ impl PureFn {
                 FOp::BrZero => r(c.a) && jump,
                 FOp::Jmp => jump,
                 FOp::LoadK => r(c.d),
-                FOp::Call => r(c.a) && c.d == c.a && (c.k as u64) < nfns as u64 && c.t > 0,
+                FOp::Call => r(c.a) && c.d == c.a && (c.k as u64) < nfns as u64,
                 FOp::Ret => r(c.a),
             }
         }) && matches!(self.code.last(), Some(c) if matches!(c.op, FOp::Ret | FOp::Jmp))

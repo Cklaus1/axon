@@ -37201,13 +37201,14 @@ fn vm_purefn_depth_boundary() {
 
 /// R50 §4 S11 qualification: a fn that would otherwise qualify stays off
 /// the tier when a param is refinement-typed, sized (`i32`) or `&mut`, when
-/// it is `@[agent]` or a goal fn, or when it returns `Uncertain`: no `vm:
-/// purefn` line, the tree's output. So do condition shapes the tier does not
-/// lower: a comparison of two locals, a literal on the left, `&&`, and a
-/// compound operand (`n * 2 > 10`).
+/// it is `@[agent]` or a goal fn, or when it returns `Uncertain` (a body the
+/// tier would lower otherwise, so only the return type keeps it off): no
+/// `vm: purefn` line, the tree's output. So do condition shapes the tier
+/// does not lower: a comparison of two locals, a literal on the left, `&&`,
+/// `||`, and a compound operand (`n * 2 > 10`).
 #[test]
 fn vm_purefn_not_qualified() {
-    let cases: [(&str, &str, &str); 10] = [
+    let cases: [(&str, &str, &str); 11] = [
         (
             "refine",
             "type Pos = i64 where _ > 0\nfn f(n: Pos) -> i64 {\n    if n < 2 { 1 } else { f(n - 1) + 1 }\n}\n\
@@ -37241,8 +37242,8 @@ fn vm_purefn_not_qualified() {
         ),
         (
             "uncertain",
-            "fn u(n: i64) -> Uncertain<i64> {\n    if n < 2 { uncertain_new(n, 0.9) } else { u(n - 1) }\n}\n\
-             fn main() -> i64 {\n    let x = u(10)\n    println(\"ok\")\n    0\n}\n",
+            "fn u(n: i64) -> Uncertain<i64> {\n    if n < 2 { n } else { u(n - 1) }\n}\n\
+             fn main() -> i64 {\n    let _x = u(10)\n    println(\"ok\")\n    0\n}\n",
             "ok\n",
         ),
         (
@@ -37262,6 +37263,12 @@ fn vm_purefn_not_qualified() {
             "fn f(n: i64) -> i64 {\n    if n > 0 && n < 100 { f(n - 1) + 1 } else { 0 }\n}\n\
              fn main() -> i64 {\n    println(to_str(f(10)))\n    0\n}\n",
             "10\n",
+        ),
+        (
+            "or",
+            "fn f(n: i64) -> i64 {\n    if n < 0 || n > 100 { 0 } else { f(n - 1) + 1 }\n}\n\
+             fn main() -> i64 {\n    println(to_str(f(10)))\n    0\n}\n",
+            "11\n",
         ),
         (
             "compound",

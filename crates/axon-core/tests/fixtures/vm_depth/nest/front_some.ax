@@ -8,6 +8,7 @@ let DEPTH = 100
 // at 20×, never a trap; it reports the deepest DEPTH that runs.
 fn main() -> i64 {
     let v = ⟪Some(¦7¦)⟫
-    println(to_str(v == v))
+    let r = match v { Some(_) => 1, None => 0 }
+    println(to_str(r))
     0
 }

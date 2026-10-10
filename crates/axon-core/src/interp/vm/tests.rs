@@ -977,8 +977,8 @@ fn fast_call_checks_depth_before_arity() {
 
 /// R50 S11: every fn the pure tier builds has register code within its own
 /// bounds: each register an instruction reads or writes is below `nregs`,
-/// each jump target is inside the code, each call names a table fn with
-/// its register count, and the code ends in `Ret` or `Jmp` (so the machine
+/// each jump target is inside the code, each call names a built table fn,
+/// and the code ends in `Ret` or `Jmp` (so the machine
 /// never runs off it). Mutually recursive fns are built together.
 #[test]
 fn purefn_build_validates() {
@@ -1050,10 +1050,10 @@ fn main() -> i64 {
                 FOp::Call => {
                     r(c.a);
                     assert_eq!(c.d, c.a, "{at}");
-                    let Some(Some(cf)) = interp.pure_slots[c.k as usize].code.get() else {
-                        panic!("callee not built: {at}");
-                    };
-                    assert_eq!(c.t as usize, cf.nregs, "{at}");
+                    assert!(
+                        matches!(interp.pure_slots[c.k as usize].code.get(), Some(Some(_))),
+                        "callee not built: {at}"
+                    );
                 }
                 FOp::Ret => r(c.a),
             }

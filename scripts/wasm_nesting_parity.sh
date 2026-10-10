@@ -12,11 +12,19 @@
 #         100 levels of recursion (building one clones it, and that clone
 #         recursion is not bounded, so they stay shallow).
 #   ax60  source nested past the wasm32 limit (parser.rs `MAX_EXPR_DEPTH`):
-#         parentheses 300 and 5,000 deep, 1,000-term `+` and string chains,
-#         a nested `Some` pattern, an `Option<` type, nested calls and
-#         blocks, three string literals nested in each other's `{...}` slot
-#         with 110 parentheses in each — each exits 2 with E0000 `expression nesting too deep
-#         (limit N)` at line 2, col 5, where its root expression starts.
+#         parentheses 300 and 5,000 deep, `+` chains of 1,000, 10,000,
+#         30,000 and 100,000 terms, a 1,000-term string chain, a nested
+#         `Some` pattern, an `Option<` type, nested calls and blocks, three
+#         string literals nested in each other's `{...}` slot with 110
+#         parentheses in each, a match guard of 300, 1,000 and 3,000 terms,
+#         an arm body of 3,000 terms, an or-pattern arm body of 5,000, a
+#         `let` inline-refinement predicate of 600 and 3,000 terms, and 100
+#         parentheses nested in each other's 50-term `*` and `+` chains (no
+#         chain past the limit, 10,000 levels together) — each exits 2 with
+#         E0000 `expression nesting too deep (limit N)` at line 2, col 5,
+#         where its root expression starts. A 100,000-term chain with a
+#         dangling `+`, one in an unclosed call and the nested chains with
+#         their last `)` missing exit 2 with native's syntax error instead.
 #   ax61  `host_await_val` without a host driver: a closure whose body is a
 #         long chain, passed from depths around the finding's (1-130) under
 #         `with` frames, and a 100,000-node list payload exit 101 (`no host
@@ -220,6 +228,20 @@ ax60)
   src paren300 "let x = $(rep '(' 300)1$(rep ')' 300)"
   src paren5000 "let x = $(rep '(' 5000)1$(rep ')' 5000)"
   src chain "let x = 1$(rep ' + 1' 999)"
+  # Chains far past the limit: the parser cuts a chain down as it passes
+  # the limit, so neither it nor the refused root recurses per level when
+  # dropped or cloned.
+  for n in 10000 30000 100000; do src "chain$n" "let x = 1$(rep ' + 1' "$n")"; done
+  # A match arm's guard and body, and a `let` inline-refinement predicate,
+  # are height-checked too: the guard is under the root's tree, the body is
+  # checked before an or-pattern clones it, and the predicate is kept
+  # outside the statement's tree.
+  for n in 300 1000 3000; do
+    src "guard$n" "let r = match 3 { n if n == 1$(rep ' + 1' "$n") => 1, _ => 0 }"
+  done
+  src arm3000 "let r = match 3 { _ => 1$(rep ' + 1' 3000) }"
+  src or_arm5000 "let r = match 1 { 1 | 2 => 1$(rep ' + 1' 5000), _ => 0 }"
+  for n in 600 3000; do src "refine$n" "let x: i64 where _ > 0$(rep ' - 1' "$n") = 5"; done
   src strchain "let x = \"a\"$(rep ' + "a"' 999)"
   src some_pattern "let x = match 1 { $(rep 'Some(' 300)y$(rep ')' 300) => 1, _ => 0 }"
   src option_type "let x: $(rep 'Option<' 300)i64$(rep '>' 300) = None"
@@ -241,13 +263,48 @@ print(x)
 EOF
   }
   src interp "let x = $(nested 3 110)"
+  # compound <levels> <terms> — each level a parenthesis around the last
+  # with <terms> `* 1` and `+ 1` after it.
+  compound() {
+    python3 - "$1" "$2" <<'EOF'
+import sys
+x = "1"
+levels, k = int(sys.argv[1]), int(sys.argv[2])
+for _ in range(levels):
+    x = "(" + x + " * 1" * k + " + 1" * k + ")"
+print(x)
+EOF
+  }
+  src compound "let x = $(compound 100 50)"
   for e in tree vm; do
-    for p in paren300 paren5000 chain strchain some_pattern option_type calls blocks interp; do
+    for p in paren300 paren5000 chain chain10000 chain30000 chain100000 strchain some_pattern \
+      option_type calls blocks interp guard300 guard1000 guard3000 arm3000 or_arm5000 \
+      refine600 refine3000 compound; do
       wasm "$e" "$p.ax"
       if [ "$RC" = 2 ] && grep -qF "\"code\":\"E0000\",\"file\":\"$p.ax\",\"line\":2,\"col\":5,\"message\":\"$msg\"" err; then
         echo "  ok  [ax60 $e $p] exit 2, E0000 at 2:5"
       else
         fail "ax60 $e $p" "exit $RC (want exit 2, E0000 '$msg' at line 2, col 5)"
+      fi
+    done
+  done
+  # A syntax error after a chain past the limit: the parse goes on past
+  # the limit and reports the error native reports (at 4,000 terms), with
+  # no recursion per level in the partial tree it drops.
+  printf 'fn main() -> i64 {\n    let x = 1%s +\n}\n' "$(rep ' + 1' 100000)" >synerr100000.ax
+  src unclosed100000 "let x = to_str(1$(rep ' + 1' 100000)"
+  c="$(compound 100 50)"
+  src compound_open "let x = ${c%)}"
+  for e in tree vm; do
+    for spec in "synerr100000:3:1:unexpected token: RBrace, expected expression" \
+      "unclosed100000:4:1:unexpected token: Int(0), expected RParen" \
+      "compound_open:4:1:unexpected token: Int(0), expected RParen"; do
+      IFS=: read -r p line col want <<<"$spec"
+      wasm "$e" "$p.ax"
+      if [ "$RC" = 2 ] && grep -qF "\"code\":\"E0000\",\"file\":\"$p.ax\",\"line\":$line,\"col\":$col,\"message\":\"$want\"" err; then
+        echo "  ok  [ax60 $e $p] exit 2, '$want' at $line:$col"
+      else
+        fail "ax60 $e $p" "exit $RC (want exit 2, E0000 '$want' at line $line, col $col)"
       fi
     done
   done

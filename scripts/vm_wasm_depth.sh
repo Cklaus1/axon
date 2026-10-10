@@ -61,11 +61,16 @@
 #   reach    the nest configuration, bisecting the deepest depth that exits 0
 #            (at most <guard> - 1) of each chain and nesting probe (for a
 #            `front` probe, the deepest nesting the front end accepts; none
-#            for `exit0` and `sweep`). The budget
+#            for `exit0` and `sweep`). A `front` probe that reaches 0 under
+#            either engine fails: its accepted nesting never runs past the
+#            front end. The budget
 #            charges the two engines differently, so with
 #            --require-default-stack the VM depth must be >= the tree's for
 #            every (profile, chain or probe): the default engine must not
 #            panic on a program the tree completes.
+#   tier     `plain` and `plain_generic` at DEPTH=100 under the VM with
+#            AXON_VM_TRACE=1: `plain` must print a `vm: purefn f` line (its f
+#            is on the pure-i64 tier, R50 S11) and `plain_generic` none.
 #
 # Before probing, the script checks the stack budget is sound on both builds
 # (scripts/wasm_stack_budget.py): every recursion through `Interp::eval`
@@ -215,6 +220,31 @@ for profile in "${PROFILES[@]}"; do
   case $? in 0) ;; 1) FRAME_FAILS=$((FRAME_FAILS + 1)) ;; *) exit 2 ;; esac
 done
 
+# The tier each chain measures (R50 S11): under AXON_VM_TRACE=1 `plain`'s f
+# is built on the VM's pure-i64 tier (a `vm: purefn f` line) and
+# `plain_generic`'s is not.
+TIER_FAILS=0
+for profile in "${PROFILES[@]}"; do
+  for chain in plain plain_generic; do
+    dir="$WORK/$profile.tier.$chain"
+    mkdir -p "$dir"
+    cp "$FIX/$chain.ax" "$dir/p.ax"
+    timeout -k 5 300 "$WASMTIME" run --env AXON_ENGINE=vm --env AXON_VM_TRACE=1 --dir "$dir" \
+      "$TARGET_DIR/wasm32-wasip1/$profile/axon-run.wasm" "$dir/p.ax" </dev/null >"$dir/out" 2>"$dir/err"
+    rc=$?
+    on=no
+    grep -q '^vm: purefn f ' "$dir/err" && on=yes
+    want=yes
+    [ "$chain" = plain_generic ] && want=no
+    if [ "$rc" = 0 ] && [ "$(cat "$dir/out")" = 100 ] && [ "$on" = "$want" ]; then
+      verdict="ok (purefn $want)"
+    else
+      verdict="FAIL (want exit 0, 100 and purefn $want)"; TIER_FAILS=$((TIER_FAILS + 1))
+    fi
+    printf 'vm_wasm_depth: %-7s vm   %-13s tier    %-14s %s\n' "$profile" "$chain" "exit=$rc purefn=$on" "$verdict"
+  done
+done
+
 # probe <wasm> <engine> <chain> <config> <depth> <dir> — run one probe.
 # Prints the exit code; leaves stdout/stderr in <dir>/out and <dir>/err.
 probe() {
@@ -343,7 +373,7 @@ for profile in "${PROFILES[@]}"; do
   done
 done | xargs -P "$JOBS" -L 1 bash -c 'job "$@"' _
 
-fails=$FRAME_FAILS
+fails=$((FRAME_FAILS + TIER_FAILS))
 declare -A depth
 for profile in "${PROFILES[@]}"; do
   for engine in "${ENGINES[@]}"; do
@@ -417,6 +447,8 @@ for profile in "${PROFILES[@]}"; do
     t="${depth[$profile.tree.$n.reach]}"; v="${depth[$profile.vm.$n.reach]}"
     if ! [[ "$t" =~ ^[0-9]+$ && "$v" =~ ^[0-9]+$ ]]; then
       cmp="FAIL (no depth measured)"; fails=$((fails + 1))
+    elif [[ "$n" == nest/* ]] && [ "$(kind "$n")" = front ] && { [ "$t" = 0 ] || [ "$v" = 0 ]; }; then
+      cmp="FAIL (front probe reaches 0: no accepted nesting runs)"; fails=$((fails + 1))
     elif [ "$v" -ge "$t" ]; then
       cmp="vm >= tree"
     elif [ "$REQUIRE_DEFAULT" = 1 ]; then
@@ -432,5 +464,5 @@ if [ "$fails" -ne 0 ]; then
   echo "vm_wasm_depth: FAILED — $fails check(s)"
   exit 1
 fi
-echo "vm_wasm_depth: PASS — the wasm32 stack budget is sound (every recursion through eval is guarded, each nest_cost covers its frame and unguarded tail, value drops are bounded, the parser's limit fits); every chain completes $REQUIRED_LINEAR in the linear stack and $REQUIRED_DEFAULT under the default stack, and panics at $GUARD; every nesting probe panics instead of trapping, every drop, host_await and front-end probe meets its rule (limit $FRONT_LIMIT) without a trap; under both engines and profiles$([ "$REQUIRE_DEFAULT" = 1 ] && echo "; the VM reaches at least the tree's depth on every chain and probe")"
+echo "vm_wasm_depth: PASS — the wasm32 stack budget is sound (every recursion through eval is guarded, each nest_cost covers its frame and unguarded tail, value drops are bounded, the parser's limit fits); \`plain\` runs on the pure-i64 tier and \`plain_generic\` off it; every chain completes $REQUIRED_LINEAR in the linear stack and $REQUIRED_DEFAULT under the default stack, and panics at $GUARD; every nesting probe panics instead of trapping, every drop, host_await and front-end probe meets its rule (limit $FRONT_LIMIT) without a trap, each front-end probe running some accepted nesting; under both engines and profiles$([ "$REQUIRE_DEFAULT" = 1 ] && echo "; the VM reaches at least the tree's depth on every chain and probe")"
 exit 0

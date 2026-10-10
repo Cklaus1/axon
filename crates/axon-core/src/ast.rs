@@ -693,21 +693,28 @@ pub fn walk_expr<'a>(root: &'a Expr, f: &mut dyn FnMut(&'a Expr)) {
 
 /// Whether `root`'s height (nodes on its longest root-to-leaf path) exceeds
 /// `limit`. Iterative like [`walk_expr`]: the parser's AX-60 bound on wasm32
-/// uses it on the operator chains it builds in a loop, which no recursion of
-/// its own has bounded.
+/// checks each root with it.
 pub fn expr_height_exceeds(root: &Expr, limit: usize) -> bool {
+    expr_height(root, limit) > limit
+}
+
+/// `root`'s height, or `cap + 1` once it is known to exceed `cap` (the walk
+/// stops there). Iterative like [`walk_expr`].
+pub fn expr_height(root: &Expr, cap: usize) -> usize {
     let mut stack: Vec<(&Expr, usize)> = Vec::new();
     let mut kids: Vec<&Expr> = Vec::new();
     let mut next = Some((root, 1));
+    let mut height = 0;
     while let Some((e, d)) = next {
-        if d > limit {
-            return true;
+        if d > cap {
+            return d;
         }
+        height = height.max(d);
         children(e, &mut kids);
         stack.extend(kids.drain(..).map(|k| (k, d + 1)));
         next = stack.pop();
     }
-    false
+    height
 }
 
 /// `e`'s direct sub-expressions, in [`walk_expr`]'s visit order.
@@ -739,7 +746,10 @@ fn children<'a>(e: &'a Expr, out: &mut Vec<&'a Expr>) {
         }
         Expr::Match { subject, arms } => {
             out.push(subject);
-            out.extend(arms.iter().map(|a| &a.body));
+            for a in arms {
+                out.extend(a.guard.as_ref());
+                out.push(&a.body);
+            }
         }
         Expr::Tuple(xs) | Expr::Array(xs) => out.extend(xs),
         Expr::Block(stmts) => out.extend(ss(stmts)),
@@ -780,6 +790,121 @@ fn children<'a>(e: &'a Expr, out: &mut Vec<&'a Expr>) {
         }
         // Leaves — no sub-expressions. Listed rather than swept into a `_` arm
         // so the exhaustiveness check above keeps doing its job.
+        Expr::Ident(_)
+        | Expr::Literal(_)
+        | Expr::None
+        | Expr::Break
+        | Expr::Continue
+        | Expr::InlineAsm { .. } => {}
+    }
+}
+
+/// Drops `e`'s sub-expressions without recursing once per level of them,
+/// leaving `e` a node of height 1 of the same kind: each node's direct
+/// sub-expressions are moved onto a work list (a leaf left in their place)
+/// before the node itself is dropped. `Expr`'s drop glue recurses per level,
+/// and the parser on wasm32 drops each AST it refuses for height (AX-60).
+pub fn clear_children(e: &mut Expr) {
+    let mut work = Vec::new();
+    take_children(e, &mut work);
+    while let Some(mut k) = work.pop() {
+        take_children(&mut k, &mut work);
+    }
+}
+
+/// Moves `e`'s direct sub-expressions (those [`children`] lists) onto `out`.
+fn take_children(e: &mut Expr, out: &mut Vec<Expr>) {
+    fn take(x: &mut Expr, out: &mut Vec<Expr>) {
+        out.push(std::mem::replace(x, Expr::None));
+    }
+    fn take_stmts(ss: &mut Vec<Stmt>, out: &mut Vec<Expr>) {
+        out.extend(std::mem::take(ss).into_iter().map(|s| s.expr));
+    }
+    match e {
+        Expr::BinOp { left, right, .. } => {
+            take(left, out);
+            take(right, out);
+        }
+        Expr::UnaryOp { operand: b, .. }
+        | Expr::Let { value: b, .. }
+        | Expr::Own { value: b, .. }
+        | Expr::RefBind { value: b, .. }
+        | Expr::Question(b)
+        | Expr::Spawn(b)
+        | Expr::Comptime(b)
+        | Expr::Lambda { body: b, .. }
+        | Expr::FieldAccess { receiver: b, .. }
+        | Expr::Ok(b)
+        | Expr::Err(b)
+        | Expr::Some(b)
+        | Expr::Assign { value: b, .. } => take(b, out),
+        Expr::Call {
+            callee: b, args, ..
+        }
+        | Expr::MethodCall {
+            receiver: b, args, ..
+        } => {
+            take(b, out);
+            out.append(args);
+        }
+        Expr::Return(inner) => out.extend(inner.take().map(|b| *b)),
+        Expr::Index {
+            receiver: a,
+            index: b,
+        }
+        | Expr::AssignTo { place: a, value: b } => {
+            take(a, out);
+            take(b, out);
+        }
+        Expr::If { cond, then, else_ } => {
+            take(cond, out);
+            take(then, out);
+            out.extend(else_.take().map(|b| *b));
+        }
+        Expr::Match { subject, arms } => {
+            take(subject, out);
+            for a in arms {
+                out.extend(a.guard.take());
+                take(&mut a.body, out);
+            }
+        }
+        Expr::Tuple(xs) | Expr::Array(xs) => out.append(xs),
+        Expr::Block(body) => take_stmts(body, out),
+        Expr::While { cond: b, body } | Expr::WhileLet { expr: b, body, .. } => {
+            take(b, out);
+            take_stmts(body, out);
+        }
+        Expr::For {
+            start, end, body, ..
+        } => {
+            take(start, out);
+            take(end, out);
+            take_stmts(body, out);
+        }
+        Expr::StructLit { fields, .. } => {
+            out.extend(std::mem::take(fields).into_iter().map(|(_, v)| v))
+        }
+        Expr::FmtStr { parts } => {
+            for p in parts {
+                if let FmtPart::Expr(inner) = p {
+                    take(inner, out);
+                }
+            }
+        }
+        Expr::Select(arms) => {
+            for a in arms {
+                take(&mut a.recv, out);
+                take(&mut a.body, out);
+            }
+        }
+        Expr::WithHandler { handler, body } => {
+            if let HandlerExpr::Inline { arms, return_arm } = handler.as_mut() {
+                for a in arms.iter_mut().chain(return_arm.as_deref_mut()) {
+                    take(&mut a.body, out);
+                }
+            }
+            take(body, out);
+        }
         Expr::Ident(_)
         | Expr::Literal(_)
         | Expr::None

@@ -205,7 +205,11 @@ fn parse_fmt_inner_expr(inner: &str, expr_depth: usize, too_deep: &mut bool) -> 
     // Same reasoning as the tokenize arm: a slot that runs out mid-expression
     // (`"{x + }"`) reports a bare `Eof` that names neither the string nor the
     // brace that opened the slot.
-    let expr = match sub.parse_expr() {
+    // AX-60: the slot's depth starts at the literal's and never returns to
+    // 0, where `nested` settles a cut-down sub-expression, so it is settled
+    // here.
+    let r = sub.parse_expr();
+    let expr = match sub.settle_tall(r) {
         Ok(e) => e,
         Err(e) if sub.too_deep => {
             *too_deep = true;
@@ -271,6 +275,14 @@ pub struct Parser {
     /// so the root `parse_expr` on wasm32 can report it at the root
     /// expression's start rather than wherever the refusal happened (AX-60).
     too_deep: bool,
+    /// AX-60 (wasm32): the AST height of the expression the last operator
+    /// layer (`parse_logical` down to `parse_postfix`) returned, so the
+    /// layer above knows its operands' heights without walking them.
+    expr_h: usize,
+    /// AX-60 (wasm32): set when a layer has cut down a sub-expression taller
+    /// than [`MAX_EXPR_DEPTH`] while its root is still being parsed (see
+    /// [`Parser::bound_height`]); the root is refused when it ends.
+    tall: bool,
     /// Phase 5: inline anonymous refinements (`d: i64 where _ != 0`) are
     /// desugared at parse time into fresh synthetic named refinements collected
     /// here; `parse_program` appends them to the program's items. This reuses the
@@ -349,6 +361,8 @@ impl Parser {
             shr_pending: false,
             expr_depth: 0,
             too_deep: false,
+            expr_h: 0,
+            tall: false,
             synthetic_refinements: Vec::new(),
             synthetic_refine_count: 0,
             surface_mode: false,
@@ -369,6 +383,8 @@ impl Parser {
             shr_pending: false,
             expr_depth: 0,
             too_deep: false,
+            expr_h: 0,
+            tall: false,
             synthetic_refinements: Vec::new(),
             synthetic_refine_count: 0,
             surface_mode: false,
@@ -388,6 +404,8 @@ impl Parser {
             shr_pending: false,
             expr_depth: 0,
             too_deep: false,
+            expr_h: 0,
+            tall: false,
             synthetic_refinements: Vec::new(),
             synthetic_refine_count: 0,
             surface_mode: false,
@@ -1255,7 +1273,9 @@ impl Parser {
         }
         let start = self.current_span().start;
         self.expect(&Token::Where)?;
-        let predicate = self.parse_expr()?;
+        // AX-60: the predicate is kept outside the statement's tree, where
+        // no root's height check sees it, so it is checked here.
+        let predicate = self.height_checked(Self::parse_expr)?;
         let end = self.current_span().end;
         let name = format!("__refine_{}", self.synthetic_refine_count);
         self.synthetic_refine_count += 1;
@@ -1825,7 +1845,7 @@ impl Parser {
         let start = self.pos;
         let r = self.nested(Self::parse_expr_inner).and_then(|e| {
             if root && crate::ast::expr_height_exceeds(&e, MAX_EXPR_DEPTH) {
-                Err(self.too_deep())
+                Err(self.refuse_tall(e))
             } else {
                 Ok(e)
             }
@@ -2358,20 +2378,26 @@ impl Parser {
         let mut arms = Vec::new();
         while !self.at(&Token::RBrace) {
             // Or-patterns: `pat | pat | ... ( if guard )? => body`. Desugared to
-            // one MatchArm per alternative sharing the (cloned) guard and body,
-            // so no Pattern AST node / downstream changes are needed. First match
-            // still wins, matching standard semantics.
-            let mut patterns = vec![self.parse_pattern()?];
+            // one MatchArm per alternative sharing the guard and body (cloned
+            // for all but the last), so no Pattern AST node / downstream
+            // changes are needed. First match still wins, matching standard
+            // semantics.
+            let mut last = self.parse_pattern()?;
+            let mut patterns = Vec::new();
             while self.eat(&Token::Pipe) {
-                patterns.push(self.parse_pattern()?);
+                let p = self.parse_pattern()?;
+                patterns.push(std::mem::replace(&mut last, p));
             }
+            // AX-60: the guard and body are height-checked here, before
+            // they are cloned (a recursion per level) and before the
+            // enclosing root's check.
             let guard = if self.eat(&Token::If) {
-                Some(self.parse_match_operand()?)
+                Some(self.height_checked(Self::parse_match_operand)?)
             } else {
                 None
             };
             self.expect(&Token::FatArrow)?;
-            let body = self.parse_expr()?;
+            let body = self.height_checked(Self::parse_expr)?;
             self.eat(&Token::Comma);
             for pattern in patterns {
                 arms.push(MatchArm {
@@ -2380,6 +2406,11 @@ impl Parser {
                     body: body.clone(),
                 });
             }
+            arms.push(MatchArm {
+                pattern: last,
+                guard,
+                body,
+            });
         }
         self.expect(&Token::RBrace)?;
         Ok(Expr::Match {
@@ -2596,6 +2627,7 @@ impl Parser {
     #[cfg_attr(target_arch = "wasm32", inline(never))]
     fn parse_logical(&mut self) -> Result<Expr> {
         let mut left = self.parse_logical_and()?;
+        let mut h = self.expr_h;
         loop {
             // ASI: an operator on a new line (outside parens) terminates the expression.
             if self.preceded_by_newline() {
@@ -2611,13 +2643,16 @@ impl Parser {
                 left: Box::new(left),
                 right: Box::new(right),
             };
+            self.joined(&mut left, &mut h)?;
         }
+        self.layer_h(h);
         Ok(left)
     }
 
     /// Logical AND: `a && b` — tighter than `||`, looser than bitwise/comparison.
     fn parse_logical_and(&mut self) -> Result<Expr> {
         let mut left = self.parse_bitwise_or()?;
+        let mut h = self.expr_h;
         loop {
             if self.preceded_by_newline() {
                 break;
@@ -2632,13 +2667,16 @@ impl Parser {
                 left: Box::new(left),
                 right: Box::new(right),
             };
+            self.joined(&mut left, &mut h)?;
         }
+        self.layer_h(h);
         Ok(left)
     }
 
     /// Bitwise OR: `a | b` (lower precedence than XOR).
     fn parse_bitwise_or(&mut self) -> Result<Expr> {
         let mut left = self.parse_bitwise_xor()?;
+        let mut h = self.expr_h;
         loop {
             if self.preceded_by_newline() {
                 break;
@@ -2656,13 +2694,16 @@ impl Parser {
                 left: Box::new(left),
                 right: Box::new(right),
             };
+            self.joined(&mut left, &mut h)?;
         }
+        self.layer_h(h);
         Ok(left)
     }
 
     /// Bitwise XOR: `a ^ b`.
     fn parse_bitwise_xor(&mut self) -> Result<Expr> {
         let mut left = self.parse_bitwise_and()?;
+        let mut h = self.expr_h;
         loop {
             if self.preceded_by_newline() {
                 break;
@@ -2677,13 +2718,16 @@ impl Parser {
                 left: Box::new(left),
                 right: Box::new(right),
             };
+            self.joined(&mut left, &mut h)?;
         }
+        self.layer_h(h);
         Ok(left)
     }
 
     /// Bitwise AND: `a & b` (higher precedence than XOR).
     fn parse_bitwise_and(&mut self) -> Result<Expr> {
         let mut left = self.parse_comparison()?;
+        let mut h = self.expr_h;
         loop {
             if self.preceded_by_newline() {
                 break;
@@ -2700,7 +2744,9 @@ impl Parser {
                 left: Box::new(left),
                 right: Box::new(right),
             };
+            self.joined(&mut left, &mut h)?;
         }
+        self.layer_h(h);
         Ok(left)
     }
 
@@ -2713,6 +2759,7 @@ impl Parser {
 
     fn parse_comparison(&mut self) -> Result<Expr> {
         let mut left = self.parse_shift()?;
+        let mut h = self.expr_h;
         // ASI: a comparison operator on a new line (outside parens) ends the expression.
         if self.preceded_by_newline() {
             return Ok(left);
@@ -2739,12 +2786,15 @@ impl Parser {
             left: Box::new(left),
             right: Box::new(right),
         };
+        self.joined(&mut left, &mut h)?;
+        self.layer_h(h);
         Ok(left)
     }
 
     /// Bit shifts: `a << b` and `a >> b`.
     fn parse_shift(&mut self) -> Result<Expr> {
         let mut left = self.parse_additive()?;
+        let mut h = self.expr_h;
         loop {
             if self.preceded_by_newline() {
                 break;
@@ -2761,12 +2811,15 @@ impl Parser {
                 left: Box::new(left),
                 right: Box::new(right),
             };
+            self.joined(&mut left, &mut h)?;
         }
+        self.layer_h(h);
         Ok(left)
     }
 
     fn parse_additive(&mut self) -> Result<Expr> {
         let mut left = self.parse_multiplicative()?;
+        let mut h = self.expr_h;
         loop {
             // ASI: operator at the start of a new line (outside parens) terminates.
             if self.preceded_by_newline() {
@@ -2784,12 +2837,15 @@ impl Parser {
                 left: Box::new(left),
                 right: Box::new(right),
             };
+            self.joined(&mut left, &mut h)?;
         }
+        self.layer_h(h);
         Ok(left)
     }
 
     fn parse_multiplicative(&mut self) -> Result<Expr> {
         let mut left = self.parse_postfix()?;
+        let mut h = self.expr_h;
         loop {
             // ASI: operator at the start of a new line (outside parens) terminates.
             if self.preceded_by_newline() {
@@ -2808,16 +2864,23 @@ impl Parser {
                 left: Box::new(left),
                 right: Box::new(right),
             };
+            self.joined(&mut left, &mut h)?;
         }
+        self.layer_h(h);
         Ok(left)
     }
 
     fn parse_postfix(&mut self) -> Result<Expr> {
         let mut expr = self.parse_primary()?;
+        // AX-60: a primary's height comes from no layer, so it is measured;
+        // each postfix node raises it, and the node is bounded below.
+        let mut h = Self::height_of(&expr);
+        self.bound_height(&mut expr, &mut h)?;
         loop {
             match self.peek() {
                 Some(Token::Question) => {
                     self.advance()?;
+                    self.rise(&mut h, &[]);
                     expr = Expr::Question(Box::new(expr));
                 }
                 Some(Token::Dot) => {
@@ -2835,14 +2898,17 @@ impl Parser {
                                 && rhs.chars().all(|c| c.is_ascii_digit())
                             {
                                 self.advance()?;
+                                self.rise(&mut h, &[]);
                                 expr = Expr::FieldAccess {
                                     receiver: Box::new(expr),
                                     field: lhs.to_string(),
                                 };
+                                self.rise(&mut h, &[]);
                                 expr = Expr::FieldAccess {
                                     receiver: Box::new(expr),
                                     field: rhs.to_string(),
                                 };
+                                self.bound_height(&mut expr, &mut h)?;
                                 continue;
                             }
                         }
@@ -2862,12 +2928,14 @@ impl Parser {
                         let args = self.parse_args()?;
                         self.paren_depth -= 1;
                         self.expect(&Token::RParen)?;
+                        self.rise(&mut h, &args);
                         expr = Expr::MethodCall {
                             receiver: Box::new(expr),
                             method: field,
                             args,
                         };
                     } else {
+                        self.rise(&mut h, &[]);
                         expr = Expr::FieldAccess {
                             receiver: Box::new(expr),
                             field,
@@ -2883,6 +2951,7 @@ impl Parser {
                     let (args, tier) = self.parse_args_with_tier()?;
                     self.paren_depth -= 1;
                     self.expect(&Token::RParen)?;
+                    self.rise(&mut h, &args);
                     expr = Expr::Call {
                         callee: Box::new(expr),
                         args,
@@ -2896,6 +2965,7 @@ impl Parser {
                     let index = self.parse_expr()?;
                     self.paren_depth -= 1;
                     self.expect(&Token::RBracket)?;
+                    self.rise(&mut h, std::slice::from_ref(&index));
                     expr = Expr::Index {
                         receiver: Box::new(expr),
                         index: Box::new(index),
@@ -2922,6 +2992,7 @@ impl Parser {
                         }
                     };
                     let callee = format!("as_{name}");
+                    self.rise(&mut h, &[]);
                     expr = Expr::Call {
                         callee: Box::new(Expr::Ident(callee)),
                         args: vec![expr],
@@ -2930,7 +3001,9 @@ impl Parser {
                 }
                 _ => break,
             }
+            self.bound_height(&mut expr, &mut h)?;
         }
+        self.layer_h(h);
         Ok(expr)
     }
 
@@ -2999,7 +3072,9 @@ impl Parser {
     }
 
     /// Run `f` one nesting level deeper, refusing past [`MAX_EXPR_DEPTH`].
-    /// The decrement runs on every path (`f`'s `?`s return into `r`).
+    /// The decrement runs on every path (`f`'s `?`s return into `r`). Back
+    /// at depth 0, the end of a root, a sub-expression cut down by
+    /// [`Parser::bound_height`] is settled.
     #[inline(always)]
     fn nested<T>(&mut self, f: fn(&mut Self) -> Result<T>) -> Result<T> {
         self.expr_depth += 1;
@@ -3009,7 +3084,93 @@ impl Parser {
         }
         let r = f(self);
         self.expr_depth -= 1;
+        if NEST_ALL && self.tall && self.expr_depth == 0 {
+            return self.settle_tall(r);
+        }
         r
+    }
+
+    /// AX-60: `r`, the result of parsing a root under which
+    /// [`Parser::bound_height`] cut down a sub-expression, refused as too
+    /// deep: the root is at least as tall as that sub-expression. A parse
+    /// error found after the cut is kept, as it would be without one.
+    #[cold]
+    #[inline(never)]
+    fn settle_tall<T>(&mut self, r: Result<T>) -> Result<T> {
+        if !std::mem::take(&mut self.tall) {
+            return r;
+        }
+        r.and_then(|_| Err(self.too_deep()))
+    }
+
+    /// AX-60 (wasm32): bounds `e`, of height `*h`, a node an operator layer
+    /// just built. Past [`MAX_EXPR_DEPTH`] its sub-expressions are dropped
+    /// (flat) and `tall` is set, so the root is refused when it ends, as
+    /// its own height check would refuse it; until then the parse goes on,
+    /// so a syntax error later in the root is still reported, and no AST
+    /// the parser holds is ever much taller than the limit. A chain the
+    /// parser builds in a loop is otherwise as tall as the source makes it,
+    /// and the clone or drop of one recurses once per level. At depth 0 no
+    /// `nested` would settle it, so the node is refused at once.
+    #[inline(always)]
+    fn bound_height(&mut self, e: &mut Expr, h: &mut usize) -> Result<()> {
+        if NEST_ALL && *h > MAX_EXPR_DEPTH {
+            self.cut_tall(e, h)?;
+        }
+        Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn cut_tall(&mut self, e: &mut Expr, h: &mut usize) -> Result<()> {
+        crate::ast::clear_children(e);
+        *h = 1;
+        if self.expr_depth == 0 {
+            return Err(self.too_deep());
+        }
+        self.tall = true;
+        Ok(())
+    }
+
+    /// AX-60 (wasm32): `e`'s height, capped just past [`MAX_EXPR_DEPTH`].
+    #[inline(always)]
+    fn height_of(e: &Expr) -> usize {
+        if NEST_ALL {
+            crate::ast::expr_height(e, MAX_EXPR_DEPTH)
+        } else {
+            0
+        }
+    }
+
+    /// AX-60 (wasm32): `*h`, a postfix operand's height, raised to that of
+    /// the node wrapping it with `side`, the node's other sub-expressions.
+    #[inline(always)]
+    fn rise(&self, h: &mut usize, side: &[Expr]) {
+        if NEST_ALL {
+            *h = 1 + side.iter().map(Self::height_of).fold(*h, usize::max);
+        }
+    }
+
+    /// AX-60 (wasm32): `*h`, the height of the left operand of `e`, a
+    /// `BinOp` an operator layer just built, raised to `e`'s (the right
+    /// operand's is the layer's `expr_h`), and `e` bounded by
+    /// [`Parser::bound_height`].
+    #[inline(always)]
+    fn joined(&mut self, e: &mut Expr, h: &mut usize) -> Result<()> {
+        if NEST_ALL {
+            *h = 1 + (*h).max(self.expr_h);
+            self.bound_height(e, h)?;
+        }
+        Ok(())
+    }
+
+    /// Records `h` as the height of the expression an operator layer
+    /// returns (AX-60, wasm32).
+    #[inline(always)]
+    fn layer_h(&mut self, h: usize) {
+        if NEST_ALL {
+            self.expr_h = h;
+        }
     }
 
     #[cold]
@@ -3018,6 +3179,28 @@ impl Parser {
         ParseError::Other(format!(
             "expression nesting too deep (limit {MAX_EXPR_DEPTH})"
         ))
+    }
+
+    /// `f`'s expression, refused on wasm32 when taller than
+    /// [`MAX_EXPR_DEPTH`] (AX-60): for one that is cloned or kept outside
+    /// its root's tree before that root's own height check.
+    #[inline(always)]
+    fn height_checked(&mut self, f: fn(&mut Self) -> Result<Expr>) -> Result<Expr> {
+        let e = f(self)?;
+        if NEST_ALL && crate::ast::expr_height_exceeds(&e, MAX_EXPR_DEPTH) {
+            return Err(self.refuse_tall(e));
+        }
+        Ok(e)
+    }
+
+    /// The nesting refusal of `e`, an AST taller than [`MAX_EXPR_DEPTH`]
+    /// (AX-60). `Expr`'s drop glue recurses once per level, so `e` is
+    /// dropped flat.
+    #[cold]
+    #[inline(never)]
+    fn refuse_tall(&mut self, mut e: Expr) -> ParseError {
+        crate::ast::clear_children(&mut e);
+        self.too_deep()
     }
 
     fn parse_primary_inner(&mut self) -> Result<Expr> {
