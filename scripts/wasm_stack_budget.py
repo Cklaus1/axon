@@ -68,7 +68,7 @@ ALLOW = [
     (r"interp::regex|6interp5regex", "value"),
     (r"ast::(Expr|Pattern|AxonType|FmtPart|HandlerExpr|MatchArm)|3ast\d+[A-Z]|3ast4Ex"
      r"|types::Type|5types4Type|resolver::collect|match_pattern|pattern_binds", "source"),
-    (r"vm::pure::|2vm4pure4Pure|compile_pure_at", "bounded (PURE_DEPTH)"),
+    (r"vm::pure::|2vm4pure4Pure|compile_pure_(at|stmts|if)", "bounded (PURE_DEPTH)"),
     (r"gamma_sample|log_gamma|reg_inc_beta|beta_cdf|sub_timespec|slice_error_fail", "bounded (recurses once)"),
     (r"slice4sort|btree", "std"),
     (r"backtrace|panicking|ThreadId>::new::exhausted", "panic"),

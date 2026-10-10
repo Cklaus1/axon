@@ -28,6 +28,8 @@ use crate::ast::{AxonType, UnaryOp};
 
 mod compile;
 mod pure;
+mod purefn;
+pub(in crate::interp) use purefn::{PFrame, PureSlot};
 #[cfg(test)]
 mod tests;
 
@@ -2629,11 +2631,22 @@ impl<'p> Interp<'p> {
     /// check and the `current_fn` swap, the arity check, each parameter
     /// moved off the stack (soft unwrap, sized coercion), then
     /// [`Interp::fast_body`]. The arguments leave the stack on every path;
-    /// `CallGuard` and `give_frame` restore the rest.
+    /// `CallGuard` and `give_frame` restore the rest. Int arguments to a fn
+    /// with pure code (S11) run it there instead; a declined one runs here
+    /// with nested pure entry off.
     #[inline(never)]
     fn call_fast(&self, entry: &FnEntry<'p>, st: &mut Vec<Value>, at: usize) -> R {
         nest_guard!(self, CALL_FAST);
+        let idx = entry.index;
         debug_assert!(compile::fast_call_blocker(entry, self.refine_preds.is_empty()).is_none());
+        let replay = match self.pure_try_values(idx, &st[at..]) {
+            purefn::PureOut::Done(n) => {
+                st.truncate(at);
+                return Ok(Value::Int(n));
+            }
+            purefn::PureOut::No => None,
+            purefn::PureOut::Declined => Some(self.pure_replay.replace(true)),
+        };
         self.set_call_tier(None);
         let mut frame = self.take_frame();
         let out = match self.enter_fn(entry.def) {
@@ -2662,18 +2675,33 @@ impl<'p> Interp<'p> {
             }
         };
         self.give_frame(frame);
+        if let Some(prev) = replay {
+            self.pure_replay.set(prev);
+        }
         out
     }
 
     /// [`Op::CallFastLocalInt`] once its argument `a` is computed:
     /// [`Interp::call_fast`]'s steps with `a` as the one stack argument,
     /// bound straight into the frame (the compiler proved the callee takes
-    /// one parameter, so the arity check cannot fail).
+    /// one parameter, so the arity check cannot fail). A fn with pure code
+    /// (S11) runs it there instead; a declined call runs here with nested
+    /// pure entry off. The run loop tries [`Interp::leaf_arm`] first: it
+    /// returns what the pure code's first instruction would.
     #[inline(never)]
     fn call_fast_arg(&self, entry: &FnEntry<'p>, a: Value, st: &mut Vec<Value>) -> R {
         nest_guard!(self, CALL_FAST_ARG);
         debug_assert!(compile::fast_call_blocker(entry, self.refine_preds.is_empty()).is_none());
         debug_assert_eq!(entry.params.len(), 1);
+        let pure = match a {
+            Value::Int(n) => self.pure_try1(entry.index, n),
+            _ => purefn::PureOut::No,
+        };
+        let prev = match pure {
+            purefn::PureOut::Done(n) => return Ok(Value::Int(n)),
+            purefn::PureOut::No => None,
+            purefn::PureOut::Declined => Some(self.pure_replay.replace(true)),
+        };
         self.set_call_tier(None);
         let mut frame = self.take_frame();
         let out = match self.enter_fn(entry.def) {
@@ -2684,6 +2712,9 @@ impl<'p> Interp<'p> {
             Err(flow) => Err(flow),
         };
         self.give_frame(frame);
+        if let Some(prev) = prev {
+            self.pure_replay.set(prev);
+        }
         out
     }
 
@@ -2757,7 +2788,9 @@ impl<'p> Interp<'p> {
     /// doing it before the depth check is unobservable); then the `tier:`
     /// clear, the depth check and the `current_fn` swap, and
     /// [`Interp::fast_body`]. A leaf body ([`Interp::leaf_call`]) is
-    /// computed without a frame.
+    /// computed without a frame. Int arguments to a fn with pure code (S11)
+    /// run it there instead; a declined one runs here with nested pure entry
+    /// off.
     #[inline(never)]
     fn call_fast_inline(
         &self,
@@ -2767,8 +2800,40 @@ impl<'p> Interp<'p> {
         st: &mut Vec<Value>,
     ) -> R {
         nest_guard!(self, CALL_FAST_INLINE);
+        let idx = entry.index;
         debug_assert!(compile::fast_call_blocker(entry, self.refine_preds.is_empty()).is_none());
         debug_assert_eq!(args.len(), entry.params.len());
+        // A one-op body takes `Interp::leaf_call`, cheaper than registers.
+        let leaf = entry
+            .compiled
+            .as_ref()
+            .and_then(std::cell::OnceCell::get)
+            .is_some_and(|b| b.ops.len() == 1);
+        let replay = match if leaf {
+            purefn::PureOut::No
+        } else {
+            self.pure_try_opnds(idx, args, env)
+        } {
+            purefn::PureOut::Done(n) => return Ok(Value::Int(n)),
+            purefn::PureOut::No => None,
+            purefn::PureOut::Declined => Some(self.pure_replay.replace(true)),
+        };
+        let out = self.call_fast_inline_generic(entry, args, env, st);
+        if let Some(prev) = replay {
+            self.pure_replay.set(prev);
+        }
+        out
+    }
+
+    /// [`Interp::call_fast_inline`] off the pure tier.
+    #[inline(always)]
+    fn call_fast_inline_generic(
+        &self,
+        entry: &FnEntry<'p>,
+        args: &[Opnd<'_>],
+        env: &Env,
+        st: &mut Vec<Value>,
+    ) -> R {
         if let Some(v) = self.leaf_call(entry, args, env) {
             return Ok(v);
         }

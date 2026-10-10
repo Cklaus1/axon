@@ -73,7 +73,8 @@ CPU="${VM_PERF_CPU:-6}"
 # ── Budgets (R50 §10, exact) ────────────────────────────────────────────────
 # program        CPython 3.14.4 median, run 20261008T142344Z (sieve: S10, see top)
 PROGRAMS=(
-  "fib-recursive 3423642492"
+  # S11: a third of CPython's median, spec §10
+  "fib-recursive 1141214164"
   "collatz       26058032109"
   "mandelbrot    15023124683"
   "arr-sum       23624147901"

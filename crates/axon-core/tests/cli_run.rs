@@ -35258,11 +35258,12 @@ fn vm_engine_trace_names_each_compiled_body_once_under_vm_only() {
     let err = String::from_utf8_lossy(&vm.stderr);
     // Each body's lines come once, on its first run, though `fib` runs 177
     // times. Every node of every body compiles (S2 the struct literal, S3
-    // the method call).
+    // the method call), and `fib` qualifies for the pure tier (S11).
     assert_eq!(
         err,
         "vm: main 12 ops, 0 tree nodes\n\
          vm: fib 6 ops, 0 tree nodes\n\
+         vm: purefn fib 8 ins\n\
          vm: P::get 1 ops, 0 tree nodes\n"
     );
     let tree = vm_run("trace", VM_FIB_SRC, "tree", true);
@@ -36857,4 +36858,292 @@ fn vm_defer_mutcall_after_tree_entry() {
     let (deferred, compiled) = vm_defer_trace("defer_mutcall", &src);
     assert_eq!(deferred, ["swap"]);
     assert_eq!(compiled, ["main", "swap"]);
+}
+
+// ── R50 S11: pure-`i64` function tier (`vm_purefn_`) ────────────────────────
+
+/// R50 S11: the `vm: purefn <fn> <n> ins` lines of `src` under
+/// `AXON_ENGINE=vm AXON_VM_EAGER=1 AXON_VM_TRACE=1`, as `<fn>` in trace order.
+fn vm_purefn_built(tag: &str, src: &str) -> Vec<String> {
+    let out = vm_run(tag, src, "vm", true);
+    String::from_utf8_lossy(&out.stderr)
+        .lines()
+        .filter_map(|l| l.strip_prefix("vm: purefn "))
+        .filter_map(|rest| rest.split_once(' ').map(|(name, _)| name.to_string()))
+        .collect()
+}
+
+/// R50 S11: `axon run` on `src` under `engine` with `AXON_MAX_DEPTH=depth`,
+/// as `(exit, stdout, stderr)`.
+fn vm_purefn_depth_run(
+    tag: &str,
+    src: &str,
+    engine: &str,
+    depth: u32,
+) -> (Option<i32>, String, String) {
+    let f = tmp_ax(&format!("vm_purefn_{tag}"), src);
+    let mut c = axon();
+    c.arg("run")
+        .arg(&f)
+        .env("AXON_MAX_DEPTH", depth.to_string())
+        .env_remove("AXON_VM_TRACE");
+    vm_engine_env(&mut c, engine);
+    let out = c.output().expect("spawn axon run");
+    let _ = std::fs::remove_file(&f);
+    (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// R50 S11 red test (§8): `fib` (an `i64` param and return, a body of
+/// compares, arithmetic and calls to itself) runs on the pure tier: its
+/// register code is built once, traced `vm: purefn fib 8 ins`, and the
+/// output is the tree's. Before S11 no `vm: purefn` line existed.
+#[test]
+fn vm_purefn_fib_in_registers() {
+    let src = "fn fib(n: i64) -> i64 {\n    if n < 2 { n } else { fib(n - 1) + fib(n - 2) }\n}\n\
+               fn main() -> i64 {\n    println(to_str(fib(25)))\n    println(to_str(fib(10)))\n    0\n}\n";
+    let (code, stdout, stderr) = vm_scalar_case("purefn_fib", src, &[("fib", 0), ("main", 0)]);
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "75025\n55\n"),
+        "{stderr}"
+    );
+    let out = vm_run("purefn_fib", src, "vm", true);
+    let err = String::from_utf8_lossy(&out.stderr);
+    let lines: Vec<&str> = err
+        .lines()
+        .filter(|l| l.starts_with("vm: purefn "))
+        .collect();
+    assert_eq!(lines, ["vm: purefn fib 8 ins"], "{err}");
+}
+
+/// A [`vm_purefn_panics_replay`] case: (tag, fns, main body, exit, stdout,
+/// stderr fragment).
+type VmPurefnPanicCase = (
+    &'static str,
+    &'static str,
+    &'static str,
+    Option<i32>,
+    &'static str,
+    &'static str,
+);
+
+/// R50 §4 S11: a pure call whose code would panic anywhere in its
+/// recursion (overflow at depth, `/` or `%` by zero, `MIN / -1`) is
+/// declined whole and replayed on the generic path: the tree's panic text
+/// and exit 101. A shift out of range wraps on the tree, so it is the
+/// tree's value. Each fn is built on the tier, so the replay is exercised.
+#[test]
+fn vm_purefn_panics_replay() {
+    let cases: [VmPurefnPanicCase; 6] = [
+        (
+            "overflow",
+            "fn p(n: i64) -> i64 {\n    if n == 0 { 1 } else { 2 * p(n - 1) }\n}\n",
+            "println(to_str(p(10)))\n    println(to_str(p(70)))",
+            Some(101),
+            "1024\n",
+            "integer overflow",
+        ),
+        (
+            "div_zero",
+            "fn q(n: i64, a: i64, d: i64) -> i64 {\n    if n == 0 { a / d } else { q(n - 1, a, d) }\n}\n",
+            "println(to_str(q(40, 9, 2)))\n    println(to_str(q(40, 9, 0)))",
+            Some(101),
+            "4\n",
+            "integer division by zero",
+        ),
+        (
+            "rem_zero",
+            "fn q(n: i64, a: i64, d: i64) -> i64 {\n    if n == 0 { a % d } else { q(n - 1, a, d) }\n}\n",
+            "println(to_str(q(40, 9, 2)))\n    println(to_str(q(40, 9, 0)))",
+            Some(101),
+            "1\n",
+            "integer remainder by zero",
+        ),
+        (
+            "min_div",
+            "fn q(n: i64, a: i64, d: i64) -> i64 {\n    if n == 0 { a / d } else { q(n - 1, a, d) }\n}\n",
+            "let m = -9223372036854775807 - 1\n    println(to_str(q(40, m, 2)))\n    println(to_str(q(40, m, -1)))",
+            Some(101),
+            "-4611686018427387904\n",
+            "overflow",
+        ),
+        (
+            "shift",
+            "fn q(n: i64, a: i64, d: i64) -> i64 {\n    if n == 0 { (a << d) + (a >> d) } else { q(n - 1, a, d) }\n}\n",
+            "println(to_str(q(40, 7, 2)))\n    println(to_str(q(40, 7, 70)))\n    println(to_str(q(40, 7, 64)))",
+            Some(0),
+            "29\n448\n14\n",
+            "",
+        ),
+        (
+            "overflow_mid",
+            "fn s(n: i64, acc: i64) -> i64 {\n    if n == 0 { acc } else { s(n - 1, acc * 3 + 1) }\n}\n",
+            "println(to_str(s(5, 0)))\n    println(to_str(s(60, 0)))",
+            Some(101),
+            "121\n",
+            "integer overflow",
+        ),
+    ];
+    for (tag, fns, body, exit, out, msg) in cases {
+        let src = format!("{fns}fn main() -> i64 {{\n    {body}\n    0\n}}\n");
+        let tag = format!("purefn_panic_{tag}");
+        let (code, stdout, stderr) = vm_same_both_engines(&tag, &src);
+        assert_eq!((code, stdout.as_str()), (exit, out), "[{tag}] {stderr}");
+        assert!(stderr.contains(msg), "[{tag}] {stderr}");
+        assert_eq!(
+            vm_purefn_built(&tag, &src).len(),
+            1,
+            "[{tag}] not on the tier"
+        );
+    }
+}
+
+/// R50 §4 S11 recursion limit: the tier budgets the frames the depth limit
+/// leaves past the call's own, so a pure chain completes at
+/// `AXON_MAX_DEPTH=N` and panics at `N - 1` exactly as the tree does,
+/// whether entered from `main` or from inside a generic recursion at depth
+/// 12.
+#[test]
+fn vm_purefn_depth_boundary() {
+    let d = "fn d(n: i64) -> i64 {\n    if n == 0 { 0 } else { d(n - 1) + 1 }\n}\n";
+    // main (1) + d(48..0) (49) = 50 frames; main (1) + wrap(10..0) (11) +
+    // d(37..0) (38) = 50.
+    let progs = [
+        ("chain", format!("{d}fn main() -> i64 {{\n    println(to_str(d(48)))\n    0\n}}\n"), "48\n"),
+        (
+            "nested",
+            format!(
+                "{d}fn wrap(k: i64, n: i64) -> i64 {{\n    let m = k - 1\n    if k == 0 {{ d(n) }} else {{ wrap(m, n) }}\n}}\n\
+                 fn main() -> i64 {{\n    println(to_str(wrap(10, 37)))\n    0\n}}\n"
+            ),
+            "37\n",
+        ),
+    ];
+    for (tag, src, out) in &progs {
+        assert_eq!(vm_purefn_built(tag, src), ["d"], "[{tag}]");
+        for depth in [49, 50, 51] {
+            let tree = vm_purefn_depth_run(tag, src, "tree", depth);
+            for engine in ["vm", "vm-default"] {
+                let vm = vm_purefn_depth_run(tag, src, engine, depth);
+                assert_eq!(vm, tree, "[{tag}] {engine} AXON_MAX_DEPTH={depth}");
+            }
+            if depth == 49 {
+                assert_eq!((tree.0, tree.1.as_str()), (Some(101), ""), "[{tag}]");
+                assert!(
+                    tree.2.contains("recursion limit exceeded (49)"),
+                    "[{tag}] {}",
+                    tree.2
+                );
+            } else {
+                assert_eq!(
+                    (tree.0, tree.1.as_str()),
+                    (Some(0), *out),
+                    "[{tag}] {}",
+                    tree.2
+                );
+            }
+        }
+    }
+}
+
+/// R50 §4 S11 qualification: a fn that would otherwise qualify stays off
+/// the tier when a param is refinement-typed, sized (`i32`) or `&mut`, when
+/// it is `@[agent]` or a goal fn, or when it returns `Uncertain`: no `vm:
+/// purefn` line, the tree's output.
+#[test]
+fn vm_purefn_not_qualified() {
+    let cases: [(&str, &str, &str); 6] = [
+        (
+            "refine",
+            "type Pos = i64 where _ > 0\nfn f(n: Pos) -> i64 {\n    if n < 2 { 1 } else { f(n - 1) + 1 }\n}\n\
+             fn main() -> i64 {\n    println(to_str(f(10)))\n    0\n}\n",
+            "10\n",
+        ),
+        (
+            "i32",
+            "fn f(n: i32) -> i32 {\n    if n < 2 { n } else { f(n - 1) + f(n - 2) }\n}\n\
+             fn main() -> i64 {\n    println(to_str(f(15)))\n    0\n}\n",
+            "610\n",
+        ),
+        (
+            "mut",
+            "fn f(a: &mut [i64], n: i64) -> i64 {\n    if n == 0 { 0 } else { f(&mut a, n - 1) + 1 }\n}\n\
+             fn main() -> i64 {\n    let a = [1]\n    println(to_str(f(&mut a, 10)))\n    0\n}\n",
+            "10\n",
+        ),
+        (
+            "agent",
+            "@[agent]\nfn f(n: i64) -> i64 {\n    if n < 2 { n } else { f(n - 1) + 1 }\n}\n\
+             fn main() -> i64 {\n    println(to_str(f(10)))\n    0\n}\n",
+            "10\n",
+        ),
+        (
+            "goal",
+            "@[adaptive]\nfn quality(x: i64) -> i64 { 100 - abs_i64(x - 7) * 10 }\n\
+             @[goal(metric: quality, target: 60, max_evals: 40, test_set: [5, 7, 9])]\n\
+             fn opt() -> i64 { goal_met }\nfn main() -> i64 {\n    println(to_str(opt()))\n    0\n}\n",
+            "1\n",
+        ),
+        (
+            "uncertain",
+            "fn u(n: i64) -> Uncertain<i64> {\n    if n < 2 { uncertain_new(n, 0.9) } else { u(n - 1) }\n}\n\
+             fn main() -> i64 {\n    let x = u(10)\n    println(\"ok\")\n    0\n}\n",
+            "ok\n",
+        ),
+    ];
+    for (tag, src, out) in cases {
+        let tag = format!("purefn_noq_{tag}");
+        let (code, stdout, stderr) = vm_same_both_engines(&tag, src);
+        assert_eq!((code, stdout.as_str()), (Some(0), out), "[{tag}] {stderr}");
+        assert_eq!(vm_purefn_built(&tag, src), Vec::<String>::new(), "[{tag}]");
+    }
+}
+
+/// R50 §4 S11: a declined call's replay turns nested pure entry off only
+/// while it runs. A scheduler fiber's panic (a declined overflow in `p`)
+/// is caught, and after it `q`, never entered before, is still built on
+/// the tier and `p` returns its value.
+#[test]
+fn vm_purefn_replay_flag_restored() {
+    let src = "fn p(n: i64) -> i64 {\n    if n == 0 { 1 } else { 2 * p(n - 1) }\n}\n\
+               fn boom(n: i64) -> i64 {\n    let m = n\n    p(m)\n}\n\
+               fn q(n: i64) -> i64 {\n    if n == 0 { 0 } else { q(n - 1) + 2 }\n}\n\
+               fn main() -> i64 {\n    let f = scheduler_spawn(\"boom\", 70)\n    let done = scheduler_run()\n    \
+               println(to_str(done))\n    println(to_str(scheduler_failed(f)))\n    \
+               println(to_str(q(20)))\n    println(to_str(p(10)))\n    0\n}\n";
+    let (code, stdout, stderr) = vm_same_both_engines("purefn_flag", src);
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "0\ntrue\n40\n1024\n"),
+        "{stderr}"
+    );
+    assert_eq!(vm_purefn_built("purefn_flag", src), ["p", "q"]);
+}
+
+/// R50 §4 S11: two mutually recursive fns are built together, a 2-param fn
+/// qualifies, and a pure fn called from non-pure code with a literal or a
+/// local argument (`Op::CallFast`'s inline and stack forms) takes the tier.
+#[test]
+fn vm_purefn_mutual_and_multi_param() {
+    let src = "fn is_even(n: i64) -> i64 {\n    if n == 0 { 1 } else { is_odd(n - 1) }\n}\n\
+               fn is_odd(n: i64) -> i64 {\n    if n == 0 { 0 } else { is_even(n - 1) }\n}\n\
+               fn k(a: i64, b: i64) -> i64 {\n    if a == 0 { b } else { k(a - 1, b + a) }\n}\n\
+               fn fib(n: i64) -> i64 {\n    if n < 2 { n } else { fib(n - 1) + fib(n - 2) }\n}\n\
+               fn main() -> i64 {\n    let s = 0\n    for i in 0..3 {\n        \
+               s = s + is_even(1001) + is_odd(77) + k(100, 1) + fib(22) + k(i, s % 7)\n    }\n    \
+               println(to_str(s))\n    println(to_str(fib(15)))\n    0\n}\n";
+    let (code, stdout, stderr) = vm_same_both_engines("purefn_mutual", src);
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "68304\n610\n"),
+        "{stderr}"
+    );
+    let built = vm_purefn_built("purefn_mutual", src);
+    let mut sorted = built.clone();
+    sorted.sort();
+    assert_eq!(sorted, ["fib", "is_even", "is_odd", "k"], "{built:?}");
 }

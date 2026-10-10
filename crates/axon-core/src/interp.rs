@@ -995,6 +995,14 @@ pub struct Interp<'p> {
     /// returns it with a `Cell` swap instead of a `RefCell` borrow and a
     /// vector push/pop (cost only).
     frame_spare: Cell<Option<Box<Env>>>,
+    /// R50 S11 (`vm::purefn`): the pure tier's per-`fn_table`-entry state
+    /// (same indices), its registers and suspended frames (reused across
+    /// calls), and whether a declined pure call is being replayed on the
+    /// generic path (nested pure entry is off meanwhile).
+    pure_slots: Box<[vm::PureSlot]>,
+    pure_regs: Cell<Vec<i64>>,
+    pure_frames: Cell<Vec<vm::PFrame>>,
+    pure_replay: Cell<bool>,
     /// Phase-7 `cost_meter` / F4: cumulative AI spend across the whole run, in
     /// integer micro-dollars (µ$). Every `ai_complete` adds `tier.cost_micro(est
     /// tokens)` — the real per-token cost, stamped into the `ai_call` provenance
@@ -1335,8 +1343,8 @@ pub(super) mod nest_cost {
     /// panics no shallower than the tree there (spec R50 §4 Recursion).
     pub const RUN_LAMBDA_TREE: usize = RUN;
     pub const RUN: usize = b(336, 528);
-    pub const CALL_FAST_ARG: usize = b(208, 272);
-    pub const CALL_FAST_INLINE: usize = b(256, 304);
+    pub const CALL_FAST_ARG: usize = b(208, 320);
+    pub const CALL_FAST_INLINE: usize = b(256, 416);
     pub const CALL_MUT_OP: usize = b(288, 416);
     pub const ASSIGN_IN_PLACE: usize = b(176, 224);
     pub const BIND_LET: usize = b(128, 208);
@@ -1350,7 +1358,7 @@ pub(super) mod nest_cost {
     pub const CALL_FN_GOAL: usize = b(464, 928);
     pub const FINISH_CALL_COLD: usize = b(224, 496);
     pub const FLATTEN_PLACE: usize = b(128, 160);
-    pub const CALL_FAST: usize = b(208, 288);
+    pub const CALL_FAST: usize = b(208, 320);
     pub const CALL_FAST_LOCAL_INT_SLOW: usize = b(176, 176);
     pub const CALL_MUT_GENERAL: usize = b(176, 288);
     pub const CALL_UNPROVEN: usize = b(192, 272);
@@ -1364,7 +1372,7 @@ pub(super) mod nest_cost {
     pub const RUN_GOAL_RANDOM: usize = b(208, 368);
     pub const RUN_GOAL_WARM: usize = b(656, 1024);
     pub const COMPILE_EXPR: usize = b(816, 688);
-    pub const COMPILE_STMT: usize = b(800, 656);
+    pub const COMPILE_STMT: usize = b(800, 672);
 }
 
 /// Hard ceiling on the configurable recursion limit. `AXON_MAX_DEPTH` is
@@ -3526,6 +3534,7 @@ impl<'p> Interp<'p> {
                 fn_table.push(FnEntry {
                     compiled: Some(std::cell::OnceCell::new()),
                     hot: res.hot_fn(f),
+                    index: idx,
                     ..FnEntry::new(f, &fns)
                 });
             }
@@ -3536,6 +3545,7 @@ impl<'p> Interp<'p> {
         let ambient = ambient_sandbox();
         Interp {
             res,
+            pure_slots: fn_table.iter().map(|_| vm::PureSlot::default()).collect(),
             fn_table,
             fn_of_sym,
             fn_of_def,
@@ -3574,6 +3584,9 @@ impl<'p> Interp<'p> {
             arg_bufs: RefCell::new(Vec::new()),
             env_pool: RefCell::new(Vec::new()),
             frame_spare: Cell::new(None),
+            pure_regs: Cell::new(Vec::new()),
+            pure_frames: Cell::new(Vec::new()),
+            pure_replay: Cell::new(false),
             ai_cost_micro: Cell::new(0),
             w1310_warned: RefCell::new(std::collections::HashSet::new()),
             tokens_used: Cell::new(0),

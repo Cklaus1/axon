@@ -411,6 +411,9 @@ pub(super) struct FnEntry<'p> {
     /// R50 S9: the body is hot on entry ([`Resolution::hot_fn`]), so it
     /// compiles on its first entry; set by `Interp::build` for table entries.
     pub(super) hot: bool,
+    /// R50 S11: the entry's index in `fn_table` (`u32::MAX` for an owned
+    /// entry); the fast-call paths name the pure tier's code by it.
+    pub(super) index: u32,
 }
 
 impl<'p> FnEntry<'p> {
@@ -459,6 +462,7 @@ impl<'p> FnEntry<'p> {
             compiled: None,
             entered: std::cell::Cell::new(false),
             hot: false,
+            index: u32::MAX,
         };
         entry.plain = !(entry.is_agent
             || entry.ai_metered
