@@ -37033,3 +37033,111 @@ fn vm_defer_mutcall_after_tree_entry() {
     assert_eq!(deferred, ["swap"]);
     assert_eq!(compiled, ["main", "swap"]);
 }
+
+// ── R51 T1c: the sealed-engine pin at the CLI (spec §4 Fork 1, §6) ──────────
+
+/// R51 T1c: a suite in `suite/` judging a candidate in `cand/`, in a scratch
+/// directory unique to this process and `tag`.
+fn r51_seal_fixture(tag: &str) -> std::path::PathBuf {
+    let d = std::env::temp_dir().join(format!("axon_r51_t1c_{tag}_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(d.join("cand")).unwrap();
+    std::fs::create_dir_all(d.join("suite")).unwrap();
+    std::fs::write(
+        d.join("cand/f.ax"),
+        "pub fn double(x: i64) -> i64 {\n    let s = 0\n    let i = 0\n    while i < 2 {\n        s = s + x\n        i = i + 1\n    }\n    s\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        d.join("suite/accept.ax"),
+        "mod f\nuse f.{double}\n\n@[test]\nfn t_ok() { assert_eq(double(21), 42) }\n",
+    )
+    .unwrap();
+    d
+}
+
+/// `axon test --json` on the fixture in the production sealed child's shape
+/// (`env -i`: the environment cleared, then only PATH and the module path),
+/// with `AXON_VM_TRACE=1 AXON_VM_EAGER=1` so any compiled body would print a
+/// `vm:` line, and `AXON_ENGINE` set to `engine` when given.
+fn r51_seal_test(
+    d: &std::path::Path,
+    seal: bool,
+    engine: Option<&str>,
+) -> (Option<i32>, String, String) {
+    let mut c = axon();
+    c.current_dir(d.join("suite"))
+        .arg("test")
+        .arg(d.join("suite/accept.ax"))
+        .arg("--json")
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env(
+            "AXON_PATH",
+            format!("{}:{}", d.join("suite").display(), d.join("cand").display()),
+        )
+        .env("AXON_PATH_EXCLUSIVE", "1")
+        .env("AXON_VM_TRACE", "1")
+        .env("AXON_VM_EAGER", "1");
+    if seal {
+        c.arg("--seal").arg(d.join("cand"));
+    }
+    if let Some(e) = engine {
+        c.env("AXON_ENGINE", e);
+    }
+    let out = c.output().expect("spawn axon test");
+    (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// R51 T1c: `axon test --seal` never runs sealed code on the VM. While the
+/// runtime seal is incomplete every sealed run is refused, `AXON_ENGINE`
+/// unset (`env -i`, the production shape), `tree`, `vm` or invalid; once it
+/// is complete (S6) the unset and `tree` runs pass on the tree and `vm` and
+/// an invalid value are refused. A refusal is exit 2, its message on stderr
+/// and no summary line on stdout. No sealed run prints a `vm:` trace line.
+/// Control: the same suite unsealed, on the default VM, passes and does
+/// print them, so their absence is not vacuous.
+#[test]
+fn r51_t1c_a_sealed_axon_test_never_runs_on_the_vm() {
+    use axon_core::interp::{SEALED_RUN_REFUSED, SEALED_RUN_VM_REFUSED, SEAL_RUNTIME_COMPLETE};
+    let d = r51_seal_fixture("pin");
+    let (code, so, se) = r51_seal_test(&d, false, None);
+    assert_eq!(code, Some(0), "control: {so}{se}");
+    assert!(so.contains("\"type\":\"summary\""), "control: {so}");
+    assert!(se.lines().any(|l| l.starts_with("vm: ")), "control: {se}");
+
+    let invalid = "AXON_ENGINE must be \"vm\" or \"tree\" (got \"garbage\")";
+    for engine in [None, Some("tree"), Some("vm"), Some("garbage")] {
+        let (code, so, se) = r51_seal_test(&d, true, engine);
+        let at = format!("AXON_ENGINE={engine:?}");
+        assert!(
+            !se.lines().any(|l| l.starts_with("vm: ")),
+            "{at}: a sealed run compiled: {se}"
+        );
+        let refusal = match engine {
+            _ if !SEAL_RUNTIME_COMPLETE => Some(SEALED_RUN_REFUSED),
+            None | Some("tree") => None,
+            Some("vm") => Some(SEALED_RUN_VM_REFUSED),
+            Some(_) => Some(invalid),
+        };
+        match refusal {
+            Some(msg) => {
+                assert_eq!(code, Some(2), "{at}: {so}{se}");
+                assert_eq!(se, format!("error: {msg}\n"), "{at}");
+                assert!(
+                    !so.contains("summary") && !so.contains("t_ok"),
+                    "{at}: stdout: {so}"
+                );
+            }
+            None => {
+                assert_eq!(code, Some(0), "{at}: {so}{se}");
+                assert!(so.contains("\"type\":\"summary\""), "{at}: {so}");
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}

@@ -793,6 +793,12 @@ impl Resolution {
             .map(|i| &self.lambdas[i])
     }
 
+    /// Every lambda code in the table (R51 T1b reads their compiled cells).
+    #[cfg(test)]
+    pub(super) fn lambda_codes(&self) -> impl Iterator<Item = &ClosureCode> {
+        self.lambdas.iter().map(|l| &*l.code)
+    }
+
     /// The resolution of struct literal node `e`, if it is in the table.
     #[inline]
     pub(super) fn record_lit(&self, e: &Expr) -> Option<&RecordLit> {

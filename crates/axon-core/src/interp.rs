@@ -873,14 +873,23 @@ pub const SEAL_RUNTIME_COMPLETE: bool = false;
 /// [`SEAL_RUNTIME_COMPLETE`] is `false`. The CLI prints it on stderr and exits 2.
 pub const SEALED_RUN_REFUSED: &str = "sealed runs are refused on this build: the runtime seal is not complete (R51 SEAL_RUNTIME_COMPLETE)";
 
-/// R51: `Err(SEALED_RUN_REFUSED)` when a run with `sealed` code must not
-/// execute on this build. [`Interp::build`] calls it for every run; `axon
-/// test` calls it too, so it refuses before printing any result line.
+/// R51 §3: the refusal a sealed run gives when the VM is requested
+/// (`AXON_ENGINE=vm` or `set_engine(Engine::Vm)`) on a build whose runtime
+/// seal is complete. The CLI prints it on stderr and exits 2.
+pub const SEALED_RUN_VM_REFUSED: &str = "a sealed run executes on the tree engine only (AXON_ENGINE=vm cannot carry the seal); unset AXON_ENGINE";
+
+/// R51: `Err(message)` when a run with `sealed` code must not execute on this
+/// build or with the engine asked for ([`EngineRefusal`]); `Ok` for every
+/// unsealed run, without reading the engine inputs. [`Interp::build`] makes
+/// the same decision for every run; `axon test` calls this first, so it
+/// refuses before printing any result line.
 pub fn sealed_run_refusal(sealed: bool) -> Result<(), String> {
-    if sealed && !SEAL_RUNTIME_COMPLETE {
-        return Err(SEALED_RUN_REFUSED.to_string());
+    if !sealed {
+        return Ok(());
     }
-    Ok(())
+    vm::engine_at_build(true)
+        .map(|_| ())
+        .map_err(|refused| refused.to_string())
 }
 
 pub struct Interp<'p> {
@@ -3497,15 +3506,24 @@ fn verify_fn_label(fn_name: &str) -> String {
 impl<'p> Interp<'p> {
     /// Build the interpreter for `program`.
     ///
-    /// `Err` (with [`SEALED_RUN_REFUSED`]) when the run is sealed and this
-    /// build's runtime seal is incomplete (R51 §4 Fork 1, §7): every run entry
-    /// passes through here, so no sealed run executes unprotected, whichever
-    /// engine would be chosen and whoever spawned it.
+    /// `Err` (an [`EngineRefusal`]'s message) when the run is sealed and must
+    /// not execute: this build's runtime seal is incomplete
+    /// ([`SEALED_RUN_REFUSED`]), the VM is requested
+    /// ([`SEALED_RUN_VM_REFUSED`]) or `AXON_ENGINE` is invalid (R51 §4 Fork
+    /// 1, §7). Every run entry passes through here, so no sealed run executes
+    /// unprotected or on the VM, whoever spawned it.
     pub fn build(program: &'p Program) -> Result<Self, String> {
-        // R51: one expression, before any override or environment read, from
-        // the input the seal state is computed from.
+        // R51: one expression, from the input the seal state is computed
+        // from; `engine_for` decides a sealed run before it looks at the
+        // override or `AXON_ENGINE`.
         let sealed = !crate::resolver::sealed_module_dirs().is_empty();
-        sealed_run_refusal(sealed)?;
+        let engine = vm::engine_at_build(sealed).map_err(|refused| refused.to_string())?;
+        Ok(Self::build_with(program, sealed, engine))
+    }
+
+    /// [`Interp::build`] with the seal state and the engine already decided
+    /// (`engine` is [`vm::engine_for`]'s choice for `sealed`).
+    fn build_with(program: &'p Program, sealed: bool, engine: Engine) -> Self {
         pin_ai_net_allowlist(program);
         let mut fns = HashMap::new();
         let mut structs = HashMap::new();
@@ -3581,7 +3599,7 @@ impl<'p> Interp<'p> {
         // Read the ambient effect ceiling once; both the sandbox registry
         // and the active-handle field below are derived from it.
         let ambient = ambient_sandbox();
-        Ok(Interp {
+        Interp {
             res,
             fn_table,
             fn_of_sym,
@@ -3602,7 +3620,7 @@ impl<'p> Interp<'p> {
             nest_limit: resolve_max_depth().saturating_mul(NEST_PER_DEPTH),
             max_depth: resolve_max_depth(),
             sealed,
-            engine: vm::engine_at_build(),
+            engine,
             vm_trace: vm::trace_at_build(),
             vm_eager: vm::eager_at_build(),
             corrigible_halted: Cell::new(false),
@@ -3647,7 +3665,7 @@ impl<'p> Interp<'p> {
             domain: axon_domain::Registry::new(),
             #[cfg(feature = "gfx-wgpu")]
             gfx_real: RefCell::new(axon_gfx::GfxReal::new()),
-        })
+        }
     }
 
     /// Install the set of statically-discharged obligations (Phase 5 §4). A
@@ -5007,7 +5025,7 @@ mod eval;
 // same `Env` the tree-walker uses, and every node it does not lower is a `Tree`
 // op that calls `eval`.
 mod vm;
-pub use vm::{set_engine, Engine};
+pub use vm::{set_engine, Engine, EngineRefusal};
 // The builtin dispatch (`call_builtin`, the ~2400-line `match name`) extracted to
 // interp/builtins.rs (R0 slice 6). Moved as ONE method into a second `impl Interp`
 // block; its function-local `want`/`ok!` travel with it. eval.rs's call to

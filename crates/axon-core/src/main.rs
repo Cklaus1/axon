@@ -6394,9 +6394,10 @@ fn cmd_test(
         process::exit(2);
     }
 
-    // R51 §6: a sealed run this build cannot protect is refused here, before
-    // any result line, so stdout never carries a summary. `Interp::build`
-    // refuses it too; that is the guarantee, this is the clean exit.
+    // R51 §6: a sealed run this build cannot protect, or one that asks for
+    // the VM (`AXON_ENGINE=vm`), is refused here, before any result line, so
+    // stdout never carries a summary. `Interp::build` refuses it too; that is
+    // the guarantee, this is the clean exit.
     if let Err(refused) =
         axon_core::interp::sealed_run_refusal(!axon_core::resolver::sealed_module_dirs().is_empty())
     {

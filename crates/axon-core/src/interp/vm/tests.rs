@@ -978,3 +978,503 @@ fn fast_call_checks_depth_before_arity() {
     interp.call_depth.set(depth);
     assert!(at_limit.contains("recursion limit exceeded"), "{at_limit}");
 }
+
+// ── R51 T1: the sealed-engine pin (spec §4 Fork 1, §8 T1) ───────────────────
+
+/// R51 T1a: [`engine_for`] over every input, 48 rows. A sealed run is
+/// refused while the runtime seal is incomplete, refused when the VM is
+/// requested or `AXON_ENGINE` is invalid, and otherwise runs on the tree,
+/// `AXON_ENGINE` unset included; it never gets the VM. An unsealed run's
+/// selection is R50 §3's, whatever `complete` says. `complete` is the
+/// const `false` on this build, so `complete = true` is reached only here.
+#[test]
+fn r51_t1a_engine_for_truth_table() {
+    use std::ffi::OsStr;
+    use Engine::{Tree, Vm};
+    use EngineRefusal::{SealIncomplete, SealedVm};
+    // The inputs are exactly these four: `AXON_VM_EAGER` (and the trace)
+    // is not one, by the signature.
+    type Selection = Result<Engine, EngineRefusal>;
+    let _: fn(bool, bool, Option<Engine>, Option<&OsStr>) -> Selection = engine_for;
+    let invalid = || EngineRefusal::Invalid(Engine::parse("garbage").unwrap_err());
+    const ENVS: [Option<&str>; 4] = [None, Some("tree"), Some("vm"), Some("garbage")];
+    const OVERRIDES: [Option<Engine>; 3] = [None, Some(Tree), Some(Vm)];
+    // (override, env) -> selection, sealed with the seal complete.
+    let sealed_complete: [[Result<Engine, EngineRefusal>; 4]; 3] = [
+        [Ok(Tree), Ok(Tree), Err(SealedVm), Err(invalid())],
+        [Ok(Tree), Ok(Tree), Err(SealedVm), Err(invalid())],
+        [Err(SealedVm), Err(SealedVm), Err(SealedVm), Err(SealedVm)],
+    ];
+    // (override, env) -> selection, unsealed (R50 §3: override, else env,
+    // else the default VM).
+    let unsealed: [[Result<Engine, EngineRefusal>; 4]; 3] = [
+        [Ok(Vm), Ok(Tree), Ok(Vm), Err(invalid())],
+        [Ok(Tree), Ok(Tree), Ok(Tree), Ok(Tree)],
+        [Ok(Vm), Ok(Vm), Ok(Vm), Ok(Vm)],
+    ];
+    let mut rows = 0;
+    for sealed in [false, true] {
+        for complete in [false, true] {
+            for (o, override_) in OVERRIDES.into_iter().enumerate() {
+                for (e, env) in ENVS.into_iter().enumerate() {
+                    let got = engine_for(sealed, complete, override_, env.map(OsStr::new));
+                    let want = match (sealed, complete) {
+                        (false, _) => unsealed[o][e].clone(),
+                        (true, false) => Err(SealIncomplete),
+                        (true, true) => sealed_complete[o][e].clone(),
+                    };
+                    let at = format!(
+                        "sealed={sealed} complete={complete} override={override_:?} env={env:?}"
+                    );
+                    assert_eq!(got, want, "{at}");
+                    if sealed {
+                        assert!(
+                            got.is_err() || got == Ok(Tree),
+                            "{at}: a sealed run got {got:?}"
+                        );
+                    }
+                    rows += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(rows, 48);
+    // The refusals print the spec §3 messages.
+    assert_eq!(SealIncomplete.to_string(), SEALED_RUN_REFUSED);
+    assert_eq!(
+        SealedVm.to_string(),
+        "a sealed run executes on the tree engine only (AXON_ENGINE=vm cannot carry the seal); unset AXON_ENGINE"
+    );
+    assert_eq!(
+        invalid().to_string(),
+        "AXON_ENGINE must be \"vm\" or \"tree\" (got \"garbage\")"
+    );
+    // Nor does the live selection read `AXON_VM_EAGER`.
+    let src = r51_source("vm/mod.rs");
+    for f in ["fn engine_for(", "fn engine_at_build("] {
+        let start = src.find(f).unwrap_or_else(|| panic!("{f} in vm/mod.rs"));
+        let body = &src[start..start + src[start..].find("\n}\n").expect("fn end")];
+        assert!(
+            !body.contains("EAGER") && !body.contains("eager"),
+            "{f} reads the eager flag"
+        );
+    }
+}
+
+/// The T1b program: every VM path a body can take, so the unsealed control
+/// shows each cell can fill. `hot` holds a `while` (S9 hot on entry);
+/// `twice` runs three times (second-entry compile); `fib` is a one-param int
+/// recursion (`CallFastLocalInt`, `leaf_arm`); `add` a two-param leaf
+/// (`leaf_call`); `swap` a `&mut [i64]` helper (`MovesCall`); `arr_map` and
+/// `arr_fold` run lambdas (`run_lambda`, `fold_leaf`).
+const R51_T1B_SRC: &str = "\
+fn hot(n: i64) -> i64 {
+    let s = 0
+    let i = 0
+    while i < n {
+        s = s + i
+        i = i + 1
+    }
+    s
+}
+fn twice(x: i64) -> i64 { x * 2 }
+fn fib(n: i64) -> i64 {
+    if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+}
+fn add(a: i64, b: i64) -> i64 { a + b }
+fn swap(a: &mut [i64], i: i64, j: i64) {
+    let t = a[i]
+    a[i] = a[j]
+    a[j] = t
+}
+fn t() -> i64 {
+    let xs = [1, 2, 3, 4]
+    swap(&mut xs, 0, 3)
+    let ys = arr_map(xs, |x: i64| x + 1)
+    let total = arr_fold(ys, 0, |acc: i64, x: i64| acc + x)
+    hot(10) + twice(1) + twice(2) + twice(3) + fib(10) + add(1, 2) + total + xs[0]
+}
+";
+
+/// Run `t` of [`R51_T1B_SRC`] on an `Interp` built with `sealed` and
+/// `engine`, eager (every body compiles on its first entry under the VM).
+/// Returns `t`'s value and the names of the fn-table bodies and the number
+/// of lambda bodies that were compiled.
+fn r51_t1b_run(
+    prog: &crate::ast::Program,
+    sealed: bool,
+    engine: Engine,
+) -> (i64, Vec<String>, usize) {
+    let mut interp = Interp::build_with(prog, sealed, engine);
+    assert_eq!((interp.sealed, interp.engine), (sealed, engine));
+    interp.vm_eager = true;
+    interp.vm_trace = false;
+    interp.init_globals().expect("no globals");
+    let got = interp.call_fn(interp.fns["t"], vec![]).expect("t runs");
+    let Value::Int(n) = got else {
+        panic!("t gave {got:?}")
+    };
+    let compiled = interp
+        .fn_table
+        .iter()
+        .filter(|e| e.compiled.as_ref().is_some_and(|c| c.get().is_some()))
+        .map(|e| e.def.name.clone())
+        .collect();
+    let lambdas = interp
+        .res
+        .lambda_codes()
+        .filter(|c| {
+            c.compiled
+                .as_ref()
+                .is_some_and(|lb| lb.compiled().is_some())
+        })
+        .count();
+    (n, compiled, lambdas)
+}
+
+/// R51 T1b: a sealed run (seal complete, the engine `engine_for` picks for
+/// the production shape: no override, `AXON_ENGINE` unset) runs on the tree
+/// and compiles nothing, not one fn-table body nor one lambda body, even
+/// eager. Control: the same program unsealed on the VM fills every one of
+/// those cells. The seal state is a build parameter here
+/// (`Interp::build_with`), so no other test can observe it.
+/// `r51_compile_refuses_a_sealed_run` is the other half: `compile` itself
+/// panics under seal.
+#[test]
+fn r51_t1b_a_sealed_run_compiles_nothing() {
+    let prog = crate::parse_source(R51_T1B_SRC).expect("parses");
+    let (want, vm_bodies, vm_lambdas) = r51_t1b_run(&prog, false, Engine::Vm);
+    let mut vm_bodies = vm_bodies;
+    vm_bodies.sort();
+    assert_eq!(
+        vm_bodies,
+        ["add", "fib", "hot", "swap", "t", "twice"],
+        "control"
+    );
+    assert_eq!(vm_lambdas, 2, "control: both lambdas compiled");
+    assert_eq!(want, 45 + 2 + 4 + 6 + 55 + 3 + 14 + 4);
+
+    let engine = engine_for(true, true, None, None).expect("a sealed run is allowed");
+    assert_eq!(engine, Engine::Tree);
+    let (got, bodies, lambdas) = r51_t1b_run(&prog, true, engine);
+    assert_eq!(got, want);
+    assert!(bodies.is_empty(), "sealed run compiled {bodies:?}");
+    assert_eq!(lambdas, 0, "sealed run compiled a lambda body");
+}
+
+/// The source of `interp/<rel>` (`interp.rs` for `""`).
+fn r51_source(rel: &str) -> String {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let p = if rel.is_empty() {
+        root.join("interp.rs")
+    } else {
+        root.join("interp").join(rel)
+    };
+    std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+}
+
+/// Every interpreter source the T1d sweep reads: `interp.rs` and every
+/// `interp/**/*.rs` (recursive, so `interp/vm/` and `interp/sym.rs` are in),
+/// except `vm/tests.rs`; each cut at its first `mod tests {`. Keyed by the
+/// path under `interp/` (`""` for `interp.rs`).
+fn r51_interp_sources() -> Vec<(String, String)> {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/interp");
+    let mut rels = vec![String::new()];
+    let mut stack = vec![dir.clone()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).expect("read interp dir") {
+            let p = e.expect("dir entry").path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                let rel = p
+                    .strip_prefix(&dir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                if rel != "vm/tests.rs" {
+                    rels.push(rel);
+                }
+            }
+        }
+    }
+    rels.sort();
+    let sources: Vec<(String, String)> = rels
+        .into_iter()
+        .map(|rel| {
+            let mut src = r51_source(&rel);
+            if let Some(cut) = src.find("mod tests {") {
+                src.truncate(cut);
+            }
+            (rel, src)
+        })
+        .collect();
+    for want in [
+        "",
+        "eval.rs",
+        "builtins.rs",
+        "sym.rs",
+        "vm/mod.rs",
+        "vm/compile.rs",
+        "vm/pure.rs",
+    ] {
+        assert!(
+            sources.iter().any(|(r, _)| r == want),
+            "the sweep reads interp/{want}"
+        );
+    }
+    sources
+}
+
+fn r51_ident_char(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b'_'
+}
+
+/// One code site the T1d sweep matched: its file, the fn it is in (for a
+/// `call_builtin` arm, `builtins <arm>`), and the text just before the match
+/// and just after it on that line.
+struct R51Site<'s> {
+    file: &'s str,
+    func: String,
+    before: &'s str,
+    after: &'s str,
+}
+
+impl R51Site<'_> {
+    fn at(&self) -> String {
+        if self.file.is_empty() {
+            format!("interp.rs::{}", self.func)
+        } else {
+            format!("interp/{}::{}", self.file, self.func)
+        }
+    }
+}
+
+/// Every occurrence of `needle` in the code (not `//` comments) of
+/// `sources`, with the fn it is in: the last `fn <name>` above it.
+fn r51_sites<'s>(sources: &'s [(String, String)], needle: &str) -> Vec<R51Site<'s>> {
+    let mut out = Vec::new();
+    for (file, src) in sources {
+        let mut func = String::new();
+        let mut arm = String::new();
+        for line in src.lines() {
+            let code = line.find("//").map_or(line, |i| &line[..i]);
+            let bytes = code.as_bytes();
+            let mut from = 0;
+            while let Some(i) = code[from..].find("fn ") {
+                let at = from + i;
+                from = at + 3;
+                if at > 0 && r51_ident_char(bytes[at - 1]) {
+                    continue;
+                }
+                let name: String = code[at + 3..]
+                    .bytes()
+                    .take_while(|&c| r51_ident_char(c))
+                    .map(char::from)
+                    .collect();
+                if !name.is_empty() {
+                    func = name;
+                    arm.clear();
+                }
+            }
+            let t = code.trim_start();
+            if func == "call_builtin" && t.starts_with('"') && t.contains("=>") {
+                arm = t[1..].split('"').next().unwrap_or("").to_string();
+            }
+            let mut from = 0;
+            while let Some(i) = code[from..].find(needle) {
+                let at = from + i;
+                from = at + needle.len();
+                out.push(R51Site {
+                    file,
+                    func: if arm.is_empty() {
+                        func.clone()
+                    } else {
+                        format!("builtins {arm}")
+                    },
+                    before: &code[..at],
+                    after: &code[at + needle.len()..],
+                });
+            }
+        }
+    }
+    out
+}
+
+/// The sorted, de-duplicated `at()` of `sites`.
+fn r51_fns(sites: &[&R51Site<'_>]) -> Vec<String> {
+    let mut v: Vec<String> = sites.iter().map(|s| s.at()).collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
+/// R51 T1d (1, 2): the `engine` field is read only at the three engine
+/// gates and the trace, and written after build only by `vm/tests.rs`.
+#[test]
+fn r51_t1d_engine_is_read_only_at_the_gates() {
+    let sources = r51_interp_sources();
+    let sites: Vec<_> = r51_sites(&sources, ".engine")
+        .into_iter()
+        .filter(|s| !s.after.bytes().next().is_some_and(r51_ident_char))
+        .collect();
+    let (writes, reads): (Vec<_>, Vec<_>) = sites.iter().partition(|s| {
+        let a = s.after.trim_start();
+        a.starts_with('=') && !a.starts_with("==")
+    });
+    assert!(
+        reads.len() >= 4,
+        "the sweep found {} `.engine` reads",
+        reads.len()
+    );
+    assert_eq!(
+        r51_fns(&reads),
+        [
+            "interp/vm/mod.rs::run_body",
+            "interp/vm/mod.rs::run_lambda",
+            "interp/vm/mod.rs::vm_trace_tree",
+            "interp/vm/pure.rs::fold_leaf",
+        ],
+        "DRIFT: a new reader of `Interp::engine` is a new engine gate; a sealed run must not reach the VM through it"
+    );
+    assert!(
+        writes.is_empty(),
+        "DRIFT: `.engine` written after build at {:?}; only vm/tests.rs may",
+        r51_fns(&writes)
+    );
+    let tests = [("vm/tests.rs".to_string(), r51_source("vm/tests.rs"))];
+    let test_writes = r51_sites(&tests, ".engine = ").len();
+    assert!(
+        test_writes >= 2,
+        "vm/tests.rs writes `.engine` {test_writes} times"
+    );
+}
+
+/// R51 T1d (3): `vm::compile::compile`, the only constructor of a `Body`,
+/// is called only from `compile_entry` and `compile_lambda`, and refuses a
+/// sealed run.
+#[test]
+fn r51_t1d_compile_has_two_callers() {
+    let sources = r51_interp_sources();
+    // In vm/ every `compile(` is the VM's (regex.rs has a compiler of its
+    // own); elsewhere the VM's is reachable only by path.
+    let calls: Vec<_> = r51_sites(&sources, "compile(")
+        .into_iter()
+        .filter(|s| {
+            let prev = s.before.bytes().last();
+            !prev.is_some_and(r51_ident_char) && !s.before.trim_end().ends_with("fn")
+        })
+        .filter(|s| {
+            s.file.starts_with("vm/")
+                || s.before.ends_with("vm::")
+                || s.before.ends_with("compile::")
+        })
+        .collect();
+    let calls: Vec<&R51Site<'_>> = calls.iter().collect();
+    assert!(
+        calls.len() >= 2,
+        "the sweep found {} `compile(` calls",
+        calls.len()
+    );
+    assert_eq!(
+        r51_fns(&calls),
+        [
+            "interp/vm/mod.rs::compile_entry",
+            "interp/vm/mod.rs::compile_lambda"
+        ],
+        "DRIFT: a new caller of vm::compile::compile builds a VM body outside the two gated paths"
+    );
+    let src = r51_source("vm/compile.rs");
+    let start = src.find("fn compile<").expect("fn compile");
+    let body = &src[start..start + src[start..].find("\n}\n").expect("fn end")];
+    assert!(body.contains("!ix.sealed"), "compile refuses a sealed run");
+    assert_eq!(
+        src.matches("Body {").count(),
+        1,
+        "compile is the only `Body` constructor"
+    );
+}
+
+/// R51 T1d (4): outside `interp/vm/`, the VM is entered only from the fn
+/// call paths, the closure call and `arr_fold`'s fold leaf.
+#[test]
+fn r51_t1d_vm_entry_callers_outside_vm() {
+    const ENTRIES: [&str; 18] = [
+        "run_body",
+        "run_body_vm",
+        "run_lambda",
+        "fold_leaf",
+        "exec",
+        "exec_on",
+        "fast_body",
+        "call_fast",
+        "leaf_call",
+        "leaf_arm",
+        "leaf_value",
+        "leaf_store",
+        "run_moves",
+        "moves_call",
+        "call_mut_op",
+        "call_mut_general",
+        "compile",
+        "compile_body",
+    ];
+    let is_entry = |name: &str| {
+        ENTRIES.contains(&name) || name.starts_with("call_fast_") || name.starts_with("compile_")
+    };
+    let sources: Vec<_> = r51_interp_sources()
+        .into_iter()
+        .filter(|(rel, _)| !rel.starts_with("vm/"))
+        .collect();
+    let sites = r51_sites(&sources, "(");
+    let calls: Vec<&R51Site<'_>> = sites
+        .iter()
+        .filter(|s| {
+            let b = s.before.as_bytes();
+            let start = b
+                .iter()
+                .rposition(|&c| !r51_ident_char(c))
+                .map_or(0, |i| i + 1);
+            let name = &s.before[start..];
+            if !is_entry(name) || s.before[..start].trim_end().ends_with("fn") {
+                return false;
+            }
+            // regex.rs's `compile`/`self.compile(` are its own pattern
+            // compiler's, which holds no `Interp`.
+            if s.file == "regex.rs" && name.starts_with("compile") {
+                return false;
+            }
+            let head = &s.before[..start];
+            // `h.exec(` is the host's, `regex::compile(` the regex
+            // compiler's: a method on another receiver or a path into
+            // another module is not the VM.
+            if let Some(recv) = head.strip_suffix('.') {
+                let r = recv.as_bytes();
+                let rs = r
+                    .iter()
+                    .rposition(|&c| !r51_ident_char(c))
+                    .map_or(0, |i| i + 1);
+                return matches!(&recv[rs..], "self" | "ix" | "interp");
+            }
+            if let Some(path) = head.strip_suffix("::") {
+                return path.ends_with("vm") || path.ends_with("compile");
+            }
+            true
+        })
+        .collect();
+    assert!(
+        calls.len() >= 4,
+        "the sweep found {} VM entry calls",
+        calls.len()
+    );
+    assert_eq!(
+        r51_fns(&calls),
+        [
+            "interp.rs::call_closure_owned_by",
+            "interp.rs::call_fn_common",
+            "interp.rs::call_fn_in_general",
+            "interp/builtins.rs::builtins arr_fold",
+        ],
+        "DRIFT: a fn enters the VM outside the sealed-engine gates; route it through run_body/run_lambda or list it with its reason"
+    );
+}
