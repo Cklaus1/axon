@@ -10,8 +10,10 @@
 #     by default), which is reached first.
 #
 # The script builds `axon-run` for wasm32-wasip1 in BOTH profiles (debug and
-# release) from the working tree under test, and runs the four chain programs in
-# crates/axon-core/tests/fixtures/vm_depth/ (plain, closure, mut, with). Each
+# release) from the working tree under test, and runs the five chain programs in
+# crates/axon-core/tests/fixtures/vm_depth/ (plain, plain_generic, closure, mut,
+# with; `plain` takes the VM's pure-i64 tier, `plain_generic` its generic
+# fast-call frames). Each
 # fixture's FIRST line is `let DEPTH = 100`; every probe rewrites it in a
 # temporary copy. Every chain runs under both engines of the same build
 # (`--env AXON_ENGINE=tree|vm`) in three configurations:
@@ -36,19 +38,50 @@
 #            101 with `recursion limit exceeded (<guard>)`, not trap. These
 #            shapes take more stack per level than the chains, so the wasm32
 #            stack budget (interp.rs `nest_cost`) is what stops them.
+#            A probe whose SECOND line is `// vm_wasm_depth: <kind>` is held
+#            to that kind's rule instead (never a trap, exit 134, in any):
+#              exit0  DEPTH=100000 must exit 0 (AX-59: dropping a value
+#                     100,000 levels deep at the bottom of a recursion);
+#                     `exit0 <n>` runs it at DEPTH=<n> instead (a value
+#                     whose construction clones it, a recursion over its
+#                     depth that the budget does not bound).
+#              sweep  every DEPTH from 1 to <guard> + 2 must exit 101 with
+#                     `no host driver` or `recursion limit exceeded
+#                     (<guard>)` (AX-61: `host_await_val` of a closure).
+#              front  a template: each `⟪open¦leaf¦close⟫` is expanded to
+#                     open×DEPTH leaf close×DEPTH, and each
+#                     `⟦L¦open¦leaf¦close⟧` to L string literals nested in
+#                     each other's `{...}` slot (escaped per level), the
+#                     DEPTH opens and closes split evenly over the L slots,
+#                     `leaf` in the innermost. At DEPTH = the wasm32
+#                     nesting limit (parser.rs `MAX_EXPR_DEPTH`) it must
+#                     exit 0 or 2 with `expression nesting too deep
+#                     (limit <limit>)`, at 20× the limit exit 2 with that
+#                     message (AX-60: the front end on deep source).
 #   reach    the nest configuration, bisecting the deepest depth that exits 0
-#            (at most <guard> - 1) of each chain and nesting probe. The budget
+#            (at most <guard> - 1) of each chain and nesting probe (for a
+#            `front` probe, the deepest nesting the front end accepts; none
+#            for `exit0` and `sweep`). A `front` probe that reaches 0 under
+#            either engine fails: its accepted nesting never runs past the
+#            front end. The budget
 #            charges the two engines differently, so with
 #            --require-default-stack the VM depth must be >= the tree's for
 #            every (profile, chain or probe): the default engine must not
 #            panic on a program the tree completes.
+#   tier     `plain` and `plain_generic` at DEPTH=100 under the VM with
+#            AXON_VM_TRACE=1: `plain` must print a `vm: purefn f` line (its f
+#            is on the pure-i64 tier, R50 S11) and `plain_generic` none.
 #
 # Before probing, the script checks the stack budget is sound on both builds
 # (scripts/wasm_stack_budget.py): every recursion through `Interp::eval`
 # passes a function carrying `nest_guard!`, no recursion runs through an
 # indirect call, and each guarded function's `nest_cost` constant covers its
 # native frame plus the deepest unguarded chain it can call before the next
-# guard. It compiles both builds with `wasmtime compile`, disassembles them
+# guard; the drop-glue recursion over a value's depth passes `bounded_drop`
+# and `DROP_INLINE_DEPTH` levels of it fit the headroom the budget leaves;
+# and the parser's worst frame chain per `MAX_EXPR_DEPTH` unit, times the
+# wasm32 limit, fits the budget. It compiles both builds with `wasmtime
+# compile`, disassembles them
 # (`objdump -d` | `c++filt`, `wasm-objdump`) and fails on any violation: a
 # frame or tail that grew would let a nesting shape trap under the guard. The
 # constants are Cranelift x86-64 frames, so this check needs an x86-64 host
@@ -100,7 +133,7 @@ fi
 GUARD=128                          # the wasm32 RECURSION_LIMIT (interp.rs)
 REQUIRED_LINEAR=$((GUARD * 13 / 10 + 1))    # > 1.3 x GUARD
 REQUIRED_DEFAULT=$((GUARD * 12 / 10 + 1))   # > 1.2 x GUARD
-CHAINS=(plain closure mut with)
+CHAINS=(plain plain_generic closure mut with)
 ENGINES=(tree vm)
 PROFILES=(debug release)
 FIX="$ROOT/crates/axon-core/tests/fixtures/vm_depth"
@@ -114,6 +147,40 @@ for c in "${CHAINS[@]}" "${NESTS[@]}"; do
 done
 if [ "${#NESTS[@]}" -eq 0 ]; then
   echo "vm_wasm_depth: no nesting probes in $FIX/nest" >&2
+  exit 2
+fi
+# kind <probe> — the rule a nesting probe is held to: its second line's
+# `// vm_wasm_depth: <kind> [<depth>]`, else `guard` (the recursion-limit
+# panic). kdepth <probe> <default> — that line's <depth>, else <default>.
+kind() {
+  local k
+  k="$(sed -n '2s|^// vm_wasm_depth: \([a-z0-9]*\)\( [0-9][0-9]*\)\{0,1\}$|\1|p' "$FIX/$1.ax")"
+  echo "${k:-guard}"
+}
+kdepth() {
+  local d
+  d="$(sed -n '2s|^// vm_wasm_depth: [a-z0-9]* \([0-9][0-9]*\)$|\1|p' "$FIX/$1.ax")"
+  echo "${d:-$2}"
+}
+# bad <rc> <dir> — a failed probe's result line. Exit 2 from a guard, exit0
+# or sweep probe is the front end refusing its source (AX-60), so the probe
+# measures nothing: it must be regenerated under the wasm32 nesting limit.
+bad() {
+  local why=""
+  [ "$1" = 2 ] && why=" (front end refused the probe: regenerate it under the wasm32 limit $FRONT_LIMIT)"
+  echo "exit=$1 bad$why: $(head -c 200 "$2/err" | tr '\n' ' ')"
+}
+for n in "${NESTS[@]}"; do
+  case "$(kind "$n")" in
+    guard|exit0|sweep|front) ;;
+    *) echo "vm_wasm_depth: $FIX/$n.ax: unknown probe kind '$(kind "$n")'" >&2; exit 2 ;;
+  esac
+done
+# The wasm32 nesting limit (parser.rs `MAX_EXPR_DEPTH`, AX-60).
+FRONT_LIMIT="$(sed -n '/^#\[cfg(target_arch = "wasm32")\]$/{n;s/^const MAX_EXPR_DEPTH: usize = \([0-9_]*\);$/\1/p;}' \
+  "$ROOT/crates/axon-core/src/parser.rs" | tr -d _)"
+if ! [[ "$FRONT_LIMIT" =~ ^[0-9]+$ ]]; then
+  echo "vm_wasm_depth: no wasm32 MAX_EXPR_DEPTH in parser.rs" >&2
   exit 2
 fi
 
@@ -153,6 +220,31 @@ for profile in "${PROFILES[@]}"; do
   case $? in 0) ;; 1) FRAME_FAILS=$((FRAME_FAILS + 1)) ;; *) exit 2 ;; esac
 done
 
+# The tier each chain measures (R50 S11): under AXON_VM_TRACE=1 `plain`'s f
+# is built on the VM's pure-i64 tier (a `vm: purefn f` line) and
+# `plain_generic`'s is not.
+TIER_FAILS=0
+for profile in "${PROFILES[@]}"; do
+  for chain in plain plain_generic; do
+    dir="$WORK/$profile.tier.$chain"
+    mkdir -p "$dir"
+    cp "$FIX/$chain.ax" "$dir/p.ax"
+    timeout -k 5 300 "$WASMTIME" run --env AXON_ENGINE=vm --env AXON_VM_TRACE=1 --dir "$dir" \
+      "$TARGET_DIR/wasm32-wasip1/$profile/axon-run.wasm" "$dir/p.ax" </dev/null >"$dir/out" 2>"$dir/err"
+    rc=$?
+    on=no
+    grep -q '^vm: purefn f ' "$dir/err" && on=yes
+    want=yes
+    [ "$chain" = plain_generic ] && want=no
+    if [ "$rc" = 0 ] && [ "$(cat "$dir/out")" = 100 ] && [ "$on" = "$want" ]; then
+      verdict="ok (purefn $want)"
+    else
+      verdict="FAIL (want exit 0, 100 and purefn $want)"; TIER_FAILS=$((TIER_FAILS + 1))
+    fi
+    printf 'vm_wasm_depth: %-7s vm   %-13s tier    %-14s %s\n' "$profile" "$chain" "exit=$rc purefn=$on" "$verdict"
+  done
+done
+
 # probe <wasm> <engine> <chain> <config> <depth> <dir> — run one probe.
 # Prints the exit code; leaves stdout/stderr in <dir>/out and <dir>/err.
 probe() {
@@ -164,6 +256,21 @@ probe() {
     guard|nest|reach) cfg=() ;;
   esac
   { echo "let DEPTH = $depth"; tail -n +2 "$FIX/$chain.ax"; } >"$dir/p.ax"
+  if [ "$(kind "$chain")" = front ]; then
+    python3 -c 'import re, sys
+n = int(sys.argv[2]); p = sys.argv[1]; s = open(p, encoding="utf-8").read()
+s = re.sub("⟪(.*?)¦(.*?)¦(.*?)⟫", lambda m: m[1] * n + m[2] + m[3] * n, s)
+def interp(m):
+    levels, o, x, c = int(m[1]), m[2], m[3], m[4]
+    for i in range(levels):
+        k = n // levels + (i < n % levels)
+        x = "\"{ " + o * k + " " + x + " " + c * k + " }\""
+        if i + 1 < levels:
+            x = x.replace("\\", "\\\\").replace("\"", "\\\"")
+    return x
+s = re.sub("⟦([0-9]+)¦(.*?)¦(.*?)¦(.*?)⟧", interp, s)
+open(p, "w", encoding="utf-8").write(s)' "$dir/p.ax" "$depth"
+  fi
   timeout -k 5 300 "$WASMTIME" run "${cfg[@]}" --env "AXON_ENGINE=$engine" \
     --dir "$dir" "$wasm" "$dir/p.ax" </dev/null >"$dir/out" 2>"$dir/err"
   echo $?
@@ -199,20 +306,57 @@ job() {
   local dir="$WORK/$profile.$engine.${chain//\//_}.$config"
   mkdir -p "$dir"
   if [ "$config" = guard ] || [ "$config" = nest ]; then
-    local rc depth="$GUARD"
-    [ "$config" = nest ] && depth=100000
-    rc="$(probe "$wasm" "$engine" "$chain" guard "$depth" "$dir")"
-    if [ "$rc" = 101 ] && grep -q "recursion limit exceeded ($GUARD)" "$dir/err"; then
-      echo "exit=101 ok" >"$dir/result"
-    else
-      echo "exit=$rc bad: $(head -c 200 "$dir/err" | tr '\n' ' ')" >"$dir/result"
-    fi
+    local rc depth="$GUARD" deep k
+    k="$(kind "$chain")"
+    [ "$config" = guard ] && k=guard
+    local refusal="expression nesting too deep (limit $FRONT_LIMIT)"
+    case "$k" in
+      guard)
+        [ "$config" = nest ] && depth=100000
+        rc="$(probe "$wasm" "$engine" "$chain" guard "$depth" "$dir")"
+        if [ "$rc" = 101 ] && grep -q "recursion limit exceeded ($GUARD)" "$dir/err"; then
+          echo "exit=101 ok" >"$dir/result"
+        else
+          bad "$rc" "$dir" >"$dir/result"
+        fi ;;
+      exit0)
+        depth="$(kdepth "$chain" 100000)"
+        rc="$(probe "$wasm" "$engine" "$chain" guard "$depth" "$dir")"
+        if [ "$rc" = 0 ] && [ "$(cat "$dir/out")" = "$depth" ]; then
+          echo "ok exit=0 (DEPTH=$depth)" >"$dir/result"
+        else
+          bad "$rc" "$dir" >"$dir/result"
+        fi ;;
+      sweep)
+        echo "ok exit=101 at DEPTH 1..$((GUARD + 2))" >"$dir/result"
+        for ((depth = 1; depth <= GUARD + 2; depth++)); do
+          rc="$(probe "$wasm" "$engine" "$chain" guard "$depth" "$dir")"
+          if ! { [ "$rc" = 101 ] && grep -qE "no host driver|recursion limit exceeded \($GUARD\)" "$dir/err"; }; then
+            echo "DEPTH=$depth $(bad "$rc" "$dir")" >"$dir/result"
+            break
+          fi
+        done ;;
+      front)
+        deep=$((FRONT_LIMIT * 20))
+        rc="$(probe "$wasm" "$engine" "$chain" guard "$FRONT_LIMIT" "$dir")"
+        if ! { [ "$rc" = 0 ] || { [ "$rc" = 2 ] && grep -qF "$refusal" "$dir/err"; }; }; then
+          echo "DEPTH=$FRONT_LIMIT exit=$rc bad: $(head -c 200 "$dir/err" | tr '\n' ' ')" >"$dir/result"
+          return
+        fi
+        local first="$rc"
+        rc="$(probe "$wasm" "$engine" "$chain" guard "$deep" "$dir")"
+        if [ "$rc" = 2 ] && grep -qF "$refusal" "$dir/err"; then
+          echo "ok exit=$first at $FRONT_LIMIT, E0000 at $deep" >"$dir/result"
+        else
+          echo "DEPTH=$deep exit=$rc bad: $(head -c 200 "$dir/err" | tr '\n' ' ')" >"$dir/result"
+        fi ;;
+    esac
   else
     bisect "$wasm" "$engine" "$chain" "$config" "$dir" >"$dir/result"
   fi
 }
-export -f probe completes bisect job
-export WASMTIME FIX WORK TARGET_DIR GUARD
+export -f probe completes bisect job kind kdepth bad
+export WASMTIME FIX WORK TARGET_DIR GUARD FRONT_LIMIT
 
 JOBS="${VM_DEPTH_JOBS:-$(nproc)}"
 for profile in "${PROFILES[@]}"; do
@@ -223,12 +367,13 @@ for profile in "${PROFILES[@]}"; do
       done
     done
     for n in "${NESTS[@]}"; do
-      printf '%s %s %s nest\n%s %s %s reach\n' "$profile" "$engine" "$n" "$profile" "$engine" "$n"
+      printf '%s %s %s nest\n' "$profile" "$engine" "$n"
+      case "$(kind "$n")" in guard|front) printf '%s %s %s reach\n' "$profile" "$engine" "$n" ;; esac
     done
   done
 done | xargs -P "$JOBS" -L 1 bash -c 'job "$@"' _
 
-fails=$FRAME_FAILS
+fails=$((FRAME_FAILS + TIER_FAILS))
 declare -A depth
 for profile in "${PROFILES[@]}"; do
   for engine in "${ENGINES[@]}"; do
@@ -260,15 +405,18 @@ for profile in "${PROFILES[@]}"; do
               *) verdict="FAIL (expected exit 101 'recursion limit exceeded ($GUARD)')"; fails=$((fails + 1)) ;;
             esac ;;
         esac
-        printf 'vm_wasm_depth: %-7s %-4s %-7s %-7s %-14s %s\n' "$profile" "$engine" "$chain" "$config" "$res" "$verdict"
+        printf 'vm_wasm_depth: %-7s %-4s %-13s %-7s %-14s %s\n' "$profile" "$engine" "$chain" "$config" "$res" "$verdict"
       done
       depth[$profile.$engine.$chain.reach]="$(cat "$WORK/$profile.$engine.$chain.reach/result" 2>/dev/null || echo "missing")"
     done
     for n in "${NESTS[@]}"; do
       res="$(cat "$WORK/$profile.$engine.${n//\//_}.nest/result" 2>/dev/null || echo "missing")"
-      case "$res" in
-        "exit=101 ok") verdict="ok (recursion-limit panic, no trap)"; res="exit=101" ;;
-        *) verdict="FAIL (expected exit 101 'recursion limit exceeded ($GUARD)')"; fails=$((fails + 1)) ;;
+      k="$(kind "$n")"
+      case "$k:$res" in
+        "guard:exit=101 ok") verdict="ok (recursion-limit panic, no trap)"; res="exit=101" ;;
+        guard:*) verdict="FAIL (expected exit 101 'recursion limit exceeded ($GUARD)')"; fails=$((fails + 1)) ;;
+        *:"ok "*) verdict="ok ($k: ${res#ok }, no trap)"; res="$k" ;;
+        *) verdict="FAIL ($k rule)"; fails=$((fails + 1)) ;;
       esac
       printf 'vm_wasm_depth: %-7s %-4s %-14s nest    %-14s %s\n' "$profile" "$engine" "$n" "$res" "$verdict"
       depth[$profile.$engine.$n.reach]="$(cat "$WORK/$profile.$engine.${n//\//_}.reach/result" 2>/dev/null || echo "missing")"
@@ -288,16 +436,19 @@ for profile in "${PROFILES[@]}"; do
     else
       cmp="vm < tree (reported; required only with --require-default-stack)"
     fi
-    printf 'vm_wasm_depth: %-7s default-stack %-7s tree=%s vm=%s %s\n' "$profile" "$chain" "$t" "$v" "$cmp"
+    printf 'vm_wasm_depth: %-7s default-stack %-13s tree=%s vm=%s %s\n' "$profile" "$chain" "$t" "$v" "$cmp"
   done
 done
 
 # Comparison under the guard: VM vs tree per (profile, chain or probe).
 for profile in "${PROFILES[@]}"; do
   for n in "${CHAINS[@]}" "${NESTS[@]}"; do
+    case "$n" in nest/*) case "$(kind "$n")" in exit0|sweep) continue ;; esac ;; esac
     t="${depth[$profile.tree.$n.reach]}"; v="${depth[$profile.vm.$n.reach]}"
     if ! [[ "$t" =~ ^[0-9]+$ && "$v" =~ ^[0-9]+$ ]]; then
       cmp="FAIL (no depth measured)"; fails=$((fails + 1))
+    elif [[ "$n" == nest/* ]] && [ "$(kind "$n")" = front ] && { [ "$t" = 0 ] || [ "$v" = 0 ]; }; then
+      cmp="FAIL (front probe reaches 0: no accepted nesting runs)"; fails=$((fails + 1))
     elif [ "$v" -ge "$t" ]; then
       cmp="vm >= tree"
     elif [ "$REQUIRE_DEFAULT" = 1 ]; then
@@ -313,5 +464,5 @@ if [ "$fails" -ne 0 ]; then
   echo "vm_wasm_depth: FAILED — $fails check(s)"
   exit 1
 fi
-echo "vm_wasm_depth: PASS — the wasm32 stack budget is sound (every recursion through eval is guarded, each nest_cost covers its frame and unguarded tail); every chain completes $REQUIRED_LINEAR in the linear stack and $REQUIRED_DEFAULT under the default stack, and panics at $GUARD; every nesting probe panics instead of trapping; under both engines and profiles$([ "$REQUIRE_DEFAULT" = 1 ] && echo "; the VM reaches at least the tree's depth on every chain and probe")"
+echo "vm_wasm_depth: PASS — the wasm32 stack budget is sound (every recursion through eval is guarded, each nest_cost covers its frame and unguarded tail, value drops are bounded, the parser's limit fits); \`plain\` runs on the pure-i64 tier and \`plain_generic\` off it; every chain completes $REQUIRED_LINEAR in the linear stack and $REQUIRED_DEFAULT under the default stack, and panics at $GUARD; every nesting probe panics instead of trapping, every drop, host_await and front-end probe meets its rule (limit $FRONT_LIMIT) without a trap, each front-end probe running some accepted nesting; under both engines and profiles$([ "$REQUIRE_DEFAULT" = 1 ] && echo "; the VM reaches at least the tree's depth on every chain and probe")"
 exit 0

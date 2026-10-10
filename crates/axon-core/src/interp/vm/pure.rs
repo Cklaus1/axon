@@ -8,8 +8,11 @@
 //!   an untyped `let`, an `if`/`while` condition), placed before the
 //!   expression's generic ops (its twin), which run instead whenever it
 //!   declines. The reads are pure, so running them twice is unobservable.
-//! - [`Op::PureLoop`]: a `while` over pure trees run in registers, placed
-//!   before the generic loop, which takes over on a decline.
+//! - [`Op::PureLoop`] / [`Op::PureFor`]: a `while` or a `for` over an
+//!   integer range whose body is pure statements (assignments to scalar
+//!   locals, element writes to local arrays, `if`s over them; spec §4 S10),
+//!   run in registers, placed before the generic loop, which takes over on
+//!   a decline. Inside a loop `xs[i]` on a local array is a leaf too.
 //! - [`Interp::fold_leaf`]: `arr_fold` over a closure whose body is one pure
 //!   tree.
 //!
@@ -35,6 +38,8 @@ pub(super) enum Pure<'p> {
     Bin(BinOp, Box<[Pure<'p>; 2]>),
     And(Box<[Pure<'p>; 2]>),
     Or(Box<[Pure<'p>; 2]>),
+    /// `xs[i]` on a local `xs` (loops only, spec §4 S10).
+    Index(Var<'p>, Box<Pure<'p>>),
 }
 
 /// Where an [`Op::Pure`] delivers its value.
@@ -164,6 +169,14 @@ pub(super) enum TOp {
     Or(u32),
     /// `dst = a`.
     Mov,
+    /// `dst = xs[a]`, array `.0` of the loop, elements of kind `.1`.
+    Load(u8, Kind),
+    /// `xs[a] = b` (no `dst`).
+    Store(u8, Kind),
+    /// When `a` is false skip the next `n` instructions (no `dst`).
+    Br(u32),
+    /// Skip the next `n` instructions (no operand, no `dst`).
+    Jmp(u32),
 }
 
 /// A register operand before allocation: a local of a kind, a literal's
@@ -203,23 +216,44 @@ const LEAVES: u8 = 8;
 /// Temporaries (expression depth) of one expression.
 const TEMPS: u8 = 8;
 
+/// The kinds [`specialize`] types leaves by: a local's, and a loop array's
+/// index and element kind.
+struct Kinds<'a> {
+    local: &'a dyn Fn(Sym, u32) -> Option<Kind>,
+    elem: &'a dyn Fn(Sym, u32) -> Option<(u8, Kind)>,
+}
+
+/// No arrays: the leaf kinds of an [`Op::Pure`] or a fold leaf.
+fn no_elem(_: Sym, _: u32) -> Option<(u8, Kind)> {
+    None
+}
+
 /// Three-address code for `p` into `code`, its value in temporary `d` or a
-/// leaf operand, typed by the kinds `kinds` gives its locals. `None` where a
-/// first run would decline on these kinds (or the depth passes [`TEMPS`]):
-/// then no register code exists and [`pure_eval`] runs instead.
-fn specialize(
-    p: &Pure<'_>,
-    kinds: &dyn Fn(Sym, u32) -> Option<Kind>,
-    code: &mut Vec<TIns>,
-    d: u8,
-) -> Option<(Src, Kind)> {
+/// leaf operand, typed by `kinds`. `None` where a first run would decline
+/// on these kinds (or the depth passes [`TEMPS`]): then no register code
+/// exists and [`pure_eval`] runs instead.
+fn specialize(p: &Pure<'_>, kinds: &Kinds<'_>, code: &mut Vec<TIns>, d: u8) -> Option<(Src, Kind)> {
     if d >= TEMPS {
         return None;
     }
     Some(match p {
         Pure::Local(v) => {
-            let k = kinds(v.s, v.slot)?;
+            let k = (kinds.local)(v.s, v.slot)?;
             (Src::L(v.s, v.slot, k), k)
+        }
+        Pure::Index(v, i) => {
+            let (arr, k) = (kinds.elem)(v.s, v.slot)?;
+            let (x, kx) = specialize(i, kinds, code, d)?;
+            if kx != Kind::I {
+                return None;
+            }
+            code.push(TIns {
+                op: TOp::Load(arr, k),
+                a: x,
+                b: Src::K(0),
+                dst: d,
+            });
+            (Src::R(d), k)
         }
         Pure::Int(n) => (Src::K(*n as u64), Kind::I),
         Pure::Float(f) => (Src::K(f.to_bits()), Kind::F),
@@ -309,14 +343,41 @@ fn specialize(
 
 /// Whether `op` reads its `b` operand.
 fn reads_b(op: &TOp) -> bool {
-    !matches!(op, TOp::And(_) | TOp::Or(_) | TOp::Mov)
+    !matches!(
+        op,
+        TOp::And(_) | TOp::Or(_) | TOp::Mov | TOp::Load(..) | TOp::Br(_) | TOp::Jmp(_)
+    )
+}
+
+/// The arrays a [`TOp::Load`]/[`TOp::Store`] reads and writes.
+trait Mem {
+    /// Element `i` of array `arr` when it is in bounds and of kind `k`.
+    fn load(&self, arr: u8, i: u64, k: Kind) -> Option<u64>;
+    /// Write element `i` of array `arr`, in bounds and of kind `k` now.
+    fn store(&mut self, arr: u8, i: u64, x: u64, k: Kind) -> Option<()>;
+    /// The iteration's element writes stand.
+    fn commit(&mut self) {}
+    /// Undo the iteration's element writes, last first.
+    fn rollback(&mut self) {}
+}
+
+/// No arrays (code without [`TOp::Load`]/[`TOp::Store`]).
+struct NoMem;
+
+impl Mem for NoMem {
+    fn load(&self, _: u8, _: u64, _: Kind) -> Option<u64> {
+        None
+    }
+    fn store(&mut self, _: u8, _: u64, _: u64, _: Kind) -> Option<()> {
+        None
+    }
 }
 
 /// Run register code over an `N`-register file (`N` a power of two, so the
 /// masked indexes need no bounds checks). `None` where an instruction
 /// declines.
 #[inline(always)]
-fn exec<const N: usize>(code: &[RIns], r: &mut [u64; N]) -> Option<()> {
+fn exec<const N: usize, M: Mem>(code: &[RIns], r: &mut [u64; N], mem: &mut M) -> Option<()> {
     let m = N - 1;
     let f = f64::from_bits;
     let mut i = 0;
@@ -353,6 +414,20 @@ fn exec<const N: usize>(code: &[RIns], r: &mut [u64; N]) -> Option<()> {
                 Scalar::Float(x) => x.to_bits(),
                 _ => return None,
             },
+            TOp::Load(arr, k) => mem.load(*arr, a, *k)?,
+            TOp::Store(arr, k) => {
+                mem.store(*arr, a, b, *k)?;
+                i += 1;
+                continue;
+            }
+            TOp::Br(n) => {
+                i += if a == 0 { *n as usize + 1 } else { 1 };
+                continue;
+            }
+            TOp::Jmp(n) => {
+                i += *n as usize + 1;
+                continue;
+            }
             TOp::And(n) => {
                 if a == 0 {
                     i += *n as usize;
@@ -457,7 +532,7 @@ impl Typed {
         for l in &self.loads[..] {
             r[l.reg as usize & 15] = bits(env.get_var(l.s, l.slot)?, l.kind)?;
         }
-        exec(&self.code, &mut r)?;
+        exec(&self.code, &mut r, &mut NoMem)?;
         Some(scalar(r[self.res as usize & 15], self.out))
     }
 }
@@ -482,7 +557,11 @@ impl<'p> PureExpr<'p> {
         self.typed
             .get_or_init(|| {
                 let mut code = Vec::new();
-                let (res, out) = specialize(&self.tree, kinds, &mut code, 0)?;
+                let kinds = Kinds {
+                    local: kinds,
+                    elem: &no_elem,
+                };
+                let (res, out) = specialize(&self.tree, &kinds, &mut code, 0)?;
                 Typed::new(code, res, out)
             })
             .as_ref()
@@ -519,6 +598,20 @@ pub(super) fn pure_eval(p: &Pure<'_>, env: &Env) -> Option<Scalar> {
         Pure::Int(n) => Scalar::Int(*n),
         Pure::Float(f) => Scalar::Float(*f),
         Pure::Bool(b) => Scalar::Bool(*b),
+        Pure::Index(v, i) => {
+            let Scalar::Int(i) = pure_eval(i, env)? else {
+                return None;
+            };
+            let Value::Array(xs) = env.get_var(v.s, v.slot)? else {
+                return None;
+            };
+            match xs.get(usize::try_from(i).ok()?)? {
+                Value::Int(n) => Scalar::Int(*n),
+                Value::Float(f) => Scalar::Float(*f),
+                Value::Bool(b) => Scalar::Bool(*b),
+                _ => return None,
+            }
+        }
         Pure::Bin(op, k) => match (pure_eval(&k[0], env)?, pure_eval(&k[1], env)?) {
             (Scalar::Int(a), Scalar::Int(b)) => int_fast(op, a, b)?,
             (Scalar::Float(a), Scalar::Float(b)) => float_fast(op, a, b)?,
@@ -552,11 +645,13 @@ fn pure_bool(p: &Pure<'_>, env: &Env) -> Option<bool> {
     }
 }
 
-/// The locals `p` reads, in tree order (repeats included).
+/// The locals `p` reads, in tree order (repeats included); an `xs[i]`
+/// reads `i`'s locals here and `xs` through [`pure_arrays`].
 fn pure_locals(p: &Pure<'_>, out: &mut Vec<(Sym, u32)>) {
     match p {
         Pure::Local(v) => out.push((v.s, v.slot)),
         Pure::Int(_) | Pure::Float(_) | Pure::Bool(_) => {}
+        Pure::Index(_, i) => pure_locals(i, out),
         Pure::Bin(_, k) | Pure::And(k) | Pure::Or(k) => {
             pure_locals(&k[0], out);
             pure_locals(&k[1], out);
@@ -564,26 +659,73 @@ fn pure_locals(p: &Pure<'_>, out: &mut Vec<(Sym, u32)>) {
     }
 }
 
-/// One statement of a [`PureLoop`] body: `let var = value` (`is_let`) or
-/// `var = value`.
-pub(super) struct PureStmt<'p> {
-    pub(super) var: Var<'p>,
-    pub(super) is_let: bool,
-    pub(super) value: Pure<'p>,
+/// The arrays `p` indexes, in tree order (repeats included).
+fn pure_arrays(p: &Pure<'_>, out: &mut Vec<(Sym, u32)>) {
+    match p {
+        Pure::Local(_) | Pure::Int(_) | Pure::Float(_) | Pure::Bool(_) => {}
+        Pure::Index(v, i) => {
+            out.push((v.s, v.slot));
+            pure_arrays(i, out);
+        }
+        Pure::Bin(_, k) | Pure::And(k) | Pure::Or(k) => {
+            pure_arrays(&k[0], out);
+            pure_arrays(&k[1], out);
+        }
+    }
 }
 
-/// A `while` whose condition is a pure tree and whose body is only untyped
-/// `let x = <pure>` and `x = <pure>` to locals, run in registers (spec §4
-/// S7). On entry the env locals it reads or assigns (not the body's own
-/// `let`s) are read once with the kind check; each iteration runs the
-/// condition, then the statements, in registers; a body `let` is a register
-/// only and the iteration's scope is never pushed. When the condition is
-/// false the assigned locals are written back once. When any step declines,
-/// the registers go back to the iteration's start and are written back, and
-/// the generic loop re-runs that iteration (its panic or slow path exactly).
-/// Nothing in the region can see the `Env` between those points.
+/// One statement of a [`PureLoop`] body (`Compiler::pure_stmts`).
+pub(super) enum PureStmt<'p> {
+    /// `let var = value` (`is_let`, top level only) or `var = value`.
+    Set {
+        var: Var<'p>,
+        is_let: bool,
+        value: Pure<'p>,
+    },
+    /// `arr[idx] = value`.
+    Store {
+        arr: Var<'p>,
+        idx: Pure<'p>,
+        value: Pure<'p>,
+    },
+    /// `if cond { then } else { else_ }`, at most [`PURE_DEPTH`] deep.
+    If {
+        cond: Pure<'p>,
+        then: Box<[PureStmt<'p>]>,
+        else_: Box<[PureStmt<'p>]>,
+    },
+}
+
+/// Every statement of `body`, branches included, in source order.
+fn each_stmt<'a, 'p>(body: &'a [PureStmt<'p>], f: &mut dyn FnMut(&'a PureStmt<'p>)) {
+    for st in body {
+        f(st);
+        if let PureStmt::If { then, else_, .. } = st {
+            each_stmt(then, f);
+            each_stmt(else_, f);
+        }
+    }
+}
+
+/// A `while` whose condition is a pure tree, or a `for` over an integer
+/// range, whose body is pure statements, run in registers (spec §4 S7,
+/// S10). On entry the env locals it reads or assigns (not the body's own
+/// `let`s or the `for` variable) are read once with the kind check, and the
+/// arrays it indexes are taken out of the env; each iteration runs the
+/// condition (or the counter test), then the statements, in registers; a
+/// body `let` and the `for` variable are registers only and the iteration's
+/// scope is never pushed. An element write copies a shared array first, as
+/// the tree's does. When the loop ends the assigned locals and the arrays
+/// are written back once. When any step declines, the registers go back to
+/// the iteration's start, its element writes are undone, everything is
+/// written back, and the generic loop re-runs that iteration (its panic or
+/// slow path exactly). Nothing in the region can see the `Env` between
+/// those points.
 pub(in crate::interp) struct PureLoop<'p> {
-    cond: Pure<'p>,
+    /// The `while` condition; `None` for a `for`.
+    cond: Option<Pure<'p>>,
+    /// The `for` variable and whether its range is inclusive.
+    for_: Option<(Var<'p>, bool)>,
     body: Box<[PureStmt<'p>]>,
     code: OnceCell<Option<LoopCode>>,
 }
@@ -596,36 +738,129 @@ struct LoopVar {
     assigned: bool,
 }
 
-/// Env locals in registers `0..8`, body `let`s `8..16`, literals `16..24`,
-/// temporaries `24..32`.
+/// An array local a [`PureLoop`] indexes, its first element's kind the one
+/// [`TOp::Load`] reads it as.
+struct LoopArr {
+    s: Sym,
+    slot: u32,
+    kind: Kind,
+}
+
+/// Env locals in registers `0..8`, body `let`s (the `for` variable first)
+/// `8..16`, literals `16..24`, temporaries `24..32`.
 const LOOP_LETS: u8 = 8;
 const LOOP_LITS: u8 = 16;
 const LOOP_TEMPS: u8 = 24;
+/// The most arrays one loop indexes.
+const LOOP_ARRS: usize = 4;
 
 /// A [`PureLoop`]'s register code, specialised on the kinds of its first
 /// entry.
 struct LoopCode {
     vars: Box<[LoopVar]>,
+    arrs: Box<[LoopArr]>,
     init: [u64; 32],
     cond: Box<[RIns]>,
     cres: u8,
     body: Box<[RIns]>,
 }
 
+/// The arrays of a running [`PureLoop`], taken out of the env, and the
+/// element writes of the current iteration (array, index, old element's
+/// bits). A write needs the old element to be a scalar of the store's kind
+/// (else it declines), so undoing one is a write of the same kind.
+struct LoopMem {
+    arrs: [Option<Rc<Elems>>; LOOP_ARRS],
+    undo: Vec<(u8, usize, u64)>,
+}
+
+/// Overwrite the scalar `v` (of kind `bits` accepted) with bits `x`.
+#[inline(always)]
+fn put_bits(v: &mut Value, x: u64) {
+    match v {
+        Value::Int(n) => *n = x as i64,
+        Value::Float(f) => *f = f64::from_bits(x),
+        Value::Bool(b) => *b = x != 0,
+        _ => unreachable!("vm: a pure loop's element changed kind"),
+    }
+}
+
+impl LoopMem {
+    /// Array `arr` for writing: unique (copied first when shared, as the
+    /// tree's element write does).
+    #[inline(always)]
+    fn items_mut(&mut self, arr: u8) -> Option<&mut Vec<Value>> {
+        let items = self.arrs[arr as usize % LOOP_ARRS].as_mut()?;
+        if Rc::get_mut(items).is_none() {
+            return Some(&mut **Rc::make_mut(items));
+        }
+        Rc::get_mut(items).map(|e| &mut **e)
+    }
+}
+
+impl Mem for LoopMem {
+    #[inline(always)]
+    fn load(&self, arr: u8, i: u64, k: Kind) -> Option<u64> {
+        let items = self.arrs[arr as usize % LOOP_ARRS].as_ref()?;
+        bits(items.get(usize::try_from(i).ok()?)?, k)
+    }
+
+    #[inline(always)]
+    fn store(&mut self, arr: u8, i: u64, x: u64, k: Kind) -> Option<()> {
+        let i = usize::try_from(i).ok()?;
+        let items = self.arrs[arr as usize % LOOP_ARRS].as_ref()?;
+        let old = bits(items.get(i)?, k)?;
+        put_bits(&mut self.items_mut(arr)?[i], x);
+        self.undo.push((arr, i, old));
+        Some(())
+    }
+
+    #[inline(always)]
+    fn commit(&mut self) {
+        self.undo.clear();
+    }
+
+    fn rollback(&mut self) {
+        while let Some((arr, i, old)) = self.undo.pop() {
+            if let Some(items) = self.items_mut(arr) {
+                put_bits(&mut items[i], old);
+            }
+        }
+    }
+}
+
 impl<'p> PureLoop<'p> {
-    pub(super) fn new(cond: Pure<'p>, body: Vec<PureStmt<'p>>) -> PureLoop<'p> {
+    pub(super) fn new(
+        cond: Option<Pure<'p>>,
+        for_: Option<(Var<'p>, bool)>,
+        body: Vec<PureStmt<'p>>,
+    ) -> PureLoop<'p> {
         PureLoop {
             cond,
+            for_,
             body: body.into_boxed_slice(),
             code: OnceCell::new(),
         }
     }
 
-    /// Run the loop against `env`: `true` when its condition went false
-    /// (the loop is done), `false` when the generic loop must run from its
-    /// condition (the env holds the current iteration's start).
+    /// Run the `while` loop against `env`: `true` when its condition went
+    /// false (the loop is done), `false` when the generic loop must run from
+    /// its condition (the env holds the current iteration's start).
     #[inline(never)]
     pub(super) fn run(&self, env: &mut Env) -> bool {
+        self.drive(env, None)
+    }
+
+    /// Run the `for` loop from counter `i` to bound `e`: `true` when the
+    /// counter passed the bound, `false` when the generic loop must run the
+    /// iteration `i` now holds (the env holds that iteration's start).
+    #[inline(never)]
+    pub(super) fn run_for(&self, env: &mut Env, i: &mut i64, e: i64) -> bool {
+        self.drive(env, Some((i, e)))
+    }
+
+    #[inline(always)]
+    fn drive(&self, env: &mut Env, ctr: Option<(&mut i64, i64)>) -> bool {
         let Some(t) = self.code.get_or_init(|| self.build(env)) else {
             return false;
         };
@@ -636,20 +871,31 @@ impl<'p> PureLoop<'p> {
                 None => return false,
             }
         }
-        let done = loop {
-            if exec(&t.cond, &mut r).is_none() {
-                break false;
-            }
-            if r[t.cres as usize & 31] == 0 {
-                break true;
-            }
-            let mut start = [0u64; LOOP_LETS as usize];
-            start.copy_from_slice(&r[..LOOP_LETS as usize]);
-            if exec(&t.body, &mut r).is_none() {
-                r[..LOOP_LETS as usize].copy_from_slice(&start);
-                break false;
-            }
+        let mut mem = LoopMem {
+            arrs: Default::default(),
+            undo: Vec::new(),
         };
+        for (a, slot) in t.arrs.iter().zip(&mut mem.arrs) {
+            match env.get_var_mut(a.s, a.slot) {
+                Some(v @ Value::Array(_)) => {
+                    let Value::Array(items) = std::mem::replace(v, Value::Unit) else {
+                        unreachable!()
+                    };
+                    *slot = Some(items);
+                }
+                _ => {
+                    put_arrays(env, &t.arrs, &mut mem);
+                    return false;
+                }
+            }
+        }
+        // A loop that indexes no array runs without the undo log (`NoMem`).
+        let done = if t.arrs.is_empty() {
+            self.iterate(t, &mut r, ctr, &mut NoMem)
+        } else {
+            self.iterate(t, &mut r, ctr, &mut mem)
+        };
+        put_arrays(env, &t.arrs, &mut mem);
         for (i, v) in t.vars.iter().enumerate() {
             if !v.assigned {
                 continue;
@@ -667,24 +913,100 @@ impl<'p> PureLoop<'p> {
         done
     }
 
+    /// Run iterations in registers until the loop ends (`true`) or a step
+    /// declines (`false`, the registers and `mem` back at that iteration's
+    /// start).
+    #[inline(always)]
+    fn iterate<M: Mem>(
+        &self,
+        t: &LoopCode,
+        r: &mut [u64; 32],
+        mut ctr: Option<(&mut i64, i64)>,
+        mem: &mut M,
+    ) -> bool {
+        let inclusive = matches!(self.for_, Some((_, true)));
+        loop {
+            if let Some((i, e)) = &ctr {
+                let i = **i;
+                if !(if inclusive { i <= *e } else { i < *e }) {
+                    return true;
+                }
+                // The generic `ForNext` increments past it.
+                if i == i64::MAX {
+                    return false;
+                }
+                r[LOOP_LETS as usize] = i as u64;
+            } else {
+                if exec(&t.cond, r, mem).is_none() {
+                    return false;
+                }
+                if r[t.cres as usize & 31] == 0 {
+                    return true;
+                }
+            }
+            let mut start = [0u64; LOOP_LETS as usize];
+            start.copy_from_slice(&r[..LOOP_LETS as usize]);
+            if exec(&t.body, r, mem).is_none() {
+                r[..LOOP_LETS as usize].copy_from_slice(&start);
+                mem.rollback();
+                return false;
+            }
+            mem.commit();
+            if let Some((i, _)) = &mut ctr {
+                **i += 1;
+            }
+        }
+    }
+
     /// The register code for the kinds `env`'s locals hold now; `None` when
     /// a first run would decline on them (a local unbound or not a plain
-    /// scalar, a statement whose kind differs from its register's, a body
-    /// `let` read before it is bound, too many registers).
+    /// scalar, an array local unbound, empty or of non-scalar elements, a
+    /// statement whose kind differs from its register's, a body `let` read
+    /// before it is bound, too many registers or arrays).
     #[cold]
     fn build(&self, env: &Env) -> Option<LoopCode> {
-        let lets: Vec<(Sym, u32)> = self
-            .body
-            .iter()
-            .filter(|st| st.is_let)
-            .map(|st| (st.var.s, st.var.slot))
-            .collect();
-        let mut reads = Vec::new();
-        pure_locals(&self.cond, &mut reads);
-        for st in &self.body[..] {
-            pure_locals(&st.value, &mut reads);
-            reads.push((st.var.s, st.var.slot));
+        let mut lets: Vec<(Sym, u32)> = Vec::new();
+        if let Some((v, _)) = &self.for_ {
+            lets.push((v.s, v.slot));
         }
+        for st in &self.body[..] {
+            if let PureStmt::Set {
+                var, is_let: true, ..
+            } = st
+            {
+                if !lets.contains(&(var.s, var.slot)) {
+                    lets.push((var.s, var.slot));
+                }
+            }
+        }
+        let mut reads = Vec::new();
+        let mut arr_reads = Vec::new();
+        let mut assigned = Vec::new();
+        if let Some(c) = &self.cond {
+            pure_locals(c, &mut reads);
+            pure_arrays(c, &mut arr_reads);
+        }
+        each_stmt(&self.body, &mut |st| match st {
+            PureStmt::Set { var, is_let, value } => {
+                pure_locals(value, &mut reads);
+                pure_arrays(value, &mut arr_reads);
+                reads.push((var.s, var.slot));
+                if !is_let {
+                    assigned.push((var.s, var.slot));
+                }
+            }
+            PureStmt::Store { arr, idx, value } => {
+                for p in [idx, value] {
+                    pure_locals(p, &mut reads);
+                    pure_arrays(p, &mut arr_reads);
+                }
+                arr_reads.push((arr.s, arr.slot));
+            }
+            PureStmt::If { cond, .. } => {
+                pure_locals(cond, &mut reads);
+                pure_arrays(cond, &mut arr_reads);
+            }
+        });
         let mut vars: Vec<LoopVar> = Vec::new();
         for (s, slot) in reads {
             if lets.contains(&(s, slot)) || vars.iter().any(|v| (v.s, v.slot) == (s, slot)) {
@@ -695,95 +1017,65 @@ impl<'p> PureLoop<'p> {
                 s,
                 slot,
                 kind,
-                assigned: false,
+                assigned: assigned.contains(&(s, slot)),
             });
         }
-        for st in &self.body[..] {
-            if !st.is_let {
-                if let Some(v) = vars
-                    .iter_mut()
-                    .find(|v| (v.s, v.slot) == (st.var.s, st.var.slot))
-                {
-                    v.assigned = true;
-                }
+        let mut arrs: Vec<LoopArr> = Vec::new();
+        for (s, slot) in arr_reads {
+            if arrs.iter().any(|a| (a.s, a.slot) == (s, slot)) {
+                continue;
             }
-        }
-        let mut lets_at: Vec<(Sym, u32)> = Vec::new();
-        for l in &lets {
-            if !lets_at.contains(l) {
-                lets_at.push(*l);
-            }
+            let Value::Array(items) = env.get_var(s, slot)? else {
+                return None;
+            };
+            let kind = kind_of(items.first()?)?;
+            arrs.push(LoopArr { s, slot, kind });
         }
         // Two bindings of one name (a body `let` shadowing a local, say):
         // one name must stand for one register, since `get_var` falls back
         // to the name when the env is not laid out as resolution assumed.
         let mut names: Vec<Sym> = Vec::new();
-        for s in vars.iter().map(|v| v.s).chain(lets_at.iter().map(|l| l.0)) {
+        let all = vars.iter().map(|v| v.s);
+        for s in all
+            .chain(lets.iter().map(|l| l.0))
+            .chain(arrs.iter().map(|a| a.s))
+        {
             if names.contains(&s) {
                 return None;
             }
             names.push(s);
         }
-        if vars.len() > LOOP_LETS as usize || lets_at.len() > (LOOP_LITS - LOOP_LETS) as usize {
+        if vars.len() > LOOP_LETS as usize
+            || lets.len() > (LOOP_LITS - LOOP_LETS) as usize
+            || arrs.len() > LOOP_ARRS
+        {
             return None;
         }
         let mut b = LoopBuilder {
             vars: &vars,
-            lets: &lets_at,
+            arrs: &arrs,
+            lets: &lets,
             bound: Vec::new(),
             init: [0u64; 32],
             lits: 0,
         };
+        if let Some((v, _)) = &self.for_ {
+            b.bound.push(((v.s, v.slot), Kind::I));
+        }
         let mut cond = Vec::new();
-        let cres = match b.lower_kind(&self.cond, &mut cond)? {
-            (r, Kind::B) => r,
-            _ => return None,
+        let cres = match &self.cond {
+            Some(c) => match b.lower_kind(c, &mut cond, 0)? {
+                (r, Kind::B) => r,
+                _ => return None,
+            },
+            None => 0,
         };
         let mut body = Vec::new();
-        for st in &self.body[..] {
-            let key = (st.var.s, st.var.slot);
-            let at = body.len();
-            let (src, kind) = b.lower_kind(&st.value, &mut body)?;
-            let dst = if st.is_let {
-                match b.bound.iter().find(|x| x.0 == key) {
-                    Some(x) if x.1 != kind => return None,
-                    Some(_) => {}
-                    None => b.bound.push((key, kind)),
-                }
-                b.let_reg(key)?
-            } else if let Some(i) = vars.iter().position(|v| (v.s, v.slot) == key) {
-                if vars[i].kind != kind {
-                    return None;
-                }
-                i as u8
-            } else {
-                // An assignment to a body `let` bound earlier.
-                let x = b.bound.iter().find(|x| x.0 == key)?;
-                if x.1 != kind {
-                    return None;
-                }
-                b.let_reg(key)?
-            };
-            // The value's last instruction can write the destination itself
-            // (every read of the destination comes before it), unless a
-            // `&&`/`||` may skip that instruction.
-            let plain = body.len() > at
-                && !body[at..]
-                    .iter()
-                    .any(|i: &RIns| matches!(i.op, TOp::And(_) | TOp::Or(_)));
-            match body.last_mut() {
-                Some(last) if plain && last.dst == src => last.dst = dst,
-                _ => body.push(RIns {
-                    op: TOp::Mov,
-                    a: src,
-                    b: 0,
-                    dst,
-                }),
-            }
-        }
+        b.lower_stmts(&self.body, &mut body)?;
         let init = b.init;
         Some(LoopCode {
             vars: vars.into_boxed_slice(),
+            arrs: arrs.into_boxed_slice(),
             init,
             cond: cond.into_boxed_slice(),
             cres,
@@ -792,10 +1084,26 @@ impl<'p> PureLoop<'p> {
     }
 }
 
+/// Give the arrays [`PureLoop::drive`] took back to `env`.
+fn put_arrays(env: &mut Env, arrs: &[LoopArr], mem: &mut LoopMem) {
+    for (a, slot) in arrs.iter().zip(&mut mem.arrs) {
+        if let Some(items) = slot.take() {
+            match env.get_var_mut(a.s, a.slot) {
+                Some(v) => *v = Value::Array(items),
+                // Taken from this binding, and nothing in the region can
+                // unbind it.
+                None => unreachable!("vm: a pure loop's array lost its binding"),
+            }
+        }
+    }
+}
+
 /// Register allocation for a [`LoopCode`]; `bound` lists the body `let`s
-/// bound so far in statement order, with their kinds.
+/// bound so far in statement order (the `for` variable first), with their
+/// kinds.
 struct LoopBuilder<'a> {
     vars: &'a [LoopVar],
+    arrs: &'a [LoopArr],
     lets: &'a [(Sym, u32)],
     bound: Vec<((Sym, u32), Kind)>,
     init: [u64; 32],
@@ -817,10 +1125,126 @@ impl LoopBuilder<'_> {
         self.bound.iter().find(|l| l.0 == (s, slot)).map(|l| l.1)
     }
 
-    /// Lower `p` into `out`; its value's register and kind.
-    fn lower_kind(&mut self, p: &Pure<'_>, out: &mut Vec<RIns>) -> Option<(u8, Kind)> {
+    /// Lower `stmts` into `out`.
+    fn lower_stmts(&mut self, stmts: &[PureStmt<'_>], out: &mut Vec<RIns>) -> Option<()> {
+        for st in stmts {
+            match st {
+                PureStmt::Set { var, is_let, value } => {
+                    self.lower_set((var.s, var.slot), *is_let, value, out)?
+                }
+                PureStmt::Store { arr, idx, value } => {
+                    let a = self
+                        .arrs
+                        .iter()
+                        .position(|a| (a.s, a.slot) == (arr.s, arr.slot))?;
+                    let (ri, ki) = self.lower_kind(idx, out, 0)?;
+                    if ki != Kind::I {
+                        return None;
+                    }
+                    // Temporaries from 1: the index's stays live.
+                    let (rv, kv) = self.lower_kind(value, out, 1)?;
+                    out.push(RIns {
+                        op: TOp::Store(a as u8, kv),
+                        a: ri,
+                        b: rv,
+                        dst: 0,
+                    });
+                }
+                PureStmt::If { cond, then, else_ } => {
+                    let (rc, kc) = self.lower_kind(cond, out, 0)?;
+                    if kc != Kind::B {
+                        return None;
+                    }
+                    let br = out.len();
+                    out.push(RIns {
+                        op: TOp::Br(0),
+                        a: rc,
+                        b: 0,
+                        dst: 0,
+                    });
+                    self.lower_stmts(then, out)?;
+                    if else_.is_empty() {
+                        out[br].op = TOp::Br((out.len() - br - 1) as u32);
+                    } else {
+                        let jmp = out.len();
+                        out.push(RIns {
+                            op: TOp::Jmp(0),
+                            a: 0,
+                            b: 0,
+                            dst: 0,
+                        });
+                        out[br].op = TOp::Br((jmp - br) as u32);
+                        self.lower_stmts(else_, out)?;
+                        out[jmp].op = TOp::Jmp((out.len() - jmp - 1) as u32);
+                    }
+                }
+            }
+        }
+        Some(())
+    }
+
+    /// Lower `let key = value` (`is_let`) or `key = value` into `out`.
+    fn lower_set(
+        &mut self,
+        key: (Sym, u32),
+        is_let: bool,
+        value: &Pure<'_>,
+        out: &mut Vec<RIns>,
+    ) -> Option<()> {
+        let at = out.len();
+        let (src, kind) = self.lower_kind(value, out, 0)?;
+        let dst = if is_let {
+            match self.bound.iter().find(|x| x.0 == key) {
+                Some(x) if x.1 != kind => return None,
+                Some(_) => {}
+                None => self.bound.push((key, kind)),
+            }
+            self.let_reg(key)?
+        } else if let Some(i) = self.vars.iter().position(|v| (v.s, v.slot) == key) {
+            if self.vars[i].kind != kind {
+                return None;
+            }
+            i as u8
+        } else {
+            // An assignment to a body `let` bound earlier, or to the `for`
+            // variable.
+            let x = self.bound.iter().find(|x| x.0 == key)?;
+            if x.1 != kind {
+                return None;
+            }
+            self.let_reg(key)?
+        };
+        // The value's last instruction can write the destination itself
+        // (every read of the destination comes before it), unless a
+        // `&&`/`||` may skip that instruction.
+        let plain = out.len() > at
+            && !out[at..]
+                .iter()
+                .any(|i: &RIns| matches!(i.op, TOp::And(_) | TOp::Or(_)));
+        match out.last_mut() {
+            Some(last) if plain && last.dst == src => last.dst = dst,
+            _ => out.push(RIns {
+                op: TOp::Mov,
+                a: src,
+                b: 0,
+                dst,
+            }),
+        }
+        Some(())
+    }
+
+    /// Lower `p` into `out`, its temporaries from `d`; its value's register
+    /// and kind.
+    fn lower_kind(&mut self, p: &Pure<'_>, out: &mut Vec<RIns>, d: u8) -> Option<(u8, Kind)> {
         let mut code = Vec::new();
-        let (res, kind) = specialize(p, &|s, slot| self.kind(s, slot), &mut code, 0)?;
+        let kinds = Kinds {
+            local: &|s, slot| self.kind(s, slot),
+            elem: &|s, slot| {
+                let i = self.arrs.iter().position(|a| (a.s, a.slot) == (s, slot))?;
+                Some((i as u8, self.arrs[i].kind))
+            },
+        };
+        let (res, kind) = specialize(p, &kinds, &mut code, d)?;
         for ins in code {
             let a = self.reg(ins.a)?;
             let b = if reads_b(&ins.op) {
@@ -945,7 +1369,7 @@ impl Interp<'_> {
             if let Some(ra) = ra {
                 r[ra] = a;
             }
-            if exec(&t.code, &mut r).is_none() {
+            if exec(&t.code, &mut r, &mut NoMem).is_none() {
                 break;
             }
             a = r[t.res as usize & 15];

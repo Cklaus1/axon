@@ -131,6 +131,7 @@ fn kinds(body: &Body<'_>) -> Vec<&'static str> {
             Op::Lambda(_) => "lambda",
             Op::Pure(_) => "pure",
             Op::PureLoop { .. } => "pure-loop",
+            Op::PureFor { .. } => "pure-for",
             Op::CallFast { args, .. } if args.is_empty() => "call-fast",
             Op::CallFast { .. } => "call-fast-inline",
             Op::CallFastLocalInt { .. } => "call-fast-local-int",
@@ -436,7 +437,8 @@ fn while_let_pushes_the_pattern_scope_then_the_body_scope() {
 fn for_converts_both_bounds_then_pushes_per_iteration() {
     // `for-test`/`for-next` push the variable's scope and (`+body`) the
     // body's, and `for-next` pops them before the increment; a body that
-    // binds nothing gets no scope of its own.
+    // binds nothing gets no scope of its own. A pure body (S10) puts a
+    // `pure-for` ahead of `for-test`.
     let k = kinds_of(
         "fn f() -> i64 { let s = 0\n for i in 0..3 { s = s + i }\n s }",
         "f",
@@ -451,6 +453,7 @@ fn for_converts_both_bounds_then_pushes_per_iteration() {
             "strict-int",
             "const",
             "strict-int",
+            "pure-for",
             "for-test",
             "store-bin",
             "for-next",
@@ -464,8 +467,11 @@ fn for_converts_both_bounds_then_pushes_per_iteration() {
         "fn f() -> i64 { let s = 0\n for i in 0..3 { let t = i\n s = s + t }\n s }",
         "f",
     );
-    assert_eq!(&k[7..11], ["for-test+body", "load", "define", "store-bin"]);
-    assert_eq!(k[11], "for-next+body");
+    assert_eq!(
+        &k[7..12],
+        ["pure-for", "for-test+body", "load", "define", "store-bin"]
+    );
+    assert_eq!(k[12], "for-next+body");
 }
 
 #[test]
@@ -967,4 +973,99 @@ fn fast_call_checks_depth_before_arity() {
     let at_limit = both();
     interp.call_depth.set(depth);
     assert!(at_limit.contains("recursion limit exceeded"), "{at_limit}");
+}
+
+/// R50 S11: every fn the pure tier builds has register code within its own
+/// bounds: each register an instruction reads or writes is below `nregs`,
+/// each jump target is inside the code, each call names a built table fn,
+/// and the code ends in `Ret` or `Jmp` (so the machine
+/// never runs off it). Mutually recursive fns are built together.
+#[test]
+fn purefn_build_validates() {
+    use super::purefn::FOp;
+    let src = "\
+fn fib(n: i64) -> i64 {
+    if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+}
+fn is_even(n: i64) -> i64 {
+    if n == 0 { 1 } else { is_odd(n - 1) }
+}
+fn is_odd(n: i64) -> i64 {
+    if n == 0 { 0 } else { is_even(n - 1) }
+}
+fn k(a: i64, b: i64) -> i64 {
+    if a == 0 { b } else { k(a - 1, (b * 3 + a) % 1000003) }
+}
+fn bits(a: i64, b: i64) -> i64 {
+    if a > 5 { (a << 2) ^ (b >> 1) } else { (a & b) | (a / 3) }
+}
+fn main() -> i64 {
+    let s = 0
+    for i in 0..3 {
+        s = s + fib(12) + is_even(31) + is_odd(8) + k(20, i) + bits(i, 1) + bits(5, i)
+    }
+    s
+}
+";
+    let prog = crate::parse_source(src).expect("parses");
+    let mut interp = Interp::build(&prog);
+    interp.engine = Engine::Vm;
+    interp.vm_trace = false;
+    interp.vm_eager = true;
+    let main = interp
+        .fn_table
+        .iter()
+        .position(|e| e.def.name == "main")
+        .expect("main");
+    interp
+        .call_fn_entry(&interp.fn_table[main], vec![])
+        .expect("main runs");
+    let mut built = Vec::new();
+    for (e, slot) in interp.fn_table.iter().zip(interp.pure_slots.iter()) {
+        let Some(Some(pf)) = slot.code.get() else {
+            continue;
+        };
+        built.push(e.def.name.clone());
+        let (n, len) = (pf.nregs, pf.code.len());
+        assert!(len > 0 && n <= 255, "{}", e.def.name);
+        for (j, c) in pf.code.iter().enumerate() {
+            let at = format!("{} #{j} {c:?}", e.def.name);
+            let r = |x: u8| assert!((x as usize) < n, "register out of range: {at}");
+            match c.op {
+                FOp::AddK | FOp::SubK | FOp::MulK | FOp::Mov => {
+                    r(c.d);
+                    r(c.a);
+                }
+                FOp::AddR | FOp::SubR | FOp::MulR | FOp::OtherR | FOp::CmpR => {
+                    r(c.d);
+                    r(c.a);
+                    r(c.b);
+                }
+                FOp::BrNotK | FOp::BrZero => {
+                    r(c.a);
+                    assert!((c.t as usize) < len, "jump out of range: {at}");
+                }
+                FOp::Jmp => assert!((c.t as usize) < len, "jump out of range: {at}"),
+                FOp::LoadK => r(c.d),
+                FOp::Call => {
+                    r(c.a);
+                    assert_eq!(c.d, c.a, "{at}");
+                    assert!(
+                        matches!(interp.pure_slots[c.k as usize].code.get(), Some(Some(_))),
+                        "callee not built: {at}"
+                    );
+                }
+                FOp::Ret => r(c.a),
+            }
+        }
+        assert!(
+            matches!(pf.code.last().map(|c| c.op), Some(FOp::Ret | FOp::Jmp)),
+            "{}: {:?}",
+            e.def.name,
+            pf.code
+        );
+        assert!(pf.valid(interp.fn_table.len()), "{}", e.def.name);
+    }
+    built.sort();
+    assert_eq!(built, ["bits", "fib", "is_even", "is_odd", "k"]);
 }

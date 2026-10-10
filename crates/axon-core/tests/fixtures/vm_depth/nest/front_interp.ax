@@ -1,0 +1,16 @@
+let DEPTH = 100
+// vm_wasm_depth: front
+// AX-60 front-end probe: string interpolation nested three literals deep,
+// the parentheses split over the three `{...}` slots. A slot is parsed by a
+// parser of its own, which starts at the depth of the expression around the
+// literal, so the three slots share one nesting budget. A template:
+// scripts/vm_wasm_depth.sh expands each ⟦L¦open¦leaf¦close⟧ to L literals
+// nested in each other's slot (escaped per level) with open×DEPTH and
+// close×DEPTH split over the L slots, runs it at DEPTH = the wasm32 nesting
+// limit and 20× it, and requires exit 0 or the E0000 `expression nesting
+// too deep` refusal (exit 2) there, the refusal at 20×, never a trap; it
+// reports the deepest DEPTH that runs.
+fn main() -> i64 {
+    println(⟦3¦(¦1¦)⟧)
+    0
+}

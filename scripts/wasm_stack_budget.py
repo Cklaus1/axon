@@ -33,14 +33,34 @@ This script checks exactly that on the build under test:
   a fixed bound, a std algorithm's log n, or the panic path. Work outside
   those runs above the last guarded frame, in the headroom the budget leaves
   below the stack size; value and source depth are not bounded by it and can
-  still trap.
+  still trap;
+- the parser (compilebench AX-60): every recursive component reachable
+  from `Parser::parse_program` either holds a call that charges one
+  `MAX_EXPR_DEPTH` unit (PARSER_CHARGES), and the wasm32 limit times the
+  worst frame chain between two charges fits the budget, or holds no
+  parser method and is one ALLOW classifies. Reachability includes the
+  `call_indirect` edges, and every recursion they give that holds a parser
+  method (generic instances and closures included) must be a component of
+  direct calls already, the one through the charged `parse_expr` among
+  them: a recursion through `nested`'s fn pointer or a `dyn` helper would
+  otherwise leave nothing to measure. A charged call and an uncharged one
+  are the same direct edge (`nested` is inlined), so parser.rs is checked
+  too: each `(None, X)` charge's `fn X` reaches `X_inner` only through
+  `self.nested(Self::X_inner)` under no condition but a bare `NEST_ALL`
+  (the native arm aside), no other code names `X_inner`, and a function an
+  `(r, e)` charge names calls `e` uncharged only in that native arm.
 
 It fails when a `nest_cost` constant is not charged by exactly one guard
 site in the function it is named after, when indirect calls widen a checked
 component, when the unguarded part of one has a cycle (a recursion no guard
 sees), when a constant is smaller than the guarded function's frame plus the
-deepest unguarded chain it can call, or when a recursion reachable from
-`eval` is neither checked nor in ALLOW. Exit 0 ok, 1 failure, 2 bad input.
+deepest unguarded chain it can call, when a recursion reachable from `eval`
+is neither checked nor in ALLOW, when a cycle of `Value` drop glue avoids
+`drop_bounded`, when indirect calls widen a parser recursion or the charged
+`parse_expr` is in none, when parser.rs lets a charged callee run without
+its `nested` on wasm32, or when a recursion reachable from
+`parse_program` with no charged call holds a parser method or is not in
+ALLOW. Exit 0 ok, 1 failure, 2 bad input.
 """
 import os
 import re
@@ -50,29 +70,288 @@ from collections import defaultdict
 
 # Unguarded recursions reachable from `eval`, each with why its depth is not
 # the program's call depth: (regex over a member's symbol, kind). First
-# match wins. "value": the depth of a run-time value or string (a nested
-# array, an `Uncertain` chain, JSON, a regex), outside the budget
-# (compilebench AX-59). "source": the nesting of one source construct (a
-# pattern, a type, an expression cloned or walked whole), walked by the
-# same function under both engines; the front end bounds it only loosely
-# (compilebench AX-60) and a deep copy near the budget's edge traps
-# (compilebench AX-61). "bounded":
+# match wins. "bounded (DROP_INLINE_DEPTH)": the drop glue of a nested
+# `Value`, which on wasm32 passes `bounded_drop` (interp.rs, compilebench
+# AX-59) and so holds at most `DROP_INLINE_DEPTH` levels of the component
+# at once; checked below: without its `drop_bounded` instances the
+# component must be acyclic, and DROP_INLINE_DEPTH passes of it must fit
+# the headroom the budget leaves; a `Value` drop component without
+# `bounded_drop` fails. "value": the depth
+# of a run-time value or string (a nested array, an `Uncertain` chain,
+# JSON, a regex) walked by something other than drop, outside the budget.
+# "source": the nesting of one source construct (a pattern, a type, an
+# expression walked whole), walked by the same function under both
+# engines, at most the parser's wasm32 `MAX_EXPR_DEPTH` deep (compilebench
+# AX-60); `parser::axon_type_to_str` renders one parsed `AxonType`, each
+# level of which a charged `parse_type_atom` built. "lexer": the
+# logos-generated `Token::lex` (the parser re-lexes each interpolation
+# slot). On release its one cycle is logos's skip re-entry (`lex.trivia();
+# Token::lex(lex)` after a skipped match), at most two deep: a whitespace
+# run is matched whole and a `//` comment runs to the newline, which is a
+# token. On debug its states also call themselves once per character of
+# one token, compilebench AX-65, out of scope (R50 §4 S12). "bounded":
 # a fixed depth (`PURE_DEPTH`; a numeric helper that recurses once). "std":
 # a std algorithm's log-n recursion. "panic": the panic path, which ends
 # the run.
+DROP_CLASS = "bounded (DROP_INLINE_DEPTH)"
 ALLOW = [
+    (r"bounded_drop::|12bounded_drop", DROP_CLASS),
     (r"interp::Value as .*Clone|6interp5Value|Rc<interp::EnumVal>|interp::SendValue|9SendValue"
      r"|send_value_display|value::display|fields_display|values_equal|Fields>::equal"
      r"|numeric_score|eval_binop_vals", "value"),
     (r"serde_json|10serde_json|serde_core", "value"),
     (r"interp::regex|6interp5regex", "value"),
     (r"ast::(Expr|Pattern|AxonType|FmtPart|HandlerExpr|MatchArm)|3ast\d+[A-Z]|3ast4Ex"
-     r"|types::Type|5types4Type|resolver::collect|match_pattern|pattern_binds", "source"),
-    (r"vm::pure::|2vm4pure4Pure|compile_pure_at", "bounded (PURE_DEPTH)"),
+     r"|types::Type|5types4Type|resolver::collect|match_pattern|pattern_binds"
+     r"|parser::axon_type_to_str|6parser16axon_type_to_str", "source"),
+    (r"token::Token as logos\S*::Logos>::lex|5Token\w*?5logos5Logos3lex", "lexer"),
+    (r"vm::pure::|2vm4pure4Pure|compile_pure_(at|stmts|if)\b", "bounded (PURE_DEPTH)"),
     (r"gamma_sample|log_gamma|reg_inc_beta|beta_cdf|sub_timespec|slice_error_fail", "bounded (recurses once)"),
     (r"slice4sort|btree", "std"),
     (r"backtrace|panicking|ThreadId>::new::exhausted", "panic"),
 ]
+# The drop glue of an interpreter `Value` (the shared `EnumVal` cell, or the
+# `Value` enum itself): a component holding it must hold `bounded_drop`.
+VALUE_DROP = re.compile(r"Rc<interp::EnumVal>>::drop_slow|drop_glue::<interp::Value>"
+                        r"|drop_glue\w*?6interp5ValueE")
+# An instance of `bounded_drop::drop_bounded`, the function every cycle of
+# `Value` drop glue must pass.
+DROP_BOUNDED = re.compile(r"bounded_drop::drop_bounded\b|12bounded_drop12drop_bounded")
+# wasmtime's default `max-wasm-stack`, which the wasm32 budget is sized for.
+WASM_STACK = 512 * 1024
+# A parser method's name, and the calls that charge one `MAX_EXPR_DEPTH`
+# unit (`Parser::nested`, inlined into its caller): (caller, callee), a
+# `None` caller meaning any. parser.rs keeps each callee out of line on
+# wasm32 so it is nameable here. PARSER_FN matches a demangled `Parser`
+# method, generic instances and closures included; PARSER_FN_V0 the v0
+# symbol c++filt leaves mangled (a long generic or closure name, cut short
+# by wasmtime).
+PARSER_FN = re.compile(r"^<axon_core\[[0-9a-f]+\]::parser::Parser>::(\w+)((?:::<.*>|::\{closure#\d+\})*)$")
+PARSER_FN_V0 = re.compile(r"^_R(\w*?)6parserNtB\w+?_6Parser(\d+)(\w+)$")
+PARSER_CHARGES = [
+    (None, "parse_expr"),
+    (None, "parse_primary"),
+    (None, "parse_pattern"),
+    (None, "parse_type_atom"),
+    (None, "parse_attr_atom"),
+    ("parse_if", "parse_if"),
+    ("parse_match|parse_match_operand", "parse_logical"),
+]
+
+
+def parser_fn(s):
+    """The name of the `Parser` method symbol `s` is, else None. A generic
+    instance, a closure or a shim gets `::<..>` or `::{closure}` appended,
+    so it never names a charged call."""
+    m = PARSER_FN.match(s)
+    if m:
+        return m.group(1) + ("" if not m.group(2) else "::{closure}" if "{closure#" in m.group(2) else "::<..>")
+    m = PARSER_FN_V0.match(s)
+    if not m or len(m.group(3)) < int(m.group(2)):
+        return None
+    n, rest = m.group(3)[: int(m.group(2))], m.group(3)[int(m.group(2)):]
+    if m.group(1).startswith("NvM") and re.fullmatch(r"(?:B\w*_)?", rest):
+        return n
+    return n + ("::{closure}" if m.group(1).startswith("NC") else "::<..>")
+
+
+def rust_code(src):
+    """`src` with comments, string and char literals blanked (same length,
+    newlines kept), so braces and names in them are not code."""
+    pat = re.compile(r'//[^\n]*|/\*.*?\*/|\bb?r(#*)"|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\\n])\'', re.S)
+    out, i = [], 0
+    while m := pat.search(src, i):
+        end = m.end()
+        if m.group(1) is not None:
+            # A raw string r#".."#: blank up to its closing quote.
+            end = src.find('"' + m.group(1), m.end())
+            end = len(src) if end < 0 else end + 1 + len(m.group(1))
+        out.append(src[i:m.start()])
+        out.append(re.sub(r"[^\n]", " ", src[m.start():end]))
+        i = end
+    out.append(src[i:])
+    return "".join(out)
+
+
+def fn_bodies(code):
+    """name -> [(start, end)] of each `fn name` body in `code` (rust_code
+    output), from its `{` to its matching `}` inclusive."""
+    spans = defaultdict(list)
+    for m in re.finditer(r"\bfn\s+(\w+)", code):
+        brace, semi = code.find("{", m.end()), code.find(";", m.end())
+        if brace < 0 or 0 <= semi < brace:
+            continue
+        depth = 0
+        for k in range(brace, len(code)):
+            depth += {"{": 1, "}": -1}.get(code[k], 0)
+            if depth == 0:
+                spans[m.group(1)].append((brace, k + 1))
+                break
+    return spans
+
+
+def block_stacks(body, offsets):
+    """For each offset in `body` (one fn body, rust_code output, from its
+    `{`), the headers of the blocks enclosing it inside the fn, outermost
+    first. A header is the code between the previous `{`, `}` or `;` and
+    the block's `{`, whitespace collapsed; an `else` block's header is
+    `else` + ` of ` + the header of the `if` block it follows."""
+    want, res = sorted(set(offsets)), {}
+    stack, closed, last, wi = [], None, 0, 0
+    for k, c in enumerate(body):
+        while wi < len(want) and want[wi] <= k:
+            res[want[wi]] = tuple(stack[1:])
+            wi += 1
+        if c not in "{};":
+            continue
+        if c == "{":
+            head = " ".join(body[last:k].split())
+            stack.append(f"else of {closed}" if head == "else" and closed is not None else head)
+        elif c == "}" and stack:
+            closed = stack.pop()
+        last = k + 1
+    for k in want[wi:]:
+        res[k] = ()
+    return res
+
+
+def stmt_prefix(body, k):
+    """The code of `body` between the previous `{`, `}` or `;` and offset k."""
+    j = max(body.rfind(c, 0, k) for c in "{};")
+    return " ".join(body[j + 1:k].split())
+
+
+# The block headers under which a charge-site function may call its callee
+# directly: the native arm of a bare `NEST_ALL` test.
+NATIVE_ARM = {"if !NEST_ALL", "else of if NEST_ALL"}
+
+
+def charge_site_faults(src, charges):
+    """The ways parser.rs (`src`) lets a PARSER_CHARGES entry's callee run
+    without its `nested` charge on wasm32. A `(None, X)` entry credits every
+    call of `X`, so in `fn X` each reference to `X_inner` must be either
+    `self.nested(Self::X_inner)` as a whole statement (or `let v =` /
+    `return` of one) under no block but a bare `if NEST_ALL`, or a direct
+    `self.X_inner()` in the native arm of a bare `NEST_ALL` test; parser.rs
+    may name `X_inner` nowhere else but its definition. An `(r, e)` entry
+    credits only the `nested` site, so a function matching `r` may call
+    `self.e(` (or name `Self::e` outside `self.nested(..)`) only in such a
+    native arm."""
+    code = rust_code(src)
+    bodies = fn_bodies(code)
+    faults = []
+
+    def where(k):
+        return f"parser.rs:{code.count(chr(10), 0, k) + 1}"
+
+    for r, e in charges:
+        if r is None:
+            inner = f"{e}_inner"
+            spans = bodies.get(e, [])
+            if len(spans) != 1:
+                faults.append(f"({r}, {e}): {len(spans)} `fn {e}` bodies in parser.rs, expected 1")
+                continue
+            s0, s1 = spans[0]
+            body = code[s0:s1]
+            refs = list(re.finditer(rf"\b{inner}\b", body))
+            stacks = block_stacks(body, [m.start() for m in refs])
+            for m in refs:
+                k, st = m.start(), stacks[m.start()]
+                via = re.search(r"self\s*\.\s*nested\s*\(\s*Self\s*::\s*$", body[max(0, k - 40):k])
+                bare = re.search(r"self\s*\.\s*$", body[max(0, k - 16):k])
+                if via:
+                    ok = (re.match(r"\s*\)", body[m.end():])
+                          and all(h == "if NEST_ALL" for h in st)
+                          and re.fullmatch(r"(?:let \w+ =|return)?", stmt_prefix(body, k - len(via.group()))))
+                    what = f"`self.nested(Self::{inner})` under {list(st) or 'no block'}"
+                elif bare and re.match(r"\s*\(", body[m.end():]):
+                    ok = (len(st) == 1 and st[0] in NATIVE_ARM
+                          and re.fullmatch(r"(?:return)?", stmt_prefix(body, k - len(bare.group()))))
+                    what = f"direct `self.{inner}()` under {list(st) or 'no block'}"
+                else:
+                    ok, what = False, f"reference to `{inner}`"
+                if not ok:
+                    faults.append(f"({r}, {e}): {what} at {where(s0 + k)}")
+            for m in re.finditer(rf"\b{inner}\b", code):
+                if not (s0 <= m.start() < s1 or re.search(r"\bfn\s+$", code[max(0, m.start() - 16):m.start()])):
+                    faults.append(f"({r}, {e}): `{inner}` named outside `fn {e}` at {where(m.start())}")
+        else:
+            for name, spans in bodies.items():
+                if not re.fullmatch(r, name):
+                    continue
+                for s0, s1 in spans:
+                    body = code[s0:s1]
+                    refs = [m for m in re.finditer(rf"\bself\s*\.\s*{e}\s*\(|\bSelf\s*::\s*{e}\b", body)
+                            if not (m.group().startswith("Self")
+                                    and re.search(r"self\s*\.\s*nested\s*\(\s*$", body[max(0, m.start() - 24):m.start()]))]
+                    stacks = block_stacks(body, [m.start() for m in refs])
+                    for m in refs:
+                        st = stacks[m.start()]
+                        if not (st and st[-1] in NATIVE_ARM):
+                            faults.append(f"({r}, {e}): uncharged `{' '.join(m.group().split())}` in `fn {name}` "
+                                          f"under {list(st) or 'no block'} at {where(s0 + m.start())}")
+    return faults
+
+
+def find_cycle(nodes, calls):
+    """A cycle of direct calls among `nodes` (its functions in call order),
+    or [] when the subgraph is acyclic. Iterative DFS."""
+    color = {}
+    for v0 in sorted(nodes):
+        if v0 in color:
+            continue
+        color[v0] = 1
+        path, work = [v0], [iter(sorted(g for g in calls.get(v0, ()) if g in nodes))]
+        while work:
+            w = next(work[-1], None)
+            if w is None:
+                color[path.pop()] = 2
+                work.pop()
+            elif color.get(w) == 1:
+                return path[path.index(w):]
+            elif w not in color:
+                color[w] = 1
+                path.append(w)
+                work.append(iter(sorted(g for g in calls.get(w, ()) if g in nodes)))
+    return []
+
+
+def components(nodes, edges):
+    """Map each of `nodes` to the root of its strongly connected component
+    under `edges`. Tarjan, iterative."""
+    index, low, onst, st, comp, idx = {}, {}, set(), [], {}, 0
+    for v0 in sorted(nodes):
+        if v0 in index:
+            continue
+        index[v0] = low[v0] = idx
+        idx += 1
+        st.append(v0)
+        onst.add(v0)
+        work = [(v0, iter(sorted(edges.get(v0, ()))))]
+        while work:
+            u, it = work[-1]
+            w = next(it, None)
+            if w is not None:
+                if w not in index:
+                    index[w] = low[w] = idx
+                    idx += 1
+                    st.append(w)
+                    onst.add(w)
+                    work.append((w, iter(sorted(edges.get(w, ())))))
+                elif w in onst:
+                    low[u] = min(low[u], index[w])
+                continue
+            work.pop()
+            if work:
+                low[work[-1][0]] = min(low[work[-1][0]], low[u])
+            if low[u] == index[u]:
+                while True:
+                    x = st.pop()
+                    onst.discard(x)
+                    comp[x] = u
+                    if x == u:
+                        break
+    return comp
 
 
 def main() -> int:
@@ -81,6 +360,28 @@ def main() -> int:
         return 2
     src, profile, wasm_x, wasm_d, cdis = sys.argv[1:]
     text = open(src, encoding="utf-8").read()
+
+    def const(pat, where, txt):
+        m = re.search(pat, txt, re.S)
+        if not m:
+            print(f"wasm_stack_budget: no {where}", file=sys.stderr)
+            return None
+        return int(m.group(1).replace("_", ""))
+
+    # The budget the guards charge against (`RECURSION_LIMIT` x
+    # `NEST_PER_DEPTH` on wasm32), the headroom it leaves below the stack,
+    # the bounded drop's inline depth, and the parser's wasm32 limit.
+    parser_src = open(os.path.join(os.path.dirname(os.path.abspath(src)), "parser.rs"), encoding="utf-8").read()
+    limit = const(r'#\[cfg\(target_arch = "wasm32"\)\]\s*const RECURSION_LIMIT: usize = ([\d_]+);',
+                  "wasm32 `RECURSION_LIMIT` in interp.rs", text)
+    per_depth = const(r"const NEST_PER_DEPTH: usize = ([\d_]+);", "`NEST_PER_DEPTH` in interp.rs", text)
+    drop_depth = const(r"const DROP_INLINE_DEPTH: usize = ([\d_]+);", "`DROP_INLINE_DEPTH` in interp.rs", text)
+    expr_depth = const(r'#\[cfg\(target_arch = "wasm32"\)\]\s*const MAX_EXPR_DEPTH: usize = ([\d_]+);',
+                       "wasm32 `MAX_EXPR_DEPTH` in parser.rs", parser_src)
+    if None in (limit, per_depth, drop_depth, expr_depth):
+        return 2
+    budget = limit * per_depth
+    headroom = WASM_STACK - budget
     body = re.search(r"pub\(super\) mod nest_cost \{(.*?)\n\}", text, re.S)
     if not body:
         print("wasm_stack_budget: no `mod nest_cost` in interp.rs", file=sys.stderr)
@@ -217,40 +518,8 @@ def main() -> int:
             n = m.group(3)[: int(m.group(2))]
         return "compile_" + n if m.group(1) else n
 
-    # Tarjan, iterative.
     nodes = set(calls) | set(frame)
-    index, low, onst, st, comp, idx = {}, {}, set(), [], {}, 0
-    for v0 in sorted(nodes):
-        if v0 in index:
-            continue
-        index[v0] = low[v0] = idx
-        idx += 1
-        st.append(v0)
-        onst.add(v0)
-        work = [(v0, iter(sorted(calls.get(v0, ()))))]
-        while work:
-            u, it = work[-1]
-            w = next(it, None)
-            if w is not None:
-                if w not in index:
-                    index[w] = low[w] = idx
-                    idx += 1
-                    st.append(w)
-                    onst.add(w)
-                    work.append((w, iter(sorted(calls.get(w, ())))))
-                elif w in onst:
-                    low[u] = min(low[u], index[w])
-                continue
-            work.pop()
-            if work:
-                low[work[-1][0]] = min(low[work[-1][0]], low[u])
-            if low[u] == index[u]:
-                while True:
-                    x = st.pop()
-                    onst.discard(x)
-                    comp[x] = u
-                    if x == u:
-                        break
+    comp = components(nodes, calls)
 
     evals = [f for f in sym if name_of(f) == "eval"]
     if not evals:
@@ -421,15 +690,202 @@ def main() -> int:
         full_names = [re.sub(r"axon_core\[[0-9a-f]+\]::", "", name_of(f) or sym.get(f) or names.get(f, str(f)))
                       for f in ms]
         why = next((w for p, w in ALLOW if any(re.search(p, s) for s in full_names)), None)
+        if why != DROP_CLASS and any(VALUE_DROP.search(s) for s in full_names):
+            bad += 1
+            print(f"wasm_stack_budget: {profile:<7} FAIL Value drop recursion without `bounded_drop`: "
+                  f"{sorted(label(f) for f in ms)[:4]}")
+            continue
         if why is None:
             bad += 1
             print(f"wasm_stack_budget: {profile:<7} FAIL unguarded recursion not in ALLOW: "
                   f"{sorted(label(f) for f in ms)[:4]}")
+            continue
+        kinds[why] += 1
+        if why == DROP_CLASS:
+            # Only `drop_bounded` counts the drops live and defers past
+            # DROP_INLINE_DEPTH, so every cycle of drop glue must pass one of
+            # its instances: without them the component must be acyclic. A
+            # cycle that avoids it (a container whose `Drop` does not hand
+            # its contents to `drop_bounded`, or whose glue still drops them)
+            # recurses once per level of the value and fails.
+            gate = {f for f in ms
+                    if any(DROP_BOUNDED.search(s) for s in (sym.get(f, ""), names.get(f, "")))}
+            loop = find_cycle(ms - gate, calls)
+            if not gate or loop:
+                bad += 1
+                print(f"wasm_stack_budget: {profile:<7} FAIL Value drop cycle avoiding `drop_bounded`: "
+                      + (" -> ".join(label(f) for f in loop + loop[:1]) if loop else "no `drop_bounded`"))
+                continue
+            # At most DROP_INLINE_DEPTH passes through the component sit on
+            # the stack, each at most the component's summed frame, above
+            # the budget.
+            total = sum(frame.get(f, 16) for f in ms)
+            ok = drop_depth * total <= headroom
+            bad += not ok
+            print(f"wasm_stack_budget: {profile:<7} {'value drop':<24} {drop_depth * total:>5} <= {headroom:<5} "
+                  + ("ok" if ok else "FAIL")
+                  + f"  (DROP_INLINE_DEPTH {drop_depth} x {len(ms)} functions, {total} B; "
+                  + f"acyclic without its {len(gate)} `drop_bounded`)")
+
+    # The parser runs before the budget is charged, so its recursion must fit
+    # the budget by itself: between two calls that charge one
+    # `MAX_EXPR_DEPTH` unit (`nested`) the stack holds at most the worst
+    # chain of frames from one charged callee to the next charged call, and
+    # the wasm32 limit times that chain fits the budget.
+    pname = {f: n for f in set(sym) | set(names) if (n := parser_fn(sym.get(f, "")) or parser_fn(names.get(f, "")))}
+    # A PARSER_CHARGES entry counts only if parser.rs really charges it:
+    # `fn <e>` runs `self.nested(Self::<e>_inner)` (a `None` caller), or a
+    # function the caller pattern names runs `self.nested(Self::<e>)`. And
+    # every `nested` site has its entry. The disassembly cannot tell a
+    # charged call from an uncharged one (`nested` is inlined, so both are
+    # the same direct edge), so charge_site_faults also checks in the source
+    # that no wasm32 path reaches a charged callee without its `nested`.
+    psites, enclosing = set(), None
+    for line in parser_src.splitlines():
+        m = fn_re.match(line)
+        if m:
+            enclosing = m.group(1)
+        if line.lstrip().startswith("//"):
+            continue
+        for m in re.finditer(r"self\.nested\(Self::(\w+)\)", line):
+            e = m.group(1)
+            psites.add((None, enclosing) if e == f"{enclosing}_inner" else (enclosing, e))
+
+    def site_of(r, e, sr, se):
+        return e == se and (r is None) == (sr is None) and (r is None or re.fullmatch(r, sr))
+
+    charges = []
+    for r, e in PARSER_CHARGES:
+        if any(site_of(r, e, sr, se) for sr, se in psites):
+            charges.append((r, e))
         else:
-            kinds[why] += 1
+            bad += 1
+            print(f"wasm_stack_budget: {profile:<7} FAIL parser charge ({r}, {e}) has no `nested` site in parser.rs")
+    for sr, se in sorted(psites, key=str):
+        if not any(site_of(r, e, sr, se) for r, e in PARSER_CHARGES):
+            bad += 1
+            print(f"wasm_stack_budget: {profile:<7} FAIL `nested` site ({sr}, {se}) in parser.rs not in PARSER_CHARGES")
+    for fault in charge_site_faults(parser_src, PARSER_CHARGES):
+        bad += 1
+        print(f"wasm_stack_budget: {profile:<7} FAIL parser charge {fault}")
+
+    def charged(f, g):
+        callee = pname.get(g)
+        return callee is not None and any(
+            callee == e and (r is None or re.fullmatch(r, pname.get(f, ""))) for r, e in charges)
+
+    heads = {g for f, gs in calls.items() for g in gs if charged(f, g)}
+    if not any(pname.get(g) == "parse_expr" for g in heads):
+        print("wasm_stack_budget: no charged `Parser::parse_expr` call in the disassembly", file=sys.stderr)
+        return 2
+    starts = [f for f in sym if pname.get(f) == "parse_program"]
+    if not starts:
+        print("wasm_stack_budget: no `Parser::parse_program` in the disassembly", file=sys.stderr)
+        return 2
+    # The components and the unit chain below use direct calls only, so a
+    # parser recursion through a fn pointer or `dyn` (`nested` called out of
+    # line, or a helper taking `Self::<f>`) would leave no recursive
+    # component and pass with nothing to charge. So, as for `eval`, add
+    # every `call_indirect` -> same-type table function edge (`full`) and
+    # require every recursion it gives from `parse_program` that holds a
+    # parser method to be a component of direct calls already.
+    preach = reach(starts, full)
+    fcomp = components(nodes | set(full), full)
+    fmembers = defaultdict(set)
+    for f, r in fcomp.items():
+        fmembers[r].add(f)
+    pwide = 0
+    for r in sorted({fcomp[f] for f in preach}):
+        wide = fmembers[r]
+        held = sorted(pname[f] for f in wide if f in pname)
+        if not held or (len(wide) == 1 and r not in full.get(r, ())):
+            continue
+        scc = members.get(comp.get(r, r), {r})
+        if wide != scc:
+            pwide += 1
+            extra = sorted(wide - scc, key=lambda f: (f not in pname, label(f)))
+            print(f"wasm_stack_budget: {profile:<7} FAIL indirect calls add {len(wide - scc)} functions to a "
+                  f"parser recursion of {len(held)} parser methods: "
+                  f"{[label(f).replace('<parser::Parser>::', '') for f in extra[:8]]}")
+    # The charged `parse_expr` recurses through direct calls (parse_expr ->
+    # ... -> parse_primary -> parse_expr); a singleton means the recursion
+    # left the direct call graph and the unit below measures nothing.
+    for g in sorted(heads):
+        if pname.get(g) == "parse_expr" and len(members[comp[g]]) == 1 and g not in calls.get(g, ()):
+            pwide += 1
+            print(f"wasm_stack_budget: {profile:<7} FAIL the charged `Parser::parse_expr` is in no recursion "
+                  f"of direct calls")
+    bad += pwide
+    pscc = set().union(*(members[comp[f]] for f in heads))
+    # Every recursion reachable from `parse_program` must pass a charged
+    # call (checked by `unit_tail` below), or be one ALLOW names that holds
+    # no parser method: a parser recursion with no charge is bounded by
+    # nothing, so the wasm32 front end traps on its nesting. Reachable over
+    # `full`, so a recursion entered through an indirect call counts too; a
+    # recursion only `full`'s over-approximated targets reach (most of the
+    # program) is held to this only if it holds a parser method.
+    pkinds = defaultdict(int)
+    direct = reach(starts, calls)
+    for r in sorted({comp[f] for f in preach if f in comp}):
+        ms = members[r]
+        if len(ms) == 1 and r not in calls.get(r, ()):
+            continue
+        if any(charged(f, g) for f in ms for g in calls.get(f, ()) if g in ms):
+            pscc |= ms
+            continue
+        if r not in direct and not any(f in pname for f in ms):
+            continue
+        full_names = [re.sub(r"axon_core\[[0-9a-f]+\]::", "", name_of(f) or sym.get(f) or names.get(f, str(f)))
+                      for f in ms]
+        why = next((w for p, w in ALLOW if any(re.search(p, s) for s in full_names)), None)
+        if why is None or any(f in pname for f in ms):
+            bad += 1
+            print(f"wasm_stack_budget: {profile:<7} FAIL parser recursion without a charge: "
+                  f"{sorted(label(f).replace('<parser::Parser>::', '') for f in ms)[:4]}")
+            continue
+        pkinds[why] += 1
+    unit_of, pstate = {}, {}
+
+    def unit_tail(f):
+        # Deepest frames from entering f to its next charged call.
+        nonlocal bad
+        if f in unit_of:
+            return unit_of[f][0]
+        if pstate.get(f) == 1:
+            bad += 1
+            print(f"wasm_stack_budget: {profile:<7} FAIL parser recursion without a charge through {label(f)}")
+            return 0
+        pstate[f] = 1
+        best, arg = 0, None
+        for g in sorted(calls.get(f, ())):
+            if g in pscc and not charged(f, g):
+                t = unit_tail(g)
+                if t > best:
+                    best, arg = t, g
+        pstate[f] = 2
+        unit_of[f] = (frame.get(f, 16) + best, arg)
+        return unit_of[f][0]
+
+    unit, worst_fn = 0, None
+    for f in sorted(heads & pscc):
+        u = unit_tail(f)
+        if u > unit:
+            unit, worst_fn = u, f
+    chain, g = [], worst_fn
+    while g is not None:
+        chain.append(f"{label(g).replace('<parser::Parser>::', '')} {frame.get(g, 16)}")
+        g = unit_of[g][1]
+    ok = expr_depth * unit <= budget
+    bad += not ok
+    print(f"wasm_stack_budget: {profile:<7} {'parser':<24} {expr_depth * unit:>6} <= {budget:<6} "
+          + ("ok" if ok and not pwide else "FAIL")
+          + f"  (MAX_EXPR_DEPTH {expr_depth} x {unit} B per unit: {' + '.join(chain)}"
+          + (", unsound: the recursion runs through indirect calls)" if pwide else ")"))
     print("\n".join(summary))
     print(f"wasm_stack_budget: {profile:<7} other recursion reachable from eval: "
           + ", ".join(f"{k} {v}" for k, v in sorted(kinds.items())))
+    print(f"wasm_stack_budget: {profile:<7} other recursion reachable from parse_program: "
+          + (", ".join(f"{k} {v}" for k, v in sorted(pkinds.items())) or "none"))
     return 1 if bad else 0
 
 

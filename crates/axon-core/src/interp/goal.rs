@@ -1187,7 +1187,7 @@ impl<'p> Interp<'p> {
     pub(super) fn history(&self, name: &str) -> Value {
         let mut out: Vec<Value> = Vec::new();
         if name.is_empty() {
-            return Value::Array(Rc::new(out));
+            return Value::Array(Rc::new(out.into()));
         }
         let scores_store = self.provenance.borrow();
         let inputs_store = self.provenance_inputs.borrow();
@@ -1203,7 +1203,7 @@ impl<'p> Interp<'p> {
                 }
             }
         }
-        Value::Array(Rc::new(out))
+        Value::Array(Rc::new(out.into()))
     }
 
     /// Drop the recorded `(input, score)` history for an `@[adaptive]` fn so

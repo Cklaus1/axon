@@ -1,0 +1,23 @@
+let DEPTH = 100
+// vm_wasm_depth: exit0
+// AX-59 drop probe: 100 levels of recursion (under the 128 guard), then a
+// chain of DEPTH closures, each capturing the previous one, built and
+// dropped at the bottom (never called). On wasm32 its drop runs at most
+// `DROP_INLINE_DEPTH` levels deep (interp.rs `bounded_drop`, the capture
+// cell). scripts/vm_wasm_depth.sh runs it at DEPTH 100000 and requires
+// exit 0.
+fn build(n: i64) -> i64 {
+    let f = |x: i64| x
+    for i in 0..n {
+        let g = f
+        f = |x: i64| g(x) + 1
+    }
+    n
+}
+fn r(k: i64, n: i64) -> i64 {
+    if k == 0 { build(n) } else { r(k - 1, n) }
+}
+fn main() -> i64 {
+    println(to_str(r(100, DEPTH)))
+    0
+}

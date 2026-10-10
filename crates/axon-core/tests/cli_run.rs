@@ -340,6 +340,374 @@ fn host_await_runs_identically_on_wasm_wasip1() {
 }
 
 #[test]
+fn wasm_drops_deep_values_ax59() {
+    // AX-59: dropping a 100,000-node enum list, a dict nested 100,000 deep and
+    // a 100,000-closure chain, and a 100,000-node list under 100 levels of
+    // recursion, used to trap wasmtime's default stack in the drop glue
+    // (exit 134). Each now exits 0 under both engines.
+    wasm_nesting_parity("ax59");
+}
+
+#[test]
+fn wasm_deep_source_gives_e0000_ax60() {
+    // AX-60: source nested past the wasm32 front-end limit (parentheses 300
+    // and 5,000 deep, 1,000-term `+` and string chains, a nested `Some`
+    // pattern, an `Option<` type, nested calls and blocks) used to run, or
+    // trap in the parser or a later walk. Each now exits 2 with E0000
+    // `expression nesting too deep (limit N)` at the expression's start.
+    wasm_nesting_parity("ax60");
+}
+
+#[test]
+fn wasm_host_await_val_no_copy_ax61() {
+    // AX-61: `host_await_val` deep-copied its payload before finding there is
+    // no host driver, and the copy of a long closure body or a 100,000-node
+    // list trapped. Now: exit 101 (`no host driver` or the recursion-limit
+    // panic), never a trap; a `Chan` payload's refusal names the same path as
+    // native; a `str` payload still round-trips byte-identically.
+    wasm_nesting_parity("ax61");
+}
+
+/// Run `scripts/wasm_nesting_parity.sh <case>` (compilebench AX-59/60/61:
+/// axon-run.wasm under wasmtime's default stack, both engines) and require
+/// its PASS. Skips, and records the skip, if the wasm target or wasmtime is
+/// unavailable.
+fn wasm_nesting_parity(case: &str) {
+    let script = format!(
+        "{}/../../scripts/wasm_nesting_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let out = harness(&script)
+        .arg(case)
+        .output()
+        .expect("run wasm_nesting_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if harness_skipped(&out, &stdout, &stderr, &script) {
+        eprintln!("wasm/wasmtime unavailable — wasm nesting {case} skipped:\n{stdout}{stderr}");
+        note_harness_skip(&format!("wasm/wasmtime unavailable — wasm nesting {case}"));
+        return;
+    }
+    assert!(
+        out.status.success() && stdout.contains("wasm_nesting_parity: PASS ("),
+        "wasm nesting {case} must pass:\n{stdout}{stderr}"
+    );
+}
+
+#[test]
+fn native_nesting_limit_unchanged_ax60() {
+    // AX-60 lowered the nesting limit on wasm32 only. Native keeps 4,000:
+    // source nested 300 deep and a 1,000-term chain run, and 5,000 nested
+    // parentheses are refused with the 4,000 limit, not 224. And native
+    // keeps `parse_type_def`'s rewind: a `type` base past the limit (an
+    // `Option<` 5,000 deep around a tuple element whose `where` predicate is
+    // 5,000 parentheses deep, so native's limit trips in it) is reparsed as
+    // an enum, giving that parse's syntax error, not the nesting refusal.
+    let dir = std::env::temp_dir().join(format!("axon_native_nest_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |name: &str, line: String| {
+        let f = dir.join(format!("{name}.ax"));
+        std::fs::write(
+            &f,
+            format!("fn f(x: i64) -> i64 {{ x }}\nfn main() -> i64 {{\n    {line}\n    0\n}}\n"),
+        )
+        .unwrap();
+        axon().args(["run", f.to_str().unwrap()]).output().unwrap()
+    };
+    let nest = |open: &str, leaf: &str, close: &str, n: usize| {
+        format!("{}{leaf}{}", open.repeat(n), close.repeat(n))
+    };
+    let accepted = [
+        (
+            "paren300",
+            format!(
+                "let x = {}\n    println(to_str(x))",
+                nest("(", "1", ")", 300)
+            ),
+        ),
+        (
+            "chain",
+            format!("let x = 1{}\n    println(to_str(x))", " + 1".repeat(999)),
+        ),
+        (
+            "strchain",
+            format!(
+                "let x = \"a\"{}\n    println(to_str(str_len(x)))",
+                " + \"a\"".repeat(999)
+            ),
+        ),
+        (
+            "calls",
+            format!(
+                "let x = {}\n    println(to_str(x))",
+                nest("f(", "1", ")", 300)
+            ),
+        ),
+        (
+            "blocks",
+            format!(
+                "let x = {}\n    println(to_str(x))",
+                nest("{ ", "1", " }", 300)
+            ),
+        ),
+    ];
+    for (name, line) in accepted {
+        let out = run(name, line);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "native must accept {name}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let want = if name == "chain" || name == "strchain" {
+            "1000\n"
+        } else {
+            "1\n"
+        };
+        assert_eq!(String::from_utf8_lossy(&out.stdout), want, "{name} output");
+    }
+    let out = run(
+        "paren5000",
+        format!("let x = {}", nest("(", "1", ")", 5000)),
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "native refuses 5,000 parentheses: {stderr}"
+    );
+    assert!(
+        stderr.contains("expression nesting too deep (limit 4000)"),
+        "native keeps its 4,000 limit: {stderr}"
+    );
+    let f = dir.join("tdef_rewind.ax");
+    std::fs::write(
+        &f,
+        format!(
+            "type P = {}(i64 where {}){}\nfn main() -> i64 {{ println(\"ok\") 0 }}\n",
+            "Option<".repeat(5000),
+            nest("(", "1", ")", 5000),
+            ">".repeat(5000)
+        ),
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "native rejects the rewound enum parse: {stderr}"
+    );
+    assert!(
+        stderr.contains("\"line\":1,\"col\":16,\"message\":\"unexpected token: Lt, expected item")
+            && !stderr.contains("expression nesting too deep"),
+        "native rewinds a too-deep `type` base to the enum parse: {stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn native_guard_borrow_e0606() {
+    // `walk_expr` visits match guards on every target (AX-60), so the borrow
+    // check sees a guard that reads an array lent `&mut` to the same call.
+    // Before, the guard was skipped: the program ran and printed `5 5`.
+    let f = std::env::temp_dir().join(format!("axon_guard_e0606_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn f(a: &mut [i64], k: i64) -> i64 { a[0] = k k }\n\
+         fn main() -> i64 {\n    \
+         let a = [1, 2, 3]\n    \
+         let r = f(&mut a, match 1 { n if a[0] > 0 => 5, _ => 0 })\n    \
+         println(\"{r} {a[0]}\")\n    \
+         0\n}\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "guard borrow must be refused: {stderr}"
+    );
+    assert!(
+        stderr.contains("\"code\":\"E0606\"")
+            && stderr
+                .contains("is borrowed `&mut` and also used by another argument of the same call"),
+        "want E0606: {stderr}"
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "", "nothing runs");
+}
+
+#[test]
+fn native_guard_assign_in_place() {
+    // `walk_expr` visits match guards (AX-60), so eval's `mentions_var` sees
+    // a guard that assigns the target of `s = s + …` / `xs = arr_push(xs, …)`
+    // and skips the in-place append; the output follows plain evaluation
+    // order (the target is read before the guard runs). Before, the append
+    // ran on the guard's value: `zza` and `3`.
+    let cases = [
+        (
+            "guard_assign_str",
+            "fn main() {\n    \
+             let s = \"start\"\n    \
+             s = s + match 1 { n if { s = \"zz\"\n true } => \"a\", _ => \"b\" }\n    \
+             println(s)\n}\n",
+            "starta\n",
+        ),
+        (
+            "guard_assign_arr",
+            "fn main() {\n    \
+             let xs = [1]\n    \
+             xs = arr_push(xs, match 1 { n if { xs = [7, 7]\n true } => 2, _ => 3 })\n    \
+             println(to_str(len(xs)))\n}\n",
+            "2\n",
+        ),
+    ];
+    for (tag, src, want) in cases {
+        for engine in ["tree", "vm"] {
+            let out = vm_run(tag, src, engine, false);
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "[{tag} {engine}] {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&out.stdout),
+                want,
+                "[{tag} {engine}]"
+            );
+        }
+    }
+}
+
+#[test]
+fn native_guard_pure_e1207() {
+    // `walk_expr` visits match guards (AX-60), so the checker's purity pass
+    // sees a non-pure fn passed as a value in an `@[pure]` fn's guard.
+    // Before, the guard was skipped: the program ran and printed `1`.
+    let src = "fn noisy(x: i64) -> i64 { x }\n\
+               fn apply(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }\n\
+               @[pure]\n\
+               fn p(x: i64) -> i64 { match x { n if apply(noisy, n) > 0 => 1, _ => 0 } }\n\
+               fn main() {\n    \
+               println(to_str(p(1)))\n}\n";
+    for engine in ["tree", "vm"] {
+        let out = vm_run("guard_pure_e1207", src, engine, false);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "[{engine}] {stderr}");
+        assert!(
+            stderr.contains("\"code\":\"E1207\"")
+                && stderr.contains("`@[pure]` function `p` performs an impure operation: non-pure function `noisy`"),
+            "[{engine}] want E1207 naming `noisy`: {stderr}"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "",
+            "[{engine}] nothing runs"
+        );
+    }
+}
+
+#[test]
+fn native_guard_tier_e0910() {
+    // `walk_expr` visits match guards (AX-60), so codegen's per-call `tier:`
+    // check sees an `ai_complete(…, tier:)` in a guard and refuses the build.
+    // Before, the guard was skipped: `axon build` succeeded, and the binary
+    // would route the call to the default model while `axon run` honours
+    // the tier.
+    let src = "fn ok_len(r: Result<str, str>) -> i64 { match r { Ok(s) => str_len(s), Err(e) => 0 } }\n\
+               fn main() -> i64 {\n    \
+               let r = match 1 { n if ok_len(ai_complete(\"hi\", tier: \"cheap\")) > 1000000 => 1, _ => 2 }\n    \
+               println(to_str(r))\n    \
+               0\n}\n";
+    let f = tmp_ax("guard_tier_e0910", src);
+    let bin = std::env::temp_dir().join(format!("axon_guard_tier_{}", std::process::id()));
+    let _ = std::fs::remove_file(&bin);
+    let out = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .env("AXON_AI_MOCK", "1")
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    if codegen_absent(&msg) {
+        note_harness_skip("axon build (no codegen feature)");
+        return;
+    }
+    let built = bin.exists();
+    let _ = std::fs::remove_file(&bin);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "guard `tier:` must be refused: {msg}"
+    );
+    assert!(
+        msg.contains("codegen error [E0910]: native codegen cannot honor the per-call AI tier"),
+        "want the E0910 per-call tier refusal: {msg}"
+    );
+    assert!(!built, "a refused build leaves no binary");
+}
+
+#[test]
+fn native_guard_write_unaliases() {
+    // `walk_expr` visits match guards (AX-60), so codegen's
+    // `written_place_roots` sees a guard's `a[0] = 9` and copies `a` for
+    // `let b = a` (AX-08 copy-on-alias). Before, the guard was skipped: `b`
+    // shared `a`'s buffer and the binary printed `9 9 1`.
+    let src = "fn main() -> i64 {\n    \
+               let a = [1, 2, 3]\n    \
+               let b = a\n    \
+               let r = match 1 { n if { a[0] = 9\n true } => 1, _ => 2 }\n    \
+               println(\"{b[0]} {a[0]} {r}\")\n    \
+               0\n}\n";
+    let interp = interp_stdout("guard_write_unaliases", src);
+    assert_eq!(interp, "1 9 1", "`axon run`");
+    let Some(native) = native_stdout("guard_write_unaliases", src) else {
+        note_harness_skip("axon build (no codegen feature)");
+        return;
+    };
+    assert_eq!(native, interp, "native != interpreter");
+}
+
+#[test]
+fn native_guard_w0002() {
+    // `children()` yields match guards (AX-60), so the resolver's W0002
+    // sees `x` read in a guard of `let x = match ..` and names the
+    // self-referencing re-declaration. Before, the guard was skipped and
+    // W0002 said only that `x` shadows the outer binding.
+    let src = "fn main() -> i64 {\n    \
+               let x = 5\n    \
+               let x = match 1 { n if x > 0 => 1, _ => 2 }\n    \
+               println(to_str(x))\n    \
+               0\n}\n";
+    let f = tmp_ax("guard_w0002", src);
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        msg.contains("W0002") && msg.contains("`let x = …` re-declares `x` from its own value"),
+        "want the self-referencing W0002: {msg}"
+    );
+}
+
+#[test]
 fn wasm_browser_host_await_round_trips_r7c() {
     // R15 §13 B1: host_await works in the BROWSER substrate — a suspending program
     // run by the axon-wasm interpreter gets its replies from an imported (JS)
@@ -35258,11 +35626,12 @@ fn vm_engine_trace_names_each_compiled_body_once_under_vm_only() {
     let err = String::from_utf8_lossy(&vm.stderr);
     // Each body's lines come once, on its first run, though `fib` runs 177
     // times. Every node of every body compiles (S2 the struct literal, S3
-    // the method call).
+    // the method call), and `fib` qualifies for the pure tier (S11).
     assert_eq!(
         err,
         "vm: main 12 ops, 0 tree nodes\n\
          vm: fib 6 ops, 0 tree nodes\n\
+         vm: purefn fib 8 ins\n\
          vm: P::get 1 ops, 0 tree nodes\n"
     );
     let tree = vm_run("trace", VM_FIB_SRC, "tree", true);
@@ -36267,6 +36636,113 @@ fn vm_pure_fold_decline() {
         .collect();
     assert_eq!(leaf, ["vm: fold-leaf main::lambda#0"], "{err}");
 }
+
+// ── R50 S10: array elements in pure loops (`vm_index_`) ─────────────────────
+
+/// R50 S10 red test (§8): sieve's two `while` loops (`flags[j] = false` and
+/// the counting loop's `if flags[k]`) run in registers, and its `for`-less
+/// outer loop keeps its `Pure` condition. S9 prints `0 loops` for them.
+#[test]
+fn vm_index_sieve_loops() {
+    let src = std::fs::read_to_string(fixture("vm_perf/sieve.ax"))
+        .expect("read sieve.ax")
+        .replace("50000000", "1000");
+    let (code, stdout, stderr, counts) = vm_pure_case("index_sieve", &src, &[("main", 0)], "main");
+    assert_eq!((code, stdout.as_str()), (Some(0), "168\n"), "{stderr}");
+    assert_eq!(counts, (1, 2));
+}
+
+/// R50 S10: element reads and writes, `if`/`else if` chains and a `for` over
+/// an inclusive range in registers. The array `ys` shares with `xs` keeps
+/// its elements (the first write copies, as the tree's does). In the second
+/// loop only `big[3]` doubles past `i64`, so iterations 0-2 commit in
+/// registers and the overflow comes in the last iteration of `0..=3`: it
+/// declines, and the generic loop re-runs that iteration from the counter
+/// and arrays written back: the tree's panic.
+#[test]
+fn vm_index_writes_copy_and_replay_panics() {
+    let src = "fn main() -> i64 {\n    let xs = arr_repeat(1, 10)\n    let ys = xs\n    for i in 1..10 {\n        \
+               xs[i] = xs[i - 1] * 3 + i\n        if xs[i] > 100 { xs[i] = xs[i] - 100 } else if xs[i] > 50 { xs[i] = 0 } \
+               else { xs[i] = xs[i] + 1 }\n    }\n    println(to_str(xs[9]) + \" \" + to_str(ys[9]))\n    \
+               let big = arr_repeat(1, 4)\n    big[3] = 4611686018427387904\n    let k = 0\n    for i in 0..=3 {\n        \
+               k = k + 1\n        big[i] = big[i] + big[i]\n    }\n    println(to_str(k))\n    0\n}\n";
+    let (code, stdout, stderr, counts) = vm_pure_case("index_writes", src, &[("main", 0)], "main");
+    assert_eq!((code, stdout.as_str()), (Some(101), "8 1\n"), "{stderr}");
+    assert_eq!(
+        stderr,
+        "axon: panic: integer overflow: 4611686018427387904 + 4611686018427387904 exceeds i64\n"
+    );
+    assert_eq!(counts, (0, 2));
+}
+
+/// R50 S10: an out-of-bounds write declines and the generic loop gives the
+/// tree's panic; an assignment to the `for` variable lasts only to the end
+/// of its iteration: the next iteration takes the counter's value (46 =
+/// 10+11+12+13; a variable coupled to the counter would end after one
+/// iteration with 10).
+#[test]
+fn vm_index_out_of_bounds_and_for_variable() {
+    let fv = "fn main() -> i64 {\n    let s = 0\n    for i in 0..4 {\n        i = i + 10\n        s = s + i\n    }\n    \
+              println(to_str(s))\n    0\n}\n";
+    let (code, stdout, stderr, counts) = vm_pure_case("index_for_var", fv, &[("main", 0)], "main");
+    assert_eq!((code, stdout.as_str()), (Some(0), "46\n"), "{stderr}");
+    assert_eq!(counts, (0, 1));
+    let src = "fn main() -> i64 {\n    let xs = arr_repeat(0, 5)\n    let s = 0\n    for i in 0..10 {\n        \
+               i = i * 2\n        s = s + i\n        xs[i] = s\n    }\n    println(to_str(s))\n    0\n}\n";
+    let (code, stdout, stderr, counts) = vm_pure_case("index_oob", src, &[("main", 0)], "main");
+    assert_eq!(
+        (code, stdout.as_str(), stderr.as_str()),
+        (
+            Some(101),
+            "",
+            "axon: panic: index 6 out of bounds (len 5)\n"
+        )
+    );
+    assert_eq!(counts, (0, 1));
+}
+
+/// R50 S10: an element of another kind (an `i32` stored into an `i64`
+/// array) declines the iteration that reads it, after that iteration wrote
+/// another array: the write is undone and the generic loop redoes it once.
+/// `&&` over element reads, and `bool`/`f64` elements, stay in registers.
+#[test]
+fn vm_index_decline_undoes_the_iteration() {
+    let src = "fn main() -> i64 {\n    let t: i32 = 5\n    let xs = arr_repeat(1, 4)\n    xs[2] = t\n    \
+               let ys = arr_repeat(0, 4)\n    let s = 0\n    for i in 0..4 {\n        ys[i] = ys[i] + 10\n        \
+               s = s + 1\n        s = s + xs[i]\n    }\n    \
+               println(to_str(s) + \" \" + to_str(ys[1]) + \" \" + to_str(ys[2]) + \" \" + to_str(ys[3]))\n    \
+               let fs = arr_repeat(1.5, 6)\n    let flags = arr_repeat(true, 6)\n    let n = 0\n    let j = 0\n    \
+               while j < 6 {\n        if flags[j] && fs[j] > 1.0 { n = n + 1 flags[j] = false }\n        j = j + 1\n    }\n    \
+               println(to_str(n) + \" \" + to_str(flags[5]))\n    0\n}\n";
+    let (code, stdout, stderr, counts) = vm_pure_case("index_undo", src, &[("main", 0)], "main");
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "12 10 10 10\n6 false\n"),
+        "{stderr}"
+    );
+    assert_eq!(counts, (0, 2));
+}
+
+/// R50 S10: an iteration that writes one element twice (`a[i] = a[i] + 1`,
+/// then `a[i] = a[i] * 10`) and then declines undoes both writes last
+/// first, so the element is back to its value before the iteration (5, not
+/// the first write's 6) when the generic loop redoes it.
+#[test]
+fn vm_index_decline_undoes_a_double_write() {
+    let src = "fn main() -> i64 {\n    let t: i32 = 5\n    let xs = arr_repeat(1, 3)\n    xs[2] = t\n    \
+               let a = arr_repeat(5, 3)\n    let s = 0\n    for i in 0..3 {\n        a[i] = a[i] + 1\n        \
+               a[i] = a[i] * 10\n        s = s + xs[i]\n    }\n    \
+               println(to_str(s) + \" \" + to_str(a[0]) + \" \" + to_str(a[1]) + \" \" + to_str(a[2]))\n    0\n}\n";
+    let (code, stdout, stderr, counts) =
+        vm_pure_case("index_undo_twice", src, &[("main", 0)], "main");
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "7 60 60 60\n"),
+        "{stderr}"
+    );
+    assert_eq!(counts, (0, 1));
+}
+
 // ── R50 S5: call costs (`vm_fastcall_`) ─────────────────────────────────────
 
 /// R50 S5: `axon run` on `src` under `engine`, with the AI mock on and a
@@ -36779,4 +37255,334 @@ fn vm_defer_mutcall_after_tree_entry() {
     let (deferred, compiled) = vm_defer_trace("defer_mutcall", &src);
     assert_eq!(deferred, ["swap"]);
     assert_eq!(compiled, ["main", "swap"]);
+}
+
+// ── R50 S11: pure-`i64` function tier (`vm_purefn_`) ────────────────────────
+
+/// R50 S11: the `vm: purefn <fn> <n> ins` lines of `src` under
+/// `AXON_ENGINE=vm AXON_VM_EAGER=1 AXON_VM_TRACE=1`, as `<fn>` in trace order.
+fn vm_purefn_built(tag: &str, src: &str) -> Vec<String> {
+    let out = vm_run(tag, src, "vm", true);
+    String::from_utf8_lossy(&out.stderr)
+        .lines()
+        .filter_map(|l| l.strip_prefix("vm: purefn "))
+        .filter_map(|rest| rest.split_once(' ').map(|(name, _)| name.to_string()))
+        .collect()
+}
+
+/// R50 S11: `axon run` on `src` under `engine` with `AXON_MAX_DEPTH=depth`,
+/// as `(exit, stdout, stderr)`.
+fn vm_purefn_depth_run(
+    tag: &str,
+    src: &str,
+    engine: &str,
+    depth: u32,
+) -> (Option<i32>, String, String) {
+    let f = tmp_ax(&format!("vm_purefn_{tag}"), src);
+    let mut c = axon();
+    c.arg("run")
+        .arg(&f)
+        .env("AXON_MAX_DEPTH", depth.to_string())
+        .env_remove("AXON_VM_TRACE");
+    vm_engine_env(&mut c, engine);
+    let out = c.output().expect("spawn axon run");
+    let _ = std::fs::remove_file(&f);
+    (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// R50 S11 red test (§8): `fib` (an `i64` param and return, a body of
+/// compares, arithmetic and calls to itself) runs on the pure tier: its
+/// register code is built once, traced `vm: purefn fib 8 ins`, and the
+/// output is the tree's. Before S11 no `vm: purefn` line existed.
+#[test]
+fn vm_purefn_fib_in_registers() {
+    let src = "fn fib(n: i64) -> i64 {\n    if n < 2 { n } else { fib(n - 1) + fib(n - 2) }\n}\n\
+               fn main() -> i64 {\n    println(to_str(fib(25)))\n    println(to_str(fib(10)))\n    0\n}\n";
+    let (code, stdout, stderr) = vm_scalar_case("purefn_fib", src, &[("fib", 0), ("main", 0)]);
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "75025\n55\n"),
+        "{stderr}"
+    );
+    let out = vm_run("purefn_fib", src, "vm", true);
+    let err = String::from_utf8_lossy(&out.stderr);
+    let lines: Vec<&str> = err
+        .lines()
+        .filter(|l| l.starts_with("vm: purefn "))
+        .collect();
+    assert_eq!(lines, ["vm: purefn fib 8 ins"], "{err}");
+}
+
+/// A [`vm_purefn_panics_replay`] case: (tag, fns, main body, exit, stdout,
+/// stderr fragment).
+type VmPurefnPanicCase = (
+    &'static str,
+    &'static str,
+    &'static str,
+    Option<i32>,
+    &'static str,
+    &'static str,
+);
+
+/// R50 §4 S11: a pure call whose code would panic anywhere in its
+/// recursion (overflow at depth, `/` or `%` by zero, `MIN / -1`) is
+/// declined whole and replayed on the generic path: the tree's panic text
+/// and exit 101. A shift out of range wraps on the tree, so it is the
+/// tree's value. Each fn is built on the tier, so the replay is exercised.
+#[test]
+fn vm_purefn_panics_replay() {
+    let cases: [VmPurefnPanicCase; 6] = [
+        (
+            "overflow",
+            "fn p(n: i64) -> i64 {\n    if n == 0 { 1 } else { 2 * p(n - 1) }\n}\n",
+            "println(to_str(p(10)))\n    println(to_str(p(70)))",
+            Some(101),
+            "1024\n",
+            "integer overflow",
+        ),
+        (
+            "div_zero",
+            "fn q(n: i64, a: i64, d: i64) -> i64 {\n    if n == 0 { a / d } else { q(n - 1, a, d) }\n}\n",
+            "println(to_str(q(40, 9, 2)))\n    println(to_str(q(40, 9, 0)))",
+            Some(101),
+            "4\n",
+            "integer division by zero",
+        ),
+        (
+            "rem_zero",
+            "fn q(n: i64, a: i64, d: i64) -> i64 {\n    if n == 0 { a % d } else { q(n - 1, a, d) }\n}\n",
+            "println(to_str(q(40, 9, 2)))\n    println(to_str(q(40, 9, 0)))",
+            Some(101),
+            "1\n",
+            "integer remainder by zero",
+        ),
+        (
+            "min_div",
+            "fn q(n: i64, a: i64, d: i64) -> i64 {\n    if n == 0 { a / d } else { q(n - 1, a, d) }\n}\n",
+            "let m = -9223372036854775807 - 1\n    println(to_str(q(40, m, 2)))\n    println(to_str(q(40, m, -1)))",
+            Some(101),
+            "-4611686018427387904\n",
+            "overflow",
+        ),
+        (
+            "shift",
+            "fn q(n: i64, a: i64, d: i64) -> i64 {\n    if n == 0 { (a << d) + (a >> d) } else { q(n - 1, a, d) }\n}\n",
+            "println(to_str(q(40, 7, 2)))\n    println(to_str(q(40, 7, 70)))\n    println(to_str(q(40, 7, 64)))",
+            Some(0),
+            "29\n448\n14\n",
+            "",
+        ),
+        (
+            "overflow_mid",
+            "fn s(n: i64, acc: i64) -> i64 {\n    if n == 0 { acc } else { s(n - 1, acc * 3 + 1) }\n}\n",
+            "println(to_str(s(5, 0)))\n    println(to_str(s(60, 0)))",
+            Some(101),
+            "121\n",
+            "integer overflow",
+        ),
+    ];
+    for (tag, fns, body, exit, out, msg) in cases {
+        let src = format!("{fns}fn main() -> i64 {{\n    {body}\n    0\n}}\n");
+        let tag = format!("purefn_panic_{tag}");
+        let (code, stdout, stderr) = vm_same_both_engines(&tag, &src);
+        assert_eq!((code, stdout.as_str()), (exit, out), "[{tag}] {stderr}");
+        assert!(stderr.contains(msg), "[{tag}] {stderr}");
+        assert_eq!(
+            vm_purefn_built(&tag, &src).len(),
+            1,
+            "[{tag}] not on the tier"
+        );
+    }
+}
+
+/// R50 §4 S11 recursion limit: the tier budgets the frames the depth limit
+/// leaves past the call's own, so a pure chain completes at
+/// `AXON_MAX_DEPTH=N` and panics at `N - 1` exactly as the tree does,
+/// whether entered from `main` or from inside a generic recursion at depth
+/// 12. A warm-up `d(1)` from the same caller first caches the callee, so
+/// the measured call is a proven `Op::CallFast` under eager compilation
+/// and enters the tier itself (`call_fast_inline` → `pure_try_opnds`) from
+/// `main` and from `wrap(0, ..)`; the first call to `d` is unproven and
+/// runs `dispatch_named`, which never enters the tier.
+#[test]
+fn vm_purefn_depth_boundary() {
+    let d = "fn d(n: i64) -> i64 {\n    if n == 0 { 0 } else { d(n - 1) + 1 }\n}\n";
+    // main (1) + d(48..0) (49) = 50 frames; main (1) + wrap(10..0) (11) +
+    // d(37..0) (38) = 50. The warm-up `d(1)` needs 2 frames fewer.
+    let progs = [
+        (
+            "chain",
+            format!("{d}fn main() -> i64 {{\n    println(to_str(d(1)))\n    println(to_str(d(48)))\n    0\n}}\n"),
+            "1\n48\n",
+        ),
+        (
+            "nested",
+            format!(
+                "{d}fn wrap(k: i64, n: i64) -> i64 {{\n    let m = k - 1\n    \
+                 if k == 0 {{\n        println(to_str(d(1)))\n        d(n)\n    }} else {{ wrap(m, n) }}\n}}\n\
+                 fn main() -> i64 {{\n    println(to_str(wrap(10, 37)))\n    0\n}}\n"
+            ),
+            "1\n37\n",
+        ),
+    ];
+    for (tag, src, out) in &progs {
+        assert_eq!(vm_purefn_built(tag, src), ["d"], "[{tag}]");
+        for depth in [49, 50, 51] {
+            let tree = vm_purefn_depth_run(tag, src, "tree", depth);
+            for engine in ["vm", "vm-default"] {
+                let vm = vm_purefn_depth_run(tag, src, engine, depth);
+                assert_eq!(vm, tree, "[{tag}] {engine} AXON_MAX_DEPTH={depth}");
+            }
+            if depth == 49 {
+                assert_eq!((tree.0, tree.1.as_str()), (Some(101), "1\n"), "[{tag}]");
+                assert!(
+                    tree.2.contains("recursion limit exceeded (49)"),
+                    "[{tag}] {}",
+                    tree.2
+                );
+            } else {
+                assert_eq!(
+                    (tree.0, tree.1.as_str()),
+                    (Some(0), *out),
+                    "[{tag}] {}",
+                    tree.2
+                );
+            }
+        }
+    }
+}
+
+/// R50 §4 S11 qualification: a fn that would otherwise qualify stays off
+/// the tier when a param is refinement-typed, sized (`i32`) or `&mut`, when
+/// it is `@[agent]` or a goal fn, or when it returns `Uncertain` (a body the
+/// tier would lower otherwise, so only the return type keeps it off): no
+/// `vm: purefn` line, the tree's output. So do condition shapes the tier
+/// does not lower: a comparison of two locals, a literal on the left, `&&`,
+/// `||`, and a compound operand (`n * 2 > 10`).
+#[test]
+fn vm_purefn_not_qualified() {
+    let cases: [(&str, &str, &str); 11] = [
+        (
+            "refine",
+            "type Pos = i64 where _ > 0\nfn f(n: Pos) -> i64 {\n    if n < 2 { 1 } else { f(n - 1) + 1 }\n}\n\
+             fn main() -> i64 {\n    println(to_str(f(10)))\n    0\n}\n",
+            "10\n",
+        ),
+        (
+            "i32",
+            "fn f(n: i32) -> i32 {\n    if n < 2 { n } else { f(n - 1) + f(n - 2) }\n}\n\
+             fn main() -> i64 {\n    println(to_str(f(15)))\n    0\n}\n",
+            "610\n",
+        ),
+        (
+            "mut",
+            "fn f(a: &mut [i64], n: i64) -> i64 {\n    if n == 0 { 0 } else { f(&mut a, n - 1) + 1 }\n}\n\
+             fn main() -> i64 {\n    let a = [1]\n    println(to_str(f(&mut a, 10)))\n    0\n}\n",
+            "10\n",
+        ),
+        (
+            "agent",
+            "@[agent]\nfn f(n: i64) -> i64 {\n    if n < 2 { n } else { f(n - 1) + 1 }\n}\n\
+             fn main() -> i64 {\n    println(to_str(f(10)))\n    0\n}\n",
+            "10\n",
+        ),
+        (
+            "goal",
+            "@[adaptive]\nfn quality(x: i64) -> i64 { 100 - abs_i64(x - 7) * 10 }\n\
+             @[goal(metric: quality, target: 60, max_evals: 40, test_set: [5, 7, 9])]\n\
+             fn opt() -> i64 { goal_met }\nfn main() -> i64 {\n    println(to_str(opt()))\n    0\n}\n",
+            "1\n",
+        ),
+        (
+            "uncertain",
+            "fn u(n: i64) -> Uncertain<i64> {\n    if n < 2 { n } else { u(n - 1) }\n}\n\
+             fn main() -> i64 {\n    let _x = u(10)\n    println(\"ok\")\n    0\n}\n",
+            "ok\n",
+        ),
+        (
+            "local_local",
+            "fn mx(a: i64, b: i64) -> i64 {\n    if a > b { a } else { b }\n}\n\
+             fn main() -> i64 {\n    println(to_str(mx(3, 9) + mx(8, 2)))\n    0\n}\n",
+            "17\n",
+        ),
+        (
+            "lit_left",
+            "fn f(n: i64) -> i64 {\n    if 0 == n { 0 } else { f(n - 1) + 2 }\n}\n\
+             fn main() -> i64 {\n    println(to_str(f(10)))\n    0\n}\n",
+            "20\n",
+        ),
+        (
+            "and",
+            "fn f(n: i64) -> i64 {\n    if n > 0 && n < 100 { f(n - 1) + 1 } else { 0 }\n}\n\
+             fn main() -> i64 {\n    println(to_str(f(10)))\n    0\n}\n",
+            "10\n",
+        ),
+        (
+            "or",
+            "fn f(n: i64) -> i64 {\n    if n < 0 || n > 100 { 0 } else { f(n - 1) + 1 }\n}\n\
+             fn main() -> i64 {\n    println(to_str(f(10)))\n    0\n}\n",
+            "11\n",
+        ),
+        (
+            "compound",
+            "fn f(n: i64) -> i64 {\n    if n * 2 > 10 { f(n - 1) + 1 } else { n }\n}\n\
+             fn main() -> i64 {\n    println(to_str(f(10)))\n    0\n}\n",
+            "10\n",
+        ),
+    ];
+    for (tag, src, out) in cases {
+        let tag = format!("purefn_noq_{tag}");
+        let (code, stdout, stderr) = vm_same_both_engines(&tag, src);
+        assert_eq!((code, stdout.as_str()), (Some(0), out), "[{tag}] {stderr}");
+        assert_eq!(vm_purefn_built(&tag, src), Vec::<String>::new(), "[{tag}]");
+    }
+}
+
+/// R50 §4 S11: a declined call's replay turns nested pure entry off only
+/// while it runs. A scheduler fiber's panic (a declined overflow in `p`)
+/// is caught, and after it `q`, never entered before, is still built on
+/// the tier and `p` returns its value.
+#[test]
+fn vm_purefn_replay_flag_restored() {
+    let src = "fn p(n: i64) -> i64 {\n    if n == 0 { 1 } else { 2 * p(n - 1) }\n}\n\
+               fn boom(n: i64) -> i64 {\n    let m = n\n    p(m)\n}\n\
+               fn q(n: i64) -> i64 {\n    if n == 0 { 0 } else { q(n - 1) + 2 }\n}\n\
+               fn main() -> i64 {\n    let f = scheduler_spawn(\"boom\", 70)\n    let done = scheduler_run()\n    \
+               println(to_str(done))\n    println(to_str(scheduler_failed(f)))\n    \
+               println(to_str(q(20)))\n    println(to_str(p(10)))\n    0\n}\n";
+    let (code, stdout, stderr) = vm_same_both_engines("purefn_flag", src);
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "0\ntrue\n40\n1024\n"),
+        "{stderr}"
+    );
+    assert_eq!(vm_purefn_built("purefn_flag", src), ["p", "q"]);
+}
+
+/// R50 §4 S11: two mutually recursive fns are built together, a 2-param fn
+/// qualifies, and a pure fn called from non-pure code with a literal or a
+/// local argument (`Op::CallFast`'s inline and stack forms) takes the tier.
+#[test]
+fn vm_purefn_mutual_and_multi_param() {
+    let src = "fn is_even(n: i64) -> i64 {\n    if n == 0 { 1 } else { is_odd(n - 1) }\n}\n\
+               fn is_odd(n: i64) -> i64 {\n    if n == 0 { 0 } else { is_even(n - 1) }\n}\n\
+               fn k(a: i64, b: i64) -> i64 {\n    if a == 0 { b } else { k(a - 1, b + a) }\n}\n\
+               fn fib(n: i64) -> i64 {\n    if n < 2 { n } else { fib(n - 1) + fib(n - 2) }\n}\n\
+               fn main() -> i64 {\n    let s = 0\n    for i in 0..3 {\n        \
+               s = s + is_even(1001) + is_odd(77) + k(100, 1) + fib(22) + k(i, s % 7)\n    }\n    \
+               println(to_str(s))\n    println(to_str(fib(15)))\n    0\n}\n";
+    let (code, stdout, stderr) = vm_same_both_engines("purefn_mutual", src);
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "68304\n610\n"),
+        "{stderr}"
+    );
+    let built = vm_purefn_built("purefn_mutual", src);
+    let mut sorted = built.clone();
+    sorted.sort();
+    assert_eq!(sorted, ["fib", "is_even", "is_odd", "k"], "{built:?}");
 }
