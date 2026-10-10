@@ -279,31 +279,44 @@ impl LambdaBody {
     }
 
     /// The compiled body of `code`, whose `compiled` this is, compiled by
-    /// `init` on the first call.
+    /// `init` on the first call. `None`, nothing kept, when `init` gives up
+    /// (wasm32 stack budget spent, AX-56); a later call tries again.
     fn get<'a>(
         &'a self,
         code: &'a ClosureCode,
-        init: impl FnOnce(&'a Expr) -> Body<'a>,
-    ) -> &'a Body<'a> {
+        init: impl FnOnce(&'a Expr) -> Option<Body<'a>>,
+    ) -> Option<&'a Body<'a>> {
         debug_assert!(code
             .compiled
             .as_ref()
             .is_some_and(|c| std::ptr::eq(c, self)));
-        self.body.get_or_init(|| {
-            let body = init(&code.body);
-            // SAFETY: `body` borrows only `code.body`, the body of the
-            // `ClosureCode` that owns `self`. A `ClosureCode` is only ever
-            // built inside an `Rc` and never moved out of it or mutated
-            // (sym.rs), so those nodes stay where they are until the code is
-            // dropped, and `self.body` is dropped with it. The extended
-            // lifetime never escapes: `get` returns the body at `'a` again,
-            // and `Body` is covariant in its lifetime.
-            unsafe { std::mem::transmute::<Body<'a>, Body<'static>>(body) }
-        })
+        if let Some(body) = self.body.get() {
+            return Some(body);
+        }
+        let body = init(&code.body)?;
+        // SAFETY: `body` borrows only `code.body`, the body of the
+        // `ClosureCode` that owns `self`. A `ClosureCode` is only ever
+        // built inside an `Rc` and never moved out of it or mutated
+        // (sym.rs), so those nodes stay where they are until the code is
+        // dropped, and `self.body` is dropped with it. The extended
+        // lifetime never escapes: `get` returns the body at `'a` again,
+        // and `Body` is covariant in its lifetime. `init` (the compiler)
+        // runs no program code, so the cell is still empty here.
+        let body = unsafe { std::mem::transmute::<Body<'a>, Body<'static>>(body) };
+        Some(self.body.get_or_init(|| body))
     }
 }
 
 impl Body<'_> {
+    /// AX-56: the body compiled to one `Tree` op (trace `vm: <f> 1 ops, 1
+    /// tree nodes`). The op loop would only add its own native frames to the
+    /// tree-walker's, so every caller runs such a body on the tree instead;
+    /// on wasm32 that keeps the default VM's stack per level at the tree's.
+    #[inline(always)]
+    pub(super) fn lone_tree(&self) -> bool {
+        matches!(&*self.ops, [Op::Tree(_)])
+    }
+
     /// R50 S4: the value of a body that is one int or float operation on
     /// locals and literals (`|acc, x| acc + x`), computed without an
     /// activation of the op loop by the scalar fast path its `Bin` op tries
@@ -1240,104 +1253,184 @@ impl<'p> Interp<'p> {
     /// Run a fn body: compiled under [`Engine::Vm`] for a fn-table entry, on
     /// the tree otherwise. `call_fn_in` is the only caller, at the point where
     /// it would evaluate `entry.def.body`; everything before and after the
-    /// body stays there (spec §4 Activation).
-    #[inline]
+    /// body stays there (spec §4 Activation). Each engine has its own frame,
+    /// so the tree-walker's stays small on wasm32 (AX-56: `exec`, inlined in
+    /// the VM's, is not on the tree's), while both charge the same budget.
+    #[inline(always)]
     pub(super) fn run_body(&self, entry: &FnEntry<'_>, env: &mut Env) -> R {
-        match self.engine {
-            Engine::Tree => self.eval(&entry.def.body, env),
-            Engine::Vm => self.run_body_vm(entry, env),
+        if self.engine == Engine::Vm {
+            self.run_body_vm(entry, env)
+        } else {
+            self.run_body_tree(entry, env)
         }
     }
 
-    #[inline(never)]
+    /// [`Interp::run_body`] under [`Engine::Tree`].
+    #[inline]
+    fn run_body_tree(&self, entry: &FnEntry<'_>, env: &mut Env) -> R {
+        nest_guard!(self, RUN_BODY_TREE);
+        self.eval(&entry.def.body, env)
+    }
+
+    /// [`Interp::run_body`] under [`Engine::Vm`]. A body the VM leaves on the
+    /// tree this time (S9 first entry, or not in the fn table) runs from
+    /// here, so its native frames are the tree-walker's own (AX-56): the
+    /// first-entry rule returns before the body runs. So does a body that
+    /// compiled to one `Tree` op ([`Body::lone_tree`]). A compiled body runs
+    /// from here too, after [`Interp::compile_body`] has compiled it and
+    /// returned, so the compiling frame is never live under the body: a
+    /// recursion through the VM does not stack that frame on any level, even
+    /// when a body the budget keeps from compiling is retried on every entry
+    /// (AX-56).
+    #[cfg_attr(target_arch = "wasm32", inline(never))]
+    #[cfg_attr(not(target_arch = "wasm32"), inline)]
     fn run_body_vm(&self, entry: &FnEntry<'_>, env: &mut Env) -> R {
-        if let Some(body) = entry.compiled.as_ref().and_then(std::cell::OnceCell::get) {
-            return self.exec(body, env);
+        nest_guard!(self, RUN_BODY_VM);
+        let body = match entry.compiled.as_ref().and_then(std::cell::OnceCell::get) {
+            Some(body) => Some(body),
+            None if !self.first_entry_on_tree(entry) => self.compile_body(entry)?,
+            None => None,
+        };
+        match body {
+            Some(body) if !body.lone_tree() => self.exec(body, env),
+            _ => self.eval(&entry.def.body, env),
         }
-        self.run_body_first(entry, env)
     }
 
-    /// [`Interp::run_body_vm`] for a body not compiled yet: on the tree for
-    /// an owned entry, and for a table entry's first entry unless the body
-    /// is hot on entry (`FnEntry::hot`) or `AXON_VM_EAGER=1` (S9); compiled
-    /// otherwise.
+    /// Compile a fn-table body on the entry that compiles it (S9's second
+    /// entry, or the first when hot or eager). `Ok(None)` when the compiler
+    /// found the wasm32 stack budget spent; the caller then runs the body on
+    /// the tree this time.
     #[cold]
     #[inline(never)]
-    fn run_body_first(&self, entry: &FnEntry<'_>, env: &mut Env) -> R {
-        let Some(cell) = &entry.compiled else {
+    fn compile_body<'e, 'q>(&self, entry: &'e FnEntry<'q>) -> Result<Option<&'e Body<'q>>, Flow> {
+        nest_guard!(self, COMPILE_BODY);
+        Ok(self.compile_entry(entry))
+    }
+
+    /// S9's first-entry rule for a body not compiled yet: `true` when it
+    /// runs on the tree this time, which is always for an owned entry (not
+    /// in the fn table), and for a table entry's first entry unless the body
+    /// is hot on entry (`FnEntry::hot`) or `AXON_VM_EAGER=1`.
+    #[cold]
+    #[inline(never)]
+    fn first_entry_on_tree(&self, entry: &FnEntry<'_>) -> bool {
+        if entry.compiled.is_none() {
             self.vm_trace_tree(entry, "not in fn table");
-            return self.eval(&entry.def.body, env);
-        };
+            return true;
+        }
         if !self.vm_eager && !entry.entered.replace(true) && !entry.hot {
             if self.vm_trace {
                 eprintln!("vm: defer {}", self.vm_body_name(entry));
             }
-            return self.eval(&entry.def.body, env);
+            return true;
         }
-        let body = cell.get_or_init(|| {
-            let body = compile(self, &entry.def.body);
-            if self.vm_trace {
-                self.vm_trace_compiled(entry, &body);
-            }
-            body
-        });
-        self.exec(body, env)
+        false
+    }
+
+    /// Compile a fn-table entry's body into its cell (its first compiled
+    /// run). Only [`Interp::compile_body`] calls it, and [`Interp::run_body_vm`]
+    /// enters that only for an entry [`Interp::first_entry_on_tree`] kept off
+    /// the tree, so the cell exists. `None`, the cell left empty, when the
+    /// compiler found the wasm32 stack budget spent (AX-56): the caller runs
+    /// the body on the tree this time.
+    #[cold]
+    #[inline(never)]
+    fn compile_entry<'e, 'q>(&self, entry: &'e FnEntry<'q>) -> Option<&'e Body<'q>> {
+        let cell = entry
+            .compiled
+            .as_ref()
+            .expect("first_entry_on_tree keeps owned entries on the tree");
+        let body = compile(self, &entry.def.body)?;
+        if self.vm_trace {
+            self.vm_trace_compiled(entry, &body);
+        }
+        Some(cell.get_or_init(|| body))
     }
 
     /// Run a lambda body (S4): compiled under [`Engine::Vm`] for a code the
     /// resolution table built, on the tree otherwise. `call_closure_owned_by`
     /// is the only caller, with the env it built (captures, then the
     /// parameters' scope); everything before and after the body stays there.
-    /// A `Flow::Return(v)` out of the body is its value `Ok(v)`.
+    /// A `Flow::Return(v)` out of the body is its value `Ok(v)`. A compiled
+    /// body runs from here (inlined into the caller), after
+    /// [`Interp::compile_lambda`] has compiled it and returned, so no
+    /// compiling frame is live under the body; a body the VM leaves on the
+    /// tree runs in [`Interp::run_lambda_tree`], the tree-walker's own frame
+    /// (AX-56, as [`Interp::run_body`] for fn bodies).
     #[inline(always)]
     pub(super) fn run_lambda(&self, code: &ClosureCode, env: &mut Env) -> R {
         if self.engine == Engine::Vm {
-            if let Some(body) = code.compiled.as_ref().and_then(|lb| lb.compiled()) {
-                if let Some(v) = body.leaf_value(env, false) {
-                    return Ok(v);
+            match code.compiled.as_ref() {
+                Some(lb) => {
+                    let body = match lb.compiled() {
+                        Some(body) => Some(body),
+                        None => self.compile_lambda(code, lb)?,
+                    };
+                    if let Some(body) = body {
+                        if let Some(v) = body.leaf_value(env, false) {
+                            return Ok(v);
+                        }
+                        if !body.lone_tree() {
+                            return self.exec(body, env);
+                        }
+                    }
                 }
-                return self.exec(body, env);
+                None if self.vm_trace => self.vm_trace_unresolved_lambda(code),
+                None => {}
             }
         }
-        self.run_lambda_cold(code, env)
+        self.run_lambda_tree(code, env)
     }
 
-    /// [`Interp::run_lambda`] on the tree, or for a body not compiled yet
-    /// (on the tree on its first entry unless it is hot on entry or
-    /// `AXON_VM_EAGER=1`, S9).
+    /// [`Interp::run_lambda`] on the tree: under [`Engine::Tree`], and under
+    /// [`Engine::Vm`] for a body not compiled this time (unresolved, an S9
+    /// first entry, the wasm32 budget spent while compiling, or one `Tree`
+    /// op). Its `nest_cost` is the VM's op loop ([`RUN`]), so a tree lambda
+    /// level charges at least what a compiled VM one does.
     #[inline(never)]
-    fn run_lambda_cold(&self, code: &ClosureCode, env: &mut Env) -> R {
-        let out = match (self.engine, &code.compiled) {
-            (Engine::Tree, _) => self.eval(&code.body, env),
-            (Engine::Vm, None) => {
-                // No name and no compiled body: one line per code instance.
-                if self.vm_trace && !code.traced.replace(true) {
-                    eprintln!("vm: tree <anon>: unresolved lambda");
-                }
-                self.eval(&code.body, env)
-            }
-            (Engine::Vm, Some(lb))
-                if !self.vm_eager && !lb.entered.replace(true) && !lb.hot.get() =>
-            {
-                if self.vm_trace {
-                    eprintln!("vm: defer {}", lb.name);
-                }
-                self.eval(&code.body, env)
-            }
-            (Engine::Vm, Some(lb)) => {
-                let body = lb.get(code, |src| {
-                    let body = compile(self, src);
-                    if self.vm_trace {
-                        self.vm_trace_named(&lb.name, &body);
-                    }
-                    body
-                });
-                return self.exec(body, env);
-            }
-        };
-        match out {
+    fn run_lambda_tree(&self, code: &ClosureCode, env: &mut Env) -> R {
+        nest_guard!(self, RUN_LAMBDA_TREE);
+        match self.eval(&code.body, env) {
             Err(Flow::Return(v)) => Ok(v),
             out => out,
+        }
+    }
+
+    /// S9's first-entry rule and the compile for a lambda body not compiled
+    /// yet: `Ok(None)` when it runs on the tree this time (its first entry,
+    /// unless it is hot on entry or `AXON_VM_EAGER=1`, or the compiler found
+    /// the wasm32 stack budget spent). Returns before the body runs.
+    #[cold]
+    #[inline(never)]
+    fn compile_lambda<'a>(
+        &self,
+        code: &'a ClosureCode,
+        lb: &'a LambdaBody,
+    ) -> Result<Option<&'a Body<'a>>, Flow> {
+        nest_guard!(self, COMPILE_LAMBDA);
+        if !self.vm_eager && !lb.entered.replace(true) && !lb.hot.get() {
+            if self.vm_trace {
+                eprintln!("vm: defer {}", lb.name);
+            }
+            return Ok(None);
+        }
+        Ok(lb.get(code, |src| {
+            let body = compile(self, src)?;
+            if self.vm_trace {
+                self.vm_trace_named(&lb.name, &body);
+            }
+            Some(body)
+        }))
+    }
+
+    /// The `AXON_VM_TRACE` line for a lambda with no compiled body (not in
+    /// the resolution table): one line per code instance.
+    #[cold]
+    #[inline(never)]
+    fn vm_trace_unresolved_lambda(&self, code: &ClosureCode) {
+        if !code.traced.replace(true) {
+            eprintln!("vm: tree <anon>: unresolved lambda");
         }
     }
 
@@ -1366,8 +1459,19 @@ impl<'p> Interp<'p> {
         let mut scopes = 0u32;
         let mut pc = 0usize;
         let mut out = self.run(body, env, &mut st, &mut scopes, &mut pc);
-        if matches!(out, Err(Flow::Break | Flow::Continue)) {
-            out = self.exec_catching(body, env, &mut st, 0, &mut scopes, &mut pc, out);
+        while let Err(flow @ (Flow::Break | Flow::Continue)) = &out {
+            if !self.catch_flow(
+                body,
+                env,
+                &mut st,
+                0,
+                &mut scopes,
+                &mut pc,
+                matches!(flow, Flow::Break),
+            ) {
+                break;
+            }
+            out = self.run(body, env, &mut st, &mut scopes, &mut pc);
         }
         for _ in 0..scopes {
             env.pop();
@@ -1404,8 +1508,19 @@ impl<'p> Interp<'p> {
         let mut scopes = 0u32;
         let mut pc = 0usize;
         let mut out = self.run(body, env, st, &mut scopes, &mut pc);
-        if matches!(out, Err(Flow::Break | Flow::Continue)) {
-            out = self.exec_catching(body, env, st, base, &mut scopes, &mut pc, out);
+        while let Err(flow @ (Flow::Break | Flow::Continue)) = &out {
+            if !self.catch_flow(
+                body,
+                env,
+                st,
+                base,
+                &mut scopes,
+                &mut pc,
+                matches!(flow, Flow::Break),
+            ) {
+                break;
+            }
+            out = self.run(body, env, st, &mut scopes, &mut pc);
         }
         for _ in 0..scopes {
             env.pop();
@@ -1419,14 +1534,18 @@ impl<'p> Interp<'p> {
         }
     }
 
-    /// [`Interp::exec`] after `run` stopped on a `Flow::Break`/`Continue`:
-    /// the innermost loop of this body holding the failing op catches it
-    /// (pops back to its scopes, trims the stack to `base` plus its height,
-    /// resumes at its target); with no such loop the flow propagates.
-    /// Repeats until `run` ends some other way.
+    /// After `run` stopped on a `Flow::Break` (`brk`) or `Continue`: the
+    /// innermost loop of this body holding the failing op catches it (pops
+    /// back to its scopes, trims the stack to `base` plus its height, sets
+    /// `*pc` to its target) and `true` is returned, so the caller runs the
+    /// body on from there; with no such loop, `false` and the flow
+    /// propagates. It never runs the body itself, so a caught flow keeps no
+    /// second `run` frame live under a recursion that continues after it
+    /// (AX-56: a level costs the same stack before and after a `break`).
+    #[cold]
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
-    fn exec_catching(
+    fn catch_flow(
         &self,
         body: &Body<'_>,
         env: &mut Env,
@@ -1434,30 +1553,24 @@ impl<'p> Interp<'p> {
         base: usize,
         scopes: &mut u32,
         pc: &mut usize,
-        mut out: R,
-    ) -> R {
-        loop {
-            match out {
-                Err(flow @ (Flow::Break | Flow::Continue)) => {
-                    // `pc` is one past the op that failed.
-                    let Some(l) = body.loop_at(*pc as u32 - 1) else {
-                        return Err(flow);
-                    };
-                    let (keep, to) = match flow {
-                        Flow::Break => (l.scopes, l.brk),
-                        _ => (l.cont_scopes, l.cont),
-                    };
-                    while *scopes > keep {
-                        env.pop();
-                        *scopes -= 1;
-                    }
-                    st.truncate(base + l.height as usize);
-                    *pc = to as usize;
-                    out = self.run(body, env, st, scopes, pc);
-                }
-                out => return out,
-            }
+        brk: bool,
+    ) -> bool {
+        // `pc` is one past the op that failed.
+        let Some(l) = body.loop_at(*pc as u32 - 1) else {
+            return false;
+        };
+        let (keep, to) = if brk {
+            (l.scopes, l.brk)
+        } else {
+            (l.cont_scopes, l.cont)
+        };
+        while *scopes > keep {
+            env.pop();
+            *scopes -= 1;
         }
+        st.truncate(base + l.height as usize);
+        *pc = to as usize;
+        true
     }
 
     /// The op loop: runs from `*pc` until the body's value is ready (the ops
@@ -1472,6 +1585,7 @@ impl<'p> Interp<'p> {
         scopes_out: &mut u32,
         pc_out: &mut usize,
     ) -> R {
+        nest_guard!(self, RUN);
         let ops = &body.ops[..];
         let mut pc = *pc_out;
         let mut scope_count = *scopes_out;
@@ -2173,6 +2287,7 @@ impl<'p> Interp<'p> {
         env: &mut Env,
         st: &mut Vec<Value>,
     ) -> Result<(), Flow> {
+        nest_guard!(self, STORE_LOCAL_STACK_SLOW);
         let l = Opnd::Local(*l);
         match scalar_fast(op, &l, &Opnd::Stack, env, st) {
             Some(s) => store_scalar(env, var, s),
@@ -2196,6 +2311,7 @@ impl<'p> Interp<'p> {
         env: &mut Env,
         st: &mut Vec<Value>,
     ) -> Result<(), Flow> {
+        nest_guard!(self, STORE_BIN_SLOW);
         if let Some(value) = in_place {
             if appendable(env, var)
                 && self.assign_in_place(var.s, var.slot, var.name, value, env)?
@@ -2427,6 +2543,7 @@ impl<'p> Interp<'p> {
     /// value or `finish_record` over the field values on top of the stack.
     #[inline(never)]
     fn record_op(&self, e: &Expr, st: &mut Vec<Value>) -> R {
+        nest_guard!(self, RECORD_OP);
         let Expr::StructLit { name, fields } = e else {
             malformed()
         };
@@ -2471,6 +2588,7 @@ impl<'p> Interp<'p> {
         env: &mut Env,
         st: &mut Vec<Value>,
     ) -> R {
+        nest_guard!(self, CALL_UNPROVEN);
         let base = st.len();
         for a in args {
             match self.opnd_value(a, env) {
@@ -2498,6 +2616,7 @@ impl<'p> Interp<'p> {
     /// `CallGuard` and `give_frame` restore the rest.
     #[inline(never)]
     fn call_fast(&self, entry: &FnEntry<'p>, st: &mut Vec<Value>, at: usize) -> R {
+        nest_guard!(self, CALL_FAST);
         debug_assert!(compile::fast_call_blocker(entry, self.refine_preds.is_empty()).is_none());
         self.set_call_tier(None);
         let mut frame = self.take_frame();
@@ -2536,6 +2655,7 @@ impl<'p> Interp<'p> {
     /// one parameter, so the arity check cannot fail).
     #[inline(never)]
     fn call_fast_arg(&self, entry: &FnEntry<'p>, a: Value, st: &mut Vec<Value>) -> R {
+        nest_guard!(self, CALL_FAST_ARG);
         debug_assert!(compile::fast_call_blocker(entry, self.refine_preds.is_empty()).is_none());
         debug_assert_eq!(entry.params.len(), 1);
         self.set_call_tier(None);
@@ -2567,6 +2687,7 @@ impl<'p> Interp<'p> {
         env: &mut Env,
         st: &mut Vec<Value>,
     ) -> R {
+        nest_guard!(self, CALL_FAST_LOCAL_INT_SLOW);
         let a = self.bin_slow(op, &Opnd::Local(*l), &Opnd::Int(r), env, st)?;
         st.push(a);
         if proven.get() || self.fast_call_proven(callee, entry, proven) {
@@ -2629,6 +2750,7 @@ impl<'p> Interp<'p> {
         env: &Env,
         st: &mut Vec<Value>,
     ) -> R {
+        nest_guard!(self, CALL_FAST_INLINE);
         debug_assert!(compile::fast_call_blocker(entry, self.refine_preds.is_empty()).is_none());
         debug_assert_eq!(args.len(), entry.params.len());
         if let Some(v) = self.leaf_call(entry, args, env) {
@@ -2745,7 +2867,7 @@ impl<'p> Interp<'p> {
         let out = match entry.compiled.as_ref().and_then(std::cell::OnceCell::get) {
             // A leaf body never sees `goal_met` (it declines one that names
             // it), so it is not bound for one (cost only).
-            Some(body) => match body.leaf_value(env, true) {
+            Some(body) if !body.lone_tree() => match body.leaf_value(env, true) {
                 Some(v) => return Ok(scalar_return(entry, v)),
                 None => match self.leaf_store(body, env) {
                     Some(out) => out,
@@ -2756,9 +2878,9 @@ impl<'p> Interp<'p> {
                     }
                 },
             },
-            None => {
+            _ => {
                 env.vars.push((SYM_GOAL_MET, Value::Int(0)));
-                self.run_body_vm(entry, env)
+                self.run_body(entry, env)
             }
         };
         match out {
@@ -2795,6 +2917,7 @@ impl<'p> Interp<'p> {
         env: &mut Env,
         st: &mut Vec<Value>,
     ) -> R {
+        nest_guard!(self, CALL_MUT_OP);
         let Expr::Call {
             callee,
             args: arg_nodes,
@@ -3090,6 +3213,7 @@ impl<'p> Interp<'p> {
         st: &mut Vec<Value>,
         at: usize,
     ) -> R {
+        nest_guard!(self, CALL_MUT_GENERAL);
         let mut argv = self.take_args(args.len());
         let mut plain = st.drain(at..);
         for o in args {

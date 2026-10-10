@@ -45,6 +45,16 @@
 #         swap      S8     swapcall  loop_generic  1M     730   per `swap(&mut a, 0, 1)` call, body included
 #       A row passes when (prog - base) <= budget * units, compared exactly.
 #
+#   scripts/vm_perf_gate.sh --compile
+#       S9 row (R50 §4 S9, compilebench AX-58): big-compile (1,002 fns, each
+#       entered once; a verbatim copy of compilebench's
+#       benchmarks/big-compile/axon/main.ax) on the same binary under three
+#       configurations, five runs each, median of five: AXON_ENGINE=tree,
+#       AXON_ENGINE=vm (deferred compile) and AXON_ENGINE=vm AXON_VM_EAGER=1.
+#       Passes when default <= 1.01 x tree and default <= 0.95 x eager
+#       (integer comparison, no rounding). The second check is the red one:
+#       eager compile-on-first-entry costs about 1.09 x tree.
+#
 # Exit: 0 every selected median within budget and every output golden;
 #       1 any median over budget or any output differing;
 #       2 "not measured": perf cannot count instructions:u on that CPU (or the
@@ -79,6 +89,9 @@ REPROS=(
 )
 # ────────────────────────────────────────────────────────────────────────────
 
+# S9 row: prog, runs, default <= tree * TREE_PCT / 100, default <= eager * EAGER_PCT / 100
+COMPILE_ROW="big-compile 5 101 95"
+
 MODE=programs
 SEL=""
 while [ $# -gt 0 ]; do
@@ -91,7 +104,8 @@ while [ $# -gt 0 ]; do
       MODE=repros
       if [ $# -gt 1 ] && [[ "$2" != --* ]]; then SEL="$2"; shift; fi ;;
     --repros=*) MODE=repros; SEL="${1#--repros=}" ;;
-    -h|--help) sed -n '2,50p' "$0"; exit 0 ;;
+    --compile) MODE=compile ;;
+    -h|--help) sed -n '2,62p' "$0"; exit 0 ;;
     *) echo "vm_perf_gate: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
@@ -142,25 +156,30 @@ fi
 fails=0
 declare -A MEDIAN=()
 
-# measure <prog> — three runs; sets MEDIAN[prog]; counts golden mismatches.
-measure() {
-  local prog="$1" k c counts=() golden="$FIX/$1.golden"
-  [ -n "${MEDIAN[$prog]+x}" ] && return 0
+# measure_as <key> <prog> <runs> <engine> <eager> — <runs> runs of <prog> under
+# AXON_ENGINE=<engine> (AXON_VM_EAGER=<eager>, empty = off); sets MEDIAN[key]
+# to the median count; counts golden mismatches.
+measure_as() {
+  local key="$1" prog="$2" runs="$3" engine="$4" eager="$5" k c counts=() golden="$FIX/$2.golden"
+  [ -n "${MEDIAN[$key]+x}" ] && return 0
   [ -f "$FIX/$prog.ax" ] && [ -f "$golden" ] || not_measured "missing $FIX/$prog.ax or its golden"
-  for k in 1 2 3; do
-    c="$(AXON_ENGINE=vm perf_count "$WORK/$prog.$k" "$AXON" run "$FIX/$prog.ax")"
-    [ -n "$c" ] || not_measured "perf did not count $prog (run $k): $(grep -v '^#' "$WORK/$prog.$k.perf" | head -2 | tr '\n' ' ')"
-    if [ "$(cat "$WORK/$prog.$k.rc")" != 0 ] || ! cmp -s "$WORK/$prog.$k.out" "$golden"; then
-      echo "vm_perf_gate: $prog run $k: exit $(cat "$WORK/$prog.$k.rc"), output differs from $prog.golden"
-      diff "$golden" "$WORK/$prog.$k.out" | head -5 | sed 's/^/      /'
-      head -5 "$WORK/$prog.$k.err" | sed 's/^/      stderr: /'
+  for k in $(seq 1 "$runs"); do
+    c="$(AXON_ENGINE="$engine" AXON_VM_EAGER="$eager" perf_count "$WORK/$key.$k" "$AXON" run "$FIX/$prog.ax")"
+    [ -n "$c" ] || not_measured "perf did not count $key (run $k): $(grep -v '^#' "$WORK/$key.$k.perf" | head -2 | tr '\n' ' ')"
+    if [ "$(cat "$WORK/$key.$k.rc")" != 0 ] || ! cmp -s "$WORK/$key.$k.out" "$golden"; then
+      echo "vm_perf_gate: $key run $k: exit $(cat "$WORK/$key.$k.rc"), output differs from $prog.golden"
+      diff "$golden" "$WORK/$key.$k.out" | head -5 | sed 's/^/      /'
+      head -5 "$WORK/$key.$k.err" | sed 's/^/      stderr: /'
       fails=$((fails + 1))
     fi
     counts+=("$c")
   done
-  MEDIAN[$prog]="$(printf '%s\n' "${counts[@]}" | sort -n | sed -n 2p)"
-  echo "vm_perf_gate: measured $prog: ${counts[*]} -> median ${MEDIAN[$prog]}"
+  MEDIAN[$key]="$(printf '%s\n' "${counts[@]}" | sort -n | sed -n "$(( (runs + 1) / 2 ))p")"
+  echo "vm_perf_gate: measured $key: ${counts[*]} -> median ${MEDIAN[$key]}"
 }
+
+# measure <prog> — three runs under the shipping configuration; sets MEDIAN[prog].
+measure() { measure_as "$1" "$1" 3 vm ""; }
 
 group() { # 1234567 -> 1,234,567
   echo "$1" | sed -E ':a; s/^(-?[0-9]+)([0-9]{3})/\1,\2/; ta'
@@ -190,6 +209,19 @@ if [ "$MODE" = programs ]; then
     if [ "$m" -le "$budget" ]; then v="PASS"; else v="OVER"; fails=$((fails + 1)); fi
     printf 'vm_perf_gate: %-14s median %16s  budget %16s  %s\n' "$prog" "$(group "$m")" "$(group "$budget")" "$v"
   done
+elif [ "$MODE" = compile ]; then
+  read -r prog runs tree_pct eager_pct <<<"$COMPILE_ROW"
+  measure_as "$prog.tree" "$prog" "$runs" tree ""
+  measure_as "$prog.default" "$prog" "$runs" vm ""
+  measure_as "$prog.eager" "$prog" "$runs" vm 1
+  t="${MEDIAN[$prog.tree]}" d="${MEDIAN[$prog.default]}" e="${MEDIAN[$prog.eager]}"
+  if [ $((d * 100)) -le $((t * tree_pct)) ]; then v1="PASS"; else v1="OVER"; fails=$((fails + 1)); fi
+  if [ $((d * 100)) -le $((e * eager_pct)) ]; then v2="PASS"; else v2="OVER"; fails=$((fails + 1)); fi
+  ratio() { awk -v a="$1" -v b="$2" 'BEGIN { printf "%.4f", a / b }'; }
+  printf 'vm_perf_gate: compile %s default %s  tree %s  = %s x tree (<= %s/100)  %s\n' \
+    "$prog" "$(group "$d")" "$(group "$t")" "$(ratio "$d" "$t")" "$tree_pct" "$v1"
+  printf 'vm_perf_gate: compile %s default %s  eager %s  = %s x eager (<= %s/100)  %s\n' \
+    "$prog" "$(group "$d")" "$(group "$e")" "$(ratio "$d" "$e")" "$eager_pct" "$v2"
 else
   declare -A want=()
   if [ -z "$SEL" ]; then

@@ -39,11 +39,13 @@ if [ -z "$WASMRT" ]; then
   exit 0
 fi
 
-# R50 §8: the wasip1 interpreter reads AXON_ENGINE like native, but wasmtime
-# passes no host environment through unless asked. Forward the engine of the
-# caller so both legs run the same one (the native leg inherits it).
+# R50 §8: the wasip1 interpreter reads AXON_ENGINE and AXON_VM_EAGER like
+# native, but wasmtime passes no host environment through unless asked.
+# Forward the caller's so both legs run the same engine and compile mode (the
+# native leg inherits them).
 ENGINE_ENV=()
-[ -n "${AXON_ENGINE:-}" ] && ENGINE_ENV=(--env "AXON_ENGINE=$AXON_ENGINE")
+[ -n "${AXON_ENGINE:-}" ] && ENGINE_ENV+=(--env "AXON_ENGINE=$AXON_ENGINE")
+[ -n "${AXON_VM_EAGER:-}" ] && ENGINE_ENV+=(--env "AXON_VM_EAGER=$AXON_VM_EAGER")
 
 # A skip must prove its own reason. The previous probe piped rustup
 # into grep, discarding rustup's exit status and stderr, so a MISSING

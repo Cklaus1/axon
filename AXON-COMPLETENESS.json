@@ -588,6 +588,20 @@
       "gap": "ASSESSED. Not a Cargo dependency of anything: axon-core SHELLS OUT to `cargo build -p axon-rt` at link time, so the link is by convention, not by the dependency graph \u2014 removing the crate breaks nothing at cargo check and fails only at `axon build` link time. Its execution proof is the parity suite, which runs only under gate.sh --strict and never in CI."
     },
     {
+      "area": "compiler",
+      "subsystem": "crate axon-rt-ai",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "no",
+      "docs": "yes",
+      "evidence": [
+        "crates/axon-rt-ai/src/lib.rs",
+        "crates/axon-core/src/codegen/link.rs",
+        "crates/axon-core/tests/cli_run.rs"
+      ],
+      "gap": "ASSESSED. No code of its own: one staticlib bundling axon-rt and axon-ai over a single std (BUG_HUNT #43). `axon build` links it instead of libaxon_rt.a exactly when an AI builtin is reachable (link.rs Runtime::WithAi), proven by cli_run `native_binaries_link_the_ai_runtime_only_when_an_ai_builtin_is_reachable`. Like axon-rt it is built by shelling out to cargo at link time, not a Cargo dependency."
+    },
+    {
       "area": "experimental",
       "subsystem": "crate axon-signal",
       "implementation": "complete",
@@ -1492,7 +1506,7 @@
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
       "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb.",
-      "open": " WASM RECLASSIFIED from not-applicable to SILENTLY-IGNORED \u2014 measured, on the wasip1 interpreter (axon-run.wasm, release) under wasmtime 45. The reader is not gated off wasm32 (interp.rs resolve_max_depth), so the variable IS read there; what wasm cannot do is grow its stack (fixed at link, -zstack-size=64MiB), unlike native which scales the interpreter thread stack with the requested depth. With the runtime's own wasm-stack cap raised (-W max-wasm-stack=64MiB) so the interpreter's limit is what binds: default depth panics gracefully at 450 (exit 101); AXON_MAX_DEPTH=100 and =300 panic gracefully at 100 and 300; AXON_MAX_DEPTH=5000 and =100000 ran recursion to 3000 cleanly. So the variable RAISES a guard the stack was sized for, and the documented invariant \u2014 'the graceful recursion-limit panic always fires before a real stack overflow' \u2014 holds on native only.\nSECOND FINDING, larger, not predicted by the review: under wasmtime's DEFAULT stack (no -W flag), the interpreter traps with 'call stack exhausted' (exit 134) at recursion depths as low as 200 \u2014 BELOW its own 450 guard, with NO environment variable set. The code comment sizing that guard ('empirical overflow boundary ~700 frames \u2026 450 leaves a comfortable margin') assumes the full 64 MiB link-time stack is usable; the embedding runtime's own cap binds first. So on the shipped default, deep recursion on wasip1 is a TRAP, not the catchable panic native gives \u2014 independent of AXON_MAX_DEPTH. BLOCKING/OPEN DEFECT: wasm recursion guard sized against the link-time stack rather than the effective runtime stack."
+      "open": " WASM RECLASSIFIED from not-applicable to SILENTLY-IGNORED \u2014 measured, on the wasip1 interpreter (axon-run.wasm, release) under wasmtime 45. The reader is not gated off wasm32 (interp.rs resolve_max_depth), so the variable IS read there; what wasm cannot do is grow its stack (fixed at link, -zstack-size=64MiB), unlike native which scales the interpreter thread stack with the requested depth. With the runtime's own wasm-stack cap raised (-W max-wasm-stack=64MiB) so the interpreter's limit is what binds: default depth panics gracefully at 450 (exit 101); AXON_MAX_DEPTH=100 and =300 panic gracefully at 100 and 300; AXON_MAX_DEPTH=5000 and =100000 ran recursion to 3000 cleanly. So the variable RAISES a guard the stack was sized for, and the documented invariant \u2014 'the graceful recursion-limit panic always fires before a real stack overflow' \u2014 holds on native only.\nSECOND FINDING, larger, not predicted by the review: under wasmtime's DEFAULT stack (no -W flag), the interpreter traps with 'call stack exhausted' (exit 134) at recursion depths as low as 200 \u2014 BELOW its own 450 guard, with NO environment variable set. The code comment sizing that guard ('empirical overflow boundary ~700 frames \u2026 450 leaves a comfortable margin') assumes the full 64 MiB link-time stack is usable; the embedding runtime's own cap binds first. So on the shipped default, deep recursion on wasip1 is a TRAP, not the catchable panic native gives \u2014 independent of AXON_MAX_DEPTH. BLOCKING/OPEN DEFECT: wasm recursion guard sized against the link-time stack rather than the effective runtime stack. FIXED 2026-10-09 (compilebench AX-56): RECURSION_LIMIT is 128 on wasm32, below the shallowest default-stack depth of the four tests/fixtures/vm_depth chains (157 with the depth limit raised, measured 2026-10-09; the gate requires 1.2 × the guard, 154; under the default limit the budget stops the tree's closure chain at 104 debug / 93 release, the VM reaches 126), and a wasm32 native-stack byte budget (interp.rs nest_cost: every recursion through eval passes a guarded function charging its measured frame and unguarded callees, 448 KiB at the default limit) stops call levels nested in expressions, with bodies, handler arms, loops, callbacks and lambdas; scripts/vm_wasm_depth.sh checks the budget's soundness on both builds (scripts/wasm_stack_budget.py) and requires the graceful panic, not a trap, under wasmtime's default stack for the chains and 31 nesting probes, both engines and profiles. AXON_MAX_DEPTH scales both limits. Recursion over a value's depth (dropping a nested value) is outside the budget and can still trap (compilebench AX-59, open), as can the front end on deep source (compilebench AX-60, open: the parser on nesting, the checker on a long operator chain) and a deep copy of one source construct near the budget's edge (compilebench AX-61, open: a long closure body sent through `host_await_val`)."
     },
     {
       "name": "AXON_TEST_DOTENV_VAR",
@@ -1589,6 +1603,62 @@
       "evidence": "crates/axon-ledger/tests/maintenance_authorization.rs::claimed_identity_carries_authority_only_under_the_armed_dev_escape",
       "open": " CORRECTION to the reader set: not 'the axon-ledger CLI only'. It is also reached through Store::open_as -> Authority::resolve, which axon-signal's dashboard and MCP server and axon-ledger's own MCP server call. So the development escape also arms claim-as-authority in those SERVERS, not only in the CLI. Engine states unaffected (still no execution engine reads it); the stated scope of the escape was not.",
       "note": "Read by the axon-ledger CLI only, not by any Axon execution engine \u2014 hence not-applicable across all four engine columns rather than unknown. It is the explicit development-only escape that lets a CLAIMED identity (--as / AXON_PRINCIPAL) carry admin authority again; without it authority comes from the real uid via rbac.json authenticated_admins. Must be exactly `1`; `0`, `true`, `yes`, empty and `1 ` are all tested disarmed, so production is the default state."
+    },
+    {
+      "name": "AXON_ENGINE",
+      "category": "interpreter-scoped",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "not-applicable",
+        "wasm": "enforced",
+        "guest": "unsupported"
+      },
+      "evidence": "governance/specs/R50-register-vm.md",
+      "note": "Selects which engine runs fn and lambda bodies inside the interpreter (`vm`, the default, or `tree`); a natively built binary has no interpreter, so native is N/A. Any other value exits 2.",
+      "open": " [wasm: enforced] measured 2026-10-09 on axon-run.wasm (wasip1, release) under wasmtime 49: `vm` and `tree` both run, `bogus` exits 2 with `AXON_ENGINE must be \"vm\" or \"tree\"`. wasm32-unknown-unknown has no environment and takes the `axon_set_engine` export instead (R50 \u00a74 Activation). [guest: unsupported] axon-guest-init exports only AXON_PRINCIPAL, AXON_BUDGET_TOKENS, AXON_RUN_ID, AXON_ALLOWED_EFFECTS and AXON_SOURCE_HASH (crates/axon-guest-init/src/main.rs), so nothing delivers it to the guest's `axon run`; a launcher decision, same shape as AXON_STRICT."
+    },
+    {
+      "name": "AXON_VM_TRACE",
+      "category": "interpreter-scoped",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "not-applicable",
+        "wasm": "enforced",
+        "guest": "unsupported"
+      },
+      "evidence": "governance/specs/R50-register-vm.md",
+      "note": "`1` prints one stderr line per compiled body, Tree op, slow-path flag and deferred first entry (R50 \u00a73); stdout is unchanged. Diagnostic only, interpreter-only by construction.",
+      "open": " [wasm: enforced] measured 2026-10-09 on axon-run.wasm (wasip1, release) under wasmtime 49: `AXON_VM_TRACE=1` printed `vm: defer main`, `vm: f 1 ops, 0 tree nodes`, and nothing under AXON_ENGINE=tree. [guest: unsupported] axon-guest-init exports only AXON_PRINCIPAL, AXON_BUDGET_TOKENS, AXON_RUN_ID, AXON_ALLOWED_EFFECTS and AXON_SOURCE_HASH (crates/axon-guest-init/src/main.rs), so nothing delivers it to the guest's `axon run`; a launcher decision, same shape as AXON_STRICT."
+    },
+    {
+      "name": "AXON_VM_EAGER",
+      "category": "interpreter-scoped",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "not-applicable",
+        "wasm": "enforced",
+        "guest": "unsupported"
+      },
+      "evidence": "governance/specs/R50-register-vm.md",
+      "note": "`1` compiles every body on its first entry instead of deferring a body that is not hot on entry to its second (R50 \u00a74 S9). Cost only: stdout, stderr, exit code and provenance are identical either way.",
+      "open": " [wasm: enforced] measured 2026-10-09 on axon-run.wasm (wasip1, release) under wasmtime 49: with AXON_VM_EAGER=1 the trace showed `vm: main 7 ops` where the default showed `vm: defer main`. [guest: unsupported] axon-guest-init exports only AXON_PRINCIPAL, AXON_BUDGET_TOKENS, AXON_RUN_ID, AXON_ALLOWED_EFFECTS and AXON_SOURCE_HASH (crates/axon-guest-init/src/main.rs), so nothing delivers it to the guest's `axon run`; a launcher decision, same shape as AXON_STRICT."
+    },
+    {
+      "name": "AXON_RUNTIME_DIR",
+      "category": "launcher-side",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "enforced",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "crates/axon-core/src/codegen/link.rs",
+      "note": "Build-time input to `axon build`: the directory holding the prebuilt native runtime staticlibs (libaxon_rt.a, libaxon_rt_ai.a). When set it is the only place searched.",
+      "open": " READER (verified): codegen/link.rs (RUNTIME_DIR_VAR, read in the runtime locator), tested by cli_run `native_build_with_a_built_runtime_runs_no_cargo_and_ignores_the_callers_toolchain` and link.rs unit tests asserting the error names the variable. [wasm: not-applicable] the wasip1 AOT link picks its runtime through AXON_WASM_RT (main.rs find_wasm_axon_rt), never this variable. A program never reads it under any engine."
     }
   ],
   "false_greens": [

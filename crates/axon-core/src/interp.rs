@@ -906,6 +906,13 @@ pub struct Interp<'p> {
     /// fails with a catchable panic rather than overflowing the (large but
     /// finite) interpreter thread stack and aborting the process.
     call_depth: Cell<usize>,
+    /// AX-56: on wasm32, the native-stack bytes the interpreter frames live
+    /// right now have charged, bounded by `nest_limit` (see [`nest_cost`]).
+    #[cfg(target_arch = "wasm32")]
+    nest: Cell<usize>,
+    /// AX-56: `max_depth × NEST_PER_DEPTH` bytes, resolved once at build.
+    #[cfg(target_arch = "wasm32")]
+    nest_limit: usize,
     /// Effective recursion ceiling for this run — `RECURSION_LIMIT` by default,
     /// or `AXON_MAX_DEPTH` (clamped) when set. Resolved once at build time so
     /// every `call_fn` sees a consistent value.
@@ -1129,17 +1136,58 @@ struct HandlerFrame {
     /// the environment snapshot it ran in — so a non-tail / multi-shot arm can
     /// REPLAY the continuation (re-run the body, feeding the resume value at the
     /// intercepted op). Unused by the bare-tail-resume fast path.
-    body: crate::ast::Expr,
+    body: SrcRef<crate::ast::Expr>,
     env_snapshot: Vec<(Sym, Value)>,
 }
 
-/// A runtime handler arm: the payload binding, the arm body, and a snapshot of
-/// the environment where the handler was written (so the arm closes over it).
+/// A runtime handler arm: the arm as written, and a snapshot of the
+/// environment where the handler was written (so the arm closes over it).
 struct HandlerArmRt {
-    effect: String,
-    binding: crate::ast::Pattern,
-    body: crate::ast::Expr,
+    arm: SrcRef<crate::ast::HandlerArm>,
     captured: Vec<(Sym, Value)>,
+}
+
+impl HandlerArmRt {
+    /// The effect name this arm intercepts.
+    fn effect(&self) -> &str {
+        // SAFETY: a `HandlerArmRt` lives only in a `HandlerFrame`, which
+        // `SrcRef`'s invariant keeps inside the `with` that borrows the arm.
+        unsafe { &self.arm.get().effect }
+    }
+}
+
+/// A pointer into the program source held by a [`HandlerFrame`] or a
+/// [`ResumeCtx`], instead of a deep clone of the AST on every `with` entry
+/// (whose recursion over the source, and the drop after, nothing charged
+/// against the wasm32 stack budget, AX-56). Invariant: every frame and
+/// resume context holding one lives only within the `eval_with_handler`
+/// call that borrows the source it points into: the frame is pushed and
+/// popped there, `run_handler_arm` splits frames off and restores them, and
+/// pushes and pops its resume context, inside that call, with no early
+/// return in between.
+struct SrcRef<T>(std::ptr::NonNull<T>);
+
+impl<T> Clone for SrcRef<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T> Copy for SrcRef<T> {}
+
+impl<T> SrcRef<T> {
+    fn new(r: &T) -> Self {
+        SrcRef(std::ptr::NonNull::from(r))
+    }
+
+    /// The source this points into.
+    ///
+    /// # Safety
+    /// Only while the frame or resume context it came from is live (the
+    /// type's invariant); the caller picks a lifetime no longer than that.
+    unsafe fn get<'a>(self) -> &'a T {
+        // SAFETY: the caller upholds the invariant above.
+        unsafe { self.0.as_ref() }
+    }
 }
 
 /// Phase 6 (multi-shot resume): state for one in-flight continuation replay. A
@@ -1170,14 +1218,13 @@ struct ResumeReplay {
 /// servicing — the `with`-block body and the environment it ran in. A
 /// `resume(v)` evaluated in the arm replays this body (feeding `v` at the
 /// intercepted op) and returns the continuation's value to the arm, so the arm
-/// can resume again (multi-shot). Cloned cheaply (the body is an `Expr` already
-/// owned by the AST clone in `HandlerArmRt`).
+/// can resume again (multi-shot). Cloned cheaply (the body is a [`SrcRef`]).
 #[derive(Clone)]
 struct ResumeCtx {
     /// The handled effect name (the op the body performs once, fed by resume).
     effect: String,
     /// The `with`-block body to replay on each resume.
-    body: crate::ast::Expr,
+    body: SrcRef<crate::ast::Expr>,
     /// The environment snapshot the body originally evaluated in.
     env_snapshot: Vec<(Sym, Value)>,
 }
@@ -1192,16 +1239,133 @@ const RECURSION_LIMIT: usize = 6_000;
 
 /// On wasm32 the interpreter runs on the single linear-memory stack (no OS
 /// thread to size up — see [`on_deep_stack`]), so the recursion guard must
-/// trip before that stack overflows or a deep recursion *traps* the module
-/// instead of producing the graceful "recursion limit" panic native gives.
-/// With the 64 MiB wasm stack the build sets (`.cargo/config.toml`
-/// `-zstack-size`) the empirical overflow boundary is ~700 interpreter frames;
-/// 450 leaves a comfortable margin so the failure is the same observable,
-/// catchable panic as native (R7 §4.3 / BUG_HUNT #28). This is the bounded,
-/// documented host divergence: deep recursion fails the same *way*, at a lower
-/// *depth*, on wasm.
+/// trip before either stack the module runs on is exhausted, or a deep
+/// recursion *traps* the module instead of producing the graceful "recursion
+/// limit" panic native gives. Two stacks bound it: the 64 MiB linear stack the
+/// build sets (`.cargo/config.toml` `-zstack-size`), and the wasm engine's own
+/// native stack, which holds every wasm frame (wasmtime's default
+/// `max-wasm-stack` is 512 KiB). The second is reached first: one recursion
+/// level is several interpreter frames (16–704 bytes each), and under
+/// wasmtime's default the shallowest of the four chains in
+/// `tests/fixtures/vm_depth/` completes depth 157 (tree-walker, fn -> closure
+/// -> fn, debug build, depth limit raised; measured 2026-10-09), above 1.2×
+/// the guard. A call level
+/// nested inside expressions (a `with` body, `1 + (1 + (..))`, a builtin
+/// calling back into a closure, nested lambdas) takes more frames per level,
+/// so a native-stack budget ([`NEST_PER_DEPTH`], [`nest_cost`]) backs the
+/// depth guard. `scripts/vm_wasm_depth.sh` requires every chain, engine and
+/// profile to complete 1.2× the guard under the default stack, and every
+/// deeper probe to panic rather than trap (AX-56). This is the bounded,
+/// documented host divergence (R7 §4.3 / BUG_HUNT #28): deep recursion fails
+/// the same *way*, at a lower *depth*, on wasm; `AXON_MAX_DEPTH` raises it
+/// for a host that gives the module a larger stack.
 #[cfg(target_arch = "wasm32")]
-const RECURSION_LIMIT: usize = 450;
+const RECURSION_LIMIT: usize = 128;
+
+/// AX-56: the wasm32 native-stack budget, in bytes, is `max_depth ×
+/// NEST_PER_DEPTH`: 448 KiB at the default depth limit, which leaves 64 KiB
+/// of wasmtime's default 512 KiB `max-wasm-stack` for the frames outside the
+/// recursion (the run's base frames, the bounded leaf work above the deepest
+/// guarded frame). Recursion over a value's depth (dropping a nested value)
+/// is outside the budget and can still trap (compilebench AX-59), as can
+/// recursion over one source construct's depth (copying a long closure body
+/// for `host_await_val`, compilebench AX-61) and the front end on deep source
+/// (compilebench AX-60: the parser on nesting, the checker on a long
+/// operator chain).
+#[cfg(target_arch = "wasm32")]
+const NEST_PER_DEPTH: usize = 3584;
+
+/// AX-56: the stack, in bytes, each guarded interpreter function charges
+/// against the wasm32 budget while it is live (`nest_guard!`,
+/// [`Interp::enter_nest`]). Every recursion through `Interp::eval` (the
+/// strongly connected component holding it in the module's call graph), and
+/// the bytecode compiler's recursion (`COMPILE_EXPR`, `COMPILE_STMT`), passes
+/// a guarded function, and each constant covers that function's frame plus
+/// the deepest chain of unguarded functions it can call before the next
+/// guarded one. Frames are the ones wasmtime's Cranelift gives on x86-64
+/// (`sub rsp` plus return address and frame pointer), the largest over the
+/// function's instances, per profile; `0` where the profile inlines it. Each
+/// constant is named after its function. `scripts/wasm_stack_budget.py`
+/// (run by `scripts/vm_wasm_depth.sh`) recomputes the components, the frames
+/// and the tails from the build under test and fails when a constant is too
+/// small, an unguarded cycle exists, an indirect call widens a component, or
+/// another recursion reachable from `eval` is not classified in its `ALLOW`.
+#[cfg(target_arch = "wasm32")]
+pub(super) mod nest_cost {
+    /// `(debug, release)` frame bytes, picked by the profile being built.
+    const fn b(debug: usize, release: usize) -> usize {
+        if cfg!(debug_assertions) {
+            debug
+        } else {
+            release
+        }
+    }
+    pub const EVAL: usize = b(192, 288);
+    pub const EVAL_BLOCK: usize = b(112, 0);
+    pub const EVAL_BINOP: usize = b(144, 0);
+    pub const EVAL_WITH_HANDLER: usize = b(144, 0);
+    pub const RUN_HANDLER_ARM: usize = b(192, 0);
+    pub const EVAL_CALL: usize = b(352, 320);
+    pub const DISPATCH_CALL: usize = b(176, 0);
+    pub const DISPATCH_NAMED: usize = b(144, 192);
+    pub const IMPL_METHOD: usize = b(96, 192);
+    pub const CALL_MUT: usize = b(160, 320);
+    pub const CALL_FN: usize = b(112, 128);
+    pub const CALL_FN_ENTRY: usize = b(112, 192);
+    pub const CALL_FN_IN: usize = b(160, 176);
+    pub const CALL_FN_IN_GENERAL: usize = b(224, 528);
+    pub const CALL_LOCAL_CLOSURE: usize = b(112, 128);
+    pub const CALL_CLOSURE_ARG: usize = b(112, 272);
+    pub const CALL_CLOSURE_OWNED_BY: usize = b(256, 336);
+    pub const CALL_BUILTIN: usize = b(496, 704);
+    pub const RUN_BODY_VM: usize = b(160, 208);
+    /// The tree's fn body charges what a VM level does above its own
+    /// (smaller) frame: the VM's fn body plus its op loop ([`RUN`], which a
+    /// level whose call sits in a `Tree` op of a compiled body passes
+    /// through), so the VM panics no shallower than the tree there (spec
+    /// R50 §4 Recursion).
+    pub const RUN_BODY_TREE: usize = RUN_BODY_VM + RUN;
+    /// A compile frame and its unguarded tail (`compile`, `Vec` growth).
+    /// Live only while one compile runs, never under the recursion; the
+    /// checker fits them like the in-cycle constants.
+    pub const COMPILE_BODY: usize = b(1504, 1024);
+    pub const COMPILE_LAMBDA: usize = b(1616, 976);
+    /// The tree's lambda body charges what a compiled VM lambda level does
+    /// above `call_closure_owned_by`, its op loop ([`RUN`]), so the VM
+    /// panics no shallower than the tree there (spec R50 §4 Recursion).
+    pub const RUN_LAMBDA_TREE: usize = RUN;
+    pub const RUN: usize = b(336, 528);
+    pub const CALL_FAST_ARG: usize = b(208, 272);
+    pub const CALL_FAST_INLINE: usize = b(256, 304);
+    pub const CALL_MUT_OP: usize = b(288, 416);
+    pub const ASSIGN_IN_PLACE: usize = b(176, 224);
+    pub const BIND_LET: usize = b(128, 208);
+    pub const CHAN_METHOD: usize = b(128, 96);
+    pub const DISPATCH_RESUME: usize = b(224, 176);
+    pub const EVAL_NATIVE_CALL: usize = b(240, 320);
+    pub const FINISH_RECORD: usize = b(160, 384);
+    pub const RUN_LOOP_BODY: usize = b(112, 128);
+    pub const BUILTIN_SCHEDULER_RUN_ONCE: usize = b(128, 304);
+    pub const CALL_CLOSURE: usize = b(112, 128);
+    pub const CALL_FN_GOAL: usize = b(464, 928);
+    pub const FINISH_CALL_COLD: usize = b(224, 496);
+    pub const FLATTEN_PLACE: usize = b(128, 160);
+    pub const CALL_FAST: usize = b(208, 288);
+    pub const CALL_FAST_LOCAL_INT_SLOW: usize = b(176, 176);
+    pub const CALL_MUT_GENERAL: usize = b(176, 288);
+    pub const CALL_UNPROVEN: usize = b(192, 272);
+    pub const RECORD_OP: usize = b(160, 160);
+    pub const STORE_BIN_SLOW: usize = b(192, 192);
+    pub const STORE_LOCAL_STACK_SLOW: usize = b(192, 208);
+    pub const GOAL_EVAL_HOLDOUT: usize = b(112, 400);
+    pub const RUN_GOAL: usize = b(672, 1008);
+    pub const RUN_GOAL_CATEGORICAL: usize = b(416, 640);
+    pub const RUN_GOAL_MULTISTART: usize = b(640, 1152);
+    pub const RUN_GOAL_RANDOM: usize = b(208, 368);
+    pub const RUN_GOAL_WARM: usize = b(656, 1024);
+    pub const COMPILE_EXPR: usize = b(816, 688);
+    pub const COMPILE_STMT: usize = b(800, 656);
+}
 
 /// Hard ceiling on the configurable recursion limit. `AXON_MAX_DEPTH` is
 /// clamped to this so a user can't set a value so high the native stack
@@ -1267,6 +1431,41 @@ impl Drop for CallGuard<'_, '_> {
         let depth = &self.interp.call_depth;
         depth.set(depth.get().saturating_sub(1));
     }
+}
+
+/// AX-56: gives back what an `enter_nest::<W>` charged when the frame
+/// unwinds (any path).
+#[cfg(target_arch = "wasm32")]
+pub(super) struct NestGuard<'a, const W: usize>(&'a Cell<usize>);
+#[cfg(target_arch = "wasm32")]
+impl<const W: usize> Drop for NestGuard<'_, W> {
+    #[inline(always)]
+    fn drop(&mut self) {
+        self.0.set(self.0.get() - W);
+    }
+}
+
+/// AX-56: charges the enclosing interpreter function's native frame
+/// (`nest_cost::$cost`) against the wasm32 stack budget until it returns, or
+/// returns the recursion-limit panic when the budget is spent, running
+/// `$spent` first (to release arguments the function owns). Expands to
+/// nothing off wasm32. Measured 2026-10-09: this `?` form leaves smaller
+/// unoptimised frames than an `Option` guard with `let .. else`.
+macro_rules! nest_guard {
+    ($interp:ident, $cost:ident) => {
+        #[cfg(target_arch = "wasm32")]
+        let _nest = $interp.enter_nest::<{ $crate::interp::nest_cost::$cost }>()?;
+    };
+    ($interp:ident, $cost:ident, $spent:block) => {
+        #[cfg(target_arch = "wasm32")]
+        let _nest = match $interp.enter_nest::<{ $crate::interp::nest_cost::$cost }>() {
+            Ok(g) => g,
+            Err(flow) => {
+                $spent
+                return Err(flow);
+            }
+        };
+    };
 }
 
 /// The evaluated arguments of a call, in order, as the call path
@@ -3350,6 +3549,10 @@ impl<'p> Interp<'p> {
             provenance_inputs: RefCell::new(HashMap::new()),
             provenance_inputs_f64: RefCell::new(HashMap::new()),
             call_depth: Cell::new(0),
+            #[cfg(target_arch = "wasm32")]
+            nest: Cell::new(0),
+            #[cfg(target_arch = "wasm32")]
+            nest_limit: resolve_max_depth().saturating_mul(NEST_PER_DEPTH),
             max_depth: resolve_max_depth(),
             engine: vm::engine_at_build(),
             vm_trace: vm::trace_at_build(),
@@ -3599,6 +3802,7 @@ impl<'p> Interp<'p> {
     }
 
     fn call_fn(&self, f: &'p FnDef, args: impl CallArgs) -> R {
+        nest_guard!(self, CALL_FN);
         match self.fn_of_def.get(&(f as *const FnDef as usize)) {
             Some(&i) => self.call_fn_entry(&self.fn_table[i as usize], args),
             None => self.call_fn_entry(&FnEntry::new(f, &self.fns), args),
@@ -3608,6 +3812,7 @@ impl<'p> Interp<'p> {
     /// [`Interp::call_fn`] with the callee already resolved (AX-18: a call
     /// by name reaches its `fn_table` entry without hashing).
     fn call_fn_entry(&self, f: &FnEntry<'p>, args: impl CallArgs) -> R {
+        nest_guard!(self, CALL_FN_ENTRY);
         // A `&mut` param must be moved back to the caller (`call_mut`); a
         // path that cannot do that (a fn reached by name string, a method)
         // would silently drop the callee's writes — refuse instead.
@@ -3691,6 +3896,7 @@ impl<'p> Interp<'p> {
     }
 
     fn call_fn_in(&self, entry: &FnEntry<'p>, args: impl CallArgs, env: &mut Env) -> R {
+        nest_guard!(self, CALL_FN_IN);
         let _guard = self.enter_fn(entry.def)?;
         // A fn with an attribute-driven step around its body, and every fn of
         // a program that declares refinements, takes the general path. The
@@ -3719,6 +3925,42 @@ impl<'p> Interp<'p> {
             interp: self,
             prev_fn: self.current_fn.replace(Some(f)),
         })
+    }
+
+    /// AX-56: charges `W` bytes (a `nest_cost` frame) against the wasm32
+    /// stack budget, or the recursion-limit panic when that would exceed it.
+    /// The call-depth guard counts fn calls, but the wasm engine's native
+    /// stack holds every interpreter frame, and how many frames one call
+    /// level takes grows with how deeply the call sits inside expressions,
+    /// `with` bodies, callbacks and lambdas. Every function a recursion
+    /// passes through charges its frame (`nest_guard!`), so the budget
+    /// bounds the stack whatever the shape: the graceful panic instead of a
+    /// trap. Native has no such check (its interpreter thread stack is sized
+    /// from `max_depth`).
+    #[cfg(target_arch = "wasm32")]
+    #[inline(always)]
+    pub(super) fn enter_nest<const W: usize>(&self) -> Result<NestGuard<'_, W>, Flow> {
+        let n = self.nest.get() + W;
+        if n > self.nest_limit {
+            return Err(self.nest_exceeded());
+        }
+        self.nest.set(n);
+        Ok(NestGuard(&self.nest))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[cold]
+    #[inline(never)]
+    fn nest_exceeded(&self) -> Flow {
+        let name = self.current_fn.get().map_or("main", |f| f.name.as_str());
+        Flow::Panic(
+            format!(
+                "recursion limit exceeded ({}) in `{}` — nesting exceeds the wasm32 stack \
+                 budget (raise with AXON_MAX_DEPTH if the host gives the module a larger stack)",
+                self.max_depth, name
+            )
+            .into(),
+        )
     }
 
     #[cold]
@@ -3760,6 +4002,7 @@ impl<'p> Interp<'p> {
     /// declares refinements, after the depth and `current_fn` guards.
     #[inline(never)]
     fn call_fn_in_general(&self, entry: &FnEntry<'p>, mut args: Vec<Value>, env: &mut Env) -> R {
+        nest_guard!(self, CALL_FN_IN_GENERAL);
         let f = entry.def;
         let params = &entry.params;
         // R4/I-13: if THIS fn is an `@[agent]`, it becomes the enclosing agent for
@@ -3973,6 +4216,7 @@ impl<'p> Interp<'p> {
     /// met. Out of line so the common call's frame does not carry it (AX-54).
     #[inline(never)]
     fn call_fn_goal(&self, f: &FnDef) -> Result<i64, Flow> {
+        nest_guard!(self, CALL_FN_GOAL);
         let mut goal_met: i64 = 0;
         let goal_spec = self.goal_spec_of(f);
         if let Some(spec) = goal_spec {
@@ -4056,6 +4300,7 @@ impl<'p> Interp<'p> {
         input_args: Vec<i64>,
         input_args_f64: Vec<f64>,
     ) -> R {
+        nest_guard!(self, FINISH_CALL_COLD);
         let f = entry.def;
         let is_adaptive_zone = entry.adaptive;
         // Phase 5: refinement-type POSTCONDITION — the dual of the entry-time
@@ -4326,6 +4571,7 @@ impl<'p> Interp<'p> {
     }
 
     fn call_closure(&self, c: Value, mut args: Vec<Value>) -> R {
+        nest_guard!(self, CALL_CLOSURE);
         let out = self.call_closure_owned_by(&c, &mut args, 1);
         self.recycle_args(args);
         out
@@ -4335,6 +4581,7 @@ impl<'p> Interp<'p> {
     /// of that binding: the binding is the one reference to the capture cell
     /// besides `c` that the body can never reach (see `call_closure_owned_by`).
     fn call_local_closure(&self, c: Value, mut args: Vec<Value>) -> R {
+        nest_guard!(self, CALL_LOCAL_CLOSURE);
         let out = self.call_closure_owned_by(&c, &mut args, 2);
         self.recycle_args(args);
         out
@@ -4348,6 +4595,9 @@ impl<'p> Interp<'p> {
     /// or the clone defeats the lend.
     #[inline]
     pub(super) fn call_closure_arg(&self, c: &Value, args: impl ClosureArgs) -> R {
+        nest_guard!(self, CALL_CLOSURE_ARG, {
+            args.bind(|_, v| drop(v));
+        });
         self.call_closure_owned_by(c, args, 1)
     }
 
@@ -4363,6 +4613,9 @@ impl<'p> Interp<'p> {
     /// S4, cost only). The body runs on the engine the `Interp` was built
     /// with ([`Interp::run_lambda`]).
     fn call_closure_owned_by(&self, c: &Value, args: impl ClosureArgs, private_refs: usize) -> R {
+        nest_guard!(self, CALL_CLOSURE_OWNED_BY, {
+            args.bind(|_, v| drop(v));
+        });
         let Value::Closure(cv) = c else {
             args.bind(|_, v| drop(v));
             return not_callable(c);
@@ -4479,6 +4732,7 @@ impl<'p> Interp<'p> {
         place: &Expr,
         env: &mut Env,
     ) -> Result<((Sym, u32), Vec<PlaceStep>), Flow> {
+        nest_guard!(self, FLATTEN_PLACE);
         let mut steps = Vec::new();
         let mut cur = place;
         let base = loop {

@@ -228,6 +228,7 @@ impl<'p> Interp<'p> {
     // ── Core evaluator ───────────────────────────────────────────────────────
 
     pub(super) fn eval(&self, expr: &Expr, env: &mut Env) -> R {
+        nest_guard!(self, EVAL);
         match expr {
             // AX-55: int, float and bool literals are built in place (no call,
             // no table probe). A string or decimal literal's value owns an
@@ -635,8 +636,8 @@ impl<'p> Interp<'p> {
     /// The closure value of lambda node `expr` evaluated in `env`. Shared by
     /// the `eval` arm and the bytecode engine (R50).
     pub(super) fn make_closure(&self, expr: &Expr, env: &Env) -> Value {
-        // A lambda inside an AST clone made at run time (a handler
-        // arm, a continuation replay) is not in the resolution table.
+        // A lambda inside an AST clone made at run time (a `SendValue`
+        // closure's body) is not in the resolution table.
         let unresolved;
         let info = match self.res.lambda(expr) {
             Some(info) => info,
@@ -676,6 +677,7 @@ impl<'p> Interp<'p> {
         v: Value,
         env: &mut Env,
     ) -> Result<(), Flow> {
+        nest_guard!(self, BIND_LET);
         // Phase 5: a `let/own/ref p: T where P = …` annotation is a
         // refinement obligation — check the bound value against the
         // predicate (the non-constant case the checker defers; constant is
@@ -719,6 +721,7 @@ impl<'p> Interp<'p> {
     }
 
     pub(super) fn eval_block(&self, stmts: &[Stmt], env: &mut Env) -> R {
+        nest_guard!(self, EVAL_BLOCK);
         env.push();
         let mut last = Value::Unit;
         for stmt in stmts {
@@ -737,6 +740,7 @@ impl<'p> Interp<'p> {
     /// Run a loop body (a `Vec<Stmt>`) in a fresh scope, translating `break`
     /// and `continue` into a [`LoopStep`] for the caller's loop construct.
     pub(super) fn run_loop_body(&self, body: &[Stmt], env: &mut Env) -> Result<LoopStep, Flow> {
+        nest_guard!(self, RUN_LOOP_BODY);
         env.push();
         for stmt in body {
             match self.eval(&stmt.expr, env) {
@@ -772,6 +776,7 @@ impl<'p> Interp<'p> {
         args: &[Expr],
         env: &mut Env,
     ) -> R {
+        nest_guard!(self, CHAN_METHOD);
         match method {
             "send" => {
                 let v = self.eval(&args[0], env)?;
@@ -810,6 +815,7 @@ impl<'p> Interp<'p> {
     /// vm): the impl method registered for the receiver's type name, else
     /// the no-method panic.
     pub(super) fn impl_method(&self, method: &str, mut argv: impl CallArgs) -> R {
+        nest_guard!(self, IMPL_METHOD);
         let tn = argv.values()[0].type_name();
         if let Some(f) = self.methods.get(&(tn.clone(), method.to_string())) {
             self.call_fn(f, argv)
@@ -825,6 +831,7 @@ impl<'p> Interp<'p> {
     /// graceful panic (exit 101, I-4), NEVER a host abort. v1 has one module:
     /// the GPU-free `gfx` mock.
     fn eval_native_call(&self, qualified: &str, args: &[Expr], env: &mut Env) -> R {
+        nest_guard!(self, EVAL_NATIVE_CALL);
         let (module, nf) = match crate::native::resolve_call(qualified) {
             Some(pair) => pair,
             None => return panic(format!("call to unknown native function `{qualified}`")),
@@ -1087,6 +1094,7 @@ impl<'p> Interp<'p> {
         tier: Option<&str>,
         env: &mut Env,
     ) -> R {
+        nest_guard!(self, EVAL_CALL);
         // Phase 13 Slice 2: P(dist op k) probability predicate.
         // The argument is a comparison expression, not a plain value — intercept
         // before normal arg evaluation to avoid evaluating "dist <= k" literally.
@@ -1134,6 +1142,7 @@ impl<'p> Interp<'p> {
         tier: Option<&str>,
         env: &mut Env,
     ) -> R {
+        nest_guard!(self, DISPATCH_CALL);
         if let Expr::Ident(name) = callee {
             if name == "resume" {
                 return self.dispatch_resume(argv);
@@ -1157,6 +1166,7 @@ impl<'p> Interp<'p> {
     /// by [`Interp::dispatch_call`] and the bytecode engine (R50).
     #[cold]
     pub(super) fn dispatch_resume(&self, argv: Vec<Value>) -> R {
+        nest_guard!(self, DISPATCH_RESUME);
         let v = argv.into_iter().next().unwrap_or(Value::Unit);
         // Phase 6 multi-shot: if a handler arm is currently servicing a
         // suspended computation (`resume_ctx` non-empty) AND we are not
@@ -1199,6 +1209,7 @@ impl<'p> Interp<'p> {
         tier: Option<&str>,
         env: &mut Env,
     ) -> R {
+        nest_guard!(self, DISPATCH_NAMED);
         self.set_call_tier(tier);
         // 1. A local/captured variable holding a closure.
         if let Some(c @ Value::Closure { .. }) = env.get_var(s, slot) {
@@ -1257,6 +1268,7 @@ impl<'p> Interp<'p> {
         tier: Option<&str>,
         env: &mut Env,
     ) -> R {
+        nest_guard!(self, CALL_MUT);
         let entry = &self.fn_table[self.call_mut_entry(callee)? as usize];
         // Plain arguments first, left to right: they cannot mention a
         // borrowed variable (E0606), so this order is unobservable — and if
@@ -1366,6 +1378,7 @@ impl<'p> Interp<'p> {
         body: &Expr,
         env: &mut Env,
     ) -> R {
+        nest_guard!(self, EVAL_WITH_HANDLER);
         let (arms, return_arm) = match handler {
             crate::ast::HandlerExpr::Inline { arms, return_arm } => (arms, return_arm),
             // Unresolved named handler: inert (matches the pre-Phase-6 behavior).
@@ -1373,20 +1386,20 @@ impl<'p> Interp<'p> {
         };
 
         // Capture the defining environment once; every arm closes over it.
+        // The frame points into `handler` and `body` (no AST clone, AX-56);
+        // it is popped below, before this borrow ends (`SrcRef`'s invariant).
         let captured = env.snapshot();
         let frame = HandlerFrame {
             arms: arms
                 .iter()
                 .map(|a| HandlerArmRt {
-                    effect: a.effect.clone(),
-                    binding: a.binding.clone(),
-                    body: a.body.clone(),
+                    arm: SrcRef::new(a),
                     captured: captured.clone(),
                 })
                 .collect(),
             // Phase 6 multi-shot: remember the body + its env so a non-tail arm
             // can replay the continuation.
-            body: body.clone(),
+            body: SrcRef::new(body),
             env_snapshot: env.snapshot(),
         };
         self.handlers.borrow_mut().push(frame);
@@ -1445,8 +1458,11 @@ impl<'p> Interp<'p> {
             feed: v,
             consumed: false,
         });
-        let mut body_env = Env::from_snapshot(ctx.env_snapshot.clone());
-        let result = self.eval(&ctx.body, &mut body_env);
+        let mut body_env = Env::from_snapshot(ctx.env_snapshot);
+        // SAFETY: `ctx` came from the live resume context, whose `with` is
+        // still evaluating (`SrcRef`'s invariant).
+        let body = unsafe { ctx.body.get() };
+        let result = self.eval(body, &mut body_env);
         // Disarm regardless of outcome so a later resume (or the arm's own code)
         // is not mistaken for a replay.
         *self.resume_replay.borrow_mut() = None;
@@ -1454,32 +1470,37 @@ impl<'p> Interp<'p> {
     }
 
     pub(super) fn run_handler_arm(&self, eff: &str, payload: Value) -> Result<Option<Value>, Flow> {
+        nest_guard!(self, RUN_HANDLER_ARM);
         // (The replay-feed interception lives in the builtin dispatch — it must
         // fire even though the handler frame is split off during the arm, so it
         // cannot be gated on an active frame here.)
 
         // Find the INDEX of the nearest frame with a matching arm (search from
-        // the top/innermost). Clone the arm data so we don't hold the RefCell
-        // borrow across arm evaluation. Also grab that frame's body + env snapshot
-        // so a non-tail arm can replay the continuation (multi-shot).
+        // the top/innermost). Copy the arm data out so we don't hold the
+        // RefCell borrow across arm evaluation. Also grab that frame's body +
+        // env snapshot so a non-tail arm can replay the continuation
+        // (multi-shot).
         let hit = {
             let stack = self.handlers.borrow();
             stack.iter().enumerate().rev().find_map(|(i, frame)| {
-                frame.arms.iter().find(|a| a.effect == eff).map(|a| {
+                frame.arms.iter().find(|a| a.effect() == eff).map(|a| {
                     (
                         i,
-                        a.binding.clone(),
-                        a.body.clone(),
+                        a.arm,
                         a.captured.clone(),
-                        frame.body.clone(),
+                        frame.body,
                         frame.env_snapshot.clone(),
                     )
                 })
             })
         };
-        let Some((idx, binding, arm_body, captured, with_body, with_env)) = hit else {
+        let Some((idx, arm, captured, with_body, with_env)) = hit else {
             return Ok(None);
         };
+        // SAFETY: the frame holding `arm` is live (it is split off below and
+        // restored before return), so its `with` is still evaluating.
+        let arm = unsafe { arm.get() };
+        let (binding, arm_body) = (&arm.binding, &arm.body);
 
         // SHALLOW-handler semantics: the arm body runs OUTSIDE the handler it
         // belongs to. Temporarily remove the handling frame AND every frame
@@ -1496,11 +1517,11 @@ impl<'p> Interp<'p> {
         // ONLY shape native codegen lowers, and the path the parity harness pins,
         // so it must stay byte-identical: evaluate the arm and propagate the
         // `Flow::Resume(v)` it raises directly (no resume_ctx, no replay).
-        if crate::effects::arm_is_bare_tail_resume(&arm_body) {
+        if crate::effects::arm_is_bare_tail_resume(arm_body) {
             let mut arm_env = Env::from_snapshot(captured);
             arm_env.push();
-            let bound = self.match_pattern(&binding, &payload, &mut arm_env);
-            let outcome = bound.and_then(|_| self.eval(&arm_body, &mut arm_env));
+            let bound = self.match_pattern(binding, &payload, &mut arm_env);
+            let outcome = bound.and_then(|_| self.eval(arm_body, &mut arm_env));
             self.handlers.borrow_mut().extend(suspended);
             return match outcome {
                 Err(Flow::Resume(v)) => Ok(Some(v)),
@@ -1520,8 +1541,8 @@ impl<'p> Interp<'p> {
         });
         let mut arm_env = Env::from_snapshot(captured);
         arm_env.push();
-        let bound = self.match_pattern(&binding, &payload, &mut arm_env);
-        let outcome = bound.and_then(|_| self.eval(&arm_body, &mut arm_env));
+        let bound = self.match_pattern(binding, &payload, &mut arm_env);
+        let outcome = bound.and_then(|_| self.eval(arm_body, &mut arm_env));
         self.resume_ctx.borrow_mut().pop();
         self.handlers.borrow_mut().extend(suspended);
 
@@ -1542,6 +1563,7 @@ impl<'p> Interp<'p> {
     }
 
     pub(super) fn eval_binop(&self, op: &BinOp, left: &Expr, right: &Expr, env: &mut Env) -> R {
+        nest_guard!(self, EVAL_BINOP);
         // Short-circuit boolean operators. An `Uncertain<bool>` operand can't
         // short-circuit (we must combine confidences), so it falls through to
         // the value-level path which propagates uncertainty.
@@ -1606,6 +1628,7 @@ impl<'p> Interp<'p> {
         value: &Expr,
         env: &mut Env,
     ) -> Result<bool, Flow> {
+        nest_guard!(self, ASSIGN_IN_PLACE);
         let (op, operand, call) = match value {
             Expr::BinOp {
                 op: BinOp::Add,
@@ -1748,6 +1771,7 @@ impl<'p> Interp<'p> {
     /// Slice B), then an enum variant is built, or a struct after its
     /// per-field and whole-struct refinement checks.
     pub(super) fn finish_record(&self, lit: &RecordLit, name: &str, vals: &mut [Value]) -> R {
+        nest_guard!(self, FINISH_RECORD);
         let take = |v: &mut Value, width: Option<IntWidth>| {
             let v = std::mem::replace(v, Value::Unit);
             match width {

@@ -1,0 +1,16 @@
+let DEPTH = 100
+// AX-56 nesting probe: one lambda that recurses through itself (fetched from
+// a dict), its body a `let` and a `with`: no fn level, so a lambda level alone
+// must cost the VM no more stack than the tree.
+// scripts/vm_wasm_depth.sh runs it deep under wasmtime's default stack
+// and requires the recursion-limit panic, not a trap.
+fn main() -> i64 {
+    let d = dict_new()
+    let g = |x: i64| {
+        let k = 0
+        with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "g") { Some(f) => f(x - 1), None => 0 }) + 1 } }
+    }
+    dict_set(d, "g", g)
+    println(to_str(g(DEPTH)))
+    0
+}

@@ -41,10 +41,12 @@ WASMTIME=""
 for c in wasmtime "$HOME/.wasmtime/bin/wasmtime"; do command -v "$c" >/dev/null 2>&1 && WASMTIME="$c" && break; done
 if [ -z "$WASMTIME" ]; then echo "wasm_host_await_parity: wasmtime not found — skipping"; exit 0; fi
 
-# R50 §8: forward AXON_ENGINE of the caller to the wasip1 interpreter (wasmtime
-# passes no host environment through; the native leg inherits it).
+# R50 §8: forward AXON_ENGINE and AXON_VM_EAGER of the caller to the wasip1
+# interpreter (wasmtime passes no host environment through; the native leg
+# inherits them).
 ENGINE_ENV=()
-[ -n "${AXON_ENGINE:-}" ] && ENGINE_ENV=(--env "AXON_ENGINE=$AXON_ENGINE")
+[ -n "${AXON_ENGINE:-}" ] && ENGINE_ENV+=(--env "AXON_ENGINE=$AXON_ENGINE")
+[ -n "${AXON_VM_EAGER:-}" ] && ENGINE_ENV+=(--env "AXON_VM_EAGER=$AXON_VM_EAGER")
 
 echo "wasm_host_await_parity: building axon (native) + axon-run (wasm32-wasip1)…"
 # The native side only needs an interpreter: the caller's AXON (the binary
