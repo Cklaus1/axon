@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 13ee4b51980e6e54748567c6435c2b2b499aa774
+generated-at: 56389c539cc704fcd31f47ea3a8e4aeaf835eb90
 
-`git diff --numstat 31413ca7..13ee4b51 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..56389c53 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -49,20 +49,20 @@ generated-at: 13ee4b51980e6e54748567c6435c2b2b499aa774
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 2207 | 1417 |
-| `crates/axon-core/src/interp/builtins.rs` | 592 | 547 |
-| `crates/axon-core/src/interp/eval.rs` | 1152 | 547 |
+| `crates/axon-core/src/interp.rs` | 2723 | 1390 |
+| `crates/axon-core/src/interp/builtins.rs` | 587 | 542 |
+| `crates/axon-core/src/interp/eval.rs` | 1164 | 547 |
 | `crates/axon-core/src/interp/goal.rs` | 55 | 52 |
-| `crates/axon-core/src/interp/proptest.rs` | 20 | 23 |
-| `crates/axon-core/src/interp/sym.rs` | 1155 | 0 |
-| `crates/axon-core/src/interp/value.rs` | 491 | 543 |
+| `crates/axon-core/src/interp/proptest.rs` | 18 | 9 |
+| `crates/axon-core/src/interp/sym.rs` | 1174 | 0 |
+| `crates/axon-core/src/interp/value.rs` | 491 | 514 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
-| `crates/axon-core/src/interp/vm/mod.rs` | 3286 | 0 |
+| `crates/axon-core/src/interp/vm/mod.rs` | 3321 | 0 |
 | `crates/axon-core/src/interp/vm/pure.rs` | 959 | 0 |
-| `crates/axon-core/src/interp/vm/tests.rs` | 980 | 0 |
+| `crates/axon-core/src/interp/vm/tests.rs` | 1021 | 0 |
 | `crates/axon-core/src/kernel.rs` | 89 | 23 |
 | `crates/axon-core/src/lib.rs` | 116 | 21 |
-| `crates/axon-core/src/main.rs` | 789 | 241 |
+| `crates/axon-core/src/main.rs` | 798 | 243 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
 | `crates/axon-core/src/mut_borrow.rs` | 800 | 0 |
 | `crates/axon-core/src/parser.rs` | 69 | 3 |
@@ -71,9 +71,9 @@ generated-at: 13ee4b51980e6e54748567c6435c2b2b499aa774
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 23200 | 5239 |
+| total | 23825 | 5166 |
 
-`git log --reverse 31413ca7..13ee4b51 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..56389c53 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -224,7 +224,8 @@ generated-at: 13ee4b51980e6e54748567c6435c2b2b499aa774
 | 416a6683 | amendment 121 | the parser unit test that is M3450's own attack (`an_item_that_ends_the_file_has_a_real_span_in_its_own_file`); no production change in this commit (parser.rs gains a test only) |
 | 64d4f997 | merged from main (R51 S0) | INTERPRETER: R50 rev 26 / AX-56: wasm32 recursion panics instead of trapping (guard 128, native-stack byte budget checked by scripts/wasm_stack_budget...: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
 | 13ee4b51 | R51 S0 merge | joins main 5864c423 with v022/veto c9ed2ddd taking MAIN's interpreter (interp.rs, interp/{eval,builtins,goal,proptest,value}.rs); veto's taint.rs/taint_tests.rs/pin.rs/conform.rs are NOT on this tree, so the seal they enforce is absent. Refuse-all pin in the same commit: Interp::build refuses any sealed run (SEAL_RUNTIME_COMPLETE = false), `axon test --seal` exits 2 before any result line, vm::compile refuses a sealed interp. Every PCI row that needs a seal edge is deferred (governance/status/r51-deferred-tests.json) until R51 S6 |
-| 147 commits | | |
+| 56389c53 | R51 S0b | INTERPRETER: ports veto's non-seal fixes onto main's interpreter on both engines (loop control contained at every frame edge, TestEnd/run_test_fn_outcome completion, Result/Option return-boundary check, least-trusted Uncertain source_tag; veto 4e7851bc, bcf9c0a7, 2175cc1b, 89256bd3, 91c2f676, ea9ba38d, 6de01247): not PCI-reviewed on this tree; every sealed run is still refused (R51 SEAL_RUNTIME_COMPLETE = false) |
+| 148 commits | | |
 <!-- END MECHANICAL -->
 
 
