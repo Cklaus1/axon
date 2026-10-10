@@ -21,8 +21,12 @@
 #       VM's median from run 20261010T015516Z (Axon 5864c423). A median
 #       passes when it is at or below the budget; no rounding. SEL is a
 #       comma-separated subset of the programs; without it, all six run.
+#       Relative check (always on, R50 §10 S11 "every other program within
+#       0.5 % of S10"): a program with a REF median (third column of
+#       PROGRAMS, the S10 binary's median) also FAILs when its median exceeds
+#       REF * 1.005 (compared exactly: median * 1000 <= REF * 1005). A REF of
+#       `-` has no relative check.
 #         --programs mandelbrot,arr-sum,collatz   S7 gate
-#         --programs sieve                        S10 gate
 #
 #   scripts/vm_perf_gate.sh --repros [SEL]
 #       Per-construct repro rows. SEL is a comma-separated list of slice names
@@ -72,14 +76,18 @@ CPU="${VM_PERF_CPU:-6}"
 
 # ── Budgets (R50 §10, exact) ────────────────────────────────────────────────
 # program        CPython 3.14.4 median, run 20261008T142344Z (sieve: S10, see top)
+# REF: the S10 median (commit 944fe056, release build), measured with
+# `AXON_BIN=<S10 axon> VM_PERF_CPU=11 scripts/vm_perf_gate.sh`; fib-recursive
+# is S11's own target, so it has none.
+# program        budget        REF
 PROGRAMS=(
   # S11: a third of CPython's median, spec §10
-  "fib-recursive 1141214164"
-  "collatz       26058032109"
-  "mandelbrot    15023124683"
-  "arr-sum       23624147901"
-  "qsort         18967575334"
-  "sieve         26764304040"
+  "fib-recursive 1141214164    -"
+  "collatz       26058032109   18366495062"
+  "mandelbrot    15023124683   5039973411"
+  "arr-sum       23624147901   4979381330"
+  "qsort         18967575334   10939169020"
+  "sieve         26764304040   24568573662"
 )
 # row       slice prog     base          units     budget
 REPROS=(
@@ -110,7 +118,7 @@ while [ $# -gt 0 ]; do
       if [ $# -gt 1 ] && [[ "$2" != --* ]]; then SEL="$2"; shift; fi ;;
     --repros=*) MODE=repros; SEL="${1#--repros=}" ;;
     --compile) MODE=compile ;;
-    -h|--help) sed -n '2,62p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,68p' "$0"; exit 0 ;;
     *) echo "vm_perf_gate: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
@@ -207,12 +215,18 @@ if [ "$MODE" = programs ]; then
     done
   fi
   for row in "${PROGRAMS[@]}"; do
-    read -r prog budget <<<"$row"
+    read -r prog budget ref <<<"$row"
     [ -z "$SEL" ] || [ -n "${pick[$prog]+x}" ] || continue
     measure "$prog"
     m="${MEDIAN[$prog]}"
     if [ "$m" -le "$budget" ]; then v="PASS"; else v="OVER"; fails=$((fails + 1)); fi
     printf 'vm_perf_gate: %-14s median %16s  budget %16s  %s\n' "$prog" "$(group "$m")" "$(group "$budget")" "$v"
+    if [ "$ref" != "-" ]; then
+      if [ $((m * 1000)) -le $((ref * 1005)) ]; then v="PASS"; else v="OVER"; fails=$((fails + 1)); fi
+      pct="$(awk -v a="$m" -v b="$ref" 'BEGIN { printf "%+.3f", (a / b - 1) * 100 }')"
+      printf 'vm_perf_gate: %-14s median %16s  S10 ref %15s  %s %% (<= +0.5 %%)  %s\n' \
+        "$prog" "$(group "$m")" "$(group "$ref")" "$pct" "$v"
+    fi
   done
 elif [ "$MODE" = compile ]; then
   read -r prog runs tree_pct eager_pct <<<"$COMPILE_ROW"

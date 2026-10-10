@@ -36426,16 +36426,18 @@ fn vm_index_sieve_loops() {
 
 /// R50 S10: element reads and writes, `if`/`else if` chains and a `for` over
 /// an inclusive range in registers. The array `ys` shares with `xs` keeps
-/// its elements (the first write copies, as the tree's does); an overflow in
-/// the last iteration's element sum declines, and the generic loop re-runs
-/// that iteration from the counter and arrays written back: the tree's panic.
+/// its elements (the first write copies, as the tree's does). In the second
+/// loop only `big[3]` doubles past `i64`, so iterations 0-2 commit in
+/// registers and the overflow comes in the last iteration of `0..=3`: it
+/// declines, and the generic loop re-runs that iteration from the counter
+/// and arrays written back: the tree's panic.
 #[test]
 fn vm_index_writes_copy_and_replay_panics() {
     let src = "fn main() -> i64 {\n    let xs = arr_repeat(1, 10)\n    let ys = xs\n    for i in 1..10 {\n        \
                xs[i] = xs[i - 1] * 3 + i\n        if xs[i] > 100 { xs[i] = xs[i] - 100 } else if xs[i] > 50 { xs[i] = 0 } \
                else { xs[i] = xs[i] + 1 }\n    }\n    println(to_str(xs[9]) + \" \" + to_str(ys[9]))\n    \
-               let big = arr_repeat(4611686018427387904, 4)\n    let k = 0\n    for i in 0..=3 {\n        k = k + 1\n        \
-               big[i] = big[i] + big[i]\n    }\n    println(to_str(k))\n    0\n}\n";
+               let big = arr_repeat(1, 4)\n    big[3] = 4611686018427387904\n    let k = 0\n    for i in 0..=3 {\n        \
+               k = k + 1\n        big[i] = big[i] + big[i]\n    }\n    println(to_str(k))\n    0\n}\n";
     let (code, stdout, stderr, counts) = vm_pure_case("index_writes", src, &[("main", 0)], "main");
     assert_eq!((code, stdout.as_str()), (Some(101), "8 1\n"), "{stderr}");
     assert_eq!(
@@ -36447,9 +36449,16 @@ fn vm_index_writes_copy_and_replay_panics() {
 
 /// R50 S10: an out-of-bounds write declines and the generic loop gives the
 /// tree's panic; an assignment to the `for` variable lasts only to the end
-/// of its iteration.
+/// of its iteration: the next iteration takes the counter's value (46 =
+/// 10+11+12+13; a variable coupled to the counter would end after one
+/// iteration with 10).
 #[test]
 fn vm_index_out_of_bounds_and_for_variable() {
+    let fv = "fn main() -> i64 {\n    let s = 0\n    for i in 0..4 {\n        i = i + 10\n        s = s + i\n    }\n    \
+              println(to_str(s))\n    0\n}\n";
+    let (code, stdout, stderr, counts) = vm_pure_case("index_for_var", fv, &[("main", 0)], "main");
+    assert_eq!((code, stdout.as_str()), (Some(0), "46\n"), "{stderr}");
+    assert_eq!(counts, (0, 1));
     let src = "fn main() -> i64 {\n    let xs = arr_repeat(0, 5)\n    let s = 0\n    for i in 0..10 {\n        \
                i = i * 2\n        s = s + i\n        xs[i] = s\n    }\n    println(to_str(s))\n    0\n}\n";
     let (code, stdout, stderr, counts) = vm_pure_case("index_oob", src, &[("main", 0)], "main");
@@ -37193,10 +37202,12 @@ fn vm_purefn_depth_boundary() {
 /// R50 §4 S11 qualification: a fn that would otherwise qualify stays off
 /// the tier when a param is refinement-typed, sized (`i32`) or `&mut`, when
 /// it is `@[agent]` or a goal fn, or when it returns `Uncertain`: no `vm:
-/// purefn` line, the tree's output.
+/// purefn` line, the tree's output. So do condition shapes the tier does not
+/// lower: a comparison of two locals, a literal on the left, `&&`, and a
+/// compound operand (`n * 2 > 10`).
 #[test]
 fn vm_purefn_not_qualified() {
-    let cases: [(&str, &str, &str); 6] = [
+    let cases: [(&str, &str, &str); 10] = [
         (
             "refine",
             "type Pos = i64 where _ > 0\nfn f(n: Pos) -> i64 {\n    if n < 2 { 1 } else { f(n - 1) + 1 }\n}\n\
@@ -37233,6 +37244,30 @@ fn vm_purefn_not_qualified() {
             "fn u(n: i64) -> Uncertain<i64> {\n    if n < 2 { uncertain_new(n, 0.9) } else { u(n - 1) }\n}\n\
              fn main() -> i64 {\n    let x = u(10)\n    println(\"ok\")\n    0\n}\n",
             "ok\n",
+        ),
+        (
+            "local_local",
+            "fn mx(a: i64, b: i64) -> i64 {\n    if a > b { a } else { b }\n}\n\
+             fn main() -> i64 {\n    println(to_str(mx(3, 9) + mx(8, 2)))\n    0\n}\n",
+            "17\n",
+        ),
+        (
+            "lit_left",
+            "fn f(n: i64) -> i64 {\n    if 0 == n { 0 } else { f(n - 1) + 2 }\n}\n\
+             fn main() -> i64 {\n    println(to_str(f(10)))\n    0\n}\n",
+            "20\n",
+        ),
+        (
+            "and",
+            "fn f(n: i64) -> i64 {\n    if n > 0 && n < 100 { f(n - 1) + 1 } else { 0 }\n}\n\
+             fn main() -> i64 {\n    println(to_str(f(10)))\n    0\n}\n",
+            "10\n",
+        ),
+        (
+            "compound",
+            "fn f(n: i64) -> i64 {\n    if n * 2 > 10 { f(n - 1) + 1 } else { n }\n}\n\
+             fn main() -> i64 {\n    println(to_str(f(10)))\n    0\n}\n",
+            "10\n",
         ),
     ];
     for (tag, src, out) in cases {
