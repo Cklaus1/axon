@@ -403,6 +403,7 @@ impl<'r, 'p> Compiler<'r, '_, 'p> {
         let scoped = binds(body);
         let inner = scopes + 1 + scoped as u32;
         let var = self.var(e, var);
+        let pure = self.pure_for(var, inclusive, body);
         let head = self.emit(
             Op::ForTest {
                 var,
@@ -432,6 +433,11 @@ impl<'r, 'p> Compiler<'r, '_, 'p> {
         let exit = self.here();
         if let Op::ForTest { exit: x, .. } = &mut self.ops[head as usize] {
             *x = exit;
+        }
+        if let Some(at) = pure {
+            if let Op::PureFor { exit: x, .. } = &mut self.ops[at as usize] {
+                *x = exit;
+            }
         }
         self.emit(Op::Drop, 1, 0);
         self.emit(Op::Drop, 1, 0);
@@ -1026,28 +1032,24 @@ impl<'r, 'p> Compiler<'r, '_, 'p> {
     /// `n` counts its operator nodes. An identifier is a leaf only when
     /// resolution binds it to a local slot.
     fn pure_tree(&self, e: &'p Expr, n: &mut u32) -> Option<Pure<'p>> {
-        self.pure_at(e, n, 0)
+        self.pure_at(e, n, 0, false)
     }
 
     /// [`Compiler::pure_tree`] for `e` at operator depth `d`: `None` past
-    /// [`PURE_DEPTH`], so every recursion over a pure tree is bounded.
-    fn pure_at(&self, e: &'p Expr, n: &mut u32, d: u32) -> Option<Pure<'p>> {
+    /// [`PURE_DEPTH`], so every recursion over a pure tree is bounded. With
+    /// `arrays` (a [`PureLoop`]'s trees, spec §4 S10) `xs[i]` on a local
+    /// `xs` is a leaf too.
+    fn pure_at(&self, e: &'p Expr, n: &mut u32, d: u32, arrays: bool) -> Option<Pure<'p>> {
         Some(match e {
-            Expr::Ident(name) => {
-                let var = self.var(e, name);
-                if var.slot >= NOT_LOCAL {
-                    return None;
-                }
-                Pure::Local(var)
-            }
+            Expr::Ident(name) => Pure::Local(self.local(e, name)?),
             Expr::Literal(Literal::Int(v)) => Pure::Int(*v),
             Expr::Literal(Literal::Float(v)) => Pure::Float(*v),
             Expr::Literal(Literal::Bool(v)) => Pure::Bool(*v),
-            Expr::BinOp { .. } if d == PURE_DEPTH => return None,
+            Expr::BinOp { .. } | Expr::Index { .. } if d == PURE_DEPTH => return None,
             Expr::BinOp { op, left, right } => {
                 let k = Box::new([
-                    self.pure_at(left, n, d + 1)?,
-                    self.pure_at(right, n, d + 1)?,
+                    self.pure_at(left, n, d + 1, arrays)?,
+                    self.pure_at(right, n, d + 1, arrays)?,
                 ]);
                 *n += 1;
                 match op {
@@ -1056,8 +1058,30 @@ impl<'r, 'p> Compiler<'r, '_, 'p> {
                     op => Pure::Bin(op.clone(), k),
                 }
             }
+            Expr::Index { receiver, index } if arrays => {
+                let arr = self.array_local(receiver)?;
+                Pure::Index(arr, Box::new(self.pure_at(index, n, d + 1, arrays)?))
+            }
             _ => return None,
         })
+    }
+
+    /// `name` when resolution binds it to a local slot.
+    fn local(&self, e: &'p Expr, name: &'p String) -> Option<Var<'p>> {
+        let var = self.var(e, name);
+        (var.slot < NOT_LOCAL).then_some(var)
+    }
+
+    /// The local an `xs[..]` reads or writes: an identifier bound to a local
+    /// slot, other than `E` and `Var` (the `Index` arm's moment predicates,
+    /// eval.rs:512-522).
+    fn array_local(&self, receiver: &'p Expr) -> Option<Var<'p>> {
+        match receiver {
+            Expr::Ident(name) if !matches!(name.as_str(), "E" | "Var") => {
+                self.local(receiver, name)
+            }
+            _ => None,
+        }
     }
 
     /// An [`Op::Pure`] for `e` into `sink` when `e` is a pure tree of two or
@@ -1087,33 +1111,93 @@ impl<'r, 'p> Compiler<'r, '_, 'p> {
     }
 
     /// An [`Op::PureLoop`] ahead of the generic loop of `while cond { body
-    /// }` when `cond` is a pure tree and every statement is an untyped
-    /// `let x = <pure>` or an `x = <pure>` to a local (spec §4 S7); its exit
-    /// is patched by [`Compiler::while_`].
+    /// }` when `cond` is a pure tree and every statement is a pure statement
+    /// ([`Compiler::pure_stmts`], spec §4 S7, S10); its exit is patched by
+    /// [`Compiler::while_`].
     fn pure_loop(&mut self, cond: &'p Expr, body: &'p [Stmt]) -> Option<u32> {
         let n = &mut 0;
-        let cond = self.pure_tree(cond, n)?;
-        let mut stmts = Vec::with_capacity(body.len());
+        let cond = self.pure_at(cond, n, 0, true)?;
+        let stmts = self.pure_stmts(body, true, 0)?;
+        let lp = Box::new(PureLoop::new(Some(cond), None, stmts));
+        Some(self.emit(Op::PureLoop { lp, exit: 0 }, 0, 0))
+    }
+
+    /// An [`Op::PureFor`] ahead of [`Op::ForTest`] for `for var in ..
+    /// { body }` when every statement is a pure statement (spec §4 S10); its
+    /// exit is patched by [`Compiler::for_`].
+    fn pure_for(&mut self, var: Var<'p>, inclusive: bool, body: &'p [Stmt]) -> Option<u32> {
+        if var.slot >= NOT_LOCAL {
+            return None;
+        }
+        let stmts = self.pure_stmts(body, true, 0)?;
+        let lp = Box::new(PureLoop::new(None, Some((var, inclusive)), stmts));
+        Some(self.emit(Op::PureFor { lp, exit: 0 }, 0, 0))
+    }
+
+    /// `body` as [`PureStmt`]s, or `None`: an untyped `let x = <pure>` (only
+    /// at the loop body's top level, `top`), `x = <pure>` to a local,
+    /// `xs[<pure>] = <pure>` to a local array, and `if <pure> { .. } else
+    /// { .. }` (`else if` included) over such statements, nested at most
+    /// [`PURE_DEPTH`] deep (`d`).
+    fn pure_stmts(&self, body: &'p [Stmt], top: bool, d: u32) -> Option<Vec<PureStmt<'p>>> {
+        if d == PURE_DEPTH {
+            return None;
+        }
+        let n = &mut 0;
+        let mut out = Vec::with_capacity(body.len());
         for s in body {
             let e = &s.expr;
-            let (name, value, is_let) = match e {
+            out.push(match e {
                 Expr::Let {
                     name,
                     value,
                     ty: None,
-                } => (name, value, true),
-                Expr::Assign { name, value } => (name, value, false),
+                } if top => PureStmt::Set {
+                    var: self.local(e, name)?,
+                    is_let: true,
+                    value: self.pure_at(value, n, 0, true)?,
+                },
+                Expr::Assign { name, value } => PureStmt::Set {
+                    var: self.local(e, name)?,
+                    is_let: false,
+                    value: self.pure_at(value, n, 0, true)?,
+                },
+                Expr::AssignTo { place, value } => {
+                    let Expr::Index { receiver, index } = &**place else {
+                        return None;
+                    };
+                    PureStmt::Store {
+                        arr: self.array_local(receiver)?,
+                        idx: self.pure_at(index, n, 0, true)?,
+                        value: self.pure_at(value, n, 0, true)?,
+                    }
+                }
+                Expr::If { .. } => self.pure_if(e, d)?,
                 _ => return None,
-            };
-            let var = self.var(e, name);
-            if var.slot >= NOT_LOCAL {
-                return None;
-            }
-            let value = self.pure_tree(value, n)?;
-            stmts.push(PureStmt { var, is_let, value });
+            });
         }
-        let lp = Box::new(PureLoop::new(cond, stmts));
-        Some(self.emit(Op::PureLoop { lp, exit: 0 }, 0, 0))
+        Some(out)
+    }
+
+    /// An `if` statement of [`Compiler::pure_stmts`] at nesting `d`.
+    fn pure_if(&self, e: &'p Expr, d: u32) -> Option<PureStmt<'p>> {
+        let Expr::If { cond, then, else_ } = e else {
+            return None;
+        };
+        let Expr::Block(then) = &**then else {
+            return None;
+        };
+        let else_ = match else_.as_deref() {
+            None => Vec::new(),
+            Some(Expr::Block(b)) => self.pure_stmts(b, false, d + 1)?,
+            Some(e @ Expr::If { .. }) if d + 1 < PURE_DEPTH => vec![self.pure_if(e, d + 1)?],
+            Some(_) => return None,
+        };
+        Some(PureStmt::If {
+            cond: self.pure_at(cond, &mut 0, 0, true)?,
+            then: self.pure_stmts(then, false, d + 1)?.into_boxed_slice(),
+            else_: else_.into_boxed_slice(),
+        })
     }
 
     /// The generic condition and branch of [`Compiler::branch`]. A binary

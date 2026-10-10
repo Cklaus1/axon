@@ -14,12 +14,15 @@
 #
 # Modes:
 #   scripts/vm_perf_gate.sh [--programs SEL]
-#       The five compilebench programs (verbatim copies of compilebench's
+#       Six compilebench programs (verbatim copies of compilebench's
 #       benchmarks/<b>/axon/main.ax in tests/fixtures/vm_perf/). Budget: the
-#       CPython 3.14.4 median from compilebench run 20261008T142344Z. A median
+#       CPython 3.14.4 median from compilebench run 20261008T142344Z, except
+#       sieve (S10), whose CPython is a C-speed slice assignment: half the S9
+#       VM's median from run 20261010T015516Z (Axon 5864c423). A median
 #       passes when it is at or below the budget; no rounding. SEL is a
-#       comma-separated subset of the programs; without it, all five run.
+#       comma-separated subset of the programs; without it, all six run.
 #         --programs mandelbrot,arr-sum,collatz   S7 gate
+#         --programs sieve                        S10 gate
 #
 #   scripts/vm_perf_gate.sh --repros [SEL]
 #       Per-construct repro rows. SEL is a comma-separated list of slice names
@@ -68,13 +71,14 @@ FIX="$ROOT/crates/axon-core/tests/fixtures/vm_perf"
 CPU="${VM_PERF_CPU:-6}"
 
 # ── Budgets (R50 §10, exact) ────────────────────────────────────────────────
-# program        CPython 3.14.4 median, run 20261008T142344Z
+# program        CPython 3.14.4 median, run 20261008T142344Z (sieve: S10, see top)
 PROGRAMS=(
   "fib-recursive 3423642492"
   "collatz       26058032109"
   "mandelbrot    15023124683"
   "arr-sum       23624147901"
   "qsort         18967575334"
+  "sieve         26764304040"
 )
 # row       slice prog     base          units     budget
 REPROS=(
@@ -196,7 +200,7 @@ if [ "$MODE" = programs ]; then
         if [ "$t" = "$prog" ]; then pick[$prog]=1; hit=1; fi
       done
       if [ "$hit" = 0 ]; then
-        echo "vm_perf_gate: --programs: '$t' is not a program (fib-recursive collatz mandelbrot arr-sum qsort)" >&2
+        echo "vm_perf_gate: --programs: '$t' is not a program (fib-recursive collatz mandelbrot arr-sum qsort sieve)" >&2
         exit 2
       fi
     done

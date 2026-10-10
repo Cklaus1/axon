@@ -36267,6 +36267,84 @@ fn vm_pure_fold_decline() {
         .collect();
     assert_eq!(leaf, ["vm: fold-leaf main::lambda#0"], "{err}");
 }
+
+// ── R50 S10: array elements in pure loops (`vm_index_`) ─────────────────────
+
+/// R50 S10 red test (§8): sieve's two `while` loops (`flags[j] = false` and
+/// the counting loop's `if flags[k]`) run in registers, and its `for`-less
+/// outer loop keeps its `Pure` condition. S9 prints `0 loops` for them.
+#[test]
+fn vm_index_sieve_loops() {
+    let src = std::fs::read_to_string(fixture("vm_perf/sieve.ax"))
+        .expect("read sieve.ax")
+        .replace("50000000", "1000");
+    let (code, stdout, stderr, counts) = vm_pure_case("index_sieve", &src, &[("main", 0)], "main");
+    assert_eq!((code, stdout.as_str()), (Some(0), "168\n"), "{stderr}");
+    assert_eq!(counts, (1, 2));
+}
+
+/// R50 S10: element reads and writes, `if`/`else if` chains and a `for` over
+/// an inclusive range in registers. The array `ys` shares with `xs` keeps
+/// its elements (the first write copies, as the tree's does); an overflow in
+/// the last iteration's element sum declines, and the generic loop re-runs
+/// that iteration from the counter and arrays written back: the tree's panic.
+#[test]
+fn vm_index_writes_copy_and_replay_panics() {
+    let src = "fn main() -> i64 {\n    let xs = arr_repeat(1, 10)\n    let ys = xs\n    for i in 1..10 {\n        \
+               xs[i] = xs[i - 1] * 3 + i\n        if xs[i] > 100 { xs[i] = xs[i] - 100 } else if xs[i] > 50 { xs[i] = 0 } \
+               else { xs[i] = xs[i] + 1 }\n    }\n    println(to_str(xs[9]) + \" \" + to_str(ys[9]))\n    \
+               let big = arr_repeat(4611686018427387904, 4)\n    let k = 0\n    for i in 0..=3 {\n        k = k + 1\n        \
+               big[i] = big[i] + big[i]\n    }\n    println(to_str(k))\n    0\n}\n";
+    let (code, stdout, stderr, counts) = vm_pure_case("index_writes", src, &[("main", 0)], "main");
+    assert_eq!((code, stdout.as_str()), (Some(101), "8 1\n"), "{stderr}");
+    assert_eq!(
+        stderr,
+        "axon: panic: integer overflow: 4611686018427387904 + 4611686018427387904 exceeds i64\n"
+    );
+    assert_eq!(counts, (0, 2));
+}
+
+/// R50 S10: an out-of-bounds write declines and the generic loop gives the
+/// tree's panic; an assignment to the `for` variable lasts only to the end
+/// of its iteration.
+#[test]
+fn vm_index_out_of_bounds_and_for_variable() {
+    let src = "fn main() -> i64 {\n    let xs = arr_repeat(0, 5)\n    let s = 0\n    for i in 0..10 {\n        \
+               i = i * 2\n        s = s + i\n        xs[i] = s\n    }\n    println(to_str(s))\n    0\n}\n";
+    let (code, stdout, stderr, counts) = vm_pure_case("index_oob", src, &[("main", 0)], "main");
+    assert_eq!(
+        (code, stdout.as_str(), stderr.as_str()),
+        (
+            Some(101),
+            "",
+            "axon: panic: index 6 out of bounds (len 5)\n"
+        )
+    );
+    assert_eq!(counts, (0, 1));
+}
+
+/// R50 S10: an element of another kind (an `i32` stored into an `i64`
+/// array) declines the iteration that reads it, after that iteration wrote
+/// another array: the write is undone and the generic loop redoes it once.
+/// `&&` over element reads, and `bool`/`f64` elements, stay in registers.
+#[test]
+fn vm_index_decline_undoes_the_iteration() {
+    let src = "fn main() -> i64 {\n    let t: i32 = 5\n    let xs = arr_repeat(1, 4)\n    xs[2] = t\n    \
+               let ys = arr_repeat(0, 4)\n    let s = 0\n    for i in 0..4 {\n        ys[i] = ys[i] + 10\n        \
+               s = s + 1\n        s = s + xs[i]\n    }\n    \
+               println(to_str(s) + \" \" + to_str(ys[1]) + \" \" + to_str(ys[2]) + \" \" + to_str(ys[3]))\n    \
+               let fs = arr_repeat(1.5, 6)\n    let flags = arr_repeat(true, 6)\n    let n = 0\n    let j = 0\n    \
+               while j < 6 {\n        if flags[j] && fs[j] > 1.0 { n = n + 1 flags[j] = false }\n        j = j + 1\n    }\n    \
+               println(to_str(n) + \" \" + to_str(flags[5]))\n    0\n}\n";
+    let (code, stdout, stderr, counts) = vm_pure_case("index_undo", src, &[("main", 0)], "main");
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "12 10 10 10\n6 false\n"),
+        "{stderr}"
+    );
+    assert_eq!(counts, (0, 2));
+}
+
 // ── R50 S5: call costs (`vm_fastcall_`) ─────────────────────────────────────
 
 /// R50 S5: `axon run` on `src` under `engine`, with the AI mock on and a

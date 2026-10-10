@@ -9,7 +9,7 @@ fn main() -> i64 {
     while i < 1000000 {
         s = s + id(i)
         i = i + 1
-        if i < 0 { s = 0 }
+        if i < 0 { println("") }
     }
     println(to_str(s))
     0

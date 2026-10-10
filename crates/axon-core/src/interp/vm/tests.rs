@@ -131,6 +131,7 @@ fn kinds(body: &Body<'_>) -> Vec<&'static str> {
             Op::Lambda(_) => "lambda",
             Op::Pure(_) => "pure",
             Op::PureLoop { .. } => "pure-loop",
+            Op::PureFor { .. } => "pure-for",
             Op::CallFast { args, .. } if args.is_empty() => "call-fast",
             Op::CallFast { .. } => "call-fast-inline",
             Op::CallFastLocalInt { .. } => "call-fast-local-int",
@@ -436,7 +437,8 @@ fn while_let_pushes_the_pattern_scope_then_the_body_scope() {
 fn for_converts_both_bounds_then_pushes_per_iteration() {
     // `for-test`/`for-next` push the variable's scope and (`+body`) the
     // body's, and `for-next` pops them before the increment; a body that
-    // binds nothing gets no scope of its own.
+    // binds nothing gets no scope of its own. A pure body (S10) puts a
+    // `pure-for` ahead of `for-test`.
     let k = kinds_of(
         "fn f() -> i64 { let s = 0\n for i in 0..3 { s = s + i }\n s }",
         "f",
@@ -451,6 +453,7 @@ fn for_converts_both_bounds_then_pushes_per_iteration() {
             "strict-int",
             "const",
             "strict-int",
+            "pure-for",
             "for-test",
             "store-bin",
             "for-next",
@@ -464,8 +467,11 @@ fn for_converts_both_bounds_then_pushes_per_iteration() {
         "fn f() -> i64 { let s = 0\n for i in 0..3 { let t = i\n s = s + t }\n s }",
         "f",
     );
-    assert_eq!(&k[7..11], ["for-test+body", "load", "define", "store-bin"]);
-    assert_eq!(k[11], "for-next+body");
+    assert_eq!(
+        &k[7..12],
+        ["pure-for", "for-test+body", "load", "define", "store-bin"]
+    );
+    assert_eq!(k[12], "for-next+body");
 }
 
 #[test]

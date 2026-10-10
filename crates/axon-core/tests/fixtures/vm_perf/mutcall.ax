@@ -10,7 +10,7 @@ fn main() -> i64 {
         s = s + i
         touch(&mut a, i)
         i = i + 1
-        if i < 0 { s = 0 }
+        if i < 0 { println("") }
     }
     println("{to_str(s)} {to_str(a[0])}")
     0

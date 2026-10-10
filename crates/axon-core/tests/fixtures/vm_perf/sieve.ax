@@ -1,0 +1,23 @@
+fn main() -> i64 {
+    let limit = 50000000
+    let flags = arr_repeat(true, limit + 1)
+    flags[0] = false
+    flags[1] = false
+    let i = 2
+    while i * i <= limit {
+        if flags[i] {
+            let j = i * i
+            while j <= limit {
+                flags[j] = false
+                j = j + i
+            }
+        }
+        i = i + 1
+    }
+    let count = 0
+    for k in 0..limit + 1 {
+        if flags[k] { count = count + 1 }
+    }
+    println(to_str(count))
+    0
+}

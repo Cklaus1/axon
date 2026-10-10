@@ -209,8 +209,8 @@ impl Body<'_> {
             .count()
     }
 
-    /// The [`Op::Pure`] and [`Op::PureLoop`] ops, the trace's `vm: pure`
-    /// line's `<p> exprs, <q> loops`.
+    /// The [`Op::Pure`] ops, and the [`Op::PureLoop`] and [`Op::PureFor`]
+    /// ops, the trace's `vm: pure` line's `<p> exprs, <q> loops`.
     fn pure_ops(&self) -> (usize, usize) {
         let p = self
             .ops
@@ -220,7 +220,7 @@ impl Body<'_> {
         let q = self
             .ops
             .iter()
-            .filter(|op| matches!(op, Op::PureLoop { .. }))
+            .filter(|op| matches!(op, Op::PureLoop { .. } | Op::PureFor { .. }))
             .count();
         (p, q)
     }
@@ -786,6 +786,14 @@ pub(super) enum Op<'p> {
     /// went false, or decline into the generic loop that follows
     /// ([`PureLoop::run`]).
     PureLoop {
+        lp: Box<PureLoop<'p>>,
+        exit: u32,
+    },
+    /// Run a `for` in registers from the counter and bound on top of the
+    /// stack (spec §4 S10): continue at `exit` (its two `Drop`s) when the
+    /// counter passed the bound, or decline into [`Op::ForTest`] with the
+    /// counter at the iteration to re-run ([`PureLoop::run_for`]).
+    PureFor {
         lp: Box<PureLoop<'p>>,
         exit: u32,
     },
@@ -1771,6 +1779,14 @@ impl<'p> Interp<'p> {
                 }
                 Op::PureLoop { lp, exit } => {
                     if lp.run(env) {
+                        pc = *exit as usize;
+                    }
+                }
+                Op::PureFor { lp, exit } => {
+                    let [.., Value::Int(i), Value::Int(e)] = &mut st[..] else {
+                        malformed()
+                    };
+                    if lp.run_for(env, i, *e) {
                         pc = *exit as usize;
                     }
                 }
