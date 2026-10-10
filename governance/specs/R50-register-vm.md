@@ -41,7 +41,8 @@ twenty-sixth (3 must-fix, 1 nit; §15 "Revision 30"); revision 31 answers the tw
 must-fix, 2 nits; §15 "Revision 31"); revision 32 answers the twenty-eighth (2 must-fix, 1 nit;
 §15 "Revision 32"); revision 33 answers the twenty-ninth (1 blocker, 1 must-fix, 1 nit; §15
 "Revision 33"); revision 34 answers the thirtieth (3 must-fix, 1 nit; §15 "Revision 34"); revision 35 answers the
-thirty-first (2 must-fix, 1 nit; §15 "Revision 35"); a thirty-second review is pending.
+thirty-first (2 must-fix, 1 nit; §15 "Revision 35"); revision 36 answers the thirty-second (2
+must-fix, 1 nit; §15 "Revision 36"); a thirty-third review is pending.
 **Risk class:** Structural (a second execution path for the reference engine)
 **Author / date:** 2026-10-09, from compilebench AX-18 (interpreter cost) after AX-53..AX-55.
 
@@ -680,10 +681,11 @@ widens `PureLoop` to array elements, `if` statements and integer-range `for` loo
   element 0 at loop entry). Outside a loop, `Pure` ops do not take element leaves.
 - **Pure statements.** A loop body is pure when every statement is an untyped `let x = <pure>`
   (top level of the body only), `x = <pure>` to a local, `xs[<pure>] = <pure>` to a local array (as
-  above), or `if <pure> { .. } else { .. }` (`else if` included) over pure statements, nested at
-  most `PURE_DEPTH` (16) deep. An element write declines when the index fails as a read's would,
-  when the old element is not a scalar of the array's kind, or when the value's kind differs from
-  it (a write that would change an element's kind always runs on the generic loop).
+  above), or `if <pure> { .. } else { .. }` (`else if` included) over pure statements, with at
+  most 15 nested `if`s (`PURE_DEPTH` 16 counts the body, compile.rs:1143). An element write
+  declines when the index fails as a read's would, or when the old element is not a scalar of the
+  written value's kind (vm/pure.rs:812), so a write that would change an element's kind always runs
+  on the generic loop; in a mixed array, a write of the element's own kind stays in registers.
 - **`PureFor` op.** A `for v in a..b` (or `a..=b`) whose body is pure compiles to a `PureFor` op
   after the bounds are evaluated and checked (two `StrictInt` ops, compile.rs:398-401), ahead of the
   generic `ForTest`. The counter and `v` are registers; an assignment to `v` lasts to the end of its
@@ -712,7 +714,9 @@ shared with another binding leaves that binding's elements; an `i64` overflow in
 last iteration of an inclusive `for` gives the tree's panic), `vm_index_out_of_bounds_and_for_variable`
 (an out-of-bounds write gives the tree's panic; assigning the `for` variable lasts one iteration) and
 `vm_index_decline_undoes_the_iteration` (an `i32` element in an `i64` array declines after the same
-iteration wrote another array; that write is made once); `vm_perf_gate.sh --programs sieve` with the
+iteration wrote another array; that write is made once), `vm_index_decline_undoes_a_double_write`
+(two writes to one element before a decline in the same iteration are undone last-first; a
+front-to-back rollback prints `7 60 60 70` for the tree's `7 60 60 60`); `vm_perf_gate.sh --programs sieve` with the
 budget in §10 (S9 fails it at 53.53 G); every `vm_perf_gate.sh` program and `--repros` row;
 `vm_parity.sh` (S10 lowers no new `Expr` variant, so its list is S9's); `vm_wasm_depth.sh
 --require-default-stack` (the loop compiler's new recursions are over `PURE_DEPTH`-bounded trees);
@@ -765,7 +769,12 @@ frame stack.
 
 Gate: red test `vm_purefn_fib_in_registers` (`vm: purefn fib 8 ins`; S10 prints no `purefn` line);
 behaviour tests `vm_purefn_panics_replay`, `vm_purefn_depth_boundary` (a chain completes at
-`AXON_MAX_DEPTH=N` and panics at `N - 1` as the tree does, entered from `main` and from depth 12),
+`AXON_MAX_DEPTH=N` and panics at `N - 1` as the tree does; each program first makes a warm-up call
+`d(1)` from the same caller, so the measured call is a proven fast call through `call_fast_inline`
+and enters the tier from `main` (eager mode; deferred mode does not compile `main`, so there it
+enters at depth 2) and from depth 12 (both modes). A budget one frame too large fails it; one frame
+too small cannot be seen in output, since the tier then declines and the generic path reruns the
+call at the tree's depth, so it costs only instructions),
 `vm_purefn_not_qualified` (each disqualifier alone: a two-local compare, a literal on the left, a
 computed operand, `&&`, `||`, and an `Uncertain` return on a builtin-free body),
 `vm_purefn_replay_flag_restored`, `vm_purefn_mutual_and_multi_param`; unit
@@ -895,7 +904,10 @@ checker walks that recurse once per link of a chain of declarations, not per lev
 the front-end limit does not reach them: `capabilities::check_expr` following a `@[contained]` fn's
 call chain, `CheckCtx::total_can_reach` over `@[total]` fns, and `resolve_ast_type` chasing
 refinement-type names (`type A{i} = A{i-1} where true`). Flat source traps each on wasm32 (release
-at 600, 3,000 and 5,000 links) while native runs it; compilebench AX-66, which predates S12.
+at 600, 3,000 and 5,000 links) while native runs it; compilebench AX-66, which predates S12. Also
+out of scope, because it is native: native does not count `else if` links (`NEST_ALL` is false), and
+a 100,000-link chain overflows the debug native stack (exit 134) and takes the release build past
+9 GB (compilebench AX-67). wasm32 refuses that chain with E0000 at 2:5.
 
 Gate: red tests `wasm_drops_deep_values_ax59`, `wasm_deep_source_gives_e0000_ax60`,
 `native_nesting_limit_unchanged_ax60`, `native_guard_borrow_e0606`, `native_guard_w0002`,
@@ -931,8 +943,12 @@ statement or, natively, by a direct call under a bare `!NEST_ALL` or the `else` 
 NEST_ALL`; nothing outside `fn X` names `X_inner`; and a charged `(r, e)` callee is called bare in
 `r` only in that native arm). The source check does not see a wasm32 branch in `X` that returns
 through another function before reaching `nested`; the dynamic probes cover that, with one case per
-counted construct that reaches 100,000 levels (`paren_type`, `tuple_type`, `ref_type`, the `+`,
-guard, arm-body and slot chains), each E0000 and never 134; `vm_perf_gate.sh`, whose `REF` column holds
+recursive parser entry: 100,000 levels for `chain100000` (`+`), `paren_type`, `tuple_type`,
+`ref_type` and `elif100000` (`else if` links), and for `synerr100000` and `unclosed100000` (a `+`
+chain ending in a syntax error); guard chains of 300, 1,000 and 3,000 terms, a 3,000-term arm body,
+a 5,000-term or-pattern arm body and a 1,500-term slot chain, all past the limit; each E0000 or the
+stated syntax error and never 134. A bypass of `parse_if`'s charge through an inlined helper passes
+the source check and the budget script but traps `elif100000` with 134; `vm_perf_gate.sh`, whose `REF` column holds
 fib-recursive's median at the S11 commit `2627dad7` next to the S10 medians, so every program's
 `instructions:u` stays within 0.5 % of the code S12 is built on; the whole suite under the S9 modes.
 
@@ -1302,7 +1318,7 @@ the reference code, gaps cost speed, never correctness.
 | R50.S9 deferred compile (§4 S9); `AXON_VM_EAGER`; `vm: defer` trace line | R50.S6, R50.S8 | `cli_run vm_defer_` + `cli_run vm_` (eager and default legs) + whole suite with `AXON_ENGINE` unset, `tree` and `vm` + `AXON_VM_EAGER=1` + `vm_parity.sh` (S9 list; eager and default runs) + `vm_perf_gate.sh` (all five) + `--repros` (every row) + `--compile` + `reference_gate.sh` + `vm_wasm_depth.sh --require-default-stack` + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` under the same three | `db2d2eee` |
 | R50.S10 array elements in pure loops (§4 S10); `PureFor`; `sieve.ax` and its `--programs` row; never-taken `if` in the repro bases made impure | R50.S9 | `cli_run vm_index_` (incl. `vm_index_sieve_loops`) + `vm_perf_gate.sh` (all six) + `--repros` (every row) + `vm_parity.sh` + `vm_wasm_depth.sh --require-default-stack` + whole suite under the S9 modes | code `944fe056`, which fails `vm_wasm_depth.sh` (`wasm_stack_budget.py`: `pure_stmts`/`pure_if` recursion not in `ALLOW`, `COMPILE_STMT` 16 bytes short in release); fixed with S11 |
 | R50.S11 pure-`i64` function tier (§4 S11); `vm: purefn` trace line; fib-recursive budget a third of CPython's | R50.S10 | `cli_run vm_purefn_` (incl. `vm_purefn_fib_in_registers`) + `purefn_build_validates` + `vm_perf_gate.sh` (all six; `REF` check: others at most 0.5 % above S10) + `--repros` (every row) + `vm_parity.sh` + `vm_wasm_depth.sh --require-default-stack` (`plain` on the tier, `plain_generic` off it) + whole suite under the S9 modes | code `2627dad7`; review fixes `faf25a22`, `e5f754ab` |
-| R50.S12 wasm32 traps (§4 S12): bounded drop of every `Value` container, front-end nesting limit 224 (interpolation slots included), no payload copy for `host_await_val`; `DictMap`/`Elems`/`VBox`/`Queue`/`Held`; nest probes; four `wasm_stack_budget.py` checks | R50.S10 | `cli_run wasm_drops_deep_values_ax59`, `wasm_deep_source_gives_e0000_ax60`, `native_nesting_limit_unchanged_ax60`, `native_guard_borrow_e0606`, `native_guard_w0002`, `native_guard_assign_in_place`, `native_guard_pure_e1207`, `native_guard_tier_e0910`, `native_guard_write_unaliases`, `wasm_host_await_val_no_copy_ax61` + `wasm_nesting_parity.sh` (debug and release; out-of-root refusals `tdef_*`, `attr_*`, `handler_*`, `*_chain`, `*_pred`) + `vm_wasm_depth.sh --require-default-stack` (debug and release; no probe exits 134) + `wasm_stack_budget.py` + `vm_perf_gate.sh` (every `REF` within 0.5 %, fib-recursive's from `2627dad7`) + whole suite under the S9 modes | code `a9c89e5e`, merged `e0f29182`; review fixes `91b13427`, `c33f521b`, `e5f754ab`, `fcd18f2b`, `2fdf7cc1`, `a875d2b8`, `8e4bd760`, `6ae2c76f`, `2d0940c2` |
+| R50.S12 wasm32 traps (§4 S12): bounded drop of every `Value` container, front-end nesting limit 224 (interpolation slots included), no payload copy for `host_await_val`; `DictMap`/`Elems`/`VBox`/`Queue`/`Held`; nest probes; four `wasm_stack_budget.py` checks | R50.S10 | `cli_run wasm_drops_deep_values_ax59`, `wasm_deep_source_gives_e0000_ax60`, `native_nesting_limit_unchanged_ax60`, `native_guard_borrow_e0606`, `native_guard_w0002`, `native_guard_assign_in_place`, `native_guard_pure_e1207`, `native_guard_tier_e0910`, `native_guard_write_unaliases`, `wasm_host_await_val_no_copy_ax61` + `wasm_nesting_parity.sh` (debug and release; out-of-root refusals `tdef_*`, `attr_*`, `handler_*`, `*_chain`, `*_pred`) + `vm_wasm_depth.sh --require-default-stack` (debug and release; no probe exits 134) + `wasm_stack_budget.py` + `vm_perf_gate.sh` (every `REF` within 0.5 %, fib-recursive's from `2627dad7`) + whole suite under the S9 modes | code `a9c89e5e`, merged `e0f29182`; review fixes `91b13427`, `c33f521b`, `e5f754ab`, `fcd18f2b`, `2fdf7cc1`, `a875d2b8`, `8e4bd760`, `6ae2c76f`, `2d0940c2`, `da151a79` |
 
 ### 14. Evidence ledger
 
@@ -1764,3 +1780,13 @@ must-fix, 1 nit). The script and parity fixes are in `2d0940c2`; parser.rs is un
 | [must-fix] S12: the budget check credited a charge to the callee's name, so a branch in `parse_type_atom` that called its inner fn without `nested` passed the script and the parity harness, and a 100,000-deep parenthesised type trapped | `wasm_stack_budget.py` checks parser.rs's charge sites (§4 S12 Gate states the rule); mutants A and C each fail with two `FAIL parser charge` lines in both profiles, and HEAD passes with unchanged numbers. `paren_type`, `tuple_type` and `ref_type` (100,000 levels) give E0000 at 2:5; mutant C fails `paren_type` with 134. The source check cannot see a branch that returns through another function before `nested`; §4 S12 says so and names the dynamic probes that cover it |
 | [must-fix] S12: the root list named a "contract or constant" that does not exist, left out struct-field and struct `} where` predicates and trait-method parameters, and gave no position for a top-level `let` | §4 S12 lists the parser's item-level roots with measured columns (top-level `let` 1:9, field 1:25, struct 1:27, trait parameter 1:29); `toplet_pred`, `field_pred`, `field_chain`, `struct_pred` and `trait_param_pred` assert them, native `ok` |
 | [nit] native's rewind of a too-deep `type` base was claimed but ungated | The native loop runs `tdef_where`, `tdef_enum` (1:16 enum-parse error) and `tdef_tuple_pred`; `native_nesting_limit_unchanged_ax60` adds a 5,000-deep `Option<` base around a 5,000-parenthesis tuple predicate and fails, with E0000 at 1:39021, when `NEST_ALL &&` is dropped from `parse_type_def`'s guard. A plain `Option<` nest cannot catch it: natively only `parse_primary` charges a level |
+
+Revision 36 (2026-10-10) answers the thirty-second review (`reviewer`, verdict "incorrect": 2
+must-fix, 1 nit). It found no wasm32 trap or native/VM divergence in the code. The test and parity
+fixes are in `da151a79`; no Rust source changed.
+
+| Finding | Resolution |
+|---|---|
+| [must-fix] S12: no 100,000-level `else if` probe, so a bypass of `parse_if`'s charge through an inlined helper passed the source check, the budget script and ax60, then trapped with 134; the probe list named guard, arm-body and slot chains as 100,000 deep | `elif100000` in ax60: E0000 at 2:5 on debug and release × tree and vm; the reviewer's mutant fails it with 134 in all four runs (ax60 226 ok, 4 FAIL; 230 ok when reverted). §4 S12 lists each probe at its real depth. Native does not count `else if` links and overflows on that chain (debug 134; release over 9 GB): out of scope, compilebench AX-67 |
+| [must-fix] S11: `vm_purefn_depth_boundary` never entered the tier from `main`: its only call from `main` was an unproven site, so the tier was first entered at depth 2 | Both programs make a warm-up `d(1)` first; under eager the measured call from `main` enters through `call_fast_inline` at depth0 1, and from depth 12 in both modes. A budget one frame too large now fails the test (vm completes where the tree panics at 49); the old test passed it. One frame too small is unobservable in output (the tier declines, generic reruns); §4 S11 says so |
+| [nit] S10: "nested at most `PURE_DEPTH` (16)" admits 15 nested `if`s; writes are checked against the value's kind, not the array's; no test writes one element twice before a decline | §4 S10 says 15 nested `if`s (16 traces no loop) and the value's kind (`xs[1] = 2.5` in an `[Int, Float]` array stays in registers, same output). `vm_index_decline_undoes_a_double_write` fails on a front-to-back rollback |
