@@ -956,6 +956,9 @@ o=$(OPKIT_RW=$W/scratch OPKIT_LIB=$LIB OPKIT_SCRATCH="$W/sp/gl*b" bash -c '. "$O
 grep -q 'contains whitespace or a glob character' <<<"$o" || fail "ATTACK: a scratch path with a glob character was refused, but not by the character rule (rc $rc): $o"
 # a glob character in OPKIT_RW is refused whole (it would expand to every directory it matches)
 mkdir -p "$W/rwg1" "$W/rwg2"; rm -f "$MR120"
+F=$W/rwg1/victim-glob; printf '%s' "$ORIG120" >"$F"
+o=$(LIB118=$LIB run118 "2:rdwr:$F" 'opkit_diag_roots_set; opkit_say hello' OPKIT_RW="$W/rwg*")
+cmp -s "$F" <(printf '%s' "$ORIG120") || fail "ATTACK: opkit_diag_roots_set expanded a glob in OPKIT_RW into roots nobody validated, and opkit_say wrote into a file under one of them: $(head -c 200 "$F")"
 o=$(OPKIT_RW="$W/rwg*" OPKIT_LIB=$LIB OPKIT_SCRATCH=$W/scratch bash -c '. "$OPKIT_LIB"; ns_run touch "$1"' bash "$MR120" 2>&1 </dev/null); rc=$?
 { [ $rc = 97 ] && [ ! -e "$MR120" ]; } || fail "ATTACK: OPKIT_RW with a glob character was expanded and accepted (rc $rc): $o"
 grep -q 'glob character' <<<"$o" || fail "ATTACK: OPKIT_RW with a glob character was refused, but not for that (rc $rc): $o"
