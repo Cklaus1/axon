@@ -40,8 +40,8 @@ the twenty-fifth (3 blockers, 2 must-fix, 4 nits; §15 "Revision 29"); revision 
 twenty-sixth (3 must-fix, 1 nit; §15 "Revision 30"); revision 31 answers the twenty-seventh (2
 must-fix, 2 nits; §15 "Revision 31"); revision 32 answers the twenty-eighth (2 must-fix, 1 nit;
 §15 "Revision 32"); revision 33 answers the twenty-ninth (1 blocker, 1 must-fix, 1 nit; §15
-"Revision 33"); revision 34 answers the thirtieth (3 must-fix, 1 nit; §15 "Revision 34"); a
-thirty-first review is pending.
+"Revision 33"); revision 34 answers the thirtieth (3 must-fix, 1 nit; §15 "Revision 34"); revision 35 answers the
+thirty-first (2 must-fix, 1 nit; §15 "Revision 35"); a thirty-second review is pending.
 **Risk class:** Structural (a second execution path for the reference engine)
 **Author / date:** 2026-10-09, from compilebench AX-18 (interpreter cost) after AX-53..AX-55.
 
@@ -835,7 +835,7 @@ nested `[` or `-` in an attribute argument) count a level as
   `parse_primary` already does (so a parenthesis, block, array literal or `Some` expression costs two
   levels and 110 of them nest; a `Some` pattern costs one), and so do an `else if`
   chain and a `match` subject and guard; a root
-  expression (a statement, contract or constant, and a `let`'s inline-refinement predicate, which is
+  expression (a statement, an item-level expression listed below, and a `let`'s inline-refinement predicate, which is
   kept outside the statement's tree) is checked with an iterative height walk over
   `walk_expr`'s children (a `match` arm's guard included), which bounds the operator and postfix chains
   the parser builds in a loop and
@@ -858,12 +858,14 @@ nested `[` or `-` in an attribute argument) count a level as
   inline-refinement predicate taller than the limit without a cut. So is an error after the root
   ends (a later statement or item, the enclosing `}`, the rest of a fn signature or attribute).
   A root is any expression the parser starts outside every counted level: a fn-body statement, a
-  top-level `let`, a contract or constant, a `@[verify(..)]` predicate, the `where` predicate of a
-  `type` definition or of a fn parameter or `let` annotation that is not inside a tuple type, and a
-  top-level handler definition's arm body. Each is refused at its own first token (`type P = i64
-  where ((..` at the predicate, column 20; `fn f(x: i64 where ((..` column 19; `@[verify(((..` column
-  10; a 600-term handler arm body column 36), except a `let` annotation's predicate, which is refused
-  at the `let`. Source outside any root is reported at the level where it trips: a type (a `type` definition, a fn signature, a field; for `type P =` and 300 `Option<`,
+  top-level `let`'s value, a `@[verify(..)]` predicate, the `where` predicate of a `type` definition
+  (a struct's `} where` included), of a struct field, or of a fn or trait-method parameter or `let`
+  annotation that is not inside a tuple type, and a top-level handler definition's arm body. Each is
+  refused at its own first token (with 300 parentheses: `let X = ((..` column 9; `type P = i64
+  where ((..` column 20; `type S = { v: i64 where ((..` column 25, as is a 600-term chain there;
+  `type S = { v: i64 } where ((..` column 27; `fn f(x: i64 where ((..` column 19; `trait T { fn
+  m(x: i64 where ((..` column 29; `@[verify(((..` column 10; a 600-term handler arm body column 36),
+  except a fn-body `let` annotation's predicate, which is refused at the `let`. Source outside any root is reported at the level where it trips: a type (a `type` definition, a fn signature, a field; for `type P =` and 300 `Option<`,
   column 1,578), a top-level handler definition's `on` pattern (300 nested `Some(`, column 1,150)
   and an attribute argument (the 225th `[` or `-`, column 234). A chain cut inside a type outside
   an expression (a tuple type's refinement predicate) is refused at the token after the outermost
@@ -908,7 +910,12 @@ compound chains (each E0000, exit 2), 100,000-term chains followed by a syntax e
 of 1,500 and 2,000 terms followed by a missing `)`, a dangling `+` or a stray token in the slot
 (native's syntax error and position, exit 2), and the out-of-expression refusals above at their
 stated columns (`tdef_where`, `tdef_enum`, `tdef_tuple_pred`, `attr_bracket`, `attr_neg`,
-`handler_pat`, `tdef_chain`, `fn_param_chain`; native prints `ok`, exit 0); nest
+`handler_pat`, `tdef_chain`, `fn_param_chain`, `tdef_pred`, `fn_pred`, `verify_pred`,
+`handler_body`, `refine_paren300`, `toplet_pred`, `field_pred`, `field_chain`, `struct_pred`,
+`trait_param_pred`; native prints `ok`, exit 0, except the native rewind cases: `tdef_where` and
+`tdef_tuple_pred` print `ok` and `tdef_enum` gives native's enum-parse syntax error at 1:16, and
+`native_nesting_limit_unchanged_ax60` asserts that error, not a nesting refusal, for a 5,000-deep
+`Option<` base holding a 5,000-parenthesis tuple predicate); nest
 probes `tests/fixtures/vm_depth/nest/{drop_list,drop_dict,drop_closure,drop_array,drop_tuple,drop_option,drop_result,host_await_closure,front_interp,front_arm,front_guard,front_or_arm,front_refine}.ax`
 and the front-end probes in `vm_wasm_depth.sh`, which never exit 134 in either profile or engine,
 and each front probe reaches a depth above 0 (the script fails a reach of 0)
@@ -918,7 +925,14 @@ and each front probe reaches a depth above 0 (the script fails a reach of 0)
 summed frame fits the 64 KiB margin: debug 16 × 2,784 B, release 16 × 1,232 B; the parser
 component's worst frame chain times 224 fits 448 KiB; every recursive component reachable from
 `Parser::parse_program` either contains a charged call or holds no `Parser` method and is classified
-in `ALLOW`, and every charged name matches a `self.nested(Self::..)` site in parser.rs); `vm_perf_gate.sh`, whose `REF` column holds
+in `ALLOW`, and every charged name matches a `self.nested(Self::..)` site in parser.rs, checked in
+the source: in a charged `X`, `X_inner` is reached only by an unconditional `self.nested(Self::X_inner)`
+statement or, natively, by a direct call under a bare `!NEST_ALL` or the `else` of a bare `if
+NEST_ALL`; nothing outside `fn X` names `X_inner`; and a charged `(r, e)` callee is called bare in
+`r` only in that native arm). The source check does not see a wasm32 branch in `X` that returns
+through another function before reaching `nested`; the dynamic probes cover that, with one case per
+counted construct that reaches 100,000 levels (`paren_type`, `tuple_type`, `ref_type`, the `+`,
+guard, arm-body and slot chains), each E0000 and never 134; `vm_perf_gate.sh`, whose `REF` column holds
 fib-recursive's median at the S11 commit `2627dad7` next to the S10 medians, so every program's
 `instructions:u` stays within 0.5 % of the code S12 is built on; the whole suite under the S9 modes.
 
@@ -1288,7 +1302,7 @@ the reference code, gaps cost speed, never correctness.
 | R50.S9 deferred compile (§4 S9); `AXON_VM_EAGER`; `vm: defer` trace line | R50.S6, R50.S8 | `cli_run vm_defer_` + `cli_run vm_` (eager and default legs) + whole suite with `AXON_ENGINE` unset, `tree` and `vm` + `AXON_VM_EAGER=1` + `vm_parity.sh` (S9 list; eager and default runs) + `vm_perf_gate.sh` (all five) + `--repros` (every row) + `--compile` + `reference_gate.sh` + `vm_wasm_depth.sh --require-default-stack` + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` under the same three | `db2d2eee` |
 | R50.S10 array elements in pure loops (§4 S10); `PureFor`; `sieve.ax` and its `--programs` row; never-taken `if` in the repro bases made impure | R50.S9 | `cli_run vm_index_` (incl. `vm_index_sieve_loops`) + `vm_perf_gate.sh` (all six) + `--repros` (every row) + `vm_parity.sh` + `vm_wasm_depth.sh --require-default-stack` + whole suite under the S9 modes | code `944fe056`, which fails `vm_wasm_depth.sh` (`wasm_stack_budget.py`: `pure_stmts`/`pure_if` recursion not in `ALLOW`, `COMPILE_STMT` 16 bytes short in release); fixed with S11 |
 | R50.S11 pure-`i64` function tier (§4 S11); `vm: purefn` trace line; fib-recursive budget a third of CPython's | R50.S10 | `cli_run vm_purefn_` (incl. `vm_purefn_fib_in_registers`) + `purefn_build_validates` + `vm_perf_gate.sh` (all six; `REF` check: others at most 0.5 % above S10) + `--repros` (every row) + `vm_parity.sh` + `vm_wasm_depth.sh --require-default-stack` (`plain` on the tier, `plain_generic` off it) + whole suite under the S9 modes | code `2627dad7`; review fixes `faf25a22`, `e5f754ab` |
-| R50.S12 wasm32 traps (§4 S12): bounded drop of every `Value` container, front-end nesting limit 224 (interpolation slots included), no payload copy for `host_await_val`; `DictMap`/`Elems`/`VBox`/`Queue`/`Held`; nest probes; four `wasm_stack_budget.py` checks | R50.S10 | `cli_run wasm_drops_deep_values_ax59`, `wasm_deep_source_gives_e0000_ax60`, `native_nesting_limit_unchanged_ax60`, `native_guard_borrow_e0606`, `native_guard_w0002`, `native_guard_assign_in_place`, `native_guard_pure_e1207`, `native_guard_tier_e0910`, `native_guard_write_unaliases`, `wasm_host_await_val_no_copy_ax61` + `wasm_nesting_parity.sh` (debug and release; out-of-root refusals `tdef_*`, `attr_*`, `handler_*`, `*_chain`, `*_pred`) + `vm_wasm_depth.sh --require-default-stack` (debug and release; no probe exits 134) + `wasm_stack_budget.py` + `vm_perf_gate.sh` (every `REF` within 0.5 %, fib-recursive's from `2627dad7`) + whole suite under the S9 modes | code `a9c89e5e`, merged `e0f29182`; review fixes `91b13427`, `c33f521b`, `e5f754ab`, `fcd18f2b`, `2fdf7cc1`, `a875d2b8`, `8e4bd760`, `6ae2c76f` |
+| R50.S12 wasm32 traps (§4 S12): bounded drop of every `Value` container, front-end nesting limit 224 (interpolation slots included), no payload copy for `host_await_val`; `DictMap`/`Elems`/`VBox`/`Queue`/`Held`; nest probes; four `wasm_stack_budget.py` checks | R50.S10 | `cli_run wasm_drops_deep_values_ax59`, `wasm_deep_source_gives_e0000_ax60`, `native_nesting_limit_unchanged_ax60`, `native_guard_borrow_e0606`, `native_guard_w0002`, `native_guard_assign_in_place`, `native_guard_pure_e1207`, `native_guard_tier_e0910`, `native_guard_write_unaliases`, `wasm_host_await_val_no_copy_ax61` + `wasm_nesting_parity.sh` (debug and release; out-of-root refusals `tdef_*`, `attr_*`, `handler_*`, `*_chain`, `*_pred`) + `vm_wasm_depth.sh --require-default-stack` (debug and release; no probe exits 134) + `wasm_stack_budget.py` + `vm_perf_gate.sh` (every `REF` within 0.5 %, fib-recursive's from `2627dad7`) + whole suite under the S9 modes | code `a9c89e5e`, merged `e0f29182`; review fixes `91b13427`, `c33f521b`, `e5f754ab`, `fcd18f2b`, `2fdf7cc1`, `a875d2b8`, `8e4bd760`, `6ae2c76f`, `2d0940c2` |
 
 ### 14. Evidence ledger
 
@@ -1741,3 +1755,12 @@ Revision 34 (2026-10-10) answers the thirtieth review (`reviewer`, verdict "inco
 | [must-fix] §4 Recursion said the front-end limit "bounds every later walk"; three checker walks over chains of declarations (`@[contained]` call chain, `@[total]` chain, refinement-type names) trap wasm32 on flat source | Filed as compilebench AX-66 (predates S12; the same build `99e6aeb8` traps). §4 Recursion narrows the claim to walks over one expression, and §4 S12's out-of-scope paragraph lists the three walks with their trap points |
 | [must-fix] S12: the root definition missed item-level predicates and handler arm bodies, whose refusals are at the predicate's or body's first token | §4 S12 defines a root as any expression started outside every counted level, lists them, and gives each position (`type` predicate 1:20, fn parameter predicate 1:19, `@[verify]` 1:10, handler arm body 1:36, `let` annotation at the `let`). Parity cases `tdef_pred`, `fn_pred`, `verify_pred`, `handler_body` and `refine_paren300` assert them |
 | [nit] §8 and §13 omitted `native_guard_w0002`; "two new checks" described four | Both list it; §4 and §13 say four checks and name the out-of-root parity cases |
+
+Revision 35 (2026-10-10) answers the thirty-first review (`reviewer`, verdict "incorrect": 2
+must-fix, 1 nit). The script and parity fixes are in `2d0940c2`; parser.rs is unchanged.
+
+| Finding | Resolution |
+|---|---|
+| [must-fix] S12: the budget check credited a charge to the callee's name, so a branch in `parse_type_atom` that called its inner fn without `nested` passed the script and the parity harness, and a 100,000-deep parenthesised type trapped | `wasm_stack_budget.py` checks parser.rs's charge sites (§4 S12 Gate states the rule); mutants A and C each fail with two `FAIL parser charge` lines in both profiles, and HEAD passes with unchanged numbers. `paren_type`, `tuple_type` and `ref_type` (100,000 levels) give E0000 at 2:5; mutant C fails `paren_type` with 134. The source check cannot see a branch that returns through another function before `nested`; §4 S12 says so and names the dynamic probes that cover it |
+| [must-fix] S12: the root list named a "contract or constant" that does not exist, left out struct-field and struct `} where` predicates and trait-method parameters, and gave no position for a top-level `let` | §4 S12 lists the parser's item-level roots with measured columns (top-level `let` 1:9, field 1:25, struct 1:27, trait parameter 1:29); `toplet_pred`, `field_pred`, `field_chain`, `struct_pred` and `trait_param_pred` assert them, native `ok` |
+| [nit] native's rewind of a too-deep `type` base was claimed but ungated | The native loop runs `tdef_where`, `tdef_enum` (1:16 enum-parse error) and `tdef_tuple_pred`; `native_nesting_limit_unchanged_ax60` adds a 5,000-deep `Option<` base around a 5,000-parenthesis tuple predicate and fails, with E0000 at 1:39021, when `NEST_ALL &&` is dropped from `parse_type_def`'s guard. A plain `Option<` nest cannot catch it: natively only `parse_primary` charges a level |
