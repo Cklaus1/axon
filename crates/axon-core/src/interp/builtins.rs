@@ -461,6 +461,7 @@ impl<'p> Interp<'p> {
     /// propagates, and so does a POLICY stop (`VerifyFailed` exit 3 /
     /// `RefineViolation` exit 6) — only a per-fiber `Panic` is caught.
     pub(super) fn builtin_scheduler_run_once(&self) -> Result<i64, Flow> {
+        nest_guard!(self, BUILTIN_SCHEDULER_RUN_ONCE);
         let order = self.scheduler.borrow().ready_order();
         let mut completed: i64 = 0;
         for id in order {
@@ -687,6 +688,7 @@ impl<'p> Interp<'p> {
     /// Dispatch a builtin call. Returns `Ok(Some(v))` if `name` is a builtin,
     /// `Ok(None)` if it is not (caller should try user functions).
     pub(super) fn call_builtin(&self, name: &str, args: &[Value]) -> Result<Option<Value>, Flow> {
+        nest_guard!(self, CALL_BUILTIN);
         // Helpers --------------------------------------------------------------
         let want = |n: usize| -> Result<(), Flow> {
             if args.len() == n {
@@ -783,7 +785,7 @@ impl<'p> Interp<'p> {
                     .handlers
                     .borrow()
                     .iter()
-                    .any(|f| f.arms.iter().any(|a| a.effect == *eff));
+                    .any(|f| f.arms.iter().any(|a| a.effect() == *eff));
                 if !handled {
                     continue;
                 }

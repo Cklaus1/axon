@@ -1,0 +1,11 @@
+let DEPTH = 100
+// AX-56 nesting probe: recursion through `?`.
+// scripts/vm_wasm_depth.sh runs it deep under wasmtime's default stack
+// and requires the recursion-limit panic, not a trap.
+fn w(n: i64) -> Result<i64, str> {
+    if n == 0 { Ok(0) } else { let v = w(n - 1)?; Ok(v + 1) }
+}
+fn main() -> i64 {
+    match w(DEPTH) { Ok(v) => println(to_str(v)), Err(e) => println(e) }
+    0
+}

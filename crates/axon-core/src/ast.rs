@@ -671,117 +671,93 @@ pub enum UnaryOp {
 /// through nested closures, and a generic callback would re-wrap its own type at
 /// every level — an infinite monomorphization that segfaults rustc rather than
 /// producing a diagnostic. Learned the hard way.)
-pub fn walk_expr<'a>(e: &'a Expr, f: &mut dyn FnMut(&'a Expr)) {
-    use Expr;
-    f(e);
-    fn walk_stmts<'a>(ss: &'a [Stmt], f: &mut dyn FnMut(&'a Expr)) {
-        for s in ss {
-            walk_expr(&s.expr, f);
-        }
+///
+/// Iterative, on a heap stack, in the same pre-order a recursion would give:
+/// a left-associative chain (`a + b + c …`, built by the parser in a loop)
+/// can be thousands of nodes deep, and the walk runs wherever its caller
+/// does, including at the bottom of a deep interpreter recursion on wasm32,
+/// where a native-stack recursion per node would trap (AX-56). A node with
+/// no sub-expressions never allocates.
+pub fn walk_expr<'a>(root: &'a Expr, f: &mut dyn FnMut(&'a Expr)) {
+    let mut stack: Vec<&'a Expr> = Vec::new();
+    let mut kids: Vec<&'a Expr> = Vec::new();
+    let mut next = Some(root);
+    while let Some(e) = next {
+        f(e);
+        children(e, &mut kids);
+        // Visit the first child next and the rest after its subtree.
+        stack.extend(kids.drain(..).rev());
+        next = stack.pop();
     }
+}
+
+/// `e`'s direct sub-expressions, in [`walk_expr`]'s visit order.
+fn children<'a>(e: &'a Expr, out: &mut Vec<&'a Expr>) {
+    let ss = |ss: &'a [Stmt]| ss.iter().map(|s| &s.expr);
     match e {
-        Expr::BinOp { left, right, .. } => {
-            walk_expr(left, f);
-            walk_expr(right, f);
-        }
-        Expr::UnaryOp { operand, .. } => walk_expr(operand, f),
+        Expr::BinOp { left, right, .. } => out.extend([&**left, &**right]),
+        Expr::UnaryOp { operand, .. } => out.push(operand),
         Expr::Let { value, .. } | Expr::Own { value, .. } | Expr::RefBind { value, .. } => {
-            walk_expr(value, f)
+            out.push(value)
         }
         Expr::Call { callee, args, .. } => {
-            walk_expr(callee, f);
-            for a in args {
-                walk_expr(a, f);
-            }
+            out.push(callee);
+            out.extend(args);
         }
         Expr::MethodCall { receiver, args, .. } => {
-            walk_expr(receiver, f);
-            for a in args {
-                walk_expr(a, f);
-            }
+            out.push(receiver);
+            out.extend(args);
         }
         Expr::Question(b) | Expr::Spawn(b) | Expr::Comptime(b) | Expr::Lambda { body: b, .. } => {
-            walk_expr(b, f)
+            out.push(b)
         }
-        Expr::Return(inner) => {
-            if let Some(b) = inner {
-                walk_expr(b, f);
-            }
-        }
-        Expr::FieldAccess { receiver, .. } => walk_expr(receiver, f),
-        Expr::Index { receiver, index } => {
-            walk_expr(receiver, f);
-            walk_expr(index, f);
-        }
+        Expr::Return(inner) => out.extend(inner.as_deref()),
+        Expr::FieldAccess { receiver, .. } => out.push(receiver),
+        Expr::Index { receiver, index } => out.extend([&**receiver, &**index]),
         Expr::If { cond, then, else_ } => {
-            walk_expr(cond, f);
-            walk_expr(then, f);
-            if let Some(b) = else_ {
-                walk_expr(b, f);
-            }
+            out.extend([&**cond, &**then]);
+            out.extend(else_.as_deref());
         }
         Expr::Match { subject, arms } => {
-            walk_expr(subject, f);
-            for a in arms {
-                walk_expr(&a.body, f);
-            }
+            out.push(subject);
+            out.extend(arms.iter().map(|a| &a.body));
         }
-        Expr::Tuple(xs) | Expr::Array(xs) => {
-            for x in xs {
-                walk_expr(x, f);
-            }
-        }
-        Expr::Block(stmts) => walk_stmts(stmts, f),
+        Expr::Tuple(xs) | Expr::Array(xs) => out.extend(xs),
+        Expr::Block(stmts) => out.extend(ss(stmts)),
         Expr::While { cond, body } => {
-            walk_expr(cond, f);
-            walk_stmts(body, f);
+            out.push(cond);
+            out.extend(ss(body));
         }
         Expr::WhileLet { expr, body, .. } => {
-            walk_expr(expr, f);
-            walk_stmts(body, f);
+            out.push(expr);
+            out.extend(ss(body));
         }
         Expr::For {
             start, end, body, ..
         } => {
-            walk_expr(start, f);
-            walk_expr(end, f);
-            walk_stmts(body, f);
+            out.extend([&**start, &**end]);
+            out.extend(ss(body));
         }
-        Expr::Ok(b) | Expr::Err(b) | Expr::Some(b) => walk_expr(b, f),
-        Expr::StructLit { fields, .. } => {
-            for (_, v) in fields {
-                walk_expr(v, f);
-            }
-        }
-        Expr::Assign { value, .. } => walk_expr(value, f),
-        Expr::AssignTo { place, value } => {
-            walk_expr(place, f);
-            walk_expr(value, f);
-        }
-        Expr::FmtStr { parts } => {
-            for p in parts {
-                if let FmtPart::Expr(inner) = p {
-                    walk_expr(inner, f);
-                }
-            }
-        }
+        Expr::Ok(b) | Expr::Err(b) | Expr::Some(b) => out.push(b),
+        Expr::StructLit { fields, .. } => out.extend(fields.iter().map(|(_, v)| v)),
+        Expr::Assign { value, .. } => out.push(value),
+        Expr::AssignTo { place, value } => out.extend([&**place, &**value]),
+        Expr::FmtStr { parts } => out.extend(parts.iter().filter_map(|p| match p {
+            FmtPart::Expr(inner) => Some(&**inner),
+            _ => None,
+        })),
         // ── Arms the old `_ => false` catch-all silently dropped (T46) ───────
         Expr::Select(arms) => {
             for a in arms {
-                walk_expr(&a.recv, f);
-                walk_expr(&a.body, f);
+                out.extend([&a.recv, &a.body]);
             }
         }
         Expr::WithHandler { handler, body } => {
             if let HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
-                for a in arms {
-                    walk_expr(&a.body, f);
-                }
-                if let Some(ra) = return_arm {
-                    walk_expr(&ra.body, f);
-                }
+                out.extend(arms.iter().map(|a| &a.body));
+                out.extend(return_arm.iter().map(|ra| &ra.body));
             }
-            walk_expr(body, f);
+            out.push(body);
         }
         // Leaves — no sub-expressions. Listed rather than swept into a `_` arm
         // so the exhaustiveness check above keeps doing its job.

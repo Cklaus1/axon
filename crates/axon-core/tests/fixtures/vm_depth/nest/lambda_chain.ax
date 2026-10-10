@@ -1,0 +1,401 @@
+let DEPTH = 100
+// AX-56 nesting probe: 130 lambdas in a dict cycle, each entered once per
+// lap, so each compiles at depth (the VM's second entry, S9): the compiling
+// frame must not stay live under the body.
+// scripts/vm_wasm_depth.sh runs it deep under wasmtime's default stack
+// and requires the recursion-limit panic, not a trap.
+fn main() -> i64 {
+    let d = dict_new()
+    let l0 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L1") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L0", l0)
+    let l1 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L2") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L1", l1)
+    let l2 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L3") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L2", l2)
+    let l3 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L4") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L3", l3)
+    let l4 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L5") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L4", l4)
+    let l5 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L6") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L5", l5)
+    let l6 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L7") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L6", l6)
+    let l7 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L8") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L7", l7)
+    let l8 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L9") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L8", l8)
+    let l9 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L10") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L9", l9)
+    let l10 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L11") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L10", l10)
+    let l11 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L12") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L11", l11)
+    let l12 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L13") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L12", l12)
+    let l13 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L14") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L13", l13)
+    let l14 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L15") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L14", l14)
+    let l15 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L16") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L15", l15)
+    let l16 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L17") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L16", l16)
+    let l17 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L18") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L17", l17)
+    let l18 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L19") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L18", l18)
+    let l19 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L20") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L19", l19)
+    let l20 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L21") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L20", l20)
+    let l21 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L22") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L21", l21)
+    let l22 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L23") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L22", l22)
+    let l23 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L24") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L23", l23)
+    let l24 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L25") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L24", l24)
+    let l25 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L26") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L25", l25)
+    let l26 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L27") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L26", l26)
+    let l27 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L28") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L27", l27)
+    let l28 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L29") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L28", l28)
+    let l29 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L30") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L29", l29)
+    let l30 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L31") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L30", l30)
+    let l31 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L32") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L31", l31)
+    let l32 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L33") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L32", l32)
+    let l33 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L34") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L33", l33)
+    let l34 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L35") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L34", l34)
+    let l35 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L36") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L35", l35)
+    let l36 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L37") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L36", l36)
+    let l37 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L38") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L37", l37)
+    let l38 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L39") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L38", l38)
+    let l39 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L40") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L39", l39)
+    let l40 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L41") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L40", l40)
+    let l41 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L42") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L41", l41)
+    let l42 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L43") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L42", l42)
+    let l43 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L44") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L43", l43)
+    let l44 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L45") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L44", l44)
+    let l45 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L46") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L45", l45)
+    let l46 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L47") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L46", l46)
+    let l47 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L48") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L47", l47)
+    let l48 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L49") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L48", l48)
+    let l49 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L50") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L49", l49)
+    let l50 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L51") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L50", l50)
+    let l51 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L52") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L51", l51)
+    let l52 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L53") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L52", l52)
+    let l53 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L54") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L53", l53)
+    let l54 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L55") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L54", l54)
+    let l55 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L56") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L55", l55)
+    let l56 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L57") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L56", l56)
+    let l57 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L58") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L57", l57)
+    let l58 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L59") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L58", l58)
+    let l59 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L60") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L59", l59)
+    let l60 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L61") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L60", l60)
+    let l61 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L62") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L61", l61)
+    let l62 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L63") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L62", l62)
+    let l63 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L64") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L63", l63)
+    let l64 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L65") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L64", l64)
+    let l65 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L66") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L65", l65)
+    let l66 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L67") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L66", l66)
+    let l67 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L68") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L67", l67)
+    let l68 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L69") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L68", l68)
+    let l69 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L70") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L69", l69)
+    let l70 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L71") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L70", l70)
+    let l71 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L72") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L71", l71)
+    let l72 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L73") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L72", l72)
+    let l73 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L74") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L73", l73)
+    let l74 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L75") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L74", l74)
+    let l75 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L76") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L75", l75)
+    let l76 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L77") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L76", l76)
+    let l77 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L78") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L77", l77)
+    let l78 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L79") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L78", l78)
+    let l79 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L80") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L79", l79)
+    let l80 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L81") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L80", l80)
+    let l81 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L82") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L81", l81)
+    let l82 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L83") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L82", l82)
+    let l83 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L84") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L83", l83)
+    let l84 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L85") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L84", l84)
+    let l85 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L86") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L85", l85)
+    let l86 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L87") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L86", l86)
+    let l87 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L88") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L87", l87)
+    let l88 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L89") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L88", l88)
+    let l89 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L90") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L89", l89)
+    let l90 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L91") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L90", l90)
+    let l91 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L92") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L91", l91)
+    let l92 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L93") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L92", l92)
+    let l93 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L94") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L93", l93)
+    let l94 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L95") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L94", l94)
+    let l95 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L96") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L95", l95)
+    let l96 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L97") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L96", l96)
+    let l97 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L98") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L97", l97)
+    let l98 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L99") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L98", l98)
+    let l99 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L100") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L99", l99)
+    let l100 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L101") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L100", l100)
+    let l101 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L102") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L101", l101)
+    let l102 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L103") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L102", l102)
+    let l103 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L104") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L103", l103)
+    let l104 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L105") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L104", l104)
+    let l105 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L106") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L105", l105)
+    let l106 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L107") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L106", l106)
+    let l107 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L108") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L107", l107)
+    let l108 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L109") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L108", l108)
+    let l109 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L110") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L109", l109)
+    let l110 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L111") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L110", l110)
+    let l111 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L112") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L111", l111)
+    let l112 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L113") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L112", l112)
+    let l113 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L114") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L113", l113)
+    let l114 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L115") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L114", l114)
+    let l115 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L116") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L115", l115)
+    let l116 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L117") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L116", l116)
+    let l117 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L118") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L117", l117)
+    let l118 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L119") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L118", l118)
+    let l119 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L120") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L119", l119)
+    let l120 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L121") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L120", l120)
+    let l121 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L122") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L121", l121)
+    let l122 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L123") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L122", l122)
+    let l123 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L124") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L123", l123)
+    let l124 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L125") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L124", l124)
+    let l125 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L126") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L125", l125)
+    let l126 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L127") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L126", l126)
+    let l127 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L128") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L127", l127)
+    let l128 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L129") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L128", l128)
+    let l129 = |x: i64| { let k = 0; with handler { on Net(e) => 0 } { if x == 0 { 0 } else { k + (match dict_get(d, "L0") { Some(f) => f(x - 1), None => 0 }) + 1 } } }
+    dict_set(d, "L129", l129)
+    l0(0)
+    l1(0)
+    l2(0)
+    l3(0)
+    l4(0)
+    l5(0)
+    l6(0)
+    l7(0)
+    l8(0)
+    l9(0)
+    l10(0)
+    l11(0)
+    l12(0)
+    l13(0)
+    l14(0)
+    l15(0)
+    l16(0)
+    l17(0)
+    l18(0)
+    l19(0)
+    l20(0)
+    l21(0)
+    l22(0)
+    l23(0)
+    l24(0)
+    l25(0)
+    l26(0)
+    l27(0)
+    l28(0)
+    l29(0)
+    l30(0)
+    l31(0)
+    l32(0)
+    l33(0)
+    l34(0)
+    l35(0)
+    l36(0)
+    l37(0)
+    l38(0)
+    l39(0)
+    l40(0)
+    l41(0)
+    l42(0)
+    l43(0)
+    l44(0)
+    l45(0)
+    l46(0)
+    l47(0)
+    l48(0)
+    l49(0)
+    l50(0)
+    l51(0)
+    l52(0)
+    l53(0)
+    l54(0)
+    l55(0)
+    l56(0)
+    l57(0)
+    l58(0)
+    l59(0)
+    l60(0)
+    l61(0)
+    l62(0)
+    l63(0)
+    l64(0)
+    l65(0)
+    l66(0)
+    l67(0)
+    l68(0)
+    l69(0)
+    l70(0)
+    l71(0)
+    l72(0)
+    l73(0)
+    l74(0)
+    l75(0)
+    l76(0)
+    l77(0)
+    l78(0)
+    l79(0)
+    l80(0)
+    l81(0)
+    l82(0)
+    l83(0)
+    l84(0)
+    l85(0)
+    l86(0)
+    l87(0)
+    l88(0)
+    l89(0)
+    l90(0)
+    l91(0)
+    l92(0)
+    l93(0)
+    l94(0)
+    l95(0)
+    l96(0)
+    l97(0)
+    l98(0)
+    l99(0)
+    l100(0)
+    l101(0)
+    l102(0)
+    l103(0)
+    l104(0)
+    l105(0)
+    l106(0)
+    l107(0)
+    l108(0)
+    l109(0)
+    l110(0)
+    l111(0)
+    l112(0)
+    l113(0)
+    l114(0)
+    l115(0)
+    l116(0)
+    l117(0)
+    l118(0)
+    l119(0)
+    l120(0)
+    l121(0)
+    l122(0)
+    l123(0)
+    l124(0)
+    l125(0)
+    l126(0)
+    l127(0)
+    l128(0)
+    l129(0)
+    println(to_str(l0(DEPTH)))
+    0
+}

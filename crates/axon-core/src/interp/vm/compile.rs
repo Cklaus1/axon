@@ -16,7 +16,7 @@
 
 use std::cell::Cell;
 
-use super::pure::{Pure, PureExpr, PureLoop, PureOp, PureStmt, Sink};
+use super::pure::{Pure, PureExpr, PureLoop, PureOp, PureStmt, Sink, PURE_DEPTH};
 use super::{Body, Cond, Loop, Move, Moves, MutRef, Op, Opnd, Src, Var};
 use crate::ast::{BinOp, Expr, FmtPart, Literal, MatchArm, Pattern, Stmt, UnaryOp};
 use crate::interp::sym::{FnEntry, NOT_LOCAL};
@@ -25,8 +25,11 @@ use crate::interp::{lit_to_val, Interp, Resolution, Value};
 
 /// Compile the fn body `body` against `ix`'s program: its resolution table
 /// (the `(sym, slot)` of every name node, the string and decimal literals)
-/// and, for the S5 call ops, its fn table.
-pub(in crate::interp) fn compile<'p>(ix: &Interp<'_>, body: &'p Expr) -> Body<'p> {
+/// and, for the S5 call ops, its fn table. `None` only on wasm32, when the
+/// compiler's own recursion would exceed the stack budget (AX-56): the
+/// caller runs the body on the tree this time, as the tree would, and does
+/// not keep a body compiled that deep.
+pub(in crate::interp) fn compile<'p>(ix: &Interp<'_>, body: &'p Expr) -> Option<Body<'p>> {
     let mut c = Compiler {
         res: &ix.res,
         ix,
@@ -36,20 +39,24 @@ pub(in crate::interp) fn compile<'p>(ix: &Interp<'_>, body: &'p Expr) -> Body<'p
         max_height: 0,
         scopes: 0,
         twins: Vec::new(),
+        spent: false,
     };
     c.expr(body);
+    if c.spent {
+        return None;
+    }
     debug_assert_eq!((c.height, c.scopes), (1, 0), "a body leaves one value");
     branch_return(&mut c.ops);
     let leaf = c
         .pure_tree(body, &mut 0)
         .map(|t| Box::new(PureExpr::new(t)));
-    Body {
+    Some(Body {
         moves: moves(&c.ops),
         ops: c.ops.into_boxed_slice(),
         loops: c.loops.into_boxed_slice(),
         max_stack: c.max_height as usize,
         leaf,
-    }
+    })
 }
 
 struct Compiler<'r, 'i, 'p> {
@@ -66,11 +73,18 @@ struct Compiler<'r, 'i, 'p> {
     /// and the [`Op::Pure`] before it, whose `Sink::Branch` target
     /// [`Compiler::patch`] sets with the branch's.
     twins: Vec<(u32, u32)>,
+    /// AX-56: a level of the compiler's recursion found the wasm32 stack
+    /// budget spent ([`Compiler::nest`]); the compile is abandoned.
+    spent: bool,
 }
 
-impl<'p> Compiler<'_, '_, 'p> {
+impl<'r, 'p> Compiler<'r, '_, 'p> {
     /// Emit the ops that evaluate `e` and push its value.
     fn expr(&mut self, e: &'p Expr) {
+        #[cfg(target_arch = "wasm32")]
+        let Some(_nest) = self.nest::<{ crate::interp::nest_cost::COMPILE_EXPR }>(e, 1) else {
+            return;
+        };
         match e {
             Expr::Literal(lit) => {
                 let v = self.literal(e, lit);
@@ -196,6 +210,10 @@ impl<'p> Compiler<'_, '_, 'p> {
     /// Emit the ops that evaluate `e` for its effect only (its value, which
     /// `eval` would compute and the caller drop, is not kept).
     fn stmt(&mut self, e: &'p Expr) {
+        #[cfg(target_arch = "wasm32")]
+        let Some(_nest) = self.nest::<{ crate::interp::nest_cost::COMPILE_STMT }>(e, 0) else {
+            return;
+        };
         match e {
             Expr::Let { name, value, ty }
             | Expr::Own { name, value, ty }
@@ -1008,6 +1026,12 @@ impl<'p> Compiler<'_, '_, 'p> {
     /// `n` counts its operator nodes. An identifier is a leaf only when
     /// resolution binds it to a local slot.
     fn pure_tree(&self, e: &'p Expr, n: &mut u32) -> Option<Pure<'p>> {
+        self.pure_at(e, n, 0)
+    }
+
+    /// [`Compiler::pure_tree`] for `e` at operator depth `d`: `None` past
+    /// [`PURE_DEPTH`], so every recursion over a pure tree is bounded.
+    fn pure_at(&self, e: &'p Expr, n: &mut u32, d: u32) -> Option<Pure<'p>> {
         Some(match e {
             Expr::Ident(name) => {
                 let var = self.var(e, name);
@@ -1019,8 +1043,12 @@ impl<'p> Compiler<'_, '_, 'p> {
             Expr::Literal(Literal::Int(v)) => Pure::Int(*v),
             Expr::Literal(Literal::Float(v)) => Pure::Float(*v),
             Expr::Literal(Literal::Bool(v)) => Pure::Bool(*v),
+            Expr::BinOp { .. } if d == PURE_DEPTH => return None,
             Expr::BinOp { op, left, right } => {
-                let k = Box::new([self.pure_tree(left, n)?, self.pure_tree(right, n)?]);
+                let k = Box::new([
+                    self.pure_at(left, n, d + 1)?,
+                    self.pure_at(right, n, d + 1)?,
+                ]);
                 *n += 1;
                 match op {
                     BinOp::And => Pure::And(k),
@@ -1228,6 +1256,33 @@ impl<'p> Compiler<'_, '_, 'p> {
     /// `e` runs on the tree-walker as one op.
     fn tree(&mut self, e: &'p Expr) {
         self.emit(Op::Tree(e), 0, 1);
+    }
+
+    /// AX-56: charge one level of the compiler's recursion (`expr`, `stmt`)
+    /// against the wasm32 stack budget, like the tree-walker's `eval` levels:
+    /// the compiler runs while the program is at depth, so a deeply nested
+    /// body would otherwise use stack the budget never sees. `None` once the
+    /// budget is spent: the compile is abandoned ([`compile`] returns `None`)
+    /// and `e` stands in as a `Tree` op (then a `Drop` for a statement,
+    /// `pushes` 0), so every caller still finds the ops and heights it
+    /// expects.
+    #[cfg(target_arch = "wasm32")]
+    fn nest<const W: usize>(
+        &mut self,
+        e: &'p Expr,
+        pushes: u32,
+    ) -> Option<crate::interp::NestGuard<'r, W>> {
+        match self.ix.enter_nest::<W>() {
+            Ok(g) => Some(g),
+            Err(_) => {
+                self.spent = true;
+                self.tree(e);
+                if pushes == 0 {
+                    self.emit(Op::Drop, 1, 0);
+                }
+                None
+            }
+        }
     }
 
     fn scope_push(&mut self) {

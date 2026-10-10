@@ -33,10 +33,12 @@ if [ -z "$WASMRT" ]; then
   echo "wasm_fs_parity: no wasm runtime — skipping"; exit 0
 fi
 
-# R50 §8: forward AXON_ENGINE of the caller to the wasip1 interpreter (wasmtime
-# passes no host environment through; the native leg inherits it).
+# R50 §8: forward AXON_ENGINE and AXON_VM_EAGER of the caller to the wasip1
+# interpreter (wasmtime passes no host environment through; the native leg
+# inherits them).
 ENGINE_ENV=()
-[ -n "${AXON_ENGINE:-}" ] && ENGINE_ENV=(--env "AXON_ENGINE=$AXON_ENGINE")
+[ -n "${AXON_ENGINE:-}" ] && ENGINE_ENV+=(--env "AXON_ENGINE=$AXON_ENGINE")
+[ -n "${AXON_VM_EAGER:-}" ] && ENGINE_ENV+=(--env "AXON_VM_EAGER=$AXON_VM_EAGER")
 
 # A skip must prove its own reason. The previous probe piped rustup
 # into grep, discarding rustup's exit status and stderr, so a MISSING

@@ -26,6 +26,7 @@ impl<'p> Interp<'p> {
         target: f64,
         max_evals: i64,
     ) -> Result<f64, Flow> {
+        nest_guard!(self, RUN_GOAL_WARM);
         let _goal_guard = self.enter_goal(name);
         if !self.goal_name_is_known(name) {
             return Err(Self::unknown_goal_name(name));
@@ -246,6 +247,7 @@ impl<'p> Interp<'p> {
         lo: i64,
         hi: i64,
     ) -> Result<f64, Flow> {
+        nest_guard!(self, RUN_GOAL_RANDOM);
         let _goal_guard = self.enter_goal(name);
         if hi <= lo {
             return panic(format!(
@@ -340,6 +342,7 @@ impl<'p> Interp<'p> {
         target: f64,
         max_evals: i64,
     ) -> Result<f64, Flow> {
+        nest_guard!(self, RUN_GOAL_CATEGORICAL);
         let _goal_guard = self.enter_goal(name);
         if n_choices <= 0 {
             return panic(format!(
@@ -437,6 +440,7 @@ impl<'p> Interp<'p> {
         lo: i64,
         hi: i64,
     ) -> Result<f64, Flow> {
+        nest_guard!(self, RUN_GOAL_MULTISTART);
         let _goal_guard = self.enter_goal(name);
         if hi <= lo {
             return panic(format!(
@@ -623,6 +627,7 @@ impl<'p> Interp<'p> {
     }
 
     pub(super) fn run_goal(&self, name: &str, target: f64, max_evals: i64) -> Result<f64, Flow> {
+        nest_guard!(self, RUN_GOAL);
         let _goal_guard = self.enter_goal(name);
         if !self.goal_name_is_known(name) {
             return Err(Self::unknown_goal_name(name));
@@ -1274,6 +1279,7 @@ impl<'p> Interp<'p> {
     /// call the fn on `input`, restore provenance, return the numeric score.
     /// The provenance must remain unmodified so that `goal_run` is unbiased.
     pub(super) fn goal_eval_holdout(&self, name: &str, input: i64) -> Result<f64, Flow> {
+        nest_guard!(self, GOAL_EVAL_HOLDOUT);
         let Some(f) = self.fns.get(name) else {
             return Err(Flow::Panic(
                 format!("goal_eval: `{name}` is not a defined function").into(),

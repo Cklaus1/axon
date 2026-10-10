@@ -1,0 +1,20 @@
+let DEPTH = 100
+// AX-56 nesting probe: lambdas and `arr_fold` callbacks alternating, six levels.
+// scripts/vm_wasm_depth.sh runs it deep under wasmtime's default stack
+// and requires the recursion-limit panic, not a trap.
+fn w(n: i64) -> i64 {
+    if n == 0 { 0 } else {
+        let l5 = |y5: i64| arr_fold([1], 0, |a: i64, x: i64| {
+            let l3 = |y3: i64| arr_fold([1], 0, |a: i64, x: i64| {
+                let l1 = |y1: i64| arr_fold([1], 0, |a: i64, x: i64| w(n - 1) + 1)
+                l1(0)
+            })
+            l3(0)
+        })
+        l5(0)
+    }
+}
+fn main() -> i64 {
+    println(to_str(w(DEPTH)))
+    0
+}

@@ -1,0 +1,19 @@
+let DEPTH = 100
+// AX-56 nesting probe: a two-argument call (`call_fast`) through three lambdas,
+// after a `break` out of a `with` body (`catch_flow`).
+// scripts/vm_wasm_depth.sh runs it deep under wasmtime's default stack
+// and requires the recursion-limit panic, not a trap.
+fn w(n: i64, m: i64) -> i64 {
+    if n == 0 { return m }
+    for i in 0..2 {
+        with handler { on Net(e) => 0 } { break }
+    }
+    let l1 = |x: i64| w(x - 1, m) + 1
+    let l2 = |x: i64| l1(x)
+    let l3 = |x: i64| l2(x)
+    l3(n)
+}
+fn main() -> i64 {
+    println(to_str(w(DEPTH, 0)))
+    0
+}

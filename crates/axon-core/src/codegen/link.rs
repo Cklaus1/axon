@@ -1180,11 +1180,13 @@ impl<'a> RuntimeLookup<'a> {
         let mut rebuild_failure = None;
         if let Some((root, target_dir)) = &workspace {
             let built = self.built_dir(target_dir, profile).join(lib);
+            // Taken before cargo runs: every input it can see is older.
+            let checked_at = std::time::SystemTime::now();
             match runtime_freshness(&built, root) {
                 Freshness::Current => return Ok(built.display().to_string()),
                 Freshness::Stale(why) => match rebuild(root, target_dir) {
                     Ok(path) => {
-                        stamp_as_current(Path::new(&path));
+                        stamp_as_current(Path::new(&path), checked_at);
                         return Ok(path);
                     }
                     Err(e) => {
@@ -1257,11 +1259,13 @@ enum Freshness {
 ///   file (device, inode, size, mtime). A lib that anything else rebuilt —
 ///   say `cargo build` under another `RUSTUP_TOOLCHAIN` — no longer matches,
 ///   so it is rebuilt with the pinned toolchain rather than linked.
-/// - Nothing it was built from is newer: the sources rustc read for it (the
-///   dep-info `<lib>.d` cargo writes beside it lists every workspace source of
-///   the crate and its path dependencies), those crates' manifests, and the
-///   workspace's `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml` and
-///   `.cargo/config.toml`.
+/// - Nothing it was built from is newer than the lib or than the start of the
+///   cargo run that stamped it (the stamp's mtime): the sources rustc read for
+///   it (the dep-info `<lib>.d` cargo writes beside it lists every workspace
+///   source of the crate and its path dependencies), those crates' manifests,
+///   and the workspace's `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml` and
+///   `.cargo/config.toml`. An input cargo judged and left the lib alone for
+///   (a comment in `.cargo/config.toml`) is older than the stamp.
 ///
 /// That is cargo's own mtime rule over the same inputs, so editing a runtime
 /// source in the workspace always rebuilds before the next link. What it
@@ -1275,9 +1279,17 @@ fn runtime_freshness(lib: &Path, root: &Path) -> Freshness {
     if std::fs::read_to_string(stamp_path(lib)).ok() != Some(lib_identity(&meta)) {
         return stale("was not built by `axon build` with the workspace's pinned toolchain".into());
     }
-    let Ok(built) = meta.modified() else {
+    let Ok(lib_time) = meta.modified() else {
         return stale("has no readable modification time".into());
     };
+    // A cargo run that finds the lib fresh leaves its mtime alone, so an input
+    // edited before that run (say a comment in `.cargo/config.toml`) would be
+    // newer than the lib forever. The stamp's mtime is when that run started:
+    // every input older than it, cargo has already judged.
+    let checked = std::fs::metadata(stamp_path(lib))
+        .and_then(|m| m.modified())
+        .ok();
+    let built = checked.map_or(lib_time, |t| t.max(lib_time));
     let dep_info = lib.with_extension("d");
     let sources = std::fs::read_to_string(&dep_info)
         .map(|d| dep_info_sources(&d))
@@ -1383,12 +1395,18 @@ fn lib_identity(meta: &std::fs::Metadata) -> String {
     )
 }
 
-/// Record that `lib` is what a pinned cargo build just produced or confirmed.
+/// Record that `lib` is what a pinned cargo build started at `checked_at`
+/// just produced or confirmed; the stamp's mtime is set to `checked_at`.
 /// Best effort: a target dir that cannot take the stamp only costs the next
 /// build another (no-op) cargo run.
-fn stamp_as_current(lib: &Path) {
+fn stamp_as_current(lib: &Path, checked_at: std::time::SystemTime) {
     if let Ok(meta) = std::fs::metadata(lib) {
-        let _ = std::fs::write(stamp_path(lib), lib_identity(&meta));
+        let stamp = stamp_path(lib);
+        if std::fs::write(&stamp, lib_identity(&meta)).is_ok() {
+            if let Ok(f) = std::fs::File::options().write(true).open(&stamp) {
+                let _ = f.set_modified(checked_at);
+            }
+        }
     }
 }
 
@@ -1764,14 +1782,15 @@ mod runtime_lookup_tests {
             }
         }
 
-        /// The workspace runtime as a pinned cargo build leaves it: built at
-        /// `at` from the fixture's source, with its dep-info, stamped.
+        /// The workspace runtime as a pinned cargo build started at `at`
+        /// leaves it: built at `at` from the fixture's source, with its
+        /// dep-info, stamped.
         fn build_workspace_lib(&self, profile: &str, at: u64) -> PathBuf {
             let lib = self.workspace_lib(profile);
             write(&lib, "!<arch>\n", at);
             let dep_info = format!("{}: {}\n", lib.display(), self.source().display());
             write(&lib.with_extension("d"), &dep_info, at);
-            stamp_as_current(&lib);
+            stamp_as_current(&lib, SystemTime::UNIX_EPOCH + Duration::from_secs(at));
             lib
         }
     }
@@ -1842,6 +1861,40 @@ mod runtime_lookup_tests {
         // The rebuilt lib is stamped, so the next link runs no cargo.
         assert_eq!(runtime_freshness(&lib, &fx.root()), Freshness::Current);
         assert_eq!(fx.lookup(fx.dev_compiler()).resolve(no_cargo), Ok(s(&lib)));
+    }
+
+    #[test]
+    fn an_input_cargo_confirmed_without_rebuilding_stays_current() {
+        // An edit cargo judges irrelevant (a comment in `.cargo/config.toml`)
+        // makes the lib look stale; cargo then leaves it untouched. The link
+        // after that confirming run must not run cargo again.
+        let fx = Fixture::new("confirmed");
+        let lib = fx.build_workspace_lib("release", T0 + 10);
+        let config = fx.root().join(".cargo").join("config.toml");
+        write(&config, "# comment\n", T0 + 20);
+        assert!(matches!(runtime_freshness(&lib, &fx.root()),
+            Freshness::Stale(w) if w.contains("config.toml")));
+
+        let mut runs = 0;
+        let got = fx.lookup(fx.dev_compiler()).resolve(|_, _| {
+            runs += 1;
+            Ok(s(&lib))
+        });
+        assert_eq!((got, runs), (Ok(s(&lib)), 1));
+        assert_eq!(runtime_freshness(&lib, &fx.root()), Freshness::Current);
+        assert_eq!(fx.lookup(fx.dev_compiler()).resolve(no_cargo), Ok(s(&lib)));
+
+        // An input edited after that run is newer than the stamp: stale again.
+        let far = SystemTime::now() + Duration::from_secs(3600);
+        let f = std::fs::File::options()
+            .write(true)
+            .open(fx.source())
+            .unwrap();
+        f.set_modified(far).unwrap();
+        assert!(matches!(
+            runtime_freshness(&lib, &fx.root()),
+            Freshness::Stale(_)
+        ));
     }
 
     #[test]

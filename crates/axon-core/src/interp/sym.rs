@@ -14,8 +14,8 @@
 //! * nodes of the lambda bodies the table itself owns (each lambda body is
 //!   cloned once, into an `Rc<ClosureCode>` held by the table).
 //!
-//! A node that is NOT in the table (an AST clone made at run time: a handler
-//! arm, a `SendValue` closure, a fn-value forwarder) cannot share an address
+//! A node that is NOT in the table (an AST clone made at run time: a
+//! `SendValue` closure, a fn-value forwarder) cannot share an address
 //! with a pinned node, since both are live allocations. Its lookup misses and
 //! falls back to interning the name, so a hit never trusts a reused address.
 //!
@@ -1008,9 +1008,8 @@ impl Builder<'_, '_> {
                     self.hot += 1;
                 }
             }
-            // Handler arms run on a snapshot of the defining env (the arms
-            // themselves on run-time clones), so they are resolved by name;
-            // the handled body runs in this frame.
+            // Handler arms run on a snapshot of the defining env, so they
+            // are resolved by name; the handled body runs in this frame.
             Expr::WithHandler { handler, body } => {
                 if let HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
                     for a in arms.iter().chain(return_arm.as_deref()) {
