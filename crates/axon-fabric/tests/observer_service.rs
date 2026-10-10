@@ -459,6 +459,36 @@ fn the_observer_service_observes_through_the_helper_once_per_nonce() {
     );
 }
 
+/// C9 round 15 (amendment 121, EQUIVALENCE): the prune that runs on every
+/// observation (`prune`, `expires.is_none_or(|t| t < now)`) is the local guard behind
+/// "one observation per nonce": the record of a nonce the custodian still honours
+/// must SURVIVE another request's prune and refuse the replay, and the record of
+/// one it no longer honours is the only kind dropped. The first request's record
+/// is read back from the store after a SECOND request (whose prune ran), and the
+/// replay is made after that.
+#[test]
+fn a_record_of_a_live_nonce_survives_another_requests_prune_and_refuses_its_replay() {
+    let mut o = obs();
+    o.start();
+    let n = o.nonce();
+    let m = o.manifest(&n, |_| {});
+    o.fabric_observe(&m, "w1")
+        .expect("control: the first observation of the nonce is signed");
+    let m2 = o.manifest(&o.nonce(), |_| {});
+    o.fabric_observe(&m2, "w2")
+        .expect("control: a second nonce's observation is signed (its request pruned the store)");
+    let rec = o.obs_dir.join("records").join(format!("{n}.observed"));
+    assert!(
+        rec.exists(),
+        "ATTACK: another request's prune dropped the record of a nonce the custodian still honours"
+    );
+    let again = o.fabric_observe(&m, "w3").map(|v| v.sha256);
+    assert!(
+        again.is_err() && format!("{again:?}").contains("already observed"),
+        "ATTACK: a nonce was observed twice after another request's prune: {again:?}"
+    );
+}
+
 /// A94 (M1531-M1539): the observer signs only what it MEASURED. A launch
 /// manifest naming, for one installed artifact, a digest other than the
 /// installed bytes is not signed. One case per measured field, each with its

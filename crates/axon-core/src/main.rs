@@ -6511,9 +6511,10 @@ fn run_check_pipeline_located(
         &mut none,
     );
     let mut diags = merged;
-    if iso_diags.is_empty() {
-        // The sealed-only check found nothing: anything the merged check said
-        // about a sealed file is the backstop (E0004), kept so it still refuses.
+    if !iso_diags.iter().any(|d| d.severity == "error") {
+        // The sealed-only check found no ERROR (its warnings are printed as they
+        // arise and are not in this list): anything the merged check said about a
+        // sealed file is the backstop (E0004), kept so it still refuses.
         diags.extend(dropped_merged.into_iter().filter(|d| d.severity == "error"));
     } else {
         diags.append(&mut iso_diags);
@@ -6706,6 +6707,7 @@ fn run_check_pipeline_inner(
     } else {
         Vec::new()
     };
+    let n_load = load_errors.len();
     for e in load_errors {
         // A MergeError is about the ENTRY file's `use` line (the module it
         // names could not be found or is circular), so the entry file is the
@@ -7063,9 +7065,22 @@ fn run_check_pipeline_inner(
 
     // The split of a `--seal` check: keep this run's half, hand back the rest.
     if view != SealView::Whole {
-        let (keep, rest): (Vec<_>, Vec<_>) =
-            diags.drain(..).partition(|d| !masked(&d.file, d.line));
-        diags = keep;
+        // In the MERGED half a diagnostic with no line (no span) cannot be told
+        // from the sealed items' by the file it names: the entry file is the
+        // label every spanless diagnostic gets. A merged diagnostic that cannot
+        // be attributed to the operator's files is therefore handed to the
+        // BACKSTOP list with the sealed-side ones -- it is shown only when the
+        // sealed-only half found no error (so it still refuses), never beside
+        // that half's own text. The only spanless diagnostics that are the
+        // operator's for certain are the module-load ones (`n_load`), which are
+        // about the entry file's own `use` lines.
+        let (kept, rest) = axon_core::seal_split::split_for_view(
+            std::mem::take(&mut diags),
+            n_load,
+            view == SealView::OperatorsOnly,
+            &masked,
+        );
+        diags = kept;
         *dropped = rest;
     }
 

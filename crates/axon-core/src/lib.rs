@@ -43,6 +43,7 @@ pub mod resolver;
 /// Self-improving-compiler Layer 3 (prototype): AI-authored passes as DATA — a
 /// validated, total, capability-free `RewriteSpec` compiled to a verifiable pass.
 pub mod rewrite_dsl;
+pub mod seal_split;
 /// SMT-backed `@[verify]` static proof (R9, `smt` feature → Z3).
 #[cfg(feature = "smt")]
 pub mod smt;

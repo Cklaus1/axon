@@ -1118,6 +1118,13 @@ GUARD_SETS.update({
 
 
 
+# C9 round 15, PSV1Y (amendment 121; EQUIV_RECORD in the registry): the candidate's `use` set aside for
+# the merged check (M3260) against the backstop for a merged diagnostic that names no line (M3456).
+GUARD_SETS.update({
+    "M3260": {"siblings": ["M3456"], "kind": "pair"},
+})
+
+
 def current_edits_digest(rid):
     """What executing record `rid` NOW would run (its edits and marker)."""
     if rid in GUARD_SETS:

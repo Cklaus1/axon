@@ -3624,6 +3624,16 @@ impl<'p> Interp<'p> {
         if crossing && r.is_ok() {
             self.dict_edge_out()?;
         }
+        // An operator-typed value a sealed fn hands back is a pick: sealed code
+        // cannot build one, so it got it from an argument or a closure and chose
+        // which (amendment 121).
+        if crossing {
+            if let Ok(v) = &r {
+                if self.t_holds_op(v) {
+                    self.t_touch(taint::PICK);
+                }
+            }
+        }
         r
     }
 
@@ -4662,6 +4672,9 @@ impl<'p> Interp<'p> {
         if T {
             // The result also carries an early exit's condition (`sticky`).
             body_t |= self.taint.sticky.get() & taint::VAL;
+            if self.taint.sticky.get() & taint::VAL != 0 && self.t_holds_op(&result) {
+                body_t |= taint::PICK;
+            }
             self.taint.acc.set(entry_t | body_t);
         }
         Ok(result)
@@ -4854,6 +4867,13 @@ impl<'p> Interp<'p> {
             )
         });
         ret_t |= self.taint.sticky.get() & taint::VAL;
+        if T && self.taint.sticky.get() & taint::VAL != 0 {
+            if let Ok(v) = &out {
+                if self.t_holds_op(v) {
+                    ret_t |= taint::PICK;
+                }
+            }
+        }
         if let Some((pc, sticky)) = ctl {
             self.taint.pc.set(pc);
             self.taint.sticky.set(sticky);
@@ -4897,6 +4917,11 @@ impl<'p> Interp<'p> {
             self.dict_edge_in(&v)?;
         }
         if T {
+            // A candidate closure hands an operator-typed value back to operator
+            // code: a pick (amendment 121).
+            if crossing && self.t_holds_op(&v) {
+                ret_t |= taint::PICK;
+            }
             self.taint.acc.set(entry_t | ret_t);
         }
         Ok(v)

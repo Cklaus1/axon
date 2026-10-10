@@ -130,6 +130,13 @@ pub(super) fn check(cases: &[Case], rules: Rules) {
         }
         if c.expect == Expect::Refused && got == Expect::Ok {
             attacks.push(format!("ATTACK: <{}> completed under {:?}", c.name, rules));
+        } else if c.expect == Expect::Fails && got == Expect::Ok {
+            // A program that must STOP (a failing assertion, a ceiling the operator
+            // set) ran to its end: the attack it carries got through.
+            attacks.push(format!(
+                "ATTACK: <{}> completed under {:?}, where an assertion or a ceiling must stop it",
+                c.name, rules
+            ));
         } else {
             other.push(format!(
                 "{:?}: case `{}` should be {:?}, was {:?}: {out:?}",
@@ -297,6 +304,70 @@ fn name_cases() -> Vec<Case> {
 #[test]
 fn a_name_sealed_code_had_a_hand_in_never_selects_an_operator_fn() {
     let cases = name_cases();
+    check(&cases, Rules::TaintOnly);
+    check(&cases, Rules::Both);
+    attacks_are_live(&cases);
+}
+
+/// The impl-carrying types of the pick cases: two strict/lenient judges (`A`, `B`,
+/// and an enum `Mode`) and two shapes (`Sq`, `Ci`) the operator defines, with a
+/// trait each that two or more of them implement, so a method call has an impl to
+/// choose between.
+const PICK_PRE: &str = "type A = { v: i64 }\ntype B = { v: i64 }\ntype Mode = Lax | Tight\ntrait Rub {\n    fn rub(self) -> bool\n}\nimpl Rub for A {\n    fn rub(self: A) -> bool { self.v == 9 }\n}\nimpl Rub for B {\n    fn rub(self: B) -> bool { true }\n}\nimpl Rub for Mode {\n    fn rub(self: Mode) -> bool { true }\n}\ntype Sq = { s: i64 }\ntype Ci = { r: i64 }\ntrait Area {\n    fn area(self) -> i64\n}\nimpl Area for Sq {\n    fn area(self: Sq) -> i64 { self.s * self.s }\n}\nimpl Area for Ci {\n    fn area(self: Ci) -> i64 { self.r * 3 }\n}\nfn mka() -> A { A { v: 1 } }\nfn mkb() -> B { B { v: 1 } }\nfn mk_sq(n: i64) -> Sq { Sq { s: n } }\nfn mkreg(n: i64) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"sq\", Sq { s: n })\n    dict_set(d, \"ci\", Ci { r: n })\n    d\n}\nfn regarr() -> [A] { [A { v: 1 }, A { v: 9 }] }\nfn lookup(reg: Dict, k: str) -> B { dict_get_or(reg, k, B { v: 1 }) }\nfn regab() -> Dict {\n    let d = dict_new()\n    dict_set(d, \"a\", A { v: 1 })\n    dict_set(d, \"b\", B { v: 1 })\n    d\n}\n";
+/// The candidate's side of the pick cases: a key, a number, a generic that picks.
+const PICK_CAND: &str = "fn key() -> str { \"b\" }\nfn val() -> i64 { 3 }\nfn pickb<T>(a: fn() -> T, b: fn() -> T) -> T { b() }\nfn cmpc(a: i64, b: i64) -> i64 { b - a }\n";
+
+/// C9 round 15 (amendment 121): an operator-typed value (a struct or enum only the
+/// operator defines) that sealed code SELECTED is never dispatched on; one built
+/// from sealed code's DATA is. The attacks are every edge that selects: a key or
+/// index, a branch, an assignment under a branch, an exit, a hand-back from a sealed
+/// fn or closure, the order a sealed comparator gives. The controls are the honest
+/// shapes a naive rule on the VALUE taint refuses.
+fn pick_cases() -> Vec<Case> {
+    use Expect::*;
+    let body = |s: &str| format!("    {s}");
+    let cand = |extra: &str| format!("{PICK_CAND}{extra}");
+    let pre = |extra: &str| format!("{PICK_PRE}{extra}");
+    vec![
+        // Honest: the operator named the value, or built it from the candidate's data.
+        case("HONEST pick: an operator struct holding the candidate's number", &pre(""), &body("assert(Sq { s: val() }.area() == 9)"), &cand(""), Ok),
+        case("HONEST pick: a factory fn given the candidate's number", &pre(""), &body("assert(mk_sq(val()).area() == 9)"), &cand(""), Ok),
+        case("HONEST pick: a struct bound, then dispatched on", &pre(""), &body("let sq = Sq { s: val() }\n    let n = sq.area()\n    assert(n == 9)"), &cand(""), Ok),
+        case("HONEST pick: a struct whose field comes from a branch on the candidate's data", &pre(""), &body("let sq = Sq { s: if val() > 1 { 3 } else { 4 } }\n    assert(sq.area() == 9)"), &cand(""), Ok),
+        case("HONEST pick: a registry the operator filled from the candidate's data, read by the operator's key", &pre(""), &body("let reg = mkreg(val())\n    assert(dict_get_or(reg, \"sq\", Sq { s: 1 }).area() == 9)"), &cand(""), Ok),
+        case("HONEST pick: structs the operator's closure builds from candidate numbers", &pre(""), &body("let ss = arr_map([val(), 2], |v| Sq { s: v })\n    assert(ss[0].area() == 9)"), &cand(""), Ok),
+        case("HONEST pick: a field read through the candidate's index, into a new struct", &pre(""), &body("let a = [Sq { s: 3 }, Sq { s: 3 }]\n    let sq = Sq { s: a[len(key()) - 1].s }\n    assert(sq.area() == 9)"), &cand(""), Ok),
+        case("HONEST pick: the operator's own key into a table of operator values", &pre(""), &body("let d = regab()\n    assert(dict_get_or(d, \"b\", A { v: 1 }).rub())"), &cand(""), Ok),
+        case("HONEST pick: a branch on the candidate's data that dispatches inside each arm", &pre(""), &body("if val() > 1 { assert(B { v: 1 }.rub()) } else { assert(A { v: 9 }.rub()) }"), &cand(""), Ok),
+        case("HONEST pick: the operator's own index loop over structs built from candidate data", &pre(""), &body("let shapes = [Sq { s: val() }, Sq { s: 2 }]\n    let total = 0\n    let i = 0\n    while i < 2 {\n        total = total + shapes[i].area()\n        i = i + 1\n    }\n    assert(total == 13)"), &cand(""), Ok),
+        case("HONEST pick: filtered by the operator's own predicate", &pre(""), &body("let ys = arr_filter([A { v: 9 }, A { v: 1 }], |a| a.v > 0)\n    assert(ys[0].rub())"), &cand(""), Ok),
+        case("the wrong answer on the operator's own strict impl still fails keyed", &pre(""), &body("let d = regab()\n    assert(dict_get_or(d, \"a\", A { v: 1 }).rub())"), &cand(""), Fails),
+        // Attacks: sealed code decides which operator value, so which impl, answers.
+        case("pick: dict_get_or by the candidate's key", &pre(""), &body("let d = regab()\n    assert(dict_get_or(d, key(), A { v: 1 }).rub())"), &cand(""), Refused),
+        case("pick: dict_get by the candidate's key", &pre(""), &body("let d = regab()\n    match dict_get(d, key()) { Some(v) => assert(v.rub())  None => assert(false) }"), &cand(""), Refused),
+        case("pick: through an operator fn that wraps the lookup", &pre(""), &body("assert(lookup(regab(), key()).rub())"), &cand(""), Refused),
+        case("pick: the key pinned to a closed type first", &pre(""), &body("let k: str = key()\n    let d = regab()\n    assert(dict_get_or(d, k, A { v: 1 }).rub())"), &cand(""), Refused),
+        case("pick: an operator enum out of a table by the candidate's key", &pre(""), &body("let d = dict_new()\n    dict_set(d, \"a\", Mode::Tight)\n    dict_set(d, \"b\", Mode::Lax)\n    assert(dict_get_or(d, key(), Mode::Tight).rub())"), &cand(""), Refused),
+        case("pick: an array index the candidate chose", &pre(""), &body("let xs = [A { v: 1 }, A { v: 9 }]\n    assert(xs[val() - 2].rub())"), &cand(""), Refused),
+        case("pick: an index into an array an operator fn returned", &pre(""), &body("assert(regarr()[val() - 2].rub())"), &cand(""), Refused),
+        case("pick: a global array index the candidate chose", &format!("{PICK_PRE}let XS = [A {{ v: 1 }}, A {{ v: 9 }}]\n"), &body("assert(XS[val() - 2].rub())"), &cand(""), Refused),
+        case("pick: a sealed generic hands one of two operator constructors' values back", &pre(""), &body("assert(pickb(mka, mkb).rub())"), &cand(""), Refused),
+        case("pick: a sealed closure hands an operator value back", &pre(""), &body("let g = cb()\n    assert(g(mkb).rub())"), &cand("fn cb<T>() -> fn(fn() -> T) -> T { |f| f() }\n"), Refused),
+        case("pick: the true arm of a branch on the candidate's data", &pre(""), &body("let r = if val() > 1 { A { v: 9 } } else { A { v: 1 } }\n    assert(r.rub())"), &cand(""), Refused),
+        case("pick: the false arm of a branch on the candidate's data", &pre(""), &body("let r = if val() > 5 { A { v: 1 } } else { A { v: 9 } }\n    assert(r.rub())"), &cand(""), Refused),
+        case("pick: a match on the candidate's data", &pre(""), &body("let r = match val() {\n        3 => A { v: 9 }\n        _ => A { v: 1 }\n    }\n    assert(r.rub())"), &cand(""), Refused),
+        case("pick: an assignment under a branch on the candidate's data", &pre(""), &body("let r = A { v: 1 }\n    if val() > 1 {\n        r = A { v: 9 }\n    }\n    assert(r.rub())"), &cand(""), Refused),
+        case("pick: an element written under a branch on the candidate's data", &pre(""), &body("let xs = [A { v: 1 }]\n    if val() > 1 {\n        xs[0] = A { v: 9 }\n    }\n    assert(xs[0].rub())"), &cand(""), Refused),
+        case("pick: an exit out of an operator fn chosen by the candidate's data", &format!("{PICK_PRE}fn early() -> Option<A> {{\n    if val() > 100 {{\n        return None\n    }}\n    Some(A {{ v: 9 }})\n}}\n"), &body("match early() { Some(a) => assert(a.rub())  None => assert(false) }"), &cand(""), Refused),
+        case("pick: an exit out of an operator closure chosen by the candidate's data", &pre(""), &body("let f = |x| {\n        if val() > 100 {\n            return None\n        }\n        Some(A { v: 9 })\n    }\n    match f(1) { Some(a) => assert(a.rub())  None => assert(false) }"), &cand(""), Refused),
+        case("pick: the order a sealed comparator gives", &pre(""), &body("let xs = arr_sort_by([A { v: 1 }, A { v: 9 }], |p, q| cmpc(p.v, q.v))\n    assert(xs[0].rub())"), &cand(""), Refused),
+        case("pick: the survivors of a sealed predicate", &pre(""), &body("let ys = arr_filter([A { v: 1 }, A { v: 9 }], |a| cmpc(a.v, 5) < 0)\n    assert(ys[0].rub())"), &cand(""), Refused),
+    ]
+}
+
+#[test]
+fn an_operator_value_the_candidate_picked_is_never_dispatched_on() {
+    let cases = pick_cases();
     check(&cases, Rules::TaintOnly);
     check(&cases, Rules::Both);
     attacks_are_live(&cases);
@@ -2421,7 +2492,7 @@ fn no_arm_of_a_pure_builtin_reads_or_advances_ambient_state() {
     );
     assert!(
         bad.is_empty(),
-        "DRIFT: a Pure-classed builtin touches ambient state (classify it World):\n{}",
+        "ATTACK: DRIFT: a Pure-classed builtin touches ambient state (classify it World):\n{}",
         bad.join("\n")
     );
     // The two that did, and the clock row.
@@ -2457,7 +2528,11 @@ fn the_durable_store_is_world_state_not_kernel_state() {
         "dstore_version",
         "dstore_clear",
     ] {
-        assert_eq!(info(n).map(|i| i.class), Some(Class::World), "`{n}`");
+        assert_eq!(
+            info(n).map(|i| i.class),
+            Some(Class::World),
+            "ATTACK: the durable store builtin `{n}` is not classed World"
+        );
     }
 }
 
@@ -2507,19 +2582,63 @@ fn every_builtin_that_takes_a_closure_has_a_callback_row_and_calls_through_call_
             r.0
         );
     }
-    // No arm runs a closure around the control taint.
-    let src = sources()
-        .into_iter()
-        .find(|(f, _)| *f == "interp/builtins.rs")
-        .unwrap()
-        .1;
-    for (i, l) in src.lines().enumerate() {
+    // No builtin arm, goal search, scheduler pass or any other interpreter file runs a
+    // closure around the control taint: every helper that invokes a closure is named
+    // here, and only the evaluator's own call of a closure the PROGRAM called (eval.rs)
+    // and the helpers' definitions (interp.rs) may use them. A helper added to
+    // interp.rs that runs a closure must be added to this list, or the scan below does
+    // not see a use of it (the scan of the helper NAMES is itself checked: the list
+    // must be every `fn call_*closure*`/`call_fn_mut` that interp.rs defines).
+    const CLOSURE_HELPERS: &[&str] = &[
+        "call_closure(",
+        "call_local_closure(",
+        "call_closure_owned_by",
+        "call_fn_mut(",
+    ];
+    let all = sources();
+    let defs = all
+        .iter()
+        .find(|(f, _)| *f == "interp.rs")
+        .map(|(_, t)| t.clone())
+        .unwrap_or_default();
+    for l in defs.lines() {
         let t = l.trim_start();
-        assert!(
-            t.starts_with("//") || !t.contains("self.call_closure("),
-            "DRIFT: builtins.rs line {} calls a closure with `call_closure`, not `call_cb` (the control taint of the results so far is dropped)",
-            i + 1
-        );
+        if let Some(rest) = t
+            .strip_prefix("fn ")
+            .or_else(|| t.strip_prefix("pub(super) fn "))
+            .or_else(|| t.strip_prefix("pub(crate) fn "))
+        {
+            let name: String = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if (name.starts_with("call_") && name.contains("closure")) || name == "call_fn_mut" {
+                assert!(
+                    CLOSURE_HELPERS.iter().any(|h| h.starts_with(&name)),
+                    "DRIFT: interp.rs defines the closure-invoking helper `{name}`, which the scan of \
+                     builtin arms does not look for (add it to CLOSURE_HELPERS)"
+                );
+            }
+        }
+    }
+    for (file, src) in &all {
+        if matches!(
+            *file,
+            "interp.rs" | "interp/eval.rs" | "interp/taint.rs" | "interp/taint_tests.rs"
+        ) || file.contains("tests")
+        {
+            continue;
+        }
+        for (i, l) in src.lines().enumerate() {
+            let t = l.trim_start();
+            for h in CLOSURE_HELPERS {
+                assert!(
+                    t.starts_with("//") || !t.contains(&format!("self.{h}")),
+                    "ATTACK: DRIFT: {file} line {} calls a closure with `{h}`, not `call_cb` (the control taint of the results so far is dropped)",
+                    i + 1
+                );
+            }
+        }
     }
     // The arms that use `call_cb` are exactly the closure-taking builtins.
     let mut used: Vec<String> = Vec::new();
@@ -2575,7 +2694,7 @@ fn every_rust_loop_that_runs_operator_code_raises_the_control_taint_after_each_r
         let window = lines[i..(i + 8).min(lines.len())].join("\n");
         assert!(
             window.contains("self.t_loop_pc()"),
-            "DRIFT: goal.rs line {} (in `{cur}`) runs operator code and does not raise the control taint after it",
+            "ATTACK: DRIFT: goal.rs line {} (in `{cur}`) runs operator code and does not raise the control taint after it",
             i + 1
         );
     }

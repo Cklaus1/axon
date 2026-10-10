@@ -819,7 +819,7 @@ mod tests {
         assert_ne!(
             seed_stream(false, Some(5)),
             seed_stream(true, Some(5)),
-            "the sealed stream coincides with the operator's"
+            "ATTACK: the sealed stream coincides with the operator's"
         );
     }
 

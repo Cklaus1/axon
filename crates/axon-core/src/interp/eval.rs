@@ -268,7 +268,7 @@ impl<'p> Interp<'p> {
                 }
                 let v = self.eval_t::<T>(value, env)?;
                 let vt = if T {
-                    self.ts::<T>(self.tl::<T>())
+                    self.t_stored_v(self.tl::<T>(), &v)
                 } else {
                     0
                 };
@@ -290,7 +290,7 @@ impl<'p> Interp<'p> {
                 // The write puts the value (and the index it was written at) into
                 // the container the binding holds: the binding now carries it.
                 if T {
-                    let wt = self.ts::<T>(self.ta::<T>());
+                    let wt = self.t_stored_v(self.ta::<T>(), &v);
                     env.taint_or(&base, wt);
                 }
                 let mut slot = env.get_mut(&base).ok_or_else(|| {
@@ -397,15 +397,23 @@ impl<'p> Interp<'p> {
                     Value::Bool(true) => {
                         let exits = ct != 0
                             && (taint::has_exit(then) || else_.as_ref().is_some_and(|e| taint::has_exit(e)));
-                        self.t_branch(ct, exits, || self.eval_t::<T>(then, env))
+                        let r = self.t_branch(ct, exits, || self.eval_t::<T>(then, env));
+                        if T {
+                            self.t_pick_branch(ct, &r);
+                        }
+                        r
                     }
                     Value::Bool(false) => {
                         let exits = ct != 0
                             && (taint::has_exit(then) || else_.as_ref().is_some_and(|e| taint::has_exit(e)));
-                        match else_ {
+                        let r = match else_ {
                             Some(e) => self.t_branch(ct, exits, || self.eval_t::<T>(e, env)),
                             None => self.t_branch(ct, exits, || Ok(Value::Unit)),
+                        };
+                        if T {
+                            self.t_pick_branch(ct, &r);
                         }
+                        r
                     }
                     other => panic(format!(
                         "if condition must be bool, got {}",
@@ -448,6 +456,9 @@ impl<'p> Interp<'p> {
                                 .any(|a| taint::has_exit(&a.body) || a.guard.as_ref().is_some_and(taint::has_exit));
                         let r = self.t_branch(ct, exits, || self.eval_t::<T>(&arm.body, env));
                         env.pop();
+                        if T {
+                            self.t_pick_branch(ct, &r);
+                        }
                         return r;
                     }
                     env.pop();
@@ -759,18 +770,23 @@ impl<'p> Interp<'p> {
                 if let Expr::Ident(name) = receiver.as_ref() {
                     if env.get(name).is_some() || self.is_global(name) {
                         let idx = self.eval_int::<T>(index, env)?;
+                        let it = self.tl::<T>();
                         let arr = match env.get(name) {
                             Some(v) => Some(v),
                             None => self.global_ref(name)?,
                         };
                         return match arr {
                             Some(Value::Array(items)) => {
-                                items.get(idx as usize).cloned().ok_or_else(|| {
+                                let el = items.get(idx as usize).cloned().ok_or_else(|| {
                                     Flow::Panic(format!(
                                         "index {idx} out of bounds (len {})",
                                         items.len()
                                     ))
-                                })
+                                })?;
+                                if T {
+                                    self.t_pick_index(it, &el);
+                                }
+                                Ok(el)
                             }
                             Some(other) => {
                                 panic(format!("indexing non-array ({})", other.type_name()))
@@ -781,10 +797,17 @@ impl<'p> Interp<'p> {
                 }
                 let arr = self.eval_t::<T>(receiver, env)?;
                 let idx = self.eval_int::<T>(index, env)?;
+                let it = self.tl::<T>();
                 match arr {
-                    Value::Array(items) => items.get(idx as usize).cloned().ok_or_else(|| {
-                        Flow::Panic(format!("index {idx} out of bounds (len {})", items.len()))
-                    }),
+                    Value::Array(items) => {
+                        let el = items.get(idx as usize).cloned().ok_or_else(|| {
+                            Flow::Panic(format!("index {idx} out of bounds (len {})", items.len()))
+                        })?;
+                        if T {
+                            self.t_pick_index(it, &el);
+                        }
+                        Ok(el)
+                    }
                     other => panic(format!("indexing non-array ({})", other.type_name())),
                 }
             }
@@ -1471,9 +1494,16 @@ impl<'p> Interp<'p> {
                     } else {
                         None
                     };
+                    let entries = self.taint.entries.get();
                     if let Some(v) = self.call_builtin(name, &argv)? {
                         if T {
                             self.t_builtin_out(name, &argv, &v);
+                            self.t_builtin_pick(
+                                &argv,
+                                &ats,
+                                self.taint.entries.get() != entries,
+                                &v,
+                            );
                         }
                         return Ok(v);
                     }

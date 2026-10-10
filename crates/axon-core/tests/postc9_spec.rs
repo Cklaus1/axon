@@ -51,12 +51,12 @@ fn a_missing_signature_a_wrong_decision_a_lost_item_or_a_dropped_pointer_is_refu
         ),
         (
             "a NARROW-CLAIM finding traced as fixed",
-            "spec:| 21 | `dispatch-operator-type-exempt-no-val-taint` | narrowed | PH-A1 |=>| 21 | `dispatch-operator-type-exempt-no-val-taint` | fixed in amendment 117 | - |",
+            "spec:| 6 | `module-loader-existence-oracle-text` | narrowed | PH-A11 |=>| 6 | `module-loader-existence-oracle-text` | fixed in amendment 117 | - |",
             "is NARROW-CLAIM in the triage table",
         ),
         (
             "a narrowed finding naming no existing item",
-            "spec:| 7 | `static-oracle-global-initializer-merged-check` | narrowed | PH-A12 |=>| 7 | `static-oracle-global-initializer-merged-check` | narrowed | PH-A99 |",
+            "spec:| 23 | `merged-e0004-backstop-name-walk-no-shadowing-oracle` | narrowed | PH-A14 |=>| 23 | `merged-e0004-backstop-name-walk-no-shadowing-oracle` | narrowed | PH-A99 |",
             "not a PH-A item heading",
         ),
         (

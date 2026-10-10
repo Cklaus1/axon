@@ -132,12 +132,12 @@ fn a_stale_amendment_list_in_the_claim_is_refused() {
     for (key, plant, fragment) in [
         (
             "the delta list",
-            "verdict:/102/106/108/114/117 (the delta=>/102/106 (the delta",
+            "verdict:/102/106/108/114/117/121 (the delta=>/102/106 (the delta",
             "delta amendment list",
         ),
         (
             "the arms list",
-            "verdict:am100, am102, am106, am108, am114 and am117 (=>am100 and am102 (",
+            "verdict:am100, am102, am106, am108, am114, am117 and am121 (=>am100 and am102 (",
             "amendments whose arms are verified",
         ),
     ] {
@@ -184,7 +184,7 @@ fn every_narrow_claim_finding_of_the_loop_is_in_the_non_claim_list_and_no_other_
     for (what, plant, fragment) in [
         (
             "an entry dropped from the claim",
-            "verdict:    - `dispatch-operator-type-exempt-via-sort-order`\n=>",
+            "verdict:    - `dangling-operator-reference-resolved-from-candidate`\n=>",
             "is not in the claim's non-claim list",
         ),
         (
@@ -194,7 +194,7 @@ fn every_narrow_claim_finding_of_the_loop_is_in_the_non_claim_list_and_no_other_
         ),
         (
             "a finding un-narrowed in the table only",
-            "triage:| NARROW-CLAIM | h. operator-type receiver exemption | same root as 21: an operator CTOR=>| FIX | h. operator-type receiver exemption | same root as 21: an operator CTOR",
+            "triage:| NARROW-CLAIM | o. other | a module, fn, type or constant the SUITE names=>| FIX | o. other | a module, fn, type or constant the SUITE names",
             "which the triage table does not mark NARROW-CLAIM",
         ),
     ] {

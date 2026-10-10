@@ -838,6 +838,10 @@ struct Resolver<'a> {
     /// callee, and consumed by the `Ident` arm: `f(x)` names `f` in CALL
     /// position, which is not a use of `f` as a first-class value.
     ident_is_callee: bool,
+    /// The sealed directories of this run (`--seal`), the ones `resolve_program_sealed`
+    /// was handed -- not the process-global set, so a caller (or a unit test) that
+    /// names its own sealed set gets the sealed predicate walks too.
+    sealed_dirs: Vec<std::path::PathBuf>,
 }
 
 impl<'a> Resolver<'a> {
@@ -851,6 +855,7 @@ impl<'a> Resolver<'a> {
             current_span: crate::span::Span::dummy(),
             generic_fns: std::collections::HashSet::new(),
             ident_is_callee: false,
+            sealed_dirs: Vec::new(),
         }
     }
 
@@ -1444,6 +1449,22 @@ impl<'a> Resolver<'a> {
 
     fn resolve_items(&mut self, program: &Program) {
         for item in &program.items {
+            // Every diagnostic raised while resolving an item is located at THAT
+            // item. `current_span` otherwise carried over from whichever
+            // statement was resolved last (or was the dummy span for the first
+            // item of the program), so a name in a refinement predicate or a
+            // top-level `let` was filed under the previous item's file -- and
+            // under the operator's entry file at line 0 when nothing preceded it.
+            // Which file a diagnostic names is what splits the sealed check's
+            // output from the operator's (C9 round 15, amendment 121), so a
+            // diagnostic that names the wrong file discloses the operator's names.
+            // (A fn, and the methods of an impl, set it themselves: `resolve_fn`.)
+            match item {
+                Item::TypeDef(t) if !t.span.is_dummy() => self.current_span = t.span,
+                Item::RefineDef(r) if !r.span.is_dummy() => self.current_span = r.span,
+                Item::LetDef { span, .. } if !span.is_dummy() => self.current_span = *span,
+                _ => {}
+            }
             match item {
                 Item::FnDef(f) => self.resolve_fn(f),
                 Item::UseDecl(u) => self.resolve_use(u),
@@ -1479,6 +1500,13 @@ impl<'a> Resolver<'a> {
                             name: "_".to_string(),
                         },
                     );
+                    // An inline parameter refinement (`n: i64 where n >= 0`) binds
+                    // the parameter's own name too, as it does when it runs; the
+                    // walk used to bind `_` alone and refused an honest candidate
+                    // for naming its own parameter.
+                    for n in refined_param_names(program, &r.name) {
+                        self.table.define(n.clone(), Symbol::Local { name: n });
+                    }
                     self.resolve_expr(&r.predicate);
                     self.table.pop_scope();
                 }
@@ -1489,8 +1517,7 @@ impl<'a> Resolver<'a> {
 
     /// Whether `span` lies in a sealed file of a `--seal` run.
     fn in_sealed_file(&self, span: crate::span::Span) -> bool {
-        let dirs = sealed_module_dirs();
-        !dirs.is_empty() && span_in_sealed(span, &dirs)
+        !self.sealed_dirs.is_empty() && span_in_sealed(span, &self.sealed_dirs)
     }
 
     fn resolve_fn(&mut self, f: &FnDef) {
@@ -2381,6 +2408,28 @@ pub fn sealed_module_dirs() -> Vec<std::path::PathBuf> {
         .clone()
 }
 
+/// The names of the fn parameters whose declared type is the (inline) refinement
+/// `refinement`: the names its predicate may also use.
+fn refined_param_names(program: &Program, refinement: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut fns: Vec<&FnDef> = Vec::new();
+    for item in &program.items {
+        match item {
+            Item::FnDef(f) => fns.push(f),
+            Item::ImplBlock(b) => fns.extend(b.methods.iter()),
+            _ => {}
+        }
+    }
+    for f in fns {
+        for p in &f.params {
+            if matches!(&p.ty, crate::ast::AxonType::Named(n) if n == refinement) {
+                out.push(p.name.clone());
+            }
+        }
+    }
+    out
+}
+
 /// Whether `span` lies in a file under one of `sealed` — the ONE provenance
 /// rule, shared by the static check here and the interpreter's runtime edge.
 pub fn span_in_sealed(span: crate::span::Span, sealed: &[std::path::PathBuf]) -> bool {
@@ -2416,6 +2465,7 @@ pub fn resolve_program_sealed(
     sealed: &[std::path::PathBuf],
 ) -> ResolveResult {
     let mut r = Resolver::new(file);
+    r.sealed_dirs = sealed.to_vec();
     r.collect_top_level(program);
     r.resolve_items(program);
     if !sealed.is_empty() {
@@ -3380,6 +3430,66 @@ mod tests {
         // And the honest merge resolves.
         let r = sealed_merge(suite, cand);
         assert!(r.errors.is_empty(), "{:?}", r.errors);
+    }
+
+    /// Round 15 (amendment 121): a diagnostic about a sealed item names the SEALED
+    /// file, wherever in the file the item sits. The split of a `--seal` check into
+    /// the operator's half and the candidate's reads the file off the span, so a
+    /// span that is dummy (the item is the only one in a file and starts at byte 0:
+    /// the parser's end-of-input span used to be `0..0`) or left over from the
+    /// previous statement (a predicate or a top-level `let` sets none) filed the
+    /// diagnostic under the OPERATOR's entry file, and the merged check's copy,
+    /// with a "did you mean `OG`?" from the operator's names, was shown.
+    #[test]
+    fn a_diagnostic_about_a_sealed_item_names_the_sealed_file_wherever_the_item_sits() {
+        let suite = "let OG = 5\nfn ofn(x: i64) -> i64 { x }\n";
+        let dirs = [std::path::PathBuf::from("/pci-sealed")];
+        let mut bad = Vec::new();
+        for (pname, pre) in [
+            ("first", ""),
+            ("after a type", "type Qx1 = { q: i64 }\n"),
+            ("after a let", "let qx2 = 1\n"),
+            ("after a comment", "// c\n"),
+            ("after a fn", "fn other() -> i64 { 2 }\n"),
+        ] {
+            for (what, item) in [
+                ("refinement predicate", "type CP = i64 where _ > ZG\n"),
+                ("struct predicate", "type CS = { a: i64 } where _.a > ZG\n"),
+                (
+                    "struct predicate (fn)",
+                    "type CS = { a: i64 } where _.a > zfn(0)\n",
+                ),
+                ("top-level let", "let CV = ZG\n"),
+                ("fn", "fn f() -> i64 { ZG }\n"),
+                (
+                    "verify predicate",
+                    "@[verify(ZG > 0)]\nfn f() -> i64 { 1 }\n",
+                ),
+            ] {
+                let r = sealed_merge(suite, &format!("{pre}{item}"));
+                let hits: Vec<_> = r
+                    .errors
+                    .iter()
+                    .filter(|d| d.message.contains("ZG") || d.message.contains("zfn"))
+                    .collect();
+                if hits.is_empty() {
+                    bad.push(format!("{what} [{pname}]: no diagnostic at all"));
+                }
+                for d in hits {
+                    if d.span.is_dummy() || !span_in_sealed(d.span, &dirs) {
+                        bad.push(format!(
+                            "{what} [{pname}]: located at {:?}, not in the sealed file: {}",
+                            d.span, d.message
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(
+            bad.is_empty(),
+            "ATTACK: a diagnostic about a sealed item was not located in the sealed file:\n{}",
+            bad.join("\n")
+        );
     }
 
     #[test]
