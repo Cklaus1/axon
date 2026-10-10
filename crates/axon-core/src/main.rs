@@ -6467,12 +6467,14 @@ fn cmd_test(
     }
 
     // Run each @[test] in-process via the interpreter (no per-test compile).
-    // A test passes if it completes without panicking; a should_fail test
-    // passes iff it panics.
+    // A test passes if its body completes, or ends early without a failure
+    // value (`exit(0)`, a plain `return`); a test that returns `Err` or ends
+    // at a `?` fails. A should_fail test passes iff it fails.
     let all_results: Vec<TestOutcome> = test_meta
         .iter()
         .map(|(name, should_fail, forall_cases)| {
             let start = Instant::now();
+            let mut completed = false;
             let (passed, error) = if let Some(cases) = forall_cases {
                 // Property test (R8): randomize params, shrink on failure.
                 use axon_core::interp::PropertyOutcome;
@@ -6495,22 +6497,27 @@ fn cmd_test(
                 // Plain zero-arg @[test].
                 // Property tests issue no completion evidence (yet): their
                 // cases run many times and "completed" is not one event.
-                // R51 S0: this interpreter cannot yet tell a body that
-                // completed from one that ended early (`run_test_fn_outcome`
-                // arrives with S0b), so a pass carries NO completion evidence:
-                // `completed` stays false and a keyed consumer fails closed.
-                match axon_core::interp::run_test_fn(&program, name) {
-                    Ok(()) if *should_fail => (
-                        false,
-                        Some(format!("should_fail test '{name}' completed without panicking")),
-                    ),
-                    Ok(()) => (true, None),
+                use axon_core::interp::TestEnd;
+                match axon_core::interp::run_test_fn_outcome(&program, name) {
+                    Ok(end) => match (end.failure_exit(), *should_fail) {
+                        // An `Err` return or a `?` exit is a failure (R51 §3).
+                        (Some(_), true) => (true, None),
+                        (Some(why), false) => (false, Some(why.to_string())),
+                        (None, true) => (
+                            false,
+                            Some(format!("should_fail test '{name}' completed without panicking")),
+                        ),
+                        (None, false) => {
+                            completed = end == TestEnd::Completed;
+                            (true, None)
+                        }
+                    },
                     Err(_) if *should_fail => (true, None),
                     Err(e) => (false, Some(e)),
                 }
             };
             let duration_ms = start.elapsed().as_millis() as u64;
-            TestOutcome { name: name.clone(), passed, duration_ms, error, completed: false }
+            TestOutcome { name: name.clone(), passed, duration_ms, error, completed }
         })
         .collect();
 

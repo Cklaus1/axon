@@ -32846,7 +32846,6 @@ fn a_wasm_link_failure_reports_the_linkers_own_error() {
 }
 
 #[test]
-#[ignore = "R51 S0b: needs the interpreter's least-trusted-operand source_tag on Uncertain binops"]
 fn uncertain_arithmetic_keeps_the_least_trusted_source_tag() {
     // D-014, second half (found by the v0.20 adversarial review, reproduced):
     // every binop result was built with `make_uncertain` → tag 0, in BOTH
@@ -32927,7 +32926,6 @@ fn uncertain_arithmetic_keeps_the_least_trusted_source_tag() {
 }
 
 #[test]
-#[ignore = "R51 S0b: needs the interpreter to stamp ai_extract_uncertain_* results source_tag 1"]
 fn ai_extract_uncertain_is_stamped_ai_sourced_on_mock_and_replay_paths() {
     // Found reconciling the Cortex v0.20 package (UPGRADE_V0_20.md D-014):
     // CX-05 requires a value's ORIGIN to travel with it, and `source_tag` is
@@ -37032,4 +37030,174 @@ fn vm_defer_mutcall_after_tree_entry() {
     let (deferred, compiled) = vm_defer_trace("defer_mutcall", &src);
     assert_eq!(deferred, ["swap"]);
     assert_eq!(compiled, ["main", "swap"]);
+}
+
+// ── R51 S0b: veto's non-seal interpreter fixes, on both engines (§8 T9) ─────
+
+/// The S0b parity programs, `tests/fixtures/r51_s0b/<name>.ax` (also in the
+/// `vm_parity.sh` corpus).
+macro_rules! s0b_src {
+    ($name:literal) => {
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/r51_s0b/",
+            $name,
+            ".ax"
+        ))
+    };
+}
+
+/// R51 §3 row 5 (veto 4e7851bc, bcf9c0a7, 2175cc1b): a callee's `break`/
+/// `continue` never ends or skips the caller's loop; the call is an error at
+/// the frame edge it reaches. One program per edge: a named fn through
+/// `CallFastLocalInt` (`stop(i + 1)`) and an inline-argument `CallFast`
+/// (`skip(i)`), a closure, and a refinement predicate. Identical on the tree,
+/// the eager VM and the default VM (`vm_same_both_engines`).
+#[test]
+fn r51_s0b_loop_control_never_leaves_its_frame_on_either_engine() {
+    let cases: [(&str, &str, &str, &str); 4] = [
+        (
+            "s0b_fast_local_int",
+            s0b_src!("escape_fast_local_int"),
+            "1\n2\n3\n",
+            "outside a loop in `stop`",
+        ),
+        (
+            "s0b_fast_inline",
+            s0b_src!("escape_fast_inline"),
+            "0\n10\n20\n",
+            "outside a loop in `skip`",
+        ),
+        (
+            "s0b_closure",
+            s0b_src!("escape_closure"),
+            "0\n1\n",
+            "outside a loop in a closure",
+        ),
+        (
+            "s0b_predicate",
+            s0b_src!("escape_predicate"),
+            "40\n41\n42\n",
+            "outside a loop in a predicate",
+        ),
+    ];
+    for (tag, src, stdout_want, msg) in cases {
+        let (code, stdout, stderr) = vm_same_both_engines(tag, src);
+        assert_eq!(
+            (code, stdout.as_str()),
+            (Some(101), stdout_want),
+            "[{tag}] {stderr}"
+        );
+        assert!(stderr.contains(msg), "[{tag}] {stderr}");
+    }
+}
+
+/// R51 §3 row 6 (veto 91c2f676): a fn declared `-> Result` never returns a
+/// `None` across its boundary (an untyped `dict_get` makes one type-check).
+/// The caller reaches `solve` through the VM's fast call from its second
+/// iteration on; the refusal is the tree's on every engine.
+#[test]
+fn r51_s0b_a_confused_result_is_refused_at_the_return_on_either_engine() {
+    let (code, stdout, stderr) = vm_same_both_engines("s0b_sum", s0b_src!("sum_confusion"));
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(101), "1\n3\n5\n"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("`solve` is declared to return Result but produced None"),
+        "{stderr}"
+    );
+}
+
+/// R51 §3 row 7 (veto ea9ba38d, 6de01247): `ai_extract_uncertain_*` results
+/// are AI-sourced, and a derived `Uncertain` keeps the least-trusted
+/// operand's `source_tag`, on the tree and on both VM entry modes.
+#[test]
+fn r51_s0b_uncertain_provenance_is_the_same_on_either_engine() {
+    let f = tmp_ax("s0b_uncertain_tag", s0b_src!("uncertain_source_tag"));
+    for engine in ["tree", "vm", "vm-default"] {
+        let mut c = axon();
+        c.arg("run").arg(&f);
+        vm_engine_env(&mut c, engine);
+        let out = c
+            .env("AXON_AI_MOCK", "1")
+            .env_remove("AXON_AI_REPLAY")
+            .env_remove("AXON_VM_TRACE")
+            .output()
+            .expect("spawn axon run");
+        assert_eq!(
+            (
+                out.status.code(),
+                String::from_utf8_lossy(&out.stdout).into_owned()
+            ),
+            (Some(0), "1\n1\n1\n1\n1\n2\n2\n0\n0\n".to_string()),
+            "[{engine}] {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let _ = std::fs::remove_file(&f);
+}
+
+/// R51 §3 rows 5-6 under `axon test` (veto 89256bd3, 91c2f676, 4e7851bc): a
+/// test passes only if its body completed. An `Err` return or a `?` exit
+/// FAILS (R51 §3; veto kept them `ok`); `exit(0)` and a test's own plain
+/// `return` stay `ok`; a callee's `break` / `continue` fails the test it
+/// unwound (through a fast call in the test's own loop, and through a
+/// closure). The same verdicts on every engine.
+#[test]
+fn r51_s0b_a_test_passes_only_if_its_body_completed_on_either_engine() {
+    let src = "fn bail(n: i64) -> i64 {\n    if n > 0 { exit(0) }\n    n\n}\n\
+               fn stop(n: i64) -> i64 {\n    if n > 2 { break }\n    n\n}\n\
+               @[test]\nfn t_done() { assert_eq(bail(0), 0) }\n\
+               @[test]\nfn t_err() -> Result<i64, str> { Err(\"no\") }\n\
+               @[test]\nfn t_q() -> Result<i64, str> {\n    let n = parse_int(\"x\")?\n    assert_eq(n, 99)\n    Ok(n)\n}\n\
+               @[test]\nfn t_exit() { assert_eq(bail(1), 99) }\n\
+               @[test]\nfn t_return() {\n    if true { return }\n    assert_eq(1, 2)\n}\n\
+               @[test]\nfn t_loop() {\n    let i = 0\n    while i < 5 {\n        assert_eq(stop(i + 1), i + 1)\n        i = i + 1\n    }\n}\n\
+               @[test]\nfn t_closure() {\n    let g = |n: i64| { if n > 1 { continue }  n }\n    for i in 0..4 {\n        assert_eq(g(i), i)\n    }\n}\n";
+    let f = tmp_ax("s0b_axon_test", src);
+    let want = [
+        ("t_done", "ok"),
+        ("t_err", "failed"),
+        ("t_q", "failed"),
+        ("t_exit", "ok"),
+        ("t_return", "ok"),
+        ("t_loop", "failed"),
+        ("t_closure", "failed"),
+    ];
+    let mut seen: Option<Vec<serde_json::Value>> = None;
+    for engine in ["tree", "vm", "vm-default"] {
+        let mut c = axon();
+        c.args(["test", "--json", "--jobs", "1"]).arg(&f);
+        vm_engine_env(&mut c, engine);
+        let out = c
+            .env_remove("AXON_VM_TRACE")
+            .output()
+            .expect("spawn axon test");
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        assert_eq!(out.status.code(), Some(3), "[{engine}] {stdout}");
+        let lines: Vec<serde_json::Value> = want
+            .iter()
+            .map(|(name, status)| {
+                let l = stdout
+                    .lines()
+                    .find(|l| l.contains(&format!("\"name\":\"{name}\"")))
+                    .unwrap_or_else(|| panic!("[{engine}] no line for {name}:\n{stdout}"));
+                assert!(
+                    l.contains(&format!("\"status\":\"{status}\"")),
+                    "[{engine}] {name}: {l}"
+                );
+                // Durations differ run to run; the rest of the line must not.
+                let mut v: serde_json::Value = serde_json::from_str(l).expect("a JSON line");
+                v.as_object_mut().unwrap().remove("duration_ms");
+                v
+            })
+            .collect();
+        match &seen {
+            None => seen = Some(lines),
+            Some(prev) => assert_eq!(prev, &lines, "[{engine}] vs tree"),
+        }
+    }
+    let _ = std::fs::remove_file(&f);
 }

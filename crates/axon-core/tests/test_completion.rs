@@ -60,23 +60,27 @@ fn line<'a>(out: &'a str, name: &str) -> &'a str {
 }
 
 #[test]
-#[ignore = "R51 S0b: completion evidence needs TestEnd / run_test_fn_outcome; until then no pass carries a completion token"]
 fn only_a_completed_test_is_issued_a_completion_token() {
     let (code, out) = run(&format!("{KEY}\n"));
-    assert_eq!(code, 0, "{out}");
+    // R51 §3 (S0b): an `Err` return or a `?` exit FAILS the test (veto kept
+    // it `ok`, untagged), so the run exits 3 (a test failed).
+    assert_eq!(code, 3, "{out}");
     assert!(
         line(&out, "t_done").contains(&format!("\"completion\":\"{T_DONE}\"")),
         "{out}"
     );
-    for t in ["t_err", "t_q", "t_exit"] {
+    for t in ["t_err", "t_q"] {
         let l = line(&out, t);
-        // Still reported ok (existing `axon test` semantics) — but untagged.
-        assert!(l.contains("\"status\":\"ok\""), "{t}: {l}");
-        assert!(
-            !l.contains("completion"),
-            "{t} was tagged as completed: {l}"
-        );
+        assert!(l.contains("\"status\":\"failed\""), "{t}: {l}");
+        assert!(l.contains("did not complete"), "{t}: {l}");
     }
+    // `exit(0)` below the test still reports ok — but untagged.
+    let l = line(&out, "t_exit");
+    assert!(l.contains("\"status\":\"ok\""), "t_exit: {l}");
+    assert!(
+        !l.contains("completion"),
+        "t_exit was tagged as completed: {l}"
+    );
 }
 
 #[test]

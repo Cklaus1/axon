@@ -391,6 +391,10 @@ pub(super) struct FnEntry<'p> {
     /// The declared return type is a plain scalar (`i64`/`i32`/`f64`/`bool`),
     /// so a soft result unwraps at the return boundary.
     pub(super) ret_is_scalar: bool,
+    /// The declared return type is a `Result` or an `Option`, so a value of
+    /// the other constructor family is refused at the return boundary
+    /// (`Interp::sum_return`).
+    pub(super) ret_sum: Option<RetSum>,
     /// Named `main` (the binding-dump capture applies to it).
     pub(super) is_main: bool,
     /// No attribute-driven step around the body: not `@[agent]`, `@[ai]`
@@ -411,6 +415,14 @@ pub(super) struct FnEntry<'p> {
     /// R50 S9: the body is hot on entry ([`Resolution::hot_fn`]), so it
     /// compiles on its first entry; set by `Interp::build` for table entries.
     pub(super) hot: bool,
+}
+
+/// [`FnEntry::ret_sum`]: which constructor family a fn's declared return
+/// type admits.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum RetSum {
+    Result,
+    Option,
 }
 
 impl<'p> FnEntry<'p> {
@@ -453,6 +465,13 @@ impl<'p> FnEntry<'p> {
                 &def.return_type,
                 Some(AxonType::Named(n)) if matches!(n.as_str(), "i64" | "i32" | "f64" | "bool")
             ),
+            ret_sum: match &def.return_type {
+                Some(AxonType::Result { .. }) => Some(RetSum::Result),
+                Some(AxonType::Option(_)) => Some(RetSum::Option),
+                Some(AxonType::Generic { base, .. }) if base == "Result" => Some(RetSum::Result),
+                Some(AxonType::Generic { base, .. }) if base == "Option" => Some(RetSum::Option),
+                _ => None,
+            },
             is_main: def.name == "main",
             has_epilogue: has_attr("adaptive") || has_attr("experiment") || def.verify.is_some(),
             plain: false,

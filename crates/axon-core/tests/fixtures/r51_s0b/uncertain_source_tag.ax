@@ -1,0 +1,23 @@
+// R51 S0b: a derived `Uncertain` keeps the least-trusted operand's
+// `source_tag` (AI 1 > runtime 2 > user 0), and `ai_extract_uncertain_*`
+// results are AI-sourced (run with AXON_AI_MOCK=1).
+fn tag_of(u: Uncertain<i64>) -> i64 {
+    u.source_tag
+}
+
+fn main() {
+    match ai_extract_uncertain_i64("n? 3") {
+        Ok(u) => {
+            println(to_str(tag_of(u)))
+            println(to_str((u + 0).source_tag))
+            println(to_str((1 + u).source_tag))
+            println(to_str((u * uncertain_new(2, 0.99)).source_tag))
+            println(to_str((uncertain_dyn_i64(2, 0.5) - u).source_tag))
+        }
+        Err(e) => println(e)
+    }
+    println(to_str((uncertain_dyn_i64(2, 0.5) * 3).source_tag))
+    println(to_str((uncertain_dyn_i64(2, 0.5) + uncertain_new(1, 0.9)).source_tag))
+    println(to_str((uncertain_new(1, 0.5) + uncertain_new(2, 0.9)).source_tag))
+    println(to_str((uncertain_new(1, 0.5) + 4).source_tag))
+}

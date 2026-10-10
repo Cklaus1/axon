@@ -141,7 +141,6 @@ fn hmac_hex(key: &[u8], msg: &[u8]) -> String {
 /// interpreter decided carries its own keyed token, in a domain distinct from
 /// a pass's — so a printed "failed" line without it is not a verdict.
 #[test]
-#[ignore = "R51 S0b: its pass control needs a completion token (TestEnd / run_test_fn_outcome)"]
 fn a_failure_is_keyed_in_its_own_domain() {
     use std::io::Write;
     let d = fresh("keyed");

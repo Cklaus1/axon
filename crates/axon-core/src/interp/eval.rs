@@ -691,7 +691,9 @@ impl<'p> Interp<'p> {
                     pe.define(SYM_UNDERSCORE, v.clone());
                     // Also bind the bound name for inline `let x: T where E[x] > k`.
                     pe.define(s, v.clone());
-                    if let Value::Bool(false) = self.eval(pred, &mut pe)? {
+                    if let Value::Bool(false) =
+                        contain_frame(self.eval(pred, &mut pe), FrameEdge::Predicate)?
+                    {
                         return Err(Flow::RefineViolation(
                             format!(
                                 "the value bound to `{}` (= {}) violates the refinement `{}` \
@@ -1521,7 +1523,10 @@ impl<'p> Interp<'p> {
             let mut arm_env = Env::from_snapshot(captured);
             arm_env.push();
             let bound = self.match_pattern(binding, &payload, &mut arm_env);
-            let outcome = bound.and_then(|_| self.eval(arm_body, &mut arm_env));
+            let outcome = contain_loop_control(
+                bound.and_then(|_| self.eval(arm_body, &mut arm_env)),
+                FrameEdge::HandlerArm,
+            );
             self.handlers.borrow_mut().extend(suspended);
             return match outcome {
                 Err(Flow::Resume(v)) => Ok(Some(v)),
@@ -1542,7 +1547,10 @@ impl<'p> Interp<'p> {
         let mut arm_env = Env::from_snapshot(captured);
         arm_env.push();
         let bound = self.match_pattern(binding, &payload, &mut arm_env);
-        let outcome = bound.and_then(|_| self.eval(arm_body, &mut arm_env));
+        let outcome = contain_loop_control(
+            bound.and_then(|_| self.eval(arm_body, &mut arm_env)),
+            FrameEdge::HandlerArm,
+        );
         self.resume_ctx.borrow_mut().pop();
         self.handlers.borrow_mut().extend(suspended);
 
@@ -1825,7 +1833,9 @@ impl<'p> Interp<'p> {
                             if let Some(fv) = fields.named(&tf.name) {
                                 let mut pe = Env::new();
                                 pe.define(SYM_UNDERSCORE, fv.clone());
-                                if let Value::Bool(false) = self.eval(pred, &mut pe)? {
+                                if let Value::Bool(false) =
+                                    contain_frame(self.eval(pred, &mut pe), FrameEdge::Predicate)?
+                                {
                                     return Err(Flow::RefineViolation(
                                                 format!(
                                                     "field `{}` of `{}` (= {}) violates the refinement \
@@ -1848,7 +1858,9 @@ impl<'p> Interp<'p> {
                     let sv = Value::record(sname, fields);
                     let mut pe = Env::new();
                     pe.define(SYM_UNDERSCORE, sv.clone());
-                    if let Value::Bool(false) = self.eval(pred, &mut pe)? {
+                    if let Value::Bool(false) =
+                        contain_frame(self.eval(pred, &mut pe), FrameEdge::Predicate)?
+                    {
                         return Err(Flow::RefineViolation(
                             format!(
                                 "the constructed `{name}` violates its struct refinement \

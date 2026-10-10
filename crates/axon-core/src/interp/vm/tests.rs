@@ -662,10 +662,17 @@ fn exec_catches_break_and_continue_in_the_innermost_loop() {
     assert!(matches!(run_both("brk_inner_only"), Ok(Value::Int(306))));
 }
 
+/// A `break` out of a tree op ends the loop it is in; a callee's `break`
+/// never does (R51 S0b, veto 4e7851bc): it is an error at the call, and the
+/// loop's scopes are still popped on the way out.
 #[test]
-fn exec_catches_break_out_of_a_tree_op_and_a_callee() {
+fn exec_catches_break_out_of_a_tree_op_and_contains_a_callees() {
     assert!(matches!(run_both("brk_from_tree_op"), Ok(Value::Int(3))));
-    assert!(matches!(run_both("brk_from_callee"), Ok(Value::Int(4))));
+    let r = run_both("brk_from_callee");
+    assert!(
+        matches!(&r, Err(Flow::Panic(m)) if m.contains("outside a loop in `stop`")),
+        "{r:?}"
+    );
 }
 
 #[test]
@@ -977,4 +984,38 @@ fn fast_call_checks_depth_before_arity() {
     let at_limit = both();
     interp.call_depth.set(depth);
     assert!(at_limit.contains("recursion limit exceeded"), "{at_limit}");
+}
+
+/// R51 S0b (§3 row 5, veto 4e7851bc/2175cc1b): a callee's `break`/`continue`
+/// is an error at the call on the VM's fast paths exactly as on the tree,
+/// never a jump in the caller's loop. Each caller loops, so from its second
+/// iteration the call runs proven: `CallFastLocalInt` (frameless leaf arm
+/// declined, and taken before the escaping `else`), and an inline-argument
+/// `CallFast`.
+#[test]
+fn loop_control_never_leaves_a_fast_call() {
+    let src = "fn stop(n: i64) -> i64 {\n if n > 3 { break }\n n\n}\n\
+               fn leaf(n: i64) -> i64 {\n if n < 4 { n } else { break }\n}\n\
+               fn skip(n: i64) -> i64 {\n if n > 2 { continue }\n n\n}\n\
+               fn a() -> i64 {\n let s = 0\n let i = 0\n while i < 6 {\n s = s + stop(i + 1)\n i = i + 1\n }\n s\n}\n\
+               fn b() -> i64 {\n let s = 0\n let i = 0\n while i < 6 {\n s = s + leaf(i + 1)\n i = i + 1\n }\n s\n}\n\
+               fn c() -> i64 {\n let s = 0\n for i in 0..6 {\n s = s + skip(i)\n }\n s\n}\n";
+    let prog = crate::parse_source(src).expect("parses");
+    let interp = Interp::build(&prog).expect("unsealed build");
+    for (f, op, msg) in [
+        ("a", "call-fast-local-int", "outside a loop in `stop`"),
+        ("b", "call-fast-local-int", "outside a loop in `leaf`"),
+        ("c", "call-fast-inline", "outside a loop in `skip`"),
+    ] {
+        let body = compile(&interp, body_of(&interp, f));
+        assert!(kinds(&body).contains(&op), "{f}: {:?}", kinds(&body));
+        let mut env = Env::new();
+        env.push();
+        let tree = format!("{:?}", interp.eval(body_of(&interp, f), &mut env));
+        let mut env = Env::new();
+        env.push();
+        let vm = format!("{:?}", interp.exec(&body, &mut env));
+        assert_eq!(vm, tree, "{f}");
+        assert!(vm.contains("Panic") && vm.contains(msg), "{f}: {vm}");
+    }
 }
