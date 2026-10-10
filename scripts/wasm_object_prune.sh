@@ -21,7 +21,16 @@ if command -v flock >/dev/null 2>&1; then exec 9>"${TMPDIR:-/tmp}/axon_wasm_pari
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 . "$ROOT/scripts/lib/axon_bin.sh"
 
-need_codegen_axon wasm_object_prune
+if [ -n "${AXON:-}" ]; then
+  named_bin AXON wasm_object_prune
+else
+  echo "wasm_object_prune: building codegen axon binary…"
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "wasm_object_prune: codegen build unavailable (LLVM absent) — skipping"; exit 0
+  fi
+  use_built AXON axon
+fi
+require_codegen_axon wasm_object_prune
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 PROG="$WORK/triv.ax"; printf 'fn main() -> i64 { 21 + 21 }\n' > "$PROG"
 

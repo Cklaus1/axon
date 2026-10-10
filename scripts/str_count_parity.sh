@@ -16,11 +16,21 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 . "$ROOT/scripts/lib/harness_skip.sh"
 . "$ROOT/scripts/lib/axon_bin.sh"
+. "$ROOT/scripts/lib/child_exit.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-need_codegen_axon str_count_parity
+if [ -n "${AXON:-}" ]; then
+  named_bin AXON str_count_parity
+else
+  echo "str_count_parity: building codegen axon binary…"
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "str_count_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
+  fi
+  use_built AXON axon
+fi
+require_codegen_axon str_count_parity
 
 PROG="$WORK/sc.ax"
 cat > "$PROG" <<'AX'
@@ -35,14 +45,19 @@ fn main() -> i64 {
 }
 AX
 
-interp_out="$("$AXON" run "$PROG" 2>/dev/null)"
+interp_out="$("$AXON" run "$PROG" 2>/dev/null)"; interp_st=$?
 BIN="$WORK/sc_bin"
 if ! berr="$("$AXON" build "$PROG" -o "$BIN" --no-cache 2>&1)"; then
   # A build that FAILED is a RESULT, not an absence. Discarding stderr here
   # reported a str_count codegen regression as "skipping".
   native_build_failed str_count_parity "str_count" "$berr" || exit 1
 fi
-native_out="$("$BIN" 2>/dev/null)"
+native_out="$("$BIN" 2>/dev/null)"; native_st=$?
+
+# The EXIT STATUS is compared too, not just stdout: output written before a
+# SIGKILL/OOM kill is byte-identical, and this harness used to report OK for a
+# native binary that printed correctly and then died with 137 (scripts/lib/child_exit.sh).
+same_exit_or_fail str_count_parity "$interp_st" "$native_st" || exit 1
 
 if [ "$interp_out" != "$native_out" ]; then
   echo "str_count_parity: FAIL — native differs from the interpreter:"

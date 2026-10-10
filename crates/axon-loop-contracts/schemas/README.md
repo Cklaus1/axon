@@ -1,0 +1,38 @@
+# axon-loop-contracts schemas
+
+These files are BYTE COPIES, not generated and not hand-edited:
+
+| File | Source |
+|---|---|
+| `closed-loop-{policy,transition,context,episode}.schema.json` | Axon Cortex build-pack v0.22, `schemas/json/closed-loop-*.schema.json` |
+| `acf-compute-request.schema.json` | v0.22 pack, `integration/compute-fabric-v0_1-reference/contracts/compute_request.schema.json` |
+| `acf-execution-receipt.schema.json` | v0.22 pack, `integration/compute-fabric-v0_1-reference/contracts/execution_receipt.schema.json` |
+
+Three files are CRATE-LOCAL, because the package defines no schema for these
+contracts: `local-policy-pin.schema.json` (`PolicyPin`),
+`local-policy-projection.schema.json` (`PolicyProjection`, the closed key set
+the reference's `bind_acf` checks), and `closed-loop-profile.schema.json`
+(`ProfileOffer` / `ProfileAccept`, B256; byte rules in
+`docs/CLOSED_LOOP_PROFILE_NEGOTIATION.md`).
+
+The schemas are ENFORCED, not just documented: `parse` validates every document
+against its contract's schema (`Contract::SCHEMA`, `src/schema.rs`) before
+typed serde. That walk is what refuses a struct written as a positional array,
+an enum written as `{"variant":null}`, and extra fields beside a unit variant
+(red-team D1-D3), which serde alone accepted. It implements only the keyword
+and pattern subset these files use and refuses anything else.
+
+The package schemas are normative; the Rust types follow them. Two tests keep
+the two in step:
+
+* `checked_in_schemas_are_the_package_bytes` pins each file's sha256, so a local
+  edit is a deliberate, visible divergence rather than drift;
+* `checked_in_schemas_agree_with_rust_serialization` walks each schema alongside
+  the Rust serialization of the package fixture and requires every object to be
+  closed and the serialized keys to equal the schema's `properties`.
+
+Rules the Rust side enforces BEYOND these schemas (all from the package's
+`CLOSED_LOOP_PROFILE_V022.md` / `tools/closed_loop_reference.py`): strict JSON
+ingest (duplicate and escaped-alias keys, floats, |int| > 2^53−1, depth > 32,
+input > 1 MiB), `next_epoch == expected_epoch + 1` on a transition, and the
+cross-document checks in `src/checks.rs`.

@@ -23,7 +23,17 @@ cd "$ROOT"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-need_codegen_axon checked_arith_parity
+if [ -n "${AXON:-}" ]; then
+  named_bin AXON checked_arith_parity
+else
+  echo "checked_arith_parity: building codegen axon binary…"
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "checked_arith_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
+  fi
+  cargo build -q -p axon-rt 2>/dev/null || true
+  use_built AXON axon
+fi
+require_codegen_axon checked_arith_parity
 
 # (label, body) — each body is a `fn main()` body. The interesting cases are the
 # faults (must panic exit 101 with a matching message) and the boundary cases

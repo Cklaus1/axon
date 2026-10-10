@@ -29,7 +29,14 @@ use crate::interp::{lit_to_val, Interp, Resolution, Value};
 /// compiler's own recursion would exceed the stack budget (AX-56): the
 /// caller runs the body on the tree this time, as the tree would, and does
 /// not keep a body compiled that deep.
+///
+/// R51 §4 Fork 1 (defence in depth): every VM execution needs a `Body` and
+/// this is its only constructor, so no body is ever built for a sealed run.
 pub(in crate::interp) fn compile<'p>(ix: &Interp<'_>, body: &'p Expr) -> Option<Body<'p>> {
+    assert!(
+        !ix.sealed,
+        "R51: a sealed run never compiles a VM body (sealed code runs on the tree only)"
+    );
     let mut c = Compiler {
         res: &ix.res,
         ix,

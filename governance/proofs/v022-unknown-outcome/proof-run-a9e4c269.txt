@@ -1,0 +1,40 @@
+== 0b every mutation row applies
+not applicable: []
+RC=0
+== 1a axon clippy
+RC=0
+== 0 rebuild interpreter
+RC=0
+== 1b axon loop/contracts/fabric/cortex tests
+RC=0
+pass 543 fail 0
+== 1d PCI surface runner
+RC=0
+v022_pci_gates: PASS — 18 rows
+== 1e stage5 named-test gates (binding rows)
+RC=0
+v022_stage5_gates: PASS
+== 1f protected readiness
+RC=0
+protected_verifier_ready: PASS — verifier=NOT_READY, stage7=NOT_READY, cx21=NOT_READY
+== 1c axon-core clippy (interpreter) + full suite (default features, default target dir)
+RC=0
+RC=0
+pass 1573 fail 0
+== 2 micode clippy+tests
+RC=0
+RC=0
+pass 5311 fail 0
+== 3 mutations
+RC=0
+133/133 killed; baselines all pass
+== 4 interop
+RC=0
+loop_interop_gate: PASS — 287 assertions (axon a9e4c269, micode fc6221a5)
+== 5 micode gates
+RC=0
+v022_micode_gates: PASS — 22 rows (micode fc6221a5)
+== trees after
+0
+0
+FREEZE_DONE

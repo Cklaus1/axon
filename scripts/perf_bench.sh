@@ -29,10 +29,13 @@ esac
 
 export AXON_SEED="${AXON_SEED:-42}"
 
-AXON="$ROOT/target/debug/axon"
-if [ ! -x "$AXON" ]; then
+. "$ROOT/scripts/lib/axon_bin.sh"
+# The binary the caller names, or the one built here -- never one that merely
+# sits in target/ (C9 round 4).
+if [ -z "${AXON:-}" ]; then
   echo "perf_bench: building the codegen axon binary…"
   cargo build -q -p axon-core || { echo "build failed"; exit 1; }
+  use_built AXON axon
 fi
 
 # Confirm `axon build` (codegen) is available — else skip cleanly.

@@ -1,0 +1,15 @@
+exit: Some(0)
+--- stdout ---
+Show the current chain state (spec §5.2): vm_id, boot_root, entry count, and the current head (tip). Read-only; never writes
+
+Usage: axon-vm chain show [OPTIONS] --store <STORE>
+
+Options:
+      --store <STORE>    Path to the chain JSONL file
+      --vm-id <VM_ID>    Label to embed in the summary. Informational only — the chain file itself has no vm_id field, so this is not validated against anything on disk [default: default]
+      --json             Emit JSON output
+      --kernel <KERNEL>  Guest kernel image used to derive the boot root when the chain is still empty (default: dist/guest/vmlinuz). Ignored once the chain has at least one entry — the root is then read back from the first entry's own `prev_hash` instead (self-consistency, same convention `chain verify`'s default `--genesis` uses)
+  -h, --help             Print help
+
+--- stderr ---
+

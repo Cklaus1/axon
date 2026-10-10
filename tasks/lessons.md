@@ -833,3 +833,4 @@ brace is `::`, not `-> `. A QUALIFIED path defeats a lookbehind written for the
 bare name. Third failure of the same pattern in one session; the fix that
 finally worked was to take the file:line list from the COMPILER and patch those
 lines, instead of guessing where literals are.
+- Mistake: edited with a relative path while the tool cwd was the main checkout (/home/cklaus/projects/axon), so the change landed in the wrong worktree. Rule: in lane worktrees, every read/edit/write path is absolute; check `git -C <main> status` after a batch of edits.

@@ -1,0 +1,111 @@
+{
+  "schema": "acf-contract-fixtures/1",
+  "examples": [
+    {
+      "path": "contracts/examples/request_offline.json",
+      "schema": "contracts/compute_request.schema.json",
+      "expected_valid": true,
+      "reason": "Structurally valid request; no authority or actual workload is supplied.",
+      "evidence_class": "SYNTHETIC_CONTRACT_FIXTURE"
+    },
+    {
+      "path": "contracts/examples/profile_source_inspected.json",
+      "schema": "contracts/backend_profile.schema.json",
+      "expected_valid": true,
+      "reason": "Truthful source-only profile; not eligible as a verified protected backend.",
+      "evidence_class": "SYNTHETIC_CONTRACT_FIXTURE"
+    },
+    {
+      "path": "contracts/examples/receipt_exit_zero_unverified.json",
+      "schema": "contracts/execution_receipt.schema.json",
+      "expected_valid": true,
+      "reason": "Exit zero without independent verification remains unverified.",
+      "evidence_class": "SYNTHETIC_CONTRACT_FIXTURE"
+    },
+    {
+      "path": "contracts/examples/receipt_outcome_unknown.json",
+      "schema": "contracts/execution_receipt.schema.json",
+      "expected_valid": true,
+      "reason": "Uncertain outcome remains uncertain; no exact cost is claimed.",
+      "evidence_class": "SYNTHETIC_CONTRACT_FIXTURE"
+    },
+    {
+      "path": "contracts/examples/request_extra_field.json",
+      "schema": "contracts/compute_request.schema.json",
+      "expected_valid": false,
+      "reason": "Unknown closed-schema fields refuse.",
+      "evidence_class": "SYNTHETIC_CONTRACT_FIXTURE"
+    },
+    {
+      "path": "contracts/examples/request_negative_budget.json",
+      "schema": "contracts/compute_request.schema.json",
+      "expected_valid": false,
+      "reason": "Negative budgets refuse.",
+      "evidence_class": "SYNTHETIC_CONTRACT_FIXTURE"
+    },
+    {
+      "path": "contracts/examples/request_float_budget.json",
+      "schema": "contracts/compute_request.schema.json",
+      "expected_valid": false,
+      "reason": "Fractional counters refuse.",
+      "evidence_class": "SYNTHETIC_CONTRACT_FIXTURE"
+    },
+    {
+      "path": "contracts/examples/request_missing_trial.json",
+      "schema": "contracts/compute_request.schema.json",
+      "expected_valid": false,
+      "reason": "Trial identity is mandatory.",
+      "evidence_class": "SYNTHETIC_CONTRACT_FIXTURE"
+    },
+    {
+      "path": "contracts/examples/request_unknown_checkpoint.json",
+      "schema": "contracts/compute_request.schema.json",
+      "expected_valid": false,
+      "reason": "Unknown variants refuse.",
+      "evidence_class": "SYNTHETIC_CONTRACT_FIXTURE"
+    },
+    {
+      "path": "contracts/examples/request_unsafe_integer.json",
+      "schema": "contracts/compute_request.schema.json",
+      "expected_valid": false,
+      "reason": "Wire integers must not silently round.",
+      "evidence_class": "SYNTHETIC_CONTRACT_FIXTURE"
+    },
+    {
+      "path": "contracts/examples/profile_verified_no_evidence.json",
+      "schema": "contracts/backend_profile.schema.json",
+      "expected_valid": false,
+      "reason": "No evidence cannot yield verified.",
+      "evidence_class": "SYNTHETIC_CONTRACT_FIXTURE"
+    },
+    {
+      "path": "contracts/examples/receipt_worker_claims_verified.json",
+      "schema": "contracts/execution_receipt.schema.json",
+      "expected_valid": false,
+      "reason": "Worker text/zero matching checks cannot supply independent verification.",
+      "evidence_class": "SYNTHETIC_CONTRACT_FIXTURE"
+    },
+    {
+      "path": "contracts/examples/receipt_unknown_cost_zero.json",
+      "schema": "contracts/execution_receipt.schema.json",
+      "expected_valid": false,
+      "reason": "Unknown usage cannot be represented as zero cost.",
+      "evidence_class": "SYNTHETIC_CONTRACT_FIXTURE"
+    },
+    {
+      "path": "contracts/examples/receipt_unknown_success.json",
+      "schema": "contracts/execution_receipt.schema.json",
+      "expected_valid": false,
+      "reason": "Uncertain execution cannot be verified success.",
+      "evidence_class": "SYNTHETIC_CONTRACT_FIXTURE"
+    },
+    {
+      "path": "contracts/examples/receipt_zero_checks_pass.json",
+      "schema": "contracts/execution_receipt.schema.json",
+      "expected_valid": false,
+      "reason": "Zero checks cannot pass registered-check verification.",
+      "evidence_class": "SYNTHETIC_CONTRACT_FIXTURE"
+    }
+  ],
+  "warning": "Only syntactic/contract fixtures; no product or backend capability evidence."
+}

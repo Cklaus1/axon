@@ -72,13 +72,38 @@ scope_alive() {
   esac
 }
 
+# Resolve "16G" / "512M" / "1073741824" to bytes.
+to_bytes() {
+  case "$1" in
+    *[gG]) echo $(( ${1%[gG]} * 1024 * 1024 * 1024 )) ;;
+    *[mM]) echo $(( ${1%[mM]} * 1024 * 1024 )) ;;
+    *[kK]) echo $(( ${1%[kK]} * 1024 )) ;;
+    ''|*[!0-9]*) return 1 ;;
+    *) echo "$1" ;;
+  esac
+}
+
 cmd_start() {
   local name="$1"; shift
-  local snapshot_ref=""
-  if [ "${1:-}" = "--snapshot" ]; then
-    shift; snapshot_ref="${1:?--snapshot needs a committish}"; shift
-  fi
-  [ "${1:-}" = "--" ] && shift
+  local snapshot_ref="" mem_max="" swap_max="" deadline=""
+  # RESOURCE LIMITS are owned by the supervisor, not prefixed onto the command.
+  # A `timeout 5h ./scripts/gate.sh --strict` job is (correctly) NOT a gate run
+  # to write_receipt — the first token must BE gate.sh — so a contained gate
+  # used to be an uncitable one (measured: a green strict gate at 1fd1eb36 was
+  # refused by release_check for exactly this). And setting memory.max by hand
+  # after `start` returns leaves a window in which the job runs uncapped. Both
+  # are closed by stating the limits HERE, applied before the child exists.
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --snapshot) shift; snapshot_ref="${1:?--snapshot needs a committish}"; shift ;;
+      --mem-max)  shift; mem_max="$(to_bytes "${1:-}")" || die "--mem-max needs a size (e.g. 16G)"; shift ;;
+      --swap-max) shift; swap_max="$(to_bytes "${1:-}")" || die "--swap-max needs a size (e.g. 2G)"; shift ;;
+      --deadline) shift; case "${1:-}" in ''|*[!0-9]*) die "--deadline needs whole seconds" ;; esac
+                  deadline="$1"; shift ;;
+      --) shift; break ;;
+      *) break ;;
+    esac
+  done
   [ $# -gt 0 ] || die "no command given"
 
   local id="${name}-$(date -u +%Y%m%dT%H%M%SZ)-$$"
@@ -129,6 +154,27 @@ cmd_start() {
     local cg="/sys/fs/cgroup/axon_run_$id"
     mkdir "$cg" 2>/dev/null && echo "cgroup:$cg" > "$dir/scope"
   fi
+  # A requested memory ceiling is applied to the cgroup NOW, before the
+  # supervisor or the child joins it. Where no cgroup exists the request is
+  # REFUSED, not degraded: V8/allocator limits do not bound Wasm or native
+  # memory (measured: 24.8 GiB RSS under --max-old-space-size=512), so a run
+  # that asked for a ceiling and silently lacks one is exactly the unprotected
+  # run the 2026-09-24 Asyncify incident was.
+  if [ -n "$mem_max$swap_max" ]; then
+    local scope_now; scope_now="$(cat "$dir/scope")"
+    [ "${scope_now#cgroup:}" != "$scope_now" ] \
+      || { echo "cancelled" > "$dir/status"; die "--mem-max/--swap-max need a cgroup v2 scope, and none is available here; refusing to run unprotected"; }
+    local cgp="${scope_now#cgroup:}"
+    if [ -n "$mem_max" ]; then echo "$mem_max" > "$cgp/memory.max" \
+      || { echo "cancelled" > "$dir/status"; die "could not set memory.max on $cgp"; }; fi
+    if [ -n "$swap_max" ]; then echo "$swap_max" > "$cgp/memory.swap.max" \
+      || { echo "cancelled" > "$dir/status"; die "could not set memory.swap.max on $cgp"; }; fi
+  fi
+  {
+    echo "mem_max=${mem_max:-none}"
+    echo "swap_max=${swap_max:-none}"
+    echo "deadline_secs=${deadline:-none}"
+  } > "$dir/limits"
 
   # The supervisor is launched with `setsid`, in its OWN SESSION, as a mode of
   # this same script. It is not an ordinary background subshell.
@@ -189,6 +235,9 @@ cmd_cancel() {
   local dir="$1"
   [ -d "$dir" ] || die "no such run: $dir"
   echo cancelled > "$dir/status"
+  # The supervisor may die with the job (cgroup.kill takes the whole scope), so
+  # it cannot be relied on to remove the run's temp; cancel removes it too.
+  if [ -s "$dir/tmpdir" ]; then _rt="$(cat "$dir/tmpdir")"; case "$_rt" in /var/tmp/axr-*) rm -rf "$_rt" ;; esac; fi
   # Stop the supervisor FIRST. It is outside the job's scope by construction
   # (own session, and it joins the cgroup only to place the child), so a
   # scope kill does not reach it — and a surviving supervisor would observe
@@ -258,12 +307,53 @@ cmd_supervise() {
   fi
   # Run INSIDE the snapshot when there is one, so the job reads committed
   # bytes rather than whatever the developer tree happens to hold right now.
+  local own_tmp=""
+  # TEMP ON DISK, PER RUN. /tmp on this host class is a RAM tmpfs (12 GB here):
+  # measured 2026-09-26, leaked test images filled it to 100% and a strict gate
+  # failed with ENOSPC in LLVM and the parity harnesses; tmpfs pages written by
+  # the job are also charged to its memory cgroup. Unless the caller set TMPDIR
+  # explicitly, the job's temp lives under its own run directory, on disk, and
+  # is removed with the run's scaffolding.
+  #
+  # SHORT path, not "$dir/tmp": a run dir is ~90 bytes, and tests that bind Unix
+  # sockets under TMPDIR then exceed SUN_LEN (108) — measured: 7 axon-fabric
+  # tests failed "path must be shorter than SUN_LEN" in a strict gate. /var/tmp
+  # is on the root disk (not a tmpfs) on this host class; the run dir records
+  # where the temp was, and the supervisor removes it after the receipt.
+  if [ -z "${TMPDIR:-}" ]; then
+    own_tmp="/var/tmp/axr-$BASHPID"
+    mkdir -p "$own_tmp" && chmod 700 "$own_tmp" && export TMPDIR="$own_tmp" && echo "$own_tmp" > "$dir/tmpdir"
+  fi
+  # Where a stage profile's results document goes: INSIDE the run dir, so the
+  # receipt can bind it (see write_receipt). Harmless to a non-profile run.
+  export STAGE_RESULTS="$dir/stage-results.json"
   local work=""
   work="$(sed -n 's/^worktree=//p' "$dir/snapshot" 2>/dev/null)"
-  if [ -n "$work" ] && [ -d "$work" ]; then
-    setsid env -C "$work" "$@" > "$dir/log" 2>&1 &
+  # SIGNAL DISPOSITIONS. A non-interactive bash starts every `&` job with
+  # SIGINT and SIGQUIT IGNORED, and an ignored disposition survives exec — so
+  # every managed job, and everything it spawned, ran with Ctrl+C disabled.
+  # Measured: a gate-launched child had SigIgn 0x6, and MiCode's
+  # signals_still_end_onboarding_after_the_key_prompt (SIGINT must end the
+  # process) failed 2/2 inside the managed gate and 0/15 outside it. A shell
+  # `trap -` cannot fix it here: this supervisor is itself an `&` job, and bash
+  # cannot reset a signal that was ignored when the shell started. So the reset
+  # happens in the exec chain, at the OS level (`env --default-signal`, or a
+  # python3 shim where `env` lacks it); a host with neither is refused rather
+  # than silently running every job with signals ignored.
+  local reset=()
+  if env --default-signal=INT,QUIT true 2>/dev/null; then
+    reset=(env --default-signal=INT,QUIT)
+  elif command -v python3 >/dev/null 2>&1; then
+    reset=(python3 -c 'import os,signal,sys
+for s in (signal.SIGINT, signal.SIGQUIT): signal.signal(s, signal.SIG_DFL)
+os.execvp(sys.argv[1], sys.argv[1:])')
   else
-    setsid "$@" > "$dir/log" 2>&1 &
+    die "cannot restore default SIGINT/SIGQUIT for the job (no env --default-signal, no python3)"
+  fi
+  if [ -n "$work" ] && [ -d "$work" ]; then
+    setsid "${reset[@]}" env -C "$work" "$@" > "$dir/log" 2>&1 &
+  else
+    setsid "${reset[@]}" "$@" > "$dir/log" 2>&1 &
   fi
   local child=$!
   echo "$child" > "$dir/pid"
@@ -277,13 +367,52 @@ cmd_supervise() {
   # legitimately empty while the supervisor is still starting, so "empty" had
   # to mean both "starting" and "gone".
   : > "$dir/.ready.tmp"; mv -f "$dir/.ready.tmp" "$dir/ready"
+  # DEADLINE WATCHDOG. It kills the JOB — every process in the scope except the
+  # supervisor and itself — never the supervisor, which must survive to record
+  # the verdict. (cgroup.kill would take the supervisor down with the job,
+  # leaving a run whose completion is never recorded.)
+  local deadline wd=""
+  deadline="$(sed -n 's/^deadline_secs=//p' "$dir/limits" 2>/dev/null)"
+  if [ -n "$deadline" ] && [ "$deadline" != none ]; then
+    local sup=$BASHPID
+    (
+      sleep "$deadline"
+      kill -0 "$child" 2>/dev/null || exit 0
+      echo yes > "$dir/deadline_hit"
+      local me=$BASHPID spins=0
+      while [ $spins -lt 50 ]; do
+        local left=0
+        case "$scope" in
+          cgroup:*)
+            for p in $(cat "${scope#cgroup:}/cgroup.procs" 2>/dev/null); do
+              [ "$p" = "$sup" ] || [ "$p" = "$me" ] && continue
+              kill -9 "$p" 2>/dev/null && left=1
+            done ;;
+          *) kill -9 -- "-$child" 2>/dev/null && left=1 ;;
+        esac
+        [ $left -eq 0 ] && break
+        sleep 0.2; spins=$((spins + 1))
+      done
+    ) &
+    wd=$!
+  fi
   wait "$child"
   local code=$?
+  [ -n "$wd" ] && kill "$wd" 2>/dev/null
+  # Record the cgroup's OWN account of what it killed while the cgroup still
+  # exists. No wrapper inside the job can rewrite memory.events, so an OOM kill
+  # is evidence even when the job's status came back 0.
+  case "$scope" in
+    cgroup:*) awk '/^oom_kill /{print $2}' "${scope#cgroup:}/memory.events" 2>/dev/null > "$dir/oom_kills" ;;
+  esac
   date -u +%Y-%m-%dT%H:%M:%SZ > "$dir/finished_at"
   # Never overwrite an explicit `cancelled`: the canceller's verdict is the
   # true one, and `wait` would otherwise report the signal as a plain exit.
   [ "$(cat "$dir/status")" = "cancelled" ] || echo "exited:$code" > "$dir/status"
   write_receipt "$dir" "$code"
+  # From the supervisor's own variable, not re-read from the run dir: a caller
+  # may already have deleted the run dir by now (measured: the self-test does).
+  case "${own_tmp:-}" in /var/tmp/axr-*) rm -rf "$own_tmp" ;; esac
   # Release the containment scope. Only `cancel` used to do this, so every
   # NORMALLY COMPLETING run leaked its cgroup — measured at 71 leaked
   # directories, 71 of the 74 cgroups on the host, accumulating across
@@ -422,8 +551,12 @@ write_receipt() {
   local started reported passed failed
   started="$(grep -cE '^[[:space:]]+(Running|Doc-tests)' "$dir/log" 2>/dev/null | head -1)"
   reported="$(grep -cE '^test result:' "$dir/log" 2>/dev/null | head -1)"
-  passed="$(grep -oE '[0-9]+ passed' "$dir/log" 2>/dev/null | awk '{s+=$1} END{print s+0}')"
-  failed="$(grep -oE '[0-9]+ failed' "$dir/log" 2>/dev/null | awk '{s+=$1} END{print s+0}')"
+  # Only cargo's own `test result:` lines. Summing `N passed` from ANYWHERE in
+  # the log added nested tool output (`claims_gate: 5 passed, 1 failed`) to the
+  # totals — measured 1552/3 against cargo's 1547/2 — and any tool that prints
+  # "N passed" would add phantom passes the same way.
+  passed="$(grep -E '^test result:' "$dir/log" 2>/dev/null | grep -oE '[0-9]+ passed' | awk '{s+=$1} END{print s+0}')"
+  failed="$(grep -E '^test result:' "$dir/log" 2>/dev/null | grep -oE '[0-9]+ failed' | awk '{s+=$1} END{print s+0}')"
   : "${started:=0}"; : "${reported:=0}"
 
   # IS THIS A GATE RUN, AND WAS IT STRICT. Recorded as explicit fields rather
@@ -453,17 +586,41 @@ write_receipt() {
   case "$first_tok" in
     */gate.sh|gate.sh) is_gate=yes ;;
   esac
+  local profile=""
   for tok in $raw_cmd; do
     case "$tok" in
       --strict) is_strict=yes ;;
+      --profile=*) profile="${tok#--profile=}" ;;
     esac
   done
+  # A STAGE profile's results document (written by the gate to $STAGE_RESULTS,
+  # which cmd_start points into this run dir) is bound into the receipt: its
+  # digest, its verdict, and the exact pair it certified. release_check reads
+  # these fields and the document; the receipt is stale if either side moved.
+  local sres="$dir/stage-results.json" stage_fields=""
+  if [ -n "$profile" ] && [ -s "$sres" ]; then
+    stage_fields="$(python3 -B - "$sres" <<'PY'
+import hashlib, json, sys
+p = sys.argv[1]; raw = open(p, "rb").read(); d = json.loads(raw)
+pair = d.get("pair", {})
+print("stage_results_sha256=" + hashlib.sha256(raw).hexdigest())
+print("stage_verdict=" + str(d.get("stage5_verdict", d.get("verdict"))))
+print("stage_required=" + str(d.get("stage5_required")))
+print("stage_micode_suite=" + str((d.get("micode_full_suite") or {}).get("status")))
+print("stage_manifest_sha256=" + str(d.get("manifest_sha256")))
+print("pair_axon_head=" + str(pair.get("axon", {}).get("start", {}).get("head")))
+print("pair_micode_head=" + str(pair.get("micode", {}).get("start", {}).get("head")))
+PY
+)"
+  fi
 
   {
     echo "schema=axon-run-receipt/1"
     echo "command=$(cat "$dir/cmd" 2>/dev/null)"
     echo "gate_run=$is_gate"
     echo "gate_strict=$is_strict"
+    echo "gate_profile=${profile:-none}"
+    [ -n "$stage_fields" ] && echo "$stage_fields"
     echo "head=${head:-unknown}"
     echo "tree=${dirty:-unknown}"
     echo "tree_digest=$tree_digest"
@@ -478,6 +635,9 @@ write_receipt() {
     echo "env_axon_names=$(env | grep -oE '^AXON_[A-Z0-9_]+' | sort | tr '\n' ',' | sed 's/,$//')"
     echo "env_axon_digest=$(env | grep -E '^AXON_' | sort | sha256sum | cut -d' ' -f1)"
     echo "cargo_profile=${CARGO_PROFILE:-debug}"
+    cat "$dir/limits" 2>/dev/null
+    echo "oom_kills=$(cat "$dir/oom_kills" 2>/dev/null || echo unknown)"
+    echo "deadline_hit=$(cat "$dir/deadline_hit" 2>/dev/null || echo no)"
     echo "child_exit=$code"
     echo "started_at=$(cat "$dir/started_at" 2>/dev/null)"
     echo "finished_at=$(cat "$dir/finished_at" 2>/dev/null)"
@@ -590,6 +750,21 @@ cmd_verify() {
       echo "  NOT CITABLE: $r_failed test(s) failed"
       bad=1
     fi
+    # A FIRED SAFEGUARD IS NEVER A PASS, whatever the status says. A wrapper
+    # inside the job can turn a child's OOM kill into exit 0 (measured: a
+    # `bash -c '... & wait'` shape does), but it cannot rewrite the cgroup's
+    # own memory.events, and it cannot unset the watchdog's deadline record.
+    local r_oom r_deadline
+    r_oom="$(sed -n 's/^oom_kills=//p' "$dir/receipt")"
+    r_deadline="$(sed -n 's/^deadline_hit=//p' "$dir/receipt")"
+    case "$r_oom" in
+      ''|0|unknown) ;;
+      *) echo "  NOT CITABLE: the memory ceiling OOM-killed $r_oom process(es) in this run"; bad=1 ;;
+    esac
+    if [ "$r_deadline" = "yes" ]; then
+      echo "  NOT CITABLE: the wall-clock deadline fired; the job did not finish on its own"
+      bad=1
+    fi
 
     # The log must still be the log this receipt was written for.
     local now_log
@@ -629,5 +804,5 @@ case "${1:-}" in
   cancel) shift; cmd_cancel "$@" ;;
   scope-alive) shift; scope_alive "$@" && echo alive || echo empty ;;
   verify) shift; cmd_verify "$@" ;;
-  *) die "usage: run_managed.sh {start <name> [--snapshot <committish>] -- <cmd...>|status <dir>|verify <dir> [--for <commit>]|cancel <dir>|scope-alive <dir>}" ;;
+  *) die "usage: run_managed.sh {start <name> [--snapshot <committish>] [--mem-max SIZE] [--swap-max SIZE] [--deadline SECS] -- <cmd...>|status <dir>|verify <dir> [--for <commit>]|cancel <dir>|scope-alive <dir>}" ;;
 esac

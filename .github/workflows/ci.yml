@@ -88,6 +88,8 @@ jobs:
       - name: CLAUDE.md claims are true (binary exists by now)
         env:
           CLAIMS_GATE_REQUIRE: "1"
+          # The binary THIS job built (claims_gate never falls back to target/).
+          AXON: ./target/debug/axon
         run: bash scripts/claims_gate.sh
 
       - name: cargo fmt check

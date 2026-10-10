@@ -51,6 +51,7 @@ pub const E0501: &str = "E0501"; // impl block names a trait that does not exist
 pub const E0502: &str = "E0502"; // impl block is missing required trait methods
 pub const E0503: &str = "E0503"; // impl method signature differs from trait declaration
 pub const E0504: &str = "E0504"; // trait bound not satisfied: type does not implement trait
+pub const E0505: &str = "E0505"; // impl for a type the runtime represents as another
 
 // ── Severity ─────────────────────────────────────────────────────────────────
 
@@ -398,7 +399,11 @@ fn is_known_type_name(
     if PRIMITIVE_NAMES.contains(&name) {
         return true;
     }
-    if DEFERRED_PREFIXES.iter().any(|p| name.starts_with(p)) {
+    // EXACT names only (amendment 117, loop finding 50): `starts_with` made any
+    // `DictFoo`/`GoalBar` a known type, so a sealed `DictTable` the operator
+    // defined was refused (E0004) while a `DictTableZ9` nothing defines was
+    // accepted.
+    if DEFERRED_PREFIXES.contains(&name) {
         return true;
     }
     if struct_fields.contains_key(name) {
@@ -474,6 +479,11 @@ pub struct CheckCtx {
     /// `check_program`; used to tell a genuine method call `p.m()` from calling
     /// a DATA field `p.x()` (E0403).
     type_methods: HashMap<String, HashSet<String>>,
+    /// The subset of `type_methods` defined by SEALED impls (the candidate's
+    /// own). A call from a sealed module is judged against this set alone, so an
+    /// operator-defined method and a missing one get the same E0403 (existence
+    /// oracle, amendment 108).
+    sealed_type_methods: HashMap<String, HashSet<String>>,
     /// Per-function generic bounds: fn_name → Vec<(param_name, trait_names)>.
     /// Built from `FnDef.generic_bounds` during `check_program` for E0504.
     fn_bounds: HashMap<String, Vec<(String, Vec<String>)>>,
@@ -579,6 +589,7 @@ impl CheckCtx {
             trait_defs: HashMap::new(),
             impl_table: HashMap::new(),
             type_methods: HashMap::new(),
+            sealed_type_methods: HashMap::new(),
             fn_bounds: HashMap::new(),
             current_span: crate::span::Span::dummy(),
             confidence_observed: HashSet::new(),
@@ -658,6 +669,27 @@ impl CheckCtx {
                 }
                 Item::ImplBlock(blk) => {
                     let ty_name = axon_type_name(&blk.for_type);
+                    // A method call dispatches on the VALUE's runtime type,
+                    // and an `f32` is an `f64` value, an `isize`/`usize` an
+                    // `i64` one: an impl keyed by the declared name would
+                    // never run, and the `f64`/`i64` impl would answer for it
+                    // (C9 round 4c, amendment 72).
+                    if let Some(rep) = match ty_name.as_str() {
+                        "f32" => Some("f64"),
+                        "isize" | "usize" => Some("i64"),
+                        _ => None,
+                    } {
+                        self.errors.push(
+                            CheckError::new(
+                                E0505,
+                                format!(
+                                    "an impl for `{ty_name}` never runs: `{ty_name}` values are represented as `{rep}`, and a method call dispatches on that"
+                                ),
+                            )
+                            .with_span(blk.span)
+                            .fix(format!("implement the trait for `{rep}` instead")),
+                        );
+                    }
                     // Record: type implements trait_name (E0504), for trait impls.
                     if !blk.trait_name.is_empty() {
                         self.impl_table
@@ -668,6 +700,15 @@ impl CheckCtx {
                     // Record every method name defined on this type (trait AND
                     // inherent impls) so `p.method()` can be told from calling a
                     // data field `p.x()` (E0403).
+                    if crate::resolver::span_in_sealed(
+                        blk.span,
+                        &crate::resolver::sealed_module_dirs(),
+                    ) {
+                        let sm = self.sealed_type_methods.entry(ty_name.clone()).or_default();
+                        for m in &blk.methods {
+                            sm.insert(m.name.clone());
+                        }
+                    }
                     let methods = self.type_methods.entry(ty_name).or_default();
                     for m in &blk.methods {
                         methods.insert(m.name.clone());
@@ -1140,6 +1181,15 @@ impl CheckCtx {
                     &mut self.current_generic_params,
                     td.generic_params.iter().cloned().collect(),
                 );
+                if self.sealed_at(td.span) {
+                    if let Some(p) = td.refinement.as_deref() {
+                        self.check_sealed_predicate(
+                            p,
+                            &format!("#typedef_{}.where", td.name),
+                            td.span,
+                        );
+                    }
+                }
                 for field in &td.fields {
                     let path = format!("#typedef_{}.field_{}", td.name, field.name);
                     // `TypeField` has no span of its own, so the typedef's is
@@ -1157,13 +1207,93 @@ impl CheckCtx {
             // Phase 5: a named refinement `type Name = T where P`. Sub-slice 1
             // registers the form; predicate well-formedness + proof obligations
             // (R01-R05, constant-arg comptime / SMT) are later sub-slices.
-            Item::RefineDef(_) => {}
+            Item::RefineDef(r) => {
+                if self.sealed_at(r.span) {
+                    self.check_axon_type(
+                        &r.base,
+                        &format!("#refine_{}.base", r.name),
+                        Some(r.span),
+                    );
+                    self.check_sealed_predicate(
+                        &r.predicate,
+                        &format!("#refine_{}.where", r.name),
+                        r.span,
+                    );
+                }
+            }
+            // Sealed items only: the type positions an unsealed program leaves
+            // unchecked are checked as an annotation is, so a name nothing
+            // defines is refused there exactly as an operator's was (C9 round
+            // 13, amendment 114: one accept/refuse for both).
+            Item::EnumDef(e) if self.sealed_at(e.span) => {
+                let prev = std::mem::replace(
+                    &mut self.current_generic_params,
+                    e.generic_params.iter().cloned().collect(),
+                );
+                for v in &e.variants {
+                    for f in &v.fields {
+                        let path = format!("#enum_{}.{}.{}", e.name, v.name, f.name);
+                        self.check_axon_type(&f.ty, &path, Some(e.span));
+                    }
+                }
+                self.current_generic_params = prev;
+            }
+            Item::TraitDef(t) if self.sealed_at(t.span) => {
+                // `Self` is the receiver's type in a method signature.
+                let prev = std::mem::replace(
+                    &mut self.current_generic_params,
+                    t.generic_params
+                        .iter()
+                        .cloned()
+                        .chain(std::iter::once("Self".to_string()))
+                        .collect(),
+                );
+                for m in &t.methods {
+                    for p in &m.params {
+                        let path = format!("#trait_{}.{}.{}", t.name, m.name, p.name);
+                        self.check_axon_type(&p.ty, &path, Some(m.span));
+                    }
+                    if let Some(rt) = &m.return_type {
+                        let path = format!("#trait_{}.{}.ret", t.name, m.name);
+                        self.check_axon_type(rt, &path, Some(m.span));
+                    }
+                }
+                self.current_generic_params = prev;
+            }
+            // A sealed module-level `let`: its initializer is walked as a predicate is
+            // (round 15, amendment 121; loop finding 7). Nothing walked it, so a struct
+            // literal, an enum path or a type path in it that names an OPERATOR type was
+            // refused by the merged check's backstop (E0004) while the same shape naming a
+            // type nothing defines was accepted: an accept/refuse oracle.
+            Item::LetDef { name, value, span } if self.sealed_at(*span) => {
+                self.check_sealed_predicate(value, &format!("#let_{name}"), *span);
+            }
             Item::EnumDef(_)
             | Item::ModDecl(_)
             | Item::UseDecl(_)
             | Item::TraitDef(_)
             | Item::LetDef { .. } => {}
         }
+    }
+
+    /// A sealed refinement / `where` / `@[verify]` predicate is walked as an
+    /// expression, so a struct literal, enum path or type path in it is
+    /// name-checked as one in a body is (amendment 117, loop finding 9): only
+    /// fn calls in a predicate were, and a name nothing defines was accepted
+    /// where the operator's own was refused. `_` is the implicit binder.
+    fn check_sealed_predicate(&mut self, pred: &Expr, path: &str, span: crate::span::Span) {
+        let prev = self.current_span;
+        self.current_span = span;
+        let mut scope: HashMap<String, Type> = HashMap::new();
+        scope.insert("_".to_string(), Type::Unknown);
+        self.check_expr(pred, path, &mut scope);
+        self.current_span = prev;
+    }
+
+    /// Whether `span` lies in a sealed module (a `--seal` run only).
+    fn sealed_at(&self, span: crate::span::Span) -> bool {
+        let dirs = crate::resolver::sealed_module_dirs();
+        !dirs.is_empty() && crate::resolver::span_in_sealed(span, &dirs)
     }
 
     fn check_fn(&mut self, f: &FnDef) {
@@ -1190,6 +1320,34 @@ impl CheckCtx {
         let prev_span = self.current_span;
         if !f.span.is_dummy() {
             self.current_span = f.span;
+        }
+
+        // Sealed only: a bound naming no trait (and no type) is refused as an
+        // annotation naming no type is (amendment 114).
+        if self.sealed_at(f.span) {
+            for (_, bounds) in &f.generic_bounds {
+                for b in bounds {
+                    if !self.trait_defs.contains_key(b) {
+                        self.check_axon_type(
+                            &AxonType::Named(b.clone()),
+                            &format!("#fn_{}.bound_{b}", f.name),
+                            Some(f.span),
+                        );
+                    }
+                }
+            }
+        }
+
+        // Sealed only: the `@[verify]` predicate is an expression like any other
+        // (amendment 117, loop finding 9).
+        if self.sealed_at(f.span) {
+            if let Some(v) = &f.verify {
+                self.check_sealed_predicate(
+                    &v.predicate,
+                    &format!("#fn_{}.verify", f.name),
+                    f.span,
+                );
+            }
         }
 
         // R5 goal sugar: validate `#[goal(...)]` attributes on the function.
@@ -3533,10 +3691,18 @@ impl CheckCtx {
                 let method_key = method_key.filter(|k| !self.current_generic_params.contains(k));
                 if let Some(key) = method_key {
                     let key = key.as_str();
-                    let has_method = self
-                        .type_methods
-                        .get(key)
-                        .is_some_and(|ms| ms.contains(method));
+                    let sealed_site = {
+                        let dirs = crate::resolver::sealed_module_dirs();
+                        !dirs.is_empty()
+                            && crate::resolver::span_in_sealed(self.current_span, &dirs)
+                    };
+                    let has_method = if sealed_site {
+                        &self.sealed_type_methods
+                    } else {
+                        &self.type_methods
+                    }
+                    .get(key)
+                    .is_some_and(|ms| ms.contains(method));
                     if !has_method {
                         let file = self.file.clone();
                         // Tailor the message + hint to the receiver shape.
@@ -4208,10 +4374,19 @@ impl CheckCtx {
             // Introduce a fresh return-type context so `?` / return checks
             // inside the lambda do not bleed into the outer function.
             Expr::Lambda {
-                params: _,
+                params,
                 body,
                 captures: _,
             } => {
+                // Sealed only (see `check_item`): an annotation on a lambda
+                // parameter naming a type nothing defines is refused.
+                if self.sealed_at(self.current_span) {
+                    for p in params {
+                        if let Some(t) = &p.ty {
+                            self.check_axon_type(t, &format!("{node_path}.param_{}", p.name), None);
+                        }
+                    }
+                }
                 let prev = self.current_ret_ty.take();
                 self.check_expr(body, &format!("{node_path}.body"), scope);
                 self.current_ret_ty = prev;
@@ -4285,6 +4460,17 @@ impl CheckCtx {
 
             // ── StructLit (incl. enum-variant literals `Enum::Variant {..}`) ──
             Expr::StructLit { name, fields } => {
+                // In a sealed module a literal of a type nothing defines is
+                // refused as an annotation naming it is (`unknown type`): it was
+                // accepted and built an anonymous value, while the operator's own
+                // type of the same shape was refused, so the pair said which
+                // names the operator defined (C9 round 13, amendment 114). The
+                // sealed-only check this runs in has no operator types, so the
+                // two now get the one refusal.
+                if self.sealed_at(self.current_span) {
+                    let head = name.split("::").next().unwrap_or(name).to_string();
+                    self.check_axon_type(&AxonType::Named(head), node_path, None);
+                }
                 // Check field VALUE expressions (infer owns field-name validation
                 // for structs via E0101; this walks nested exprs for other rules).
                 for (i, (_fname, fexpr)) in fields.iter().enumerate() {
@@ -4425,13 +4611,19 @@ impl CheckCtx {
             }
 
             // ── Leaves ───────────────────────────────────────────────────────
-            Expr::Ident(_)
-            | Expr::Literal(_)
-            | Expr::None
-            | Expr::Array(_)
-            | Expr::Tuple(_)
-            | Expr::Break
-            | Expr::Continue => {}
+            // A sealed container literal is walked too (amendment 117, loop
+            // finding 25): a struct literal, enum path or type path in an
+            // element was never name-checked, so a name nothing defines was
+            // accepted where the operator's own was refused. An unsealed
+            // program's arrays are untouched.
+            Expr::Array(elems) | Expr::Tuple(elems) => {
+                if self.sealed_at(self.current_span) {
+                    for (i, e) in elems.iter().enumerate() {
+                        self.check_expr(e, &format!("{node_path}.elem_{i}"), scope);
+                    }
+                }
+            }
+            Expr::Ident(_) | Expr::Literal(_) | Expr::None | Expr::Break | Expr::Continue => {}
         }
     }
 
@@ -5928,7 +6120,17 @@ impl CheckCtx {
                 }
                 self.check_axon_type(ret, &format!("{node_path}.ret"), span);
             }
-            AxonType::TypeParam(_) | AxonType::DynTrait(_) => {}
+            AxonType::TypeParam(_) => {}
+            // Sealed only: the trait a `dyn` names is a name like any other
+            // (amendment 117, loop findings 5, 8). It was a leaf, so a trait the
+            // operator defined was refused by the merged check (E0004) while one
+            // nothing defines was accepted.
+            AxonType::DynTrait(tr) => {
+                let here = span.unwrap_or(self.current_span);
+                if self.sealed_at(here) && !self.trait_defs.contains_key(tr) {
+                    self.check_axon_type(&AxonType::Named(tr.clone()), node_path, span);
+                }
+            }
             AxonType::Tuple(elems) => {
                 for (i, elem) in elems.iter().enumerate() {
                     self.check_axon_type(elem, &format!("{node_path}.elem_{i}"), span);
@@ -6796,7 +6998,7 @@ pub fn axon_type_to_type(ty: &AxonType) -> Type {
             "()" | "unit" => Type::Unit,
             "never" | "Never" | "!" => Type::Never,
             other => {
-                if DEFERRED_PREFIXES.iter().any(|p| other.starts_with(p)) {
+                if DEFERRED_PREFIXES.contains(&other) {
                     Type::Deferred(other.to_string())
                 } else {
                     Type::Struct(other.to_string())
@@ -6811,7 +7013,7 @@ pub fn axon_type_to_type(ty: &AxonType) -> Type {
         AxonType::Chan(inner) => Type::Chan(Box::new(axon_type_to_type(inner))),
         AxonType::Slice(inner) => Type::Slice(Box::new(axon_type_to_type(inner))),
         AxonType::Generic { base, args } => {
-            if DEFERRED_PREFIXES.iter().any(|p| base.starts_with(p)) {
+            if DEFERRED_PREFIXES.contains(&base.as_str()) {
                 return Type::Deferred(base.clone());
             }
             let _ = args;
@@ -7063,6 +7265,11 @@ fn method_lookup_key(ty: &Type) -> Option<&'static str> {
         // Matched by NAME so the rest of `Deferred` keeps its false-positive
         // protection: an `Uncertain<T>` or a row-typed value is still skipped.
         Type::Deferred(n) if n == "Dict" || n.starts_with("Dict<") => Some("dict"),
+        // `()` — what a call of a fn with no declared return type is. A method
+        // on it needs an `impl … for ()`; without one the call is refused here,
+        // not dispatched at runtime on whatever the body happened to produce
+        // (C9 round 4c, amendment 72).
+        Type::Unit => Some("()"),
         // Unknown / Var / other Deferred / Fn / Chan / DynTrait / Uncertain /
         // Temporal / Unit: don't risk a false positive.
         _ => None,

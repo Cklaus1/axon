@@ -29,7 +29,16 @@ cd "$ROOT"
 # caller's AXON or one built here, and it is ASKED whether it can codegen: an
 # interp-only binary is a skip (codegen is not under test in this invocation),
 # a compiler that cannot build `fn main() -> i64 { 0 }` is a FAIL.
-need_codegen_axon all_examples_parity
+if [ -n "${AXON:-}" ]; then
+  named_bin AXON all_examples_parity
+else
+  echo "all_examples_parity: building codegen axon binary…"
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "all_examples_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
+  fi
+  use_built AXON axon
+fi
+require_codegen_axon all_examples_parity
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -94,6 +103,10 @@ for f in examples/*.ax examples/stdlib/*.ax examples/asi/*.ax \
       refused=$((refused + 1)); refuses="$refuses\n  REFUSED (interp-only, E0910): $base"
     else
       failbuild=$((failbuild + 1)); fails="$fails\n  BUILD-FAIL: $base"
+      # Keep the compiler's own words. The count alone said "38 build-fail" on a
+      # strict run that could not be reproduced afterwards, and with no error
+      # text there was nothing to diagnose. First 3 lines per example.
+      fails="$fails\n$(printf '%s\n' "$BUILD_ERR" | grep -v '^Compiling ' | head -3 | sed 's/^/      | /')"
     fi
     continue
   fi

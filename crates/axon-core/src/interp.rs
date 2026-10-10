@@ -863,6 +863,26 @@ struct SandboxScope {
 
 // ── Interpreter ──────────────────────────────────────────────────────────────
 
+/// R51 §4 Fork 1, §7: whether this build carries the complete runtime seal
+/// (taint, seal edges, PICK, pins). While `false`, every sealed run is refused
+/// whatever the engine; it flips to `true` only in the slice where the seal
+/// tests are green (S6).
+pub const SEAL_RUNTIME_COMPLETE: bool = false;
+
+/// R51 §3: the refusal every sealed run entry gives while
+/// [`SEAL_RUNTIME_COMPLETE`] is `false`. The CLI prints it on stderr and exits 2.
+pub const SEALED_RUN_REFUSED: &str = "sealed runs are refused on this build: the runtime seal is not complete (R51 SEAL_RUNTIME_COMPLETE)";
+
+/// R51: `Err(SEALED_RUN_REFUSED)` when a run with `sealed` code must not
+/// execute on this build. [`Interp::build`] calls it for every run; `axon
+/// test` calls it too, so it refuses before printing any result line.
+pub fn sealed_run_refusal(sealed: bool) -> Result<(), String> {
+    if sealed && !SEAL_RUNTIME_COMPLETE {
+        return Err(SEALED_RUN_REFUSED.to_string());
+    }
+    Ok(())
+}
+
 pub struct Interp<'p> {
     fns: HashMap<String, &'p FnDef>,
     #[allow(dead_code)]
@@ -917,6 +937,11 @@ pub struct Interp<'p> {
     /// or `AXON_MAX_DEPTH` (clamped) when set. Resolved once at build time so
     /// every `call_fn` sees a consistent value.
     max_depth: usize,
+    /// R51: this run executes sealed code (`--seal` set a non-empty sealed
+    /// set). Computed once in [`Interp::build`] from the same input as the
+    /// refuse-all pin; `vm::compile::compile` refuses to build a body while it
+    /// is set. S5 replaces it with the `Seal` state.
+    pub(crate) sealed: bool,
     /// R50: which engine runs fn bodies (`AXON_ENGINE`, or `set_engine` on a
     /// target without an environment). Read once, at build.
     engine: Engine,
@@ -2082,8 +2107,13 @@ pub fn run_named_fn_as_bool_with_score(
     score: Option<i64>,
 ) -> Option<i32> {
     on_deep_stack(|| {
-        let mut interp =
-            Interp::build(program).with_discharged(crate::verify::Discharged::default());
+        let mut interp = match Interp::build(program) {
+            Ok(ix) => ix.with_discharged(crate::verify::Discharged::default()),
+            Err(refused) => {
+                eprintln!("error: {refused}");
+                return Some(2);
+            }
+        };
         if !interp.fns.contains_key(fn_name) {
             return None;
         }
@@ -3245,7 +3275,14 @@ fn run_program_inner(
     discharged: crate::verify::Discharged,
     map_status: bool,
 ) -> i32 {
-    let mut interp = Interp::build(program).with_discharged(discharged);
+    let mut interp = match Interp::build(program) {
+        Ok(ix) => ix.with_discharged(discharged),
+        Err(refused) => {
+            let _ = std::io::stdout().flush();
+            eprintln!("error: {refused}");
+            return 2;
+        }
+    };
     // BUG_HUNT #23: a missing entry point is a COMPILE-time error (the program
     // is malformed), not a runtime panic. Report it cleanly with exit 2 (the
     // compile-error code) instead of `panic: no main` + exit 101 — and never
@@ -3390,7 +3427,7 @@ pub fn run_test_fn(program: &Program, name: &str) -> Result<(), String> {
 }
 
 fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
-    let mut interp = Interp::build(program);
+    let mut interp = Interp::build(program)?;
     if let Err(f) = interp.init_globals() {
         return Err(flow_to_msg(f));
     }
@@ -3458,7 +3495,17 @@ fn verify_fn_label(fn_name: &str) -> String {
 }
 
 impl<'p> Interp<'p> {
-    pub fn build(program: &'p Program) -> Self {
+    /// Build the interpreter for `program`.
+    ///
+    /// `Err` (with [`SEALED_RUN_REFUSED`]) when the run is sealed and this
+    /// build's runtime seal is incomplete (R51 §4 Fork 1, §7): every run entry
+    /// passes through here, so no sealed run executes unprotected, whichever
+    /// engine would be chosen and whoever spawned it.
+    pub fn build(program: &'p Program) -> Result<Self, String> {
+        // R51: one expression, before any override or environment read, from
+        // the input the seal state is computed from.
+        let sealed = !crate::resolver::sealed_module_dirs().is_empty();
+        sealed_run_refusal(sealed)?;
         pin_ai_net_allowlist(program);
         let mut fns = HashMap::new();
         let mut structs = HashMap::new();
@@ -3534,7 +3581,7 @@ impl<'p> Interp<'p> {
         // Read the ambient effect ceiling once; both the sandbox registry
         // and the active-handle field below are derived from it.
         let ambient = ambient_sandbox();
-        Interp {
+        Ok(Interp {
             res,
             fn_table,
             fn_of_sym,
@@ -3554,6 +3601,7 @@ impl<'p> Interp<'p> {
             #[cfg(target_arch = "wasm32")]
             nest_limit: resolve_max_depth().saturating_mul(NEST_PER_DEPTH),
             max_depth: resolve_max_depth(),
+            sealed,
             engine: vm::engine_at_build(),
             vm_trace: vm::trace_at_build(),
             vm_eager: vm::eager_at_build(),
@@ -3599,7 +3647,7 @@ impl<'p> Interp<'p> {
             domain: axon_domain::Registry::new(),
             #[cfg(feature = "gfx-wgpu")]
             gfx_real: RefCell::new(axon_gfx::GfxReal::new()),
-        }
+        })
     }
 
     /// Install the set of statically-discharged obligations (Phase 5 §4). A
@@ -4772,7 +4820,7 @@ fn lit_to_val(lit: &Literal) -> Value {
     }
 }
 
-fn type_name_of(ty: &crate::ast::AxonType) -> String {
+pub(crate) fn type_name_of(ty: &crate::ast::AxonType) -> String {
     use crate::ast::AxonType::*;
     match ty {
         Named(n) => n.clone(),
@@ -6512,7 +6560,7 @@ mod literal_escape_tests {
             let src = format!("let x = {lit}\nfn main() -> i64 {{ 0 }}\n");
             let prog = crate::parse_source(&src)
                 .unwrap_or_else(|e| panic!("dumped literal must re-parse ({original:?}): {e}"));
-            let mut interp = Interp::build(&prog);
+            let mut interp = Interp::build(&prog).expect("unsealed build");
             interp.init_globals().expect("globals initialise");
             let got = interp
                 .globals

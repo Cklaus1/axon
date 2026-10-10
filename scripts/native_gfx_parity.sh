@@ -31,7 +31,16 @@ trap 'rm -rf "$WORK"' EXIT
 
 # Asks the binary whether it can emit native code (a trivial build) and says
 # why when it cannot: no backend is a skip, a broken compiler is a FAIL.
-need_codegen_axon native_gfx_parity
+if [ -n "${AXON:-}" ]; then
+  named_bin AXON native_gfx_parity
+else
+  echo "native_gfx_parity: building codegen axon binary…"
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "native_gfx_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
+  fi
+  use_built AXON axon
+fi
+require_codegen_axon native_gfx_parity
 
 fail=0
 

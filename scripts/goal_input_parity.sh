@@ -33,7 +33,16 @@ fn main() -> i64 {
 }
 AX
 
-need_codegen_axon goal_input_parity
+if [ -n "${AXON:-}" ]; then
+  named_bin AXON goal_input_parity
+else
+  echo "goal_input_parity: building codegen axon binary…"
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "goal_input_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
+  fi
+  use_built AXON axon
+fi
+require_codegen_axon goal_input_parity
 
 # Interpreter provenance (the oracle — already logs input).
 IPROV="$WORK/icache"; mkdir -p "$IPROV"

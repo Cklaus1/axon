@@ -61,6 +61,12 @@ PKG="docs/axon_cortex_v0_15/axon-cortex-build-v0_15"
 SUMS="$PKG/SHA256SUMS_v0_15.json"
 REGISTRY="governance/cortex_gate_execution_registry.json"
 REPORT="target/cortex-package-validation.json"
+# The manifest is pinned from OUTSIDE the package. A forward/reverse check
+# against a manifest that can be regenerated alongside the files it lists
+# proves nothing: measured on a scratch copy, a tampered spec plus a
+# recomputed SHA256SUMS_v0_15.json read as "both directions clean" (gate PASS).
+# Re-vendoring means editing this pin — a reviewable code change.
+PIN_SUMS15="99047d324053d7aa09020061de9787372675760c5d67be1e31863ed2f6bddee3"
 
 # Non-vacuity floors. Minimums, not exact values: a legitimately re-vendored
 # package may grow. A truncated or empty manifest trips these.
@@ -83,9 +89,13 @@ command -v python3 >/dev/null 2>&1 || abort "python3 not found (required to pars
 mkdir -p target
 
 echo "── cortex: package integrity (SHA256SUMS_v0_15, both directions) ──"
-python3 - "$PKG" "$SUMS" "$MIN_FILES" <<'PY'
+python3 -B - "$PKG" "$SUMS" "$MIN_FILES" "$PIN_SUMS15" <<'PY'
 import hashlib, json, os, sys
-pkg, sums, min_files = sys.argv[1], sys.argv[2], int(sys.argv[3])
+pkg, sums, min_files, pin_sums = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+got_sums = hashlib.sha256(open(sums, "rb").read()).hexdigest()
+if got_sums != pin_sums:
+    print(f"  integrity FAILED:\n    PINNED   {os.path.basename(sums)} digest {got_sums} != pinned {pin_sums} "
+          "(the manifest itself changed — re-vendor deliberately by editing PIN_SUMS15)"); sys.exit(1)
 man = json.load(open(sums, encoding="utf-8"))
 if man.get("schema") != "cortex-package-sha256/1":
     print(f"  manifest schema is {man.get('schema')!r}, expected cortex-package-sha256/1"); sys.exit(1)
@@ -94,7 +104,17 @@ if not isinstance(listed, dict) or len(listed) < min_files:
     print(f"  NON-VACUITY: manifest lists {len(listed) if hasattr(listed,'__len__') else '?'} files, floor is {min_files}"); sys.exit(1)
 
 present = set()
-for root, _dirs, files in os.walk(pkg):
+links = []
+if os.path.islink(pkg.rstrip("/")):
+    links.append("SYMLINK  <package root>")
+for root, dirs, files in os.walk(pkg):
+    # os.walk lists a symlinked directory under `dirs` but does not descend into
+    # it, so a link pointing OUTSIDE the package was invisible to this walk
+    # (measured: "both directions clean" with specs/extra -> an outside dir).
+    # Any link is refused here, by the repo's own walk.
+    for n in dirs + files:
+        if os.path.islink(os.path.join(root, n)):
+            links.append(f"SYMLINK  {os.path.relpath(os.path.join(root, n), pkg)}")
     for f in files:
         present.add(os.path.relpath(os.path.join(root, f), pkg))
 
@@ -120,7 +140,7 @@ for root, _dirs, files in os.walk(pkg):
 # a future deviation must be added here with a reason, not tolerated silently.
 DEVIATIONS: dict[str, tuple[str, str]] = {}
 
-bad = []
+bad = list(links)
 verified = 0
 deviated = []
 for rel, want in sorted(listed.items()):
@@ -159,19 +179,31 @@ for d in deviated:
 print(f"  {verified}/{len(listed)} files match ({len(deviated)} via a pinned deviation); {len(present)} present; "
       f"unlisted: {sorted(allowed_unlisted)} (the manifest itself) — both directions clean")
 PY
-[ $? -eq 0 ] || note_fail "package integrity (SHA256SUMS_v0_15.json)"
+INTEGRITY15=$?
+[ $INTEGRITY15 -eq 0 ] || note_fail "package integrity (SHA256SUMS_v0_15.json)"
+# The package's Python runs only on a tree whose bytes were just verified.
+# Measured (v0.22 Stage 6, donor lesson 90c4c616): with integrity merely
+# RECORDED as failed, a line inserted into tools/validate_package.py still
+# executed with the gate's privileges before the verdict. Abort instead: an
+# integrity failure means no package code runs at all.
+[ $INTEGRITY15 -eq 0 ] || abort "v0.15 integrity failed — refusing to execute code from an unverified package (no package code was executed)"
 
 echo "── cortex: the package's own validator (tools/validate_package.py) ─"
 # --report is NOT optional. The validator's default report path is
 # <root>/package_validation.json, which is a HASH-LISTED file, and it stamps a
 # fresh `validated_at` every run -- running it with defaults would break the
 # integrity check above. Write the report to target/ instead.
-if ! python3 "$PKG/tools/validate_package.py" --root "$PKG" --report "$REPORT" >/dev/null; then
+# A stale PASS report must not survive into this run. Measured: with the
+# validator replaced by a no-op that exits 0 without writing, the gate read the
+# PREVIOUS run's PASS report from target/ and passed.
+rm -f "$REPORT"
+if ! python3 -B "$PKG/tools/validate_package.py" --root "$PKG" --report "$REPORT" >/dev/null; then
   note_fail "package validator reported errors (see $REPORT)"
 fi
 python3 - "$REPORT" <<'PY'
 import json, sys
-r = json.load(open(sys.argv[1], encoding="utf-8"))
+try: r = json.load(open(sys.argv[1], encoding="utf-8"))
+except (OSError, ValueError) as e: print(f"  no readable validator report (it must be written by THIS run): {e}"); sys.exit(1)
 if r.get("result") != "PASS":
     print("  validator result:", r.get("result"), r.get("errors")); sys.exit(1)
 c = r.get("counts", {})
@@ -202,127 +234,11 @@ PY
 [ $? -eq 0 ] || note_fail "validator mutated the vendored package ($PKG/package_validation.json)"
 
 echo "── cortex: honesty invariant (NOT_RUN unless something here runs it) ─"
-python3 - "$PKG" "$REGISTRY" "$MIN_GATES" "$MIN_TASKS" <<'PY'
-import json, os, sys
-pkg, registry_path, min_gates, min_tasks = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
-
-DEFAULT_RESULT = "NOT_RUN"
-DEFAULT_STATUS = "Not started"
-DONE_STATUSES = {"Done", "Complete", "Completed", "Landed"}
-
-gates = json.load(open(os.path.join(pkg, "gate_manifest.json"), encoding="utf-8"))["gates"]
-tasks = json.load(open(os.path.join(pkg, "task_manifest.json"), encoding="utf-8"))["tasks"]
-reg = json.load(open(registry_path, encoding="utf-8"))
-
-errors, notices = [], []
-
-if reg.get("schema") != "cortex-gate-execution/1":
-    errors.append(f"{registry_path}: schema is {reg.get('schema')!r}, expected cortex-gate-execution/1")
-reg_gates = {r.get("gate_id"): r for r in reg.get("gates", [])}
-reg_tasks = {r.get("task_id"): r for r in reg.get("tasks", [])}
-
-if len(gates) < min_gates:
-    errors.append(f"NON-VACUITY: parsed {len(gates)} gates, floor is {min_gates}")
-if len(tasks) < min_tasks:
-    errors.append(f"NON-VACUITY: parsed {len(tasks)} work packages, floor is {min_tasks}")
-
-def registry_row_is_real(row, what):
-    """A row may only vouch for a gate if it names a file that EXISTS and is
-    INVOKED. Grepping the invoker for the executed path is what stops this
-    registry from being a place to declare things green."""
-    bad = []
-    ex = row.get("executed_by")
-    inv = row.get("invoked_by")
-    if not ex or not os.path.isfile(ex):
-        bad.append(f"{what}: executed_by {ex!r} does not exist in this repo")
-        return bad
-    if not os.access(ex, os.X_OK) and not ex.endswith((".rs", ".py")):
-        bad.append(f"{what}: executed_by {ex!r} is not executable")
-    if not inv or not os.path.isfile(inv):
-        bad.append(f"{what}: invoked_by {inv!r} does not exist in this repo")
-        return bad
-    try:
-        text = open(inv, encoding="utf-8", errors="replace").read()
-    except OSError as e:
-        bad.append(f"{what}: cannot read invoker {inv!r}: {e}")
-        return bad
-    if ex not in text and os.path.basename(ex) not in text:
-        bad.append(f"{what}: {inv} does not invoke {ex} — a registry row may not "
-                   f"vouch for a script nothing runs (orphaned-gate class)")
-    return bad
-
-n_offdefault_gates = 0
-for g in gates:
-    gid, res = g.get("id"), g.get("product_result")
-    if res is None:
-        errors.append(f"gate {gid}: no product_result field")
-        continue
-    if res == DEFAULT_RESULT:
-        continue
-    n_offdefault_gates += 1
-    row = reg_gates.get(gid)
-    if row is None:
-        errors.append(f"gate {gid}: product_result={res!r} but no row in {registry_path}. "
-                      f"The package may only claim a gate ran if something in this repo runs it.")
-        continue
-    # (structural validity of the row is checked once, over all rows, below)
-    allowed = row.get("allowed_product_result") or []
-    if res not in allowed:
-        errors.append(f"gate {gid}: product_result={res!r} not in registry allowed_product_result {allowed}")
-
-n_offdefault_tasks = 0
-for t in tasks:
-    tid, st = t.get("id"), t.get("status")
-    if st is None:
-        errors.append(f"task {tid}: no status field")
-        continue
-    if st == DEFAULT_STATUS:
-        continue
-    n_offdefault_tasks += 1
-    row = reg_tasks.get(tid)
-    if row is None:
-        errors.append(f"task {tid}: status={st!r} but no row in {registry_path}.")
-        continue
-    allowed = row.get("allowed_status") or []
-    if st not in allowed:
-        errors.append(f"task {tid}: status={st!r} not in registry allowed_status {allowed}")
-    # A work package declared DONE implies its gate targets ran. Require each to
-    # be registry-backed too, so "Done" cannot launder an unexecuted gate.
-    if st in DONE_STATUSES:
-        for gt in t.get("gate_targets", []):
-            if gt not in reg_gates:
-                errors.append(f"task {tid}: status={st!r} but gate target {gt} has no registry row")
-
-# Stale registry rows are a notice, not a failure: wiring a real gate BEFORE the
-# vendored manifest is re-vendored is legitimate and harmless.
-gate_ids = {g.get("id") for g in gates}
-task_ids = {t.get("id") for t in tasks}
-for gid in sorted(set(reg_gates) - gate_ids):
-    notices.append(f"registry row for unknown gate {gid} (not in gate_manifest.json)")
-for tid in sorted(set(reg_tasks) - task_ids):
-    notices.append(f"registry row for unknown task {tid} (not in task_manifest.json)")
-# EVERY registry row is validated, not just the ones currently vouching for an
-# off-default result. A row whose script was deleted or unwired must break the
-# day it rots, not the day someone flips the manifest -- otherwise the registry
-# silently becomes the rubber stamp it exists to prevent.
-for gid, row in sorted(reg_gates.items()):
-    errors.extend(registry_row_is_real(row, f"registry row {gid}"))
-    if gid in gate_ids and next(g for g in gates if g.get("id") == gid).get("product_result") == DEFAULT_RESULT:
-        notices.append(f"{gid} is executed by {row.get('executed_by')} in this repo while the vendored "
-                       f"manifest still says NOT_RUN — correct and expected: NOT_RUN is a true statement "
-                       f"about the PACKAGE, and only a re-vendored upstream release may change it")
-
-for n in notices:
-    print(f"  notice: {n}")
-if errors:
-    print("  honesty invariant VIOLATED:")
-    for e in errors:
-        print("   ", e)
-    sys.exit(1)
-print(f"  {len(gates)} gates, {len(tasks)} work packages parsed; "
-      f"{n_offdefault_gates} gates off {DEFAULT_RESULT} and {n_offdefault_tasks} tasks off '{DEFAULT_STATUS}', "
-      f"all registry-backed; registry has {len(reg_gates)} gate row(s), {len(reg_tasks)} task row(s)")
-PY
+# One implementation for every vendored package (moved out of this script in
+# v0.22 Stage 6 so v0.22 is held to exactly the same registry rule).
+python3 -B scripts/cortex_honesty_invariant.py --pkg "$PKG" --execution-registry "$REGISTRY" \
+  --min-gates "$MIN_GATES" --min-tasks "$MIN_TASKS" \
+  --also-known docs/axon_cortex_v0_22/axon-cortex-build-v0_22
 [ $? -eq 0 ] || note_fail "honesty invariant (gate_manifest / task_manifest vs $REGISTRY)"
 
 if [ ${#FAILURES[@]} -gt 0 ]; then

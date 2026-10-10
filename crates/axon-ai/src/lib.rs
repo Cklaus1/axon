@@ -1200,6 +1200,12 @@ pub extern "C" fn __axon_ai_extract_bool(
 
 // -- Tests --------------------------------------------------------------------
 
+/// The one lock every test that mutates process environment variables must
+/// hold. Env is process-global and cargo runs tests in parallel threads, so a
+/// per-module lock is not a lock at all against the other modules.
+#[cfg(test)]
+static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1356,10 +1362,13 @@ mod tests {
         assert!(parse_tool_use_input(&response).is_err());
     }
 
-    // Tests that mutate ANTHROPIC_API_KEY share a global lock so cargo's
-    // parallel test runner can't interleave their env-var changes.
-    use std::sync::Mutex;
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    // Tests that mutate ANTHROPIC_API_KEY / AXON_AI_MOCK share ONE process-wide
+    // lock so cargo's parallel runner can't interleave their env changes. It
+    // lives at crate level (`TEST_ENV_LOCK`) because a lock private to this
+    // module does not stop a test in a SIBLING module: `mock_mode_is_not_refused`
+    // removed AXON_AI_MOCK unlocked, and `ai_complete_honors_axon_ai_mock` then
+    // fell through to the key check — measured failing a Stage-2 strict gate.
+    use super::TEST_ENV_LOCK as ENV_LOCK;
 
     /// Exercise the bridges with an unset API key so we never touch the network.
     /// The bridges must serialise the error through `out_err_*`, return 1, and
@@ -2086,8 +2095,18 @@ mod native_ai_audit_refusal_tests {
     #[test]
     fn mock_mode_is_not_refused() {
         // `ai_mock_enabled` is the predicate the guard returns early on.
+        // Holds the process-wide env lock and RESTORES the previous value: this
+        // test used to set and then remove AXON_AI_MOCK unlocked, clobbering a
+        // concurrent test that needed mock mode on.
+        let _guard = super::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let prev = std::env::var("AXON_AI_MOCK").ok();
         std::env::set_var("AXON_AI_MOCK", "1");
         assert!(super::ai_mock_enabled());
-        std::env::remove_var("AXON_AI_MOCK");
+        match prev {
+            Some(v) => std::env::set_var("AXON_AI_MOCK", v),
+            None => std::env::remove_var("AXON_AI_MOCK"),
+        }
     }
 }

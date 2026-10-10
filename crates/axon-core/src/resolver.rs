@@ -197,10 +197,9 @@ impl Diagnostic {
 const E0001: &str = "E0001"; // undefined name
 const E0002: &str = "E0002"; // duplicate name
 const E0003: &str = "E0003"; // module not found
-                             // E0004 (item not exported) is Phase 2 — declared but not yet used.
+                             // E0004: a SEALED module used a name the rest of the program defines.
 const W0003: &str = "W0003"; // user fn shadows a builtin (builtin takes precedence)
 const W0006: &str = "W0006"; // unused local binding (`let x = …` never read)
-#[allow(dead_code)]
 const E0004: &str = "E0004";
 const I0001: &str = "I0001"; // deferred attribute info
 
@@ -839,6 +838,10 @@ struct Resolver<'a> {
     /// callee, and consumed by the `Ident` arm: `f(x)` names `f` in CALL
     /// position, which is not a use of `f` as a first-class value.
     ident_is_callee: bool,
+    /// The sealed directories of this run (`--seal`), the ones `resolve_program_sealed`
+    /// was handed -- not the process-global set, so a caller (or a unit test) that
+    /// names its own sealed set gets the sealed predicate walks too.
+    sealed_dirs: Vec<std::path::PathBuf>,
 }
 
 impl<'a> Resolver<'a> {
@@ -852,6 +855,7 @@ impl<'a> Resolver<'a> {
             current_span: crate::span::Span::dummy(),
             generic_fns: std::collections::HashSet::new(),
             ident_is_callee: false,
+            sealed_dirs: Vec::new(),
         }
     }
 
@@ -961,6 +965,36 @@ impl<'a> Resolver<'a> {
             // silently (the type-checker can warn later).
             self.table.define(b.name.to_string(), sym);
         }
+
+        // Named refinements and trait impls live outside the value/type symbol
+        // table, so their duplicates are tracked here. Every definition in the
+        // merged program is unique: a later one silently replacing an earlier
+        // one is how an imported module (a candidate, say) displaced a suite
+        // helper's constant, refinement or impl method (v0.22 G01, FG-066).
+        let mut refinements: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut impls: std::collections::HashSet<(String, String)> =
+            std::collections::HashSet::new();
+        // What a method call DISPATCHES on: the interpreter keys methods by
+        // (receiver type name, method name), whatever trait supplied them. Two
+        // impls of DIFFERENT traits naming one method for one type (or a
+        // `Box<i64>` impl beside a `Box<T>` one) used to be accepted, and the
+        // later silently replaced the earlier — so a candidate's
+        // `impl Other for SuiteType { fn m … }` changed what the operator's
+        // own `x.m()` ran (PCI 2b, executed). Unique by dispatch key instead.
+        let mut dispatch: std::collections::HashSet<(String, String)> =
+            std::collections::HashSet::new();
+        let mut traits: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let dup = |this: &mut Self, what: String, span: crate::span::Span| {
+            this.emit_error(
+                Diagnostic::error(
+                    E0002,
+                    format!("{what} is defined more than once in this program"),
+                )
+                .with_file(this.file)
+                .with_span(span)
+                .with_fix("rename one of the definitions, or remove the duplicate".to_string()),
+            );
+        };
 
         for item in &program.items {
             match item {
@@ -1120,21 +1154,293 @@ impl<'a> Resolver<'a> {
                 Item::UseDecl(_) => {
                     // UseDecls are handled in pass 2 after all module names are known.
                 }
-                Item::TraitDef(_) | Item::ImplBlock(_) => {
-                    // Phase 3: trait/impl blocks processed in a dedicated pass.
+                Item::ImplBlock(b) => {
+                    // Bodies are processed in a dedicated pass; uniqueness here.
+                    let key = (b.trait_name.clone(), format!("{:?}", b.for_type));
+                    if !impls.insert(key) {
+                        dup(
+                            self,
+                            format!("`impl {} for {:?}`", b.trait_name, b.for_type),
+                            b.span,
+                        );
+                    } else {
+                        let tn = crate::interp::type_name_of(&b.for_type);
+                        for m in &b.methods {
+                            if !dispatch.insert((tn.clone(), m.name.clone())) {
+                                dup(
+                                    self,
+                                    format!(
+                                        "the method `{}` on `{tn}` (a method call cannot tell \
+                                         two impls apart)",
+                                        m.name
+                                    ),
+                                    m.span,
+                                );
+                            }
+                        }
+                    }
                 }
-                Item::LetDef { name, .. } => {
+                Item::TraitDef(t) => {
+                    // Phase 3: trait blocks processed in a dedicated pass;
+                    // uniqueness here.
+                    if !traits.insert(t.name.as_str()) {
+                        dup(self, format!("the trait `{}`", t.name), t.span);
+                    }
+                }
+                Item::LetDef { name, span, .. } => {
                     let sym = Symbol::Fn {
                         name: name.clone(),
                         param_names: vec![],
                     };
-                    self.table.define(name.clone(), sym);
+                    if let Some(prev) = self.table.define(name.clone(), sym) {
+                        if !matches!(prev, Symbol::Builtin { .. }) {
+                            dup(self, format!("the constant `{name}`"), *span);
+                        }
+                    }
                 }
-                Item::RefineDef(_) => {
+                Item::RefineDef(r) => {
                     // Phase 5: a named refinement is a type alias; it introduces a
-                    // type name, not a value. No value-symbol to define here (the
-                    // type-name registry is built by the checker/infer layers).
+                    // type name, not a value — but it must be unique.
+                    if !refinements.insert(r.name.as_str()) {
+                        dup(self, format!("the refinement type `{}`", r.name), r.span);
+                    }
                 }
+            }
+        }
+        // A named refinement shares the TYPE namespace. Named `i64` (or after a
+        // struct/enum), its predicate became a precondition of every parameter
+        // of that type in the merged program — candidate code injected into the
+        // entry of the operator's own helpers (PCI candidate-1 review, executed:
+        // a signed-off pass). Checked after the pass so order does not matter.
+        const BUILTIN_GENERICS: &[&str] = &[
+            "Option",
+            "Result",
+            "Chan",
+            "Dict",
+            "Uncertain",
+            "Temporal",
+            "Goal",
+        ];
+        // Every GENERIC PARAMETER in the merged program is a type-level name
+        // too: a candidate `type T = … where P` became a precondition of the
+        // operator's own `fn same<T>` (PCI candidate-2 review, executed: a
+        // signed-off pass). The set is every name a type position can resolve
+        // to; a refinement must be disjoint from all of it.
+        let mut generic_names: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for item in &program.items {
+            let gss: Vec<&Vec<String>> = match item {
+                Item::FnDef(f) => vec![&f.generic_params],
+                Item::TypeDef(t) => vec![&t.generic_params],
+                Item::EnumDef(e) => vec![&e.generic_params],
+                Item::TraitDef(t) => vec![&t.generic_params],
+                Item::ImplBlock(b) => std::iter::once(&b.generic_params)
+                    .chain(b.methods.iter().map(|m| &m.generic_params))
+                    .collect(),
+                Item::LetDef { .. } | Item::ModDecl(_) | Item::UseDecl(_) | Item::RefineDef(_) => {
+                    vec![]
+                }
+            };
+            for gs in gss {
+                generic_names.extend(gs.iter().map(String::as_str));
+            }
+        }
+        for item in &program.items {
+            if let Item::RefineDef(r) = item {
+                let n = r.name.as_str();
+                let taken = crate::types::Type::from_name(n).is_some()
+                    || BUILTIN_GENERICS.contains(&n)
+                    || generic_names.contains(n)
+                    // The checker accepts any name STARTING with a deferred
+                    // prefix (`DictTable`, `GoalX`) as a type — so a type
+                    // position can resolve to it (PCI candidate-3 review).
+                    || ["Uncertain", "Temporal", "Goal", "Dict"]
+                        .iter()
+                        .any(|p| n.starts_with(p))
+                    || matches!(
+                        self.table.lookup(n),
+                        Some(Symbol::Type { .. }) | Some(Symbol::Enum { .. })
+                    );
+                if taken {
+                    dup(
+                        self,
+                        format!("the type name `{n}` (a refinement cannot reuse a type's name)"),
+                        r.span,
+                    );
+                }
+            }
+        }
+    }
+
+    // ── Sealed modules (Protected Check Isolation) ───────────────────────
+
+    /// Refuse (E0004) any identifier in a SEALED item that names a global the
+    /// unsealed program defines. Every expression the item carries is walked
+    /// — body, `@[verify]` predicate, refinement predicate, struct `where`,
+    /// `let` initializer — because predicates are where candidate code reached
+    /// the operator before. The walk does not model local shadowing, so a
+    /// candidate local that happens to share a suite global's name is refused
+    /// too: that errs toward refusal, never toward access.
+    fn check_sealed(&mut self, program: &Program, sealed: &[std::path::PathBuf]) {
+        let is_sealed = |span: crate::span::Span| span_in_sealed(span, sealed);
+        let item_span = |item: &Item| -> Option<crate::span::Span> {
+            match item {
+                Item::FnDef(f) => Some(f.span),
+                Item::TypeDef(t) => Some(t.span),
+                Item::EnumDef(e) => Some(e.span),
+                Item::TraitDef(t) => Some(t.span),
+                Item::ImplBlock(b) => Some(b.span),
+                Item::RefineDef(r) => Some(r.span),
+                Item::LetDef { span, .. } => Some(*span),
+                Item::ModDecl(_) | Item::UseDecl(_) => None,
+            }
+        };
+        fn global_name(item: &Item) -> Option<&str> {
+            match item {
+                Item::FnDef(f) => Some(f.name.as_str()),
+                Item::TypeDef(t) => Some(t.name.as_str()),
+                Item::EnumDef(e) => Some(e.name.as_str()),
+                Item::TraitDef(t) => Some(t.name.as_str()),
+                Item::RefineDef(r) => Some(r.name.as_str()),
+                Item::LetDef { name, .. } => Some(name.as_str()),
+                // A module name is not a value the candidate can misuse — and
+                // the suite's `mod f` names the CANDIDATE's own module, so
+                // counting it refused an honest candidate's local `f`.
+                Item::ModDecl(_) | Item::ImplBlock(_) | Item::UseDecl(_) => None,
+            }
+        }
+        // The operator's globals: everything an UNSEALED item defines.
+        let suite: std::collections::HashSet<&str> = program
+            .items
+            .iter()
+            .filter(|it| !item_span(it).is_some_and(is_sealed))
+            .filter_map(global_name)
+            .collect();
+        for item in &program.items {
+            let Some(span) = item_span(item).filter(|s| is_sealed(*s)) else {
+                continue;
+            };
+            let mut exprs: Vec<&Expr> = Vec::new();
+            let mut fns: Vec<&FnDef> = Vec::new();
+            // TYPE positions too (C9 round 4, PSV-1, amendment 53): a
+            // signature, a field, an impl header, a bound or an annotation
+            // naming an operator type or trait is the same reach into the
+            // operator's code as an expression naming it. `generics` are the
+            // item's own type parameters, which are local names.
+            let mut types: Vec<&crate::ast::AxonType> = Vec::new();
+            let mut names: Vec<&str> = Vec::new();
+            let mut generics: Vec<&str> = Vec::new();
+            match item {
+                Item::FnDef(f) => fns.push(f),
+                Item::ImplBlock(b) => {
+                    fns.extend(b.methods.iter());
+                    types.push(&b.for_type);
+                    names.push(&b.trait_name);
+                    generics.extend(b.generic_params.iter().map(String::as_str));
+                    names.extend(
+                        b.generic_bounds
+                            .iter()
+                            .flat_map(|(_, ts)| ts)
+                            .map(String::as_str),
+                    );
+                }
+                Item::RefineDef(r) => {
+                    exprs.push(&r.predicate);
+                    types.push(&r.base);
+                }
+                Item::TypeDef(t) => {
+                    exprs.extend(t.refinement.as_deref());
+                    types.extend(t.fields.iter().map(|f| &f.ty));
+                    generics.extend(t.generic_params.iter().map(String::as_str));
+                }
+                Item::EnumDef(e) => {
+                    types.extend(e.variants.iter().flat_map(|v| &v.fields).map(|f| &f.ty));
+                    generics.extend(e.generic_params.iter().map(String::as_str));
+                }
+                Item::TraitDef(t) => {
+                    for m in &t.methods {
+                        types.extend(m.params.iter().map(|p| &p.ty));
+                        types.extend(m.return_type.as_ref());
+                    }
+                    generics.extend(t.generic_params.iter().map(String::as_str));
+                }
+                Item::LetDef { value, .. } => exprs.push(value),
+                Item::ModDecl(_) | Item::UseDecl(_) => {}
+            }
+            for f in fns {
+                exprs.push(&f.body);
+                if let Some(v) = &f.verify {
+                    exprs.push(&v.predicate);
+                }
+                types.extend(f.params.iter().map(|p| &p.ty));
+                types.extend(f.return_type.as_ref());
+                generics.extend(f.generic_params.iter().map(String::as_str));
+                names.extend(
+                    f.generic_bounds
+                        .iter()
+                        .flat_map(|(_, ts)| ts)
+                        .map(String::as_str),
+                );
+            }
+            let mut reached: Vec<String> = Vec::new();
+            let reach = |n: &str, reached: &mut Vec<String>| {
+                // Every segment of a qualified name (`rubric::expected`,
+                // `Enum::Variant`), not just the whole string.
+                for seg in n.split("::") {
+                    if suite.contains(seg) && !reached.iter().any(|r| r == seg) {
+                        reached.push(seg.to_string());
+                    }
+                }
+            };
+            // Annotation names inside bodies (`let x: T`, `|p: T|`).
+            let mut annotated: Vec<String> = Vec::new();
+            for e in exprs {
+                crate::ast::walk_expr(e, &mut |x| {
+                    let mut ann = |t: &crate::ast::AxonType| {
+                        crate::ast::walk_type_names(t, &mut |n| annotated.push(n.to_string()))
+                    };
+                    match x {
+                        Expr::Ident(n)
+                        | Expr::Assign { name: n, .. }
+                        | Expr::StructLit { name: n, .. } => reach(n, &mut reached),
+                        Expr::Let { ty: Some(t), .. }
+                        | Expr::Own { ty: Some(t), .. }
+                        | Expr::RefBind { ty: Some(t), .. } => ann(t),
+                        Expr::Lambda { params, .. } => {
+                            params.iter().flat_map(|p| &p.ty).for_each(ann)
+                        }
+                        _ => {}
+                    }
+                });
+            }
+            for t in types {
+                crate::ast::walk_type_names(t, &mut |n| names.push(n));
+            }
+            for n in names
+                .into_iter()
+                .chain(annotated.iter().map(String::as_str))
+            {
+                if !generics.contains(&n) {
+                    reach(n, &mut reached);
+                }
+            }
+            for n in reached {
+                self.emit_error(
+                    Diagnostic::error(
+                        E0004,
+                        format!(
+                            "a sealed module (the candidate under test) cannot use `{n}`, \
+                             which the operator's code defines"
+                        ),
+                    )
+                    .with_file(self.file)
+                    .with_span(span)
+                    .with_fix(
+                        "the candidate-under-test interface is one-directional: the suite \
+                         imports the candidate's names, never the reverse — define what the \
+                         candidate needs in its own modules"
+                            .to_string(),
+                    ),
+                );
             }
         }
     }
@@ -1143,6 +1449,22 @@ impl<'a> Resolver<'a> {
 
     fn resolve_items(&mut self, program: &Program) {
         for item in &program.items {
+            // Every diagnostic raised while resolving an item is located at THAT
+            // item. `current_span` otherwise carried over from whichever
+            // statement was resolved last (or was the dummy span for the first
+            // item of the program), so a name in a refinement predicate or a
+            // top-level `let` was filed under the previous item's file -- and
+            // under the operator's entry file at line 0 when nothing preceded it.
+            // Which file a diagnostic names is what splits the sealed check's
+            // output from the operator's (C9 round 15, amendment 121), so a
+            // diagnostic that names the wrong file discloses the operator's names.
+            // (A fn, and the methods of an impl, set it themselves: `resolve_fn`.)
+            match item {
+                Item::TypeDef(t) if !t.span.is_dummy() => self.current_span = t.span,
+                Item::RefineDef(r) if !r.span.is_dummy() => self.current_span = r.span,
+                Item::LetDef { span, .. } if !span.is_dummy() => self.current_span = *span,
+                _ => {}
+            }
             match item {
                 Item::FnDef(f) => self.resolve_fn(f),
                 Item::UseDecl(u) => self.resolve_use(u),
@@ -1151,11 +1473,51 @@ impl<'a> Resolver<'a> {
                         self.resolve_fn(m);
                     }
                 }
-                // TypeDef / EnumDef / ModDecl / TraitDef have no expressions to walk.
+                // EnumDef / ModDecl / TraitDef have no expressions to walk.
                 Item::LetDef { value, .. } => self.resolve_expr(value),
+                // A sealed struct's WHOLE-struct refinement (`type S = {..} where
+                // _.a > f(0)`) is resolved as a named refinement's predicate is,
+                // so a name in it gets the one refusal (amendment 117, finding 4).
+                Item::TypeDef(t) if self.in_sealed_file(t.span) && t.refinement.is_some() => {
+                    self.table.push_scope();
+                    self.table.define(
+                        "_".to_string(),
+                        Symbol::Local {
+                            name: "_".to_string(),
+                        },
+                    );
+                    if let Some(p) = t.refinement.as_deref() {
+                        self.resolve_expr(p);
+                    }
+                    self.table.pop_scope();
+                }
+                // A sealed refinement's predicate is resolved (see `resolve_fn`).
+                Item::RefineDef(r) if self.in_sealed_file(r.span) => {
+                    self.table.push_scope();
+                    self.table.define(
+                        "_".to_string(),
+                        Symbol::Local {
+                            name: "_".to_string(),
+                        },
+                    );
+                    // An inline parameter refinement (`n: i64 where n >= 0`) binds
+                    // the parameter's own name too, as it does when it runs; the
+                    // walk used to bind `_` alone and refused an honest candidate
+                    // for naming its own parameter.
+                    for n in refined_param_names(program, &r.name) {
+                        self.table.define(n.clone(), Symbol::Local { name: n });
+                    }
+                    self.resolve_expr(&r.predicate);
+                    self.table.pop_scope();
+                }
                 _ => {}
             }
         }
+    }
+
+    /// Whether `span` lies in a sealed file of a `--seal` run.
+    fn in_sealed_file(&self, span: crate::span::Span) -> bool {
+        !self.sealed_dirs.is_empty() && span_in_sealed(span, &self.sealed_dirs)
     }
 
     fn resolve_fn(&mut self, f: &FnDef) {
@@ -1194,6 +1556,27 @@ impl<'a> Resolver<'a> {
         }
 
         self.resolve_expr(&f.body);
+
+        // A SEALED fn's `@[verify]` predicate is resolved too, so a name in it
+        // that nothing defines is refused as it is in a body (amendment 114: an
+        // operator fn named there was refused E0004 while a missing one was
+        // accepted). The names the runtime binds for it are `value`,
+        // `confidence`, `source_tag`.
+        if let Some(v) = &f.verify {
+            if self.in_sealed_file(f.span) {
+                self.table.push_scope();
+                for n in ["value", "confidence", "source_tag"] {
+                    self.table.define(
+                        n.to_string(),
+                        Symbol::Local {
+                            name: n.to_string(),
+                        },
+                    );
+                }
+                self.resolve_expr(&v.predicate);
+                self.table.pop_scope();
+            }
+        }
 
         // Unused-local lint (W0006): a `let`-binding whose name is never read.
         self.check_unused_locals(&f.body);
@@ -1963,6 +2346,100 @@ impl<'a> Resolver<'a> {
 
 // ── Public entry-point ────────────────────────────────────────────────────────
 
+/// Directories whose modules are SEALED (Protected Check Isolation): code from
+/// them — a candidate under test — may use builtins and names its own sealed
+/// modules define, and NOTHING the rest of the program (the operator's suite)
+/// defines. The candidate-under-test interface is one-directional: the suite
+/// imports the candidate's names; the candidate reaches none of the suite's.
+///
+/// The merged program is one global namespace, and `use` restricted nothing:
+/// a candidate called the operator's hidden helpers by name (reading the
+/// answer key), and mutated a reference-shared `Dict` the suite held in a
+/// module-level `let` — a signed-off pass under the empty ceiling, because
+/// `dict_set` is effect-free (PCI candidate-2 review, executed). Set by
+/// `axon test --seal DIR`; empty means no sealing.
+static SEALED_DIRS: std::sync::Mutex<Vec<std::path::PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// Seal every module file under `dirs` for subsequent resolutions in this
+/// process (canonicalized, so a path spelled differently still matches).
+pub fn set_sealed_module_dirs(dirs: &[std::path::PathBuf]) {
+    let canon = dirs
+        .iter()
+        .map(|d| d.canonicalize().unwrap_or_else(|_| d.clone()))
+        .collect();
+    *SEALED_DIRS.lock().unwrap_or_else(|p| p.into_inner()) = canon;
+}
+
+/// The `mod`/`use` declarations the sealed files themselves make (they carry no
+/// span, so a declaration is the candidate's if a sealed file makes it).
+#[derive(Default)]
+pub struct SealedDecls {
+    pub mods: std::collections::HashSet<String>,
+    pub uses: std::collections::HashSet<(Vec<String>, Vec<String>)>,
+    /// The stems of the module files (and directories) under the sealed set: a `mod f` the
+    /// OPERATOR wrote names the candidate's module when `f.ax` or `f/` is one of them.
+    pub stems: std::collections::HashSet<String>,
+}
+
+/// Whether `item` belongs to the sealed set: a span in a sealed file, or (for
+/// the spanless `mod`/`use`) a declaration a sealed file makes.
+pub fn item_in_sealed(item: &Item, sealed: &[std::path::PathBuf], decls: &SealedDecls) -> bool {
+    let span = match item {
+        Item::FnDef(f) => f.span,
+        Item::TypeDef(t) => t.span,
+        Item::EnumDef(e) => e.span,
+        Item::TraitDef(t) => t.span,
+        Item::ImplBlock(b) => b.span,
+        Item::RefineDef(r) => r.span,
+        Item::LetDef { span, .. } => *span,
+        Item::ModDecl(m) => return decls.mods.contains(&m.name) || decls.stems.contains(&m.name),
+        Item::UseDecl(u) => {
+            return decls.uses.contains(&(u.path.clone(), u.items.clone()));
+        }
+    };
+    span_in_sealed(span, sealed)
+}
+
+/// The sealed directories currently in force (see [`set_sealed_module_dirs`]).
+pub fn sealed_module_dirs() -> Vec<std::path::PathBuf> {
+    SEALED_DIRS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+}
+
+/// The names of the fn parameters whose declared type is the (inline) refinement
+/// `refinement`: the names its predicate may also use.
+fn refined_param_names(program: &Program, refinement: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut fns: Vec<&FnDef> = Vec::new();
+    for item in &program.items {
+        match item {
+            Item::FnDef(f) => fns.push(f),
+            Item::ImplBlock(b) => fns.extend(b.methods.iter()),
+            _ => {}
+        }
+    }
+    for f in fns {
+        for p in &f.params {
+            if matches!(&p.ty, crate::ast::AxonType::Named(n) if n == refinement) {
+                out.push(p.name.clone());
+            }
+        }
+    }
+    out
+}
+
+/// Whether `span` lies in a file under one of `sealed` — the ONE provenance
+/// rule, shared by the static check here and the interpreter's runtime edge.
+pub fn span_in_sealed(span: crate::span::Span, sealed: &[std::path::PathBuf]) -> bool {
+    crate::span::source_path_of(span.source).is_some_and(|p| {
+        let p = std::path::PathBuf::from(p);
+        let p = p.canonicalize().unwrap_or(p);
+        sealed.iter().any(|d| p.starts_with(d))
+    })
+}
+
 /// Resolve all names in `program`.
 ///
 /// `file` is the source file path used to annotate diagnostics.
@@ -1973,9 +2450,27 @@ impl<'a> Resolver<'a> {
 /// - `errors`: all [`Severity::Error`] and [`Severity::Warning`] diagnostics.
 /// - `infos`: all [`Severity::Info`] diagnostics (e.g. I0001).
 pub fn resolve_program(program: &Program, file: &str) -> ResolveResult {
+    let sealed = SEALED_DIRS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+    resolve_program_sealed(program, file, &sealed)
+}
+
+/// [`resolve_program`] with an explicit sealed set (for callers and tests that
+/// must not depend on process-global state).
+pub fn resolve_program_sealed(
+    program: &Program,
+    file: &str,
+    sealed: &[std::path::PathBuf],
+) -> ResolveResult {
     let mut r = Resolver::new(file);
+    r.sealed_dirs = sealed.to_vec();
     r.collect_top_level(program);
     r.resolve_items(program);
+    if !sealed.is_empty() {
+        r.check_sealed(program, sealed);
+    }
 
     ResolveResult {
         table: r.table,
@@ -2816,6 +3311,264 @@ mod tests {
     }
 
     // ── E0002: duplicate fn name ──────────────────────────────────────────────
+
+    /// v0.22 G01 (FG-066): a module-level `let`, a named refinement and a
+    /// trait impl are unique in the merged program too — a later definition
+    /// used to replace an earlier one silently, which let an imported candidate
+    /// module displace a suite helper's constant, refinement or impl method.
+    #[test]
+    fn duplicate_let_refinement_or_impl_produces_e0002() {
+        for (why, src, name) in [
+            ("let", "let WANT = 42\nlet WANT = 0\nfn main() -> i64 { WANT }\n", "WANT"),
+            (
+                "refinement",
+                "type Answer = i64 where _ == 42\ntype Answer = i64 where _ >= 0\nfn main() -> i64 { 0 }\n",
+                "Answer",
+            ),
+            (
+                "impl",
+                "type E = { want: i64 }\ntrait J { fn check(self: E, got: i64) }\n\
+                 impl J for E { fn check(self: E, got: i64) { assert_eq(got, self.want) } }\n\
+                 impl J for E { fn check(self: E, got: i64) { } }\nfn main() -> i64 { 0 }\n",
+                "impl J for",
+            ),
+            (
+                "same method from a second trait",
+                "type E = { want: i64 }\ntrait J { fn check(self: E, got: i64) }\n\
+                 trait K { fn check(self: E, got: i64) }\n\
+                 impl J for E { fn check(self: E, got: i64) { assert_eq(got, self.want) } }\n\
+                 impl K for E { fn check(self: E, got: i64) { } }\nfn main() -> i64 { 0 }\n",
+                "method `check` on `E`",
+            ),
+            (
+                "trait",
+                "trait J { fn check(self) -> i64 }\ntrait J { fn other(self) -> i64 }\n\
+                 fn main() -> i64 { 0 }\n",
+                "trait `J`",
+            ),
+            (
+                "refinement named after a builtin type",
+                "type i64 = i64 where _ != 1000\nfn main() -> i64 { 0 }\n",
+                "type name `i64`",
+            ),
+            (
+                "refinement named after a generic parameter",
+                "fn same<T>(a: T, b: T) -> bool { a == b }\ntype T = i64 where _ != 0\nfn main() -> i64 { 0 }\n",
+                "type name `T`",
+            ),
+            (
+                "refinement named after a deferred-prefix type",
+                "type DictTable = Dict where _ != _\nfn main() -> i64 { 0 }\n",
+                "type name `DictTable`",
+            ),
+            (
+                "refinement named after a struct",
+                "type Point = { x: i64 }\ntype Point2 = i64 where _ > 0\ntype Point = Point where _.x > 0\nfn main() -> i64 { 0 }\n",
+                "type name `Point`",
+            ),
+        ] {
+            let prog = crate::parse_source(src).expect("parses");
+            let result = resolve_program(&prog, "test.ax");
+            let e = errors_with_code(&result, E0002);
+            assert_eq!(e.len(), 1, "{why}: {e:?}");
+            // The duplicate `impl` case is refused by EITHER of two
+            // independent checks — impl uniqueness, or the per-(type, method)
+            // dispatch check, since both impls define `check` — so either
+            // reason is a refusal here. The attack itself (the second `check`
+            // replacing the first) is `interp::tests::
+            // a_second_impl_never_replaces_the_first_impls_method`.
+            let dispatch = why == "impl" && e[0].contains("method `check` on `E`");
+            assert!(e[0].contains(name) || dispatch, "{why}: {e:?}");
+        }
+    }
+
+    /// Merge an operator file and a candidate file the way `mod` does, each
+    /// with its own source identity, and resolve with the candidate sealed.
+    fn sealed_merge(suite: &str, cand: &str) -> ResolveResult {
+        use crate::span::intern_source;
+        let s = crate::parse_source_in(suite, intern_source("/pci-suite/h.ax", suite))
+            .expect("suite parses");
+        let c = crate::parse_source_in(cand, intern_source("/pci-sealed/f.ax", cand))
+            .expect("candidate parses");
+        let prog = Program {
+            items: s.items.into_iter().chain(c.items).collect(),
+        };
+        resolve_program_sealed(&prog, "h.ax", &[std::path::PathBuf::from("/pci-sealed")])
+    }
+
+    /// An inline refinement desugars to a synthetic named refinement. Named
+    /// per file alone, the operator's and a candidate's first ones were both
+    /// `__refine_0`: one name for two predicates in the merged program, so
+    /// one replaces the other (the interpreter keeps the last) or, with the
+    /// duplicate check in the way, an honest candidate is refused. The
+    /// collision itself is the defect, and it is observed here at the parser,
+    /// before any later check can hide it.
+    #[test]
+    fn two_files_inline_refinements_never_share_a_name() {
+        use crate::span::intern_source;
+        let names = |path: &str, src: &str| -> Vec<String> {
+            crate::parse_source_in(src, intern_source(path, src))
+                .expect("parses")
+                .items
+                .into_iter()
+                .filter_map(|i| match i {
+                    Item::RefineDef(r) => Some(r.name),
+                    _ => None,
+                })
+                .collect()
+        };
+        let suite = "fn check(x: i64 where x == 42) -> i64 { x }\n";
+        let cand = "fn helper(n: i64 where n >= 0) -> i64 { n }\n";
+        let s = names("/refine-suite/h.ax", suite);
+        let c = names("/refine-cand/f.ax", cand);
+        assert!(
+            s.len() == 1 && c.len() == 1,
+            "one synthetic refinement each: {s:?} {c:?}"
+        );
+        assert!(
+            s[0] != c[0],
+            "ATTACK: the candidate's inline refinement took the operator's synthetic name `{}`",
+            s[0]
+        );
+        // And the honest merge resolves.
+        let r = sealed_merge(suite, cand);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+    }
+
+    /// Round 15 (amendment 121): a diagnostic about a sealed item names the SEALED
+    /// file, wherever in the file the item sits. The split of a `--seal` check into
+    /// the operator's half and the candidate's reads the file off the span, so a
+    /// span that is dummy (the item is the only one in a file and starts at byte 0:
+    /// the parser's end-of-input span used to be `0..0`) or left over from the
+    /// previous statement (a predicate or a top-level `let` sets none) filed the
+    /// diagnostic under the OPERATOR's entry file, and the merged check's copy,
+    /// with a "did you mean `OG`?" from the operator's names, was shown.
+    #[test]
+    fn a_diagnostic_about_a_sealed_item_names_the_sealed_file_wherever_the_item_sits() {
+        let suite = "let OG = 5\nfn ofn(x: i64) -> i64 { x }\n";
+        let dirs = [std::path::PathBuf::from("/pci-sealed")];
+        let mut bad = Vec::new();
+        for (pname, pre) in [
+            ("first", ""),
+            ("after a type", "type Qx1 = { q: i64 }\n"),
+            ("after a let", "let qx2 = 1\n"),
+            ("after a comment", "// c\n"),
+            ("after a fn", "fn other() -> i64 { 2 }\n"),
+        ] {
+            for (what, item) in [
+                ("refinement predicate", "type CP = i64 where _ > ZG\n"),
+                ("struct predicate", "type CS = { a: i64 } where _.a > ZG\n"),
+                (
+                    "struct predicate (fn)",
+                    "type CS = { a: i64 } where _.a > zfn(0)\n",
+                ),
+                ("top-level let", "let CV = ZG\n"),
+                ("fn", "fn f() -> i64 { ZG }\n"),
+                (
+                    "verify predicate",
+                    "@[verify(ZG > 0)]\nfn f() -> i64 { 1 }\n",
+                ),
+            ] {
+                let r = sealed_merge(suite, &format!("{pre}{item}"));
+                let hits: Vec<_> = r
+                    .errors
+                    .iter()
+                    .filter(|d| d.message.contains("ZG") || d.message.contains("zfn"))
+                    .collect();
+                if hits.is_empty() {
+                    bad.push(format!("{what} [{pname}]: no diagnostic at all"));
+                }
+                for d in hits {
+                    if d.span.is_dummy() || !span_in_sealed(d.span, &dirs) {
+                        bad.push(format!(
+                            "{what} [{pname}]: located at {:?}, not in the sealed file: {}",
+                            d.span, d.message
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(
+            bad.is_empty(),
+            "ATTACK: a diagnostic about a sealed item was not located in the sealed file:\n{}",
+            bad.join("\n")
+        );
+    }
+
+    #[test]
+    fn a_sealed_module_cannot_reach_the_operators_names() {
+        // PCI candidate-2 review: one global namespace let the candidate read
+        // the answer key and mutate the suite's reference-shared Dict.
+        let suite =
+            "fn build() -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", 42)\n    d\n}\n\
+                     let TABLE = build()\nfn expected() -> Dict { TABLE }\n";
+        for (why, cand, name) in [
+            ("mutate a suite constant", "fn double(n: i64) -> i64 {\n    dict_set(TABLE, \"k\", 0)\n    n\n}\n", "TABLE"),
+            ("call a hidden helper", "fn double(n: i64) -> i64 { dict_get_or(expected(), \"k\", 0) }\n", "expected"),
+            ("module-level initializer", "let STEAL = expected()\nfn double(n: i64) -> i64 { n }\n", "expected"),
+            ("refinement predicate", "fn poke(x: i64) -> bool {\n    dict_set(TABLE, \"k\", 0)\n    true\n}\ntype Sneak = i64 where poke(_)\nfn double(n: Sneak) -> i64 { n }\n", "TABLE"),
+            ("verify predicate", "@[verify(dict_get_or(TABLE, \"k\", 0) > 0)]\nfn double(n: i64) -> i64 { n }\n", "TABLE"),
+            ("qualified path", "fn double(n: i64) -> i64 { dict_get_or(rubric::expected(), \"k\", 0) }\n", "expected"),
+            (
+                "match guard",
+                "fn double(n: i64) -> i64 {\n    match n {\n        x if dict_get_or(TABLE, \"k\", 0) > 0 => 1\n        _ => 0\n    }\n}\n",
+                "TABLE",
+            ),
+        ] {
+            let e = errors_with_code(&sealed_merge(suite, cand), E0004);
+            assert!(
+                e.iter().any(|m| m.contains(&format!("`{name}`"))),
+                "ATTACK: a sealed module reached the operator's `{name}` ({why}): {e:?}"
+            );
+        }
+        // Honest: builtins and its own names only. The operator's suite may
+        // still use the candidate's names (the interface), and an inline
+        // refinement in each file no longer collides on `__refine_0`.
+        // The suite's `mod f` names the candidate's own module: a candidate
+        // local called `f` is not a reach into the suite.
+        let r = sealed_merge(
+            "mod f\nfn check(x: i64 where x > 0) -> i64 { double(x) }\n",
+            "fn helper(n: i64 where n >= 0) -> i64 { n * 2 }\n\
+             fn double(n: i64) -> i64 {\n    let f = |k: i64| helper(k)\n    f(n)\n}\n",
+        );
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+    }
+
+    /// C9 round 4 (PSV-1, amendment 53): TYPE positions are a reach into the
+    /// operator's code too. A candidate that names the operator's trait in an
+    /// impl header, its type in a signature, a field, a bound or an
+    /// annotation is refused statically, like an expression naming it.
+    #[test]
+    fn a_sealed_module_cannot_name_the_operators_types_or_traits() {
+        let suite = "trait Judge {\n    fn ok(self) -> bool\n}\ntype Expect = { want: i64 }\n\
+                     impl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\n";
+        for (why, cand, name) in [
+            ("impl header trait", "impl Judge for str {\n    fn ok(self: str) -> bool { true }\n}\nfn solve(n: i64) -> i64 { n }\n", "Judge"),
+            ("impl header type", "trait Mine {\n    fn ok(self) -> bool\n}\nimpl Mine for Expect {\n    fn ok(self: Expect) -> bool { true }\n}\n", "Expect"),
+            ("return type", "fn solve(n: i64) -> Expect { solve(n) }\n", "Expect"),
+            ("parameter type", "fn solve(e: Option<Expect>) -> i64 { 0 }\n", "Expect"),
+            ("field type", "type Box = { e: [Expect] }\n", "Expect"),
+            ("trait bound", "fn solve<T: Judge>(x: T) -> i64 { 0 }\n", "Judge"),
+            ("dyn type", "fn solve(x: dyn Judge) -> i64 { 0 }\n", "Judge"),
+            ("let annotation", "fn solve(n: i64) -> i64 {\n    let e: Option<Expect> = None\n    n\n}\n", "Expect"),
+            ("lambda annotation", "fn solve(n: i64) -> i64 {\n    let f = |e: Expect| 0\n    n\n}\n", "Expect"),
+        ] {
+            let e = errors_with_code(&sealed_merge(suite, cand), E0004);
+            assert!(
+                e.iter().any(|m| m.contains(&format!("`{name}`"))),
+                "ATTACK: a sealed module named the operator's `{name}` in a type position ({why}): {e:?}"
+            );
+        }
+        // Honest: its own types and traits, type parameters that happen to
+        // share nothing, builtin types.
+        let r = sealed_merge(
+            suite,
+            "type Point = { x: i64 }\ntrait Mine {\n    fn area(self) -> i64\n}\n\
+             impl Mine for Point {\n    fn area(self: Point) -> i64 { self.x }\n}\n\
+             fn pick<T: Mine>(x: T, xs: [Option<Point>]) -> T { x }\n",
+        );
+        assert!(r.errors.is_empty(), "control: {:?}", r.errors);
+    }
 
     #[test]
     fn duplicate_fn_name_produces_e0002() {

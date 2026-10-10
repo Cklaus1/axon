@@ -123,16 +123,16 @@ command -v taskset >/dev/null 2>&1 || not_measured "taskset is not installed"
 # The shipping configuration: no eager compile, no trace (R50 S9).
 unset AXON_VM_EAGER AXON_VM_TRACE
 
+. "$ROOT/scripts/lib/axon_bin.sh"
 if [ -n "${AXON_BIN:-}" ]; then
+  named_bin AXON_BIN vm_perf_gate
   AXON="$AXON_BIN"
 else
   echo "vm_perf_gate: building axon (release, --no-default-features)…"
   cargo build -q --release -p axon-core --no-default-features --bin axon \
     || not_measured "release build failed"
-  AXON="${CARGO_TARGET_DIR:-target}/release/axon"
+  AXON=""; use_built AXON axon "" release
 fi
-case "$AXON" in /*) ;; *) AXON="$ROOT/$AXON" ;; esac
-[ -x "$AXON" ] || not_measured "$AXON is not executable"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT

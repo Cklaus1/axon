@@ -32,7 +32,16 @@ fn planner() -> i64 {
 fn main() -> i64 { planner() }
 AX
 
-need_codegen_axon agent_action_parity
+if [ -n "${AXON:-}" ]; then
+  named_bin AXON agent_action_parity
+else
+  echo "agent_action_parity: building codegen axon binary…"
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "agent_action_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
+  fi
+  use_built AXON axon
+fi
+require_codegen_axon agent_action_parity
 
 # Extract the discriminating fields of each agent_action record.
 #

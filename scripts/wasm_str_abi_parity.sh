@@ -30,8 +30,25 @@ for rt in wasmtime "$HOME/.wasmtime/bin/wasmtime"; do
 done
 [ -n "$WASMRT" ] || { echo "wasm_str_abi_parity: no wasm runtime — skipping"; exit 0; }
 
-need_codegen_axon wasm_str_abi_parity
-need_axon_run wasm_str_abi_parity
+if [ -n "${AXON:-}" ]; then
+  named_bin AXON wasm_str_abi_parity
+else
+  echo "wasm_str_abi_parity: building codegen axon binary…"
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "wasm_str_abi_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
+  fi
+  use_built AXON axon
+fi
+require_codegen_axon wasm_str_abi_parity
+if [ -n "${AXON_RUN:-}" ]; then
+  named_bin AXON_RUN wasm_str_abi_parity
+else
+  if ! cargo build -q -p axon-core --no-default-features --bin axon-run 2>/dev/null; then
+    echo "wasm_str_abi_parity: interp build unavailable — skipping"; exit 0
+  fi
+  use_built AXON_RUN axon-run
+fi
+INTERP="$AXON_RUN"
 # The wasm runtime (carrying the scalar-ABI bridge) must exist for str programs
 # to link. Build it; skip honestly if the wasm32 target isn't installed.
 # Distinguish an ABSENT target from a BROKEN build. The probe used to be

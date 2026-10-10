@@ -45,13 +45,23 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 . "$ROOT/scripts/lib/harness_skip.sh"
 . "$ROOT/scripts/lib/axon_bin.sh"
+. "$ROOT/scripts/lib/child_exit.sh"
 
 SEED="${AXON_SEED:-42}"
 N="${FUZZ_N:-40}"   # random inputs per builtin (edges added on top)
 
 # The caller's AXON, or a codegen `axon` built here; either way it must prove it
 # can emit native code (an interp-only build `run`s but cannot `build`).
-need_codegen_axon fuzz_parity
+if [ -n "${AXON:-}" ]; then
+  named_bin AXON fuzz_parity
+else
+  echo "fuzz_parity: building codegen axon binary…"
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "fuzz_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
+  fi
+  use_built AXON axon
+fi
+require_codegen_axon fuzz_parity
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -204,13 +214,15 @@ nan_case() {
   local name="$1" expr="$2" expect="$3"
   local src="$WORK/$name.ax"
   printf 'fn main() -> i64 {\n    println(to_str(%s))\n    0\n}\n' "$expr" > "$src"
-  local i_out n_out
-  i_out="$("$AXON" run "$src" 2>/dev/null)"
+  local i_out n_out i_st n_st
+  i_out="$("$AXON" run "$src" 2>/dev/null)"; i_st=$?
   if ! nbuild "$src" "$WORK/$name.bin"; then
     echo "  FAIL $name: native build failed after 3 attempts:"
     echo "$NBUILD_ERR" | sed 's/^/       /' | head -5; fail=1; return
   fi
-  n_out="$("$WORK/$name.bin" 2>/dev/null)"
+  n_out="$("$WORK/$name.bin" 2>/dev/null)"; n_st=$?
+  # nan_case compared stdout only; a kill after printing matched (child_exit.sh).
+  if ! same_exit_or_fail "  $name" "$i_st" "$n_st"; then fail=1; return; fi
   if [ "$i_out" != "$n_out" ]; then
     echo "  FAIL $name: interp='$i_out' native='$n_out' (NaN/inf format divergence)"; fail=1; return
   fi

@@ -1,0 +1,699 @@
+{ __opkit_so=$-; set +xvTE; } </dev/null >/dev/null 2>&1
+# opkit_ns.sh — the ONLY way a test may run the operator deployment kit
+# (scripts/operator_deploy_protected_host.sh), a controlled-build verb, or one of the mutating verbs the drift gate lists
+# (scripts/opkit_ns_drift.py: MUTATORS and HOST_VERBS) aimed at a real destination. Amendment 113: this used to say "any other
+# state-changing verb", which is broader than the gate -- `sed -i`, `tar -x -C` and `rsync` into a real destination are NOT
+# flagged in a test script (the KIT's own write targets are checked for them, destination_problems); the namespace is what holds.
+#
+# Amendment 92. Incident 2026-10-06: a guard-removal experiment turned a kit
+# refusal test into a REAL root --apply on the dev host. A refusal test that
+# depends on the guard it tests becomes a real apply the moment that guard
+# regresses, so the test must be unable to reach the host WITHOUT the guard.
+#
+# Why a namespace and not a `--root PREFIX` flag: the kit's destinations
+# (/etc/axon, /usr/local/libexec, /var/lib/axon-*, /etc/systemd/system), the
+# user database (useradd/getent), the setuid launcher's ownership, the
+# production loader that is run as the Fabric uid, and trust_root_preflight.sh
+# all resolve ABSOLUTE paths and the system user database; a prefix would make
+# the tested kit a different program from the deployed one. So the prefix is the
+# private mount namespace itself: every destination the kit can reach is
+# shadowed by a tmpfs and the shadowing is PROVED before anything runs.
+#
+#   opkit_ns_isolate   (inside a fresh `unshare -m --propagation private`)
+#                      shadow the destinations, then assert (below)
+#   opkit_ns_assert    refuse (return 1) unless this process is in a mount
+#                      namespace other than PID 1's and every destination is a
+#                      tmpfs mount that is not the host's own directory (device:inode
+#                      compared through the host's view)
+#   ns_run CMD...      (outer shell) run CMD in a fresh isolated namespace;
+#                      exit 97 if the isolation cannot be proved, CMD never ran.
+#                      Amendment 97: the namespace is mount + PID (with its own /proc) + UTS + IPC +
+#                      NET. NET is private (loopback only) unless OPKIT_NET=host, which a step that
+#                      must reach a package registry (the controlled host build) states explicitly.
+#                      Before unsharing, the outer shell opens a handle on the HOST's root and
+#                      records the host's namespace ids: a PID namespace hides the host's PID 1, so
+#                      the host's view is a descriptor, not /proc/1/root.
+#
+# Amendment 101: DENY BY DEFAULT. The shadow list above is the set of places a command may WRITE; every
+# other mount of the namespace (/opt /home /root /usr /boot /var/cache, /sys, ...) is made read-only before
+# the shadows are laid down, recursively and atomically (mount_setattr(MOUNT_ATTR_RDONLY, AT_RECURSIVE)).
+# The extractor in opkit_ns_drift.py stays as a second layer. The host-root descriptor the proof compares
+# through is CLOSED before the command starts; inside the namespace a re-assertion rests on a stamp the
+# proof wrote, not on a host view.
+#
+# Amendment 105 -- WHAT THIS IS AND IS NOT. A read-only mount is a mount FLAG, not a boundary against a
+# process that holds CAP_SYS_ADMIN, CAP_MKNOD or CAP_SYS_RAWIO. Round 11 measured root inside the
+# namespace writing /dev/kmsg (it landed in the host's dmesg), `umount /proc` (which revealed the HOST's
+# /proc, whose /proc/1/root reached the host's /opt), `mount -o remount,rw /` and `dd` to a block
+# device. So the command runs with:
+#   * a PRIVATE /dev (a tmpfs holding only null zero full random urandom tty, a private devpts, a private
+#     /dev/shm; mounted read-only): there is no kmsg, no block device, nothing to dd to;
+#   * a PRIVATE /proc: the host's /proc that `unshare --mount-proc` only COVERS is detached, so a
+#     `umount /proc` can reveal nothing but the namespace's own (proved: exactly one mount per
+#     /proc and /dev, and the one in effect is not the host's);
+#   * nodev on every tmpfs and bind the helper makes, so a node made by `mknod` cannot be opened;
+#   * a reduced capability BOUNDING SET (OPKIT_DROP_CAPS): no CAP_SYS_ADMIN (no mount, umount, remount,
+#     pivot_root, new namespaces), CAP_MKNOD, CAP_SYS_MODULE, CAP_SYS_RAWIO, CAP_SYSLOG, CAP_SYS_PTRACE,
+#     CAP_DAC_READ_SEARCH (open_by_handle_at reaches any inode of a filesystem, whatever the mount
+#     namespace), CAP_NET_ADMIN/NET_RAW, CAP_SYS_BOOT/TIME, CAP_BPF/PERFMON ... A setuid program the
+#     command runs gets no more than that set;
+#   * descriptors (amendment 109 states them exactly): a DIRECTORY descriptor above stderr makes the run
+#     REFUSE (97, the command never runs); every other inherited descriptor above stderr is CLOSED (those
+#     OPKIT_KEEP_FDS names are kept, each held to the check below). Fds 0-2 are REFUSED (97) if they are a
+#     directory, a block device, a SOCKET, a writable regular file outside the caller's named scratch
+#     (OPKIT_RW, OPKIT_SCRATCH), or a character device other than null, zero, full, random, urandom, /dev/tty
+#     (5:0) and a pts slave (/dev/pts/*). The host console, the virtual terminals and the serial ports
+#     (/dev/console 5:1, /dev/tty0.. 4:*, /dev/ttyS* 4:64.., hvc, ...) are NOT accepted: a caller that
+#     wants the run's output hands in a pipe or a pts. A pipe (a FIFO) is accepted;
+#     (so a caller logs a run through a PIPE -- `... | tee log` -- or puts the log under OPKIT_RW);
+#   * the temp roots are the helper's own, never the environment's (amendment 109): the scratch root must lie
+#     STRICTLY below /tmp or /var/tmp, and OPKIT_RW entries strictly below /var/tmp (amendment 113), (realpath), be owned by the caller, not be
+#     group/other-writable, not be a symlink, and not be a system path. $TMPDIR is NOT a temp root and
+#     is IGNORED (the helper never consults it); a caller-set OPKIT_SCRATCH that is not such a directory
+#     is REFUSED (97) before anything is mounted or created. With no OPKIT_SCRATCH the helper makes its
+#     own (mktemp -d under /var/tmp or /tmp, mode 0700) and removes the empty directories it left.
+# EXECUTED by scripts/test_opkit_ns.sh (inside ns_run, canaries only): the private /dev and /proc, the
+# bounding set, a setuid-root program getting no capability the set took, the tmpfs mounts and the OPKIT_RW
+# bind carrying nodev (read from the mount flags in /proc/self/mountinfo: no capability is left to make a
+# node, so a node is not created to be refused), the descriptor rules above, OPKIT_RW/TMPDIR/OPKIT_SCRATCH
+# validation with host listings before and after, and an ordinary uid, which ns_run refuses (97, not run) at its root check,
+# BEFORE it reaches unshare (amendment 113: this sentence said an ordinary uid "cannot unshare"; the root check stops it first).
+# Amendment 111 EXECUTED, in the same tests and as the default-capability root inside ns_run (canary files only): the process's
+# CapEff and CapPrm are within its bounding set; every removed capability reads 0 in the bounding set and cannot be raised to the
+# ambient set (prctl); `setpriv --inh-caps / --ambient-caps / --bounding-set` for sys_admin, net_admin, mknod and dac_read_search
+# each FAIL and the command never runs; a setuid-root copy of a program (in /srv, a shadow tmpfs that honours setuid -- /tmp is
+# nosuid, so a setuid copy there proves nothing, and the earlier probe that used it now lives in /srv) holds exactly the bounding
+# set and none of what was removed; a file-capability copy (cap_sys_admin, cap_mknod, cap_dac_read_search +ep) cannot be
+# executed at all (EPERM); and for the step handed OPKIT_CAPS_KEEP=sys_admin the benign check only: CAP_SYS_ADMIN is present in the
+# bounding set, CAP_NET_ADMIN is not, and OPKIT_CAPS_KEEP=net_admin (or any other spelling) is refused (97). NOTHING was done WITH a
+# kept CAP_SYS_ADMIN.
+# Amendment 113 -- WHAT THAT EVIDENCE IS. The capability-drop evidence in scripts/test_opkit_ns.sh (the amendment-105 and
+# amendment-111 blocks, roughly lines 543-617 before this amendment) was executed by its AUTHOR, once. It is NOT independently
+# reproduced: two reviewers who tried to repeat it were stopped by the automated safety check and did not run it. Read it as the
+# author's measurement, not as a reviewed result.
+# NOT executed by the CURRENT helper (OPKIT_CAPS_KEEP=sys_admin included) and not authorised: the escape routes themselves --
+# setns, chroot, a nested user namespace, open_by_handle_at, mounting a setuid binary, bpf, init_module, reboot -- and a hostile
+# CAP_SYS_ADMIN step (it would write the host). That is a statement about THIS helper: round 11, against an EARLIER helper, DID
+# run `mount -o remount,rw /` and `dd` as full-capability root (above), which is why the bounding set exists. The retained capabilities (chown, setuid/setgid, dac_override, fowner, kill, setpcap, setfcap ...) are therefore still
+# not tried as an escape beyond the write test, which runs as the default-capability root and meets EROFS everywhere unlisted.
+# WHAT REMAINS. A step that is handed CAP_SYS_ADMIN (OPKIT_CAPS_KEEP=sys_admin, used ONLY by the controlled
+# build fixture, whose unshare --pid needs it) is NOT contained against a root that means to escape: it can
+# `mount -o remount,rw /` and write the host. Nor is any root user namespace-less root against the host
+# kernel (a module, a kernel bug). What holds, and what the tests below execute: UNPRIVILEGED build code
+# and the kit AS WRITTEN (which does none of these) cannot reach the host through a mount, a device or
+# /proc, and a command with the default capability set cannot do so even as root. A user namespace was
+# considered and is NOT used: the kit's own tests chown to arbitrary uids, create accounts and exercise a
+# setuid launcher, which a one-uid mapping cannot represent.
+# OPKIT_RW: space-separated host directories the command may write (scratch the test itself created). Amendment 113: strictly
+# below /var/tmp ONLY. /tmp is replaced by a fresh tmpfs before the binds are made, so an entry under /tmp validated and then
+# could not be bound (97 from inside, the command not run); the validation now says what can work.
+# /tmp is a fresh tmpfs and TMPDIR is /tmp inside.
+#
+# OPKIT_RESTORE: "STASH=DEST ..." copy a stash (made earlier, under an UNshadowed path, by a step that
+# itself ran under ns_run) back to DEST inside the namespace, with owners and modes.
+# OPKIT_SCRATCH: a scratch directory (never under a shadowed path) for the /etc copy.
+# OPKIT_EXTRA: files to install into the shadow /usr/local/bin.
+
+# ── amendment 118: the refusal text is never written through a descriptor the helper has not vetted ──────────────────────
+# Incident 2026-10-09 01:14:46: a caller opened the real /etc/passwd READ-WRITE on fd 2 and ran ns_run. The helper classified
+# fd 2 as "a WRITABLE regular file outside the caller's scratch" -- and then wrote that verdict INTO IT (the first five lines of
+# /etc/passwd became two lines of refusal text). Fix at the source: no line of THIS FILE'S OWN CODE writes to fd 1 or fd 2 except
+# through opkit_say (the drift gate holds that), and opkit_say writes to fd 2 only if the SAME classifier that guards the command
+# accepts fd 2 as a destination. When it does not, the text goes to the controlling terminal if one opens, else NOWHERE: the exit
+# code (97) is the signal.
+#
+# ── amendment 120: that sentence was not the whole truth ─────────────────────────────────────────────────────────────────────
+# The helper's functions run IN THE CALLER'S SHELL, and bash itself writes to fd 2 on the caller's behalf: `set -x` (or an exported
+# SHELLOPTS=xtrace, a BASH_ENV file that says `set -x`, BASH_XTRACEFD=2) made bash print every command of this file, one trace
+# line each, to fd 2 BEFORE the classifier had looked at it -- so a refused read-write /etc/passwd on fd 2 was overwritten by the
+# trace of the helper's own code, exit 97, the command never run, the incident's outcome by another hand. What is TRUE now:
+#   * the helper disables the shell's own diagnostics that would write to a descriptor before it is classified, on EVERY entry:
+#     line 1 of this file (source time) and the first statement of EVERY function (the drift gate requires both) is
+#         { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+#     `local -` makes the option change local to the function (the caller's -x/-v/-T/-E come back when it returns, and at the end
+#     of this file for the source-time guard); the group's redirections send what bash prints about the guard ITSELF (the xtrace
+#     line of `local -`, a DEBUG trap the caller set, a PS4 command substitution) to /dev/null; +x +v stop xtrace and verbose, +T
+#     stops DEBUG/RETURN traps being inherited by the helper's functions, +E stops the caller's ERR trap being inherited;
+#   * the inner shell is `env -u SHELLOPTS -u BASH_ENV -u BASH_XTRACEFD -u BASHOPTS -u ENV -u PS4 -u BASH_COMPAT bash --noprofile
+#     --norc` and begins with `set +o xtrace +o verbose`, so nothing the caller exported steers it either;
+#   * the command the caller asked for also runs without those variables (the environment of a hermetic run is the helper's).
+# WHAT REMAINS, stated (each measured in scripts/test_opkit_ns.sh on scratch victims): (a) a caller that sets BASH_XTRACEFD to a
+# descriptor OTHER than 0-2 has named a trace channel of its own, and the guard cannot run before bash traces the guard's own
+# statements to it: two lines at source time (`++ __opkit_so=..`, `++ set +xvTE`) and two at the first entry of a function (`+ local -`,
+# `+ set +xvTE`); nothing of the helper's code beyond those. The classifier looks only at fds 0-2. (b) `set -v` in the SOURCING shell
+# makes bash echo each line it reads, so line 1 of this file (and no other: the guard is its first statement) is echoed to the
+# sourcing shell's fd 2 before any code of the helper runs. (c) A DEBUG or RETURN trap of a caller with `set -T`, an ERR trap of a
+# caller with `set -E`, runs the CALLER's code inside the helper's functions (a trap is inherited at function entry; the guard's +T/+E
+# cannot take it back for the function already entered); without -T/-E the traps are not inherited and nothing runs (measured). That
+# code is the caller's own, as a `echo x >&2` the caller wrote in its own script would be; it is not bash printing the helper's code.
+OPKIT_DIAG_ROOTS=()   # the validated OPKIT_RW/OPKIT_SCRATCH, ONE ELEMENT EACH (amendment 120: never expanded unquoted): a writable regular file under one of them is an accepted log; empty before validation
+
+# A descriptor the command would inherit that is a way around the shadows: sets OPKIT_FD_WHY and returns 1. Prints NOTHING.
+opkit_ns_fd_why() { # N [ROOTS...]  (a writable regular file is accepted only under one of ROOTS)
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  local n=$1 p=/proc/$BASHPID/fd/$1 flags acc t rt typ nl   # $BASHPID: "self" inside $( ) is the child
+  shift
+  OPKIT_FD_WHY=""
+  [ -e "$p" ] || return 0
+  if [ -d "$p" ]; then OPKIT_FD_WHY="LEAK: descriptor $n is a directory ($(readlink "$p" 2>/dev/null))"; return 1; fi
+  if [ -b "$p" ]; then OPKIT_FD_WHY="LEAK: descriptor $n is a block device ($(readlink "$p" 2>/dev/null))"; return 1; fi
+  if [ -S "$p" ]; then OPKIT_FD_WHY="LEAK: descriptor $n is a socket ($(readlink "$p" 2>/dev/null)): a write through it reaches the peer"; return 1; fi
+  if [ -c "$p" ]; then
+    typ=$(stat -L -c '%t:%T' -- "$p" 2>/dev/null)
+    case "$typ" in
+      1:3|1:5|1:7|1:8|1:9|5:0|8[89a-f]:*) ;;   # null zero full random urandom, /dev/tty, a pts slave (hex major 88-8f = 136-143)
+      *) OPKIT_FD_WHY="LEAK: descriptor $n is a character device ($(readlink "$p" 2>/dev/null), $typ): the console, the virtual terminals and serial ports are not accepted"; return 1 ;;
+    esac
+    return 0
+  fi
+  if [ -f "$p" ]; then
+    flags=$(sed -n 's/^flags:[[:space:]]*//p' "/proc/$BASHPID/fdinfo/$n" 2>/dev/null)
+    [ -n "$flags" ] || { OPKIT_FD_WHY="LEAK: descriptor $n: its open mode cannot be read"; return 1; }
+    acc=$(( 8#$flags & 3 ))
+    if [ "$acc" != 0 ]; then
+      # amendment 120: classify by INODE, not only by name. A hard link to a host-style file, created INSIDE the caller's scratch,
+      # has a path under a root and the host file's inode: the name says "scratch", the inode is the host's. A second name for the
+      # inode is refused whatever its path (an unreadable count fails closed).
+      nl=$(stat -L -c '%h' -- "$p" 2>/dev/null)
+      case "$nl" in 1) ;; *) OPKIT_FD_WHY="LEAK: descriptor $n is a WRITABLE regular file with ${nl:-an unreadable number of} names (a hard link): its path says nothing about whose inode it is"; return 1 ;; esac
+      t=$(readlink -f -- "$p" 2>/dev/null)
+      for rt in "$@"; do
+        [ -n "$rt" ] && case "$t" in "$rt"/*) return 0 ;; esac
+      done
+      OPKIT_FD_WHY="LEAK: descriptor $n is a WRITABLE regular file ($t) outside the caller's named scratch"; return 1
+    fi
+  fi
+  return 0
+}
+
+# Amendment 120: the roots are an ARRAY, one element per validated directory, never a string that is split again. Built only from
+# directories opkit_scratch_check accepted (which refuses whitespace and glob characters), with globbing off while it is built.
+opkit_diag_roots_set() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  local r
+  set -f
+  OPKIT_DIAG_ROOTS=()
+  for r in ${OPKIT_RW:-}; do
+    [ -z "$r" ] || OPKIT_DIAG_ROOTS+=("$r")
+  done
+  [ -z "${OPKIT_SCRATCH:-}" ] || OPKIT_DIAG_ROOTS+=("$OPKIT_SCRATCH")
+  return 0
+}
+
+# THE diagnostic channel. fd 2 if (and only if) the classifier accepts it; else the controlling terminal if one opens; else nothing.
+opkit_say() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  if opkit_ns_fd_why 2 "${OPKIT_DIAG_ROOTS[@]}"; then printf '%s\n' "$*" >&2; return 0; fi
+  { printf '%s\n' "$*" >/dev/tty; } 2>/dev/null || true
+  return 0
+}
+
+# fds 0-2, classified with reads only; the reasons are emitted (through opkit_say) after ALL three are classified.
+opkit_ns_std_fds_ok() { # ROOTS...
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  local n why="" bad=0
+  for n in 0 1 2; do
+    opkit_ns_fd_why "$n" "$@" || { bad=1; why+="${why:+$'\n'}$OPKIT_FD_WHY"; }
+  done
+  [ "$bad" = 0 ] && return 0
+  opkit_say "$why"
+  return 1
+}
+
+# The destinations the kit can write. THE one list: opkit_ns_isolate shadows exactly these, the proof
+# asserts exactly these, and scripts/opkit_ns_drift.py fails if a write target of the kit is outside them.
+OPKIT_DEFAULT_DESTS="/etc /usr/local /var/lib /var/log /var/spool /var/mail /run /srv"
+
+# The *_FOR_TEST variables exist only for scripts/test_opkit_ns.sh, which points the assertion at scratch
+# directories (never at a real destination) and at a stand-in for the host. Amendment 97: they are
+# honoured ONLY when the outermost script of this shell is scripts/test_opkit_ns.sh itself; for any other
+# caller one that is set makes the proof REFUSE (it is never silently ignored, and never weakens it).
+opkit_selftest_caller() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  local top self here
+  top=${BASH_SOURCE[${#BASH_SOURCE[@]} - 1]:-}
+  [ -n "$top" ] || return 1
+  top=$(realpath -e -- "$top" 2>/dev/null) || return 1
+  here=$(dirname -- "$(realpath -e -- "${BASH_SOURCE[0]}")")
+  self=$(realpath -e -- "$here/../test_opkit_ns.sh" 2>/dev/null) || return 1
+  [ "$top" = "$self" ]
+}
+
+opkit_overrides() { # prints the effective "DESTS NS_PID VIEW_PID"; returns 1 (and says why) if overrides are not allowed
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  if [ -n "${OPKIT_DESTS_FOR_TEST:-}${OPKIT_NS_PID_FOR_TEST:-}${OPKIT_VIEW_PID_FOR_TEST:-}" ]; then
+    opkit_selftest_caller || { opkit_say "REFUSE(opkit_ns): an OPKIT_*_FOR_TEST override is set outside scripts/test_opkit_ns.sh"; return 1; }
+    echo "${OPKIT_DESTS_FOR_TEST:-$OPKIT_DEFAULT_DESTS}|${OPKIT_NS_PID_FOR_TEST:-}|${OPKIT_VIEW_PID_FOR_TEST:-}"
+  else
+    echo "$OPKIT_DEFAULT_DESTS||"
+  fi
+}
+
+# Amendment 113 -- THE PRECONDITION OF EVERY DESTRUCTIVE PRIMITIVE. opkit_ns_isolate made `/` read-only and shadowed /etc
+# BEFORE opkit_ns_assert refused the host's own mount namespace, so a primitive called bare (or the refusal itself) had already
+# done the damage. Now ONE function, opkit_ns_precondition, is the FIRST statement of opkit_ns_isolate, opkit_ns_make_ro,
+# opkit_ns_fresh_proc, opkit_ns_private_dev and opkit_ns_drop_host_fd (scripts/opkit_ns_drift.py derives the primitives from
+# this file -- every function that mounts, umounts, pivots or closes the host descriptor -- and fails unless each one starts with
+# it). It returns 97, having changed nothing, unless:
+#   1. this process's mount namespace is NOT the host's. The host's id is the one ns_run recorded before it unshared
+#      (OPKIT_HOST_NS); for scripts/test_opkit_ns.sh alone, the stand-in PID of OPKIT_NS_PID_FOR_TEST; with neither there is
+#      no proof and the answer is refusal;
+#   2. (outside the self-test) this process is PID 1 of a PID namespace that is not the initial one: the last field of
+#      NSpid in /proc/$BASHPID/status (the shell's own entry: /proc/self would be the awk process) is 1. ns_run's `unshare --pid --fork` makes its inner shell exactly that, and the host's own
+#      shell is not, so a bare call on the host is refused whatever OPKIT_HOST_NS says. A caller that is itself the init of a
+#      private PID namespace and forges OPKIT_HOST_NS is NOT stopped by this -- but that caller has root in a namespace it made,
+#      which is the case the primitives are for; what is stopped is a mistake, which is all a textual id can stop.
+opkit_ns_precondition() { # PRIMITIVE-NAME
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  local who=${1:-?} ov nspid own hostmnt
+  ov=$(opkit_overrides) || { opkit_say "REFUSE(opkit_ns): $who: not run (an override is not allowed here); nothing was changed"; return 97; }
+  ov=${ov#*|}; nspid=${ov%%|*}
+  own=$(readlink /proc/self/ns/mnt 2>/dev/null)
+  if [ -n "$nspid" ]; then hostmnt=$(readlink "/proc/$nspid/ns/mnt" 2>/dev/null)
+  elif [ -n "${OPKIT_HOST_NS:-}" ]; then hostmnt=$(tr ',' '\n' <<<"$OPKIT_HOST_NS" | sed -n 's/^mnt=//p')
+  else hostmnt=""; fi
+  [ -n "$own" ] && [ -n "$hostmnt" ] && [ "$own" != "$hostmnt" ] \
+    || { opkit_say "REFUSE(opkit_ns): $who: no proof that this is not the host's mount namespace (own: ${own:-unreadable}, host: ${hostmnt:-not recorded}); nothing was changed"; return 97; }
+  if [ -z "$nspid" ]; then
+    awk '/^NSpid:/ { exit !($NF == 1) }' "/proc/$BASHPID/status" 2>/dev/null \
+      || { opkit_say "REFUSE(opkit_ns): $who: this process is not PID 1 of a private PID namespace, so it is not inside ns_run's namespace; nothing was changed"; return 97; }
+  fi
+  return 0
+}
+
+opkit_ns_assert() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  local ov dests nspid viewpid view d c hostmnt own fs kv k v host_dev here_dev
+  [ "$(id -u)" = 0 ] || { opkit_say "REFUSE(opkit_ns): not root, so no namespace to prove"; return 1; }
+  ov=$(opkit_overrides) || return 1
+  dests=${ov%%|*}; ov=${ov#*|}; nspid=${ov%%|*}; viewpid=${ov#*|}
+  # the HOST's view of the filesystem: the descriptor ns_run opened before it unshared (a PID namespace
+  # hides the host's PID 1), or, for the self-test, the stand-in PID's root
+  if [ -n "$viewpid" ]; then view=/proc/$viewpid/root
+  elif [ -n "${OPKIT_HOST_FD:-}" ]; then view=/proc/self/fd/$OPKIT_HOST_FD
+  elif opkit_stamp_ok; then view=stamp         # inside ns_run after the descriptor was closed: the proof's stamp
+  else view=/proc/1/root; fi
+  own=$(readlink /proc/self/ns/mnt)
+  if [ -n "$nspid" ]; then hostmnt=$(readlink "/proc/$nspid/ns/mnt")
+  elif [ -n "${OPKIT_HOST_NS:-}" ]; then hostmnt=$(tr ',' '\n' <<<"$OPKIT_HOST_NS" | sed -n 's/^mnt=//p')
+  else hostmnt=$(readlink /proc/1/ns/mnt); fi
+  [ -n "$own" ] && [ -n "$hostmnt" ] && [ "$own" != "$hostmnt" ] \
+    || { opkit_say "REFUSE(opkit_ns): this is the host's mount namespace (${own:-unreadable}): the host"; return 1; }
+  if [ -z "$nspid" ] && [ -n "${OPKIT_HOST_NS:-}" ]; then
+    for kv in $(tr ',' ' ' <<<"$OPKIT_HOST_NS"); do
+      k=${kv%%=*} v=${kv#*=}
+      [ "$k" = mnt ] && continue
+      [ "$k" = net ] && [ "${OPKIT_NET:-private}" = host ] && continue
+      [ "$(readlink "/proc/self/ns/$k" 2>/dev/null)" != "$v" ] \
+        || { opkit_say "REFUSE(opkit_ns): the $k namespace is the host's ($v)"; return 1; }
+    done
+  fi
+  for d in $dests; do
+    [ -L "$d" ] && continue          # a symlink (e.g. /var/mail) has no mount of its own; its target is covered
+    [ -d "$d" ] || continue
+    # the LAST mountinfo row for the mount point is the one in effect
+    fs=$(awk -v m="$d" '$5 == m { f = $0 } END { n = split(f, a, " - "); if (n == 2) { split(a[2], b, " "); print b[1] } }' /proc/self/mountinfo)
+    [ "$fs" = tmpfs ] || { opkit_say "REFUSE(opkit_ns): $d is not shadowed by a tmpfs (found: ${fs:-none})"; return 1; }
+    c="$d/.opkit-ns-canary.$$"
+    : >"$c" 2>/dev/null || { opkit_say "REFUSE(opkit_ns): cannot write a canary under $d"; return 1; }
+    rm -f "$c"
+    # The proof is an IDENTITY comparison, not a negative lookup (a canary "not seen" through an unreadable
+    # /proc/1/root passed vacuously): the host's own $d, read through the host's view, must be a
+    # DIFFERENT filesystem object (device:inode) from ours, and an unreadable view or an unstatable $d is a refusal.
+    [ "$view" = stamp ] && continue   # the identity comparison was made once, by the proof that wrote the stamp
+    host_dev=$(stat -L -c '%d:%i' -- "$view$d" 2>/dev/null) \
+      || { opkit_say "REFUSE(opkit_ns): the host's $d cannot be examined through the host's view ($view), so its identity cannot be compared with the shadow"; return 1; }
+    here_dev=$(stat -c '%d:%i' -- "$d")
+    [ "$host_dev" != "$here_dev" ] \
+      || { opkit_say "REFUSE(opkit_ns): $d is the HOST's own directory (device:inode $here_dev), not a shadow"; return 1; }
+  done
+  # DENY BY DEFAULT (amendment 101): outside the self-test overrides the root must be read-only except
+  # the shadows; the self-test asks for the same proof with OPKIT_REQUIRE_RO=1
+  if [ -z "${OPKIT_DESTS_FOR_TEST:-}" ] || [ "${OPKIT_REQUIRE_RO:-}" = 1 ]; then
+    opkit_ro_proof "$dests" || return 1
+  fi
+  if [ -z "${OPKIT_DESTS_FOR_TEST:-}" ] || [ "${OPKIT_REQUIRE_PRIVATE:-}" = 1 ]; then
+    opkit_private_proof || return 1
+  fi
+  return 0
+}
+
+# Amendment 105: exactly one mount at /proc and one at /dev (a second, covered one is what `umount` would
+# reveal), and /dev is the private tmpfs.
+opkit_private_proof() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  local probe n
+  for probe in /proc /dev; do
+    n=$(awk -v m="$probe" '$5 == m { c++ } END { print c + 0 }' /proc/self/mountinfo)
+    [ "$n" = 1 ] || { opkit_say "REFUSE(opkit_ns): $probe has $n mounts (1 expected): a covered mount is what umount would reveal"; return 1; }
+  done
+  # /proc is writable (a user namespace needs its uid_map), so the paths that reach the host are read-only mounts of their own
+  for probe in /proc/sys /proc/sysrq-trigger; do
+    [ -e "$probe" ] || continue
+    awk -v m="$probe" '$5 == m { split($6, o, ","); for (k in o) if (o[k] == "ro") found = 1 } END { exit !found }' /proc/self/mountinfo \
+      || { opkit_say "REFUSE(opkit_ns): $probe is not a read-only mount: a root without any capability can write it"; return 1; }
+  done
+  [ "$(awk '$5 == "/dev" { split($0, a, " - "); split(a[2], b, " "); print b[1] }' /proc/self/mountinfo)" = tmpfs ] \
+    || { opkit_say "REFUSE(opkit_ns): /dev is not the private tmpfs"; return 1; }
+  return 0
+}
+
+# Every mount of this namespace is read-only unless it lies under a shadowed destination, an OPKIT_RW
+# directory or /tmp; and a file cannot be created in the places no list names.
+opkit_ro_proof() { # DESTS
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  local bad d probe
+  bad=$(awk -v ok="$1 ${OPKIT_RW:-} /tmp /dev/shm /dev/pts /proc" 'BEGIN { n = split(ok, a, " ") }
+    { mp = $5; skip = 0
+      for (i = 1; i <= n; i++) if (mp == a[i] || index(mp, a[i] "/") == 1) skip = 1
+      if (skip) next
+      split($6, o, ","); ro = 0; for (k in o) if (o[k] == "ro") ro = 1
+      if (!ro) print mp }' /proc/self/mountinfo)
+  [ -z "$bad" ] || { opkit_say "REFUSE(opkit_ns): writable mounts outside the shadows (the root is not read-only): $(tr '\n' ' ' <<<"$bad")"; return 1; }
+  for probe in / /opt /home /root /usr /usr/lib /boot /var /var/cache /bin; do
+    [ -d "$probe" ] || continue
+    case " $1 ${OPKIT_RW:-} /tmp " in *" $probe "*) continue ;; esac
+    d="$probe/.opkit-ro-canary.$$"
+    if { : >"$d"; } 2>/dev/null; then rm -f "$d"; opkit_say "REFUSE(opkit_ns): a file can be created under $probe: the root is not read-only"; return 1; fi
+  done
+  return 0
+}
+
+# The proof writes this once it holds; a command inside the namespace re-asserts from it (the host
+# descriptor is gone by then). Content: our namespace ids and the host's.
+OPKIT_STAMP=/run/.opkit-ns-proved
+opkit_ns_ids() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  echo "mnt=$(readlink /proc/self/ns/mnt),pid=$(readlink /proc/self/ns/pid),uts=$(readlink /proc/self/ns/uts),ipc=$(readlink /proc/self/ns/ipc)"
+}
+opkit_stamp_ok() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  local s own host
+  [ -f "$OPKIT_STAMP" ] && [ ! -L "$OPKIT_STAMP" ] && [ "$(stat -c %u "$OPKIT_STAMP")" = 0 ] || return 1
+  s=$(cat "$OPKIT_STAMP") || return 1
+  own=${s%% *}; host=${s#* }
+  [ "$own" = "$(opkit_ns_ids)" ] || return 1
+  [ "$(sed -n 's/^mnt=\([^,]*\).*/\1/p' <<<"$own")" != "$(sed -n 's/^mnt=\([^,]*\).*/\1/p' <<<"$host")" ]
+}
+
+# Make every mount of this namespace read-only in one recursive step. Refuses (1) if it cannot.
+opkit_ns_make_ro() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  opkit_ns_precondition opkit_ns_make_ro || return 97
+  python3 -S - <<'PY' || { opkit_say "REFUSE(opkit_ns): cannot make the root read-only (mount_setattr)"; return 1; }
+import ctypes, sys
+libc = ctypes.CDLL(None, use_errno=True)
+class A(ctypes.Structure):
+    _fields_ = [("attr_set", ctypes.c_uint64), ("attr_clr", ctypes.c_uint64), ("propagation", ctypes.c_uint64), ("userns_fd", ctypes.c_uint64)]
+a = A(1, 0, 0, 0)                        # MOUNT_ATTR_RDONLY
+r = libc.syscall(442, -100, b"/", 0x8000, ctypes.byref(a), ctypes.sizeof(a))   # mount_setattr(AT_FDCWD, "/", AT_RECURSIVE)
+if r != 0:
+    sys.exit(1)   # (amendment 118: no write to a stderr this process has not vetted; the shell says what failed)
+PY
+}
+
+# Any directory descriptor above stderr is a way out of the shadows; prints each and returns 1.
+opkit_ns_fd_leak() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  local f n=0 t
+  for f in /proc/self/fd/*; do
+    case "${f##*/}" in 0|1|2) continue ;; esac
+    [ -d "$f" ] || continue
+    t=$(readlink "$f" 2>/dev/null)
+    opkit_say "LEAK: descriptor ${f##*/} -> ${t:-?}"; n=$((n + 1))
+  done
+  [ "$n" = 0 ]
+}
+
+# Called once, after the proof: closes the host-root descriptor and checks nothing like it survives.
+opkit_ns_drop_host_fd() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  opkit_ns_precondition opkit_ns_drop_host_fd || return 97
+  if [ -n "${OPKIT_HOST_FD:-}" ]; then eval "exec $OPKIT_HOST_FD<&-"; unset OPKIT_HOST_FD; fi
+  opkit_ns_fd_leak
+}
+
+# ── amendment 105 ─────────────────────────────────────────────────────────────────────────────────
+# The capability bounding set the command runs with (see the header). OPKIT_CAPS_KEEP names capabilities a
+# step is handed anyway; the ONLY one that may be named is sys_admin.
+OPKIT_DROP_CAPS="sys_admin sys_module sys_rawio sys_boot sys_time syslog mknod dac_read_search net_admin net_raw sys_ptrace bpf perfmon mac_admin mac_override audit_control linux_immutable sys_pacct sys_tty_config checkpoint_restore wake_alarm block_suspend sys_chroot"
+opkit_bounding_arg() { # prints the setpriv --bounding-set argument; returns 1 on a capability that may not be kept
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  local c k out=""
+  for c in $OPKIT_DROP_CAPS; do
+    for k in $(tr ',' ' ' <<<"${OPKIT_CAPS_KEEP:-}"); do
+      [ "$k" = sys_admin ] || { opkit_say "REFUSE(opkit_ns): OPKIT_CAPS_KEEP may name only sys_admin (got: $k)"; return 1; }
+      [ "$k" = "$c" ] && continue 2
+    done
+    out="$out,-$c"
+  done
+  echo "${out#,}"
+}
+
+# OPKIT_RW entries (strictly below /var/tmp, amendment 113) and the scratch root (below /tmp or /var/tmp) are scratch the caller made, never "whatever the environment said"
+# (amendment 109): absolute, a real directory (not a symlink), STRICTLY below /tmp or /var/tmp (realpath), owned
+# by the caller, neither group- nor other-writable (a shared /var/tmp is 1777), and not a system path. $TMPDIR is
+# not a temp root: the environment does not get to name one.
+# OPKIT_RW_ROOTS_FOR_TEST: extra temp roots, honoured only for scripts/test_opkit_ns.sh (so its tests can reach the
+# system-path guard without a real host directory being involved); any other caller that sets it is refused.
+opkit_rw_extra_roots() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  [ -n "${OPKIT_RW_ROOTS_FOR_TEST:-}" ] || return 0
+  opkit_selftest_caller || { opkit_say "REFUSE(opkit_ns): OPKIT_RW_ROOTS_FOR_TEST is set outside scripts/test_opkit_ns.sh"; echo /nonexistent-refused; return 0; }
+  echo "$OPKIT_RW_ROOTS_FOR_TEST"
+}
+opkit_scratch_check() { # LABEL DIR [ROOT...] : the one rule for every directory the caller names as scratch (default roots /tmp and /var/tmp)
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  local what=$1 d=$2 r root ok=0 mode own roots
+  shift 2; roots="$*"; [ -n "$roots" ] || roots="/tmp /var/tmp"
+  # amendment 120: a scratch path with whitespace or a glob character is refused. The roots used to be expanded unquoted, so
+  # '/var/tmp/s/a b' (one validated directory) became TWO roots, '/var/tmp/s/a' and 'b', neither validated.
+  case "$d" in *[[:space:]]*|*[\*\?\[\]\\]*) opkit_say "REFUSE(opkit_ns): $what entry '$d' contains whitespace or a glob character"; return 1 ;; esac
+  [ -d "$d" ] || { opkit_say "REFUSE(opkit_ns): $what entry '$d' is not a directory"; return 1; }
+  r=$(realpath -e -- "$d") || return 1
+  # canonical: absolute, no symlink, no `..`, no double slash (one check for all of them)
+  [ "$r" = "$d" ] || { opkit_say "REFUSE(opkit_ns): $what entry '$d' is not canonical (it resolves to $r)"; return 1; }
+  case "$r" in
+    /|/opt|/home|/root|/usr|/etc|/var|/boot|/dev|/proc|/sys|/run|/srv|/bin|/sbin|/lib|/lib64|/var/lib|/var/tmp|/tmp \
+    |/opt/*|/usr/*|/etc/*|/boot/*|/dev/*|/proc/*|/sys/*|/root/*|/bin/*|/sbin/*|/lib/*|/lib64/*|/var/lib/*|/var/log/*|/var/spool/*|/var/mail/*|/var/cache/*|/run/*|/srv/*)
+      opkit_say "REFUSE(opkit_ns): $what entry '$r' is a system path"; return 1 ;;
+  esac
+  for root in $roots $(opkit_rw_extra_roots); do
+    root=$(realpath -e -- "$root" 2>/dev/null) || continue
+    case "$root" in /|/opt|/home|/root|/usr|/etc|/var|/boot|/dev|/proc|/sys) continue ;; esac
+    case "$r" in "$root"/*) ok=1 ;; esac
+  done
+  [ $ok = 1 ] || { opkit_say "REFUSE(opkit_ns): $what entry '$r' is not strictly below $(sed 's/ / or /g' <<<"$roots"): it is not scratch this run made"; return 1; }
+  mode=$(stat -c %a -- "$r"); own=$(stat -c %u -- "$r")
+  [ "$own" = "$(id -u)" ] || { opkit_say "REFUSE(opkit_ns): $what entry '$r' is owned by uid $own, not the caller"; return 1; }
+  [ $(( 8#$mode & 8#022 )) = 0 ] || { opkit_say "REFUSE(opkit_ns): $what entry '$r' is group- or other-writable (mode $mode): it is shared, not scratch"; return 1; }
+  return 0
+}
+opkit_rw_validate() { # DIR...
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  local d
+  for d in "$@"; do opkit_scratch_check OPKIT_RW "$d" /var/tmp || return 1; done
+  return 0
+}
+# The roots the environment can name besides OPKIT_RW. $TMPDIR is IGNORED: the helper never consults it (inside the namespace
+# it sets TMPDIR=/tmp itself, outside it names /var/tmp and /tmp explicitly), so nothing it does can be steered by it. A caller-set
+# OPKIT_SCRATCH must pass the scratch rule or the run is refused (97) before anything is mounted or created.
+opkit_env_roots_validate() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  if [ -n "${OPKIT_SCRATCH:-}" ]; then opkit_scratch_check OPKIT_SCRATCH "$OPKIT_SCRATCH" || return 1; fi
+  return 0
+}
+
+# One descriptor, reason said through opkit_say (never through an unvetted fd 2).
+opkit_ns_fd_ok() { # N [ROOTS...]
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  opkit_ns_fd_why "$@" && return 0
+  opkit_say "$OPKIT_FD_WHY"; return 1
+}
+
+# fds 0-2 are checked, every other inherited descriptor is closed (OPKIT_KEEP_FDS names those kept, each
+# held to the same check). The caller's named scratch is OPKIT_RW and OPKIT_SCRATCH.
+opkit_ns_sanitize_fds() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  local f n bad=0 keep=" $(tr ',' ' ' <<<"${OPKIT_KEEP_FDS:-}") "
+  opkit_diag_roots_set
+  for n in 0 1 2; do opkit_ns_fd_ok "$n" "${OPKIT_DIAG_ROOTS[@]}" || bad=1; done
+  for f in /proc/self/fd/*; do
+    n=${f##*/}
+    case "$n" in 0|1|2) continue ;; esac
+    [ -e "$f" ] || continue
+    case "$keep" in *" $n "*) opkit_ns_fd_ok "$n" "${OPKIT_DIAG_ROOTS[@]}" || bad=1; continue ;; esac
+    eval "exec $n<&-" 2>/dev/null || true
+  done
+  [ "$bad" = 0 ]
+}
+
+# The host's /proc that `unshare --mount-proc` only COVERS is detached, so a `umount /proc` reveals nothing of
+# the host; /proc is then mounted fresh with hidepid and the host-affecting paths masked or read-only
+# (/proc/sysrq-trigger and /proc/sys are writable by root WITHOUT any capability, so a read-only flag on the
+# mount alone would be the only thing between a command and the host -- and a read-only /proc cannot take a
+# uid_map write, which a nested user namespace needs). The masks are bind mounts: removing one takes
+# CAP_SYS_ADMIN, which the command does not have unless it was handed it.
+opkit_ns_fresh_proc() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  opkit_ns_precondition opkit_ns_fresh_proc || return 97
+  local f
+  umount -l -R /proc 2>/dev/null || true       # the namespace's own proc mount, if any ...
+  umount -l -R /proc 2>/dev/null || true       # ... and the host's one it covered
+  umount -l -R /proc 2>/dev/null || true       # (a third, in case the namespace was set up with more)
+  mount -t proc -o nosuid,nodev,hidepid=2 proc /proc || mount -t proc -o nosuid,nodev proc /proc \
+    || { opkit_say "REFUSE(opkit_ns): cannot mount a private /proc"; return 1; }
+  for f in sys sysrq-trigger irq bus fs; do    # read-only
+    [ -e "/proc/$f" ] || continue
+    mount --bind "/proc/$f" "/proc/$f" && mount -o remount,bind,ro "/proc/$f" \
+      || { opkit_say "REFUSE(opkit_ns): cannot make /proc/$f read-only"; return 1; }
+  done
+  for f in kcore keys latency_stats timer_list timer_stats sched_debug kmsg; do   # masked
+    [ -e "/proc/$f" ] || continue
+    mount --bind /dev/null "/proc/$f" || { opkit_say "REFUSE(opkit_ns): cannot mask /proc/$f"; return 1; }
+  done
+  for f in acpi scsi; do
+    [ -d "/proc/$f" ] || continue
+    mount -t tmpfs -o ro,nosuid,nodev,noexec,size=0k tmpfs "/proc/$f" || { opkit_say "REFUSE(opkit_ns): cannot mask /proc/$f"; return 1; }
+  done
+}
+
+# A private minimal /dev: null zero full random urandom tty, a private devpts and /dev/shm. Built under a
+# scratch mount point (made before the root was read-only), then moved over /dev after the host's /dev
+# was detached. The device nodes are bind mounts taken while the host's /dev is still visible.
+opkit_ns_private_dev() { # MOUNTPOINT
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  opkit_ns_precondition opkit_ns_private_dev || return 97
+  local nd=$1 n
+  mount -t tmpfs -o mode=0755,nosuid,noexec tmpfs "$nd" || return 1
+  for n in null zero full random urandom tty; do
+    : >"$nd/$n" && mount --bind "/dev/$n" "$nd/$n" || { opkit_say "REFUSE(opkit_ns): cannot give the command /dev/$n"; return 1; }
+  done
+  mkdir "$nd/pts" "$nd/shm" || return 1
+  ln -s /proc/self/fd "$nd/fd" && ln -s /proc/self/fd/0 "$nd/stdin" && ln -s /proc/self/fd/1 "$nd/stdout" \
+    && ln -s /proc/self/fd/2 "$nd/stderr" && ln -s pts/ptmx "$nd/ptmx" || return 1
+  mount -t devpts -o newinstance,ptmxmode=0666,mode=0620,nosuid,noexec devpts "$nd/pts" || return 1
+  mount -t tmpfs -o mode=1777,nosuid,nodev,noexec tmpfs "$nd/shm" || return 1
+  mount -o remount,ro,bind "$nd" "$nd" 2>/dev/null || mount -o remount,ro "$nd" || return 1
+  umount -l -R /dev || { opkit_say "REFUSE(opkit_ns): cannot detach the host's /dev"; return 1; }
+  mount --move "$nd" /dev || { opkit_say "REFUSE(opkit_ns): cannot install the private /dev"; return 1; }
+}
+
+opkit_ns_isolate() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  opkit_ns_precondition opkit_ns_isolate || return 97     # amendment 113: before ANYTHING, including the scratch directories
+  local d keysave=${OPKIT_SCRATCH:?OPKIT_SCRATCH must be a scratch directory} r devmp
+  opkit_overrides >/dev/null || return 1
+  opkit_scratch_check OPKIT_SCRATCH "$keysave" || return 1     # amendment 109: nothing is created in a directory the environment named
+  keysave=$keysave/etc.$$
+  devmp=${OPKIT_SCRATCH}/dev.$$
+  mkdir -p "$keysave" "$devmp" || return 1    # before the root is read-only: scratch is the caller's
+  # DENY BY DEFAULT: everything is read-only from here on; only the mounts made below are writable
+  opkit_ns_make_ro || return 1
+  opkit_ns_fresh_proc || return 1
+  opkit_ns_private_dev "$devmp" || return 1
+  mount -t tmpfs -o mode=0755,nodev tmpfs "$keysave" || return 1   # a tmpfs of our own: nothing to leak
+  cp -a /etc/. "$keysave/" && mount --bind "$keysave" /etc || { opkit_say "REFUSE(opkit_ns): cannot shadow /etc"; return 1; }
+  umount "$keysave" || { opkit_say "REFUSE(opkit_ns): cannot release the scratch mount of the /etc copy"; return 1; }   # /etc keeps the tmpfs
+  for d in $OPKIT_DEFAULT_DESTS; do
+    [ "$d" = /etc ] && continue
+    if [ -L "$d" ]; then continue; fi          # /var/mail is a symlink on some hosts; its target is covered
+    mount -t tmpfs -o mode=0755,nodev tmpfs "$d" || { opkit_say "REFUSE(opkit_ns): cannot shadow $d"; return 1; }
+  done
+  mount -t tmpfs -o mode=1777,nodev,nosuid tmpfs /tmp || { opkit_say "REFUSE(opkit_ns): cannot give the command a tmpfs /tmp"; return 1; }
+  for d in ${OPKIT_RW:-}; do                   # scratch the caller made for this run, named explicitly
+    [ -d "$d" ] && mount --bind "$d" "$d" && mount -o remount,bind,rw,nodev "$d" \
+      || { opkit_say "REFUSE(opkit_ns): cannot make $d writable"; return 1; }
+  done
+  # OPKIT_RESTORE: "STASH=DEST ..." copies a stash (taken earlier, under an UNshadowed path, by a step that
+  # ran in its own namespace) back to DEST with owners and modes. Replaces the old carry-from-the-host
+  # mechanism: nothing a test needs lives under a real destination any more.
+  for r in ${OPKIT_RESTORE:-}; do
+    [ -d "${r%%=*}" ] && { mkdir -p "${r#*=}" && cp -a "${r%%=*}/." "${r#*=}/"; } \
+      || { opkit_say "REFUSE(opkit_ns): cannot restore ${r%%=*}"; return 1; }
+  done
+  if [ -n "${OPKIT_EXTRA:-}" ]; then mkdir -p /usr/local/bin && install -m 0755 $OPKIT_EXTRA /usr/local/bin/ || return 1; fi
+  if [ "${OPKIT_NET:-private}" != host ]; then command -v ip >/dev/null && ip link set lo up 2>/dev/null; fi
+  opkit_ns_assert || return 1
+  # the stamp a later re-assertion rests on (the host descriptor is closed before the command starts)
+  printf '%s %s\n' "$(opkit_ns_ids)" "$(tr ',' '\n' <<<"${OPKIT_HOST_NS:-}" | grep -v '^net=' | paste -sd,)" >"$OPKIT_STAMP" \
+    && chmod 0600 "$OPKIT_STAMP" || return 1
+  export TMPDIR=/tmp
+}
+
+# Outer shell. Never runs CMD unless the isolation was proved first.
+# Exit 97 for every refusal, including a host that cannot create the namespaces at all (an ordinary uid, a
+# kernel without them): the command never ran. (Amendment 109: that case used to return unshare's own 1.)
+# The checks that need no namespace, run with their stderr CAPTURED (amendment 118): the tools they call (realpath, stat, id ...)
+# write their own diagnostics to fd 2, and at this point fd 2 has not been classified. stdout carries one line, BSET:<set>.
+opkit_ns_prephase() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  local bset
+  # amendment 120: OPKIT_RW is split into words below (a list), so a glob character in the RAW string would be expanded to
+  # whatever it matches; the raw string is refused before anything splits it.
+  case "${OPKIT_RW:-}" in *[\*\?\[\]\\]*|*$'\n'*|*$'\t'*) opkit_say "REFUSE(ns_run): OPKIT_RW contains a glob character, a newline or a tab"; return 97 ;; esac
+  [ "$(id -u)" = 0 ] || { opkit_say "REFUSE(ns_run): not root, so no namespace to prove; the command did not run"; return 97; }
+  opkit_env_roots_validate || return 97
+  opkit_rw_validate ${OPKIT_RW:-} || return 97
+  bset=$(opkit_bounding_arg) || return 97
+  echo "BSET:$bset"
+}
+
+ns_run() {
+  { local -; set +xvTE; } </dev/null >/dev/null 2>&1
+  [ "$#" -gt 0 ] || return 2
+  local hfd hostns rc bset own="" scratch pre prerc diag
+  # Amendment 118, the order: (1) the pre-checks, every byte they print captured; (2) fds 0-2 classified with reads only,
+  # emitting only through opkit_say (which writes to fd 2 only if fd 2 itself passes); (3) only then the captured text; (4) only
+  # then anything that mounts or runs a tool whose own stderr lands on fd 2.
+  OPKIT_DIAG_ROOTS=()
+  pre=$(opkit_ns_prephase 2>&1); prerc=$?
+  bset=$(sed -n 's/^BSET://p' <<<"$pre" 2>/dev/null)
+  diag=$(grep -v '^BSET:' <<<"$pre" 2>/dev/null)
+  [ "$prerc" != 0 ] || opkit_diag_roots_set
+  opkit_ns_std_fds_ok "${OPKIT_DIAG_ROOTS[@]}" || return 97
+  if [ "$prerc" != 0 ]; then [ -z "$diag" ] || opkit_say "$diag"; return "$prerc"; fi
+  local netflag=--net
+  [ "${OPKIT_NET:-private}" = host ] && netflag=
+  unshare --mount --propagation private --pid --fork --uts --ipc $netflag true 2>/dev/null \
+    || { opkit_say "REFUSE(ns_run): the namespaces cannot be created here (unshare failed); the command did not run"; return 97; }
+  scratch=${OPKIT_SCRATCH:-}
+  if [ -z "$scratch" ]; then        # the helper's own scratch root, never one the environment named
+    own=$(mktemp -d /var/tmp/opkit-ns.XXXXXX 2>/dev/null || mktemp -d /tmp/opkit-ns.XXXXXX 2>/dev/null) && chmod 0700 "$own" \
+      || { opkit_say "REFUSE(ns_run): cannot make a scratch root under /var/tmp or /tmp"; return 97; }
+    scratch=$own
+  fi
+  exec {hfd}</ || { opkit_say "REFUSE(ns_run): cannot open a handle on the host's root"; [ -z "$own" ] || rmdir "$own"; return 97; }
+  hostns="mnt=$(readlink /proc/self/ns/mnt),pid=$(readlink /proc/self/ns/pid),uts=$(readlink /proc/self/ns/uts),ipc=$(readlink /proc/self/ns/ipc),net=$(readlink /proc/self/ns/net)"
+  OPKIT_SCRATCH=$scratch OPKIT_LIB=${OPKIT_LIB:?OPKIT_LIB must name opkit_ns.sh} OPKIT_HOST_FD=$hfd OPKIT_HOST_NS=$hostns OPKIT_BSET=$bset \
+  unshare --mount --propagation private --pid --fork --kill-child --mount-proc --uts --ipc $netflag \
+    env -u SHELLOPTS -u BASH_ENV -u BASH_XTRACEFD -u BASHOPTS -u ENV -u PS4 -u BASH_COMPAT bash --noprofile --norc -c '
+    set +o xtrace +o verbose
+    . "$OPKIT_LIB"
+    # Amendment 118: before the first mount (whose tools write to fd 2 themselves), fds 0-2 are classified again, silently
+    opkit_diag_roots_set
+    opkit_ns_std_fds_ok "${OPKIT_DIAG_ROOTS[@]}" || exit 97
+    opkit_ns_isolate || { opkit_say "REFUSE(ns_run): isolation not proved; the command did not run"; exit 97; }
+    # Amendment 101: the descriptor on the host root served the proof; the command must not inherit it
+    opkit_ns_drop_host_fd || { opkit_say "REFUSE(ns_run): a directory descriptor outlived the proof; the command did not run"; exit 97; }
+    # Amendment 105: nothing else inherited is a way out either (fds 0-2 are checked, the rest closed)
+    opkit_ns_sanitize_fds || { opkit_say "REFUSE(ns_run): an inherited descriptor is a way around the shadows; the command did not run"; exit 97; }
+    bset=$OPKIT_BSET; unset OPKIT_BSET
+    # the command runs WITHOUT the capabilities that make a read-only mount a mere flag
+    exec setpriv --bounding-set "$bset" -- "$@"' ns_run "$@"
+  rc=$?
+  exec {hfd}<&-
+  if [ -n "$own" ]; then      # the empty mount-point directories the namespace left in the scratch root we made, and the root
+    find "$own" -mindepth 1 -maxdepth 1 -type d -empty -delete 2>/dev/null
+    rmdir "$own" 2>/dev/null || true
+  fi
+  return $rc
+}
+
+# Amendment 120: the source-time guard on line 1 turned the sourcing shell's xtrace/verbose/functrace/errtrace off for the top-level
+# statements above; the caller's own settings come back here, so sourcing this file changes nothing about the caller's shell.
+__opkit_f=${__opkit_so//[!xvTE]/}
+case $__opkit_f in
+  '') unset __opkit_so __opkit_f ;;
+  *) eval "unset __opkit_so __opkit_f; set -$__opkit_f" ;;      # the LAST statement: nothing below this line is traced
+esac

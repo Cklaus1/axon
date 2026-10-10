@@ -1,0 +1,4863 @@
+{
+  "schema": "acf-source-binding/1",
+  "archive": "axon-ai-context-20260924(1).zip",
+  "archive_sha256": "68c2a7d5a49acdd2e91229210adbacf62bcb1f18e2647b013594d744e1711fac",
+  "snapshot_commit_as_reported_by_bundle": "4cceb89",
+  "snapshot_date_as_reported_by_bundle": "2026-09-24",
+  "commit_independently_verified": false,
+  "archive_file_count": 1213,
+  "files": {
+    ".cargo/config.toml": {
+      "sha256": "482895b7126fb6b0493ce48b6ea0e489ebddc4cc4809667a83199e531cc07498",
+      "bytes": 860
+    },
+    ".env.example": {
+      "sha256": "07c05e9a45d0d61335c642d6110f4752692fb7c981234715174c5807392f1511",
+      "bytes": 1103
+    },
+    ".git-blame-ignore-revs": {
+      "sha256": "6794305845993db7cd9213062cb1780cfbe2fb0ae05a2dcee849f7deb92aa98d",
+      "bytes": 999
+    },
+    ".github/workflows/ci.yml": {
+      "sha256": "c1ca01a6ca1579a90277b7b50d14319f33355e9d567d12c85e15237329e7d464",
+      "bytes": 10906
+    },
+    ".github/workflows/ios.yml": {
+      "sha256": "9e9345a0b36b6133f11363cf16678262546fcbcb2da7b186eff7534015d17cf7",
+      "bytes": 9387
+    },
+    ".github/workflows/tee.yml": {
+      "sha256": "299863e741f825e2f9ef51ad34bf1cf9f485e354446eea053cca24255396c557",
+      "bytes": 7220
+    },
+    ".gitignore": {
+      "sha256": "1a633c597f892fd6f85947413823a193fa7248c18b30b824f6d6c38e48c7c0a0",
+      "bytes": 4299
+    },
+    "AGENTS.md": {
+      "sha256": "ad1e5023f60df9e93ebd95177ab592e5b7cbd954cbc7ca96bfedfe932e3c8d44",
+      "bytes": 1789
+    },
+    "AI_Language_Plan.md": {
+      "sha256": "b572a303a8a00449da59876bd974c01b4f1d4ca05be0fef68779835250eeb37b",
+      "bytes": 62764
+    },
+    "ARCHITECTURE.md": {
+      "sha256": "22c4178cc91e346d67120a9554d9e1ddf348b004777e6966a16095978dab12a5",
+      "bytes": 21203
+    },
+    "AXON-COMPLETENESS.json": {
+      "sha256": "141d7aab1144318d4524c8e9a9773c71774513975e96d13edfba29b2009b49c5",
+      "bytes": 136218
+    },
+    "AXON-COMPLETENESS.md": {
+      "sha256": "3b101c5758f9a391cf8102a1004f7d268f230914564e9ff624098d57797d2de8",
+      "bytes": 88482
+    },
+    "AXON_ASI_KERNEL_DESIGN.md": {
+      "sha256": "a91e3325d24160f8b7951bbbff1cb04482cb3b15572f2203ce7d7701a445f0fe",
+      "bytes": 11634
+    },
+    "AXON_FOR_RLM.md": {
+      "sha256": "744533272cce4e5df7f029181f24864d9fd51ac5e6c63b806b198678e803e6ca",
+      "bytes": 10784
+    },
+    "AXON_KERNEL.md": {
+      "sha256": "4ad0fb28f4bc74f744e3fc69b1a57e9b70cc17069bdfb3b43fee19d649e62a66",
+      "bytes": 12068
+    },
+    "AXON_REFERENCE.md": {
+      "sha256": "ef59c0a21cfa90d4df0443ead805666643667525bdf2df2e1391a0db61e8b776",
+      "bytes": 92813
+    },
+    "AXON_VM.md": {
+      "sha256": "8201053f562478e6551ba3cd51ef05143ccf42e490943065f9effffd58106697",
+      "bytes": 17012
+    },
+    "BUILD_RESOLVED.md": {
+      "sha256": "c1766c014cf6c57b890d6dbcf12ec07b12cef356af62b8109a1097dc87965bf4",
+      "bytes": 5849
+    },
+    "CHANGELOG.md": {
+      "sha256": "55d0838a1e2dd13aa8801e9a961ccb05942c24f12cfacd94535ca07b92db47c5",
+      "bytes": 23919
+    },
+    "CLAUDE.md": {
+      "sha256": "27b8823e1b78aae515a2611ac1ddcae6a9edc36e47f329c8e17118e8896ff3db",
+      "bytes": 56594
+    },
+    "COMPARISON.md": {
+      "sha256": "dc2d8ffc696a0150c33bb50bac35315316033039332240e54db163920c91c676",
+      "bytes": 9272
+    },
+    "Cargo.lock": {
+      "sha256": "0b43ccaeee140e1616ab9b0aa9d17a38aa9cb63e3f37ca0f6e0827b8ec694bd5",
+      "bytes": 78487
+    },
+    "Cargo.toml": {
+      "sha256": "bdbac15c9d8087ad1de2c236660804cc16e1a69f83c3b5a61431db2e02def1d6",
+      "bytes": 1188
+    },
+    "ENVIRONMENTS.md": {
+      "sha256": "9465a65fb38b984e652bdfea05bd0f821c4c248a9e85718070a27b0c0ab4774c",
+      "bytes": 13834
+    },
+    "HOSTING_AI_PROJECTS.md": {
+      "sha256": "137732edf5d29eeaa035614c4ccbb2e860731e313b7474b82d32aef84dc33d0f",
+      "bytes": 9183
+    },
+    "IMPLEMENTATION_PLAN.md": {
+      "sha256": "6647bcdf5d274f5610314432196fc9b3fade79cd9c28396f349deb4487310a2a",
+      "bytes": 20084
+    },
+    "LICENSE": {
+      "sha256": "0e72dd7802ec2994960435e46f7d9b6b0751e835742634baf8f5dde7c1572b37",
+      "bytes": 1068
+    },
+    "README-axon-certcheck.md": {
+      "sha256": "f21732266266034a784bbdcb27a631bd5e58de2c56235a6fb29889fff3e8703b",
+      "bytes": 4361
+    },
+    "README-axon-intent.md": {
+      "sha256": "2d74e731a3af164c7ace3d1edcf3ae9129fc365a4cc2ff4339849f3cd0b531ed",
+      "bytes": 3170
+    },
+    "README-axon-os.md": {
+      "sha256": "c8bec247b062409e7a1bd33cb845f4dfc6eeeba5ed9f1649590cf82b2076a644",
+      "bytes": 2167
+    },
+    "README-r27.md": {
+      "sha256": "555e351fd5202ac9c4f82b2534b86ad6303ab40dd29d0bccd212f377700dc4eb",
+      "bytes": 2148
+    },
+    "README.md": {
+      "sha256": "695d924d1fb5fa7b741f65faeda7dae0577e67a4d5d642fc040465271f6ea21c",
+      "bytes": 9849
+    },
+    "ROADMAP.md": {
+      "sha256": "fc8b848d116c6cbef93325e43b47f132ea42fb3042cc6583ce87bb23209d831c",
+      "bytes": 66767
+    },
+    "SESSION_STATUS.md": {
+      "sha256": "43f6448cc683c0baa049af98c0bf121a67ff5169c5c4744745e79336820d9f1a",
+      "bytes": 85884
+    },
+    "STATUS.md": {
+      "sha256": "8af722e81de4c8cf85f505a333afa017d744d1904c2b9952172cfac2e340898d",
+      "bytes": 9380
+    },
+    "TARGETS.md": {
+      "sha256": "34f82b393059b91b6f6e8a757b580dd19d16ceced859748b33fdbde114c4078c",
+      "bytes": 7144
+    },
+    "VISION.md": {
+      "sha256": "d21689daccc6a55aa546a0ac7e376436277b628b248af5f0e65f731f41288315",
+      "bytes": 7920
+    },
+    "VISION_OS.md": {
+      "sha256": "1e1dc236d04822abd34232ede8bf6ec560e6f39583585f57f7cd3e89697bc4da",
+      "bytes": 29002
+    },
+    "WHY_REPLAY_MATTERS.md": {
+      "sha256": "e7b5b71083229ec88dc949d046fe06b436a0c2da9c2ab1bcb5fa42aa4e1e937b",
+      "bytes": 24324
+    },
+    "crates/axon-ai/Cargo.toml": {
+      "sha256": "577e76fb37dc1b018883b30d15eeda6f48f25e5a4ed4b4333b0c77bac8c941fa",
+      "bytes": 278
+    },
+    "crates/axon-ai/README.md": {
+      "sha256": "526dc6d7522c9b070745cebdc303dc7945b17586a8f9bbb239092b9ea9c4b1b7",
+      "bytes": 3628
+    },
+    "crates/axon-ai/src/lib.rs": {
+      "sha256": "92c2dcdd9d9bd35ac549ede1673d6ebda582283601c569605800b9beae0bdb96",
+      "bytes": 84156
+    },
+    "crates/axon-attest/Cargo.toml": {
+      "sha256": "a4c29a39cc06d728ea61d3b05c752ff6f6922af17549bacc9a69965ca7b1c78c",
+      "bytes": 481
+    },
+    "crates/axon-attest/src/lib.rs": {
+      "sha256": "2a6a0b4cd8aa575c462472b882cc01e4d19da8bba80946603ef68f7c5b5c44a4",
+      "bytes": 87135
+    },
+    "crates/axon-audit/Cargo.toml": {
+      "sha256": "1f82e8294979769307f979103b589b8e88eb478b16b5ffb40a32d2aaaa9339e4",
+      "bytes": 651
+    },
+    "crates/axon-audit/src/lib.rs": {
+      "sha256": "25b2e2267eb8a63f500cc57c3bdcc23234ab186882a38f621ed4fe13dc759732",
+      "bytes": 39666
+    },
+    "crates/axon-audit/tests/r28_gate.rs": {
+      "sha256": "c3bd25c2939413575c6348edd9b4f6c83760500bc84d7e3a7032e59a9ba8691c",
+      "bytes": 8780
+    },
+    "crates/axon-certcheck/Cargo.toml": {
+      "sha256": "defdac9313c24478573e731172e28238d3fbbda0591c8dc6ef477d14d10a670a",
+      "bytes": 950
+    },
+    "crates/axon-certcheck/examples/gen_artifacts.rs": {
+      "sha256": "831a6c811e1e0ecfb8feb8cc1fb092de80459ee87996fe8cbc70351d1a56f154",
+      "bytes": 1731
+    },
+    "crates/axon-certcheck/examples/gen_corpus.rs": {
+      "sha256": "8ee6cf7a7152e90cc86ce6edc5aabb28f5091d18c9685486cbd2c20346d67205",
+      "bytes": 6205
+    },
+    "crates/axon-certcheck/src/certificate.rs": {
+      "sha256": "46a8dc39f82f6c336adc084daebea333d32092ae333a54f35556ff9c32ff6924",
+      "bytes": 7604
+    },
+    "crates/axon-certcheck/src/checker.rs": {
+      "sha256": "e3b7bf4d0ae12a65f1cdb9d7b5fb29c240b7095f332442d90ae0cb384241d19b",
+      "bytes": 36356
+    },
+    "crates/axon-certcheck/src/cli.rs": {
+      "sha256": "b94e07721549ced9c78901f3ed2cffb04f5e5e70b8f097cd64cb7136fad1c048",
+      "bytes": 12708
+    },
+    "crates/axon-certcheck/src/emit.rs": {
+      "sha256": "a1383aab2dd9eae523b84f297d3e3af08f9514b6e9d8238d6da9dfd85248ec52",
+      "bytes": 9058
+    },
+    "crates/axon-certcheck/src/eval.rs": {
+      "sha256": "43fcb170f8d7373c92aea530e98a3a0abd7c600f95d90f637c9d155c2aec4b77",
+      "bytes": 19263
+    },
+    "crates/axon-certcheck/src/lib.rs": {
+      "sha256": "08d91d1c4ffcc569269967ccd8db44b057815c12975c1089389298d5d5bdf3b0",
+      "bytes": 1495
+    },
+    "crates/axon-certcheck/src/main.rs": {
+      "sha256": "656751c0865dfa46278f7338ffb29d71b253b5b221f673d3ba23a2c92deffdf8",
+      "bytes": 313
+    },
+    "crates/axon-certcheck/src/obligation.rs": {
+      "sha256": "5ea67036da70d902ec40b83f403a10a68048fcc29dd372154a88fc38f9488d90",
+      "bytes": 12137
+    },
+    "crates/axon-certcheck/src/obligations.rs": {
+      "sha256": "ec19e15085d50373e47ea4816893da6af4701b3787db1708a4e25869572596cb",
+      "bytes": 3386
+    },
+    "crates/axon-certcheck/src/policy.rs": {
+      "sha256": "a49858aff21518379fe8d25427293ee60aefed3ec2bd8117eb6d745413221c70",
+      "bytes": 7832
+    },
+    "crates/axon-certcheck/src/synth.rs": {
+      "sha256": "89b4afa2956ec87c15ce71357fd8a03601dd7f5c3aa20e74d3aa870ca537f50d",
+      "bytes": 17631
+    },
+    "crates/axon-certcheck/tests/acceptance.rs": {
+      "sha256": "a2e0fd236166ad653572d03795626b63d96764f8f19856e1f97f45afb2cc25fb",
+      "bytes": 19350
+    },
+    "crates/axon-certcheck/tests/corpus/fact_not_entailed.cert": {
+      "sha256": "faaf0c5b7f7b225ade56af5e18b6a384a920cda174633b14d220b4c5ca4e3441",
+      "bytes": 630
+    },
+    "crates/axon-certcheck/tests/corpus/negative_farkas_coeff.cert": {
+      "sha256": "38f4962c48afe862f3a0e8a591ae09f45db380141202016570865ace0ff2129d",
+      "bytes": 646
+    },
+    "crates/axon-certcheck/tests/corpus/non_exhaustive_split.cert": {
+      "sha256": "0224b47908bc3bd366c2e5400aa52f9c0121b44025514a48e709206729a7d8f1",
+      "bytes": 654
+    },
+    "crates/axon-certcheck/tests/corpus/stale_cert_digest.cert": {
+      "sha256": "ccf061163e24903b731b790adb045c4c7824dc2445e1b4130d0371c9685105e8",
+      "bytes": 645
+    },
+    "crates/axon-certcheck/tests/corpus/sum_not_contradiction.cert": {
+      "sha256": "cdb4d95397e22b47f92fc36c4a6b47a0907dfe30788e3265d1f26394d342d22e",
+      "bytes": 621
+    },
+    "crates/axon-certcheck/tests/corpus/wrong_obligation_digest.cert": {
+      "sha256": "9051aa1d436b4961bbd0135c881ef664d89fd059e08dd8b0a29f5cd00e7c4380",
+      "bytes": 645
+    },
+    "crates/axon-core/Cargo.toml": {
+      "sha256": "309c2bf0257ac34b37fd87a2addf98aee3048f89b8291c466b7bcfbfb840397f",
+      "bytes": 5488
+    },
+    "crates/axon-core/build.rs": {
+      "sha256": "b98abf502abf0373b0f53d78f3fceee06d88505cf0a52676ec2409e7e2ed7a42",
+      "bytes": 2552
+    },
+    "crates/axon-core/src/ai_routing.rs": {
+      "sha256": "58b8306a9933bf80516a60a713242382eaf4126e1240bd4392c2cad93dfb5ba0",
+      "bytes": 13662
+    },
+    "crates/axon-core/src/ast.rs": {
+      "sha256": "5617a14650a6ab87da4fed3fd6cfb4bc2aa62725327149aa7f7cddaa1290a76c",
+      "bytes": 27245
+    },
+    "crates/axon-core/src/audit.rs": {
+      "sha256": "2d9384910461580192a699d84b84781da3104b7292fc74011b4b84e7b217e0c4",
+      "bytes": 10595
+    },
+    "crates/axon-core/src/bin/axon-run.rs": {
+      "sha256": "237c3f33ebec08aed6e36ad0b3689f8d51577297371f2d69b675222001894b4d",
+      "bytes": 2657
+    },
+    "crates/axon-core/src/borrow.rs": {
+      "sha256": "dea710b8c6fa932bb3fbeb7d18f6ce5d832337dd28e91b54497885cd158f8636",
+      "bytes": 26040
+    },
+    "crates/axon-core/src/builtins.rs": {
+      "sha256": "cc6eb82da07f2e51694dfc024d91902fa6adb85d2f5097a4e98d3b38538cad82",
+      "bytes": 162403
+    },
+    "crates/axon-core/src/cache.rs": {
+      "sha256": "b06bc9587585d0f36a7dde08703fe9792451c94379f713c1ec97dc9529be3c72",
+      "bytes": 4715
+    },
+    "crates/axon-core/src/capabilities.rs": {
+      "sha256": "aca342c508c205ce6b1ff53a19f41c08408c0cfd2c3963f8c9e8c81299628ba1",
+      "bytes": 131853
+    },
+    "crates/axon-core/src/cert_gate.rs": {
+      "sha256": "f1e45af0c82cb4b9fb4647f40c5a7b8854ceebdb9193793942043a099067bf4b",
+      "bytes": 10269
+    },
+    "crates/axon-core/src/checker.rs": {
+      "sha256": "d5b6899536de38d5973cf5a5765732b68d59693e7f8d61a2a3ab383babef099d",
+      "bytes": 410024
+    },
+    "crates/axon-core/src/clock.rs": {
+      "sha256": "f265497a8f48b9a952d033d1591b88e6c34bf8f95ffa501464cd44cee7fe8db3",
+      "bytes": 7867
+    },
+    "crates/axon-core/src/codegen/IR_REARCH.md": {
+      "sha256": "81f7b5beeda45f36bcca779f8f917a819008d1123f6abf41d4ac37110495df9d",
+      "bytes": 16850
+    },
+    "crates/axon-core/src/codegen/MIGRATION.md": {
+      "sha256": "03efba1b794be57874fe297bc7908ac7e63e98428a459166c3ac09b5a2b14d0f",
+      "bytes": 11938
+    },
+    "crates/axon-core/src/codegen/asi.rs": {
+      "sha256": "ba862eeb587f1ae9df7ac851b19011adc60b598b4c7ef613f4bd600ac357446e",
+      "bytes": 54129
+    },
+    "crates/axon-core/src/codegen/bpf.rs": {
+      "sha256": "54deac6d02b2e88bc85cde2f3b6e5c02b2d413367714f3d730ba259abb972281",
+      "bytes": 26030
+    },
+    "crates/axon-core/src/codegen/build_wrappers.rs": {
+      "sha256": "3d1fb102ae7282a61ee26d3818c92f3e95f0a642a0017f0ece0a1cb9e7b2580e",
+      "bytes": 21145
+    },
+    "crates/axon-core/src/codegen/builtin_externs.rs": {
+      "sha256": "97a6a58be6dfc56b7f939f5cd41d19b14651aee8f8f6ac7d388318787a052259",
+      "bytes": 31510
+    },
+    "crates/axon-core/src/codegen/builtins.rs": {
+      "sha256": "7b7907bdf2b866a73ef3a9cb35586f04bae2d1c433b105af6308859cdae54627",
+      "bytes": 255332
+    },
+    "crates/axon-core/src/codegen/expr.rs": {
+      "sha256": "740b5312f2b1d5c4adc03c5d1e31ac8d56d55dd45d1ca3da352601ad17852883",
+      "bytes": 491406
+    },
+    "crates/axon-core/src/codegen/ir_inkwell.rs": {
+      "sha256": "752d80869c33c2365cb8c32b616a8dddefbcdac03129886688e30d728285d040",
+      "bytes": 3272
+    },
+    "crates/axon-core/src/codegen/link.rs": {
+      "sha256": "59abdbd9a0dd62ece42b2047c67b3bbf8e68e4bf482d28010f307feefb47ed55",
+      "bytes": 34092
+    },
+    "crates/axon-core/src/codegen/match_pat.rs": {
+      "sha256": "4bead8db533ba1bbc71eda1df912348204acd7c4657a7f426cddd3483a300c3e",
+      "bytes": 30287
+    },
+    "crates/axon-core/src/codegen/mod.rs": {
+      "sha256": "0d924df48ea7fffdc6bb04aa4d3a03feca4f00a4acc2ce6b9c234f2c6defbb0a",
+      "bytes": 119406
+    },
+    "crates/axon-core/src/codegen/option_result.rs": {
+      "sha256": "2fa5d7e0e18b1aa4a30f6a0c7a22ff2266e64af8c479c8bf54e96a3ae4207bc1",
+      "bytes": 11108
+    },
+    "crates/axon-core/src/codegen/output.rs": {
+      "sha256": "32a079de7d58eadeafe2b6d9805e1120fdf906d08faee3cca9d62b7ed1bd5299",
+      "bytes": 14267
+    },
+    "crates/axon-core/src/codegen/types.rs": {
+      "sha256": "de9703bed4874cecf5fe268feb7ae22af792b29c74975e11c802ebebefa68e68",
+      "bytes": 17277
+    },
+    "crates/axon-core/src/complexity.rs": {
+      "sha256": "c390d7b594f022634f7c4ed47dc16e7de4dbaa811b84ae79414119eadc0c954e",
+      "bytes": 19008
+    },
+    "crates/axon-core/src/comptime.rs": {
+      "sha256": "9fdebb3bb3b16d36af20301b6c4b4eb1baad781ed2ac37fad3cc345b082f0c44",
+      "bytes": 24438
+    },
+    "crates/axon-core/src/decimal.rs": {
+      "sha256": "f506ed309516e8f1bc5904fd1c0de9b5eb32c9083741a5aad6ccb32ad3404065",
+      "bytes": 12754
+    },
+    "crates/axon-core/src/diag_schema.rs": {
+      "sha256": "0cdebeda295ed29012a2ffa2ab11002cf2916edbec011f4ce701cc9e4aac96d6",
+      "bytes": 9395
+    },
+    "crates/axon-core/src/doc.rs": {
+      "sha256": "96c19ce73b4609ebe0f73d08a3a93aaa5c0c3eea08029a66e9038dc7d9471b1b",
+      "bytes": 13385
+    },
+    "crates/axon-core/src/effects.rs": {
+      "sha256": "1736bde33511ffbd98f93ca175f224f28e57be2cd36aa1961bdd34146f9e746c",
+      "bytes": 67533
+    },
+    "crates/axon-core/src/env_registry.rs": {
+      "sha256": "0f5dae51261c36fa1c132a1ba6c4b5c50d40069a4f733a5f1171a4ec0c835b7f",
+      "bytes": 15629
+    },
+    "crates/axon-core/src/error.rs": {
+      "sha256": "1277b4435fffd08143b8a0362ae5cfdb58c8fef93ef89774d9a10f99e8169a6d",
+      "bytes": 44627
+    },
+    "crates/axon-core/src/fmt.rs": {
+      "sha256": "2fdf8898c2a4c06b40626addd761e3f3edd54fa35af1378c84ca0c212101a946",
+      "bytes": 49583
+    },
+    "crates/axon-core/src/host.rs": {
+      "sha256": "5e34fc649e63e659b23f21b7c5cc6c41bc2287cc5d3d6abe77c075707dd92939",
+      "bytes": 35206
+    },
+    "crates/axon-core/src/improve.rs": {
+      "sha256": "81388ec8e2ab1811ef86c923606fdb638977d66586c59748e385961c5dbcc052",
+      "bytes": 107180
+    },
+    "crates/axon-core/src/improve_templates.rs": {
+      "sha256": "418f0883b89a3b35cea3bdc5a4d8aaa1b4ed2830d7be9b753ba7f578dfaceab5",
+      "bytes": 9677
+    },
+    "crates/axon-core/src/infer.rs": {
+      "sha256": "849c93352b87673f69ed7af743fc1093283b43fdd3ad132cf67d024a1c2cf683",
+      "bytes": 122511
+    },
+    "crates/axon-core/src/interp.rs": {
+      "sha256": "affb392bc6a0dce3f923d352b277b94370a2d2c85c66f7bca0ccb4060babb71f",
+      "bytes": 241029
+    },
+    "crates/axon-core/src/interp/builtins.rs": {
+      "sha256": "e283947fe01e5694f361d214d73a2ae543a49a542b1afda178fa467ff5347b0f",
+      "bytes": 306260
+    },
+    "crates/axon-core/src/interp/eval.rs": {
+      "sha256": "0d5ce4db2d2abc2f688f5816b44e8ead52c52e4cabd8e28c333e3796a5eac485",
+      "bytes": 73102
+    },
+    "crates/axon-core/src/interp/goal.rs": {
+      "sha256": "140c2d1889dfaf849c81f1e2f2a4910bf743748f82240520b8ea13811a37fbd8",
+      "bytes": 59910
+    },
+    "crates/axon-core/src/interp/proptest.rs": {
+      "sha256": "09432b58bee76d63a958039f7308617e280ca7574df21ba2b0362238ac80c053",
+      "bytes": 10857
+    },
+    "crates/axon-core/src/interp/provenance.rs": {
+      "sha256": "837f4db1e44114ab354d0da4b2d45614762c94ff0f00b48b88934848f6a701e8",
+      "bytes": 26788
+    },
+    "crates/axon-core/src/interp/regex.rs": {
+      "sha256": "eb0697f62e5ee1fd1cc79aaafa82b7ddc5a5fc4f2586e8109bab613e35600320",
+      "bytes": 33316
+    },
+    "crates/axon-core/src/interp/value.rs": {
+      "sha256": "b16278da41a42b442b99752fb506c9c0678f26e5c42537e4d28402e8c370acb2",
+      "bytes": 39970
+    },
+    "crates/axon-core/src/kernel.rs": {
+      "sha256": "3bb71267bf53535441bc51de7b215e957947d639f0cddfed50e77480e0f25ae6",
+      "bytes": 51071
+    },
+    "crates/axon-core/src/lexer.rs": {
+      "sha256": "2587677e55d6da1beb0d450856e84f46515122608415283bbf3b242c1543dc24",
+      "bytes": 7258
+    },
+    "crates/axon-core/src/lib.rs": {
+      "sha256": "1af856f30e6d77d70e86e6090f3e92dec7a248efddce836f2621c5ab827b08d0",
+      "bytes": 68089
+    },
+    "crates/axon-core/src/lockfile.rs": {
+      "sha256": "358fa56cdb09ef341b985480bca6796ee72be6705de716dd283243ac6b82ceb3",
+      "bytes": 14960
+    },
+    "crates/axon-core/src/lsp.rs": {
+      "sha256": "a993f25634a5849bc29de509cc575d7f1dac8ce05bbfd75f3db643ce95084c4d",
+      "bytes": 42399
+    },
+    "crates/axon-core/src/main.rs": {
+      "sha256": "494f42bab6576df8c2d93302de5174bb6f1d15c2ad8f8bb1e6be262fff5ed79e",
+      "bytes": 372962
+    },
+    "crates/axon-core/src/manifest.rs": {
+      "sha256": "26eb47b3aeb4ecca1d6b6ba322c490ebed9817ba6beb2e2f85c3f70b60b4d5a7",
+      "bytes": 22607
+    },
+    "crates/axon-core/src/mobile.rs": {
+      "sha256": "8cef2f09a626b0b9799ef92a96d477f879472eda2f20851e0ae4cfbbe0a63ad2",
+      "bytes": 26222
+    },
+    "crates/axon-core/src/mono.rs": {
+      "sha256": "c7437ebb622110bed6260294e533e01e0c5d50c99d107db04e5ac91fa29ceed1",
+      "bytes": 30302
+    },
+    "crates/axon-core/src/native.rs": {
+      "sha256": "2c84a6b11a4687703017ee32eb707ea6cbcd77705912e75379144078a600d782",
+      "bytes": 32061
+    },
+    "crates/axon-core/src/parse_help.rs": {
+      "sha256": "4a57f7b6dfab3c179416aae789e992f04f25922eeef5dc2ce977333ffb8235dd",
+      "bytes": 34349
+    },
+    "crates/axon-core/src/parser.rs": {
+      "sha256": "63310857c0d7cc75caffb61c490c8c6f9d13cf67a00ad40f9ebf54e8db76d5fa",
+      "bytes": 195390
+    },
+    "crates/axon-core/src/preflight.rs": {
+      "sha256": "667f8aa1557d00198f20c17f20576f19fe809c40c574c1c8250ad8537fd59db2",
+      "bytes": 4009
+    },
+    "crates/axon-core/src/replay.rs": {
+      "sha256": "0e37658160f5bbef237b519e65e2ab351c2a89bc996b698359605a285dade230",
+      "bytes": 74525
+    },
+    "crates/axon-core/src/resolver.rs": {
+      "sha256": "33a315a313f9553b1ddc48e3fc438c8715eb4fc9db63fe407b2ee21814452d76",
+      "bytes": 134291
+    },
+    "crates/axon-core/src/rewrite_dsl.rs": {
+      "sha256": "79380286679455ac37e31d07d07c8ae4c5b4a41bc08835b995393cd4497f3be8",
+      "bytes": 39931
+    },
+    "crates/axon-core/src/smt.rs": {
+      "sha256": "cacf6c10a36b378dff6a20d960ff913236d1ba1220c2bff7e85b9180d919ec51",
+      "bytes": 106131
+    },
+    "crates/axon-core/src/span.rs": {
+      "sha256": "407addbada0689e31f9fc9fb07ae898f5edb3b39f1defedd87454a6e932f3077",
+      "bytes": 15300
+    },
+    "crates/axon-core/src/token.rs": {
+      "sha256": "97a606de44bd9b939663241eec348fa9e387d92ca8f3b003cc445e83c6c1546e",
+      "bytes": 8287
+    },
+    "crates/axon-core/src/types.rs": {
+      "sha256": "d48435489581b27a810302bd1734317e399dca7d103ceda62584f8e56655cc0d",
+      "bytes": 20657
+    },
+    "crates/axon-core/src/verify.rs": {
+      "sha256": "a6c5dd18c3ecdf989afee1a059dd6998e53627504b21a00ccef671c11bdc6385",
+      "bytes": 46253
+    },
+    "crates/axon-core/tests/builtin_impl_matches_classification.rs": {
+      "sha256": "824a328db59d87bbd8d08aaafaad233bef685df873874e74172e5a4ddd085c05",
+      "bytes": 4305
+    },
+    "crates/axon-core/tests/builtin_value_ref.rs": {
+      "sha256": "c58cb5f35cabbf847fccf24f71bc2943b0726aec24dde5cbaf30cd6fa8e6da25",
+      "bytes": 8163
+    },
+    "crates/axon-core/tests/cli_run.rs": {
+      "sha256": "267aee486645358efd69803e6175d4f318470929af9d199312c3850fe03e74dc",
+      "bytes": 1293615
+    },
+    "crates/axon-core/tests/dstore_capability.rs": {
+      "sha256": "719146ca442af6f3376668512e6de325d904c933bd41f0cfa0048c1097ff17fa",
+      "bytes": 21337
+    },
+    "crates/axon-core/tests/fixtures/adaptive_basic.ax": {
+      "sha256": "566e8970885e73109df15367d6686ec770458a1b090e7b00ef94f80d0fe48786",
+      "bytes": 555
+    },
+    "crates/axon-core/tests/fixtures/ai_complete.ax": {
+      "sha256": "bf2ac1c3ddf83aefe492a6ab2fe9d450a4bf869efdb600c634da4c14e5f59d9a",
+      "bytes": 347
+    },
+    "crates/axon-core/tests/fixtures/ai_extract_generic.ax": {
+      "sha256": "f17a73143df9e8470029c7fd0de30f971dc10afe44253ee20d30154517a59d7c",
+      "bytes": 1665
+    },
+    "crates/axon-core/tests/fixtures/ai_extract_uncertain.ax": {
+      "sha256": "739ee5c2ecece51291229af05be7feae4cb3cb861a8fa0b055c4b9763b086842",
+      "bytes": 834
+    },
+    "crates/axon-core/tests/fixtures/borrow_errors.ax": {
+      "sha256": "3743fdad945502b00ff5ad4628c2c65490436f8df21432a0efeb726229b5cdd7",
+      "bytes": 605
+    },
+    "crates/axon-core/tests/fixtures/chan_spawn.ax": {
+      "sha256": "6a91bcb15df8673c455b9c3f127933bde02ae9aeae51402a1bcc0890fa781ac3",
+      "bytes": 515
+    },
+    "crates/axon-core/tests/fixtures/channels.ax": {
+      "sha256": "e9848a034157932b6a8ca3390c428fe13826d8ec917fb3772347279f123dbe0a",
+      "bytes": 287
+    },
+    "crates/axon-core/tests/fixtures/char_access.ax": {
+      "sha256": "4300be36baa927bb91be3f2dd123b41be07949ca6feb5f66f0c2fbdcab673d2a",
+      "bytes": 2056
+    },
+    "crates/axon-core/tests/fixtures/closure_captures.ax": {
+      "sha256": "253830a6f802f3cc51531d8a2e09c1ed2c385f670eb07f9417347d5dd88c8fc7",
+      "bytes": 489
+    },
+    "crates/axon-core/tests/fixtures/closures.ax": {
+      "sha256": "c6b1ce3b8ec04227dd8a18d7a4552a0542369e892e979c5d780f978185a7d2d2",
+      "bytes": 962
+    },
+    "crates/axon-core/tests/fixtures/comptime_consts.ax": {
+      "sha256": "45f1338747e76449649d1c823ecc67d36375c578200d94e359eec910436864ea",
+      "bytes": 663
+    },
+    "crates/axon-core/tests/fixtures/contained_fail_alias.ax": {
+      "sha256": "faca9dc1f2ec134aace368a77e64b7259c20fd1a59bbcb2d9c4a00c53fc2b408",
+      "bytes": 615
+    },
+    "crates/axon-core/tests/fixtures/contained_fail_fs.ax": {
+      "sha256": "b7d4ab2d6ef3af7872bdc4d9bc86a9badebd8526cdc86783bf1ff3a4536814ed",
+      "bytes": 413
+    },
+    "crates/axon-core/tests/fixtures/contained_fail_never.ax": {
+      "sha256": "85664d94bea459559ac16a393325d9b67d9a30b2a0d972e97e4cc8c4a64f7dc5",
+      "bytes": 446
+    },
+    "crates/axon-core/tests/fixtures/contained_pass.ax": {
+      "sha256": "ac1c4069f1f7ddc30d24ae85fba0d32af2999c45209efc50bb67a4b0123efd92",
+      "bytes": 397
+    },
+    "crates/axon-core/tests/fixtures/dump_dicts.ax": {
+      "sha256": "a3c42b4ef985bed7ac326dfd423fa44da239597d429cb2345bcf802fcca770be",
+      "bytes": 955
+    },
+    "crates/axon-core/tests/fixtures/dump_shadow_builtin.ax": {
+      "sha256": "371ef5316cd3c0da3fdc89748351f9e3719bfa4f8edb865e8e183c75a42dd79d",
+      "bytes": 606
+    },
+    "crates/axon-core/tests/fixtures/effect_row_leak.ax": {
+      "sha256": "681f363c9f364cde893cb2340b420df10a35de0b6230ad32ead8dfe5785f0015",
+      "bytes": 291
+    },
+    "crates/axon-core/tests/fixtures/effect_row_ok.ax": {
+      "sha256": "f5e1185f3647981439e564427aca273a9f0afb3d7f0edc27df6c7b63ec6755c9",
+      "bytes": 212
+    },
+    "crates/axon-core/tests/fixtures/encoding.ax": {
+      "sha256": "3c38dacba2d4321870ee90d934fa10799538d22e14fbdfb9c836e18aeb5dbe42",
+      "bytes": 2508
+    },
+    "crates/axon-core/tests/fixtures/errors_e0301_option_not_unwrapped.ax": {
+      "sha256": "cf40a1f2ef4832570bd6b4ef4115316c67973085eac5e467164b99e06a27795c",
+      "bytes": 69
+    },
+    "crates/axon-core/tests/fixtures/errors_e0302_result_ignored.ax": {
+      "sha256": "1d6e23ae54e652fb26d3fce3b9afc3643b49ece7464e8216c7a5c502be047ebe",
+      "bytes": 87
+    },
+    "crates/axon-core/tests/fixtures/errors_e0303_question_in_non_result.ax": {
+      "sha256": "ccbc99cbaf848708eaae53622b7fe1a87fa19af6ea3504a3e65f882732984760",
+      "bytes": 121
+    },
+    "crates/axon-core/tests/fixtures/errors_e0305_wrong_arity.ax": {
+      "sha256": "43c5a8e23041049c989f69dfb681465f37e2d396878a2266c60bf460c29f82e8",
+      "bytes": 72
+    },
+    "crates/axon-core/tests/fixtures/errors_e0306_wrong_type.ax": {
+      "sha256": "8338bee31c9f811df87d5d4999d443c27f59ccad4d869b01fcc29e029fb99201",
+      "bytes": 78
+    },
+    "crates/axon-core/tests/fixtures/errors_e0307_return_mismatch.ax": {
+      "sha256": "d050e78749187da6febd87c819f7a311b5171ecc1a8ea274677f390395afce6c",
+      "bytes": 62
+    },
+    "crates/axon-core/tests/fixtures/errors_e0308_unknown_type.ax": {
+      "sha256": "c51954ef445732261e57fdaf201a4226b490f5c684ea23cf417c7464862428bd",
+      "bytes": 61
+    },
+    "crates/axon-core/tests/fixtures/errors_e0309_bad_field.ax": {
+      "sha256": "4e347086700617e2b48f9a6f5a5d77fd2b3f61733a07d0b33703a650ef79bb69",
+      "bytes": 93
+    },
+    "crates/axon-core/tests/fixtures/fs_append_size.ax": {
+      "sha256": "c6d56012ebd1a63969b0fc754fa3d64351be9f9fdd409bf921912bdf49657508",
+      "bytes": 1756
+    },
+    "crates/axon-core/tests/fixtures/fs_ops.ax": {
+      "sha256": "d00fa6522a567952870524c8bb7b8e22dff75b2a366dcdc264c3c22754c84ace",
+      "bytes": 2045
+    },
+    "crates/axon-core/tests/fixtures/generics.ax": {
+      "sha256": "e0b773b247b6ff149d83b9d4a306f35c305dc2786371ca10309909c02d19fba2",
+      "bytes": 569
+    },
+    "crates/axon-core/tests/fixtures/goal_run_hillclimb.ax": {
+      "sha256": "13ffef93ea653ea079ba7325e038b3537924e59895b0618d061fc230660e068b",
+      "bytes": 1385
+    },
+    "crates/axon-core/tests/fixtures/goal_run_optimizer.ax": {
+      "sha256": "e4509ce63112a09125adb7fb7fe9ffb22ade503eb81f513f1ecd2410cd10c464",
+      "bytes": 805
+    },
+    "crates/axon-core/tests/fixtures/host_await_deep_recursion.ax": {
+      "sha256": "536b91a5c60014bbffcbca747136f62b2ff3cff4143aa5e40c6e920a087f7b01",
+      "bytes": 173
+    },
+    "crates/axon-core/tests/fixtures/io_builtins.ax": {
+      "sha256": "08b3cdca754f7c8a62f22d18d92ff1b05f6513b94148ec3376513576961468d4",
+      "bytes": 696
+    },
+    "crates/axon-core/tests/fixtures/json_arrays.ax": {
+      "sha256": "d1bba929ba1776149391d4a924220aa4f5eff0ef8649131f21b57857db6c8ffb",
+      "bytes": 2674
+    },
+    "crates/axon-core/tests/fixtures/json_f64_and_paths.ax": {
+      "sha256": "575d48855496a771e93319a5692ee33c118a1ed644a656b08ac852242a34bb83",
+      "bytes": 4467
+    },
+    "crates/axon-core/tests/fixtures/json_i64_path_failures.ax": {
+      "sha256": "bfaec08396552cb9e5fed38a709cc04e338524914ea51ab296f58e07fc4d3ff7",
+      "bytes": 1460
+    },
+    "crates/axon-core/tests/fixtures/json_write.ax": {
+      "sha256": "36207a67aad826c3a0eae623568e348bdf01fc20b02a6909ba9a4a744b9962bd",
+      "bytes": 1946
+    },
+    "crates/axon-core/tests/fixtures/kernel_goal_bad_principal.ax": {
+      "sha256": "6a9d9461d9e0474be227b42c5ad1de93f53a287b0a7b513dc8c98585766c0373",
+      "bytes": 442
+    },
+    "crates/axon-core/tests/fixtures/multifile_main.ax": {
+      "sha256": "31be6aeed893aa217657e3a4abdc8e4b7739eefb787aa7c51f2d6e33a8c7c238",
+      "bytes": 324
+    },
+    "crates/axon-core/tests/fixtures/multifile_math.ax": {
+      "sha256": "c59e3594d8e818b9a62cd1ae6cf22632279accbc6bdad2fa69c10524cdf42176",
+      "bytes": 283
+    },
+    "crates/axon-core/tests/fixtures/native_cross_module.ax": {
+      "sha256": "a4266e0cb81d0f1826c3f947fc3aab97d750e8ef7d89dcb6790e36407ae28d66",
+      "bytes": 175
+    },
+    "crates/axon-core/tests/fixtures/native_handle_arith.ax": {
+      "sha256": "7ff6ed8345b9d9bde6cf9a0a753a2c330d54d803167bbcacdf92b3155beb915e",
+      "bytes": 159
+    },
+    "crates/axon-core/tests/fixtures/native_no_cap.ax": {
+      "sha256": "fe981c0d91adc716c524564914a7c3f6691ce6923d0ae89be890ae2bda7dde51",
+      "bytes": 112
+    },
+    "crates/axon-core/tests/fixtures/native_nonrepr_arg.ax": {
+      "sha256": "b4a29a2dd7c59089a9ed6cfdd14b32f65f947b51a5be786a6a58607db4f8850b",
+      "bytes": 200
+    },
+    "crates/axon-core/tests/fixtures/native_ok.ax": {
+      "sha256": "712e7cb3bf633b328a74774e31fddadf40dd3d351b8a2c8b836e35a834586f75",
+      "bytes": 314
+    },
+    "crates/axon-core/tests/fixtures/native_unknown_module.ax": {
+      "sha256": "9df446ccfc4073f1e22425cf0059a6e044a3ec6fd9b7e643e71a655ec12d2c87",
+      "bytes": 40
+    },
+    "crates/axon-core/tests/fixtures/native_use_after_consume.ax": {
+      "sha256": "6fc32cb8d614542bfcc45ee0576ad6886d34b28a046b7dc118f82a79e5be9818",
+      "bytes": 197
+    },
+    "crates/axon-core/tests/fixtures/phase10_test_attrs.ax": {
+      "sha256": "3b03156f981f2f7bd6a05f971ce7f2b64fbbc6c70fa8857a6f883cfe340d5b23",
+      "bytes": 1209
+    },
+    "crates/axon-core/tests/fixtures/phase11_fmt_strings.ax": {
+      "sha256": "5d977b2595fd1f84899e5555b66cfa832fd1f6f1825e5fa66aa6abbc540b8348",
+      "bytes": 815
+    },
+    "crates/axon-core/tests/fixtures/phase12_coverage.ax": {
+      "sha256": "7d2b5182b604715e1f37b2b7bb6d2b95ee2b7c104a3265b1052b35804d1c1571",
+      "bytes": 1902
+    },
+    "crates/axon-core/tests/fixtures/phase13_structs.ax": {
+      "sha256": "1d68abdadf853aa74116287991b371fff4b2ab62de981600f09ca8ffadf4a4d6",
+      "bytes": 1401
+    },
+    "crates/axon-core/tests/fixtures/phase14_question_op.ax": {
+      "sha256": "0bad2dbe51c09f28307fec7572fc8170fe1e046a63524418d4038fde16b34a23",
+      "bytes": 1461
+    },
+    "crates/axon-core/tests/fixtures/phase15_higher_order.ax": {
+      "sha256": "92bf89a3e3c09bbc68beb661b69fe8cae0927ddbe6a868e44db4e53c54400778",
+      "bytes": 2369
+    },
+    "crates/axon-core/tests/fixtures/phase16_recursive_types.ax": {
+      "sha256": "ead994f40c4a0cbe07abfcd67bcceee966f81ad526bc0131b5c451ae00212179",
+      "bytes": 2893
+    },
+    "crates/axon-core/tests/fixtures/phase17_match_patterns.ax": {
+      "sha256": "01c94e10b8117662f31a29cd353644766876a6ea4d5d549e4d4308dc815ae14c",
+      "bytes": 2911
+    },
+    "crates/axon-core/tests/fixtures/phase18_string_algorithms.ax": {
+      "sha256": "d53caf9dec18ed39d70ca9504b7fd9e1cdf5eec7fc550d65d2d644f54677836c",
+      "bytes": 2859
+    },
+    "crates/axon-core/tests/fixtures/phase19_numeric_algorithms.ax": {
+      "sha256": "90f04f6f2f1dde70db2d5fbf221569a0e2cdbcd9866e26c70f723c92ef027a15",
+      "bytes": 2744
+    },
+    "crates/axon-core/tests/fixtures/phase20_state_machines.ax": {
+      "sha256": "388caed01c40c1140e6b4d657c59dcb71e338281ea6d0021ab27a826f41e5aff",
+      "bytes": 4193
+    },
+    "crates/axon-core/tests/fixtures/phase21_error_patterns.ax": {
+      "sha256": "780bf6a60fbe9f2b6dbd84c11407fa2b79803b38187d461e4c350e252043b28f",
+      "bytes": 4297
+    },
+    "crates/axon-core/tests/fixtures/phase22_generics_usage.ax": {
+      "sha256": "693c67b17e3ed4f34b72f7850c202bbf8d9be4236c156024d5f57ad25ed3dad6",
+      "bytes": 3736
+    },
+    "crates/axon-core/tests/fixtures/phase23_traits_in_practice.ax": {
+      "sha256": "ff0a8618e7f2a50453f888caed46d33a0ee04966995974a36c3c7ca9d41e16b8",
+      "bytes": 4030
+    },
+    "crates/axon-core/tests/fixtures/phase24_concurrency.ax": {
+      "sha256": "c516c8cce0e210190a5a9699a265d4fffafa6bb57d374142cf955a67af0fc368",
+      "bytes": 2987
+    },
+    "crates/axon-core/tests/fixtures/phase25_integration.ax": {
+      "sha256": "929e730cd3dc0a8eebbf47ca1223c633bd9f8e45cf6e7bf8bf87e6aa4fbeacdf",
+      "bytes": 5441
+    },
+    "crates/axon-core/tests/fixtures/phase26_comptime.ax": {
+      "sha256": "16f726a70e21e1f51a9999df04c10250a59298a6f34c2855b629c2d624848700",
+      "bytes": 3497
+    },
+    "crates/axon-core/tests/fixtures/phase27_loops_advanced.ax": {
+      "sha256": "ab1f568c1bcbfecaf5052841c94b7676fb5b015707ec8a16a125c94703be77b2",
+      "bytes": 3716
+    },
+    "crates/axon-core/tests/fixtures/phase28_generic_types.ax": {
+      "sha256": "a6f3862a6df478ea56d2c085de1a271c62a7fdbd522e1b6920d2abc59c3d72ab",
+      "bytes": 4339
+    },
+    "crates/axon-core/tests/fixtures/phase29_mutual_recursion.ax": {
+      "sha256": "0c55eab94ec9c901da90908885b2d3c4170195a9725f9e413d4aeb4c6fe5d36d",
+      "bytes": 3130
+    },
+    "crates/axon-core/tests/fixtures/phase30_comprehensive.ax": {
+      "sha256": "3d1697695e49941ae1434261ace5e96723ea398dc5210fb784bbeea4f1f05f12",
+      "bytes": 5921
+    },
+    "crates/axon-core/tests/fixtures/phase31_ownership.ax": {
+      "sha256": "683eb23c3711f7af8ec03b7181323d5bdeb2816fdc637ebf702e863715792f76",
+      "bytes": 2599
+    },
+    "crates/axon-core/tests/fixtures/phase32_string_builtins.ax": {
+      "sha256": "ea1f00c812a3726e8ff4bf84f75d82a94410965bbba6ec427558208b8116f787",
+      "bytes": 4595
+    },
+    "crates/axon-core/tests/fixtures/phase33_math_builtins.ax": {
+      "sha256": "d3c3d54a4df45d61f15de26560fd12c7484e8bcfdfe8bb2eb2e22fe0d0a5fe11",
+      "bytes": 3950
+    },
+    "crates/axon-core/tests/fixtures/phase34_float_ops.ax": {
+      "sha256": "97ff47ef55161aeff43ca6e1783eea082c709cf47839e9d8efb40372e8ef25d5",
+      "bytes": 4786
+    },
+    "crates/axon-core/tests/fixtures/phase35_nested_types.ax": {
+      "sha256": "fc68a32b631726a965d857622b52c8ac4150aa5949e4d8446c15c7cb05d184aa",
+      "bytes": 4230
+    },
+    "crates/axon-core/tests/fixtures/phase36_iterator_patterns.ax": {
+      "sha256": "816a6034116386d4d460a9163e534823a00b8915376ff206fdccd86bc9ed6717",
+      "bytes": 3224
+    },
+    "crates/axon-core/tests/fixtures/phase37_error_chaining.ax": {
+      "sha256": "891c5056452a5025d67b9cdc2296dbef0e6c5105ebc20640031749d88565a7e0",
+      "bytes": 3928
+    },
+    "crates/axon-core/tests/fixtures/phase38_string_processing.ax": {
+      "sha256": "f91827636209a5868227acbbf9bd25b0e3fafd082495d7abfd51740ca6b28002",
+      "bytes": 4119
+    },
+    "crates/axon-core/tests/fixtures/phase39_math_algorithms.ax": {
+      "sha256": "3fd9d9bec1b33674edb32bca9d0c29b0d93209020ec51b5edf9b3a934479f494",
+      "bytes": 3715
+    },
+    "crates/axon-core/tests/fixtures/phase40_struct_algorithms.ax": {
+      "sha256": "266224347bece95db4120be69bc960dfeace938a3dfe421d3704ec75bb7795b0",
+      "bytes": 3669
+    },
+    "crates/axon-core/tests/fixtures/phase41_bit_operations.ax": {
+      "sha256": "05208d6dd7ce2ee59fbe68e685fbcdaa531a5f7dd85633a476d2791d074e4141",
+      "bytes": 4594
+    },
+    "crates/axon-core/tests/fixtures/phase42_sorting_checks.ax": {
+      "sha256": "4550c5acd70da9099039f0b53208bcb7e0a49354610ea67e278ea39cf6b5bf3e",
+      "bytes": 3959
+    },
+    "crates/axon-core/tests/fixtures/phase43_advanced_match.ax": {
+      "sha256": "494f0f1c909c1b56cb9f3b8117dea113a0c3b7a9afc243a373e32f665a5b478b",
+      "bytes": 4164
+    },
+    "crates/axon-core/tests/fixtures/phase44_option_chaining.ax": {
+      "sha256": "496732ae952ff8dbf745f10240d515bfff427f0a42f3476997758a435a6c354c",
+      "bytes": 4690
+    },
+    "crates/axon-core/tests/fixtures/phase45_comprehensive_v2.ax": {
+      "sha256": "bf8830fe623ed85678d1b13a84abb22dc0fa510bd3bf0e6854c792003cdaa877",
+      "bytes": 5353
+    },
+    "crates/axon-core/tests/fixtures/phase46_trait_objects.ax": {
+      "sha256": "ca2f220252395e4636741b16774cc8834fe1c2e64a05aef5c6a44d88b9681789",
+      "bytes": 4094
+    },
+    "crates/axon-core/tests/fixtures/phase47_closure_composition.ax": {
+      "sha256": "338e158b299427cd7acb1acd3324faf264dab68b03532b412c0b12ee94c081c4",
+      "bytes": 3542
+    },
+    "crates/axon-core/tests/fixtures/phase48_string_builder.ax": {
+      "sha256": "7d7a7271f483edf1dfcd4ea6a7e3abac7aa80839fbbc354b681bf6b11ddfed86",
+      "bytes": 4077
+    },
+    "crates/axon-core/tests/fixtures/phase49_numeric_format.ax": {
+      "sha256": "445acf018680b4c08ce4737da113c26ea121fdff5919040145d6b5bae403e7ef",
+      "bytes": 3728
+    },
+    "crates/axon-core/tests/fixtures/phase50_error_recovery.ax": {
+      "sha256": "fba81f65145ebce6c564b057ccacbac682fd8bd08fb2b1e97b2f13b159c8cb7f",
+      "bytes": 4086
+    },
+    "crates/axon-core/tests/fixtures/phase51_data_structures.ax": {
+      "sha256": "ca3a6fa8ccbf542109d2642f64c71efda2e7a0c7189e0b9ed25352526e719e41",
+      "bytes": 3433
+    },
+    "crates/axon-core/tests/fixtures/phase52_sorting.ax": {
+      "sha256": "fede72b786168777a8ef928631c47250986a36be13f78ed1398738b4ad2da365",
+      "bytes": 3963
+    },
+    "crates/axon-core/tests/fixtures/phase53_recursive_math.ax": {
+      "sha256": "00b1ba9167bf85a6822ae08ea8574a46dc8c254e56dd4100847adcfde3720a42",
+      "bytes": 3441
+    },
+    "crates/axon-core/tests/fixtures/phase54_pattern_algebra.ax": {
+      "sha256": "9404d6b2b4e230cc27ad3d99f68aa077835eb8f043a758c412b40319607ff861",
+      "bytes": 5744
+    },
+    "crates/axon-core/tests/fixtures/phase55_mixed_comprehensive.ax": {
+      "sha256": "f4fd30078745bdc96e3ed69e0f4d157fb0666eea720bd9516b310e6e0ab01249",
+      "bytes": 4914
+    },
+    "crates/axon-core/tests/fixtures/phase56_while_let.ax": {
+      "sha256": "317b2f0882f059299a15de9bf2f60c9dc585cc778e9c586d2d34c533bf569cdf",
+      "bytes": 466
+    },
+    "crates/axon-core/tests/fixtures/phase57_uncertain_temporal.ax": {
+      "sha256": "9c1a9fabe2acb27fab67a0ec84bc40bd294fda9dbee12154dc9ee97ef030da52",
+      "bytes": 389
+    },
+    "crates/axon-core/tests/fixtures/phase58_advanced_closures.ax": {
+      "sha256": "5e23fbbb9554441e41a1433657765cee536beeeb650f9bea911027b84087f7c0",
+      "bytes": 3221
+    },
+    "crates/axon-core/tests/fixtures/phase59_nested_generics.ax": {
+      "sha256": "12e316cf1b4df2b53044f57d505a5c6dfa220eb217f22045325ae0b3e583d8b5",
+      "bytes": 2821
+    },
+    "crates/axon-core/tests/fixtures/phase5_builtins.ax": {
+      "sha256": "e1669abc7baf68bc1f81466273230a6bbbab54cdbddda6a44652610acc25180e",
+      "bytes": 1869
+    },
+    "crates/axon-core/tests/fixtures/phase60_string_processing.ax": {
+      "sha256": "fa238e70d457340a734ab386f085723ee93e349854b21a4ab8707d075acfb773",
+      "bytes": 4087
+    },
+    "crates/axon-core/tests/fixtures/phase61_numeric_literals.ax": {
+      "sha256": "5d008095acd4c4931dcf5e68f59ef45f8129e2048048ab1af8b1fdf71504500f",
+      "bytes": 545
+    },
+    "crates/axon-core/tests/fixtures/phase62_trait_bounds.ax": {
+      "sha256": "31574f3c6111e049fc81b0954f71da113ebca337968cfe1cd5373e3c6a49f110",
+      "bytes": 735
+    },
+    "crates/axon-core/tests/fixtures/phase63_or_patterns.ax": {
+      "sha256": "9562b609a1117a28c4c7bffd3d6b401319a99b12d3f38c216ee36f9c720cff14",
+      "bytes": 794
+    },
+    "crates/axon-core/tests/fixtures/phase64_let_else.ax": {
+      "sha256": "f236d284c12b4e14587922e519680e4bb9c4b22712679fa2a83ebda07c44681c",
+      "bytes": 2772
+    },
+    "crates/axon-core/tests/fixtures/phase65_arrays_and_slices.ax": {
+      "sha256": "4b51dffb8e26f96d7a248c40975dcdbb1632e4691f7f3634b3be8bf2999c0f27",
+      "bytes": 2890
+    },
+    "crates/axon-core/tests/fixtures/phase65_test_minimal.ax": {
+      "sha256": "4b51dffb8e26f96d7a248c40975dcdbb1632e4691f7f3634b3be8bf2999c0f27",
+      "bytes": 2890
+    },
+    "crates/axon-core/tests/fixtures/phase66_string_interpolation.ax": {
+      "sha256": "e0b6d51af266d13375f9a1fa227589b97f40d7a9f46890db9d991b89e1f21f97",
+      "bytes": 2179
+    },
+    "crates/axon-core/tests/fixtures/phase67_higher_order.ax": {
+      "sha256": "f40852817bf2defb393fc8daedd07b0c2205a434b493d9446adad963c42ac18a",
+      "bytes": 3200
+    },
+    "crates/axon-core/tests/fixtures/phase69_recursive_types.ax": {
+      "sha256": "6ff68c1f9f795e6f0fd36b77a8af231e3ba4f178228bd1ef2efcba0d7c425998",
+      "bytes": 1504
+    },
+    "crates/axon-core/tests/fixtures/phase6_builtins.ax": {
+      "sha256": "c04c41382cba423b8fab45dcabfde68b7d1d24ecdcfed5ef6e3b75ad061d2aff",
+      "bytes": 1761
+    },
+    "crates/axon-core/tests/fixtures/phase70_advanced_enums.ax": {
+      "sha256": "d4210200a6a01ad7455c385d637dbf38382a2ec3819a04ff53623af281e86a70",
+      "bytes": 1872
+    },
+    "crates/axon-core/tests/fixtures/phase71_string_escapes.ax": {
+      "sha256": "1f31d69a32008629b96888e9b8b16be3b6a7cd70074e108d64b30ff2b153e42a",
+      "bytes": 964
+    },
+    "crates/axon-core/tests/fixtures/phase72_concurrency_patterns.ax": {
+      "sha256": "abc6fa3e2208f533ff9a7f75f3ab70458ebc1222c0ac525e7fb7fe137cfb5f32",
+      "bytes": 2742
+    },
+    "crates/axon-core/tests/fixtures/phase73_error_handling_advanced.ax": {
+      "sha256": "b923134cbb4076a6f0956367cbe6e55b915fb554aceb53611115681a5357b135",
+      "bytes": 4662
+    },
+    "crates/axon-core/tests/fixtures/phase74_type_inference_advanced.ax": {
+      "sha256": "184373485f99268da8c1179fea706c3508033fcd278192a0800d749fdb52a2c0",
+      "bytes": 3708
+    },
+    "crates/axon-core/tests/fixtures/phase75_operator_overloading.ax": {
+      "sha256": "ecf7ec122075198f38234af35407bbc54c6d86ad7ed15a62db9fd7964ecda84a",
+      "bytes": 1256
+    },
+    "crates/axon-core/tests/fixtures/phase7_builtins.ax": {
+      "sha256": "69c53bb508618467dbf03e0022b1b60563056877d459ee2de09c876a1df630e2",
+      "bytes": 1864
+    },
+    "crates/axon-core/tests/fixtures/phase8_for_loop.ax": {
+      "sha256": "66fa158e6d0bf6894d9d96642455a406e2e572828abaec0c39512b6757544adf",
+      "bytes": 1423
+    },
+    "crates/axon-core/tests/fixtures/phase9_numeric.ax": {
+      "sha256": "e6e337e6746d0d729fbb00b676a070feb660ca8749c67c3f896a5a6edaf762bc",
+      "bytes": 1369
+    },
+    "crates/axon-core/tests/fixtures/r17_no_alloc_e1704.ax": {
+      "sha256": "853910b282877a8300771997207ff17785ecbe93157dd37f6a24c0076e9ce30e",
+      "bytes": 745
+    },
+    "crates/axon-core/tests/fixtures/r23_bpf_counter_clean.ax": {
+      "sha256": "6d20e43ecfae00093f3c4f8b0d1bdebf3334730456084f50a2f27fd1795f82a3",
+      "bytes": 1466
+    },
+    "crates/axon-core/tests/fixtures/r23_bpf_heap_e1704.ax": {
+      "sha256": "1ce82308fc5783ac0756df5220b8737e59a4259d4e8ed3bbb593fc19761affd0",
+      "bytes": 472
+    },
+    "crates/axon-core/tests/fixtures/r23_bpf_helper_e2300.ax": {
+      "sha256": "8172a61f31673c9af26bbb03ce50e754f47db0f94910c98d51324fe948132551",
+      "bytes": 576
+    },
+    "crates/axon-core/tests/fixtures/r23_bpf_unbounded_e1208.ax": {
+      "sha256": "f61aa32f2b7dedf2aa10660b8eab3cdc8b4fb8bee789831eeed06f1ee53a6c19",
+      "bytes": 516
+    },
+    "crates/axon-core/tests/fixtures/r24_tee_unseal_e1810.ax": {
+      "sha256": "267adb54745f81cffcc8cbd83237f5b6d78210f474d3a7607832b655ad7037eb",
+      "bytes": 1095
+    },
+    "crates/axon-core/tests/fixtures/regex.ax": {
+      "sha256": "c55b2d5fd312fcc8b6bc70872abe3d0fe51a332ce672f90758614298ea3f613a",
+      "bytes": 5914
+    },
+    "crates/axon-core/tests/fixtures/sandbox_io_does_not_grant_exec.ax": {
+      "sha256": "90e03677430a1982e53abd24afe2206387279fa5581a55d2036ab41df1b228a7",
+      "bytes": 730
+    },
+    "crates/axon-core/tests/fixtures/sandbox_nested_escape.ax": {
+      "sha256": "19a1c28b607454d9fe8079aca4308783991238201ed5f7a0e1a85dfb0e982d6d",
+      "bytes": 950
+    },
+    "crates/axon-core/tests/fixtures/sandbox_preminted_escape.ax": {
+      "sha256": "5738a4c762ce5d6f6f9e56870609bed096e883a94429293e18851d75ed69edf4",
+      "bytes": 839
+    },
+    "crates/axon-core/tests/fixtures/sandbox_scope_copy.ax": {
+      "sha256": "fd44c805b083f01d585bbb226df31020cf6ab625f48262f75eca62ac7206316f",
+      "bytes": 1557
+    },
+    "crates/axon-core/tests/fixtures/sandbox_scope_copy_read.ax": {
+      "sha256": "f584cbffff66bcc15aa6367154f21a82593f88a90bb9a03ef70fc92afea6c78e",
+      "bytes": 587
+    },
+    "crates/axon-core/tests/fixtures/sandbox_scope_fs.ax": {
+      "sha256": "b026d43988c2cc99d04978002a0af652dafc4796f782d21a8cad24d85ee9a18f",
+      "bytes": 804
+    },
+    "crates/axon-core/tests/fixtures/sandbox_scope_native_net.ax": {
+      "sha256": "68667bbf3e0aedb1c42029b8abbb4fc233427c9ae46458d069fd39f0ef4931e6",
+      "bytes": 1442
+    },
+    "crates/axon-core/tests/fixtures/sandbox_scope_net.ax": {
+      "sha256": "f23a4d5a392a6761ae651f897bc91b614b1f7cfecc60818e17e3aef4607be05d",
+      "bytes": 548
+    },
+    "crates/axon-core/tests/fixtures/sandbox_scope_traversal.ax": {
+      "sha256": "9c87b07306df69b5b123fe0b9a2e7d716e3d5cbcdae5a60eba39fbd0a3cfa379",
+      "bytes": 579
+    },
+    "crates/axon-core/tests/fixtures/select.ax": {
+      "sha256": "aeac206bf22ca937e75ae478d75465966e677938c8ebe681d9ce5f200ccd8a53",
+      "bytes": 486
+    },
+    "crates/axon-core/tests/fixtures/spans.ax": {
+      "sha256": "a99400d4aeaa1ade73ce67fbb22f7cc6b733308be596fba54170d9d1c34a196d",
+      "bytes": 295
+    },
+    "crates/axon-core/tests/fixtures/sql_injection.ax": {
+      "sha256": "728687f60787f55bc5aec0a2a6c6962f7c923d235b7316469707ce9f253e5576",
+      "bytes": 456
+    },
+    "crates/axon-core/tests/fixtures/sql_injection_guard.ax": {
+      "sha256": "4468261d787329b652001bf2127e93fd553980081cbdd0da9d910e3c97eac438",
+      "bytes": 447
+    },
+    "crates/axon-core/tests/fixtures/sql_safe.ax": {
+      "sha256": "1c15ca998dcbcaadad89e8d0dd6202feafd591e2220ea84f6ba710e0bdfc600b",
+      "bytes": 316
+    },
+    "crates/axon-core/tests/fixtures/temporal_basic.ax": {
+      "sha256": "f5535a8a4271861bc086fa023060e2935fb5ca1b7518f5d9bb15a6d353e52931",
+      "bytes": 178
+    },
+    "crates/axon-core/tests/fixtures/test_enum_arg.ax": {
+      "sha256": "d58db52f48b06b343a544a0ba15a81553fe889f32e0386411cc1935283f92801",
+      "bytes": 265
+    },
+    "crates/axon-core/tests/fixtures/trait_bounds.ax": {
+      "sha256": "c332c97954c0706c76d336ccccf8bd8f3bb46b01b9a122a03201834d9b524273",
+      "bytes": 404
+    },
+    "crates/axon-core/tests/fixtures/trait_errors.ax": {
+      "sha256": "730a259555641c447a7f55f28d8fa54cbd247d706f4958eeb04bb6d36bf5b50b",
+      "bytes": 680
+    },
+    "crates/axon-core/tests/fixtures/traits.ax": {
+      "sha256": "690815a07db76483f9f43cbb14227e13f110beda909d8d2a51a4f382adeb187c",
+      "bytes": 513
+    },
+    "crates/axon-core/tests/fixtures/uncertain_basic.ax": {
+      "sha256": "d1eacfa74593d078401fa001be0f90d4de38b9364b02453db023d6384f6670d3",
+      "bytes": 116
+    },
+    "crates/axon-core/tests/fixtures/uncertain_propagation.ax": {
+      "sha256": "7e3184dc5ea879e7307e19975ae6259bde978f1fd4148277ba3073f8d5d5079f",
+      "bytes": 678
+    },
+    "crates/axon-core/tests/fixtures/uncertain_propagation_f64.ax": {
+      "sha256": "d8465aa8b69a406ecee27949f36d828bd20e46da1c641c763ea8b1c27e1b2089",
+      "bytes": 717
+    },
+    "crates/axon-core/tests/fixtures/utf8_slice_aligned.ax": {
+      "sha256": "4a85ec73ae1dd2bc00392962ff4596dde8185f5cf696f1d8362c3d93dfe573d9",
+      "bytes": 742
+    },
+    "crates/axon-core/tests/fixtures/utf8_slice_boundary.ax": {
+      "sha256": "81607b4670862d9ea9c1baa78e8005d25016055ce6734a3bb3f4787f3fe19d2b",
+      "bytes": 605
+    },
+    "crates/axon-core/tests/fixtures/verify_ai_source.ax": {
+      "sha256": "dd2e67c059a2e1fbd80c01e47d82ed6d5d07b6ebc90734096a7cfa118e5e6d00",
+      "bytes": 604
+    },
+    "crates/axon-core/tests/fixtures/verify_fail.ax": {
+      "sha256": "a4d521859e97ed421772f357fe60d50c9738458fa71656b420d5c874c72d0eb8",
+      "bytes": 354
+    },
+    "crates/axon-core/tests/fixtures/verify_pass.ax": {
+      "sha256": "057ccc548a4959f7dc7c744ad7800545253a49f840a5b9014ae801feff09208d",
+      "bytes": 320
+    },
+    "crates/axon-core/tests/fixtures/verify_runtime_fail.ax": {
+      "sha256": "0062e8e6a0b78ea38f59fafb68cf75f84e407e8b40612c056875599a8e8cb397",
+      "bytes": 1156
+    },
+    "crates/axon-core/tests/fixtures/verify_runtime_pass.ax": {
+      "sha256": "d68248da12089276df75e86c5fb18b6de17dc7e0c9a888d14a136b6caf9d40c9",
+      "bytes": 799
+    },
+    "crates/axon-core/tests/fixtures/with_handler.ax": {
+      "sha256": "779df9e56851be5944f06b119ca4e69eedd1b2f5e4172d404c2b5c0812dff575",
+      "bytes": 749
+    },
+    "crates/axon-core/tests/integration_fixtures.rs": {
+      "sha256": "e82862ed326371a8551947191d7a7f3d489d5d3fe10ea192699398c90ff80d62",
+      "bytes": 82530
+    },
+    "crates/axon-core/tests/multi_kind_capability_consumers.rs": {
+      "sha256": "ff356d4ab3e36d22fa691b156bec83585e158dab70afae308872f32b7c735cd4",
+      "bytes": 8138
+    },
+    "crates/axon-core/tests/parse_help_probe.rs": {
+      "sha256": "2436a853a0b6ef8c53f7c432a796365addd83e55c5046fdfbcd98075bedf05ae",
+      "bytes": 27165
+    },
+    "crates/axon-core/tests/pipeline_parity.rs": {
+      "sha256": "2c2840f7eb67aa1e7bb768f33a68acab61d942d3f6ec5246005ef1046c13d8c3",
+      "bytes": 4462
+    },
+    "crates/axon-core/tests/preflight_reachability.rs": {
+      "sha256": "3ebe891a18ac7f2869a3295b2d1d2e96e865743a420f2c27e5794a7cf2fa29c9",
+      "bytes": 4227
+    },
+    "crates/axon-core/tests/release_manifest.rs": {
+      "sha256": "f4e6b234bf4434959da418dd05ccdfddbad0a26ccaa2a64b2b57bdfb2698aac1",
+      "bytes": 9827
+    },
+    "crates/axon-cortex/Cargo.toml": {
+      "sha256": "a5991778bf57459c775598e863c6c237df9db3c5e759ba898428e435aa01c45b",
+      "bytes": 598
+    },
+    "crates/axon-cortex/README.md": {
+      "sha256": "29ff82eb8bc87003dcc078f6f1b3a14541b1e62bf67b34382356f33420921eb2",
+      "bytes": 6163
+    },
+    "crates/axon-cortex/benchmarks/README.md": {
+      "sha256": "74f4de5570f7dead35302263202869d77cb880142a0351f281b3caf36fc923d9",
+      "bytes": 15508
+    },
+    "crates/axon-cortex/benchmarks/adversary.py": {
+      "sha256": "46389b51ae7906060eff8b5bec639507956f3c9d02ecbd1a54aad358993153d9",
+      "bytes": 4566
+    },
+    "crates/axon-cortex/benchmarks/analyse_real_model.py": {
+      "sha256": "502c7443aec5e0974d9191501f2225ddc12f011cd115ec1a3d23a89627a95001",
+      "bytes": 21352
+    },
+    "crates/axon-cortex/benchmarks/check_docs.py": {
+      "sha256": "6880c54b8dfbc30469e95b3d41c6d66aaa68214a736e21f172d5324fdbf87385",
+      "bytes": 19122
+    },
+    "crates/axon-cortex/benchmarks/common.py": {
+      "sha256": "9c55548a5961667472318196de5b9c3b97721eb178a0b7e4044cd11bbb05db85",
+      "bytes": 8861
+    },
+    "crates/axon-cortex/benchmarks/drivers/claude_cli.sh": {
+      "sha256": "0531dc3dc831eaf693673d042327c89f8cbdf6c9a868e6d13b51bdee9d09fa2f",
+      "bytes": 5408
+    },
+    "crates/axon-cortex/benchmarks/guess.py": {
+      "sha256": "d6a65d7f197696864317a86fbc9d5e1c62984e7ed8c945215e8741529ed1214c",
+      "bytes": 2724
+    },
+    "crates/axon-cortex/benchmarks/guessing.py": {
+      "sha256": "d7915784943d7984473252ed04483a62e4d3f754dca7b2263d1b44522cca562d",
+      "bytes": 3549
+    },
+    "crates/axon-cortex/benchmarks/localization-2026-09-20.json": {
+      "sha256": "f32076c8213cfa897d2504b41bb8799e1b2ac95ef5df1cc8ef454a5446ce4e05",
+      "bytes": 26398
+    },
+    "crates/axon-cortex/benchmarks/oracle.py": {
+      "sha256": "1e4dc21f5355b20b9d6c7f88a51cfbe9530af9fc507fe24b0564e9cd824a5501",
+      "bytes": 4853
+    },
+    "crates/axon-cortex/benchmarks/out_of_scope.py": {
+      "sha256": "81c82736d76b6996983212ddf987cafd638cb61d29f701b92382d93c2aea930d",
+      "bytes": 4011
+    },
+    "crates/axon-cortex/benchmarks/pending_driver_patch.py": {
+      "sha256": "7fcb7db72058888c1670dd3ae604e4a404a8de8da966da38b869285461662a5a",
+      "bytes": 4688
+    },
+    "crates/axon-cortex/benchmarks/real-model-2026-09-20.json": {
+      "sha256": "367c411b562cedbaab5f4fda81286181ea4daac4889d9184d981e460408073f9",
+      "bytes": 4182
+    },
+    "crates/axon-cortex/benchmarks/real_model.py": {
+      "sha256": "e5e2fa9e68386005442c0f49fa6557ccc52dd2c85792c02157ad46883138addb",
+      "bytes": 12369
+    },
+    "crates/axon-cortex/benchmarks/selftest_analyse.py": {
+      "sha256": "9662f2f7daa919a98600f5f32f977c59630283df6a1038835d68c4d3da34729c",
+      "bytes": 8354
+    },
+    "crates/axon-cortex/benchmarks/topk.py": {
+      "sha256": "5c751530462cc73b69f9e45344e5abc9cef448c52b89262a4fbe19ca12b2c8c0",
+      "bytes": 5943
+    },
+    "crates/axon-cortex/fixtures/ambiguous.ax": {
+      "sha256": "6c0347d539514180b27f3061d408d11e7e82db793c38719b15ec8c7a7ff0a2eb",
+      "bytes": 931
+    },
+    "crates/axon-cortex/fixtures/broken.ax": {
+      "sha256": "6ebcc2bcd26cc4b5949ce97ce745ad518df35aae550208ee227fdb36a682b99a",
+      "bytes": 739
+    },
+    "crates/axon-cortex/fixtures/clean.ax": {
+      "sha256": "2458eb9fcc559e8baaafa6f78840fbab38bf540a8d0c7804599a48e92f656e5b",
+      "bytes": 337
+    },
+    "crates/axon-cortex/fixtures/pre_existing_failure.ax": {
+      "sha256": "292fa9b632853073f469c20eb7a886e4830d74d00397a167735c0a00a982899e",
+      "bytes": 932
+    },
+    "crates/axon-cortex/fixtures/sibling_check.ax": {
+      "sha256": "4216a9718ca3485e7bbf38727c9c01fb4517a2a838f00ac583d26322ae9d5e23",
+      "bytes": 650
+    },
+    "crates/axon-cortex/fixtures/uncompilable.ax": {
+      "sha256": "a7d107c66a1c66e68a2e1865343b56a007c40c77fd1e04ca405423d87f8710da",
+      "bytes": 392
+    },
+    "crates/axon-cortex/fixtures/warned.ax": {
+      "sha256": "6059827100c09a6460d685f43f4206173b04b3bf78f0e48a57dcb50bbd537b85",
+      "bytes": 628
+    },
+    "crates/axon-cortex/fixtures/warned_broken.ax": {
+      "sha256": "f98ae2ddbca701a56bd84d6a1088c768122e9794e9001ae20f55b808e92f0464",
+      "bytes": 1008
+    },
+    "crates/axon-cortex/skills/README.md": {
+      "sha256": "653ef30da63cd93093fd0ec29d379c3605a1e8a7efee97581e58f47284c5f051",
+      "bytes": 1139
+    },
+    "crates/axon-cortex/skills/documented-limitation-fabricates-value.json": {
+      "sha256": "fab5a285e56352619f2ff2cd0db2158401ec4c0ee0baa9eb5c763bfb99c5ec98",
+      "bytes": 2630
+    },
+    "crates/axon-cortex/skills/feed-the-gate-a-rejectable-case.json": {
+      "sha256": "ff1532d3c8a64c6a9e0cccc185dec96521f3802c25b3d641f885da5a2c3f319e",
+      "bytes": 2292
+    },
+    "crates/axon-cortex/skills/instrument-and-sweep-for-reachability.json": {
+      "sha256": "3a5dee0d876e9658844fd15a887a883601a99287023ab09d5882fed347350f25",
+      "bytes": 2300
+    },
+    "crates/axon-cortex/skills/trace-a-claim-to-its-executed-predicate.json": {
+      "sha256": "f9f7c306bad43e6bb46280c9c3bc9064fa42f13cab9af9aad19969b93827b218",
+      "bytes": 3247
+    },
+    "crates/axon-cortex/src/action.rs": {
+      "sha256": "6b0027c1ca312da811cc89a0d4efe0b21c4f52cf50732d51923076970822d534",
+      "bytes": 6207
+    },
+    "crates/axon-cortex/src/ai.rs": {
+      "sha256": "9fdc49f89801988dcba78f6033236ac41b0521799cf0fa500553e73730936ea3",
+      "bytes": 4164
+    },
+    "crates/axon-cortex/src/bin/cortex.rs": {
+      "sha256": "94796fb245f481b8329de06e6dd5ebcdf9e00fd320b342ebb8dd09b0023ab812",
+      "bytes": 27208
+    },
+    "crates/axon-cortex/src/episode.rs": {
+      "sha256": "2e0061d1c4f9a062622bbd1f287df382dff07601c63a50960a14d274cf3f64b6",
+      "bytes": 8476
+    },
+    "crates/axon-cortex/src/generate.rs": {
+      "sha256": "623854e6968bc8cb3b95515f2794d1b134ec3fce6359039bba2e15a1892165e7",
+      "bytes": 19656
+    },
+    "crates/axon-cortex/src/lib.rs": {
+      "sha256": "14af6e5cf1229b330d9b2c984ef93d7a085c4ee9cd08d436deb35865767ccdc5",
+      "bytes": 24746
+    },
+    "crates/axon-cortex/src/locate.rs": {
+      "sha256": "24efb406c5b9a278f29a9120d7d735512dae50bcffba47b431657e66828c3e79",
+      "bytes": 11686
+    },
+    "crates/axon-cortex/src/runner.rs": {
+      "sha256": "3f970015a52590d79805654ceb0f1e0b25ee0425c9ca55661b2dbd169e232e68",
+      "bytes": 79159
+    },
+    "crates/axon-cortex/src/select.rs": {
+      "sha256": "1068dd7e11cb9861388774396f9bae154e4514d40e54ca8c216fa0c76c24b51b",
+      "bytes": 10038
+    },
+    "crates/axon-cortex/tests/cli.rs": {
+      "sha256": "1e12cdec4c4e85da44afe3ad4ec44f11345d9ee9175fb85a1315d926c2af54ec",
+      "bytes": 60720
+    },
+    "crates/axon-cortex/tests/conformance.rs": {
+      "sha256": "027c707af0747b3c7325d931ce06d14fee91a96c78c6d4055548a186659b6acf",
+      "bytes": 96783
+    },
+    "crates/axon-cortex/tests/skills.rs": {
+      "sha256": "fdc17f52d79de9579e0be86fe0edad5db08d4ae3f462c86b22b4235656d53797",
+      "bytes": 4574
+    },
+    "crates/axon-domain/Cargo.toml": {
+      "sha256": "85a2c7715f5ba674b86ad68e6988ee7c360ff78fe84099f194e7530d91154651",
+      "bytes": 1367
+    },
+    "crates/axon-domain/examples/fhir_test_server.rs": {
+      "sha256": "e684f97cfbe6610006e08a6c370aefb3921a5f4f236271148472cafdd5e00d70",
+      "bytes": 1575
+    },
+    "crates/axon-domain/examples/modbus_test_server.rs": {
+      "sha256": "ffef1589dfe71d5cd17427d53674f26f68a8e06f73d3120d1bcc341855e3d251",
+      "bytes": 3627
+    },
+    "crates/axon-domain/src/fhir.rs": {
+      "sha256": "6de5c46f682af6bf6a8f7e605b68e4b8bfdbd06b2b783649d8406c56acf91d33",
+      "bytes": 10838
+    },
+    "crates/axon-domain/src/fix.rs": {
+      "sha256": "e7a94891eee82452ee886630e015ebc3af0889f64a97fab4b30a162db1394751",
+      "bytes": 12120
+    },
+    "crates/axon-domain/src/lib.rs": {
+      "sha256": "33ad1b23eeda5596e94a21f203d4b74023aa9de3e29a69402c179903da2dd8c9",
+      "bytes": 7156
+    },
+    "crates/axon-domain/src/modbus.rs": {
+      "sha256": "a3d77f705c62c7497e1f38be368aa0bc1825ca10931ef66ae140b561fce5e865",
+      "bytes": 13091
+    },
+    "crates/axon-gfx-mock/Cargo.toml": {
+      "sha256": "61fa54db4a4707de8a5c184b1300923c4dbb504c5a70821b9515e9d77ace50f3",
+      "bytes": 689
+    },
+    "crates/axon-gfx-mock/src/lib.rs": {
+      "sha256": "b02d105129ae3faf7412df213e84507abc426969f05facefdc49f1b49b0369d7",
+      "bytes": 19680
+    },
+    "crates/axon-gfx/Cargo.toml": {
+      "sha256": "ff4a0b00ca9efb4abcc9939517de7f78277974d7a02695d7ce9dfdd4b20b18c2",
+      "bytes": 1894
+    },
+    "crates/axon-gfx/src/lib.rs": {
+      "sha256": "d9a9dd0ce685d75fc3a4aae87b5281ff5835dc8b5c9d6990ee8495783d7d8643",
+      "bytes": 19194
+    },
+    "crates/axon-guest-init/Cargo.toml": {
+      "sha256": "3154fbe8a46464cd5b72f9c50ecd4ddac9fc50cd684eb172bab823b11159befb",
+      "bytes": 615
+    },
+    "crates/axon-guest-init/src/main.rs": {
+      "sha256": "3d0d0603f45677b36358e2afdea96c3cc67624774dda538cff486826196155b1",
+      "bytes": 26420
+    },
+    "crates/axon-guest-kernel/Cargo.toml": {
+      "sha256": "e36310904801a3dcef1d3df26007819249c804ecb71ee5b462edcc44b4cb8ec5",
+      "bytes": 729
+    },
+    "crates/axon-guest-kernel/build.rs": {
+      "sha256": "9f72b43889402f2b5a0fd4f5589d5d2eb13d7d19538097abcbc4cbe849cb48d1",
+      "bytes": 1010
+    },
+    "crates/axon-guest-kernel/linker.ld": {
+      "sha256": "7845caa27f2cfed03629ecb567e856e2d37619ecd46652f012f8a6cd8dec6a95",
+      "bytes": 1440
+    },
+    "crates/axon-guest-kernel/src/boot.s": {
+      "sha256": "d9a060f89c8becbd5ba89865b6e99ab646dfbfa4f7cf74c3438d8ce7446f558f",
+      "bytes": 7689
+    },
+    "crates/axon-guest-kernel/src/bump.rs": {
+      "sha256": "08a132c31572ea72673a9efc6adad1749dcc9b49bbc917e7c4af40a8c4e8076d",
+      "bytes": 2546
+    },
+    "crates/axon-guest-kernel/src/enforce.rs": {
+      "sha256": "0afd69f5610c8f4a016345ea9d9c54c3068f07c38047c44cbc7329ad8ce87330",
+      "bytes": 19849
+    },
+    "crates/axon-guest-kernel/src/hypercall.rs": {
+      "sha256": "383a6767b48d8dca1135a4f61e1c3fa1f01320ee25edf96e8308c3362cab24bd",
+      "bytes": 1958
+    },
+    "crates/axon-guest-kernel/src/main.rs": {
+      "sha256": "9f125a09a3582e5168d6e97005a69a43fbd47fc44b85be714d36dc21cab7cfaa",
+      "bytes": 3167
+    },
+    "crates/axon-guest-kernel/src/mmds.rs": {
+      "sha256": "9c264fe0b09213ef680630401ce7cb2a4869bf0436854f7133bbce4895a4ef25",
+      "bytes": 9485
+    },
+    "crates/axon-guest-kernel/src/mmds_parse.rs": {
+      "sha256": "17cd924b75eb3a08e8313b67c987948486d02a68b8043d42c8d9176f4755a533",
+      "bytes": 5123
+    },
+    "crates/axon-guest-kernel/src/serial.rs": {
+      "sha256": "d06501a120d3410a097eb291fd023b5b333d9321c16d1601ab4fa8906df9d7bd",
+      "bytes": 2259
+    },
+    "crates/axon-guest-kernel/targets/x86_64-axon-metal.json": {
+      "sha256": "446e7bec4ceb2a03c92824a8e14b24970acb9b9241d1789e160f6904345d3e67",
+      "bytes": 568
+    },
+    "crates/axon-intent/Cargo.toml": {
+      "sha256": "fbecb6f0482a9767ee1f9b7d23b8ae3a3495052625845d892440e25ae6cc7c7c",
+      "bytes": 546
+    },
+    "crates/axon-intent/src/admit.rs": {
+      "sha256": "23ac6316ea23e523804ffde4b7b5248b7aa340cd8bdb5340a1e2ff334a84cc02",
+      "bytes": 2775
+    },
+    "crates/axon-intent/src/approval.rs": {
+      "sha256": "20cc3a60e252a07c1810918aab168cfe372b1e8f3868c6aedd870deb69f8647a",
+      "bytes": 15595
+    },
+    "crates/axon-intent/src/cli.rs": {
+      "sha256": "2b920dd159c023636dfef892005a611777c447ee472a39459942edcf14c9a137",
+      "bytes": 17783
+    },
+    "crates/axon-intent/src/confidence.rs": {
+      "sha256": "091fd3289f33315bf2ee406bafe83303a70430c47e2b17a4fc0235f93a91ee48",
+      "bytes": 8767
+    },
+    "crates/axon-intent/src/emit.rs": {
+      "sha256": "9f14f7e6dd4a7b2741936c126db70430713f3e1dae74f3b131b786139b6fe456",
+      "bytes": 4976
+    },
+    "crates/axon-intent/src/grant_infer.rs": {
+      "sha256": "1acc986ee3dd1833b62503b0c43c984aaf6e84726e9c292572baafc8bbab393f",
+      "bytes": 6860
+    },
+    "crates/axon-intent/src/intent.rs": {
+      "sha256": "142fd23354ab3428953fc6e78719614b19c06d14c303295bfcdbb06a16feb976",
+      "bytes": 13721
+    },
+    "crates/axon-intent/src/lib.rs": {
+      "sha256": "08042573ffe39a4c26644c4b42d00cb1df3144b0935eca0fec381086a2ec1f9b",
+      "bytes": 1910
+    },
+    "crates/axon-intent/src/main.rs": {
+      "sha256": "d757d7fff1e2413ee13c152c7e1de7cacb2dcf445789ce87eef94f2144a48375",
+      "bytes": 269
+    },
+    "crates/axon-intent/src/pipeline.rs": {
+      "sha256": "1579f4bee20f04d6b8fe78e7dbdbb13fb1574ec370fd83db1f4efcae77c72ccc",
+      "bytes": 8926
+    },
+    "crates/axon-intent/src/policy.rs": {
+      "sha256": "f29ac48a2ad3d4db76b3977f6aef4a64f0b830bfd358df00906b3d94214f2177",
+      "bytes": 4771
+    },
+    "crates/axon-intent/src/refusal.rs": {
+      "sha256": "a176d1c342073c6d9872457f0980f3816ebf66b1cc39a48e5996fbf26f1ea61d",
+      "bytes": 3804
+    },
+    "crates/axon-intent/src/synth.rs": {
+      "sha256": "ee9a24430b8a5b2c8ccbb6c419ac5fc5745370ff8534f244943699d72cea0d86",
+      "bytes": 25941
+    },
+    "crates/axon-intent/tests/acceptance.rs": {
+      "sha256": "fdb852b3cb7155ed18bf92600ab87bbb528d79d9bad005266d712962dbe4a958",
+      "bytes": 25349
+    },
+    "crates/axon-ledger/Cargo.toml": {
+      "sha256": "4d3c81cfc152b1671a4700f68c9084e2d206a39052e7af76f80ea70d3bc539ad",
+      "bytes": 663
+    },
+    "crates/axon-ledger/LEDGER.md": {
+      "sha256": "8434dd8de11f74c66783a76a0d094d98d5e7a1a454b3d69987f44f64c35688c7",
+      "bytes": 8195
+    },
+    "crates/axon-ledger/RELEASING.md": {
+      "sha256": "6ca89185cb1a01c390d48c44710d46b599baabe25c68900ceee3154a6a9e9e70",
+      "bytes": 1930
+    },
+    "crates/axon-ledger/github-action/pr-enrichment.yml": {
+      "sha256": "263aa38a3cddf7174707ecc7ba662447178aac12c588150fcd8b3b3e6cbce6a4",
+      "bytes": 4926
+    },
+    "crates/axon-ledger/install.sh": {
+      "sha256": "b0068e9ad15353a64ff65d483c9f37097033421ce964b4c0b74d17ac3dfa5729",
+      "bytes": 954
+    },
+    "crates/axon-ledger/src/gate.rs": {
+      "sha256": "d905bad7c262f5128d0b355c4998f0ee71106f92e7065ddd9a51b1ab9dc31601",
+      "bytes": 4214
+    },
+    "crates/axon-ledger/src/hash.rs": {
+      "sha256": "afcd92106dab89d44c1b570aedd835182f93c9987b0725b43d09a03f495bc8dc",
+      "bytes": 2730
+    },
+    "crates/axon-ledger/src/ingest/edge.rs": {
+      "sha256": "74d78cb59a1800a0c613d1289774d76b9fcc3d0c5a73f768691748b39283b1ac",
+      "bytes": 11405
+    },
+    "crates/axon-ledger/src/ingest/git.rs": {
+      "sha256": "755eee70f0020b539474ca7c9b8cadc59671a16015170199e8bdb568f35835d7",
+      "bytes": 3995
+    },
+    "crates/axon-ledger/src/ingest/mod.rs": {
+      "sha256": "093fb15d42cb858596d465b8932d5d4a4716122348dd77e945af56a95dc1ac52",
+      "bytes": 79
+    },
+    "crates/axon-ledger/src/ingest/outcome.rs": {
+      "sha256": "cc2c0666f403c38dd1b0ccaa536b0f030c401c9a607383bf9276b9bf2a05a720",
+      "bytes": 2062
+    },
+    "crates/axon-ledger/src/ingest/provider.rs": {
+      "sha256": "9a293a81eaf1a95cb0afb102218e026d40f3149a3c08782f8f7d73dd7d084ae0",
+      "bytes": 13263
+    },
+    "crates/axon-ledger/src/ingest/session.rs": {
+      "sha256": "8532e69b4c6f671f5dc347c61f8ae9e02d390f8c262e7181d92abc9d3394130d",
+      "bytes": 16451
+    },
+    "crates/axon-ledger/src/lib.rs": {
+      "sha256": "fdcd85d50bd036a5257b23840eda7facf3834b6dac5d8691626cbc184a01b906",
+      "bytes": 148
+    },
+    "crates/axon-ledger/src/main.rs": {
+      "sha256": "11dbc0d328a68d35cee475508f3f4b4ae8bd6a8cc4a8abc91665f36724e45324",
+      "bytes": 96584
+    },
+    "crates/axon-ledger/src/mcp.rs": {
+      "sha256": "8d2089833405f82ac34b8db8d83e2325ea3f8fda927b2641b3e13aa46b125765",
+      "bytes": 37841
+    },
+    "crates/axon-ledger/src/model.rs": {
+      "sha256": "1e8d51696da0ec6e2fc51f58c87aacc4d151d6a8318eecf18dcad3a5109f0c58",
+      "bytes": 4204
+    },
+    "crates/axon-ledger/src/query.rs": {
+      "sha256": "c2599a8efcdcccb475d771dc12cf181471a69a5e44d76bf07935703457458507",
+      "bytes": 31060
+    },
+    "crates/axon-ledger/src/rbac.rs": {
+      "sha256": "889fda6174df6097cc9a3249defe4c774b018f4d7004fc73698fc2c35b8c693b",
+      "bytes": 25696
+    },
+    "crates/axon-ledger/src/store.rs": {
+      "sha256": "8d1145d32fdeb0968cffd1e757a46fde48104a4e46fb18cf0125a401d79a215e",
+      "bytes": 19021
+    },
+    "crates/axon-ledger/src/watch.rs": {
+      "sha256": "a627542c63fef124427904a05311085014d40d6fff1ba7d4ceb5397e76cab63e",
+      "bytes": 3628
+    },
+    "crates/axon-ledger/src/webhook.rs": {
+      "sha256": "1275a2f3218aaee5c0084ddbed35856e9b92b99221afb3603a540ade94ac4ef7",
+      "bytes": 12422
+    },
+    "crates/axon-ledger/tests/attribution_integrity.rs": {
+      "sha256": "c8f46ccb64b266e42a96805d01a6dea7fa0d05971f79ed92eaa7f7e26215f3c3",
+      "bytes": 15998
+    },
+    "crates/axon-ledger/tests/authority_reachability.rs": {
+      "sha256": "a1c90300cea34e3e93c3cfb51a8de3329835f47aea716c8cf72614837e3cf313",
+      "bytes": 7188
+    },
+    "crates/axon-ledger/tests/maintenance_authorization.rs": {
+      "sha256": "0dff491256dd5a0952e1eac0c0a0a42e3c9f4660626fdbf7572b63aa23b2ae2b",
+      "bytes": 36495
+    },
+    "crates/axon-ledger/tests/read_commands_filter.rs": {
+      "sha256": "f9e63a122f5303cca3920747862b882e49c5bc2004c07bb82278c2b364a0d825",
+      "bytes": 16628
+    },
+    "crates/axon-os/Cargo.toml": {
+      "sha256": "6ab768fef92db9d0a82d5bd3f6f0a994b49ea4fda05d02203f74adc084abc264",
+      "bytes": 810
+    },
+    "crates/axon-os/src/approval.rs": {
+      "sha256": "6c04402d4c59e95a12ae47d9bbb0fd94f0e15f69887e58ff382cedc6ef9f9b10",
+      "bytes": 10641
+    },
+    "crates/axon-os/src/cli.rs": {
+      "sha256": "da52395cfb6dcd7cc3af8be699bf2e3946a10618bf2a0b18911449798f764b16",
+      "bytes": 46653
+    },
+    "crates/axon-os/src/coalition.rs": {
+      "sha256": "ad8ddded1f3b1a0f84fc74e767c2e1e1d436c4cb97095450d611a1788c97158b",
+      "bytes": 8542
+    },
+    "crates/axon-os/src/corrigible.rs": {
+      "sha256": "444cabef8f2c56afb08c663510bc5266d6de35358252fb4dc6c4d4813ba4510e",
+      "bytes": 3612
+    },
+    "crates/axon-os/src/gate.rs": {
+      "sha256": "09c222e92f783a30edb09b6ef8242ce813dc34edf31ccebaef95f3f276d84057",
+      "bytes": 5301
+    },
+    "crates/axon-os/src/grant.rs": {
+      "sha256": "89df45c30aa1bca52a9db503314b5a089c71fb8d523ea99a397538bffb797e60",
+      "bytes": 13365
+    },
+    "crates/axon-os/src/killchan.rs": {
+      "sha256": "c89d533ae749d588c544491d667583a2956bcbdb819475a5186314e44c6eae3b",
+      "bytes": 10936
+    },
+    "crates/axon-os/src/latch.rs": {
+      "sha256": "63e9f2c32852b4f856f483e994e7fc23d1489d9ed40b3d189586b7311b8ff5eb",
+      "bytes": 2029
+    },
+    "crates/axon-os/src/ledger.rs": {
+      "sha256": "cddc219657c4aab305dc84951fc7dd364c5fc29a71b571668a6e86a9b4883132",
+      "bytes": 6712
+    },
+    "crates/axon-os/src/lib.rs": {
+      "sha256": "8f6b463664d653ce98a02890fd8a07dd5a57f7112fe37afef26e4bd3826e2e13",
+      "bytes": 1337
+    },
+    "crates/axon-os/src/main.rs": {
+      "sha256": "425882431dbcb6bd983b8222cb9b8f8647b9604ee04a563467d66217a072870b",
+      "bytes": 259
+    },
+    "crates/axon-os/src/manifest.rs": {
+      "sha256": "56a848251ccdab112fbc51800230b9c40759650576edef89e121dbe51d19de7d",
+      "bytes": 21490
+    },
+    "crates/axon-os/src/monitor.rs": {
+      "sha256": "1c902cf5ed05d09ad161c5e184c571087a6e244aa6a08d2bf2fbd4673036a6cf",
+      "bytes": 12347
+    },
+    "crates/axon-os/src/profile.rs": {
+      "sha256": "267a5717f23207165a2db125326fbcd132dda5ea8dfb11b4c88abb53c6b04651",
+      "bytes": 8787
+    },
+    "crates/axon-os/src/record.rs": {
+      "sha256": "84ff67aa2a1909a398e47f694691a61cd8d4875f25fad0d53ae4966c1e3d7356",
+      "bytes": 19536
+    },
+    "crates/axon-os/src/replay.rs": {
+      "sha256": "f55a30e08e15e385943d74ec020f3e05a93b9ee7f96e042c855631089385e2e7",
+      "bytes": 5957
+    },
+    "crates/axon-os/src/runtime.rs": {
+      "sha256": "7b033ba159eee680c20795c77b6007e0dfd7558227db65008897858a43b8158f",
+      "bytes": 41998
+    },
+    "crates/axon-os/src/supervisor.rs": {
+      "sha256": "7199b59f3d7101bc6c6cc638834f6812df7102cc180f6d50630a309dffb97eb2",
+      "bytes": 11685
+    },
+    "crates/axon-os/src/verdict.rs": {
+      "sha256": "99596e3101f4ab227594b70e8b89176b754e5952167130d27db6d6784d7fc038",
+      "bytes": 5507
+    },
+    "crates/axon-os/tests/acceptance.rs": {
+      "sha256": "8e6e21308b3daf6a5279394e116c69844302fca72da76bd76c34d2895c300fc2",
+      "bytes": 30396
+    },
+    "crates/axon-os/tests/authority_serialization.rs": {
+      "sha256": "45b0f533d54305665ba17328fd7bf58582127bc974b408f05cf93b0fc5dfea84",
+      "bytes": 12936
+    },
+    "crates/axon-os/tests/r27_acceptance.rs": {
+      "sha256": "120912d1bbcf6e6a36e782f9f1e5603c2f3cea9ce42d193bd107d84f8d2c6b5b",
+      "bytes": 35779
+    },
+    "crates/axon-os/tests/r29_compliance.rs": {
+      "sha256": "5fa391b3806523c30524d9cf5e9e9ca556d8640f7cef31067f8835b5992274db",
+      "bytes": 21692
+    },
+    "crates/axon-os/tests/replay_authorization.rs": {
+      "sha256": "375c53d668be44dad1bc7fdded43ac993e5ca8d6d18b5f97440a56f36288fc3b",
+      "bytes": 10486
+    },
+    "crates/axon-reflex/Cargo.toml": {
+      "sha256": "a4aa359a07513ed867185a7d74a4dd256448e582583752274da58e23f52a1492",
+      "bytes": 1233
+    },
+    "crates/axon-reflex/src/bin/sidecar.rs": {
+      "sha256": "1dfdf6d691c35ff8aeec26f132fc022942980fb136a1db3e87d3239ae2c0027a",
+      "bytes": 1153
+    },
+    "crates/axon-reflex/src/lib.rs": {
+      "sha256": "92cd5835658e6940a29f1d868b94ab53e47692be64b5aa83666c2603d0f2d9e7",
+      "bytes": 30935
+    },
+    "crates/axon-reflex/tests/principal_isolation.rs": {
+      "sha256": "c468207b299cddae856505476bfbc2b3a10f4ab10e157767d8b8b803744b063d",
+      "bytes": 10637
+    },
+    "crates/axon-reflex/tests/protocol_hardening.rs": {
+      "sha256": "f2f6e585ec889e7c74f0e0d0dbb73dc049115b9b25653adf67e3ec8ec67cf446",
+      "bytes": 9675
+    },
+    "crates/axon-rt/Cargo.toml": {
+      "sha256": "b721f33765976dc400cb1a702dc60e71b171e0e511ee7fef5b581c5243ef5bb8",
+      "bytes": 1678
+    },
+    "crates/axon-rt/src/adaptive_registry.rs": {
+      "sha256": "968c0a71e45962219c91aee49d5ba0ff960301bd89b5110f0dd78fca2831096d",
+      "bytes": 6066
+    },
+    "crates/axon-rt/src/gfx_mock_ffi.rs": {
+      "sha256": "c4536371a784bd4448bdb425e5d69165fa50da4b38ac96ad2feb8904690a215c",
+      "bytes": 6471
+    },
+    "crates/axon-rt/src/goal.rs": {
+      "sha256": "d899edf4031e78220d7ab9d75321def5aa1c38abc2ef457130a97d8d4b025501",
+      "bytes": 23146
+    },
+    "crates/axon-rt/src/lib.rs": {
+      "sha256": "95fd8318e253bba23375e02e6cc0f9672ab023dddab64d71608a1b972d557e75",
+      "bytes": 163552
+    },
+    "crates/axon-rt/src/mobile_ios.rs": {
+      "sha256": "b6b98a328d2f6a5cb13ad747fab1be737ff9e897747b9639d55f98830c620fcf",
+      "bytes": 13248
+    },
+    "crates/axon-rt/src/provenance.rs": {
+      "sha256": "06b5093a5d850b362ec3bfcf4c1958168a6752e21f574e58fd1646d84f77d8f0",
+      "bytes": 22494
+    },
+    "crates/axon-signal/Cargo.toml": {
+      "sha256": "724d59a9e514e4146cee7fab0e113070d5a01fe792c315277b57932d9bdaba0b",
+      "bytes": 762
+    },
+    "crates/axon-signal/SIGNAL.md": {
+      "sha256": "f1c465710c7534e7305d3258e17bd660ecefc1d344abb681f21dab5e60050d66",
+      "bytes": 4121
+    },
+    "crates/axon-signal/github-action/pr-session-score.yml": {
+      "sha256": "557cf53695381fa02c8a0c3d8045aca20475c50ec1f1e51a00e1922fa97f252e",
+      "bytes": 5051
+    },
+    "crates/axon-signal/src/ab.rs": {
+      "sha256": "e4650880be1bbbccdffd3d812b6f134f2953e7a8fc59be2565d9bab0245b532e",
+      "bytes": 16951
+    },
+    "crates/axon-signal/src/benchmark.rs": {
+      "sha256": "8fdd8a58e3c49b32e409f9453f374cd6da8dfcb142d6f5dc995fd535c5e265d3",
+      "bytes": 18835
+    },
+    "crates/axon-signal/src/dashboard.rs": {
+      "sha256": "0994f8d9c07a3d9ccaaed15b6eaa0a876b0c2faf184c57da2a00ce18d5f5df7c",
+      "bytes": 17508
+    },
+    "crates/axon-signal/src/export.rs": {
+      "sha256": "45db75ee10f42f692b8172b2cad06ef7112e41e5e5f542280e8dda8594e16bfc",
+      "bytes": 13598
+    },
+    "crates/axon-signal/src/lib.rs": {
+      "sha256": "726b44cc57ee1d3cfa1ea27c02de133c6192aa1fd8ceb79933a0f59ae0b21221",
+      "bytes": 2937
+    },
+    "crates/axon-signal/src/main.rs": {
+      "sha256": "4b2e0c99f962af1e245fea36fb71a1913ba1f369e8040e378020350835a0e791",
+      "bytes": 27597
+    },
+    "crates/axon-signal/src/mcp.rs": {
+      "sha256": "a6700b9171e72684aeff0fe53a370eb3bf36f1c5fc9ac5763f357e4e7b3a3065",
+      "bytes": 25792
+    },
+    "crates/axon-signal/src/patterns.rs": {
+      "sha256": "ffbd25ee66a764ef21b00794fe33ca3d7a0a945055dfa0a7515e1cfb3c84752e",
+      "bytes": 7968
+    },
+    "crates/axon-signal/src/rework.rs": {
+      "sha256": "0e0db90ca6b9708d851d2d22ac8e60b0c2a8c6efecd40d843c64d10b248f796c",
+      "bytes": 14813
+    },
+    "crates/axon-signal/src/score.rs": {
+      "sha256": "7d01da21b901e6c813e1c9eb2703fe68fa3659d91682573fd5c8c3f627c7a2d1",
+      "bytes": 21751
+    },
+    "crates/axon-signal/src/trends.rs": {
+      "sha256": "d4bf4a931eb6b2cca637d56ed81220b81a34fd35cf519b359fc39273eb9a0554",
+      "bytes": 14389
+    },
+    "crates/axon-signal/src/weekly.rs": {
+      "sha256": "bcde15f39b2f2abaf014a1c5388af313adb5a4ee9aa9c28dca8f540e5af5d8b0",
+      "bytes": 12269
+    },
+    "crates/axon-signal/tests/exposure_boundary.rs": {
+      "sha256": "8c600b1a944d2df220a1bc918a786d6f5bd394d9fc1f0fff23ca52f5a6704273",
+      "bytes": 2100
+    },
+    "crates/axon-surface/Cargo.toml": {
+      "sha256": "98ad6b5c1bd0a2062edafa8fd60b32d89c8d84c1dcddfc2e39775272a1198b48",
+      "bytes": 789
+    },
+    "crates/axon-surface/src/compile.rs": {
+      "sha256": "d144b2549a3a20226c0d5eeeb70406cd07e1af783e19998adff508c392145a5e",
+      "bytes": 23967
+    },
+    "crates/axon-surface/src/error.rs": {
+      "sha256": "f3961d32846f159043c2b4aa6ae98a653d052282e6d3a01a403b70c1e0a1cee6",
+      "bytes": 752
+    },
+    "crates/axon-surface/src/lib.rs": {
+      "sha256": "cda26800f6f6f54bbb4dcf4953043c3d63a1fe00305b60d76b5429e512169eeb",
+      "bytes": 1500
+    },
+    "crates/axon-surface/src/main.rs": {
+      "sha256": "aad5f00a5a58270cad9ab6f908a024347f545574b3e9119168387d502d7a4248",
+      "bytes": 2280
+    },
+    "crates/axon-surface/src/parser.rs": {
+      "sha256": "460f9d00b32b0ee942ba893c6bfc65d4bf7f38d88b155a101e4dbec84799dca9",
+      "bytes": 14851
+    },
+    "crates/axon-surface/src/prelude.ax": {
+      "sha256": "b99d7a886c5e6cb145adb95af770b25607bd3ee43d34d13d50bb374aa31e0cb0",
+      "bytes": 942
+    },
+    "crates/axon-vm/Cargo.toml": {
+      "sha256": "5fd0b95a7d2ced39d578f5b658df6da94d52845bc54cb9fa0e1bac5fe0adbfec",
+      "bytes": 581
+    },
+    "crates/axon-vm/src/chain.rs": {
+      "sha256": "aaeea84e3d035b0bd82fb422c11e5e037cbb33380a97413752e8f9c6935c9dca",
+      "bytes": 39434
+    },
+    "crates/axon-vm/src/main.rs": {
+      "sha256": "d2da243325792507c9f3ea88f87179eb3271525b160125ce30015dc728308232",
+      "bytes": 154582
+    },
+    "crates/axon-vm/src/quorum/io.rs": {
+      "sha256": "c15747be6494b72312882babc2f8d00d4c616deebe9ba18c09d04e40ff41a6b3",
+      "bytes": 8085
+    },
+    "crates/axon-vm/src/quorum/logic.rs": {
+      "sha256": "2299a82363bb588f748a9afe1163669e9ff01f5ceffa7427964db3048f4fa02f",
+      "bytes": 11790
+    },
+    "crates/axon-vm/src/quorum/mod.rs": {
+      "sha256": "a6f1fd3588db40bcb20c2dc72c9904a76d4f259c7d72b46bcb91e7a7723b6fc1",
+      "bytes": 21549
+    },
+    "crates/axon-vm/src/quorum/vsock.rs": {
+      "sha256": "24c1c72cb817e9d24f5968276825099ebe55f5eb80804b936317432a2d7e2427",
+      "bytes": 22423
+    },
+    "crates/axon-vm/tests/guest_kernel_fail_closed.rs": {
+      "sha256": "a671546c788a7315408119613439d29668a0de46ec72fd7b6d248cc552e94cef",
+      "bytes": 6267
+    },
+    "crates/axon-vm/tests/guest_policy_parse.rs": {
+      "sha256": "73a71f11ce8315ba6e1e09686507390d8c007ce239ba980ea178339f053f96f5",
+      "bytes": 6234
+    },
+    "crates/axon-wasm/Cargo.toml": {
+      "sha256": "86eee0261235a4260a0a762e8c844107ad7893b96e2854b17ef6dc2ec98b4cc7",
+      "bytes": 1788
+    },
+    "crates/axon-wasm/build.rs": {
+      "sha256": "8605af9e7516c8d8bb856053aed005a3683227534d095f76a12521950aa498c9",
+      "bytes": 1003
+    },
+    "crates/axon-wasm/src/lib.rs": {
+      "sha256": "dd6c9b59499edbad65127f24d4d0c0259da66452952617dccb341ed7d955501e",
+      "bytes": 6792
+    },
+    "crates/axon-wasm/tests/browser_compute_parity.rs": {
+      "sha256": "f819c44411c29a468c538cea290de8703d2ce6777de5cd066fb11042977c2d24",
+      "bytes": 5553
+    },
+    "crates/axon-wasm/tests/oracle.rs": {
+      "sha256": "ca2c1375170527fd19d572263683b75dddeee51ef3ed5ab14f7ba7e8ec68dc3a",
+      "bytes": 4421
+    },
+    "crates/axon-wasm/webdriver.json": {
+      "sha256": "1e44d397c148b146c252ee9debf39f0ff6c262106ed9f1b5575509acbec1df54",
+      "bytes": 189
+    },
+    "crates/axon-web/Cargo.toml": {
+      "sha256": "339d205926203e21eb9c18787a8ddbeb140b55fbb21641cbf10fab1e2dc9cb8d",
+      "bytes": 321
+    },
+    "crates/axon-web/src/api.rs": {
+      "sha256": "62bcbf43c5b5c7738b8573f2edf77709a7f5cf87afac3a5040122901177280c0",
+      "bytes": 22172
+    },
+    "crates/axon-web/src/html.rs": {
+      "sha256": "1351e3303a5032b6af61dc376d576e5c4a6034bd04c580676c984c3e34fd4647",
+      "bytes": 27279
+    },
+    "crates/axon-web/src/lib.rs": {
+      "sha256": "2a50a873f6a6cb9700c6acef54191e6c783c387763621e0196fed1a94966602f",
+      "bytes": 68
+    },
+    "crates/axon-web/src/main.rs": {
+      "sha256": "335ad4887d36bb1f3acc3ed72fabe53de1fe845ca7fbead8f6eda2c1a70a8ef9",
+      "bytes": 764
+    },
+    "crates/axon-web/src/server.rs": {
+      "sha256": "5acaa0a57f4b33ba87533738df2e6c4de25167210a8e77c700eddd0a4d56e699",
+      "bytes": 4016
+    },
+    "crates/axon-web/src/tests.rs": {
+      "sha256": "8d99272d2c58227bf3f278f7235b9ddd97671059238ff642848b4c0178599d65",
+      "bytes": 33217
+    },
+    "crates/cortex-policy-adapter/Cargo.toml": {
+      "sha256": "8956084e01336da9ccc939007cfd8483e6b0a5b71fbd931c67b76a9458ea0ac8",
+      "bytes": 347
+    },
+    "crates/cortex-policy-adapter/src/main.rs": {
+      "sha256": "d0f315d416e14632c14a2a8ff7fe28c9257fc0faf831de2deeda651812859587",
+      "bytes": 14398
+    },
+    "crates/cortex-policy-adapter/tests/protocol.rs": {
+      "sha256": "ed844e97476f261c4b3818d74df6ec58de0cbccce3f786ddb0c82b8487de9837",
+      "bytes": 17860
+    },
+    "dev.sh": {
+      "sha256": "23a4ee682b1a87d1a69829f4b677295d3fb14bef599b7796ae7aad50e0f74145",
+      "bytes": 4905
+    },
+    "docs/LEDGER_PRODUCT.md": {
+      "sha256": "cf6310a5b30a112c8ace35f9dc4b22e5b2d2570145e95dff03c7d7348c3de726",
+      "bytes": 8140
+    },
+    "docs/SIGNAL_PRODUCT.md": {
+      "sha256": "589df237e41318f29aa71a289797010f10ae965826b2752c1bb7d57d39521e4f",
+      "bytes": 11820
+    },
+    "docs/TRAINLOOP_INTEGRATION.md": {
+      "sha256": "4b4184be1899831de69e5e34e7beaa4cc3c889c04d0cf96b8b25001557a0b632",
+      "bytes": 12011
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/AXON_CORTEX_MASTER.md": {
+      "sha256": "d83656d0e00a9f28919a53b0136d8ee5535daa256719104f205b8291f3e9106a",
+      "bytes": 655866
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/BUILD_PACKAGE_VALIDATION.json": {
+      "sha256": "adb80ef72d4bd55d375ecc4aa909ea26fed63c9cad71d31ff653aa1e89ec4e26",
+      "bytes": 2759
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/CHANGELOG_v0_10.md": {
+      "sha256": "20aaa0327d553993f0f473b88755aa7de7c10e34844667438cb15651b878e941",
+      "bytes": 720
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/CHANGELOG_v0_11.md": {
+      "sha256": "905d132cb5beffe9b935fc421a4eea3f346e4049f1a5f29d745a77c9be0df921",
+      "bytes": 2020
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/CHANGELOG_v0_12.md": {
+      "sha256": "fc71b6045bf1c27a63418475a94282d49bbdd01bd1ddf8b3d4dffe36fc389e56",
+      "bytes": 1294
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/CHANGELOG_v0_13.md": {
+      "sha256": "236b91bb093c41f07da24c4ac04950f9b83e1e072615d503788f75373923df2e",
+      "bytes": 1156
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/CHANGELOG_v0_14.md": {
+      "sha256": "fcd27a5b6ff4d3b4d0115f83d37e4d2dd2690350aaee0d851ee83d08f1880b21",
+      "bytes": 1476
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/CHANGELOG_v0_15.md": {
+      "sha256": "5c211d1b4b1fcc27e64ba35d2c76810f02464dcc851fdc72afcf3f7e8d524b2a",
+      "bytes": 754
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/CHANGELOG_v0_3.md": {
+      "sha256": "3d77fbd7b165fbc93503a2f647945acdb3aa0f0b4715518cbdb9ea1d7164b4fb",
+      "bytes": 1211
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/CHANGELOG_v0_4.md": {
+      "sha256": "ef35fe77797631aa507dbb16520f930f5953d369fb820f89c59a7855b36b5022",
+      "bytes": 1938
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/CHANGELOG_v0_5.md": {
+      "sha256": "401e88c085074a1ac6c23ebed85543ba71be088c6349f144a7aa094302cdd527",
+      "bytes": 1633
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/CHANGELOG_v0_6.md": {
+      "sha256": "eb641a72b55fe36b4114270725ec8bdd6f9685c77680884cf740c9100cb741d6",
+      "bytes": 1326
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/CHANGELOG_v0_7.md": {
+      "sha256": "88777b30cfe56e3c7b8c2606e1889aa5d7d5911546621edbc569616078484674",
+      "bytes": 1027
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/CHANGELOG_v0_8.md": {
+      "sha256": "c31353344c7263828f4f1878cd16d46d18f15fcb7fc9afd8d85b423f471d5a71",
+      "bytes": 875
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/CHANGELOG_v0_9.md": {
+      "sha256": "87a6a0e0db6c14f6b2b7036178c897dfc3f18053621b2682b054e83aa4d9a299",
+      "bytes": 2041
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/DECISIONS.md": {
+      "sha256": "4c9fc09652527802e07893f8366c8458db586fe1175e4dac2ba345b9013fc46b",
+      "bytes": 17806
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/EXISTING_AXON_MAP.md": {
+      "sha256": "9af46134bf0c9859c330df48c2318c48ba55fc6cc8e5e3b9c864b1a707a1bc8b",
+      "bytes": 6740
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/GLOSSARY.md": {
+      "sha256": "d74fe9775f593ab0f333c9a3aa78b70739c198702306f28d4860526f107111d0",
+      "bytes": 12473
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/README.md": {
+      "sha256": "7e25aef319165624c4e26a144e0280278b2cb59ecfe222761ba185fc8f84913b",
+      "bytes": 15402
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/REVIEW.md": {
+      "sha256": "a8b7bbe1046fc0c5039d8001c1e13dd9889c768a30e473df74c58e25eabbb6ab",
+      "bytes": 26508
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/SHA256SUMS_v0_10.json": {
+      "sha256": "5cdec48f47ddc12fdded1f068fc3e48a00487c9ceb87380391118edb21cec2fb",
+      "bytes": 8663
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/SHA256SUMS_v0_11.json": {
+      "sha256": "65804cf304751474bcec5937e3f3c488383a56cf935eba282c073629c541cbc8",
+      "bytes": 8958
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/SHA256SUMS_v0_12.json": {
+      "sha256": "17e5059ea0ce4d2139c1b88b6316ee023c9f1c0199382a8e197923cd57a945dd",
+      "bytes": 9869
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/SHA256SUMS_v0_13.json": {
+      "sha256": "ceec80d607279c0425d48d5ce718fafe7fea00b79275033981bafe726ae547e7",
+      "bytes": 10284
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/SHA256SUMS_v0_14.json": {
+      "sha256": "a85d0a20b50e8190060539ae98e2a18b72b93d785c7dd20ddd29139bafc796e6",
+      "bytes": 10928
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/SHA256SUMS_v0_15.json": {
+      "sha256": "99047d324053d7aa09020061de9787372675760c5d67be1e31863ed2f6bddee3",
+      "bytes": 11821
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/SHA256SUMS_v0_5.json": {
+      "sha256": "6d8efe2d0fe1c00801a70fc7de76dd3878604d1be1428cf0c92ba9d4a003ebb0",
+      "bytes": 6188
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/SHA256SUMS_v0_6.json": {
+      "sha256": "c8bcaa1cf08d64990d1c77e60847b0770bd4619bf49e785128a7d9f2bd86e061",
+      "bytes": 10206
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/SHA256SUMS_v0_7.json": {
+      "sha256": "9321a1c5bb4a58c94029c262d0700c9938f498095fa15c359072a99fe8634687",
+      "bytes": 10683
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/SHA256SUMS_v0_8.json": {
+      "sha256": "585c184d8d11ad92de88de3c40a49322a22d2790022ba3fae7de3a6cd8b6182a",
+      "bytes": 7291
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/SHA256SUMS_v0_9.json": {
+      "sha256": "1d97417b963800d2869d579caae2bc00dc353963c5389cc81d8332306d95397e",
+      "bytes": 7943
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/SOURCES.md": {
+      "sha256": "a9ed9fda37d9831ec7ed0d0ad02c7b388d0f3b043c5cf84b3b0d67666656dcdd",
+      "bytes": 21334
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/ACCEPTANCE_GATES.md": {
+      "sha256": "0c7376b079b17d081ced5d8fdba88e4ef78f7f59d766f5dca24c5e907746515d",
+      "bytes": 46564
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/BOOTSTRAP_PROMPT.md": {
+      "sha256": "12c20690acb54595b9f0abf4afefb2ad5f8bff422fd90d1fd163b139271ab406",
+      "bytes": 4891
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/BUILD_PLAN.md": {
+      "sha256": "42ffab6fed25b7402ff0f3ce74975b9ffa19d1bc10b9f2f61756877af0870678",
+      "bytes": 24689
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/BUILD_PROTOCOL.md": {
+      "sha256": "85dfd1248a49fc02c7122dd0f89aef14428df7b5de2593c7a778cedb709425a9",
+      "bytes": 10202
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/CAUSAL_ACTIVE_EXPERIMENTATION.md": {
+      "sha256": "a8335aad1d26db1c5c1379e7d4781c93b303bf2c0fadbde432ef7b4a5faa9739",
+      "bytes": 687
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/CODING_FRONTIER_LAB.md": {
+      "sha256": "1621a12e050376001fbaa753bbc236772a15cbbdfed39bf45e1a6aef7cd9ab00",
+      "bytes": 3634
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/COGNITIVE_SCHEDULER_REGISTRY.md": {
+      "sha256": "e36b9c8bfc0f0378de8a3bc6e3a8d6378f4473f49ad722d26ea78ec1c5a5d4bf",
+      "bytes": 874
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/COGNITIVE_SPECIALIZATION.md": {
+      "sha256": "99ccd13a581ed62126f59e6573676206ae0b5ec0295a1fa71c22d6f940920b0c",
+      "bytes": 2513
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/COMPLETION_CRITIC.md": {
+      "sha256": "a47d2eb1d3bde11e7ae5bb55011727c9d6392b381addfe83147698320e6dd3dd",
+      "bytes": 1567
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/CROSS_PROJECT_LEARNING.md": {
+      "sha256": "05f9adfadee23f384e95b5eae49b01f148c5c811939447105ea9ff3a46c4802b",
+      "bytes": 1370
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/DECISION_COMPOSITION.md": {
+      "sha256": "07fefb7d3a168cfee72d3ef908cad0380b64cfcaa5d1fc974c9331cf2548a842",
+      "bytes": 2403
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/DEPENDENCY_ADOPTION.md": {
+      "sha256": "9e0b1e67b41452b4cc5c522933acbf6390a80446ce84149d8ae213243ba0bca6",
+      "bytes": 4921
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/EXPERIMENT_REGISTER.md": {
+      "sha256": "2098f5affcf7cd4eb623fdf43d078ba6123893bae32f2ff99e8c62efca1baff1",
+      "bytes": 8274
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/INTENT_COMPILER.md": {
+      "sha256": "f2db8790bdd96410b6bb43ac8c5d0a4b4772e3e4bc9fa2f8c5241fb5a5a0749d",
+      "bytes": 4980
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/KNOWLEDGE_INGESTION.md": {
+      "sha256": "8dcea0cfc4794060f33ad90f24440a4dd306e1e33504821cbcb287310863a230",
+      "bytes": 1875
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/LOOPS.md": {
+      "sha256": "ae3ae06f8718656a8007bcb3ddc91696b78f39432af051d96e3db41afe69babf",
+      "bytes": 12300
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/MICODE_EXPERIENCE_BRIDGE.md": {
+      "sha256": "cbcfc967df9ac1f91170e58a1b0a792146603cc4b27899caaadf538575521a27",
+      "bytes": 3543
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/NEURAL_PROGRAMS.md": {
+      "sha256": "dc75c0faaef8cb5a43379c65570f940b5ebb760fb75e58a80dffa3f8da901a2b",
+      "bytes": 2682
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/REFLEX_BACKEND_BAKEOFF.md": {
+      "sha256": "f6b837a65bddd02d1eb291e86d990cf7815e976e06b1bfc4ae74c57c65e5f0c8",
+      "bytes": 9096
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/REFLEX_CALIBRATION_LAB.md": {
+      "sha256": "b63856e0af138f8a3e1e0831c3700ac100750d6e7609a4853b4d5585a16c98e6",
+      "bytes": 5196
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/REFLEX_CONFORMANCE.md": {
+      "sha256": "84d3b6f5eec968490467083d0b6a206194bea96002434ea0ef92cce5040a44cf",
+      "bytes": 7536
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/REFLEX_DECISION_CORPUS.md": {
+      "sha256": "058b539236b0383b554c6ccca52d2802bb4ce8ca9ea8e34e1aa0f84c875cfbb9",
+      "bytes": 6718
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/REFLEX_KEV_PILOT.md": {
+      "sha256": "2a749d21a730a85657691275517af4b348f52cb80810f427c6efcea66d6617f2",
+      "bytes": 4081
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/REFLEX_LEARNING_PLANE.md": {
+      "sha256": "7a289176419b47dbec12a97faa8de25ebac02c1dc6bd4f06c2382fc9c25291a8",
+      "bytes": 1244
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/REFLEX_RUNTIME.md": {
+      "sha256": "c5a31bfef696fbcb49ecafcd055d4f9b3a7f386bcf57df641d0f467447eb16d1",
+      "bytes": 5086
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/REPOSITORY_OPTIMIZATION.md": {
+      "sha256": "7caaa1630760006cdc2f307c5d74fb81860bf0e6adddf7c67c70ac3ba68496c0",
+      "bytes": 3414
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/SELF_APPLICATION.md": {
+      "sha256": "746b99fb5bb6348f25ef7351fbb91cdcde0ab964542c0b06d4d9e6e5096fdad9",
+      "bytes": 4975
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/SELF_OPTIMIZING_OS.md": {
+      "sha256": "9d2895f490298ad30d3fa2eca44e0d1dd0e3092192a190d5c72f26b8a8c830e3",
+      "bytes": 5682
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/SEMANTIC_ALIGNMENT_LOOP.md": {
+      "sha256": "a01f8e9c971323beba4f1f2b3acaf0fece37f59f04ad62faeada57844f314c76",
+      "bytes": 1935
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/SEMANTIC_PERCEPTION_RETRIEVAL.md": {
+      "sha256": "58cd78a881c82adf7e307dac05a3a63f28bb7bf15e2cdb102e5b18e07d7f6595",
+      "bytes": 1722
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/SEMANTIC_SUPERVISOR_PLANE.md": {
+      "sha256": "4afae32974bd84e54f1d6395db9696df709ccf474a5ad4db9a827a5b0206890d",
+      "bytes": 1354
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/SEMANTIC_WORKING_SET_MANAGER.md": {
+      "sha256": "5e667495fb5b6d0fa6ed05063e0721fbd282749067086af98b73347a0df03b3d",
+      "bytes": 1338
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/STATUS.md": {
+      "sha256": "12f411cb3685480e55c7a400b98a114aa835e7a9f7bc57ec461411e4f4ffebcf",
+      "bytes": 6247
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/TASKS.md": {
+      "sha256": "bb6114e7a15c56ce722ac93421761f335d4bdbfe54f92be32c984a76b78eb68a",
+      "bytes": 42452
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/build/UNIVERSAL_EVIDENCE_GRAPH.md": {
+      "sha256": "7a6dcc47b94ce826119cb4a57f81f7b859f428dad151bf5bd503a2e7606cf436",
+      "bytes": 703
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/examples/SAFE_REPAIR_EPISODE.md": {
+      "sha256": "f3013df1ec15d9bc7065ea82c1b2d2dba6256ebd8b9fa97d8c553429454e37cc",
+      "bytes": 4237
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/gate_manifest.json": {
+      "sha256": "872621e31510a8fd0431762cb919ad03c74758070e316461e7fe89dbfda877bd",
+      "bytes": 100159
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/package_validation.json": {
+      "sha256": "adb80ef72d4bd55d375ecc4aa909ea26fed63c9cad71d31ff653aa1e89ec4e26",
+      "bytes": 2759
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/package_validator_selftests.json": {
+      "sha256": "c1b7211519ac55bebf8a197f1833276c9d43917c2f9a8b4c160256e9b735e519",
+      "bytes": 1078
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/schemas/PROTOCOLS.md": {
+      "sha256": "025882566bd2222fc22bb77759d8343f60b0a39a7d7a588169cefc0dffe61c40",
+      "bytes": 24138
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/source_manifest.json": {
+      "sha256": "baa1ee71051b90fe6a39f22a114a943555e20eeb04c0b518b3755545316a68a5",
+      "bytes": 1016
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/spec_manifest.json": {
+      "sha256": "692d95c86251d0606bdfae2ad94457a6ed1eb10cceacfde37f07c834aaa68f8c",
+      "bytes": 11483
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-00-system-contract.md": {
+      "sha256": "7269585701b51b9750818a3290f76f194c5c923d598cd2a8fbbbd48b76a46b2e",
+      "bytes": 6004
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-01-evaluation.md": {
+      "sha256": "83d437fd6bb950dff0773cbcfd585a41fb4b59c081b3786b9357569e80d1536d",
+      "bytes": 6350
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-02-world-observation.md": {
+      "sha256": "cb5c278d5a24a37a6ae2ac339a79702c1f40211fec2ec4f903ce3c4857cc0b94",
+      "bytes": 6120
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-03-capabilities-executor.md": {
+      "sha256": "77e5f8e71b353b7872f3523c3ece9d875070ffd50e216d1b6e4ef5846cf37806",
+      "bytes": 5266
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-04-air-runtime.md": {
+      "sha256": "97a2499a3674c8fec729ee67b1eea31fdf7635e2619bb3f3c212bd54bafed45e",
+      "bytes": 6200
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-05-reflex-inference.md": {
+      "sha256": "03709de6a70ee247b92a1b69a93619a382389df7a477e0662243281fbdd88736",
+      "bytes": 13380
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-06-routing-calibration.md": {
+      "sha256": "23a2dafbfc3da4c4e7941615ea75b1707b495bf99d6fe4492af293fffbf31e39",
+      "bytes": 6099
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-07-predictive-world.md": {
+      "sha256": "413b79e9feebb3909f3a39af66e9dc3f791b26640fdec6edd54c00788e019cc2",
+      "bytes": 5675
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-08-planning-experiments.md": {
+      "sha256": "ec6fb5c55a3b938db09875df042b7907368d7742da9ca0bab85b48cf94fb1a7a",
+      "bytes": 4818
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-09-representation-abstraction.md": {
+      "sha256": "af27260929ff00106cb74152fcde875eeccc19073f184754dc246845a9e1fd8e",
+      "bytes": 4861
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-10-replay-learning-data.md": {
+      "sha256": "c8b4e9383be41d2fe3204ff706ade1466d162799e9e363e5af5b098317ba573e",
+      "bytes": 7951
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-11-crystallization-admission.md": {
+      "sha256": "559f2ec7b50d237184729185f1688232ac67e6a6937dd4f04428e822dc98467e",
+      "bytes": 6584
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-12-learning-meta.md": {
+      "sha256": "88368523c0547797395597cc168860410991bbe6377d6c993a98f7c86d907974",
+      "bytes": 6385
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-13-os-runtime.md": {
+      "sha256": "36d5e8ace88b205564764a7a5297cd3877ec8d1309f3769a2cc811c430ddec0b",
+      "bytes": 6561
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-14-parallel-model-research.md": {
+      "sha256": "b07f253af05e05d1bbb3f47cd14150f7b6e08943b7204cb2f4faedef4db4f79e",
+      "bytes": 11925
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-15-language-compiler-proof.md": {
+      "sha256": "c2adb60837eaed125f477a25a54018b2c66b0de486668ecf3fd48102e85146ff",
+      "bytes": 8216
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-16-micode-experience-bridge.md": {
+      "sha256": "2d7f93626ac9a7305dede90e925939db4ba50feb364ee86db669d6bed0692d0b",
+      "bytes": 7316
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-17-external-repository-knowledge.md": {
+      "sha256": "f55684f7bfb1b9a111acf0b2e118b476dd1cd3cd48406215250b9d972b3e4c6f",
+      "bytes": 5645
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-18-capability-synthesis-native-promotion.md": {
+      "sha256": "3d572dbc70f70e66b0b92ce5d1f6579de6d7458b53e2d24aa297bf1ad423ee61",
+      "bytes": 5337
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-19-intent-compiler.md": {
+      "sha256": "593ce9da8346811db61d69b145f160663cbfabed28cf568ba5e65483b419f9f5",
+      "bytes": 8253
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-20-reflex-research-lab.md": {
+      "sha256": "6c0d9efa9d333b2a2f69194ca322edbbdafa903e77eb7230d5185874af4eae5d",
+      "bytes": 23103
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-21-coding-frontier-benchmark-lab.md": {
+      "sha256": "5b3bc0a5d5d67983a03e0f06e3787d00de5a12e4ff017deb540fdc967b126d12",
+      "bytes": 16424
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-22-cognitive-specialization-compiler.md": {
+      "sha256": "82ba473fefb3b7f87dcc0da7481af2934e0896811d50c5c7461dd16ea784c37c",
+      "bytes": 10466
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-23-neural-program-runtime-skill-compiler.md": {
+      "sha256": "afa7e1ac2dc6a735f969e59108b29697278babe879aca1c8a8f60e9aabe91e04",
+      "bytes": 7740
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-24-semantic-perception-retrieval.md": {
+      "sha256": "3bc0c16f9c1cac500794c054745a50fd6b472595829f7372afe2b3592001139e",
+      "bytes": 7469
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-25-reflex-learning-plane.md": {
+      "sha256": "c67883d94aa10022e8eaf59a4147c0c0afd8ff1874a1277fa7328cc76f7d6a11",
+      "bytes": 5563
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-26-decision-composition-runtime.md": {
+      "sha256": "511bad76e85ed6070f0d50654dfda47535dcbbfa9a76e95b77019a76882ad016",
+      "bytes": 9308
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-27-semantic-supervisor-plane.md": {
+      "sha256": "e8419e305a6d4da374b80d943dc5dd86b6092f4ab243b653c8bab591397a5392",
+      "bytes": 8726
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-28-semantic-working-set-manager.md": {
+      "sha256": "69fa24916859844b57c9ab2feb44a8adcc1ffb9908188c199a552a961b00e1b6",
+      "bytes": 9085
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-29-reflexive-self-application-plane.md": {
+      "sha256": "9ff9d04fe4f4615415b4645665468fd87ba6fcbb180833eac64a940b8223f776",
+      "bytes": 12668
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-30-repository-improvement-plane.md": {
+      "sha256": "5df09174abaa87c5897763be7f02f49da71f0ec3f86fb5aad2c9c86550200dff",
+      "bytes": 8176
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-31-cross-project-learning-plane.md": {
+      "sha256": "96011d700ce647025b7064a59ff4663d6f9b5d65b104fea340244c6dd36c6252",
+      "bytes": 6856
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-32-universal-evidence-graph.md": {
+      "sha256": "6b25dbefa431864e11efe00f36b10ce9467ff455ded56442af6b92438c7a4274",
+      "bytes": 6068
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-33-causal-active-experimentation-plane.md": {
+      "sha256": "5ed5ef4ada9b0073f6e4c764f02bd795eb377834f8e794495194c853cd890626",
+      "bytes": 6092
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-34-cognitive-scheduler-capability-registry.md": {
+      "sha256": "3199b3ce45aa4537916c06c32ddccb5f4d04909d7d23eb71a9b2496a73a73adf",
+      "bytes": 6619
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/INDEX.md": {
+      "sha256": "d5c152e3aea75ad80d94ad5b3ad50cafcce58cc2c83b6644a38fcd9085d5b2c5",
+      "bytes": 9429
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/task_manifest.json": {
+      "sha256": "9e0a794b05ee02cfd6bc057aa88cbfd887aea985559d5f7ed40b27503dfc3840",
+      "bytes": 87285
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/templates/SPEC_TEMPLATE.md": {
+      "sha256": "8a11a8b9aee52e33dc398b274c315819967e8d1e8d67f49cb7618c1f742036a5",
+      "bytes": 1687
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/templates/WORK_PACKAGE.md": {
+      "sha256": "bb7c39b4cdb5d68750a54ba1f74187440d31d006d80da885996e6947a65b16d0",
+      "bytes": 1916
+    },
+    "docs/axon_cortex_v0_15/axon-cortex-build-v0_15/tools/validate_package.py": {
+      "sha256": "100313ae5c824a665f48e19f9183dc9d0c4cbbacacb3115e25968cc62702e2e6",
+      "bytes": 7695
+    },
+    "docs/history/AUTONOMOUS_BUILD_ALL.md": {
+      "sha256": "5995c5ebb1d9d209bed7ef9ed2794f8b66afa8c07ccf9bc3f9ec81974d2d3b5a",
+      "bytes": 10973
+    },
+    "docs/history/AUTONOMOUS_MAX.md": {
+      "sha256": "01d6feb7911aac8daea4e384abd3a677fc2322397a20c9d3b1ee6fe2c59abc4f",
+      "bytes": 2086
+    },
+    "docs/history/MITOSIS_AUDIT.md": {
+      "sha256": "3879cb16cf453cd6d3a4db7b7f24633fea37a84e51541ec654b7af5b56f781b3",
+      "bytes": 9105
+    },
+    "docs/history/README.md": {
+      "sha256": "880dcf2a7977c6d016c85a530421e444f7b63c2fcba10d09dd7966eba835bb3d",
+      "bytes": 1051
+    },
+    "docs/history/SESSION_RECAP.md": {
+      "sha256": "2114f060fd5768a1f3a42b6d55638a4dca7b97a465812dbbe548920fb10983f4",
+      "bytes": 6646
+    },
+    "examples/adaptive_summarize.ax": {
+      "sha256": "34f83cd4726911dc390ff861357f5ec93fe864a978cef3df3a2193cc69cf27e0",
+      "bytes": 488
+    },
+    "examples/agents/collude.ax": {
+      "sha256": "6b44b39c3b5176b93f972aaacb0c9b58991c1f72edbe910b9e1511829517b84c",
+      "bytes": 175
+    },
+    "examples/agents/collude.axjob": {
+      "sha256": "acb6fc53dd33286f2b7f06b5dfcb41d1d84669731b1322054f14bc0a1b33a251",
+      "bytes": 275
+    },
+    "examples/agents/persistent.ax": {
+      "sha256": "181711bf907abd0689e22ee6d74928c25d3c06c1e47f43290c4f4ceb97191390",
+      "bytes": 428
+    },
+    "examples/agents/persistent.axjob": {
+      "sha256": "601afd63f0a2d1e311c45f38ff9fba2040efce56ff32fa92ce0f56beed04a208",
+      "bytes": 284
+    },
+    "examples/ai_complete.ax": {
+      "sha256": "a3536516d33b2e776d99b40f5405603397af308570b0fce7ae780ce309ba4306",
+      "bytes": 144
+    },
+    "examples/algorithms.ax": {
+      "sha256": "8f46ff78bcf328e47f96f34eaaa57ab00ae72d746650112667d29e2c1b804e1a",
+      "bytes": 1273
+    },
+    "examples/anthropic_stream.ax": {
+      "sha256": "4c7b8dff94cf1f509e29e25897e83fe2a49fc78f8c8eb1f19bedee45f2e28409",
+      "bytes": 1485
+    },
+    "examples/asi/README.md": {
+      "sha256": "5e2e7bc3b947adcf863eb675b5a001c9a7f0262eee0895f087f5af64a6e50ad5",
+      "bytes": 20459
+    },
+    "examples/asi/ad_optimizer.ax": {
+      "sha256": "86ee8a57b0a9910d6786bb67e49031a0286badfec449493e0a7c4484539e56a6",
+      "bytes": 6712
+    },
+    "examples/asi/agent_metacognition.ax": {
+      "sha256": "8ef99eeb923b7376bc36bfcea28cdfec8b4ae5c0fa2738b4e267ec5bd9914c32",
+      "bytes": 1005
+    },
+    "examples/asi/ai_fallback.ax": {
+      "sha256": "049e9f843e73987a14a9e515c94980d7c5ca218e9987fdad669ee83332479877",
+      "bytes": 1527
+    },
+    "examples/asi/allocate.ax": {
+      "sha256": "4d10c38aafe8be43ec3e9fb8360bb661e276d4c5db8accd09b226bd9d53c9685",
+      "bytes": 2227
+    },
+    "examples/asi/analyze.py": {
+      "sha256": "22a650ecf0497f181f96adce67dd78330a087345a2490c2b23ca38ea24283484",
+      "bytes": 7805
+    },
+    "examples/asi/bandit_ucb.ax": {
+      "sha256": "b33fa157d0247736053f91ab2b31b7150f57b5e24de2717770cbb5a3efdc03e3",
+      "bytes": 2020
+    },
+    "examples/asi/bench.sh": {
+      "sha256": "7df48bdcbbed39471e6b977e77165e8fb282c5ca8ae6fb1cda26364e9c7da038",
+      "bytes": 4137
+    },
+    "examples/asi/budget_audit.ax": {
+      "sha256": "971a576e2c4ec46cca905e4eecb0612e8bd18c0f23a5c6d743cfcac4851d972f",
+      "bytes": 5789
+    },
+    "examples/asi/categorical_goal.ax": {
+      "sha256": "e7b5543d3c2cb143ecb64969e5680dd2999c45ba563183dda08fd149eaffa512",
+      "bytes": 1291
+    },
+    "examples/asi/classify.ax": {
+      "sha256": "7bd5f7a8a4c558cfff75de457e7b76ac8bb321e062143205a48e694c587306d1",
+      "bytes": 6428
+    },
+    "examples/asi/code_review.ax": {
+      "sha256": "4e164c19fdde0e6ae34c3fe35a33647a14024882859dfb60e3378a97490caf03",
+      "bytes": 5216
+    },
+    "examples/asi/constrained_goal.ax": {
+      "sha256": "950d1a252d0c09d09238fa7fe7c2ebdc36492b7c8f44b890e75d7080314a776d",
+      "bytes": 1639
+    },
+    "examples/asi/contained.ax": {
+      "sha256": "65d8d397993bbe05d11c806675af15b049b1db17495f33d76912f459c2085b6e",
+      "bytes": 1499
+    },
+    "examples/asi/contained_violation.ax": {
+      "sha256": "7eda8bf0c795deffad4f44e6c51a7d50fe6d5257c39e0e1c23c3b887b06ea28f",
+      "bytes": 1657
+    },
+    "examples/asi/coord_attested.ax": {
+      "sha256": "000ae3cde508b03055d536dcb2f0abf9f735eec4823e2e688eec8dbe6f8f19df",
+      "bytes": 11751
+    },
+    "examples/asi/corrigible.ax": {
+      "sha256": "e6cbd1479ea3499fc71c5e52cc754452406fc3d7c39d52a91f6c59adfe386f70",
+      "bytes": 2512
+    },
+    "examples/asi/deliberative_agent.ax": {
+      "sha256": "69a00ea951e0e75406161c8bb167927d3c76b344f82717c1af38db46349105b4",
+      "bytes": 3317
+    },
+    "examples/asi/experiment_zone.ax": {
+      "sha256": "2e4584b059e4228e323fef04dfe185134a48dd97dc6ae5a3b2334260fee09589",
+      "bytes": 2197
+    },
+    "examples/asi/goal_attribute.ax": {
+      "sha256": "853dabe8d6f8287e8fb90d4b0ceebb509364639099eed878ecfb03ca461cc5f1",
+      "bytes": 660
+    },
+    "examples/asi/kernel_orchestrator.ax": {
+      "sha256": "cfb19945dd7423dd726b629952e746fe6e37f2eb1f08f386e92d5e4ec62cc8ed",
+      "bytes": 3489
+    },
+    "examples/asi/learn_linear.ax": {
+      "sha256": "ec602540385e53e5196423de48072684fedbd1949bacd6da8018447b5d828091",
+      "bytes": 2886
+    },
+    "examples/asi/learn_linear_f64.ax": {
+      "sha256": "25fbde5abca1be9f2383b915fed123dc34083cb4575e2d4ce5baeb3a150db7b5",
+      "bytes": 3551
+    },
+    "examples/asi/llm_cache.ax": {
+      "sha256": "a69f6f6a5ae6ef798c4174d3302b716b1af23ce587cbf8701411b57455a51b3e",
+      "bytes": 3046
+    },
+    "examples/asi/llm_proxy.py": {
+      "sha256": "c70f340d12705bbd1d9f83e3e0a8cf958c73e291b4e7781e9d22aa8e8060acdc",
+      "bytes": 5116
+    },
+    "examples/asi/local_search.ax": {
+      "sha256": "679f1307c3432fb93693a7d7f04c8bca4302ee57abb1fe83123fbb9709b33589",
+      "bytes": 2150
+    },
+    "examples/asi/multi_objective.ax": {
+      "sha256": "f3f19dc5cd60aab0da158fdc34a6d4ea3aacdc196b4ae3e3a8bd1dedc1cfc31f",
+      "bytes": 4011
+    },
+    "examples/asi/optimize.ax": {
+      "sha256": "f8f6036be81c1d88a995679a3d5b78866d09c308b7e338d66ffb6b4b5ba071a6",
+      "bytes": 8391
+    },
+    "examples/asi/parallel_score.ax": {
+      "sha256": "274a7659e90176c863e7001081e0af947781dc107b262ddd356ff6de95c38efb",
+      "bytes": 1158
+    },
+    "examples/asi/pareto.ax": {
+      "sha256": "6b74e80c8098131ad56cab0880d3032468ab83f9c8133ae8ea91387e29e0ed39",
+      "bytes": 3139
+    },
+    "examples/asi/persistent_bandit.ax": {
+      "sha256": "3332c7b35ec3b23a08e9cf65576065f7114469a71aa70c66c1cf00fd463684c2",
+      "bytes": 5713
+    },
+    "examples/asi/persistent_learner.ax": {
+      "sha256": "004c08e32bff316245ee658d86351e15fc5aa39c400e7193fb0b35cf8f39890c",
+      "bytes": 4193
+    },
+    "examples/asi/planner.ax": {
+      "sha256": "bb1d8926d826243408bda3aee79a5bd8dd80c724f5841a4398776dfb6a0e4a34",
+      "bytes": 2906
+    },
+    "examples/asi/pricing.ax": {
+      "sha256": "7194428f12eedfe1490ebc9586c15a02b14214c0338932103f79576997472a96",
+      "bytes": 4115
+    },
+    "examples/asi/rank.ax": {
+      "sha256": "33033b69a1d7d0df2663f5af9e329a979963e0d88480615c37178450d6cf7e82",
+      "bytes": 1768
+    },
+    "examples/asi/risk_monitor.ax": {
+      "sha256": "4caa15abb905d0e15568ac9fc3fd6f2f253d9e1b17af9e4429718029c4feba7c",
+      "bytes": 7940
+    },
+    "examples/asi/run.sh": {
+      "sha256": "c6f9894f4ffd6ce6b2426626e8a07f832ec2a9d65efeafbd56025f94411b7266",
+      "bytes": 9889
+    },
+    "examples/asi/safe_bandit.ax": {
+      "sha256": "8c16a12bacbf1cf880b14ed7ddf72016f7e504da92e672652a61ee21b2bc6cba",
+      "bytes": 5319
+    },
+    "examples/asi/safe_self_improve.ax": {
+      "sha256": "54c7ecda6a181437e1c62d66cec16f0303dc71c192e9659068ec7492d27aedad",
+      "bytes": 6236
+    },
+    "examples/asi/safety_stack_demo.ax": {
+      "sha256": "fdc15bd41eebe724984f9c80dd21a2bf9cf9ed86ec11e687cd2c88cc8c65b5fd",
+      "bytes": 8904
+    },
+    "examples/asi/search_rank.ax": {
+      "sha256": "7849f54dbf8f90bf19da513ce4d9614f18082d13c3056047406549756453b326",
+      "bytes": 5655
+    },
+    "examples/asi/self_improve.ax": {
+      "sha256": "cbf24951b96a61ee5a69d735b39deaaa5f2494999e0057127a9ce49bec67d7ec",
+      "bytes": 5490
+    },
+    "examples/asi/summarize.ax": {
+      "sha256": "15b42863c16274fe66adf5a65230397b669651fbc1f2ff3c488604d16b53f725",
+      "bytes": 5194
+    },
+    "examples/asi/supervised_agent.ax": {
+      "sha256": "f46278bab439ed64a919df4ab866a74b19b5e9d4d77a30767ecdbe303a386e11",
+      "bytes": 4155
+    },
+    "examples/asi/taint_flow.ax": {
+      "sha256": "6a33fd230b3a44fa1a070596216ce6485d8fce6e5ecf11afd66a1d10eb004978",
+      "bytes": 9220
+    },
+    "examples/asi/watch.sh": {
+      "sha256": "049c73b88c738fbeaad12d69acbd7e22909fae637ae936df5290881a23fab408",
+      "bytes": 1827
+    },
+    "examples/asi/word_freq.ax": {
+      "sha256": "9a0025dbe1cec94e400e69eb1ccef5246f77fa63fc4a19836bede8c9b7e8283b",
+      "bytes": 1944
+    },
+    "examples/asi/world_model.ax": {
+      "sha256": "929436921daf98901086528995284118059422007a7ad993b2c523027d19374c",
+      "bytes": 4391
+    },
+    "examples/bpf/bad_heap.ax": {
+      "sha256": "1ce82308fc5783ac0756df5220b8737e59a4259d4e8ed3bbb593fc19761affd0",
+      "bytes": 472
+    },
+    "examples/bpf/bad_helper.ax": {
+      "sha256": "8172a61f31673c9af26bbb03ce50e754f47db0f94910c98d51324fe948132551",
+      "bytes": 576
+    },
+    "examples/bpf/bad_unbounded.ax": {
+      "sha256": "f61aa32f2b7dedf2aa10660b8eab3cdc8b4fb8bee789831eeed06f1ee53a6c19",
+      "bytes": 516
+    },
+    "examples/bpf/counter.ax": {
+      "sha256": "6d20e43ecfae00093f3c4f8b0d1bdebf3334730456084f50a2f27fd1795f82a3",
+      "bytes": 1466
+    },
+    "examples/browser/.gitignore": {
+      "sha256": "a1ecbb270771ff55e4a7a07927bd664a8a0c83c324719980e833090e88e9aa2e",
+      "bytes": 122
+    },
+    "examples/browser/README.md": {
+      "sha256": "607cbfed70cd49b11161053b853eb7cd4be93697e3fd891ef9c5e4074e364c2b",
+      "bytes": 5089
+    },
+    "examples/browser/axon_asyncify.mjs": {
+      "sha256": "6be5afcbce52571ba7f11b6f4c515043da2d2992f86c1b517fceeb7885f4bfa8",
+      "bytes": 3433
+    },
+    "examples/browser/build-interactive.sh": {
+      "sha256": "0a47b78751eda2d642b4b0ad3ae33b8826e792fb0d846e9e50a187299a8cbc38",
+      "bytes": 1354
+    },
+    "examples/browser/build-playground.sh": {
+      "sha256": "9beb33470e7cf4bc3e8ef4c440731702a5cfdb5238cf346e2a5e5c16f2697eea",
+      "bytes": 897
+    },
+    "examples/browser/demo.ax": {
+      "sha256": "432b94327e0b20c675e2efc29228669571b20b501562e7f4c1090c234d3392f1",
+      "bytes": 898
+    },
+    "examples/browser/index.html": {
+      "sha256": "aaa8a363d3f79b6892ed3705fb7e9f85ae26ebb560144099845f8dc3334d6edd",
+      "bytes": 2341
+    },
+    "examples/browser/interactive.html": {
+      "sha256": "38c63c6ff9feb910f764c258b26f60614bdfa052d204a8271caeda1e9dbee74c",
+      "bytes": 5179
+    },
+    "examples/browser/playground.html": {
+      "sha256": "0246a33af33d6bea4b318f735c694a9eb69df9c413a6ccea803634071974ddd5",
+      "bytes": 5843
+    },
+    "examples/calculator.ax": {
+      "sha256": "1a1635bafc1b55d9d5ca3c88d50efde00e0e540129214212ba32c2c23e4bb679",
+      "bytes": 2136
+    },
+    "examples/closures_demo.ax": {
+      "sha256": "97e43f7d944abcebdd98d85ce6c1692a19c3a71a988928c946f2bd22c3b91c8c",
+      "bytes": 3088
+    },
+    "examples/comprehensive.ax": {
+      "sha256": "a2eab813f1d8b940ffabb0cb3bcf1bd4da352ba4171cbfdad5af9d3bbe545d6e",
+      "bytes": 908
+    },
+    "examples/domain/fhir_demo.ax": {
+      "sha256": "9089e5c059c3023e540e0f9e05fba553269d031227ce2abfd9a0d4464a935557",
+      "bytes": 1663
+    },
+    "examples/domain/fix_demo.ax": {
+      "sha256": "90ed15790002ceae1ada58b5710b1e064b65a74b81891b8b2b6a3aa5d86acf0e",
+      "bytes": 1296
+    },
+    "examples/domain/modbus_demo.ax": {
+      "sha256": "45a117ba93e41aac683f65d43e3d82a1b6954b5eb7cfc37a266009a9a1c2bc55",
+      "bytes": 1352
+    },
+    "examples/effects.ax": {
+      "sha256": "b64f97d24bc34afef84ee7a4613ac0de65f743cbf506d005adcabf8abc3d620b",
+      "bytes": 2692
+    },
+    "examples/enums.ax": {
+      "sha256": "6c5bbee8d90851bdee601e152d1ef8fe443c11262666bc1a6fbea060143c30b8",
+      "bytes": 330
+    },
+    "examples/error_handling.ax": {
+      "sha256": "a512df457aebc6c4a0f34a67b354265f62a55daab8a1f21a7cbdd92c8f1701d2",
+      "bytes": 2467
+    },
+    "examples/escapes.ax": {
+      "sha256": "b070aabbb95cca417c8ae4dc3b5928b82da3d3299abc28a298074126116a4ec4",
+      "bytes": 165
+    },
+    "examples/feature_tour.ax": {
+      "sha256": "188d77674ae78d3f459d6e9d96f01196c5673b2b06e3d7024a7872d4b89d643d",
+      "bytes": 2250
+    },
+    "examples/fibonacci.ax": {
+      "sha256": "ac69e5c4e65905fcba0d7eb55373136204c07c677f3e6160a1414d48acf5c82b",
+      "bytes": 1695
+    },
+    "examples/file_roundtrip.ax": {
+      "sha256": "ac54d5b3c2220a2872f4f9371cf1148df29e4272e1b5b89069eaed8ae8bb68b4",
+      "bytes": 717
+    },
+    "examples/fintech/ledger.ax": {
+      "sha256": "a026522496940a40338c40d12c98d52d66ffbb38bf3b722af1293014e2c5b5c0",
+      "bytes": 6121
+    },
+    "examples/fintech/overdraft.ax": {
+      "sha256": "533992ab92bf941a6b4814692956c976cb8fc429dc4f115b05b3ba8209887f2e",
+      "bytes": 689
+    },
+    "examples/flagship/EVALUATE.md": {
+      "sha256": "503de343140a3266a94b2ad4b335b877372b5195c810313b2a09793ce8fb44ba",
+      "bytes": 4097
+    },
+    "examples/flagship/README.md": {
+      "sha256": "d568e38bf0a2431de0cec489e1776506fe20b00752cc543003f917675976cb0c",
+      "bytes": 10249
+    },
+    "examples/flagship/THREAT_MODEL.md": {
+      "sha256": "6895596d491d697b40648e3ba29f418498918f54e17b8e4bf35cf7224b106ed5",
+      "bytes": 10430
+    },
+    "examples/flagship/WRITEUP.md": {
+      "sha256": "6319c03fa6c0fcbd45f17644c5aa5d2d7a890320d0033f9cfb89a0495057e3ce",
+      "bytes": 6894
+    },
+    "examples/flagship/agent_task.ax": {
+      "sha256": "5541d9529675cd7e90672f3e88d7d2d4e638a8a95b0964b0fd48fef28536fc80",
+      "bytes": 3120
+    },
+    "examples/flagship/agent_task_evil.ax": {
+      "sha256": "3bfe12a36b9de1b7bd7cc340286588f60771c2b62e6af3ce12503ed2d6434df2",
+      "bytes": 2273
+    },
+    "examples/flagship/agent_task_llm_generated.ax": {
+      "sha256": "f3bdaedf86c6b17cf9bf52a9518051f51f3032974b2e7236c9e31e7d3be47e5b",
+      "bytes": 1338
+    },
+    "examples/flagship/agent_task_secrets.ax": {
+      "sha256": "f0997b51bbcc2d799224a2c68d7c7cc47569843a29334819588a4e7fdf00b481",
+      "bytes": 3152
+    },
+    "examples/flagship/agent_task_subtle.ax": {
+      "sha256": "2b6dbe646924c6602d88d1ada3d612042cf7a1fb4206b6bbb53279781f0a1489",
+      "bytes": 2446
+    },
+    "examples/flagship/compare_docker.sh": {
+      "sha256": "d89837f0708066c58c277a8245f0e5c1e8dcf4493d4bba752239c8112c165748",
+      "bytes": 6335
+    },
+    "examples/flagship/compare_python.sh": {
+      "sha256": "bb824f8cc155e2c946cfe77a60697bf9e988717ab568cf65705fa1a6f212b4c2",
+      "bytes": 4294
+    },
+    "examples/flagship/cve/COVERAGE.md": {
+      "sha256": "a1eaeabc7563432eaaf09755080cb25b7670371d924bc61ee0e83ca911bd8a50",
+      "bytes": 5359
+    },
+    "examples/flagship/cve/CVE-2024-2624/README.md": {
+      "sha256": "7563da0c9cb380970f91bdf31e813f9c589573aa3706e5eca04b838be01e4081",
+      "bytes": 2075
+    },
+    "examples/flagship/cve/CVE-2024-2624/file_store.ax": {
+      "sha256": "38ed0891a4e2209c1b2855c5b8fe0f048e361d11b2f9b5bd52f9dff34b591f43",
+      "bytes": 1998
+    },
+    "examples/flagship/cve/CVE-2024-2624/file_store_traversal.ax": {
+      "sha256": "36281424e52097f02dc9871a5abd7be3d8b3d3362e916ec5a8efad60d9f96c65",
+      "bytes": 1786
+    },
+    "examples/flagship/cve/CVE-2024-2771/README.md": {
+      "sha256": "4dafe9e8ad2f057f987b43f4bcc3a94ed1464816d2333aafb4ced046fd55f1d5",
+      "bytes": 2408
+    },
+    "examples/flagship/cve/CVE-2024-2771/escalation.ax": {
+      "sha256": "fafc022ba78912125e36629d6e9184a33716876cd0a4dddc74e3a2948a4166f1",
+      "bytes": 1847
+    },
+    "examples/flagship/cve/CVE-2024-2771/escalation_exfil.ax": {
+      "sha256": "28c4c3c3cd14a466315b1b3cb05f61dedebdf4c75782847282fc5d5b8a6fdeeb",
+      "bytes": 1603
+    },
+    "examples/flagship/cve/CVE-2024-32964/README.md": {
+      "sha256": "8b69d80c5da74aa4cf3f51b3b8a98e11135f38995fe4dee837a902b31bbcaf8d",
+      "bytes": 2328
+    },
+    "examples/flagship/cve/CVE-2024-32964/proxy.ax": {
+      "sha256": "e3defeb4a4d0cfadb813d47f54d79b78c9ce07c345bf82b9642d9862c7dc4f73",
+      "bytes": 1593
+    },
+    "examples/flagship/cve/CVE-2024-32964/proxy_ssrf.ax": {
+      "sha256": "367406f50da954cd13d64543d6978906e524d86cc22133b141871b2063470d44",
+      "bytes": 1690
+    },
+    "examples/flagship/cve/CVE-2024-34359/README.md": {
+      "sha256": "85e51dcb259ca8ce4050454cc26df871c4f6816498722eeff0d62e80d8458333",
+      "bytes": 3385
+    },
+    "examples/flagship/cve/CVE-2024-34359/model_loader.ax": {
+      "sha256": "211ce08e3740ddda3858e82092cf8ca8d1498ed4bd1822f665a80d1a262b0421",
+      "bytes": 2713
+    },
+    "examples/flagship/cve/CVE-2024-34359/model_loader_ssti.ax": {
+      "sha256": "abc1051b8b873e5e9ae7daf95bf7a3c4afe822f07681480d013c1f771abaa92e",
+      "bytes": 2204
+    },
+    "examples/flagship/cve/CVE-2024-5314/README.md": {
+      "sha256": "9d3df220f77856327a3fc5f4a8ae948df4eed8098794f1365dd738c46c785f56",
+      "bytes": 2835
+    },
+    "examples/flagship/cve/CVE-2024-5314/list_records.ax": {
+      "sha256": "9acdc697d6443e3c09bccb8aaffd815bc3501be2dece695a7530afdf7f0ab3cb",
+      "bytes": 1540
+    },
+    "examples/flagship/cve/CVE-2024-5314/list_records_injection.ax": {
+      "sha256": "0ed81f9bfb31db013b91e8ad9865e5865be5044e206925b23b966d2cc5f4c1e8",
+      "bytes": 1148
+    },
+    "examples/flagship/cve/TRIAGE.md": {
+      "sha256": "ff9cc6d0c8fa253ac1a88d9b41e558dcc206e563ee27180b1e1d7040fd864b47",
+      "bytes": 6984
+    },
+    "examples/flagship/cve/run.sh": {
+      "sha256": "d3adfba6a6f83ab337e9caa077448c814a0c01749e7322f8d27f9525ba2f5e2e",
+      "bytes": 4751
+    },
+    "examples/flagship/demo.sh": {
+      "sha256": "c4803642c95d2d91b4bdf803036050b95a867093bd981949369c5d8e62937c02",
+      "bytes": 11106
+    },
+    "examples/flagship/docker_probe.py": {
+      "sha256": "22519982df990f6fe5826dd15874edfdf7275fead3c500c6449dc766d9defde6",
+      "bytes": 1819
+    },
+    "examples/flagship/foil_python.py": {
+      "sha256": "f256b41d6e89b0323cc8286c0372d6f03b7007595e23098e785c48b47a2f6796",
+      "bytes": 3587
+    },
+    "examples/flagship/real_llm.prompt.txt": {
+      "sha256": "af15a0fd6c4fa5a41c2cd9a938fd1b788557506e46fa6fe80342727a73ad1f67",
+      "bytes": 2027
+    },
+    "examples/flagship/real_llm.sh": {
+      "sha256": "75c49ba98abce6e7c08dee2d640b5e9e1a6f8500e7006ad0c3f14e55ef5b00b9",
+      "bytes": 5224
+    },
+    "examples/flagship/run.sh": {
+      "sha256": "4f5d6a6f85d2a7a9ac8acf8c8b6c304bccae7ed42427f8ad0d95b062b1c839ea",
+      "bytes": 4764
+    },
+    "examples/flagship/seccomp-agent.json": {
+      "sha256": "d64db07f6ddf99f79e001a9b75f7b10464d06002fa338e1859581a0ec84bc43b",
+      "bytes": 2372
+    },
+    "examples/floats.ax": {
+      "sha256": "19e9beb25dfc746cbf27833fce57ed028b53f1010d4a4f3a34412bab01155f47",
+      "bytes": 244
+    },
+    "examples/goals/README.md": {
+      "sha256": "0f2c9da31098851709c17090ebcc43889446d789af1a031c3e6c410f9eb59919",
+      "bytes": 6285
+    },
+    "examples/goals/agent-goal-evil.md": {
+      "sha256": "b0e64890e1e790190c431ea6d4c0f07c98c2560a04d1bf3f0c66c3610ca167c4",
+      "bytes": 3722
+    },
+    "examples/goals/agent-goal.md": {
+      "sha256": "acd6c8c7e2315846c99dba3c74ce775ff12d25692b82b37bd260154700bd84eb",
+      "bytes": 3891
+    },
+    "examples/goals/brief-gate.ax": {
+      "sha256": "7649cd73634377744e7606a503da334a878b2a0b611454f26c377880a3ac1fc5",
+      "bytes": 4262
+    },
+    "examples/goals/compose-goal.md": {
+      "sha256": "29b98a3306b0a3ee43c8786d01be2565ee0c122dec113ce457f0ab52ca5af1ee",
+      "bytes": 1486
+    },
+    "examples/goals/constrained-goal.md": {
+      "sha256": "2a9df9550e3f068ef7717b5f7546ec01800ae38abc7e782cb278d6d5caf2236b",
+      "bytes": 2415
+    },
+    "examples/goals/data/notes.txt": {
+      "sha256": "e48d5882cef1abc703849b82bdf41b880a6db0a424b4db9bcc080d97740c23a7",
+      "bytes": 872
+    },
+    "examples/goals/file-budget-goal.md": {
+      "sha256": "1352edaca073abde80033bc9f51b5f998ba5a6027f10f9eec852b7a89d7fc43b",
+      "bytes": 1729
+    },
+    "examples/goals/flagship-goal.md": {
+      "sha256": "ae4767d7fe3118a3e8d95eb4f29fc501409d9e011c09c48be5c063dd0e267846",
+      "bytes": 2419
+    },
+    "examples/goals/hello-goal.ax": {
+      "sha256": "39248dade0470168d8e5ef1495fdae4b86a6193edd32572d3383021be4c20851",
+      "bytes": 3415
+    },
+    "examples/goals/hello-goal.md": {
+      "sha256": "13889fc3c25c1120a234f35102b84e52db9af8a897ca8b873330582ce7082943",
+      "bytes": 6202
+    },
+    "examples/goals/learn-goal.md": {
+      "sha256": "3138a334792306a65fb6f55a6fc918a79ea7b3e44ad6c35c1fe30c3788831013",
+      "bytes": 2197
+    },
+    "examples/goals/optimize-goal.md": {
+      "sha256": "563b6c1346c37929bdd5d4a78b1dfd4163d774dcf1b38377c1ed652b747f763f",
+      "bytes": 1764
+    },
+    "examples/goals/redteam-goal.ax": {
+      "sha256": "e6d6f3c808c83340b94198d4a2f85fff48c1811eab1f672dd23c48094a2bf3b8",
+      "bytes": 2210
+    },
+    "examples/goals/redteam-goal.md": {
+      "sha256": "59165cbad1fe51d7f136901f83835c45f100b15b837badac76159256e84f489e",
+      "bytes": 2228
+    },
+    "examples/goals/sandboxed-goal-evil.md": {
+      "sha256": "f8ce5759121021fb9f087cf34d9752f501ae8e8b6102bb8330c788f08b3f8922",
+      "bytes": 2368
+    },
+    "examples/goals/sandboxed-goal.md": {
+      "sha256": "6b0e0df9e129337ea0854d70c0c6801f28bb75ca647f2e8cf61d43ac6ebefa66",
+      "bytes": 2215
+    },
+    "examples/goals/verified-goal.md": {
+      "sha256": "1d3f07d9d983fda3d7ee87a7bfd7e286c3c3ae665ea7731bf809eaa958913a9c",
+      "bytes": 2187
+    },
+    "examples/hello.ax": {
+      "sha256": "8472bb134f238a16c8d9ee5ebf463016f8cd8767cb9837e3a6ccfe2a469577f9",
+      "bytes": 385
+    },
+    "examples/http_get.ax": {
+      "sha256": "f50b492204c76f4a4bd607702c526f391cb66992b9d5318b17ce23c4466cf0b4",
+      "bytes": 641
+    },
+    "examples/http_sse.ax": {
+      "sha256": "ecfa45fd03508fd3dd6c8a71aabef990d32e81b7a9a196653790cdc10f28e2db",
+      "bytes": 974
+    },
+    "examples/intents/overbroad.intent.md": {
+      "sha256": "19cd637c5f5718ff09aaf2562ae11b7ebc4ba26f21bb2eb471d0a274febb8055",
+      "bytes": 630
+    },
+    "examples/intents/summarize.intent.md": {
+      "sha256": "83a62a3126cf62e3907fe676912a1fc25cc9547b7719ce5ca5d0637a5a86965e",
+      "bytes": 323
+    },
+    "examples/intents/vague.intent.md": {
+      "sha256": "4ef8661b14625b51badda05eb1a95ad4fa549be973ff3ae2c5c5ad226f6e9e13",
+      "bytes": 565
+    },
+    "examples/interactive/README.md": {
+      "sha256": "2f7df8b4b407edb7b3352edbacef861ab34deb1f09c8515499744052fbb5a08c",
+      "bytes": 1109
+    },
+    "examples/interactive/approval_agent.ax": {
+      "sha256": "f11e16514cb81dfd912460ad7fe5dfe13c74be6593d2169cf526843cee54857e",
+      "bytes": 1242
+    },
+    "examples/interactive/greet.ax": {
+      "sha256": "83e116fce51e45e8eae24a4ac033e352b2eca5ed83672106981439ee7536ee56",
+      "bytes": 681
+    },
+    "examples/interactive/guess.ax": {
+      "sha256": "7101f7114e53a25f8093f817c86f68f3caaf259838573cf55bd63b3aa3f478f3",
+      "bytes": 1600
+    },
+    "examples/interpolation.ax": {
+      "sha256": "5f66f07bde31e282e6bdf7f0ee066169b846292d147925ea96c9663da61a185c",
+      "bytes": 121
+    },
+    "examples/jobs/data/report.txt": {
+      "sha256": "94ad604d20c9c7978cfa8da66c7737094b9e7dab846d31f861204459a72bf81a",
+      "bytes": 60
+    },
+    "examples/jobs/evasion.ax": {
+      "sha256": "488954872cf05c61f789a67059d1798cd4825ac8acfc37738f4ac0134c14f891",
+      "bytes": 1116
+    },
+    "examples/jobs/evasion.axjob": {
+      "sha256": "4b156cac33fb081358be0b699df4bf8b8b428901e588f0b0c96c51c682359b3c",
+      "bytes": 226
+    },
+    "examples/jobs/overreach.ax": {
+      "sha256": "b7066e8002a866a6582db7e52ff38724b0b46ef336e555f18e92ee8d5e92423f",
+      "bytes": 337
+    },
+    "examples/jobs/overreach.axjob": {
+      "sha256": "29645d72e784f7103c9ed4c4f1edad6c0e93bc900efc49bd9d5e574878aff8cc",
+      "bytes": 307
+    },
+    "examples/jobs/runaway.ax": {
+      "sha256": "31def4d2de5fbd590bd258e8131946a15f2d19cdf12ccc7551b6a49bb619ddcf",
+      "bytes": 224
+    },
+    "examples/jobs/runaway.axjob": {
+      "sha256": "2d951e93556983ea3a3ac66b090fa6a51ab2747542611e1fde56c816a9462b89",
+      "bytes": 202
+    },
+    "examples/jobs/summarize.ax": {
+      "sha256": "2fe0b1dd735dff4a712dbe902bd9b863945548a390228473b5f0bbaaa80621ac",
+      "bytes": 545
+    },
+    "examples/jobs/summarize.axjob": {
+      "sha256": "3b9c18a1b93b09fbdff47bce96150efdeddfd83e7f818865504922180f6b8c0f",
+      "bytes": 301
+    },
+    "examples/kernel/boot_stub.asm": {
+      "sha256": "8a79ebca7e472e47f97d9acf580dcec99b702b923dbf350e699aa9262b8c1148",
+      "bytes": 5273
+    },
+    "examples/kernel/hello_kernel.ax": {
+      "sha256": "f764c335aeac795431628e36c87fef922d7afd2a14644b084c28621366d31969",
+      "bytes": 2684
+    },
+    "examples/kernel/hello_kernel_slice1.ax": {
+      "sha256": "db6d2e0921f2c011d22a4f4ed40dd7f39d4a1dbcd204f57b05dd5ed5a45f1417",
+      "bytes": 3031
+    },
+    "examples/kernel/hello_kernel_slice2.ax": {
+      "sha256": "b27b6898dbfd1d7ffecd6a0cb25e04ae19002c3275d9777523de2ffec0efc103",
+      "bytes": 2495
+    },
+    "examples/kernel/hello_kernel_slice3.ax": {
+      "sha256": "4d4544b049a787e13ea1f134caaab0ef1113f42476d5d0ebdcaff24218716b20",
+      "bytes": 2608
+    },
+    "examples/kernel/hello_kernel_timer_irq.ax": {
+      "sha256": "d853b701206cd993048190393c1db26a895f92515e5f30d270a7c16e46a94a08",
+      "bytes": 8056
+    },
+    "examples/logical_ops.ax": {
+      "sha256": "931a20d861673aa7948887e3438d40430f5be931656c709c97afc4d3c357c7e2",
+      "bytes": 367
+    },
+    "examples/math.ax": {
+      "sha256": "7f8d748215bb61aa3d8565c0dfe9182910f5cce4c5222af684ed4238a863dbcd",
+      "bytes": 178
+    },
+    "examples/math_builtins.ax": {
+      "sha256": "9bd1adb130614baaa34665b419721902b3439c66d3f1cc460f5ea5592dabaef9",
+      "bytes": 231
+    },
+    "examples/mobile/compute.ax": {
+      "sha256": "cd9e4e58790f3e0d5dc2defd3bdb726bafcb2ab05a51fef6be501b18b000a699",
+      "bytes": 1079
+    },
+    "examples/mobile/ios_compute_parity.ax": {
+      "sha256": "4c3f58fd30563b0a1d76df95883d6dd867258fdc44974c9374f0ee6bae2556a2",
+      "bytes": 1759
+    },
+    "examples/mobile/ios_window_clear.ax": {
+      "sha256": "5a75b4a314c485f7cdaa67bf53b8609d97bf6da2a12f6681d045aef06ffeb527",
+      "bytes": 1495
+    },
+    "examples/mobile/lifecycle.ax": {
+      "sha256": "75ed3287f09933b415f80dbb608481ad4a6e17479c60782f6e2ce40ce61100c7",
+      "bytes": 2227
+    },
+    "examples/modular/README.md": {
+      "sha256": "107bcdc8e81cc66ceacead4bbf9fe1ade3b62739ed935d616ab3e16c72d44e5c",
+      "bytes": 1071
+    },
+    "examples/modular/agent.ax": {
+      "sha256": "d5ca543ec1e4753434d753cdcaaee9dc91b92e040477e01095b337abfe774c68",
+      "bytes": 752
+    },
+    "examples/modular/scorelib.ax": {
+      "sha256": "e495c919aa13df0fcc0c9e6095a6488f487c212327b3756ed708cee8f1053723",
+      "bytes": 904
+    },
+    "examples/modulo.ax": {
+      "sha256": "c01814599a8e1ef998f214a45a51c743db6ba261f7841e488a28836228612997",
+      "bytes": 421
+    },
+    "examples/native/gfx_demo.ax": {
+      "sha256": "5559395f520db72526e008cc0ac3e279932cb5408d59e6bc0825c0846ffd53cf",
+      "bytes": 1321
+    },
+    "examples/native/gfx_render.ax": {
+      "sha256": "1da4d2c8029dceeda588612229252c6e873d3a0e42dc3e1a446a82fe26be2b5b",
+      "bytes": 1394
+    },
+    "examples/options.ax": {
+      "sha256": "e6aa78d0db964e47d9edcd6033dba1bd4aeac6676921fbbab0c591c6f6023ed2",
+      "bytes": 266
+    },
+    "examples/parse_int.ax": {
+      "sha256": "39bfcacc9ea4479d4378b05b722d909514a8a53d2285a590dd9c256fb36b1d4e",
+      "bytes": 1071
+    },
+    "examples/proofs/carve.cert": {
+      "sha256": "426531e8d95b7335b1c6c06ba5ba78565ddd114530c42fda865ba967ef35953c",
+      "bytes": 645
+    },
+    "examples/proofs/carve.obl": {
+      "sha256": "a6099eebb4eabb8622b6fbd7f9497ed53ee462e4814bd15d24901c0d65875215",
+      "bytes": 264
+    },
+    "examples/proofs/mint_o1.cert": {
+      "sha256": "d05412c7b56731affd7f7262d9020a23149e8fef8ad849c8f09beb16e3d0f561",
+      "bytes": 4155
+    },
+    "examples/proofs/mint_o1.obl": {
+      "sha256": "24e000e66baf74a9bc66e82e72a9ba65b7716106fe7dd7787db2cb91ec1614c5",
+      "bytes": 771
+    },
+    "examples/proofs/mint_o2.cert": {
+      "sha256": "20bb23a8986d1cbab09e1c0ff2002d3d2137dd5b834357e58dd40cbe35061a69",
+      "bytes": 1353
+    },
+    "examples/proofs/mint_o2.obl": {
+      "sha256": "c36ebc03690e4fbd09f82e96cc7a6a6dc6fb8578768cc07d3bdf85e272206d10",
+      "bytes": 418
+    },
+    "examples/property_test.ax": {
+      "sha256": "19357b51f165a1565e0be6c1f41d2f84682c4690cad92ef6147712eaf73b77c9",
+      "bytes": 1842
+    },
+    "examples/r27/killable_agent.ax": {
+      "sha256": "c8029fa2fb4f4a111af6f86d98d5f0a41c8c8cc64c7df15f991241d6e125dfb8",
+      "bytes": 344
+    },
+    "examples/r27/killable_agent.axjob": {
+      "sha256": "96b2a6036a8efae47e922f3fd42cceae487a6f67e1ae37c843aa33725f29b427",
+      "bytes": 284
+    },
+    "examples/r27/overreach_agent.ax": {
+      "sha256": "40ec6fe21b0c0c25a05a50595a9955a3a8cea91970f4908ed8e043fdd2319ef4",
+      "bytes": 286
+    },
+    "examples/r27/overreach_agent.axjob": {
+      "sha256": "c6cd87f4491f1d5c6c0b37ea18ae35f76da4f7bccb327920524ad96d83599ec9",
+      "bytes": 286
+    },
+    "examples/refinement_attenuation.ax": {
+      "sha256": "935bb86ba1af350cca0e6c01881684222032087a63af7ce5fcb931822dd7cd85",
+      "bytes": 2237
+    },
+    "examples/refinements.ax": {
+      "sha256": "a629e9be093a3a4793aa1cab5b6eb0c7331a7998e9e46b227be5b3bacf7fed25",
+      "bytes": 3791
+    },
+    "examples/sensitive_data.ax": {
+      "sha256": "79851467c1b70303a04c2158b18e296ffd5e5d0410e9f901e3e67e3f9bf5c245",
+      "bytes": 772
+    },
+    "examples/should_fail_test.ax": {
+      "sha256": "c7c21d8e38fa248c0e73c25e5b4de6979aa36581c28cf7f9458ceb9b6e7eba62",
+      "bytes": 595
+    },
+    "examples/slices.ax": {
+      "sha256": "092d12a1988e27eb5454db83d302a15956f9d0b4053bc2dff1fe8ba2d0e448bc",
+      "bytes": 125
+    },
+    "examples/stdlib/README.md": {
+      "sha256": "93f5fee3845614fccd21ac6e75b390329cb4a39ac1254c30d0c52bff04ceb10b",
+      "bytes": 7592
+    },
+    "examples/stdlib/agent.ax": {
+      "sha256": "fb4f028d039dfcddf3a74ee68e862c01428e7379a81c30f439d5678d072f399b",
+      "bytes": 7870
+    },
+    "examples/stdlib/arrays.ax": {
+      "sha256": "9f8768fa415a6a6c00f088d6f7c0f7ae4c699ead81a388ba2b0233427ecdb40e",
+      "bytes": 2361
+    },
+    "examples/stdlib/asi_prelude.ax": {
+      "sha256": "351d7326b2ff74e6f4c2b5532eac39df3d6f4c656a9c786763c740fc719bba23",
+      "bytes": 9124
+    },
+    "examples/stdlib/audit_event.ax": {
+      "sha256": "966bc4f2d4dbc2eddea24a7e26815fe0577559f6dc98407496f651d3fe2bcb71",
+      "bytes": 6354
+    },
+    "examples/stdlib/bandit.ax": {
+      "sha256": "75f895e26b327a9531bc7c0ad6bcf0183a90d9b5f101953657277bb16852a7fd",
+      "bytes": 4697
+    },
+    "examples/stdlib/belief.ax": {
+      "sha256": "bfeb64803edcfa26033ba92ab9a834a1a8fb6870c0d44eb29b4d8176a720a7f3",
+      "bytes": 6539
+    },
+    "examples/stdlib/budget.ax": {
+      "sha256": "2f4d399dda08a451bd01f72dfd2c2d9ce4ba1a07f466d372ff7f8932a633cc3b",
+      "bytes": 7806
+    },
+    "examples/stdlib/causal.ax": {
+      "sha256": "f6013b86fcf4945cc86173b5a9210366fc1acb78f287b6812b1da61a51eac9a0",
+      "bytes": 10402
+    },
+    "examples/stdlib/constraint.ax": {
+      "sha256": "fbdac5dea3ce670ff83e37488b8b3d4c26ad91f329d8f988d08b75628c3a4e1b",
+      "bytes": 2479
+    },
+    "examples/stdlib/coord.ax": {
+      "sha256": "a5448b41f6b44a321aa9fa22779608a3ef84320f089dd6a168230999523e02c0",
+      "bytes": 16593
+    },
+    "examples/stdlib/counterfactual.ax": {
+      "sha256": "521fffba0d9e071c1ef95ef95eb448736f5d3c5a8dfdc53400b5df9e228d2b57",
+      "bytes": 10650
+    },
+    "examples/stdlib/crdt.ax": {
+      "sha256": "a56c0c618fd3d81b1a7bebc6fe77c128465e8cdb56840ce4940222576807d681",
+      "bytes": 16542
+    },
+    "examples/stdlib/date.ax": {
+      "sha256": "5d78b7818eb83e4b2ecff7545eb908154b517a225e263d8271391f3a4f0804c1",
+      "bytes": 10663
+    },
+    "examples/stdlib/distribution.ax": {
+      "sha256": "a03e6fa85f199a6cd9e9839014934c85b0bba118bacbaf56c84e8ec526207107",
+      "bytes": 13789
+    },
+    "examples/stdlib/effect.ax": {
+      "sha256": "647107d59f6d2ffaf764ea6fa2a1cb69a3fbe743fa7e6a5cdf8b3517ee036f13",
+      "bytes": 6535
+    },
+    "examples/stdlib/goal.ax": {
+      "sha256": "92f01bdeda87b14ce9cd7d82e6d9a14c24d5c7ec5c573c53e2d70b81984e3ed6",
+      "bytes": 6562
+    },
+    "examples/stdlib/llm_gateway.ax": {
+      "sha256": "8dfa53695152bf198ef18495e0790ef319bb6da501cf2432081cf6114c39c936",
+      "bytes": 8473
+    },
+    "examples/stdlib/path.ax": {
+      "sha256": "67752236c6f138b76d0253ca0b34870ad981b4f8f0e3ddfbb2b34d07c15b31d5",
+      "bytes": 6724
+    },
+    "examples/stdlib/phase14_tests.ax": {
+      "sha256": "1d72c303abc2d5c5eab517f35ac4beb12f4fd27858f9bf774f424f3249df7df2",
+      "bytes": 57876
+    },
+    "examples/stdlib/plan.ax": {
+      "sha256": "c8d16bff9c36f4ca6d42d81d35551fa6a51a8af713155730a53edf6055b51edd",
+      "bytes": 15397
+    },
+    "examples/stdlib/principal.ax": {
+      "sha256": "59acfcc16988117c780a6028f570d08efa867d352895484a1ce96e36d789e871",
+      "bytes": 2239
+    },
+    "examples/stdlib/principal_mint.ax": {
+      "sha256": "48d23db911daa34ff1bb7a3b375acb6cdbcf9baada2e302ca3e7931d00e7d473",
+      "bytes": 11582
+    },
+    "examples/stdlib/r42_smoke.ax": {
+      "sha256": "8cd6cef076b2edc6f3413f69b92e21c87aa7d6a2d2121524ce1441f238f3721a",
+      "bytes": 3765
+    },
+    "examples/stdlib/replicated.ax": {
+      "sha256": "9186ba506929310223441cab6c1f27fee8583918b7af804650fd0147a5e4cf77",
+      "bytes": 17293
+    },
+    "examples/stdlib/reward.ax": {
+      "sha256": "83f495d126fe5a2271e48d66a58f7218d9a1273b231cc3cbc47e9a120dea7be7",
+      "bytes": 5077
+    },
+    "examples/stdlib/risk.ax": {
+      "sha256": "c57863b7ea77ca1a3e8a7495ddcc9fef0005386743eb37241c163d76b0514673",
+      "bytes": 17085
+    },
+    "examples/stdlib/safe_action.ax": {
+      "sha256": "a9992f50c096a07b3763920bd47478d148999c27ae653aac3ea652dfe43dc8d5",
+      "bytes": 3746
+    },
+    "examples/stdlib/set.ax": {
+      "sha256": "5c9689a6dc4e0e7bd6576908142c15b53164e108e42b0816c0caffe3b71e1c30",
+      "bytes": 5302
+    },
+    "examples/stdlib/source.ax": {
+      "sha256": "4bd7620f256c4bff066d6ec0711f279b5f29fb1433339f06350167f33630af2f",
+      "bytes": 5056
+    },
+    "examples/stdlib/store.ax": {
+      "sha256": "520ced2c5e25ba381c1b72e77ecad13cf3b77687be122cf8af0213b51850b2de",
+      "bytes": 7315
+    },
+    "examples/stdlib/supervisor.ax": {
+      "sha256": "1bce710a02426d6119b9436840e14c6a5c5b3477bfd5f13fd4f15d29c273d32f",
+      "bytes": 5702
+    },
+    "examples/stdlib/supervisor_tree.ax": {
+      "sha256": "d3c826c59a1c2cf7789ad7124b4723c0cff6b4e66035442417b10e3ffb4e64ed",
+      "bytes": 8323
+    },
+    "examples/stdlib/tainted.ax": {
+      "sha256": "61f92d3b01faf0db5dae5b74d1edf0bb9aa1de9dfe0638db2c66e4958abcfb7b",
+      "bytes": 17441
+    },
+    "examples/stdlib/trace.ax": {
+      "sha256": "b40b249767ec63541a82761625f322b1f66153be6ee2a0126f8bb3220db44274",
+      "bytes": 6382
+    },
+    "examples/stdlib/uncertain.ax": {
+      "sha256": "02f26eaf28ea4dbda1507eb0ce17cc41ef77a5151336271cc9261a29328659b1",
+      "bytes": 2318
+    },
+    "examples/stdlib/world.ax": {
+      "sha256": "7e0180ef027c757e8305fbeaee2814891530a8aa0fee5e40f0466173082cbf34",
+      "bytes": 5637
+    },
+    "examples/stdlib_tests.ax": {
+      "sha256": "91daaf2dd7868692cfba97b09e1e0ced158f12636dfd13e1c9abbddbc849db52",
+      "bytes": 1622
+    },
+    "examples/structs.ax": {
+      "sha256": "ab03cc047247365fd9aa37bf1557ebbb9d001eaa6cca92b78742ffdbb11507eb",
+      "bytes": 273
+    },
+    "examples/sum_types.ax": {
+      "sha256": "3aa28232d632fb8db32d3af406dbb7c80bc6d536ade001fc2d52155d70e4745c",
+      "bytes": 982
+    },
+    "examples/tee/confidential_score.ax": {
+      "sha256": "1c2b57a820d0a9177fff6a2e4af8cbc1ed8247be92adbbfc5c0b6867ef0714a2",
+      "bytes": 3110
+    },
+    "examples/temporal_decay.ax": {
+      "sha256": "0ed2b33b7f73088e0d7905aa0476a9d6b6a3b3fdde03db1831626395d90d7ec4",
+      "bytes": 819
+    },
+    "examples/tests.ax": {
+      "sha256": "bf4db7b4bec97edefec4c4144f2fa6163687edd3059e9dffc71e707590439977",
+      "bytes": 168
+    },
+    "examples/trainloop_stream.ax": {
+      "sha256": "2926f8c86583bf5e77f8f4896957fec1419f81b99076f050c7cda1e1716dfb2a",
+      "bytes": 1273
+    },
+    "examples/traits_demo.ax": {
+      "sha256": "069f6e877afa8a4d2b69d6a2c045dd5b1c7794c598439ee8d80d6f4d2caacfc6",
+      "bytes": 2952
+    },
+    "examples/traits_methods.ax": {
+      "sha256": "52b2e04ed4bf54c464591925ad556082d60a55f63291b6d643390fd06c4737ec",
+      "bytes": 1090
+    },
+    "examples/tuples.ax": {
+      "sha256": "74df3133a422473e793e47f4ffa9d504a7a31b4882931c3301ed417430bd66e0",
+      "bytes": 1151
+    },
+    "examples/uncertain_propagation.ax": {
+      "sha256": "d82ae4423c7e3be830330d98682db3579e5e56b8fee40ef8353c46f3d1fe7878",
+      "bytes": 875
+    },
+    "examples/while.ax": {
+      "sha256": "0a94fdf53d619c14248328e8f7810352c1d187a10db828fd805395c597fc5733",
+      "bytes": 134
+    },
+    "examples/zephyr/CMakeLists.txt": {
+      "sha256": "37e3b17cf42c84e3f33aeaf85a46decc5a5e2371cda97b85de6ca0dffd61c898",
+      "bytes": 1636
+    },
+    "examples/zephyr/app.ax": {
+      "sha256": "93a8fb7a16566512afc3b4857eb9ecbf456b694c77e49044bc322176456a8406",
+      "bytes": 3604
+    },
+    "examples/zephyr/prj.conf": {
+      "sha256": "f9c977dab3626f17947f41ff8058b66116f794a1886928383f0054dd777e3825",
+      "bytes": 252
+    },
+    "examples/zephyr/src/main.c": {
+      "sha256": "771f10f222f34ed06327b98aca35aa0900f8fae99a3e61fe8a2300bfa7836882",
+      "bytes": 2841
+    },
+    "experiments/SUMMARY.md": {
+      "sha256": "1365d2c3c395c64aae97561823a579900402969ac13f58df605faad732f81409",
+      "bytes": 4386
+    },
+    "experiments/cortex-phase1/.gitignore": {
+      "sha256": "4eac2eebe29bf72d2b91393a43b50a7498b659831c16dffaefbd3a398cec91b3",
+      "bytes": 12
+    },
+    "experiments/cortex-phase1/PHASE1_REPORT.md": {
+      "sha256": "bcb99f15e6cf7b18af7c97e7ec7e7c75935cc6ac2cf06bc8d35ed1c1ac6f2ebd",
+      "bytes": 4300
+    },
+    "experiments/cortex-phase1/analyze.py": {
+      "sha256": "356db258497db3781c9c24030e1e127622f44485032fa90070b1f3b14def3c1b",
+      "bytes": 4181
+    },
+    "experiments/cortex-phase1/gen_tasks.py": {
+      "sha256": "f4d6d73839756e4ba2a36f24b39d6b1df04ca2434afdc6bed5f6255ae2d1fdb8",
+      "bytes": 6750
+    },
+    "experiments/cortex-phase1/run_meta.json": {
+      "sha256": "a63eea106f70fceba0be9d8e596908b1ed8ca651ac4700d527dec9a43dc15b3e",
+      "bytes": 541
+    },
+    "experiments/cortex-phase1/runner.py": {
+      "sha256": "27256c44ca6259c3dea20ebf8c0c02ceb1d26b5fcb6782d23655626b4d643d0b",
+      "bytes": 11275
+    },
+    "experiments/cortex-phase1/tasks/abs_wrong_sign.json": {
+      "sha256": "42b49d703d2ee981fe049ad2cc043d2758e579e17578245a53939f58a372b9e4",
+      "bytes": 473
+    },
+    "experiments/cortex-phase1/tasks/clamp_ignores_hi.json": {
+      "sha256": "c3e50239627c1d8be4e212926d81b89ae6be32e610706eeb84adebc37d6e8515",
+      "bytes": 553
+    },
+    "experiments/cortex-phase1/tasks/count_skips_last.json": {
+      "sha256": "eadaadb9798ea6afe493208039020ae0af4046cba40002c90e11a01006dbd910",
+      "bytes": 621
+    },
+    "experiments/cortex-phase1/tasks/double_adds.json": {
+      "sha256": "314128b07a289ac591f2d22e52bc8b49cbebfe1e4c4148c44b7faff2e3eb461c",
+      "bytes": 428
+    },
+    "experiments/cortex-phase1/tasks/factorial_zero.json": {
+      "sha256": "4dc88aab1886521fb85b40e8fd1db0bdbb6d3e44e49906cba394ade52bff1aed",
+      "bytes": 482
+    },
+    "experiments/cortex-phase1/tasks/is_even_inverted.json": {
+      "sha256": "74d3e6278ea69028bbb5a474d1c6d30197a452224f19a57deab6b774239c19f1",
+      "bytes": 427
+    },
+    "experiments/cortex-phase1/tasks/max_returns_min.json": {
+      "sha256": "e02f9a4d3d546e7d6f3cca08dffb49e73b38d88df10e105c16a8b8b7a685d5b7",
+      "bytes": 516
+    },
+    "experiments/cortex-phase1/tasks/min_of_three.json": {
+      "sha256": "7d2a3995c74acdd498f8cce1bf20f08583e5e176c5a654ac86b3a24624ed4d62",
+      "bytes": 532
+    },
+    "experiments/cortex-phase1/tasks/sign_missing_zero.json": {
+      "sha256": "639acf9c472459cf8ecebe763ac0f230039f50f4cbda1432cfc4aecaff7ed7cd",
+      "bytes": 513
+    },
+    "experiments/cortex-phase1/tasks/sum_off_by_one.json": {
+      "sha256": "1a1c60352aadde350c46b021d68c203a1f583fc82f790cd6c13020143d538ff2",
+      "bytes": 625
+    },
+    "experiments/cortex-phase2/.gitignore": {
+      "sha256": "225ac74ec39d2132bba3cb66fe91b8000dd941db1fa32f8ee7fff994d7533524",
+      "bytes": 13
+    },
+    "experiments/cortex-phase2/PHASE2_REPORT.md": {
+      "sha256": "5aee9d899a5a1da6d6737c7beb2e38db44c501de7037a0fe159a60e35b5f4c9f",
+      "bytes": 4148
+    },
+    "experiments/cortex-phase2/calibrate.py": {
+      "sha256": "2d5c7852407e91d607319a480d7f8711748b78676d228c6a9d47c3f58e2a95d6",
+      "bytes": 3385
+    },
+    "experiments/cortex-phase2/calibration.json": {
+      "sha256": "229d68929adfaeb6797ef98c038f0b9d745aeac3e6cacf716ac8baa677b87792",
+      "bytes": 2023
+    },
+    "experiments/cortex-phase2/candidates.py": {
+      "sha256": "020cded4b24b83412b3765e13aa5040710ecfeae75edeb24c560bea11d15ec4a",
+      "bytes": 7923
+    },
+    "experiments/cortex-phase2/run_meta.json": {
+      "sha256": "f25c76540a65164efce5d33b260460325595ba5da9858209bfa4faaabbf0ae45",
+      "bytes": 514
+    },
+    "experiments/cortex-phase2/runner2.py": {
+      "sha256": "e7dff77f1a196e473a61b63308eaa3caed0d51c27e26f2543c385fd326d2ce1e",
+      "bytes": 5906
+    },
+    "experiments/cortex-phase2/tasks_axon.py": {
+      "sha256": "c866027750495c0db846e4b9265a011fe8020d72d91f61e8d0f4ca2834d68e6a",
+      "bytes": 3688
+    },
+    "experiments/cortex-phase3/PHASE3_REPORT.md": {
+      "sha256": "9d1bb466d8d257f4743f143bcfa6ab7b08b75c206ca3a4cafa50037a939ace77",
+      "bytes": 4134
+    },
+    "experiments/cortex-phase3/ablate.py": {
+      "sha256": "18a4d79446441a910281489691d9f4437b0501f76ed0cbf0a315daae4da8506b",
+      "bytes": 5335
+    },
+    "experiments/cortex-phase3/ablation_meta.json": {
+      "sha256": "ff3fe87c4bcc7d961c1794a4ac7caf5055e6bc9fb78c7bc22e74c78263183223",
+      "bytes": 458
+    },
+    "experiments/cortex-phase3/transfer.py": {
+      "sha256": "7fe26137b0c4463b55d238126d551e7a3ea714de7833635643b64ce087c5e8fe",
+      "bytes": 6760
+    },
+    "experiments/cortex-phase3/transfer_meta.json": {
+      "sha256": "d7cd55762c07c2160199faf59524c63cb6763073e5c1d954746f6296faac351c",
+      "bytes": 374
+    },
+    "experiments/cortex-phase4/PHASE4_REPORT.md": {
+      "sha256": "8e031084839d47ce0519f49fc992ef1f1e456c34959ea97fb06971e6f83f5d90",
+      "bytes": 3529
+    },
+    "experiments/cortex-phase4/calibrate_py.py": {
+      "sha256": "c0499b5fa7b37e69f343befccbd14b5fb5a9f9e7168f30585017dd7625542390",
+      "bytes": 1809
+    },
+    "experiments/cortex-phase4/py_calibration.json": {
+      "sha256": "a20f752329d38c232060a8f56c25e14575f1d02442f69e44711bc9b0e704083f",
+      "bytes": 2270
+    },
+    "experiments/cortex-phase4/py_candidates.py": {
+      "sha256": "77595219ec47d1c46de4aa21858c3c4e280ca7004fd1d8bd483a3ef14f306094",
+      "bytes": 7413
+    },
+    "experiments/cortex-phase4/py_tasks.json": {
+      "sha256": "34b55e41f05d8a5aa8c5495b2bdfa7f8c0b3f37d53d78aa13bdd4aabb5e646c2",
+      "bytes": 2480
+    },
+    "experiments/cortex-phase4/run_transfer.py": {
+      "sha256": "99ceea9230077f67a213ae3459a803a262cb927e7ab5ec8e78b07d5603587b37",
+      "bytes": 3572
+    },
+    "experiments/cortex-phase4/transfer4_meta.json": {
+      "sha256": "615c901c1464ec45568a843daf25e2394c730167cfc9d74939e02a750dac1646",
+      "bytes": 504
+    },
+    "experiments/cortex-phase5/PHASE5_REPORT.md": {
+      "sha256": "17f2c7f4f1796cdcb2bc4d497f08d0dc27b0ffb1b01c6ce2f75874a70192c329",
+      "bytes": 3475
+    },
+    "experiments/cortex-phase5/build2.py": {
+      "sha256": "68a9638e1b6121a9acb3cb7d5bafe251cd88fbec240283ad289ccb5b5a7c663d",
+      "bytes": 4391
+    },
+    "experiments/cortex-phase5/build_stdlib_tasks.py": {
+      "sha256": "3d9f7cb0ce3b5eb66b2b739b2aa361623af7b6856f5467daa04f190bdb9481e5",
+      "bytes": 5077
+    },
+    "experiments/cortex-phase5/calibrated_tasks.json": {
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "bytes": 2
+    },
+    "experiments/cortex-phase5/fair_tasks.json": {
+      "sha256": "b3fc0c5ad19823b08211c981278fd8cfd6457d311025f4eee8da75eea68f80df",
+      "bytes": 5175
+    },
+    "experiments/cortex-phase5/http_model.py": {
+      "sha256": "b3ab3f9967c997f433519e3fc991b37bbec29f7fa745c80f73e9009b62ccd3d8",
+      "bytes": 1838
+    },
+    "experiments/cortex-phase5/run5.py": {
+      "sha256": "8aff17548666fac6c927ec9765c6c6d4a124efdf73c6d15b9b70101e13ea9e69",
+      "bytes": 6603
+    },
+    "experiments/cortex-phase5/stdlib_tasks.json": {
+      "sha256": "b3fc0c5ad19823b08211c981278fd8cfd6457d311025f4eee8da75eea68f80df",
+      "bytes": 5175
+    },
+    "flagship": {
+      "sha256": "17e2b321abb84c78ce63e332790e82697de995470ec47e467582f873dfc910b9",
+      "bytes": 5905
+    },
+    "governance/ARCHITECTURE_INVARIANTS.md": {
+      "sha256": "73663f17d6165df2954f120079276c219b9d7bc6d25d4ce96b6ec1b6ee1237df",
+      "bytes": 5571
+    },
+    "governance/ASI_BUILD_LOOP.md": {
+      "sha256": "2ca929008dd41a56d78e95dbc28619cd99a3aa4b25b18d22384735b3899740ee",
+      "bytes": 9133
+    },
+    "governance/BUG_HUNT_2026-05-31.md": {
+      "sha256": "70327837f9b02392df6c605b44d16f53aa4914f8167cb982281e4be00f3aaa97",
+      "bytes": 50696
+    },
+    "governance/BUILD_PROTOCOL.md": {
+      "sha256": "ec34e03bdc133bf12810f2b41287f494712ef48a79b9e3e26610ec90e69af10c",
+      "bytes": 13265
+    },
+    "governance/CODE_REVIEW_RUBRIC.md": {
+      "sha256": "829fbd5673611616b7a4b99b69dd00da7492171cdd5a362c7ea6c3899a24c9b8",
+      "bytes": 4535
+    },
+    "governance/DEFINITION_OF_DONE.md": {
+      "sha256": "423c04646c6f490f00abca697b29507f783415cafb1a290cef363214ae426ae6",
+      "bytes": 3849
+    },
+    "governance/EXECUTION_MODEL.md": {
+      "sha256": "ab0ab98e3f99f402d2dddcfe73d15b8e6dbc1dfef945a34eee7d319be9b7414b",
+      "bytes": 9902
+    },
+    "governance/EXIT_CODES.md": {
+      "sha256": "8cf879228ea4605fd3f3f1c36e1159f2f59c5601d0c5e222dd1a5c6bc9362ca0",
+      "bytes": 6037
+    },
+    "governance/MILESTONE.md": {
+      "sha256": "fc62916afaa6eeaa37e5c16840d142e0f886a629ce75cfa3248bc801b9d4fb7d",
+      "bytes": 10519
+    },
+    "governance/README.md": {
+      "sha256": "e366ef57ed49c1b403439e0bccfbac5062025c7b76ccd121b7f32af5e3c990ae",
+      "bytes": 3968
+    },
+    "governance/RELEASE.md": {
+      "sha256": "024461c0d2ffea2059ed3f5a3a9008826690ed08325e570e4e6599cb954c1839",
+      "bytes": 3819
+    },
+    "governance/REQUIREMENTS.md": {
+      "sha256": "75887390578cd5c657a0d0809ff01a2e5a6ae84bf6179fddcc63ee3309da8f08",
+      "bytes": 79540
+    },
+    "governance/SPEC_TEMPLATE.md": {
+      "sha256": "ef83d5edff42a091af8da41f52cbd11d04f5b2956a0625a504d5cc4314af2ced",
+      "bytes": 6972
+    },
+    "governance/TESTING_STANDARD.md": {
+      "sha256": "f5d404de559cf141418f0ccdbe0b961fc9523122d67329083db0aafc20a862dd",
+      "bytes": 8233
+    },
+    "governance/cortex-v015/CX-35-reflex-serving.md": {
+      "sha256": "33dba9877983b2ce989f07db3da38fdae7f590b89b0744f18378e9ca1f276b5b",
+      "bytes": 60195
+    },
+    "governance/cortex-v015/DISCREPANCIES.md": {
+      "sha256": "93264084af1f2e87dbdb4c4a29df161b886bb8b8e1794464860a740042514f62",
+      "bytes": 29813
+    },
+    "governance/cortex-v015/ENV_CONTROL_AUDIT.md": {
+      "sha256": "ae126a9b0ad720e73c23f85c81c29e5b890f24858c772e051029c197a29a20d0",
+      "bytes": 373945
+    },
+    "governance/cortex-v015/IMPLEMENTATION_MAP.md": {
+      "sha256": "d2f37c4aa8b7c371933b5a8420d3a7b35e6adddc48b04fa4682013a2eeafc7ce",
+      "bytes": 11223
+    },
+    "governance/cortex_gate_execution_registry.json": {
+      "sha256": "f56d80d7278c296543619d7d5b6f8300cda25fadca9b4aefcd7a6245dbcd00f3",
+      "bytes": 2518
+    },
+    "governance/incidents/2026-09-20-execution-supervision.md": {
+      "sha256": "ded0f32dac875d1b122f19368f7b892048c0dc73b60373dcc9bd3b23d06b0efe",
+      "bytes": 8821
+    },
+    "governance/notes/diagnostic-location-granularity.md": {
+      "sha256": "638d4467d2d77aa269fad2a25eb8d06d3e568979791f10f067cf67e03deac7d1",
+      "bytes": 1605
+    },
+    "governance/proofs/R27Corrigibility.v": {
+      "sha256": "6aa36fae9f143c772f2430c6dde71258ede2b18f6c73dc13646a50c52fbb5f43",
+      "bytes": 12268
+    },
+    "governance/proofs/R27KillSwitch-3principals.cfg": {
+      "sha256": "25f2b8aa3432156c749e2f36ca47a1d45be0456b6ed5ab1a1c2945db3d0bd166",
+      "bytes": 936
+    },
+    "governance/proofs/R27KillSwitch.cfg": {
+      "sha256": "63706cf1a809faca1b07c27cf86332df563c57bfcfd455275e2cef935abf52df",
+      "bytes": 641
+    },
+    "governance/proofs/R27KillSwitch.tla": {
+      "sha256": "fdede5c7461f4d38335edea11c7f528674d9f470f27baf69d6965af2b61ebc0d",
+      "bytes": 7172
+    },
+    "governance/proofs/README.md": {
+      "sha256": "79c8b360ae737baa7da52a8ef70cf43f345b692a877ee9d5738020eceb53eaba",
+      "bytes": 13175
+    },
+    "governance/release-verification.json": {
+      "sha256": "b2af832f83561b1144106e37085232d2c245f365f3df1b6910a1abf6d4109afe",
+      "bytes": 11470
+    },
+    "governance/reviews/2026-07-31-deep-review.md": {
+      "sha256": "14e500dfc83d576da4f14afe1bbc4e6864d55f58c0aa024f00ea1fedc9e7eed9",
+      "bytes": 349349
+    },
+    "governance/reviews/2026-08-01-triage/SUMMARY.md": {
+      "sha256": "0b4cff87630890b582d5bb0b0c3ec8f258a9e57279359f2bc2261e80e8e2a2ea",
+      "bytes": 3292
+    },
+    "governance/reviews/2026-08-01-triage/verdict-1.md": {
+      "sha256": "708de12df0ed541e7b9e390921fdb12a9f6a335d6fe3a62bc9214a7c99d2ce65",
+      "bytes": 8141
+    },
+    "governance/reviews/2026-08-01-triage/verdict-2.md": {
+      "sha256": "8cfc8d3cff90419831c94dffea4d612d51b99e1bf5850a7360ea764907624137",
+      "bytes": 7609
+    },
+    "governance/reviews/2026-08-01-triage/verdict-3.md": {
+      "sha256": "d4ebde0cd81649ad19ab37edf9af1d7a81ebcaaf2c5a73d3e377befb4b8d0cca",
+      "bytes": 8007
+    },
+    "governance/reviews/2026-08-01-triage/verdict-4.md": {
+      "sha256": "a1246530c5724585d22887e01d81acf40d12828c030b4a35da5966a190f66539",
+      "bytes": 7929
+    },
+    "governance/reviews/2026-09-19-contaminated-checkout-correction.md": {
+      "sha256": "324ede827a921c1b99212799002fc6762a80032f47964c870b5c8d2e10f68a6c",
+      "bytes": 10488
+    },
+    "governance/reviews/2026-09-19-cortex-v015-intake.md": {
+      "sha256": "59bd41eac22b37bd4015d2a51dce73e8c8f60264976e3929d15f583e644615b1",
+      "bytes": 4426
+    },
+    "governance/reviews/2026-09-19-coverage-metric-audit.md": {
+      "sha256": "05c8d6bb9a9cd2b39d6d41c9a048d129ae2e99cf43e46c11e9b34b7f454dcaea",
+      "bytes": 13823
+    },
+    "governance/reviews/2026-09-19-coverage-sweep-ledger.md": {
+      "sha256": "d7873fb7f79bcd68f82d50e4213f75fc66cb704f40e2ec13517519987000efef",
+      "bytes": 44699
+    },
+    "governance/reviews/2026-09-19-critical-status.md": {
+      "sha256": "b233ba0c88504d00d1d8c4fdb09e094e75a809d8980587b48adc7c1d5cd69a5f",
+      "bytes": 13134
+    },
+    "governance/reviews/2026-09-20-r25-evidence-cannot-pass.md": {
+      "sha256": "29063994fccf0cabc6bd22d1267301e50b29643279bec894e82fb507051b50b1",
+      "bytes": 3196
+    },
+    "governance/specs/R0-interp-module-split.md": {
+      "sha256": "1c89d23afabf0d82cff00239bd8dd9c2223a4f7f865069c3f5b64359111820f2",
+      "bytes": 8477
+    },
+    "governance/specs/R1-codegen-build-unblock.md": {
+      "sha256": "5de4651e15d3409b8e809e0e240d260b722a43c9511660a0ded53ceaf445efb2",
+      "bytes": 20014
+    },
+    "governance/specs/R10-self-improving-compiler.md": {
+      "sha256": "65e6fb5bee7c444b603e2d510b33b635f1cd77caa123691b6a37a651c61a7f84",
+      "bytes": 24062
+    },
+    "governance/specs/R11-capability-minting.md": {
+      "sha256": "1e41217dceb0933fea96fb5bb593d8c37554446e7f0c60807a9eed82aa60ba14",
+      "bytes": 16701
+    },
+    "governance/specs/R12-kernel-runtime-services.md": {
+      "sha256": "c9c7eccb86d4eadf6d824e871a95690fdb2d7a2bdb6d9e64a3fc322b4093a0ff",
+      "bytes": 10076
+    },
+    "governance/specs/R12b-kernel-goal.md": {
+      "sha256": "ad87a2ac61fad71196c36ce43c659eebe8c9f0f02ab5aefd732d2e3907a60ae5",
+      "bytes": 8902
+    },
+    "governance/specs/R13-native-ffi.md": {
+      "sha256": "9002085679e3827d45a0638d22ec17f43cc0d6d0350cd0e50339adad1515a77b",
+      "bytes": 33998
+    },
+    "governance/specs/R14-mobile-targets.md": {
+      "sha256": "8c030ac382622abd12ad8f4b54da7b755b73d8382ee64fdc0c0e96161bd6f84d",
+      "bytes": 61097
+    },
+    "governance/specs/R15-resume-runtime.md": {
+      "sha256": "a625f412d64066e146419682c35add46dd903fdcb28ff965cc0e169bf5b218e2",
+      "bytes": 20423
+    },
+    "governance/specs/R16-axon-ui.md": {
+      "sha256": "a30829229983c52b031b6ea9d8f1d28b0d8d2450bd48b096d69218877019a42c",
+      "bytes": 115937
+    },
+    "governance/specs/R16a-i2-pixel-parity-amendment.md": {
+      "sha256": "3a945fdec06c882187c79ad9c6aeb1b6605ac7bb591b03d33db08088752e2f9c",
+      "bytes": 9369
+    },
+    "governance/specs/R17-freestanding-substrate.md": {
+      "sha256": "447c2d9286fb81657941fb9060aab4956efb11e3460247305ad8b322cf323fee",
+      "bytes": 86873
+    },
+    "governance/specs/R18-buyer-jury-packet.md": {
+      "sha256": "20d6de30a6fe57c9b859fae9f8cacf205a5a029b67cd0a6295a0128d98d38cda",
+      "bytes": 4053
+    },
+    "governance/specs/R18-provenance-ledger.md": {
+      "sha256": "397cffb604f8190a68347b29222bcc1f23f192be1fa5f311aa7a75600e4df6f7",
+      "bytes": 49427
+    },
+    "governance/specs/R18-slice0-results.md": {
+      "sha256": "27962d9d58eec6035411bf5f1447b5236e533ce20045631a25364c54d5b6e074",
+      "bytes": 5018
+    },
+    "governance/specs/R18-slice0-spike.md": {
+      "sha256": "a3609c43e8693c57cd99b204f63e163ca4c7f53451725b8f68daaad1a63749dc",
+      "bytes": 14244
+    },
+    "governance/specs/R19-fixed-width-integers.md": {
+      "sha256": "9eada13439673d81954608749e4f0223c109ee69550d050c2414dce7f30d4965",
+      "bytes": 16893
+    },
+    "governance/specs/R1b-str-return-abi.md": {
+      "sha256": "c2e21e256964fe17e9f6a572e81c339e3d1ca57fc195c6d2e9a6af25c10bbdd4",
+      "bytes": 23568
+    },
+    "governance/specs/R1c-dict-runtime.md": {
+      "sha256": "a061714205def0cb004a24a8b6871652bca3ff4c463130b830ad2bf16323d9d6",
+      "bytes": 34490
+    },
+    "governance/specs/R1d-single-source-builtins.md": {
+      "sha256": "e940868fca0d74d9e19b2f6145e1234b4a9e4125015975c458906b9776c13ec5",
+      "bytes": 48748
+    },
+    "governance/specs/R1e-ir-backend-consolidation.md": {
+      "sha256": "29855b14bf085f917bc2908addd935ef2c335a1714eedbb652448499d752a2cd",
+      "bytes": 15053
+    },
+    "governance/specs/R1f-differential-parity-fuzz.md": {
+      "sha256": "f7d26e94283b0ddb14dab6a0f778d67128ba28bcf8462779ebe48ce95c80edcb",
+      "bytes": 10580
+    },
+    "governance/specs/R20-smt-capability-proofs.md": {
+      "sha256": "2f51bee614b8b19decb293cd50dce619758cde9427cf3cdb655747ed1a9d499f",
+      "bytes": 11002
+    },
+    "governance/specs/R21-axon-os-supervisor.md": {
+      "sha256": "a75eff56f1b5f71a29a74d5cb53b9a33ac5d9928b4cb82988f985ed298049638",
+      "bytes": 34119
+    },
+    "governance/specs/R21-decimal.md": {
+      "sha256": "b426d5bd18283641ad63aa2a61e5112d5608c77fb1af647c82058999e09da421",
+      "bytes": 42481
+    },
+    "governance/specs/R22-domain-modules.md": {
+      "sha256": "38bf24e1e6bcb437976714b2b4c1e712aeef7d93462897a39693fb9bdb0ab4a6",
+      "bytes": 10625
+    },
+    "governance/specs/R22-intent-approve-gateway.md": {
+      "sha256": "1694ac5e0ddbe0ef1e9f8367c63c4188100530277a56ef86039bb51de40a970b",
+      "bytes": 35370
+    },
+    "governance/specs/R23-ebpf-target.md": {
+      "sha256": "44c25681c49413819d96ec4f86c7222398d84b1e498ddcffa06a715e4cefc45d",
+      "bytes": 9371
+    },
+    "governance/specs/R23-proof-certificates.md": {
+      "sha256": "a0ed622ffa6e007bfe44fc8eeecf3955aadc767213b8b8902339e823ecd0b11c",
+      "bytes": 35476
+    },
+    "governance/specs/R24-defended-approval-boundary.md": {
+      "sha256": "9f4404ecce2cb607b5d031e49f41d46a5e6f305d3703c20f175b5a8850df7425",
+      "bytes": 110145
+    },
+    "governance/specs/R24-tee-target.md": {
+      "sha256": "fbf99f34ae806ae15791610e1a37e00109a9e1d2081e882d5b9b99427bb0ee9f",
+      "bytes": 8556
+    },
+    "governance/specs/R25-information-flow-monitor.md": {
+      "sha256": "fcf0bb81c99762a4dc3dbe23252f3f0fff6e4c211152044ae3c99c572a19b009",
+      "bytes": 129198
+    },
+    "governance/specs/R25-zephyr-target.md": {
+      "sha256": "c821757f455ed9ae5fd304975e56b081dfc54e893695708b6234fa3770a58224",
+      "bytes": 9747
+    },
+    "governance/specs/R26-confidential-microvm-substrate.md": {
+      "sha256": "e6a29a78d3972f6f3d17f7a412c918786691273ae37e4f114027ed78a67d45d0",
+      "bytes": 61408
+    },
+    "governance/specs/R27-corrigibility-resource-bounds.md": {
+      "sha256": "469742597b5cc9a6928941dec1211e9e87d4568fe5588eabc9266144d6919aef",
+      "bytes": 47272
+    },
+    "governance/specs/R28-capability-audit-ledger.md": {
+      "sha256": "5ba6e9268d0ad98a0eefef6cbfed86a25e77d5b680d440bc57499589b28b930a",
+      "bytes": 7781
+    },
+    "governance/specs/R29-continuous-compliance-monitor.md": {
+      "sha256": "c9fa039405039b949416f30dbd8500ffae37827fa08a874080155983a66174d6",
+      "bytes": 12413
+    },
+    "governance/specs/R2a-type-map-threading.md": {
+      "sha256": "cfeda330579cc720a96fc8f0714cd275c5bab6fe70219b792770d893ac6917d5",
+      "bytes": 8476
+    },
+    "governance/specs/R3-ai-primitive.md": {
+      "sha256": "e901a3a588e420a24a953abde896a7342f864b69f53c251ac7bd15f995122ee4",
+      "bytes": 22451
+    },
+    "governance/specs/R30-unified-safety-gate.md": {
+      "sha256": "a2de033bfbb1f8906391d9271779242659f7919c50afafc38668e121e301515e",
+      "bytes": 8184
+    },
+    "governance/specs/R31-extended-tcb-attestation.md": {
+      "sha256": "d6b0ed0f9afeec6b3cd726683fdde086435d2da94532e89a6860069a8d288837",
+      "bytes": 40482
+    },
+    "governance/specs/R32-formal-corrigibility-proof.md": {
+      "sha256": "5a9020b994023d699d8ab358e6aefcde1063e855096114807403430186426dbb",
+      "bytes": 52113
+    },
+    "governance/specs/R33-cross-vm-safety-quorum.md": {
+      "sha256": "44c57bb73c86870346f692f5403cacc5fdef3e6e33b3855004d6bf5a28dc22df",
+      "bytes": 124081
+    },
+    "governance/specs/R34-incremental-attestation.md": {
+      "sha256": "9fe3176680f4833e346468fa7b794dc948062296f541c9199e11b78a81256854",
+      "bytes": 100826
+    },
+    "governance/specs/R36-full-asi-os.md": {
+      "sha256": "97107119ea8eab0fa4a4752505e5a100de8249ff6e70cd18f2584a24f4ccfc0b",
+      "bytes": 40814
+    },
+    "governance/specs/R37-nano-micro-asi-kernel.md": {
+      "sha256": "a45bda6498a164260c6ec54a49e374c549255624f0c7d275ae69122211cbe68d",
+      "bytes": 46111
+    },
+    "governance/specs/R38-embedded-agent-runtime.md": {
+      "sha256": "510c52f29597f47dfb3c2f330ba8911fac45c970eb9726d635cbebb2a94118ea",
+      "bytes": 59231
+    },
+    "governance/specs/R39-typed-execution-graph.md": {
+      "sha256": "d15ca4c598995a24e252b433daffd0d5d3519414824ffd5707cc3cf16f1cc7dd",
+      "bytes": 51848
+    },
+    "governance/specs/R3b-named-tier-arg.md": {
+      "sha256": "32070c3ecaef0cae2bc3d05636d103519c9dd63a10c5452b7a769acb0d48cffc",
+      "bytes": 5273
+    },
+    "governance/specs/R3c-ai-budget-meter.md": {
+      "sha256": "9ae372a3e5cc873407e202d1e75968621d9dade7aaadcfe29f441e000bbf8969",
+      "bytes": 8429
+    },
+    "governance/specs/R4-code-zones.md": {
+      "sha256": "26013cefb3cec7181b547622f068d9b5689fdb5ad4db7793edb6e0d53e103e52",
+      "bytes": 20217
+    },
+    "governance/specs/R40-ai-native-research-compiler.md": {
+      "sha256": "a6c2ccb1691f00734915c18f732300c79598fe3f29de6a6b7a34ca7977722abb",
+      "bytes": 41831
+    },
+    "governance/specs/R41-polyglot-runtime.md": {
+      "sha256": "a69bfb01385476be825041e77b2c91730d23fb971c9e8dbd7efa7ac3a6e8a700",
+      "bytes": 62628
+    },
+    "governance/specs/R42-stdlib-gaps.md": {
+      "sha256": "4711836143affda88c26559a529f00081c73c2531f61d4ec383a8aa7da295004",
+      "bytes": 39114
+    },
+    "governance/specs/R43-bytes-and-binary.md": {
+      "sha256": "967bc0200d14144ccc9393d39b8201d08d757f8420b41f77e6ad70f8a71c3012",
+      "bytes": 16339
+    },
+    "governance/specs/R44-accumulating-session.md": {
+      "sha256": "27eb55d44edd1d824be44e76c0ffea5e1b7ea6c7ba468b8f758821357cc28f15",
+      "bytes": 38441
+    },
+    "governance/specs/R45-require-contained.md": {
+      "sha256": "834e6a907f903c0f4c5535795ccf49a5daf3df9ef1ee0fa732a3a71d7a45977e",
+      "bytes": 10633
+    },
+    "governance/specs/R5-goal-attribute.md": {
+      "sha256": "44c117027e21301ede2c2b98c82c56720ba2eb27071b7a2b67a4c5c05319a16c",
+      "bytes": 9743
+    },
+    "governance/specs/R6-capability-security.md": {
+      "sha256": "0c2a449f1c08d4a6f740f94515efa9fde5eefa4d469fb3ec4048c4f9bbad013b",
+      "bytes": 26427
+    },
+    "governance/specs/R7-targets.md": {
+      "sha256": "6ac0e4763a8817bb88b2edc8db05a53117566e87d3b5e48ba1c3efe3f605db26",
+      "bytes": 28369
+    },
+    "governance/specs/R7b-axonhost.md": {
+      "sha256": "8bfcadc3ee5e6038a917c6dd54d66351d5572af60ed99414911b6bdf4b1b565c",
+      "bytes": 8205
+    },
+    "governance/specs/R7c-browser-host.md": {
+      "sha256": "e97fb486615cd3de6b0e7d57e6d3047045bcfc7b73b73ee8a41b4f569b7647f5",
+      "bytes": 22519
+    },
+    "governance/specs/R8-diagnostic-schema.md": {
+      "sha256": "8892a7f77e70cc4074b9ae99b63ebf4cee5cbfe432eaee1cc5d99a186592d153",
+      "bytes": 10374
+    },
+    "governance/specs/R9-smt-verify.md": {
+      "sha256": "b2d5f4a29958d63ad82bd27c8a13070455a70b5ea3025ac6caa1b5db2dad2249",
+      "bytes": 8018
+    },
+    "governance/specs/R9b-smt-loop-invariants.md": {
+      "sha256": "9c7626a4870722022e4db7e9ee111f77dff3e39b06cb60b2d26afc51254166aa",
+      "bytes": 40568
+    },
+    "governance/specs/README.md": {
+      "sha256": "12742f92a422dc64149cd5e2b771e39e72a7ed5facc7e379b24f793d27e4b591",
+      "bytes": 23033
+    },
+    "rust-toolchain.toml": {
+      "sha256": "52919930a59744858620410c5b8f19125c332fd26e0b44ee3384a08ccbf4717c",
+      "bytes": 3332
+    },
+    "scripts/acceptance_gate.sh": {
+      "sha256": "fb983100639330ea6823b4b4b4b509c2cfa6afc0dd964abd7bd5f228d8762c4d",
+      "bytes": 4075
+    },
+    "scripts/agent_action_parity.sh": {
+      "sha256": "439518cf38421a8e1f9ac1d8d68071fb5c591656d1ee3939da8347c89afa5d05",
+      "bytes": 3081
+    },
+    "scripts/all_examples_parity.sh": {
+      "sha256": "d4c3c5b1885fe206209a10f271ecd22fa5d7f598495e6793acc22325bfda5f64",
+      "bytes": 8150
+    },
+    "scripts/android_compute_parity.sh": {
+      "sha256": "59af1698a33e2c27af53c2e05d44598e00bc17fee435ee8f8627b46ce4678c94",
+      "bytes": 7968
+    },
+    "scripts/android_lifecycle.sh": {
+      "sha256": "fd5a14ad54c8731237a98daf0edadbf402a5aae39a0930fa142ffe43d0108c43",
+      "bytes": 8229
+    },
+    "scripts/arr_panic_msg_parity.sh": {
+      "sha256": "45cc3c46d48679c0483f82838a97cc695b3308c1661fec684e2333a50c91a2a7",
+      "bytes": 2451
+    },
+    "scripts/arr_reduce_parity.sh": {
+      "sha256": "e9308c6d141d21ec7d08ade9033e8fa6007de3449c662c9037381d4edea66217",
+      "bytes": 19800
+    },
+    "scripts/artifact_admission_allowlist.txt": {
+      "sha256": "d06ae6c387d5fcc202ef28b629abcd8be3c5039df2caea569e17b756388ebfe2",
+      "bytes": 793
+    },
+    "scripts/artifact_admission_gate.sh": {
+      "sha256": "597e6a8aa88126f80a9cc78139ecd14f291af8dce47786a85b55e3c22df4a5d1",
+      "bytes": 4797
+    },
+    "scripts/assert_msg_parity.sh": {
+      "sha256": "71c12b0171716c83ff054b0fbf08ce347c2809254a5f29d5de6d48f8dd6bfc8f",
+      "bytes": 2636
+    },
+    "scripts/atomic_ir_test.sh": {
+      "sha256": "3722664bb2b33297df1168089a4fe12bc980423b3cb971bb573f887f0eb57c1a",
+      "bytes": 3554
+    },
+    "scripts/axon_kernel_gate.sh": {
+      "sha256": "0a58ce0b6a0f82cf817b76219c1b90f727e87ff48c40bb011d68de9b975bf4fe",
+      "bytes": 9156
+    },
+    "scripts/axon_safety_gate.sh": {
+      "sha256": "5a06ddd434221eaffefbde778b3ca6a786fe223bcc6a4dddc091b15b95a35ea0",
+      "bytes": 19226
+    },
+    "scripts/axon_session.py": {
+      "sha256": "ce713f1d9bbbae15c89ba8a64a090aed68dabc2c7766362f43804fab274f7448",
+      "bytes": 12010
+    },
+    "scripts/axon_session_demo.sh": {
+      "sha256": "45133fdcb3c8fb372b355a5e35203698d41b76b5cd0bd9665bea973d2e5d934d",
+      "bytes": 5269
+    },
+    "scripts/bitwise_cast_parity.sh": {
+      "sha256": "f89758750adfc192ac7f92ae0cd5f050c29ae8461530b6188e7b87d45f2757d1",
+      "bytes": 3732
+    },
+    "scripts/bpfload.c": {
+      "sha256": "76fd8928a50a1b7e0bddbd309a26a93bb855b37e4d449d3ae8ebc766710325f2",
+      "bytes": 4549
+    },
+    "scripts/browser_compute_parity.sh": {
+      "sha256": "ebfa5a5ca13310969e1cab9d03f27a6223c95065c4612f34c20947a9fb7f0f5c",
+      "bytes": 9450
+    },
+    "scripts/browser_webgpu_clear.html": {
+      "sha256": "240c9f9e2e4e7e47677745cd7b3d8f5abc12270e6274edbca9d0d768c253509f",
+      "bytes": 2473
+    },
+    "scripts/browser_webgpu_clear.py": {
+      "sha256": "9785d528e992dc8cdae9874af926cae5a36658192be62c28c79d202269451d16",
+      "bytes": 1947
+    },
+    "scripts/browser_webgpu_clear.sh": {
+      "sha256": "4c3888348158f1234f5369bd8db42b54f974dbafee1c938e9a0fd577446de4ab",
+      "bytes": 3692
+    },
+    "scripts/build-guest-image.sh": {
+      "sha256": "38e7aaf4822622045277c7427c9c707e5f183b64c3b767ee7d7066612cfed265",
+      "bytes": 7539
+    },
+    "scripts/build_differential_baseline.tsv": {
+      "sha256": "0015ae56d52ca399906011e8c1382c475c1bd48624b46227f3f6f36012f47aca",
+      "bytes": 195
+    },
+    "scripts/build_outcome_baseline.tsv": {
+      "sha256": "2d73b9b392358ebe1599a46b1ede9ef9d82dfb06a5f41753c2c34cb62720d92a",
+      "bytes": 14263
+    },
+    "scripts/build_outcome_regression.sh": {
+      "sha256": "7b1deab8ce4ed344d04a8a3f619df8b5bf6b05b69b5786cca63f18e23e96194d",
+      "bytes": 29529
+    },
+    "scripts/chan_parity.sh": {
+      "sha256": "00d40503872ec7ab525971f38dbdb9dcd01b75b37bdff22da8ea42e394027b2c",
+      "bytes": 6313
+    },
+    "scripts/checked_arith_parity.sh": {
+      "sha256": "f0af2bd35ca6bea5cdcb99832e53de2cb004a6970c5957fe2e150645f60290d4",
+      "bytes": 5602
+    },
+    "scripts/claims_gate.sh": {
+      "sha256": "5eda1605ed5791394cf9d17cad771483fa2a84e81b13573cc80878efe63f69ac",
+      "bytes": 14364
+    },
+    "scripts/clock_parity.sh": {
+      "sha256": "ea1cfa59805787f8addf0a86641cb7d6aada49eabc5442d004083cf45d2ee2cc",
+      "bytes": 9394
+    },
+    "scripts/closure_capture_parity.sh": {
+      "sha256": "2ffb49784904e84a8f55824ae50669d13092dcbedc57515082b38b7108e9ce03",
+      "bytes": 5281
+    },
+    "scripts/closure_ret_parity.sh": {
+      "sha256": "5d63f84a130c25f8c10d39b13efe8ff9f473a8c679498d1bccbecc97d4323b54",
+      "bytes": 5147
+    },
+    "scripts/completeness.py": {
+      "sha256": "9dca72986ebd666e92010356eb76fd850bc9909bdbbc68883cfe3248d5ae0404",
+      "bytes": 22281
+    },
+    "scripts/cortex_package_gate.sh": {
+      "sha256": "61b23c11afbf934452b71a4fed4f26bb1702c6ed13ce85a79cb51daa549f94b5",
+      "bytes": 16678
+    },
+    "scripts/decimal_parity.sh": {
+      "sha256": "30cd624f751c166834f7a76119240e1bce51dbd47a4139a66867cf7f985fef82",
+      "bytes": 4664
+    },
+    "scripts/diagnostic_location_gate.sh": {
+      "sha256": "c94f492290e8189ec20392d3a93a7915b000253cdc10440028ca7429355ab9f5",
+      "bytes": 4632
+    },
+    "scripts/dict_parity.sh": {
+      "sha256": "e27886de95897bed2ad9ec7cf57b53b04cccc19aee8df9a934c7f14a717cd754",
+      "bytes": 15984
+    },
+    "scripts/docs_pdf.py": {
+      "sha256": "1dc429d42a00857a8ff495f372b803d04f826a1dade14f37c76fd7197123b5e5",
+      "bytes": 15863
+    },
+    "scripts/ebpf_verify.sh": {
+      "sha256": "7506e50ec0390cf20282638b0cf719cc6a073ddb309a6a51bc12d56680785693",
+      "bytes": 5380
+    },
+    "scripts/exec_parity.sh": {
+      "sha256": "53e59985994ba66a08e40ae3f9fab2e4f291ff0ec2257efcfd6569ad86d1df40",
+      "bytes": 2360
+    },
+    "scripts/exit_code_parity.sh": {
+      "sha256": "22563a778a0d0f241b426b76a2371f693e6e52dcb15ec920f37adec85f0e360c",
+      "bytes": 24521
+    },
+    "scripts/fc_boot_test.sh": {
+      "sha256": "2ab02fbb5f9c9327b072d06dc5b1888bc3f39546621f1f0e0e85824cf9314a58",
+      "bytes": 7596
+    },
+    "scripts/fhir_roundtrip.sh": {
+      "sha256": "0d03a228629541223f92a4d1c3856edfb55b2d46cac4efe2b038cdbacb2fab4f",
+      "bytes": 2871
+    },
+    "scripts/fix_codec.sh": {
+      "sha256": "727d72950a6622b6b4bff27732c5a213456d3db99fd13890e42dce3b5839bf4d",
+      "bytes": 2051
+    },
+    "scripts/float_to_int_parity.sh": {
+      "sha256": "41402bbf84a166b61ab5f5cc16ec838507a434baee0c5b74d40b958307d295f9",
+      "bytes": 2972
+    },
+    "scripts/fuzz_parity.sh": {
+      "sha256": "fecd1796d0a7a8501c1658e8574a54778627b8a3f34d276e43225b4a84b86d7d",
+      "bytes": 26435
+    },
+    "scripts/gate.sh": {
+      "sha256": "08fb3d0826b5ffc6bf70b93fbd704aaf796938f3fee94fd11042a899a89d7cf2",
+      "bytes": 42946
+    },
+    "scripts/gate_verdict_is_read.sh": {
+      "sha256": "609db74d389a5645beaf08d1a278c2cc0a942fc516ec6b2997862a2a5749c514",
+      "bytes": 3984
+    },
+    "scripts/gdt_layout_ir_test.sh": {
+      "sha256": "17c6cb2cc3f4e682fa68c0d3b5bf11cd955ddf8157162fb4aed374bdfbc31a1c",
+      "bytes": 3966
+    },
+    "scripts/gfx_wgpu_render_gate.sh": {
+      "sha256": "f16e1c21496ae294052216de1eda44de4f984bc12a2fd8201d54eeeaaa8546b2",
+      "bytes": 4275
+    },
+    "scripts/goal_input_parity.sh": {
+      "sha256": "b126bda1a3e6c72a42d8e4a0973e50e07916b9a45e4f89f9c43adeb1ff7905ba",
+      "bytes": 3495
+    },
+    "scripts/goal_run_return_parity.sh": {
+      "sha256": "ad5124b40f898a2c92698a253433eae65283cb13b9116b1f0cff19ffbbb98714",
+      "bytes": 3401
+    },
+    "scripts/goal_unknown_name_parity.sh": {
+      "sha256": "f6f97586cff030078cb941665a1ae4cd36aa908af86b4a6162d40cde9502c8af",
+      "bytes": 4177
+    },
+    "scripts/handler_resume_parity.sh": {
+      "sha256": "e0bdc3030a171ce7842b76bfd7dfbd77fd84bda8061e1b244cb934759d3e45f0",
+      "bytes": 4937
+    },
+    "scripts/i64_radix_panic_parity.sh": {
+      "sha256": "1cf6fd241eeb0ce331e716c04f231b45eaa0520fa5bdd42430afc4989362faed",
+      "bytes": 2839
+    },
+    "scripts/kernel.ld": {
+      "sha256": "79b32b3264ec82e17edee7e824f3eeea028c3345c710b6fbab803bad66354778",
+      "bytes": 1091
+    },
+    "scripts/kernel_enforce_test.sh": {
+      "sha256": "abfde53bcd9d11df0f76d2725e4aa79c4c3276d0ea4d0de0e1887511637bde45",
+      "bytes": 2808
+    },
+    "scripts/kernel_suspend_fiber_parity.sh": {
+      "sha256": "be87d8ade8968a6d49d1cd605b6264ac7109b2a0f2899078d119a00674a9ec80",
+      "bytes": 2260
+    },
+    "scripts/lib/harness_skip.sh": {
+      "sha256": "199091050c2bcb550bc86e7c9341fd9dd495df0da513b522c8ebf561ba9e1ebf",
+      "bytes": 6886
+    },
+    "scripts/lifecycle_probe.sh": {
+      "sha256": "928c89c0eeb8fba38ffaf89059c86e29202acf2f10219f80ce6eb449f90b5e8b",
+      "bytes": 10160
+    },
+    "scripts/lockfile_gate.sh": {
+      "sha256": "d6b899b97b89720a3ac7a14dfbbeaf5c918ea8615274369a63a711b8610d5059",
+      "bytes": 3432
+    },
+    "scripts/managed_run_gate.sh": {
+      "sha256": "b7b2d36762af59e544c0744327ef3206811469e07182702a56e4918e08b80c40",
+      "bytes": 11788
+    },
+    "scripts/modbus_roundtrip.sh": {
+      "sha256": "36b1b2f2306f05074ce0924f2de3611e1ada211a7cd9eabf0c04a7d8c195bf7f",
+      "bytes": 3088
+    },
+    "scripts/native_ffi_forge.sh": {
+      "sha256": "365ddabb06880b8563e7e360c7b52972ffdc9260a95e580c197e2424edb463b8",
+      "bytes": 3959
+    },
+    "scripts/native_gfx_parity.sh": {
+      "sha256": "06a6d33a088ea696810ce117e435470991ee5ac03e60c410a26a762918b40736",
+      "bytes": 4487
+    },
+    "scripts/no_nested_crates.sh": {
+      "sha256": "53476258372d53bd900fa76e2f642e724dfd5ac5c46f37bdd3dc9f8570f1d025",
+      "bytes": 1676
+    },
+    "scripts/no_wildcard_cors.sh": {
+      "sha256": "36da044311379f8120a77233be4487653c04926e550f0beb7015333c39b01b41",
+      "bytes": 2023
+    },
+    "scripts/parity_all.sh": {
+      "sha256": "21609c958b6161575571cfaa7520657758f0880c73ae28aacaa385c9881c8d84",
+      "bytes": 7344
+    },
+    "scripts/parse_float_bool_parity.sh": {
+      "sha256": "9e258f278e1c7e6287944403088c8272e82fdcd9c3f1f788bac116624f769c9a",
+      "bytes": 3425
+    },
+    "scripts/parse_int_err_parity.sh": {
+      "sha256": "a811d181d1e8c942869637ab8f35519a4e5f4be0163e06f89bd36b03cb31b470",
+      "bytes": 2519
+    },
+    "scripts/parse_int_radix_parity.sh": {
+      "sha256": "6fa454fc9d9a6a5a8f7e6b2703838c713c74eaf92739cc0e448bfac33cb8f705",
+      "bytes": 2783
+    },
+    "scripts/parse_or_parity.sh": {
+      "sha256": "0c3e014dee6ae832a2157130d9483fa69fc6014873ea94ca745d53f372ff77ad",
+      "bytes": 4122
+    },
+    "scripts/perf_bench.sh": {
+      "sha256": "280498ae6968055b5a34b4954eabad526cdfd81d9c5c08803a1a37a5922936db",
+      "bytes": 3501
+    },
+    "scripts/provenance_parity.sh": {
+      "sha256": "e4eab36e318271a9328c44885db131b9adac94e11c868716a01e281941ed7767",
+      "bytes": 4565
+    },
+    "scripts/qemu_boot_test.sh": {
+      "sha256": "36ac52266335dba083c861247b81f9908609c296b1774f9ae230c4dfbe5042bd",
+      "bytes": 5060
+    },
+    "scripts/r1_build_measure.sh": {
+      "sha256": "e9db9362d63e5c95b2da4bab53eb5cac0589367cfa6918432fb5fc539e157485",
+      "bytes": 8979
+    },
+    "scripts/r22_acceptance_gate.sh": {
+      "sha256": "6f71a8ec5654c5639736540167525428b9075b6f553e15bacdc44d4155591c66",
+      "bytes": 4255
+    },
+    "scripts/r23_acceptance_gate.sh": {
+      "sha256": "564d1eda55ac3ab66aa254c44ccd26cbbdf381b1b1b52d3914ebbda4e851c437",
+      "bytes": 5891
+    },
+    "scripts/r26_acceptance_gate.sh": {
+      "sha256": "8717fa8497b6192e5c98e51190c132213713b2fc60ab0b15cf5a3c609b2a671e",
+      "bytes": 9928
+    },
+    "scripts/r27_acceptance_gate.sh": {
+      "sha256": "f37e63d4c64110272dc9963b63675bad91dcdb556ac1398c3627a279b1d6557c",
+      "bytes": 6008
+    },
+    "scripts/r28_acceptance_gate.sh": {
+      "sha256": "bfbc7affd9e08f1008e435c4fc15ff51dfd82578f065b5d31b5c846016977318",
+      "bytes": 5163
+    },
+    "scripts/r29_acceptance_gate.sh": {
+      "sha256": "adb715302e3e1de3e5f05b3a51a1b62358fd009d7aa5958af0f85690c58b524a",
+      "bytes": 7593
+    },
+    "scripts/r30_acceptance_gate.sh": {
+      "sha256": "b473a9026c87953b75efc38c70606a2b345223eb5d15303b24e2c025d1d15957",
+      "bytes": 12107
+    },
+    "scripts/r31_acceptance_gate.sh": {
+      "sha256": "9fd8dd509a38da1dd0fb51ce83ebe29324a1f5c39dc06925142f3cfefec542dc",
+      "bytes": 6165
+    },
+    "scripts/r32_acceptance_gate.sh": {
+      "sha256": "d9d9ed599f0b35586c57959622442949c50d07cb14f5f432ef2bbafda2dd7feb",
+      "bytes": 8065
+    },
+    "scripts/r33_acceptance_gate.sh": {
+      "sha256": "9183b6a109070b533212f853494b0792d8e6f4ce52eead4cd34307656750dd29",
+      "bytes": 23280
+    },
+    "scripts/r34_acceptance_gate.sh": {
+      "sha256": "528e8bfc52a0f19a533aadf1965dcdfe6bf2bfcd951cb5a2a54883a20e907529",
+      "bytes": 14104
+    },
+    "scripts/r39_render_status.sh": {
+      "sha256": "e5a912017f5b5b339a2f76be927a4e4a96c503cde2b3999d948517762ccd9744",
+      "bytes": 4814
+    },
+    "scripts/r39_slice1_gate.sh": {
+      "sha256": "4a775395f0bd195d93f6a34c90b86d91f037ff5c261f4f58ff221ad71ebfeb50",
+      "bytes": 5305
+    },
+    "scripts/r39_slice2_gate.sh": {
+      "sha256": "f0eb363a85b5bb64edf68936ce0a2c6aad15e6946be9b014988499e10abb877d",
+      "bytes": 6153
+    },
+    "scripts/r39_slice2_validate.sh": {
+      "sha256": "1b00d7ae04c6ce02eecbb8f66a745c969082047b6ea35890aae73f219a31a90f",
+      "bytes": 6059
+    },
+    "scripts/r39_slice3_gate.sh": {
+      "sha256": "c44e454736b035864a4f66b7b600e695067e4c040729b99a279adb645c65451d",
+      "bytes": 6064
+    },
+    "scripts/r39_slice4_gate.sh": {
+      "sha256": "91548cd7b6f7452d39985f2ee0e4f63149ba8399ba7ad476b4192cd642dc82dd",
+      "bytes": 7238
+    },
+    "scripts/r39_slice5_dag_check.sh": {
+      "sha256": "6ca30de65b404cfede1bd9db716217014959945947b967651399013208b7d3fd",
+      "bytes": 7655
+    },
+    "scripts/r39_slice5_gate.sh": {
+      "sha256": "1b35b61f0682b48d410c8fbe9fb2bdc7d59b1e050c53202a3a686761e19320b0",
+      "bytes": 8687
+    },
+    "scripts/r44_acceptance_gate.sh": {
+      "sha256": "912e6ff58637377bd5cf3f301e6833a062936e76c0a4fff27e2fd55cd80fb322",
+      "bytes": 14711
+    },
+    "scripts/random_i64_parity.sh": {
+      "sha256": "7f8b0d1db4ac3c9b3c2a5808c675b97cd2e15cabb3be4ec44fda4c29e35d2415",
+      "bytes": 5516
+    },
+    "scripts/recursion_guard_parity.sh": {
+      "sha256": "6419f895224d781c34f696b369b716e4dfc7c17d645f2ce9ee7e2710fc079b22",
+      "bytes": 5817
+    },
+    "scripts/reference_gate.sh": {
+      "sha256": "89e5c5760f6a8f9c50ccab168781bb88442345848fb725750ee587e317f32c99",
+      "bytes": 2458
+    },
+    "scripts/release_check.sh": {
+      "sha256": "42a8121dfea66ab541c5bee0ea64ebaba43aba2aa6ca809e17b7b4bb96588ede",
+      "bytes": 5600
+    },
+    "scripts/replay_host_gate.sh": {
+      "sha256": "18352c900442f3526087074b5b6d1884b041fdde763e9d70ea987f77acec935e",
+      "bytes": 18087
+    },
+    "scripts/run_managed.sh": {
+      "sha256": "66ac5df20099ed3a4261f26e6ca3c5fe4af0e3391f8cb58b23392049e6c479b5",
+      "bytes": 30085
+    },
+    "scripts/setup-environments.sh": {
+      "sha256": "58a128b17e230e41c2a8d5b25eedea2d315bcb31dfb7485cc0f196a8e49960ac",
+      "bytes": 9004
+    },
+    "scripts/smt_discharge_parity.sh": {
+      "sha256": "29c445b056eb195aa92b49e4e37227d4f6db3bb2216e24cb45a30e002af91814",
+      "bytes": 5397
+    },
+    "scripts/smt_mint_parity.sh": {
+      "sha256": "4d3dd6aece8c8ccf70fcc6db82e49938f32795d275022e951c37da156c6a5c3b",
+      "bytes": 4438
+    },
+    "scripts/stage17_matrix.sh": {
+      "sha256": "8251aab13ce41969ff5816b2e93da00a614506e010aacda1f5ba4fb1008bd70c",
+      "bytes": 3894
+    },
+    "scripts/stage17_probe.sh": {
+      "sha256": "0b319beea1792d0bd7b5681c436fb81df8ddec527a87106d6848163e9b9835d9",
+      "bytes": 4365
+    },
+    "scripts/str_count_parity.sh": {
+      "sha256": "de32448f134f07d8874f1f52d7015e5da5358e0798e1a63ec2a97bcb385e1943",
+      "bytes": 2611
+    },
+    "scripts/str_utf8_parity.sh": {
+      "sha256": "5e2fd9042d5ea17785b059847037d60987812ef0c251135ac8387e7d44866cac",
+      "bytes": 4958
+    },
+    "scripts/suspend_resume_parity.sh": {
+      "sha256": "58379094f9716959defdcd78d3776f111385525531c020fb18cde0aeecad99f5",
+      "bytes": 7869
+    },
+    "scripts/tee_sim_run.sh": {
+      "sha256": "6105e5c4893493c09ed27e89dc3b2978308b119b7b1bfe157dfd0d22c939d0ce",
+      "bytes": 6241
+    },
+    "scripts/timer_irq_qemu_test.sh": {
+      "sha256": "4344e39d18e889f5919db023a11c50ded004e15b5cec1684d662539eb107d110",
+      "bytes": 10446
+    },
+    "scripts/to_str_parity.sh": {
+      "sha256": "8a5ad9f0ff4c66e7761f07d77cb1260bad06f434ca4a68f6e7eeab4036308b19",
+      "bytes": 2369
+    },
+    "scripts/unsigned_parity.sh": {
+      "sha256": "a679b03cf32c59bf8d0b50c4d68889562aff6d3e2f9cd0fc126672578889d2fd",
+      "bytes": 7965
+    },
+    "scripts/utf8_boundary_parity.sh": {
+      "sha256": "12b3d97657bd4d3b25df6871abc961eb5980bdc6e2634a44da7abb4fe565a1cc",
+      "bytes": 5433
+    },
+    "scripts/verify_all_specs.sh": {
+      "sha256": "8cf2ac6ac84cb1b59dfae1570aafc32f762ac1e5737e88c9104071e2c12c9244",
+      "bytes": 15796
+    },
+    "scripts/vision_focus.sh": {
+      "sha256": "36000be0b43d50d730380da511ced0c76d6a6fb7ee17952bc3772e004af576ae",
+      "bytes": 6269
+    },
+    "scripts/wasi_env_control_gate.sh": {
+      "sha256": "1570e3b806f17e8620b24495b86dc181152261f9769f4de54a552cff66575f1b",
+      "bytes": 9188
+    },
+    "scripts/wasm_aot_env_parity.sh": {
+      "sha256": "31a779fef027d83b143b3bc8875af3cc05854ff8cab74161b95505e9464c63f8",
+      "bytes": 6153
+    },
+    "scripts/wasm_aot_link_probe.sh": {
+      "sha256": "667f9cd1945182f30c3d332a2d04b2c7b979c51184dd881af3fbb109d0a6664b",
+      "bytes": 4950
+    },
+    "scripts/wasm_aot_run_parity.sh": {
+      "sha256": "403dc9077a11ce5134e8c3c47572b1f606473be967882a5c62b50c68797df726",
+      "bytes": 8343
+    },
+    "scripts/wasm_aot_stdout_parity.sh": {
+      "sha256": "7b26df38f8cc64a4b4fe4c10e6e710546388338f9bbace0cf062dfbf6a68b823",
+      "bytes": 6179
+    },
+    "scripts/wasm_asyncify_driver.js": {
+      "sha256": "be2f3451b0b318653e9c67aff3413910ceef956c0811ba43278f1782dfd5c8a1",
+      "bytes": 1926
+    },
+    "scripts/wasm_asyncify_host_await.sh": {
+      "sha256": "24a4a89ac78162914a6083660f4bfd971bc578cd507ad8c62ee6c95f1cb3faf5",
+      "bytes": 5911
+    },
+    "scripts/wasm_browser_examples_parity.sh": {
+      "sha256": "60af1d174c00d4f6151bb2eff172332be89e5bf17a21e48be271694ab6451bb4",
+      "bytes": 5934
+    },
+    "scripts/wasm_browser_host.js": {
+      "sha256": "6ac75fdddb173d50836e44b59c7eaadccc758f1c2cb5c6c4e4bb02fbc56d8dbe",
+      "bytes": 1276
+    },
+    "scripts/wasm_browser_host_await.sh": {
+      "sha256": "428a27715b21cb9f690da2b4cae27564b38bce122fbc962302afb47c4442548a",
+      "bytes": 3673
+    },
+    "scripts/wasm_browser_host_driver.js": {
+      "sha256": "29acc207e7c53481e084d7b039d3d2642c2893d7953c2cc917dbf0d2e595f3d9",
+      "bytes": 2176
+    },
+    "scripts/wasm_browser_interp_parity.sh": {
+      "sha256": "c4f13881d7c00cbecb3f1aa907f9e659605532c8d11ab62c778d722e43c30cc2",
+      "bytes": 5961
+    },
+    "scripts/wasm_browser_io_parity.sh": {
+      "sha256": "0503017398017076bce09cbacbc397743005468420af0d33e85e7ba9a464f41b",
+      "bytes": 7026
+    },
+    "scripts/wasm_browser_parity.sh": {
+      "sha256": "9dc26355be0ac4eb953f86fa63755becbceb3ca9264fe6db8cc73e7283e8792a",
+      "bytes": 7732
+    },
+    "scripts/wasm_examples_parity.sh": {
+      "sha256": "4a5b868b2f6db702b6b9200773e5d15b35754df1fa807e7595c819c0b4c1da58",
+      "bytes": 6420
+    },
+    "scripts/wasm_fs_parity.sh": {
+      "sha256": "4fd10b39fe8bb31bd72d8af7ac97ca442debd060a10b87142d5e2f209af8a44f",
+      "bytes": 4643
+    },
+    "scripts/wasm_host_await_parity.sh": {
+      "sha256": "7a77e7c2d7400ab66f36eaae1e3e935a78014d65c6d2bff0f09cb4ba2a47a9d0",
+      "bytes": 4543
+    },
+    "scripts/wasm_interp_driver.js": {
+      "sha256": "d0c953961355aabcd3dd2fc8246a45c8d200dabdabb8986f0aba7b829294e538",
+      "bytes": 1674
+    },
+    "scripts/wasm_malloc_abi_parity.sh": {
+      "sha256": "3110f704f3fc2c17246ff114696451e721bb354b7b12154ff883faa4f53d1cc0",
+      "bytes": 7526
+    },
+    "scripts/wasm_object_prune.sh": {
+      "sha256": "087d4fc3659174fc42308e809f52fad1998607559fde0fef0e273aa292ae9429",
+      "bytes": 5064
+    },
+    "scripts/wasm_parity.sh": {
+      "sha256": "e69369e90c2ea0dc05d8be44c2cd2e2f8624bd31d6cb0b3726717978ea633863",
+      "bytes": 7280
+    },
+    "scripts/wasm_str_abi_parity.sh": {
+      "sha256": "5d045414f409e4c77b562aea97a5c444d452a73b7af85586a86c9cda6ed10c96",
+      "bytes": 9600
+    },
+    "scripts/wasm_unknown_interp_builds.sh": {
+      "sha256": "9fbe90ac288a7f0b07d08baa93aae48c49c43965be172a76d61bdda482a120a3",
+      "bytes": 2631
+    },
+    "scripts/zephyr_qemu_gate.sh": {
+      "sha256": "bcf6934d12f3f7901814ae166efa259b8c948dbfce85df90201220484a8367ed",
+      "bytes": 6370
+    },
+    "spec/axon-for-llms.md": {
+      "sha256": "ddfcc80ff4b66031c513176f8959ee63b45c645937072c035d9e03bdf836ebe6",
+      "bytes": 8345
+    },
+    "spec/compiler-phase1.md": {
+      "sha256": "33eae7963b5ba7a59af9347725446011232bd117db9f057acefebc457be8fea4",
+      "bytes": 15729
+    },
+    "spec/compiler-phase12.md": {
+      "sha256": "23a9c0cbb6d9e6072cf103bf1cc5874ae0fd7afede6a08e2e49740b4134a1cf0",
+      "bytes": 4645
+    },
+    "spec/compiler-phase13.md": {
+      "sha256": "30cc5d2a94ec5bba2d4809216bfbb360f4336723adc6aaba70fd6fd2fe614ebe",
+      "bytes": 21020
+    },
+    "spec/compiler-phase2.md": {
+      "sha256": "308789f3b71a748ab519b52eec63a683bbe2a22c2d6625caa5eccf80b2d6291a",
+      "bytes": 11594
+    },
+    "spec/compiler-phase3.md": {
+      "sha256": "9f46cdac706e9852be42be781e788e9a6b5bc3024c490861c30296ca79f2486f",
+      "bytes": 40924
+    },
+    "spec/compiler-phase4.md": {
+      "sha256": "a5205ac2d5f243b5ac3e89c2c2093bb06f0ab081aa36396c8c2d809fb2132e8b",
+      "bytes": 28414
+    },
+    "spec/compiler-phase5.md": {
+      "sha256": "71f688227c102ffda4468a6f54278fca2422d94ecab547326e0b765e111eeeea",
+      "bytes": 27095
+    },
+    "spec/compiler-phase6.md": {
+      "sha256": "0c16fb151ec4c8049322c850d1d0a1b74db785ed7043528809623fed6e256ef1",
+      "bytes": 21805
+    },
+    "spec/grammar.ebnf": {
+      "sha256": "602676cdc200393f7f572b9c2976f9a432fddf7c1881b555c65a289e153933e4",
+      "bytes": 24519
+    },
+    "spec/language-tour.md": {
+      "sha256": "305eb64cf922de6cab53df0fc8b4fa94a7c47a4ffba51ce0b9a26059d368da7b",
+      "bytes": 7764
+    },
+    "spec/runtime.md": {
+      "sha256": "5dd3432c51a1369802ed155fa5f198839fa78e96ffc7bd287cd3a9cebcfc8257",
+      "bytes": 27646
+    },
+    "spec/self-improving-layer3.md": {
+      "sha256": "6036028c25dcbfb16adda44aeec17213959d1d4e0c1a6e93489bff4e3a4b9b02",
+      "bytes": 14588
+    },
+    "spec/stdlib.md": {
+      "sha256": "caba92e917fdfbd537faf7cbe18740b36715d0a7e1257b9d548a4074ae767886",
+      "bytes": 24053
+    },
+    "spec/worldmodel-loop.md": {
+      "sha256": "4bc3ccd94e3fedcf8b6c37818812cdccc0cb6ff80a5a5844dc68f1603573f3d3",
+      "bytes": 13846
+    },
+    "tasks/attempts.log": {
+      "sha256": "89dfd88fa7fe07990c3f0262b782a62b2b322acf70cc92d85fbd952c20b74450",
+      "bytes": 4572
+    },
+    "tasks/baseline-rlm.md": {
+      "sha256": "54e4e21c445b0b683de2de8ec63817669f3e9831d1437723480933f4b70aaf34",
+      "bytes": 1934
+    },
+    "tasks/baseline.md": {
+      "sha256": "b3cee7aa174a672d42f47e769a2855d142e75cf63ea6624148d2346f17915805",
+      "bytes": 3967
+    },
+    "tasks/build-loop-cortex.md": {
+      "sha256": "2c5d3442e719a2f5325a5cf1a4efb0f1baf2b82c59c69be8555422ea2621cd8f",
+      "bytes": 3867
+    },
+    "tasks/build-loop-high.md": {
+      "sha256": "212367e9c935687d8ac5d19a4c9f65079a40429475b7ef58a84452ce5190aa86",
+      "bytes": 3179
+    },
+    "tasks/build-loop-r42.md": {
+      "sha256": "342a328c36fa3a0345c8aacd0f08042b481bd610ddc7a7fa07d36c5bf2081e7c",
+      "bytes": 7498
+    },
+    "tasks/build-loop-rlm.md": {
+      "sha256": "9fe9a974519522210abfef3d66339fff3dc2a33901fc0cdfc44ca73a13c3ba3b",
+      "bytes": 9802
+    },
+    "tasks/build-loop-rlm2.md": {
+      "sha256": "e6638690dd17b19cb3bd229f560eb708220b5226671d96abac189c62e0384b82",
+      "bytes": 4240
+    },
+    "tasks/build-loop.md": {
+      "sha256": "0d8703db75d553321f5722dcac4d6af81d31130c2cabf06df33fe7a72ff002ce",
+      "bytes": 11922
+    },
+    "tasks/cortex-baseline.md": {
+      "sha256": "41eb1ab9e7f9a3a219f5bdd82d285872bf9355115581e7c7d8b567cc58c842ba",
+      "bytes": 1580
+    },
+    "tasks/cortex-run-report.md": {
+      "sha256": "fe825255c4d73784b2c3bb0a07e5249db043cad067e4baac15e382042518ad92",
+      "bytes": 4033
+    },
+    "tasks/draft-diagnostic-delivery.md": {
+      "sha256": "a42fb83c5210af8d7840fc33137b02eeb384c5e41a6aac715fe952f7c5de8155",
+      "bytes": 8925
+    },
+    "tasks/draft-rlm-repair-measurement.md": {
+      "sha256": "7bc06d0abe95168d4bcc5cddb5556e1ffc9d9be92884f0d41a74a819d2362838",
+      "bytes": 8648
+    },
+    "tasks/flight-plan-cortex.md": {
+      "sha256": "e41953cb64be554fe5247c24b080405bc6d08f7fb35bc4bb3597df80dd28aa87",
+      "bytes": 2129
+    },
+    "tasks/flight-plan-high.md": {
+      "sha256": "d719f2d3980f05f1b3892db60f2ce08d5ca3bfb753e6cb2cbd0c54bd2d1f578e",
+      "bytes": 2458
+    },
+    "tasks/flight-plan-rlm.md": {
+      "sha256": "7de0c37db5ba5b2606f88f4297966fe972f68cce032f1471c5d9ec99217e31db",
+      "bytes": 3780
+    },
+    "tasks/flight-plan-rlm2.md": {
+      "sha256": "f95f4dad3640054d1cbcebddb95d0743e61f5ef322b469208db58cd7bd6ed997",
+      "bytes": 3002
+    },
+    "tasks/flight-plan.md": {
+      "sha256": "51fa81ae505f8b6631a1a4b084d9c9944b3bf1e2784f15fbd8afecdb6c46373a",
+      "bytes": 3174
+    },
+    "tasks/lessons.md": {
+      "sha256": "e1aa838e804af04b6031609a64060d38f60e4a6f9e02b1cdfd55596a4b74bdac",
+      "bytes": 55496
+    },
+    "tasks/opportunities.md": {
+      "sha256": "5d2418080c906a8f3054d094d159b0176613fae2bd6db9465e3dca02c64b8ff0",
+      "bytes": 126188
+    },
+    "tasks/spec-axon-cortex.md": {
+      "sha256": "d757e3ea62953efb7957a9020735354c4c6f083ac828e93e51361315ee93a61b",
+      "bytes": 7865
+    },
+    "tasks/spec-high-security-gates.md": {
+      "sha256": "fdd911139ad6fdee3b7728eaa1241d80a50f4c3a4fcc6ceffb8c95a1574a1ac2",
+      "bytes": 15639
+    },
+    "tasks/spec-rlm-accumulator.md": {
+      "sha256": "bbc4441dc07ea64796913469ffdf600e5becf8e1f19f5c505d5eaa1fe87b11c4",
+      "bytes": 10130
+    },
+    "tasks/spec-rlm-engine.md": {
+      "sha256": "87f705dc7d783eea245cf223361c224459c3b472ac941535169992399e9b5083",
+      "bytes": 7863
+    },
+    "tasks/todo-high.md": {
+      "sha256": "51dd16399e02bfab5d7059f66edb6b415eb7102b127b4b87641b26b9fda037f0",
+      "bytes": 2497
+    },
+    "tasks/todo-rlm.md": {
+      "sha256": "7997f4a5197c83ced74f2cf8551ababef950460f8952384284aaa79c590b6aa3",
+      "bytes": 2429
+    },
+    "tasks/todo-rlm2.md": {
+      "sha256": "9db7599743ff0570d32e164c6cd698b08342df95b4de1d396086d3bfc8a27c0b",
+      "bytes": 5037
+    },
+    "tasks/todo.md": {
+      "sha256": "9e2476da795f2d011b2be49cb6204d1ecb3cde23e0282a0c6651b36c89e5b01f",
+      "bytes": 65705
+    },
+    "test.ax": {
+      "sha256": "4f219c5700d6503ee75848644bee8e20fff89eac8049c73c490ebcb444eed63f",
+      "bytes": 317
+    },
+    "tests/fixtures/borrow_errors.ax": {
+      "sha256": "79c5864b4d55294ada87c69bce6f4523855d81acc265804807ac6f3145ad974d",
+      "bytes": 508
+    },
+    "tests/fixtures/chan_spawn.ax": {
+      "sha256": "5bc401b316ab4168410e9d445479fbcea1ed3b448eb8f78bab507648863e7d4a",
+      "bytes": 289
+    },
+    "tests/fixtures/closure_captures.ax": {
+      "sha256": "253830a6f802f3cc51531d8a2e09c1ed2c385f670eb07f9417347d5dd88c8fc7",
+      "bytes": 489
+    },
+    "tests/fixtures/comptime_consts.ax": {
+      "sha256": "51372d4de3f852f3a73bed888e86b6e0d20e206c6b1af641ca429650709d844f",
+      "bytes": 461
+    },
+    "tools/ios-parity-harness/README.md": {
+      "sha256": "6b07f2573c5ad9aa25734e85dffed46ec58c07665ef4e277d18ac73ec5fa0fd6",
+      "bytes": 3627
+    },
+    "AI_CONTEXT_README.md": {
+      "sha256": "314d29470c5a30c3878f432b677f941b98a6f8ab132f54666eb7ed901cda7ad7",
+      "bytes": 898
+    }
+  }
+}

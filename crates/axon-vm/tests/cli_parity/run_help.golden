@@ -1,0 +1,73 @@
+exit: Some(0)
+--- stdout ---
+Run an Axon program in a microVM
+
+Usage: axon-vm run [OPTIONS] <PROGRAM>
+
+Arguments:
+  <PROGRAM>
+          Path to the .ax program to run
+
+Options:
+      --fc-socket <FC_SOCKET>
+          Firecracker socket path (default: /tmp/axon-vm-<pid>.sock)
+
+      --kernel <KERNEL>
+          Guest kernel image (default: dist/guest/vmlinuz)
+
+      --initrd <INITRD>
+          Guest initramfs (default: dist/guest/initramfs.cpio.gz)
+
+      --mem-mib <MEM_MIB>
+          Guest memory in MiB (default: 128)
+          
+          [default: 128]
+
+      --vcpus <VCPUS>
+          Guest vCPU count (default: 1)
+          
+          [default: 1]
+
+      --principal <PRINCIPAL>
+          Principal name (from ~/.config/axon/principals.toml)
+
+      --vsock-port <VSOCK_PORT>
+          vsock port for host_await (default: 5000)
+          
+          [default: 5000]
+
+      --json
+          Emit JSON output (axon-vm-run/2 schema)
+
+      --no-attest
+          Skip kernel attestation before boot (dev/CI mode only — NOT for production).
+          
+          WARNING: disables the mandatory R26 attestation gate, and is the ONLY way to disable it — no environment variable can. It prints a WARNING on every run. In production, kernel attestation is mandatory before any VM boot.
+
+      --expect-digest <EXPECT_DIGEST>
+          Expected kernel SHA-256 digest (64 hex chars), supplied by the operator.
+          
+          Takes precedence over the on-disk baseline in `~/.axon/kernel_baseline.sha256`, which is a user-writable file an attacker who can swap the kernel can also delete. A mismatch exits 10. This is the strongest form of the R26 gate: the expected value comes from outside the machine being attested.
+
+      --extended-tcb
+          R31: verify the full host safety stack before booting. Measures kernel + axon-os + axon-audit + monitor and gates boot on `axtcb1_ext`. Any measure failure → exit 12. Mismatch → exit 10.
+          
+          AUDIT T52: the mismatch arm used to be unreachable — this measured the stack and printed "4/4 components verified" without comparing it to anything. Supply the expected digest with `--expect-axtcb1-ext`, or pin one via `axon-vm attest --extended-tcb --pin-extended`.
+
+      --expect-axtcb1-ext <AXTCB1_EXT>
+          R31/T52: the expected `axtcb1-ext:` digest for `--extended-tcb`. Overrides the pinned baseline in `~/.axon/axtcb1_ext_baseline`
+
+      --quorum <QUORUM>
+          R33: require a cross-VM safety quorum of size N before booting. Collects `.vote` files from `--quorum-dir`, runs the strict-majority `check_quorum`, and gates the Firecracker launch on the result. Exit 13 = quorum blocked (insufficient approvals); exit 14 = quorum blocked (attestation mismatch across voters)
+
+      --quorum-dir <QUORUM_DIR>
+          R33: directory of `.vote` response files for `--quorum`. Required when `--quorum` is given
+
+      --chain-stamp <CHAIN_STAMP>
+          R34: extend the incremental attestation rolling hash chain at PATH before booting. The chain is verified first (a broken/tampered chain refuses the run — exit 15, VM never spawned); the new run's program hash + run-id + timestamp are then chained onto the tip and the new `axtcb1-run:` tip is printed to stderr
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+--- stderr ---
+

@@ -12,8 +12,25 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 . "$ROOT/scripts/lib/axon_bin.sh"
 
-need_codegen_axon dict_parity
-need_axon_run dict_parity
+if [ -n "${AXON:-}" ]; then
+  named_bin AXON dict_parity
+else
+  echo "dict_parity: building codegen axon binary…"
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "dict_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
+  fi
+  use_built AXON axon
+fi
+require_codegen_axon dict_parity
+if [ -n "${AXON_RUN:-}" ]; then
+  named_bin AXON_RUN dict_parity
+else
+  if ! cargo build -q -p axon-core --no-default-features --bin axon-run 2>/dev/null; then
+    echo "dict_parity: interp build unavailable — skipping"; exit 0
+  fi
+  use_built AXON_RUN axon-run
+fi
+INTERP="$AXON_RUN"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
 fail=0

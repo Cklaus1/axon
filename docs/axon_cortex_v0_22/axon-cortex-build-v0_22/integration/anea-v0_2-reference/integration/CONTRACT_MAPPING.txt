@@ -1,0 +1,79 @@
+# Owner contracts and wire-profile mapping
+
+**Status:** Proposed source-aligned integration mapping. Existing repository identifiers/serialization must be inspected and approved before production use. This file does not allocate new AIR keywords or replace any CX/MX protocol.
+
+## 1. Separate the axes
+
+| Axis | Examples / source | Rule |
+|---|---|---|
+| AIR node kind | Observe, Rule, Retrieve, Decide, Generate, Reason, Predict, Check, Act — CX-04 | Node semantics and effects are preserved. |
+| MiCode accounting class | RULE, RETRIEVE, REFLEX, GENERATE, THINK, SIMULATE, PROVE, ACT — MX-05 | Bind `air_cognitive_vocabulary_version`; not silently extended. |
+| Structured operation kind | SELECT, PROJECT, COPY, COMPOSE, SEMANTIC_EXTRACT, SEMANTIC_MATCH | Existing structured detail, not a new accounting class. |
+| Capability strategy/class | SpecializedReflex, GeneralReflex, NeuralProgram, Generator, Rule, Tool, Human — CX-34/CX-36 | Registered contract and applicability, not physical backend identity. |
+| Physical mechanism | structured API, token/sequence scoring, learned head, learned function | How the admitted capability executes. |
+| Deployment | Embedded, LocalSidecar, RemoteService | Location, readiness, disclosure and execution receipt. |
+| Immutable artifact | `.np`, base/head/adapter assets and evidence refs | What exact version ran; aliases are discovery only. |
+
+D02 blocks ambiguous live class mappings. A source-grounded Generate wrapper around a learned artifact does not by itself determine the canonical new accounting vocabulary. A reviewed host mapping must preserve learned-execution metadata and effects. Until then, exports of unsupported mappings fail rather than relabeling the call deterministic Rule.
+
+## 2. Reuse owner envelopes
+
+| ANEA v0.1 term/profile | Owner-aligned destination | Required mapping |
+|---|---|---|
+| Neural Program as generic portable program | Typed cognitive operation / AIR artifact | Rename architecture and business-logic examples; `.np` no longer means graph source. |
+| ANEA planner | CX-34 scheduler + AIR scheduling/lowering | Preserve policy/candidate/exclusion/budget/receipt fields; no separate active registry. |
+| Generic Decision<T> | CX-05 QuestionResult families | Preserve Choice, BinaryProbability, OrdinalDistribution, abstention and failure. |
+| CapabilityDescriptor fixture | BackendFeatureManifest **projection** | Add canonical model/input/limits/isolation/provenance in the real owner; fixture is not entire manifest. |
+| ContextSnapshot | Authorized source/working-set view | Bind WorkingSetReceipt and EffectiveInputReceipt; not a new memory store. |
+| InferenceStateHandle | Existing StateHandle / declared emulation | Preserve identity, principal, model/encoder and lease rules. |
+| ImplementationManifest/head fixture | Reflex lowering/head manifest **projection** | Classify as SpecializedReflex where appropriate; not the CX-36 `.np` manifest. |
+| .nps source | CX-36 Neural Program Source / CX-23 implementation | All semantic fields present; exact grammar independently versioned. |
+| .np container | CX-36 NeuralProgramArtifact | Full semantic/asset/provenance/compatibility/admission boundary. |
+| Trace + evaluation | CX-32 graph + existing journals / MX-30 | Typed claims/edges, negatives, effective input and invalidation closure. |
+| Optimizer | CX-22 + CX-29 + CX-33, external CX-11 admission | No new self-promotion service. |
+| ANEA build milestones | Existing B/T task slices + MX-17 /build-loop | I-stage view only; preserve upstream dependencies. |
+
+## 3. Probability mapping without erasing origin
+
+The supplied documents use different names. CX-05/PROTOCOLS lists `ProviderReportedDistribution`, `NativeOptionLogit`, `SequenceLikelihood`, `GeneratedEstimate`, `EntropyDerived`, `EnsembleEstimate`, `Unavailable`. CX-24 also explicitly names `TokenLogitDistribution`, `DecisionHeadDistribution`, `EmpiricallyCalibrated`. These are not silently collapsed into a new one-field enum.
+
+The reference mapping preserves `raw_origin_vocabulary`, `raw_origin` and `computation_kind`; empirical calibration is separate. For the retained Choice fixtures:
+
+| Physical `scores.kind` | Preserved source meaning | Notes |
+|---|---|---|
+| candidate_token_conditional | NativeOptionLogit / TokenLogitDistribution under registered source vocabulary | Derived normalization over actual complete candidate token scores. |
+| sequence_conditional | SequenceLikelihood | Complete sequence and termination convention, not first token. |
+| head_softmax | DecisionHeadDistribution | A head/pointer distribution, not model-generated confidence. |
+| model_reported_distribution | GeneratedEstimate for the existing self-report fixture | Do not confuse a generated numerical estimate with a provider-native distribution. |
+| none | Unavailable | Never inject uniform mass. |
+
+A provider-native distribution requires its own truthful source mapping. A calibration transform does not replace raw origin. The narrow inherited fixture's `candidate_complete` requirement intentionally asks for actual score evidence; it is not a universal rule forbidding all empirically calibrated generated-estimate research under CX-06. Any broader consumer contract needs its own evidence and mapping.
+
+BinaryProbability binds an explicit positive event and probability; it does not return a guessed Boolean. OrdinalDistribution binds ordered levels/rubric and probabilities; any expectation is derived with the registered numeric level values, and different distributions with equal means remain distinct. Choice may be label-only, and more general distribution consumers need not request a selected label.
+
+## 4. Shared encoder and effective input
+
+Use the Reflex Runtime's canonical encoder across training, evaluation, live serving and replay. The shared contract includes state/question/candidate serialization, reserved-token escaping, canonical ordering, branch boundaries and position/isolation policy. Backend tokenization follows it and remains pinned. Any semantic projection, omission, redaction or altered question appears in EffectiveInputReceipt and calibration/evaluation domain.
+
+WorkingSetReceipt captures what the system selected; EffectiveInputReceipt captures what the backend actually evaluated. Neither the full repository nor an opaque object ID can substitute for those facts. State reuse requires compatible model/base/adapter/template/encoder/tenant/epoch keys and current authorization. Long-lived `.np` base/adapter residency is separate from per-invocation state caching.
+
+## 5. Lifecycle and registry mapping
+
+CX-36 lists candidate/shadow/canary/active/deprecated/quarantined/retired. Existing protocol lifecycle uses Proposed/ValidatedOffline/Shadow/Canary/Active with Rejected/Suspended/Retired alternatives. These fields represent related but not identical state machines.
+
+Proposed mapping to approve under D04:
+
+- candidate is not active and can carry separate compilation/evaluation/admission stage;
+- shadow/canary/active are permitted execution states only with the corresponding external admission;
+- quarantine excludes normal selection and preserves evidence; it is not history deletion;
+- deprecated/retired/superseded affect selection according to current registry policy;
+- rejection may close an experiment without active publication;
+- the mode authorization is rechecked independently of any declared state label.
+
+No automatic string mapping converts a status to a grant. The reference fixture includes a `fixture_only` record kind specifically so staged lifecycle data cannot pretend to be real admission.
+
+## 6. Reference profile scope
+
+`core.schema.json` retains version 0.1 of the Choice transport/profile and its historical arithmetic/binding tests. `neural.schema.json` covers proposed source, artifact, compile-job, invocation, registry-view and diagnostic fixture shapes. `reflex.schema.json` covers probability-family/batch/feature/effective-input shapes needed to exercise missing semantics. `governance.schema.json` covers intent/build/operation/evidence/experiment fixture shapes.
+
+All schemas validate structure plus a selected set of offline cross-field checks. They do not establish learned weights, signer authenticity, current grants, corpus eligibility, real tokenization, meaningful calibration, accurate diagnostic extraction, GPU/cache isolation or live provider behavior. The actual implementation must connect them to the existing owners and pass product gates.

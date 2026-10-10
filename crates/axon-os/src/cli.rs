@@ -398,7 +398,33 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
     // R27 and R29 now SHARE `<out>/<run_id>.kill`: one path, two writers.
     let kill_file_path = if killable || monitor_effects.is_some() {
         let kf = out.join(format!("{run_id}.kill"));
-        let _ = std::fs::write(&kf, r#"{"latch":"clear"}"#);
+        // A kill ARMED before this run started (`axon-os kill` found no live
+        // latch and wrote this path, promising "a run starting with this id
+        // will pick it up") must stop the run. The latch is therefore created
+        // CLEAR only when absent, atomically (`create_new`), and an existing
+        // one is never overwritten. It used to be reset to clear
+        // unconditionally, so a kill that landed before the run reached this
+        // line was discarded and the job ran to its timeout (C9 round 4b,
+        // integrate-3: exit 8 "timed out" where the operator's kill asked for
+        // 4 -- r27 acc_a1 under a 6-shard load, reproduced by arming first).
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&kf)
+        {
+            Ok(mut f) => {
+                use std::io::Write;
+                let _ = f.write_all(br#"{"latch":"clear"}"#);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => {
+                eprintln!(
+                    "axon-os run: cannot create kill latch {}: {e}",
+                    kf.display()
+                );
+                return ExitCode::from(2);
+            }
+        }
         std::env::set_var("AXON_KILL_FILE", &kf);
         // Record WHERE the channel is, at run START — not in the run record,
         // which is written when the run ENDS and so cannot help a live

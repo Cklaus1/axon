@@ -1,0 +1,6 @@
+exit: Some(2)
+--- stdout ---
+
+--- stderr ---
+axon-vm: AXON_VM_ALLOWED_EFFECTS may only narrow the manifest's effect grant, not widen it. Not in the manifest: Net. Manifest grants: IO.
+

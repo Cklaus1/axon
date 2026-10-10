@@ -1,0 +1,103 @@
+#!/bin/sh
+# Guest-side probe (template; the harness substitutes @...@ before staging).
+# Prints KEY=VALUE lines only. Every refusal probe has a POSITIVE CONTROL that
+# uses the same tool against something that IS reachable, so a probe that
+# "fails" because the tool is broken cannot pass as a refusal.
+#
+# Tokens are split in halves and joined only at run time, so this file itself
+# never contains a whole token and cannot satisfy a search for one.
+HOST_TOKEN="@TA@""@TB@"
+ENV_TOKEN="@EA@""@EB@"
+WS_TOKEN="@WA@""@WB@"
+HOSTIP="@HOSTIP@"
+PORT="@PORT@"
+
+# ── network ────────────────────────────────────────────────────────────────
+echo "netdevs=$(ls /sys/class/net | tr '\n' ',')"
+ifconfig lo 127.0.0.1 up >/dev/null 2>&1
+
+# positive controls: the same tools DO work where a path exists (loopback)
+mkdir -p /tmp/www && echo "lo-http-ok" > /tmp/www/x
+httpd -p 127.0.0.1:8080 -h /tmp/www >/dev/null 2>&1
+sleep 1
+wget -q -T 3 -O /tmp/lo_http http://127.0.0.1:8080/x >/dev/null 2>&1
+echo "ctl_wget_loopback_rc=$? body=$(cat /tmp/lo_http 2>/dev/null)"
+# nc control: nc speaks raw HTTP to the loopback httpd and must read the body
+printf 'GET /x HTTP/1.0\r\n\r\n' | nc -w 3 127.0.0.1 8080 > /tmp/lo_nc 2>/dev/null
+echo "ctl_nc_loopback_body=$(grep -o lo-http-ok /tmp/lo_nc 2>/dev/null)"
+
+# refusals: egress to the host's own address, a public IP, metadata, DNS
+wget -q -T 3 -O /dev/null "http://$HOSTIP:$PORT/b263-guest-egress" >/dev/null 2>&1
+echo "egress_wget_host_rc=$?"
+echo "b263-guest-egress" | nc -w 3 "$HOSTIP" "$PORT" >/dev/null 2>&1
+echo "egress_nc_host_rc=$?"
+wget -q -T 3 -O /dev/null http://1.1.1.1/ >/dev/null 2>&1
+echo "egress_wget_public_rc=$?"
+wget -q -T 3 -O /dev/null http://169.254.169.254/latest/meta-data/ >/dev/null 2>&1
+echo "egress_metadata_rc=$?"
+nslookup example.com >/dev/null 2>&1
+echo "egress_dns_rc=$?"
+ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
+echo "egress_ping_rc=$?"
+ifconfig eth0 10.0.2.15 up >/dev/null 2>&1
+echo "nic_bringup_rc=$?"
+
+# ── host filesystem visibility ─────────────────────────────────────────────
+hits_in() {  # count files under the given roots that contain token $1
+    tok="$1"; shift
+    n=0
+    for d in "$@"; do
+        c=$(grep -rl -F -- "$tok" "$d" 2>/dev/null | wc -l)
+        n=$((n + c))
+    done
+    echo "$n"
+}
+ROOTS=""
+for d in /*; do
+    case "$d" in /proc|/sys|/dev) ;; *) ROOTS="$ROOTS $d" ;; esac
+done
+# shellcheck disable=SC2086
+echo "host_token_file_hits=$(hits_in "$HOST_TOKEN" $ROOTS)"
+# raw block devices too: a host file leaking onto any attached drive would show
+echo "host_token_blockdev_hits=$(cat /dev/vda /dev/vdb 2>/dev/null | grep -c -F -- "$HOST_TOKEN")"
+# positive control: a token that WAS placed on the workspace drive is found
+# shellcheck disable=SC2086
+echo "ws_token_file_hits=$(hits_in "$WS_TOKEN" $ROOTS)"
+echo "blockdevs=$(ls /sys/block | grep -v '^loop' | tr '\n' ',')"
+echo "filesystems_mounted=$(cut -d' ' -f3 /proc/mounts | sort -u | tr '\n' ',')"
+mkdir -p /tmp/m
+mount -t 9p hostshare /tmp/m >/dev/null 2>&1; echo "mount_9p_rc=$?"
+mount -t virtiofs hostshare /tmp/m >/dev/null 2>&1; echo "mount_virtiofs_rc=$?"
+
+# ── secrets / environment ──────────────────────────────────────────────────
+e=0
+env | grep -q -F -- "$ENV_TOKEN" && e=$((e + 1))
+grep -q -F -- "$ENV_TOKEN" /proc/cmdline && e=$((e + 1))
+tr '\0' '\n' < /proc/1/environ | grep -q -F -- "$ENV_TOKEN" && e=$((e + 1))
+echo "env_token_hits=$e"
+echo "workload_env_names=$(env | cut -d= -f1 | sort | tr '\n' ',')"
+
+# ── read-only root ─────────────────────────────────────────────────────────
+echo "rootfs_blockdev_ro_flag=$(cat /sys/block/vda/ro)"
+touch /b263-write-test >/dev/null 2>&1; echo "rootfs_write_rc=$?"
+mount -o remount,rw / >/dev/null 2>&1; echo "rootfs_remount_rw_rc=$?"
+echo "rootfs_mode_after_remount=$(grep ' / ' /proc/mounts | head -1 | cut -d' ' -f4 | cut -d, -f1)"
+touch /b263-write-test2 >/dev/null 2>&1; echo "rootfs_write_after_remount_rc=$?"
+echo x > /bin/b263-write-test3 2>/dev/null; echo "rootfs_write_bin_after_remount_rc=$?"
+dd if=/dev/zero of=/dev/vda bs=512 count=1 conv=fsync >/dev/null 2>&1; echo "rootfs_rawdev_write_rc=$?"
+
+# ── guest process bound (in-guest pids cgroup, max 32) ─────────────────────
+# ash treats a failed fork as fatal (exit 2), so the burst runs in a subshell
+# that is EXPECTED to die at the ceiling. While the ceiling is hit every fork
+# fails, so the counters are read with shell builtins only.
+( i=0; while [ $i -lt 100 ]; do sleep 3 >/dev/null 2>&1 & i=$((i + 1)); done ) 2>/dev/null
+read -r cur < /sys/fs/cgroup/job/pids.current
+ev=""
+while read -r k v; do [ "$k" = max ] && ev=$v; done < /sys/fs/cgroup/job/pids.events
+echo "guest_pids_current_at_peak=$cur"
+echo "guest_pids_events_max=$ev"
+# drain: wait (builtin polling) until the sleepers exit and forks work again
+n=0
+while [ "$cur" -gt 3 ] && [ $n -lt 200000 ]; do read -r cur < /sys/fs/cgroup/job/pids.current; n=$((n + 1)); done
+echo "PROBE-END"
+exit 0

@@ -11,9 +11,15 @@ FAIL=0
 ok()   { echo "  PASS: $1"; }
 bad()  { echo "  FAIL: $1"; FAIL=1; }
 
-if [ ! -x "$ROOT/target/debug/axon" ]; then
-  echo "SKIP: no axon binary (cargo build -p axon-core --bin axon)"; exit 0
+# The binary the caller names in AXON, or the one built here -- never one that
+# merely sits in target/ (C9 round 4). axon_session.py runs exactly $AXON.
+. "$ROOT/scripts/lib/axon_bin.sh"
+if [ -z "${AXON:-}" ]; then
+  (cd "$ROOT" && cargo build -q -p axon-core --bin axon 2>/dev/null) \
+    || { echo "SKIP: axon build unavailable (cargo build -p axon-core --bin axon)"; exit 0; }
+  AXON="$(cd "$ROOT" && built_bin axon)" || exit 2
 fi
+export AXON
 
 python3 "$ROOT/scripts/axon_session.py" new "$SESS"
 

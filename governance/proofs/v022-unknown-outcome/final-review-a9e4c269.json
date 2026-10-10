@@ -1,0 +1,248 @@
+{
+ "schema": "axon-v022-final-review/1",
+ "gate": "G01-r22-unknown-outcome",
+ "registering_run": "wf_dc09551c-ab1",
+ "axon_sha": "a9e4c269c08beb7854397aa2d067a41c7e907e6f",
+ "micode_sha": "fc6221a5fdc79de946484f893fa2a27ade0a5c24",
+ "history": {
+  "wf_849bc606-7e8": {
+   "candidate": "candidate 1 (6d3f0ff6+e7fdb739): DO_NOT_REGISTER",
+   "reviews": [
+    {
+     "gate": "G01-r22-unknown-outcome \u2014 \"Timeout, cancellation, unmatched checks, missing evidence and unverifiable output remain distinct non-success states through the bridge and statistical analysis; no default pass is supplied.\" Frozen pair: Axon 6d3f0ff6a51bdaebdf3e024772ab47f293d45997 (v022/stage3), MiCode e7fdb7395da4fcd58625e752ffaaf77886d82235. Probes ran in /var/tmp/bind3-final-G01-r22-unknown-outcome/ against `git archive` exports of both SHAs, each with its own CARGO_TARGET_DIR and wrapped in bounded_run. That directory has been removed, and both frozen trees are still clean.",
+     "findings": [
+      {
+       "title": "A timed-out acceptance check and missing check evidence reach Axon as the same state (not_run), so EVL cannot tell them apart",
+       "classification": "BLOCKER",
+       "clause": "Timeout, cancellation, unmatched checks, missing evidence and unverifiable output remain distinct non-success states through the bridge and statistical analysis",
+       "evidence": "MiCode side of the bridge. micode-persist/src/fabric_check.rs says: 'Every failure is returned as Err(reason); the caller then records verification: not_run'. Its `run()` watchdog returns Err(\"axon-fabric <op> did not finish within {timeout_s}s\"). A crashed Fabric, or one that returns no receipt, returns Err(\"printed no strict JSON\"). An unattested or misattested receipt also returns Err. In assembly.rs, `fabric_acceptance_check` maps every Err to None, which becomes `verification: not_run, verifier_ref: null`. On the Axon side, evl.rs `judge` turns an uncited NotRun on a completed D12 trial into UnknownKind::NotRun, because run_end is None. EXECUTED through the real `micode exec` binary: I added a probe to a copy of crates/micode/tests/closed_loop_v022_real_binary.rs using its own real-binary harness, with a fake axon-fabric script in MICODE_AXON_FABRIC_CHECK. (1) 'sleep 20' with timeout_s=1 logged 'reason=axon-fabric workspace-import did not finish within 1s'. (2) 'exit 1' logged 'reason=axon-fabric workspace-import printed no strict JSON'. (3) A refused Fabric call exited 5. All three sidecars had byte-identical verification blocks: {\"status\":\"completed\",\"verification\":{\"evidence_refs\":[],\"issuer_ref\":null,\"matched_checks\":0,\"output_workspace_ref\":null,\"result\":\"not_run\",\"verifier_ref\":null}}. The probe printed CHECK_TIMEOUT_EQ_MISSING_EVIDENCE=true. I then fed these shapes, as they reach EVL, into a copy of axon-loop tests/d12_unknown_outcome.rs (uncited completed/not_run and failed/not_run on D12 trials, which is the shape these sidecars take in EVL). Every trial came out 'Unknown/Some(NotRun): verification not run (status Completed)', and the arm kinds were {NotRun: 5}. So a check timeout and missing evidence collapse into one statistical bucket. 8b only shows a timeout as distinct when Fabric itself signs a timed_out receipt (request wall_time_ms=2000, well under MiCode's 600s watchdog). A check that outlives the bridge's own deadline, or a Fabric that hangs, gets no TimedOut.",
+       "executed": true,
+       "fix": "Give the sidecar a typed, unsigned non-verdict reason for an uncited check, for example verification.not_run_reason \u2208 {not_configured, bridge_timeout, fabric_refused, no_evidence, unattested}. Have EVL map it to kinds (bridge_timeout\u2192TimedOut, no_evidence\u2192MissingEvidence, unattested\u2192Unverifiable, refused/not_configured\u2192NotRun), treating it as a producer claim that can only move a trial toward Unknown. Add an interop row that uses a hung Fabric (watchdog) alongside a crashed Fabric."
+      },
+      {
+       "title": "The agent run hitting its own deadline reaches EVL as NotRun, the same as a model refusal; a D12 trial can never be TimedOut",
+       "classification": "BLOCKER",
+       "clause": "Timeout, cancellation, unmatched checks, missing evidence and unverifiable output remain distinct non-success states through the bridge and statistical analysis",
+       "evidence": "In micode-persist/src/loop_sidecar.rs, `LoopStatus::from_end` maps Error{shape:\"timeout\"}, BudgetExhausted (which includes budget.max_wall_clock_secs), Refusal, ContentFiltered and LengthTruncated all to LoopStatus::Failed. Since e7fdb739, a non-completed task records verification not_run. Neither the sidecar nor Axon's EpisodeStatus has a timed-out state. In evl.rs, run_end for a D12 trial is only `(d.ep.status == Cancelled).then_some(Cancelled)`, so an uncited not_run on a Failed episode becomes NotRun. That contradicts EVL's own definition, `TimedOut: The run hit its deadline before a verdict`, and the candidate's statement that an uncited not_run takes TimedOut from how the run ended. The code comment 'MiCode folds any other ending into outcome_unknown' is also wrong: timeouts become failed. EXECUTED with the real `micode exec` binary. I set MICODE_BUDGET_MAX_WALL_CLOCK_SECS=1 and used a provider that answers a tool call after 1.5s. stderr showed 'turn did not complete: [turn skipped: wall-clock time budget exhausted]', and the sidecar signature was {\"status\":\"failed\",\"verification\":{...\"result\":\"not_run\",\"verifier_ref\":null}}. A provider returning stop_reason refusal produced an identical signature (TIMEOUT_INDISTINGUISHABLE_FROM_REFUSAL \u2026 true). In the Axon probe, both came out 'Unknown/Some(NotRun): verification not run (status Failed)'.",
+       "executed": true,
+       "fix": "Carry the end class through the bridge. Either add a timed_out LoopStatus/EpisodeStatus, or add a typed end_reason field that EVL reads for D12 trials and maps (deadline/budget wall-clock/provider timeout \u2192 TimedOut) without it ever making a trial count. Pin this with a real-binary interop row that uses MICODE_BUDGET_MAX_WALL_CLOCK_SECS."
+      },
+      {
+       "title": "The real way to cancel a headless micode exec (SIGTERM/SIGINT) writes no sidecar, so a cancelled trial arrives as 'missing', not Cancelled",
+       "classification": "BLOCKER",
+       "clause": "Timeout, cancellation, unmatched checks, missing evidence and unverifiable output remain distinct non-success states through the bridge and statistical analysis",
+       "evidence": "The stated limitation says 'headless micode exec has no cancellation source'. A signal is one, and the harness itself (a supervisor kill, `timeout`) is the realistic sender. EXECUTED: I spawned the real `micode exec` with a closed-loop expected context against a provider that stalls for 20s, then sent SIGTERM (and SIGINT) after 3s. Result: 'PROBE sigterm: status=ExitStatus(unix_wait_status(15)) context_receipts=1 sidecars=0'. The drive_session comment in assembly.rs agrees: 'A session whose future is dropped \u2014 cancellation, Ctrl-C \u2026 \u2014 fires nothing'. EVL therefore counts the trial as `missing`, never as Cancelled, and it is indistinguishable from a trial never run or one killed by an external timeout. The unit tests pin the Cancelled kind only for a sidecar status that no real cancellation produces. I classify this as a blocker because it disproves the premise of the stated limitation and cancellation does not come through the bridge as its own state. It is weaker than the two findings above, because 'missing' is still a non-success that is never counted as a pass.",
+       "executed": true,
+       "fix": "Install a SIGTERM/SIGINT handler on the closed-loop exec path that cancels the session cooperatively (AbortReason::Cancelled) and still runs closed_loop_finish, which writes status cancelled with not_run. Alternatively, have Axon intake derive a Cancelled record from an orphaned context receipt that has no sidecar. Add a real-binary interop row that signals the process."
+      },
+      {
+       "title": "A degeneration trip or a detach is labelled Cancelled",
+       "classification": "MINOR",
+       "clause": "none",
+       "evidence": "`LoopStatus::from_end` maps every `E::Aborted { .. }` to Cancelled, and AbortReason includes Detached and DegenerationDetected(..) as well as Cancelled. A degeneration trip is a real headless source, and it is reported to EVL as UnknownKind::Cancelled, which mixes non-cancellations into the Cancelled kind. Not executed.",
+       "executed": false,
+       "fix": "Map only AbortReason::Cancelled to Cancelled. Send degeneration and detach to Failed/OutcomeUnknown or to a typed reason."
+      },
+      {
+       "title": "The admission statistics drop the unknown kinds",
+       "classification": "MINOR",
+       "clause": "none",
+       "evidence": "admission.rs `ArmFacts` carries only `unknown: u64`, and the decision rule treats every unknown the same way: pessimistic for ACCEPT and optimistic for the inferiority bound. The kinds survive only in the referenced EvaluationRecord (`unknown_kinds`). This is fail-safe and supplies no pass, but the admission record does not keep the non-success states apart itself.",
+       "executed": false,
+       "fix": "Copy unknown_kinds into ArmFacts so an admission reason can say, for example, 'INCONCLUSIVE: 2 timed_out, 1 unverifiable'."
+      },
+      {
+       "title": "In 8b, missing evidence and unverifiable output are made by the harness, not by a real bridge failure",
+       "classification": "MINOR",
+       "clause": "none",
+       "evidence": "In loop_interop_gate.sh 8b, u-pong-2 is set to missing_evidence by nulling q/r in the EVL request, and u-fail-2 is set to unverifiable by swapping in another trial's attestation. The real bridge's own missing-evidence and unverifiable paths (Fabric crash, unattested receipt) are not exercised, and they produce not_run (finding 1).",
+       "executed": false,
+       "fix": "Add real producer rows: a Fabric that crashes, a Fabric run with no signer (unattested), and a hung Fabric."
+      }
+     ],
+     "holding": [
+      {
+       "part": "No default pass",
+       "evidence": "8b (4.log): the candidate arm counts 0 pass and 0 fail; the undelivered incumbent trials are missing [8,0] and never passed; every assigned trial is exactly one of pass/fail/kind/missing. My Axon probe, re-executed: {NotRun: 5}, pass=0, fail=0. In evl.rs, an authenticated D12 pass or fail is demoted to Unbound (D12_NOT_COUNTED), a vacuous pass (matched_checks==0) is Unmatched, and a cancelled or timed-out run's verdict is not counted."
+      },
+      {
+       "part": "A Fabric-signed check timeout, an unmatched check, and an authenticated cited unknown stay distinct",
+       "evidence": "8b real trials: u-spin-1/2 are unknown/timed_out from Fabric's signed timed_out receipt; u-none-1 is unknown/unmatched (completed, 0 matched); u-none-2 is not_run. The discriminator (discriminator-8b.log, M125 applied: cited unknowns unauthenticated) fails 4 of the 22 assertions, so these rows depend on the new authentication of cited unknowns. The d12_unknown_outcome and unknown_kinds tests re-executed green in my copy (6 passed)."
+      },
+      {
+       "part": "D12 trials under a protected class become Unverifiable; unauthenticated evidence becomes Unverifiable",
+       "evidence": "The evl.rs protected-class branch returns Unverifiable for a D12 trial with no acf receipt. The test a_protected_evaluation_never_counts_a_d12_trial passed in my re-execution. A swapped attestation gives Unverifiable (8b u-fail-2, and c6 in the unit test)."
+      },
+      {
+       "part": "MiCode checks only a completed task",
+       "evidence": "e7fdb739 `acceptance_check_applies(status) == Completed`. 5.log: G01-r22-unknown-outcome (micode/lib) 1/1 passed. My real-binary refusal and wall-clock probes produced no citation (verifier_ref null)."
+      },
+      {
+       "part": "The arm invariant",
+       "evidence": "evl.rs refuses to write an evaluation unless assigned == pass + fail + \u03a3kinds + missing and unknown == \u03a3kinds + missing. This holds in 8b for both arms."
+      }
+     ],
+     "verdict": "DO_NOT_REGISTER"
+    }
+   ]
+  },
+  "wf_bac07f9d-087": {
+   "candidate": "candidate 2 (1486ef37+3192e948): DO_NOT_REGISTER",
+   "reviews": [
+    {
+     "gate": "G01-r22-unknown-outcome \u2014 \"Timeout, cancellation, unmatched checks, missing evidence and unverifiable output remain distinct non-success states through the bridge and statistical analysis; no default pass is supplied.\" Frozen pair axon 1486ef37 + micode 3192e948.",
+     "findings": [
+      {
+       "title": "A provider timeout with no content (first-byte deadline) still reaches EVL as NotRun, the same kind as a refusal",
+       "classification": "BLOCKER",
+       "clause": "Timeout, cancellation, unmatched checks, missing evidence and unverifiable output remain distinct non-success states through the bridge and statistical analysis",
+       "evidence": "Executed with the real binaries from the frozen proof build. I copied them to /var/tmp/bind4-final and ran a patched copy of loop_interop_gate.sh; the only change to 8b is that u-pong-1 became a provider stall. The provider sends 200 and headers, then no SSE bytes, and the run sets MICODE_PROVIDER_FIRST_BYTE_TIMEOUT_SECS=1. MiCode logged three times: 'micode_providers::sse: no data received before the applicable stream deadline elapsed waited=1s phase=FirstByte bytes_seen=0'. Then 'provider emitted no content before the deadline; re-issuing' ran reissue=1 and reissue=2, and the exec ended with 'turn did not complete: turn failed: connection dropped mid-stream after 0 bytes'. The sidecar was [\"failed\",{\"result\":\"not_run\",\"verifier_ref\":null,\"evidence_refs\":[]}], with NO not-run reason marker. Real `evl evaluate` judged it [\"u-pong-1\",\"unknown\",\"not_run\",\"verification not run (status Failed)\"]. That is the same kind as u-none-3, where Fabric refused (not_run, 'the producer states check_refused'), and u-none-2, a refused check configuration (not_run). The stats line changed to not_run:3, timed_out:3. Cause, micode 3192e948: raw_loop.rs (~line 564) maps a StreamFaultKind::Timeout with bytes_seen==0 to FailureShape::StreamDeath so it can be re-issued. After MAX_STREAM_DEATH_REISSUES=2 the session ends as Error{shape:\"stream_death\"}. The finish site in assembly.rs sets run_timed_out only for shape==\"timeout\" or a wall-clock BudgetExhausted, so this timeout gets no RunTimedOut. MiCode's own comment calls the zero-content stall 'the measured stall', so this is the realistic provider timeout. Candidate 1's blocker 2 named 'provider timeout' explicitly. Candidate 2 fixes it only for a timeout after some content has streamed.",
+       "executed": true,
+       "fix": "At the finish site, also record RunTimedOut when the session ended on a StreamDeath that was produced by a deadline expiry. Either carry the originating phase (FirstByte/Total) through the reissue exhaustion, or keep a flag in raw_loop when the last attempt's fault was StreamFaultKind::Timeout. Add an 8b trial with a silent provider past first_byte that asserts unknown/timed_out."
+      },
+      {
+       "title": "Fabric watchdog does not kill the hung Fabric child",
+       "classification": "MINOR",
+       "clause": "none",
+       "evidence": "fabric_check.rs run(): on recv_timeout, the result is CheckTimedOut, but the spawned child (waited on in a detached thread) is never killed. A real Fabric keeps running the check and can journal a receipt after MiCode has already recorded check_timed_out. The sidecar still says not_run, so nothing counts and no gate sentence is falsified. The leftover process is untidy.",
+       "executed": false,
+       "fix": "Kill the child (or its process group) when the watchdog fires."
+      },
+      {
+       "title": "A second SIGTERM/SIGINT, or SIGKILL after a grace period, yields no sidecar, so the trial is 'missing'",
+       "classification": "MINOR",
+       "clause": "none",
+       "evidence": "exec.rs: on the second signal, std::process::exit(143/130) runs before any sidecar is written. Cancellation is cooperative ('the turn finishes'), so a supervisor whose grace period is shorter than the in-flight turn turns a cancellation into 'missing'. That is still a non-success, never a pass, and it is a documented design choice.",
+       "executed": false,
+       "fix": "On the second signal, write a minimal cancelled sidecar before exiting, or document the grace-period requirement."
+      },
+      {
+       "title": "exhausted_dimension reports cost/tokens/turns before wall-clock",
+       "classification": "MINOR",
+       "clause": "none",
+       "evidence": "budget.rs exhausted_dimension checks cost, then tokens, then turns, and only then wall-clock. A run that is past its wall-clock budget and also over another cap is not tagged RunTimedOut. It then shows as NotRun, which is still a non-success.",
+       "executed": false,
+       "fix": "Check wall-clock first, or tag RunTimedOut whenever wall-clock is among the exhausted dimensions."
+      }
+     ],
+     "holding": [
+      {
+       "part": "Hung, crashed, unsigned and refusing Fabric are now distinct (candidate-1 blocker 1)",
+       "evidence": "Re-executed in 8b of the probe run: u-spin-2 (hang) is timed_out 'producer states check_timed_out', u-fail-3 (crash) is missing_evidence, u-fail-2 (no signer) is unverifiable, u-none-3 (unregistered grant) is not_run 'check_refused'."
+      },
+      {
+       "part": "Wall-clock budget exhaustion is timed_out (candidate-1 blocker 2, wall-clock leg)",
+       "evidence": "Executed: the u-pong-3 sidecar is failed + not_run with one marker, and EVL gives unknown/timed_out 'the producer states run_timed_out'."
+      },
+      {
+       "part": "SIGTERM gives a cancelled sidecar (candidate-1 blocker 3)",
+       "evidence": "Executed: u-pong-2 sidecar [cancelled, not_run], and EVL gives unknown/cancelled."
+      },
+      {
+       "part": "Unmatched and signed check timeouts stay distinct",
+       "evidence": "Executed: u-none-1 gives unmatched from a cited Completed receipt with 0 matched. u-spin-1 and u-spin-3 give timed_out from a Fabric-signed TimedOut receipt."
+      },
+      {
+       "part": "No default pass",
+       "evidence": "evl.rs judge: VerifiedPass requires Passed, matched_checks>0, not D12, a trusted non-subject issuer and authenticated evidence. A stated reason maps only to an Unknown kind. The probe run's candidate arm counted 0 pass and 0 fail, and the undelivered incumbent trials are missing [12,0]."
+      },
+      {
+       "part": "Intake accepts only the closed marker set on an uncited verification",
+       "evidence": "intake.rs: an uncited verification with non-empty evidence_refs is refused unless it is exactly one recomputed MICODE_NOT_RUN_REASONS marker. All 12 sidecars were intaken in the probe run."
+      },
+      {
+       "part": "Kinds are counted apart in the evaluation",
+       "evidence": "ArmResult.unknown_kinds is a BTreeMap per kind, and evl checks assigned == pass + fail + \u03a3kinds + missing. Admission bounds use the aggregate unknown count, which was already a recorded MINOR."
+      }
+     ],
+     "verdict": "DO_NOT_REGISTER"
+    }
+   ]
+  },
+  "wf_dc09551c-ab1": {
+   "candidate": "candidate 3 (a9e4c269+fc6221a5): REGISTER",
+   "reviews": [
+    {
+     "gate": "G01-r22-unknown-outcome: \"Timeout, cancellation, unmatched checks, missing evidence and unverifiable output remain distinct non-success states through the bridge and statistical analysis; no default pass is supplied.\" Frozen pair: axon a9e4c269c08beb7854397aa2d067a41c7e907e6f, micode fc6221a5fdc79de946484f893fa2a27ade0a5c24.",
+     "findings": [
+      {
+       "title": "A process-group SIGINT that lands during the Fabric acceptance check ends as missing_evidence, not cancelled",
+       "classification": "MINOR",
+       "clause": "none (nearest: \"cancellation ... remain distinct non-success states\")",
+       "evidence": "Executed on exported copies of the frozen pair, using a modified copy of loop_interop_gate.sh (u-fail-4 replaced). A Fabric wrapper sleeps 6 s and then execs the real axon-fabric. micode exec runs under setsid, and `kill -INT -- -PGID` is sent at 3 s. At that moment ps shows the wrapper running `workspace-import`. Result: MiCode prints 'cancelling (a second signal exits immediately)', but the status was already computed as completed before closed_loop_finish ran. The wrapper died from the signal, so the sidecar is [completed, not_run, null, [check_evidence_missing marker]]. Intake accepted it, and EVL judged it unknown/missing_evidence. It is still non-success and never counted. The agent's run had in fact finished before the signal, and EVL's closed set defines Cancelled as 'the run was canceled before a verdict'. By the code's own taxonomy, missing_evidence is a truthful description of what happened, so the gate's wording is not falsified. The operator's cancel intent is lost only in this narrow window, and only when the signal reaches the whole process group.",
+       "executed": true,
+       "fix": "In closed_loop_finish, re-read self.cancel.is_cancelled() after a failed fabric_acceptance_check. When it is set, record status cancelled, or state a distinct reason."
+      },
+      {
+       "title": "First SIGTERM does not interrupt an in-flight provider wait; with the recorded second-signal exit (or a supervisor SIGKILL after its grace period), a cancelled hung run arrives as missing",
+       "classification": "MINOR",
+       "clause": "none (extends the recorded MINOR 'a second signal exits without a sidecar')",
+       "evidence": "session_loop.rs:376-504 consults cancel only at the turn boundary. Executor::backoff observes the token only between attempts. stream_turn_with_reissue and the SSE drivers never consult it. With defaults (connect 30 s + first_byte 180 s per attempt, plus up to 2 stream re-issues), a cooperatively cancelled stalled run can take minutes to reach the sidecar. A supervisor's grace-period SIGKILL, or an operator's second Ctrl-C, then yields no sidecar, and the trial is `missing` (still counted, never a pass). Found by code reading, not executed. It does not falsify the gate: an uncatchable kill cannot be carried by any bridge, missing is still a distinct non-success, and the second-signal behaviour is already recorded.",
+       "executed": false,
+       "fix": "Race the in-flight turn (stream consumption and executor execute) against the session cancel token, so the first signal produces the cancelled sidecar promptly."
+      },
+      {
+       "title": "Re-issue loop reports only the last attempt's failure (silent, silent, drop ends as stream_death)",
+       "classification": "MINOR",
+       "clause": "none",
+       "evidence": "Executed: a probe unit test was added to an exported copy of micode-core raw_loop.rs, using SequencedAdapter. Outcomes: drop,drop,silent -> Error{timeout}; silent,drop,silent -> timeout; total,total,total -> timeout; silent,silent,drop -> Error{stream_death}, so that run is failed + not_run with no reason and EVL judges it not_run. The final attempt really was a dropped connection, so labelling it stream_death is defensible. This is the stated design ('a plain zero-byte drop still ends as StreamDeath'). It does not falsify the claim.",
+       "executed": true,
+       "fix": "Optionally keep the 'any attempt hit a deadline' fact and state it, so a mixed stall-then-drop is not reported as a plain refusal-equivalent not_run."
+      },
+      {
+       "title": "EVL MissingEvidence also covers a Fabric-signed completed/failed check with verification unknown (no completion token, output moved, pass with nonzero exit)",
+       "classification": "MINOR",
+       "clause": "none (nearest: \"missing evidence and unverifiable output remain distinct\")",
+       "evidence": "evl.rs judge(): a cited Unknown whose receipt is Completed with matched_checks > 0, or Failed, maps via `_ => UnknownKind::MissingEvidence`. axon-fabric submit.rs:1459-1497 produces such receipts for 'passed without completion evidence', 'Passed && exit != 0' and a post-run workspace `problem`. The signed receipt does not carry Fabric's reason string, so EVL cannot separate these from a crashed Fabric. Both cases are documented as MissingEvidence ('not delivered, or ended without one'), and EVL's Unverifiable is defined as authentication failure. The five named kinds therefore stay distinct as the code defines them. Found by code reading, not executed.",
+       "executed": false,
+       "fix": "Carry a signed not-verdict reason in the receipt, or split the kind, so a check that ran and could not vouch for its output is distinguishable from a verifier that produced nothing."
+      },
+      {
+       "title": "Admission ArmFacts carry only the aggregate unknown count, not unknown_kinds",
+       "classification": "MINOR",
+       "clause": "none",
+       "evidence": "admission.rs facts() copies a.unknown but not a.unknown_kinds. The admission record refers to the journalled evaluation (evaluation_ref), which keeps the per-kind counts, and rederive re-reads it. All unknowns are treated pessimistically (the ACCEPT test uses c_pess; inc_opt adds unknowns against the candidate), so no default pass arises. Found by code reading, not executed.",
+       "executed": false,
+       "fix": "Optionally copy unknown_kinds into ArmFacts so the decision record is self-describing."
+      },
+      {
+       "title": "Recorded candidate-2 MINORs (watchdog leaves a hung Fabric child running; second signal exits without a sidecar; exhausted_dimension checks wall-clock last) re-judged",
+       "classification": "MINOR",
+       "clause": "none",
+       "evidence": "Watchdog: an orphaned Fabric child cannot upgrade the trial. EVL ignores verification documents for a NotRun, and intake refuses uncited refs other than the one recomputed marker. Second signal: the trial becomes `missing`, which is counted and never a pass (see the related finding above). exhausted_dimension: a run that exhausts cost and wall-clock together is reported as a cost exhaustion and judged not_run, which is still non-success. None of these falsifies the gate. Found by code reading, not executed.",
+       "executed": false,
+       "fix": "As recorded: kill the child on watchdog expiry; write the cancelled sidecar synchronously before exiting on the second signal; prefer wall-clock when several budget dimensions are exhausted."
+      }
+     ],
+     "holding": [
+      {
+       "part": "Candidate-2 blocker fixed: a provider silent after its headers past first-byte, on every re-issue, is judged timed_out",
+       "evidence": "Executed a_silent_provider_past_its_deadline_ends_as_a_timeout_not_a_drop on an exported copy of micode fc6221a5 (pass). The frozen proof 4.log shows u-pong-4 failed + not_run + run_timed_out, judged unknown/timed_out. discriminator-micode-3192e948.log fails exactly those 3 assertions against the previous MiCode, so the evidence discriminates."
+      },
+      {
+       "part": "A provider that never sends headers (the classic hang) is timed_out end to end, with the real binaries",
+       "evidence": "Executed a new real-binary probe (modified copy of interop 8b, u-pong-1): the provider sleeps 36 s before headers on 5 requests, with MICODE_PROVIDER_FIRST_BYTE_TIMEOUT_SECS=1. The run took 3 requests and 95 s. Executor::call wraps execute in connect+first_byte and returns Exhausted{Timeout{FirstByte}}. The sidecar is [failed, not_run, null, [run_timed_out marker]], intake accepted it, and the real `evl evaluate` judged unknown/timed_out with reason 'the producer states run_timed_out'."
+      },
+      {
+       "part": "The eight named non-success producers stay distinct through the real bridge into EVL, and no default pass is supplied",
+       "evidence": "Frozen proof 4.log section 8b: 37/37 assertions pass, all 16 candidate sidecars are intaken, and the kinds are counted apart ({cancelled:1, missing_evidence:1, not_run:2, timed_out:6, unbound:3, unmatched:2, unverifiable:1}). The candidate arm has verified_pass 0 and fail 0. Every trial is exactly one of pass/fail/kind/missing, and the 16 undelivered incumbent trials are missing, never passed. Re-executed the whole interop gate on exported copies: 284 of 287 assertions passed, and the only 3 failures come from the two trials I deliberately changed."
+      },
+      {
+       "part": "Axon EVL/intake mapping",
+       "evidence": "Code read in crates/axon-loop/src/evl.rs judge(): run end outranks the stated reason; a stated reason maps only to non-success kinds; a cited Unknown takes its kind from the signed receipt (TimedOut, Canceled, Completed with 0 matched -> Unmatched); an unauthenticated verdict is Unverifiable; undelivered verification docs are MissingEvidence; Passed with 0 matched is Unmatched before the D12 test; D12 verdicts are Unbound; the arm invariant assigned = pass + fail + \u03a3kinds + missing is enforced before any write. Intake recognises only the 5-reason closed set by recomputed digest. Executed d12_unknown_outcome (7/7) and unknown_kinds (1/1) on an exported copy of axon a9e4c269."
+      },
+      {
+       "part": "Statistical analysis supplies no default pass",
+       "evidence": "Code read in admission.rs: ACCEPT needs candidate-pessimistic (verified passes only) >= incumbent-optimistic (passes + unknowns) - margin, and c_pess > 0. Unknowns only widen bounds against the candidate. Fabric never emits failed or passed with 0 matched (submit.rs:1418-1438 maps 0 matched to NotRun), so 'unmatched' cannot be hidden inside a Fail."
+      },
+      {
+       "part": "Frozen trees untouched",
+       "evidence": "All probes ran on `git archive` exports under /var/tmp/bind5-final with their own target dirs, since removed. Both frozen trees are clean afterwards: git status --porcelain is empty, and HEADs are a9e4c269 and fc6221a5."
+      }
+     ],
+     "verdict": "REGISTER"
+    }
+   ]
+  }
+ }
+}

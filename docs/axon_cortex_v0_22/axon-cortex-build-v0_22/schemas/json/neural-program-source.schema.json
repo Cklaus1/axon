@@ -1,0 +1,468 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Neural Program Source v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "axon.nps/1"
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+    },
+    "contract_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "input_schema_ref": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "digest"
+      ],
+      "additionalProperties": false
+    },
+    "output_schema_ref": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "digest"
+      ],
+      "additionalProperties": false
+    },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_-]{0,63}$"
+          },
+          "modality": {
+            "enum": [
+              "MUST",
+              "SHOULD",
+              "NON_GOAL",
+              "HYPOTHESIS"
+            ]
+          },
+          "statement": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          },
+          "validation_ref": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 16384
+              },
+              "revision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 16384
+              },
+              "digest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "id",
+              "revision",
+              "digest"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "modality",
+          "statement"
+        ],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "modality": {
+                  "const": "MUST"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "validation_ref"
+              ]
+            }
+          }
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 256
+    },
+    "semantic_validator_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          },
+          "revision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "digest"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 256
+    },
+    "applicability": {
+      "type": "object",
+      "properties": {
+        "domain": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "languages": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          },
+          "minItems": 0,
+          "maxItems": 256
+        },
+        "max_input_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "guard_ref": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16384
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16384
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "id",
+            "revision",
+            "digest"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "domain",
+        "languages",
+        "max_input_bytes",
+        "guard_ref"
+      ],
+      "additionalProperties": false
+    },
+    "effect_ceiling": {
+      "type": "object",
+      "properties": {
+        "filesystem": {
+          "enum": [
+            "none",
+            "scoped_read",
+            "scoped_write"
+          ]
+        },
+        "network": {
+          "enum": [
+            "deny",
+            "approved_only"
+          ]
+        },
+        "subprocess": {
+          "enum": [
+            "deny",
+            "registered_only"
+          ]
+        },
+        "environment": {
+          "enum": [
+            "none",
+            "projected_only"
+          ]
+        }
+      },
+      "required": [
+        "filesystem",
+        "network",
+        "subprocess",
+        "environment"
+      ],
+      "additionalProperties": false
+    },
+    "data_policy_ref": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "digest"
+      ],
+      "additionalProperties": false
+    },
+    "build": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "enum": [
+            "spec_driven",
+            "from_examples",
+            "import"
+          ]
+        },
+        "backend_preference": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "recipe_ref": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16384
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16384
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "id",
+            "revision",
+            "digest"
+          ],
+          "additionalProperties": false
+        },
+        "example_refs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 16384
+              },
+              "revision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 16384
+              },
+              "digest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "id",
+              "revision",
+              "digest"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "mode",
+        "backend_preference",
+        "recipe_ref",
+        "example_refs"
+      ],
+      "additionalProperties": false
+    },
+    "evaluation_policy_ref": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "digest"
+      ],
+      "additionalProperties": false
+    },
+    "fallback_policy_ref": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "digest"
+      ],
+      "additionalProperties": false
+    },
+    "provenance_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          },
+          "revision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "digest"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 256
+    }
+  },
+  "required": [
+    "schema",
+    "name",
+    "contract_version",
+    "input_schema_ref",
+    "output_schema_ref",
+    "requirements",
+    "semantic_validator_refs",
+    "applicability",
+    "effect_ceiling",
+    "data_policy_ref",
+    "build",
+    "evaluation_policy_ref",
+    "fallback_policy_ref",
+    "provenance_refs"
+  ],
+  "additionalProperties": false
+}

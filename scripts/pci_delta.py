@@ -1,0 +1,398 @@
+#!/usr/bin/env python3
+"""The mechanical half of governance/notes/v022-pci-delta.md.
+
+Everything that changed under crates/axon-core/src since the certified interpreter
+(31413ca7) is listed from git, not from memory: per-file line counts and every
+commit, each tagged with the theme (and amendment) it belongs to. The note embeds
+the output between two markers; `--check` regenerates it at the head the note
+names and fails on any difference.
+
+A commit under crates/axon-core/src that THEMES does not classify is a FAILURE,
+so a new interpreter change cannot reach the tree without being placed in the
+note. `--check` also fails when a commit after the note's pinned head touches
+crates/axon-core/src: the note is then stale and must be regenerated
+(`scripts/pci_delta.py --emit HEAD`, paste between the markers, update the pin).
+
+    python3 scripts/pci_delta.py --emit [REV]   # print the block for REV (default HEAD)
+    python3 scripts/pci_delta.py --check        # compare with the note
+"""
+import os
+import re
+import subprocess
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+NOTE = os.path.join(ROOT, "governance/notes/v022-pci-delta.md")
+TRIAGE = os.path.join(ROOT, "governance/notes/v022-psv1-loop-triage.md")
+BASE = "31413ca7"
+PATHSPEC = "crates/axon-core/src"
+BEGIN = "<!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->"
+END = "<!-- END MECHANICAL -->"
+
+# commit (first 8 hex) -> (theme, what it does to pass/fail, by the commit's own message)
+THEMES = {
+    "abf72e0b": ("review fixes B1/B3 (main.rs)", "runner/test-CLI hardening from review wf_d725935a-7ed"),
+    "bae904b8": ("keyed failure token (main.rs)", "the interpreter keys every FAILURE it decides, so a printed failure line is not a verdict: narrowing"),
+    "a4a05f28": ("key and completion", "K is unreachable from candidate code: narrowing"),
+    "e9a13f72": ("key and completion", "the raw key read is unix-only so the wasm32 build compiles: build fix"),
+    "91c2f676": ("key and completion", "sealed handlers act only on sealed operations; completion is the body's end: narrowing"),
+    "f2a12aab": ("key and completion", "row attack (Option-shaped test) where completion is the only guard: evidence"),
+    "8f8e9755": ("sealed modules, module path", "an unreadable suite module never falls through to the candidate: narrowing"),
+    "08903fdf": ("sealed modules, module path", "a sealed module's use resolves only in the sealed dirs: narrowing"),
+    "38273ef1": ("sealed modules, module path", "one file per module name, suite first: narrowing"),
+    "32fdea5c": ("sealed modules, module path", "the sealed-module rule holds whoever imports: narrowing"),
+    "8e9858f4": ("RNG isolation", "a sealed frame may not reseed the process RNG: narrowing"),
+    "b8bbdb74": ("RNG isolation", "a sealed frame may not DRAW from the process RNG: narrowing"),
+    "bce231ad": ("RNG isolation", "RNG hardening completeness, M254 false retirement: narrowing"),
+    "8a7962fb": ("RNG isolation", "per-kernel RNG isolation: narrowing"),
+    "7da2fe71": ("rows, style, harness", "rustfmt and a row re-anchor: no intended change in semantics"),
+    "e1e2a22f": ("rows, style, harness", "row cells and attack messages: no intended change in semantics"),
+    "2a397d93": ("rows, style, harness", "row routes: no intended change in semantics"),
+    "73834357": ("rows, style, harness", "+23 interp.rs lines with two defect fixes found making rows honest"),
+    "48a077ee": ("amendment 74", "predicate primitives are refusal sites; keyed_outcome rowed"),
+    "ba1bad03": ("amendment 74", "merge of c9r4c/gate"),
+    "e8537726": ("amendment 53", "a value is cast at every declared boundary; an operator method name is the operator's: narrowing (A86)"),
+    "3cf23eef": ("amendment 60", "the cast keys on the dispatch type; a local is never called by name: narrowing"),
+    "8a5419de": ("amendment 60", "scalar-arm attacks reach their arms; M1155 compiles"),
+    "fa0643ac": ("amendment 72", "at a seal crossing every type position is determined from the operator side or refused; E0505 refuses an impl for f32/isize/usize: narrowing"),
+    "68176b53": ("amendment 72", "M1148/M1669 attacks: row repair"),
+    "6b793da8": ("amendment 72", "the operator's dicts are snapshotted at a seal crossing and verified at every edge back: narrowing"),
+    "3b9b9092": ("amendment 78", "a position the operator held is judged by what it held, deeply and strictly: narrowing"),
+    "d29d4ef6": ("amendment 78", "row repairs (M1672, M1843, M1845)"),
+    "2bf1d9d0": ("amendment 82", "comment-only (TestEnd doc)"),
+    "40ca1092": ("amendment 82", "merge of c9r4c/claims; comment-only in this path"),
+    "12c6685e": ("amendment 83", "the dispatch rule: operator code never selects an operator impl by a type nothing on the operator side determined (untyped dict/channel/lambda reads must be annotated; pin.rs): narrowing"),
+    "554951b6": ("amendment 83", "unit-test case only (an unannotated lambda parameter case in interp.rs tests): no production change"),
+    "9e19e961": ("amendment 83", "unit test and comments only (interpolation/comparison of an untyped read select no operator impl): no production change"),
+    "b971194c": ("amendment 83", "clippy: the arithmetic arm of the pin walk (interp/pin.rs) collapsed into a guard: no change in what is refused"),
+    "70692659": ("amendment 83", "unit-test attack text only (M1996: a shift truncates where + and * panic): no production change"),
+    # origin/main merged into v022/veto (PR #8). These commits were written and tested on main, NOT
+    # reviewed against the PCI claims: none is a PCI narrowing, and what they do to pass/fail was
+    # not analysed there. The ones that touch the interpreter are listed as such so a reviewer reads them.
+    "378da246": ("merged from main (AX findings)", "native agent_action audit record gains effect_row/principal; interp.rs and interp/builtins.rs change only by a `cfg` re-export and a visibility change: no change in what the interpreter evaluates or refuses"),
+    "96a31eb8": ("merged from main (AX findings)", "native codegen only (place assignment, str + str, allocas): the interpreter is untouched"),
+    "13f01eb8": ("merged from main (AX findings)", "INTERPRETER: arr_sort_by becomes a stable merge sort (interp/builtins.rs): not PCI-reviewed"),
+    "be8576af": ("merged from main (AX findings)", "INTERPRETER: arrays become shared Rc values, cheaper user calls (interp.rs, eval.rs, value.rs): not PCI-reviewed; the seal's cast and dict-snapshot code was adapted to the Rc layout in the merge"),
+    "36227ec7": ("merged from main (AX findings)", "native codegen only (non-escaping array literals on the stack): the interpreter is untouched"),
+    "1727775e": ("merged from main (AX findings)", "LANGUAGE + INTERPRETER: `&mut [T]` parameters write through (parser, checker, interp.rs, eval.rs, new E0604-E0606): not PCI-reviewed; the merge routes `call_fn_mut` through the same seal edges as `call_fn`"),
+    "edfe3e2d": ("merged from main (AX findings)", "native codegen, plus checker concat typing and resolver capture analysis (`axon check` accepts different programs): interpreter evaluation is untouched"),
+    "19310764": ("merged from main (AX findings)", "LANGUAGE + INTERPRETER: named functions are first-class values (resolver, checker, effects, eval.rs): not PCI-reviewed"),
+    "099ff710": ("merged from main (AX findings)", "build/cache/CLI only (runtime location, compiler-identity cache key): the interpreter is untouched"),
+    "c4d307bd": ("merged from main (AX findings)", "CLI help text only: no change in what is refused"),
+    "6493c2f2": ("merged from main (AX findings)", "native codegen/link only (LLVM pipeline, --opt-level): the interpreter is untouched"),
+    "82b83298": ("merged from main (AX findings)", "native link flags only: the interpreter is untouched"),
+    "1d01b014": ("merged from main (AX findings)", "INTERPRETER: shared copy-on-write strings, in-place append, lent closure captures (interp.rs, eval.rs, builtins.rs, value.rs): not PCI-reviewed; closures resolve a local through `call_local_closure` while the amendment-60 rule (a local is never called by name elsewhere) is kept"),
+    "a4af40a1": ("merge of origin/main (PR #8)", "joins the commits above; combines main's `call_fn_in`/`call_fn_mut` with the seal as one `call_fn_sealed` path, adds `&mut T` and Rc-array arms to conform.rs/pin.rs, keeps amendments 53-83 on the merged call path: no intended change in what is refused (rows re-run on this head)"),
+    "aa0dd7eb": ("env registry (integrate6)", "three TEST-ONLY re-exec markers registered (AXON_EQ_ALONE/GIT_ENV/HARDEN); a registry row for a var only tests read: no change in what is refused"),
+    "fe00e4c5": ("merge of c9r4c/psv1e (integrate6)", "joins the psv1e dispatch-analysis rebuild (pin.rs `Tys`, amendment 88) with main's `&mut T` type and Rc layout (a `RefMut` arm in the closed-type walk, no env duplicate in the closure call): no intended change in what is refused"),
+    "9acbb453": ("merge of origin/main (PR #8)", "merge fixes: `input_arg` read from the args (the verify panic's input suffix), the per-frame stack budget raised to 512 KiB because the merged debug frame is ~265 KB: no change in what is refused"),
+    "dab96417": ("amendment 88", "the dispatch analysis trusts only what the operator chose: candidate fns/types/lets, local-name shadowing and trait names no longer determine a receiver; keys carry the owning fn; fail-closed lookup; operator-defined runtime values dispatch; the address cache is removed (pin.rs, interp.rs, eval.rs): narrowing on candidate-influenced receivers, widening only for operator-only polymorphism"),
+    "edde3d5d": ("amendment 88", "clippy: an unused `mut` removed in pin.rs; no change in what is refused"),
+    "f4a7a2dc": ("amendment 94", "a `&mut` write-through value is cast and verified at the seal edge back, and a `&mut` operand is open in the dispatch analysis; a sealed frame cannot take an operator fn as a first-class value; a union annotation does not pin a receiver (interp.rs, interp/eval.rs, interp/pin.rs, interp/conform.rs): narrowing"),
+    "13374667": ("amendment 94", "the edge-back cast also runs on an aborted call; a provenance mark on fn values dropped (redundant with the creation edge); rows and tests: narrowing, no widening"),
+    "2d70adf5": ("amendment 94", "the held-value judgement at the `&mut` edge is not strict, so an honest fill of an empty output array passes while the declared type judges the position (conform.rs `strict` parameter): the one deliberate relaxation, relative to the first form of this amendment, not to the merged tree"),
+    "2c0203e0": ("amendment 96", "sandbox_run's result is cast to its declared i64 at the seal crossing; every read of an operator global goes through one lookup (`global_ref`) so the FieldAccess/Index fast paths and the closure-constant call apply the edge; a sealed frame's fn value carries its own mark (an operator fn value stays unmarked) and cannot replace an operator closure; unary `-x`/`~x` is judged by the width arm; drift tests for global reads and for builtins that run user code: narrowing"),
+    "12cf6c55": ("amendment 96", "unit test only (the value of a with-handler expression is undetermined until pinned: a stated cost): no production change"),
+    "8caedb78": ("amendment 94", "rustfmt only (interp.rs): no change in what is refused"),
+    "b024c06e": ("amendment 88", "pin.rs: a redundant sealed-let filter removed (the push guard is the one rule); test-only otherwise; no change in what is refused"),
+    "cc74956e": ("amendment 100", "a handler arm and its continuation replay run under the pin owner of the fn that INSTALLED the handler, not the one that performed the effect; the name argument of every name-resolving builtin (sandbox_run, scheduler_spawn, goal_*, kernel_goal_create) must be an operator-chosen name (Ctx::npure) or the call is refused; an operator fn and a missing one read the same to sealed code; drift tests: narrowing, no widening"),
+    "c62e9b02": ("amendment 102", "a runtime taint: a value sealed code produced carries a taint every operation of the evaluator propagates (an accumulator around `eval`, a taint per binding, per shared object and per module-level let, an early-exit taint for a fn result and for stores), and an operator frame refuses to use a tainted value to SELECT operator code: the name given to a name-resolving builtin, an operator closure the candidate picked (out of a table by a key, index or branch) and then called, the impl a method call dispatches to (receiver type), and the width of fixed-width arithmetic; the static pin analysis is kept underneath; a plain `axon run` is unchanged (one branch per eval); drift tests for builtin classes, dict writers, dispatch sites, value holders and swept files: narrowing, no widening"),
+    "83175bed": ("amendment 106", "a channel is one shared object with one taint: every channel method and every `select` arm examined takes it into the result, and a sealed frame's mutating access (send, recv, try_recv) marks it; a kernel or world write stores the control taint it ran under; a builtin runs its callbacks under the control taint of its arguments; string interpolation and the stringifying builtins take the taint of every shared object they print; a sealed caller is refused in ONE text on every path (a name, a global, a field or index, `goal_run`, a goal constraint, `kernel_goal_create`: `goal_run` of an operator fn no longer completes); routing and drift tests for every dict, kernel and array reader, 38 hunted programs: narrowing, no widening"),
+    "1a75557b": ("amendment 106", "test only (the oracle test reads the verdict as Debug text; no production change)"),
+    "ee1c7056": ("amendment 108", "a comparison (`==`, `!=`, ordering) takes the taint of every shared object (dict, channel) inside either operand, however deep, and every builtin argument is walked deep (no table of names): `if d == e {lenient} else {strict}` over a dict the candidate filled is refused like `dict_get_or`; a sealed method call is judged by the methods sealed impls define and a run-time method miss reads like an operator method (existence oracle, method path); a `native::` call is World state (a sealed call marks it, an operator call reads it back); drift and routing tests, 12 rows: narrowing, no widening"),
+    "b8f176d9": ("amendment 108", "test only (a clippy `useless_format` in a taint test): no production change"),
+    "8abeb02b": ("amendment 108", "builtin arguments are walked deep EXCEPT the first argument of ten builtins that only count, key into or append (`SHALLOW_FIRST_ARG`, fail-closed: unlisted is deep), which keeps a loop of a million `dict_set`s linear; tests: narrowing, no widening beyond amendment 108's first form"),
+    "65d407d8": ("amendment 114", "the right operand of `&&`/`||` runs under the left's control taint (sealed runs, a cold function), a refused match guard, a `?` and a `select` arm raise theirs, `?` counts as an exit, the sealed files are checked by a second pipeline over the sealed items alone with the checker refusing the missing name wherever the operator's was (struct literal, lambda parameter, enum/trait/refinement types, generic bound, verify and refinement predicates); taint::CONTROL_TABLE drift-tested against ast.rs: narrowing, no widening"),
+    "5d333913": ("amendment 114", "test and registry only (a taint test for the type a `?` carries, plant controls for the note check): no production change"),
+    "2e68236b": ("amendment 114", "the sealed-only check holds the operator's `mod` of a candidate module (found by the fabric suite), so a candidate whose module uses its own helper resolves; an operator module the candidate does not ship is still missing: narrowing relative to the first form of amendment 114, no widening of what base accepted"),
+    "da68ec7e": ("amendment 114", "test only (the module test loads sol.ax): no production change"),
+    "c4ea5684": ("amendment 117", "follow-up to 3849fadb found by the full mutation run: two guards that proved redundant are removed (a sealed-caller check after goal_name_is_known; the operator-pop branch of t_chan_access, covered by t_chan_choice) and a test case for an aborting arm's value: no change in what is refused"),
+    "3849fadb": ("amendment 117", "the clear, localized members of the round-14 find-until-dry loop (44 of 53 findings): `temporal_new`/`temporal_is_valid` are World and Time (a clock reader is no Pure builtin); a match guard, every `while`/`while let` condition evaluation after the first, every builtin callback after the first (`call_cb`) and every Rust loop that runs operator code (`t_loop_pc`: goal searches, the scheduler pass) run under the control taint of what decided them; an operator pop and the channel a `select` looked at are marked; an abort-capable `with` body treats a branch on tainted data as a possible exit and sealed code that ran in it raises the sticky taint, as does a scheduler fiber that ran sealed code and failed; a resume value keeps its taint; `dstore_*` is World, a zoned call's provenance push is kernel state and its append is world state; a refinement type pins what its base pins; a width inside an `Uncertain`/`Temporal` is a width; `sandbox_run` copies the operator's sandbox entry into the sealed kernel for the call; the principal token stream is per registry; the sealed-only check resolves `dyn`, array/tuple elements, refinement/`where`/`@[verify]`/whole-struct predicates and the exact deferred type names, and the goal variants and `goal_eval` give a sealed caller the missing-name text: narrowing, no widening (the claim itself is NARROWED to what is enforced)"),
+    "b7aaa9c1": ("amendment 121", "the existence oracle at every placement and the operator-typed value the candidate picked (first cut): the parser's end-of-input span is no longer the dummy `0..0`; the resolver locates a type, a refinement and a top-level `let` at its item and keeps the run's own sealed set (an HONEST `fn lim(n: i64 where n >= 0)` is no longer refused for naming its parameter); a merged diagnostic with no line joins the backstop; a sealed top-level `let` initializer is name-checked; a third taint bit, `PICK`, marks an operator-typed value (or one holding it) that sealed code selected (an index, a builtin's read on a selector it chose, a branch, a store under its control, an exit it decided, a hand-back from a sealed fn or closure) and the dispatch rule refuses a receiver that carries it: narrowing, no widening"),
+    "d7574f7d": ("amendment 121", "the split moves to `seal_split.rs` (library, so a gate row runs its test), the honest-registry control is made to bind the candidate's taint, doc and test wording: no change in what is refused beyond b7aaa9c1"),
+    "45347cb7": ("amendment 121", "the backstop's first branch no longer appends the sealed-only diagnostics (empty there); three older rows re-anchored; the refusal-coverage exemption of the observer prune dropped (that file is not under crates/axon-core/src; the commit touches main.rs only by removing one line): no change in what is refused"),
+    "416a6683": ("amendment 121", "the parser unit test that is M3450's own attack (`an_item_that_ends_the_file_has_a_real_span_in_its_own_file`); no production change in this commit (parser.rs gains a test only)"),
+}
+
+
+# `--plant KEY:OLD=>NEW` (KEY: note | verdict | gates | spec | matrix | triage) changes the text of one input IN MEMORY before
+# `--check` judges it: the control that shows a wrong table row, a wrong result, a wrong package or a wrong
+# claim list is REFUSED (crates/axon-core/tests/pci_delta_note.rs). A plant that matches nothing is an error, so
+# a control cannot pass because it planted nothing.
+PLANTS = {}
+
+
+def read(key, path):
+    text = open(path).read()
+    for old, new in PLANTS.get(key, []):
+        if old not in text:
+            print(f"pci_delta: --plant {key}: {old!r} is not in {os.path.basename(path)}", file=sys.stderr)
+            sys.exit(3)
+        text = text.replace(old, new, 1)
+    return text
+
+
+def git(*a):
+    return subprocess.run(["git", *a], cwd=ROOT, check=True, capture_output=True, text=True).stdout
+
+
+def block(rev):
+    full = git("rev-parse", rev).strip()
+    out = [f"generated-at: {full}", "", f"`git diff --numstat {BASE}..{full[:8]} -- {PATHSPEC}`:", "",
+           "| file | added | removed |", "|---|---|---|"]
+    ta = tr = 0
+    for line in git("diff", "--numstat", f"{BASE}..{full}", "--", PATHSPEC).splitlines():
+        a, r, f = line.split("\t")
+        ta += int(a); tr += int(r)
+        out.append(f"| `{f}` | {a} | {r} |")
+    out.append(f"| total | {ta} | {tr} |")
+    out += ["", f"`git log --reverse {BASE}..{full[:8]} -- {PATHSPEC}`:", "",
+            "| commit | theme | what it does to pass/fail (from its message) |", "|---|---|---|"]
+    missing = []
+    n = 0
+    for line in git("log", "--reverse", "--format=%H %s", f"{BASE}..{full}", "--", PATHSPEC).splitlines():
+        h, subj = line.split(" ", 1)
+        n += 1
+        t = THEMES.get(h[:8])
+        if t is None:
+            missing.append(f"{h[:8]} {subj}")
+            t = ("UNCLASSIFIED", "")
+        out.append(f"| {h[:8]} | {t[0]} | {t[1]} |")
+    out.append(f"| {n} commits | | |")
+    return "\n".join(out), missing
+
+
+def registry_ranges():
+    """{amendment: (lo, hi, ids)} for the mutation rows tagged `(amN` in their description
+    (amendments 102 onward tag their rows): the ranges the note and the claim quote are
+    DERIVED from the registry here, never retyped."""
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import v022_g01_mutations as reg  # noqa: E402
+
+    out = {}
+    for r in reg.MUTATIONS:
+        mm = re.search(r"\(am(\d+)\b", r[1])
+        if mm:
+            out.setdefault(int(mm.group(1)), []).append((int(r[0][1:]), r[7].split("::")[-1], r[5], r[6], r[7]))
+    return {n: (min(i for i, *_ in v), max(i for i, *_ in v), v) for n, v in out.items()}
+
+
+GATES = os.path.join(ROOT, "scripts/v022_pci_gates.sh")
+# The cargo invocation the gate script builds for each row, as the lines that build it say.
+INVOCATION = (
+    'cargo test --locked -q -p "$pkg" "${feat[@]}" "${sel[@]}" -- --exact $names',
+    'if [ "$target" = lib ]; then sel=(--lib); else sel=(--test "$target"); fi',
+)
+# Amendments in the note's table that are not interpreter-EVALUATION deltas the claim lists:
+# 74 made predicate primitives refusal sites and rowed `keyed_outcome` (test CLI, not evaluation).
+NOT_IN_CLAIM_LIST = {74}
+
+
+def gate_rows():
+    """[(label, package, target, [exact test names])] parsed from the script's ROWS array, and the
+    script text. The invocation is the one the script builds from those fields, checked below."""
+    text = read("gates", GATES)
+    rows = [
+        (m.group(1).strip(), m.group(2), m.group(3), m.group(4).split())
+        for m in re.finditer(r'^  "([^"|]*)\|([^"|]*)\|([^"|]*)\|([^"|]*)"$', text, re.M)
+    ]
+    return rows, text
+
+
+def gate_runs(rows):
+    """{(package, cargo target selector, exact test name)} the gate runs: `--lib` for `lib`, else
+    `--test <target>`, which is how registry rows spell their target."""
+    out = set()
+    for _, pkg, target, names in rows:
+        sel = "--lib" if target == "lib" else f"--test {target}"
+        out.update((pkg, sel, n) for n in names)
+    return out
+
+
+def doc_drift():
+    """The amendment -> matrix-rows and amendment -> mutation-ids statements of the note and of
+    the claim, each checked against the file that owns it."""
+    bad = []
+    note = read("note", NOTE)
+    spec = read("spec", os.path.join(ROOT, "governance/specs/v022-psv-protocol.md"))
+    verdict = read("verdict", os.path.join(ROOT, "governance/specs/v022-protected-suite-verdict.md"))
+    matrix = read("matrix", os.path.join(ROOT, "governance/specs/v022-psv-negative-matrix.md"))
+    have = {int(m.group(1)) for m in re.finditer(r"^\|\s*A(\d+)\s*\|", matrix, re.M)}
+    reg = registry_ranges()
+    grows, gates = gate_rows()
+    runs = gate_runs(grows)
+    for shape in INVOCATION:
+        if shape not in gates:
+            bad.append(f"the gate script no longer builds its cargo invocation as pci_delta.py parses it: missing `{shape}`")
+    for line in note.splitlines():
+        m = re.match(r"\| amendment (\d+) \|(.*)", line)
+        if not m:
+            continue
+        n = int(m.group(1))
+        mr = re.search(r"matrix (A\d+)(?:-(A\d+))?", m.group(2))
+        if mr:
+            lo = int(mr.group(1)[1:])
+            hi = int(mr.group(2)[1:]) if mr.group(2) else lo
+            # The amendment's own text states its rows (and the integrator rewrites that text
+            # when it renumbers), so the note must say what the amendment says.
+            i = re.search(r"^%d\. \*\*" % n, spec, re.M)
+            st = re.search(r"matrix rows? A(\d+)(?:-A(\d+))?", spec[i.start() : i.start() + 3500]) if i else None
+            if st:
+                slo = int(st.group(1))
+                shi = int(st.group(2)) if st.group(2) else slo
+                if (slo, shi) != (lo, hi):
+                    bad.append(f"the note gives amendment {n} matrix rows A{lo}-A{hi}; the amendment says A{slo}-A{shi}")
+            miss = [k for k in range(lo, hi + 1) if k not in have]
+            if miss:
+                bad.append(f"the note gives amendment {n} matrix rows A{lo}-A{hi}; the matrix has no A{miss[0]}")
+        if n in reg:
+            want = f"M{reg[n][0]}-M{reg[n][1]}"
+            if want not in m.group(2):
+                bad.append(f"the note gives amendment {n} mutation ids other than the registry's {want}")
+    for n, (lo, hi, ids) in sorted(reg.items()):
+        if f"M{lo}-M{hi}" not in note:
+            bad.append(f"the note does not give amendment {n}'s registry range M{lo}-M{hi}")
+        # Every row of the amendment fails a test some gate row RUNS: the package, the cargo
+        # target and the exact name of the invocation the script builds (not a substring of it).
+        for _, t, pkg, tgt, full in ids:
+            if (pkg, tgt, full) not in runs:
+                bad.append(f"amendment {n}: the test {full} ({pkg} {tgt}) of a mutation row is run by no gate row")
+    for m in re.finditer(r"am(\d+) \(M(\d+)-M(\d+)\)", verdict):
+        n = int(m.group(1))
+        if n in reg and (int(m.group(2)), int(m.group(3))) != reg[n][:2]:
+            bad.append(f"the claim quotes am{n} as M{m.group(2)}-M{m.group(3)}; the registry says M{reg[n][0]}-M{reg[n][1]}")
+    # The coverage table of the note is the gate script's rows plus the am102 sweep: label, package/target
+    # AND the result each row prints (`PASS n/n`, n the number of named tests), not the labels alone.
+    t = re.search(r"\| row \| package/target \| result \|\n\|[-|]*\|\n((?:\|.*\n)+)", note)
+    if not t:
+        bad.append("the note has no gate-row coverage table")
+    else:
+        lab = lambda x: re.sub(r"\s+", " ", x).strip()
+        tab = sorted((lab(c[1]), lab(c[2]), lab(c[3])) for c in (l.split("|") for l in t.group(1).splitlines()))
+        want = sorted(
+            [(lab(l), f"{pkg}/{tg}", f"PASS {len(ns)}/{len(ns)}") for l, pkg, tg, ns in grows]
+            + [(lab("am102 sweep (only the taint on: exactly the two static-only programs differ)"), "axon-core/lib (PSV1T_TAINT_ONLY)", "PASS")]
+        )
+        if tab != want:
+            only_t = [x for x in tab if x not in want][:3]
+            only_s = [x for x in want if x not in tab][:3]
+            bad.append(f"the note's coverage table ({len(tab)} rows) is not the gate script's rows plus the sweep ({len(want)}): table-only {only_t}, script-only {only_s}")
+    # The claim's two amendment lists are derived, not retyped: the delta amendments are the note's table
+    # rows (bar those that are not evaluation deltas), and the amendments whose ARMS are verified to fail a
+    # gate row are am100 and every amendment the registry tags.
+    delta = sorted({int(x) for x in re.findall(r"^\| amendment (\d+) \|", note, re.M)} - NOT_IN_CLAIM_LIST)
+    m = re.search(r"plus amendments ([0-9/]+) \(the delta", verdict)
+    if not m or [int(x) for x in m.group(1).split("/")] != delta:
+        bad.append("the claim's delta amendment list is not the note's table: expected " + "/".join(map(str, delta)) + ", the claim says " + (m.group(1) if m else "nothing"))
+    arms = sorted({100} | set(reg))
+    m = re.search(r"and the arms of\s+((?:am\d+, )*am\d+(?: and am\d+)?) \(", verdict)
+    got = sorted(int(x) for x in re.findall(r"am(\d+)", m.group(1))) if m else None
+    if got != arms:
+        bad.append("the claim's list of amendments whose arms are verified is not am100 plus the registry's: expected " + ", ".join(f"am{x}" for x in arms) + ", the claim says " + (m.group(1) if m else "nothing"))
+    # The PSV-1 claim's list of what is NOT claimed names every finding the loop's triage table decided
+    # NARROW-CLAIM (amendment 117), and nothing else: a finding cannot be narrowed in the table and
+    # silently dropped from the claim, and the claim cannot keep an entry the table no longer narrows.
+    tri = read("triage", TRIAGE)
+    tm = re.search(r"<!-- BEGIN TRIAGE.*?-->\n(.*?)\n<!-- END TRIAGE -->", tri, re.S)
+    if not tm:
+        bad.append("the triage table has no BEGIN TRIAGE / END TRIAGE markers")
+        narrowed, decided = set(), {}
+    else:
+        decided = {}
+        for line in tm.group(1).splitlines():
+            c = [x.strip() for x in line.strip().strip("|").split("|")]
+            if len(c) >= 4 and c[0].isdigit():
+                decided[c[1].strip("`")] = c[3]
+        narrowed = {sig for sig, dec in decided.items() if dec == "NARROW-CLAIM"}
+        for sig, dec in decided.items():
+            if dec not in ("FIX", "NARROW-CLAIM", "NOT-A-RUBRIC-ISSUE"):
+                bad.append(f"the triage table gives finding `{sig}` the decision {dec!r}")
+        if len(decided) < 53:
+            bad.append(f"the triage table has {len(decided)} findings, the loop confirmed 53")
+    nm = re.search(r"<!-- BEGIN PSV-1 NON-CLAIMS.*?-->\n(.*?)\n<!-- END PSV-1 NON-CLAIMS -->", verdict, re.S)
+    if not nm:
+        bad.append("the claim has no BEGIN PSV-1 NON-CLAIMS / END PSV-1 NON-CLAIMS list")
+        listed = set()
+    else:
+        listed = set(re.findall(r"^\s+- `([a-z0-9_-]+)`\s*$", nm.group(1), re.M))
+    for sig in sorted(narrowed - listed):
+        bad.append(f"the finding `{sig}` is NARROW-CLAIM in the triage table and is not in the claim's non-claim list")
+    for sig in sorted(listed - narrowed):
+        bad.append(f"the claim's non-claim list names `{sig}`, which the triage table does not mark NARROW-CLAIM")
+    # The list of non-retired rows whose target is the interpreter, with its count.
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import v022_g01_mutations as regm  # noqa: E402
+
+    ids = sorted(int(r[0][1:]) for r in regm.MUTATIONS if r[2].startswith(PATHSPEC) and r[0] not in regm.RETIRED)
+    runs, a = [], ids[0]
+    for x, y in zip(ids, ids[1:] + [None]):
+        if y != x + 1:
+            runs.append(f"M{a}" if a == x else f"M{a}-M{x}")
+            a = y
+    want_list = f"{len(ids)} rows at this head, recomputed from the script): " + ", ".join(runs)
+    if want_list not in note:
+        bad.append("the note's list of interpreter mutation rows is not the registry's: expected " + want_list[:120] + " ... " + want_list[-80:])
+    return bad
+
+
+def main():
+    args = sys.argv[1:]
+    while "--plant" in args:
+        i = args.index("--plant")
+        spec = args[i + 1]
+        key, _, rest = spec.partition(":")
+        old, sep, new = rest.partition("=>")
+        if not sep or key not in ("note", "verdict", "gates", "spec", "matrix", "triage"):
+            print("pci_delta: --plant KEY:OLD=>NEW with KEY in note|verdict|gates|spec|matrix|triage", file=sys.stderr)
+            return 2
+        PLANTS.setdefault(key, []).append((old, new))
+        del args[i : i + 2]
+    sys.argv[1:] = args
+    if len(sys.argv) >= 2 and sys.argv[1] == "--emit":
+        # `--drop HASH8` forgets one classification: the control that shows an
+        # unclassified commit is refused (crates/axon-core/tests/pci_delta_note.rs).
+        if "--drop" in sys.argv:
+            THEMES.pop(sys.argv[sys.argv.index("--drop") + 1], None)
+        b, missing = block(sys.argv[2] if len(sys.argv) > 2 else "HEAD")
+        print(BEGIN + "\n" + b + "\n" + END)
+        if missing:
+            print("UNCLASSIFIED: " + "; ".join(missing), file=sys.stderr)
+            return 1
+        return 0
+    if len(sys.argv) == 2 and sys.argv[1] == "--check":
+        text = open(NOTE).read()
+        m = re.search(re.escape(BEGIN) + r"\n(.*?)\n" + re.escape(END), text, re.S)
+        if not m:
+            print("pci_delta: the note has no mechanical block")
+            return 1
+        pin = re.search(r"^generated-at: ([0-9a-f]{40})$", m.group(1), re.M)
+        if not pin:
+            print("pci_delta: the block names no generated-at head")
+            return 1
+        want, missing = block(pin.group(1))
+        bad = []
+        if missing:
+            bad.append("unclassified commit(s): " + "; ".join(missing))
+        if want != m.group(1):
+            bad.append("the note's block is not what git says at its own pinned head")
+        rows = len(re.findall(r'^  "[^"]*\|[^"]*\|[^"]*\|[^"]*"$', open(os.path.join(ROOT, "scripts/v022_pci_gates.sh")).read(), re.M))
+        for q in re.findall(r"v022_pci_gates[^\n]{0,40}?(\d+) rows", open(NOTE).read()):
+            if int(q) != rows:
+                bad.append(f"the note quotes {q} gate rows, the script has {rows}")
+        if re.search(r"v022_pci_gates\.sh`?,? \d+ rows", open(os.path.join(ROOT, "governance/specs/v022-protected-suite-verdict.md")).read()):
+            bad.append("the verdict spec quotes a hand-typed gate row count")
+        bad += doc_drift()
+        later = git("log", "--format=%h %s", f"{pin.group(1)}..HEAD", "--", PATHSPEC).strip()
+        if later:
+            bad.append("commits after the pinned head touch " + PATHSPEC + " (regenerate the note):\n" + later)
+        if bad:
+            print("pci_delta: FAIL\n" + "\n".join(bad))
+            return 1
+        print("pci_delta: PASS")
+        return 0
+    print(__doc__)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

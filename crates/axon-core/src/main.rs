@@ -379,6 +379,35 @@ enum Command {
         )]
         jobs: usize,
 
+        /// Read a per-run secret (hex) as the FIRST line of stdin, before any
+        /// program code runs, and mark each test that COMPLETED — its body
+        /// returned normally, not via `exit(0)` or an `Err` — with
+        /// `"completion": HMAC-SHA256(secret, "axon-test-completion/1\0" + name)`.
+        /// A caller that must know the test really finished (Fabric) checks it.
+        #[arg(
+            long,
+            help = "Read a completion secret from stdin; tag completed tests"
+        )]
+        completion_key_stdin: bool,
+
+        /// With `--filter`, select only the test named EXACTLY that — not every
+        /// name containing it. The protected guest runner uses it so a suite
+        /// sibling (`t_ok_edge` for `t_ok`) never runs beside the registered
+        /// acceptance test (PSV review wf_d725935a-7ed).
+        #[arg(long, help = "--filter selects the exact test name, not a substring")]
+        exact: bool,
+
+        /// Seal every module under DIR (repeatable): code from it may use
+        /// builtins and its own sealed names, never a name the rest of the
+        /// program defines (E0004). Fabric seals the candidate under test so
+        /// it cannot reach the operator's suite (Protected Check Isolation).
+        #[arg(
+            long = "seal",
+            value_name = "DIR",
+            help = "Seal modules under DIR (E0004)"
+        )]
+        seal: Vec<PathBuf>,
+
         /// Emit results as newline-delimited JSON (NDJSON).
         #[arg(long, help = "Machine-readable NDJSON output")]
         json: bool,
@@ -965,7 +994,13 @@ fn dispatch(command: Command) {
             filter,
             jobs,
             json,
-        } => cmd_test(files, filter, jobs, json),
+            completion_key_stdin,
+            exact,
+            seal,
+        } => {
+            axon_core::resolver::set_sealed_module_dirs(&seal);
+            cmd_test(files, filter, jobs, json, completion_key_stdin, exact)
+        }
         Command::Replay {
             journal,
             diff,
@@ -6179,9 +6214,130 @@ struct TestOutcome {
     passed: bool,
     duration_ms: u64,
     error: Option<String>,
+    /// The test body returned normally (see `interp::TestEnd`).
+    completed: bool,
 }
 
-fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool) {
+/// HMAC-SHA256 (RFC 2104) over `msg`, hex.
+fn hmac_sha256_hex(key: &[u8], msg: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut k = [0u8; 64];
+    if key.len() > 64 {
+        k[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        k[..key.len()].copy_from_slice(key);
+    }
+    let (mut ipad, mut opad) = ([0x36u8; 64], [0x5cu8; 64]);
+    for i in 0..64 {
+        ipad[i] ^= k[i];
+        opad[i] ^= k[i];
+    }
+    let inner = Sha256::new()
+        .chain_update(ipad)
+        .chain_update(msg)
+        .finalize();
+    let outer = Sha256::new()
+        .chain_update(opad)
+        .chain_update(inner)
+        .finalize();
+    outer.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Read the completion key: ONE hex line from fd 0, read raw (a byte at a time,
+/// so no buffered stdin keeps a copy), decoded, and the line scrubbed.
+fn read_completion_key() -> Vec<u8> {
+    use std::io::Read;
+    let fail = |m: &str| -> ! {
+        eprintln!("axon test: --completion-key-stdin: {m}");
+        std::process::exit(2)
+    };
+    // Raw fd 0 on unix. Elsewhere (the wasm32 build of this binary, which has
+    // no processes and so no guest runner) plain stdin.
+    #[cfg(unix)]
+    // SAFETY: fd 0 is borrowed for the read only; ManuallyDrop never closes it.
+    let mut fd0 = std::mem::ManuallyDrop::new(unsafe {
+        <std::fs::File as std::os::unix::io::FromRawFd>::from_raw_fd(0)
+    });
+    #[cfg(not(unix))]
+    let mut fd0 = std::io::stdin();
+    let mut line = Vec::with_capacity(160);
+    let mut b = [0u8; 1];
+    loop {
+        match fd0.read(&mut b) {
+            Ok(1) if b[0] != b'\n' && line.len() < 1024 => line.push(b[0]),
+            Ok(_) => break,
+            Err(_) => fail("could not read the key from stdin"),
+        }
+    }
+    let t: &[u8] = line.trim_ascii();
+    let ok = t.len() >= 32 && t.len().is_multiple_of(2) && t.iter().all(|c| c.is_ascii_hexdigit());
+    let key = ok.then(|| {
+        t.chunks(2)
+            .map(|h| u8::from_str_radix(std::str::from_utf8(h).unwrap_or("00"), 16).unwrap_or(0))
+            .collect::<Vec<u8>>()
+    });
+    line.fill(0);
+    b.fill(0);
+    key.unwrap_or_else(|| fail("the key must be at least 16 bytes of hex"))
+}
+
+/// The completion token for test `name` under `key` — Fabric computes the same.
+fn completion_token(key: &[u8], name: &str) -> String {
+    let mut msg = b"axon-test-completion/1\0".to_vec();
+    msg.extend_from_slice(name.as_bytes());
+    hmac_sha256_hex(key, &msg)
+}
+
+/// The keyed token for a failure THIS interpreter decided, in its own domain
+/// (`axon_psv::outcome_token`): without it a printed "failed" line is not a
+/// verdict, so candidate output cannot write a failure over a genuine pass.
+fn failure_token(key: &[u8], name: &str) -> String {
+    let mut msg = b"axon-test-failed/1\0".to_vec();
+    msg.extend_from_slice(name.as_bytes());
+    hmac_sha256_hex(key, &msg)
+}
+
+fn cmd_test(
+    files: Vec<PathBuf>,
+    filter: Option<String>,
+    jobs: usize,
+    json: bool,
+    completion_key_stdin: bool,
+    exact: bool,
+) {
+    // Read the completion secret FIRST — before any program code runs — so
+    // nothing the program does can read stdin for it.
+    let completion_key: Option<Vec<u8>> = if completion_key_stdin {
+        let key = read_completion_key();
+        // K now lives in this address space, which will also run candidate
+        // code. Nothing unprivileged may read it (review wf_ecfcd666-6c9,
+        // PSV-3: a spawned helper read K from /proc/<pid>/mem in the guest):
+        // the process is NON-DUMPABLE, so no unprivileged process, its own
+        // children included, can open its memory; and it can spawn NOTHING, as
+        // `Exec` leaves the effect ceiling whatever the caller granted.
+        #[cfg(target_os = "linux")]
+        // SAFETY: prctl(PR_SET_DUMPABLE, 0) takes no pointers.
+        if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) } != 0 {
+            eprintln!("axon test: --completion-key-stdin: could not make the process non-dumpable");
+            std::process::exit(2);
+        }
+        let ceiling: Vec<String> = match std::env::var("AXON_ALLOWED_EFFECTS") {
+            Ok(raw) => raw
+                .split(',')
+                .map(|e| e.trim().to_string())
+                .filter(|e| !e.is_empty() && e != "Exec")
+                .collect(),
+            Err(_) => axon_core::builtins::GRANTABLE_EFFECTS
+                .iter()
+                .filter(|e| **e != "Exec")
+                .map(|e| e.to_string())
+                .collect(),
+        };
+        std::env::set_var("AXON_ALLOWED_EFFECTS", ceiling.join(","));
+        Some(key)
+    } else {
+        None
+    };
     // R23: the mint-TCB certificate gate, on every verb that EXECUTES.
     //
     // It ran on `run` and the native build path and nowhere else, so under
@@ -6238,16 +6394,34 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
         process::exit(2);
     }
 
+    // R51 §6: a sealed run this build cannot protect is refused here, before
+    // any result line, so stdout never carries a summary. `Interp::build`
+    // refuses it too; that is the guarantee, this is the clean exit.
+    if let Err(refused) =
+        axon_core::interp::sealed_run_refusal(!axon_core::resolver::sealed_module_dirs().is_empty())
+    {
+        eprintln!("error: {refused}");
+        process::exit(2);
+    }
+
     // Collect test function metadata: (name, should_fail, forall_cases).
     // A `@[test] @[forall(n=N)]` fn with typed params is a PROPERTY test (R8):
     // its params are randomized over N cases (default 100) and a failure is
     // shrunk to a minimal counterexample. A plain `@[test]` fn must be 0-arg.
+    // A test is the OPERATOR's to define. Under `--seal`, a `@[test]` in a
+    // sealed module (the candidate under test) is not collected: candidate
+    // bytes never add a check to the rubric, nor sink one (PSV review
+    // wf_d725935a-7ed, B1). The same provenance rule the resolver applies.
+    let sealed = axon_core::resolver::sealed_module_dirs();
     let test_meta: Vec<(String, bool, Option<u32>)> = program
         .items
         .iter()
         .filter_map(|item| {
             if let axon_core::ast::Item::FnDef(f) = item {
                 let test_attr = f.attrs.iter().find(|a| a.name == "test")?;
+                if !sealed.is_empty() && axon_core::resolver::span_in_sealed(f.span, &sealed) {
+                    return None;
+                }
                 let forall_attr = f.attrs.iter().find(|a| a.name == "forall");
                 let forall_cases = forall_attr.map(|a| {
                     // `@[forall(n: 250)]` → 250; bare `@[forall]` → default 100.
@@ -6270,7 +6444,12 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
                 }
                 let should_fail = test_attr.args.iter().any(|a| a == "should_fail");
                 if let Some(ref pat) = filter {
-                    if !f.name.contains(pat.as_str()) {
+                    let selected = if exact {
+                        f.name == *pat
+                    } else {
+                        f.name.contains(pat.as_str())
+                    };
+                    if !selected {
                         return None;
                     }
                 }
@@ -6314,6 +6493,12 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
                 }
             } else {
                 // Plain zero-arg @[test].
+                // Property tests issue no completion evidence (yet): their
+                // cases run many times and "completed" is not one event.
+                // R51 S0: this interpreter cannot yet tell a body that
+                // completed from one that ended early (`run_test_fn_outcome`
+                // arrives with S0b), so a pass carries NO completion evidence:
+                // `completed` stays false and a keyed consumer fails closed.
                 match axon_core::interp::run_test_fn(&program, name) {
                     Ok(()) if *should_fail => (
                         false,
@@ -6325,7 +6510,7 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
                 }
             };
             let duration_ms = start.elapsed().as_millis() as u64;
-            TestOutcome { name: name.clone(), passed, duration_ms, error }
+            TestOutcome { name: name.clone(), passed, duration_ms, error, completed: false }
         })
         .collect();
 
@@ -6349,17 +6534,45 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
 
         if json {
             if r.passed {
-                println!(
-                    "{{\"name\":{:?},\"status\":\"ok\",\"duration_ms\":{}}}",
-                    r.name, r.duration_ms
-                );
+                match completion_key.as_deref().filter(|_| r.completed) {
+                    Some(k) => println!(
+                        "{{\"name\":{:?},\"status\":\"ok\",\"duration_ms\":{},\"completion\":\"{}\"}}",
+                        r.name,
+                        r.duration_ms,
+                        completion_token(k, &r.name)
+                    ),
+                    None => println!(
+                        "{{\"name\":{:?},\"status\":\"ok\",\"duration_ms\":{}}}",
+                        r.name, r.duration_ms
+                    ),
+                }
             } else {
                 let msg = r.error.as_deref().unwrap_or("non-zero exit");
-                let escaped = msg.replace('\\', "\\\\").replace('"', "\\\"");
-                println!(
-                    "{{\"name\":{:?},\"status\":\"failed\",\"duration_ms\":{},\"message\":\"{}\"}}",
-                    r.name, r.duration_ms, escaped
-                );
+                // Every control character is escaped too: a raw newline in a
+                // message (which can carry candidate text) split the line and
+                // dropped the named test's result (PCI 15).
+                let escaped: String = msg
+                    .chars()
+                    .map(|c| match c {
+                        '\\' => "\\\\".to_string(),
+                        '"' => "\\\"".to_string(),
+                        c if (c as u32) < 0x20 => format!("\\u{:04x}", c as u32),
+                        c => c.to_string(),
+                    })
+                    .collect();
+                match completion_key.as_deref() {
+                    Some(k) => println!(
+                        "{{\"name\":{:?},\"status\":\"failed\",\"duration_ms\":{},\"message\":\"{}\",\"completion\":\"{}\"}}",
+                        r.name,
+                        r.duration_ms,
+                        escaped,
+                        failure_token(k, &r.name)
+                    ),
+                    None => println!(
+                        "{{\"name\":{:?},\"status\":\"failed\",\"duration_ms\":{},\"message\":\"{}\"}}",
+                        r.name, r.duration_ms, escaped
+                    ),
+                }
             }
         } else if r.passed {
             println!("test {} ... ok ({:.1}ms)", r.name, r.duration_ms as f64);
@@ -6410,9 +6623,174 @@ fn run_check_pipeline_located(
     Vec<axon_core::PipelineDiagnostic>,
     axon_core::infer::InferCtx,
 ) {
+    let sealed = axon_core::resolver::sealed_module_dirs();
+    if sealed.is_empty() {
+        let mut dropped = Vec::new();
+        return run_check_pipeline_inner(
+            program,
+            src,
+            source_path,
+            true,
+            SealView::Whole,
+            None,
+            &mut dropped,
+        );
+    }
+    // `axon test --seal`: the candidate's items are judged by a check that
+    // never saw the operator's (C9 round 13, amendment 114). Run on the merged
+    // program, an operator name in a candidate position said so (`cannot use
+    // `X`, which the operator's code defines`) where a name nothing defines said
+    // "cannot find name"/"unknown type"/"no type or module", one text per
+    // position, and a struct literal or an enum pattern of the operator's was
+    // refused where the missing one was accepted. Nothing can be made to differ
+    // between the two cases that is not there to look at: every diagnostic in a
+    // sealed file comes from a pipeline over the SEALED items alone, where an
+    // operator name IS a name nothing defines.
+    //
+    // The candidate's `use` declarations carry no span, so the merged check cannot
+    // tell them from the operator's: they are set aside for the merged check (and
+    // put back after it) and judged by the sealed-only one, where a module the
+    // operator declares is a module nothing declares.
+    let entry_uses: std::collections::HashSet<(Vec<String>, Vec<String>)> = program
+        .items
+        .iter()
+        .filter_map(|it| match it {
+            axon_core::ast::Item::UseDecl(u) => Some((u.path.clone(), u.items.clone())),
+            _ => None,
+        })
+        .collect();
+    let mut decls = sealed_module_decls(&sealed);
+    decls.uses.retain(|u| !entry_uses.contains(u));
+    let mut dropped_merged = Vec::new();
+    let (merged, ictx) = run_check_pipeline_inner(
+        program,
+        src,
+        source_path,
+        true,
+        SealView::OperatorsOnly,
+        Some(&decls.uses),
+        &mut dropped_merged,
+    );
+    let mut iso = axon_core::ast::Program {
+        items: program
+            .items
+            .iter()
+            .filter(|it| axon_core::resolver::item_in_sealed(it, &sealed, &decls))
+            .cloned()
+            .collect(),
+    };
+    let mut none = Vec::new();
+    let (mut iso_diags, _) = run_check_pipeline_inner(
+        &mut iso,
+        src,
+        source_path,
+        false,
+        SealView::SealedOnly,
+        None,
+        &mut none,
+    );
+    let mut diags = merged;
+    if !iso_diags.iter().any(|d| d.severity == "error") {
+        // The sealed-only check found no ERROR (its warnings are printed as they
+        // arise and are not in this list): anything the merged check said about a
+        // sealed file is the backstop (E0004), kept so it still refuses.
+        diags.extend(dropped_merged.into_iter().filter(|d| d.severity == "error"));
+    } else {
+        diags.append(&mut iso_diags);
+    }
+    axon_core::collapse_refined_type_errors(&mut diags);
+    axon_core::collapse_unresolved_duplicates(&mut diags);
+    (diags, ictx)
+}
+
+/// Which diagnostics a run of the pipeline keeps (see
+/// [`run_check_pipeline_located`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SealView {
+    /// No sealing: every diagnostic.
+    Whole,
+    /// The merged program: diagnostics about files outside the sealed set only.
+    OperatorsOnly,
+    /// The sealed-only program: diagnostics about the sealed files only.
+    SealedOnly,
+}
+
+/// The `mod` and `use` declarations the sealed files make (they carry no span,
+/// so which of the program's declarations are the candidate's is read off the
+/// files themselves).
+fn sealed_module_decls(sealed: &[PathBuf]) -> axon_core::resolver::SealedDecls {
+    let mut d = axon_core::resolver::SealedDecls::default();
+    fn walk(dir: &Path, d: &mut axon_core::resolver::SealedDecls, depth: u8) {
+        if depth > 8 {
+            return;
+        }
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if let Some(stem) = p.file_stem().and_then(|x| x.to_str()) {
+                if p.is_dir() || p.extension().is_some_and(|x| x == "ax") {
+                    d.stems.insert(stem.to_string());
+                }
+            }
+            if p.is_dir() {
+                walk(&p, d, depth + 1);
+            } else if p.extension().is_some_and(|x| x == "ax") {
+                if let Ok(src) = std::fs::read_to_string(&p) {
+                    if let Ok(prog) = parse_source(&src) {
+                        for it in prog.items {
+                            match it {
+                                axon_core::ast::Item::ModDecl(m) => {
+                                    d.mods.insert(m.name);
+                                }
+                                axon_core::ast::Item::UseDecl(u) => {
+                                    d.uses.insert((u.path, u.items));
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for dir in sealed {
+        walk(dir, &mut d, 0);
+    }
+    d
+}
+
+fn run_check_pipeline_inner(
+    program: &mut axon_core::ast::Program,
+    src: &str,
+    source_path: &Path,
+    load_modules: bool,
+    view: SealView,
+    hide_uses: Option<&std::collections::HashSet<(Vec<String>, Vec<String>)>>,
+    dropped: &mut Vec<axon_core::PipelineDiagnostic>,
+) -> (
+    Vec<axon_core::PipelineDiagnostic>,
+    axon_core::infer::InferCtx,
+) {
     use axon_core::PipelineDiagnostic;
     // AX-36: consecutive laps, so the phases below tile this function.
     let mut laps = axon_core::time_passes::Laps::start();
+    let sealed_dirs = axon_core::resolver::sealed_module_dirs();
+    // Whether a diagnostic about `file` belongs to the other half of the split.
+    let masked = |file: &str, line: u32| -> bool {
+        if view == SealView::Whole {
+            return false;
+        }
+        let p = PathBuf::from(file);
+        let p = p.canonicalize().unwrap_or(p);
+        let in_sealed = sealed_dirs.iter().any(|d| p.starts_with(d));
+        // A diagnostic with no line (no span: a `use` declaration) is attributed to
+        // the entry file; in the sealed-only program it can only be the sealed
+        // items', so it is kept there.
+        let sealed_side = in_sealed || (view == SealView::SealedOnly && line == 0);
+        (view == SealView::OperatorsOnly) == sealed_side
+    };
     let file = source_path.display().to_string();
     let source_map = axon_core::span::SourceMap::new(src.to_string());
     laps.lap("source_map");
@@ -6506,7 +6884,13 @@ fn run_check_pipeline_located(
     // Step 0: load modules referenced by `use` declarations (AXON_PATH search).
     // MergeErrors carry no span (they're file-level), so line/col stay 0.
     let search_dirs = axon_core::axon_search_dirs(std::env::current_exe().ok().as_deref());
-    for e in axon_core::load_use_decls(program, &search_dirs) {
+    let load_errors = if load_modules {
+        axon_core::load_use_decls(program, &search_dirs)
+    } else {
+        Vec::new()
+    };
+    let n_load = load_errors.len();
+    for e in load_errors {
         // A MergeError is about the ENTRY file's `use` line (the module it
         // names could not be found or is circular), so the entry file is the
         // right label here — unlike everything below, which is about a span.
@@ -6521,6 +6905,23 @@ fn run_check_pipeline_located(
         );
     }
     laps.lap("modules");
+
+    // The `use` declarations set aside for this run (see the wrapper), put back at the end.
+    let mut hidden: Vec<(usize, axon_core::ast::Item)> = Vec::new();
+    if let Some(set) = hide_uses {
+        let mut kept = Vec::with_capacity(program.items.len());
+        for (i, it) in std::mem::take(&mut program.items).into_iter().enumerate() {
+            match &it {
+                axon_core::ast::Item::UseDecl(u)
+                    if set.contains(&(u.path.clone(), u.items.clone())) =>
+                {
+                    hidden.push((i, it));
+                }
+                _ => kept.push(it),
+            }
+        }
+        program.items = kept;
+    }
 
     // Step 1: name resolution
     let resolve_result = axon_core::resolver::resolve_program(program, &file);
@@ -6573,6 +6974,9 @@ fn run_check_pipeline_located(
             help: warn.fix.clone(),
         };
         if suppressed_as_session_prelude(&d.code, d.line) {
+            continue;
+        }
+        if masked(&d.file, d.line) {
             continue;
         }
         if !std::io::stderr().is_terminal() {
@@ -6674,6 +7078,9 @@ fn run_check_pipeline_located(
                 found: err.found.clone(),
                 help: err.fix.clone(),
             };
+            if masked(&wd.file, wd.line) {
+                continue;
+            }
             if !std::io::stderr().is_terminal() {
                 eprintln!("{}", wd.json());
             } else {
@@ -6842,6 +7249,31 @@ fn run_check_pipeline_located(
         );
     }
     laps.lap("verify");
+
+    for (i, it) in hidden {
+        program.items.insert(i, it);
+    }
+
+    // The split of a `--seal` check: keep this run's half, hand back the rest.
+    if view != SealView::Whole {
+        // In the MERGED half a diagnostic with no line (no span) cannot be told
+        // from the sealed items' by the file it names: the entry file is the
+        // label every spanless diagnostic gets. A merged diagnostic that cannot
+        // be attributed to the operator's files is therefore handed to the
+        // BACKSTOP list with the sealed-side ones -- it is shown only when the
+        // sealed-only half found no error (so it still refuses), never beside
+        // that half's own text. The only spanless diagnostics that are the
+        // operator's for certain are the module-load ones (`n_load`), which are
+        // about the entry file's own `use` lines.
+        let (kept, rest) = axon_core::seal_split::split_for_view(
+            std::mem::take(&mut diags),
+            n_load,
+            view == SealView::OperatorsOnly,
+            &masked,
+        );
+        diags = kept;
+        *dropped = rest;
+    }
 
     // Collapse byte-identical diagnostics. Some checks fire per-operand: `"a" +
     // "b"` runs check_numeric_operand on BOTH operands, each producing an E0102

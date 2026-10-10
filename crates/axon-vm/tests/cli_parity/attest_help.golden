@@ -1,0 +1,59 @@
+exit: Some(0)
+--- stdout ---
+R26: Measure a kernel image and produce a software-TPM attestation report.
+
+NOTE: substrate = qemu-swtpm (stand-in — no memory encryption vs the host operator). Use sev-snp/tdx (hw-attest feature) for real confidential computing.
+
+Outputs JSON on stdout: schema axon-attest/1. Exit 0 = attestation produced (and verified if --verify-digest given). Exit 10 = attestation failed or absent. Exit 2  = bad arguments / kernel not found.
+
+Usage: axon-vm attest [OPTIONS] --kernel <KERNEL>
+
+Options:
+      --kernel <KERNEL>
+          Path to the kernel ELF image to measure. In CI (AXON_CI_NO_KVM=1), this path is optional — a synthetic mock kernel is used when the file does not exist, making the attest subcommand runnable without real hardware
+
+      --policy <POLICY>
+          Optional base64-encoded policy to embed in the report metadata
+
+      --run-prog <run>
+          Optional Axon program to run inside the attested guest (mock in CI)
+
+      --verify-digest <VERIFY_DIGEST>
+          Expected hex digest to verify against (64 hex chars = SHA-256 of kernel). If provided, verify_report is called and a mismatch exits 10
+
+      --nonce <NONCE>
+          Nonce for freshness (anti-replay in real deployments)
+          
+          [default: default-nonce]
+
+      --verify-axtcb1 <VERIFY_AXTCB1>
+          Expected axtcb1 digest to verify (e.g. "axtcb1:…")
+
+      --extended-tcb
+          R31: also measure axon-os + axon-audit + monitor; extend report with `axtcb1_ext` and a 4-entry `components` array (schema axon-vm-report/2). Missing required component (kernel or axon-os) → exit 12
+
+      --axon-os <AXON_OS>
+          R31: path to the axon-os binary (default: sibling of this executable). Only used when --extended-tcb is set
+
+      --axon-audit <AXON_AUDIT>
+          R31: path to the axon-audit-writer binary (default: sibling of this executable; absent → zero-fill sentinel per §4.2). Only used when --extended-tcb is set
+
+      --verify-axtcb1-ext <VERIFY_AXTCB1_EXT>
+          R31: expected axtcb1_ext to verify (e.g. "axtcb1-ext:…"). If provided, verify_extended is called and a mismatch exits 10
+
+      --pin-baseline
+          Record this kernel's digest as the trusted boot baseline (`~/.axon/kernel_baseline.sha256`), which `axon-vm run` then requires.
+          
+          This is a deliberate operator action: `run` never establishes a baseline on its own, so blessing a kernel is always something a human did, and is refused for a mock/absent kernel. Overwriting an existing pin requires --repin, so a silent re-baseline cannot happen by accident.
+
+      --pin-extended
+          T52: record the measured `axtcb1-ext:` as the pinned extended-TCB baseline (`~/.axon/axtcb1_ext_baseline`), so `run --extended-tcb` has something to verify against. Requires --extended-tcb
+
+      --repin
+          Allow --pin-baseline to overwrite an existing baseline with a different digest
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+--- stderr ---
+

@@ -1,0 +1,512 @@
+{
+  "schema": "axon.closed-loop-requirements/1",
+  "version": "0.22",
+  "scope": "INTEGRATION_PROPOSAL",
+  "requirements": [
+    {
+      "id": "R22-01",
+      "task": "B255",
+      "owners": [
+        "CX-00"
+      ],
+      "gates": [
+        "G00-r22-source-rebase",
+        "G00-r22-preservation"
+      ],
+      "fabric_tasks": [
+        "ACF-T00"
+      ],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-02",
+      "task": "B256",
+      "owners": [
+        "CX-16"
+      ],
+      "gates": [
+        "G16-r22-closed-wire",
+        "G16-r22-negotiation"
+      ],
+      "fabric_tasks": [],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-03",
+      "task": "B257",
+      "owners": [
+        "CX-10",
+        "CX-32"
+      ],
+      "gates": [
+        "G10-r22-trial-identity",
+        "G32-r22-sidecar-bindings"
+      ],
+      "fabric_tasks": [],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-04",
+      "task": "B258",
+      "owners": [
+        "CX-03",
+        "CX-13"
+      ],
+      "gates": [
+        "G03-r22-authority-intersection",
+        "G13-r22-profile-eligibility"
+      ],
+      "fabric_tasks": [
+        "ACF-T01"
+      ],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-05",
+      "task": "B259",
+      "owners": [
+        "CX-13"
+      ],
+      "gates": [
+        "G13-r22-legacy-scope",
+        "G13-r22-no-weak-fallback"
+      ],
+      "fabric_tasks": [
+        "ACF-T02"
+      ],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-06",
+      "task": "B260",
+      "owners": [
+        "CX-13"
+      ],
+      "gates": [
+        "G13-r22-journal-before-effect",
+        "G13-r22-aggregate-reservation",
+        "G13-r22-unknown-reconcile"
+      ],
+      "fabric_tasks": [
+        "ACF-T03"
+      ],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-07",
+      "task": "B261",
+      "owners": [
+        "CX-03",
+        "CX-28"
+      ],
+      "gates": [
+        "G03-r22-workspace-import",
+        "G28-r22-workspace-not-context",
+        "G03-r22-trial-isolation"
+      ],
+      "fabric_tasks": [
+        "ACF-T04"
+      ],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-08",
+      "task": "B262",
+      "owners": [
+        "CX-13"
+      ],
+      "gates": [
+        "G13-r22-vm-cli-parity",
+        "G13-r22-guest-truth"
+      ],
+      "fabric_tasks": [
+        "ACF-T05"
+      ],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-09",
+      "task": "B263",
+      "owners": [
+        "CX-13",
+        "CX-03"
+      ],
+      "gates": [
+        "G03-r22-physical-isolation",
+        "G13-r22-profile-qualification",
+        "G13-r22-launch-cleanup"
+      ],
+      "fabric_tasks": [
+        "ACF-T06"
+      ],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-10",
+      "task": "B264",
+      "owners": [
+        "CX-01",
+        "CX-03"
+      ],
+      "gates": [
+        "G01-r22-registered-check",
+        "G01-r22-verifier-separation",
+        "G03-r22-check-effects"
+      ],
+      "fabric_tasks": [
+        "ACF-T07"
+      ],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-11",
+      "task": "B265",
+      "owners": [
+        "CX-32"
+      ],
+      "gates": [
+        "G32-r22-receipt-roles",
+        "G32-r22-artifact-recheck"
+      ],
+      "fabric_tasks": [],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-12",
+      "task": "B266",
+      "owners": [
+        "CX-16"
+      ],
+      "gates": [
+        "G16-r22-preflight-start",
+        "G16-r22-preflight-return",
+        "G16-r22-role-scope"
+      ],
+      "fabric_tasks": [],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-13",
+      "task": "B267",
+      "owners": [
+        "CX-16",
+        "CX-03"
+      ],
+      "gates": [
+        "G16-r22-local-authority",
+        "G16-r22-trust-graduation",
+        "G03-r22-dispatch-recheck"
+      ],
+      "fabric_tasks": [],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-14",
+      "task": "B268",
+      "owners": [
+        "CX-16"
+      ],
+      "gates": [
+        "G16-r22-real-consumer",
+        "G16-r22-candidate-shortlist",
+        "G16-r22-provider-host-boundary"
+      ],
+      "fabric_tasks": [],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-15",
+      "task": "B269",
+      "owners": [
+        "CX-16",
+        "CX-10"
+      ],
+      "gates": [
+        "G16-r22-real-producer",
+        "G10-r22-all-attempts"
+      ],
+      "fabric_tasks": [],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-16",
+      "task": "B270",
+      "owners": [
+        "CX-10",
+        "CX-13"
+      ],
+      "gates": [
+        "G10-r22-full-task-cost",
+        "G13-r22-billing-settlement",
+        "G10-r22-cohort-denominator"
+      ],
+      "fabric_tasks": [],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-17",
+      "task": "B271",
+      "owners": [
+        "CX-08",
+        "CX-11"
+      ],
+      "gates": [
+        "G08-r22-logical-branches",
+        "G11-r22-workspace-cas",
+        "G08-r22-branch-cancellation"
+      ],
+      "fabric_tasks": [
+        "ACF-T08"
+      ],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-18",
+      "task": "B272",
+      "owners": [
+        "CX-05",
+        "CX-06",
+        "CX-26",
+        "CX-28",
+        "CX-34"
+      ],
+      "gates": [
+        "G34-r22-pilot-controls",
+        "G05-r22-decision-semantics",
+        "G26-r22-speculation-disabled",
+        "G28-r22-context-provenance"
+      ],
+      "fabric_tasks": [],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-19",
+      "task": "B273",
+      "owners": [
+        "CX-29"
+      ],
+      "gates": [
+        "G29-r22-bounded-mutation",
+        "G29-r22-hypothesis-memory"
+      ],
+      "fabric_tasks": [],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-20",
+      "task": "B274",
+      "owners": [
+        "CX-21",
+        "CX-33"
+      ],
+      "gates": [
+        "G21-r22-protected-splits",
+        "G33-r22-decision-rule-freeze",
+        "G21-r22-inconclusive-valid"
+      ],
+      "fabric_tasks": [],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-21",
+      "task": "B275",
+      "owners": [
+        "CX-08",
+        "CX-21"
+      ],
+      "gates": [
+        "G08-r22-real-paired-execution",
+        "G21-r22-order-cache-controls"
+      ],
+      "fabric_tasks": [],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-22",
+      "task": "B276",
+      "owners": [
+        "CX-01"
+      ],
+      "gates": [
+        "G01-r22-nonvacuous-outcome",
+        "G01-r22-independent-issuer",
+        "G01-r22-unknown-outcome"
+      ],
+      "fabric_tasks": [],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-23",
+      "task": "B277",
+      "owners": [
+        "CX-11"
+      ],
+      "gates": [
+        "G11-r22-independent-admission",
+        "G11-r22-admission-disposition"
+      ],
+      "fabric_tasks": [],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-24",
+      "task": "B278",
+      "owners": [
+        "CX-11",
+        "CX-16"
+      ],
+      "gates": [
+        "G11-r22-policy-cas",
+        "G16-r22-future-task-uptake",
+        "G16-r22-inflight-policy-pin"
+      ],
+      "fabric_tasks": [],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-25",
+      "task": "B279",
+      "owners": [
+        "CX-11",
+        "CX-13"
+      ],
+      "gates": [
+        "G11-r22-rollback-revalidate",
+        "G13-r22-rollback-lifecycle",
+        "G11-r22-regression-observed"
+      ],
+      "fabric_tasks": [],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-26",
+      "task": "B280",
+      "owners": [
+        "CX-13",
+        "CX-16"
+      ],
+      "gates": [
+        "G13-r22-restart-matrix",
+        "G16-r22-peer-failure-matrix"
+      ],
+      "fabric_tasks": [],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-27",
+      "task": "B281",
+      "owners": [
+        "CX-10",
+        "CX-25"
+      ],
+      "gates": [
+        "G10-r22-eligibility-projection",
+        "G25-r22-no-self-label-loop"
+      ],
+      "fabric_tasks": [],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-28",
+      "task": "B282",
+      "owners": [
+        "CX-03",
+        "CX-32"
+      ],
+      "gates": [
+        "G03-r22-joint-bypass",
+        "G32-r22-evidence-laundering"
+      ],
+      "fabric_tasks": [],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-29",
+      "task": "B283",
+      "owners": [
+        "CX-00",
+        "CX-16"
+      ],
+      "gates": [
+        "G00-r22-package-gate-upgrade",
+        "G16-r22-source-ci-scope"
+      ],
+      "fabric_tasks": [],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-30",
+      "task": "B284",
+      "owners": [
+        "CX-00"
+      ],
+      "gates": [
+        "G00-r22-pack-integrity",
+        "G00-r22-honest-status"
+      ],
+      "fabric_tasks": [],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-31",
+      "task": "B285",
+      "owners": [
+        "CX-16",
+        "CX-29"
+      ],
+      "gates": [
+        "G16-r22-operational-loop",
+        "G29-r22-no-forced-winner",
+        "G16-r22-bounded-activation"
+      ],
+      "fabric_tasks": [],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    },
+    {
+      "id": "R22-32",
+      "task": "B286",
+      "owners": [
+        "CX-21",
+        "CX-29"
+      ],
+      "gates": [
+        "G21-r22-measured-claim",
+        "G29-r22-claim-separation"
+      ],
+      "fabric_tasks": [],
+      "basis": "0.21 owners + supplied Fabric M0-M2 + supplied MiCode source; new bridge details explicitly proposed",
+      "runtime_status": "NOT_RUN"
+    }
+  ]
+}

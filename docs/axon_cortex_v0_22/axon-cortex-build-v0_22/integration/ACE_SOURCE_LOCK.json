@@ -1,0 +1,90 @@
+{
+  "schema": "axon.ace-source-lock/1",
+  "document_version": "0.18",
+  "execution_profile": "axon.ace-execution/1",
+  "status": "PROPOSED_DOCUMENT_CONTRACT",
+  "product_gates_executed": 0,
+  "source_archives": [
+    {
+      "filename": "Axon_Cortex_Build_Files_v0_16.zip",
+      "sha256": "d856baa9cd22e3f215491285e76122f8506c54a0dac41c9547c071f8048cfcb9",
+      "bytes": 745170,
+      "included": false
+    },
+    {
+      "filename": "AXON_ANEA_v0_2_CX36_ALIGNED_BUILD_PACK(1).zip",
+      "sha256": "f162b81fc3faff5f2ef9dbad4ddfa225da92eed32ee42043119be012c4b1dc33",
+      "bytes": 744899,
+      "included": false
+    },
+    {
+      "filename": "MiCode_Axon_Support_Build_Plan_v0_10.zip",
+      "sha256": "c9900509463b622f636f1699ca73d4ddb70d1e176da92c1c39bbf350bb927388",
+      "bytes": 547360,
+      "included": false
+    }
+  ],
+  "reference_files": [
+    {
+      "path": "integration/anea-v0_2-reference/ANEA_SPEC.txt",
+      "source_member": "axon_anea_build_pack_v0_2/ANEA_SPEC.md",
+      "sha256": "4ac4dcc6369ca02365b1cc40b77e43fa9ef696c124497ae31eb4ddfa34710ba6",
+      "use": "historical_reference_not_active_format"
+    },
+    {
+      "path": "integration/anea-v0_2-reference/REQUIREMENTS.json",
+      "source_member": "axon_anea_build_pack_v0_2/REQUIREMENTS.json",
+      "sha256": "feafdc2a911448b0727b7b300ac77a6dfe4e69eef8448ffa6a9e98e769d0eda4",
+      "use": "historical_reference_not_active_format"
+    },
+    {
+      "path": "integration/anea-v0_2-reference/OPEN_DECISIONS.json",
+      "source_member": "axon_anea_build_pack_v0_2/OPEN_DECISIONS.json",
+      "sha256": "40ca52f3a81dacaa4522bafbadabb74ec97462acd5f561e181212106c48a057a",
+      "use": "historical_reference_not_active_format"
+    },
+    {
+      "path": "integration/anea-v0_2-reference/integration/UPSTREAM_AMENDMENTS.txt",
+      "source_member": "axon_anea_build_pack_v0_2/integration/UPSTREAM_AMENDMENTS.md",
+      "sha256": "4140c5e9ca14af1095af9733bb5d0b0ff6401ab99c5ac6ab80a1c3265b0fdf80",
+      "use": "historical_reference_not_active_format"
+    },
+    {
+      "path": "integration/anea-v0_2-reference/integration/CONTRACT_MAPPING.txt",
+      "source_member": "axon_anea_build_pack_v0_2/integration/CONTRACT_MAPPING.md",
+      "sha256": "daaa7217f6a272be72a2b6713d773256ad3af1ed5e5b6072069ceeb5323d49ce",
+      "use": "historical_reference_not_active_format"
+    }
+  ],
+  "retained_formats": [
+    "axon.nps/1",
+    "axon.np/1",
+    "axon.cjson/1"
+  ],
+  "cx36_revision": "0.2",
+  "legacy_artifact_profile": "anea-reference-zip-0.2: LEGACY_REFERENCE_ONLY",
+  "unchanged_reviewed_contracts": [
+    {
+      "path": "specs/CX-36-neural-program-artifact-contract.md",
+      "sha256": "3c7591109dbf1e4720ce0dade1f48c43d2f8ba6ba478e01a36d64954cd9e9968"
+    },
+    {
+      "path": "schemas/json/neural-program-source.schema.json",
+      "sha256": "7098d826351687ab5c2df843f08c768691693c815dd64942a516b256ba474f3e"
+    },
+    {
+      "path": "schemas/json/neural-program-manifest.schema.json",
+      "sha256": "ab4220f4d53884507db9cedca64fe6732b852d7bfeee1305182b1c2b99143369"
+    },
+    {
+      "path": "tools/neural_contract_reference.py",
+      "sha256": "d129ba91a35c963774c6fc6f278be15aaeb03e84f620b4245011f14fe1f47955"
+    },
+    {
+      "path": "fixtures/neural_programs/minimal.np",
+      "sha256": "2f65a139e656219a2e7175352f0b0e7002b16f674ac9dcfe99209f55992ba760"
+    }
+  ],
+  "legacy_source_name": "ANEA v0.2",
+  "rename_note": "ANEA is a historical source alias; ACE is the current Axon Cognitive Execution name."
+}

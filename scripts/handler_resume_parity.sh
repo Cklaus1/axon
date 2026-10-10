@@ -22,7 +22,16 @@ cd "$ROOT"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-need_codegen_axon handler_resume_parity
+if [ -n "${AXON:-}" ]; then
+  named_bin AXON handler_resume_parity
+else
+  echo "handler_resume_parity: building codegen axon binary…"
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "handler_resume_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
+  fi
+  use_built AXON axon
+fi
+require_codegen_axon handler_resume_parity
 
 fail=0
 check() {

@@ -1,0 +1,273 @@
+{
+  "schema": "axon-build-release-profiles/1",
+  "package_version": "0.22",
+  "default_active_runtime": false,
+  "profiles": [
+    {
+      "id": "intake",
+      "exit_tasks": [
+        "B02",
+        "B165"
+      ],
+      "activation": "none",
+      "goal": "Reconcile source truth, contracts and document validator."
+    },
+    {
+      "id": "safe_repair",
+      "exit_tasks": [
+        "B14"
+      ],
+      "activation": "owned deterministic fixture only",
+      "goal": "First safe repair loop without model training."
+    },
+    {
+      "id": "first_model",
+      "exit_tasks": [
+        "B16"
+      ],
+      "activation": "explicit approved baseline/shadow only",
+      "goal": "Common backend boundary and first adapter, no custom model requirement."
+    },
+    {
+      "id": "neural_format",
+      "exit_tasks": [
+        "B155"
+      ],
+      "activation": "none",
+      "goal": "Source/container identity and format checks, not trained behavior."
+    },
+    {
+      "id": "early_self_observation",
+      "exit_tasks": [
+        "B118",
+        "B140"
+      ],
+      "activation": "passive instrumented incumbent",
+      "goal": "Collect useful data before new context/supervisor implementations exist."
+    },
+    {
+      "id": "reference_scheduler",
+      "exit_tasks": [
+        "B149"
+      ],
+      "activation": "incumbent capabilities under current policy",
+      "goal": "Deterministic registry and hard filters before learned utility."
+    },
+    {
+      "id": "neural_candidate",
+      "exit_tasks": [
+        "B164",
+        "B166"
+      ],
+      "activation": "only separately admitted bounded target",
+      "goal": "Source-bound pilot plus exact release/revocation handling."
+    },
+    {
+      "id": "review_integration",
+      "exit_tasks": [
+        "B173"
+      ],
+      "activation": "only profiles whose live gates pass",
+      "goal": "Reviewed end-to-end scope, not an implicit whole-OS implementation."
+    },
+    {
+      "id": "ace_contract",
+      "exit_tasks": [
+        "B175",
+        "B187"
+      ],
+      "activation": "disabled unless separately admitted",
+      "goal": "Owner/profile reconciliation and offline conformance, no live inference."
+    },
+    {
+      "id": "ace_core",
+      "exit_tasks": [
+        "B182"
+      ],
+      "activation": "disabled unless separately admitted",
+      "goal": "One authorized real incumbent through the real Axon consumer."
+    },
+    {
+      "id": "ace_micode",
+      "exit_tasks": [
+        "B183"
+      ],
+      "activation": "disabled unless separately admitted",
+      "goal": "Joint Axon/MiCode integration at pinned live revisions."
+    },
+    {
+      "id": "ace_three_family",
+      "exit_tasks": [
+        "B184"
+      ],
+      "activation": "disabled unless separately admitted",
+      "goal": "Optional real three-family comparison, not core dependency."
+    },
+    {
+      "id": "ace_neural",
+      "exit_tasks": [
+        "B185"
+      ],
+      "activation": "disabled unless separately admitted",
+      "goal": "Separate reviewed learned-function lifecycle, allowing rejection."
+    },
+    {
+      "id": "ace_native_state",
+      "exit_tasks": [
+        "B186"
+      ],
+      "activation": "disabled unless separately admitted",
+      "goal": "Optional engine-backed state/isolation profile, not inferred from fixtures."
+    },
+    {
+      "id": "ace_v1_runtime",
+      "exit_tasks": [
+        "B199"
+      ],
+      "activation": "disabled unless separately admitted",
+      "goal": "Complete ACE v1 provider/runtime contract and bounded conformance; real model/service interoperability remains separately gated."
+    },
+    {
+      "id": "ace_calibrated_decision",
+      "exit_tasks": [
+        "B209"
+      ],
+      "activation": "disabled unless separately admitted",
+      "goal": "RLCD/Jev-informed calibrated decision contracts, falsification, fan-out/high-cardinality runtime and peer mapping; specialized model/packing arms may be rejected and no Jev reproduction is claimed."
+    },
+    {
+      "id": "schema_decision_contract",
+      "exit_tasks": [
+        "B213"
+      ],
+      "activation": "none unless independently admitted for an explicitly authorized live slice",
+      "goal": "Bounded schema/active-output/source-provenance/local-authority path without learned model prerequisites."
+    },
+    {
+      "id": "lightweight_reflex_shadow",
+      "exit_tasks": [
+        "B216"
+      ],
+      "activation": "none unless independently admitted for an explicitly authorized live slice",
+      "goal": "One fixed-task experiment with independent data/calibration/threshold/final-test roles; rejected/inconclusive is valid."
+    },
+    {
+      "id": "lightweight_reflex_runtime",
+      "exit_tasks": [
+        "B218"
+      ],
+      "activation": "none unless independently admitted for an explicitly authorized live slice",
+      "goal": "Qualified artifact/runtime/shared-assets plus full-cost shadow and independent disposition; no automatic activation."
+    },
+    {
+      "id": "schema_reflex_micode",
+      "exit_tasks": [
+        "B219"
+      ],
+      "activation": "none unless independently admitted for an explicitly authorized live slice",
+      "goal": "Actual paired low-risk source/provider/consumer integration, separately evidenced from fixtures."
+    },
+    {
+      "id": "v020_package_conformance",
+      "exit_tasks": [
+        "B220"
+      ],
+      "activation": "none unless independently admitted for an explicitly authorized live slice",
+      "goal": "Offline mappings, reference tests, generated artifacts and pinned owner/consumer bytes only."
+    },
+    {
+      "id": "v021_package_conformance",
+      "exit_tasks": [
+        "B249"
+      ],
+      "activation": "none",
+      "goal": "Documentation, mappings and executable model-free reference semantics only. Does not require a model, GPU, Rust compiler or MiCode runtime."
+    },
+    {
+      "id": "v021_guardrails",
+      "exit_tasks": [
+        "B233",
+        "B236",
+        "B237",
+        "B240",
+        "B242",
+        "B244",
+        "B245",
+        "B248"
+      ],
+      "activation": "disabled pending source evidence and independent admission",
+      "goal": "Actual deterministic runtime boundaries and baseline flows; requires source integration, no successful learned-model training prerequisite."
+    },
+    {
+      "id": "v021_provider_qualification",
+      "exit_tasks": [
+        "B227",
+        "B228",
+        "B229",
+        "B230",
+        "B238",
+        "B246"
+      ],
+      "activation": "explicit authorized shadow only",
+      "goal": "Real provider adapters and comparison plans; rejected or inconclusive quality results are legitimate."
+    },
+    {
+      "id": "v021_live_pilot",
+      "exit_tasks": [
+        "B250"
+      ],
+      "activation": "only separately authorized low-risk scope",
+      "goal": "Real source/model-backed pilot; independent final outcome and complete economics. Does not assert an unseen peer exists."
+    },
+    {
+      "id": "v021_peer_contract",
+      "exit_tasks": [
+        "B247"
+      ],
+      "activation": "none; peer implementation is pending",
+      "goal": "Proposed MiCode 0.15 consumer migration addendum; actual paired qualification is a separate runtime requirement."
+    },
+    {
+      "id": "v022_package_conformance",
+      "exit_tasks": [
+        "B284"
+      ],
+      "activation": "none by package; explicit independent source-qualified admission only",
+      "goal": "Offline package/schema/reference scope only, no runtime prerequisite"
+    },
+    {
+      "id": "v022_protected_execution",
+      "exit_tasks": [
+        "B264",
+        "B283"
+      ],
+      "activation": "none by package; explicit independent source-qualified admission only",
+      "goal": "Real ACF M0/M1 registered-check path, physically qualified on an actual host"
+    },
+    {
+      "id": "v022_peer_roundtrip",
+      "exit_tasks": [
+        "B269",
+        "B270"
+      ],
+      "activation": "none by package; explicit independent source-qualified admission only",
+      "goal": "Real Axon/MiCode policy/evidence path with preflight, local authority and whole-task accounting"
+    },
+    {
+      "id": "v022_operational_closed_loop",
+      "exit_tasks": [
+        "B285"
+      ],
+      "activation": "none by package; explicit independent source-qualified admission only",
+      "goal": "Bounded M0-M2 joint runtime, independent admission, future-task uptake and rollback; no forced measured win"
+    },
+    {
+      "id": "v022_improvement_study",
+      "exit_tasks": [
+        "B286"
+      ],
+      "activation": "none by package; explicit independent source-qualified admission only",
+      "goal": "Optional independent study; no benefit claim unless its evidence justifies it"
+    }
+  ]
+}

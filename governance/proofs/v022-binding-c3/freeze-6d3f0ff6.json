@@ -1,0 +1,20 @@
+{
+ "schema": "axon-v022-binding-freeze/1",
+ "candidate": 3,
+ "gates": [
+  "G11-r22-admission-disposition",
+  "G01-r22-unknown-outcome"
+ ],
+ "axon_sha": "6d3f0ff6a51bdaebdf3e024772ab47f293d45997",
+ "micode_sha": "e7fdb7395da4fcd58625e752ffaaf77886d82235",
+ "stage5_runner_sha256": "1010a4279ad2aa0229064b9480935e4eab999eb7902741a789e29ffdb4dbcaeb",
+ "micode_runner_sha256": "e2ca00dcea54e32f8200de478b09994576f90f703751c8e87a913ced58a4736b",
+ "mutation_driver_sha256": "02b36bf179cb83e4ab16372db78b0a0ef61485094f7872e42874b53ef8ac07b0",
+ "mutation_scope": "all",
+ "interop_gate_sha256": "5356c68fcb9ec72d27e762de8c265994458e404ecfebe64da7338b10d82937e0",
+ "prior_reviews": [
+  "wf_d788c05a-be2 (candidate 1)",
+  "wf_8aad6d16-ad6 (candidate 2b: disposition DO_NOT_REGISTER, 1 blocker)"
+ ],
+ "discriminator": "interop section 8b vs 6d3f0ff6 with M125 applied (cited unknowns unauthenticated): 4 of 22 section assertions fail (u-none-1 unmatched, u-spin-1/2 timed_out, kind statistics); /var/tmp/disc-8b.log"
+}

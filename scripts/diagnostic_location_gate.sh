@@ -19,8 +19,9 @@
 # real file identity. This is the floor: a location that cannot exist.
 set -uo pipefail
 cd "$(dirname "$0")/.."
-AXON="${AXON:-$PWD/target/debug/axon}"
-[ -x "$AXON" ] || { echo "SKIP: no binary at $AXON (build axon-core first)"; exit 0; }
+# Runs only the binary its caller names (scripts/lib/axon_bin.sh).
+. scripts/lib/axon_bin.sh
+named_bin AXON diagnostic_location_gate
 
 WS=$(mktemp -d); trap 'rm -rf "$WS"' EXIT
 fails=0; checked=0; diags=0

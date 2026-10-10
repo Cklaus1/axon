@@ -1,0 +1,47 @@
+# Operator decisions G / G1, amendment 68: the preflight observer service.
+# EXAMPLE for the operator to install beside axon-observer.socket; nothing in
+# the repository installs it.
+#
+# It runs as its OWN uid (never the Fabric's, never root), is started only by
+# its socket (it refuses to run without LISTEN_FDS), reads
+# /etc/axon/observer.json, signs with /var/lib/axon-observer/key/observer.pk8
+# (owner axon-observer, mode 0400, directory 0700: the operator generates it
+# AS this user; its public half goes in /etc/axon/trust/observer/), keeps one
+# record per observed nonce in /var/lib/axon-observer/observed (0700), and
+# measures the operator's installed files (read-only: /etc/axon and the
+# installed launcher, firecracker, guest image, suite registry and B263
+# record). `observer_uid` in that config is this User's uid; `fabric_uid` the
+# Fabric service's; `caller_uid` 0 (the setuid-root helper relays).
+
+[Unit]
+Description=Axon preflight observer
+Requires=axon-observer.socket
+After=axon-observer.socket
+
+[Service]
+Type=simple
+# The installed production build (pin its bytes in the helper config's
+# observer.service.sha256).
+ExecStart=/usr/local/libexec/axon/axon-observer
+User=axon-observer
+Group=axon-observer
+StateDirectory=axon-observer/observed axon-observer/key
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+Restart=on-failure

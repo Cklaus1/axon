@@ -35,7 +35,8 @@ rm -f /tmp/fix_codec_$$.log
 
 echo "fix_codec: building interpreter axon binary…"
 if cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null; then
-  AXON="target/debug/axon"
+  . scripts/lib/axon_bin.sh
+  AXON=""; use_built AXON axon  # the interpreter just built
   echo "fix_codec: running examples/domain/fix_demo.ax under the interpreter…"
   OUT="$("$AXON" run examples/domain/fix_demo.ax 2>&1)"
   echo "$OUT"

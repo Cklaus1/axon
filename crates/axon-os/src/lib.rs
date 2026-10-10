@@ -34,6 +34,7 @@ pub use manifest::{parse as parse_manifest, JobManifest};
 pub use record::{
     build as build_record, verify as verify_record, AuditEvent, RawEvent, RunRecord, VerifyMismatch,
 };
-pub use runtime::{PrincipalHandle, RunOutcome, Runtime};
+pub use runtime::{Isolation, IsolationRequirement, PrincipalHandle, RunOutcome, Runtime};
 pub use supervisor::run as supervise;
+pub use supervisor::run_requiring as supervise_requiring;
 pub use verdict::Verdict;

@@ -1,0 +1,36 @@
+{
+  "schema": "acf-compute-request/1",
+  "operation_id": "operation-example-01",
+  "task_id": "task-example-01",
+  "trial_id": "trial-example-01",
+  "attempt_id": "attempt-example-01",
+  "principal_ref": "fixture:principal-not-a-credential",
+  "grant_ref": "fixture:grant-not-authorized",
+  "approval_ref": null,
+  "job_kind": "registered_check",
+  "registered_executable_ref": "fixture:check-no-real-executable",
+  "executable_digest": "acf1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "workspace_version_ref": "acf1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "semantic_state_ref": null,
+  "policy_digest": "acf1:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "required": {
+    "engine": "axon_interpreter",
+    "hardware_isolation": true,
+    "os": "linux",
+    "architecture": "x86_64",
+    "network_mode": "deny",
+    "checkpoint_kind": "logical_workspace"
+  },
+  "limits": {
+    "cpu_millicores": 1000,
+    "memory_bytes": 268435456,
+    "disk_bytes": 1073741824,
+    "wall_time_ms": 30000,
+    "output_bytes": 1048576,
+    "max_cost_micro": 100000,
+    "currency_code": "USD",
+    "price_schedule_ref": "fixture:synthetic-not-pricing"
+  },
+  "argv": [],
+  "result_schema_ref": "fixture:registered-check-result/1"
+}

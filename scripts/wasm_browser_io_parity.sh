@@ -30,7 +30,15 @@ command -v node >/dev/null 2>&1 || { echo "wasm_browser_io_parity: no node — s
 HOSTJS="scripts/wasm_browser_host.js"
 [ -f "$HOSTJS" ] || { echo "wasm_browser_io_parity: host harness missing — skipping"; exit 0; }
 
-need_axon wasm_browser_io_parity
+if [ -n "${AXON:-}" ]; then
+  named_bin AXON wasm_browser_io_parity
+else
+  echo "wasm_browser_io_parity: building codegen axon binary…"
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "wasm_browser_io_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
+  fi
+  use_built AXON axon
+fi
 # Distinguish an ABSENT target from a BROKEN build. The probe used to be
 # `if ! cargo build ... 2>/dev/null` reporting "unavailable - skipping", which
 # said the same thing for both and threw away the compiler error naming which.
@@ -54,13 +62,16 @@ if ! _rt_err="$(cargo build -q -p axon-rt --target wasm32-unknown-unknown 2>&1)"
 fi
 PROBE="$(mktemp -d)/p.ax"; printf 'fn main() { println("ok") }\n' > "$PROBE"
 # Report WHY the link failed instead of calling every cause "unavailable".
-# E0907 means this `axon` has no codegen backend: a skip when the caller chose
-# an interp-only binary, a FAIL when it is the codegen build made above and a
-# concurrent build replaced it. Neither is an absent toolchain.
+# E0907 means this `axon` has no codegen backend: a skip when $AXON is an
+# interp-only build (require_codegen_axon), a FAIL when it can build native code
+# and still answers E0907. Neither is an absent toolchain.
 _probe_err="$("$AXON" target build "$PROBE" --target wasm32-unknown-unknown 2>&1)"
 if [ ! -f "${PROBE%.ax}.linked.wasm" ]; then
   if echo "$_probe_err" | grep -q E0907; then
-    axon_has_no_codegen wasm_browser_io_parity
+    require_codegen_axon wasm_browser_io_parity
+    echo "wasm_browser_io_parity: FAIL — \$AXON ($AXON) builds native code yet answered E0907:"
+    printf '%s\n' "$_probe_err" | head -5 | sed 's/^/        /'
+    exit 1
   fi
   echo "wasm_browser_io_parity: browser println link unavailable — skipping"; exit 0
 fi

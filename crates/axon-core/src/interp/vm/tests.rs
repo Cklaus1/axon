@@ -142,15 +142,25 @@ fn kinds(body: &Body<'_>) -> Vec<&'static str> {
 #[test]
 fn s1_compiles_fib_without_tree_ops() {
     let prog = program();
-    let interp = Interp::build(&prog);
+    let interp = Interp::build(&prog).expect("unsealed build");
     let body = compile(&interp, body_of(&interp, "fib"));
     assert_eq!(body.tree_nodes(), 0, "{:?}", kinds(&body));
+}
+
+/// R51 §4 Fork 1: no VM body is ever built for a sealed run, whatever asks.
+#[test]
+#[should_panic(expected = "R51: a sealed run never compiles a VM body")]
+fn r51_compile_refuses_a_sealed_run() {
+    let prog = program();
+    let mut interp = Interp::build(&prog).expect("unsealed build");
+    interp.sealed = true;
+    let _ = compile::compile(&interp, body_of(&interp, "fib"));
 }
 
 #[test]
 fn s1_leaves_only_unlowered_variants_on_the_tree() {
     let prog = program();
-    let interp = Interp::build(&prog);
+    let interp = Interp::build(&prog).expect("unsealed build");
     let body = compile(&interp, body_of(&interp, "main"));
     let trees: Vec<&str> = body
         .ops
@@ -167,7 +177,7 @@ fn s1_leaves_only_unlowered_variants_on_the_tree() {
 fn s1_every_expr_node_compiles_to_a_balanced_body() {
     // `compile` checks (debug) that a body leaves one value and no scope.
     let prog = program();
-    let interp = Interp::build(&prog);
+    let interp = Interp::build(&prog).expect("unsealed build");
     let mut seen = std::collections::HashSet::new();
     for item in &prog.items {
         let crate::ast::Item::FnDef(f) = item else {
@@ -205,7 +215,7 @@ fn f(xs: [i64], g: [[i64]], i: i64) -> i64 {
 }
 ";
     let prog = crate::parse_source(src).expect("parses");
-    let interp = Interp::build(&prog);
+    let interp = Interp::build(&prog).expect("unsealed build");
     let body = compile(&interp, body_of(&interp, "f"));
     let k = kinds(&body);
     let count = |name: &str| k.iter().filter(|&&x| x == name).count();
@@ -220,7 +230,7 @@ fn f(xs: [i64], g: [[i64]], i: i64) -> i64 {
 #[test]
 fn compiled_is_some_only_for_fn_table_entries() {
     let prog = program();
-    let interp = Interp::build(&prog);
+    let interp = Interp::build(&prog).expect("unsealed build");
     for entry in &interp.fn_table {
         let cell = entry.compiled.as_ref().expect("table entries carry a cell");
         assert!(cell.get().is_none(), "nothing compiled before a run");
@@ -234,7 +244,7 @@ fn compiled_is_some_only_for_fn_table_entries() {
 fn vm_engine_compiles_a_body_on_first_run_and_tree_never_does() {
     let prog = program();
     for (engine, compiled) in [(Engine::Tree, false), (Engine::Vm, true)] {
-        let mut interp = Interp::build(&prog);
+        let mut interp = Interp::build(&prog).expect("unsealed build");
         interp.engine = engine;
         interp.vm_trace = false;
         let i = fib_index(&interp);
@@ -250,7 +260,7 @@ fn vm_engine_compiles_a_body_on_first_run_and_tree_never_does() {
 #[test]
 fn vm_engine_runs_an_owned_entry_on_the_tree() {
     let prog = program();
-    let mut interp = Interp::build(&prog);
+    let mut interp = Interp::build(&prog).expect("unsealed build");
     interp.engine = Engine::Vm;
     interp.vm_trace = false;
     let owned = FnEntry::new(interp.fn_table[fib_index(&interp)].def, &interp.fns);
@@ -278,7 +288,7 @@ fn engine_parse_accepts_only_vm_and_tree() {
 /// The op kinds of fn `f`'s body in `src`.
 fn kinds_of(src: &str, f: &str) -> Vec<&'static str> {
     let prog = crate::parse_source(src).expect("parses");
-    let interp = Interp::build(&prog);
+    let interp = Interp::build(&prog).expect("unsealed build");
     kinds(&compile(&interp, body_of(&interp, f)))
 }
 
@@ -473,7 +483,7 @@ fn ax31_shaped_assign_runs_assign_in_place_first() {
     // Both operands inline: one fused op that runs `assign_in_place` first.
     let prog =
         crate::parse_source("fn f() -> str { let s = \"\"\n s = s + \"x\"\n s }").expect("parses");
-    let interp = Interp::build(&prog);
+    let interp = Interp::build(&prog).expect("unsealed build");
     let body = compile(&interp, body_of(&interp, "f"));
     assert!(body.ops.iter().any(|op| matches!(
         op,
@@ -490,7 +500,7 @@ fn ax31_shaped_assign_runs_assign_in_place_first() {
     assert_eq!(&k[4..9], ["in-place", "load", "bin", "call", "store"]);
     // Not AX-31-shaped: no `assign_in_place` call at all.
     let prog = crate::parse_source("fn f() -> i64 { let i = 0\n i = 1 + i\n i }").unwrap();
-    let interp = Interp::build(&prog);
+    let interp = Interp::build(&prog).expect("unsealed build");
     let body = compile(&interp, body_of(&interp, "f"));
     assert!(body.ops.iter().all(|op| !matches!(
         op,
@@ -618,7 +628,7 @@ fn unscoped_panic() -> i64 {
 /// one binding), and that both engines agree. Returns the vm's result.
 fn run_both(f: &str) -> R {
     let prog = crate::parse_source(EXITS).expect("parses");
-    let interp = Interp::build(&prog);
+    let interp = Interp::build(&prog).expect("unsealed build");
     let body = body_of(&interp, f);
     let sentinel = intern("sentinel");
     let frame = || {
@@ -685,7 +695,7 @@ fn exec_turns_return_into_the_body_value_after_popping() {
 #[test]
 fn exec_runs_hand_built_ops_with_balanced_scopes() {
     let prog = program();
-    let interp = Interp::build(&prog);
+    let interp = Interp::build(&prog).expect("unsealed build");
     let a = intern("a");
     let mut env = Env::new();
     env.define(a, Value::Int(1));
@@ -923,7 +933,7 @@ fn has_ref_mut_entry_is_not_fast_call_eligible() {
          fn main() -> i64 { let a = [0]\n t(&mut a)\n p(1) }",
     )
     .expect("parses");
-    let interp = Interp::build(&prog);
+    let interp = Interp::build(&prog).expect("unsealed build");
     let entry = |name: &str| interp.fn_table.iter().find(|e| e.def.name == name).unwrap();
     assert!(entry("t").has_ref_mut);
     assert_eq!(
@@ -946,7 +956,7 @@ fn has_ref_mut_entry_is_not_fast_call_eligible() {
 fn fast_call_checks_depth_before_arity() {
     let prog = crate::parse_source("fn f(x: i64) -> i64 { x }\nfn g() -> i64 { f(1, 2) }")
         .expect("parses");
-    let interp = Interp::build(&prog);
+    let interp = Interp::build(&prog).expect("unsealed build");
     let g = body_of(&interp, "g");
     let body = compile(&interp, g);
     assert!(kinds(&body).contains(&"call-fast"), "{:?}", kinds(&body));

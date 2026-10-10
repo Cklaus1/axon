@@ -49,8 +49,10 @@ spec headers (which this repo has repeatedly found stale in *both* directions,
 
 - `scripts/kernel_enforce_test.sh` **PASSES on this host**: an Axon-policy-driven syscall gate
   inside a bare-metal guest kernel, booted under real Firecracker, **denies a real `openat`
-  (syscall 257) when the policy withholds FS** (halt, exit 8 = SandboxViolation) and permits it
-  when FS is granted. The enforcer is the guest kernel — not Linux, not seccomp.
+  (syscall 257) when the policy withholds FS** (halt, exit 8 = SandboxViolation). When FS is
+  granted the gate reaches its grant branch and **issues no syscall** — the allow path
+  (dispatch → 0 → `sysretq` to ring 3) is NOT implemented (FG-041, corrected 2026-09-25;
+  tracked as R36.S1). Only the DENY direction is demonstrated. The enforcer is the guest kernel — not Linux, not seccomp.
 - `axon-vm run` refuses to boot an unattested or digest-mismatched kernel image
   (`b85bd83` — attestation is mandatory in the run path, not optional).
 - The host safety stack is real and gated green (all re-run 2026-07-18): R27 kill-switch/latch

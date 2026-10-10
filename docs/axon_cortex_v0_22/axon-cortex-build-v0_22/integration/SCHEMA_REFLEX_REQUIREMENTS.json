@@ -1,0 +1,629 @@
+{
+  "schema": "axon.micode-schema-reflex-crosswalk/1",
+  "axon_document_version": "0.20",
+  "micode_document_version": "0.14",
+  "scope": "proposed implementation coverage, not product evidence",
+  "requirements": [
+    {
+      "id": "SR01",
+      "title": "Single-owner architecture and unchanged formats",
+      "status": "PROPOSED",
+      "product_result": "NOT_RUN",
+      "axon": {
+        "specs": [
+          "CX-00",
+          "CX-23"
+        ],
+        "tasks": [
+          "B217",
+          "B220"
+        ],
+        "gates": [
+          "G00-v020-coverage",
+          "G23-lightweight-qualification"
+        ]
+      },
+      "micode": {
+        "specs": [
+          "MX-04",
+          "MX-32",
+          "MX-33",
+          "MX-34"
+        ],
+        "tasks": [
+          "T208",
+          "T214",
+          "T217"
+        ],
+        "gates": [
+          "G170",
+          "G179",
+          "G184"
+        ]
+      }
+    },
+    {
+      "id": "SR02",
+      "title": "Bounded fail-closed schema frontend",
+      "status": "PROPOSED",
+      "product_result": "NOT_RUN",
+      "axon": {
+        "specs": [
+          "CX-26"
+        ],
+        "tasks": [
+          "B211"
+        ],
+        "gates": [
+          "G26-schema-subset"
+        ]
+      },
+      "micode": {
+        "specs": [
+          "MX-04",
+          "MX-22"
+        ],
+        "tasks": [
+          "T209"
+        ],
+        "gates": [
+          "G171"
+        ]
+      }
+    },
+    {
+      "id": "SR03",
+      "title": "Untrusted annotations do not grant authority",
+      "status": "PROPOSED",
+      "product_result": "NOT_RUN",
+      "axon": {
+        "specs": [
+          "CX-03",
+          "CX-37"
+        ],
+        "tasks": [
+          "B213"
+        ],
+        "gates": [
+          "G03-schema-trust",
+          "G37-schema-proposal-only"
+        ]
+      },
+      "micode": {
+        "specs": [
+          "MX-04",
+          "MX-06",
+          "MX-34"
+        ],
+        "tasks": [
+          "T211"
+        ],
+        "gates": [
+          "G174"
+        ]
+      }
+    },
+    {
+      "id": "SR04",
+      "title": "Active presence/value completeness",
+      "status": "PROPOSED",
+      "product_result": "NOT_RUN",
+      "axon": {
+        "specs": [
+          "CX-05",
+          "CX-26"
+        ],
+        "tasks": [
+          "B212"
+        ],
+        "gates": [
+          "G05-active-output-presence",
+          "G26-active-composition"
+        ]
+      },
+      "micode": {
+        "specs": [
+          "MX-05",
+          "MX-22"
+        ],
+        "tasks": [
+          "T210"
+        ],
+        "gates": [
+          "G172"
+        ]
+      }
+    },
+    {
+      "id": "SR05",
+      "title": "Exact span and current invocation identity",
+      "status": "PROPOSED",
+      "product_result": "NOT_RUN",
+      "axon": {
+        "specs": [
+          "CX-26"
+        ],
+        "tasks": [
+          "B212"
+        ],
+        "gates": [
+          "G26-exact-span",
+          "G26-active-composition"
+        ]
+      },
+      "micode": {
+        "specs": [
+          "MX-22"
+        ],
+        "tasks": [
+          "T210"
+        ],
+        "gates": [
+          "G173"
+        ]
+      }
+    },
+    {
+      "id": "SR06",
+      "title": "Whole-invocation named correctness event",
+      "status": "PROPOSED",
+      "product_result": "NOT_RUN",
+      "axon": {
+        "specs": [
+          "CX-06"
+        ],
+        "tasks": [
+          "B213"
+        ],
+        "gates": [
+          "G06-full-invocation-event"
+        ]
+      },
+      "micode": {
+        "specs": [
+          "MX-06",
+          "MX-17",
+          "MX-22",
+          "MX-34"
+        ],
+        "tasks": [
+          "T215"
+        ],
+        "gates": [
+          "G182"
+        ]
+      }
+    },
+    {
+      "id": "SR07",
+      "title": "Fixed task/label compatibility",
+      "status": "PROPOSED",
+      "product_result": "NOT_RUN",
+      "axon": {
+        "specs": [
+          "CX-05"
+        ],
+        "tasks": [
+          "B210"
+        ],
+        "gates": [
+          "G05-fixed-task-binding"
+        ]
+      },
+      "micode": {
+        "specs": [
+          "MX-32",
+          "MX-33",
+          "MX-34"
+        ],
+        "tasks": [
+          "T214"
+        ],
+        "gates": [
+          "G179"
+        ]
+      }
+    },
+    {
+      "id": "SR08",
+      "title": "Scoped durable teacher jobs",
+      "status": "PROPOSED",
+      "product_result": "NOT_RUN",
+      "axon": {
+        "specs": [
+          "CX-10"
+        ],
+        "tasks": [
+          "B214"
+        ],
+        "gates": [
+          "G10-teacher-job-scope"
+        ]
+      },
+      "micode": {
+        "specs": [
+          "MX-13",
+          "MX-18"
+        ],
+        "tasks": [
+          "T212"
+        ],
+        "gates": [
+          "G175"
+        ]
+      }
+    },
+    {
+      "id": "SR09",
+      "title": "Grouped independent data roles",
+      "status": "PROPOSED",
+      "product_result": "NOT_RUN",
+      "axon": {
+        "specs": [
+          "CX-10"
+        ],
+        "tasks": [
+          "B214"
+        ],
+        "gates": [
+          "G10-grouped-role-isolation"
+        ]
+      },
+      "micode": {
+        "specs": [
+          "MX-13",
+          "MX-18"
+        ],
+        "tasks": [
+          "T212"
+        ],
+        "gates": [
+          "G176"
+        ]
+      }
+    },
+    {
+      "id": "SR10",
+      "title": "Label provenance and conflict adjudication",
+      "status": "PROPOSED",
+      "product_result": "NOT_RUN",
+      "axon": {
+        "specs": [
+          "CX-10"
+        ],
+        "tasks": [
+          "B214"
+        ],
+        "gates": [
+          "G10-label-adjudication"
+        ]
+      },
+      "micode": {
+        "specs": [
+          "MX-13",
+          "MX-18"
+        ],
+        "tasks": [
+          "T212"
+        ],
+        "gates": [
+          "G176"
+        ]
+      }
+    },
+    {
+      "id": "SR11",
+      "title": "Simplest matched baselines",
+      "status": "PROPOSED",
+      "product_result": "NOT_RUN",
+      "axon": {
+        "specs": [
+          "CX-20"
+        ],
+        "tasks": [
+          "B215"
+        ],
+        "gates": [
+          "G20-lightweight-baselines"
+        ]
+      },
+      "micode": {
+        "specs": [
+          "MX-05",
+          "MX-18",
+          "MX-24"
+        ],
+        "tasks": [
+          "T213"
+        ],
+        "gates": [
+          "G177"
+        ]
+      }
+    },
+    {
+      "id": "SR12",
+      "title": "Independent corrected threshold search",
+      "status": "PROPOSED",
+      "product_result": "NOT_RUN",
+      "axon": {
+        "specs": [
+          "CX-06",
+          "CX-20"
+        ],
+        "tasks": [
+          "B216"
+        ],
+        "gates": [
+          "G06-independent-threshold",
+          "G20-protected-release-evaluation"
+        ]
+      },
+      "micode": {
+        "specs": [
+          "MX-05",
+          "MX-18",
+          "MX-24"
+        ],
+        "tasks": [
+          "T213"
+        ],
+        "gates": [
+          "G178"
+        ]
+      }
+    },
+    {
+      "id": "SR13",
+      "title": "No recommendation is not automatic acceptance",
+      "status": "PROPOSED",
+      "product_result": "NOT_RUN",
+      "axon": {
+        "specs": [
+          "CX-06"
+        ],
+        "tasks": [
+          "B216"
+        ],
+        "gates": [
+          "G06-no-recommendation"
+        ]
+      },
+      "micode": {
+        "specs": [
+          "MX-05",
+          "MX-18",
+          "MX-24"
+        ],
+        "tasks": [
+          "T213"
+        ],
+        "gates": [
+          "G178"
+        ]
+      }
+    },
+    {
+      "id": "SR14",
+      "title": "Runtime and artifact qualification",
+      "status": "PROPOSED",
+      "product_result": "NOT_RUN",
+      "axon": {
+        "specs": [
+          "CX-05",
+          "CX-23"
+        ],
+        "tasks": [
+          "B217"
+        ],
+        "gates": [
+          "G05-runtime-profile",
+          "G23-lightweight-qualification"
+        ]
+      },
+      "micode": {
+        "specs": [
+          "MX-32",
+          "MX-33",
+          "MX-34"
+        ],
+        "tasks": [
+          "T214"
+        ],
+        "gates": [
+          "G179"
+        ]
+      }
+    },
+    {
+      "id": "SR15",
+      "title": "Isolated shared-encoder assets and features",
+      "status": "PROPOSED",
+      "product_result": "NOT_RUN",
+      "axon": {
+        "specs": [
+          "CX-34"
+        ],
+        "tasks": [
+          "B217"
+        ],
+        "gates": [
+          "G34-shared-encoder-isolation"
+        ]
+      },
+      "micode": {
+        "specs": [
+          "MX-32",
+          "MX-33",
+          "MX-34"
+        ],
+        "tasks": [
+          "T214"
+        ],
+        "gates": [
+          "G180"
+        ]
+      }
+    },
+    {
+      "id": "SR16",
+      "title": "Immutable shadow/drift/revocation lifecycle",
+      "status": "PROPOSED",
+      "product_result": "NOT_RUN",
+      "axon": {
+        "specs": [
+          "CX-25",
+          "CX-34"
+        ],
+        "tasks": [
+          "B218"
+        ],
+        "gates": [
+          "G25-no-live-self-training",
+          "G34-reflex-revocation"
+        ]
+      },
+      "micode": {
+        "specs": [
+          "MX-18",
+          "MX-24",
+          "MX-32",
+          "MX-34"
+        ],
+        "tasks": [
+          "T216"
+        ],
+        "gates": [
+          "G183"
+        ]
+      }
+    },
+    {
+      "id": "SR17",
+      "title": "Full-cascade economics and actual calls",
+      "status": "PROPOSED",
+      "product_result": "NOT_RUN",
+      "axon": {
+        "specs": [
+          "CX-22"
+        ],
+        "tasks": [
+          "B218"
+        ],
+        "gates": [
+          "G22-fixed-task-economics"
+        ]
+      },
+      "micode": {
+        "specs": [
+          "MX-06",
+          "MX-17",
+          "MX-22",
+          "MX-34"
+        ],
+        "tasks": [
+          "T215"
+        ],
+        "gates": [
+          "G181",
+          "G182"
+        ]
+      }
+    },
+    {
+      "id": "SR18",
+      "title": "Real paired consumer and recovery evidence",
+      "status": "PROPOSED",
+      "product_result": "NOT_RUN",
+      "axon": {
+        "specs": [
+          "CX-16"
+        ],
+        "tasks": [
+          "B219"
+        ],
+        "gates": [
+          "G16-v020-peer"
+        ]
+      },
+      "micode": {
+        "specs": [
+          "MX-06",
+          "MX-17",
+          "MX-22",
+          "MX-34"
+        ],
+        "tasks": [
+          "T215"
+        ],
+        "gates": [
+          "G181"
+        ]
+      }
+    },
+    {
+      "id": "SR19",
+      "title": "Context and richer learners are optional",
+      "status": "PROPOSED",
+      "product_result": "NOT_RUN",
+      "axon": {
+        "specs": [
+          "CX-20",
+          "CX-28"
+        ],
+        "tasks": [
+          "B221",
+          "B222"
+        ],
+        "gates": [
+          "G28-reflex-context-pilot",
+          "G20-reflex-extension-review"
+        ]
+      },
+      "micode": {
+        "specs": [
+          "MX-05",
+          "MX-24",
+          "MX-26",
+          "MX-32"
+        ],
+        "tasks": [
+          "T218",
+          "T219"
+        ],
+        "gates": [
+          "G185",
+          "G186"
+        ]
+      }
+    },
+    {
+      "id": "SR20",
+      "title": "Regeneration, pinned exports and honest status",
+      "status": "PROPOSED",
+      "product_result": "NOT_RUN",
+      "axon": {
+        "specs": [
+          "CX-00"
+        ],
+        "tasks": [
+          "B220"
+        ],
+        "gates": [
+          "G00-v020-coverage"
+        ]
+      },
+      "micode": {
+        "specs": [
+          "MX-34"
+        ],
+        "tasks": [
+          "T217"
+        ],
+        "gates": [
+          "G184"
+        ]
+      }
+    }
+  ]
+}

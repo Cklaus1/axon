@@ -48,15 +48,14 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-AXON="${AXON:-./target/debug/axon}"
+# This harness builds nothing, so it runs ONLY the binary its caller names in
+# AXON (scripts/lib/axon_bin.sh): never one that merely sits in target/ or on
+# PATH. With none named it refuses; that is a failure, not a skip.
+. scripts/lib/axon_bin.sh
+named_bin AXON replay_host_gate
 REPO="$(pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-
-if [ ! -x "$AXON" ]; then
-  echo "replay_host_gate: SKIP — no axon binary at $AXON"
-  exit 0
-fi
 AXON="$(cd "$(dirname "$AXON")" && pwd)/$(basename "$AXON")"
 
 pass=0; fail=0

@@ -1,0 +1,16 @@
+exit: Some(0)
+--- stdout ---
+Manage principals
+
+Usage: axon-vm principal <COMMAND>
+
+Commands:
+  add   Register a new principal
+  list  List registered principals
+  help  Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help
+
+--- stderr ---
+

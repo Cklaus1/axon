@@ -49,8 +49,16 @@ cargo build -q -p axon-wasm --target wasm32-unknown-unknown --release 2>/dev/nul
 # under test), else the default (codegen) axon, the one configuration every
 # harness builds - a --no-default-features build here would replace the shared
 # target/debug/axon with a codegen-less binary under the harnesses that follow.
-need_axon wasm_browser_interp_parity
-WASM="target/wasm32-unknown-unknown/release/axon_wasm.wasm"
+if [ -n "${AXON:-}" ]; then
+  named_bin AXON wasm_browser_interp_parity
+else
+  echo "wasm_browser_interp_parity: building codegen axon binary…"
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "wasm_browser_interp_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
+  fi
+  use_built AXON axon
+fi
+WASM=""; use_built WASM axon_wasm.wasm wasm32-unknown-unknown release  # the wasm build above
 NATIVE="$AXON"
 # R50 §8: the driver forwards AXON_ENGINE (tree=0, vm=1) to the cdylib's
 # `axon_set_engine` export before `axon_eval`; the native leg reads it directly,

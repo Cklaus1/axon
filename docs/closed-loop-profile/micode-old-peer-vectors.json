@@ -1,0 +1,52 @@
+{
+  "vectors": "closed-loop-profile/1 old-peer vectors, CORRECTED to the documents MiCode really emits",
+  "corrects": "axon v022/stage3 @ e946ed19 docs/closed-loop-profile/vectors.json negotiate[old_peer_axon_bridge_v0] (and adds the full cortex-policy-adapter v1 request field set)",
+  "difference": "Axon's vector guesses the axon-bridge/v0 document as {\"schema\":\"axon-bridge/v0\",\"episode_id\":\"ep-1\"}. MiCode's real wire (crates/micode-persist/src/axon_export.rs AxonBundle) has NO `schema` key and no `episode_id`: the version rides in `bridge_version`, beside air_vocabulary_version, corpus_version, records[] and decisions. Both shapes produce not_a_profile (schema absent vs. schema not closed-loop-profile/*), so the RESULT CODE agrees; the difference is which branch of the check order is exercised. The cortex request MiCode sends (cortex_client.rs) also carries `symbol` and `query` (null when absent), which Axon's vector omits.",
+  "note": "Same case format as Axon's vectors.json. The bundle below is export_bundle() output serialized by MiCode; bridge_profile::tests::micodes_real_old_peer_documents_are_not_a_profile deserializes it as AxonBundle and passes it through import_bundle, so it is a genuine wire document.",
+  "negotiate": [
+    {
+      "name": "old_peer_axon_bridge_v0",
+      "why": "MiCode's REAL axon-bridge/v0 bundle carries no `schema` key; it is an old peer, never read as support for the axon-bridge/v0 adapter",
+      "local": {
+        "peer": "axon",
+        "schemas": [
+          "axon.closed-loop.context/1",
+          "axon.closed-loop.episode/1",
+          "axon.closed-loop.policy/1",
+          "axon.closed-loop.transition/1"
+        ],
+        "features": [],
+        "adapters": [
+          "cortex-policy-adapter/1"
+        ],
+        "required": []
+      },
+      "offer": "{\"bridge_version\":\"axon-bridge/v0\",\"air_vocabulary_version\":\"air/v0\",\"corpus_version\":\"corpus-v0\",\"records\":[{\"identity\":{\"decision_id\":\"dec-0001\",\"episode_id\":\"ep-safe-repair-01\",\"provenance\":\"reflex-shadow/v0 via observer/v0\"},\"canonical_encoding_version\":\"canonical-decision/v0\",\"decision\":{\"air_vocabulary_version\":\"air/v0\",\"cognitive_class\":\"REFLEX\",\"state_digest\":\"state\",\"question\":\"which action?\",\"candidates\":[\"read\",\"edit\"],\"candidate_order_digest\":\"b756b9c54c8ade2721ccbda5c500f58bcb178306799f260b1e1cf4101d2745c6\",\"outcome\":{\"outcome\":\"CHOSE\",\"index\":0},\"acceptable_indices\":[],\"acceptable_provenance\":{\"established_by\":\"unestablished\"},\"shadow\":null,\"session\":null,\"challenge\":{\"state\":\"unknown\"}},\"grouping\":{\"repo_identity\":\"github.com/Cklaus1/atlas\",\"repo_family\":\"rust-agent\",\"task_family\":\"repair\",\"language_ecosystem\":\"rust/cargo\",\"candidate_generation_policy\":\"semantic/v0\"},\"corpus_role\":\"TRAINING_KNOWLEDGE\",\"reserved_outcomes_available\":[\"ESCALATE\"],\"backend_identity\":\"reflex-shadow/v0\",\"evidence_refs\":[\"sha256:evidence\"]}],\"decisions\":null}",
+      "expect": {
+        "unsupported": "not_a_profile"
+      }
+    },
+    {
+      "name": "old_peer_cortex_policy_v1",
+      "why": "the full field set cortex_client.rs sends (incl. symbol/query); an old peer, never read as support for cortex-policy-adapter/1",
+      "local": {
+        "peer": "axon",
+        "schemas": [
+          "axon.closed-loop.context/1",
+          "axon.closed-loop.episode/1",
+          "axon.closed-loop.policy/1",
+          "axon.closed-loop.transition/1"
+        ],
+        "features": [],
+        "adapters": [
+          "cortex-policy-adapter/1"
+        ],
+        "required": []
+      },
+      "offer": "{\"protocol_version\":1,\"action\":\"search\",\"principal\":\"agent\",\"target_path\":\"src/lib.rs\",\"snapshot_id\":\"s1\",\"symbol\":null,\"query\":\"fn main\"}",
+      "expect": {
+        "unsupported": "not_a_profile"
+      }
+    }
+  ]
+}

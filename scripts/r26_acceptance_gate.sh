@@ -171,7 +171,8 @@ fi
 # ─ (9) CLI smoke: axon-vm attest (CI/mock mode) ───────────────────────────────
 echo ""
 echo "r26_acceptance_gate: (9) CLI smoke — axon-vm attest in AXON_CI_NO_KVM=1 mode…"
-AXON_VM="$ROOT/target/debug/axon-vm"
+. "$ROOT/scripts/lib/axon_bin.sh"
+AXON_VM=""; use_built AXON_VM axon-vm  # built in step (8)
 
 if [ ! -x "$AXON_VM" ]; then
   echo "  SKIP: axon-vm binary not found at $AXON_VM"

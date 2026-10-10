@@ -1,0 +1,215 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:axon:ace-runtime:1",
+  "title": "ACE v1 bounded execution-plan/result projection; validation is not authority",
+  "type": "object",
+  "$defs": {
+    "determinism": {
+      "enum": [
+        "DETERMINISTIC",
+        "SEEDED_REPRODUCIBLE",
+        "BEST_EFFORT_REPRODUCIBLE",
+        "NONDETERMINISTIC",
+        "UNKNOWN"
+      ]
+    },
+    "result_kind": {
+      "enum": [
+        "DecisionDistribution",
+        "ProposedValue",
+        "Prediction",
+        "EvidenceResult",
+        "GeneratedArtifact",
+        "ProposedAction",
+        "Abstention",
+        "Refusal",
+        "Unsupported",
+        "Failure",
+        "OutcomeUnknown"
+      ]
+    },
+    "data_handling": {
+      "type": "object",
+      "required": [
+        "retention_policy",
+        "provider_logging",
+        "training_use",
+        "region_or_residency",
+        "server_side_cache",
+        "telemetry"
+      ],
+      "properties": {
+        "retention_policy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider_logging": {
+          "type": "string",
+          "minLength": 1
+        },
+        "training_use": {
+          "type": "string",
+          "minLength": 1
+        },
+        "region_or_residency": {
+          "type": "string",
+          "minLength": 1
+        },
+        "subprocessors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "transport_encryption": {
+          "type": "string"
+        },
+        "server_side_cache": {
+          "type": "string",
+          "minLength": 1
+        },
+        "telemetry": {
+          "type": "string",
+          "minLength": 1
+        },
+        "downloads": {
+          "type": "string"
+        },
+        "deletion_semantics": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "plan": {
+      "type": "object",
+      "required": [
+        "plan_id",
+        "operation_contract_digest",
+        "capability_revision",
+        "provider_revision",
+        "required_features",
+        "input_projection_digest",
+        "result_semantics",
+        "data_handling_requirements",
+        "determinism_requirement",
+        "budget_reservation",
+        "deadline",
+        "fallback_graph",
+        "policy_generation"
+      ],
+      "properties": {
+        "plan_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "operation_contract_digest": {
+          "type": "string",
+          "minLength": 1
+        },
+        "capability_revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider_revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "required_features": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "input_projection_digest": {
+          "type": "string",
+          "minLength": 1
+        },
+        "result_semantics": {
+          "$ref": "#/$defs/result_kind"
+        },
+        "state_handle_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "data_handling_requirements": {
+          "$ref": "#/$defs/data_handling"
+        },
+        "determinism_requirement": {
+          "$ref": "#/$defs/determinism"
+        },
+        "budget_reservation": {
+          "type": "object"
+        },
+        "deadline": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fallback_graph": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "policy_generation": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "execution_id",
+        "result_kind",
+        "terminal_status",
+        "determinism_class"
+      ],
+      "properties": {
+        "execution_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "result_kind": {
+          "$ref": "#/$defs/result_kind"
+        },
+        "terminal_status": {
+          "enum": [
+            "FINALIZED",
+            "ABSTAINED",
+            "REFUSED",
+            "UNSUPPORTED",
+            "FAILED",
+            "CANCELED_LOCAL",
+            "CANCELED_REMOTE_CONFIRMED",
+            "OUTCOME_UNKNOWN"
+          ]
+        },
+        "determinism_class": {
+          "$ref": "#/$defs/determinism"
+        },
+        "final_digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "usage": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/plan"
+    },
+    {
+      "$ref": "#/$defs/result"
+    }
+  ]
+}

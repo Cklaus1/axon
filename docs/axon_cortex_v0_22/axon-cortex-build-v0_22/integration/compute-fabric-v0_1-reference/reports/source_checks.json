@@ -1,0 +1,36 @@
+{
+  "schema": "acf-source-checks/1",
+  "scope": "Non-executing syntax/structure checks and existing documentation-package gate only.",
+  "rust_compilation": "NOT_RUN: cargo and rustc are absent",
+  "runtime_tests": "NOT_RUN: no Firecracker binary or /dev/kvm available",
+  "checks": [
+    {
+      "name": ".py syntax",
+      "files_checked": 37,
+      "failures": [],
+      "result": "PASS",
+      "product_execution": false
+    },
+    {
+      "name": ".toml syntax",
+      "files_checked": 25,
+      "failures": [],
+      "result": "PASS",
+      "product_execution": false
+    },
+    {
+      "name": "scripts/*.sh bash -n",
+      "files_checked": 126,
+      "failures": [],
+      "result": "PASS",
+      "product_execution": false
+    },
+    {
+      "name": "scripts/cortex_package_gate.sh",
+      "result": "PASS",
+      "product_execution": false,
+      "details": "113/113 pinned files; 35 specifications; 152 work packages; 247 proposed product gates; zero product gates executed.",
+      "log": "reports/existing_cortex_package_gate.log"
+    }
+  ]
+}

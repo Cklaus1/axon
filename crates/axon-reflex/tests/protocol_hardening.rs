@@ -230,3 +230,75 @@ fn guessing_a_handle_id_conveys_no_authority_on_any_operation() {
     b.decide(&h, "q", &alice)
         .expect("the owner's state must survive a refused foreign request");
 }
+
+/// The RESPONSE direction is parsed as strictly as the request direction.
+///
+/// Found reconciling Cortex v0.20 (UPGRADE_V0_20.md D-015): requests went
+/// through `parse_strict`, responses through a plain `serde_json::Value` parse,
+/// which is last-wins. So a reply carrying the correlation id twice —
+/// `"req_id":7, …, "req_id":8` — was accepted as request 8's answer while a
+/// reviewer reading it left-to-right sees 7, and a duplicated `refusal` key
+/// could be spelled so the client acted on the second. The correlation check
+/// above is only as strong as the parse underneath it.
+#[test]
+fn duplicate_keys_in_a_response_are_refused_not_last_wins() {
+    let dup_id = format!(
+        r#"{{"protocol":"{PROTOCOL}","req_id":7,"ok":{{"choice":"decided(q)","principal":"alice"}},"req_id":8}}"#
+    );
+    match decode_response(&dup_id, 8) {
+        Err(Refusal::Protocol(_)) => {}
+        other => panic!("a reply naming req_id 7 AND 8 was read as 8's answer: {other:?}"),
+    }
+    // Escaped spelling of the same key: the parser, not a text scan, decides.
+    let esc = format!(
+        r#"{{"protocol":"{PROTOCOL}","req_id":8,"ok":{{"choice":"x","principal":"alice"}},"req_id":8}}"#
+    );
+    assert!(
+        matches!(decode_response(&esc, 8), Err(Refusal::Protocol(_))),
+        "an escaped duplicate key was accepted"
+    );
+    // Control: the same reply without the duplicate is accepted.
+    let clean = format!(
+        r#"{{"protocol":"{PROTOCOL}","req_id":8,"ok":{{"choice":"decided(q)","principal":"alice"}}}}"#
+    );
+    assert!(
+        decode_response(&clean, 8).is_ok(),
+        "a well-formed reply must be accepted"
+    );
+}
+
+/// A request that omits its correlation id is refused, not served as id 0.
+///
+/// `unwrap_or(0)` gave every id-less request the same id, so two such callers
+/// could not tell their answers apart — the ambiguity correlation exists to
+/// remove (UPGRADE_V0_20.md, hardening C17).
+#[test]
+fn a_request_without_a_correlation_id_is_refused() {
+    for bad in [
+        r#""#,
+        r#","req_id":null"#,
+        r#","req_id":"1""#,
+        r#","req_id":-1"#,
+    ] {
+        let req = format!(
+            r#"{{"protocol":"axon-reflex/1","op":"encode","id":"","input":"x","principal":"alice"{bad}}}"#
+        );
+        let r = core_reply(&req);
+        assert!(
+            r.contains("\"refusal\"") && r.contains("req_id"),
+            "request with req_id {bad:?} was served rather than refused: {r}"
+        );
+        assert!(
+            !r.contains("\"id\":\"st-"),
+            "an id-less request minted state: {r}"
+        );
+    }
+    // Control: with an id it is served.
+    let ok = core_reply(
+        r#"{"protocol":"axon-reflex/1","op":"encode","id":"","input":"x","principal":"alice","req_id":1}"#,
+    );
+    assert!(
+        !ok.contains("\"refusal\""),
+        "a well-formed request was refused: {ok}"
+    );
+}

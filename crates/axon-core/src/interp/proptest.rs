@@ -38,7 +38,10 @@ pub(super) fn run_property_test_inner(
     cases: u32,
 ) -> PropertyOutcome {
     let seed = rng_seed();
-    let mut interp = Interp::build(program);
+    let mut interp = match Interp::build(program) {
+        Ok(ix) => ix,
+        Err(refused) => return PropertyOutcome::Unsupported(refused),
+    };
     if let Err(f) = interp.init_globals() {
         return PropertyOutcome::Unsupported(flow_to_msg(f));
     }

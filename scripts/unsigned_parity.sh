@@ -4,7 +4,18 @@
 # Exit 0 = all cases byte-identical; non-zero = failure.
 
 set -euo pipefail
-AXON=$(pwd)/target/debug/axon
+cd "$(dirname "$0")/.."
+. scripts/lib/axon_bin.sh
+# The binary the caller names, or the one THIS harness builds (C9 round 4:
+# a binary that merely sits in target/ was built from some other tree).
+if [ -z "${AXON:-}" ]; then
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "unsigned_parity: SKIP — codegen build unavailable (LLVM absent)"
+    exit 0
+  fi
+  use_built AXON axon
+fi
+AXON="$(cd "$(dirname "$AXON")" && pwd)/$(basename "$AXON")"
 TMPDIR_LOCAL=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_LOCAL"' EXIT
 

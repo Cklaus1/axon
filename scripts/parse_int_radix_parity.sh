@@ -41,7 +41,16 @@ fn main() -> i64 {
 }
 AX
 
-need_codegen_axon parse_int_radix_parity
+if [ -n "${AXON:-}" ]; then
+  named_bin AXON parse_int_radix_parity
+else
+  echo "parse_int_radix_parity: building codegen axon binary…"
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "parse_int_radix_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
+  fi
+  use_built AXON axon
+fi
+require_codegen_axon parse_int_radix_parity
 
 I_OUT="$(AXON_AI_MOCK=1 "$AXON" run "$PROG" 2>&1)"; I_EXIT=$?
 BIN="$WORK/pir_bin"

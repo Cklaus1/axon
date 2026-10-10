@@ -1,0 +1,28 @@
+{
+  "schema": "axon-v022-gate-status/1",
+  "gate": "PCI-v022-protected-check-isolation",
+  "state": "CERTIFIED",
+  "record": "governance/proofs/v022-pci/CERTIFICATION.md",
+  "axon_revision": "31413ca7abb6ff730e1b63718d4304c7a8402675",
+  "micode_revision": "b72cf4c4380335e5f5590181012e707cea259fab",
+  "certified_artifacts": [
+    {
+      "what": "PCI spec (certified)",
+      "path": "governance/specs/v022-protected-check-isolation.md",
+      "sha256": "bd5c6d326d04d12a7b3ab82b838d3e7aaa3e1bf90a9575d06f7d70f6992067ca"
+    },
+    {
+      "what": "PCI certification record",
+      "path": "governance/proofs/v022-pci/CERTIFICATION.md",
+      "sha256": "afb94d6a47d637adb4702e0df71dc14b6b1fcf3c14365c5b1c318fdae8d57b05"
+    }
+  ],
+  "protected_backend_transfer": "pending \u2014 surface 19: completion evidence, sealing, per-provenance kernels and cwd confinement on the microVM with interp parity, proof governance/proofs/v022-pci-microvm/CERTIFICATION.md",
+  "follow_ups": [
+    "MINOR: P/E/Var pseudo-builtins are not reserved names; W0003 text wrong for P; eval_prob_pred double-evaluates its operand.",
+    "MINOR: temporal_now/temporal_new/temporal_is_valid classed pure though they read the clock (should be Time).",
+    "MINOR: mutation-proof gaps (M89 message-kill; handler-arm contain_loop_control unmutated; M52/M60/M71 side-effect kills; tested-not-mutated sub-claims).",
+    "MINOR: interop gate lacks a negative completion case; MiCode .env closure gated by unit-test rows only.",
+    "FUTURE: candidate @[test]s matched by the substring filter still run in the verifier process (surface 14); per-Kernel principal token stream; Cortex local adjudicator needs no completion evidence."
+  ]
+}

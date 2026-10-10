@@ -84,7 +84,7 @@ fn main() -> i64 {
   <pre id="out"></pre>
 
   <script type="module">
-    import { runAxon } from './axon_asyncify.mjs';
+    import { runAxon, verifyArtifact } from './axon_asyncify.mjs';
 
     const $ = (id) => document.getElementById(id);
     const promptEl = $('prompt'), reqLabel = $('reqLabel'), replyEl = $('reply');
@@ -114,6 +114,10 @@ fn main() -> i64 {
       $('status').textContent = 'running…';
       try {
         const wasm = await (await fetch('./axon_interp.async.wasm')).arrayBuffer();
+        // Refuse any module build-interactive.sh did not stamp (stale/-O0 builds
+        // exhaust host memory). A missing stamp is a refusal, not a warning.
+        const sr = await fetch('./axon_interp.async.wasm.stamp.json');
+        await verifyArtifact(wasm, sr.ok ? await sr.json() : null);
         const { exitCode, output } = await runAxon(wasm, $('src').value, hostAwait);
         $('out').textContent = output;
         $('status').textContent = 'exit ' + exitCode;

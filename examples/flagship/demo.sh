@@ -18,9 +18,12 @@
 set -euo pipefail
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 
-AXON="$REPO/target/debug/axon"
-AXON_OS="$REPO/target/debug/axon-os"
-AXON_VM="$REPO/target/debug/axon-vm"
+# The binaries the caller names, or the ones built here from this tree -- never
+# ones that merely sit in target/ (C9 round 4; scripts/lib/axon_bin.sh).
+. "$REPO/scripts/lib/axon_bin.sh"
+AXON="${AXON:-$(cd "$REPO" && cargo build -q -p axon-core --no-default-features --bin axon >&2 2>/dev/null && built_bin axon || true)}"
+AXON_OS="${AXON_OS:-$(cd "$REPO" && cargo build -q -p axon-os --bin axon-os >&2 2>/dev/null && built_bin axon-os || true)}"
+AXON_VM="${AXON_VM:-$(cd "$REPO" && cargo build -q -p axon-vm --bin axon-vm >&2 2>/dev/null && built_bin axon-vm || true)}"
 D="$REPO/examples/flagship"
 DEMO_OUT="${TMPDIR:-/tmp}/axon-flagship-$$"
 RUN_ID="flagship-$(date +%s 2>/dev/null || echo 00)"

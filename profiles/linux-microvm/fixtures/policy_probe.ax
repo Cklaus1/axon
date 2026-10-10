@@ -1,0 +1,10 @@
+// B263 x1: proves whether the WORKLOAD ran at all. Under a refused policy
+// axon-guest-init never execs axon, so neither the stdout marker nor the file
+// below may exist; under a valid policy both do (positive control).
+fn main() {
+    println("X1-WORKLOAD-RAN")
+    match write_file("/work/out/ran.txt", "x1-workload-ran\n") {
+        Ok(_) => println("ran.txt written")
+        Err(e) => println("ran.txt FAILED {e}")
+    }
+}

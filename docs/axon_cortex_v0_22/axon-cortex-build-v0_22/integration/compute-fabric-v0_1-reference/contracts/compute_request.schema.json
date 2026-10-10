@@ -1,0 +1,223 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "acf-compute-request/1"
+    },
+    "operation_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "trial_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "attempt_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "principal_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "grant_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "approval_ref": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "job_kind": {
+      "enum": [
+        "interpreter_run",
+        "registered_check"
+      ]
+    },
+    "registered_executable_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "executable_digest": {
+      "type": "string",
+      "pattern": "^acf1:[0-9a-f]{64}$"
+    },
+    "workspace_version_ref": {
+      "type": "string",
+      "pattern": "^acf1:[0-9a-f]{64}$"
+    },
+    "semantic_state_ref": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "policy_digest": {
+      "type": "string",
+      "pattern": "^acf1:[0-9a-f]{64}$"
+    },
+    "required": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "engine": {
+          "enum": [
+            "axon_interpreter",
+            "axon_wasm",
+            "native_process"
+          ]
+        },
+        "hardware_isolation": {
+          "type": "boolean"
+        },
+        "os": {
+          "enum": [
+            "linux",
+            "none"
+          ]
+        },
+        "architecture": {
+          "enum": [
+            "x86_64",
+            "aarch64",
+            "wasm32"
+          ]
+        },
+        "network_mode": {
+          "enum": [
+            "deny",
+            "brokered"
+          ]
+        },
+        "checkpoint_kind": {
+          "enum": [
+            "none",
+            "logical_workspace",
+            "filesystem",
+            "machine_state"
+          ]
+        }
+      },
+      "required": [
+        "engine",
+        "hardware_isolation",
+        "os",
+        "architecture",
+        "network_mode",
+        "checkpoint_kind"
+      ]
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpu_millicores": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "memory_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "disk_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "wall_time_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "output_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "max_cost_micro": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "currency_code": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$"
+        },
+        "price_schedule_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "cpu_millicores",
+        "memory_bytes",
+        "disk_bytes",
+        "wall_time_ms",
+        "output_bytes",
+        "max_cost_micro",
+        "currency_code",
+        "price_schedule_ref"
+      ]
+    },
+    "argv": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "string",
+        "maxLength": 8192
+      }
+    },
+    "result_schema_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    }
+  },
+  "required": [
+    "schema",
+    "operation_id",
+    "task_id",
+    "trial_id",
+    "attempt_id",
+    "principal_ref",
+    "grant_ref",
+    "approval_ref",
+    "job_kind",
+    "registered_executable_ref",
+    "executable_digest",
+    "workspace_version_ref",
+    "semantic_state_ref",
+    "policy_digest",
+    "required",
+    "limits",
+    "argv",
+    "result_schema_ref"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ACF minimal untrusted compute request; validation does not authorize"
+}

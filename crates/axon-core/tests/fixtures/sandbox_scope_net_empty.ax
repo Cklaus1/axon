@@ -1,0 +1,17 @@
+// D-001 (UPGRADE_V0_20.md): an EMPTY net list with Net granted is DENY-ALL.
+// The vendored Cortex packages (v0.15 and v0.20, four places) still describe
+// the old convention — "empty scope meaning unscoped, not deny-all". Measured
+// under that convention, a scope of "" let a call to an arbitrary host through
+// even when the principal did not grant net. This fixture pins the inversion so
+// that implementing the package text literally fails a test instead of
+// reopening the hole.
+fn job(x: i64) -> i64 {
+    match http_get("https://evil.example.com/x", "") { Ok(_) => println("ESCAPED: reached evil host")  Err(e) => println("http err {e}") }
+    0
+}
+fn main() {
+    let p = principal_root("p", true, false, false, 100)
+    let sb = sandbox_create_scoped(p, "Net", "", "", "")
+    let r = sandbox_run(sb, "job", 0)
+    println("NOT REACHED {to_str(r)}")
+}

@@ -1,0 +1,76 @@
+{
+  "schema": "axon.review-validation/2",
+  "package_version": "0.22",
+  "generated_at": "2026-09-24T05:51:57.331781+00:00",
+  "scope": "DOCUMENTATION_STATIC_SOURCE_REVIEW_AND_MODEL_FREE_REFERENCE_ONLY",
+  "baseline_v021": {
+    "validator": "PASS",
+    "tests_run": 367,
+    "result": "PASS",
+    "log": "review/baseline_v021_tests.log"
+  },
+  "v022": {
+    "tests_run": 567,
+    "new_tests_run": 200,
+    "result": "PASS",
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "test_command": "python -B tools/run_review_tests.py",
+    "test_results": "review/TEST_RESULTS.json",
+    "test_log": "review/TEST_LOG.txt",
+    "specs": 37,
+    "tasks": 287,
+    "proposed_cx_gates": 504,
+    "new_tasks": 32,
+    "new_cx_gates": 80,
+    "orphan_gates": 0
+  },
+  "fabric_reference": {
+    "result": "PASS",
+    "byte_preserved": true,
+    "total_tasks": 14,
+    "total_gates": 55,
+    "bounded_tasks": 9,
+    "bounded_gates": 38,
+    "fixture_and_parser_cases": 22,
+    "canonical_identity_checks": 1,
+    "report": "review/FABRIC_REFERENCE_REVALIDATION_V022.json"
+  },
+  "paired_source": {
+    "axon_files": 1213,
+    "micode_files": 859,
+    "matched": 2072,
+    "changed": 0,
+    "source_mutated": false,
+    "report": "review/PAIRED_SOURCE_CHECK_V022.json",
+    "full_byte_inventory_not_full_line_by_line_audit": true
+  },
+  "runtime_evidence_negative_check": {
+    "result": "NOT_QUALIFIED",
+    "expected_exit_code": 2,
+    "required_gate_count": 156,
+    "submitted_gate_count": 0,
+    "report": "review/EMPTY_EVIDENCE_CHECK_V022.json"
+  },
+  "environment": {
+    "python": "3.13.5",
+    "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+    "jsonschema": "4.26.0",
+    "cargo_found": false,
+    "rustc_found": false
+  },
+  "product_gates_executed": 0,
+  "engineering_qualified": false,
+  "policy_activated": false,
+  "measured_improvement_supported": false,
+  "not_run": [
+    "Rust compilation and source test suites (cargo/rustc unavailable)",
+    "Real Linux/KVM microVM confinement, recovery and cancellation",
+    "Real Axon-MiCode-Fabric interoperability",
+    "Live model/provider calls or training",
+    "Actual controlled workloads and statistical improvement study",
+    "Production policy admission, activation or rollback"
+  ],
+  "note": "Final non-recursive integrity validation is package_validation.json; independently authenticate the external ZIP digest. Reports do not grant authority or close live gates."
+}

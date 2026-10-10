@@ -1,0 +1,11 @@
+[package]
+name = "axon-workspace-recipe"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "The WorkspaceVersion byte recipe and tree walker, shared by the host and the protected guest runner."
+
+[dependencies]
+sha2 = "0.10"
+serde = { workspace = true }

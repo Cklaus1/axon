@@ -1,0 +1,26 @@
+exit: Some(0)
+--- stdout ---
+Verify an exported chain JSON (auditor side — no live VM required).
+
+Same internal-consistency check as `chain verify` (linkage + formula recomputation), extended to also check the claimed `head` against the recomputed tip — catches a truncated/forged export where every individual link still recomputes cleanly. Prints "EXPORT OK: N entries" and exits 0, or "EXPORT BROKEN at seq M" and exits 15.
+
+NOTE: like the already-landed `chain verify`, this checks internal chain-linkage/formula consistency only — it does NOT re-hash program source files against `prog_hash` (no `--sources-dir` re-verification is wired up; see spec §12 open gap).
+
+Usage: axon-vm chain verify-export [OPTIONS] <FILE>
+
+Arguments:
+  <FILE>
+          Path to the exported chain JSON file
+
+Options:
+      --expect-head <EXPECT_HEAD>
+          Expected chain tip. AUDIT T31: the export's own `head` field is written by whoever produced the export, so an attacker who truncates and re-exports produces a head that agrees with the shortened entry list. Only a head the AUDITOR already knows detects that
+
+      --expect-count <EXPECT_COUNT>
+          Expected number of entries (see `--expect-head`)
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+--- stderr ---
+

@@ -19,15 +19,12 @@ REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
 skip() { echo "SKIP: $*" >&2; exit 0; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
-AXON_BIN=""
-for candidate in \
-    "$REPO/target/debug/axon" \
-    "$REPO/target/release/axon" \
-    "$(command -v axon 2>/dev/null || true)"
-do
-    if [[ -x "$candidate" ]]; then AXON_BIN="$candidate"; break; fi
-done
-[[ -n "$AXON_BIN" ]] || skip "axon binary not found (build with: cargo build -p axon-core)"
+# The axon binary is the one the caller names in AXON_BIN -- never one that
+# merely sits in target/ or on PATH (scripts/lib/axon_bin.sh; C9 round 4: a
+# planted `axon` on PATH was run here and the check PASSED). None named is a
+# refusal (exit 2), not a skip.
+. "$REPO/scripts/lib/axon_bin.sh"
+named_bin AXON_BIN atomic_ir_test
 
 # No --help-based codegen probe: --emit-llvm is listed unconditionally, so
 # flag-presence never distinguishes a codegen build from a --no-default-features

@@ -1,0 +1,14 @@
+exit: Some(2)
+--- stdout ---
+{
+  "error": "no effect grant: the program has no `.axmeta` manifest (`axon build --emit-manifest`), no `--principal` was given, and AXON_VM_ALLOWED_EFFECTS is unset. Refusing to launch rather than sending a null policy to the guest",
+  "exit_code": -1,
+  "no_effect_grant": true,
+  "ok": false,
+  "principal": null,
+  "run_id": "vm-N-N",
+  "schema": "axon-vm-run/1"
+}
+
+--- stderr ---
+

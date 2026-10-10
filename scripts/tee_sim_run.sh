@@ -48,7 +48,8 @@ if ! _build_err="$(cargo build -q -p axon-core --no-default-features --bin axon 
   echo "$_build_err" | sed 's/^/    | /' >&2
   exit 1
 fi
-AXON="$ROOT/target/debug/axon"
+. "$ROOT/scripts/lib/axon_bin.sh"
+AXON=""; use_built AXON axon  # the interpreter just built
 
 # Expected output of the in-enclave run (with the enclave env vars set). We
 # verify the workload PRODUCES this both directly and (if available) under

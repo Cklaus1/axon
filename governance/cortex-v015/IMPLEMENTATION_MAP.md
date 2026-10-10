@@ -9,7 +9,7 @@ Package integrity verified independently before any reading:
 `SHA256SUMS_v0_15.json`, **113/113 match**, 0 mismatched, 0 missing.
 
 Conflicts are filed separately in [`DISCREPANCIES.md`](DISCREPANCIES.md)
-(D-001 … D-008). This file is the map; that file is the conflict register.
+(D-001 … D-021). This file is the map; that file is the conflict register.
 
 ---
 
@@ -101,6 +101,20 @@ is not PASS."*
 
 **No new crates.** Every gap below has an existing owner.
 
+> **SUPERSEDED 2026-09-24 (v0.22 candidate line, `v022/integration@279da778`).**
+> The sentence above no longer describes the tree. Three crates were added:
+> `axon-loop-contracts` (pure closed-loop contract types, strict parse, `cl22:`
+> digest), `axon-loop` (fenced policy pointer + authority epoch, experiment
+> register, EVO/EVL, CX-11 policy admission, TEL, MiCode intake) and
+> `axon-fabric` (durable operation journal, reservations, the ACF submit path).
+> **Why:** the v0.22 package's CX-11 admission, CX-29/CX-33 experiment loop
+> and ACF-01 compute fabric had no code owner on `main` — they were doc-only
+> (`reconciliation.md` "greenfield owners"). The crates are defensible; the
+> silence was not: the candidate recorded them nowhere, and several of them
+> duplicate owners this table names. Those duplications are OPEN conflicts,
+> listed in §4a below and filed as `DISCREPANCIES.md` D-014 … D-021. Status of
+> all three crates is **partial**; none is on an `axon` CLI verb's path.
+
 | missing | extend | not |
 |---|---|---|
 | AIR graph + validator (CX-04) | `host.rs` seam + `checker.rs` categories + reserved E-codes in `error.rs` | a new `axon-air` crate |
@@ -110,6 +124,35 @@ is not PASS."*
 | Proof receipts (CX-15 P-1) | `verify.rs::Discharged`, keyed on a **program digest** instead of a bare fn name | a proof-receipt crate |
 | Epoch / version pinning (CX-00 R7) | `axon-os::manifest::JobManifest` + `record::RunRecord` | a `RunManifest` type — same artifact, new name |
 | CX gate execution records | `governance/cortex_gate_execution_registry.json` — exists, empty, unconditionally gated, rejects rows naming orphan scripts | a fifth registry, or edits to the SHA-pinned vendored manifest |
+
+
+### 4a. Ownership conflicts opened by the v0.22 candidate (all OPEN)
+
+Evidence for every row: `git show v022/integration@279da778:<path>`, plus
+operator-side analysis in `.axon-v022/analysis/D_architecture.json` (untracked,
+**not in the repository** — cite it as operator evidence, not as a repo file).
+None of these is fixed on the Stage-1 honesty branch; Stage 1 only records them.
+
+| id | conflict | existing owner it bypasses | stage | discrepancy |
+|---|---|---|---|---|
+| D-C1 | `axon-loop/src/ledger.rs` is a second hash-chained ledger, **unkeyed** sha256 in the same directory as its data; its own doc lists forged-append, consistent truncation and whole-store rollback (red-team F1/F2/R1/R2) as out of model | `axon-audit` `Ledger::open_keyed` + authenticated `compute_tip` — the row above ("Lineage chain (CX-10) → extend axon-audit's Ledger") | 2 | D-015 |
+| D-C2 | a fourth authority vocabulary: contract `principal_ref`/`grant_ref` are opaque strings used only to format `authority_ref`; Fabric admission runs `supervise_requiring` over a no-op `AdmissionProbe` with a HARD-CODED `Profile::Restricted` grant and `require_approval: false` (`axon-fabric/src/submit.rs`, `supervisor_admits`), so the grant admitted is not the grant enforced; `cortex --fabric-journal` hard-codes principal `cortex:repair` and `policy_digest acf1:000…` (`axon-cortex/src/bin/cortex.rs`) | `axon-os::grant::Grant` + `gate::admit` + `approval.rs` (§5 risk 2 predicted exactly this) | 2 | D-016 |
+| D-C3 | two `acf1:` canonicalisers either side of the cortex→fabric process seam: `axon-fabric/src/submit.rs` `executable_digest`/`workspace_digest` (via `axon_loop_contracts::canonical_bytes`) and `axon-cortex/src/runner.rs` `fabric_*_digest` (serde_json sorted-map order; equality asserted only in tests) | one canonicaliser | 2 | D-017 |
+| D-C5 | a second reservation / budget algebra: `axon-fabric/src/journal.rs` `reserve` | `axon-os::ledger::ResourceLedger::carve` (checked, never-decreasing; itself still without a production caller) | 2 | D-017 |
+| D-C6 | name collision: `axon-loop/src/admission.rs` is CX-11 **policy** admission; `axon-os::gate::admit` / `axon-intent` `admit.rs` are **effect** admission. An ACCEPT, or the active-policy pointer it moves, is **never a grant** and must never be read as one | — (distinct concerns; keep both, keep them named apart) | invariant | D-018 |
+
+Also open, and not ownership conflicts: the `axon-vm` library entry point
+bypasses `cmd_run`'s pre-launch gates (D-019); the `linux-microvm-protected`
+profile is enclosure-only and its Fabric eligibility check ignores BLOCKED
+rows (D-020); red-team r4 NS3/NS4p/NS4b and G6 (Fabric ignores the requested
+architecture / checkpoint kind) are Stage-2 defects, see the crate READMEs.
+The v0.22 package's own `EXISTING_AXON_MAP.md` repeats two stale claims
+(D-021).
+
+**Axon ↔ MiCode.** The MiCode v0.22 consumer (`v022/micode`, based on
+`checkpoint/v014-reconciled`) is **not releasable** until MiCode `tui` —
+specifically `ed082601`, credential-to-provider-host isolation — is merged
+(operator decision D3, 2026-09-24).
 
 ---
 

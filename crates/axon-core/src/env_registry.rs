@@ -22,12 +22,16 @@
 pub const ALL_ENV_VARS: &[(&str, &str)] = &[
     // ── Determinism & execution ──────────────────────────────────────────
     ("AXON_SEED", "seed the RNG (u64) so `random_*` runs reproduce"),
+    ("AXON_EQ_ALONE", "TEST-ONLY re-exec marker: a test that must run in a fresh single-test process (it forks) re-runs itself with this set to its own name, so a multi-threaded test process never forks (axon-fabric observer_service, axon-guest-init)"),
+    ("AXON_EQ_GIT_ENV", "TEST-ONLY re-exec marker: the git_cmd environment test runs the child in a process whose environment it controls (axon-fabric git_data)"),
+    ("AXON_EQ_HARDEN", "TEST-ONLY re-exec marker: the helper's harden() test runs in a fresh single-test process because it forks (axon-fabric privileged_launcher)"),
     ("AXON_MAX_DEPTH", "recursion-depth ceiling (default 6000, clamped to 1,000,000); the interpreter thread stack scales with it"),
     ("AXON_ENGINE", "engine for fn bodies under `axon run`/`axon-run`/`axon test`/`axon goal`: `vm` (default; R50 bytecode engine, a body compiled on its second entry or on its first when it holds a loop that may run long, same observable behaviour) or `tree` (the reference tree-walker); any other value exits 2 before the program runs"),
     ("AXON_VM_TRACE", "`1`: under AXON_ENGINE=vm, print one `vm: ...` stderr line per compiled body (op and tree-fallback counts), per fallback, and `vm: defer <name>` per body whose first entry runs on the tree; never changes stdout or the exit code"),
     ("AXON_VM_EAGER", "`1`: under AXON_ENGINE=vm, compile every body on its first entry instead of deferring a body with no long loop to its second entry (R50 S9); never changes stdout or the exit code"),
     ("AXON_CLOCK", "deterministic virtual clock `<start_ms>[:<tick_ms>]`; `sleep_ms` advances it without really sleeping"),
     ("AXON_PATH", "colon-separated module search path for `mod`/`use` imports"),
+    ("AXON_PATH_EXCLUSIVE", "exactly `1`: resolve modules ONLY from AXON_PATH, never `~/.axon/lib` or the binary's own library. Fabric sets it for every check it runs, so a verdict depends on nothing outside the suite and the candidate"),
     ("AXON_STRICT", "promote advisory hazard diagnostics to errors (today E0302, an unused Result); `axon deploy` sets it itself"),
     ("AXON_RUNTIME_DIR", "`axon build`: directory holding the prebuilt native runtime staticlibs (`libaxon_rt.a`, `libaxon_rt_ai.a`; `<dir>/<triple>/` for `--target`). When set it is the ONLY place searched; unset, the compiler uses the install layout beside it (`<bin>/../lib/axon/runtime/<profile>/`, see scripts/install.sh), else the runtime in the cargo target dir it was built into, which it rebuilds with the workspace's pinned toolchain only when that runtime is out of date; independent of the current directory, PATH and the caller's Rust toolchain"),
     // ── Record / replay ──────────────────────────────────────────────────
@@ -50,7 +54,7 @@ pub const ALL_ENV_VARS: &[(&str, &str)] = &[
     // ── Capabilities, principals, audit ──────────────────────────────────
     ("AXON_ALLOWED_EFFECTS", "ambient effect ceiling for the whole run; a true ceiling that an inner sandbox may narrow but never widen. EMPTY means deny every effect and is not the same as unset. Interpreter-only"),
     ("AXON_PRINCIPAL", "the principal a run executes as — audit ATTRIBUTION only; it grants and withholds nothing"),
-    ("AXON_GUEST_ALLOW_NO_POLICY", "axon-guest-init: start the guest even though no MMDS capability policy could be loaded (no effect ceiling, no token cap, no seccomp). Development only — without it an unreadable policy REFUSES to start the guest, because an absent policy is not a permissive one"),
+    ("AXON_GUEST_ALLOW_NO_POLICY", "axon-guest-init: start the guest even though no capability policy could be loaded from the kernel cmdline (`axon.policy=`) or MMDS (no effect ceiling, no token cap, no seccomp). READ ONLY in builds with the non-default cargo feature `dev-allow-no-policy`; a default build ignores it and REFUSES, because Linux copies `NAME=value` cmdline words into init's environment, so a runtime flag would be reachable by whoever can append one"),
     ("AXON_REQUIRE_CERTS", "fail closed on the R23 solver-free kernel-mint certificate check instead of the default silent pass"),
     ("AXON_ATTEST_KEY", "operator-provisioned attestation key (hex, >=16 bytes). When set, axon-vm signs AND verifies the attestation report under it, so a report signed by anyone else fails. Unset falls back to an ephemeral per-process key, where signer and verifier are the same process — real integrity over the measurement, but attesting nothing to a third party"),
     ("AXON_AUDIT_LEDGER", "path to the R28 capability audit ledger"),

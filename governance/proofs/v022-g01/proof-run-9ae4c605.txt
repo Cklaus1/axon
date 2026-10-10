@@ -1,0 +1,28 @@
+== 1a axon clippy
+RC=0
+== 0 rebuild interpreter
+RC=0
+== 1b axon loop/contracts/fabric/cortex tests
+RC=0
+pass 467 fail 0
+== 1c axon-core clippy (interpreter) + full suite (default features, default target dir)
+RC=0
+RC=0
+pass 1565 fail 0
+== 2 micode clippy+tests
+RC=0
+RC=0
+pass 5306 fail 0
+== 3 mutations
+RC=0
+50/50 killed; baselines all pass
+== 4 interop
+RC=0
+loop_interop_gate: PASS — 250 assertions (axon 9ae4c605, micode dd4ea0a9)
+== 5 micode gates
+RC=0
+v022_micode_gates: PASS — 19 rows (micode dd4ea0a9)
+== trees after
+0
+0
+FREEZE_DONE

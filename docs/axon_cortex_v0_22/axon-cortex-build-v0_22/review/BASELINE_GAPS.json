@@ -1,0 +1,148 @@
+{
+  "orphan_gate_assignments": {
+    "G00-authority": "B07",
+    "G01-comparability": "B43",
+    "G02-injection": "B05",
+    "G02-stale": "B05",
+    "G04-replay": "B13",
+    "G05-batch-identity": "B42",
+    "G05-candidate-absence": "B42",
+    "G05-effective-input": "B42",
+    "G05-primitive-semantics": "B42",
+    "G05-prompt-boundary": "B42",
+    "G10-behavior-policy": "B21",
+    "G10-multi-valid": "B21",
+    "G13-adoption": "B43",
+    "G20-registry": "B63",
+    "G20-reproduce": "B20",
+    "G20-mechanism": "B59",
+    "G20-calibration": "B19",
+    "G20-system-impact": "B20",
+    "G20-budget": "B20",
+    "G20-admission-boundary": "B27"
+  },
+  "task_dependency_amendments": {
+    "B116": {
+      "depends_on": [
+        "B04"
+      ],
+      "output": "Instrument a generic CognitiveOperationRecord on existing seams, including component revision, effective input and explicit omissions; do not wait for new supervisor/context implementations."
+    },
+    "B117": {
+      "depends_on": [
+        "B15",
+        "B116"
+      ]
+    },
+    "B118": {
+      "depends_on": [
+        "B05",
+        "B13",
+        "B116"
+      ],
+      "output": "Passive incumbent context-selection/retention receipts on existing context owner; no new working-set policy or active control is needed."
+    },
+    "B121": {
+      "depends_on": [
+        "B07",
+        "B13",
+        "B119",
+        "B120"
+      ]
+    },
+    "B123": {
+      "depends_on": [
+        "B27",
+        "B30",
+        "B122"
+      ]
+    },
+    "B128": {
+      "depends_on": [
+        "B04",
+        "B54"
+      ]
+    },
+    "B131": {
+      "depends_on": [
+        "B07",
+        "B129",
+        "B130"
+      ]
+    },
+    "B132": {
+      "stage": "M5"
+    },
+    "B133": {
+      "depends_on": [
+        "B131"
+      ],
+      "output": "Run one owner-approved isolated repository experiment with no merge/deploy; report candidate, evidence and rejection/acceptance proposal. Active canary remains B132."
+    },
+    "B134": {
+      "stage": "M2",
+      "depends_on": [
+        "B21",
+        "B70"
+      ]
+    },
+    "B141": {
+      "depends_on": [
+        "B13",
+        "B14",
+        "B140"
+      ],
+      "output": "Map existing observation/action/verifier events to evidence identities; adapters for future supervisor/working-set events follow as those owners land."
+    },
+    "B143": {
+      "depends_on": [
+        "B12",
+        "B142"
+      ],
+      "output": "Implement the minimal evidence-closure/subject binding adapter; end-to-end production activation stays in B124/B166/B173."
+    },
+    "B144": {
+      "depends_on": [
+        "B43",
+        "B140"
+      ]
+    },
+    "B148": {
+      "depends_on": [
+        "B04",
+        "B06",
+        "B140"
+      ],
+      "output": "Build the minimal deterministic capability registry for incumbent rules/tools/models, exact artifact/revision ownership and authenticated status; no learned specialization or cross-project promotion prerequisite."
+    },
+    "B149": {
+      "depends_on": [
+        "B148",
+        "B10",
+        "B12"
+      ]
+    },
+    "B150": {
+      "depends_on": [
+        "B149",
+        "B13",
+        "B07"
+      ]
+    },
+    "B77": {
+      "depends_on": [
+        "B155"
+      ],
+      "output": "Integrate CX-36 artifact/release contracts into the existing CX-23 owner, replacing duplicate manifest definitions; does not require a successful specialization miner."
+    },
+    "B78": {
+      "title": "Local Neural Program backend candidate baseline",
+      "depends_on": [
+        "B77",
+        "B43"
+      ],
+      "output": "Local isolated learned-function backend candidate or explicitly recorded unsupported profile; hosted ProgramAsWeights integration is optional B157, never a default acquisition path."
+    }
+  },
+  "scope": "Document findings; original product gates remain NOT_RUN"
+}

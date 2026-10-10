@@ -1,0 +1,2719 @@
+{
+  "schema": "axon-v022-paired-disable/2",
+  "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+  "all_hold": true,
+  "registry_blobs": {
+    "scripts/v022_g01_mutations.py": "1695eb40da27e6149594d586d8d3a722c72bf6ad",
+    "scripts/v022_attack_markers.py": "3e1671161e22f4343041feb052011ad2490b698b"
+  },
+  "tree_clean": true,
+  "environment": [
+    {
+      "euid": 0,
+      "etc_axon_present": true,
+      "unset": [
+        "AXON",
+        "AXON_BIN",
+        "CORTEX_BIN"
+      ],
+      "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-0/debug/axon"
+    },
+    {
+      "euid": 0,
+      "etc_axon_present": true,
+      "unset": [
+        "AXON",
+        "AXON_BIN",
+        "CORTEX_BIN"
+      ],
+      "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-1/debug/axon"
+    },
+    {
+      "euid": 0,
+      "etc_axon_present": true,
+      "unset": [
+        "AXON",
+        "AXON_BIN",
+        "CORTEX_BIN"
+      ],
+      "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-2/debug/axon"
+    },
+    {
+      "euid": 0,
+      "etc_axon_present": true,
+      "unset": [
+        "AXON",
+        "AXON_BIN",
+        "CORTEX_BIN"
+      ],
+      "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-3/debug/axon"
+    }
+  ],
+  "records": [
+    {
+      "mutation": "M19",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a protected evaluation counts no execution leg that ran on a development backend",
+      "original_guard": {
+        "file": "crates/axon-loop/src/evl.rs"
+      },
+      "subsumed_by": [
+        "M428"
+      ],
+      "live_killing_mutant": "M428",
+      "all_paths": "M19's filter runs only in judge()'s protected branch, on d.acf's receipt; that branch then calls verify_execution on the SAME (request, receipt) unconditionally (the only exit between them is the verification-leg filter, itself a refusal), and verify_execution refuses a receipt whose backend is not a PROTECTED_PROFILES entry (M428). Admission never runs M19; there M428 is sole and killed on its own route",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M19",
+          "M428"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-fabric"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK"
+        },
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "a9b00410a9c1566c5ebd6f3552427850838268da7d129ed98743d67ef9b444c3",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-0/debug/axon"
+      }
+    },
+    {
+      "mutation": "M27",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a verdict runs an operator suite (check:<id>), never a candidate file",
+      "original_guard": {
+        "file": "crates/axon-loop/src/intake.rs"
+      },
+      "subsumed_by": [
+        "M30"
+      ],
+      "live_killing_mutant": "joint:M27+M30",
+      "all_paths": "check_pins is one function with two callers (intake, admission re-derivation) and no early Ok; its acceptance join (M30's clause) requires argv == [check:{acc_suite}, test] exactly, so argv[0] always has the check: prefix M27 tests",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M27",
+          "M30"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-fabric"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK"
+        },
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "b7fc7301b4815465164dad2bf3d5b15d82e83728696fb9501e82b4f8fb167508",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-1/debug/axon"
+      }
+    },
+    {
+      "mutation": "M29",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "the recorded suite is the one the request named",
+      "original_guard": {
+        "file": "crates/axon-loop/src/intake.rs"
+      },
+      "subsumed_by": [
+        "M30"
+      ],
+      "live_killing_mutant": "joint:M29+M30",
+      "all_paths": "same function: M30's clause requires argv[0] == check:{acc_suite} and recorded == acc.check_suite, and acc_suite is acc.check_suite's own id, so the recorded suite is argv's suite whenever M30 passes",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M29",
+          "M30"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-fabric"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK"
+        },
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "4a572c766e79f5eb03c45db09c6b70cb215f562639b685f3d2618f01465801ac",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-2/debug/axon"
+      }
+    },
+    {
+      "mutation": "M58",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a break/continue raised in a FUNCTION BODY does not escape into the caller's loop",
+      "original_guard": {
+        "file": "crates/axon-core/src/interp.rs"
+      },
+      "subsumed_by": [
+        "M59"
+      ],
+      "live_killing_mutant": "M59",
+      "all_paths": null,
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M58",
+          "M59"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-core",
+          "axon-cortex",
+          "axon-fabric",
+          "axon-intent",
+          "axon-os",
+          "axon-psv",
+          "axon-wasm",
+          "axon-web"
+        ],
+        "consumer_suites": {
+          "axon-cortex": "SUITE_OK",
+          "axon-fabric": "SUITE_OK",
+          "axon-intent": "SUITE_OK",
+          "axon-os": "SUITE_OK",
+          "axon-psv": "SUITE_OK",
+          "axon-wasm": "SUITE_OK",
+          "axon-web": "SUITE_OK"
+        },
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "9355dd70d455b0b2d7385f420ddfb6be9a915919d4a5d0f06669eb302a0a5c1a",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-3/debug/axon"
+      }
+    },
+    {
+      "mutation": "M60",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a second impl never replaces the first impl's method",
+      "original_guard": {
+        "file": "crates/axon-core/src/resolver.rs"
+      },
+      "subsumed_by": [
+        "M69"
+      ],
+      "live_killing_mutant": "joint:M60+M69",
+      "all_paths": "the ONLY harm of a duplicate impl is the interpreter's method table (keyed (type_name_of(for_type), method), last insert wins) replacing a method; with M60's check off every impl takes the else branch, whose dispatch check keys on the SAME type_name_of and method name and refuses any second definition of that key (E0002), whatever the traits. A duplicate impl sharing no method key replaces nothing (a missing required method is E0502; impl_table is a set)",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M60",
+          "M69"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-core",
+          "axon-cortex",
+          "axon-fabric",
+          "axon-intent",
+          "axon-os",
+          "axon-psv",
+          "axon-wasm",
+          "axon-web"
+        ],
+        "consumer_suites": {
+          "axon-cortex": "SUITE_OK",
+          "axon-fabric": "SUITE_OK",
+          "axon-intent": "SUITE_OK",
+          "axon-os": "SUITE_OK",
+          "axon-psv": "SUITE_OK",
+          "axon-wasm": "SUITE_OK",
+          "axon-web": "SUITE_OK"
+        },
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "1a64936b3fd11b94a59b90037e68cbca264e65cc1b54a67f5bdf83326068c807",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-0/debug/axon"
+      }
+    },
+    {
+      "mutation": "M89",
+      "status": "EQUIVALENT_DID",
+      "kind": "set",
+      "property": "a sealed frame never gets an operator function run through a fiber",
+      "original_guard": {
+        "file": "crates/axon-core/src/interp/builtins.rs"
+      },
+      "subsumed_by": [
+        "M86",
+        "M96"
+      ],
+      "live_killing_mutant": "joint:M89+M86+M96",
+      "all_paths": "every fiber runs in builtin_scheduler_run_once (scheduler_run, supervisor_run) through call_fn. A fiber lives in the kernel of the frame that queued it (k() = kernels[frame_sealed], M96), so a sealed frame's fiber is run only from a sealed frame, where call_fn's call edge (M86) refuses an operator function. Executed: M89+M86 reopens the sealed-frame route, M89+M96 reopens the operator-frame route",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M89",
+          "M86",
+          "M96"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-core",
+          "axon-cortex",
+          "axon-fabric",
+          "axon-intent",
+          "axon-os",
+          "axon-psv",
+          "axon-wasm",
+          "axon-web"
+        ],
+        "consumer_suites": {
+          "axon-cortex": "SUITE_OK",
+          "axon-fabric": "SUITE_OK",
+          "axon-intent": "SUITE_OK",
+          "axon-os": "SUITE_OK",
+          "axon-psv": "SUITE_OK",
+          "axon-wasm": "SUITE_OK",
+          "axon-web": "SUITE_OK"
+        },
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "9865166b0fab35650fa5ab36d7afc663eaf60ab337e5a1436ef78e1389115e16",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-1/debug/axon"
+      }
+    },
+    {
+      "mutation": "M139",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "on a protected host the caller's --check-registry never becomes the suite registry",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/bin/axon-fabric.rs"
+      },
+      "subsumed_by": [
+        "M141"
+      ],
+      "live_killing_mutant": "joint:M139+M141",
+      "all_paths": "the binary reads --check-registry in exactly two places, both in submit(): M139's refusal and the registry_path match; on a protected host (host is Some) that match's arm is h.suite_registry (M141), which never reads the flag, so with M139 removed the flag is read by nothing",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M139",
+          "M141"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "ad1d4d83494c054c244f288f15b0da073d5b1dfab0ea34d56b8e69fdff33eddd",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-2/debug/axon"
+      }
+    },
+    {
+      "mutation": "M141",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "on a protected host the caller's --check-registry never becomes the suite registry",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/bin/axon-fabric.rs"
+      },
+      "subsumed_by": [
+        "M139"
+      ],
+      "live_killing_mutant": "joint:M139+M141",
+      "all_paths": "M139's refusal runs before the registry_path match on the same host (Some) and tests a.opt(--check-registry), the same lookup the override would use; nothing between them can succeed without passing it, so the override is reached only with the flag absent",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M141",
+          "M139"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "5b3d811ce4fb5b83696f63359afba50e8ffe094b60784d2d6164d90f344180f4",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-3/debug/axon"
+      }
+    },
+    {
+      "mutation": "M152",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a signature made for one authority never verifies for another",
+      "original_guard": {
+        "file": "crates/axon-loop-contracts/src/operator_trust.rs"
+      },
+      "subsumed_by": [
+        "M153"
+      ],
+      "live_killing_mutant": "joint:M152+M153",
+      "all_paths": "verify_evidence_signature is the ONLY reader of the signature's domain field (Fabric backend, readiness, loop protected_evidence all call it); after the field check it always verifies over evidence_signing_message(authority, bytes) for the CALLER's authority, not the field's, so a signature made for another authority verifies only if the message is not domain-bound (M153). The relabelled case is M153's own (active) attack",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M152",
+          "M153"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric",
+          "axon-loop-contracts",
+          "axon-loop",
+          "axon-reflex",
+          "cortex-policy-adapter"
+        ],
+        "consumer_suites": {
+          "axon-loop": "SUITE_OK",
+          "axon-reflex": "SUITE_OK",
+          "cortex-policy-adapter": "SUITE_OK"
+        },
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "2f99e3892ec6aa34fe35c73e829199cec4c51335b682724ac339934f73e1ed0d",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-0/debug/axon"
+      }
+    },
+    {
+      "mutation": "M176",
+      "status": "STALE_REFACTORED",
+      "property": "a pass needs exit 0",
+      "original_guard": "the exit-0 guard became the Some(0) of the Passed arm in runner.rs (C9 re-audit)",
+      "old_string_present": false,
+      "replacement": "M293",
+      "replacement_state": "REPLACEMENT_KILLED",
+      "matrix": null,
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "b85949a2dbfc599aedfb13288f34fde18738543546562b1bb1703fa9076acb1e",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-1/debug/axon"
+      }
+    },
+    {
+      "mutation": "M183",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a pass rests on this launch's keyed completion evidence",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/psv.rs"
+      },
+      "subsumed_by": [
+        "M312"
+      ],
+      "live_killing_mutant": "joint:M183+M312",
+      "all_paths": "both checks sit in derive()'s Passed arm; M312 requires exactly one result line naming the test, status ok, whose completion equals outcome_token(K, test, true), which is the same HMAC as completion_token(K, test); parse_axon_test_json records that line's token in report.completion, so M312 passing implies M183's predicate",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M183",
+          "M312"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "bdf38860cfa358c6979839c58e58f45e6883c404d43d5e272e137d957376a705",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-2/debug/axon"
+      }
+    },
+    {
+      "mutation": "M186",
+      "status": "EQUIVALENT_DID",
+      "kind": "set",
+      "property": "a guest verdict made without a verified observation is never classed protected",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/psv.rs"
+      },
+      "subsumed_by": [
+        "M606",
+        "M620"
+      ],
+      "live_killing_mutant": "joint:M186+M606+M620",
+      "all_paths": "derive has one caller (submit's protected-profile arm) and receives no observation exactly when the config has no observer (observe returns a verified observation or Err, and Err launches nothing: M204). Its class reaches the receipt only through psv_receipt, which re-labels guest-unobserved every launch that is not admissible on a route that attests protected: the DIRECT route never attests (M606, attests_protected), and on the PRIVILEGED route an admissible launch needs the helper to launch, which it never does without a verified observation (M620; its refusal is not launched_ok, which M323's clause downgrades). HostVerdict.class itself has no reader. So a verdict with no observation is guest-unobserved on every route whatever derive's None arm says. Executed on the direct route",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M186",
+          "M606",
+          "M620"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "f172f9bc4d98d227473387bb8d9780ce5bd5a74856fc5bbc75688828fbfafb9d",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-3/debug/axon"
+      }
+    },
+    {
+      "mutation": "M187",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "the protected profile launches only an operator suite with a named test",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/submit.rs"
+      },
+      "subsumed_by": [
+        "M400"
+      ],
+      "live_killing_mutant": "joint:M187+M400",
+      "all_paths": "the protected arm of the dispatch match is the only launch path for the protected profile, and every request reaching it passes M400's spec match, which yields a launch spec only for (Some(suite), Some(test)); M187 is the same predicate before reservation",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M187",
+          "M400"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "5e64cac5a264668b485b7a1e96947e2839a655cd2c5c7f309bfc55ac5656f4b6",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-0/debug/axon"
+      }
+    },
+    {
+      "mutation": "M209",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a counted protected verdict's recorded verifier is one the operator verifier root holds, under the recorded key",
+      "original_guard": {
+        "file": "crates/axon-loop/src/admission.rs"
+      },
+      "subsumed_by": [
+        "M360"
+      ],
+      "live_killing_mutant": "joint:M209+M360",
+      "all_paths": "derive's rooted-verifier check applies only to a PROTECTED evaluation's counted trials, reached from admit and every rederive (activation, rollback); for each such trial the same loop iteration then runs reverify_protected, which authenticates the verdict under the EPISODE's issuer via verify_check_evidence (a protected claim is required, so rooted_key(issuer) must hold) and requires the record's issuer and key_id to BE that signer (M360). So the record's issuer is rooted with that key whenever M360 passes. The development class never uses the rooted lookup",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M209",
+          "M360"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-fabric"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK"
+        },
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "779a76f01e9da2b95c1008a24c63e0a9de74b26381dcf74bbe8fea2ccf7d047b",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-1/debug/axon"
+      }
+    },
+    {
+      "mutation": "M210",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a counted protected trial's context attribution is an observer the operator observer root holds, under the recorded key",
+      "original_guard": {
+        "file": "crates/axon-loop/src/admission.rs"
+      },
+      "subsumed_by": [
+        "M361"
+      ],
+      "live_killing_mutant": "joint:M210+M361",
+      "all_paths": "derive's rooted-observer check runs only for a PROTECTED evaluation's counted trials, after the verifier loop, where reverify_protected has returned the context's signer for EVERY such trial (trusted observer, rooted_key held, signature verified under it); M361 then requires context_signed_by to equal that signer. So the attribution is rooted with that key whenever M361 passes. No other reader of context_signed_by exists",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M210",
+          "M361"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-fabric"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK"
+        },
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "eda57d612757009e03e178c71166001877ba91d35aafb0477734ff31a0efd3be",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-2/debug/axon"
+      }
+    },
+    {
+      "mutation": "M214",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a protected claim names its preflight observation",
+      "original_guard": {
+        "file": "crates/axon-loop-contracts/src/protected_evidence.rs"
+      },
+      "subsumed_by": [
+        "M233"
+      ],
+      "live_killing_mutant": "joint:M214+M233",
+      "all_paths": "check() runs only from check_bundle (intake, admission re-verify) and from EVL, where a claim that passes check() goes on to verify_check_evidence -> check_bundle; check_bundle want()s preflight-observation-sha256 (exactly once) unconditionally",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M214",
+          "M233"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-loop-contracts",
+          "axon-fabric",
+          "axon-reflex",
+          "cortex-policy-adapter"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK",
+          "axon-reflex": "SUITE_OK",
+          "cortex-policy-adapter": "SUITE_OK"
+        },
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "95b20c911c75c9a1916758dbf168d22fda2c009d89bd90582043e7185a9bb7c4",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-3/debug/axon"
+      }
+    },
+    {
+      "mutation": "M216",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "each protected join is named exactly once",
+      "original_guard": {
+        "file": "crates/axon-loop-contracts/src/protected_evidence.rs"
+      },
+      "subsumed_by": [
+        "M299"
+      ],
+      "live_killing_mutant": "joint:M216+M299",
+      "all_paths": "as M214: every one of the 8 REQUIRED_DIGEST_REFS is want()ed in check_bundle, and one_ref() refuses a prefix named more than once",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M216",
+          "M299"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-loop-contracts",
+          "axon-fabric",
+          "axon-reflex",
+          "cortex-policy-adapter"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK",
+          "axon-reflex": "SUITE_OK",
+          "cortex-policy-adapter": "SUITE_OK"
+        },
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "2849e794f756ad50f2eeb74fb1faf35fd96a761c098d147ce640be0955b4fd8f",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-0/debug/axon"
+      }
+    },
+    {
+      "mutation": "M217",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "each protected receipt join (the eight REQUIRED_DIGEST_REFS) is a sha256",
+      "original_guard": {
+        "file": "crates/axon-loop-contracts/src/protected_evidence.rs"
+      },
+      "subsumed_by": [
+        "M473"
+      ],
+      "live_killing_mutant": "joint:M217+M473",
+      "all_paths": "protected_evidence::check has two callers, check_bundle and EVL's pre-check (evl.rs), and EVL's pre-check passing implies claims_protected, so verify_check_evidence then runs check_bundle as well; admission's reverify_protected (the store-writer route) reaches the same check_bundle through verify_check_evidence. The development class never calls check. In check_bundle every one of the eight refs must EQUAL a value that is a lowercase sha256 on every path: launch-manifest, preflight-observation and guest-verdict equal sha256_hex of the bundle's bytes (M233/M299 and the manifest join), and guest-kernel/rootfs/axon/init and qualification equal the manifest's *sha256 fields, which names_every_digest (M473) requires to be 64 lowercase hex before any join runs. So a ref that is not a sha256 is refused whenever M217's rule would have refused it, and M473 stays ACTIVE and killed",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M217",
+          "M473"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-loop-contracts",
+          "axon-fabric",
+          "axon-reflex",
+          "cortex-policy-adapter"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK",
+          "axon-reflex": "SUITE_OK",
+          "cortex-policy-adapter": "SUITE_OK"
+        },
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "a384982b1b606d85be71bbb918155336c034ee19299508dce5ff2ef566b88ffd",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-1/debug/axon"
+      }
+    },
+    {
+      "mutation": "M245",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a protected clearance is a real monitor signature under the operator monitor root",
+      "original_guard": {
+        "file": "crates/axon-loop/src/admission.rs"
+      },
+      "subsumed_by": [
+        "M264"
+      ],
+      "live_killing_mutant": "M264",
+      "all_paths": null,
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M245",
+          "M264"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-fabric"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK"
+        },
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "1069a4ef673590ced6f918d2de4c5d621c26e6b27d6f0af8fc592eb58cc86ef6",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-2/debug/axon"
+      }
+    },
+    {
+      "mutation": "M273",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "on a protected host a caller grant registry never authorizes status or cancel",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/bin/axon-fabric.rs"
+      },
+      "subsumed_by": [
+        "M401"
+      ],
+      "live_killing_mutant": "joint:M273+M401",
+      "all_paths": "grant_registry() is the one reader of --grant-registry for status/cancel (and submit, where M274 refuses first); on a protected host its arm resolves h.grants(), the operator's pinned registry (M401), which never reads the flag",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M273",
+          "M401"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "3f10bb1de1051a3238fb2956953a5a7a628d93b1618e500a0042a9a316d73ae7",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-3/debug/axon"
+      }
+    },
+    {
+      "mutation": "M285",
+      "status": "EQUIVALENT_DID",
+      "kind": "set",
+      "property": "git never reports a replacement object's content under a certified name",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/readiness.rs"
+      },
+      "subsumed_by": [
+        "M385",
+        "M289"
+      ],
+      "live_killing_mutant": "joint:M285+M385+M289",
+      "all_paths": "every git call goes through git_cmd, which clears the environment (no GIT_REPLACE_REF_BASE) and disables replacement objects (M385); every object read is re-hashed to its name (M289)",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M285",
+          "M385",
+          "M289"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "c9647b355a2347f80fd76658f12935be15a4802d",
+      "edits_sha256": "53719497aea6341700be503abe77fa2cedb903cf95753c4bb756e821e7b1fb1e",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4-pdfix-target/debug/axon"
+      }
+    },
+    {
+      "mutation": "M286",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "readiness never certifies a tree whose ancestry an info/grafts file rewrites",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/readiness.rs"
+      },
+      "subsumed_by": [
+        "M581"
+      ],
+      "live_killing_mutant": "joint:M286+M581",
+      "all_paths": "refuse_git_spoofing has one caller (the protected_backend component), and the only parent-dependent answer readiness then takes is git_data::descends on axon_sha, a full commit id (checked 40-hex; object_named takes it as a hash, M642), which reads every commit's parents from the hash-checked object bytes (M581) and never from git's commit walk, the only reader of grafts. `git diff certified HEAD` and the tree walk compare trees, which grafts do not touch. So a grafts file changes no answer readiness decides on",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M286",
+          "M581"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "c9647b355a2347f80fd76658f12935be15a4802d",
+      "edits_sha256": "df1ae2944dcfa435f4c8c638f391bc73c2e6e02c56a03040e1ba0fc6966c3eb7",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4-pdfix-target/debug/axon"
+      }
+    },
+    {
+      "mutation": "M287",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "an uncommitted change hidden by skip-worktree is not certified",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/readiness.rs"
+      },
+      "subsumed_by": [
+        "M290"
+      ],
+      "live_killing_mutant": "joint:M287+M290",
+      "all_paths": "the flag only hides worktree-vs-index; worktree_differs hashes every certified path's bytes directly (never the index), a missing file differs, and a path outside the certified tree already differs in the tree diff",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M287",
+          "M290"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "c9647b355a2347f80fd76658f12935be15a4802d",
+      "edits_sha256": "5c95b0f931a1ef4ec1d241b8343cfec5d75f9e66accf82f895f733a36a5af7c1",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4-pdfix-target/debug/axon"
+      }
+    },
+    {
+      "mutation": "M288",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "an uncommitted change hidden by assume-unchanged is not certified",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/readiness.rs"
+      },
+      "subsumed_by": [
+        "M290"
+      ],
+      "live_killing_mutant": "joint:M288+M290",
+      "all_paths": "as M287 (assume-unchanged, the other index flag)",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M288",
+          "M290"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "c9647b355a2347f80fd76658f12935be15a4802d",
+      "edits_sha256": "cffd4f915f6547a3e434af7396878e5483a4930d3f97dc9207571bb6d8e2ba81",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4-pdfix-target/debug/axon"
+      }
+    },
+    {
+      "mutation": "M338",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "the record's verifier_key_id is a key of the operator's verifier root",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/readiness.rs"
+      },
+      "subsumed_by": [
+        "M812"
+      ],
+      "live_killing_mutant": "joint:M338+M812",
+      "all_paths": "attribution has one caller (the decision) and always runs launched() at its end (M750). launched() looks verifier_key_id up among the verifier root's exclusive keys and refuses when none has that id; exclusive_keys is a subset of key_ids (it drops keys shared with another root), so every id the membership check refuses the lookup also refuses. Since amendment 57",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M338",
+          "M812"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "c9647b355a2347f80fd76658f12935be15a4802d",
+      "edits_sha256": "2a50083170a39a58d0e384258ddac158a54137941fe715d3b736e30f95047efa",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4-pdfix-target/debug/axon"
+      }
+    },
+    {
+      "mutation": "M346",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "build provenance never reads a tree with an edited tracked file as clean",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/provenance.rs"
+      },
+      "subsumed_by": [
+        "M451"
+      ],
+      "live_killing_mutant": "joint:M346+M451",
+      "all_paths": "provenance() runs head_bytes_differ (M451) on every call, before the ls-files tag check: it hashes every blob of HEAD's tree against the working-tree bytes, so an edited, deleted or replaced tracked file is dirty whatever the index says. A skip-worktree bit hides only worktree-vs-index differences from git status; an index that differs from HEAD still shows in status (staged), and a worktree equal to HEAD is the committed source. So M346's refusal never stands alone",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M346",
+          "M451"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "313b833e6c18c029159f5e96c1c5cf9de09c17285cf1744d047eeae023a73864",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-1/debug/axon"
+      }
+    },
+    {
+      "mutation": "M347",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "build provenance never reads an untracked input as clean",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/provenance.rs"
+      },
+      "subsumed_by": [
+        "M501"
+      ],
+      "live_killing_mutant": "joint:M347+M501",
+      "all_paths": "provenance() always runs head_bytes_differ -> tree_differs, whose untracked_objects walk (M500 files, M501 whole untracked directories) reports every filesystem object not in HEAD's tree and not on the operator allowlist, without consulting git. `status --untracked-files=all` (M347) only ever ADDS reasons; an untracked non-ignored file is one the walk reports unless the operator allowlist names it, and an allowlisted file is excused by decision C, which makes the allowlist the authority (so what status would add there is not a lost property). So M347's refusal never stands alone",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M347",
+          "M501"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "98d36b0ab95cd7b89ed9f3f11b00bc76983067979887f46bad999d4f6c702fd7",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-2/debug/axon"
+      }
+    },
+    {
+      "mutation": "M377",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "the launch manifest is for the request's and receipt's candidate",
+      "original_guard": {
+        "file": "crates/axon-loop-contracts/src/protected_evidence.rs"
+      },
+      "subsumed_by": [
+        "M378"
+      ],
+      "live_killing_mutant": "M379",
+      "all_paths": "check_bundle is reached only through verify_check_evidence, which joins the receipt's input tree to the request's (M33); with that join, manifest==receipt implies manifest==request",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M377",
+          "M378"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-loop-contracts",
+          "axon-fabric",
+          "axon-reflex",
+          "cortex-policy-adapter"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK",
+          "axon-reflex": "SUITE_OK",
+          "cortex-policy-adapter": "SUITE_OK"
+        },
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "dae32f6a1e68fd828b3f2780b54ad0de95405ffaad530bb9f713df67e8ef8d1b",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-3/debug/axon"
+      }
+    },
+    {
+      "mutation": "M378",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "the launch manifest is for the request's and receipt's candidate",
+      "original_guard": {
+        "file": "crates/axon-loop-contracts/src/protected_evidence.rs"
+      },
+      "subsumed_by": [
+        "M377"
+      ],
+      "live_killing_mutant": "M379",
+      "all_paths": "as M377, symmetrically: manifest==request and request==receipt (M33) imply manifest==receipt",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M378",
+          "M377"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-loop-contracts",
+          "axon-fabric",
+          "axon-reflex",
+          "cortex-policy-adapter"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK",
+          "axon-reflex": "SUITE_OK",
+          "cortex-policy-adapter": "SUITE_OK"
+        },
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "cd0396598f8ebcf86e96097f470ba88121abaf9d70ba2261a09a071ea9e135aa",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-0/debug/axon"
+      }
+    },
+    {
+      "mutation": "M385",
+      "status": "EQUIVALENT_DID",
+      "kind": "set",
+      "property": "git never reports a replacement object's content under a certified name",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/git_data.rs"
+      },
+      "subsumed_by": [
+        "M285",
+        "M289"
+      ],
+      "live_killing_mutant": "joint:M285+M385+M289",
+      "all_paths": "replacements exist only as refs under refs/replace/ (the environment is cleared, so the ref base is the default); refuse_git_spoofing refuses any such ref (M285) before a verdict; objects are re-hashed (M289)",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M385",
+          "M285",
+          "M289"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "c9647b355a2347f80fd76658f12935be15a4802d",
+      "edits_sha256": "3161c96761804404e87b30d69caa35023ce2e8af3ff40a1fda3c1c5120adc657",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4-pdfix-target/debug/axon"
+      }
+    },
+    {
+      "mutation": "M400",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "the protected profile launches only an operator suite with a named test",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/submit.rs"
+      },
+      "subsumed_by": [
+        "M187"
+      ],
+      "live_killing_mutant": "joint:M187+M400",
+      "all_paths": "M187 runs for every request whose selected profile is the protected one, before reservation, and returns Err unless target.suite and target.filter are both Some; the protected arm is reached only with that profile",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M400",
+          "M187"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "682b1d23383ec3a901b45f4421c351e932af9bbdba8cac7cc7f09080fa1c1a78",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-2/debug/axon"
+      }
+    },
+    {
+      "mutation": "M401",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "on a protected host a caller grant registry never authorizes status or cancel",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/bin/axon-fabric.rs"
+      },
+      "subsumed_by": [
+        "M273"
+      ],
+      "live_killing_mutant": "joint:M273+M401",
+      "all_paths": "within the same arm, M273's by-name refusal of --grant-registry runs first and tests the flag's presence (has), which any value the override could read implies",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M401",
+          "M273"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "a84dd187bb3eb26cdd68101f2017e3b6ca1c77c45525f4b591b0262a5a8b34ea",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-3/debug/axon"
+      }
+    },
+    {
+      "mutation": "M414",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "build provenance never reads a file hidden by a non-tracked ignore rule as clean",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/provenance.rs"
+      },
+      "subsumed_by": [
+        "M501"
+      ],
+      "live_killing_mutant": "joint:M414+M501",
+      "all_paths": "a file ignored by info/exclude, an untracked .gitignore or a config excludesFile is an object not in HEAD's tree; the walk (M501 for its untracked directory, M500 for a file) reports it unless the operator allowlist names it, and git-ignore plays no part in the walk (decision C). The check-ignore source test (M414) only ADDS a reason. So it never stands alone",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M414",
+          "M501"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "637fc67807e800ddddb66bf19e0e579f5d4eb9893fdd2d9ddc8317663a1264f8",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-0/debug/axon"
+      }
+    },
+    {
+      "mutation": "M418",
+      "status": "EQUIVALENT_DID",
+      "kind": "set",
+      "property": "the observation a certification cites was made by a key in the operator observer root",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/readiness.rs"
+      },
+      "subsumed_by": [
+        "M339",
+        "M340"
+      ],
+      "live_killing_mutant": "joint:M418+M339+M340",
+      "all_paths": "attribution() has one caller (the component verdict) and no early Ok; after the membership loop it always verifies the observation's signature under keys(observer_dir) (M340, which returns the signer's fingerprint) and requires signer == observer_key_id (M339). key_ids and keys read the same operator root, so signer in root and signer == observer_key_id put observer_key_id in the root",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M418",
+          "M339",
+          "M340"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "c9647b355a2347f80fd76658f12935be15a4802d",
+      "edits_sha256": "c1c5e713dd041164f0b89f4f628dfd45cb47c286f9bc32f5fad04d1ab58062dd",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4-pdfix-target/debug/axon"
+      }
+    },
+    {
+      "mutation": "M453",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a gitfile .git (a repository chosen elsewhere) never answers a protected provenance question",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/git_data.rs"
+      },
+      "subsumed_by": [
+        "M580"
+      ],
+      "live_killing_mutant": "joint:M453+M580",
+      "all_paths": "discover is the protected entry for every caller (readiness, build provenance's toplevel, descends_from_protected) and, after the kind check, always runs own_repository: git's own --git-common-dir (env cleared) must canonicalize to top/.git. For a gitfile, top/.git is a FILE while git's common dir is a directory, so the two never match (and a gitfile git cannot follow is Err). A symlinked .git stays refused by the kind check with M453 applied. So the kind check's refusal of a gitfile never stands alone",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M453",
+          "M580"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "c9647b355a2347f80fd76658f12935be15a4802d",
+      "edits_sha256": "368992fe6ed8e67a2311d1294e7238abbaec63cf274bf6a6c1c60a68b66725f5",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4-pdfix-target/debug/axon"
+      }
+    },
+    {
+      "mutation": "M459",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "the guest build's PCI lineage never passes through grafted ancestry",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/provenance.rs"
+      },
+      "subsumed_by": [
+        "M581"
+      ],
+      "live_killing_mutant": "joint:M459+M581",
+      "all_paths": "lineage() is the one body of descends_from (--descends) and descends_from_protected (--lineage, the manifest's); after the grafts refusal it always calls git_data::descends, which names the revision by hash only (object_named, M642: no ref, no parent navigation) and walks parents parsed from hash-checked commit bytes (M581), never git's commit walk, the only reader of grafts. So a grafts file cannot change the answer",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M459",
+          "M581"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "f5d0a7c4ea2d03d6d07328bde8bab946a483a2af6f0791436149da72a8a9d2c6",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-3/debug/axon"
+      }
+    },
+    {
+      "mutation": "M482",
+      "status": "EQUIVALENT_DID",
+      "kind": "set",
+      "property": "readiness decides on ONE set of bytes per file: a FIFO serving each read differently certifies nothing (the retired check's only unique effect is naming the FIFO in the reason)",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/backend.rs"
+      },
+      "subsumed_by": [
+        "M481",
+        "M335"
+      ],
+      "live_killing_mutant": "joint:M482+M481+M335",
+      "all_paths": "read_regular is the one reader of every file readiness, the evidence/signature readers, the observer and the B263 qualification decide on, and each caller decides on the single buffer it returns (M335/M336/M337 for readiness's record, preflight and manifest). A FIFO serves one set of bytes per open, so a single read of a FIFO is no more than a regular file an agent could have written; the two-read substitution needs a second read (M335 off). The non-blocking open (M481) is in the set only so the test's feeder can connect: with it on, a FIFO whose writer has not connected reads EOF. Executed: M482 alone, M482+M481, and M481+M335 each refuse; M482+M481+M335 certifies the agent's commit",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M482",
+          "M481",
+          "M335"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "c9647b355a2347f80fd76658f12935be15a4802d",
+      "edits_sha256": "98d110fe24a9f8ddf52f2d803a4f85e1911264f62648e8aed262a7cf94312cd0",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4-pdfix-target/debug/axon"
+      }
+    },
+    {
+      "mutation": "M487",
+      "status": "EQUIVALENT_DID",
+      "kind": "set",
+      "property": "a service leaf (out_root, nonce_store) that is a symlink never loads",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/protected_host.rs"
+      },
+      "subsumed_by": [
+        "M486",
+        "M327"
+      ],
+      "live_killing_mutant": "joint:M487+M486+M327",
+      "all_paths": "service_leaf is the only check of the two leaves and reads symlink_metadata, which never follows: for a symlink, is_dir() is false (M486 refuses it on every unix) and st_mode is 0777 on Linux (M327 refuses it). Only with both removed does a link owned by the service euid load",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M487",
+          "M486",
+          "M327"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "2f1bb4ebb1136c264e819e17e7fcb120a51fada188b6609cce605658d212ea01",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-1/debug/axon"
+      }
+    },
+    {
+      "mutation": "M546",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a protected host refuses a Fabric running as root",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/protected_host.rs"
+      },
+      "subsumed_by": [
+        "M548"
+      ],
+      "live_killing_mutant": "joint:M546+M548",
+      "all_paths": "fabric_is_not_root has one caller, operator() (M704's call); M546 disables the same refusal inside it, so M704's argument applies unchanged: euid 0 is refused by M536 (helper fabric_uid 0) or M548 (any other)",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M546",
+          "M548"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "53f2ccca287a1e270c0ce4e7ab27da09ea3edd3fe5360ec8f9ed26718c34c1ea",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-2/debug/axon"
+      }
+    },
+    {
+      "mutation": "M594",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "an interpreter that is itself a #! script never runs through its own #! line",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/sealed_exec.rs"
+      },
+      "subsumed_by": [
+        "M595"
+      ],
+      "live_killing_mutant": "joint:M594+M595",
+      "all_paths": "sealed_exec::command has four callers (privileged_launcher::run twice, backend::run_direct twice, observer::observe, backend::run_privileged with no interpreter), and none puts the interpreter's descriptor in `inherit`; only the PROGRAM's is inherited. open_verified opens every object close-on-exec, so execveat(interpreter_fd, \"\", AT_EMPTY_PATH) of a #! script fails with ENOENT (the kernel cannot hand /dev/fd/N of a close-on-exec descriptor to the #! interpreter; measured). M594 removed alone: the exec fails, nothing runs. M595 removed alone: M594 refuses in command()",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M594",
+          "M595"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "aaa6359eb188ec4c3a780f6c7974850aeadc2a8b78b7f4508b16a2898e97e238",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-3/debug/axon"
+      }
+    },
+    {
+      "mutation": "M595",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "an interpreter that is itself a #! script never runs through its own #! line",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/sealed_exec.rs"
+      },
+      "subsumed_by": [
+        "M594"
+      ],
+      "live_killing_mutant": "joint:M594+M595",
+      "all_paths": "the only descriptor a script is executed FROM is the interpreter's (a script PROGRAM with no interpreter is refused by M529; with one, the program is read as /dev/fd/N, never executed); an interpreter that is a script is refused by M594 before any fork. So a verified descriptor that is not close-on-exec is never executed as a script while M594 stands",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M595",
+          "M594"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "df3580c241bdabcbacc7d3ae69afe8717948839815bcd264adfc5bec78bd4392",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-0/debug/axon"
+      }
+    },
+    {
+      "mutation": "M596",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "no other uid can read the per-attempt secret in the helper's staging snapshot",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/privileged_launcher.rs"
+      },
+      "subsumed_by": [
+        "M597"
+      ],
+      "live_killing_mutant": "joint:M596+M597",
+      "all_paths": "new_staging is the only creator of a staging dir and every snapshot file is written below the per-launch dir it creates, with mode 0700 (M597) under harden()'s umask 022; the staging root is operator-owned and not group/other-writable (M598, M589), so no other uid can create, rename or replace entries in it. With M596 removed alone (a 0755 staging root) another uid can list the root but not enter the 0700 per-launch dir. With M597 removed alone the 0700 root (M596) stops traversal",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M596",
+          "M597"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "6a9190773177ec10a5e5e480dea8b967d901da37cf59699efb42ced01422d711",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-1/debug/axon"
+      }
+    },
+    {
+      "mutation": "M597",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "no other uid can read the per-attempt secret in the helper's staging snapshot",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/privileged_launcher.rs"
+      },
+      "subsumed_by": [
+        "M596"
+      ],
+      "live_killing_mutant": "joint:M596+M597",
+      "all_paths": "the per-launch dir sits directly in the staging root, which must be 0700 (M596) and operator-owned (M598): no other uid can traverse into it whatever the per-launch dir's own mode",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M597",
+          "M596"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "ee1be474d19d819e0fb9f44254595e8e48897d316ac07b6ed87e9957ad302a7f",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-2/debug/axon"
+      }
+    },
+    {
+      "mutation": "M602",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a production helper that is not root in every id never launches",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/bin/axon-protected-launcher.rs"
+      },
+      "subsumed_by": [
+        "M628"
+      ],
+      "live_killing_mutant": "joint:M602+M628",
+      "all_paths": "every launch goes serve_as -> prepare -> observed_launch, which verifies the observation (M620) and then spends its nonce through the operator's custodian (M621) before make_out and run; run is reached only from a Prepared. The spend is authorized by the custodian's SO_PEERCRED rule: only launcher_uid spends (M628). A helper whose euid is not 0 connects with that euid (become_root is a no-op without euid 0). A PROTECTED custodian's config must set launcher_uid to 0 (CustodianConfig::check(true), M640); a test custodian (launcher_uid unchecked) authorizes no production launch (M625), a dev one none at all (M624); the helper accepts only a socket its configured custodian uid or root serves (M626). So a helper that is not root never spends, and never launches. Executed with the production helper and the production (socket-activated) custodian",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M602",
+          "M628"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "50aaee2f122bfa427418bc7d6a1ec130466e35b84b16c7cf04f19f7e1e96bda4",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-3/debug/axon"
+      }
+    },
+    {
+      "mutation": "M634",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a protected host refuses a custodian that is the Fabric's own uid or root",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/protected_host.rs"
+      },
+      "subsumed_by": [
+        "M633"
+      ],
+      "live_killing_mutant": "joint:M634+M633",
+      "all_paths": "custodian_is_separate has one caller, operator() (M705's call); M634 disables the same refusal inside it, so M705's argument applies unchanged",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M634",
+          "M633"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "84934250d356250d0c00bd909b9f02747104d5811aacbdea3f69dcfe028c5d2d",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-0/debug/axon"
+      }
+    },
+    {
+      "mutation": "M704",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a protected host refuses a Fabric running as root",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/protected_host.rs"
+      },
+      "subsumed_by": [
+        "M548"
+      ],
+      "live_killing_mutant": "joint:M704+M548",
+      "all_paths": "operator() is the only production caller of fabric_is_not_root and the only constructor of a production ProtectedHost (the test-trust --protected-host-config route is absent from a production build). After the call it always loads the helper's operator config with Authority::production() (M706) and runs helper_agrees(helper, host, euid). load_config refuses a helper config with fabric_uid 0 in production (M536), and helper_agrees refuses fabric_uid != euid (M548). So with euid 0 every path is refused: fabric_uid 0 by M536, any other by M548. Executed with the production axon-fabric as root",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M704",
+          "M548"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "b1334cba9f4f1b6de54704b8200fb0c9cbff25dd2f9680ce66305c22d8b8def0",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-1/debug/axon"
+      }
+    },
+    {
+      "mutation": "M705",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a protected host refuses a custodian that is the Fabric's own uid or root",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/protected_host.rs"
+      },
+      "subsumed_by": [
+        "M633"
+      ],
+      "live_killing_mutant": "joint:M705+M633",
+      "all_paths": "operator() is custodian_is_separate's only production caller, reached only for a host with an observer (a Service custodian). It then loads the helper config under the production rules (M706), whose own rule refuses a helper custodian that is the helper's fabric_uid or 0 (M633), and helper_agrees requires the helper's custodian to EQUAL the host's (M636) and its fabric_uid to equal euid (M548). So a host custodian equal to euid or 0 is refused on every path: by M633 when the helper agrees, by M636 or M548 when it does not. A host with no observer names no custodian for Fabric to be issued a nonce by. Executed with the production axon-fabric",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M705",
+          "M633"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "4941e4cf9e5a99d0834166b7758bf360d2f125fd7248ff30cbec87202b9a5fab",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-2/debug/axon"
+      }
+    },
+    {
+      "mutation": "M796",
+      "status": "EQUIVALENT_DID",
+      "kind": "set",
+      "property": "the helper launches only a request whose psv_manifest_sha256 is a lowercase sha256",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/privileged_launcher.rs"
+      },
+      "subsumed_by": [
+        "M623",
+        "M797"
+      ],
+      "live_killing_mutant": "joint:M796+M623+M797",
+      "all_paths": "validate_request has one production caller, prepare (via serve_as). Every prepared request reaches observed_launch before anything is launched: snapshot_manifest compares sha256_hex of the snapshot manifest (always 64 lowercase hex) with the request's word (M623), so a word that is not lowercase hex never equals it; and the nonce is spent with that word, which the custodian refuses unless it is 64 lowercase hex (M797). Executed with a genuine observation of the uppercase spelling",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M796",
+          "M623",
+          "M797"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "b2e57129025bf050e9e92274d2c5bfa9602f3ea3f6d19158d885ece94dd6e532",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-3/debug/axon"
+      }
+    },
+    {
+      "mutation": "M801",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "each psv input of a request is <out root>/<inputs>/<its fixed leaf>",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/privileged_launcher.rs"
+      },
+      "subsumed_by": [
+        "M800"
+      ],
+      "live_killing_mutant": "joint:M801+M800",
+      "all_paths": "the leaf-name rule and the exact-spelling rule run on the same path p in the same loop iteration. If p's file name is not `leaf`, parent.join(leaf) (a path ending in `leaf`) differs from p, so M800 refuses every input M801 refuses",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M801",
+          "M800"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "eaa0e42a6af4f15d4a2711601293cee04754c8ebf7d4b371f98023232d473be0",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-0/debug/axon"
+      }
+    },
+    {
+      "mutation": "M803",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "the root launcher writes only into the out dir the helper created",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/privileged_launcher.rs"
+      },
+      "subsumed_by": [
+        "M802"
+      ],
+      "live_killing_mutant": "joint:M803+M802",
+      "all_paths": "make_out's only caller is prepare; mkdirat must CREATE the out dir (M802), so a pre-existing dir of any owner is refused before the owner re-check. The re-check refuses only a dir replaced between mkdirat and openat, a race no deterministic test interposes; its four-cell attack is a Fabric-owned dir already at the out path",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M803",
+          "M802"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "c5c4cc40be5febc9086de93db253d3b5d4374ec46829c185bde03091adde8e15",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-1/debug/axon"
+      }
+    },
+    {
+      "mutation": "M804",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "the out dir of a launch is not its psv inputs dir",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/privileged_launcher.rs"
+      },
+      "subsumed_by": [
+        "M802"
+      ],
+      "live_killing_mutant": "joint:M804+M802",
+      "all_paths": "validate_request's only caller is prepare, which creates the out dir with mkdirat (M802) after snapshot_inputs opened the inputs dir: an out name equal to the inputs name names a directory that exists, so mkdirat refuses it",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M804",
+          "M802"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "1abe5eb73233cccbb1dc547b56c5554e8fa130d9e30b04e18bf8a470008e1618",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-2/debug/axon"
+      }
+    },
+    {
+      "mutation": "M809",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "readiness never reads a failed git as an empty answer",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/readiness.rs"
+      },
+      "subsumed_by": [
+        "M810"
+      ],
+      "live_killing_mutant": "joint:M809+M810",
+      "all_paths": "every git() answer feeds one of: the refs/replace/ refusal (M285, retired: replacement objects are off, M385), the grafts path (an empty answer names the repository itself, which exists, so the graft refusal fires), the index tags (M287/M288, retired: the tree is compared by its bytes), the change lists (diff, diff-index, ls-files --others), which only ADD to `outside`, and HEAD's name for the hash-checked comparison (an empty name makes Objects::entries fail). When the change lists add nothing, the comparison from hash-checked objects runs (M810) and M697 refuses any difference. Executed with a failing `git diff` over a committed code change",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M809",
+          "M810"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "c9647b355a2347f80fd76658f12935be15a4802d",
+      "edits_sha256": "d72b9c5af46db8e338749b33dd6f38cfd9d1f7f79dedd2035351eb5579804ac9",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4-pdfix-target/debug/axon"
+      }
+    },
+    {
+      "mutation": "M813",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a custodian serves only from a store that is a real directory",
+      "original_guard": {
+        "file": "crates/axon-fabric/src/custodian.rs"
+      },
+      "subsumed_by": [
+        "M325"
+      ],
+      "live_killing_mutant": "joint:M813+M325",
+      "all_paths": "check_store has one caller per custodian mode (the binary, before any connection). A symlink's lstat mode is 0777 on Linux, so the next rule (no group/other access, M325) refuses every symlink; a non-directory the custodian owns with mode 0600 fails every issue and spend (ENOTDIR under it), so it serves nothing. Executed with the production custodian and a symlink it owns",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M813",
+          "M325"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-fabric"
+        ],
+        "consumer_suites": {},
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "0cc6e6481d701b1ecc3ce19468c3a464d9767dc8e4f70c23a66227646e32326c",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-0/debug/axon"
+      }
+    },
+    {
+      "mutation": "M830",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "intake records an episode only with the context receipt it names",
+      "original_guard": {
+        "file": "crates/axon-loop/src/intake.rs"
+      },
+      "subsumed_by": [
+        "M857"
+      ],
+      "live_killing_mutant": "joint:M830+M857",
+      "all_paths": "intake_episode is the only caller; after this check it always calls bind_episode with the same episode and context (no early return between them but refusals), and bind_episode refuses `episode.context_ref != digest(ctx)` (M857), the identical predicate: ctx_ref is digest(&ctx) of the same parsed context",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M830",
+          "M857"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-fabric"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK"
+        },
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "2a44c38d96f7877f3ce0b5000bfaaee1fa2c49f8d3b4ce5e2688201bb992d84e",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-1/debug/axon"
+      }
+    },
+    {
+      "mutation": "M852",
+      "status": "EQUIVALENT_DID",
+      "kind": "set",
+      "property": "a counted protected context rests on an observer the operator trusts at the derivation",
+      "original_guard": {
+        "file": "crates/axon-loop/src/admission.rs"
+      },
+      "subsumed_by": [
+        "M122",
+        "M104"
+      ],
+      "live_killing_mutant": "joint:M852+M122+M104",
+      "all_paths": "reverify_protected has one caller, derive, which calls it for every counted trial of a protected evaluation and, with no early Ok after it, then runs (a) the any-class loop refusing a trial whose context_observer_ref is not in config.observers() (M122) and (b) the protected loop refusing a trial whose context_signed_by issuer is not in config.observers() (M104). reverify_protected itself refuses unless t.context_observer_ref == Some(who) (M362), where `who` is the observer M852 checks, so on every path a `who` outside config.observers() is also a context_observer_ref outside it (M122); M104 refuses the same trial through its signer attribution",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M852",
+          "M122",
+          "M104"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-fabric"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK"
+        },
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "b73a5cb25b38ccb9c4d0c17e7f221515bb32058ac7c03352d2fea9ad3a54fd31",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-2/debug/axon"
+      }
+    },
+    {
+      "mutation": "M853",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "an ack of another schema never joins an episode",
+      "original_guard": {
+        "file": "crates/axon-loop/src/intake.rs"
+      },
+      "subsumed_by": [
+        "M854"
+      ],
+      "live_killing_mutant": "joint:M853+M854",
+      "all_paths": "check_ack has one caller, intake_episode, which hands it only the text select_ack returns; select_ack passes over every text whose schema is not ACK_SCHEMA (M854), so the text check_ack sees always has that schema",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M853",
+          "M854"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-fabric"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK"
+        },
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "93fa24c1fca29f88fea1d34beaa011d2c505cbb674547441bc80b57d9400c3c4",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-3/debug/axon"
+      }
+    },
+    {
+      "mutation": "M854",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "an ack of another schema never joins an episode",
+      "original_guard": {
+        "file": "crates/axon-loop/src/intake.rs"
+      },
+      "subsumed_by": [
+        "M853"
+      ],
+      "live_killing_mutant": "joint:M853+M854",
+      "all_paths": "select_ack's only caller hands its result to check_ack, which refuses any schema but ACK_SCHEMA (M853) before anything is recorded",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M854",
+          "M853"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-fabric"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK"
+        },
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "aaaad439cbaded7535c571ac4976dc18f2dfd71c1d39fe1aba5fb5c2d81f8e75",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-0/debug/axon"
+      }
+    },
+    {
+      "mutation": "M855",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "an ack over another candidate view never joins an episode",
+      "original_guard": {
+        "file": "crates/axon-loop/src/intake.rs"
+      },
+      "subsumed_by": [
+        "M856"
+      ],
+      "live_killing_mutant": "joint:M855+M856",
+      "all_paths": "check_ack has one caller, intake_episode, which hands it only the text select_ack returns; select_ack passes over every ack whose candidate_set_ref is not the episode's (M856), so the ack check_ack sees always names the episode's view",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M855",
+          "M856"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-fabric"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK"
+        },
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "cb6bac02cab538e19e29c7499951f6bbea09ccc5e2d6b4c09cb01d6f1626c7d8",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-1/debug/axon"
+      }
+    },
+    {
+      "mutation": "M856",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "an ack over another candidate view never joins an episode",
+      "original_guard": {
+        "file": "crates/axon-loop/src/intake.rs"
+      },
+      "subsumed_by": [
+        "M855"
+      ],
+      "live_killing_mutant": "joint:M855+M856",
+      "all_paths": "select_ack's only caller hands its result to check_ack, which refuses an ack whose candidate_set_ref is not the episode's (M855) before anything is recorded",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M856",
+          "M855"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-loop",
+          "axon-fabric"
+        ],
+        "consumer_suites": {
+          "axon-fabric": "SUITE_OK"
+        },
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
+      "edits_sha256": "82e5dc8d85f1492a15317791b0b29a63a7d2a2cb2b203868242b70fd9fad3e57",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-2/debug/axon"
+      }
+    }
+  ],
+  "note": "Joined 4-shard run at aad46c05 (58/59 hold; M418's joint cell and full-suite cell failed on stale tests). M418 and 9 readiness records re-executed at c9647b35 (c9r4/pdfix, test-only) and hold. Records are evidence about the commit each names; a full exact-head run is part of the freeze proof."
+}

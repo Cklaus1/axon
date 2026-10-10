@@ -1,0 +1,45 @@
+{
+  "schema": "axon.review-validation/1",
+  "package_version": "0.21",
+  "scope": "DOCUMENTATION_AND_MODEL_FREE_REFERENCE_ONLY",
+  "baseline": {
+    "validator": "PASS",
+    "unittest_tests_run": 249,
+    "result": "PASS",
+    "source_analyser_selftest_cases": 4,
+    "source_analyser_result": "PASS"
+  },
+  "v021": {
+    "unittest_tests_run": 367,
+    "new_tests_run": 118,
+    "result": "PASS",
+    "elapsed_seconds_reported": "10.306",
+    "command": "python -B -m unittest discover -s tests -v",
+    "log": "review/v021_tests.log",
+    "log_sha256": "a11790c5d8302ea9417e37c7afa8c9638df0e5a40bf980341b90a0a30af4bc2d",
+    "package_validator": "PASS",
+    "specs": 37,
+    "tasks": 255,
+    "proposed_product_gates": 424,
+    "orphan_gates": 0
+  },
+  "source_integrity": {
+    "reviewed_files": 1213,
+    "matched_files": 1213,
+    "changed_files": 0,
+    "source_mutated": false,
+    "planner_report": "review/upgrade_plan_reviewed_source.json"
+  },
+  "not_run": [
+    "Rust compilation and Cargo test suite",
+    "Live CLM/Jev/provider inference",
+    "Model/head/router training",
+    "RRSI harness-evolution experiments",
+    "GPU/latency/quality/cost performance qualification",
+    "Live MiCode peer interoperability",
+    "Product acceptance gates"
+  ],
+  "product_gates_executed": 0,
+  "peer_status": "PROPOSED_CONSUMER_DELTA_ONLY",
+  "note": "The receipt reports executed model-free tests, not runtime implementation or admission. Final package hash validation is stored separately to avoid self-hash cycles."
+}
