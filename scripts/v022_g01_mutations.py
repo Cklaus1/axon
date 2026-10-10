@@ -10945,7 +10945,7 @@ MUTATIONS += [
 MUTATIONS += [
     ('M3450', "EXISTENCE (am121): the parser's end-of-input span is the dummy span (a sole bare fn at byte 0 gets no file)", 'crates/axon-core/src/parser.rs',
      '            Some(last) => Span::with_source(last.end, last.end, self.source),', '            Some(_) => Span::dummy(),',
-     'axon-psv', '--test runner', 'a_sealed_candidate_cannot_read_the_suites_answer'),
+     'axon-core', '--lib', 'parser::tests::an_item_that_ends_the_file_has_a_real_span_in_its_own_file'),
     ('M3451', "EXISTENCE (am121): a whole-struct refinement predicate is resolved at the previous statement's span", 'crates/axon-core/src/resolver.rs',
      '                Item::TypeDef(t) if !t.span.is_dummy() => self.current_span = t.span,\n', '',
      'axon-core', '--lib', 'resolver::tests::a_diagnostic_about_a_sealed_item_names_the_sealed_file_wherever_the_item_sits'),
@@ -11041,6 +11041,22 @@ MUTATIONS += [
      'axon-fabric', '--test observer_service', 'a_record_of_a_live_nonce_survives_another_requests_prune_and_refuses_its_replay'),
 ]
 
+
+# C9 round 15 (amendment 121): M3260 is retired under the four-cell rule against M3456. The
+# candidate's `use` declarations are set aside for the merged check (M3260's guard) AND a merged
+# diagnostic that names no line is handed to the backstop (M3456's guard, `seal_split`): the text a
+# module the operator declares would have shown beside the sealed-only half's is dropped by either.
+EQUIV_RECORD["M3260"] = {
+    "property": "a candidate's `use` of a module the operator declares reads like one of a missing module",
+    "subsumed_by": ["M3456"], "killer": "joint:M3260+M3456",
+    "all_paths": "the only diagnostics a candidate `use` can give the merged check are the resolver's "
+                 "module/name lookups (E0003 and the item lookups of `resolve_use`), and a UseDecl carries "
+                 "no span: every one of them reaches `split_for_view` with line 0 in the entry file, which "
+                 "the merged half hands to the backstop (shown only when the sealed-only half found no "
+                 "error). Both guards are in the one function that splits a `--seal` check, "
+                 "run_check_pipeline_inner, so there is no route to the merged half's output that skips both."}
+EQUIVALENT_DID |= {"M3260"}
+RETIRED = LEGACY_EQUIV | EQUIVALENT_DID | set(STALE_REFACTORED)
 
 if __name__ == "__main__":
     main()

@@ -3581,6 +3581,29 @@ mod tests {
         assert!(matches!(&stmts[0].expr, Expr::Let { name, .. } if name == "x"));
     }
 
+    /// C9 round 15 (amendment 121): an item that ENDS the file has a real span in its
+    /// own file. The end-of-input span used to be the dummy `0..0`, so a bare `fn` at
+    /// byte 0 that is the file's only item was a dummy span, and a diagnostic located
+    /// by it was filed under whichever file was the entry file, at no line.
+    #[test]
+    fn an_item_that_ends_the_file_has_a_real_span_in_its_own_file() {
+        use crate::span::intern_source;
+        let src = "fn only() -> i64 { 1 }";
+        let id = intern_source("/eof-span/f.ax", src);
+        let prog = crate::parse_source_in(src, id).expect("parses");
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        assert!(
+            !f.span.is_dummy() && !f.span.source.is_unknown(),
+            "ATTACK: an item that ends the file got a dummy span: {:?}",
+            f.span
+        );
+        assert_eq!(f.span.source, id, "the span names another file");
+        assert_eq!(f.span.start, 0);
+        assert_eq!(f.span.end, src.len(), "the item ends where the file does");
+    }
+
     #[test]
     fn test_ownership_modes() {
         let prog = parse("fn main(){own x=Vec.new();ref y=&x}");

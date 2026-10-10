@@ -134,6 +134,7 @@ ROWS=(
   # Amendment 121 (round 15): the existence oracle at every placement of the item, the operator-typed value the
   # candidate picked, the closure-helper scan, the observer's prune.
   "am121 a diagnostic about a sealed item names the sealed file wherever the item sits|axon-core|lib|resolver::tests::a_diagnostic_about_a_sealed_item_names_the_sealed_file_wherever_the_item_sits"
+  "am121 an item that ends a file has a real span in its own file|axon-core|lib|parser::tests::an_item_that_ends_the_file_has_a_real_span_in_its_own_file"
   "am121 a spanless merged diagnostic joins the backstop|axon-core|lib|seal_split::tests::a_spanless_merged_diagnostic_is_not_shown_beside_the_sealed_ones"
   "am121 the operator value the candidate picked is never dispatched on (attacks and honest controls)|axon-core|lib|interp::taint_tests::an_operator_value_the_candidate_picked_is_never_dispatched_on"
   "am121 the operator value the candidate picked (runner leg, corroboration)|axon-psv|sealed_frames|an_operator_value_the_candidate_picked_is_refused_through_the_runner"
