@@ -480,6 +480,39 @@ fn native_nesting_limit_unchanged_ax60() {
 }
 
 #[test]
+fn native_guard_borrow_e0606() {
+    // `walk_expr` visits match guards on every target (AX-60), so the borrow
+    // check sees a guard that reads an array lent `&mut` to the same call.
+    // Before, the guard was skipped: the program ran and printed `5 5`.
+    let f = std::env::temp_dir().join(format!("axon_guard_e0606_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn f(a: &mut [i64], k: i64) -> i64 { a[0] = k k }\n\
+         fn main() -> i64 {\n    \
+         let a = [1, 2, 3]\n    \
+         let r = f(&mut a, match 1 { n if a[0] > 0 => 5, _ => 0 })\n    \
+         println(\"{r} {a[0]}\")\n    \
+         0\n}\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "guard borrow must be refused: {stderr}"
+    );
+    assert!(
+        stderr.contains("\"code\":\"E0606\"")
+            && stderr
+                .contains("is borrowed `&mut` and also used by another argument of the same call"),
+        "want E0606: {stderr}"
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "", "nothing runs");
+}
+
+#[test]
 fn wasm_browser_host_await_round_trips_r7c() {
     // R15 §13 B1: host_await works in the BROWSER substrate — a suspending program
     // run by the axon-wasm interpreter gets its replies from an imported (JS)

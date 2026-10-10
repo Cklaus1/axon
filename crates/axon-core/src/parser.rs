@@ -75,8 +75,14 @@ pub fn clear_accepted_mut() {
 /// A string literal's parts. `expr_depth` is the outer parser's
 /// [`MAX_EXPR_DEPTH`] depth at the literal, under which each `{...}` slot is
 /// parsed (AX-60); `too_deep` is set when a slot is refused for nesting, so
-/// the outer root reports it like its own refusal.
-fn parse_fmt_str_raw(raw: &str, expr_depth: usize, too_deep: &mut bool) -> Result<Expr> {
+/// the outer root reports it like its own refusal, and `tall` when a slot's
+/// chain was cut down, so the outer root settles it when it ends.
+fn parse_fmt_str_raw(
+    raw: &str,
+    expr_depth: usize,
+    too_deep: &mut bool,
+    tall: &mut bool,
+) -> Result<Expr> {
     // Fast path: no braces at all.
     if !raw.contains('{') && !raw.contains('}') {
         return Ok(Expr::Literal(Literal::Str(raw.to_string())));
@@ -152,7 +158,7 @@ fn parse_fmt_str_raw(raw: &str, expr_depth: usize, too_deep: &mut bool) -> Resul
                     ParseError::Other("unclosed `{` in interpolated string".into())
                 })?;
                 let inner = after_open[..close].trim();
-                let expr = parse_fmt_inner_expr(inner, expr_depth, too_deep)?;
+                let expr = parse_fmt_inner_expr(inner, expr_depth, too_deep, tall)?;
                 parts.push(FmtPart::Expr(Box::new(expr)));
                 remaining = &after_open[close + 1..];
             }
@@ -187,7 +193,15 @@ fn parse_fmt_str_raw(raw: &str, expr_depth: usize, too_deep: &mut bool) -> Resul
 /// [`MAX_EXPR_DEPTH`] budget with the expression around them instead of each
 /// slot getting a fresh one. A nesting refusal passes through unwrapped, with
 /// `too_deep` set: it is the outer statement's error, not a malformed slot.
-fn parse_fmt_inner_expr(inner: &str, expr_depth: usize, too_deep: &mut bool) -> Result<Expr> {
+/// A chain cut down in the slot is returned with `tall` set, for the outer
+/// root to settle at its end like any other cut, so a syntax error later in
+/// the slot or the root is still reported.
+fn parse_fmt_inner_expr(
+    inner: &str,
+    expr_depth: usize,
+    too_deep: &mut bool,
+    tall: &mut bool,
+) -> Result<Expr> {
     // A slot whose contents don't even TOKENIZE is the same caller error as one
     // with leftover tokens (`"\d{2,4}"` reaches here as the slot `\d,4`), so it
     // gets the same hint. The bare lexer error — `UnexpectedChar { src: "\\" }` —
@@ -206,10 +220,9 @@ fn parse_fmt_inner_expr(inner: &str, expr_depth: usize, too_deep: &mut bool) -> 
     // (`"{x + }"`) reports a bare `Eof` that names neither the string nor the
     // brace that opened the slot.
     // AX-60: the slot's depth starts at the literal's and never returns to
-    // 0, where `nested` settles a cut-down sub-expression, so it is settled
-    // here.
-    let r = sub.parse_expr();
-    let expr = match sub.settle_tall(r) {
+    // 0, where `nested` settles a cut-down sub-expression; the slot's `tall`
+    // passes to the outer parser once the slot is known well-formed.
+    let expr = match sub.parse_expr() {
         Ok(e) => e,
         Err(e) if sub.too_deep => {
             *too_deep = true;
@@ -240,6 +253,7 @@ fn parse_fmt_inner_expr(inner: &str, expr_depth: usize, too_deep: &mut bool) -> 
              double it: `{{{{{inner}}}}}`."
         )));
     }
+    *tall |= sub.tall;
     Ok(expr)
 }
 
@@ -3267,7 +3281,7 @@ impl Parser {
             }
             Some(Token::Str(_)) => {
                 if let Token::Str(s) = self.advance()?.clone() {
-                    parse_fmt_str_raw(&s, self.expr_depth, &mut self.too_deep)
+                    parse_fmt_str_raw(&s, self.expr_depth, &mut self.too_deep, &mut self.tall)
                 } else {
                     unreachable!()
                 }

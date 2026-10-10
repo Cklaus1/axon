@@ -20,11 +20,14 @@
 #         an arm body of 3,000 terms, an or-pattern arm body of 5,000, a
 #         `let` inline-refinement predicate of 600 and 3,000 terms, and 100
 #         parentheses nested in each other's 50-term `*` and `+` chains (no
-#         chain past the limit, 10,000 levels together) — each exits 2 with
-#         E0000 `expression nesting too deep (limit N)` at line 2, col 5,
-#         where its root expression starts. A 100,000-term chain with a
-#         dangling `+`, one in an unclosed call and the nested chains with
-#         their last `)` missing exit 2 with native's syntax error instead.
+#         chain past the limit, 10,000 levels together), and a 1,500-term
+#         chain in a string's `{...}` slot — each exits 2 with E0000
+#         `expression nesting too deep (limit N)` at line 2, col 5, where
+#         its root expression starts. A 100,000-term chain with a dangling
+#         `+`, one in an unclosed call, the nested chains with their last
+#         `)` missing, and a slot chain past the limit in an unclosed call,
+#         before a dangling `+` or before a leftover token in the slot exit 2
+#         with native's syntax error instead.
 #   ax61  `host_await_val` without a host driver: a closure whose body is a
 #         long chain, passed from depths around the finding's (1-130) under
 #         `with` frames, and a 100,000-node list payload exit 101 (`no host
@@ -276,10 +279,13 @@ print(x)
 EOF
   }
   src compound "let x = $(compound 100 50)"
+  # A chain past the limit inside one interpolation slot (1,500 terms: the
+  # debug lexer traps on a string literal of about 11,000 characters).
+  src slot1500 "let s = \"{1$(rep ' + 1' 1500)}\""
   for e in tree vm; do
     for p in paren300 paren5000 chain chain10000 chain30000 chain100000 strchain some_pattern \
       option_type calls blocks interp guard300 guard1000 guard3000 arm3000 or_arm5000 \
-      refine600 refine3000 compound; do
+      refine600 refine3000 compound slot1500; do
       wasm "$e" "$p.ax"
       if [ "$RC" = 2 ] && grep -qF "\"code\":\"E0000\",\"file\":\"$p.ax\",\"line\":2,\"col\":5,\"message\":\"$msg\"" err; then
         echo "  ok  [ax60 $e $p] exit 2, E0000 at 2:5"
@@ -290,18 +296,29 @@ EOF
   done
   # A syntax error after a chain past the limit: the parse goes on past
   # the limit and reports the error native reports (at 4,000 terms), with
-  # no recursion per level in the partial tree it drops.
+  # no recursion per level in the partial tree it drops. A chain cut inside
+  # a slot is settled by the root around the string, so the slot's own
+  # leftover-token error and a later error in that root win as well.
   printf 'fn main() -> i64 {\n    let x = 1%s +\n}\n' "$(rep ' + 1' 100000)" >synerr100000.ax
   src unclosed100000 "let x = to_str(1$(rep ' + 1' 100000)"
   c="$(compound 100 50)"
   src compound_open "let x = ${c%)}"
+  src slot_unclosed "let s = to_str(\"{1$(rep ' + 1' 2000)}\""
+  printf 'fn main() -> i64 {\n    let s = "{1%s}" +\n}\n' "$(rep ' + 1' 1500)" >slot_synerr.ax
+  src slot_leftover "let s = \"{1$(rep ' + 1' 1500) 5}\""
   for e in tree vm; do
     for spec in "synerr100000:3:1:unexpected token: RBrace, expected expression" \
       "unclosed100000:4:1:unexpected token: Int(0), expected RParen" \
-      "compound_open:4:1:unexpected token: Int(0), expected RParen"; do
+      "compound_open:4:1:unexpected token: Int(0), expected RParen" \
+      "slot_unclosed:4:1:unexpected token: Int(0), expected RParen" \
+      "slot_synerr:3:1:unexpected token: RBrace, expected expression" \
+      "slot_leftover:3:5:unexpected Int(5) after the interpolated expression"; do
       IFS=: read -r p line col want <<<"$spec"
       wasm "$e" "$p.ax"
-      if [ "$RC" = 2 ] && grep -qF "\"code\":\"E0000\",\"file\":\"$p.ax\",\"line\":$line,\"col\":$col,\"message\":\"$want\"" err; then
+      # The leftover error quotes the slot, so `want` is matched anywhere
+      # in the message.
+      if [ "$RC" = 2 ] && grep -qF "\"code\":\"E0000\",\"file\":\"$p.ax\",\"line\":$line,\"col\":$col,\"message\":\"" err &&
+        grep -qF "$want" err; then
         echo "  ok  [ax60 $e $p] exit 2, '$want' at $line:$col"
       else
         fail "ax60 $e $p" "exit $RC (want exit 2, E0000 '$want' at line $line, col $col)"
