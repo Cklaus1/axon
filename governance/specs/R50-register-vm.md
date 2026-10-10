@@ -36,7 +36,8 @@ Revision 27 (2026-10-10; §15 "Revision 27") adds S10 (array elements in pure lo
 pure-`i64` function tier) and S12 (compilebench AX-59/AX-60/AX-61 wasm32 traps), each prototyped
 and measured first; they are Draft until an adversarial review passes them. Revision 28 answers the
 twenty-fourth review of them (2 blockers, 6 must-fix, nits; §15 "Revision 28"); revision 29 answers
-the twenty-fifth (3 blockers, 2 must-fix, 4 nits; §15 "Revision 29"); a twenty-sixth review is
+the twenty-fifth (3 blockers, 2 must-fix, 4 nits; §15 "Revision 29"); revision 30 answers the
+twenty-sixth (3 must-fix, 1 nit; §15 "Revision 30"); a twenty-seventh review is
 pending.
 **Risk class:** Structural (a second execution path for the reference engine)
 **Author / date:** 2026-10-09, from compilebench AX-18 (interpreter cost) after AX-53..AX-55.
@@ -776,10 +777,15 @@ none, in both profiles; the whole suite under the S9 modes.
 dropping a deeply nested value (compilebench AX-59), the front end on deep source (AX-60) and the
 closure-body copy in `host_await_val` (AX-61). Under wasmtime's default stack each ends in `wasm trap:
 call stack exhausted` (exit 134) instead of a panic or a diagnostic. S12 removes the three traps on
-wasm32; natively it changes one path, the parser's string-interpolation slots, which now parse from
-the enclosing literal's `expr_depth` (so a slot shares native's 4,000 limit with its literal) and
-report a refusal inside a slot unwrapped. Native costs are unchanged, and the reference semantics are
-unchanged on both targets, except that wasm32 refuses source deeper than its nesting limit (below).
+wasm32. Natively it changes two paths. First, the parser's string-interpolation slots now parse from
+the enclosing literal's `expr_depth`, so a slot shares native's 4,000 limit with its literal, and a
+refusal inside a slot is reported unwrapped. Second, `ast::children` now yields a `match` arm's guard,
+so on both targets every `walk_expr` pass sees guards: a guard that reads an argument borrowed
+`&mut` in the same call is E0606 (it ran before), W0002 names the self-referencing `let x = match
+.. { n if x > 0 => .. }` form, and capability checks see calls in guards (CHANGELOG; cli test
+`native_guard_borrow_e0606`). Native costs are unchanged. Apart from these two changes, the
+reference semantics are unchanged on both targets, except that wasm32 refuses source deeper than
+its nesting limit (below).
 
 - **Drop (AX-59).** Any container can sit on a data cycle that grows without bound: the checker
   does not keep values shallow (below), so every container that holds a `Value` drops through the
@@ -818,8 +824,12 @@ unchanged on both targets, except that wasm32 refuses source deeper than its nes
   which can be deep from shallow
   source (`let a{i} = [a{i-1}]` repeated); that is out of scope (compilebench AX-63). Past the limit
   the parse fails with E0000 `expression nesting too deep (limit 224)` at the start of the enclosing
-  statement (for `let s = ((...` the `let`), exit 2; a syntax error later in the same source wins and
-  is reported as natively (for example a 100,000-term chain ending in a dangling `+`). Source that ran
+  statement (for `let s = ((...` the `let`), exit 2. A syntax error later in the same root expression,
+  after an operator or postfix chain was cut while it was built (in an interpolation slot as well),
+  wins and is reported as natively, for example a 100,000-term chain ending in a dangling `+`.
+  Other refusals are reported as E0000 at the root's start even when native would report a later
+  syntax error. These are a refusal for parenthesis, block, pattern, type or `else if` depth, and
+  any refusal followed by an error in a later statement. Source that ran
   on wasm32 between the limit and its old trap point (in release, for example, a 224-819-term `+`
   chain) is now refused; the CHANGELOG states the limit.
 - **`host_await_val` (AX-61).** Both wasm32 `host_await_yield` drivers take only a `Str` request, so a
@@ -832,16 +842,22 @@ Out of scope, all recursing once per data level outside the budget and listed in
 `wasm_stack_budget.py`'s `ALLOW` list: structural `==` and formatting of deep values (`values_equal`,
 `display`) and cloning a deep value (`Value::clone`; a `Some`/`Ok` chain read back through `dict_get`
 is cloned per step and completes about 2,700 levels in debug and 4,000 in release), all compilebench
-AX-62; and the checker's recursion over deep inferred types (AX-63).
+AX-62; and the checker's recursion over deep inferred types (AX-63). Also out of scope, and not a
+recursion in Axon's code: on the debug wasm32 build only, the logos-generated lexer recurses once per
+character of a string literal or block comment, so a string of about 11,000 characters or a
+50,000-character `/* */` comment exits 134 (release and native run them; compilebench AX-65,
+which predates S12). This bounds the slot-chain probes, which stay below it.
 
 Gate: red tests `wasm_drops_deep_values_ax59`, `wasm_deep_source_gives_e0000_ax60`,
-`native_nesting_limit_unchanged_ax60` and `wasm_host_await_val_no_copy_ax61` (§8), with
+`native_nesting_limit_unchanged_ax60`, `native_guard_borrow_e0606` and
+`wasm_host_await_val_no_copy_ax61` (§8), with
 `wasm_nesting_parity.sh ax59` covering enum, dict, closure, array, tuple, option and result chains
 and `ax60` nested interpolation slots (each slot parses from the enclosing literal's depth), `+`
 chains of 10,000, 30,000 and 100,000 terms, match guards of 300, 1,000 and 3,000 terms, a 3,000-term
 arm body, a 5,000-term or-pattern arm body, inline-refinement predicates of 600 and 3,000 terms and
-compound chains (each E0000, exit 2), and 100,000-term chains followed by a syntax error (native's
-syntax error, exit 2); nest
+compound chains (each E0000, exit 2), 100,000-term chains followed by a syntax error, and slot chains
+of 1,500 and 2,000 terms followed by a missing `)`, a dangling `+` or a stray token in the slot
+(native's syntax error and position, exit 2); nest
 probes `tests/fixtures/vm_depth/nest/{drop_list,drop_dict,drop_closure,drop_array,drop_tuple,drop_option,drop_result,host_await_closure,front_interp,front_arm,front_guard,front_or_arm,front_refine}.ax`
 and the front-end probes in `vm_wasm_depth.sh`, which never exit 134 in either profile or engine,
 and each front probe reaches a depth above 0 (the script fails a reach of 0)
@@ -1033,7 +1049,8 @@ against the same frames, and the tree-walker is the reference for both.
     `0 loops`);
   - S11 `vm_purefn_fib_in_registers` (`vm: purefn fib 8 ins`; no `vm: purefn` line before S11);
   - S12 `wasm_drops_deep_values_ax59`, `wasm_deep_source_gives_e0000_ax60` and
-    `wasm_host_await_val_no_copy_ax61` (each traps, exit 134, on wasm32 before S12).
+    `wasm_host_await_val_no_copy_ax61` (each traps, exit 134, on wasm32 before S12), and
+    `native_guard_borrow_e0606` (exit 0, prints `5 5`, natively before S12's guard walk).
 
 Every `tests/fixtures/` path in this spec is under `crates/axon-core/`.
 
@@ -1211,7 +1228,7 @@ the reference code, gaps cost speed, never correctness.
 | R50.S9 deferred compile (§4 S9); `AXON_VM_EAGER`; `vm: defer` trace line | R50.S6, R50.S8 | `cli_run vm_defer_` + `cli_run vm_` (eager and default legs) + whole suite with `AXON_ENGINE` unset, `tree` and `vm` + `AXON_VM_EAGER=1` + `vm_parity.sh` (S9 list; eager and default runs) + `vm_perf_gate.sh` (all five) + `--repros` (every row) + `--compile` + `reference_gate.sh` + `vm_wasm_depth.sh --require-default-stack` + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` under the same three | `db2d2eee` |
 | R50.S10 array elements in pure loops (§4 S10); `PureFor`; `sieve.ax` and its `--programs` row; never-taken `if` in the repro bases made impure | R50.S9 | `cli_run vm_index_` (incl. `vm_index_sieve_loops`) + `vm_perf_gate.sh` (all six) + `--repros` (every row) + `vm_parity.sh` + `vm_wasm_depth.sh --require-default-stack` + whole suite under the S9 modes | code `944fe056`, which fails `vm_wasm_depth.sh` (`wasm_stack_budget.py`: `pure_stmts`/`pure_if` recursion not in `ALLOW`, `COMPILE_STMT` 16 bytes short in release); fixed with S11 |
 | R50.S11 pure-`i64` function tier (§4 S11); `vm: purefn` trace line; fib-recursive budget a third of CPython's | R50.S10 | `cli_run vm_purefn_` (incl. `vm_purefn_fib_in_registers`) + `purefn_build_validates` + `vm_perf_gate.sh` (all six; `REF` check: others at most 0.5 % above S10) + `--repros` (every row) + `vm_parity.sh` + `vm_wasm_depth.sh --require-default-stack` (`plain` on the tier, `plain_generic` off it) + whole suite under the S9 modes | code `2627dad7`; review fixes `faf25a22`, `e5f754ab` |
-| R50.S12 wasm32 traps (§4 S12): bounded drop of every `Value` container, front-end nesting limit 224 (interpolation slots included), no payload copy for `host_await_val`; `DictMap`/`Elems`/`VBox`/`Queue`/`Held`; nest probes; two `wasm_stack_budget.py` checks | R50.S10 | `cli_run wasm_drops_deep_values_ax59`, `wasm_deep_source_gives_e0000_ax60`, `native_nesting_limit_unchanged_ax60`, `wasm_host_await_val_no_copy_ax61` + `vm_wasm_depth.sh --require-default-stack` (debug and release; no probe exits 134) + `wasm_stack_budget.py` + native `instructions:u` within 0.5 % + whole suite under the S9 modes | code `a9c89e5e`, merged `e0f29182`; review fixes `91b13427`, `c33f521b`, `e5f754ab` |
+| R50.S12 wasm32 traps (§4 S12): bounded drop of every `Value` container, front-end nesting limit 224 (interpolation slots included), no payload copy for `host_await_val`; `DictMap`/`Elems`/`VBox`/`Queue`/`Held`; nest probes; two `wasm_stack_budget.py` checks | R50.S10 | `cli_run wasm_drops_deep_values_ax59`, `wasm_deep_source_gives_e0000_ax60`, `native_nesting_limit_unchanged_ax60`, `wasm_host_await_val_no_copy_ax61` + `vm_wasm_depth.sh --require-default-stack` (debug and release; no probe exits 134) + `wasm_stack_budget.py` + native `instructions:u` within 0.5 % + whole suite under the S9 modes | code `a9c89e5e`, merged `e0f29182`; review fixes `91b13427`, `c33f521b`, `e5f754ab`, `fcd18f2b` |
 
 ### 14. Evidence ledger
 
@@ -1611,3 +1628,15 @@ calls it bare) and `e5f754ab`.
 | [nit] §4 S12 said native code paths are unchanged; §9 forbade the exit 2 the front probes need | §4 S12 names the native interpolation-slot change; §9: no nest probe exits 134, every front probe exits 0 or 2 with E0000 and reaches above 0 |
 | [nit] S11 tests that cannot fail: `uncertain` case disqualified by a builtin; no `\|\|` case; the `plain`/`plain_generic` tier split unchecked; one-op wording | Builtin-free `uncertain` body (removing the check at purefn.rs:173 fails it); `\|\|` case; `vm_wasm_depth.sh` asserts the `vm: purefn` line for `plain` and its absence for `plain_generic`; §4 S11 says a one-op body whose op is a call takes a generic frame |
 | [nit] `FOp::Call.t` patched and validated but never read | The patch and validation are removed for `Call`; the doc names the ops that read `t` |
+
+Revision 30 (2026-10-10) answers the twenty-sixth review (`reviewer`, verdict "incorrect": 0
+blockers, 3 must-fix, 1 nit). It found no wasm32 trap left in the parser, and confirmed that S11's
+Qualifying list matches `pure_shape` and that the parser budget figures hold. The code fix is
+`fcd18f2b`.
+
+| Finding | Resolution |
+|---|---|
+| [must-fix] S12: an interpolation slot settled its own chain cut, so E0000 beat a later syntax error (missing `)`, dangling `+`, stray token in the slot) | The slot runs its leftover check and then passes its `tall` flag to the outer parser, which settles at the root's end. All three shapes now give native's error and position on wasm32 debug and release under both engines (4:1, 3:1, 3:5); they are added to `wasm_nesting_parity.sh ax60`, next to a 1,500-term slot chain that still gives E0000 |
+| [must-fix] S12: "a syntax error later in the same source wins" overclaimed | §4 S12 limits it to an error later in the same root after an operator or postfix cut (slots included). Parenthesis, block, pattern, type or `else if` refusals, and a refusal followed by an error in a later statement, are reported as E0000 at the root's start |
+| [must-fix] S12: walking match guards changes native output (E0606 on a guard reading a `&mut`-borrowed argument, W0002 wording, capability checks), but §4 said native changes only in slots | §4 S12 names both native changes; red test `native_guard_borrow_e0606` (§8; exit 0 `5 5` before, E0606 exit 2 after); CHANGELOG states it |
+| [nit] debug-wasm32 lexer traps on long string literals (about 11,000 characters) and block comments (50,000) were not listed out of scope | Listed in §4 S12's out-of-scope paragraph; filed as compilebench AX-65 (pre-existing, logos per-character recursion, debug only) |
