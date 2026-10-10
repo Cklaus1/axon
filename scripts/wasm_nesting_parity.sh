@@ -14,7 +14,8 @@
 #   ax60  source nested past the wasm32 limit (parser.rs `MAX_EXPR_DEPTH`):
 #         parentheses 300 and 5,000 deep, `+` chains of 1,000, 10,000,
 #         30,000 and 100,000 terms, a 1,000-term string chain, a nested
-#         `Some` pattern, an `Option<` type, nested calls and blocks, three
+#         `Some` pattern, an `Option<` type, a parenthesised, a tuple and a
+#         `&` type 100,000 deep, nested calls and blocks, three
 #         string literals nested in each other's `{...}` slot with 110
 #         parentheses in each, a match guard of 300, 1,000 and 3,000 terms,
 #         an arm body of 3,000 terms, an or-pattern arm body of 5,000, a
@@ -31,16 +32,20 @@
 #         with native's syntax error instead. A `type` definition whose base
 #         type (an `Option<` 300 deep, with and without `where`, or a tuple
 #         element's `where` predicate in 300 parentheses) is too deep exits 2
-#         with the same E0000 on line 1, where the refusal happens; so do an
+#         with the same E0000 on line 1, where the refusal happens (native
+#         keeps its rewind: `ok`, the enum parse's syntax error at 1:16,
+#         `ok`); so do an
 #         attribute argument's `[` and `-` 300 deep and a top-level handler
 #         definition's `on` pattern 300 `Some(` deep (where each trips), a
 #         600-term chain in a tuple element's `where` in a `type`
 #         definition and in a fn parameter (at the token after that type),
 #         and, at their own first token, the `where` predicate of a `type`
-#         definition and of a fn parameter's type, and a `@[verify(..)]`
-#         predicate, each 300 parentheses deep, and a top-level handler
-#         definition's 600-term arm body. Native runs these nine: exit 0,
-#         `ok`.
+#         definition, of a struct field, of a struct after its `}`, of a fn
+#         parameter's type and of a trait method parameter's type, a
+#         `@[verify(..)]` predicate and a top-level `let`'s value, each 300
+#         parentheses deep, a struct field's 600-term predicate and a
+#         top-level handler definition's 600-term arm body. Native runs
+#         these fourteen: exit 0, `ok`.
 #   ax61  `host_await_val` without a host driver: a closure whose body is a
 #         long chain, passed from depths around the finding's (1-130) under
 #         `with` frames, and a 100,000-node list payload exit 101 (`no host
@@ -284,6 +289,12 @@ ax60)
   src strchain "let x = \"a\"$(rep ' + "a"' 999)"
   src some_pattern "let x = match 1 { $(rep 'Some(' 300)y$(rep ')' 300) => 1, _ => 0 }"
   src option_type "let x: $(rep 'Option<' 300)i64$(rep '>' 300) = None"
+  # Each other construct parse_type_atom charges, 100,000 deep: a
+  # parenthesised type, a tuple type and a `&` type (`rep` cannot repeat
+  # `&`: bash's pattern substitution reads it as the matched text).
+  src paren_type "let x: $(rep '(' 100000)i64$(rep ')' 100000) = 1"
+  src tuple_type "let x: $(rep '(i64, ' 100000)i64$(rep ')' 100000) = 1"
+  src ref_type "let x: $(python3 -c 'print("& " * 100000, end="")')i64 = 1"
   src calls "let x = $(rep 'f(' 300)1$(rep ')' 300)"
   src blocks "let x = $(rep '{ ' 300)1$(rep ' }' 300)"
   # Each slot is parsed by a parser of its own: three slots of 110 each
@@ -320,8 +331,8 @@ EOF
   src slot1500 "let s = \"{1$(rep ' + 1' 1500)}\""
   for e in "${RUNS[@]}"; do
     for p in paren300 paren5000 chain chain10000 chain30000 chain100000 strchain some_pattern \
-      option_type calls blocks interp guard300 guard1000 guard3000 arm3000 or_arm5000 \
-      refine600 refine3000 refine_paren300 compound slot1500; do
+      option_type paren_type tuple_type ref_type calls blocks interp guard300 guard1000 guard3000 \
+      arm3000 or_arm5000 refine600 refine3000 refine_paren300 compound slot1500; do
       wasm "$e" "$p.ax"
       if [ "$RC" = 2 ] && grep -qF "\"code\":\"E0000\",\"file\":\"$p.ax\",\"line\":2,\"col\":5,\"message\":\"$msg\"" err; then
         echo "  ok  [ax60 $e $p] exit 2, E0000 at 2:5"
@@ -366,7 +377,8 @@ EOF
   # not taken for an enum and is reported where it happens, as in a fn
   # signature — at the first `Option` past the limit, or the parenthesis
   # past it in a tuple element's `where` predicate. Native parses the first
-  # and third (`ok`) and reports a syntax error at 1:16 for the second.
+  # and third (`ok`) and reports a syntax error at 1:16 for the second (the
+  # enum parse it rewinds to; checked below).
   tdef() { printf 'type P = %s\nfn main() -> i64 { println("ok") 0 }\n' "$2" >"$1.ax"; }
   tdef tdef_where "$(rep 'Option<' 300)i64$(rep '>' 300) where true"
   tdef tdef_enum "$(rep 'Option<' 300)i64$(rep '>' 300)"
@@ -383,6 +395,27 @@ EOF
       fi
     done
   done
+  # Native keeps the rewind: the same three files run (`ok`) or fail with
+  # the enum parse's syntax error, not a nesting refusal.
+  for spec in "tdef_where:ok" "tdef_enum:1:16:unexpected token: Lt, expected item (fn/type/enum/mod/use/trait/impl/let)" \
+    "tdef_tuple_pred:ok"; do
+    IFS=: read -r p line col want <<<"$spec"
+    for engine in tree vm; do
+      (ulimit -s 65536 && AXON_ENGINE=$engine exec "$INTERP" run "$p.ax") </dev/null >out 2>err
+      RC=$?
+      if [ "$line" = ok ]; then
+        if [ "$RC" = 0 ] && [ "$(cat out)" = ok ]; then
+          echo "  ok  [ax60 native/$engine $p] exit 0, ok"
+        else
+          fail "ax60 native/$engine $p" "exit $RC (want exit 0, ok)"
+        fi
+      elif [ "$RC" = 2 ] && grep -qF "\"code\":\"E0000\",\"file\":\"$p.ax\",\"line\":$line,\"col\":$col,\"message\":\"$want\"}" err; then
+        echo "  ok  [ax60 native/$engine $p] exit 2, '$want' at $line:$col"
+      else
+        fail "ax60 native/$engine $p" "exit $RC (want exit 2, E0000 '$want' at line $line, col $col)"
+      fi
+    done
+  done
   # Source the parser reads outside any root expression is refused at the
   # level where it trips: an attribute argument's `[` or `-` 300 deep (at
   # the one past the limit), a top-level handler definition's `on` pattern
@@ -390,11 +423,14 @@ EOF
   # expression (a `type` definition, a fn parameter) is refused at the
   # token after the outermost type that holds it. An expression the parser
   # starts outside every charged level is a root of its own, refused at its
-  # first token: the `where` predicate of a `type` definition or of an
-  # unwrapped fn parameter type, a `@[verify(..)]` predicate (each 300
-  # parentheses deep), a top-level handler definition's arm body (a
-  # 600-term chain). The native interpreter (axon-run, which prints no
-  # warnings) runs each: `ok`, exit 0. It runs on a 64 MiB main-thread
+  # first token: the `where` predicate of a `type` definition (after a base
+  # type or after a struct's `}`), of a struct field's type, of an
+  # unwrapped fn parameter type and of a trait method's parameter type, a
+  # `@[verify(..)]` predicate and a top-level `let`'s value (each 300
+  # parentheses deep), a struct field's predicate as a 600-term chain, and
+  # a top-level handler definition's arm body (a 600-term chain). The
+  # native interpreter (axon-run, which prints no warnings) runs each:
+  # `ok`, exit 0. It runs on a 64 MiB main-thread
   # stack: axon-run parses on the main thread, whose default 8 MiB a debug
   # build overflows at about 200 parentheses (a release build at about
   # 2,000), short of native's `MAX_EXPR_DEPTH` of 4,000, which is sized for
@@ -410,9 +446,14 @@ EOF
   top tdef_pred "type P = i64 where $pred"
   top fn_pred "fn f(x: i64 where $pred) -> i64 { 0 }"
   top verify_pred "@[verify($pred)]"
+  top toplet_pred "let X = $pred"
+  top field_pred "type S = { v: i64 where $pred }"
+  top field_chain "type S = { v: i64 where 1$(rep ' + 1' 599) > 0 }"
+  top struct_pred "type S = { v: i64 } where $pred"
+  top trait_param_pred "trait T { fn m(x: i64 where $pred) -> i64 }"
   top handler_body "handler H = handler { on Net(x) => 1$(rep ' + 1' 599) }"
   for p in attr_bracket attr_neg handler_pat tdef_chain fn_param_chain tdef_pred fn_pred verify_pred \
-    handler_body; do
+    toplet_pred field_pred field_chain struct_pred trait_param_pred handler_body; do
     for engine in tree vm; do
       (ulimit -s 65536 && AXON_ENGINE=$engine exec "$INTERP" run "$p.ax") </dev/null >out 2>err
       RC=$?
@@ -427,6 +468,7 @@ EOF
     for spec in "attr_bracket:$((10 + LIMIT))" "attr_neg:$((10 + LIMIT))" \
       "handler_pat:$((30 + 5 * LIMIT))" "tdef_chain:$((9 + ${#ty} + 2))" \
       "fn_param_chain:$((8 + ${#ty} + 1))" "tdef_pred:20" "fn_pred:19" "verify_pred:10" \
+      "toplet_pred:9" "field_pred:25" "field_chain:25" "struct_pred:27" "trait_param_pred:29" \
       "handler_body:36"; do
       IFS=: read -r p col <<<"$spec"
       wasm "$e" "$p.ax"

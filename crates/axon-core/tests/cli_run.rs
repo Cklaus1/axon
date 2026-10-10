@@ -398,7 +398,11 @@ fn wasm_nesting_parity(case: &str) {
 fn native_nesting_limit_unchanged_ax60() {
     // AX-60 lowered the nesting limit on wasm32 only. Native keeps 4,000:
     // source nested 300 deep and a 1,000-term chain run, and 5,000 nested
-    // parentheses are refused with the 4,000 limit, not 224.
+    // parentheses are refused with the 4,000 limit, not 224. And native
+    // keeps `parse_type_def`'s rewind: a `type` base past the limit (an
+    // `Option<` 5,000 deep around a tuple element whose `where` predicate is
+    // 5,000 parentheses deep, so native's limit trips in it) is reparsed as
+    // an enum, giving that parse's syntax error, not the nesting refusal.
     let dir = std::env::temp_dir().join(format!("axon_native_nest_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let run = |name: &str, line: String| {
@@ -475,6 +479,29 @@ fn native_nesting_limit_unchanged_ax60() {
     assert!(
         stderr.contains("expression nesting too deep (limit 4000)"),
         "native keeps its 4,000 limit: {stderr}"
+    );
+    let f = dir.join("tdef_rewind.ax");
+    std::fs::write(
+        &f,
+        format!(
+            "type P = {}(i64 where {}){}\nfn main() -> i64 {{ println(\"ok\") 0 }}\n",
+            "Option<".repeat(5000),
+            nest("(", "1", ")", 5000),
+            ">".repeat(5000)
+        ),
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "native rejects the rewound enum parse: {stderr}"
+    );
+    assert!(
+        stderr.contains("\"line\":1,\"col\":16,\"message\":\"unexpected token: Lt, expected item")
+            && !stderr.contains("expression nesting too deep"),
+        "native rewinds a too-deep `type` base to the enum parse: {stderr}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

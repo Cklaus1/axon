@@ -43,7 +43,12 @@ This script checks exactly that on the build under test:
   method (generic instances and closures included) must be a component of
   direct calls already, the one through the charged `parse_expr` among
   them: a recursion through `nested`'s fn pointer or a `dyn` helper would
-  otherwise leave nothing to measure.
+  otherwise leave nothing to measure. A charged call and an uncharged one
+  are the same direct edge (`nested` is inlined), so parser.rs is checked
+  too: each `(None, X)` charge's `fn X` reaches `X_inner` only through
+  `self.nested(Self::X_inner)` under no condition but a bare `NEST_ALL`
+  (the native arm aside), no other code names `X_inner`, and a function an
+  `(r, e)` charge names calls `e` uncharged only in that native arm.
 
 It fails when a `nest_cost` constant is not charged by exactly one guard
 site in the function it is named after, when indirect calls widen a checked
@@ -52,7 +57,8 @@ sees), when a constant is smaller than the guarded function's frame plus the
 deepest unguarded chain it can call, when a recursion reachable from `eval`
 is neither checked nor in ALLOW, when a cycle of `Value` drop glue avoids
 `drop_bounded`, when indirect calls widen a parser recursion or the charged
-`parse_expr` is in none, or when a recursion reachable from
+`parse_expr` is in none, when parser.rs lets a charged callee run without
+its `nested` on wasm32, or when a recursion reachable from
 `parse_program` with no charged call holds a parser method or is not in
 ALLOW. Exit 0 ok, 1 failure, 2 bad input.
 """
@@ -147,6 +153,144 @@ def parser_fn(s):
     if m.group(1).startswith("NvM") and re.fullmatch(r"(?:B\w*_)?", rest):
         return n
     return n + ("::{closure}" if m.group(1).startswith("NC") else "::<..>")
+
+
+def rust_code(src):
+    """`src` with comments, string and char literals blanked (same length,
+    newlines kept), so braces and names in them are not code."""
+    pat = re.compile(r'//[^\n]*|/\*.*?\*/|\bb?r(#*)"|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\\n])\'', re.S)
+    out, i = [], 0
+    while m := pat.search(src, i):
+        end = m.end()
+        if m.group(1) is not None:
+            # A raw string r#".."#: blank up to its closing quote.
+            end = src.find('"' + m.group(1), m.end())
+            end = len(src) if end < 0 else end + 1 + len(m.group(1))
+        out.append(src[i:m.start()])
+        out.append(re.sub(r"[^\n]", " ", src[m.start():end]))
+        i = end
+    out.append(src[i:])
+    return "".join(out)
+
+
+def fn_bodies(code):
+    """name -> [(start, end)] of each `fn name` body in `code` (rust_code
+    output), from its `{` to its matching `}` inclusive."""
+    spans = defaultdict(list)
+    for m in re.finditer(r"\bfn\s+(\w+)", code):
+        brace, semi = code.find("{", m.end()), code.find(";", m.end())
+        if brace < 0 or 0 <= semi < brace:
+            continue
+        depth = 0
+        for k in range(brace, len(code)):
+            depth += {"{": 1, "}": -1}.get(code[k], 0)
+            if depth == 0:
+                spans[m.group(1)].append((brace, k + 1))
+                break
+    return spans
+
+
+def block_stacks(body, offsets):
+    """For each offset in `body` (one fn body, rust_code output, from its
+    `{`), the headers of the blocks enclosing it inside the fn, outermost
+    first. A header is the code between the previous `{`, `}` or `;` and
+    the block's `{`, whitespace collapsed; an `else` block's header is
+    `else` + ` of ` + the header of the `if` block it follows."""
+    want, res = sorted(set(offsets)), {}
+    stack, closed, last, wi = [], None, 0, 0
+    for k, c in enumerate(body):
+        while wi < len(want) and want[wi] <= k:
+            res[want[wi]] = tuple(stack[1:])
+            wi += 1
+        if c not in "{};":
+            continue
+        if c == "{":
+            head = " ".join(body[last:k].split())
+            stack.append(f"else of {closed}" if head == "else" and closed is not None else head)
+        elif c == "}" and stack:
+            closed = stack.pop()
+        last = k + 1
+    for k in want[wi:]:
+        res[k] = ()
+    return res
+
+
+def stmt_prefix(body, k):
+    """The code of `body` between the previous `{`, `}` or `;` and offset k."""
+    j = max(body.rfind(c, 0, k) for c in "{};")
+    return " ".join(body[j + 1:k].split())
+
+
+# The block headers under which a charge-site function may call its callee
+# directly: the native arm of a bare `NEST_ALL` test.
+NATIVE_ARM = {"if !NEST_ALL", "else of if NEST_ALL"}
+
+
+def charge_site_faults(src, charges):
+    """The ways parser.rs (`src`) lets a PARSER_CHARGES entry's callee run
+    without its `nested` charge on wasm32. A `(None, X)` entry credits every
+    call of `X`, so in `fn X` each reference to `X_inner` must be either
+    `self.nested(Self::X_inner)` as a whole statement (or `let v =` /
+    `return` of one) under no block but a bare `if NEST_ALL`, or a direct
+    `self.X_inner()` in the native arm of a bare `NEST_ALL` test; parser.rs
+    may name `X_inner` nowhere else but its definition. An `(r, e)` entry
+    credits only the `nested` site, so a function matching `r` may call
+    `self.e(` (or name `Self::e` outside `self.nested(..)`) only in such a
+    native arm."""
+    code = rust_code(src)
+    bodies = fn_bodies(code)
+    faults = []
+
+    def where(k):
+        return f"parser.rs:{code.count(chr(10), 0, k) + 1}"
+
+    for r, e in charges:
+        if r is None:
+            inner = f"{e}_inner"
+            spans = bodies.get(e, [])
+            if len(spans) != 1:
+                faults.append(f"({r}, {e}): {len(spans)} `fn {e}` bodies in parser.rs, expected 1")
+                continue
+            s0, s1 = spans[0]
+            body = code[s0:s1]
+            refs = list(re.finditer(rf"\b{inner}\b", body))
+            stacks = block_stacks(body, [m.start() for m in refs])
+            for m in refs:
+                k, st = m.start(), stacks[m.start()]
+                via = re.search(r"self\s*\.\s*nested\s*\(\s*Self\s*::\s*$", body[max(0, k - 40):k])
+                bare = re.search(r"self\s*\.\s*$", body[max(0, k - 16):k])
+                if via:
+                    ok = (re.match(r"\s*\)", body[m.end():])
+                          and all(h == "if NEST_ALL" for h in st)
+                          and re.fullmatch(r"(?:let \w+ =|return)?", stmt_prefix(body, k - len(via.group()))))
+                    what = f"`self.nested(Self::{inner})` under {list(st) or 'no block'}"
+                elif bare and re.match(r"\s*\(", body[m.end():]):
+                    ok = (len(st) == 1 and st[0] in NATIVE_ARM
+                          and re.fullmatch(r"(?:return)?", stmt_prefix(body, k - len(bare.group()))))
+                    what = f"direct `self.{inner}()` under {list(st) or 'no block'}"
+                else:
+                    ok, what = False, f"reference to `{inner}`"
+                if not ok:
+                    faults.append(f"({r}, {e}): {what} at {where(s0 + k)}")
+            for m in re.finditer(rf"\b{inner}\b", code):
+                if not (s0 <= m.start() < s1 or re.search(r"\bfn\s+$", code[max(0, m.start() - 16):m.start()])):
+                    faults.append(f"({r}, {e}): `{inner}` named outside `fn {e}` at {where(m.start())}")
+        else:
+            for name, spans in bodies.items():
+                if not re.fullmatch(r, name):
+                    continue
+                for s0, s1 in spans:
+                    body = code[s0:s1]
+                    refs = [m for m in re.finditer(rf"\bself\s*\.\s*{e}\s*\(|\bSelf\s*::\s*{e}\b", body)
+                            if not (m.group().startswith("Self")
+                                    and re.search(r"self\s*\.\s*nested\s*\(\s*$", body[max(0, m.start() - 24):m.start()]))]
+                    stacks = block_stacks(body, [m.start() for m in refs])
+                    for m in refs:
+                        st = stacks[m.start()]
+                        if not (st and st[-1] in NATIVE_ARM):
+                            faults.append(f"({r}, {e}): uncharged `{' '.join(m.group().split())}` in `fn {name}` "
+                                          f"under {list(st) or 'no block'} at {where(s0 + m.start())}")
+    return faults
 
 
 def find_cycle(nodes, calls):
@@ -592,7 +736,10 @@ def main() -> int:
     # A PARSER_CHARGES entry counts only if parser.rs really charges it:
     # `fn <e>` runs `self.nested(Self::<e>_inner)` (a `None` caller), or a
     # function the caller pattern names runs `self.nested(Self::<e>)`. And
-    # every `nested` site has its entry.
+    # every `nested` site has its entry. The disassembly cannot tell a
+    # charged call from an uncharged one (`nested` is inlined, so both are
+    # the same direct edge), so charge_site_faults also checks in the source
+    # that no wasm32 path reaches a charged callee without its `nested`.
     psites, enclosing = set(), None
     for line in parser_src.splitlines():
         m = fn_re.match(line)
@@ -618,6 +765,9 @@ def main() -> int:
         if not any(site_of(r, e, sr, se) for r, e in PARSER_CHARGES):
             bad += 1
             print(f"wasm_stack_budget: {profile:<7} FAIL `nested` site ({sr}, {se}) in parser.rs not in PARSER_CHARGES")
+    for fault in charge_site_faults(parser_src, PARSER_CHARGES):
+        bad += 1
+        print(f"wasm_stack_budget: {profile:<7} FAIL parser charge {fault}")
 
     def charged(f, g):
         callee = pname.get(g)
