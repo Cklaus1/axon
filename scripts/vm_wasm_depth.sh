@@ -10,8 +10,10 @@
 #     by default), which is reached first.
 #
 # The script builds `axon-run` for wasm32-wasip1 in BOTH profiles (debug and
-# release) from the working tree under test, and runs the four chain programs in
-# crates/axon-core/tests/fixtures/vm_depth/ (plain, closure, mut, with). Each
+# release) from the working tree under test, and runs the five chain programs in
+# crates/axon-core/tests/fixtures/vm_depth/ (plain, plain_generic, closure, mut,
+# with; `plain` takes the VM's pure-i64 tier, `plain_generic` its generic
+# fast-call frames). Each
 # fixture's FIRST line is `let DEPTH = 100`; every probe rewrites it in a
 # temporary copy. Every chain runs under both engines of the same build
 # (`--env AXON_ENGINE=tree|vm`) in three configurations:
@@ -39,12 +41,19 @@
 #            A probe whose SECOND line is `// vm_wasm_depth: <kind>` is held
 #            to that kind's rule instead (never a trap, exit 134, in any):
 #              exit0  DEPTH=100000 must exit 0 (AX-59: dropping a value
-#                     100,000 levels deep at the bottom of a recursion).
+#                     100,000 levels deep at the bottom of a recursion);
+#                     `exit0 <n>` runs it at DEPTH=<n> instead (a value
+#                     whose construction clones it, a recursion over its
+#                     depth that the budget does not bound).
 #              sweep  every DEPTH from 1 to <guard> + 2 must exit 101 with
 #                     `no host driver` or `recursion limit exceeded
 #                     (<guard>)` (AX-61: `host_await_val` of a closure).
 #              front  a template: each `⟪open¦leaf¦close⟫` is expanded to
-#                     open×DEPTH leaf close×DEPTH. At DEPTH = the wasm32
+#                     open×DEPTH leaf close×DEPTH, and each
+#                     `⟦L¦open¦leaf¦close⟧` to L string literals nested in
+#                     each other's `{...}` slot (escaped per level), the
+#                     DEPTH opens and closes split evenly over the L slots,
+#                     `leaf` in the innermost. At DEPTH = the wasm32
 #                     nesting limit (parser.rs `MAX_EXPR_DEPTH`) it must
 #                     exit 0 or 2 with `expression nesting too deep
 #                     (limit <limit>)`, at 20× the limit exit 2 with that
@@ -119,7 +128,7 @@ fi
 GUARD=128                          # the wasm32 RECURSION_LIMIT (interp.rs)
 REQUIRED_LINEAR=$((GUARD * 13 / 10 + 1))    # > 1.3 x GUARD
 REQUIRED_DEFAULT=$((GUARD * 12 / 10 + 1))   # > 1.2 x GUARD
-CHAINS=(plain closure mut with)
+CHAINS=(plain plain_generic closure mut with)
 ENGINES=(tree vm)
 PROFILES=(debug release)
 FIX="$ROOT/crates/axon-core/tests/fixtures/vm_depth"
@@ -136,11 +145,17 @@ if [ "${#NESTS[@]}" -eq 0 ]; then
   exit 2
 fi
 # kind <probe> — the rule a nesting probe is held to: its second line's
-# `// vm_wasm_depth: <kind>`, else `guard` (the recursion-limit panic).
+# `// vm_wasm_depth: <kind> [<depth>]`, else `guard` (the recursion-limit
+# panic). kdepth <probe> <default> — that line's <depth>, else <default>.
 kind() {
   local k
-  k="$(sed -n '2s|^// vm_wasm_depth: \([a-z0-9]*\)$|\1|p' "$FIX/$1.ax")"
+  k="$(sed -n '2s|^// vm_wasm_depth: \([a-z0-9]*\)\( [0-9][0-9]*\)\{0,1\}$|\1|p' "$FIX/$1.ax")"
   echo "${k:-guard}"
+}
+kdepth() {
+  local d
+  d="$(sed -n '2s|^// vm_wasm_depth: [a-z0-9]* \([0-9][0-9]*\)$|\1|p' "$FIX/$1.ax")"
+  echo "${d:-$2}"
 }
 # bad <rc> <dir> — a failed probe's result line. Exit 2 from a guard, exit0
 # or sweep probe is the front end refusing its source (AX-60), so the probe
@@ -215,6 +230,15 @@ probe() {
     python3 -c 'import re, sys
 n = int(sys.argv[2]); p = sys.argv[1]; s = open(p, encoding="utf-8").read()
 s = re.sub("⟪(.*?)¦(.*?)¦(.*?)⟫", lambda m: m[1] * n + m[2] + m[3] * n, s)
+def interp(m):
+    levels, o, x, c = int(m[1]), m[2], m[3], m[4]
+    for i in range(levels):
+        k = n // levels + (i < n % levels)
+        x = "\"{ " + o * k + " " + x + " " + c * k + " }\""
+        if i + 1 < levels:
+            x = x.replace("\\", "\\\\").replace("\"", "\\\"")
+    return x
+s = re.sub("⟦([0-9]+)¦(.*?)¦(.*?)¦(.*?)⟧", interp, s)
 open(p, "w", encoding="utf-8").write(s)' "$dir/p.ax" "$depth"
   fi
   timeout -k 5 300 "$WASMTIME" run "${cfg[@]}" --env "AXON_ENGINE=$engine" \
@@ -266,9 +290,10 @@ job() {
           bad "$rc" "$dir" >"$dir/result"
         fi ;;
       exit0)
-        rc="$(probe "$wasm" "$engine" "$chain" guard 100000 "$dir")"
-        if [ "$rc" = 0 ]; then
-          echo "ok exit=0 (DEPTH=100000)" >"$dir/result"
+        depth="$(kdepth "$chain" 100000)"
+        rc="$(probe "$wasm" "$engine" "$chain" guard "$depth" "$dir")"
+        if [ "$rc" = 0 ] && [ "$(cat "$dir/out")" = "$depth" ]; then
+          echo "ok exit=0 (DEPTH=$depth)" >"$dir/result"
         else
           bad "$rc" "$dir" >"$dir/result"
         fi ;;
@@ -300,7 +325,7 @@ job() {
     bisect "$wasm" "$engine" "$chain" "$config" "$dir" >"$dir/result"
   fi
 }
-export -f probe completes bisect job kind bad
+export -f probe completes bisect job kind kdepth bad
 export WASMTIME FIX WORK TARGET_DIR GUARD FRONT_LIMIT
 
 JOBS="${VM_DEPTH_JOBS:-$(nproc)}"
@@ -350,7 +375,7 @@ for profile in "${PROFILES[@]}"; do
               *) verdict="FAIL (expected exit 101 'recursion limit exceeded ($GUARD)')"; fails=$((fails + 1)) ;;
             esac ;;
         esac
-        printf 'vm_wasm_depth: %-7s %-4s %-7s %-7s %-14s %s\n' "$profile" "$engine" "$chain" "$config" "$res" "$verdict"
+        printf 'vm_wasm_depth: %-7s %-4s %-13s %-7s %-14s %s\n' "$profile" "$engine" "$chain" "$config" "$res" "$verdict"
       done
       depth[$profile.$engine.$chain.reach]="$(cat "$WORK/$profile.$engine.$chain.reach/result" 2>/dev/null || echo "missing")"
     done
@@ -381,7 +406,7 @@ for profile in "${PROFILES[@]}"; do
     else
       cmp="vm < tree (reported; required only with --require-default-stack)"
     fi
-    printf 'vm_wasm_depth: %-7s default-stack %-7s tree=%s vm=%s %s\n' "$profile" "$chain" "$t" "$v" "$cmp"
+    printf 'vm_wasm_depth: %-7s default-stack %-13s tree=%s vm=%s %s\n' "$profile" "$chain" "$t" "$v" "$cmp"
   done
 done
 

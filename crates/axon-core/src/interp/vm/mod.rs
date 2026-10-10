@@ -2065,15 +2065,15 @@ impl<'p> Interp<'p> {
                 }
                 Op::WrapSome => {
                     let v = pop(st);
-                    st.push(Value::Some(Box::new(v)));
+                    st.push(Value::Some(VBox::new(v)));
                 }
                 Op::WrapOk => {
                     let v = pop(st);
-                    st.push(Value::Ok(Box::new(v)));
+                    st.push(Value::Ok(VBox::new(v)));
                 }
                 Op::WrapErr => {
                     let v = pop(st);
-                    st.push(Value::Err(Box::new(v)));
+                    st.push(Value::Err(VBox::new(v)));
                 }
                 Op::FmtNew => st.push(Value::Str(Rc::new(String::new()))),
                 Op::FmtLit(t) => fmt_top(st).push_str(t),
@@ -2084,7 +2084,7 @@ impl<'p> Interp<'p> {
                 Op::MakeArray(n) => {
                     let at = tail(st, *n);
                     let items: Vec<Value> = st.drain(at..).collect();
-                    st.push(Value::Array(Rc::new(items)));
+                    st.push(Value::Array(Rc::new(items.into())));
                 }
                 Op::MakeTuple(n) => {
                     let at = tail(st, *n);

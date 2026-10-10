@@ -770,7 +770,7 @@ struct LoopCode {
 /// bits). A write needs the old element to be a scalar of the store's kind
 /// (else it declines), so undoing one is a write of the same kind.
 struct LoopMem {
-    arrs: [Option<Rc<Vec<Value>>>; LOOP_ARRS],
+    arrs: [Option<Rc<Elems>>; LOOP_ARRS],
     undo: Vec<(u8, usize, u64)>,
 }
 
@@ -792,9 +792,9 @@ impl LoopMem {
     fn items_mut(&mut self, arr: u8) -> Option<&mut Vec<Value>> {
         let items = self.arrs[arr as usize % LOOP_ARRS].as_mut()?;
         if Rc::get_mut(items).is_none() {
-            return Some(Rc::make_mut(items));
+            return Some(&mut **Rc::make_mut(items));
         }
-        Rc::get_mut(items)
+        Rc::get_mut(items).map(|e| &mut **e)
     }
 }
 

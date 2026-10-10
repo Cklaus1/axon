@@ -72,7 +72,11 @@ pub fn clear_accepted_mut() {
     ACCEPTED_MUT.with(|v| v.borrow_mut().clear());
 }
 
-fn parse_fmt_str_raw(raw: &str) -> Result<Expr> {
+/// A string literal's parts. `expr_depth` is the outer parser's
+/// [`MAX_EXPR_DEPTH`] depth at the literal, under which each `{...}` slot is
+/// parsed (AX-60); `too_deep` is set when a slot is refused for nesting, so
+/// the outer root reports it like its own refusal.
+fn parse_fmt_str_raw(raw: &str, expr_depth: usize, too_deep: &mut bool) -> Result<Expr> {
     // Fast path: no braces at all.
     if !raw.contains('{') && !raw.contains('}') {
         return Ok(Expr::Literal(Literal::Str(raw.to_string())));
@@ -148,7 +152,7 @@ fn parse_fmt_str_raw(raw: &str) -> Result<Expr> {
                     ParseError::Other("unclosed `{` in interpolated string".into())
                 })?;
                 let inner = after_open[..close].trim();
-                let expr = parse_fmt_inner_expr(inner)?;
+                let expr = parse_fmt_inner_expr(inner, expr_depth, too_deep)?;
                 parts.push(FmtPart::Expr(Box::new(expr)));
                 remaining = &after_open[close + 1..];
             }
@@ -177,7 +181,13 @@ fn parse_fmt_str_raw(raw: &str) -> Result<Expr> {
 
 /// Parse the expression inside `{...}` in a format string using the real lexer and parser.
 /// This supports arbitrary expressions, e.g. `{to_str(x + 1)}`.
-fn parse_fmt_inner_expr(inner: &str) -> Result<Expr> {
+///
+/// AX-60: the sub-parser starts at the outer parser's `expr_depth`, so
+/// nested interpolations (`"{ \"{ (((…))) }\" }"`) share one
+/// [`MAX_EXPR_DEPTH`] budget with the expression around them instead of each
+/// slot getting a fresh one. A nesting refusal passes through unwrapped, with
+/// `too_deep` set: it is the outer statement's error, not a malformed slot.
+fn parse_fmt_inner_expr(inner: &str, expr_depth: usize, too_deep: &mut bool) -> Result<Expr> {
     // A slot whose contents don't even TOKENIZE is the same caller error as one
     // with leftover tokens (`"\d{2,4}"` reaches here as the slot `\d,4`), so it
     // gets the same hint. The bare lexer error — `UnexpectedChar { src: "\\" }` —
@@ -191,15 +201,23 @@ fn parse_fmt_inner_expr(inner: &str) -> Result<Expr> {
     })?;
     let token_vals: Vec<Token> = tokens.into_iter().map(|(t, _)| t).collect();
     let mut sub = Parser::new(token_vals);
+    sub.expr_depth = expr_depth;
     // Same reasoning as the tokenize arm: a slot that runs out mid-expression
     // (`"{x + }"`) reports a bare `Eof` that names neither the string nor the
     // brace that opened the slot.
-    let expr = sub.parse_expr().map_err(|e| {
-        ParseError::Other(format!(
-            "`{{{inner}}}`: incomplete expression ({e:?}) — a `{{...}}` slot holds \
-             exactly ONE expression. For a literal brace, double it: `{{{{{inner}}}}}`."
-        ))
-    })?;
+    let expr = match sub.parse_expr() {
+        Ok(e) => e,
+        Err(e) if sub.too_deep => {
+            *too_deep = true;
+            return Err(e);
+        }
+        Err(e) => {
+            return Err(ParseError::Other(format!(
+                "`{{{inner}}}`: incomplete expression ({e:?}) — a `{{...}}` slot holds \
+                 exactly ONE expression. For a literal brace, double it: `{{{{{inner}}}}}`."
+            )))
+        }
+    };
     // The slot must be consumed IN FULL. `parse_expr` happily stops at the first
     // token it cannot continue with, and for a decade of format-string
     // implementations that has meant the tail is discarded in silence — so
@@ -1791,12 +1809,15 @@ impl Parser {
             return self.parse_expr_inner();
         }
         // AX-60: a root expression (a statement of a fn body, a contract, a
-        // constant) is checked for AST height, which bounds every later
-        // recursive walk over it, including the operator chains the parser
-        // builds in a loop. A refusal anywhere under a root is reported at the
-        // root's first token: the error span is the parser's position, and
-        // the token where the limit tripped (or the one after an over-tall
-        // chain) says nothing about which expression to split.
+        // constant) is checked for AST height, which bounds the later
+        // recursive walks over its AST (resolution, compilation, evaluation),
+        // including over the operator chains the parser builds in a loop. It
+        // does not bound the depth of a type the checker infers from flat
+        // source. A refusal anywhere under a root is reported at the root's
+        // first token, the start of the statement (the `let` of `let x =
+        // ...`): the error span is the parser's position, and the token where
+        // the limit tripped (or the one after an over-tall chain) says
+        // nothing about which expression to split.
         let root = self.expr_depth == 0;
         if root {
             self.too_deep = false;
@@ -3063,7 +3084,7 @@ impl Parser {
             }
             Some(Token::Str(_)) => {
                 if let Token::Str(s) = self.advance()?.clone() {
-                    parse_fmt_str_raw(&s)
+                    parse_fmt_str_raw(&s, self.expr_depth, &mut self.too_deep)
                 } else {
                     unreachable!()
                 }

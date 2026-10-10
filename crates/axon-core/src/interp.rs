@@ -74,15 +74,15 @@ pub enum Value {
     /// So `let b = a; b[0] = 9` still leaves `a` untouched, while `a[i] = v` on
     /// a uniquely owned binding is O(1) (AX-06: the deep copy made index reads
     /// and writes O(len), turning a sieve quadratic).
-    Array(Rc<Vec<Value>>),
+    Array(Rc<Elems>),
     /// Structural record: `Point { x, y }`.
     Struct(Rc<StructVal>),
     /// Enum variant: `Shape::Circle { radius }`.
     Enum(Rc<EnumVal>),
-    Some(Box<Value>),
+    Some(VBox),
     None,
-    Ok(Box<Value>),
-    Err(Box<Value>),
+    Ok(VBox),
+    Err(VBox),
     /// A lambda plus the environment it captured at creation time.
     ///
     /// AUDIT T40 (findings F094 / P5-16 / DOC-02). The capture used to be a
@@ -106,10 +106,10 @@ pub enum Value {
     /// a `spawn`ed body and the main flow see the same queue. The interpreter is
     /// cooperative/single-threaded: `spawn` runs eagerly, so a `send` happens
     /// before the matching `recv`.
-    Chan(Rc<RefCell<VecDeque<Value>>>),
+    Chan(Rc<RefCell<Queue>>),
     /// Tuple value `(a, b, …)`. Accessed via `t.0`, `t.1` (numeric field).
     /// Immutable once built, so the elements are shared on clone.
-    Tuple(Rc<Vec<Value>>),
+    Tuple(Rc<Elems>),
     /// String-keyed dictionary — the ASI workhorse for caches, frequency
     /// tables, named state. Mutating builtins (`dict_set`, `dict_remove`)
     /// share the inner `RefCell` so a stored handle stays in sync with
@@ -198,12 +198,12 @@ impl IntWidth {
 /// Every renderer orders fields by NAME, as it did when this was a `HashMap`,
 /// so the storage order is never observable.
 #[derive(Clone, Default)]
-pub struct Fields(Vec<(Sym, Value)>);
+pub struct Fields(Slot<Vec<(Sym, Value)>>);
 
 impl Fields {
     /// Fields from `(name, value)` pairs; a repeated name keeps the last value.
     pub(crate) fn from_pairs(pairs: impl IntoIterator<Item = (Sym, Value)>) -> Fields {
-        let mut f = Fields(Vec::new());
+        let mut f = Fields::default();
         for (k, v) in pairs {
             f.insert(k, v);
         }
@@ -261,11 +261,11 @@ impl Fields {
             return false;
         }
         // Same type, same layout: one pass, no lookups.
-        if self.0.iter().zip(&other.0).all(|(a, b)| a.0 == b.0) {
+        if self.0.iter().zip(other.0.iter()).all(|(a, b)| a.0 == b.0) {
             return self
                 .0
                 .iter()
-                .zip(&other.0)
+                .zip(other.0.iter())
                 .all(|(a, b)| value::values_equal(&a.1, &b.1));
         }
         self.0
@@ -282,67 +282,249 @@ impl std::fmt::Debug for Fields {
     }
 }
 
-/// A dict's map. A newtype only so that, on wasm32, it can carry the AX-59
-/// bounded `Drop` (a dict can hold a dict that holds another: `dict` values
-/// are untyped); it derefs to the map.
-#[derive(Debug, Clone, Default)]
-pub struct DictMap(std::collections::BTreeMap<String, Value>);
+/// AX-59: where a container keeps the values it holds. On wasm32 the
+/// container's `Drop` (`bounded_drop`) moves them out and drops them through
+/// `drop_bounded`, so its own drop glue must not drop them again: the slot is
+/// a `ManuallyDrop`. Native keeps the plain type and plain drop glue. Every
+/// container keeps its slot private and derefs to its contents, so the same
+/// code reads it on every target.
+#[cfg(target_arch = "wasm32")]
+type Slot<T> = std::mem::ManuallyDrop<T>;
+#[cfg(not(target_arch = "wasm32"))]
+type Slot<T> = T;
 
-impl std::ops::Deref for DictMap {
-    type Target = std::collections::BTreeMap<String, Value>;
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
+/// `x` in a [`Slot`].
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn slot<T>(x: T) -> Slot<T> {
+    std::mem::ManuallyDrop::new(x)
 }
 
-impl std::ops::DerefMut for DictMap {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+/// `x` in a [`Slot`].
+#[cfg(not(target_arch = "wasm32"))]
+#[inline(always)]
+fn slot<T>(x: T) -> Slot<T> {
+    x
+}
+
+/// `Deref`/`DerefMut` of a newtype over a [`Slot`] to its contents.
+macro_rules! slot_deref {
+    ($t:ty => $target:ty) => {
+        impl std::ops::Deref for $t {
+            type Target = $target;
+            #[inline]
+            fn deref(&self) -> &$target {
+                &self.0
+            }
+        }
+
+        impl std::ops::DerefMut for $t {
+            #[inline]
+            fn deref_mut(&mut self) -> &mut $target {
+                &mut self.0
+            }
+        }
+    };
+}
+
+/// A dict's map. A newtype only so that, on wasm32, it can carry the AX-59
+/// bounded `Drop`; it derefs to the map.
+#[derive(Clone, Default)]
+pub struct DictMap(Slot<std::collections::BTreeMap<String, Value>>);
+
+slot_deref!(DictMap => std::collections::BTreeMap<String, Value>);
+
+impl std::fmt::Debug for DictMap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("DictMap").field(&**self).finish()
     }
 }
 
 impl From<std::collections::BTreeMap<String, Value>> for DictMap {
     #[inline]
     fn from(m: std::collections::BTreeMap<String, Value>) -> DictMap {
-        DictMap(m)
+        DictMap(slot(m))
+    }
+}
+
+/// The elements of an array or a tuple. A newtype only so that, on wasm32,
+/// it can carry the AX-59 bounded `Drop`; it derefs to the vector.
+#[derive(Clone, Default)]
+pub struct Elems(Slot<Vec<Value>>);
+
+slot_deref!(Elems => Vec<Value>);
+
+impl std::fmt::Debug for Elems {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&**self, f)
+    }
+}
+
+impl From<Vec<Value>> for Elems {
+    #[inline]
+    fn from(v: Vec<Value>) -> Elems {
+        Elems(slot(v))
+    }
+}
+
+impl FromIterator<Value> for Elems {
+    #[inline]
+    fn from_iter<I: IntoIterator<Item = Value>>(it: I) -> Elems {
+        Elems(slot(it.into_iter().collect()))
+    }
+}
+
+impl Elems {
+    /// The vector, moved out.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[inline]
+    pub(crate) fn into_vec(self) -> Vec<Value> {
+        self.0
+    }
+
+    /// The vector, moved out (an empty one is left to the `Drop`).
+    #[cfg(target_arch = "wasm32")]
+    #[inline]
+    pub(crate) fn into_vec(mut self) -> Vec<Value> {
+        std::mem::take(&mut *self.0)
+    }
+}
+
+/// The payload of a `Some`, `Ok` or `Err`. A newtype only so that, on
+/// wasm32, it can carry the AX-59 bounded `Drop`; it derefs to the value.
+pub struct VBox(Box<Slot<Value>>);
+
+/// By hand rather than derived: the derived clone goes through `Box`'s and
+/// `ManuallyDrop`'s, adding frames per level to the (unbounded, value-depth)
+/// recursion that clones a deep `Some` chain.
+impl Clone for VBox {
+    #[inline]
+    fn clone(&self) -> VBox {
+        VBox::new(Value::clone(self))
+    }
+}
+
+impl std::ops::Deref for VBox {
+    type Target = Value;
+    #[inline]
+    fn deref(&self) -> &Value {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for VBox {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Value {
+        &mut self.0
+    }
+}
+
+impl std::fmt::Debug for VBox {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&**self, f)
+    }
+}
+
+impl VBox {
+    #[inline]
+    pub(crate) fn new(v: Value) -> VBox {
+        VBox(Box::new(slot(v)))
+    }
+
+    /// The value, moved out.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[inline]
+    pub(crate) fn into_inner(self) -> Value {
+        *self.0
+    }
+
+    /// The value, moved out (`Unit` is left to the `Drop`).
+    #[cfg(target_arch = "wasm32")]
+    #[inline]
+    pub(crate) fn into_inner(mut self) -> Value {
+        std::mem::replace::<Value>(&mut self.0, Value::Unit)
+    }
+}
+
+/// A channel's queue. A newtype only so that, on wasm32, it can carry the
+/// AX-59 bounded `Drop`; it derefs to the queue.
+#[derive(Default)]
+pub struct Queue(Slot<VecDeque<Value>>);
+
+slot_deref!(Queue => VecDeque<Value>);
+
+impl std::fmt::Debug for Queue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&**self, f)
+    }
+}
+
+/// A field of a container that holds values outside a newtype of its own
+/// (a closure's code and capture cell), in a [`Slot`] it derefs through:
+/// the owner's AX-59 bounded `Drop` drops it on wasm32.
+#[derive(Clone, Default)]
+pub struct Held<T>(Slot<T>);
+
+impl<T> std::ops::Deref for Held<T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T> std::ops::DerefMut for Held<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
+
+impl<T: std::fmt::Debug> std::fmt::Debug for Held<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&**self, f)
+    }
+}
+
+impl<T> Held<T> {
+    #[inline]
+    pub(crate) fn new(x: T) -> Held<T> {
+        Held(slot(x))
     }
 }
 
 /// AX-59 (wasm32): dropping a deeply nested value without recursing once per
-/// level of data nesting. Drop glue for a deep value (an 8,000-node enum list)
-/// otherwise recurses through `Rc<EnumVal>` -> `Fields` -> `Value` per level,
-/// outside every depth guard, and traps wasmtime's default 512 KiB stack.
-/// Native keeps plain drop glue: its interpreter thread's stack (sized from
-/// `max_depth`, at least 1 GiB) holds a million-level drop, and the hook costs
-/// a record drop ~37 instructions there.
+/// level of data nesting. Drop glue for a deep value (an enum list, an array
+/// of arrays, a `Some` chain, 100,000 levels deep) otherwise recurses through
+/// the containers per level, outside every depth guard, and traps wasmtime's
+/// default 512 KiB stack. Native keeps plain drop glue: its interpreter
+/// thread's stack (sized from `max_depth`, at least 1 GiB) holds a
+/// million-level drop.
 ///
-/// Every cycle of drop glue the checker admits passes a `Fields`, a closure's
-/// capture cell or a [`DictMap`] (it refuses an infinite array/option type);
-/// each drops its contents through `drop_bounded`, which runs plain glue for
-/// the first `DROP_INLINE_DEPTH` levels and below that hands the contents to
-/// the outermost drop, which frees them after its own glue has returned.
-/// Drop order is not observable: no `Value` payload has a `Drop` with side
-/// effects. `scripts/wasm_stack_budget.py` checks the bound (class
-/// `bounded (DROP_INLINE_DEPTH)`).
+/// Every container that holds a `Value` keeps it in a [`Slot`] (`Fields`,
+/// `DictMap`, `Elems`, `VBox`, `Queue`, a closure's capture cell and code),
+/// and its `Drop` hands the contents to `drop_bounded`, which runs plain glue
+/// for the first `DROP_INLINE_DEPTH` levels and below that hands them to the
+/// outermost drop, which frees them after its own glue has returned. So every
+/// cycle of drop glue passes `drop_bounded`: `scripts/wasm_stack_budget.py`
+/// checks that the drop component without it is acyclic, and that
+/// `DROP_INLINE_DEPTH` passes of the component fit the headroom (class
+/// `bounded (DROP_INLINE_DEPTH)`). Drop order is not observable: no `Value`
+/// payload has a `Drop` with side effects.
 #[cfg(target_arch = "wasm32")]
 mod bounded_drop {
-    use super::{ClosureVal, DictMap, Fields, RefCell, Sym, Value};
+    use super::{ClosureCode, ClosureVal, DictMap, Elems, Fields, Queue, Rc, RefCell, Sym, VBox};
+    use super::{Value, VecDeque};
     use std::cell::Cell;
     use std::collections::BTreeMap;
+    use std::mem::{replace, take, ManuallyDrop};
 
     impl Drop for Fields {
         #[inline]
         fn drop(&mut self) {
-            drop_pairs(&mut self.0);
-        }
-    }
-
-    impl Drop for ClosureVal {
-        #[inline]
-        fn drop(&mut self) {
-            drop_pairs(self.captured.get_mut());
+            if !self.0.is_empty() {
+                drop_bounded(take(&mut *self.0));
+            }
         }
     }
 
@@ -350,41 +532,55 @@ mod bounded_drop {
         #[inline]
         fn drop(&mut self) {
             if !self.0.is_empty() {
-                drop_bounded(std::mem::take(&mut self.0));
+                drop_bounded(take(&mut *self.0));
             }
         }
     }
 
-    /// Drop `pairs` through [`drop_bounded`] when one of them can hold
-    /// another level (by tag: a shared `Rc` would only be decremented);
-    /// scalars drop as plain glue.
-    #[inline]
-    fn drop_pairs(pairs: &mut Vec<(Sym, Value)>) {
-        if pairs.iter().any(|(_, v)| {
-            matches!(
-                v,
-                Value::Struct(_)
-                    | Value::Enum(_)
-                    | Value::Array(_)
-                    | Value::Tuple(_)
-                    | Value::Some(_)
-                    | Value::Ok(_)
-                    | Value::Err(_)
-                    | Value::Closure(_)
-                    | Value::Dict(_)
-                    | Value::Chan(_)
-            )
-        }) {
-            drop_bounded(std::mem::take(pairs));
+    impl Drop for Elems {
+        #[inline]
+        fn drop(&mut self) {
+            if !self.0.is_empty() {
+                drop_bounded(take(&mut *self.0));
+            }
         }
     }
 
-    /// How many levels of `Fields`/capture/dict drops run as plain glue
-    /// before the rest is deferred to the outermost drop. Sized so that this
-    /// many levels of the drop cycle (its summed frames, as
-    /// `scripts/wasm_stack_budget.py` reports them) fit the headroom
-    /// `NEST_PER_DEPTH` leaves above the deepest guarded frame; the script
-    /// reads this constant and asserts that.
+    impl Drop for Queue {
+        #[inline]
+        fn drop(&mut self) {
+            if !self.0.is_empty() {
+                drop_bounded(take(&mut *self.0));
+            }
+        }
+    }
+
+    impl Drop for VBox {
+        #[inline]
+        fn drop(&mut self) {
+            drop_bounded(replace::<Value>(&mut self.0, Value::Unit));
+        }
+    }
+
+    impl Drop for ClosureVal {
+        #[inline]
+        fn drop(&mut self) {
+            let captured = &mut **self.captured.get_mut();
+            if !captured.is_empty() {
+                drop_bounded(take(captured));
+            }
+            // SAFETY: `code` is a `ManuallyDrop` that only this `Drop` drops,
+            // and nothing reads it after this line.
+            drop_bounded(unsafe { ManuallyDrop::take(&mut self.code.0) });
+        }
+    }
+
+    /// How many levels of container drops run as plain glue before the rest
+    /// is deferred to the outermost drop. Sized so that this many levels of
+    /// the drop cycle (its summed frames, as `scripts/wasm_stack_budget.py`
+    /// reports them) fit the headroom `NEST_PER_DEPTH` leaves above the
+    /// deepest guarded frame; the script reads this constant and asserts
+    /// that.
     const DROP_INLINE_DEPTH: usize = 16;
 
     thread_local! {
@@ -403,19 +599,30 @@ mod bounded_drop {
     enum DropLater {
         Pairs(Vec<(Sym, Value)>),
         Map(BTreeMap<String, Value>),
+        Elems(Vec<Value>),
+        Queue(VecDeque<Value>),
+        Value(Value),
+        Code(Rc<ClosureCode>),
     }
 
-    impl From<Vec<(Sym, Value)>> for DropLater {
-        fn from(p: Vec<(Sym, Value)>) -> DropLater {
-            DropLater::Pairs(p)
-        }
+    macro_rules! drop_later_from {
+        ($($t:ty => $v:ident),* $(,)?) => {$(
+            impl From<$t> for DropLater {
+                fn from(x: $t) -> DropLater {
+                    DropLater::$v(x)
+                }
+            }
+        )*};
     }
 
-    impl From<BTreeMap<String, Value>> for DropLater {
-        fn from(m: BTreeMap<String, Value>) -> DropLater {
-            DropLater::Map(m)
-        }
-    }
+    drop_later_from!(
+        Vec<(Sym, Value)> => Pairs,
+        BTreeMap<String, Value> => Map,
+        Vec<Value> => Elems,
+        VecDeque<Value> => Queue,
+        Value => Value,
+        Rc<ClosureCode> => Code,
+    );
 
     /// Drop `x` (a container's contents) as plain glue unless
     /// [`DROP_INLINE_DEPTH`] drops are live; then defer it to the outermost
@@ -502,8 +709,8 @@ impl Value {
 /// never copies its body.
 #[derive(Debug)]
 pub struct ClosureVal {
-    pub code: Rc<ClosureCode>,
-    pub captured: RefCell<Vec<(Sym, Value)>>,
+    pub code: Held<Rc<ClosureCode>>,
+    pub captured: RefCell<Held<Vec<(Sym, Value)>>>,
 }
 
 /// R13 native FFI: an opaque, affine native `Handle` = `{tag, payload}` where
@@ -528,7 +735,7 @@ impl Value {
 
     /// A tuple of `items`.
     pub(crate) fn tuple(items: Vec<Value>) -> Value {
-        Value::Tuple(Rc::new(items))
+        Value::Tuple(Rc::new(items.into()))
     }
 
     fn type_name(&self) -> String {
@@ -1426,7 +1633,7 @@ const RECURSION_LIMIT: usize = 6_000;
 /// native stack, which holds every wasm frame (wasmtime's default
 /// `max-wasm-stack` is 512 KiB). The second is reached first: one recursion
 /// level is several interpreter frames (16–704 bytes each), and under
-/// wasmtime's default the shallowest of the four chains in
+/// wasmtime's default the shallowest of the five chains in
 /// `tests/fixtures/vm_depth/` completes depth 157 (tree-walker, fn -> closure
 /// -> fn, debug build, depth limit raised; measured 2026-10-09), above 1.2×
 /// the guard. A call level
@@ -2672,29 +2879,29 @@ impl SendValue {
                         .map(|(k, v)| (intern(&k), v.into_value())),
                 ),
             })),
-            SendValue::Some(b) => Value::Some(Box::new(b.into_value())),
+            SendValue::Some(b) => Value::Some(VBox::new(b.into_value())),
             SendValue::None => Value::None,
-            SendValue::Ok(b) => Value::Ok(Box::new(b.into_value())),
-            SendValue::Err(b) => Value::Err(Box::new(b.into_value())),
+            SendValue::Ok(b) => Value::Ok(VBox::new(b.into_value())),
+            SendValue::Err(b) => Value::Err(VBox::new(b.into_value())),
             SendValue::Closure {
                 params,
                 body,
                 captured,
             } => Value::Closure(Rc::new(ClosureVal {
-                code: Rc::new(ClosureCode::unresolved(
+                code: Held::new(Rc::new(ClosureCode::unresolved(
                     params.iter().map(|p| intern(p)).collect(),
                     *body,
-                )),
+                ))),
                 // A closure that crossed the host boundary gets a FRESH capture
                 // cell: the SendValue path is a deep clone by construction (a
                 // shared cell is exactly what it cannot carry), so the two sides
                 // are independent counters, not aliases (T40 + R15 Slice 2).
-                captured: RefCell::new(
+                captured: RefCell::new(Held::new(
                     captured
                         .into_iter()
                         .map(|(k, v)| (intern(&k), v.into_value()))
                         .collect(),
-                ),
+                )),
             })),
             SendValue::Tuple(xs) => Value::tuple(xs.into_iter().map(Self::into_value).collect()),
             SendValue::Dict(entries) => {
@@ -6089,7 +6296,9 @@ fn main() { }
             intern("S"),
             Fields::from_pairs([(intern("d"), dict), (intern("n"), Value::Int(1))]),
         );
-        let v = Value::Array(Rc::new(vec![s, Value::Str(Rc::new("hi".to_string()))]));
+        let v = Value::Array(Rc::new(
+            vec![s, Value::Str(Rc::new("hi".to_string()))].into(),
+        ));
         let sv = SendValue::from_value(&v).expect("Chan-free ⇒ sendable");
         let back = sv.into_value();
         // Spot-check the reconstructed shape.
@@ -6725,11 +6934,11 @@ mod literal_escape_tests {
     #[test]
     fn option_result_tuple_and_enum_have_literal_forms() {
         let cases: Vec<(Value, &str)> = vec![
-            (Value::Some(Box::new(Value::Int(2))), "Some(2)"),
+            (Value::Some(VBox::new(Value::Int(2))), "Some(2)"),
             (Value::None, "None"),
-            (Value::Ok(Box::new(Value::Int(5))), "Ok(5)"),
+            (Value::Ok(VBox::new(Value::Int(5))), "Ok(5)"),
             (
-                Value::Err(Box::new(Value::Str(Rc::new("bad".to_string())))),
+                Value::Err(VBox::new(Value::Str(Rc::new("bad".to_string())))),
                 "Err(\"bad\")",
             ),
             (Value::tuple(vec![Value::Int(1), Value::Int(2)]), "(1, 2)"),

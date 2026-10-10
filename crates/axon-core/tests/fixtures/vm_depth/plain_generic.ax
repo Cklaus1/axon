@@ -1,0 +1,14 @@
+let DEPTH = 100
+// R50 §4 Recursion, chain 1b: plain fn recursion through the generic call
+// path. `plain.ax` qualifies for the pure-i64 tier (R50 S11, vm/purefn.rs);
+// the `let` in this body keeps f out of it, so the VM's generic fast-call
+// frames are what this chain measures. scripts/vm_wasm_depth.sh rewrites the
+// first line per probe; f recurses DEPTH levels below main.
+fn f(n: i64) -> i64 {
+    if n == 0 { 0 } else { let m = n - 1; 1 + f(m) }
+}
+
+fn main() -> i64 {
+    println(to_str(f(DEPTH)))
+    0
+}

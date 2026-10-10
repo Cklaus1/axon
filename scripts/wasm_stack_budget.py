@@ -39,8 +39,9 @@ It fails when a `nest_cost` constant is not charged by exactly one guard
 site in the function it is named after, when indirect calls widen a checked
 component, when the unguarded part of one has a cycle (a recursion no guard
 sees), when a constant is smaller than the guarded function's frame plus the
-deepest unguarded chain it can call, or when a recursion reachable from
-`eval` is neither checked nor in ALLOW. Exit 0 ok, 1 failure, 2 bad input.
+deepest unguarded chain it can call, when a recursion reachable from `eval`
+is neither checked nor in ALLOW, or when a cycle of `Value` drop glue
+avoids `drop_bounded`. Exit 0 ok, 1 failure, 2 bad input.
 """
 import os
 import re
@@ -53,8 +54,10 @@ from collections import defaultdict
 # match wins. "bounded (DROP_INLINE_DEPTH)": the drop glue of a nested
 # `Value`, which on wasm32 passes `bounded_drop` (interp.rs, compilebench
 # AX-59) and so holds at most `DROP_INLINE_DEPTH` levels of the component
-# at once; checked below against the headroom the budget leaves, and a
-# `Value` drop component without `bounded_drop` fails. "value": the depth
+# at once; checked below: without its `drop_bounded` instances the
+# component must be acyclic, and DROP_INLINE_DEPTH passes of it must fit
+# the headroom the budget leaves; a `Value` drop component without
+# `bounded_drop` fails. "value": the depth
 # of a run-time value or string (a nested array, an `Uncertain` chain,
 # JSON, a regex) walked by something other than drop, outside the budget.
 # "source": the nesting of one source construct (a pattern, a type, an
@@ -83,6 +86,9 @@ ALLOW = [
 # `Value` enum itself): a component holding it must hold `bounded_drop`.
 VALUE_DROP = re.compile(r"Rc<interp::EnumVal>>::drop_slow|drop_glue::<interp::Value>"
                         r"|drop_glue\w*?6interp5ValueE")
+# An instance of `bounded_drop::drop_bounded`, the function every cycle of
+# `Value` drop glue must pass.
+DROP_BOUNDED = re.compile(r"bounded_drop::drop_bounded\b|12bounded_drop12drop_bounded")
 # wasmtime's default `max-wasm-stack`, which the wasm32 budget is sized for.
 WASM_STACK = 512 * 1024
 # A parser method's name, and the calls that charge one `MAX_EXPR_DEPTH`
@@ -98,6 +104,29 @@ PARSER_CHARGES = [
     ("parse_if", "parse_if"),
     ("parse_match|parse_match_operand", "parse_logical"),
 ]
+
+
+def find_cycle(nodes, calls):
+    """A cycle of direct calls among `nodes` (its functions in call order),
+    or [] when the subgraph is acyclic. Iterative DFS."""
+    color = {}
+    for v0 in sorted(nodes):
+        if v0 in color:
+            continue
+        color[v0] = 1
+        path, work = [v0], [iter(sorted(g for g in calls.get(v0, ()) if g in nodes))]
+        while work:
+            w = next(work[-1], None)
+            if w is None:
+                color[path.pop()] = 2
+                work.pop()
+            elif color.get(w) == 1:
+                return path[path.index(w):]
+            elif w not in color:
+                color[w] = 1
+                path.append(w)
+                work.append(iter(sorted(g for g in calls.get(w, ()) if g in nodes)))
+    return []
 
 
 def main() -> int:
@@ -480,15 +509,30 @@ def main() -> int:
             continue
         kinds[why] += 1
         if why == DROP_CLASS:
-            # `bounded_drop` defers past DROP_INLINE_DEPTH live drops, so at
-            # most that many passes through the component sit on the stack,
-            # each at most the component's summed frame, above the budget.
+            # Only `drop_bounded` counts the drops live and defers past
+            # DROP_INLINE_DEPTH, so every cycle of drop glue must pass one of
+            # its instances: without them the component must be acyclic. A
+            # cycle that avoids it (a container whose `Drop` does not hand
+            # its contents to `drop_bounded`, or whose glue still drops them)
+            # recurses once per level of the value and fails.
+            gate = {f for f in ms
+                    if any(DROP_BOUNDED.search(s) for s in (sym.get(f, ""), names.get(f, "")))}
+            loop = find_cycle(ms - gate, calls)
+            if not gate or loop:
+                bad += 1
+                print(f"wasm_stack_budget: {profile:<7} FAIL Value drop cycle avoiding `drop_bounded`: "
+                      + (" -> ".join(label(f) for f in loop + loop[:1]) if loop else "no `drop_bounded`"))
+                continue
+            # At most DROP_INLINE_DEPTH passes through the component sit on
+            # the stack, each at most the component's summed frame, above
+            # the budget.
             total = sum(frame.get(f, 16) for f in ms)
             ok = drop_depth * total <= headroom
             bad += not ok
             print(f"wasm_stack_budget: {profile:<7} {'value drop':<24} {drop_depth * total:>5} <= {headroom:<5} "
                   + ("ok" if ok else "FAIL")
-                  + f"  (DROP_INLINE_DEPTH {drop_depth} x {len(ms)} functions, {total} B)")
+                  + f"  (DROP_INLINE_DEPTH {drop_depth} x {len(ms)} functions, {total} B; "
+                  + f"acyclic without its {len(gate)} `drop_bounded`)")
 
     # The parser runs before the budget is charged, so its recursion must fit
     # the budget by itself: between two calls that charge one

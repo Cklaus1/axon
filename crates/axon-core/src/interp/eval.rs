@@ -193,8 +193,8 @@ fn strict_int_panic(other: Value) -> Result<i64, Flow> {
 /// (R50).
 pub(super) fn question(v: Value) -> R {
     match v {
-        Value::Ok(x) => Ok(*x),
-        Value::Some(x) => Ok(*x),
+        Value::Ok(x) => Ok(x.into_inner()),
+        Value::Some(x) => Ok(x.into_inner()),
         Value::Err(e) => Err(Flow::Return(Value::Err(e))),
         Value::None => Err(Flow::Return(Value::None)),
         other => panic(format!(
@@ -212,15 +212,15 @@ fn fn_value(name: &str, arity: usize) -> Value {
     let params: Vec<String> = (0..arity).map(|i| format!("#{i}")).collect();
     let args = params.iter().map(|p| Expr::Ident(p.clone())).collect();
     Value::Closure(Rc::new(ClosureVal {
-        code: Rc::new(ClosureCode::unresolved(
+        code: Held::new(Rc::new(ClosureCode::unresolved(
             params.iter().map(|p| intern(p)).collect(),
             Expr::Call {
                 callee: Box::new(Expr::Ident(name.to_string())),
                 args,
                 tier: None,
             },
-        )),
-        captured: std::cell::RefCell::new(Vec::new()),
+        ))),
+        captured: std::cell::RefCell::new(Held::default()),
     }))
 }
 
@@ -460,7 +460,7 @@ impl<'p> Interp<'p> {
                     // same as `chan<T>()`. Its BUILTINS doc said "bounded
                     // channel with the given capacity" and now says what it does.
                     if name.starts_with("chan::<") || name == "Chan::new" {
-                        return Ok(Value::Chan(Rc::new(RefCell::new(VecDeque::new()))));
+                        return Ok(Value::Chan(Rc::new(RefCell::new(Queue::default()))));
                     }
                     // R13 native FFI: a native `M::fn(...)` call dispatches to the
                     // in-process mock shim (one impl, two engines — I-2).
@@ -540,7 +540,7 @@ impl<'p> Interp<'p> {
                 for e in elems {
                     out.push(self.eval(e, env)?);
                 }
-                Ok(Value::Array(Rc::new(out)))
+                Ok(Value::Array(Rc::new(out.into())))
             }
 
             Expr::StructLit { name, fields } => {
@@ -570,9 +570,9 @@ impl<'p> Interp<'p> {
                 v
             }
 
-            Expr::Ok(e) => Ok(Value::Ok(Box::new(self.eval(e, env)?))),
-            Expr::Err(e) => Ok(Value::Err(Box::new(self.eval(e, env)?))),
-            Expr::Some(e) => Ok(Value::Some(Box::new(self.eval(e, env)?))),
+            Expr::Ok(e) => Ok(Value::Ok(VBox::new(self.eval(e, env)?))),
+            Expr::Err(e) => Ok(Value::Err(VBox::new(self.eval(e, env)?))),
+            Expr::Some(e) => Ok(Value::Some(VBox::new(self.eval(e, env)?))),
             Expr::None => Ok(Value::None),
 
             Expr::FmtStr { parts } => {
@@ -659,8 +659,8 @@ impl<'p> Interp<'p> {
             .collect();
         // T40: a SHARED, persistent capture cell — see Value::Closure.
         Value::Closure(Rc::new(ClosureVal {
-            code: Rc::clone(&info.code),
-            captured: std::cell::RefCell::new(captured),
+            code: Held::new(Rc::clone(&info.code)),
+            captured: std::cell::RefCell::new(Held::new(captured)),
         }))
     }
 
@@ -771,7 +771,7 @@ impl<'p> Interp<'p> {
     /// `recv` pops from it, `clone` shares the handle.
     pub(super) fn chan_method(
         &self,
-        q: &Rc<RefCell<VecDeque<Value>>>,
+        q: &Rc<RefCell<Queue>>,
         method: &str,
         args: &[Expr],
         env: &mut Env,
@@ -797,7 +797,7 @@ impl<'p> Interp<'p> {
             // producers and needs to know when results have stopped
             // coming, not just block on the first miss.
             "try_recv" => Ok(match q.borrow_mut().pop_front() {
-                Some(v) => Value::Some(Box::new(v)),
+                Some(v) => Value::Some(VBox::new(v)),
                 None => Value::None,
             }),
             // How many values are queued and unread. Useful with
@@ -1796,7 +1796,7 @@ impl<'p> Interp<'p> {
                     .map(|(&n, v)| (n, v.expect("every named field is given"))),
             );
         }
-        let fields = Fields(out);
+        let fields = Fields(slot(out));
         let (sname, fields) = match lit.kind {
             RecordKind::Enum(enum_name, variant) => {
                 return Ok(Value::Enum(Rc::new(EnumVal {

@@ -6,12 +6,16 @@
 # exhausted`, which I-4 forbids; every case names the exit it requires.
 #
 #   ax59  dropping a value 100,000 levels deep (an enum list, a dict of
-#         dicts, a closure chain, and a list dropped under 100 levels of
-#         recursion) exits 0 with the program's output.
+#         dicts, a closure chain, an array chain, and a list, array chain and
+#         tuple chain dropped under 100 levels of recursion) exits 0 with the
+#         program's output; so do a `Some` and an `Ok` chain 1,000 deep under
+#         100 levels of recursion (building one clones it, and that clone
+#         recursion is not bounded, so they stay shallow).
 #   ax60  source nested past the wasm32 limit (parser.rs `MAX_EXPR_DEPTH`):
 #         parentheses 300 and 5,000 deep, 1,000-term `+` and string chains,
 #         a nested `Some` pattern, an `Option<` type, nested calls and
-#         blocks — each exits 2 with E0000 `expression nesting too deep
+#         blocks, three string literals nested in each other's `{...}` slot
+#         with 110 parentheses in each — each exits 2 with E0000 `expression nesting too deep
 #         (limit N)` at line 2, col 5, where its root expression starts.
 #   ax61  `host_await_val` without a host driver: a closure whose body is a
 #         long chain, passed from depths around the finding's (1-130) under
@@ -143,9 +147,46 @@ fn main() -> i64 {
     0
 }
 EOF
+  cat >array.ax <<'EOF'
+fn build(n: i64) -> i64 {
+    let d = dict_new()
+    dict_set(d, "k", 0)
+    for i in 0..n { let v = dict_get(d, "k") dict_set(d, "k", [v]) }
+    n
+}
+fn main() -> i64 { println(to_str(build(100000))) 0 }
+EOF
+  # chain <name> <wrap> <n>: a chain of <n> values, each <wrap> around the
+  # previous one (read back from an untyped dict), built and dropped under
+  # 100 levels of recursion.
+  chain() {
+    cat >"$1.ax" <<EOF
+fn build(n: i64) -> i64 {
+    let d = dict_new()
+    dict_set(d, "k", 0)
+    for i in 0..n { let v = dict_get(d, "k") dict_set(d, "k", $2) }
+    n
+}
+fn r(k: i64, n: i64) -> i64 {
+    if k == 0 { build(n) } else { r(k - 1, n) }
+}
+fn main() -> i64 {
+    println(to_str(r(100, $3)))
+    0
+}
+EOF
+  }
+  chain deep_array '[v]' 100000
+  chain deep_tuple '(v, i)' 100000
+  chain deep_option 'Some(v)' 1000
+  chain deep_result 'Ok(v)' 1000
   for e in tree vm; do
-    for p in list dict closure deep_list; do
-      want=built; [ "$p" = deep_list ] && want=100000
+    for p in list dict closure deep_list array deep_array deep_tuple deep_option deep_result; do
+      case "$p" in
+        deep_option|deep_result) want=1000 ;;
+        deep_*|array) want=100000 ;;
+        *) want=built ;;
+      esac
       wasm "$e" "$p.ax"
       if [ "$RC" = 0 ] && [ "$(cat out)" = "$want" ]; then
         echo "  ok  [ax59 $e $p] exit 0"
@@ -166,8 +207,24 @@ ax60)
   src option_type "let x: $(rep 'Option<' 300)i64$(rep '>' 300) = None"
   src calls "let x = $(rep 'f(' 300)1$(rep ')' 300)"
   src blocks "let x = $(rep '{ ' 300)1$(rep ' }' 300)"
+  # Each slot is parsed by a parser of its own: three slots of 110 each
+  # (under the limit one by one, over it together) must share one budget.
+  # nested <levels> <parens> — string literals nested in each other's slot.
+  nested() {
+    python3 - "$1" "$2" <<'EOF'
+import sys
+x = "1"
+levels, k = int(sys.argv[1]), int(sys.argv[2])
+for i in range(levels):
+    x = '"{ ' + "(" * k + " " + x + " " + ")" * k + ' }"'
+    if i + 1 < levels:
+        x = x.replace("\\", "\\\\").replace('"', '\\"')
+print(x)
+EOF
+  }
+  src interp "let x = $(nested 3 110)"
   for e in tree vm; do
-    for p in paren300 paren5000 chain strchain some_pattern option_type calls blocks; do
+    for p in paren300 paren5000 chain strchain some_pattern option_type calls blocks interp; do
       wasm "$e" "$p.ax"
       if [ "$RC" = 2 ] && grep -qF "\"code\":\"E0000\",\"file\":\"$p.ax\",\"line\":2,\"col\":5,\"message\":\"$msg\"" err; then
         echo "  ok  [ax60 $e $p] exit 2, E0000 at 2:5"
