@@ -1,7 +1,7 @@
 # R50 — Bytecode engine for `axon run`
 
 **Spec ID:** `R50-register-vm`
-**Status:** Landed (S0-S9; S6 made `vm` the default at `a9176ce5`); revision 27 adds S10-S12, Draft pending review. Reviewed at revision 10 after nine adversarial reviews (2026-10-09, `reviewer`). The first eight,
+**Status:** Landed (S0-S9; S6 made `vm` the default at `a9176ce5`); revision 27 adds S10-S12, Reviewed at revision 37 (built and gated on `ax/perf2`, not yet merged). Reviewed at revision 10 after nine adversarial reviews (2026-10-09, `reviewer`). The first eight,
 verdict "incorrect" (first 2 blockers and 11 must-fix, second 4 must-fix and 8 smaller, third 6 must-fix
 and 6 smaller, fourth 7 must-fix and 5 smaller, fifth 5 must-fix and 7 smaller, sixth 5 must-fix and 6
 smaller, seventh 2 must-fix and 3 smaller, eighth 2 must-fix and 2 smaller), and the ninth, verdict
@@ -42,7 +42,9 @@ must-fix, 2 nits; §15 "Revision 31"); revision 32 answers the twenty-eighth (2 
 §15 "Revision 32"); revision 33 answers the twenty-ninth (1 blocker, 1 must-fix, 1 nit; §15
 "Revision 33"); revision 34 answers the thirtieth (3 must-fix, 1 nit; §15 "Revision 34"); revision 35 answers the
 thirty-first (2 must-fix, 1 nit; §15 "Revision 35"); revision 36 answers the thirty-second (2
-must-fix, 1 nit; §15 "Revision 36"); a thirty-third review is pending.
+must-fix, 1 nit; §15 "Revision 36"). The thirty-third, verdict "correct" (0 blockers, 0 must-fix,
+2 nits), judged revision 36 ready; revision 37 fixes its nits (§15 "Revision 37"), so S10-S12 are
+Reviewed.
 **Risk class:** Structural (a second execution path for the reference engine)
 **Author / date:** 2026-10-09, from compilebench AX-18 (interpreter cost) after AX-53..AX-55.
 
@@ -942,12 +944,14 @@ the source: in a charged `X`, `X_inner` is reached only by an unconditional `sel
 statement or, natively, by a direct call under a bare `!NEST_ALL` or the `else` of a bare `if
 NEST_ALL`; nothing outside `fn X` names `X_inner`; and a charged `(r, e)` callee is called bare in
 `r` only in that native arm). The source check does not see a wasm32 branch in `X` that returns
-through another function before reaching `nested`; the dynamic probes cover that, with one case per
-recursive parser entry: 100,000 levels for `chain100000` (`+`), `paren_type`, `tuple_type`,
+through another function before reaching `nested`; the dynamic probes cover that for these
+entries: 100,000 levels for `chain100000` (`+`), `paren_type`, `tuple_type`,
 `ref_type` and `elif100000` (`else if` links), and for `synerr100000` and `unclosed100000` (a `+`
 chain ending in a syntax error); guard chains of 300, 1,000 and 3,000 terms, a 3,000-term arm body,
 a 5,000-term or-pattern arm body and a 1,500-term slot chain, all past the limit; each E0000 or the
-stated syntax error and never 134. A bypass of `parse_if`'s charge through an inlined helper passes
+stated syntax error and never 134. The `match` subject charge (`parse_match_operand`) has no probe:
+`parse_primary`'s charge still bounds that recursion, so a bypass of it cannot trap (it lets a
+subject chain nest up to twice the limit on wasm32 instead of refusing it). A bypass of `parse_if`'s charge through an inlined helper passes
 the source check and the budget script but traps `elif100000` with 134; `vm_perf_gate.sh`, whose `REF` column holds
 fib-recursive's median at the S11 commit `2627dad7` next to the S10 medians, so every program's
 `instructions:u` stays within 0.5 % of the code S12 is built on; the whole suite under the S9 modes.
@@ -1164,7 +1168,7 @@ Every `tests/fixtures/` path in this spec is under `crates/axon-core/`.
 ### 10. Performance budget
 
 `scripts/vm_perf_gate.sh` builds `cargo build --release -p axon-core --no-default-features --bin axon`
-(the workspace release profile: opt 3, thin LTO, 1 codegen unit). It runs each of the five programs in
+(the workspace release profile: opt 3, thin LTO, 1 codegen unit). It runs each of the six programs in
 `tests/fixtures/vm_perf/`, verbatim copies of compilebench's `benchmarks/<b>/axon/main.ax`, with
 `AXON_ENGINE=vm` under `perf stat -e instructions:u -r 3 taskset -c ${VM_PERF_CPU:-6}`. It fails on any
 median above budget, or on any output differing from the program's golden. If `perf` cannot count, it
@@ -1177,8 +1181,10 @@ exits **2** with "not measured"; that is a failure, not a skip.
 | mandelbrot | 15,023,124,683 | 49,352,860,742 |
 | arr-sum | 23,624,147,901 | 58,866,778,109 |
 | qsort | 18,967,575,334 | 103,109,443,137 |
+| sieve | 1,085,960,442 (budget 26,764,304,040, half the S9 VM's median; S10 below) | — |
 
-A median passes when it is at or below the budget; there is no rounding.
+fib-recursive's budget is 1,141,214,164 from S11 (below), a third of the CPython median in the
+table. A median passes when it is at or below the budget; there is no rounding.
 
 `--repros` mode gates per-construct costs on five programs in `tests/fixtures/vm_perf/`. Three are a
 1M-iteration `while i < 1000000 { s = s + i; i = i + 1 }` loop. `loop.ax` is the bare loop; `call1.ax`
@@ -1790,3 +1796,15 @@ fixes are in `da151a79`; no Rust source changed.
 | [must-fix] S12: no 100,000-level `else if` probe, so a bypass of `parse_if`'s charge through an inlined helper passed the source check, the budget script and ax60, then trapped with 134; the probe list named guard, arm-body and slot chains as 100,000 deep | `elif100000` in ax60: E0000 at 2:5 on debug and release × tree and vm; the reviewer's mutant fails it with 134 in all four runs (ax60 226 ok, 4 FAIL; 230 ok when reverted). §4 S12 lists each probe at its real depth. Native does not count `else if` links and overflows on that chain (debug 134; release over 9 GB): out of scope, compilebench AX-67 |
 | [must-fix] S11: `vm_purefn_depth_boundary` never entered the tier from `main`: its only call from `main` was an unproven site, so the tier was first entered at depth 2 | Both programs make a warm-up `d(1)` first; under eager the measured call from `main` enters through `call_fast_inline` at depth0 1, and from depth 12 in both modes. A budget one frame too large now fails the test (vm completes where the tree panics at 49); the old test passed it. One frame too small is unobservable in output (the tier declines, generic reruns); §4 S11 says so |
 | [nit] S10: "nested at most `PURE_DEPTH` (16)" admits 15 nested `if`s; writes are checked against the value's kind, not the array's; no test writes one element twice before a decline | §4 S10 says 15 nested `if`s (16 traces no loop) and the value's kind (`xs[1] = 2.5` in an `[Int, Float]` array stays in registers, same output). `vm_index_decline_undoes_a_double_write` fails on a front-to-back rollback |
+
+Revision 37 (2026-10-10) answers the thirty-third review (`reviewer`, verdict "correct": 0 blockers,
+0 must-fix, 2 nits). It re-ran revision 36's repros and mutants (the `parse_if` bypass fails
+`elif100000` with 134; a budget one frame too large fails `vm_purefn_depth_boundary`; a front-to-back
+rollback fails `vm_index_decline_undoes_a_double_write`) and found no wasm32 trap or native/VM
+divergence in S10-S12. It also found a pre-R50 wasm32 heap abort on a 30,000-term `try` chain
+(compilebench AX-68, out of scope: the preflight path is unchanged since `886aae53`).
+
+| Finding | Resolution |
+|---|---|
+| [nit] "one case per recursive parser entry" overclaims: the `match` subject charge has no probe; a bypass passes every gate but cannot trap, because `parse_primary`'s charge still bounds the recursion | §4 S12 names only the probed entries and states the unprobed `match`-subject charge and why a bypass cannot trap |
+| [nit] §10 said "five programs" and listed fib-recursive's CPython median as its budget | §10 says six, adds the sieve row and its budget, and states fib-recursive's S11 budget |
