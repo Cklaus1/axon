@@ -15,55 +15,65 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 529e768bdb629249fc7d00dc96f853e6d76a7d1d
+generated-at: 13ee4b51980e6e54748567c6435c2b2b499aa774
 
-`git diff --numstat 31413ca7..529e768b -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..13ee4b51 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
-| `crates/axon-core/src/ast.rs` | 86 | 8 |
-| `crates/axon-core/src/builtins.rs` | 8 | 3 |
-| `crates/axon-core/src/cache.rs` | 70 | 2 |
+| `crates/axon-core/src/ast.rs` | 201 | 88 |
+| `crates/axon-core/src/builtins.rs` | 44 | 10 |
+| `crates/axon-core/src/cache.rs` | 284 | 40 |
 | `crates/axon-core/src/capabilities.rs` | 18 | 1 |
-| `crates/axon-core/src/checker.rs` | 406 | 74 |
-| `crates/axon-core/src/codegen/asi.rs` | 8 | 0 |
-| `crates/axon-core/src/codegen/build_wrappers.rs` | 15 | 1 |
+| `crates/axon-core/src/checker.rs` | 608 | 106 |
+| `crates/axon-core/src/clock.rs` | 58 | 3 |
+| `crates/axon-core/src/codegen/asi.rs` | 14 | 18 |
+| `crates/axon-core/src/codegen/build_wrappers.rs` | 25 | 1 |
+| `crates/axon-core/src/codegen/builtin_externs.rs` | 8 | 0 |
 | `crates/axon-core/src/codegen/builtins.rs` | 6 | 0 |
+| `crates/axon-core/src/codegen/display.rs` | 514 | 0 |
+| `crates/axon-core/src/codegen/enum_layout.rs` | 451 | 0 |
 | `crates/axon-core/src/codegen/escape.rs` | 509 | 0 |
-| `crates/axon-core/src/codegen/expr.rs` | 1489 | 435 |
-| `crates/axon-core/src/codegen/link.rs` | 747 | 291 |
-| `crates/axon-core/src/codegen/match_pat.rs` | 43 | 36 |
-| `crates/axon-core/src/codegen/mod.rs` | 197 | 8 |
+| `crates/axon-core/src/codegen/expr.rs` | 2305 | 680 |
+| `crates/axon-core/src/codegen/link.rs` | 1610 | 337 |
+| `crates/axon-core/src/codegen/match_pat.rs` | 335 | 147 |
+| `crates/axon-core/src/codegen/mod.rs` | 363 | 106 |
 | `crates/axon-core/src/codegen/option_result.rs` | 11 | 6 |
-| `crates/axon-core/src/codegen/output.rs` | 60 | 20 |
+| `crates/axon-core/src/codegen/output.rs` | 118 | 69 |
+| `crates/axon-core/src/codegen/types.rs` | 5 | 4 |
 | `crates/axon-core/src/complexity.rs` | 1 | 0 |
 | `crates/axon-core/src/doc.rs` | 1 | 0 |
-| `crates/axon-core/src/effects.rs` | 51 | 0 |
-| `crates/axon-core/src/env_registry.rs` | 4 | 0 |
-| `crates/axon-core/src/error.rs` | 20 | 11 |
+| `crates/axon-core/src/effects.rs` | 291 | 108 |
+| `crates/axon-core/src/env_registry.rs` | 7 | 0 |
+| `crates/axon-core/src/error.rs` | 22 | 13 |
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
+| `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 6771 | 1207 |
-| `crates/axon-core/src/interp/builtins.rs` | 482 | 341 |
-| `crates/axon-core/src/interp/conform.rs` | 1789 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 995 | 185 |
-| `crates/axon-core/src/interp/goal.rs` | 69 | 30 |
-| `crates/axon-core/src/interp/pin.rs` | 955 | 0 |
-| `crates/axon-core/src/interp/proptest.rs` | 35 | 15 |
-| `crates/axon-core/src/interp/taint.rs` | 1523 | 0 |
-| `crates/axon-core/src/interp/taint_tests.rs` | 2832 | 0 |
-| `crates/axon-core/src/interp/value.rs` | 15 | 7 |
+| `crates/axon-core/src/interp.rs` | 2207 | 1417 |
+| `crates/axon-core/src/interp/builtins.rs` | 592 | 547 |
+| `crates/axon-core/src/interp/eval.rs` | 1152 | 547 |
+| `crates/axon-core/src/interp/goal.rs` | 55 | 52 |
+| `crates/axon-core/src/interp/proptest.rs` | 20 | 23 |
+| `crates/axon-core/src/interp/sym.rs` | 1155 | 0 |
+| `crates/axon-core/src/interp/value.rs` | 491 | 543 |
+| `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
+| `crates/axon-core/src/interp/vm/mod.rs` | 3286 | 0 |
+| `crates/axon-core/src/interp/vm/pure.rs` | 959 | 0 |
+| `crates/axon-core/src/interp/vm/tests.rs` | 980 | 0 |
 | `crates/axon-core/src/kernel.rs` | 89 | 23 |
-| `crates/axon-core/src/lib.rs` | 115 | 13 |
-| `crates/axon-core/src/main.rs` | 422 | 94 |
+| `crates/axon-core/src/lib.rs` | 116 | 21 |
+| `crates/axon-core/src/main.rs` | 789 | 241 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
 | `crates/axon-core/src/mut_borrow.rs` | 800 | 0 |
-| `crates/axon-core/src/parser.rs` | 84 | 3 |
-| `crates/axon-core/src/resolver.rs` | 530 | 65 |
+| `crates/axon-core/src/parser.rs` | 69 | 3 |
+| `crates/axon-core/src/replay.rs` | 40 | 17 |
+| `crates/axon-core/src/resolver.rs` | 534 | 66 |
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
-| total | 21351 | 2881 |
+| `crates/axon-core/src/time_passes.rs` | 189 | 0 |
+| `crates/axon-core/src/types.rs` | 28 | 0 |
+| total | 23200 | 5239 |
 
-`git log --reverse 31413ca7..529e768b -- crates/axon-core/src`:
+`git log --reverse 31413ca7..13ee4b51 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -129,22 +139,92 @@ generated-at: 529e768bdb629249fc7d00dc96f853e6d76a7d1d
 | 2c0203e0 | amendment 96 | sandbox_run's result is cast to its declared i64 at the seal crossing; every read of an operator global goes through one lookup (`global_ref`) so the FieldAccess/Index fast paths and the closure-constant call apply the edge; a sealed frame's fn value carries its own mark (an operator fn value stays unmarked) and cannot replace an operator closure; unary `-x`/`~x` is judged by the width arm; drift tests for global reads and for builtins that run user code: narrowing |
 | 12cf6c55 | amendment 96 | unit test only (the value of a with-handler expression is undetermined until pinned: a stated cost): no production change |
 | cc74956e | amendment 100 | a handler arm and its continuation replay run under the pin owner of the fn that INSTALLED the handler, not the one that performed the effect; the name argument of every name-resolving builtin (sandbox_run, scheduler_spawn, goal_*, kernel_goal_create) must be an operator-chosen name (Ctx::npure) or the call is refused; an operator fn and a missing one read the same to sealed code; drift tests: narrowing, no widening |
+| cf286ad6 | merged from main (R51 S0) | INTERPRETER: feat(builtins): now_ns monotonic nanosecond clock in both engines (AX-32): not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| f16d5295 | merged from main (R51 S0) | outside the interpreter (main.rs): fix(cli): axon run leaves stderr to the program; run-id only with --verbose or AXON_RECORD (AX-33): the interpreter is untouched |
+| 37ff592f | merged from main (R51 S0) | outside the interpreter (cache.rs, codegen/link.rs, codegen/mod.rs, codegen/output.rs, error.rs, lib.rs, main.rs): perf(build): cache the optimised object so a hit only links (AX-34): the interpreter is untouched |
+| 855d93a5 | merged from main (R51 S0) | outside the interpreter (main.rs): fix(cli): axon build names the artifact it wrote, not always Binary (AX-39): the interpreter is untouched |
+| e432b391 | merged from main (R51 S0) | outside the interpreter (codegen/link.rs, codegen/output.rs, main.rs): perf(codegen): run globaldce at O0 and prune AI wrappers for --emit-obj (AX-37): the interpreter is untouched |
+| 673e3004 | merged from main (R51 S0) | outside the interpreter (codegen/link.rs, env_registry.rs): perf(codegen): link prebuilt runtimes without running cargo, pinned to the workspace toolchain (AX-35): the interpreter is untouched |
+| 75f623b0 | merged from main (R51 S0) | outside the interpreter (builtins.rs, effects.rs): perf(effects): walk each body once and propagate effects over a worklist; O(1) builtin lookup (AX-36): the interpreter is untouched |
+| 4ddfbff7 | merged from main (R51 S0) | outside the interpreter (codegen/link.rs, codegen/output.rs, lib.rs, main.rs, time_passes.rs): feat(cli): axon check/build --time-passes per-phase timing report (AX-36): the interpreter is untouched |
+| 58934b2b | merged from main (R51 S0) | outside the interpreter (codegen/link.rs, main.rs): perf(codegen): --opt-level s/z mark every definition optsize/minsize (AX-38): the interpreter is untouched |
+| b43383a6 | merged from main (R51 S0) | merge commit (Merge branch 'ax/frontend-timing' into ax/cb-integration); joins its branch, no change beyond its parents |
+| 009c3291 | merged from main (R51 S0) | merge commit (Merge branch 'ax/codegen-size' into ax/cb-integration); joins its branch, no change beyond its parents |
+| a107086b | merged from main (R51 S0) | merge commit (Merge branch 'ax/runtime-libs' into ax/cb-integration); joins its branch, no change beyond its parents |
+| 1780bcde | merged from main (R51 S0) | merge commit (Merge branch 'ax/build-cache' into ax/cb-integration); joins its branch, no change beyond its parents |
+| 32c7f3bf | merged from main (R51 S0) | INTERPRETER: perf(interp): closures capture only their free variables; syms instead of names (AX-40, AX-18): not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| 11c44343 | merged from main (R51 S0) | INTERPRETER (via merge): merge commit (Merge branch 'ax/interp-closures' into ax/cb-integration); joins its branch, no change beyond its parents; not PCI-reviewed, sealed runs refused on this tree (R51 SEAL_RUNTIME_COMPLETE = false) |
+| 05132402 | merged from main (R51 S0) | INTERPRETER: style(interp): FxHasher reads 8-byte words with as_chunks (clippy): not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
 | c62e9b02 | amendment 102 | a runtime taint: a value sealed code produced carries a taint every operation of the evaluator propagates (an accumulator around `eval`, a taint per binding, per shared object and per module-level let, an early-exit taint for a fn result and for stores), and an operator frame refuses to use a tainted value to SELECT operator code: the name given to a name-resolving builtin, an operator closure the candidate picked (out of a table by a key, index or branch) and then called, the impl a method call dispatches to (receiver type), and the width of fixed-width arithmetic; the static pin analysis is kept underneath; a plain `axon run` is unchanged (one branch per eval); drift tests for builtin classes, dict writers, dispatch sites, value holders and swept files: narrowing, no widening |
 | 83175bed | amendment 106 | a channel is one shared object with one taint: every channel method and every `select` arm examined takes it into the result, and a sealed frame's mutating access (send, recv, try_recv) marks it; a kernel or world write stores the control taint it ran under; a builtin runs its callbacks under the control taint of its arguments; string interpolation and the stringifying builtins take the taint of every shared object they print; a sealed caller is refused in ONE text on every path (a name, a global, a field or index, `goal_run`, a goal constraint, `kernel_goal_create`: `goal_run` of an operator fn no longer completes); routing and drift tests for every dict, kernel and array reader, 38 hunted programs: narrowing, no widening |
 | 1a75557b | amendment 106 | test only (the oracle test reads the verdict as Debug text; no production change) |
+| b156e0fd | merged from main (R51 S0) | outside the interpreter (checker.rs, types.rs): fix(checker): resolve enums and refinements inside tuples and fn types (AX-41): the interpreter is untouched |
+| 213acb7b | merged from main (R51 S0) | outside the interpreter (codegen/enum_layout.rs, codegen/expr.rs, codegen/match_pat.rs, codegen/mod.rs, codegen/types.rs): fix(codegen): lay out struct fields of enum type; place enum payload fields by name (AX-43): the interpreter is untouched |
+| f7c0cf4f | merged from main (R51 S0) | outside the interpreter (codegen/asi.rs, codegen/expr.rs, codegen/match_pat.rs, codegen/mod.rs): fix(codegen): each refusal printed and counted once; no E0701 cascade after a refusal (AX-45): the interpreter is untouched |
+| 79ab856e | merged from main (R51 S0) | outside the interpreter (builtins.rs, codegen/expr.rs, codegen/mod.rs): fix(codegen): native arr_push/reverse/take/drop over any element type (AX-44): the interpreter is untouched |
+| 9e952186 | merged from main (R51 S0) | INTERPRETER: perf(interp): 16-byte Value, Box<str> Flow, Sym-keyed records, cached string literals (AX-46, AX-47): not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| 9d73a8b6 | merged from main (R51 S0) | merge commit (Merge branch 'ax/native-arr-push' into ax/cb-integration2); joins its branch, no change beyond its parents |
+| da8d4b2d | merged from main (R51 S0) | INTERPRETER: style(interp): rustfmt the AX-46/AX-47 record and Flow changes: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| 837ab524 | merged from main (R51 S0) | INTERPRETER: perf(interp): inline Int/Float binop fast path shared with eval_binop_vals (AX-46): not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| eb34ee05 | merged from main (R51 S0) | INTERPRETER: test(interp): pin record print order, equality, variant matching and narrow-field coercion (AX-47): not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| 25b5f63d | merged from main (R51 S0) | outside the interpreter (codegen/enum_layout.rs, codegen/expr.rs, codegen/match_pat.rs, codegen/types.rs): fix(codegen): lower recursive enums by boxing self-referential payload fields (AX-42): the interpreter is untouched |
+| a507e2ec | merged from main (R51 S0) | merge commit (Merge branch 'ax/native-enum-layout' into ax/cb-integration2); joins its branch, no change beyond its parents |
+| b92a7962 | merged from main (R51 S0) | merge commit (Merge branch 'ax/codegen-diag' into ax/cb-integration2); joins its branch, no change beyond its parents |
+| d91575b8 | merged from main (R51 S0) | outside the interpreter (codegen/match_pat.rs): fix(codegen): enum field pattern test goes through build_wrappers::w_and (R1e): the interpreter is untouched |
+| e46ec5a0 | merged from main (R51 S0) | INTERPRETER (via merge): merge commit (Merge branch 'ax/interp-value' into ax/cb-integration2); joins its branch, no change beyond its parents; not PCI-reviewed, sealed runs refused on this tree (R51 SEAL_RUNTIME_COMPLETE = false) |
 | ee1c7056 | amendment 108 | a comparison (`==`, `!=`, ordering) takes the taint of every shared object (dict, channel) inside either operand, however deep, and every builtin argument is walked deep (no table of names): `if d == e {lenient} else {strict}` over a dict the candidate filled is refused like `dict_get_or`; a sealed method call is judged by the methods sealed impls define and a run-time method miss reads like an operator method (existence oracle, method path); a `native::` call is World state (a sealed call marks it, an operator call reads it back); drift and routing tests, 12 rows: narrowing, no widening |
 | b8f176d9 | amendment 108 | test only (a clippy `useless_format` in a taint test): no production change |
 | 8abeb02b | amendment 108 | builtin arguments are walked deep EXCEPT the first argument of ten builtins that only count, key into or append (`SHALLOW_FIRST_ARG`, fail-closed: unlisted is deep), which keeps a loop of a million `dict_set`s linear; tests: narrowing, no widening beyond amendment 108's first form |
+| d1334115 | merged from main (R51 S0) | INTERPRETER: style: rustfmt sweep, layout only (compilebench AX-52): not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| 1a6282f5 | merged from main (R51 S0) | outside the interpreter (codegen/mod.rs): fix(codegen): give a tuple element binding its semantic type so an inner tuple destructures natively (AX-48): the interpreter is untouched |
+| a7fc7778 | merged from main (R51 S0) | outside the interpreter (codegen/display.rs, codegen/expr.rs, codegen/mod.rs): fix(codegen): render interpolated structs, enums, Option/Result natively like the interpreter (AX-49): the interpreter is untouched |
+| 0e4030eb | merged from main (R51 S0) | merge commit (Merge branch 'ax/struct-interp' into ax/cb-integration3); joins its branch, no change beyond its parents |
+| c2385099 | merged from main (R51 S0) | outside the interpreter (codegen/build_wrappers.rs, codegen/display.rs): fix(codegen): display helpers emit through build_wrappers (R1e); w_float_ext: the interpreter is untouched |
+| 2c6266c0 | merged from main (R51 S0) | INTERPRETER: perf(interp): resolve locals to frame slots; read scalar binop operands in place (AX-53, AX-55): not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| c3c34ecc | merged from main (R51 S0) | INTERPRETER: perf(interp): user-fn call decides attrs once, reuses frames and arg buffers (AX-54): not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| ff5ceb8e | merged from main (R51 S0) | INTERPRETER (via merge): merge commit (Merge branch 'ax/interp-calls' into ax/cb-integration4); joins its branch, no change beyond its parents; not PCI-reviewed, sealed runs refused on this tree (R51 SEAL_RUNTIME_COMPLETE = false) |
+| 99b8b099 | merged from main (R51 S0) | INTERPRETER: R50 S0: engine selector, run_body, FnEntry.compiled, trace, extracted dispatch_call/bind_let/call_mut, AX-57 scope-leak fix: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| 7af37c53 | merged from main (R51 S0) | INTERPRETER: R50 S1: bytecode engine lowers the scalar core (literals, locals, blocks, let, assign, operators, if/while/for, return/break/continue, ?,...: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| 40881a3a | merged from main (R51 S0) | INTERPRETER: R50 S1: inline the extracted eval helpers' fast paths (tree loop.ax back under S0): not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| d1346ad6 | merged from main (R51 S0) | INTERPRETER: R50 S1: vm exec keeps Break/Continue catching off the common return path: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| 58a6b01e | merged from main (R51 S0) | INTERPRETER: R50 S1: calls by name resolve the callee at compile time (dispatch_named); call_fn_in binds params by index: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| 0ff60f9c | merged from main (R51 S0) | INTERPRETER: R50 S1: blocks, while iterations and for bodies that bind nothing push no scope; body exit builds no Unit to drop: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| 3c7a1716 | merged from main (R51 S0) | INTERPRETER: R50 S1: call frames pool as Box<Env> (a pointer moves, not the frame); frame clear forgets scalar bindings instead of running drop glue: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
 | 65d407d8 | amendment 114 | the right operand of `&&`/`||` runs under the left's control taint (sealed runs, a cold function), a refused match guard, a `?` and a `select` arm raise theirs, `?` counts as an exit, the sealed files are checked by a second pipeline over the sealed items alone with the checker refusing the missing name wherever the operator's was (struct literal, lambda parameter, enum/trait/refinement types, generic bound, verify and refinement predicates); taint::CONTROL_TABLE drift-tested against ast.rs: narrowing, no widening |
+| fb35ba68 | merged from main (R51 S0) | INTERPRETER: R50 S1: call_mut takes its frame from the call-frame pool (take_frame/give_frame) instead of allocating one per call: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| 547b6029 | merged from main (R51 S0) | INTERPRETER: R50 S1: current_fn holds the executing fn's &FnDef in a Cell (no Rc clone, no RefCell flag); one CallGuard restores it and the call depth: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| 325f5a89 | merged from main (R51 S0) | INTERPRETER: R50 S1: call_fn_in's common path (FnEntry::plain, no refinements) is guards, arity, bind, goal_met, body, result; attribute-driven steps ...: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| 2affff15 | merged from main (R51 S0) | INTERPRETER: R50 S1: call_fn_in pushes params and goal_met into the empty frame (the define_var slot == len case, without its checks): not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| 4bd88b06 | merged from main (R51 S0) | INTERPRETER: R50 S1: a VM call by name leaves its arguments on the operand stack (StackTail); a user-fn callee binds them from there, no take_args/rec...: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| abf5976b | merged from main (R51 S0) | INTERPRETER: R50 S1: a bytecode activation's operand stack lives in its pooled frame (Env::stack) instead of the vm_stacks pool: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| 733c4806 | merged from main (R51 S0) | INTERPRETER: R50 S1: env_pool is Vec<Box<Env>> on purpose (allow clippy::vec_box): not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
 | 5d333913 | amendment 114 | test and registry only (a taint test for the type a `?` carries, plant controls for the note check): no production change |
 | 2e68236b | amendment 114 | the sealed-only check holds the operator's `mod` of a candidate module (found by the fabric suite), so a candidate whose module uses its own helper resolves; an operator module the candidate does not ship is still missing: narrowing relative to the first form of amendment 114, no widening of what base accepted |
+| 3a67ec2c | merged from main (R51 S0) | INTERPRETER: R50 S3: lower match, while let and method calls (MethodRecv); extract chan_method/impl_method: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| ef20af0c | merged from main (R51 S0) | INTERPRETER: R50 S2: aggregates, index/field reads and place writes lower to ops: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| 765bb811 | merged from main (R51 S0) | INTERPRETER (via merge): merge commit (Merge ax/r50-s3 (R50 S3 match, while let, methods)); joins its branch, no change beyond its parents; not PCI-reviewed, sealed runs refused on this tree (R51 SEAL_RUNTIME_COMPLETE = false) |
+| 89017cc5 | merged from main (R51 S0) | INTERPRETER: R50 S4: lambdas compile (make_closure, ClosureCode.compiled), allocation-free builtin -> closure call; fold.ax 330/element: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| 12713cbd | merged from main (R51 S0) | INTERPRETER (via merge): merge commit (Merge ax/r50-s4 (R50 S4 lambdas, allocation-free builtin -> closure call)); joins its branch, no change beyond its parents; not PCI-reviewed, sealed runs refused on this tree (R51 SEAL_RUNTIME_COMPLETE = false) |
+| 91796cac | merged from main (R51 S0) | outside the interpreter (cache.rs): spec(R50): S2-S4 landed, evidence ledger; cache unit tests use per-test scratch dirs (parallel-test race): the interpreter is untouched |
+| 93877287 | merged from main (R51 S0) | INTERPRETER: R50 S5 (WIP): CallFast op (proven fast VM->VM call, inline-operand args), CallMut op over call_mut_with, fast_call_blocker + vm: slow tra...: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| f0ce9745 | merged from main (R51 S0) | INTERPRETER: R50 S5: fast-call tests (mutcall no tree nodes, slow per flag, param/return semantics, tier clearing, depth limit, depth-before-arity, ha...: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| fd8816b7 | merged from main (R51 S0) | INTERPRETER: R50 S5: allocation-free call_mut (both engines), CallMut op, leaf fast-call bodies; fastcall 257/300, mutcall 562/600: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| 3eb79f1a | merged from main (R51 S0) | INTERPRETER (via merge): merge commit (Merge ax/r50-s5 (R50 S5 fast calls, allocation-free call_mut, CallMut op)); joins its branch, no change beyond its parents; not PCI-reviewed, sealed runs refused on this tree (R51 SEAL_RUNTIME_COMPLETE = false) |
+| 8470d24c | merged from main (R51 S0) | INTERPRETER: R50 S7: Pure and PureLoop ops, fold_leaf in arr_fold; vm: pure / vm: fold-leaf trace lines: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| 0899ae24 | merged from main (R51 S0) | INTERPRETER (via merge): merge commit (Merge ax/cb-integration4 (R50 S5) into ax/r50-s7); joins its branch, no change beyond its parents; not PCI-reviewed, sealed runs refused on this tree (R51 SEAL_RUNTIME_COMPLETE = false) |
+| 08f0e6fe | merged from main (R51 S0) | INTERPRETER: R50 S8 (WIP, gate not met): IndexDefine, WriteIndexIndex, BinStack, CallFastLocalInt, BranchReturn/leaf_arm, Moves &mut fast path: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| 34f2bf90 | merged from main (R51 S0) | INTERPRETER: R50 S8: CallMut caches a frame-free MovesCall form (swap fused to one Swap move); fib trace op counts: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| a9176ce5 | merged from main (R51 S0) | INTERPRETER: R50 S6: AXON_ENGINE defaults to vm; docs (I-2 sentence, env rows, reference, wasm export): not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| db2d2eee | merged from main (R51 S0) | INTERPRETER: R50 S9: deferred compile (second entry unless hot on entry), AXON_VM_EAGER, vm: defer trace; compilebench AX-58: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
 | 3849fadb | amendment 117 | the clear, localized members of the round-14 find-until-dry loop (44 of 53 findings): `temporal_new`/`temporal_is_valid` are World and Time (a clock reader is no Pure builtin); a match guard, every `while`/`while let` condition evaluation after the first, every builtin callback after the first (`call_cb`) and every Rust loop that runs operator code (`t_loop_pc`: goal searches, the scheduler pass) run under the control taint of what decided them; an operator pop and the channel a `select` looked at are marked; an abort-capable `with` body treats a branch on tainted data as a possible exit and sealed code that ran in it raises the sticky taint, as does a scheduler fiber that ran sealed code and failed; a resume value keeps its taint; `dstore_*` is World, a zoned call's provenance push is kernel state and its append is world state; a refinement type pins what its base pins; a width inside an `Uncertain`/`Temporal` is a width; `sandbox_run` copies the operator's sandbox entry into the sealed kernel for the call; the principal token stream is per registry; the sealed-only check resolves `dyn`, array/tuple elements, refinement/`where`/`@[verify]`/whole-struct predicates and the exact deferred type names, and the goal variants and `goal_eval` give a sealed caller the missing-name text: narrowing, no widening (the claim itself is NARROWED to what is enforced) |
 | c4ea5684 | amendment 117 | follow-up to 3849fadb found by the full mutation run: two guards that proved redundant are removed (a sealed-caller check after goal_name_is_known; the operator-pop branch of t_chan_access, covered by t_chan_choice) and a test case for an aborting arm's value: no change in what is refused |
 | b7aaa9c1 | amendment 121 | the existence oracle at every placement and the operator-typed value the candidate picked (first cut): the parser's end-of-input span is no longer the dummy `0..0`; the resolver locates a type, a refinement and a top-level `let` at its item and keeps the run's own sealed set (an HONEST `fn lim(n: i64 where n >= 0)` is no longer refused for naming its parameter); a merged diagnostic with no line joins the backstop; a sealed top-level `let` initializer is name-checked; a third taint bit, `PICK`, marks an operator-typed value (or one holding it) that sealed code selected (an index, a builtin's read on a selector it chose, a branch, a store under its control, an exit it decided, a hand-back from a sealed fn or closure) and the dispatch rule refuses a receiver that carries it: narrowing, no widening |
 | d7574f7d | amendment 121 | the split moves to `seal_split.rs` (library, so a gate row runs its test), the honest-registry control is made to bind the candidate's taint, doc and test wording: no change in what is refused beyond b7aaa9c1 |
 | 45347cb7 | amendment 121 | the backstop's first branch no longer appends the sealed-only diagnostics (empty there); three older rows re-anchored; the refusal-coverage exemption of the observer prune dropped (that file is not under crates/axon-core/src; the commit touches main.rs only by removing one line): no change in what is refused |
 | 416a6683 | amendment 121 | the parser unit test that is M3450's own attack (`an_item_that_ends_the_file_has_a_real_span_in_its_own_file`); no production change in this commit (parser.rs gains a test only) |
-| 77 commits | | |
+| 64d4f997 | merged from main (R51 S0) | INTERPRETER: R50 rev 26 / AX-56: wasm32 recursion panics instead of trapping (guard 128, native-stack byte budget checked by scripts/wasm_stack_budget...: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| 13ee4b51 | R51 S0 merge | joins main 5864c423 with v022/veto c9ed2ddd taking MAIN's interpreter (interp.rs, interp/{eval,builtins,goal,proptest,value}.rs); veto's taint.rs/taint_tests.rs/pin.rs/conform.rs are NOT on this tree, so the seal they enforce is absent. Refuse-all pin in the same commit: Interp::build refuses any sealed run (SEAL_RUNTIME_COMPLETE = false), `axon test --seal` exits 2 before any result line, vm::compile refuses a sealed interp. Every PCI row that needs a seal edge is deferred (governance/status/r51-deferred-tests.json) until R51 S6 |
+| 147 commits | | |
 <!-- END MECHANICAL -->
 
 
