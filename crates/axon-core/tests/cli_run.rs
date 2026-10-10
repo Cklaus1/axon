@@ -584,6 +584,75 @@ fn native_guard_pure_e1207() {
 }
 
 #[test]
+fn native_guard_tier_e0910() {
+    // `walk_expr` visits match guards (AX-60), so codegen's per-call `tier:`
+    // check sees an `ai_complete(…, tier:)` in a guard and refuses the build.
+    // Before, the guard was skipped: `axon build` succeeded, and the binary
+    // would route the call to the default model while `axon run` honours
+    // the tier.
+    let src = "fn ok_len(r: Result<str, str>) -> i64 { match r { Ok(s) => str_len(s), Err(e) => 0 } }\n\
+               fn main() -> i64 {\n    \
+               let r = match 1 { n if ok_len(ai_complete(\"hi\", tier: \"cheap\")) > 1000000 => 1, _ => 2 }\n    \
+               println(to_str(r))\n    \
+               0\n}\n";
+    let f = tmp_ax("guard_tier_e0910", src);
+    let bin = std::env::temp_dir().join(format!("axon_guard_tier_{}", std::process::id()));
+    let _ = std::fs::remove_file(&bin);
+    let out = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .env("AXON_AI_MOCK", "1")
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    if codegen_absent(&msg) {
+        note_harness_skip("axon build (no codegen feature)");
+        return;
+    }
+    let built = bin.exists();
+    let _ = std::fs::remove_file(&bin);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "guard `tier:` must be refused: {msg}"
+    );
+    assert!(
+        msg.contains("codegen error [E0910]: native codegen cannot honor the per-call AI tier"),
+        "want the E0910 per-call tier refusal: {msg}"
+    );
+    assert!(!built, "a refused build leaves no binary");
+}
+
+#[test]
+fn native_guard_write_unaliases() {
+    // `walk_expr` visits match guards (AX-60), so codegen's
+    // `written_place_roots` sees a guard's `a[0] = 9` and copies `a` for
+    // `let b = a` (AX-08 copy-on-alias). Before, the guard was skipped: `b`
+    // shared `a`'s buffer and the binary printed `9 9 1`.
+    let src = "fn main() -> i64 {\n    \
+               let a = [1, 2, 3]\n    \
+               let b = a\n    \
+               let r = match 1 { n if { a[0] = 9\n true } => 1, _ => 2 }\n    \
+               println(\"{b[0]} {a[0]} {r}\")\n    \
+               0\n}\n";
+    let interp = interp_stdout("guard_write_unaliases", src);
+    assert_eq!(interp, "1 9 1", "`axon run`");
+    let Some(native) = native_stdout("guard_write_unaliases", src) else {
+        note_harness_skip("axon build (no codegen feature)");
+        return;
+    };
+    assert_eq!(native, interp, "native != interpreter");
+}
+
+#[test]
 fn wasm_browser_host_await_round_trips_r7c() {
     // R15 §13 B1: host_await works in the BROWSER substrate — a suspending program
     // run by the axon-wasm interpreter gets its replies from an imported (JS)

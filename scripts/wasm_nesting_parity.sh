@@ -27,7 +27,10 @@
 #         `+`, one in an unclosed call, the nested chains with their last
 #         `)` missing, and a slot chain past the limit in an unclosed call,
 #         before a dangling `+` or before a leftover token in the slot exit 2
-#         with native's syntax error instead.
+#         with native's syntax error instead. A `type` definition whose base
+#         type (an `Option<` 300 deep, with and without `where`, or a tuple
+#         element's `where` predicate in 300 parentheses) is too deep exits 2
+#         with the same E0000 on line 1, where the refusal happens.
 #   ax61  `host_await_val` without a host driver: a closure whose body is a
 #         long chain, passed from depths around the finding's (1-130) under
 #         `with` frames, and a 100,000-node list payload exit 101 (`no host
@@ -343,6 +346,28 @@ EOF
         echo "  ok  [ax60 $e $p] exit 2, '$want' at $line:$col"
       else
         fail "ax60 $e $p" "exit $RC (want exit 2, E0000 '$want' at line $line, col $col)"
+      fi
+    done
+  done
+  # A too-deep type in a `type` definition, whose base type is parsed
+  # speculatively (a refinement or, failing that, an enum): the refusal is
+  # not taken for an enum and is reported where it happens, as in a fn
+  # signature — at the first `Option` past the limit, or the parenthesis
+  # past it in a tuple element's `where` predicate. Native parses the first
+  # and third (`ok`) and reports a syntax error at 1:16 for the second.
+  tdef() { printf 'type P = %s\nfn main() -> i64 { println("ok") 0 }\n' "$2" >"$1.ax"; }
+  tdef tdef_where "$(rep 'Option<' 300)i64$(rep '>' 300) where true"
+  tdef tdef_enum "$(rep 'Option<' 300)i64$(rep '>' 300)"
+  tdef tdef_tuple_pred "(i64 where $(rep '(' 300)1$(rep ')' 300)) where true"
+  for e in "${RUNS[@]}"; do
+    for spec in "tdef_where:$((10 + 7 * LIMIT))" "tdef_enum:$((10 + 7 * LIMIT))" \
+      "tdef_tuple_pred:$((20 + LIMIT / 2))"; do
+      IFS=: read -r p col <<<"$spec"
+      wasm "$e" "$p.ax"
+      if [ "$RC" = 2 ] && grep -qF "\"code\":\"E0000\",\"file\":\"$p.ax\",\"line\":1,\"col\":$col,\"message\":\"$msg\"" err; then
+        echo "  ok  [ax60 $e $p] exit 2, E0000 at 1:$col"
+      else
+        fail "ax60 $e $p" "exit $RC (want exit 2, E0000 '$msg' at line 1, col $col)"
       fi
     done
   done

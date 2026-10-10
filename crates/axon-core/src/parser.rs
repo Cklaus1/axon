@@ -1552,9 +1552,16 @@ impl Parser {
             // `where` — but only when the RHS can't be a multi-variant enum. We
             // detect the refinement by: a bare type name with NO variant fields,
             // immediately followed by `where`.
+            // A nesting refusal (AX-60, wasm32) is the program's error, not a
+            // sign the RHS is an enum: pass it through, where it happened, as
+            // a too-deep type anywhere else outside an expression is. Native
+            // keeps its rewind (a refusal in a tuple element's `where`
+            // predicate still falls back to the enum parse there).
             let checkpoint = self.pos;
-            if let Ok(base) = self.parse_type() {
-                if self.at(&Token::Where) {
+            self.too_deep = false;
+            match self.parse_type() {
+                Err(e) if NEST_ALL && self.too_deep => return Err(e),
+                Ok(base) if self.at(&Token::Where) => {
                     self.expect(&Token::Where)?;
                     let predicate = self.parse_expr()?;
                     let end = self.current_span().end;
@@ -1566,6 +1573,7 @@ impl Parser {
                         span: self.sp(start, end),
                     }));
                 }
+                _ => {}
             }
             // Not a refinement — rewind and parse as an enum.
             self.pos = checkpoint;
