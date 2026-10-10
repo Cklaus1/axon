@@ -40,7 +40,8 @@ the twenty-fifth (3 blockers, 2 must-fix, 4 nits; §15 "Revision 29"); revision 
 twenty-sixth (3 must-fix, 1 nit; §15 "Revision 30"); revision 31 answers the twenty-seventh (2
 must-fix, 2 nits; §15 "Revision 31"); revision 32 answers the twenty-eighth (2 must-fix, 1 nit;
 §15 "Revision 32"); revision 33 answers the twenty-ninth (1 blocker, 1 must-fix, 1 nit; §15
-"Revision 33"); a thirtieth review is pending.
+"Revision 33"); revision 34 answers the thirtieth (3 must-fix, 1 nit; §15 "Revision 34"); a
+thirty-first review is pending.
 **Risk class:** Structural (a second execution path for the reference engine)
 **Author / date:** 2026-10-09, from compilebench AX-18 (interpreter cost) after AX-53..AX-55.
 
@@ -371,7 +372,9 @@ index reads take `Int` only (`strict_int`, below), while place writes also accep
   loosely: it trapped on nesting the parser recurses on at 273 levels in release, and the checker on
   a left-associative operator chain (which the parser builds in a loop) at 1,301 terms in debug and
   832 in release (compilebench AX-60). From S12 wasm32 refuses any expression higher than 224 (§4
-  S12), which bounds every later walk over it. Copying a 700-term lambda for `host_await_val`
+  S12), which bounds every later walk over one expression. A walk over a chain of declarations
+  (a call chain behind `@[contained]` or `@[total]`, a chain of refinement-type names) is not
+  bounded by it: flat source traps it on wasm32 (compilebench AX-66, out of scope, §4 S12). Copying a 700-term lambda for `host_await_val`
   (`SendValue::from_value_at`) at the bottom of a recursion with a `with` and nine parentheses per
   level trapped at depth 67-77 under both engines and profiles (compilebench AX-61); from S12 wasm32
   copies no payload but a `Str`. The interpreter walks expressions without recursion
@@ -854,8 +857,13 @@ nested `[` or `-` in an attribute argument) count a level as
   error. That covers parenthesis, block, pattern, type or `else if` depth, and a match arm body or
   inline-refinement predicate taller than the limit without a cut. So is an error after the root
   ends (a later statement or item, the enclosing `}`, the rest of a fn signature or attribute).
-  Source outside any expression has no root, so its refusal is reported at the level where it
-  trips: a type (a `type` definition, a fn signature, a field; for `type P =` and 300 `Option<`,
+  A root is any expression the parser starts outside every counted level: a fn-body statement, a
+  top-level `let`, a contract or constant, a `@[verify(..)]` predicate, the `where` predicate of a
+  `type` definition or of a fn parameter or `let` annotation that is not inside a tuple type, and a
+  top-level handler definition's arm body. Each is refused at its own first token (`type P = i64
+  where ((..` at the predicate, column 20; `fn f(x: i64 where ((..` column 19; `@[verify(((..` column
+  10; a 600-term handler arm body column 36), except a `let` annotation's predicate, which is refused
+  at the `let`. Source outside any root is reported at the level where it trips: a type (a `type` definition, a fn signature, a field; for `type P =` and 300 `Option<`,
   column 1,578), a top-level handler definition's `on` pattern (300 nested `Some(`, column 1,150)
   and an attribute argument (the 225th `[` or `-`, column 234). A chain cut inside a type outside
   an expression (a tuple type's refinement predicate) is refused at the token after the outermost
@@ -880,7 +888,12 @@ AX-62; and the checker's recursion over deep inferred types (AX-63). Also out of
 recursion in Axon's code: on the debug wasm32 build only, the logos-generated lexer recurses once per
 character of a string literal or block comment, so a string of about 11,000 characters or a
 50,000-character `/* */` comment exits 134 (release and native run them; compilebench AX-65,
-which predates S12). This bounds the slot-chain probes, which stay below it.
+which predates S12). This bounds the slot-chain probes, which stay below it. Also out of scope: three
+checker walks that recurse once per link of a chain of declarations, not per level of nesting, so
+the front-end limit does not reach them: `capabilities::check_expr` following a `@[contained]` fn's
+call chain, `CheckCtx::total_can_reach` over `@[total]` fns, and `resolve_ast_type` chasing
+refinement-type names (`type A{i} = A{i-1} where true`). Flat source traps each on wasm32 (release
+at 600, 3,000 and 5,000 links) while native runs it; compilebench AX-66, which predates S12.
 
 Gate: red tests `wasm_drops_deep_values_ax59`, `wasm_deep_source_gives_e0000_ax60`,
 `native_nesting_limit_unchanged_ax60`, `native_guard_borrow_e0606`, `native_guard_w0002`,
@@ -900,7 +913,7 @@ probes `tests/fixtures/vm_depth/nest/{drop_list,drop_dict,drop_closure,drop_arra
 and the front-end probes in `vm_wasm_depth.sh`, which never exit 134 in either profile or engine,
 and each front probe reaches a depth above 0 (the script fails a reach of 0)
 (`drop_option`/`drop_result` run at 1,000, under the clone limit above);
-`wasm_stack_budget.py` with two new checks (every `Value` drop component is acyclic once its
+`wasm_stack_budget.py` with four new checks (every `Value` drop component is acyclic once its
 `drop_bounded` nodes are removed, so no sub-cycle avoids the bound, and `DROP_INLINE_DEPTH` times its
 summed frame fits the 64 KiB margin: debug 16 × 2,784 B, release 16 × 1,232 B; the parser
 component's worst frame chain times 224 fits 448 KiB; every recursive component reachable from
@@ -1091,7 +1104,8 @@ against the same frames, and the tree-walker is the reference for both.
   - S11 `vm_purefn_fib_in_registers` (`vm: purefn fib 8 ins`; no `vm: purefn` line before S11);
   - S12 `wasm_drops_deep_values_ax59`, `wasm_deep_source_gives_e0000_ax60` and
     `wasm_host_await_val_no_copy_ax61` (each traps, exit 134, on wasm32 before S12), and
-    `native_guard_borrow_e0606` (exit 0, prints `5 5`), `native_guard_assign_in_place` (prints `zza`
+    `native_guard_borrow_e0606` (exit 0, prints `5 5`), `native_guard_w0002` (W0002 without the
+    "re-declares" wording), `native_guard_assign_in_place` (prints `zza`
     and `3`), `native_guard_pure_e1207` (exit 0, prints `1`), `native_guard_tier_e0910` (`axon build`
     succeeds) and `native_guard_write_unaliases` (the binary prints `9 9 1`), each natively before
     S12's guard walk.
@@ -1274,7 +1288,7 @@ the reference code, gaps cost speed, never correctness.
 | R50.S9 deferred compile (§4 S9); `AXON_VM_EAGER`; `vm: defer` trace line | R50.S6, R50.S8 | `cli_run vm_defer_` + `cli_run vm_` (eager and default legs) + whole suite with `AXON_ENGINE` unset, `tree` and `vm` + `AXON_VM_EAGER=1` + `vm_parity.sh` (S9 list; eager and default runs) + `vm_perf_gate.sh` (all five) + `--repros` (every row) + `--compile` + `reference_gate.sh` + `vm_wasm_depth.sh --require-default-stack` + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` under the same three | `db2d2eee` |
 | R50.S10 array elements in pure loops (§4 S10); `PureFor`; `sieve.ax` and its `--programs` row; never-taken `if` in the repro bases made impure | R50.S9 | `cli_run vm_index_` (incl. `vm_index_sieve_loops`) + `vm_perf_gate.sh` (all six) + `--repros` (every row) + `vm_parity.sh` + `vm_wasm_depth.sh --require-default-stack` + whole suite under the S9 modes | code `944fe056`, which fails `vm_wasm_depth.sh` (`wasm_stack_budget.py`: `pure_stmts`/`pure_if` recursion not in `ALLOW`, `COMPILE_STMT` 16 bytes short in release); fixed with S11 |
 | R50.S11 pure-`i64` function tier (§4 S11); `vm: purefn` trace line; fib-recursive budget a third of CPython's | R50.S10 | `cli_run vm_purefn_` (incl. `vm_purefn_fib_in_registers`) + `purefn_build_validates` + `vm_perf_gate.sh` (all six; `REF` check: others at most 0.5 % above S10) + `--repros` (every row) + `vm_parity.sh` + `vm_wasm_depth.sh --require-default-stack` (`plain` on the tier, `plain_generic` off it) + whole suite under the S9 modes | code `2627dad7`; review fixes `faf25a22`, `e5f754ab` |
-| R50.S12 wasm32 traps (§4 S12): bounded drop of every `Value` container, front-end nesting limit 224 (interpolation slots included), no payload copy for `host_await_val`; `DictMap`/`Elems`/`VBox`/`Queue`/`Held`; nest probes; two `wasm_stack_budget.py` checks | R50.S10 | `cli_run wasm_drops_deep_values_ax59`, `wasm_deep_source_gives_e0000_ax60`, `native_nesting_limit_unchanged_ax60`, `native_guard_borrow_e0606`, `native_guard_assign_in_place`, `native_guard_pure_e1207`, `native_guard_tier_e0910`, `native_guard_write_unaliases`, `wasm_host_await_val_no_copy_ax61` + `wasm_nesting_parity.sh` (debug and release; `tdef_*` type-definition refusals) + `vm_wasm_depth.sh --require-default-stack` (debug and release; no probe exits 134) + `wasm_stack_budget.py` + `vm_perf_gate.sh` (every `REF` within 0.5 %, fib-recursive's from `2627dad7`) + whole suite under the S9 modes | code `a9c89e5e`, merged `e0f29182`; review fixes `91b13427`, `c33f521b`, `e5f754ab`, `fcd18f2b`, `2fdf7cc1`, `a875d2b8`, `8e4bd760` |
+| R50.S12 wasm32 traps (§4 S12): bounded drop of every `Value` container, front-end nesting limit 224 (interpolation slots included), no payload copy for `host_await_val`; `DictMap`/`Elems`/`VBox`/`Queue`/`Held`; nest probes; four `wasm_stack_budget.py` checks | R50.S10 | `cli_run wasm_drops_deep_values_ax59`, `wasm_deep_source_gives_e0000_ax60`, `native_nesting_limit_unchanged_ax60`, `native_guard_borrow_e0606`, `native_guard_w0002`, `native_guard_assign_in_place`, `native_guard_pure_e1207`, `native_guard_tier_e0910`, `native_guard_write_unaliases`, `wasm_host_await_val_no_copy_ax61` + `wasm_nesting_parity.sh` (debug and release; out-of-root refusals `tdef_*`, `attr_*`, `handler_*`, `*_chain`, `*_pred`) + `vm_wasm_depth.sh --require-default-stack` (debug and release; no probe exits 134) + `wasm_stack_budget.py` + `vm_perf_gate.sh` (every `REF` within 0.5 %, fib-recursive's from `2627dad7`) + whole suite under the S9 modes | code `a9c89e5e`, merged `e0f29182`; review fixes `91b13427`, `c33f521b`, `e5f754ab`, `fcd18f2b`, `2fdf7cc1`, `a875d2b8`, `8e4bd760`, `6ae2c76f` |
 
 ### 14. Evidence ledger
 
@@ -1717,3 +1731,13 @@ blocker, 1 must-fix, 1 nit). The code fix and tests are in `8e4bd760`.
 | [blocker] S12: `parse_attr_atom` recursed once per nested `[` or `-` in an attribute argument with no charge, so `@[foo(x: [[..1..]])]` trapped on wasm32 (release at 4,000 levels, debug at 6,000, a 20,000 `-` chain in both); `wasm_stack_budget.py` looked only at components holding a charged call, so it could not see this | On wasm32 `parse_attr_atom` runs through `nested`: E0000 at 1:234 on debug and release under both engines; native still prints W0001 and `ok`, byte-identical. The budget script now fails any recursive component reachable from `parse_program` that has no charged call and holds a `Parser` method, and any charged name without a `self.nested(Self::..)` site; on `99e6aeb8` it fails with both lines. Cases `attr_bracket` and `attr_neg` in `wasm_nesting_parity.sh ax60` fail on the pre-fix build |
 | [must-fix] S12: the refusal rule named only types as refused outside a root; a handler definition's `on` pattern and a chain cut inside a tuple type's predicate are refused elsewhere | §4 S12 states both positions (1:1150; the token after the outermost type, 1:1226 and 1:1224) and the attribute position. Cases `handler_pat`, `tdef_chain` and `fn_param_chain` assert them; the behaviour predates this revision |
 | [nit] "cover them" overstated the guard tests: W0002 and several consumers had none | `native_guard_w0002` asserts the "re-declares" message and fails with the guard push removed from `ast::children`; §4 S12 names which consumers the six tests gate and which ride on the shared change |
+
+Revision 34 (2026-10-10) answers the thirtieth review (`reviewer`, verdict "incorrect": 3 must-fix,
+1 nit). The script fix and parity cases are in `6ae2c76f`.
+
+| Finding | Resolution |
+|---|---|
+| [must-fix] S12: `wasm_stack_budget.py` built the parser components from direct calls only, so with `Parser::nested` not inlined every parser cycle became a `call_indirect` and the check passed at 320 B per unit | Reachability from `parse_program` runs over direct plus same-signature `call_indirect` edges; a widened parser recursion that differs from its direct component fails, as does a charged `parse_expr` outside any direct recursion; `PARSER_FN` matches generic, closure and v0-mangled Parser methods. The `inline(never)` mutant now fails with all three lines; HEAD passes both profiles with unchanged numbers (debug 224 × 1,664, release 224 × 1,904) |
+| [must-fix] §4 Recursion said the front-end limit "bounds every later walk"; three checker walks over chains of declarations (`@[contained]` call chain, `@[total]` chain, refinement-type names) trap wasm32 on flat source | Filed as compilebench AX-66 (predates S12; the same build `99e6aeb8` traps). §4 Recursion narrows the claim to walks over one expression, and §4 S12's out-of-scope paragraph lists the three walks with their trap points |
+| [must-fix] S12: the root definition missed item-level predicates and handler arm bodies, whose refusals are at the predicate's or body's first token | §4 S12 defines a root as any expression started outside every counted level, lists them, and gives each position (`type` predicate 1:20, fn parameter predicate 1:19, `@[verify]` 1:10, handler arm body 1:36, `let` annotation at the `let`). Parity cases `tdef_pred`, `fn_pred`, `verify_pred`, `handler_body` and `refine_paren300` assert them |
+| [nit] §8 and §13 omitted `native_guard_w0002`; "two new checks" described four | Both list it; §4 and §13 say four checks and name the out-of-root parity cases |
