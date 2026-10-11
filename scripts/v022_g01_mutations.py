@@ -11186,12 +11186,19 @@ MUTATIONS += [
     ('M3492', "R51 PIN: run_test_body consults the pinned engine", 'crates/axon-core/src/interp/vm/mod.rs',
      '        if self.seal_pin_vm() {\n            let body = match', '        if true {\n            let body = match',
      'axon-core', '--no-default-features --lib', 'interp::vm::tests::r51_t7_a_sealed_run_enters_no_vm_path_at_any_gate'),
+    # R51 S7 (final-head T7 run, 3921a309): the two general-call routing rows were REFUSED_ELSEWHERE
+    # in a debug cell. Since ffe2b413 the unsealed frame writes through push_var_t::<false>, whose debug
+    # assertion (env.rs guard_unsealed) stops a sealed run in an unsealed frame at its first write,
+    # before any attack; in a build without debug assertions only `check_store` (the next sealed write
+    # or read of a binding) is left, and a call chain that binds nothing passes it (measured: both
+    # mutants complete the attack below with debug assertions off). The routing is the shipped guard,
+    # so the cell runs with debug assertions off and the attack binds nothing.
     ('M3493', "R51 general calls: no entry of a sealed run is plain (every call takes call_fn_in_general)", 'crates/axon-core/src/interp/sym.rs',
      '        sealed\n            || self.is_agent\n', '        false\n            || self.is_agent\n',
-     'axon-core', '--no-default-features --lib', 'interp::tests::runtime_sealing_holds_without_the_static_check'),
+     'axon-core', '--no-default-features --lib --config profile.test.debug-assertions=false', 'interp::tests::a_sealed_call_that_binds_nothing_still_meets_the_seal_edge'),
     ('M3494', "R51 general calls: a sealed run's general call goes through call_fn_sealed", 'crates/axon-core/src/interp.rs',
      '    fn seal_frames(&self) -> bool {\n        self.seal.active\n', '    fn seal_frames(&self) -> bool {\n        false\n',
-     'axon-core', '--no-default-features --lib', 'interp::tests::runtime_sealing_holds_without_the_static_check'),
+     'axon-core', '--no-default-features --lib --config profile.test.debug-assertions=false', 'interp::tests::a_sealed_call_that_binds_nothing_still_meets_the_seal_edge'),
     # R51 T7 (found re-anchoring M3343): call_fn_entry's `&mut` refusal comes ahead of the call edge
     # (as v0.22's call_fn did), so a direct call of an operator `&mut` fn told sealed code the fn
     # exists; dispatch_named applies the call edge first.

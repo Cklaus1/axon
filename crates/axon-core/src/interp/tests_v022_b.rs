@@ -781,6 +781,28 @@ fn runtime_sealing_holds_without_the_static_check() {
     }
 }
 
+/// R51 S7 (rows M3493, M3494): a sealed run's general call meets the seal
+/// edge (`call_fn_sealed`) on its own. The taint store stops a sealed run
+/// that enters an unsealed frame only where a binding is touched: the debug
+/// assertion at every unsealed write, and `check_store` at the next sealed
+/// write or read in every build. A call chain whose fns take no parameter and
+/// bind nothing touches no binding a sealed instruction reads, so in a build
+/// without debug assertions (the shipped one) the routing is the only thing
+/// between sealed code and an operator fn. The two rows run this test with
+/// debug assertions off, where their mutants reach the attack.
+#[test]
+fn a_sealed_call_that_binds_nothing_still_meets_the_seal_edge() {
+    let suite = "fn secret() -> i64 { 42 }\n\
+                 @[test]\nfn t() { assert_eq(answer(), 42) }\n";
+    let out = sealed_outcome("r51-s7route", suite, "fn answer() -> i64 { secret() }\n", "t");
+    assert!(
+        matches!(&out, Err(m) if m.contains("sealed code")),
+        "ATTACK: sealed code reached the operator (a call that binds nothing): {out:?}"
+    );
+    let honest = sealed_outcome("r51-s7route", suite, "fn answer() -> i64 { 42 }\n", "t");
+    assert_eq!(honest, Ok(TestEnd::Completed), "control: the candidate's own answer");
+}
+
 /// A position NOTHING determined — an empty array's element type bound
 /// through `T`, or a generic struct handed through a plain `T` — is
 /// refused at the crossing; a later operator-side value fills it (the
