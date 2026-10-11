@@ -206,7 +206,11 @@ resolver/main/checker/lib/builtins/parser/seal_split/ast/kernel) are re-anchored
 only on the re-run. [REVISED: was "EQUIVALENT retirements in `interp*` are RESET and re-argued", reason: EG-3.]
 The four retired rows in `crates/axon-core/src` (M58 interp.rs, M89 interp/builtins.rs, M60 resolver.rs, M3260
 main.rs) are re-retired on executed four-cell records (`v022_paired_disable.py --only=`) at the S6 head, or
-re-activated if a cell fails. [REVISED: was "Evidence anchored outside the interpreter … carries over
+re-activated if a cell fails. [REVISED: M58 is re-retired as STALE_REFACTORED -> M59 on an executed replacement
+record, not a four-cell one, reason: v0.22's separate `call_fn` break/continue arm that M58 mutated does not exist
+on main (old text 0 times); the one `frame_edge` arm M59 mutates guards every frame edge, and with it removed
+M58's own fn-boundary attack succeeds. e41d6225 had re-anchored M58 onto M59's text, so no four-cell could hold.]
+[REVISED: was "Evidence anchored outside the interpreter … carries over
 unchanged", reason: S0Merge-5.] Evidence anchored outside `crates/axon-core/src` carries over **only if** its
 `old` text still matches exactly once on the merged tree and its killing test is outside `interp*` and passes at
 S6; every other row is re-run like an `interp*` row. `pci_delta.py`'s classification and the git-pinned notes are

@@ -892,12 +892,9 @@ GUARD_SETS = {
     # M255 (store-writer route) were all load-bearing and are ACTIVE.
     # (M209/M210 again EQUIVALENT since M360/M361: C9 round 1b, below.)
     "M245": {"siblings": ["M264"], "kind": "pair"},
-    # M58 (call_fn_frame's break/continue arm) vs M59 (contain_frame). ALL
-    # PATHS: call_fn_frame has exactly ONE caller (interp.rs, in call_fn),
-    # and it wraps the call in contain_frame, which maps break/continue to
-    # the same panic. The attack is M58's OWN (function-body escapes only);
-    # the older test also attacked a closure, a route M58 never guarded.
-    "M58": {"siblings": ["M59"], "kind": "pair"},
+    # M58 (v0.22's call_fn break/continue arm) was a pair with M59 here; on
+    # R51 that arm is gone and M58 is STALE_REFACTORED -> M59 (its record is
+    # the replacement cell below, not a four-cell matrix).
     # C9 round 1 (harness workstream): kills that were another check's
     # refusal. The attack is each row's own test, which accepts ANY
     # refusal (the layers are independent) and panics "ATTACK: …" on
