@@ -439,7 +439,7 @@ MUTATIONS = [
      'crates/axon-core/src/interp/builtins.rs',
      '                if !(a == b || (a - b).abs() <= 1e-9) {',
      '                if (a - b).abs() > 1e-9 {',
-     'axon-core', '--no-default-features --lib', 'interp::tests::no_control_transfer_escapes_a_frame'),
+     'axon-core', '--no-default-features --lib', 'interp::vm::tests::assert_eq_f64_fails_on_nan_on_both_engines'),
     ('M77', 'interpreter: an exit(0) property case is not a pass',
      'crates/axon-core/src/interp/proptest.rs',
      '        Err(Flow::Exit(0)) => {\n            Err("`exit(0)` ended the property case before it completed".to_string())\n        }',
@@ -10926,7 +10926,7 @@ MUTATIONS += [
      'axon-core', '--lib', 'interp::taint_tests::the_durable_store_is_world_state_not_kernel_state'),
     ('M3323', 'STATE (am117): a Pure builtin arm reads the process clock', 'crates/axon-core/src/interp/builtins.rs',
      '            "temporal_at" => {\n                want(2)?;', '            "temporal_at" => {\n                want(2)?;\n                let _ = program_now_ms();',
-     'axon-core', '--lib', 'interp::taint_tests::no_arm_of_a_pure_builtin_reads_or_advances_ambient_state'),
+     'axon-core', '--lib', 'interp::sink_tests::no_arm_of_a_pure_builtin_reads_or_advances_ambient_state'),
     ('M3325', 'STATE (am117): the RNG-drawing goal search does not read the world cell', 'crates/axon-core/src/interp/taint.rs',
      '        if RNG_COUPLED.contains(&name) {\n            self.t_touch(self.taint.world.get());\n        }', '        let _ = RNG_COUPLED;',
      'axon-core', '--lib', 'interp::taint_tests::operator_side_control_flow_on_candidate_data_carries_its_taint_into_what_it_runs'),
@@ -10941,7 +10941,7 @@ MUTATIONS += [
      'axon-psv', '--test sealed_frames', 'a_candidate_cannot_read_or_drive_the_clock_through_the_temporal_builtins'),
     ('M3329', 'CLOCK (am117): temporal_is_valid needs no Time effect', 'crates/axon-core/src/builtins.rs',
      '"now_ms" | "now_ns" | "sleep_ms" | "temporal_now" | "temporal_new" | "temporal_is_valid" => {', '"now_ms" | "now_ns" | "sleep_ms" | "temporal_now" | "temporal_new" => {',
-     'axon-core', '--lib', 'interp::taint_tests::no_arm_of_a_pure_builtin_reads_or_advances_ambient_state'),
+     'axon-core', '--lib', 'interp::sink_tests::no_arm_of_a_pure_builtin_reads_or_advances_ambient_state'),
     ('M3330', 'CLOCK (am117): temporal_now needs no Time effect', 'crates/axon-core/src/builtins.rs',
      '"now_ms" | "now_ns" | "sleep_ms" | "temporal_now" | "temporal_new" | "temporal_is_valid" => {', '"now_ms" | "now_ns" | "sleep_ms" | "temporal_new" | "temporal_is_valid" => {',
      'axon-psv', '--test sealed_frames', 'a_candidate_cannot_read_or_drive_the_clock_through_the_temporal_builtins'),
@@ -11103,6 +11103,12 @@ MUTATIONS += [
     ('M3482', "EQUIVALENCE (am121): the observer's prune keeps the expired and drops the live", 'crates/axon-fabric/src/observer_service.rs',
      '            if expires.is_none_or(|t| t < now) {\n', '            if expires.is_none_or(|t| t > now) {\n',
      'axon-fabric', '--test observer_service', 'a_record_of_a_live_nonce_survives_another_requests_prune_and_refuses_its_replay'),
+    # R51 §6 (S6 gaps): `axon test` refuses a sealed run this build cannot protect (or one asking
+    # for the VM) before any result line. `Interp::build` refuses it too (the guarantee); this is
+    # the clean exit, pinned by T1c: exit 2, the refusal alone on stderr, no summary on stdout.
+    ('M3483', "R51 PIN: `axon test` refuses a sealed run it cannot protect before any result line", 'crates/axon-core/src/main.rs',
+     '        eprintln!("error: {refused}");\n        process::exit(2);\n', '        let _ = &refused;\n',
+     'axon-core', '--no-default-features --test cli_run', 'r51_t1c_a_sealed_axon_test_never_runs_on_the_vm'),
 ]
 
 

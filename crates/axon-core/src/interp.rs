@@ -5954,7 +5954,12 @@ impl<'p> Interp<'p> {
         self.fns.contains_key(name) || self.k().provenance.borrow().contains_key(name)
     }
 
-    fn unknown_goal_name(name: &str) -> Flow {
+    /// A sealed caller gets the common no-such-fn text, so a missing goal name
+    /// reads exactly as an operator one (amendment 117, loop finding 38).
+    fn unknown_goal_name(&self, name: &str) -> Flow {
+        if self.seal.active && self.frame_sealed.get() {
+            return Flow::Panic(Self::sealed_no_fn_msg(name).into());
+        }
         Flow::Panic(
             format!(
                 "goal function `{name}` is not defined and has no recorded provenance — \

@@ -2995,4 +2995,6 @@ ATTACK_MARKERS.update({
     'M3480': "ATTACK: another request's prune dropped the record of a nonce the custodian still honours",
     'M3481': "ATTACK: another request's prune dropped the record of a nonce the custodian still honours",
     'M3482': "ATTACK: another request's prune dropped the record of a nonce the custodian still honours",
+    # R51 §6: the cmd_test sealed-run refusal (S6 gaps).
+    'M3483': r'ATTACK: AXON_ENGINE=\S+: a sealed run was not refused before any result line',
 })

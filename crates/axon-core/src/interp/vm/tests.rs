@@ -1534,3 +1534,42 @@ fn r51_t1d_vm_entry_callers_outside_vm() {
         "DRIFT: a fn enters the VM outside the sealed-engine gates; route it through run_body/run_lambda or list it with its reason"
     );
 }
+
+/// `assert_eq_f64` fails on NaN on both engines (v0.22 M76; native compares
+/// OEQ): `(a - b).abs() > 1e-9` is false for NaN, so the old test let a NaN
+/// pass. `inf == inf` and a sub-1e-9 difference still pass.
+#[test]
+fn assert_eq_f64_fails_on_nan_on_both_engines() {
+    let prog = crate::parse_source(
+        "fn t_nan() { assert_eq_f64(0.0 / 0.0, 2.0) }\n\
+         fn t_nan_nan() { assert_eq_f64(0.0 / 0.0, 0.0 / 0.0) }\n\
+         fn t_far() { assert_eq_f64(1.0, 1.5) }\n\
+         fn t_inf() { assert_eq_f64(1.0 / 0.0, 1.0 / 0.0) }\n\
+         fn t_near() { assert_eq_f64(0.1 + 0.2, 0.3) }\n",
+    )
+    .expect("parses");
+    for engine in [Engine::Tree, Engine::Vm] {
+        let mut interp = Interp::build(&prog).expect("unsealed build");
+        interp.engine = engine;
+        interp.vm_trace = false;
+        let run = |name: &str| {
+            let f = interp
+                .fn_table
+                .iter()
+                .find(|e| e.def.name == name)
+                .unwrap_or_else(|| panic!("{name} is in the fn table"));
+            interp.call_fn_entry(f, Vec::<Value>::new())
+        };
+        for t in ["t_nan", "t_nan_nan", "t_far"] {
+            let got = run(t);
+            assert!(
+                matches!(got, Err(Flow::Panic(_))),
+                "ATTACK: NaN passed an f64 assertion, or a far pair did ({engine:?} {t}): {got:?}"
+            );
+        }
+        for t in ["t_inf", "t_near"] {
+            let got = run(t);
+            assert!(matches!(got, Ok(Value::Unit)), "{engine:?} {t}: {got:?}");
+        }
+    }
+}
