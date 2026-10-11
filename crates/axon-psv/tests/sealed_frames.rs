@@ -1826,6 +1826,9 @@ fn existence_forms() -> Vec<(
         ("goal_run_random name", "let r = goal_run_random(\"nonadapt\", 100.0, 5, 0, 10)\n 41", "let r = goal_run_random(\"zznosuch\", 100.0, 5, 0, 10)\n 41", "", ""),
         ("goal_run_multistart name", "let r = goal_run_multistart(\"nonadapt\", 100.0, 2, 3, 0, 10)\n 41", "let r = goal_run_multistart(\"zznosuch\", 100.0, 2, 3, 0, 10)\n 41", "", ""),
         ("goal_eval name", "let r = goal_eval(\"nonadapt\", 3)\n 41", "let r = goal_eval(\"zznosuch\", 3)\n 41", "", ""),
+        // R51: an operator fn whose `&mut` param `call_fn` refuses ahead of the call edge, so only
+        // the held-out eval's own lookup (a sealed caller sees its own fns) keeps it from answering.
+        ("goal_eval name of a &mut fn", "let r = goal_eval(\"mutp\", 3)\n 41", "let r = goal_eval(\"zzmutp\", 3)\n 41", "", ""),
         ("struct refinement predicate", "41", "41", "type CS = { a: i64 } where _.a > ofn(0)\n", "type CS = { a: i64 } where _.a > zfn(0)\n"),
         ("dyn param", "41", "41", "fn dd(x: dyn Sc) -> i64 { 1 }\n", "fn dd(x: dyn ZC) -> i64 { 1 }\n"),
         ("dyn let", "let d: dyn Sc = mk()\n 41", "let d: dyn ZC = mk()\n 41", "", ""),
@@ -1900,12 +1903,13 @@ fn existence_placements() -> Vec<(&'static str, &'static str, &'static str, &'st
 /// ACCEPT/REFUSE.
 #[test]
 fn a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one() {
-    let su = "mod sol\nmod opmod\nuse sol.{solve}\ntrait Sc {\n    fn score(self) -> i64\n}\nimpl Sc for i64 {\n    fn score(self: i64) -> i64 { 41 }\n}\ntype OT = { k: i64 }\ntype OE = P | Q\ntype DictTable = { k: i64 }\nlet OG = 5\nlet TABLE = [41, 42]\nfn ofn(x: i64) -> i64 { x }\nfn secret() -> i64 { 41 }\nfn nonadapt(n: i64) -> i64 { n }\n@[test]\nfn accept() {\n  assert_eq(solve(), 41)\n}\n";
+    let su = "mod sol\nmod opmod\nuse sol.{solve}\ntrait Sc {\n    fn score(self) -> i64\n}\nimpl Sc for i64 {\n    fn score(self: i64) -> i64 { 41 }\n}\ntype OT = { k: i64 }\ntype OE = P | Q\ntype DictTable = { k: i64 }\nlet OG = 5\nlet TABLE = [41, 42]\nfn ofn(x: i64) -> i64 { x }\nfn secret() -> i64 { 41 }\nfn nonadapt(n: i64) -> i64 { n }\nfn mutp(a: &mut [i64]) { a[0] = 1 }\n@[test]\nfn accept() {\n  assert_eq(solve(), 41)\n}\n";
     // (position, body naming the operator's, body naming the same shape of a
     // missing name, item before `solve` naming the operator's, ... the missing's)
     let forms = existence_forms();
     let swaps = [
         ("zznosuch", "nonadapt"),
+        ("zzmutp", "mutp"),
         ("ZTABLE", "TABLE"),
         ("zfn", "ofn"),
         ("ZG", "OG"),

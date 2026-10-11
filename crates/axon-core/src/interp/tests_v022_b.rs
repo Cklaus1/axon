@@ -1707,23 +1707,51 @@ fn the_sweep_routes_stay_closed() {
 
 /// Existence oracle (C9 round 10): a sealed caller is told the same thing
 /// whether the name it asked for is the operator's fn or does not exist.
+///
+/// R51: two ways sealed code names a fn. A name string handed to
+/// `sandbox_run`, whose lookup sees only the caller's own fns (an operator fn
+/// and a missing one take the same branch), and a call in the candidate's own
+/// text, where an operator fn meets the call edge (`seal_call`) and a missing
+/// one the unknown-callee refusal (`no_such_fn`): two refusals that must say
+/// the same words.
 #[test]
 fn a_sealed_caller_cannot_tell_an_operator_fn_from_a_missing_one() {
     let suite =
         "fn secret(x: i64) -> i64 { 9 }\n@[test]\nfn t() {\n    assert_eq(solve(NAME), 9)\n}\n";
-    let cand = |n: &str| {
-        format!("fn solve(x: i64) -> i64 {{\n    let p = principal_root(\"r\", true, true, true, 100)\n    let sb = sandbox_create(p, \"IO\")\n    sandbox_run(sb, \"{n}\", 0)\n}}\n")
+    let forms = [
+        (
+            "sandbox_run",
+            "    let p = principal_root(\"r\", true, true, true, 100)\n    let sb = sandbox_create(p, \"IO\")\n    sandbox_run(sb, \"{n}\", 0)\n",
+        ),
+        ("call", "    {n}(x)\n"),
+    ];
+    for (form, body) in forms {
+        let cand = |n: &str| format!("fn solve(x: i64) -> i64 {{\n{}}}\n", body.replace("{n}", n));
+        let said = |n: &str| match judged_on("r10-oracle", &suite.replace("NAME", "0"), &cand(n)) {
+            Err(m) => m,
+            Ok(e) => panic!("{form} {n}: {e:?}"),
+        };
+        let (a, b) = (said("secret"), said("nonexistent_fn"));
+        let norm = |m: &str, n: &str| m.replace(n, "NAME");
+        assert!(
+            norm(&a, "secret") == norm(&b, "nonexistent_fn"),
+            "ATTACK: an operator fn and a missing one read differently to sealed code ({form}): {a} / {b}"
+        );
+    }
+    // Honest control: the candidate's own fn, named both ways, runs.
+    let own = |body: &str| {
+        format!(
+            "fn mine(x: i64) -> i64 {{ 9 }}\nfn solve(x: i64) -> i64 {{\n{}}}\n",
+            body.replace("{n}", "mine")
+        )
     };
-    let said = |n: &str| match judged_on("r10-oracle", &suite.replace("NAME", "0"), &cand(n)) {
-        Err(m) => m,
-        Ok(e) => panic!("{n}: {e:?}"),
-    };
-    let (a, b) = (said("secret"), said("nonexistent_fn"));
-    let norm = |m: &str, n: &str| m.replace(n, "NAME");
-    assert!(
-        norm(&a, "secret") == norm(&b, "nonexistent_fn"),
-        "ATTACK: an operator fn and a missing one read differently to sealed code: {a} / {b}"
-    );
+    for (form, body) in forms {
+        let r = judged_on("r10-oracle-own", &suite.replace("NAME", "0"), &own(body));
+        assert!(
+            matches!(r, Ok(TestEnd::Completed)),
+            "control ({form}): the candidate's own fn: {r:?}"
+        );
+    }
 }
 
 /// Drift (amendment 100, BLOCKER A): pin verdicts are keyed (owner, site
@@ -1887,7 +1915,7 @@ fn every_name_resolving_lookup_is_a_listed_sink() {
     const ALLOWED: &[(&str, &str, &str)] = &[
         ("interp/eval.rs", "let known = self.callees.borrow().get(s.index()).copied();", "dispatch_named: the callee identifier's Sym in the program text, not a value"),
         ("interp/eval.rs", "let r = match self.fn_of_sym.get(&s) {", "dispatch_named: the callee identifier's Sym in the program text"),
-        ("interp/eval.rs", "return self.call_fn_entry(&self.fn_table[(resolved - CALLEE_FN) as usize], argv);", "dispatch_named: the entry the callee identifier resolved to; call_fn_entry applies seal_call"),
+        ("interp/eval.rs", "let e = &self.fn_table[(resolved - CALLEE_FN) as usize];", "dispatch_named: the entry the callee identifier resolved to; seal_call ahead of a `&mut` fn's refusal, call_fn_entry applies it otherwise"),
         ("interp/eval.rs", "let entry = &self.fn_table[self.call_mut_entry(callee)? as usize];", "call_mut: the entry call_mut_entry resolved from program text"),
         ("interp/eval.rs", "Expr::Ident(name) => match self.fn_of_sym.get(&self.res.sym(callee, name)) {", "call_mut_entry: the callee identifier of a `&mut` call, in the program text"),
         ("interp/eval.rs", "} else if let Some(&i) = self.fn_of_sym.get(&s) {", "ident_unbound: an identifier in the program text, not a value"),
@@ -1905,13 +1933,13 @@ fn every_name_resolving_lookup_is_a_listed_sink() {
         ("interp.rs", "Some(&i) => self.call_fn_entry(&self.fn_table[i as usize], args),", "call_fn: that FnDef's entry; call_fn_entry applies seal_call"),
         ("interp.rs", "let entry = match self.fn_of_def.get(&(f as *const FnDef as usize)) {", "call_test_fn: the host-named test's FnDef, by address"),
         ("interp.rs", "Some(&i) => &self.fn_table[i as usize],", "call_test_fn: that FnDef's entry"),
-        ("interp/goal.rs", "if let Some(f) = self.fns.get(name) {", "run_goal_*: reached only from the listed goal_* sinks; call_fn applies seal_call"),
+        ("interp/goal.rs", "if let Some(f) = self.fns.get(name) {", "run_goal_warm: reached only from the listed goal_* sinks, behind goal_name_is_known (a sealed caller knows only its own fns)"),
         ("interp/goal.rs", "let Some(cf) = self.fns.get(cname.as_str()).copied() else {", "the constraint name, a sink (goal_run_constrained arg 2)"),
         ("interp/goal.rs", "let f = match self.fns.get(name) {", "run_goal_*: reached only from the listed goal_* sinks (4 sites)"),
         ("interp/goal.rs", "let f = match self.fns.get(name) {", "run_goal_*: reached only from the listed goal_* sinks (4 sites)"),
         ("interp/goal.rs", "let f = match self.fns.get(name) {", "run_goal_*: reached only from the listed goal_* sinks (4 sites)"),
         ("interp/goal.rs", "let f = match self.fns.get(name) {", "run_goal_*: reached only from the listed goal_* sinks (4 sites)"),
-        ("interp/goal.rs", "if let Some(f) = self.fns.get(name) {", "run_goal: reached only from the listed goal_* sinks"),
+        ("interp/goal.rs", "if let Some(f) = self.fns.get(name) {", "run_goal: reached only from the listed goal_* sinks, behind goal_name_is_known (a sealed caller knows only its own fns)"),
         ("interp/goal.rs", ".fns", "goal_eval_holdout: the goal_eval sink; a sealed caller sees only its own fns"),
         ("interp/builtins.rs", "let outcome = match self.fns.get(fn_name.as_str()).copied() {", "a queued fiber: its name passed the scheduler_spawn sink"),
         ("interp/builtins.rs", "let visible = match self.fns.get(constraint.as_str()) {", "goal_run_constrained: a sink; a sealed caller sees only its own fns"),

@@ -508,15 +508,25 @@ fn t_width_bare() -> bool {
 /// (sealed_frames.rs:1847-1852): a sealed caller naming an operator fn at a
 /// goal builtin is told the same words as for a name nothing defines - the
 /// common no-such-name text - for `goal_run`, `goal_run_categorical`,
-/// `goal_run_random` and `goal_run_multistart`, including an operator goal
-/// that already has recorded provenance (the call edge, `seal_call`).
+/// `goal_run_random` and `goal_run_multistart`, including after the operator
+/// has run the same goal itself. `recm` is an `@[adaptive]` goal no search
+/// climbs (mixed params), so `goal_run` answers it from recorded provenance
+/// alone: the operator's call records it in the operator's kernel, and the
+/// candidate's kernel, which `goal_name_is_known` reads for a sealed caller,
+/// never holds it.
 /// Controls: the operator's own call of the same goal runs, and its call of
 /// a missing name keeps the goal-specific text.
 #[test]
 fn a_sealed_caller_is_refused_in_the_same_words_for_an_operator_goal_name_and_a_missing_one() {
     const SUITE_G: &str = "\
 fn nonadapt(n: i64) -> i64 { n }
-fn op_run() -> f64 { goal_run(\"nonadapt\", 100.0, 3) }
+@[adaptive]
+fn recm(a: i64, b: f64) -> i64 { a }
+fn op_run() -> f64 {
+    let _s = recm(3, 1.0)
+    let _n = goal_run(\"nonadapt\", 100.0, 3)
+    goal_run(\"recm\", 100.0, 3)
+}
 fn op_missing() -> f64 { goal_run(\"zznosuch\", 100.0, 3) }
 ";
     let calls = [
@@ -532,7 +542,7 @@ fn op_missing() -> f64 { goal_run(\"zznosuch\", 100.0, 3) }
             "pub fn c{i}_own() -> f64 {{ {} }}\n",
             c.replace('N', "mygoal")
         ));
-        for (k, n) in [("op", "nonadapt"), ("miss", "zznosuch")] {
+        for (k, n) in [("op", "nonadapt"), ("rec", "recm"), ("miss", "zznosuch")] {
             cand.push_str(&format!(
                 "pub fn c{i}_{k}() -> f64 {{ {} }}\n",
                 c.replace('N', n)
@@ -543,9 +553,10 @@ fn op_missing() -> f64 { goal_run(\"zznosuch\", 100.0, 3) }
     for (fresh, tag) in [(true, "fresh"), (false, "recorded")] {
         with_src(&format!("r51-s4-goal-{tag}"), SUITE_G, &cand, true, |ix| {
             if !fresh {
-                // The operator's own run records `nonadapt`'s provenance.
+                // The operator's own run of the same goals: `recm`'s answer is
+                // the score its call recorded.
                 let o = go(ix, "op_run", false, vec![]);
-                if o.is_err() {
+                if !matches!(o, Ok(Value::Float(s)) if s == 3.0) {
                     fails.push(format!("control: the operator's own goal_run: {o:?}"));
                 }
             }
@@ -560,12 +571,15 @@ fn op_missing() -> f64 { goal_run(\"zznosuch\", 100.0, 3) }
                     Err(Flow::Panic(m)) => m.replace(name, "NAME"),
                     o => format!("not refused: {o:?}"),
                 };
-                let (op, miss) = (text("op", "nonadapt"), text("miss", "zznosuch"));
                 let want = sink_tests::no_fn("NAME");
-                if op != want || miss != want {
-                    fails.push(format!(
-                        "ATTACK ({tag}) {call}: operator {op:?} vs missing {miss:?}"
-                    ));
+                let miss = text("miss", "zznosuch");
+                for (k, name) in [("op", "nonadapt"), ("rec", "recm")] {
+                    let op = text(k, name);
+                    if op != want || miss != want {
+                        fails.push(format!(
+                            "ATTACK ({tag}) {call}: operator `{name}` {op:?} vs missing {miss:?}"
+                        ));
+                    }
                 }
             }
         });
@@ -580,23 +594,33 @@ fn op_missing() -> f64 { goal_run(\"zznosuch\", 100.0, 3) }
 }
 
 /// Drift (R51 S4): every goal search that resolves its goal by name in
-/// interp/goal.rs applies the call edge (`seal_call`) to the fn it found, so a
-/// sealed caller naming an operator goal gets the no-such-fn text. The two
-/// lookups that do not are listed: the held-out eval filters its lookup by the
-/// frame (same text), and a constraint fn is named by the operator's own
-/// `@[adaptive]` attribute, never by a caller.
+/// interp/goal.rs refuses a sealed caller an operator fn in the no-such-fn
+/// text before it uses the fn: the search applies the call edge (`seal_call`)
+/// to the fn it found, or has just asked `goal_name_is_known`, which answers a
+/// sealed caller naming an operator fn as a name nothing defines (v0.22's
+/// shape for `run_goal`/`run_goal_warm`; rows M2925/M2946). The two lookups
+/// that do neither are listed: the held-out eval filters its lookup by the
+/// frame (same text), and the constraint fn's name already passed
+/// `goal_run_constrained`'s own frame-filtered lookup (builtins.rs).
 #[test]
 fn every_goal_name_lookup_applies_the_call_edge() {
     let src = include_str!("goal.rs");
     let lines: Vec<&str> = src.lines().collect();
-    let (mut edged, mut listed) = (0, 0);
+    let (mut edged, mut known, mut listed) = (0, 0, 0);
     for (i, l) in lines.iter().enumerate() {
         if !l.contains("self.fns.get(") && !(l.trim() == ".fns" && lines[i + 1].contains(".get(")) {
             continue;
         }
         let window = lines[i..(i + 16).min(lines.len())].join("\n");
+        // The lookup right after `goal_name_is_known`'s refusal.
+        let asked = i >= 3
+            && lines[i - 3].trim() == "if !self.goal_name_is_known(name) {"
+            && lines[i - 2].trim() == "return Err(self.unknown_goal_name(name));"
+            && lines[i - 1].trim() == "}";
         if window.contains("self.seal_call(f)?") {
             edged += 1;
+        } else if asked {
+            known += 1;
         } else if window.contains("self.fn_is_sealed(f)") || l.contains("cname.as_str()") {
             listed += 1;
         } else {
@@ -608,8 +632,8 @@ fn every_goal_name_lookup_applies_the_call_edge() {
         }
     }
     assert_eq!(
-        (edged, listed),
-        (6, 2),
+        (edged, known, listed),
+        (4, 2, 2),
         "DRIFT: goal.rs's goal-name lookups changed; classify the new one"
     );
 }

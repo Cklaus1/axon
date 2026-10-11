@@ -28,14 +28,14 @@ impl<'p> Interp<'p> {
     ) -> Result<f64, Flow> {
         nest_guard!(self, RUN_GOAL_WARM);
         let _goal_guard = self.enter_goal(name);
+        // A sealed caller naming an operator fn is refused here, in the words a
+        // missing name gets: the name is known to it only as its own fn or by
+        // its own kernel's provenance, which records only sealed fns.
         if !self.goal_name_is_known(name) {
             return Err(self.unknown_goal_name(name));
         }
         if let Some(f) = self.fns.get(name) {
             let f = *f;
-            // A sealed caller with an operator goal's recorded provenance still
-            // reaches no operator fn (the call edge's common text; R51 S4).
-            self.seal_call(f)?;
             let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
             let all_i64_params =
                 !f.params.is_empty() && f.params.iter().all(|p| is_i64_type(&p.ty));
@@ -656,13 +656,12 @@ impl<'p> Interp<'p> {
     pub(super) fn run_goal(&self, name: &str, target: f64, max_evals: i64) -> Result<f64, Flow> {
         nest_guard!(self, RUN_GOAL);
         let _goal_guard = self.enter_goal(name);
+        // As in `run_goal_warm`.
         if !self.goal_name_is_known(name) {
             return Err(self.unknown_goal_name(name));
         }
         if let Some(f) = self.fns.get(name) {
             let f = *f;
-            // As in `run_goal_warm` (R51 S4).
-            self.seal_call(f)?;
             let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
             let all_i64_params =
                 !f.params.is_empty() && f.params.iter().all(|p| is_i64_type(&p.ty));
