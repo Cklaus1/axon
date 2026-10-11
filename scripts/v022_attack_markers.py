@@ -3000,4 +3000,17 @@ ATTACK_MARKERS.update({
     'M3482': "ATTACK: another request's prune dropped the record of a nonce the custodian still honours",
     # R51 §6: the cmd_test sealed-run refusal (S6 gaps).
     'M3483': r'ATTACK: AXON_ENGINE=\S+: a sealed run was not refused before any result line',
+    # R51 §8 T7 (S6): the pin, the compile refusal, the engine consults, the general-call split.
+    'M3484': r'ATTACK: sealed=true complete=false override=None env=None: a sealed run the pin refuses was selected: Ok\(Vm\)',
+    'M3485': r'ATTACK: sealed=true complete=false override=None env=None: a sealed run the pin refuses was selected: Ok\(Tree\)',
+    'M3486': r'ATTACK: sealed=true complete=true override=Some\(Vm\) env=None: a sealed run the pin refuses was selected: Ok\(Tree\)',
+    'M3487': r'ATTACK: sealed=true complete=true override=None env=Some\("vm"\): a sealed run the pin refuses was selected: Ok\(Vm\)',
+    'M3488': r'ATTACK: AXON_ENGINE=\S+: a sealed run was not refused before any result line',
+    'M3489': r'ATTACK: a sealed run on the VM built VM bodies: \[',
+    'M3490': r'ATTACK: a sealed run entered the VM through run_body\b',
+    'M3491': r'ATTACK: a sealed run entered the VM through run_body\b',
+    'M3492': r'ATTACK: a sealed run entered the VM through run_test_body\b',
+    'M3493': r'ATTACK: a sealed run entered the VM through run_lambda\b',
+    'M3494': r"ATTACK: sealed code reached the operator \(direct call\): Ok\(Completed\)",
+    'M3495': r"ATTACK: sealed code reached the operator \(direct call\): Ok\(Completed\)",
 })

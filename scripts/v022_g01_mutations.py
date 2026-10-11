@@ -11111,6 +11111,49 @@ MUTATIONS += [
     ('M3483', "R51 PIN: `axon test` refuses a sealed run it cannot protect before any result line", 'crates/axon-core/src/main.rs',
      '        eprintln!("error: {refused}");\n        process::exit(2);\n', '        let _ = &refused;\n',
      'axon-core', '--no-default-features --test cli_run', 'r51_t1c_a_sealed_axon_test_never_runs_on_the_vm'),
+    # R51 §8 T7 (S6): the sealed-engine pin, the `compile` refusal, each engine gate's consult and
+    # the general-call seal split, each in a `seal_*` function SEAL_FN scans. The pin's killer is
+    # T1a; a gate's is a sealed run that must set no S9 first-entry mark (only a VM path sets one);
+    # the compile refusal's is a sealed `Interp` handed the VM anyway; the split's is M86's.
+    # fold_leaf's and the trace's consults have no row: under the pin no VM body exists for
+    # fold_leaf to run (it returns 0 at `lb.compiled()`), and `vm_trace_tree` is reached in a
+    # sealed run only from a VM path or `main`'s binding capture, which `axon test` never runs.
+    ('M3484', "R51 PIN: a sealed run is decided by the pin, never by R50's unsealed selection", 'crates/axon-core/src/interp/vm/mod.rs',
+     '    if !sealed {\n        return Ok(None);\n    }\n', '    if true {\n        return Ok(None);\n    }\n',
+     'axon-core', '--no-default-features --lib', 'interp::vm::tests::r51_t1a_engine_for_truth_table'),
+    ('M3485', "R51 PIN: a sealed run is refused while the runtime seal is incomplete", 'crates/axon-core/src/interp/vm/mod.rs',
+     '    if !complete {\n        return Err(EngineRefusal::SealIncomplete);', '    if false {\n        return Err(EngineRefusal::SealIncomplete);',
+     'axon-core', '--no-default-features --lib', 'interp::vm::tests::r51_t1a_engine_for_truth_table'),
+    ('M3486', "R51 PIN: a sealed run asking for the VM by set_engine is refused", 'crates/axon-core/src/interp/vm/mod.rs',
+     '    if override_ == Some(Engine::Vm) {\n        return Err(EngineRefusal::SealedVm);', '    if false {\n        return Err(EngineRefusal::SealedVm);',
+     'axon-core', '--no-default-features --lib', 'interp::vm::tests::r51_t1a_engine_for_truth_table'),
+    ('M3487', "R51 PIN: a sealed run asking for the VM by AXON_ENGINE=vm is refused", 'crates/axon-core/src/interp/vm/mod.rs',
+     '        Some(Engine::Vm) => Err(EngineRefusal::SealedVm),\n', '        Some(Engine::Vm) => Ok(Some(Engine::Vm)),\n',
+     'axon-core', '--no-default-features --lib', 'interp::vm::tests::r51_t1a_engine_for_truth_table'),
+    ('M3488', "R51 PIN: sealed_run_refusal consults the pin for a sealed run (axon test's early refusal)", 'crates/axon-core/src/interp.rs',
+     'pub fn sealed_run_refusal(sealed: bool) -> Result<(), String> {\n    if !sealed {', 'pub fn sealed_run_refusal(sealed: bool) -> Result<(), String> {\n    if true {',
+     'axon-core', '--no-default-features --test cli_run', 'r51_t1c_a_sealed_axon_test_never_runs_on_the_vm'),
+    ('M3489', "R51 PIN (defence in depth): compile builds no VM body for a sealed run", 'crates/axon-core/src/interp/vm/compile.rs',
+     '    assert!(\n        !ix.seal.active,\n', '    assert!(\n        true || !ix.seal.active,\n',
+     'axon-core', '--no-default-features --lib', 'interp::vm::tests::r51_t7_a_sealed_run_given_the_vm_builds_no_vm_body'),
+    ('M3490', "R51 PIN: the engine consult every gate reads is the pinned engine", 'crates/axon-core/src/interp/vm/mod.rs',
+     '    pub(super) fn seal_pin_vm(&self) -> bool {\n        self.engine == Engine::Vm\n', '    pub(super) fn seal_pin_vm(&self) -> bool {\n        true\n',
+     'axon-core', '--no-default-features --lib', 'interp::vm::tests::r51_t7_a_sealed_run_enters_no_vm_path_at_any_gate'),
+    ('M3491', "R51 PIN: run_body consults the pinned engine", 'crates/axon-core/src/interp/vm/mod.rs',
+     '        if self.seal_pin_vm() {\n            self.run_body_vm(entry, env)', '        if true {\n            self.run_body_vm(entry, env)',
+     'axon-core', '--no-default-features --lib', 'interp::vm::tests::r51_t7_a_sealed_run_enters_no_vm_path_at_any_gate'),
+    ('M3492', "R51 PIN: run_test_body consults the pinned engine", 'crates/axon-core/src/interp/vm/mod.rs',
+     '        if self.seal_pin_vm() {\n            let body = match', '        if true {\n            let body = match',
+     'axon-core', '--no-default-features --lib', 'interp::vm::tests::r51_t7_a_sealed_run_enters_no_vm_path_at_any_gate'),
+    ('M3493', "R51 PIN: run_lambda consults the pinned engine", 'crates/axon-core/src/interp/vm/mod.rs',
+     '        if self.seal_pin_vm() {\n            match code.compiled.as_ref() {', '        if true {\n            match code.compiled.as_ref() {',
+     'axon-core', '--no-default-features --lib', 'interp::vm::tests::r51_t7_a_sealed_run_enters_no_vm_path_at_any_gate'),
+    ('M3494', "R51 general calls: no entry of a sealed run is plain (every call takes call_fn_in_general)", 'crates/axon-core/src/interp/sym.rs',
+     '        sealed\n            || self.is_agent\n', '        false\n            || self.is_agent\n',
+     'axon-core', '--no-default-features --lib', 'interp::tests::runtime_sealing_holds_without_the_static_check'),
+    ('M3495', "R51 general calls: a sealed run's general call goes through call_fn_sealed", 'crates/axon-core/src/interp.rs',
+     '    fn seal_frames(&self) -> bool {\n        self.seal.active\n', '    fn seal_frames(&self) -> bool {\n        false\n',
+     'axon-core', '--no-default-features --lib', 'interp::tests::runtime_sealing_holds_without_the_static_check'),
 ]
 
 
