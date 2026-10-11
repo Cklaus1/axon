@@ -1899,7 +1899,14 @@ impl<'p> Interp<'p> {
                         // The arguments stay on the stack: a call that binds
                         // them to a fn's parameters moves them from there.
                         let argv = StackTail { st: &mut *st, at };
-                        self.dispatch_named(callee.name, callee.s, callee.slot, argv, *tier, env)
+                        self.dispatch_named::<VM_SEALED>(
+                            callee.name,
+                            callee.s,
+                            callee.slot,
+                            argv,
+                            *tier,
+                            env,
+                        )
                     };
                     st.push(tri!(v));
                 }
@@ -2107,11 +2114,20 @@ impl<'p> Interp<'p> {
                 Op::Tree(e) => st.push(tri!(self.eval(e, env))),
                 Op::Let { var, ty } => {
                     let v = pop(st);
-                    tri!(self.bind_let(var.name, var.s, var.slot, Some(ty), v, env));
+                    tri!(self.bind_let::<VM_SEALED>(
+                        var.name,
+                        var.s,
+                        var.slot,
+                        Some(ty),
+                        v,
+                        VM_TAINT,
+                        env
+                    ));
                 }
                 Op::AssignInPlace { var, value, done } => {
                     if appendable(env, var)
-                        && tri!(self.assign_in_place(var.s, var.slot, var.name, value, env))
+                        && tri!(self
+                            .assign_in_place::<VM_SEALED>(var.s, var.slot, var.name, value, env))
                     {
                         pc = *done as usize;
                     }
@@ -2289,7 +2305,7 @@ impl<'p> Interp<'p> {
                         *scopes += 1;
                     }
                     let Some(v) = st.last() else { malformed() };
-                    if !tri!(self.match_pattern(pat, v, env)) {
+                    if !tri!(self.match_pattern::<VM_SEALED>(pat, v, env, VM_TAINT)) {
                         if *scoped {
                             pop_scope(env, scopes);
                         }
@@ -2328,7 +2344,7 @@ impl<'p> Interp<'p> {
                         env.push();
                         *scopes += 1;
                     }
-                    if tri!(self.match_pattern(pat, &v, env)) {
+                    if tri!(self.match_pattern::<VM_SEALED>(pat, &v, env, VM_TAINT)) {
                         if *body {
                             env.push();
                             *scopes += 1;
@@ -2352,7 +2368,7 @@ impl<'p> Interp<'p> {
                 Op::MethodRecv { method, args, done } => {
                     if let Some(Value::Chan(_)) = st.last() {
                         let Value::Chan(q) = pop(st) else { malformed() };
-                        st.push(tri!(self.chan_method(&q, method, args, env)));
+                        st.push(tri!(self.chan_method::<VM_SEALED>(&q, method, args, env)));
                         pc = *done as usize;
                     }
                 }
@@ -2409,7 +2425,7 @@ impl<'p> Interp<'p> {
         nest_guard!(self, STORE_BIN_SLOW);
         if let Some(value) = in_place {
             if appendable(env, var)
-                && self.assign_in_place(var.s, var.slot, var.name, value, env)?
+                && self.assign_in_place::<VM_SEALED>(var.s, var.slot, var.name, value, env)?
             {
                 return Ok(());
             }
@@ -2698,7 +2714,7 @@ impl<'p> Interp<'p> {
             malformed()
         };
         let argv = StackTail { st, at };
-        self.dispatch_named(callee.name, callee.s, callee.slot, argv, None, env)
+        self.dispatch_named::<VM_SEALED>(callee.name, callee.s, callee.slot, argv, None, env)
     }
 
     /// [`Op::CallFast`] once proven (spec §4 S5): `call_fn_entry` →

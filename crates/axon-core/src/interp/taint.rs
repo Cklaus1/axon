@@ -61,10 +61,6 @@
 //! and width rules) and the seal edges that make a frame sealed are S3/S4; until
 //! S6 every sealed run is refused at build (`SEAL_RUNTIME_COMPLETE`).
 
-// S2.3 step 1 of 4: the tables and hooks land before their readers (the
-// `eval_t::<true>` hook sites, step 2), so nothing calls them yet.
-#![allow(dead_code)]
-
 use super::*;
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -100,10 +96,6 @@ pub(crate) struct Taint {
     /// (see `eval_with_handler`): inside one, every branch on tainted data is a
     /// possible exit.
     pub(crate) abortable: Cell<u32>,
-    /// How many scheduler fibers are running: a panic in one is caught and
-    /// recorded, so a call into sealed code from operator code in a fiber is a
-    /// possible exit (sticky once it returns).
-    pub(crate) catchable: Cell<u32>,
     /// The taint of the value the last `return` carried (a `return` unwinds past
     /// the statements around it, whose accumulation must not become the fn's
     /// result, so the fn's frame reads it from here).
@@ -882,51 +874,6 @@ impl<'p> Interp<'p> {
         // (amendment 117, loop finding 47).
         if RNG_COUPLED.contains(&name) {
             self.t_touch(self.taint.world.get());
-        }
-    }
-
-    /// The provenance a zoned (`@[adaptive]` / `@[experiment]`) call records
-    /// is a write the runtime performs for the CALLER, not a builtin, so it
-    /// reached no `t_builtin_out` (amendment 117, PSV-1 loop findings 19, 24,
-    /// 43). The in-memory best store is kernel state (`agent_trace_len`,
-    /// `goal_count`, `goal_history` read it back); the JSONL append is a file
-    /// both kernels share, so it is World state like `write_file`. A sealed
-    /// call writes the sealed kernel's store (not the operator's) but the file
-    /// is shared: ALL. An operator call stores the taint of what it recorded
-    /// and the control it ran under, as any other operator write does.
-    pub(super) fn t_provenance_write(&self, arg_t: u8, in_memory: bool, file: bool) {
-        if !self.seal.active {
-            return;
-        }
-        let (kernel, world) = (&self.taint.kernel, &self.taint.world);
-        if self.frame_sealed.get() {
-            if file {
-                world.set(world.get() | ALL);
-            }
-            return;
-        }
-        let a = self.t_stored(arg_t);
-        if in_memory {
-            kernel.set(kernel.get() | a);
-        }
-        if file {
-            world.set(world.get() | a);
-        }
-    }
-
-    /// Inside a builtin that runs operator code a number of times the earlier
-    /// results decide (a callback loop, a goal search, a scheduler pass): raise
-    /// the control taint of everything the runs returned so far for the rest of
-    /// the builtin, so the next run and what it stores are control-dependent on
-    /// them (amendment 117). The builtin dispatch restores the pc on return.
-    /// Operator frames only: a sealed frame's control is already everything.
-    #[inline(always)]
-    pub(super) fn t_loop_pc(&self) {
-        if self.seal.active && !self.frame_sealed.get() {
-            let t = self.taint.acc.get() & VAL;
-            if t != 0 {
-                self.taint.pc.set(self.taint.pc.get() | t);
-            }
         }
     }
 

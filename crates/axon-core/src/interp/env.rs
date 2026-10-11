@@ -592,17 +592,7 @@ impl Bindings {
 
     /// Update the binding [`Bindings::get_var_idx`] finds to `val` carrying
     /// taint `t` (the binding takes the taint of the value now in it);
-    /// returns false if none exists.
-    #[inline]
-    pub(super) fn assign_var(&mut self, name: Sym, slot: u32, val: Value, t: u8) -> bool {
-        if self.store {
-            self.assign_var_t::<true>(name, slot, val, t)
-        } else {
-            self.assign_var_t::<false>(name, slot, val, t)
-        }
-    }
-
-    /// [`Bindings::assign_var`] for a caller that knows the run (see
+    /// returns false if none exists. The caller knows the run (see
     /// [`Bindings::guard`]).
     #[inline]
     pub(super) fn assign_var_t<const T: bool>(
@@ -905,7 +895,7 @@ mod tests {
         );
         env.define_var(c, 5, Value::Int(9), 2);
         assert_eq!(taints(&env), vec![1, 4, 0, 0, 0, 2], "padding is untainted");
-        assert!(env.assign_var(c, 5, Value::Int(10), 1));
+        assert!(env.assign_var_t::<true>(c, 5, Value::Int(10), 1));
         assert_eq!(
             taints(&env),
             vec![1, 4, 0, 0, 0, 1],
