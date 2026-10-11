@@ -381,7 +381,7 @@ fn a_let_annotation_is_cast() {
 /// cast to `T`; or a plain value cast to `T` (soft typing); the bare name
 /// takes only its wrapper.
 #[test]
-#[ignore = "R51 S6: port gap: main's param coercion (sym.rs FnEntry::new param_coerce) unwraps a soft wrapper at a bare `Uncertain` parameter even unsealed, so the operator's `impl Judge for Uncertain` gets the inner i64; also needs S4's dispatch-rule-off switch and a live sealed run"]
+#[ignore = "R51 S4: needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"]
 fn a_declared_soft_type_casts_its_wrapper_and_its_inner_value() {
     let soft =
         "impl Judge for Uncertain {\n    fn ok(self: Uncertain) -> bool { self.value == 9 }\n}\n\

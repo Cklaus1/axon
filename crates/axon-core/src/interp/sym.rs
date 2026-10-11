@@ -444,10 +444,9 @@ impl<'p> FnEntry<'p> {
                 .params
                 .iter()
                 .map(|p| {
-                    let soft = matches!(
-                        &p.ty,
-                        AxonType::Generic { base, .. } if base == "Uncertain" || base == "Temporal"
-                    );
+                    // The bare name counts too, as at every cast (v0.22
+                    // `call_fn`'s `is_soft_decl`).
+                    let soft = super::conform::is_soft_decl(&p.ty);
                     (!soft, super::axon_type_to_width(&p.ty))
                 })
                 .collect(),

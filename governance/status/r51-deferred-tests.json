@@ -7,8 +7,8 @@
     "S5": 0,
     "S2": 0,
     "S3": 0,
-    "S4": 38,
-    "S6": 178
+    "S4": 39,
+    "S6": 177
   },
   "tests": [
     {
@@ -1286,8 +1286,8 @@
     {
       "name": "a_declared_soft_type_casts_its_wrapper_and_its_inner_value",
       "file": "crates/axon-core/src/interp/tests_v022_a.rs",
-      "slice": "S6",
-      "reason": "port gap: main's param coercion (sym.rs FnEntry::new param_coerce) unwraps a soft wrapper at a bare `Uncertain` parameter even unsealed, so the operator's `impl Judge for Uncertain` gets the inner i64; also needs S4's dispatch-rule-off switch and a live sealed run"
+      "slice": "S4",
+      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
     },
     {
       "name": "a_confused_enum_never_crosses_as_another_enum",
