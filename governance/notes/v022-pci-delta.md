@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: ce42eeb2709fdaee13060e80d34ce4a422037902
+generated-at: 23be800cb7c5bb48fb9ec96224f3fb59d1d19481
 
-`git diff --numstat 31413ca7..ce42eeb2 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..23be800c -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -50,7 +50,7 @@ generated-at: ce42eeb2709fdaee13060e80d34ce4a422037902
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
 | `crates/axon-core/src/interp.rs` | 4910 | 1499 |
-| `crates/axon-core/src/interp/builtins.rs` | 665 | 515 |
+| `crates/axon-core/src/interp/builtins.rs` | 666 | 512 |
 | `crates/axon-core/src/interp/conform.rs` | 1780 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1413 | 0 |
 | `crates/axon-core/src/interp/crossing_tests.rs` | 418 | 0 |
@@ -61,16 +61,16 @@ generated-at: ce42eeb2709fdaee13060e80d34ce4a422037902
 | `crates/axon-core/src/interp/kernel_tests.rs` | 401 | 0 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 48 | 21 |
-| `crates/axon-core/src/interp/sink_tests.rs` | 1286 | 0 |
+| `crates/axon-core/src/interp/sink_tests.rs` | 1197 | 0 |
 | `crates/axon-core/src/interp/sym.rs` | 1188 | 0 |
 | `crates/axon-core/src/interp/taint.rs` | 1283 | 0 |
-| `crates/axon-core/src/interp/taint_tests.rs` | 1128 | 0 |
+| `crates/axon-core/src/interp/taint_tests.rs` | 1236 | 0 |
 | `crates/axon-core/src/interp/tests_v022_s4.rs` | 662 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 506 | 514 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
 | `crates/axon-core/src/interp/vm/mod.rs` | 3426 | 0 |
 | `crates/axon-core/src/interp/vm/pure.rs` | 964 | 0 |
-| `crates/axon-core/src/interp/vm/tests.rs` | 1536 | 0 |
+| `crates/axon-core/src/interp/vm/tests.rs` | 1575 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
 | `crates/axon-core/src/lib.rs` | 116 | 21 |
 | `crates/axon-core/src/main.rs` | 799 | 243 |
@@ -82,9 +82,9 @@ generated-at: ce42eeb2709fdaee13060e80d34ce4a422037902
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 38740 | 5302 |
+| total | 38799 | 5299 |
 
-`git log --reverse 31413ca7..ce42eeb2 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..23be800c -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -269,8 +269,12 @@ generated-at: ce42eeb2709fdaee13060e80d34ce4a422037902
 | 5fea0339 | R51 S4b | INTERPRETER make_closure records the creating frame's pin owner in a sealed run (cv.seal.pin_owner = pin_fn, veto PIN_FN_MARK eval.rs:967-972); dispatch_named in a sealed run refuses a non-closure value a local holds (not_callable) instead of falling through to a fn of the same name (veto eval.rs local-call rule, amendment 60); both under seal.active, so an unsealed run is unchanged. TEST-ONLY T8.1 dispatch tests (undetermined positions, width/name, goal names) under Both/TaintOnly/StaticOnly/Neither with controls; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | bbf8be12 | R51 S4b | TEST-ONLY: v0.22's S4 dispatch rows ported under their v0.22 names in interp/tests_v022_s4.rs (included at the end of interp.rs mod tests; ignored R51 S6, they need a live sealed run); tests/dispatch_rule_switch_is_test_only.rs un-ignored and extended to TAINT_FORCE_ON; drift tests for the goal-name call edge and the impl_method/dispatch_named sink classification; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 3bd4709b | R51 S4b | TEST-ONLY: #[ignore] reasons of the dispatch-rule deferred tests (interp.rs unit tests, axon-psv sealed_frames) re-slotted to S6 with the registry; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 5205763e | R51 S6 gaps | INTERPRETER (both engines, S0b-class correctness fix) assert_eq_f64 is stated positively, !(a == b || |a-b| <= 1e-9), as veto builtins.rs:3745, so a NaN operand FAILS on the tree and the VM (they share the arm) as it does natively (OEQ); inf == inf still passes, and every non-NaN pair behaves as before. INTERPRETER seal edge (veto goal.rs:274/373/476/554, interp.rs:4959): run_goal_random/categorical/multistart/tournament call seal_call after the name lookup and unknown_goal_name gives a sealed caller the uniform no-such-fn text, so a sealed caller cannot tell an operator fn from a missing name; both are no-ops unless seal.active and the frame is sealed, so an unsealed run is unchanged. TEST-ONLY: vm/tests.rs NaN parity test, sink_tests.rs goal-search seal test and the clock-builtin World/Time check (veto taint_tests.rs:2498-2516), an ATTACK marker on the T1c CLI refusal asserts. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 748f0715 | R51 S6 gaps | TEST-ONLY: no_arm_of_a_pure_builtin_reads_or_advances_ambient_state moves verbatim from interp/sink_tests.rs to interp/taint_tests.rs, v0.22's module path, so the M3323/M3329 rows and the am117 gate row name a test that exists; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | ce42eeb2 | R51 S4b | TEST-ONLY: operator_arithmetic_never_runs_at_a_width_the_candidate_chose moved from interp/sink_tests.rs to interp::tests (interp/tests_v022_s4.rs, the v0.22 module path) with v0.22's runner half, which asserts SEALED_RUN_REFUSED until S6; sink_tests helpers with_ix and WIDTH widened to pub(super); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 182 commits | | |
+| ddab14e1 | R51 S6 gaps | INTERPRETER revert of 5205763e's goal-name seal edge (the seal_call after the lookup in run_goal_random/categorical/multistart/tournament and the seal-aware unknown_goal_name): r51/s4b 65eda84a ports the same edge and merges first, so goal.rs and unknown_goal_name return to the base exactly; the unsealed path never changed. TEST-ONLY: the duplicate sink_tests goal-search test is dropped (S4b's dispatch_tests cover it). Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 23be800c | R51 S6 gaps merge | joins r51/gaps (5205763e..5a739bf7: NaN assert_eq_f64, M3483 row, no_arm move to interp::taint_tests, M3342 re-anchor) onto S4b (27836b1c); only this table and the note conflicted, resolved by keeping both sides; goal.rs/unknown_goal_name are S4b's (the gaps lane reverted its own copy); no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 186 commits | | |
 <!-- END MECHANICAL -->
 
 
@@ -428,7 +432,7 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am121 a live nonce's record survives another request's prune | axon-fabric/observer_service | PASS 1/1 |
 | am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 426 rows at this head, recomputed from the script): M59, M61-M62, M65, M67-M70, M72-M79, M82-M83, M85-M88, M90-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3251, M3253-M3259, M3267-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3458, M3460-M3479
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 427 rows at this head, recomputed from the script): M59, M61-M62, M65, M67-M70, M72-M79, M82-M83, M85-M88, M90-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3251, M3253-M3259, M3267-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3458, M3460-M3479, M3483
 
 | delta | rows (named in the amendment's own text) |
 |---|---|
