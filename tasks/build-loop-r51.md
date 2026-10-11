@@ -8,7 +8,7 @@ v0.22 reference checkout (read-only): `/home/cklaus/projects/axon-lanes/v022-ref
 
 | Placeholder | Value |
 |---|---|
-| `<TEST_CMD>` | `./scripts/gate.sh` (main's gate; `--strict` from S6). Inner-loop fast set: `cargo test -p axon-core --no-default-features` |
+| `<TEST_CMD>` | `./scripts/gate.sh` (main's gate; `--strict` from S6). Inner-loop fast set: `cargo test -p axon-core --no-default-features`. Lane acceptance: `./scripts/gate.sh --fast [--base=REF]` (fmt, clippy -D warnings on the crates changed since the merge base with REF, default main, axon-core `--no-default-features`, axon-cortex and axon-psv suites, `vm_parity.sh`, `v022_refusal_coverage.py`, `pci_delta.py --check`, `g01_anchors.py`). The fast tier is NOT the gate and NOT evidence: it refuses `--strict`/`--profile`, never prints `gate PASSED`, and `run_managed.sh` records it `gate_run=no gate_strict=no gate_tier=fast`, so `release_check.sh` never accepts it |
 | `<RUN_CMD>` | `target/debug/axon test --seal <cand> <suite.ax>` (CLI) and the axon-psv runner (`cargo test -p axon-psv --test sealed_frames`) |
 | `<SMOKE_SCENARIO>` | `tasks/r51-smoke/`: one sealed suite with an honest candidate and three attack candidates (global read `TABLE[0]`, PICK through a cast, taint through a frame-pool reuse). Signal before S6: every sealed invocation exits 2 with the R51 refusal on stderr and no `"type":"summary"` on stdout. From S6: honest → summary `passed`, each attack → its refusal message; `AXON_ENGINE=vm` → exit 2 VM refusal; `env -i` run → no `AXON_VM_TRACE=1` lines |
 | `<FULL_SUITE_BUDGET>` | one `gate.sh` run (baseline measured in Step 0, `tasks/r51-baseline.md`) |
@@ -75,7 +75,7 @@ the node cites.
 
 **Full-suite regression loop:** after S0.5, S1, S5, S2.3, S3.4, S4, S6.3: `./scripts/gate.sh` (and from S6
 `--strict` via `run_managed.sh`), failure set diffed both ways against `tasks/r51-baseline.md`. A new failure
-blocks unless it is on the known-failure list below.
+blocks unless it is on the known-failure list below. A `--fast` PASS is never a substitute for this run.
 
 **Smoke loop:** at the same tiers, run `tasks/r51-smoke/run.sh` in a temp dir with a bounded timeout and check
 its signal (before S6: all refused; from S6: the honest/attack table). `git status --short --ignored` must show
