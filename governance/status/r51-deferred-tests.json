@@ -6,9 +6,9 @@
     "S0b": 14,
     "S5": 0,
     "S2": 0,
-    "S3": 5,
-    "S4": 15,
-    "S6": 165
+    "S3": 0,
+    "S4": 16,
+    "S6": 169
   },
   "tests": [
     {
@@ -140,8 +140,8 @@
     {
       "name": "taint_survives_every_carrier_a_value_can_travel_by",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S3",
-      "reason": "the refusing sinks (t_check_names, t_check_call_picked) and the dict/closure edges are seal edges; the S2 channel is ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the name rule (t_check_names) and the dict, channel, &mut, closure, scheduler and sandbox_run carriers ported (S3); needs a live sealed run"
     },
     {
       "name": "the_candidate_never_selects_the_operators_code_by_width_or_by_name",
@@ -506,14 +506,14 @@
     {
       "name": "a_candidate_cannot_redefine_a_suite_helpers_impl_or_constant",
       "file": "crates/axon-fabric/tests/check_effects.rs",
-      "slice": "S3",
-      "reason": "seal edges for operator impls and constants not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edges for operator impls and constants ported (S3); needs a live sealed run"
     },
     {
       "name": "a_sealed_candidate_cannot_reach_operator_state_by_handle_or_definition",
       "file": "crates/axon-fabric/tests/check_effects.rs",
-      "slice": "S3",
-      "reason": "seal edges and global_ref not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edges and global_ref ported (S3); needs a live sealed run"
     },
     {
       "name": "a_sealed_candidate_cannot_reach_the_operators_names",
@@ -542,8 +542,8 @@
     {
       "name": "a_candidate_calls_its_own_fn_value_and_never_reads_an_operator_global",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S3",
-      "reason": "global_ref and fn-value marks not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "global_ref and fn-value marks ported (S3); needs a live sealed run"
     },
     {
       "name": "a_candidates_write_to_its_array_parameter_never_reaches_the_operators_copy",
@@ -554,8 +554,8 @@
     {
       "name": "a_channel_the_candidate_touched_never_selects_operator_code",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S3",
-      "reason": "channel contracts and channel taint not ported; sealed control refused until S6"
+      "slice": "S4",
+      "reason": "seal edge channel contracts and channel taint ported (S3); the refusing sink t_check_call_picked needs PICK (S4) and a live sealed run (S6)"
     },
     {
       "name": "a_dict_entry_the_operator_held_is_never_retyped_by_the_candidate",
