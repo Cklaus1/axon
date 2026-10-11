@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: afd9e294d518d37d6277644b039c13948b7c8f80
+generated-at: e12ac5fa482144365921a4102585b4ef9680b395
 
-`git diff --numstat 31413ca7..afd9e294 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..e12ac5fa -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -49,17 +49,20 @@ generated-at: afd9e294d518d37d6277644b039c13948b7c8f80
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 4001 | 1421 |
+| `crates/axon-core/src/interp.rs` | 3796 | 1419 |
 | `crates/axon-core/src/interp/builtins.rs` | 587 | 542 |
-| `crates/axon-core/src/interp/eval.rs` | 1164 | 547 |
+| `crates/axon-core/src/interp/env.rs` | 1070 | 0 |
+| `crates/axon-core/src/interp/eval.rs` | 1539 | 597 |
 | `crates/axon-core/src/interp/goal.rs` | 55 | 52 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 18 | 9 |
 | `crates/axon-core/src/interp/sym.rs` | 1184 | 0 |
+| `crates/axon-core/src/interp/taint.rs` | 956 | 0 |
+| `crates/axon-core/src/interp/taint_tests.rs` | 901 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 491 | 514 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
-| `crates/axon-core/src/interp/vm/mod.rs` | 3398 | 0 |
-| `crates/axon-core/src/interp/vm/pure.rs` | 959 | 0 |
+| `crates/axon-core/src/interp/vm/mod.rs` | 3426 | 0 |
+| `crates/axon-core/src/interp/vm/pure.rs` | 964 | 0 |
 | `crates/axon-core/src/interp/vm/tests.rs` | 1536 | 0 |
 | `crates/axon-core/src/kernel.rs` | 89 | 23 |
 | `crates/axon-core/src/lib.rs` | 116 | 21 |
@@ -72,9 +75,9 @@ generated-at: afd9e294d518d37d6277644b039c13948b7c8f80
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 26669 | 5197 |
+| total | 29799 | 5245 |
 
-`git log --reverse 31413ca7..afd9e294 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..e12ac5fa -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -230,8 +233,16 @@ generated-at: afd9e294d518d37d6277644b039c13948b7c8f80
 | ea565f8e | R51 S1 merge | joins R51 S0b (56389c53) and S1 (a45dc364); the only overlaps are appended tests (vm/tests.rs, cli_run.rs) and this table; interp.rs, vm/mod.rs and main.rs auto-merged: no change beyond the two commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | f7ccb9e6 | R51 S1 | test only (vm/tests.rs T1d): S0b's run_test_body is listed as an engine gate and exec_raw as a VM entry; no production change; every sealed run is still refused |
 | d60ea237 | R51 S5 | INTERPRETER static layer: ports v0.22's interp/pin.rs verbatim and adds the Seal state (sealed fns/globals/refines/types, operator method names), pins and frame provenance (with_frame, fn_is_sealed) to Interp; Interp::build reads the sealed set once and hands it to build_in, so tests pass it without publishing it; Seal and Pins are computed only for a non-empty sealed set (an unsealed build does no new work). No seal edge consumes them yet (S2/S3/S4); not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 426067dc | R51 S2.1 | INTERPRETER Env: binding storage moves into a private Bindings type (interp/env.rs) with a parallel taint vector present only in a sealed run; every binding writer takes the taint, the raw env.vars writes (bind_params, goal_met, closure lend/copy/write-back, VM param pushes, &mut move-in/out) become Bindings methods, get_var_idx is the one index-returning lookup, and the vectors are checked in step after every method (release panic when the store is present). Unsealed runs carry no store and every tree site passes taint 0; behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 6be3a637 | R51 S2.2 | INTERPRETER Env factory: Env's constructors become private to interp/env.rs and every Env of a run is made by the Interp (new_env, env_from_snapshot, the frame pool moved into env.rs), which gives it a taint store exactly when seal.active; a given frame is emptied (taints with bindings), a snapshot whose store does not match the run panics, and a taint read from a store-less Env panics (never reads 0). Unsealed runs: same envs, no store, behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 8a0a268c | R51 S2 perf | INTERPRETER cost-only: the Bindings taint store becomes a Vec plus a store flag, and the bytecode engine (never sealed) writes and removes bindings through const-generic _t::<false> forms, so the unsealed call path has no branch on the store (R50 §10 call-path budget restored); the release-mode in-step check runs on sealed writes and taint reads only (debug builds check every mutation); two pre-existing clippy lints in interp tests fixed. Behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 99f7927f | R51 S2.3 step 1 | INTERPRETER taint state: ports v0.22 interp/taint.rs (taint bits, Taint accumulator/pc/sticky cells, builtin class tables with now_ns classed WORLD like now_ms, builtin/provenance/native/loop hooks) onto main's Sym/slot Bindings, adds the Interp.taint field and records a module-level let's taint at init_globals in a sealed run. Nothing reads the taint yet (eval_t hook sites are the next step); behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 2ccc64c3 | R51 S2.3 step 2a | INTERPRETER evaluator dispatch: eval() branches once on seal.active to eval_tainted (the v0.22 accumulator wrapper, reading a binding's taint through the same slot lookup as its value) or eval_arm::<false>; eval_arm, eval_block, run_loop_body, eval_binop, eval_call and operand are const-generic over the run, recursing through eval_t::<T>, so the unsealed instantiation is main's evaluator. No taint hook yet; behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 819fe549 | R51 S2.3 step 2b | INTERPRETER taint hooks on the sealed instantiation only (eval_t::<true>): a block restores the accumulator between statements; let, refinement-predicate and pattern bindings carry the value's taint; assignments (plain, in place, place writes) store it with the pc/sticky control taint; comparisons read operands deep and untype, with no in-place operand read; &&/|| through short_circuit_tainted; if/match/while/while-let/for/select branch under t_branch; return and ? set the return taint (? also sticky); fmt-strings, channel send, handler arms (abortable count, payload and return-arm taint), native calls (World) and builtin dispatch (t_builtin_in, pc guard, t_builtin_out). dispatch_named, dispatch_call, match_pattern, bind_let, chan_method and assign_in_place become const-generic, the bytecode engine passing VM_SEALED=false. Unsealed runs: the T=false instantiation is main's code; behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| d21ed278 | R51 S2.3 step 3 | TEST-ONLY taint unit tests (interp/taint_tests.rs, cfg(test)): drive the evaluator's sealed instantiation eval_t::<true> on a build_with Interp (the refuse-all pin bypassed, the build_in refusal pinned) and kill every S2 hook in a mutation table; every_builtin_has_a_taint_class, the stringifier/emitter and call_builtin drift tests; match_pattern_rt becomes pub(super) for them. Deferred registry re-slots the 8 S2 entries (the taint sinks are S3, the clock class is ported so S6) and adds one S3 unit test. Interpreter behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | afd9e294 | R51 S0b perf | INTERPRETER cost only: S0b's return boundary (sum_return) tests the value's tag first (ret_needs_check: only Struct..=Err can be asked anything) and reads one FnEntry::ret byte (RetCheck replaces ret_is_scalar + ret_sum); leaf_call checks such a result out of line (leaf_return_checked), declining a confused Result/Option to the full path as before. Same refusals on both engines (soft unwrap, Result/Option confusion); new cli_run test + fixture for the leaf-call refusal; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 153 commits | | |
+| e12ac5fa | R51 S2 merge | joins S0b-perf (afd9e294) and S2 (426067dc..d21ed278); interp.rs, vm/mod.rs, sym.rs and eval.rs auto-merged, only this table and the note conflicted; no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 161 commits | | |
 <!-- END MECHANICAL -->
 
 
