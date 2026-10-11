@@ -1526,9 +1526,9 @@ fn r51_t1d_vm_entry_callers_outside_vm() {
     assert_eq!(
         r51_fns(&calls),
         [
-            "interp.rs::call_closure_owned_by",
+            "interp.rs::call_closure_frame",
             "interp.rs::call_fn_common",
-            "interp.rs::call_fn_in_general",
+            "interp.rs::call_fn_frame",
             "interp/builtins.rs::builtins arr_fold",
         ],
         "DRIFT: a fn enters the VM outside the sealed-engine gates; route it through run_body/run_lambda or list it with its reason"

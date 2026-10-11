@@ -248,7 +248,8 @@ Unknown, cortex to Err ("no summary"). T1 asserts all three.
   - T1d drift: the set of functions that read `.engine` equals {`run_body`, `run_test_body`, `run_lambda`,
     `fold_leaf`, the trace read}; `vm/tests.rs` is the only writer of `.engine` after build; the callers of `compile` are exactly
     `compile_entry` and `compile_lambda`; every caller of a VM entry point outside `vm/` is in the allow-list
-    {`call_fn_common`, `call_fn_in_general`, `call_closure_owned_by`, builtins `arr_fold`}.
+    {`call_fn_common`, `call_fn_frame`, `call_closure_frame`, builtins `arr_fold`} [REVISED: was `call_fn_in_general`,
+    `call_closure_owned_by`; S2.3 step 4 moved their bodies into the const-generic frames].
   - Sealed-state tests hold one lock that every `Interp::build` in the test binary respects (or the seal state
     is a build parameter), so a concurrent unrelated test never sees `seal.active`.
 - **T2 no regression** [REVISED: was "pass unchanged", reason: S0Merge-6, EG-6, EG-8]: `vm_parity.sh`,

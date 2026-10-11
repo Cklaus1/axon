@@ -7919,19 +7919,23 @@ fn main() { }
     fn user_code_runners() -> std::collections::HashSet<String> {
         // R51: main's call path (AX-54 split `call_fn_frame`; `call_mut_with`
         // is v0.22's `call_fn_mut`; AX-40 added `call_closure_arg`) and the
-        // VM entries a builtin arm calls directly (`fold_leaf`, T1d).
+        // VM entries a builtin arm calls directly (`fold_leaf`, T1d); R51 S2.3
+        // made the general fn frame and the closure frame const-generic
+        // (`call_fn_frame`, `call_closure_frame`).
         const PRIMITIVES: &[&str] = &[
             "call_fn",
             "call_fn_entry",
             "call_fn_in",
             "call_fn_common",
             "call_fn_in_general",
+            "call_fn_frame",
             "call_test_fn",
             "call_mut_with",
             "call_closure",
             "call_closure_arg",
             "call_local_closure",
             "call_closure_owned_by",
+            "call_closure_frame",
             "run_body",
             "run_test_body",
             "run_lambda",
