@@ -446,7 +446,13 @@ impl<'p> Interp<'p> {
         self.cast_at(v, ty, cx, 0)
     }
 
-    fn cast_at(&self, v: &mut Value, ty: &T, cx: &Cx, depth: usize) -> Result<(), String> {
+    pub(super) fn cast_at(
+        &self,
+        v: &mut Value,
+        ty: &T,
+        cx: &Cx,
+        depth: usize,
+    ) -> Result<(), String> {
         if depth > MAX_CAST_DEPTH {
             return Err("the value is nested too deeply to check against its declared type".into());
         }

@@ -512,6 +512,15 @@ fn a_record_is_cast_by_name_then_by_field() {
             cast(ix, &ghost, "Pick").is_err(),
             "a variant the enum lacks"
         );
+        let other = Value::Enum(Rc::new(EnumVal {
+            enum_name: intern("Other"),
+            variant: intern("One"),
+            fields: Fields::from_pairs([(intern("x"), Value::Int(1))]),
+        }));
+        assert!(
+            cast(ix, &other, "Pick").is_err(),
+            "ATTACK: another enum's look-alike variant passed by variant name"
+        );
         // A refinement by its base.
         assert!(cast(ix, &Value::Int(1), "Pos").is_ok());
         assert!(cast(ix, &strv("s"), "Pos").is_err());
@@ -951,6 +960,114 @@ fn a_nested_dict_is_snapshotted() {
     });
 }
 
+/// A dict reached only as another dict's value is snapshotted too: the walk
+/// goes into a dict's values.
+#[test]
+fn a_dict_inside_a_dict_is_snapshotted() {
+    with_ix("r51-s3-dict-in-dict", true, |ix| {
+        let inner = dict(&[("x", Value::Int(1))]);
+        let outer = dict(&[("in", Value::Dict(inner.clone()))]);
+        ix.dict_edge_in(&Value::Dict(outer)).expect("in");
+        assert_eq!(ix.dict_snaps.borrow().len(), 2, "both dicts");
+        ix.with_frame(true, || {
+            ix.dict_mutated(&inner);
+            inner.borrow_mut().insert("x".into(), strv("s"));
+        });
+        assert!(
+            refused(&ix.dict_edge_out(), "key `x`"),
+            "ATTACK: a dict inside a handed dict was retyped unrecorded"
+        );
+    });
+}
+
+/// A dict too large to snapshot is refused at the crossing, never skipped.
+#[test]
+fn a_dict_past_the_snapshot_bound_is_refused_not_skipped() {
+    with_ix("r51-s3-dict-max", true, |ix| {
+        let d: std::collections::BTreeMap<String, Value> = (0..=super::conform::DICT_SNAP_MAX)
+            .map(|i| (i.to_string(), Value::Unit))
+            .collect();
+        let r = ix.dict_edge_in(&Value::Dict(Rc::new(RefCell::new(d))));
+        assert!(
+            refused(&r, "cannot cross a seal"),
+            "ATTACK: a dict past the bound crossed with no snapshot: {r:?}"
+        );
+    });
+}
+
+/// An operator mutation (`dict_mutated` outside a sealed frame bumps
+/// `dict_epoch`) makes every snapshot stale, so the next hand-over re-takes
+/// it: a replacing dict is then judged against what the operator holds NOW.
+#[test]
+fn a_handover_after_an_operator_mutation_retakes_the_snapshot() {
+    with_ix("r51-s3-dict-retake", true, |ix| {
+        let d = dict(&[("k", Value::Int(1))]);
+        ix.dict_edge_in(&Value::Dict(d.clone())).expect("in");
+        d.borrow_mut().insert("k".into(), strv("now a str"));
+        ix.dict_mutated(&d);
+        ix.dict_edge_in(&Value::Dict(d.clone())).expect("again");
+        let now = Value::Dict(dict(&[("k", strv("s"))]));
+        assert!(
+            ix.replaced_ok_top(&Value::Dict(d.clone()), &now).is_ok(),
+            "judged against the operator's latest"
+        );
+        let first = Value::Dict(dict(&[("k", Value::Int(2))]));
+        assert!(
+            ix.replaced_ok_top(&Value::Dict(d), &first).is_err(),
+            "ATTACK: judged against a stale snapshot"
+        );
+    });
+}
+
+/// A snapshot taken since the last operator mutation, and not dirtied, is
+/// KEPT at the next hand-over (O(1) per dict), not re-taken from whatever
+/// the dict holds by then.
+#[test]
+fn a_fresh_snapshot_is_kept_at_the_next_handover() {
+    with_ix("r51-s3-dict-fresh", true, |ix| {
+        let d = dict(&[("k", Value::Int(1))]);
+        ix.dict_edge_in(&Value::Dict(d.clone())).expect("in");
+        // A write no mutation hook saw: a re-take would record it.
+        d.borrow_mut().insert("k".into(), strv("unseen"));
+        ix.dict_edge_in(&Value::Dict(d.clone())).expect("again");
+        let replacing = Value::Dict(dict(&[("k", Value::Int(2))]));
+        assert!(
+            ix.replaced_ok_top(&Value::Dict(d), &replacing).is_ok(),
+            "the kept snapshot holds `k: i64`"
+        );
+    });
+}
+
+/// Round 6: a candidate closure that captured a handed dict mutates it after
+/// the OPERATOR did, with no hand-over in between. The first sealed mutation
+/// records what the dict then holds, so the operator's own change is what
+/// sealed code is judged against.
+#[test]
+fn the_first_sealed_mutation_records_what_the_operator_then_held() {
+    with_ix("r51-s3-dict-round6", true, |ix| {
+        let d = dict(&[("k", Value::Int(1))]);
+        ix.dict_edge_in(&Value::Dict(d.clone())).expect("in");
+        d.borrow_mut().insert("k".into(), strv("op"));
+        ix.dict_mutated(&d);
+        ix.with_frame(true, || {
+            ix.dict_mutated(&d);
+            d.borrow_mut().insert("k".into(), strv("cand"));
+        });
+        assert!(
+            ix.dict_edge_out().is_ok(),
+            "an honest write of the operator's latest type"
+        );
+        ix.with_frame(true, || {
+            ix.dict_mutated(&d);
+            d.borrow_mut().insert("k".into(), Value::Int(3));
+        });
+        assert!(
+            refused(&ix.dict_edge_out(), "key `k`"),
+            "ATTACK: retyped against the operator's latest"
+        );
+    });
+}
+
 /// What replaces a held value is judged by what the operator held, deeply
 /// (amendment 78).
 #[test]
@@ -999,6 +1116,25 @@ fn a_replacement_is_judged_by_what_the_operator_held() {
         assert!(
             refused(&ix.dict_edge_out(), "key `k`"),
             "ATTACK: a position the operator's value did not show was filled freely"
+        );
+    });
+}
+
+/// Inside an array the operator held, each element is judged by what the
+/// operator held at that index, deeply (a dict element keeps its keys' types
+/// although the array's own type says nothing of them).
+#[test]
+fn an_element_of_a_held_array_is_judged_deeply() {
+    with_ix("r51-s3-repl-arr", true, |ix| {
+        let arr = |m| Value::Array(Rc::new(vec![Value::Dict(m)]));
+        let held = arr(dict(&[("a", Value::Int(1))]));
+        assert!(ix
+            .replaced_ok_top(&held, &arr(dict(&[("a", Value::Int(2))])))
+            .is_ok());
+        assert!(
+            ix.replaced_ok_top(&held, &arr(dict(&[("a", strv("s"))])))
+                .is_err(),
+            "ATTACK: an array element's dict entry was retyped"
         );
     });
 }
@@ -1255,4 +1391,21 @@ fn a_value_nested_past_the_bound_is_refused_not_left_unvisited() {
         refused(&past, "cannot cross a seal"),
         "ATTACK: a value nested past the walk bound crossed unvisited: {past:?}"
     );
+}
+
+/// The cast's own depth bound refuses, never waves the rest through.
+#[test]
+fn a_cast_past_its_depth_bound_is_refused() {
+    with_ix("r51-s3-cast-depth", false, |ix| {
+        let t = ty("i64");
+        assert!(ix
+            .cast_at(&mut Value::Int(1), &t, &Cx::default(), MAX_CAST_DEPTH)
+            .is_ok());
+        let past = ix.cast_at(&mut Value::Int(1), &t, &Cx::default(), MAX_CAST_DEPTH + 1);
+        assert!(
+            past.as_ref()
+                .is_err_and(|e| e.contains("nested too deeply")),
+            "ATTACK: a value past the cast bound was not refused: {past:?}"
+        );
+    });
 }
