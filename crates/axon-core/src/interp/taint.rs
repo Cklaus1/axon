@@ -1197,6 +1197,7 @@ impl<'p> Interp<'p> {
     #[cold]
     #[inline(never)]
     pub(super) fn eval_tainted(&self, expr: &Expr, env: &mut Env) -> R {
+        nest_guard!(self, EVAL_TAINTED);
         let tn = &self.taint;
         if self.frame_sealed.get() {
             let r = self.eval_arm::<true>(expr, env);

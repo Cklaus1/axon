@@ -920,11 +920,11 @@ fn pure_rechecks_leaf_kinds() {
         matches!(e.eval(&env), Some(Scalar::Int(15))),
         "register code"
     );
-    *env.get_mut(a, 0).expect("bound") = Value::Float(1.5);
+    *env.get_mut_t::<false>(a, 0).expect("bound") = Value::Float(1.5);
     assert!(e.eval(&env).is_none(), "float against int code");
-    *env.get_mut(a, 0).expect("bound") = Value::Int(i64::MAX);
+    *env.get_mut_t::<false>(a, 0).expect("bound") = Value::Int(i64::MAX);
     assert!(e.eval(&env).is_none(), "overflow");
-    *env.get_mut(a, 0).expect("bound") = Value::Str(Rc::new("x".to_string()));
+    *env.get_mut_t::<false>(a, 0).expect("bound") = Value::Str(Rc::new("x".to_string()));
     assert!(e.eval(&env).is_none(), "str");
     assert!(e.eval(&Env::new()).is_none(), "unbound");
 }

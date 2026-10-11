@@ -11,6 +11,13 @@ only if every recursion through the interpreter passes a guarded function,
 and each guarded function's constant covers its own frame plus every
 unguarded frame that can sit above it before the next guarded one.
 
+A function compiled once per run kind (R51: `f<const T: bool>`, whose
+`::<true>` instance runs exactly in a sealed run) is two functions here:
+it guards with `nest_guard!(self, if T { F_SEALED } else { F })`, its
+`::<false>` instance is `f`, checked against `F`, and its `::<true>`
+instance is `f_sealed`, checked against `F_SEALED`; each constant needs
+that one site, like any other.
+
 This script checks exactly that on the build under test:
 
 - the call graph is the module's direct `call`s (wasm-objdump -d); it also
@@ -20,9 +27,11 @@ This script checks exactly that on the build under test:
 - the frames are the Cranelift x86-64 frames wasmtime gives each function
   (`sub $N,%rsp` + return address + frame pointer);
 - the checked components are the strongly connected component holding
-  `Interp::eval` and every other recursive component reachable from it
-  that holds a guarded function (the bytecode compiler's `Compiler::expr`
-  and `stmt`, which recurse once per level of source nesting);
+  the evaluator, `Interp::eval_arm` (`Interp::eval`, which picks its
+  instance, is inlined into every caller), and every other recursive
+  component reachable from it that holds a guarded function (the bytecode
+  compiler's `Compiler::expr` and `stmt`, which recurse once per level of
+  source nesting);
 - a guarded function reachable from `eval` but in no checked component
   (`Interp::compile_body`, `compile_lambda`: a frame live while one
   compile runs) is checked the same way, its unguarded tail stopping at
@@ -72,6 +81,29 @@ ALLOW = [
     (r"gamma_sample|log_gamma|reg_inc_beta|beta_cdf|sub_timespec|slice_error_fail", "bounded (recurses once)"),
     (r"slice4sort|btree", "std"),
     (r"backtrace|panicking|ThreadId>::new::exhausted", "panic"),
+    # R51 (the seal, `interp/conform.rs`). The cast of a value to a declared type, the
+    # type a value shows, and the walks of a value handed across a seal
+    # follow the value's nesting (refused past `MAX_CAST_DEPTH`, 1,000,000,
+    # far past the stack); the type walkers read a declared type whose type
+    # parameters are bound to types values showed (`value_type`), a generic
+    # value's field environments nest with it (`Cx` parent chain), and a
+    # closure's contracts chain once per crossing (`Contract::next`).
+    (r"^(cast|cast_at|cast_named|cast_option|cast_result|cast_soft|cast_tparam|value_type"
+     r"|generic_type|walk_fresh|replaced_ok|pins_runtime_type)$"
+     r"|interp::conform::(resolve|subst|merge|bind_from|has_undet|is_unstated|mentions_tparam"
+     r"|unshown_fn|Cx>::root)|7conform(2Cx|8Contract)|interp::conform::(Cx|Contract)>"
+     r"|doc::render_type", "value"),
+    # R51 (the seal). A channel is stamped with its element type,
+    # re-read from the `chan::<T>` callee name the parser rendered from the
+    # source type (`parse_type_text`: the lexer and the parser) and checked
+    # closed (`is_known_closed`); a declared type is checked to pin a runtime
+    # type (`pin::Tys::closed`, each named definition's fields once).
+    (r"Logos>::lex|5logos5Logos3lex|parser::Parser>::|parser::axon_type_to_str"
+     r"|^is_known_closed$|pin::Tys>::(closed|fields_closed)", "source"),
+    # R51 (taint, `interp/taint.rs`): the taint of a value's shared objects is read
+    # to a fixed depth (`t_obj`, `t_mark_obj`, `t_note`: 3; `t_op_values`: 4;
+    # `t_obj_deep`: 32).
+    (r"Interp>::(t_obj|t_obj_deep|t_mark_obj|t_note)::go$|^t_op_values$", "bounded (taint depth)"),
 ]
 
 
@@ -106,11 +138,16 @@ def main() -> int:
         return 2
     # A constant counts only if its function really charges it: every
     # `nest_guard!(self, X…)` / `nest::<{…nest_cost::X}>` site under src/ must
-    # sit in the function named after X (`Compiler::<f>` for COMPILE_<F>), and
-    # every constant, aliases included, needs exactly one such site.
+    # sit in the function named after X (`Compiler::<f>` for COMPILE_<F>; the
+    # `::<true>` instance `f_sealed` for the X_SEALED of an `if T { X_SEALED }
+    # else { X }` site), and every constant, aliases included, needs exactly
+    # one such site.
     sites = defaultdict(list)
     fn_re = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:const\s+)?(?:unsafe\s+)?fn\s+(\w+)")
-    site_re = re.compile(r"nest_guard!\(\s*self\s*,\s*([A-Z_]+)\b|nest_cost::([A-Z_]+)\s*\}>")
+    site_re = re.compile(
+        r"nest_guard!\(\s*self\s*,\s*(?:if\s+T\s*\{\s*([A-Z_]+)\s*\}\s*else\s*\{\s*([A-Z_]+)\s*\}|([A-Z_]+)\b)"
+        r"|nest_cost::([A-Z_]+)\s*\}>"
+    )
     root_dir = os.path.dirname(os.path.abspath(src))
     for dirpath, _, files in os.walk(root_dir):
         for fname in sorted(files):
@@ -125,9 +162,14 @@ def main() -> int:
                 if line.lstrip().startswith("//"):
                     continue
                 for m in site_re.finditer(line):
-                    const = (m.group(1) or m.group(2)).lower()
-                    fn = enclosing if m.group(1) else f"compile_{enclosing}"
-                    sites[const].append((fn, f"{os.path.relpath(path, root_dir)}:{lineno}"))
+                    where = f"{os.path.relpath(path, root_dir)}:{lineno}"
+                    if m.group(1):
+                        sites[m.group(1).lower()].append((f"{enclosing}_sealed", where))
+                        sites[m.group(2).lower()].append((enclosing, where))
+                    elif m.group(3):
+                        sites[m.group(3).lower()].append((enclosing, where))
+                    else:
+                        sites[m.group(4).lower()].append((f"compile_{enclosing}", where))
     bad_sites = 0
     for c in sorted(set(costs) | set(sites)):
         where = sites.get(c, [])
@@ -199,9 +241,11 @@ def main() -> int:
         left -= 1
 
     # `Interp::<f>` maps to the constant `<F>`; the bytecode compiler's
-    # `Compiler::<f>` (vm/compile.rs) to `COMPILE_<F>`.
+    # `Compiler::<f>` (vm/compile.rs) to `COMPILE_<F>`; an instance whose
+    # first generic argument is `true` (`::<true: bool, ..>`, mangled
+    # `Kb1_`) is the sealed run's, `<f>_sealed`.
     dem = re.compile(
-        r"^<axon_core\[[0-9a-f]+\]::interp::(?:vm::compile::(Compiler)|Interp)>::(\w+)(?:::<[^{]*>)?$"
+        r"^<axon_core\[[0-9a-f]+\]::interp::(?:vm::compile::(Compiler)|Interp)>::(\w+)(?:::<([^{]*)>)?$"
     )
     mang = re.compile(r"^_RI?NvM\w*?(?:6Interp|8(Compiler))(\d+)(\w+)")
 
@@ -210,12 +254,15 @@ def main() -> int:
         m = dem.match(s)
         if m:
             n = m.group(2)
+            sealed = re.match(r"true\b", m.group(3) or "") is not None
         else:
             m = mang.match(s)
             if not (m and len(m.group(3)) >= int(m.group(2))):
                 return None
             n = m.group(3)[: int(m.group(2))]
-        return "compile_" + n if m.group(1) else n
+            sealed = m.group(3)[int(m.group(2)):].startswith("Kb1_")
+        n = "compile_" + n if m.group(1) else n
+        return n + "_sealed" if sealed else n
 
     # Tarjan, iterative.
     nodes = set(calls) | set(frame)
@@ -252,9 +299,9 @@ def main() -> int:
                     if x == u:
                         break
 
-    evals = [f for f in sym if name_of(f) == "eval"]
+    evals = [f for f in sym if name_of(f) == "eval_arm"]
     if not evals:
-        print("wasm_stack_budget: no `Interp::eval` in the disassembly", file=sys.stderr)
+        print("wasm_stack_budget: no `Interp::eval_arm` in the disassembly", file=sys.stderr)
         return 2
     members = defaultdict(set)
     for f, r in comp.items():

@@ -1060,7 +1060,7 @@ fn an_abortable_handler_body_makes_what_follows_sticky() {
 }
 
 /// A sealed frame entered inside an abort-capable `with` body makes what
-/// follows sticky (`eval_with_handler` compares `taint.entries`). Sealed frames
+/// follows sticky (`with_abort_exit` compares `taint.entries`). Sealed frames
 /// are entered only through `Interp::with_frame`, which has no caller before
 /// the seal edges.
 #[test]

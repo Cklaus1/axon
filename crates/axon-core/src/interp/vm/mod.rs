@@ -1403,7 +1403,7 @@ impl<'p> Interp<'p> {
     #[cold]
     #[inline(never)]
     pub(super) fn run_test_body(&self, entry: &FnEntry<'_>, env: &mut Env) -> R {
-        nest_guard!(self, RUN_BODY_TREE);
+        nest_guard!(self, RUN_TEST_BODY);
         if self.seal_pin_vm() {
             let body = match entry.compiled.as_ref().and_then(std::cell::OnceCell::get) {
                 Some(body) => Some(body),

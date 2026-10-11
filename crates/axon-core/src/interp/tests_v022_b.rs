@@ -1818,7 +1818,7 @@ fn every_frame_that_runs_stored_operator_code_sets_its_owner() {
     const SETS_OWNER: &[&str] = &[
         "call_fn_sealed",
         "call_closure_frame",
-        "run_handler_arm",
+        "run_arm_sealed",
         "replay_continuation",
     ];
     let is_test_file = |f: &str| f.ends_with("_tests.rs") || f.starts_with("tests_");
@@ -1847,7 +1847,7 @@ fn every_frame_that_runs_stored_operator_code_sets_its_owner() {
         "DRIFT: the set of fns that set `pin_fn` changed"
     );
     // The handler paths set it from the frame's recorded installer.
-    for n in ["run_handler_arm", "replay_continuation"] {
+    for n in ["run_arm_sealed", "replay_continuation"] {
         let body = &items.iter().find(|(_, m, _)| m == n).unwrap().2;
         assert!(
             body.contains("pin_owner"),
