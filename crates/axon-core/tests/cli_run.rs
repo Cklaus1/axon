@@ -37237,7 +37237,11 @@ type CountDecline = (
 /// a downward overflow (`n0 = -(2^63 - 1)`, `c = -1` over two `true`s: a
 /// fit check of the upper bound only wraps and exits 0),
 /// a negative `lo` (a path casting `lo` with `as usize`
-/// reads far out of bounds or counts the wrong slice), and a `Vals` array.
+/// reads far out of bounds or counts the wrong slice), an all-`bool` `Vals`
+/// array, a mixed `Vals` array (`f[1] = one` through an untyped lambda: the
+/// tree panics on the `i64` condition; a count accepting `Vals` and skipping
+/// what is not `true` exits 0 with `n=3`), and a `Float` count (the tree adds
+/// `0.1` ten times, `x < 1.0`; `n0 + c0 * t` in `f64` gives exactly `1.0`).
 #[test]
 fn vm_bulk_count_declines() {
     let one = "let c = 1";
@@ -37351,6 +37355,30 @@ fn vm_bulk_count_declines() {
             panic,
         );
     }
+    let mixed = "fn main() -> i64 {\n    let id = |x| x\n    let one = 1\n    \
+                 let f = id([true, false, true, true])\n    f[1] = one\n    let n = 0\n    \
+                 for k in 0..4 {\n        if f[k] { n = n + 1 }\n    }\n    println(\"n={n}\")\n    0\n}\n";
+    vm_bulk_expect(
+        "bulk_count_mixed_vals",
+        mixed,
+        "main",
+        (0, 1),
+        101,
+        "",
+        "if condition must be bool, got i64",
+    );
+    let float = "fn main() -> i64 {\n    let x = 0.0\n    let d = 0.1\n    let one = 1.0\n    \
+                 let g = arr_repeat(true, 10)\n    for v in 0..10 {\n        if g[v] { x = x + d }\n    }\n    \
+                 println(\"x={x} {x == one} {x < one}\")\n    0\n}\n";
+    vm_bulk_expect(
+        "bulk_count_float",
+        float,
+        "main",
+        (0, 1),
+        0,
+        "x=1 false true\n",
+        "",
+    );
 }
 
 /// R50 S13: loops one step outside the fill and count shapes, each over a
@@ -37364,9 +37392,10 @@ fn vm_bulk_count_declines() {
 /// before the store; a third statement; `j = k + s`; `a[j] = j`; `j = j + j`;
 /// a step assigning another local (`k = j + s`, zero iterations); and, each
 /// in a program of its own as the tree panics in it, `j = j - s`,
-/// `while j > b`, `while k <= b` and `while j <= j`. A recogniser that skips
-/// one of those checks runs a bulk path, and most of them print another
-/// result.
+/// `while j > b`, `while k <= b` and `while j <= j`; and, in its own program
+/// for its `W0002` warning, `let j = j + s` as the step (zero iterations). A
+/// recogniser that skips one of those checks runs a bulk path, and most of
+/// them print another result.
 #[test]
 fn vm_bulk_near_miss_shapes() {
     let src = r#"fn main() -> i64 {
@@ -37560,6 +37589,53 @@ fn vm_bulk_near_miss_shapes() {
         assert_eq!((code, stdout.as_str()), (Some(101), ""), "[{tag}] {stderr}");
         assert_eq!(stderr, format!("axon: panic: {panic}\n"), "[{tag}]");
         assert_eq!((counts, bulk), ((0, 1), None), "[{tag}]");
+    }
+    let let_step = "fn main() -> i64 {\n    let f = arr_repeat(0, 10)\n    let j = 10\n    \
+                    let s = 3\n    let b = 5\n    while j < b {\n        f[j] = 7\n        \
+                    let j = j + s\n    }\n    println(\"{f} j={j}\")\n    0\n}\n";
+    let (code, stdout, stderr, counts, bulk) =
+        vm_bulk_case("bulk_near_miss_let_step", let_step, "main");
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "[0, 0, 0, 0, 0, 0, 0, 0, 0, 0] j=10\n"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("\"code\":\"W0002\""), "{stderr}");
+    assert_eq!((counts, bulk), ((0, 1), None));
+}
+
+/// R50 S13: `arr_repeat` of a plain `Bool` or `Float` and `arr_range` at
+/// `i64::MAX` elements are refused at the call under both engines (exit 101,
+/// the builtin and the count named), as `Ints` is
+/// (`interp_arr_repeat_unallocatable_size_is_a_runtime_error_naming_n`).
+/// `Bools` is the one form where that count is a valid layout, so its
+/// request reaches the allocator; an infallible allocation would abort. The
+/// parenthesised reason differs by form and is not compared.
+#[test]
+fn packed_constructors_refuse_unallocatable_sizes() {
+    for (tag, call, name) in [
+        (
+            "bools",
+            "arr_repeat(true, 9223372036854775807)",
+            "arr_repeat",
+        ),
+        (
+            "floats",
+            "arr_repeat(1.5, 9223372036854775807)",
+            "arr_repeat",
+        ),
+        ("ints", "arr_range(0, 9223372036854775807)", "arr_range"),
+    ] {
+        let src = format!(
+            "fn main() -> i64 {{\n    let a = {call}\n    println(\"{{len(a)}}\")\n    0\n}}\n"
+        );
+        let tag = format!("packed_unallocatable_{tag}");
+        let (code, stdout, stderr) = vm_same_both_engines(&tag, &src);
+        assert_eq!((code, stdout.as_str()), (Some(101), ""), "[{tag}] {stderr}");
+        let want = format!(
+            "axon: panic: {name}: cannot allocate an array of 9223372036854775807 elements"
+        );
+        assert!(stderr.starts_with(&want), "[{tag}] {stderr}");
     }
 }
 

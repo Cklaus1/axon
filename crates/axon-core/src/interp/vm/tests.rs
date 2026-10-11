@@ -1457,7 +1457,15 @@ fn near_miss() -> [i64] {
         f10[j10] = 7
         k10 = j10 + s10
     }
-    [n1, m1, n2, n3, n4, n5, m5, n6, m6, n7, p, j1, j2, j3, x, j6, j8, j9, v, j10, k10]
+    let f11 = arr_repeat(0, 10)
+    let j11 = 10
+    let s11 = 3
+    let b11 = 5
+    while j11 < b11 {
+        f11[j11] = 7
+        let j11 = j11 + s11
+    }
+    [n1, m1, n2, n3, n4, n5, m5, n6, m6, n7, p, j1, j2, j3, x, j6, j8, j9, v, j10, k10, j11]
 }
 fn near_miss_sub() -> i64 {
     let a = arr_repeat(false, 10)
@@ -1612,7 +1620,7 @@ fn packed_forms_persist() {
         other => panic!("not an array: {other:?}"),
     };
     let want = [
-        16, 4, 0, -11, 102, 16, 8, 16, 12, 47, 32, 8, 8, 9, 4, 10, 11, 32, 3, 10, 0,
+        16, 4, 0, -11, 102, 16, 8, 16, 12, 47, 32, 8, 8, 9, 4, 10, 11, 32, 3, 10, 0, 10,
     ];
     assert!(
         got.len() == want.len()
@@ -1655,7 +1663,7 @@ fn packed_forms_persist() {
             pure_loops("near_miss_cond"),
             pure_loops("near_miss_same"),
         ],
-        [16, 1, 1, 1, 1]
+        [17, 1, 1, 1, 1]
     );
 
     // Each bulk shape and the counter it moves, as `[Bools, Ints, Floats]`
