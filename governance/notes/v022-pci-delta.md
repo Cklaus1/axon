@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: d25cae8c1ab68e8659ed6d66e1cf235a9bf83982
+generated-at: 5205763ea63155a656946f13cf19d97f47954d29
 
-`git diff --numstat 31413ca7..d25cae8c -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..5205763e -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -49,18 +49,18 @@ generated-at: d25cae8c1ab68e8659ed6d66e1cf235a9bf83982
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 4807 | 1467 |
-| `crates/axon-core/src/interp/builtins.rs` | 665 | 515 |
+| `crates/axon-core/src/interp.rs` | 4812 | 1467 |
+| `crates/axon-core/src/interp/builtins.rs` | 666 | 512 |
 | `crates/axon-core/src/interp/conform.rs` | 1780 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1413 | 0 |
 | `crates/axon-core/src/interp/crossing_tests.rs` | 418 | 0 |
 | `crates/axon-core/src/interp/env.rs` | 1193 | 0 |
 | `crates/axon-core/src/interp/eval.rs` | 1915 | 600 |
-| `crates/axon-core/src/interp/goal.rs` | 65 | 36 |
+| `crates/axon-core/src/interp/goal.rs` | 83 | 42 |
 | `crates/axon-core/src/interp/kernel_tests.rs` | 401 | 0 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 48 | 21 |
-| `crates/axon-core/src/interp/sink_tests.rs` | 1335 | 0 |
+| `crates/axon-core/src/interp/sink_tests.rs` | 1410 | 0 |
 | `crates/axon-core/src/interp/sym.rs` | 1188 | 0 |
 | `crates/axon-core/src/interp/taint.rs` | 1190 | 0 |
 | `crates/axon-core/src/interp/taint_tests.rs` | 1128 | 0 |
@@ -68,7 +68,7 @@ generated-at: d25cae8c1ab68e8659ed6d66e1cf235a9bf83982
 | `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
 | `crates/axon-core/src/interp/vm/mod.rs` | 3426 | 0 |
 | `crates/axon-core/src/interp/vm/pure.rs` | 964 | 0 |
-| `crates/axon-core/src/interp/vm/tests.rs` | 1536 | 0 |
+| `crates/axon-core/src/interp/vm/tests.rs` | 1575 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
 | `crates/axon-core/src/lib.rs` | 116 | 21 |
 | `crates/axon-core/src/main.rs` | 799 | 243 |
@@ -80,9 +80,9 @@ generated-at: d25cae8c1ab68e8659ed6d66e1cf235a9bf83982
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 37276 | 5265 |
+| total | 37414 | 5268 |
 
-`git log --reverse 31413ca7..d25cae8c -- crates/axon-core/src`:
+`git log --reverse 31413ca7..5205763e -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -263,7 +263,8 @@ generated-at: d25cae8c1ab68e8659ed6d66e1cf235a9bf83982
 | 72009129 | R51 S3 merge | INTERPRETER dict_set/dict_remove/dict_inc call dict_mutated without an outer seal.active guard, as veto does (builtins.rs:5286/5318/5470); dict_mutated returns at once when the seal is inactive, so an unsealed run does the same work less one branch. TEST-ONLY: the main-only sink classification names call_fn_sealed for call_fn_in_general (S3c moved the sealed instantiation behind the crossing). Both were drift tests from S3d that S3c's code tripped at the merge. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 2bf3e4a4 | R51 S3e | INTERPRETER init_globals in a sealed run (veto interp.rs:3292-3303): init_globals_sealed runs each module-level initialiser under its own definition's provenance (with_frame) in a fresh env, so a candidate's `let` meets the call and global-read edges (an earlier global is read through global_ref) and its kernel effects land in the candidate's kernel; the let's taint is recorded by t_set_global. The unsealed path is unchanged (one shared env, no taint bookkeeping, now without the dead seal.active branch). Plus TEST-ONLY sink tests (every taint carrier into the name rule, the name half of channel taint, own fn values, definition provenance, a candidate impl answering an operator method) and the last 5 S3 deferred-registry entries re-slotted (4 to S6, 1 to S4 for PICK). Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | d25cae8c | R51 S3e | TEST-ONLY: rustfmt of interp/sink_tests.rs (line wrapping of the S3e tests); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 177 commits | | |
+| 5205763e | R51 S6 gaps | INTERPRETER (both engines, S0b-class correctness fix) assert_eq_f64 is stated positively, !(a == b || |a-b| <= 1e-9), as veto builtins.rs:3745, so a NaN operand FAILS on the tree and the VM (they share the arm) as it does natively (OEQ); inf == inf still passes, and every non-NaN pair behaves as before. INTERPRETER seal edge (veto goal.rs:274/373/476/554, interp.rs:4959): run_goal_random/categorical/multistart/tournament call seal_call after the name lookup and unknown_goal_name gives a sealed caller the uniform no-such-fn text, so a sealed caller cannot tell an operator fn from a missing name; both are no-ops unless seal.active and the frame is sealed, so an unsealed run is unchanged. TEST-ONLY: vm/tests.rs NaN parity test, sink_tests.rs goal-search seal test and the clock-builtin World/Time check (veto taint_tests.rs:2498-2516), an ATTACK marker on the T1c CLI refusal asserts. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 178 commits | | |
 <!-- END MECHANICAL -->
 
 
@@ -421,7 +422,7 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am121 a live nonce's record survives another request's prune | axon-fabric/observer_service | PASS 1/1 |
 | am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 426 rows at this head, recomputed from the script): M59, M61-M62, M65, M67-M70, M72-M79, M82-M83, M85-M88, M90-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3251, M3253-M3259, M3267-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3458, M3460-M3479
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 427 rows at this head, recomputed from the script): M59, M61-M62, M65, M67-M70, M72-M79, M82-M83, M85-M88, M90-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3251, M3253-M3259, M3267-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3458, M3460-M3479, M3483
 
 | delta | rows (named in the amendment's own text) |
 |---|---|
