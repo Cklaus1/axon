@@ -87,6 +87,21 @@ fn soft_inner_struct(v: &Value) -> Option<Value> {
     None
 }
 
+/// Whether arithmetic on `v` runs at a fixed WIDTH: a fixed-width integer, or
+/// an `Uncertain`/`Temporal` whose inner `value` is one (`eval_binop_vals`
+/// unwraps the soft wrapper and runs the inner operation at the inner width, so
+/// a width rule that looked only at the top-level value never saw it: amendment
+/// 117, PSV-1 loop finding 52). R51 S3, from v0.22 interp.rs:5268.
+pub(crate) fn width_sized(v: &Value) -> bool {
+    match v {
+        Value::SizedInt { .. } => true,
+        Value::Struct(s) if s.name == SYM_UNCERTAIN || s.name == SYM_TEMPORAL => {
+            s.fields.get(SYM_VALUE).is_some_and(width_sized)
+        }
+        _ => false,
+    }
+}
+
 // ── R19 Slice B — width-correct integer helpers ───────────────────────────────
 
 /// Interpret the stored i64 bit-pattern as the unsigned value for the type.

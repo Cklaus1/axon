@@ -2516,7 +2516,7 @@ impl<'p> Interp<'p> {
     /// `globals`, so `name[i]` reads it in place.
     #[inline(always)]
     fn bound_in_place(&self, var: &Var<'_>, env: &Env) -> bool {
-        env.get_var(var.s, var.slot).is_some() || self.globals.contains_key(&var.s)
+        env.get_var(var.s, var.slot).is_some() || self.is_global(var.s)
     }
 
     /// The value an inline operand evaluates to, as `eval` evaluates its

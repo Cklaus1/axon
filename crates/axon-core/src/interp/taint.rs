@@ -720,6 +720,12 @@ impl<'p> Interp<'p> {
         }
     }
 
+    /// Whether the annotation `ty` pins the runtime type: the cast succeeded
+    /// and `ty` is a closed type the operator chose.
+    pub(super) fn t_pins(&self, ty: &crate::ast::AxonType) -> bool {
+        self.pins.closed_ty(ty)
+    }
+
     /// The taint of the value a frame's body produced, read before anything
     /// else is evaluated (veto interp.rs:4296-4306, 4852-4864): a `return`
     /// carries its own (`taint.ret`; the statements it unwound past must not
@@ -1104,6 +1110,57 @@ impl<'p> Interp<'p> {
                 self.taint.acc.set(self.taint.acc.get() & !TYP);
             }
         }
+    }
+
+    /// The NAME rule at run time: operator code gives a name-resolving builtin
+    /// only a name sealed code had no hand in. `ats[i]` is the taint of
+    /// argument `i`. R51 S3, from v0.22 taint.rs:1351; main has no test toggle
+    /// (`TAINT_FORCE_ON`): in a sealed run the rule always applies.
+    #[inline(always)]
+    pub(crate) fn t_check_names(&self, builtin: &str, ats: &[u8]) -> Result<(), Flow> {
+        if !self.seal.active {
+            return Ok(());
+        }
+        self.t_check_names_sealed(builtin, ats)
+    }
+
+    #[inline(never)]
+    fn t_check_names_sealed(&self, builtin: &str, ats: &[u8]) -> Result<(), Flow> {
+        if self.frame_sealed.get() {
+            return Ok(());
+        }
+        let Some(idxs) = super::pin::name_sink(builtin) else {
+            return Ok(());
+        };
+        for &i in idxs {
+            if ats.get(i).copied().unwrap_or(0) & VAL != 0 {
+                return panic(format!(
+                    "operator code gave `{builtin}` a function name nothing on the operator side \
+                     determined (argument {}): the name reached this call from sealed code and \
+                     nothing the operator wrote chose it (runtime taint) — the candidate would \
+                     choose which function runs; name it with a literal or a constant the \
+                     operator wrote",
+                    i + 1
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// The WIDTH rule at run time: operator code does not do arithmetic on a
+    /// fixed-width integer whose width is sealed code's. R51 S3, from v0.22
+    /// taint.rs:1480.
+    pub(crate) fn t_check_width(&self, v: &Value, vt: u8, what: &str) -> Result<(), Flow> {
+        if !self.seal.active || self.frame_sealed.get() || vt & TYP == 0 || !width_sized(v) {
+            return Ok(());
+        }
+        panic(format!(
+            "operator code did arithmetic on a fixed-width integer whose width nothing on the \
+             operator side determined ({what} on {}): its width reached this operation from \
+             sealed code and no pin the operator wrote cleared it (runtime taint) — the \
+             candidate would choose the wrapping; pin it with `let x: T = ...`",
+            v.type_name()
+        ))
     }
 }
 

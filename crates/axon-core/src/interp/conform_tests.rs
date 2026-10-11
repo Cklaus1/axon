@@ -332,9 +332,11 @@ fn a_sealed_frames_closure_is_marked_by_a_typed_field_not_a_capture_entry() {
             ["i64"],
             "its own annotation is its first contract"
         );
-        // A fn VALUE a sealed frame takes is marked too; an operator's is not.
+        // A fn VALUE a sealed frame takes is marked too (it may take only its
+        // own fns: the call edge applies to a fn named in value position, R51
+        // S3); an operator's is not marked.
         let g = ix
-            .with_frame(true, || ix.ident_unbound("sq", intern("sq")))
+            .with_frame(true, || ix.ident_unbound("solve", intern("solve")))
             .expect("a fn value");
         assert!(closure_of(&g).seal.sealed_fnval);
         let h = ix.ident_unbound("sq", intern("sq")).expect("a fn value");

@@ -3401,8 +3401,6 @@ impl Parser {
 /// Read back a type rendered by [`axon_type_to_str`] (the element type a
 /// `chan<T>()` call carries in its callee name). `None` when the text is not
 /// exactly one type. R51 S3, from v0.22 parser.rs:3405 (amendment 72).
-// S3c: `Interp::chan_created` is called from the `chan::<T>` builtin.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn parse_type_text(s: &str) -> Option<AxonType> {
     let tokens: Vec<Token> = crate::lexer::Lexer::tokenize(s)
         .ok()?
