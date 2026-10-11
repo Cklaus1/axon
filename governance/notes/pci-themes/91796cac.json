@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R51 S0)",
+  "text": "outside the interpreter (cache.rs): spec(R50): S2-S4 landed, evidence ledger; cache unit tests use per-test scratch dirs (parallel-test race): the interpreter is untouched"
+}

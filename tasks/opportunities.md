@@ -2378,6 +2378,43 @@ of in every VM fast path. Needs an adversarial review against PSV-1 (control tai
 first; it may not cover all of them. Note the Firecracker real-guest boot test is SKIP on this host (no guest kernel
 image), so the microVM path is not proven here.
 
+## R51 S7: a symlinked candidate module under a sealed directory is judged as operator code (S7-Seal-1, NOTE)
+
+`crates/axon-core/src/resolver.rs` (the sealed-file test: `p.canonicalize().unwrap_or(p)` then
+`sealed.iter().any(|d| p.starts_with(d))`); v0.22 has the same line (v022-ref resolver.rs:2438). A candidate
+file that is a symlink to a file outside the sealed directory canonicalizes outside it, so its code is judged as
+operator code: observed with the c01 attack candidate as `cand/sol.ax -> <outside>/sol.ax`, head and v0.22 both
+`p1f0` (the attack passes); the same candidate as a regular file is refused on both. Not introduced by R51.
+
+Impact today: none under the protected runner, which refuses any symlink in a guest input
+(`crates/axon-psv/src/lib.rs`, the input symlink check). It matters only to a caller of `axon test --seal` outside
+axon-psv: the seal assumes symlink-free inputs. Proposed severity [low]. Smallest fix: refuse a symlinked module
+file under a sealed directory where the loader reads it (or in `set_sealed_module_dirs`' callers), or also match
+the un-canonicalized path. Needs a sealed_frames attack test (symlinked candidate refused) and a mutation row.
+
+## R51 S7: native recursion nested in expressions can still abort the tree engine (BUG_HUNT #28 gap, pre-existing)
+
+[medium] The native recursion guard counts call depth only; the interpreter thread stack is
+`max_depth × STACK_BYTES_PER_FRAME` (floor `MIN_STACK_BYTES`). Each level of expression nesting around a call is one
+more evaluator frame (release `eval_arm::<false>` 1024 B, debug ~11 KB with `eval_binop`), so a call level nested
+deep enough in expressions overflows the real stack (exit 134 `has overflowed its stack`) before the guard trips.
+Pre-existing: 5864c423 aborts the same way. Measured 2026-10-11 (`fn down(n) { … (((down(n - 1) + 0) + 0) …) + 1 }`,
+k parens, `AXON_ENGINE=tree`, default limit 6000; sweep script `/var/tmp/r51-tmp/s7stack-sweep.py`):
+
+| build | deepest k completing at down(5990) | first aborting k at down(2000) |
+|---|---|---|
+| 5864c423 release | 280 (285 aborts) | 1000 |
+| f89f4d43 release (stack ×1.25, S7-UnsealedParity-10) | 300 (350 aborts) | 1000 |
+| 5864c423 debug | 20 (22 aborts) | 100 |
+| f89f4d43 debug | 24 (26 aborts) | 100 |
+
+The default VM completes every cell up to k = 1000 (release) / 200 (debug): its compiled bodies do not recurse per
+nesting level. Candidate fix (needs a spec row: base-134 cells would become exit 101, an unsealed behaviour change):
+on native, `eval_arm` compares the stack pointer against a floor recorded when `on_deep_stack` starts the thread
+(stack size minus a fixed reserve for the unguarded frames above the last evaluator frame) and returns the
+recursion-limit panic past it; one load and compare per evaluation on the tree engine, measured against §10 before
+landing. Raising the reserve further only moves the edge.
+
 ## axon-fabric `build_state` tests fail the gate on any host with mold installed
 
 Found 2026-10-11 (R51 speed lane, gate profiling at 9e67b796): with `/usr/bin/mold` present, `scripts/gate.sh`
@@ -2391,6 +2428,6 @@ build script refuses it as a production build under a linker, and two tests fail
 "v0.22 closed-loop crate tests" in about 2 minutes. Not reached before: mold was absent from this host until
 2026-10-11 and was removed again the same day.
 
-Fix (crates/ change, needs a pci_delta THEMES entry): the helper also removes every `CARGO_TARGET_*_RUSTFLAGS` and
+Fix (crates/ change, needs a `governance/notes/pci-themes/<hash8>.json` classification): the helper also removes every `CARGO_TARGET_*_RUSTFLAGS` and
 `CARGO_TARGET_*_LINKER` variable of the parent environment, and a case asserts the control build still builds with
 the target-scoped flag set in the parent. Until then a host with mold cannot pass the gate.

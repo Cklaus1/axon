@@ -1,0 +1,4 @@
+{
+  "theme": "amendment 94",
+  "text": "the held-value judgement at the `&mut` edge is not strict, so an honest fill of an empty output array passes while the declared type judges the position (conform.rs `strict` parameter): the one deliberate relaxation, relative to the first form of this amendment, not to the merged tree"
+}

@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S6 gaps merge",
+  "text": "joins r51/gaps (5205763e..5a739bf7: NaN assert_eq_f64, M3483 row, no_arm move to interp::taint_tests, M3342 re-anchor) onto S4b (27836b1c); only this table and the note conflicted, resolved by keeping both sides; goal.rs/unknown_goal_name are S4b's (the gaps lane reverted its own copy); no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

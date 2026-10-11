@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (AX findings)",
+  "text": "native agent_action audit record gains effect_row/principal; interp.rs and interp/builtins.rs change only by a `cfg` re-export and a visibility change: no change in what the interpreter evaluates or refuses"
+}

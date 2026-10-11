@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (AX findings)",
+  "text": "native codegen, plus checker concat typing and resolver capture analysis (`axon check` accepts different programs): interpreter evaluation is untouched"
+}

@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S3c",
+  "text": "INTERPRETER scheduler pass (veto builtins.rs:468-482, amendment 117 loop findings 15/45): builtin_scheduler_run_once raises taint.catchable around each fiber's call, so call_fn_sealed's crossing sticky fires inside a fiber, and sets the sealed-entry sticky (VAL) after a fiber that entered a sealed frame (taint.entries moved) and failed; in an unsealed run entries never moves, so its behaviour is unchanged. Plus TEST-ONLY unit tests (interp/crossing_tests.rs, interp/taint_tests.rs) for handler_edge_into/back, the fiber pass, and the t_pins TYPE strips at a fn parameter, a closure parameter and an operator return. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

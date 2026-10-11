@@ -1,0 +1,4 @@
+{
+  "theme": "R51 T3a",
+  "text": "INTERPRETER, UNSEALED BEHAVIOUR CHANGES: sym.rs FnEntry::new param_coerce asks conform::is_soft_decl, so a parameter declared with the bare name `Uncertain`/`Temporal` keeps its soft wrapper as v0.22's call_fn did (main recognised only `Uncertain<T>`, unwrapped the argument, and `impl Judge for Uncertain { fn ok(self: Uncertain) .. self.value }` panicked \"field access on non-struct\" on both engines); a non-seal fix (spec T9 class) landing on both engines, pinned tree == vm by cli_run a_bare_uncertain_parameter_keeps_its_wrapper_in_both_engines; a_declared_soft_type_casts_its_wrapper_and_its_inner_value re-sliced S6 -> S4 (its gap is closed); every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S4 follow-up",
+  "text": "TEST-ONLY: the ported rows take v0.22's harness calls now that S4's switches exist: sealed_outcome_rule(.., true) restored in tests_v022_a.rs (three fn-value rows) and tests_v022_b.rs (the global fast-path row), their R51 adaptation comments dropped; taint_tests::run sets DISPATCH_RULE_OFF/TAINT_FORCE_ON per Rules on the run's own thread (veto taint_tests.rs:41-51) instead of refusing TaintOnly/Neither; the 23 S4-slotted tests_v022_a rows re-slot to S6 and 28 reasons drop the stale 'S4 adds the switch' text, registry synced (S4 23 -> 0, S6 248 -> 271); all 57 touched rows pass with the seal flipped locally (not committed); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

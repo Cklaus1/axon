@@ -1,0 +1,4 @@
+{
+  "theme": "sealed modules, module path",
+  "text": "a sealed module's use resolves only in the sealed dirs: narrowing"
+}

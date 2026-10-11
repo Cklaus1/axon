@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S6.2",
+  "text": "TEST-ONLY: interp/taint_tests.rs T8.2 positional probes carry a scalar the candidate chose (idx()) so only the binding's taint carries it; the &mut attack reads the clean neighbour; no behaviour change"
+}

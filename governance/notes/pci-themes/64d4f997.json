@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R51 S0)",
+  "text": "INTERPRETER: R50 rev 26 / AX-56: wasm32 recursion panics instead of trapping (guard 128, native-stack byte budget checked by scripts/wasm_stack_budget...: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it"
+}

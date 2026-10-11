@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S6 T7",
+  "text": "INTERPRETER, NO BEHAVIOUR CHANGE: the sealed guards move into functions the refusal-coverage gate's SEAL_FN selects: engine_for's sealed branch into seal_engine_pin (vm/mod.rs), compile's seal assert into seal_compile_refusal (vm/compile.rs), the `.engine == Vm` test of run_body/run_test_body/run_lambda/vm_trace_tree and fold_leaf's into Interp::seal_pin_vm (#[inline(always)], vm/mod.rs), FnEntry::new's plain/sealed into FnEntry::seal_general (sym.rs), call_fn_in_general's seal.active into Interp::seal_frames (#[inline(always)], interp.rs); each helper returns the expression it replaces, so the unsealed path computes the same bool; TEST-ONLY: T1a asserts the pin's ATTACK, T1d re-derived for the helpers, new T7 killers r51_t7_a_sealed_run_enters_no_vm_path_at_any_gate and r51_t7_a_sealed_run_given_the_vm_builds_no_vm_body, sink_tests plain drift reads seal_general; sealed runs as at 04d3ad7b"
+}

@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S7 native stack",
+  "text": "INTERPRETER (native thread stack size only; no change in what any run computes, accepts or refuses): STACK_BYTES_PER_FRAME 256 KiB -> 320 KiB and MIN_STACK_BYTES 1 GiB -> 1.25 GiB, so the interpreter thread reserves 1.25x the address space, covering the unsealed native frames R51's per-run-kind evaluator grew (release eval_arm::<false> 1024 B, was eval 912 B; at 3921a309 a recursion nested 260-280 expressions deep at down(5990) aborted where 5864c423 ran it, S7-UnsealedParity-10); unsealed behaviour change: none against 5864c423 (every call depth x paren depth cell that completed or hit the recursion limit there does so again, release and debug, tree and VM; cells that aborted there reach further before aborting); wasm32 unaffected (no thread); cli_run regression test; sealed runs as at 04d3ad7b"
+}

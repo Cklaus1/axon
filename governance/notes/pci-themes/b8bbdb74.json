@@ -1,0 +1,4 @@
+{
+  "theme": "RNG isolation",
+  "text": "a sealed frame may not DRAW from the process RNG: narrowing"
+}

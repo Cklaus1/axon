@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (AX findings)",
+  "text": "LANGUAGE + INTERPRETER: `&mut [T]` parameters write through (parser, checker, interp.rs, eval.rs, new E0604-E0606): not PCI-reviewed; the merge routes `call_fn_mut` through the same seal edges as `call_fn`"
+}

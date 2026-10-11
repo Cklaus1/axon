@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (AX findings)",
+  "text": "native codegen only (place assignment, str + str, allocas): the interpreter is untouched"
+}

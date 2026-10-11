@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S0 merge",
+  "text": "joins main 5864c423 with v022/veto c9ed2ddd taking MAIN's interpreter (interp.rs, interp/{eval,builtins,goal,proptest,value}.rs); veto's taint.rs/taint_tests.rs/pin.rs/conform.rs are NOT on this tree, so the seal they enforce is absent. Refuse-all pin in the same commit: Interp::build refuses any sealed run (SEAL_RUNTIME_COMPLETE = false), `axon test --seal` exits 2 before any result line, vm::compile refuses a sealed interp. Every PCI row that needs a seal edge is deferred (governance/status/r51-deferred-tests.json) until R51 S6"
+}

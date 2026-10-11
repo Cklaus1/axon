@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S4a",
+  "text": "TEST-ONLY: interp/pick_tests.rs, T8.1 PICK laundering attacks with honest controls (cast re-wrap, fn(..)-typed parameter, fn_value forwarder, SendValue round trip) on a build_with sealed unit runner; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

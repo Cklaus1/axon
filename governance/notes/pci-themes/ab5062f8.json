@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S4a",
+  "text": "merges r51/int 27836b1c (S4b) into r51/s4; only the registry's by_slice counts conflicted, recomputed from the entries (S4 = 0); no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

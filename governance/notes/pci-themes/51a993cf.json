@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S3a",
+  "text": "TEST-ONLY: PrincipalRegistry::is_sealed (cfg(test)) so a kernel unit test pins that the sealed kernel's registry is built with new_sealed; the call_builtin drift scan skips interp/kernel_tests.rs (a unit-test module calling the dispatcher directly, as taint_tests.rs does). Interpreter behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

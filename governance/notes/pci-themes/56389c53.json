@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S0b",
+  "text": "INTERPRETER: ports veto's non-seal fixes onto main's interpreter on both engines (loop control contained at every frame edge, TestEnd/run_test_fn_outcome completion, Result/Option return-boundary check, least-trusted Uncertain source_tag; veto 4e7851bc, bcf9c0a7, 2175cc1b, 89256bd3, 91c2f676, ea9ba38d, 6de01247): not PCI-reviewed on this tree; every sealed run is still refused (R51 SEAL_RUNTIME_COMPLETE = false)"
+}

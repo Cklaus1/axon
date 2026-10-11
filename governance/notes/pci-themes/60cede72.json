@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S6 T7",
+  "text": "TEST-ONLY: doc comment of vm::tests::r51_t7_a_sealed_run_enters_no_vm_path_at_any_gate states that its lambda case pins the closure path, not run_lambda's consult (a sealed closure body runs in call_closure_frame::<true> and never reaches run_lambda); the run_lambda row dropped from the registry; no behaviour change; sealed runs as at 04d3ad7b"
+}

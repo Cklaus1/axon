@@ -1,0 +1,4 @@
+{
+  "theme": "amendment 88",
+  "text": "pin.rs: a redundant sealed-let filter removed (the push guard is the one rule); test-only otherwise; no change in what is refused"
+}

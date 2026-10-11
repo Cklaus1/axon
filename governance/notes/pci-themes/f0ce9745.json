@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R51 S0)",
+  "text": "INTERPRETER: R50 S5: fast-call tests (mutcall no tree nodes, slow per flag, param/return semantics, tier clearing, depth limit, depth-before-arity, ha...: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it"
+}

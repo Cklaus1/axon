@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R51 S0)",
+  "text": "outside the interpreter (cache.rs, codegen/link.rs, codegen/mod.rs, codegen/output.rs, error.rs, lib.rs, main.rs): perf(build): cache the optimised object so a hit only links (AX-34): the interpreter is untouched"
+}

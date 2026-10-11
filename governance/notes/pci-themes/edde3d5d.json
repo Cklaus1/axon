@@ -1,0 +1,4 @@
+{
+  "theme": "amendment 88",
+  "text": "clippy: an unused `mut` removed in pin.rs; no change in what is refused"
+}

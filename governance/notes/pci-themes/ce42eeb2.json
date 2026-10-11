@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S4b",
+  "text": "TEST-ONLY: operator_arithmetic_never_runs_at_a_width_the_candidate_chose moved from interp/sink_tests.rs to interp::tests (interp/tests_v022_s4.rs, the v0.22 module path) with v0.22's runner half, which asserts SEALED_RUN_REFUSED until S6; sink_tests helpers with_ix and WIDTH widened to pub(super); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

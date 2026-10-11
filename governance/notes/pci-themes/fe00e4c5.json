@@ -1,0 +1,4 @@
+{
+  "theme": "merge of c9r4c/psv1e (integrate6)",
+  "text": "joins the psv1e dispatch-analysis rebuild (pin.rs `Tys`, amendment 88) with main's `&mut T` type and Rc layout (a `RefMut` arm in the closed-type walk, no env duplicate in the closure call): no intended change in what is refused"
+}

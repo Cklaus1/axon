@@ -634,12 +634,35 @@ def host_identity():
     return mut.host_identity()
 
 
+BUSY_RUN = {}
+
+
 def environment():
     """Who and where the cells ran: a full-suite cell with root-only tests
     means something different as root, and with or without /etc/axon."""
     return {"euid": os.geteuid(), "etc_axon_present": os.path.isdir("/etc/axon"),
             "unset": list(mut.AMBIENT_BINARY_VARS), "consumer_axon_bin": interpreter_env().strip(),
-            "host": host_identity()}
+            "host": host_identity(), **BUSY_RUN}
+
+
+def require_idle():
+    """Refuse to run on a busy machine (scripts/lib/require_idle.py): a loaded
+    machine starved a SCHED_IDLE launcher test and wasted a 2.8 h run. With
+    --allow-busy the run proceeds and every record's `environment` says so."""
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "scripts/lib/require_idle.py"),
+                        "--label", "v022_paired_disable"], text=True, capture_output=True)
+    sys.stdout.write(r.stdout)
+    sys.stderr.write(r.stderr)
+    if r.returncode == 0:
+        return
+    if r.returncode != 75:
+        sys.exit(f"refused: the idle guard itself failed (require_idle exit {r.returncode}); "
+                 "--allow-busy covers a busy machine (exit 75) only")
+    if "--allow-busy" not in sys.argv[1:]:
+        sys.exit(f"refused: machine is busy (require_idle exit {r.returncode}); rerun when idle, "
+                 "or pass --allow-busy (recorded in every record's environment)")
+    BUSY_RUN["allow_busy"] = {"require_idle_exit": r.returncode, "guard_output": r.stdout.strip()}
+    print("WARNING: --allow-busy: running on a busy machine; recorded in environment.allow_busy")
 
 
 def build_prereqs():
@@ -1137,7 +1160,7 @@ def main():
     commit = sh("git rev-parse HEAD").stdout.strip()
     flags = {"--reexecute-stale", "--check-stale"}
     argv = [a for a in sys.argv[1:]
-            if not a.startswith(("--only=", "--shard=", "--baseline-cache=")) and a not in flags and a != "--join"]
+            if not a.startswith(("--only=", "--shard=", "--baseline-cache=")) and a not in flags and a not in ("--join", "--allow-busy")]
     BASELINE_CACHE["commit"] = commit
     BASELINE_CACHE["dir"] = next((os.path.abspath(a.split("=", 1)[1]) for a in sys.argv[1:]
                                   if a.startswith("--baseline-cache=")), None)
@@ -1200,6 +1223,7 @@ def main():
                 print(f"current {r['mutation']} (executed at {str(r['commit'])[:8]})")
         print(f"{n} of {len(prev.get('records', []))} records stale under the currency rule")
         sys.exit(1 if n else 0)
+    require_idle()
     if only is not None:
         unknown = sorted(only - set(GUARD_SETS) - set(mut.STALE_REFACTORED))
         if unknown:
