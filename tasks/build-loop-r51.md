@@ -14,6 +14,7 @@ v0.22 reference checkout (read-only): `/home/cklaus/projects/axon-lanes/v022-ref
 | `<FULL_SUITE_BUDGET>` | one `gate.sh` run (baseline measured in Step 0, `tasks/r51-baseline.md`) |
 | `<RUN_BUDGET>` | unbounded (compound stop + poison ceiling) |
 | `<REVIEW_MODEL>` | invoking model, adversarial self-review + 3 reviewer subagents at S7 |
+| `<LANE_MODEL>` | Default: the invoking model. A lane whose change is fully specified and mechanical (registry re-anchor with the rows named, evidence copy, script guard with the behaviour given, doc rows) MAY run on a faster model (`anthropic/claude-sonnet-5-5`). Any lane that diagnoses a cause, touches `crates/axon-core/src/interp*`, or decides a seal/refusal question stays on the invoking model. The integrator re-runs the acceptance commands of a faster-model lane before merging: the IdleGuard lane (2 min) returned correct code with no evidence |
 | `<MAX_SPEC_DRAFT_SUBAGENTS>` | 5 |
 
 Baseline (Step 0, main 5864c423 + spec commit): `cargo test -p axon-core --no-default-features --no-fail-fast`
@@ -80,6 +81,18 @@ blocks unless it is on the known-failure list below.
 **Smoke loop:** at the same tiers, run `tasks/r51-smoke/run.sh` in a temp dir with a bounded timeout and check
 its signal (before S6: all refused; from S6: the honest/attack table). `git status --short --ignored` must show
 nothing new afterwards.
+
+**Mutation feedback loop (T7):** in a lane, re-run only what changed:
+`python3 scripts/v022_g01_mutations.py --scope=all --only=<list> --changed-since=<prior OUT.json>[,...]
+[--granularity=file|fn] OUT.json` (preview without running: `python3 scripts/v022_mut_select.py` with the same
+selection flags and `--head=REV`). It selects rows no record ran or shows not KILLED, rows whose registry entry or
+marker changed, and rows whose anchored code (file, or the enclosing Rust fn) or killing test's source changed
+since the record's commit, and prints each row's reasons. **Rule: incremental for lane feedback, the full run at
+the final head is the evidence.** The OUT is a sample (`only` + `changed_since`): `--merge` and `--check-status`
+refuse it, and a T7 list or receipt never cites it. Selection cannot see a change outside the anchor and the test's
+own source that alters what the test observes: replaying e946f06d's T7 lists against 3921a309, M3493/M3494 went
+KILLED -> REFUSED_ELSEWHERE through a debug assert in `interp/env.rs`, which neither row anchors; `file` selected
+both (369/439 rows, only because their test lives in the changed `interp.rs`), `fn` selected neither (115/439).
 
 ## Gates
 

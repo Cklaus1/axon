@@ -14,10 +14,25 @@ applies (its text is absent or ambiguous) or that stops the crate compiling is
 reported as such — never as killed — so a refactor cannot silently turn this
 into a pass. Every file is restored and re-hashed after each mutation.
 
-    python3 scripts/v022_g01_mutations.py [--scope=S] [--shard=K/N] [--only=M1,M2] OUT.json
+    python3 scripts/v022_g01_mutations.py [--scope=S] [--shard=K/N] [--only=M1,M2]
+        [--changed-since=A.json[,B.json...] [--granularity=file|fn]] OUT.json
 
 --only runs a SAMPLE of the scope's rows; its output is marked and cannot be
 merged as a shard.
+
+--changed-since runs only the rows the given earlier run records do not show
+KILLED at this tree (scripts/v022_mut_select.py): rows no record ran or not
+killed, rows whose registry entry or marker changed, rows whose anchored code
+(the file, or with --granularity=fn the Rust fn enclosing the anchor) or whose
+killing test's source changed since the record's commit. Each selected row's
+reasons and a summary are printed first; with --only the selection is cut to
+those rows. It is LANE FEEDBACK, NEVER EVIDENCE: the output is a sample
+exactly as --only's (`only` lists the rows run; `changed_since` names the
+records and reasons), so --merge and --check-status refuse it and no T7 list
+cites it. Selection misses any change outside the anchor and the test's own
+source that alters what the test observes (a callee, another module on the
+path, a helper, a fixture, a dependency); the full run at the final head is the
+evidence of record (tasks/build-loop-r51.md).
 
 Refuses to run on a tree with ANY uncommitted change (C9 round 4: a check of
 crates/ alone let a locally edited scripts/ or profiles/ guard -- 24 rows guard
@@ -8736,7 +8751,8 @@ def main():
         if len(sys.argv) < 5:
             sys.exit("usage: v022_g01_mutations.py --merge OUT.json SHARD.json SHARD.json…")
         merge(sys.argv[2], sys.argv[3:])
-    args = [a for a in sys.argv[1:] if not a.startswith(("--scope=", "--shard=", "--only="))]
+    args = [a for a in sys.argv[1:]
+            if not a.startswith(("--scope=", "--shard=", "--only=", "--changed-since=", "--granularity="))]
     only_arg = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--only=")), None)
     only = None if only_arg is None else set(only_arg.split(","))
     scope = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--scope=")), "g01")
@@ -8749,9 +8765,19 @@ def main():
         except (ValueError, AssertionError):
             sys.exit(f"--shard={shard_arg}: want K/N with 0 <= K < N")
         shard = (k, n)
+    changed_arg = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--changed-since=")), None)
+    granularity = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--granularity=")), None)
+    if changed_arg is not None:
+        import v022_mut_select as select_rows
+        if granularity is None:
+            granularity = "file"
+        if granularity not in select_rows.GRANULARITIES:
+            sys.exit(f"--granularity={granularity}: want one of {'|'.join(select_rows.GRANULARITIES)}")
+    elif granularity is not None:
+        sys.exit("--granularity selects rows only with --changed-since")
     if len(args) != 1 or scope not in ("g01", "pci", "binding", "psv", "all"):
         sys.exit("usage: v022_g01_mutations.py [--scope=g01|pci|binding|psv|all] [--shard=K/N] "
-                 "[--only=M1,M2,...] OUT.json")
+                 "[--only=M1,M2,...] [--changed-since=A.json[,B.json...] [--granularity=file|fn]] OUT.json")
     if only is not None:
         known = {m[0] for m in MUTATIONS}
         unknown = sorted(m for m in only if m not in known or not in_scope(m, scope))
@@ -8774,6 +8800,17 @@ def main():
         sys.exit(f"refused: uncommitted changes in the tree — a mutation run is evidence about a commit\n{dirty}")
     blobs = registry_blobs()
     commit = sh("git rev-parse HEAD").stdout.strip()
+    selection = None
+    if changed_arg is not None:
+        # Lane feedback (scripts/v022_mut_select.py): the rows the records do
+        # not show killed at THIS commit. The run is a sample, like --only's.
+        universe = [m for m in MUTATIONS if in_scope(m[0], scope) and (only is None or m[0] in only)]
+        picked, records = select_rows.select(universe, ATTACK_MARKERS, row_digest, row_good,
+                                             changed_arg.split(","), commit, granularity)
+        select_rows.report(picked, len(universe), granularity)
+        selection = {"records": [{"path": p, "commit": c} for p, c in records], "granularity": granularity,
+                     "selected": picked, "evidence": select_rows.NOT_EVIDENCE}
+        only = set(picked)
     # The Fabric integration tests exec the `axon` interpreter from the target
     # dir: build it from THIS tree first, so no baseline or kill rests on a
     # stale binary, and record which one it was.
@@ -8883,13 +8920,18 @@ def main():
                            "unset": list(AMBIENT_BINARY_VARS), "host": host_identity()},
            "toolchain": toolchain,
            "shard": None if shard is None else {"index": shard[0], "of": shard[1]},
-           # A sample (--only) is not a run of the scope, and merge refuses it.
+           # A sample (--only, or a --changed-since selection) is not a run of
+           # the scope, and merge and --check-status refuse it.
            "only": None if only is None else sorted(only),
+           **({} if selection is None else {"changed_since": selection}),
            "all_killed": ok, "mutations": results}
     with open(sys.argv[1], "w") as f:
         json.dump(doc, f, indent=2)
         f.write("\n")
-    ok &= print_evidence_model(results, scope, partial=only is not None or shard is not None)
+    ok &= print_evidence_model(results, scope, partial=only is not None or shard is not None,
+                               extra="" if selection is None else "  (SAMPLE: --changed-since selection)")
+    if selection is not None:
+        print(f"NOT EVIDENCE: {select_rows.NOT_EVIDENCE}", flush=True)
     sys.exit(0 if ok else 1)
 
 # ── C9 round 8, EQGATE4 (amendment 95; M2400-M2469) ──────────────────────────
