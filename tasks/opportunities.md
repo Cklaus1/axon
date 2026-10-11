@@ -2431,3 +2431,18 @@ build script refuses it as a production build under a linker, and two tests fail
 Fix (crates/ change, needs a `governance/notes/pci-themes/<hash8>.json` classification): the helper also removes every `CARGO_TARGET_*_RUSTFLAGS` and
 `CARGO_TARGET_*_LINKER` variable of the parent environment, and a case asserts the control build still builds with
 the target-scoped flag set in the parent. Until then a host with mold cannot pass the gate.
+
+## `require_idle.py` cannot see one saturated CPU; the `privileged_launcher` scheduling test hangs on it
+
+Found 2026-10-11 (R51 final-head paired-disable at 2b0e7438). `axon-fabric`'s
+`a_callers_scheduling_state_never_reaches_the_root_launch` starts its probe under `SCHED_IDLE`, pinned to the first
+CPU of its affinity (CPU 0), and waits with no deadline. Six `sh -c 'while :; do :; done'` loops from another session
+(3.7 days old, SCHED_OTHER, pinned to CPU 0) kept CPU 0 at 100% user. The probe got 18 ms of CPU in 82 min, so the shard
+never returned: that explains this run and the 986ec715 paired-disable hang (`bounded_run` killed it at 7200 s).
+Killing the loops let the probe finish at once. `scripts/lib/require_idle.py` sums foreign CPU across the host: six
+loops sharing one CPU counted as about 1 core, under its threshold of 2, so the guard reported the host idle.
+
+Fix (two parts, both needed): `require_idle.py` also reports BUSY when any single CPU in the caller's affinity is
+saturated by foreign tasks over the window (per-CPU deltas from `/proc/stat`, or per-task `processor` from
+`/proc/<pid>/stat`); and the test pins its probe to the CPU with the most idle time in its affinity and fails with a
+message after a deadline instead of hanging (crates/ change: classify it in `governance/notes/pci-themes/`).
