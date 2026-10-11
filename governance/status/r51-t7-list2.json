@@ -2,10 +2,10 @@
   "schema": "axon-v022-mutation-run/3",
   "gate": "all",
   "scope": "all",
-  "commit": "e946f06d0f406ee346599e6b9bce46bdc0d62638",
+  "commit": "0c28bd03991ed96c2dd0c6cadd6a22d92307c852",
   "registry_blobs": {
-    "scripts/v022_g01_mutations.py": "efa1fabee0e816b66956f1ca1187589f85da4d02",
-    "scripts/v022_attack_markers.py": "575e90aa6aa802b58a1cf38068443d619c124d1e"
+    "scripts/v022_g01_mutations.py": "0c079136e4a7aaf87d9115fa62c29e7150c9c8e1",
+    "scripts/v022_attack_markers.py": "5a7ce697ccb4161416367fe32394cafae956d7be"
   },
   "tree_clean": true,
   "environment": {
@@ -31,7 +31,7 @@
   "toolchain": {
     "rustc": "rustc 1.99.0-nightly (375b1431b 2026-07-10)",
     "cargo": "cargo 1.99.0-nightly (59800466c 2026-07-07)",
-    "axon_bin_sha256": "89e2fe47d6daa49bca111bf03efe87da462d9cffba7a806c31ec901aa8e97b24"
+    "axon_bin_sha256": "dd033bceaca309a6b9ef8105a9ed4dd95e3f33ad3d5bcc501db95941a213fb01"
   },
   "shard": null,
   "only": [
@@ -189,15 +189,15 @@
       "guard": "interpreter: loop control is contained at every frame edge (fn, closure, predicate)",
       "file": "crates/axon-core/src/interp.rs",
       "package": "axon-core",
-      "old_sha256": "82b110ae27a35dfc040cbb1797588c6a885b4ff7fdb2204e0648e8e9353a46c3",
+      "old_sha256": "432bdeb3cb397093c76a4f1dfd38d1dd9d5e4de608e5e797db42fde8df3f5271",
       "new_sha256": "01af4237e19263a51c37e26606fb3656ca6b02bee5491e153f2aefbea7d7d307",
       "target": "--no-default-features --lib",
       "test": "interp::tests::loop_control_does_not_escape_through_a_predicate",
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "these escapes passed the test",
-      "kill_evidence": "thread 'interp::tests::loop_control_does_not_escape_through_a_predicate' (3743271) panicked at crates/axon-core/src/interp.rs:7985:9: | these escapes passed the test: [\"return refinement\", \"param refinement\", \"verify\", \"struct refinement\"]",
-      "cell_output": "/var/tmp/v022-cells/cell-M59-907ef61a0774.log"
+      "kill_evidence": "thread 'interp::tests::loop_control_does_not_escape_through_a_predicate' (895381) panicked at crates/axon-core/src/interp.rs:8177:9: | these escapes passed the test: [\"return refinement\", \"param refinement\", \"verify\", \"struct refinement\"]",
+      "cell_output": "/var/tmp/v022-cells/cell-M59-0d4655958be9.log"
     },
     {
       "id": "M61",
@@ -211,8 +211,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "failed: let: \\[\\]",
-      "kill_evidence": "thread 'resolver::tests::duplicate_let_refinement_or_impl_produces_e0002' (3748829) panicked at crates/axon-core/src/resolver.rs:3373:13: | assertion `left == right` failed: let: [] | left: 0 | right: 1",
-      "cell_output": "/var/tmp/v022-cells/cell-M61-d38e479c5982.log"
+      "kill_evidence": "thread 'resolver::tests::duplicate_let_refinement_or_impl_produces_e0002' (897231) panicked at crates/axon-core/src/resolver.rs:3368:13: | assertion `left == right` failed: let: [] | left: 0 | right: 1",
+      "cell_output": "/var/tmp/v022-cells/cell-M61-5beb9b742a58.log"
     },
     {
       "id": "M62",
@@ -226,8 +226,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "failed: refinement: \\[\\]",
-      "kill_evidence": "thread 'resolver::tests::duplicate_let_refinement_or_impl_produces_e0002' (3751732) panicked at crates/axon-core/src/resolver.rs:3373:13: | assertion `left == right` failed: refinement: [] | left: 0 | right: 1",
-      "cell_output": "/var/tmp/v022-cells/cell-M62-651dd34026ef.log"
+      "kill_evidence": "thread 'resolver::tests::duplicate_let_refinement_or_impl_produces_e0002' (897955) panicked at crates/axon-core/src/resolver.rs:3368:13: | assertion `left == right` failed: refinement: [] | left: 0 | right: 1",
+      "cell_output": "/var/tmp/v022-cells/cell-M62-392c39f5deaa.log"
     },
     {
       "id": "M65",
@@ -241,8 +241,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "t_err: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_test_completes_only_when_its_body_returns_normally' (3757900) panicked at crates/axon-core/src/interp.rs:8011:13: | t_err: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M65-9e48dc75d5a8.log"
+      "kill_evidence": "thread 'interp::tests::a_test_completes_only_when_its_body_returns_normally' (899413) panicked at crates/axon-core/src/interp.rs:8203:13: | t_err: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M65-3756b258c10e.log"
     },
     {
       "id": "M67",
@@ -256,8 +256,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "t_exit: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_test_completes_only_when_its_body_returns_normally' (3761250) panicked at crates/axon-core/src/interp.rs:8009:13: | t_exit: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M67-f29663882952.log"
+      "kill_evidence": "thread 'interp::tests::a_test_completes_only_when_its_body_returns_normally' (900730) panicked at crates/axon-core/src/interp.rs:8201:13: | t_exit: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M67-5bd6f79bd9ca.log"
     },
     {
       "id": "M68",
@@ -271,8 +271,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "was tagged as completed",
-      "kill_evidence": "thread 'only_a_completed_test_is_issued_a_completion_token' (3765091) panicked at crates/axon-core/tests/test_completion.rs:80:5: | t_exit was tagged as completed: {\"name\":\"t_exit\",\"status\":\"ok\",\"duration_ms\":0,\"completion\":\"ecd6e544db58fa6e14c813b63e75c60e6c711b998e33028059528331bf8464f6\"}",
-      "cell_output": "/var/tmp/v022-cells/cell-M68-8d0dc7fec2ad.log"
+      "kill_evidence": "thread 'only_a_completed_test_is_issued_a_completion_token' (902449) panicked at crates/axon-core/tests/test_completion.rs:80:5: | t_exit was tagged as completed: {\"name\":\"t_exit\",\"status\":\"ok\",\"duration_ms\":0,\"completion\":\"ecd6e544db58fa6e14c813b63e75c60e6c711b998e33028059528331bf8464f6\"}",
+      "cell_output": "/var/tmp/v022-cells/cell-M68-b65abf1f2eee.log"
     },
     {
       "id": "M69",
@@ -286,8 +286,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "failed: same method from a second trait: \\[\\]",
-      "kill_evidence": "thread 'resolver::tests::duplicate_let_refinement_or_impl_produces_e0002' (3768551) panicked at crates/axon-core/src/resolver.rs:3373:13: | assertion `left == right` failed: same method from a second trait: [] | left: 0 | right: 1",
-      "cell_output": "/var/tmp/v022-cells/cell-M69-5d5957b4a2ff.log"
+      "kill_evidence": "thread 'resolver::tests::duplicate_let_refinement_or_impl_produces_e0002' (903469) panicked at crates/axon-core/src/resolver.rs:3368:13: | assertion `left == right` failed: same method from a second trait: [] | left: 0 | right: 1",
+      "cell_output": "/var/tmp/v022-cells/cell-M69-93273a4e505d.log"
     },
     {
       "id": "M70",
@@ -301,8 +301,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "failed: trait: \\[\\]",
-      "kill_evidence": "thread 'resolver::tests::duplicate_let_refinement_or_impl_produces_e0002' (3771858) panicked at crates/axon-core/src/resolver.rs:3373:13: | assertion `left == right` failed: trait: [] | left: 0 | right: 1",
-      "cell_output": "/var/tmp/v022-cells/cell-M70-628c9c6ea303.log"
+      "kill_evidence": "thread 'resolver::tests::duplicate_let_refinement_or_impl_produces_e0002' (904603) panicked at crates/axon-core/src/resolver.rs:3368:13: | assertion `left == right` failed: trait: [] | left: 0 | right: 1",
+      "cell_output": "/var/tmp/v022-cells/cell-M70-e13e5c410e50.log"
     },
     {
       "id": "M72",
@@ -316,8 +316,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a `return` escaped the candidate's [a-z ]+ into the operator's helper and the test completed",
-      "kill_evidence": "thread 'interp::tests::no_control_transfer_escapes_a_frame' (3776929) panicked at crates/axon-core/src/interp/tests_v022_c.rs:95:9: | ATTACK: a `return` escaped the candidate's param refinement into the operator's helper and the test completed (param refinement (helper): Ok(Completed))",
-      "cell_output": "/var/tmp/v022-cells/cell-M72-ec4ba0788e6d.log"
+      "kill_evidence": "thread 'interp::tests::no_control_transfer_escapes_a_frame' (906159) panicked at crates/axon-core/src/interp/tests_v022_c.rs:95:9: | ATTACK: a `return` escaped the candidate's param refinement into the operator's helper and the test completed (param refinement (helper): Ok(Completed))",
+      "cell_output": "/var/tmp/v022-cells/cell-M72-f7a2591693eb.log"
     },
     {
       "id": "M73",
@@ -331,8 +331,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "resume[^\\n]*: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::no_control_transfer_escapes_a_frame' (3780099) panicked at crates/axon-core/src/interp/tests_v022_c.rs:105:13: | resume closure (in the operator's arm): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M73-a264c98f3df1.log"
+      "kill_evidence": "thread 'interp::tests::no_control_transfer_escapes_a_frame' (906855) panicked at crates/axon-core/src/interp/tests_v022_c.rs:105:13: | resume closure (in the operator's arm): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M73-a2cbf01fb1a3.log"
     },
     {
       "id": "M74",
@@ -346,8 +346,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a handler completion was caught by a `with` that did not install it\\s*\\n\\s*left: Err\\(\"assertion failed: 107 != 7\"\\)",
-      "kill_evidence": "thread 'interp::tests::no_control_transfer_escapes_a_frame' (3783369) panicked at crates/axon-core/src/interp/tests_v022_c.rs:130:5: | assertion `left == right` failed: ATTACK: a handler completion was caught by a `with` that did not install it | left: Err(\"assertion failed: 107 != 7\") | right: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M74-0a49c0778577.log"
+      "kill_evidence": "thread 'interp::tests::no_control_transfer_escapes_a_frame' (907684) panicked at crates/axon-core/src/interp/tests_v022_c.rs:130:5: | assertion `left == right` failed: ATTACK: a handler completion was caught by a `with` that did not install it | left: Err(\"assertion failed: 107 != 7\") | right: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M74-2d197ece0f3f.log"
     },
     {
       "id": "M75",
@@ -361,8 +361,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "failed: refinement named after a builtin type: \\[\\]",
-      "kill_evidence": "thread 'resolver::tests::duplicate_let_refinement_or_impl_produces_e0002' (3786749) panicked at crates/axon-core/src/resolver.rs:3373:13: | assertion `left == right` failed: refinement named after a builtin type: [] | left: 0 | right: 1",
-      "cell_output": "/var/tmp/v022-cells/cell-M75-062bd5d99839.log"
+      "kill_evidence": "thread 'resolver::tests::duplicate_let_refinement_or_impl_produces_e0002' (908889) panicked at crates/axon-core/src/resolver.rs:3368:13: | assertion `left == right` failed: refinement named after a builtin type: [] | left: 0 | right: 1",
+      "cell_output": "/var/tmp/v022-cells/cell-M75-076ca24dea6c.log"
     },
     {
       "id": "M76",
@@ -376,8 +376,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "NaN passed an f64 assertion",
-      "kill_evidence": "thread 'interp::vm::tests::assert_eq_f64_fails_on_nan_on_both_engines' (3791891) panicked at crates/axon-core/src/interp/vm/tests.rs:1747:13: | ATTACK: NaN passed an f64 assertion, or a far pair did (Tree t_nan): Ok(Unit)",
-      "cell_output": "/var/tmp/v022-cells/cell-M76-437aec9e6b73.log"
+      "kill_evidence": "thread 'interp::vm::tests::assert_eq_f64_fails_on_nan_on_both_engines' (910178) panicked at crates/axon-core/src/interp/vm/tests.rs:1747:13: | ATTACK: NaN passed an f64 assertion, or a far pair did (Tree t_nan): Ok(Unit)",
+      "cell_output": "/var/tmp/v022-cells/cell-M76-e86cb4fdcb12.log"
     },
     {
       "id": "M77",
@@ -391,8 +391,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "an exit\\(0\\) property case passed",
-      "kill_evidence": "thread 'interp::tests::no_control_transfer_escapes_a_frame' (3796551) panicked at crates/axon-core/src/interp/tests_v022_c.rs:145:5: | an exit(0) property case passed",
-      "cell_output": "/var/tmp/v022-cells/cell-M77-4b54de34e1e7.log"
+      "kill_evidence": "thread 'interp::tests::no_control_transfer_escapes_a_frame' (910997) panicked at crates/axon-core/src/interp/tests_v022_c.rs:145:5: | an exit(0) property case passed",
+      "cell_output": "/var/tmp/v022-cells/cell-M77-f1e79dd4e463.log"
     },
     {
       "id": "M78",
@@ -406,8 +406,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "expected exactly one E0002\\s+left: 0",
-      "kill_evidence": "thread 'resolver::tests::duplicate_fn_name_produces_e0002' (3801348) panicked at crates/axon-core/src/resolver.rs:3582:9: | assertion `left == right` failed: expected exactly one E0002 | left: 0 | right: 1",
-      "cell_output": "/var/tmp/v022-cells/cell-M78-419878276c15.log"
+      "kill_evidence": "thread 'resolver::tests::duplicate_fn_name_produces_e0002' (912638) panicked at crates/axon-core/src/resolver.rs:3606:9: | assertion `left == right` failed: expected exactly one E0002 | left: 0 | right: 1",
+      "cell_output": "/var/tmp/v022-cells/cell-M78-5c4875f9bf50.log"
     },
     {
       "id": "M79",
@@ -421,8 +421,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a sealed module reached the operator's `TABLE` \\(mutate a suite constant\\): \\[\\]",
-      "kill_evidence": "thread 'resolver::tests::a_sealed_module_cannot_reach_the_operators_names' (3805338) panicked at crates/axon-core/src/resolver.rs:3517:13: | ATTACK: a sealed module reached the operator's `TABLE` (mutate a suite constant): []",
-      "cell_output": "/var/tmp/v022-cells/cell-M79-49e8dfc600e5.log"
+      "kill_evidence": "thread 'resolver::tests::a_sealed_module_cannot_reach_the_operators_names' (914332) panicked at crates/axon-core/src/resolver.rs:3541:13: | ATTACK: a sealed module reached the operator's `TABLE` (mutate a suite constant): []",
+      "cell_output": "/var/tmp/v022-cells/cell-M79-8a7172dbcb1c.log"
     },
     {
       "id": "M82",
@@ -436,8 +436,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "failed: refinement named after a generic parameter: \\[\\]",
-      "kill_evidence": "thread 'resolver::tests::duplicate_let_refinement_or_impl_produces_e0002' (3809025) panicked at crates/axon-core/src/resolver.rs:3372:13: | assertion `left == right` failed: refinement named after a generic parameter: [] | left: 0 | right: 1",
-      "cell_output": "/var/tmp/v022-cells/cell-M82-665c01748285.log"
+      "kill_evidence": "thread 'resolver::tests::duplicate_let_refinement_or_impl_produces_e0002' (915231) panicked at crates/axon-core/src/resolver.rs:3367:13: | assertion `left == right` failed: refinement named after a generic parameter: [] | left: 0 | right: 1",
+      "cell_output": "/var/tmp/v022-cells/cell-M82-143bd146b061.log"
     },
     {
       "id": "M83",
@@ -451,8 +451,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: the candidate's inline refinement took the operator's synthetic name `__refine_\\d+`",
-      "kill_evidence": "thread 'resolver::tests::two_files_inline_refinements_never_share_a_name' (3815449) panicked at crates/axon-core/src/resolver.rs:3428:9: | ATTACK: the candidate's inline refinement took the operator's synthetic name `__refine_0`",
-      "cell_output": "/var/tmp/v022-cells/cell-M83-0946925a7c08.log"
+      "kill_evidence": "thread 'resolver::tests::two_files_inline_refinements_never_share_a_name' (916661) panicked at crates/axon-core/src/resolver.rs:3452:9: | ATTACK: the candidate's inline refinement took the operator's synthetic name `__refine_0`",
+      "cell_output": "/var/tmp/v022-cells/cell-M83-0c365bfc03c6.log"
     },
     {
       "id": "M85",
@@ -466,8 +466,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "the ambient module resolved",
-      "kill_evidence": "thread 'an_exclusive_module_path_never_falls_through_to_ambient_dirs' (3820764) panicked at crates/axon-core/tests/pci_isolation.rs:106:5: | the ambient module resolved: {\"schema\":\"axon-diag/1\",\"severity\":\"warning\",\"code\":\"W1210\",\"message\":\"`planted` imported without a lock entry \u2014 bytes are unverified and unaudited; run `axon lock /var/tmp/v022-harness-3738139-s1b52u3o/axon_pci_ambient_3820763/src/main.ax`\"}",
-      "cell_output": "/var/tmp/v022-cells/cell-M85-a6fe3e654f50.log"
+      "kill_evidence": "thread 'an_exclusive_module_path_never_falls_through_to_ambient_dirs' (918309) panicked at crates/axon-core/tests/pci_isolation.rs:106:5: | the ambient module resolved: {\"schema\":\"axon-diag/1\",\"severity\":\"warning\",\"code\":\"W1210\",\"message\":\"`planted` imported without a lock entry \u2014 bytes are unverified and unaudited; run `axon lock /var/tmp/v022-harness-893845-shij0xfb/axon_pci_ambient_918308/src/main.ax`\"}",
+      "cell_output": "/var/tmp/v022-cells/cell-M85-9e77b16a367a.log"
     },
     {
       "id": "M86",
@@ -481,8 +481,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: sealed code reached the operator \\(direct call\\): Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (3828315) panicked at crates/axon-core/src/interp/tests_v022_b.rs:728:9: | ATTACK: sealed code reached the operator (direct call): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M86-05610e357de4.log"
+      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (919886) panicked at crates/axon-core/src/interp/tests_v022_b.rs:728:9: | ATTACK: sealed code reached the operator (direct call): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M86-2d76f6c56687.log"
     },
     {
       "id": "M87",
@@ -496,8 +496,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: sealed code reached the operator \\(global read\\): Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (3830558) panicked at crates/axon-core/src/interp/tests_v022_b.rs:728:9: | ATTACK: sealed code reached the operator (global read): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M87-95732fad6e7a.log"
+      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (920838) panicked at crates/axon-core/src/interp/tests_v022_b.rs:728:9: | ATTACK: sealed code reached the operator (global read): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M87-81c7136762d5.log"
     },
     {
       "id": "M88",
@@ -511,8 +511,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: sealed code reached the operator \\(refinement attaching to an operator annotation\\): Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (3833780) panicked at crates/axon-core/src/interp/tests_v022_b.rs:728:9: | ATTACK: sealed code reached the operator (refinement attaching to an operator annotation): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M88-e2925f4377fd.log"
+      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (921546) panicked at crates/axon-core/src/interp/tests_v022_b.rs:728:9: | ATTACK: sealed code reached the operator (refinement attaching to an operator annotation): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M88-28795dea2d6f.log"
     },
     {
       "id": "M90",
@@ -526,8 +526,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: sealed code reached the operator \\(a candidate closure called by the operator\\): Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (3837119) panicked at crates/axon-core/src/interp/tests_v022_b.rs:728:9: | ATTACK: sealed code reached the operator (a candidate closure called by the operator): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M90-33f4025ffb4d.log"
+      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (922424) panicked at crates/axon-core/src/interp/tests_v022_b.rs:728:9: | ATTACK: sealed code reached the operator (a candidate closure called by the operator): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M90-1e68070d80aa.log"
     },
     {
       "id": "M91",
@@ -541,8 +541,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: sealed code reached the operator \\(a candidate closure called by the operator\\): Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (3840377) panicked at crates/axon-core/src/interp/tests_v022_b.rs:728:9: | ATTACK: sealed code reached the operator (a candidate closure called by the operator): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M91-11f9c5ec2f23.log"
+      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (923314) panicked at crates/axon-core/src/interp/tests_v022_b.rs:728:9: | ATTACK: sealed code reached the operator (a candidate closure called by the operator): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M91-56b6e11b6320.log"
     },
     {
       "id": "M92",
@@ -556,8 +556,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: sealed code reached the operator \\(a candidate handler arm\\): Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (3842439) panicked at crates/axon-core/src/interp/tests_v022_b.rs:728:9: | ATTACK: sealed code reached the operator (a candidate handler arm): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M92-de4cdea9a0f9.log"
+      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (924057) panicked at crates/axon-core/src/interp/tests_v022_b.rs:728:9: | ATTACK: sealed code reached the operator (a candidate handler arm): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M92-5d8556190d44.log"
     },
     {
       "id": "M93",
@@ -571,23 +571,23 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a sealed module reached the operator's `TABLE` \\(match guard\\): \\[\\]",
-      "kill_evidence": "thread 'resolver::tests::a_sealed_module_cannot_reach_the_operators_names' (3845718) panicked at crates/axon-core/src/resolver.rs:3519:13: | ATTACK: a sealed module reached the operator's `TABLE` (match guard): []",
-      "cell_output": "/var/tmp/v022-cells/cell-M93-51969c1f3840.log"
+      "kill_evidence": "thread 'resolver::tests::a_sealed_module_cannot_reach_the_operators_names' (924927) panicked at crates/axon-core/src/resolver.rs:3543:13: | ATTACK: a sealed module reached the operator's `TABLE` (match guard): []",
+      "cell_output": "/var/tmp/v022-cells/cell-M93-ec45ffbf4e88.log"
     },
     {
       "id": "M94",
-      "guard": "resolver: a refinement cannot take a deferred-prefix type name",
+      "guard": "resolver: a refinement cannot take a deferred type name (exact names, as the checker)",
       "file": "crates/axon-core/src/resolver.rs",
       "package": "axon-core",
-      "old_sha256": "a750d690ff24242f4036f596f2f60f2c56269a02791bc4490fc177933b891566",
-      "new_sha256": "bcaccf49d9576369b53cdc99dfe8cb94b60701ee4a2225a83a9fd32fae199a27",
+      "old_sha256": "8eaeea11df4f106cbe00f7001d64488965b607b223f1fec545029587d66d92f8",
+      "new_sha256": "a8956f5b90ea526af59f82ddcd6d216c053583e854e27e86a1280b3c5e0f3875",
       "target": "--no-default-features --lib",
       "test": "resolver::tests::duplicate_let_refinement_or_impl_produces_e0002",
       "baseline": "passed",
       "result": "killed",
-      "attack_marker": "failed: refinement named after a deferred-prefix type: \\[\\]",
-      "kill_evidence": "thread 'resolver::tests::duplicate_let_refinement_or_impl_produces_e0002' (3849026) panicked at crates/axon-core/src/resolver.rs:3373:13: | assertion `left == right` failed: refinement named after a deferred-prefix type: [] | left: 0 | right: 1",
-      "cell_output": "/var/tmp/v022-cells/cell-M94-12274a0dd203.log"
+      "attack_marker": "failed: refinement named after a deferred type: \\[\\]",
+      "kill_evidence": "thread 'resolver::tests::duplicate_let_refinement_or_impl_produces_e0002' (925957) panicked at crates/axon-core/src/resolver.rs:3368:13: | assertion `left == right` failed: refinement named after a deferred type: [] | left: 0 | right: 1",
+      "cell_output": "/var/tmp/v022-cells/cell-M94-109040c2e070.log"
     },
     {
       "id": "M95",
@@ -601,8 +601,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: sealed code reached the operator \\(module-level initializer\\): Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (3852134) panicked at crates/axon-core/src/interp/tests_v022_b.rs:728:9: | ATTACK: sealed code reached the operator (module-level initializer): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M95-739c01242977.log"
+      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (926930) panicked at crates/axon-core/src/interp/tests_v022_b.rs:728:9: | ATTACK: sealed code reached the operator (module-level initializer): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M95-4ac131320f7e.log"
     },
     {
       "id": "M96",
@@ -616,23 +616,23 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a sealed frame reached the operator's kernel state \\(reads the operator's fiber result by id\\): Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (3855692) panicked at crates/axon-core/src/interp/tests_v022_b.rs:777:9: | ATTACK: a sealed frame reached the operator's kernel state (reads the operator's fiber result by id): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M96-fd9a5c69a867.log"
+      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (927802) panicked at crates/axon-core/src/interp/tests_v022_b.rs:777:9: | ATTACK: a sealed frame reached the operator's kernel state (reads the operator's fiber result by id): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M96-0ba19fe10c6c.log"
     },
     {
       "id": "M97",
       "guard": "interpreter: a whole-struct `where` runs under its type's provenance",
       "file": "crates/axon-core/src/interp/eval.rs",
       "package": "axon-core",
-      "old_sha256": "3a5ff7e3b32045c463cc0881b97ae8a09b8fc26f1d05bb5fe92feef34634003a",
-      "new_sha256": "e576dad4c4b2ae2246ae18563712dd8a378e2ac0fc51ba93c123b771a3d03a56",
+      "old_sha256": "6b1ba03db9284d6d4341a12c8b2ba219d006241595585f563ab4d1e8f3d629b7",
+      "new_sha256": "c6505dbedecb1341530cb2841cf31b2458c2577f326e13ee91e6262fbb794d2c",
       "target": "--no-default-features --lib",
       "test": "interp::tests::runtime_sealing_holds_without_the_static_check",
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: sealed code reached the operator \\(a candidate struct's where, built by the operator\\): Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (3859113) panicked at crates/axon-core/src/interp/tests_v022_b.rs:728:9: | ATTACK: sealed code reached the operator (a candidate struct's where, built by the operator): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M97-172f48e52eb4.log"
+      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (928817) panicked at crates/axon-core/src/interp/tests_v022_b.rs:728:9: | ATTACK: sealed code reached the operator (a candidate struct's where, built by the operator): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M97-4142ed7f9255.log"
     },
     {
       "id": "M219",
@@ -646,8 +646,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "\\n\\[[^\\n]*\\\"t_cand_probe\\\"[^\\n]*\\]",
-      "kill_evidence": "thread 'a_sealed_candidates_own_test_is_never_collected' (3864311) panicked at crates/axon-core/tests/psv_test_selection.rs:101:5: | [\"t_cand_probe\"]",
-      "cell_output": "/var/tmp/v022-cells/cell-M219-bee47124fad2.log"
+      "kill_evidence": "thread 'a_sealed_candidates_own_test_is_never_collected' (930348) panicked at crates/axon-core/tests/psv_test_selection.rs:101:5: | [\"t_cand_probe\"]",
+      "cell_output": "/var/tmp/v022-cells/cell-M219-74d5d1177b89.log"
     },
     {
       "id": "M243",
@@ -661,8 +661,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "\\\"status\\\":\\\"failed\\\"\\}\\n\\s*left: Some\\(\\\"[0-9a-f]{64}\\\"\\)\\n\\s*right: Some\\(\\\"[0-9a-f]{64}\\\"\\)",
-      "kill_evidence": "thread 'a_failure_is_keyed_in_its_own_domain' (3868462) panicked at crates/axon-core/tests/psv_test_selection.rs:188:5: | assertion `left == right` failed: {\"completion\":\"d47dd98b73c118e2f3535c1fa8376614b02e35aa753e62fdda77cd90e4e3f2fd\",\"duration_ms\":0,\"message\":\"assertion failed: 2 != 3\",\"name\":\"t_ok_edge\",\"status\":\"failed\"} | left: Some(\"d47dd98b73c118e2f3535c1fa8376614b02e35aa753e62fdda77cd90e4e3f2fd\") | right: Some(\"8c26ec29aa669b01770ffeed39e3a661f4feaae12cb49f06e9ad88dcb5d18527\")",
-      "cell_output": "/var/tmp/v022-cells/cell-M243-7c0abe476847.log"
+      "kill_evidence": "thread 'a_failure_is_keyed_in_its_own_domain' (931886) panicked at crates/axon-core/tests/psv_test_selection.rs:188:5: | assertion `left == right` failed: {\"completion\":\"d47dd98b73c118e2f3535c1fa8376614b02e35aa753e62fdda77cd90e4e3f2fd\",\"duration_ms\":0,\"message\":\"assertion failed: 2 != 3\",\"name\":\"t_ok_edge\",\"status\":\"failed\"} | left: Some(\"d47dd98b73c118e2f3535c1fa8376614b02e35aa753e62fdda77cd90e4e3f2fd\") | right: Some(\"8c26ec29aa669b01770ffeed39e3a661f4feaae12cb49f06e9ad88dcb5d18527\")",
+      "cell_output": "/var/tmp/v022-cells/cell-M243-955c7f783763.log"
     },
     {
       "id": "M246",
@@ -676,8 +676,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "assertion `left == right` failed\\n\\s*left: \\\"OPENED\\\"\\n\\s*right: \\\"DENIED\\\"",
-      "kill_evidence": "thread 'holding_a_completion_key_makes_the_process_non_dumpable' (3875032) panicked at crates/axon-core/tests/psv_test_selection.rs:289:5: | assertion `left == right` failed | left: \"OPENED\" | right: \"DENIED\"",
-      "cell_output": "/var/tmp/v022-cells/cell-M246-712ac86e4524.log"
+      "kill_evidence": "thread 'holding_a_completion_key_makes_the_process_non_dumpable' (933872) panicked at crates/axon-core/tests/psv_test_selection.rs:289:5: | assertion `left == right` failed | left: \"OPENED\" | right: \"DENIED\"",
+      "cell_output": "/var/tmp/v022-cells/cell-M246-98ed3db7bd1a.log"
     },
     {
       "id": "M247",
@@ -691,8 +691,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "Some\\(\\\"IO,Exec\\\"\\): .*SPAWNED",
-      "kill_evidence": "thread 'holding_a_completion_key_spawns_nothing' (3882079) panicked at crates/axon-core/tests/psv_test_selection.rs:242:9: | Some(\"IO,Exec\"): OUT:SPAWNED |  | {\"name\":\"t_spawn\",\"status\":\"ok\",\"duration_ms\":4,\"completion\":\"5586cab44ac34d9c4bd37b8c2c4c72a04b3747b39ee2e06d41643e1c51bbee04\"} | {\"type\":\"summary\",\"total\":1,\"passed\":1,\"failed\":0,\"skipped\":0,\"duration_ms\":4}",
-      "cell_output": "/var/tmp/v022-cells/cell-M247-0193b778259a.log"
+      "kill_evidence": "thread 'holding_a_completion_key_spawns_nothing' (936085) panicked at crates/axon-core/tests/psv_test_selection.rs:242:9: | Some(\"IO,Exec\"): OUT:SPAWNED |  | {\"name\":\"t_spawn\",\"status\":\"ok\",\"duration_ms\":1,\"completion\":\"5586cab44ac34d9c4bd37b8c2c4c72a04b3747b39ee2e06d41643e1c51bbee04\"} | {\"type\":\"summary\",\"total\":1,\"passed\":1,\"failed\":0,\"skipped\":0,\"duration_ms\":1}",
+      "cell_output": "/var/tmp/v022-cells/cell-M247-1df487b98ac1.log"
     },
     {
       "id": "M248",
@@ -706,8 +706,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "None: .*SPAWNED",
-      "kill_evidence": "thread 'holding_a_completion_key_spawns_nothing' (3884293) panicked at crates/axon-core/tests/psv_test_selection.rs:242:9: | None: OUT:SPAWNED |  | {\"name\":\"t_spawn\",\"status\":\"ok\",\"duration_ms\":1,\"completion\":\"5586cab44ac34d9c4bd37b8c2c4c72a04b3747b39ee2e06d41643e1c51bbee04\"} | {\"type\":\"summary\",\"total\":1,\"passed\":1,\"failed\":0,\"skipped\":0,\"duration_ms\":1}",
-      "cell_output": "/var/tmp/v022-cells/cell-M248-6b71916af00a.log"
+      "kill_evidence": "thread 'holding_a_completion_key_spawns_nothing' (937094) panicked at crates/axon-core/tests/psv_test_selection.rs:242:9: | None: OUT:SPAWNED |  | {\"name\":\"t_spawn\",\"status\":\"ok\",\"duration_ms\":2,\"completion\":\"5586cab44ac34d9c4bd37b8c2c4c72a04b3747b39ee2e06d41643e1c51bbee04\"} | {\"type\":\"summary\",\"total\":1,\"passed\":1,\"failed\":0,\"skipped\":0,\"duration_ms\":2}",
+      "cell_output": "/var/tmp/v022-cells/cell-M248-f16ed73812db.log"
     },
     {
       "id": "M250",
@@ -721,8 +721,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "(?m)^[\\w-]+: \\{[^\\n]*\\\"status\\\":\\\"ok\\\"",
-      "kill_evidence": "thread 'an_unreadable_suite_module_never_falls_through_to_the_candidate' (3889781) panicked at crates/axon-core/tests/psv_test_selection.rs:350:9: | latin1: {\"name\":\"t_helper\",\"status\":\"ok\",\"duration_ms\":1,\"completion\":\"d6181676b19ef94fa65ffaabbe72980eb718becedc75f81c110e80f5e3e050fd\"} | {\"type\":\"summary\",\"total\":1,\"passed\":1,\"failed\":0,\"skipped\":0,\"duration_ms\":1}",
-      "cell_output": "/var/tmp/v022-cells/cell-M250-eb8169e5640a.log"
+      "kill_evidence": "thread 'an_unreadable_suite_module_never_falls_through_to_the_candidate' (938887) panicked at crates/axon-core/tests/psv_test_selection.rs:350:9: | latin1: {\"name\":\"t_helper\",\"status\":\"ok\",\"duration_ms\":0,\"completion\":\"d6181676b19ef94fa65ffaabbe72980eb718becedc75f81c110e80f5e3e050fd\"} | {\"type\":\"summary\",\"total\":1,\"passed\":1,\"failed\":0,\"skipped\":0,\"duration_ms\":0}",
+      "cell_output": "/var/tmp/v022-cells/cell-M250-e7beb30bdc4c.log"
     },
     {
       "id": "M251",
@@ -736,8 +736,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a sealed module\\'s copy of the operator library\\'s `rubric` defined the rubric: [^\\n]*\"status\":\"ok\"",
-      "kill_evidence": "thread 'a_sealed_module_never_supplies_an_operator_modules_name' (3895376) panicked at crates/axon-core/tests/psv_test_selection.rs:521:5: | ATTACK: a sealed module's copy of the operator library's `rubric` defined the rubric: {\"name\":\"t_ok\",\"status\":\"ok\",\"duration_ms\":1,\"completion\":\"983eee466d96ddfc8caace462fcbb79e957cc860a50f5da4eda6846febc6f785\"} | {\"type\":\"summary\",\"total\":1,\"passed\":1,\"failed\":0,\"skipped\":0,\"duration_ms\":1}",
-      "cell_output": "/var/tmp/v022-cells/cell-M251-1da440cdec05.log"
+      "kill_evidence": "thread 'a_sealed_module_never_supplies_an_operator_modules_name' (940951) panicked at crates/axon-core/tests/psv_test_selection.rs:521:5: | ATTACK: a sealed module's copy of the operator library's `rubric` defined the rubric: {\"name\":\"t_ok\",\"status\":\"ok\",\"duration_ms\":0,\"completion\":\"983eee466d96ddfc8caace462fcbb79e957cc860a50f5da4eda6846febc6f785\"} | {\"type\":\"summary\",\"total\":1,\"passed\":1,\"failed\":0,\"skipped\":0,\"duration_ms\":0}",
+      "cell_output": "/var/tmp/v022-cells/cell-M251-db99391afdd2.log"
     },
     {
       "id": "M260",
@@ -751,8 +751,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a sealed module's use pulled the suite's unimported reference module into the program",
-      "kill_evidence": "thread 'a_sealed_modules_use_never_reaches_an_unimported_suite_module' (3899977) panicked at crates/axon-core/tests/psv_test_selection.rs:420:5: | ATTACK: a sealed module's use pulled the suite's unimported reference module into the program: {\"name\":\"t_ok\",\"status\":\"ok\",\"duration_ms\":0,\"completion\":\"983eee466d96ddfc8caace462fcbb79e957cc860a50f5da4eda6846febc6f785\"} | {\"type\":\"summary\",\"total\":1,\"passed\":1,\"failed\":0,\"skipped\":0,\"duration_ms\":0}",
-      "cell_output": "/var/tmp/v022-cells/cell-M260-b346d3fe63f6.log"
+      "kill_evidence": "thread 'a_sealed_modules_use_never_reaches_an_unimported_suite_module' (942795) panicked at crates/axon-core/tests/psv_test_selection.rs:420:5: | ATTACK: a sealed module's use pulled the suite's unimported reference module into the program: {\"name\":\"t_ok\",\"status\":\"ok\",\"duration_ms\":0,\"completion\":\"983eee466d96ddfc8caace462fcbb79e957cc860a50f5da4eda6846febc6f785\"} | {\"type\":\"summary\",\"total\":1,\"passed\":1,\"failed\":0,\"skipped\":0,\"duration_ms\":0}",
+      "cell_output": "/var/tmp/v022-cells/cell-M260-08c8e4809d53.log"
     },
     {
       "id": "M270",
@@ -766,8 +766,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "the candidate's RNG activity moved the operator's stream",
-      "kill_evidence": "thread 'sealed_rng_activity_never_moves_the_operators_stream' (3906453) panicked at crates/axon-core/tests/psv_test_selection.rs:840:5: | the candidate's RNG activity moved the operator's stream: {\"name\":\"t_ok\",\"status\":\"failed\",\"duration_ms\":2,\"message\":\"assertion failed: 105169 != 734289\",\"completion\":\"0038c3ec9b144f23b2a7ae1622194df25cea9fdb9ebb34835dc5ac00fda856f7\"} | {\"type\":\"summary\",\"total\":1,\"passed\":0,\"failed\":1,\"skipped\":0,\"duration_ms\":2}",
-      "cell_output": "/var/tmp/v022-cells/cell-M270-9a3846cbf1ce.log"
+      "kill_evidence": "thread 'sealed_rng_activity_never_moves_the_operators_stream' (944598) panicked at crates/axon-core/tests/psv_test_selection.rs:840:5: | the candidate's RNG activity moved the operator's stream: {\"name\":\"t_ok\",\"status\":\"failed\",\"duration_ms\":1,\"message\":\"assertion failed: 105169 != 734289\",\"completion\":\"0038c3ec9b144f23b2a7ae1622194df25cea9fdb9ebb34835dc5ac00fda856f7\"} | {\"type\":\"summary\",\"total\":1,\"passed\":0,\"failed\":1,\"skipped\":0,\"duration_ms\":1}",
+      "cell_output": "/var/tmp/v022-cells/cell-M270-7ae9102da782.log"
     },
     {
       "id": "M271",
@@ -781,8 +781,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "the reseed must not pass",
-      "kill_evidence": "thread 'a_sealed_candidate_cannot_reseed_the_rng' (3910785) panicked at crates/axon-core/tests/psv_test_selection.rs:683:5: | the reseed must not pass: {\"name\":\"t_ok\",\"status\":\"ok\",\"duration_ms\":1,\"completion\":\"983eee466d96ddfc8caace462fcbb79e957cc860a50f5da4eda6846febc6f785\"} | {\"type\":\"summary\",\"total\":1,\"passed\":1,\"failed\":0,\"skipped\":0,\"duration_ms\":1}",
-      "cell_output": "/var/tmp/v022-cells/cell-M271-d503cb3a9934.log"
+      "kill_evidence": "thread 'a_sealed_candidate_cannot_reseed_the_rng' (946162) panicked at crates/axon-core/tests/psv_test_selection.rs:683:5: | the reseed must not pass: {\"name\":\"t_ok\",\"status\":\"ok\",\"duration_ms\":0,\"completion\":\"983eee466d96ddfc8caace462fcbb79e957cc860a50f5da4eda6846febc6f785\"} | {\"type\":\"summary\",\"total\":1,\"passed\":1,\"failed\":0,\"skipped\":0,\"duration_ms\":0}",
+      "cell_output": "/var/tmp/v022-cells/cell-M271-bd29c124a857.log"
     },
     {
       "id": "M272",
@@ -796,8 +796,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "its stream mirrors the operator seed",
-      "kill_evidence": "thread 'a_sealed_candidates_own_stream_reveals_nothing_of_the_operators' (3915042) panicked at crates/axon-core/tests/psv_test_selection.rs:870:5: | the candidate's first draw equalled the operator's \u2014 its stream mirrors the operator seed: {\"name\":\"t_ok\",\"status\":\"ok\",\"duration_ms\":0,\"completion\":\"983eee466d96ddfc8caace462fcbb79e957cc860a50f5da4eda6846febc6f785\"} | {\"type\":\"summary\",\"total\":1,\"passed\":1,\"failed\":0,\"skipped\":0,\"duration_ms\":0}",
-      "cell_output": "/var/tmp/v022-cells/cell-M272-a2121bb5499f.log"
+      "kill_evidence": "thread 'a_sealed_candidates_own_stream_reveals_nothing_of_the_operators' (947980) panicked at crates/axon-core/tests/psv_test_selection.rs:870:5: | the candidate's first draw equalled the operator's \u2014 its stream mirrors the operator seed: {\"name\":\"t_ok\",\"status\":\"ok\",\"duration_ms\":1,\"completion\":\"983eee466d96ddfc8caace462fcbb79e957cc860a50f5da4eda6846febc6f785\"} | {\"type\":\"summary\",\"total\":1,\"passed\":1,\"failed\":0,\"skipped\":0,\"duration_ms\":1}",
+      "cell_output": "/var/tmp/v022-cells/cell-M272-a94516057aba.log"
     },
     {
       "id": "M436",
@@ -811,8 +811,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: the operator's own `use rubric` loaded the candidate's copy, which defined the rubric: [^\\n]*\\\"status\\\":\\\"ok\\\"",
-      "kill_evidence": "thread 'an_operator_import_never_resolves_to_a_sealed_modules_copy' (3920538) panicked at crates/axon-core/tests/psv_test_selection.rs:609:5: | ATTACK: the operator's own `use rubric` loaded the candidate's copy, which defined the rubric: {\"name\":\"t_ok\",\"status\":\"ok\",\"duration_ms\":0,\"completion\":\"983eee466d96ddfc8caace462fcbb79e957cc860a50f5da4eda6846febc6f785\"} | {\"type\":\"summary\",\"total\":1,\"passed\":1,\"failed\":0,\"skipped\":0,\"duration_ms\":0}",
-      "cell_output": "/var/tmp/v022-cells/cell-M436-1c4cd10ce6bf.log"
+      "kill_evidence": "thread 'an_operator_import_never_resolves_to_a_sealed_modules_copy' (949768) panicked at crates/axon-core/tests/psv_test_selection.rs:609:5: | ATTACK: the operator's own `use rubric` loaded the candidate's copy, which defined the rubric: {\"name\":\"t_ok\",\"status\":\"ok\",\"duration_ms\":0,\"completion\":\"983eee466d96ddfc8caace462fcbb79e957cc860a50f5da4eda6846febc6f785\"} | {\"type\":\"summary\",\"total\":1,\"passed\":1,\"failed\":0,\"skipped\":0,\"duration_ms\":0}",
+      "cell_output": "/var/tmp/v022-cells/cell-M436-d076c65948d5.log"
     },
     {
       "id": "M560",
@@ -826,8 +826,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: sealed handler answered operator code: the candidate.s arm aborted the operator.s listener at its println \\(t_abort\\)",
-      "kill_evidence": "thread 'interp::tests::a_sealed_handler_never_answers_or_aborts_operator_code' (3927263) panicked at crates/axon-core/src/interp/tests_v022_b.rs:1412:9: | ATTACK: sealed handler answered operator code: the candidate's arm aborted the operator's listener at its println (t_abort): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M560-f0abbedb424a.log"
+      "kill_evidence": "thread 'interp::tests::a_sealed_handler_never_answers_or_aborts_operator_code' (951562) panicked at crates/axon-core/src/interp/tests_v022_b.rs:1434:9: | ATTACK: sealed handler answered operator code: the candidate's arm aborted the operator's listener at its println (t_abort): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M560-83506142b932.log"
     },
     {
       "id": "M561",
@@ -841,8 +841,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: sealed handler answered operator code: the candidate.s multi-shot replay fed the operator.s read_file \\(t_replay\\)",
-      "kill_evidence": "thread 'interp::tests::a_sealed_handler_never_answers_or_aborts_operator_code' (3931915) panicked at crates/axon-core/src/interp/tests_v022_b.rs:1412:9: | ATTACK: sealed handler answered operator code: the candidate's multi-shot replay fed the operator's read_file (t_replay): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M561-3a436e74725a.log"
+      "kill_evidence": "thread 'interp::tests::a_sealed_handler_never_answers_or_aborts_operator_code' (952513) panicked at crates/axon-core/src/interp/tests_v022_b.rs:1434:9: | ATTACK: sealed handler answered operator code: the candidate's multi-shot replay fed the operator's read_file (t_replay): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M561-aec7409d2e55.log"
     },
     {
       "id": "M562",
@@ -856,8 +856,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: sealed handler answered operator code: the candidate.s arm aborted the operator.s listener through a candidate call \\(t_through\\)",
-      "kill_evidence": "thread 'interp::tests::a_sealed_handler_never_answers_or_aborts_operator_code' (3933953) panicked at crates/axon-core/src/interp/tests_v022_b.rs:1412:9: | ATTACK: sealed handler answered operator code: the candidate's arm aborted the operator's listener through a candidate call (t_through): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M562-600e51dad962.log"
+      "kill_evidence": "thread 'interp::tests::a_sealed_handler_never_answers_or_aborts_operator_code' (953517) panicked at crates/axon-core/src/interp/tests_v022_b.rs:1434:9: | ATTACK: sealed handler answered operator code: the candidate's arm aborted the operator's listener through a candidate call (t_through): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M562-9da2afddc334.log"
     },
     {
       "id": "M563",
@@ -871,8 +871,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: the candidate steered the operator.s challenge by calling its closure five times: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::operator_code_a_sealed_frame_runs_never_draws_the_operator_rng' (3938022) panicked at crates/axon-core/src/interp/tests_v022_b.rs:1450:5: | ATTACK: the candidate steered the operator's challenge by calling its closure five times: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M563-b6b0a32bb363.log"
+      "kill_evidence": "thread 'interp::tests::operator_code_a_sealed_frame_runs_never_draws_the_operator_rng' (955878) panicked at crates/axon-core/src/interp/tests_v022_b.rs:1472:5: | ATTACK: the candidate steered the operator's challenge by calling its closure five times: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M563-468ca087a25e.log"
     },
     {
       "id": "M564",
@@ -886,8 +886,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a test that ended early at `\\?` was counted complete \\(t_find\\): Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_test_ended_by_question_mark_is_never_completed' (3943241) panicked at crates/axon-core/src/interp.rs:8069:13: | ATTACK: a test that ended early at `?` was counted complete (t_find): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M564-ef4b0f7fed8f.log"
+      "kill_evidence": "thread 'interp::tests::a_test_ended_by_question_mark_is_never_completed' (957151) panicked at crates/axon-core/src/interp.rs:8295:13: | ATTACK: a test that ended early at `?` was counted complete (t_find): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M564-3ab78905ded0.log"
     },
     {
       "id": "M565",
@@ -901,8 +901,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a test that ended early at `\\?` was counted complete \\(t_find\\): Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_test_ended_by_question_mark_is_never_completed' (3946671) panicked at crates/axon-core/src/interp.rs:8069:13: | ATTACK: a test that ended early at `?` was counted complete (t_find): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M565-523da8e7b238.log"
+      "kill_evidence": "thread 'interp::tests::a_test_ended_by_question_mark_is_never_completed' (958854) panicked at crates/axon-core/src/interp.rs:8295:13: | ATTACK: a test that ended early at `?` was counted complete (t_find): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M565-99cec19526d6.log"
     },
     {
       "id": "M566",
@@ -916,8 +916,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a fn declared -> Result returned a None across its boundary: Ok\\(EndedEarly",
-      "kill_evidence": "thread 'interp::tests::a_declared_result_fn_never_returns_an_option' (3952170) panicked at crates/axon-core/src/interp.rs:8096:9: | ATTACK: a fn declared -> Result returned a None across its boundary: Ok(EndedEarly(\"the test returned `Err` (or a `?` ended it on `Err`/`None`): it did not complete\"))",
-      "cell_output": "/var/tmp/v022-cells/cell-M566-b206de8a798e.log"
+      "kill_evidence": "thread 'interp::tests::a_declared_result_fn_never_returns_an_option' (960818) panicked at crates/axon-core/src/interp.rs:8322:9: | ATTACK: a fn declared -> Result returned a None across its boundary: Ok(EndedEarly(\"the test ended on `Err`, or early on `None` (a `return None` or a `?` on `None`): it did not complete\"))",
+      "cell_output": "/var/tmp/v022-cells/cell-M566-044c2e70f5a6.log"
     },
     {
       "id": "M651",
@@ -931,8 +931,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: the candidate's `ok` ran under the operator's method name: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_candidates_method_never_runs_under_the_operators_method_name' (3958965) panicked at crates/axon-core/src/interp/tests_v022_s4.rs:374:5: | ATTACK: the candidate's `ok` ran under the operator's method name: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M651-bb217d4930c7.log"
+      "kill_evidence": "thread 'interp::tests::a_candidates_method_never_runs_under_the_operators_method_name' (962865) panicked at crates/axon-core/src/interp/tests_v022_s4.rs:374:5: | ATTACK: the candidate's `ok` ran under the operator's method name: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M651-ea55d5780ea4.log"
     },
     {
       "id": "M652",
@@ -946,8 +946,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a confused bool crossed a declared `-> i64` return: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_confused_scalar_never_crosses_a_declared_return' (3964039) panicked at crates/axon-core/src/interp/tests_v022_a.rs:121:5: | ATTACK: a confused bool crossed a declared `-> i64` return: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M652-cc7ff65fad34.log"
+      "kill_evidence": "thread 'interp::tests::a_confused_scalar_never_crosses_a_declared_return' (964605) panicked at crates/axon-core/src/interp/tests_v022_a.rs:121:5: | ATTACK: a confused bool crossed a declared `-> i64` return: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M652-21db7ec71db8.log"
     },
     {
       "id": "M653",
@@ -961,8 +961,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: an `Other` crossed a declared `-> Point` return: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_confused_struct_never_crosses_as_another_struct' (3968940) panicked at crates/axon-core/src/interp/tests_v022_a.rs:145:5: | ATTACK: an `Other` crossed a declared `-> Point` return: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M653-8b3ca1fe4b3c.log"
+      "kill_evidence": "thread 'interp::tests::a_confused_struct_never_crosses_as_another_struct' (966049) panicked at crates/axon-core/src/interp/tests_v022_a.rs:145:5: | ATTACK: an `Other` crossed a declared `-> Point` return: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M653-6b4ce4741a10.log"
     },
     {
       "id": "M654",
@@ -976,8 +976,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a confused element crossed a declared `-> \\[i64\\]` return: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_confused_element_never_crosses_inside_an_array' (3971677) panicked at crates/axon-core/src/interp/tests_v022_a.rs:162:5: | ATTACK: a confused element crossed a declared `-> [i64]` return: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M654-0f4b2242c2c5.log"
+      "kill_evidence": "thread 'interp::tests::a_confused_element_never_crosses_inside_an_array' (967917) panicked at crates/axon-core/src/interp/tests_v022_a.rs:162:5: | ATTACK: a confused element crossed a declared `-> [i64]` return: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M654-2e015c6eb5fc.log"
     },
     {
       "id": "M655",
@@ -991,8 +991,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a confused payload crossed a declared `-> Option<i64>` return: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_confused_payload_never_crosses_inside_an_option' (3973254) panicked at crates/axon-core/src/interp/tests_v022_a.rs:182:5: | ATTACK: a confused payload crossed a declared `-> Option<i64>` return: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M655-d3b7c200623e.log"
+      "kill_evidence": "thread 'interp::tests::a_confused_payload_never_crosses_inside_an_option' (969403) panicked at crates/axon-core/src/interp/tests_v022_a.rs:182:5: | ATTACK: a confused payload crossed a declared `-> Option<i64>` return: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M655-ad17804b68c8.log"
     },
     {
       "id": "M656",
@@ -1006,8 +1006,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a confused element crossed a declared `-> \\(i64, i64\\)` return: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_confused_element_never_crosses_inside_a_tuple' (3974659) panicked at crates/axon-core/src/interp/tests_v022_a.rs:202:5: | ATTACK: a confused element crossed a declared `-> (i64, i64)` return: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M656-123408f95042.log"
+      "kill_evidence": "thread 'interp::tests::a_confused_element_never_crosses_inside_a_tuple' (972504) panicked at crates/axon-core/src/interp/tests_v022_a.rs:202:5: | ATTACK: a confused element crossed a declared `-> (i64, i64)` return: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M656-a249630ef51c.log"
     },
     {
       "id": "M657",
@@ -1021,8 +1021,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a confused field crossed a declared `-> Holder` return: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_confused_field_never_crosses_inside_a_struct' (3976045) panicked at crates/axon-core/src/interp/tests_v022_a.rs:225:5: | ATTACK: a confused field crossed a declared `-> Holder` return: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M657-6a21efe51a4f.log"
+      "kill_evidence": "thread 'interp::tests::a_confused_field_never_crosses_inside_a_struct' (977065) panicked at crates/axon-core/src/interp/tests_v022_a.rs:225:5: | ATTACK: a confused field crossed a declared `-> Holder` return: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M657-2eb20b423353.log"
     },
     {
       "id": "M658",
@@ -1036,8 +1036,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a confused field was constructed into a candidate global: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_confused_field_is_refused_at_construction' (3977525) panicked at crates/axon-core/src/interp/tests_v022_a.rs:248:5: | ATTACK: a confused field was constructed into a candidate global: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M658-ec70ddcdcc99.log"
+      "kill_evidence": "thread 'interp::tests::a_confused_field_is_refused_at_construction' (980331) panicked at crates/axon-core/src/interp/tests_v022_a.rs:248:5: | ATTACK: a confused field was constructed into a candidate global: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M658-5943260e9e4e.log"
     },
     {
       "id": "M659",
@@ -1051,8 +1051,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a confused value entered the operator's `x: i64` parameter: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_confused_argument_never_enters_a_declared_parameter' (3979001) panicked at crates/axon-core/src/interp/tests_v022_a.rs:261:5: | ATTACK: a confused value entered the operator's `x: i64` parameter: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M659-64b560f82c22.log"
+      "kill_evidence": "thread 'interp::tests::a_confused_argument_never_enters_a_declared_parameter' (984589) panicked at crates/axon-core/src/interp/tests_v022_a.rs:261:5: | ATTACK: a confused value entered the operator's `x: i64` parameter: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M659-ab334d975b2c.log"
     },
     {
       "id": "M660",
@@ -1066,8 +1066,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a value at an undetermined type parameter crossed into operator code: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_value_at_an_undetermined_type_parameter_never_crosses_the_seal' (3980387) panicked at crates/axon-core/src/interp/tests_v022_b.rs:66:5: | ATTACK: a value at an undetermined type parameter crossed into operator code: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M660-ff86a1779126.log"
+      "kill_evidence": "thread 'interp::tests::a_value_at_an_undetermined_type_parameter_never_crosses_the_seal' (992802) panicked at crates/axon-core/src/interp/tests_v022_b.rs:66:5: | ATTACK: a value at an undetermined type parameter crossed into operator code: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M660-3818257dd040.log"
     },
     {
       "id": "M661",
@@ -1081,8 +1081,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a closure declared `fn\\(i64\\) -> i64` returned a confused bool: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_closures_confused_result_never_crosses_its_declared_type' (3982069) panicked at crates/axon-core/src/interp/tests_v022_a.rs:282:5: | ATTACK: a closure declared `fn(i64) -> i64` returned a confused bool: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M661-367b31e44fdc.log"
+      "kill_evidence": "thread 'interp::tests::a_closures_confused_result_never_crosses_its_declared_type' (994631) panicked at crates/axon-core/src/interp/tests_v022_a.rs:282:5: | ATTACK: a closure declared `fn(i64) -> i64` returned a confused bool: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M661-d95a0b04f333.log"
     },
     {
       "id": "M662",
@@ -1096,8 +1096,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: the operator's listener was called with a confused bool: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_closures_confused_argument_never_crosses_its_declared_type' (3984185) panicked at crates/axon-core/src/interp/tests_v022_a.rs:304:5: | ATTACK: the operator's listener was called with a confused bool: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M662-10fb96205166.log"
+      "kill_evidence": "thread 'interp::tests::a_closures_confused_argument_never_crosses_its_declared_type' (997128) panicked at crates/axon-core/src/interp/tests_v022_a.rs:304:5: | ATTACK: the operator's listener was called with a confused bool: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M662-195c3755a3c1.log"
     },
     {
       "id": "M663",
@@ -1111,8 +1111,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a confused bool was sent on a `Chan<i64>` the operator reads: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_confused_value_is_never_sent_on_a_declared_channel' (3989497) panicked at crates/axon-core/src/interp/tests_v022_a.rs:349:5: | ATTACK: a confused bool was sent on a `Chan<i64>` the operator reads: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M663-540979f19843.log"
+      "kill_evidence": "thread 'interp::tests::a_confused_value_is_never_sent_on_a_declared_channel' (1006167) panicked at crates/axon-core/src/interp/tests_v022_a.rs:349:5: | ATTACK: a confused bool was sent on a `Chan<i64>` the operator reads: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M663-ca55e4bb29d3.log"
     },
     {
       "id": "M664",
@@ -1126,8 +1126,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a confused bool was bound to the operator's `let r: i64`: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_let_annotation_is_cast' (3994760) panicked at crates/axon-core/src/interp/tests_v022_a.rs:361:5: | ATTACK: a confused bool was bound to the operator's `let r: i64`: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M664-ad315bfb2f03.log"
+      "kill_evidence": "thread 'interp::tests::a_let_annotation_is_cast' (1010857) panicked at crates/axon-core/src/interp/tests_v022_a.rs:361:5: | ATTACK: a confused bool was bound to the operator's `let r: i64`: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M664-2dd7eea8e6ff.log"
     },
     {
       "id": "M665",
@@ -1141,8 +1141,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a sealed module named the operator's `\\w+` in a type position \\([^)]*\\): \\[\\]",
-      "kill_evidence": "thread 'resolver::tests::a_sealed_module_cannot_name_the_operators_types_or_traits' (4003069) panicked at crates/axon-core/src/resolver.rs:3554:13: | ATTACK: a sealed module named the operator's `Judge` in a type position (impl header trait): []",
-      "cell_output": "/var/tmp/v022-cells/cell-M665-f5b46148b2a9.log"
+      "kill_evidence": "thread 'resolver::tests::a_sealed_module_cannot_name_the_operators_types_or_traits' (1016460) panicked at crates/axon-core/src/resolver.rs:3578:13: | ATTACK: a sealed module named the operator's `Judge` in a type position (impl header trait): []",
+      "cell_output": "/var/tmp/v022-cells/cell-M665-5fa5493756f6.log"
     },
     {
       "id": "M666",
@@ -1156,8 +1156,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a bool passed the operator's `T: Judge` bound through `Lax`: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_type_parameters_trait_bound_is_cast' (4006074) panicked at crates/axon-core/src/interp/tests_v022_b.rs:107:5: | ATTACK: a bool passed the operator's `T: Judge` bound through `Lax`: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M666-928017fbe671.log"
+      "kill_evidence": "thread 'interp::tests::a_type_parameters_trait_bound_is_cast' (1019639) panicked at crates/axon-core/src/interp/tests_v022_b.rs:107:5: | ATTACK: a bool passed the operator's `T: Judge` bound through `Lax`: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M666-66d070413423.log"
     },
     {
       "id": "M667",
@@ -1171,8 +1171,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: the operator's `\\|r: i64\\|` listener was called with a confused bool: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_lambdas_annotated_parameter_is_cast' (4007697) panicked at crates/axon-core/src/interp/tests_v022_a.rs:326:5: | ATTACK: the operator's `|r: i64|` listener was called with a confused bool: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M667-b44a44bc4d3a.log"
+      "kill_evidence": "thread 'interp::tests::a_lambdas_annotated_parameter_is_cast' (1024468) panicked at crates/axon-core/src/interp/tests_v022_a.rs:326:5: | ATTACK: the operator's `|r: i64|` listener was called with a confused bool: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M667-8b775aaf95dd.log"
     },
     {
       "id": "M920",
@@ -1186,8 +1186,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a value of another integer width crossed a declared integer type \\(w4\\w+\\): Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_value_of_another_integer_width_never_crosses_a_declared_integer' (4010948) panicked at crates/axon-core/src/interp/tests_v022_b.rs:189:9: | ATTACK: a value of another integer width crossed a declared integer type (w4ret): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M920-043e51ba8ae9.log"
+      "kill_evidence": "thread 'interp::tests::a_value_of_another_integer_width_never_crosses_a_declared_integer' (1028098) panicked at crates/axon-core/src/interp/tests_v022_b.rs:189:9: | ATTACK: a value of another integer width crossed a declared integer type (w4ret): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M920-17b0f05a51ab.log"
     },
     {
       "id": "M921",
@@ -1201,8 +1201,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a u8 crossed a declared u16: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_value_of_another_fixed_width_never_crosses_a_declared_fixed_width' (4014987) panicked at crates/axon-core/src/interp/tests_v022_b.rs:227:5: | ATTACK: a u8 crossed a declared u16: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M921-71750eb708e2.log"
+      "kill_evidence": "thread 'interp::tests::a_value_of_another_fixed_width_never_crosses_a_declared_fixed_width' (1031974) panicked at crates/axon-core/src/interp/tests_v022_b.rs:227:5: | ATTACK: a u8 crossed a declared u16: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M921-18eac9b6391a.log"
     },
     {
       "id": "M922",
@@ -1216,8 +1216,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: an i64 crossed a declared u8 without taking its width: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::an_i64_at_a_declared_fixed_width_takes_the_width' (4018080) panicked at crates/axon-core/src/interp/tests_v022_b.rs:308:5: | ATTACK: an i64 crossed a declared u8 without taking its width: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M922-4bef9856c20e.log"
+      "kill_evidence": "thread 'interp::tests::an_i64_at_a_declared_fixed_width_takes_the_width' (1036106) panicked at crates/axon-core/src/interp/tests_v022_b.rs:308:5: | ATTACK: an i64 crossed a declared u8 without taking its width: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M922-cda0c4e12c7e.log"
     },
     {
       "id": "M923",
@@ -1231,8 +1231,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a non-closure crossed a declared fn type: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_non_closure_never_crosses_a_declared_fn_type' (4022403) panicked at crates/axon-core/src/interp/tests_v022_b.rs:359:5: | ATTACK: a non-closure crossed a declared fn type: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M923-11ac19ef4f72.log"
+      "kill_evidence": "thread 'interp::tests::a_non_closure_never_crosses_a_declared_fn_type' (1038845) panicked at crates/axon-core/src/interp/tests_v022_b.rs:359:5: | ATTACK: a non-closure crossed a declared fn type: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M923-9858fc64c680.log"
     },
     {
       "id": "M924",
@@ -1246,8 +1246,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a call through a local ran the operator's fn of the same name: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_call_through_a_local_never_resolves_the_name_elsewhere' (4026707) panicked at crates/axon-core/src/interp.rs:8582:9: | ATTACK: a call through a local ran the operator's fn of the same name: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M924-efe976f5410e.log"
+      "kill_evidence": "thread 'interp::tests::a_call_through_a_local_never_resolves_the_name_elsewhere' (1043338) panicked at crates/axon-core/src/interp.rs:8841:9: | ATTACK: a call through a local ran the operator's fn of the same name: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M924-25c3234ba435.log"
     },
     {
       "id": "M925",
@@ -1261,8 +1261,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: an i64 crossed a declared `Dict`: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (4030331) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `Dict`: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M925-ac9de62d14d0.log"
+      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (1046710) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `Dict`: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M925-9a9b0cc873a3.log"
     },
     {
       "id": "M926",
@@ -1276,8 +1276,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: an Uncertain wrapper crossed a declared plain type: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_soft_wrapper_takes_the_declared_plain_type' (4034686) panicked at crates/axon-core/src/interp/tests_v022_b.rs:385:5: | ATTACK: an Uncertain wrapper crossed a declared plain type: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M926-994511c8a896.log"
+      "kill_evidence": "thread 'interp::tests::a_soft_wrapper_takes_the_declared_plain_type' (1050502) panicked at crates/axon-core/src/interp/tests_v022_b.rs:385:5: | ATTACK: an Uncertain wrapper crossed a declared plain type: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M926-edeff1365dcf.log"
     },
     {
       "id": "M927",
@@ -1291,8 +1291,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a Temporal crossed a declared Uncertain: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_declared_soft_type_casts_its_wrapper_and_its_inner_value' (4038694) panicked at crates/axon-core/src/interp/tests_v022_a.rs:418:5: | ATTACK: a Temporal crossed a declared Uncertain: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M927-58246ea42443.log"
+      "kill_evidence": "thread 'interp::tests::a_declared_soft_type_casts_its_wrapper_and_its_inner_value' (1054326) panicked at crates/axon-core/src/interp/tests_v022_a.rs:418:5: | ATTACK: a Temporal crossed a declared Uncertain: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M927-14257b4b45f8.log"
     },
     {
       "id": "M928",
@@ -1306,8 +1306,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: an Uncertain of another inner type crossed a declared Uncertain<i64>: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_declared_soft_type_casts_its_wrapper_and_its_inner_value' (4041392) panicked at crates/axon-core/src/interp/tests_v022_a.rs:423:5: | ATTACK: an Uncertain of another inner type crossed a declared Uncertain<i64>: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M928-6dc3531ecde2.log"
+      "kill_evidence": "thread 'interp::tests::a_declared_soft_type_casts_its_wrapper_and_its_inner_value' (1056009) panicked at crates/axon-core/src/interp/tests_v022_a.rs:423:5: | ATTACK: an Uncertain of another inner type crossed a declared Uncertain<i64>: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M928-ba486444d710.log"
     },
     {
       "id": "M929",
@@ -1321,8 +1321,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a plain value of another type crossed a declared Uncertain<i64>: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_declared_soft_type_casts_its_wrapper_and_its_inner_value' (4044799) panicked at crates/axon-core/src/interp/tests_v022_a.rs:428:5: | ATTACK: a plain value of another type crossed a declared Uncertain<i64>: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M929-82d05df099b1.log"
+      "kill_evidence": "thread 'interp::tests::a_declared_soft_type_casts_its_wrapper_and_its_inner_value' (1057601) panicked at crates/axon-core/src/interp/tests_v022_a.rs:428:5: | ATTACK: a plain value of another type crossed a declared Uncertain<i64>: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M929-8ff1e83226b1.log"
     },
     {
       "id": "M930",
@@ -1336,8 +1336,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a plain value crossed a declared bare Uncertain: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_declared_soft_type_casts_its_wrapper_and_its_inner_value' (4047833) panicked at crates/axon-core/src/interp/tests_v022_a.rs:455:5: | ATTACK: a plain value crossed a declared bare Uncertain: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M930-8463eb845734.log"
+      "kill_evidence": "thread 'interp::tests::a_declared_soft_type_casts_its_wrapper_and_its_inner_value' (1059866) panicked at crates/axon-core/src/interp/tests_v022_a.rs:455:5: | ATTACK: a plain value crossed a declared bare Uncertain: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M930-1b5b8b97afe5.log"
     },
     {
       "id": "M931",
@@ -1351,8 +1351,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: an `Other::A` crossed a declared `-> Grade` return: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_confused_enum_never_crosses_as_another_enum' (4057011) panicked at crates/axon-core/src/interp/tests_v022_a.rs:482:5: | ATTACK: an `Other::A` crossed a declared `-> Grade` return: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M931-feb4caf6531c.log"
+      "kill_evidence": "thread 'interp::tests::a_confused_enum_never_crosses_as_another_enum' (1064062) panicked at crates/axon-core/src/interp/tests_v022_a.rs:482:5: | ATTACK: an `Other::A` crossed a declared `-> Grade` return: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M931-c7664767d732.log"
     },
     {
       "id": "M932",
@@ -1366,8 +1366,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: an i64 crossed a declared `\\[i64\\]`: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (4064367) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `[i64]`: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M932-3d3ce2dd9630.log"
+      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (1065596) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `[i64]`: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M932-b1f061a1ee54.log"
     },
     {
       "id": "M933",
@@ -1381,8 +1381,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: an i64 crossed a declared `\\(i64, i64\\)`: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (4071325) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `(i64, i64)`: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M933-ea0fc165a6f3.log"
+      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (1067385) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `(i64, i64)`: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M933-55f618b3a4db.log"
     },
     {
       "id": "M934",
@@ -1396,8 +1396,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: an i64 crossed a declared `str\\|bool`: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (4076442) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `str|bool`: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M934-c95e206a8445.log"
+      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (1069651) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `str|bool`: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M934-1a5dbc6879ba.log"
     },
     {
       "id": "M935",
@@ -1411,8 +1411,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: an i64 crossed a declared `Chan<i64>`: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (4078636) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `Chan<i64>`: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M935-ae4a6ced953f.log"
+      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (1071949) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `Chan<i64>`: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M935-c782c49fa8cf.log"
     },
     {
       "id": "M936",
@@ -1426,8 +1426,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: an i64 crossed a declared `Option<i64>`: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (4081468) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `Option<i64>`: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M936-0e28eb71e009.log"
+      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (1074132) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `Option<i64>`: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M936-977879276c79.log"
     },
     {
       "id": "M937",
@@ -1441,8 +1441,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: an i64 crossed a declared `Result<i64, str>`: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (4085226) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `Result<i64, str>`: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M937-fe344b2fae07.log"
+      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (1075198) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `Result<i64, str>`: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M937-4dbb02b66cf6.log"
     },
     {
       "id": "M938",
@@ -1456,8 +1456,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: an i64 crossed a declared `f64`: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (4089301) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `f64`: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M938-1e1dea6851d2.log"
+      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (1077331) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `f64`: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M938-7ee8bd3a2921.log"
     },
     {
       "id": "M939",
@@ -1471,8 +1471,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: an i64 crossed a declared `bool`: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (4091626) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `bool`: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M939-45bb4197e78a.log"
+      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (1079719) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `bool`: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M939-68c2d9b498bd.log"
     },
     {
       "id": "M1140",
@@ -1486,8 +1486,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: an i64 crossed a declared `str`: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (4093421) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `str`: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M1140-30565a0ac5d8.log"
+      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (1081963) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `str`: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M1140-25cce7f7a519.log"
     },
     {
       "id": "M1141",
@@ -1501,8 +1501,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: an i64 crossed a declared `\\(\\)`: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (4095574) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `()`: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M1141-106c607f8ff3.log"
+      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (1083944) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `()`: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M1141-22947653481c.log"
     },
     {
       "id": "M1142",
@@ -1516,8 +1516,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: an i64 crossed a declared `Decimal`: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (4098153) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `Decimal`: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M1142-a64224a88052.log"
+      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (1085138) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `Decimal`: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M1142-1414089024df.log"
     },
     {
       "id": "M1143",
@@ -1531,8 +1531,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: an i64 crossed a declared `Pt`: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (4100344) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `Pt`: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M1143-34040e5f5963.log"
+      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (1087543) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `Pt`: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M1143-d0bd4368661c.log"
     },
     {
       "id": "M1144",
@@ -1546,8 +1546,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: an i64 crossed a declared `Gr`: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (4101694) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `Gr`: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M1144-101b25e3c111.log"
+      "kill_evidence": "thread 'interp::tests::every_declared_type_refuses_a_value_of_another_type' (1089985) panicked at crates/axon-core/src/interp/tests_v022_b.rs:458:9: | ATTACK: an i64 crossed a declared `Gr`: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M1144-6f35e58bf8e3.log"
     },
     {
       "id": "M1145",
@@ -1561,8 +1561,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a bool crossed a type parameter the arguments bound to i64: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::the_remaining_cast_arms_refuse_a_value_of_another_type' (4105653) panicked at crates/axon-core/src/interp/tests_v022_b.rs:484:5: | ATTACK: a bool crossed a type parameter the arguments bound to i64: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M1145-db1041e10d0f.log"
+      "kill_evidence": "thread 'interp::tests::the_remaining_cast_arms_refuse_a_value_of_another_type' (1093729) panicked at crates/axon-core/src/interp/tests_v022_b.rs:484:5: | ATTACK: a bool crossed a type parameter the arguments bound to i64: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M1145-78fcce092693.log"
     },
     {
       "id": "M1146",
@@ -1576,8 +1576,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a bool crossed a declared `dyn Strict`: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::the_remaining_cast_arms_refuse_a_value_of_another_type' (4108253) panicked at crates/axon-core/src/interp/tests_v022_b.rs:512:5: | ATTACK: a bool crossed a declared `dyn Strict`: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M1146-1ab68649861f.log"
+      "kill_evidence": "thread 'interp::tests::the_remaining_cast_arms_refuse_a_value_of_another_type' (1095079) panicked at crates/axon-core/src/interp/tests_v022_b.rs:512:5: | ATTACK: a bool crossed a declared `dyn Strict`: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M1146-79e1de8f3cf9.log"
     },
     {
       "id": "M1147",
@@ -1591,8 +1591,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a confused variant field crossed a declared `-> Wr<i64>`: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::the_remaining_cast_arms_refuse_a_value_of_another_type' (4110514) panicked at crates/axon-core/src/interp/tests_v022_b.rs:532:5: | ATTACK: a confused variant field crossed a declared `-> Wr<i64>`: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M1147-56c320ba94d6.log"
+      "kill_evidence": "thread 'interp::tests::the_remaining_cast_arms_refuse_a_value_of_another_type' (1097133) panicked at crates/axon-core/src/interp/tests_v022_b.rs:532:5: | ATTACK: a confused variant field crossed a declared `-> Wr<i64>`: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M1147-4947d7749fe5.log"
     },
     {
       "id": "M1148",
@@ -1606,8 +1606,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a value queued before the channel crossed `Chan<i64>` was never cast: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::the_remaining_cast_arms_refuse_a_value_of_another_type' (4112089) panicked at crates/axon-core/src/interp/tests_v022_b.rs:559:5: | ATTACK: a value queued before the channel crossed `Chan<i64>` was never cast: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M1148-728d58e6d9f7.log"
+      "kill_evidence": "thread 'interp::tests::the_remaining_cast_arms_refuse_a_value_of_another_type' (1099768) panicked at crates/axon-core/src/interp/tests_v022_b.rs:559:5: | ATTACK: a value queued before the channel crossed `Chan<i64>` was never cast: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M1148-a6a0cadc1d82.log"
     },
     {
       "id": "M1149",
@@ -1621,8 +1621,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a u8 crossed a declared refinement of i64: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::the_remaining_cast_arms_refuse_a_value_of_another_type' (4114347) panicked at crates/axon-core/src/interp/tests_v022_b.rs:613:5: | ATTACK: a u8 crossed a declared refinement of i64: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M1149-5d185f3e66c2.log"
+      "kill_evidence": "thread 'interp::tests::the_remaining_cast_arms_refuse_a_value_of_another_type' (1102456) panicked at crates/axon-core/src/interp/tests_v022_b.rs:613:5: | ATTACK: a u8 crossed a declared refinement of i64: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M1149-c1f3de8e4e14.log"
     },
     {
       "id": "M1150",
@@ -1636,8 +1636,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a bool passed the operator's `T: Judge` bound through `Lax`: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_type_parameters_trait_bound_is_cast' (4118568) panicked at crates/axon-core/src/interp/tests_v022_b.rs:107:5: | ATTACK: a bool passed the operator's `T: Judge` bound through `Lax`: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M1150-7871e3f65887.log"
+      "kill_evidence": "thread 'interp::tests::a_type_parameters_trait_bound_is_cast' (1104597) panicked at crates/axon-core/src/interp/tests_v022_b.rs:107:5: | ATTACK: a bool passed the operator's `T: Judge` bound through `Lax`: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M1150-d7c04bfa348e.log"
     },
     {
       "id": "M1151",
@@ -1651,8 +1651,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a confused bool crossed a declared `-> i64` return: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_confused_scalar_never_crosses_a_declared_return' (4121873) panicked at crates/axon-core/src/interp/tests_v022_a.rs:121:5: | ATTACK: a confused bool crossed a declared `-> i64` return: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M1151-8460ffb98029.log"
+      "kill_evidence": "thread 'interp::tests::a_confused_scalar_never_crosses_a_declared_return' (1105895) panicked at crates/axon-core/src/interp/tests_v022_a.rs:121:5: | ATTACK: a confused bool crossed a declared `-> i64` return: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M1151-40667fa43d39.log"
     },
     {
       "id": "M1152",
@@ -1666,8 +1666,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a confused bool was sent on a `Chan<i64>` the operator reads: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_confused_value_is_never_sent_on_a_declared_channel' (4123920) panicked at crates/axon-core/src/interp/tests_v022_a.rs:349:5: | ATTACK: a confused bool was sent on a `Chan<i64>` the operator reads: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M1152-c297f79449fe.log"
+      "kill_evidence": "thread 'interp::tests::a_confused_value_is_never_sent_on_a_declared_channel' (1107158) panicked at crates/axon-core/src/interp/tests_v022_a.rs:349:5: | ATTACK: a confused bool was sent on a `Chan<i64>` the operator reads: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M1152-f339bdbecf4e.log"
     },
     {
       "id": "M1153",
@@ -1681,8 +1681,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: the operator's listener was called with a confused bool: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_closures_confused_argument_never_crosses_its_declared_type' (4126629) panicked at crates/axon-core/src/interp/tests_v022_a.rs:304:5: | ATTACK: the operator's listener was called with a confused bool: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M1153-b4280bb4b8b7.log"
+      "kill_evidence": "thread 'interp::tests::a_closures_confused_argument_never_crosses_its_declared_type' (1107964) panicked at crates/axon-core/src/interp/tests_v022_a.rs:304:5: | ATTACK: the operator's listener was called with a confused bool: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M1153-5fa11d945696.log"
     },
     {
       "id": "M1154",
@@ -1696,8 +1696,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a closure declared `fn\\(i64\\) -> i64` returned a confused bool: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_closures_confused_result_never_crosses_its_declared_type' (4129330) panicked at crates/axon-core/src/interp/tests_v022_a.rs:282:5: | ATTACK: a closure declared `fn(i64) -> i64` returned a confused bool: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M1154-4eecade78d8c.log"
+      "kill_evidence": "thread 'interp::tests::a_closures_confused_result_never_crosses_its_declared_type' (1109011) panicked at crates/axon-core/src/interp/tests_v022_a.rs:282:5: | ATTACK: a closure declared `fn(i64) -> i64` returned a confused bool: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M1154-3555bf7f0ca3.log"
     },
     {
       "id": "M1155",
@@ -1711,8 +1711,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a confused bool crossed a declared `-> i64` return: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_confused_scalar_never_crosses_a_declared_return' (4131507) panicked at crates/axon-core/src/interp/tests_v022_a.rs:121:5: | ATTACK: a confused bool crossed a declared `-> i64` return: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M1155-a9d724903c58.log"
+      "kill_evidence": "thread 'interp::tests::a_confused_scalar_never_crosses_a_declared_return' (1109888) panicked at crates/axon-core/src/interp/tests_v022_a.rs:121:5: | ATTACK: a confused bool crossed a declared `-> i64` return: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M1155-4818757dc70f.log"
     },
     {
       "id": "M1157",
@@ -1726,8 +1726,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a bool crossed a declared `u8`: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::the_remaining_cast_arms_refuse_a_value_of_another_type' (4134249) panicked at crates/axon-core/src/interp/tests_v022_b.rs:578:5: | ATTACK: a bool crossed a declared `u8`: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M1157-bea83e6d2245.log"
+      "kill_evidence": "thread 'interp::tests::the_remaining_cast_arms_refuse_a_value_of_another_type' (1110795) panicked at crates/axon-core/src/interp/tests_v022_b.rs:578:5: | ATTACK: a bool crossed a declared `u8`: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M1157-99d18ade863b.log"
     },
     {
       "id": "M1156",
@@ -1741,8 +1741,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: sealed code reached the operator \\(direct call\\): Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (4135726) panicked at crates/axon-core/src/interp/tests_v022_b.rs:728:9: | ATTACK: sealed code reached the operator (direct call): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M1156-cddacb81b4ec.log"
+      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (1112300) panicked at crates/axon-core/src/interp/tests_v022_b.rs:728:9: | ATTACK: sealed code reached the operator (direct call): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M1156-2cbd78642ce0.log"
     },
     {
       "id": "M1764",
@@ -1756,8 +1756,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a candidate that does not type-check passed the operator's test",
-      "kill_evidence": "thread 'a_candidate_that_does_not_type_check_is_never_tested' (4139486) panicked at crates/axon-core/tests/psv_test_selection.rs:1075:5: | ATTACK: a candidate that does not type-check passed the operator's test: {\"name\":\"t_ok\",\"status\":\"failed\",\"duration_ms\":1,\"message\":\"`_s` is declared `str` but was bound to 5 \u2014 a runtime type confusion (declared `str`, got a value of type `i64`)\",\"completion\":\"0038c3ec9b144f23b2a7ae1622194df25cea9fdb9ebb34835dc5ac00fda856f7\"} | {\"type\":\"summary\",\"total\":1,\"passed\":0,\"failed\":1,\"skipped\":0,\"duration_ms\":1}",
-      "cell_output": "/var/tmp/v022-cells/cell-M1764-757cb80a5587.log"
+      "kill_evidence": "thread 'a_candidate_that_does_not_type_check_is_never_tested' (1115740) panicked at crates/axon-core/tests/psv_test_selection.rs:1075:5: | ATTACK: a candidate that does not type-check passed the operator's test: {\"name\":\"t_ok\",\"status\":\"failed\",\"duration_ms\":1,\"message\":\"`_s` is declared `str` but was bound to 5 \u2014 a runtime type confusion (declared `str`, got a value of type `i64`)\",\"completion\":\"0038c3ec9b144f23b2a7ae1622194df25cea9fdb9ebb34835dc5ac00fda856f7\"} | {\"type\":\"summary\",\"total\":1,\"passed\":0,\"failed\":1,\"skipped\":0,\"duration_ms\":1}",
+      "cell_output": "/var/tmp/v022-cells/cell-M1764-ea4445a5bb53.log"
     },
     {
       "id": "M1765",
@@ -1771,8 +1771,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a run whose registered test FAILED exited",
-      "kill_evidence": "thread 'a_run_whose_test_failed_exits_nonzero' (4143575) panicked at crates/axon-core/tests/psv_test_selection.rs:1097:5: | ATTACK: a run whose registered test FAILED exited Some(0) (its failure would be read as no verdict): {\"name\":\"t_bad\",\"status\":\"failed\",\"duration_ms\":0,\"message\":\"assertion failed: 2 != 3\",\"completion\":\"4da44dfa15dc96982234fd5a28872e12594e29af607ad16a7b1c68cc4b64e37c\"} | {\"type\":\"summary\",\"total\":1,\"passed\":0,\"failed\":1,\"skipped\":0,\"duration_ms\":0}",
-      "cell_output": "/var/tmp/v022-cells/cell-M1765-b485265f9676.log"
+      "kill_evidence": "thread 'a_run_whose_test_failed_exits_nonzero' (1119572) panicked at crates/axon-core/tests/psv_test_selection.rs:1097:5: | ATTACK: a run whose registered test FAILED exited Some(0) (its failure would be read as no verdict): {\"name\":\"t_bad\",\"status\":\"failed\",\"duration_ms\":1,\"message\":\"assertion failed: 2 != 3\",\"completion\":\"4da44dfa15dc96982234fd5a28872e12594e29af607ad16a7b1c68cc4b64e37c\"} | {\"type\":\"summary\",\"total\":1,\"passed\":0,\"failed\":1,\"skipped\":0,\"duration_ms\":1}",
+      "cell_output": "/var/tmp/v022-cells/cell-M1765-658bd85e6151.log"
     },
     {
       "id": "M1730",
@@ -1786,8 +1786,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: sealed code reached the operator \\(direct call\\): Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (4145750) panicked at crates/axon-core/src/interp/tests_v022_b.rs:728:9: | ATTACK: sealed code reached the operator (direct call): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M1730-8e090e205631.log"
+      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (1121590) panicked at crates/axon-core/src/interp/tests_v022_b.rs:728:9: | ATTACK: sealed code reached the operator (direct call): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M1730-5ff1cb5b1f88.log"
     },
     {
       "id": "M1731",
@@ -1801,8 +1801,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: sealed code reached the operator \\(direct call\\): Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (4146914) panicked at crates/axon-core/src/interp/tests_v022_b.rs:728:9: | ATTACK: sealed code reached the operator (direct call): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M1731-8ba66b6f7b25.log"
+      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (1124479) panicked at crates/axon-core/src/interp/tests_v022_b.rs:728:9: | ATTACK: sealed code reached the operator (direct call): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M1731-a2df55894a17.log"
     },
     {
       "id": "M1734",
@@ -1816,8 +1816,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a sealed module reached the operator's `TABLE` \\(mutate a suite constant\\): \\[\\]",
-      "kill_evidence": "thread 'resolver::tests::a_sealed_module_cannot_reach_the_operators_names' (4150604) panicked at crates/axon-core/src/resolver.rs:3519:13: | ATTACK: a sealed module reached the operator's `TABLE` (mutate a suite constant): []",
-      "cell_output": "/var/tmp/v022-cells/cell-M1734-86115297debf.log"
+      "kill_evidence": "thread 'resolver::tests::a_sealed_module_cannot_reach_the_operators_names' (1127283) panicked at crates/axon-core/src/resolver.rs:3543:13: | ATTACK: a sealed module reached the operator's `TABLE` (mutate a suite constant): []",
+      "cell_output": "/var/tmp/v022-cells/cell-M1734-b510a1400f74.log"
     },
     {
       "id": "M1975",
@@ -1831,8 +1831,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: the dispatch rule.s off switch is reachable from a production build",
-      "kill_evidence": "thread 'the_dispatch_rule_off_switch_is_compiled_only_into_unit_tests' (4152553) panicked at crates/axon-core/tests/dispatch_rule_switch_is_test_only.rs:46:9: | ATTACK: the dispatch rule's off switch is reachable from a production build (interp.rs:922 is not under #[cfg(test)]): thread_local! { pub(crate) static DISPATCH_RULE_OFF: Cell<bool> = const { Cell::new(false) } }",
-      "cell_output": "/var/tmp/v022-cells/cell-M1975-058def1b5b45.log"
+      "kill_evidence": "thread 'the_dispatch_rule_off_switch_is_compiled_only_into_unit_tests' (1130882) panicked at crates/axon-core/tests/dispatch_rule_switch_is_test_only.rs:46:9: | ATTACK: the dispatch rule's off switch is reachable from a production build (interp.rs:937 is not under #[cfg(test)]): thread_local! { pub(crate) static DISPATCH_RULE_OFF: Cell<bool> = const { Cell::new(false) } }",
+      "cell_output": "/var/tmp/v022-cells/cell-M1975-67032e42aa3e.log"
     },
     {
       "id": "M1669",
@@ -1846,8 +1846,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a method call on a unit fn's result passed the checker: Some\\(0\\)",
-      "kill_evidence": "thread 'a_method_call_on_unit_without_an_impl_is_e0403' (4157997) panicked at crates/axon-core/tests/cli_run.rs:33137:5: | ATTACK: a method call on a unit fn's result passed the checker: Some(0)",
-      "cell_output": "/var/tmp/v022-cells/cell-M1669-b3081123e5ae.log"
+      "kill_evidence": "thread 'a_method_call_on_unit_without_an_impl_is_e0403' (1136183) panicked at crates/axon-core/tests/cli_run.rs:33177:5: | ATTACK: a method call on a unit fn's result passed the checker: Some(0)",
+      "cell_output": "/var/tmp/v022-cells/cell-M1669-fdf384734019.log"
     },
     {
       "id": "M1670",
@@ -1861,8 +1861,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a dead impl for `f32` passed the checker",
-      "kill_evidence": "thread 'an_impl_for_a_type_the_runtime_represents_as_another_is_e0505' (4164966) panicked at crates/axon-core/tests/cli_run.rs:33172:17: | ATTACK: a dead impl for `f32` passed the checker:",
-      "cell_output": "/var/tmp/v022-cells/cell-M1670-28c147f1ef58.log"
+      "kill_evidence": "thread 'an_impl_for_a_type_the_runtime_represents_as_another_is_e0505' (1140701) panicked at crates/axon-core/tests/cli_run.rs:33212:17: | ATTACK: a dead impl for `f32` passed the checker:",
+      "cell_output": "/var/tmp/v022-cells/cell-M1670-19b7e2c9a708.log"
     },
     {
       "id": "M1936",
@@ -1876,8 +1876,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a should_fail property that held over every case was reported as passing",
-      "kill_evidence": "thread 'a_should_fail_property_that_holds_is_a_failure' (4171018) panicked at crates/axon-core/tests/axon_test_outcomes.rs:111:5: | ATTACK: a should_fail property that held over every case was reported as passing: Some((\"ok\", \"\"))",
-      "cell_output": "/var/tmp/v022-cells/cell-M1936-32e1f017cc5d.log"
+      "kill_evidence": "thread 'a_should_fail_property_that_holds_is_a_failure' (1142368) panicked at crates/axon-core/tests/axon_test_outcomes.rs:111:5: | ATTACK: a should_fail property that held over every case was reported as passing: Some((\"ok\", \"\"))",
+      "cell_output": "/var/tmp/v022-cells/cell-M1936-3a57f1f86bae.log"
     },
     {
       "id": "M1937",
@@ -1891,8 +1891,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a property that failed on a counterexample was reported as passing",
-      "kill_evidence": "thread 'a_property_that_fails_is_a_failure' (4178986) panicked at crates/axon-core/tests/axon_test_outcomes.rs:121:5: | ATTACK: a property that failed on a counterexample was reported as passing: Some((\"ok\", \"\"))",
-      "cell_output": "/var/tmp/v022-cells/cell-M1937-aa3a28d7141b.log"
+      "kill_evidence": "thread 'a_property_that_fails_is_a_failure' (1144019) panicked at crates/axon-core/tests/axon_test_outcomes.rs:121:5: | ATTACK: a property that failed on a counterexample was reported as passing: Some((\"ok\", \"\"))",
+      "cell_output": "/var/tmp/v022-cells/cell-M1937-40dbb4516c03.log"
     },
     {
       "id": "M1938",
@@ -1906,8 +1906,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a should_fail test that completed without panicking was reported as passing",
-      "kill_evidence": "thread 'a_should_fail_test_that_does_not_panic_is_a_failure' (4741) panicked at crates/axon-core/tests/axon_test_outcomes.rs:100:5: | ATTACK: a should_fail test that completed without panicking was reported as passing: Some((\"ok\", \"\"))",
-      "cell_output": "/var/tmp/v022-cells/cell-M1938-2ff5e919722f.log"
+      "kill_evidence": "thread 'a_should_fail_test_that_does_not_panic_is_a_failure' (1146285) panicked at crates/axon-core/tests/axon_test_outcomes.rs:100:5: | ATTACK: a should_fail test that completed without panicking was reported as passing: Some((\"ok\", \"\"))",
+      "cell_output": "/var/tmp/v022-cells/cell-M1938-b762b2775410.log"
     },
     {
       "id": "M2370",
@@ -1921,8 +1921,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a `&mut` write-through carried a candidate-chosen value to the operator \\(an appended u8 into an empty output array\\): Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_mut_write_through_value_is_cast_at_the_seal_edge_back' (18489) panicked at crates/axon-core/src/interp/tests_v022_a.rs:104:5: | ATTACK: a `&mut` write-through carried a candidate-chosen value to the operator (an appended u8 into an empty output array): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M2370-fd61d389c975.log"
+      "kill_evidence": "thread 'interp::tests::a_mut_write_through_value_is_cast_at_the_seal_edge_back' (1151882) panicked at crates/axon-core/src/interp/tests_v022_a.rs:104:5: | ATTACK: a `&mut` write-through carried a candidate-chosen value to the operator (an appended u8 into an empty output array): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M2370-430148632ec9.log"
     },
     {
       "id": "M2371",
@@ -1936,8 +1936,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a `&mut` write-through carried a candidate-chosen value to the operator \\(a union element admitted the u8\\): Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_mut_write_through_value_is_judged_by_what_the_operator_held' (22475) panicked at crates/axon-core/src/interp/tests_v022_a.rs:104:5: | ATTACK: a `&mut` write-through carried a candidate-chosen value to the operator (a union element admitted the u8): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M2371-5046dd1b6072.log"
+      "kill_evidence": "thread 'interp::tests::a_mut_write_through_value_is_judged_by_what_the_operator_held' (1155558) panicked at crates/axon-core/src/interp/tests_v022_a.rs:104:5: | ATTACK: a `&mut` write-through carried a candidate-chosen value to the operator (a union element admitted the u8): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M2371-3a4fc770211e.log"
     },
     {
       "id": "M2372",
@@ -1951,8 +1951,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a `&mut` u8 survived an aborted call into the operator's binding: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_mut_value_is_cast_when_an_operator_handler_aborts_the_call' (27729) panicked at crates/axon-core/src/interp/tests_v022_a.rs:859:5: | ATTACK: a `&mut` u8 survived an aborted call into the operator's binding: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M2372-9d7b6a7ec19f.log"
+      "kill_evidence": "thread 'interp::tests::a_mut_value_is_cast_when_an_operator_handler_aborts_the_call' (1160194) panicked at crates/axon-core/src/interp/tests_v022_a.rs:859:5: | ATTACK: a `&mut` u8 survived an aborted call into the operator's binding: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M2372-0cf5fb74876f.log"
     },
     {
       "id": "M2373",
@@ -1966,8 +1966,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a `&mut` write-through carried a candidate-chosen value to the operator \\(a generic element into an empty output array\\): Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_mut_write_through_value_is_cast_at_the_seal_edge_back' (29527) panicked at crates/axon-core/src/interp/tests_v022_a.rs:104:5: | ATTACK: a `&mut` write-through carried a candidate-chosen value to the operator (a generic element into an empty output array): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M2373-61bae956011d.log"
+      "kill_evidence": "thread 'interp::tests::a_mut_write_through_value_is_cast_at_the_seal_edge_back' (1163081) panicked at crates/axon-core/src/interp/tests_v022_a.rs:104:5: | ATTACK: a `&mut` write-through carried a candidate-chosen value to the operator (a generic element into an empty output array): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M2373-097a5b498923.log"
     },
     {
       "id": "M2374",
@@ -1981,8 +1981,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a variable lent as `&mut` was still determined",
-      "kill_evidence": "thread 'interp::tests::a_mut_operand_is_never_determined_by_the_pin_analysis' (31135) panicked at crates/axon-core/src/interp.rs:8422:9: | ATTACK: a variable lent as `&mut` was still determined",
-      "cell_output": "/var/tmp/v022-cells/cell-M2374-0e2e79419d5c.log"
+      "kill_evidence": "thread 'interp::tests::a_mut_operand_is_never_determined_by_the_pin_analysis' (1166896) panicked at crates/axon-core/src/interp.rs:8681:9: | ATTACK: a variable lent as `&mut` was still determined",
+      "cell_output": "/var/tmp/v022-cells/cell-M2374-fcce8047dd73.log"
     },
     {
       "id": "M2375",
@@ -1996,8 +1996,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a union annotation pinned the receiver",
-      "kill_evidence": "thread 'interp::tests::a_mut_operand_is_never_determined_by_the_pin_analysis' (32369) panicked at crates/axon-core/src/interp.rs:8428:9: | ATTACK: a union annotation pinned the receiver",
-      "cell_output": "/var/tmp/v022-cells/cell-M2375-b1b308ae91c0.log"
+      "kill_evidence": "thread 'interp::tests::a_mut_operand_is_never_determined_by_the_pin_analysis' (1171791) panicked at crates/axon-core/src/interp.rs:8687:9: | ATTACK: a union annotation pinned the receiver",
+      "cell_output": "/var/tmp/v022-cells/cell-M2375-55f2be05989e.log"
     },
     {
       "id": "M2376",
@@ -2011,8 +2011,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a sealed frame took an operator fn as a value \\(ran the operator's `secret` through a fn value\\): Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_sealed_frame_cannot_take_an_operator_fn_as_a_value' (36893) panicked at crates/axon-core/src/interp/tests_v022_a.rs:1064:9: | ATTACK: a sealed frame took an operator fn as a value (ran the operator's `secret` through a fn value): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M2376-a32d6b764cf3.log"
+      "kill_evidence": "thread 'interp::tests::a_sealed_frame_cannot_take_an_operator_fn_as_a_value' (1177904) panicked at crates/axon-core/src/interp/tests_v022_a.rs:1064:9: | ATTACK: a sealed frame took an operator fn as a value (ran the operator's `secret` through a fn value): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M2376-9f44403e53f9.log"
     },
     {
       "id": "M2470",
@@ -2026,8 +2026,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a sealed frame read an operator global \\(a whole read\\)",
-      "kill_evidence": "thread 'interp::tests::a_sealed_frame_cannot_read_an_operator_global_through_a_fast_path' (40951) panicked at crates/axon-core/src/interp/tests_v022_b.rs:1573:9: | ATTACK: a sealed frame read an operator global (a whole read): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M2470-0e326bb1a967.log"
+      "kill_evidence": "thread 'interp::tests::a_sealed_frame_cannot_read_an_operator_global_through_a_fast_path' (1182692) panicked at crates/axon-core/src/interp/tests_v022_b.rs:1595:9: | ATTACK: a sealed frame read an operator global (a whole read): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M2470-32afad3e89e5.log"
     },
     {
       "id": "M2471",
@@ -2041,8 +2041,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a sealed frame read an operator global \\(a field\\)",
-      "kill_evidence": "thread 'interp::tests::a_sealed_frame_cannot_read_an_operator_global_through_a_fast_path' (43604) panicked at crates/axon-core/src/interp/tests_v022_b.rs:1573:9: | ATTACK: a sealed frame read an operator global (a field): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M2471-8d1ab0046a04.log"
+      "kill_evidence": "thread 'interp::tests::a_sealed_frame_cannot_read_an_operator_global_through_a_fast_path' (1185604) panicked at crates/axon-core/src/interp/tests_v022_b.rs:1595:9: | ATTACK: a sealed frame read an operator global (a field): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M2471-c1a523ac19f2.log"
     },
     {
       "id": "M2472",
@@ -2056,8 +2056,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a sealed frame read an operator global \\(an index\\)",
-      "kill_evidence": "thread 'interp::tests::a_sealed_frame_cannot_read_an_operator_global_through_a_fast_path' (50154) panicked at crates/axon-core/src/interp/tests_v022_b.rs:1573:9: | ATTACK: a sealed frame read an operator global (an index): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M2472-4478ade3e0fe.log"
+      "kill_evidence": "thread 'interp::tests::a_sealed_frame_cannot_read_an_operator_global_through_a_fast_path' (1190096) panicked at crates/axon-core/src/interp/tests_v022_b.rs:1595:9: | ATTACK: a sealed frame read an operator global (an index): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M2472-afafca6dea4f.log"
     },
     {
       "id": "M2473",
@@ -2071,8 +2071,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a sealed frame read an operator global \\(a closure constant call\\)",
-      "kill_evidence": "thread 'interp::tests::a_sealed_frame_cannot_read_an_operator_global_through_a_fast_path' (54450) panicked at crates/axon-core/src/interp/tests_v022_b.rs:1573:9: | ATTACK: a sealed frame read an operator global (a closure constant call): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M2473-64628f128481.log"
+      "kill_evidence": "thread 'interp::tests::a_sealed_frame_cannot_read_an_operator_global_through_a_fast_path' (1193704) panicked at crates/axon-core/src/interp/tests_v022_b.rs:1595:9: | ATTACK: a sealed frame read an operator global (a closure constant call): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M2473-8be49053117e.log"
     },
     {
       "id": "M2474",
@@ -2086,8 +2086,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a sealed frame read an operator global \\(a whole read\\)",
-      "kill_evidence": "thread 'interp::tests::a_sealed_frame_cannot_read_an_operator_global_through_a_fast_path' (58835) panicked at crates/axon-core/src/interp/tests_v022_b.rs:1573:9: | ATTACK: a sealed frame read an operator global (a whole read): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M2474-a4b8395564ca.log"
+      "kill_evidence": "thread 'interp::tests::a_sealed_frame_cannot_read_an_operator_global_through_a_fast_path' (1197762) panicked at crates/axon-core/src/interp/tests_v022_b.rs:1595:9: | ATTACK: a sealed frame read an operator global (a whole read): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M2474-195ca16901a5.log"
     },
     {
       "id": "M2475",
@@ -2101,8 +2101,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: sandbox_run handed the operator a value the candidate chose the type of \\(dispatch on a u8 result\\)",
-      "kill_evidence": "thread 'interp::tests::sandbox_run_results_are_cast_at_the_seal_crossing' (62936) panicked at crates/axon-core/src/interp/tests_v022_b.rs:1524:9: | ATTACK: sandbox_run handed the operator a value the candidate chose the type of (dispatch on a u8 result): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M2475-b9f9dfcc805c.log"
+      "kill_evidence": "thread 'interp::tests::sandbox_run_results_are_cast_at_the_seal_crossing' (1202247) panicked at crates/axon-core/src/interp/tests_v022_b.rs:1546:9: | ATTACK: sandbox_run handed the operator a value the candidate chose the type of (dispatch on a u8 result): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M2475-d84cf9a78a27.log"
     },
     {
       "id": "M2476",
@@ -2116,8 +2116,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: sealed code called an operator fn value with an undetermined argument: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_candidates_own_fn_value_takes_arguments_and_an_operators_still_does_not' (80827) panicked at crates/axon-core/src/interp/tests_v022_a.rs:899:5: | ATTACK: sealed code called an operator fn value with an undetermined argument: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M2476-fbbcd122fc50.log"
+      "kill_evidence": "thread 'interp::tests::a_candidates_own_fn_value_takes_arguments_and_an_operators_still_does_not' (1207577) panicked at crates/axon-core/src/interp/tests_v022_a.rs:899:5: | ATTACK: sealed code called an operator fn value with an undetermined argument: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M2476-cd3c2718f941.log"
     },
     {
       "id": "M2477",
@@ -2131,8 +2131,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a candidate fn value replaced an operator closure in the operator's dict: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::a_candidates_own_fn_value_takes_arguments_and_an_operators_still_does_not' (83083) panicked at crates/axon-core/src/interp/tests_v022_a.rs:910:5: | ATTACK: a candidate fn value replaced an operator closure in the operator's dict: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M2477-b1a1c52f7141.log"
+      "kill_evidence": "thread 'interp::tests::a_candidates_own_fn_value_takes_arguments_and_an_operators_still_does_not' (1210488) panicked at crates/axon-core/src/interp/tests_v022_a.rs:910:5: | ATTACK: a candidate fn value replaced an operator closure in the operator's dict: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M2477-5190e0b85b6f.log"
     },
     {
       "id": "M2478",
@@ -2146,8 +2146,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: the operator's unary negation wrapped at a width the candidate chose: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::operator_unary_arithmetic_never_runs_at_a_width_the_candidate_chose' (89298) panicked at crates/axon-core/src/interp/tests_v022_s4.rs:321:9: | ATTACK: the operator's unary negation wrapped at a width the candidate chose: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M2478-d1acceed31ab.log"
+      "kill_evidence": "thread 'interp::tests::operator_unary_arithmetic_never_runs_at_a_width_the_candidate_chose' (1211699) panicked at crates/axon-core/src/interp/tests_v022_s4.rs:321:9: | ATTACK: the operator's unary negation wrapped at a width the candidate chose: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M2478-d43dd1ca3ef4.log"
     },
     {
       "id": "M2479",
@@ -2161,8 +2161,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: the operator's unary negation wrapped at a width the candidate chose: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::operator_unary_arithmetic_never_runs_at_a_width_the_candidate_chose' (91814) panicked at crates/axon-core/src/interp/tests_v022_s4.rs:321:9: | ATTACK: the operator's unary negation wrapped at a width the candidate chose: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M2479-f1af04e6fda5.log"
+      "kill_evidence": "thread 'interp::tests::operator_unary_arithmetic_never_runs_at_a_width_the_candidate_chose' (1212487) panicked at crates/axon-core/src/interp/tests_v022_s4.rs:321:9: | ATTACK: the operator's unary negation wrapped at a width the candidate chose: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M2479-1d518fe29359.log"
     },
     {
       "id": "M2480",
@@ -2176,8 +2176,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: the operator's unary negation wrapped at a width the candidate chose: Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::operator_unary_arithmetic_never_runs_at_a_width_the_candidate_chose' (94523) panicked at crates/axon-core/src/interp/tests_v022_s4.rs:321:9: | ATTACK: the operator's unary negation wrapped at a width the candidate chose: Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M2480-7c891416985c.log"
+      "kill_evidence": "thread 'interp::tests::operator_unary_arithmetic_never_runs_at_a_width_the_candidate_chose' (1213494) panicked at crates/axon-core/src/interp/tests_v022_s4.rs:321:9: | ATTACK: the operator's unary negation wrapped at a width the candidate chose: Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M2480-6312bfc1e16f.log"
     },
     {
       "id": "M2461",
@@ -2191,8 +2191,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "OUT:SPAWNED",
-      "kill_evidence": "thread 'holding_a_completion_key_spawns_nothing' (96263) panicked at crates/axon-core/tests/psv_test_selection.rs:242:9: | Some(\"IO,Exec\"): OUT:SPAWNED |  | {\"name\":\"t_spawn\",\"status\":\"ok\",\"duration_ms\":7,\"completion\":\"5586cab44ac34d9c4bd37b8c2c4c72a04b3747b39ee2e06d41643e1c51bbee04\"} | {\"type\":\"summary\",\"total\":1,\"passed\":1,\"failed\":0,\"skipped\":0,\"duration_ms\":7}",
-      "cell_output": "/var/tmp/v022-cells/cell-M2461-6463c3b47fbb.log"
+      "kill_evidence": "thread 'holding_a_completion_key_spawns_nothing' (1214479) panicked at crates/axon-core/tests/psv_test_selection.rs:242:9: | Some(\"IO,Exec\"): OUT:SPAWNED |  | {\"name\":\"t_spawn\",\"status\":\"ok\",\"duration_ms\":1,\"completion\":\"5586cab44ac34d9c4bd37b8c2c4c72a04b3747b39ee2e06d41643e1c51bbee04\"} | {\"type\":\"summary\",\"total\":1,\"passed\":1,\"failed\":0,\"skipped\":0,\"duration_ms\":1}",
+      "cell_output": "/var/tmp/v022-cells/cell-M2461-547fcc68c5fb.log"
     },
     {
       "id": "M3483",
@@ -2206,8 +2206,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: AXON_ENGINE=\\S+: a sealed run was not refused before any result line",
-      "kill_evidence": "thread 'r51_t1c_a_sealed_axon_test_never_runs_on_the_vm' (98954) panicked at crates/axon-core/tests/cli_run.rs:37409:17: | assertion `left == right` failed: ATTACK: AXON_ENGINE=Some(\"vm\"): a sealed run was not refused before any result line: {\"name\":\"t_ok\",\"status\":\"failed\",\"duration_ms\":3,\"message\":\"a sealed run executes on the tree engine only (AXON_ENGINE=vm cannot carry the seal); unset AXON_ENGINE\"} | {\"type\":\"summary\",\"total\":1,\"passed\":0,\"failed\":1,\"skipped\":0,\"duration_ms\":3} |  | left: Some(3) | right: Some(2)",
-      "cell_output": "/var/tmp/v022-cells/cell-M3483-90c09f43d1ed.log"
+      "kill_evidence": "thread 'r51_t1c_a_sealed_axon_test_never_runs_on_the_vm' (1216266) panicked at crates/axon-core/tests/cli_run.rs:37458:17: | assertion `left == right` failed: ATTACK: AXON_ENGINE=Some(\"vm\"): a sealed run was not refused before any result line: {\"name\":\"t_ok\",\"status\":\"failed\",\"duration_ms\":0,\"message\":\"a sealed run executes on the tree engine only (AXON_ENGINE=vm cannot carry the seal); unset AXON_ENGINE\"} | {\"type\":\"summary\",\"total\":1,\"passed\":0,\"failed\":1,\"skipped\":0,\"duration_ms\":0} |  | left: Some(3) | right: Some(2)",
+      "cell_output": "/var/tmp/v022-cells/cell-M3483-46db1b302116.log"
     },
     {
       "id": "M3484",
@@ -2221,8 +2221,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: sealed=true complete=false override=None env=None: a sealed run the pin refuses was selected: Ok\\(Vm\\)",
-      "kill_evidence": "thread 'interp::vm::tests::r51_t1a_engine_for_truth_table' (103754) panicked at crates/axon-core/src/interp/vm/tests.rs:1101:25: | ATTACK: sealed=true complete=false override=None env=None: a sealed run the pin refuses was selected: Ok(Vm)",
-      "cell_output": "/var/tmp/v022-cells/cell-M3484-be95ff4d68f6.log"
+      "kill_evidence": "thread 'interp::vm::tests::r51_t1a_engine_for_truth_table' (1218130) panicked at crates/axon-core/src/interp/vm/tests.rs:1101:25: | ATTACK: sealed=true complete=false override=None env=None: a sealed run the pin refuses was selected: Ok(Vm)",
+      "cell_output": "/var/tmp/v022-cells/cell-M3484-779f1583af56.log"
     },
     {
       "id": "M3485",
@@ -2236,8 +2236,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: sealed=true complete=false override=None env=None: a sealed run the pin refuses was selected: Ok\\(Tree\\)",
-      "kill_evidence": "thread 'interp::vm::tests::r51_t1a_engine_for_truth_table' (105997) panicked at crates/axon-core/src/interp/vm/tests.rs:1101:25: | ATTACK: sealed=true complete=false override=None env=None: a sealed run the pin refuses was selected: Ok(Tree)",
-      "cell_output": "/var/tmp/v022-cells/cell-M3485-e86bae721b35.log"
+      "kill_evidence": "thread 'interp::vm::tests::r51_t1a_engine_for_truth_table' (1218919) panicked at crates/axon-core/src/interp/vm/tests.rs:1101:25: | ATTACK: sealed=true complete=false override=None env=None: a sealed run the pin refuses was selected: Ok(Tree)",
+      "cell_output": "/var/tmp/v022-cells/cell-M3485-844bcc24d08a.log"
     },
     {
       "id": "M3486",
@@ -2251,8 +2251,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: sealed=true complete=true override=Some\\(Vm\\) env=None: a sealed run the pin refuses was selected: Ok\\(Tree\\)",
-      "kill_evidence": "thread 'interp::vm::tests::r51_t1a_engine_for_truth_table' (108266) panicked at crates/axon-core/src/interp/vm/tests.rs:1101:25: | ATTACK: sealed=true complete=true override=Some(Vm) env=None: a sealed run the pin refuses was selected: Ok(Tree)",
-      "cell_output": "/var/tmp/v022-cells/cell-M3486-082d69845e70.log"
+      "kill_evidence": "thread 'interp::vm::tests::r51_t1a_engine_for_truth_table' (1219786) panicked at crates/axon-core/src/interp/vm/tests.rs:1101:25: | ATTACK: sealed=true complete=true override=Some(Vm) env=None: a sealed run the pin refuses was selected: Ok(Tree)",
+      "cell_output": "/var/tmp/v022-cells/cell-M3486-f0b236443e13.log"
     },
     {
       "id": "M3487",
@@ -2266,8 +2266,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: sealed=true complete=true override=None env=Some\\(\"vm\"\\): a sealed run the pin refuses was selected: Ok\\(Vm\\)",
-      "kill_evidence": "thread 'interp::vm::tests::r51_t1a_engine_for_truth_table' (109939) panicked at crates/axon-core/src/interp/vm/tests.rs:1101:25: | ATTACK: sealed=true complete=true override=None env=Some(\"vm\"): a sealed run the pin refuses was selected: Ok(Vm)",
-      "cell_output": "/var/tmp/v022-cells/cell-M3487-c28475786ba1.log"
+      "kill_evidence": "thread 'interp::vm::tests::r51_t1a_engine_for_truth_table' (1220691) panicked at crates/axon-core/src/interp/vm/tests.rs:1101:25: | ATTACK: sealed=true complete=true override=None env=Some(\"vm\"): a sealed run the pin refuses was selected: Ok(Vm)",
+      "cell_output": "/var/tmp/v022-cells/cell-M3487-5f1f64d77282.log"
     },
     {
       "id": "M3488",
@@ -2281,8 +2281,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: AXON_ENGINE=\\S+: a sealed run was not refused before any result line",
-      "kill_evidence": "thread 'r51_t1c_a_sealed_axon_test_never_runs_on_the_vm' (112628) panicked at crates/axon-core/tests/cli_run.rs:37409:17: | assertion `left == right` failed: ATTACK: AXON_ENGINE=Some(\"vm\"): a sealed run was not refused before any result line: {\"name\":\"t_ok\",\"status\":\"failed\",\"duration_ms\":0,\"message\":\"a sealed run executes on the tree engine only (AXON_ENGINE=vm cannot carry the seal); unset AXON_ENGINE\"} | {\"type\":\"summary\",\"total\":1,\"passed\":0,\"failed\":1,\"skipped\":0,\"duration_ms\":0} |  | left: Some(3) | right: Some(2)",
-      "cell_output": "/var/tmp/v022-cells/cell-M3488-94df8401aaca.log"
+      "kill_evidence": "thread 'r51_t1c_a_sealed_axon_test_never_runs_on_the_vm' (1221755) panicked at crates/axon-core/tests/cli_run.rs:37458:17: | assertion `left == right` failed: ATTACK: AXON_ENGINE=Some(\"vm\"): a sealed run was not refused before any result line: {\"name\":\"t_ok\",\"status\":\"failed\",\"duration_ms\":0,\"message\":\"a sealed run executes on the tree engine only (AXON_ENGINE=vm cannot carry the seal); unset AXON_ENGINE\"} | {\"type\":\"summary\",\"total\":1,\"passed\":0,\"failed\":1,\"skipped\":0,\"duration_ms\":0} |  | left: Some(3) | right: Some(2)",
+      "cell_output": "/var/tmp/v022-cells/cell-M3488-22619bcc0c2a.log"
     },
     {
       "id": "M3489",
@@ -2296,8 +2296,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a sealed run on the VM built VM bodies: \\[",
-      "kill_evidence": "thread 'interp::vm::tests::r51_t7_a_sealed_run_given_the_vm_builds_no_vm_body' (117176) panicked at crates/axon-core/src/interp/vm/tests.rs:1359:5: | ATTACK: a sealed run on the VM built VM bodies: [\"t\"], 0 lambda bodies",
-      "cell_output": "/var/tmp/v022-cells/cell-M3489-536bafaa6424.log"
+      "kill_evidence": "thread 'interp::vm::tests::r51_t7_a_sealed_run_given_the_vm_builds_no_vm_body' (1226540) panicked at crates/axon-core/src/interp/vm/tests.rs:1359:5: | ATTACK: a sealed run on the VM built VM bodies: [\"t\"], 0 lambda bodies",
+      "cell_output": "/var/tmp/v022-cells/cell-M3489-ded93862043d.log"
     },
     {
       "id": "M3490",
@@ -2311,8 +2311,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a sealed run entered the VM through run_body\\b",
-      "kill_evidence": "thread 'interp::vm::tests::r51_t7_a_sealed_run_enters_no_vm_path_at_any_gate' (120330) panicked at crates/axon-core/src/interp/vm/tests.rs:1315:17: | ATTACK: a sealed run entered the VM through run_body",
-      "cell_output": "/var/tmp/v022-cells/cell-M3490-7b8a6f815f0b.log"
+      "kill_evidence": "thread 'interp::vm::tests::r51_t7_a_sealed_run_enters_no_vm_path_at_any_gate' (1230889) panicked at crates/axon-core/src/interp/vm/tests.rs:1315:17: | ATTACK: a sealed run entered the VM through run_body",
+      "cell_output": "/var/tmp/v022-cells/cell-M3490-19b937107dda.log"
     },
     {
       "id": "M3491",
@@ -2326,8 +2326,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a sealed run entered the VM through run_body\\b",
-      "kill_evidence": "thread 'interp::vm::tests::r51_t7_a_sealed_run_enters_no_vm_path_at_any_gate' (122471) panicked at crates/axon-core/src/interp/vm/tests.rs:1315:17: | ATTACK: a sealed run entered the VM through run_body",
-      "cell_output": "/var/tmp/v022-cells/cell-M3491-e4f25233aac4.log"
+      "kill_evidence": "thread 'interp::vm::tests::r51_t7_a_sealed_run_enters_no_vm_path_at_any_gate' (1231821) panicked at crates/axon-core/src/interp/vm/tests.rs:1315:17: | ATTACK: a sealed run entered the VM through run_body",
+      "cell_output": "/var/tmp/v022-cells/cell-M3491-1e9b13b138b9.log"
     },
     {
       "id": "M3492",
@@ -2341,8 +2341,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a sealed run entered the VM through run_test_body\\b",
-      "kill_evidence": "thread 'interp::vm::tests::r51_t7_a_sealed_run_enters_no_vm_path_at_any_gate' (124920) panicked at crates/axon-core/src/interp/vm/tests.rs:1315:17: | ATTACK: a sealed run entered the VM through run_test_body",
-      "cell_output": "/var/tmp/v022-cells/cell-M3492-9c62e1aaecf7.log"
+      "kill_evidence": "thread 'interp::vm::tests::r51_t7_a_sealed_run_enters_no_vm_path_at_any_gate' (1232907) panicked at crates/axon-core/src/interp/vm/tests.rs:1315:17: | ATTACK: a sealed run entered the VM through run_test_body",
+      "cell_output": "/var/tmp/v022-cells/cell-M3492-6258aeb86753.log"
     },
     {
       "id": "M3493",
@@ -2351,13 +2351,13 @@
       "package": "axon-core",
       "old_sha256": "d3346403f71f23193d47800976f7a12a403d10538f03cb164254b35e4c663f93",
       "new_sha256": "ecec30aa4cf96fc4084e1d35fbb61d1e8f29729f118a3beb7849088656a4dcb8",
-      "target": "--no-default-features --lib",
-      "test": "interp::tests::runtime_sealing_holds_without_the_static_check",
+      "target": "--no-default-features --lib --config profile.test.debug-assertions=false",
+      "test": "interp::tests::a_sealed_call_that_binds_nothing_still_meets_the_seal_edge",
       "baseline": "passed",
       "result": "killed",
-      "attack_marker": "ATTACK: sealed code reached the operator \\(direct call\\): Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (127379) panicked at crates/axon-core/src/interp/tests_v022_b.rs:728:9: | ATTACK: sealed code reached the operator (direct call): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M3493-dc064758fe5e.log"
+      "attack_marker": "ATTACK: sealed code reached the operator \\(a call that binds nothing\\): Ok\\(Completed\\)",
+      "kill_evidence": "thread 'interp::tests::a_sealed_call_that_binds_nothing_still_meets_the_seal_edge' (1242320) panicked at crates/axon-core/src/interp/tests_v022_b.rs:798:5: | ATTACK: sealed code reached the operator (a call that binds nothing): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M3493-3fa90cf206fe.log"
     },
     {
       "id": "M3494",
@@ -2366,13 +2366,13 @@
       "package": "axon-core",
       "old_sha256": "fa4e394cd51db1b299862145590c684c683488a22c644b6bbb9220e24b09b922",
       "new_sha256": "f40c933e83de4ec90f5ab9b542f33b650dc609b85e0a19d4e8c17983a43069b4",
-      "target": "--no-default-features --lib",
-      "test": "interp::tests::runtime_sealing_holds_without_the_static_check",
+      "target": "--no-default-features --lib --config profile.test.debug-assertions=false",
+      "test": "interp::tests::a_sealed_call_that_binds_nothing_still_meets_the_seal_edge",
       "baseline": "passed",
       "result": "killed",
-      "attack_marker": "ATTACK: sealed code reached the operator \\(direct call\\): Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::tests::runtime_sealing_holds_without_the_static_check' (129618) panicked at crates/axon-core/src/interp/tests_v022_b.rs:728:9: | ATTACK: sealed code reached the operator (direct call): Ok(Completed)",
-      "cell_output": "/var/tmp/v022-cells/cell-M3494-701218316321.log"
+      "attack_marker": "ATTACK: sealed code reached the operator \\(a call that binds nothing\\): Ok\\(Completed\\)",
+      "kill_evidence": "thread 'interp::tests::a_sealed_call_that_binds_nothing_still_meets_the_seal_edge' (1245132) panicked at crates/axon-core/src/interp/tests_v022_b.rs:798:5: | ATTACK: sealed code reached the operator (a call that binds nothing): Ok(Completed)",
+      "cell_output": "/var/tmp/v022-cells/cell-M3494-ce9e5e6d24ee.log"
     }
   ]
 }
