@@ -746,10 +746,10 @@ impl<'p> Interp<'p> {
     /// 43; veto taint.rs:1221-1248). The in-memory best store is kernel state
     /// (`goal_count`, `goal_history` read it back through [`Class::Kernel`]);
     /// the JSONL append is a file both kernels share, so it is World state
-    /// like `write_file`. A sealed call writes the file: ALL. An operator call
-    /// stores the taint of what it recorded and the control it ran under, as
-    /// any other operator write does. (Veto's sealed call also wrote a sealed
-    /// kernel's store, not the operator's: the per-frame `Kernel` is S3's.)
+    /// like `write_file`. A sealed call writes the sealed kernel's store (not
+    /// the operator's: the per-frame `Kernel`, S3) but the file is shared:
+    /// ALL. An operator call stores the taint of what it recorded and the
+    /// control it ran under, as any other operator write does.
     pub(super) fn t_provenance_write(&self, arg_t: u8, in_memory: bool, file: bool) {
         if !self.seal.active {
             return;
