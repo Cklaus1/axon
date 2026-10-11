@@ -1300,6 +1300,20 @@ fn count_neg() -> i64 {
     }
     e
 }
+fn count_empty() -> i64 {
+    let t = arr_repeat(true, 4)
+    let one = 1
+    let z = 0
+    let y = 7
+    for k in 0..z {
+        if t[k] { y = y + one }
+    }
+    let r = 7
+    for k in 9..2 {
+        if t[k] { r = r + one }
+    }
+    y * 100 + r
+}
 fn near_miss() -> [i64] {
     let a = arr_repeat(true, 12)
     a[1] = false
@@ -1641,6 +1655,8 @@ fn packed_forms_persist() {
         ("count_sub", vec![], 2, 10_120),
         ("count_mid", vec![], 3, 198_197_016),
         ("count_neg", vec![], 1, -587),
+        // Both empty ranges take the bulk path, which changes nothing.
+        ("count_empty", vec![], 2, 707),
     ];
     for (len, n) in [
         (1, 1),

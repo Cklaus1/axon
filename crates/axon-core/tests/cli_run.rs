@@ -36916,12 +36916,14 @@ fn vm_bulk_fill_runs() {
 /// at `i64::MAX` (the tree panics one past the end; a path computing
 /// `b0 + 1` in `i64` wraps, takes the range as empty and exits 0), and
 /// `SizedInt` operands: an `i8` `j`, `s` and `b` (the tree checks `j + s` at
-/// `i8` width; a path reading them as `i64` exits 0), and each of `b` and
-/// `s` alone an `i8` passed through `id` (the checker rejects the mixed
-/// arithmetic): an `i8` `b = 126` gives the tree's index panic where a loose
-/// `b` exits 0 with `j = 130`, and an `i8` `s = 5` makes `j` an `i8` after
-/// one step, so `105 <= 150` is false at that width and the loop stops at
-/// `j = 105` where a path reading `s` as `i64` prints `155`.
+/// `i8` width; a path reading them as `i64` exits 0), and each of `j`, `b`
+/// and `s` alone an `i8` passed through `id` (the checker rejects the mixed
+/// arithmetic): an `i8` `j = 120` overflows at `125 + 5` where a path reading
+/// `j` as `i64` writes `a[120]` and `a[125]` and exits 0 with `j = 130`, an
+/// `i8` `b = 126` gives the tree's index panic where a loose `b` exits 0 with
+/// `j = 130`, and an `i8` `s = 5` makes `j` an `i8` after one step, so
+/// `105 <= 150` is false at that width and the loop stops at `j = 105` where
+/// a path reading `s` as `i64` prints `155`.
 #[test]
 fn vm_bulk_fill_bounds_and_declines() {
     let program = |init: &str, step: &str, value: &str| {
@@ -36929,7 +36931,7 @@ fn vm_bulk_fill_bounds_and_declines() {
             "fn main() -> i64 {{\n    {init}\n    {step}\n    while j <= b {{\n        a[j] = {value}\n        j = j + s\n    }}\n    println(\"{{a}} j={{j}}\")\n    0\n}}\n"
         )
     };
-    let cases: [(&str, &str, &str, &str, &str); 8] = [
+    let cases: [(&str, &str, &str, &str, &str); 9] = [
         (
             "past",
             "let a = arr_repeat(0, 10)\n    let j = 1\n    let b = 10",
@@ -36976,6 +36978,13 @@ fn vm_bulk_fill_bounds_and_declines() {
             "sized",
             "let a = arr_repeat(false, 200)\n    let j: i8 = 120\n    let b: i8 = 126",
             "let s: i8 = 5",
+            "true",
+            "integer overflow: i8 125 + 5 out of range",
+        ),
+        (
+            "sized_j",
+            "let id = |x| x\n    let w: i8 = 120\n    let a = arr_repeat(false, 200)\n    let j = id(w)\n    let b = 126",
+            "let s = 5",
             "true",
             "integer overflow: i8 125 + 5 out of range",
         ),
@@ -37084,7 +37093,10 @@ fn vm_bulk_fill_other_kind_declines() {
 /// `..` and `..=`, lengths 1 to 1,001 around the 64-element chunk (63, 64,
 /// 65, 129) with a `true` in the last partial chunk, ranges starting
 /// mid-chunk and crossing chunk boundaries (`60..140` crosses 64 and 128),
-/// counts starting from `n0 != 0` (`m`, `e`), and a negative `c`.
+/// counts starting from `n0 != 0` (`m`, `e`), a negative `c`, and two empty
+/// ranges from `n0 = 7`, `0..z` with `z = 0` and a reversed `9..2` (the
+/// count leaves `n` alone; a path without the emptiness branch slices out of
+/// range).
 #[test]
 fn vm_bulk_count_runs() {
     let src = r#"fn tail(len: i64) -> i64 {
@@ -37143,11 +37155,24 @@ fn main() -> i64 {
         if b[k] { x = x + 1 }
     }
     println("mid c={c} d={d} x={x} neg e={e}")
+    let t = arr_repeat(true, 4)
+    let one = 1
+    let z = 0
+    let y = 7
+    for k in 0..z {
+        if t[k] { y = y + one }
+    }
+    let r = 7
+    for k in 9..2 {
+        if t[k] { r = r + one }
+    }
+    println("empty n={y} n={r}")
     0
 }
 "#;
-    let want = "sub n=10 m=120\ntails 1 3 3 4 22 22 22 44 334\nmid c=198 d=197 x=16 neg e=-587\n";
-    vm_bulk_expect("bulk_count_runs", src, "main", (1, 6), 0, want, "");
+    let want = "sub n=10 m=120\ntails 1 3 3 4 22 22 22 44 334\nmid c=198 d=197 x=16 neg e=-587\n\
+                empty n=7 n=7\n";
+    vm_bulk_expect("bulk_count_runs", src, "main", (1, 8), 0, want, "");
     let traced = vm_run("bulk_count_runs", src, "vm", true);
     let err = String::from_utf8_lossy(&traced.stderr);
     assert_eq!(vm_bulk_counts(&err, "tail"), Some((1, 1)), "{err}");
