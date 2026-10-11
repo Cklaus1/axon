@@ -134,7 +134,7 @@ fn solve() -> i64 { 41 }
 ";
 
 /// Whether `r` is the value `want` (`Value` has no `PartialEq`).
-fn yields(r: &Result<Value, Flow>, want: &Value) -> bool {
+pub(super) fn yields(r: &Result<Value, Flow>, want: &Value) -> bool {
     r.as_ref()
         .is_ok_and(|v| super::value::values_equal(v, want))
 }
@@ -173,7 +173,7 @@ fn with_prog<R>(
 /// [`with_prog`] over `suite` and `cand`, with the module-level `let`s
 /// initialised, as a run evaluates them before `main`: without them every
 /// global read would miss, and a refusal would prove nothing.
-fn with_src<R>(
+pub(super) fn with_src<R>(
     tag: &str,
     suite: &str,
     cand: &str,
@@ -187,14 +187,14 @@ fn with_src<R>(
 }
 
 /// [`with_src`] over [`SUITE`] and [`CAND`].
-fn with_ix<R>(tag: &str, sealed: bool, f: impl FnOnce(&Interp<'_>) -> R) -> R {
+pub(super) fn with_ix<R>(tag: &str, sealed: bool, f: impl FnOnce(&Interp<'_>) -> R) -> R {
     with_src(tag, SUITE, CAND, sealed, f)
 }
 
 /// Run fn `name`'s body with `args` (value, taint) bound to its parameters,
 /// in a sealed frame when `sealed_frame`, with `pin_fn` set to it. The
 /// sealed instantiation runs exactly when the run is sealed.
-fn go_t(
+pub(super) fn go_t(
     ix: &Interp<'_>,
     name: &str,
     sealed_frame: bool,
@@ -227,7 +227,12 @@ fn go_t(
 }
 
 /// [`go_t`] with every argument clean.
-fn go(ix: &Interp<'_>, name: &str, sealed_frame: bool, args: Vec<Value>) -> Result<Value, Flow> {
+pub(super) fn go(
+    ix: &Interp<'_>,
+    name: &str,
+    sealed_frame: bool,
+    args: Vec<Value>,
+) -> Result<Value, Flow> {
     go_t(
         ix,
         name,
@@ -236,15 +241,22 @@ fn go(ix: &Interp<'_>, name: &str, sealed_frame: bool, args: Vec<Value>) -> Resu
     )
 }
 
-fn refused<T: std::fmt::Debug>(r: &Result<T, Flow>, needle: &str) -> bool {
+pub(super) fn refused<T: std::fmt::Debug>(r: &Result<T, Flow>, needle: &str) -> bool {
     matches!(r, Err(Flow::Panic(m)) if m.contains(needle))
 }
 
-fn strv(s: &str) -> Value {
+/// The runtime taint rules apply on this test's thread from here on
+/// (`TAINT_FORCE_ON`, off by default in a unit test; R51 S4). A static-layer
+/// assertion before the call is judged by the static rule alone.
+pub(super) fn taint_rules_on() {
+    TAINT_FORCE_ON.with(|c| c.set(true));
+}
+
+pub(super) fn strv(s: &str) -> Value {
     Value::Str(Rc::new(s.to_string()))
 }
 
-fn u8v(n: i64) -> Value {
+pub(super) fn u8v(n: i64) -> Value {
     Value::SizedInt {
         val: n,
         ty: IntWidth::U8,
@@ -252,18 +264,19 @@ fn u8v(n: i64) -> Value {
 }
 
 /// A dict `{ "k": v }`.
-fn dict_k(v: Value) -> Value {
+pub(super) fn dict_k(v: Value) -> Value {
     let mut m = std::collections::BTreeMap::new();
     m.insert("k".to_string(), v);
     Value::Dict(Rc::new(RefCell::new(m)))
 }
 
 /// The text sealed code is told for a name it cannot use.
-fn no_fn(name: &str) -> String {
+pub(super) fn no_fn(name: &str) -> String {
     Interp::sealed_no_fn_msg(name)
 }
 
-const WIDTH: &str = "operator code did arithmetic on a fixed-width integer whose width nothing \
+pub(super) const WIDTH: &str =
+    "operator code did arithmetic on a fixed-width integer whose width nothing \
                      on the operator side determined";
 const NAME: &str = "a function name nothing on the operator side determined";
 
@@ -384,6 +397,7 @@ fn operator_code_hands_a_name_resolving_builtin_only_a_determined_name() {
             !refused(&r, "runtime taint"),
             "the static rule refused it: {r:?}"
         );
+        taint_rules_on();
         // Pure statically; the runtime taint of the branch decides.
         assert!(go_t(ix, "spawn_branch", false, vec![(Value::Int(1), 0)]).is_ok());
         let r = go_t(ix, "spawn_branch", false, vec![(Value::Int(1), ALL)]);
@@ -403,71 +417,6 @@ fn operator_code_hands_a_name_resolving_builtin_only_a_determined_name() {
         assert!(
             go(ix, "spawn_param", false, vec![strv("w")]).is_ok(),
             "unsealed: no rule"
-        );
-    });
-}
-
-/// v0.22 `operator_arithmetic_never_runs_at_a_width_the_candidate_chose`
-/// (veto interp.rs:10752) and its unary form (10178): operator arithmetic on
-/// a fixed-width integer whose width nothing on the operator side determined
-/// is refused - statically (`seal_width`, `seal_width_unary`: a value read
-/// untyped from a dict) and by the runtime taint (`t_check_width`: a typed
-/// parameter whose value carries the candidate's type taint). A comparison is
-/// not arithmetic; a `let x: u8` pin determines the width; a sealed frame's
-/// own arithmetic is its own.
-#[test]
-fn operator_arithmetic_never_runs_at_a_width_the_candidate_chose() {
-    with_ix("r51-s3-width", true, |ix| {
-        let d = || dict_k(u8v(255));
-        let r = go(ix, "shift", false, vec![d()]);
-        assert!(
-            refused(&r, WIDTH),
-            "ATTACK: `v << 1` at the candidate's width: {r:?}"
-        );
-        let r = go(ix, "neg", false, vec![d()]);
-        assert!(
-            refused(&r, WIDTH),
-            "ATTACK: `-v` at the candidate's width: {r:?}"
-        );
-        assert!(go(ix, "compare", false, vec![d()]).is_ok(), "a comparison");
-        assert!(
-            go(ix, "shift", false, vec![dict_k(Value::Int(4))]).is_ok(),
-            "an i64"
-        );
-        assert!(
-            go(ix, "shift_pinned", false, vec![d()]).is_ok(),
-            "pinned by `let x: u8`"
-        );
-        assert!(
-            go(ix, "shift", true, vec![d()]).is_ok(),
-            "the sealed frame's own"
-        );
-        assert!(
-            go(ix, "neg", true, vec![d()]).is_ok(),
-            "the sealed frame's own"
-        );
-        // The runtime rule: determined statically, the value's TYPE taint
-        // says the candidate chose it.
-        assert!(go_t(ix, "shift_t", false, vec![(u8v(255), 0)]).is_ok());
-        let r = go_t(ix, "shift_t", false, vec![(u8v(255), ALL)]);
-        assert!(
-            refused(&r, WIDTH) && refused(&r, "runtime taint"),
-            "ATTACK: a tainted width: {r:?}"
-        );
-        let r = go_t(ix, "neg_t", false, vec![(u8v(4), ALL)]);
-        assert!(
-            refused(&r, "runtime taint"),
-            "ATTACK: a tainted unary width: {r:?}"
-        );
-        assert!(
-            go_t(ix, "neg_t", false, vec![(u8v(4), VAL)]).is_ok(),
-            "VAL is not TYP"
-        );
-    });
-    with_ix("r51-s3-width-u", false, |ix| {
-        assert!(
-            go(ix, "shift", false, vec![dict_k(u8v(255))]).is_ok(),
-            "unsealed"
         );
     });
 }
@@ -804,6 +753,7 @@ fn taint_reaches_an_operator_name_by_every_carrier() {
 /// taint state). Every `attacks` probe must be refused by the runtime name
 /// rule, every `honest` one must run; the misses, listed.
 fn judge_probes(tag: &str, attacks: &[&str], honest: &[&str]) -> Vec<String> {
+    taint_rules_on();
     let run = |probe: &str| {
         with_src(&format!("{tag}-{probe}"), CARRY, CARRY_CAND, true, |ix| {
             go(ix, probe, false, vec![])
@@ -911,6 +861,7 @@ fn definition_owned_code_runs_under_its_definitions_provenance() {
         refused(&r, &no_fn("secret")),
         "ATTACK: the candidate's `where` ran in an operator frame: {r:?}"
     );
+    taint_rules_on();
     let r = with_src("r51-s3e-defn-let", CARRY, CARRY_CAND, true, |ix| {
         go(ix, "name_by_mine", false, vec![])
     });
@@ -1174,8 +1125,8 @@ fn every_main_only_sink_is_classified() {
         ("call_mut_with", "seal edge on the call path (the `&mut` hand-back cast, crossing lane); the callee frame is call_fn_in's", "call_mut_with", &["self.call_fn_in(entry, argv, &mut frame)"]),
         ("chan_method", "seal edge (chan_send_check, dict_edge_in) and taint touch point (t_mark_obj)", "chan_method", &["self.chan_send_check(q, &mut v)?", "self.dict_edge_in(&v)?", "self.t_mark_obj("]),
         ("dispatch_call", "seal edge before it: the name rule at eval_call's sealed arm", "eval_name_sink_call", &["self.seal_name_args(name, args)?", "self.t_check_names(name, &ats)?"]),
-        ("dispatch_named", "seal edge (global read, no-such-fn text) and taint touch point (builtin in/out)", "dispatch_named", &["self.global_ref(s)?", "self.no_such_fn(", "t_builtin_in(", "t_builtin_out("]),
-        ("impl_method", "seal edge via its sealed twin (the tree MethodCall arm under T; VM Op::MethodCall never runs sealed)", "impl_method_sealed", &["self.seal_method(f, &tn)?", "self.seal_dispatch(receiver, f, &argv[0], &tn)?", "self.no_such_fn("]),
+        ("dispatch_named", "seal edge (global read, no-such-fn text, a sealed local never falls through to a fn by name) and taint touch point (builtin in/out)", "dispatch_named", &["self.global_ref(s)?", "self.no_such_fn(", "return super::not_callable(c);", "t_builtin_in(", "t_builtin_out("]),
+        ("impl_method", "seal edge via its sealed twin (the tree MethodCall arm under T; VM Op::MethodCall never runs sealed): static and runtime receiver dispatch rule", "impl_method_sealed", &["self.seal_method(f, &tn)?", "self.seal_dispatch(receiver, f, &argv[0], &tn)?", "self.t_check_dispatch(f, &argv[0], rt, &tn)?", "self.no_such_fn("]),
         ("call_closure_arg", "taint touch point (the builtin's loop pc); the closure argument cast is a crossing edge", "call_closure_arg", &["t_loop_pc"]),
         ("cond_bool", "neither: value to bool; the branch's control taint is taken by its callers (t_branch)", "eval_arm", &["self.t_branch("]),
         ("logic_rhs", "neither: combines evaluated values; taint at short_circuit_tainted", "short_circuit_tainted", &["logic_rhs("]),

@@ -29,10 +29,13 @@ impl<'p> Interp<'p> {
         nest_guard!(self, RUN_GOAL_WARM);
         let _goal_guard = self.enter_goal(name);
         if !self.goal_name_is_known(name) {
-            return Err(Self::unknown_goal_name(name));
+            return Err(self.unknown_goal_name(name));
         }
         if let Some(f) = self.fns.get(name) {
             let f = *f;
+            // A sealed caller with an operator goal's recorded provenance still
+            // reaches no operator fn (the call edge's common text; R51 S4).
+            self.seal_call(f)?;
             let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
             let all_i64_params =
                 !f.params.is_empty() && f.params.iter().all(|p| is_i64_type(&p.ty));
@@ -269,8 +272,11 @@ impl<'p> Interp<'p> {
             None if self.k().provenance.borrow().contains_key(name) => {
                 return Ok(self.best_observed(name, target, n_samples));
             }
-            None => return Err(Self::unknown_goal_name(name)),
+            None => return Err(self.unknown_goal_name(name)),
         };
+        // A name the operator defines reads exactly as one nothing defines to a
+        // sealed caller (amendment 117, loop finding 38; veto goal.rs:272, R51 S4).
+        self.seal_call(f)?;
         let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
         let all_i64_params = !f.params.is_empty() && f.params.iter().all(|p| is_i64_type(&p.ty));
         let i64_ret = f
@@ -364,8 +370,11 @@ impl<'p> Interp<'p> {
             None if self.k().provenance.borrow().contains_key(name) => {
                 return Ok(self.best_observed(name, target, max_evals));
             }
-            None => return Err(Self::unknown_goal_name(name)),
+            None => return Err(self.unknown_goal_name(name)),
         };
+        // A name the operator defines reads exactly as one nothing defines to a
+        // sealed caller (amendment 117, loop finding 38; veto goal.rs:371, R51 S4).
+        self.seal_call(f)?;
         let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
         let one_i64_param = f.params.len() == 1 && is_i64_type(&f.params[0].ty);
         let i64_ret = f
@@ -463,8 +472,11 @@ impl<'p> Interp<'p> {
             None if self.k().provenance.borrow().contains_key(name) => {
                 return Ok(self.best_observed(name, target, 0));
             }
-            None => return Err(Self::unknown_goal_name(name)),
+            None => return Err(self.unknown_goal_name(name)),
         };
+        // A name the operator defines reads exactly as one nothing defines to a
+        // sealed caller (amendment 117, loop finding 38; veto goal.rs:474, R51 S4).
+        self.seal_call(f)?;
         let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
         let all_i64_params = !f.params.is_empty() && f.params.iter().all(|p| is_i64_type(&p.ty));
         let i64_ret = f
@@ -538,8 +550,11 @@ impl<'p> Interp<'p> {
             None if self.k().provenance.borrow().contains_key(name) => {
                 return Ok(self.best_observed(name, target, 0));
             }
-            None => return Err(Self::unknown_goal_name(name)),
+            None => return Err(self.unknown_goal_name(name)),
         };
+        // A name the operator defines reads exactly as one nothing defines to a
+        // sealed caller (amendment 117, loop finding 38; veto goal.rs:552, R51 S4).
+        self.seal_call(f)?;
         let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
         let all_i64_params = !f.params.is_empty() && f.params.iter().all(|p| is_i64_type(&p.ty));
         let i64_ret = f
@@ -642,10 +657,12 @@ impl<'p> Interp<'p> {
         nest_guard!(self, RUN_GOAL);
         let _goal_guard = self.enter_goal(name);
         if !self.goal_name_is_known(name) {
-            return Err(Self::unknown_goal_name(name));
+            return Err(self.unknown_goal_name(name));
         }
         if let Some(f) = self.fns.get(name) {
             let f = *f;
+            // As in `run_goal_warm` (R51 S4).
+            self.seal_call(f)?;
             let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
             let all_i64_params =
                 !f.params.is_empty() && f.params.iter().all(|p| is_i64_type(&p.ty));
