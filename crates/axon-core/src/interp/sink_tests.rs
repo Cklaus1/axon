@@ -1092,7 +1092,8 @@ fn every_main_only_sink_is_classified() {
         .expect("interp/sym.rs")
         .1;
     assert!(
-        sym.contains("entry.plain = !(sealed"),
+        sym.contains("entry.plain = !entry.seal_general(sealed);")
+            && sym.contains("fn seal_general(&self, sealed: bool) -> bool {\n        sealed\n"),
         "DRIFT: a sealed run's entries are not plain"
     );
 }

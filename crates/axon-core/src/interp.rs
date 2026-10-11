@@ -4945,11 +4945,21 @@ impl<'p> Interp<'p> {
     /// `::<false>`, which is the code an unsealed run always ran.
     #[inline(always)]
     fn call_fn_in_general(&self, entry: &FnEntry<'p>, args: Vec<Value>, env: &mut Env) -> R {
-        if self.seal.active {
+        if self.seal_frames() {
             self.call_fn_sealed(entry, args, env)
         } else {
             self.call_fn_frame::<false>(entry, args, env, false)
         }
+    }
+
+    /// Whether [`Interp::call_fn_in_general`] enters the callee's frame
+    /// through [`Interp::call_fn_sealed`] (the call edge, the crossing, the
+    /// `::<true>` instantiation): exactly in a sealed run. Named so the
+    /// refusal-coverage gate's `SEAL_FN` scans it (spec §8 T7); inlined, so
+    /// the test is the field read it was.
+    #[inline(always)]
+    fn seal_frames(&self) -> bool {
+        self.seal.active
     }
 
     /// A sealed run's call (veto `call_fn_sealed`, interp.rs:3579-3632): the

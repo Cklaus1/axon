@@ -127,25 +127,46 @@ pub(crate) fn engine_for(
     override_: Option<Engine>,
     env: Option<&std::ffi::OsStr>,
 ) -> Result<Engine, EngineRefusal> {
-    let parse = |raw: &std::ffi::OsStr| {
-        Engine::parse(&raw.to_string_lossy()).map_err(EngineRefusal::Invalid)
-    };
-    if sealed {
-        if !complete {
-            return Err(EngineRefusal::SealIncomplete);
-        }
-        if override_ == Some(Engine::Vm) {
-            return Err(EngineRefusal::SealedVm);
-        }
-        return match env.map(parse).transpose()? {
-            Some(Engine::Vm) => Err(EngineRefusal::SealedVm),
-            None | Some(Engine::Tree) => Ok(Engine::Tree),
-        };
+    if let Some(pinned) = seal_engine_pin(sealed, complete, override_, env)? {
+        return Ok(pinned);
     }
     if let Some(engine) = override_ {
         return Ok(engine);
     }
-    Ok(env.map(parse).transpose()?.unwrap_or(Engine::DEFAULT))
+    Ok(env
+        .map(parse_engine)
+        .transpose()?
+        .unwrap_or(Engine::DEFAULT))
+}
+
+/// An `AXON_ENGINE` value as [`engine_for`] reads it.
+fn parse_engine(raw: &std::ffi::OsStr) -> Result<Engine, EngineRefusal> {
+    Engine::parse(&raw.to_string_lossy()).map_err(EngineRefusal::Invalid)
+}
+
+/// The seal pin, [`engine_for`]'s sealed half (R51 §4 Fork 1): `Ok(None)` for
+/// an unsealed run, which the pin leaves to R50 §3's selection; for a sealed
+/// run the refusal, or `Ok(Some(Engine::Tree))`, never the VM. Named so the
+/// refusal-coverage gate's `SEAL_FN` scans it (spec §8 T7).
+fn seal_engine_pin(
+    sealed: bool,
+    complete: bool,
+    override_: Option<Engine>,
+    env: Option<&std::ffi::OsStr>,
+) -> Result<Option<Engine>, EngineRefusal> {
+    if !sealed {
+        return Ok(None);
+    }
+    if !complete {
+        return Err(EngineRefusal::SealIncomplete);
+    }
+    if override_ == Some(Engine::Vm) {
+        return Err(EngineRefusal::SealedVm);
+    }
+    match env.map(parse_engine).transpose()? {
+        Some(Engine::Vm) => Err(EngineRefusal::SealedVm),
+        None | Some(Engine::Tree) => Ok(Some(Engine::Tree)),
+    }
 }
 
 /// The engine an `Interp` being built runs with: [`engine_for`] over the live
@@ -1313,6 +1334,19 @@ fn write_place_op(
 }
 
 impl<'p> Interp<'p> {
+    /// Whether this run executes on the VM: the engine [`engine_for`] chose
+    /// at build, which the seal pin never makes [`Engine::Vm`] for a sealed
+    /// run. The one read of `Interp::engine`: every engine gate
+    /// ([`Interp::run_body`], [`Interp::run_test_body`], [`Interp::run_lambda`],
+    /// `fold_leaf`) and the trace consult it (spec §8 T1d), so a sealed run
+    /// enters no VM path. Named so the refusal-coverage gate's `SEAL_FN` scans
+    /// it (spec §8 T7); inlined, so each gate's test is the field compare it
+    /// was.
+    #[inline(always)]
+    pub(super) fn seal_pin_vm(&self) -> bool {
+        self.engine == Engine::Vm
+    }
+
     /// Run a fn body: compiled under [`Engine::Vm`] for a fn-table entry, on
     /// the tree otherwise. `call_fn_in` is the only caller, at the point where
     /// it would evaluate `entry.def.body`; everything before and after the
@@ -1321,7 +1355,7 @@ impl<'p> Interp<'p> {
     /// the VM's, is not on the tree's), while both charge the same budget.
     #[inline(always)]
     pub(super) fn run_body(&self, entry: &FnEntry<'_>, env: &mut Env) -> R {
-        if self.engine == Engine::Vm {
+        if self.seal_pin_vm() {
             self.run_body_vm(entry, env)
         } else {
             self.run_body_tree(entry, env)
@@ -1370,7 +1404,7 @@ impl<'p> Interp<'p> {
     #[inline(never)]
     pub(super) fn run_test_body(&self, entry: &FnEntry<'_>, env: &mut Env) -> R {
         nest_guard!(self, RUN_BODY_TREE);
-        if self.engine == Engine::Vm {
+        if self.seal_pin_vm() {
             let body = match entry.compiled.as_ref().and_then(std::cell::OnceCell::get) {
                 Some(body) => Some(body),
                 None if !self.first_entry_on_tree(entry) => self.compile_body(entry)?,
@@ -1446,7 +1480,7 @@ impl<'p> Interp<'p> {
     /// (AX-56, as [`Interp::run_body`] for fn bodies).
     #[inline(always)]
     pub(super) fn run_lambda(&self, code: &ClosureCode, env: &mut Env) -> R {
-        if self.engine == Engine::Vm {
+        if self.seal_pin_vm() {
             match code.compiled.as_ref() {
                 Some(lb) => {
                     let body = match lb.compiled() {
@@ -3372,7 +3406,7 @@ impl<'p> Interp<'p> {
     /// `vm: tree <name>: <reason>` under `AXON_ENGINE=vm AXON_VM_TRACE=1`: a
     /// whole fn body runs on the tree-walker.
     pub(super) fn vm_trace_tree(&self, entry: &FnEntry<'_>, reason: &str) {
-        if self.engine == Engine::Vm && self.vm_trace {
+        if self.seal_pin_vm() && self.vm_trace {
             eprintln!("vm: tree {}: {reason}", self.vm_body_name(entry));
         }
     }

@@ -886,7 +886,7 @@ impl Interp<'_> {
     /// binds its parameters without coercion and has no depth guard, and a
     /// pure body neither writes its captures nor calls out.
     pub(in crate::interp) fn fold_leaf(&self, f: &Value, xs: &[Value], acc: &mut Value) -> usize {
-        if self.engine != Engine::Vm || xs.is_empty() {
+        if !self.seal_pin_vm() || xs.is_empty() {
             return 0;
         }
         let Value::Closure(cv) = f else {

@@ -485,15 +485,24 @@ impl<'p> FnEntry<'p> {
             entered: std::cell::Cell::new(false),
             hot: false,
         };
-        entry.plain = !(sealed
-            || entry.is_agent
-            || entry.ai_metered
-            || entry.corrigible
-            || entry.adaptive
-            || entry.has_goal
-            || entry.is_main
-            || entry.has_epilogue);
+        entry.plain = !entry.seal_general(sealed);
         entry
+    }
+
+    /// Whether every call of this entry takes `Interp::call_fn_in_general`
+    /// (not [`FnEntry::plain`]): in a sealed run every call does, so it goes
+    /// through `call_fn_sealed` (R51 §4 Fork 1, VmPin-4a); otherwise a fn
+    /// with an attribute-driven step around its body does. Named so the
+    /// refusal-coverage gate's `SEAL_FN` scans it (spec §8 T7).
+    fn seal_general(&self, sealed: bool) -> bool {
+        sealed
+            || self.is_agent
+            || self.ai_metered
+            || self.corrigible
+            || self.adaptive
+            || self.has_goal
+            || self.is_main
+            || self.has_epilogue
     }
 }
 
