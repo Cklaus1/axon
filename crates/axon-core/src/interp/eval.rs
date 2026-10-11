@@ -1688,7 +1688,14 @@ impl<'p> Interp<'p> {
         };
         // 3. A user-defined function.
         if resolved >= CALLEE_FN {
-            return self.call_fn_entry(&self.fn_table[(resolved - CALLEE_FN) as usize], argv);
+            let e = &self.fn_table[(resolved - CALLEE_FN) as usize];
+            // `call_fn_entry` refuses a `&mut` fn reached without `&mut`
+            // operands ahead of the call edge, in words that name it: a sealed
+            // caller is told what a missing name gets first (amendment 106).
+            if e.has_ref_mut {
+                self.seal_call(e.def)?;
+            }
+            return self.call_fn_entry(e, argv);
         }
         // 4. A module-level closure constant.
         if let Some(c @ Value::Closure { .. }) = self.global_ref(s)? {

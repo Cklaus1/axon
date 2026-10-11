@@ -2955,7 +2955,7 @@ ATTACK_MARKERS.update({
     'M3340': 'struct refinement predicate: ACCEPT/REFUSE differs',
     'M3341': 'predicate: struct literal: ACCEPT/REFUSE differs',
     'M3342': 'goal_run_categorical name: ACCEPT/REFUSE differs',
-    'M3343': 'goal_eval name: the text differs',
+    'M3343': 'goal_eval name of a &mut fn: the text differs',
     'M3344': r'ATTACK: DRIFT: interp/builtins\.rs line \d+ calls a closure with `call_closure\(`',
     'M3345': r'ATTACK: DRIFT: goal\.rs line \d+ \(in `[^`]*`\) runs operator code and does not raise the control taint after it',
     'M3346': 'ATTACK: sealed code selected operator code \\(a match guard run because',
@@ -3012,4 +3012,5 @@ ATTACK_MARKERS.update({
     'M3492': r'ATTACK: a sealed run entered the VM through run_test_body\b',
     'M3493': r"ATTACK: sealed code reached the operator \(direct call\): Ok\(Completed\)",
     'M3494': r"ATTACK: sealed code reached the operator \(direct call\): Ok\(Completed\)",
+    'M3495': r'call \[mutp\] Err\("`@` takes `&mut` parameters',
 })

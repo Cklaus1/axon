@@ -10983,8 +10983,13 @@ MUTATIONS += [
     ('M3342', 'ORACLE (am117): goal_run_categorical lets a sealed caller tell an operator fn from a missing name', 'crates/axon-core/src/interp/goal.rs',
      '        let f = match self.fns.get(name) {\n            Some(f) => *f,\n            None if self.k().provenance.borrow().contains_key(name) => {\n                return Ok(self.best_observed(name, target, max_evals));\n            }\n            None => return Err(self.unknown_goal_name(name)),\n        };\n        // A name the operator defines reads exactly as one nothing defines to a\n        // sealed caller (amendment 117, loop finding 38; veto goal.rs:371, R51 S4).\n        self.seal_call(f)?;\n', '        let f = match self.fns.get(name) {\n            Some(f) => *f,\n            None if self.k().provenance.borrow().contains_key(name) => {\n                return Ok(self.best_observed(name, target, max_evals));\n            }\n            None => return Err(self.unknown_goal_name(name)),\n        };\n',
      'axon-psv', '--test sealed_frames', 'a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one'),
-    ('M3343', 'ORACLE (am117): goal_eval gives a sealed caller a different text for a missing name', 'crates/axon-core/src/interp/goal.rs',
-     'return self.no_such_fn(\n                name,\n                format!("goal_eval: `{name}` is not a defined function"),\n            );', 'return Err(Flow::Panic(format!(\n                "goal_eval: `{name}` is not a defined function"\n            )));',
+    # R51: v0.22's guard (the common text from no_such_fn, where an operator name instead reached
+    # call_fn's call edge) no longer decides: main's lookup sees only the sealed caller's own fns, so
+    # an operator name and a missing one take the same no_such_fn branch and the plain-text mutant
+    # tells them apart nowhere. The deciding guard is that lookup: without it an operator fn with a
+    # `&mut` param meets call_fn's `&mut` refusal before the call edge.
+    ('M3343', "ORACLE (am117): goal_eval's lookup sees only a sealed caller's own fns (an operator fn never reaches call_fn's `&mut` refusal)", 'crates/axon-core/src/interp/goal.rs',
+     '            .get(name)\n            .filter(|f| !(self.seal.active && self.frame_sealed.get()) || self.fn_is_sealed(f));\n        let Some(f) = visible else {', '            .get(name);\n        let Some(f) = visible else {',
      'axon-psv', '--test sealed_frames', 'a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one'),
     ('M3344', 'DRIFT (am117): one arr_* arm calls its closure around the control taint', 'crates/axon-core/src/interp/builtins.rs',
      '                    let mapped = self.call_closure_arg(f, [x.clone()])?;', '                    let mapped = self.call_closure(f.clone(), vec![x.clone()])?;',
@@ -11155,6 +11160,12 @@ MUTATIONS += [
     ('M3494', "R51 general calls: a sealed run's general call goes through call_fn_sealed", 'crates/axon-core/src/interp.rs',
      '    fn seal_frames(&self) -> bool {\n        self.seal.active\n', '    fn seal_frames(&self) -> bool {\n        false\n',
      'axon-core', '--no-default-features --lib', 'interp::tests::runtime_sealing_holds_without_the_static_check'),
+    # R51 T7 (found re-anchoring M3343): call_fn_entry's `&mut` refusal comes ahead of the call edge
+    # (as v0.22's call_fn did), so a direct call of an operator `&mut` fn told sealed code the fn
+    # exists; dispatch_named applies the call edge first.
+    ('M3495', "EXISTENCE ORACLE (am106): a sealed direct call of an operator `&mut` fn meets the call edge before call_fn_entry's `&mut` refusal", 'crates/axon-core/src/interp/eval.rs',
+     '            if e.has_ref_mut {\n                self.seal_call(e.def)?;\n', '            if false && e.has_ref_mut {\n                self.seal_call(e.def)?;\n',
+     'axon-core', '--lib', 'interp::taint_tests::a_sealed_caller_cannot_tell_an_operator_name_from_a_missing_one_on_any_path'),
 ]
 
 

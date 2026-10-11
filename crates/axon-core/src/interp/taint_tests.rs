@@ -2693,7 +2693,8 @@ const ORACLE_FORMS: &[(&str, &str)] = &[
 ];
 
 /// (a name the operator defines, a name nothing defines): one pair per kind of
-/// operator definition.
+/// operator definition. `mutp` takes a `&mut` param, which `call_fn_entry`
+/// refuses ahead of the call edge in words that name it (R51).
 const ORACLE_PAIRS: &[(&str, &str)] = &[
     ("secret", "zznosuch"),
     ("TABLE", "ZZNOSUCH"),
@@ -2701,14 +2702,15 @@ const ORACLE_PAIRS: &[(&str, &str)] = &[
     ("nonadapt", "zznosuch"),
     ("F", "ZZNOSUCH"),
     ("CFG", "ZZNOSUCH"),
+    ("mutp", "zznosuch"),
 ];
 
 /// A sealed caller's refusal does not say whether the operator defines a name:
 /// across every form and kind of definition, the text for an operator name is
-/// the text for a missing one, modulo the name itself. 20 forms x 6 pairs.
+/// the text for a missing one, modulo the name itself. 20 forms x 7 pairs.
 #[test]
 fn a_sealed_caller_cannot_tell_an_operator_name_from_a_missing_one_on_any_path() {
-    let su = "let TABLE = [41, 42]\n@[adaptive]\nfn ad(n: i64) -> i64 { n }\nfn secret() -> i64 { 41 }\nfn nonadapt(n: i64) -> i64 { n }\ntype C = { k: i64 }\nlet CFG = C { k: 41 }\nlet F = |x: i64| x + 1\nlet P = principal_root(\"r\", true, true, true, 100)\n";
+    let su = "let TABLE = [41, 42]\n@[adaptive]\nfn ad(n: i64) -> i64 { n }\nfn secret() -> i64 { 41 }\nfn nonadapt(n: i64) -> i64 { n }\nfn mutp(a: &mut [i64]) -> i64 { 41 }\ntype C = { k: i64 }\nlet CFG = C { k: 41 }\nlet F = |x: i64| x + 1\nlet P = principal_root(\"r\", true, true, true, 100)\n";
     let body = "    assert_eq(solve(), 41)";
     let verdict = |name: &str, form: &str| -> String {
         let cand = format!(
