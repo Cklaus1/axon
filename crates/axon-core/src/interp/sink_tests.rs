@@ -786,7 +786,13 @@ fn taint_reaches_an_operator_name_by_every_carrier() {
     assert!(fails.is_empty(), "{}", fails.join("\n"));
     // Unsealed: no rule, every probe runs.
     with_src("r51-s3e-carry-u", CARRY, CARRY_CAND, false, |ix| {
-        for probe in ["via_dict", "via_chan", "via_mut", "via_capture", "via_sched"] {
+        for probe in [
+            "via_dict",
+            "via_chan",
+            "via_mut",
+            "via_capture",
+            "via_sched",
+        ] {
             let r = go(ix, probe, false, vec![]);
             assert!(r.is_ok(), "unsealed {probe}: {r:?}");
         }
@@ -864,7 +870,10 @@ fn a_channel_the_candidate_touched_never_selects_an_operator_name() {
 fn a_candidate_calls_its_own_fn_value_and_no_operator_one() {
     with_src("r51-s3e-fnval", CARRY, CARRY_CAND, true, |ix| {
         let r = go(ix, "own_fn_value", false, vec![]);
-        assert!(yields(&r, &Value::Int(4)), "the candidate's own fn value: {r:?}");
+        assert!(
+            yields(&r, &Value::Int(4)),
+            "the candidate's own fn value: {r:?}"
+        );
         let r = go(ix, "solve_fv", true, vec![Value::Int(3)]);
         assert!(yields(&r, &Value::Int(4)), "inside its own frame: {r:?}");
         let r = go(ix, "held_fn_value", false, vec![]);
@@ -934,8 +943,16 @@ fn a_candidates_module_level_let_is_a_sealed_frame() {
             assert!(ix.init_globals().is_ok(), "unsealed {cand:?}");
         });
     };
-    refused_init("r51-s3e-init-call", "let STOLEN = secret(1)\n", &no_fn("secret"));
-    refused_init("r51-s3e-init-read", "let PEEK = TABLE[0]\n", &no_fn("TABLE"));
+    refused_init(
+        "r51-s3e-init-call",
+        "let STOLEN = secret(1)\n",
+        &no_fn("secret"),
+    );
+    refused_init(
+        "r51-s3e-init-read",
+        "let PEEK = TABLE[0]\n",
+        &no_fn("TABLE"),
+    );
     refused_init("r51-s3e-init-whole", "let PEEK = PAIR\n", &no_fn("PAIR"));
     with_prog(
         "r51-s3e-init-k",
@@ -947,7 +964,10 @@ fn a_candidates_module_level_let_is_a_sealed_frame() {
                 .expect("a candidate initialiser reads its own earlier global");
             assert_eq!(ix.kernels[0].scheduler.borrow().len(), 0, "operator fibers");
             assert_eq!(ix.kernels[1].scheduler.borrow().len(), 1, "sealed fibers");
-            assert!(yields(&Ok(ix.globals[&intern("OWN")].clone()), &Value::Int(1)));
+            assert!(yields(
+                &Ok(ix.globals[&intern("OWN")].clone()),
+                &Value::Int(1)
+            ));
         },
     );
 }
@@ -985,7 +1005,10 @@ impl Other for Expect { fn check(self: Expect, got: i64) -> bool { true } }
     let honest = with_src("r51-s3e-impl-h", SUITE_E, "", true, |ix| {
         go(ix, "judge_expect", false, vec![])
     });
-    assert!(yields(&honest, &Value::Bool(false)), "the operator's own: {honest:?}");
+    assert!(
+        yields(&honest, &Value::Bool(false)),
+        "the operator's own: {honest:?}"
+    );
 }
 
 // ── Drift ───────────────────────────────────────────────────────────────────
