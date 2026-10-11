@@ -1,0 +1,47 @@
+pub fn fib(n: i64) -> i64 {
+    if n < 2 { return n }
+    fib(n - 1) + fib(n - 2)
+}
+
+pub fn sieve_count(n: i64) -> i64 {
+    let flags = arr_repeat(true, n + 1)
+    let count = 0
+    let i = 2
+    while i <= n {
+        if flags[i] {
+            count = count + 1
+            let j = i * i
+            while j <= n {
+                flags[j] = false
+                j = j + i
+            }
+        }
+        i = i + 1
+    }
+    count
+}
+
+pub fn sorted_checksum(n: i64) -> i64 {
+    let xs = arr_repeat(0, n)
+    let x = 1
+    for i in 0..n {
+        x = (x * 48271) % 2147483647
+        xs[i] = x % 100000
+    }
+    let s = arr_sort_by(xs, |a: i64, b: i64| a - b)
+    let cs = 0
+    for i in 0..n {
+        cs = (cs * 31 + s[i]) % 1000000007
+    }
+    cs
+}
+
+pub fn word_freq(n: i64) -> i64 {
+    let d = dict_new()
+    for i in 0..n {
+        let k = "w" + to_str(i % 97)
+        let c = match dict_get(d, k) { Some(v) => v, None => 0 }
+        dict_set(d, k, c + 1)
+    }
+    match dict_get(d, "w3") { Some(v) => v, None => 0 }
+}

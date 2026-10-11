@@ -1,0 +1,14 @@
+mod sol
+use sol.{fib, sieve_count, sorted_checksum, word_freq}
+
+@[test]
+fn t_fib() { assert_eq(fib(27), 196418) }
+
+@[test]
+fn t_sieve() { assert_eq(sieve_count(1000000), 78498) }
+
+@[test]
+fn t_sort() { assert(sorted_checksum(100000) >= 0) }
+
+@[test]
+fn t_words() { assert_eq(word_freq(100000), 1031) }
