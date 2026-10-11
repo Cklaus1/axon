@@ -37387,10 +37387,11 @@ fn vm_bulk_count_declines() {
 /// line. Counts: an `else`; `a[w]` for another local `w`; `n = n - c`;
 /// `n = m + c`; a second statement in the `then` block; a statement after
 /// the `if`; `n = n + v` with an outer `v` shadowed by the loop's;
-/// `p = p + p`; and `v = v + 1`, the loop variable as the accumulated local
-/// (the tree leaves the outer `v` at 3). Fills: `q[k] = 7`; the increment
-/// before the store; a third statement; `j = k + s`; `a[j] = j`; `j = j + j`;
-/// a step assigning another local (`k = j + s`, zero iterations); and, each
+/// `p = p + p`; `v = v + 1`, the loop variable as the accumulated local
+/// (the tree leaves the outer `v` at 3); and a statement before the `if`.
+/// Fills: `q[k] = 7`; the increment before the store; a third statement;
+/// `j = k + s`; `a[j] = j`; `j = j + j`; a step assigning another local
+/// (`k = j + s`, zero iterations); a statement before the store; and, each
 /// in a program of its own as the tree panics in it, `j = j - s`,
 /// `while j > b`, `while k <= b` and `while j <= j`; and, in its own program
 /// for its `W0002` warning, `let j = j + s` as the step (zero iterations). A
@@ -37524,6 +37525,28 @@ fn vm_bulk_near_miss_shapes() {
         k10 = j10 + s10
     }
     println("target {f10} j={j10} k={k10}")
+    let g12 = arr_repeat(true, 12)
+    g12[1] = false
+    g12[4] = false
+    let c12 = 2
+    let n12 = 0
+    let m12 = 0
+    for v in 0..12 {
+        m12 = m12 + 1
+        if g12[v] { n12 = n12 + c12 }
+    }
+    println("before n={n12} m={m12}")
+    let f12 = arr_repeat(0, 10)
+    let j12 = 1
+    let s12 = 3
+    let b12 = 8
+    let x12 = 0
+    while j12 <= b12 {
+        x12 = x12 + 1
+        f12[j12] = 7
+        j12 = j12 + s12
+    }
+    println("lead {f12} j={j12} x={x12}")
     0
 }
 "#;
@@ -37544,7 +37567,8 @@ fn vm_bulk_near_miss_shapes() {
         })
         .collect();
     let want = format!(
-        "{want}twice [{}] j=32\ntarget [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] j=10 k=0\n",
+        "{want}twice [{}] j=32\ntarget [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] j=10 k=0\n\
+         before n=20 m=12\nlead [0, 7, 0, 0, 7, 0, 0, 7, 0, 0] j=10 x=3\n",
         twice.join(", ")
     );
     let (code, stdout, stderr, counts, bulk) = vm_bulk_case("bulk_near_miss", src, "main");
@@ -37554,7 +37578,7 @@ fn vm_bulk_near_miss_shapes() {
         "{stderr}"
     );
     assert_eq!(stderr, "");
-    assert_eq!((counts, bulk), ((0, 16), None));
+    assert_eq!((counts, bulk), ((0, 18), None));
     let panics = [
         (
             "sub",
