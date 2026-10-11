@@ -109,7 +109,7 @@ fn mut_refused(why: &str, out: &Result<TestEnd, String>, needle: &str) {
 
 /// Scalar kind: a confused `true` from a fn declared `-> i64`.
 #[test]
-#[ignore = "R51 S4: needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"]
+#[ignore = "R51 S6: the declared-return cast (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"]
 fn a_confused_scalar_never_crosses_a_declared_return() {
     let suite = "@[test]\nfn t() {\n    let r = solve(3)\n    assert(r.ok())\n}\n";
     live(
@@ -127,7 +127,7 @@ fn a_confused_scalar_never_crosses_a_declared_return() {
 
 /// Struct name: an `Other` returned from a fn declared `-> Point`.
 #[test]
-#[ignore = "R51 S4: needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"]
+#[ignore = "R51 S6: the declared-return cast's struct-name check (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"]
 fn a_confused_struct_never_crosses_as_another_struct() {
     let suite = "impl Judge for Point {\n    fn ok(self: Point) -> bool { self.x == 9 }\n}\n\
                  impl Judge for Other {\n    fn ok(self: Other) -> bool { true }\n}\n\
@@ -152,7 +152,7 @@ fn a_confused_struct_never_crosses_as_another_struct() {
 
 /// Array elements, `Option` payloads, tuple elements.
 #[test]
-#[ignore = "R51 S4: needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"]
+#[ignore = "R51 S6: the declared-return cast's array elements (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"]
 fn a_confused_element_never_crosses_inside_an_array() {
     let suite = "@[test]\nfn t() {\n    assert(solve(3)[0].ok())\n}\n";
     live(
@@ -169,7 +169,7 @@ fn a_confused_element_never_crosses_inside_an_array() {
 }
 
 #[test]
-#[ignore = "R51 S4: needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"]
+#[ignore = "R51 S6: the declared-return cast's Option payload (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"]
 fn a_confused_payload_never_crosses_inside_an_option() {
     let suite = "@[test]\nfn t() {\n    match solve(3) {\n        Some(r) => assert(r.ok())\n        None => assert(false)\n    }\n}\n";
     live(
@@ -190,7 +190,7 @@ fn a_confused_payload_never_crosses_inside_an_option() {
 }
 
 #[test]
-#[ignore = "R51 S4: needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"]
+#[ignore = "R51 S6: the declared-return cast's tuple elements (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"]
 fn a_confused_element_never_crosses_inside_a_tuple() {
     let suite = "@[test]\nfn t() {\n    assert(solve(3).0.ok())\n}\n";
     live(
@@ -213,7 +213,7 @@ fn a_confused_element_never_crosses_inside_a_tuple() {
 /// A struct's fields at the return: the field was ASSIGNED after
 /// construction, so only the deep return cast sees it.
 #[test]
-#[ignore = "R51 S4: needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"]
+#[ignore = "R51 S6: the deep declared-return cast's struct fields (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"]
 fn a_confused_field_never_crosses_inside_a_struct() {
     let suite = "@[test]\nfn t() {\n    assert(solve(3).v.ok())\n}\n";
     let ty = "type Holder = { v: i64 }\n";
@@ -237,7 +237,7 @@ fn a_confused_field_never_crosses_inside_a_struct() {
 /// A field at CONSTRUCTION: a candidate global the suite reads crosses
 /// no fn boundary, so the struct literal is the declared type it meets.
 #[test]
-#[ignore = "R51 S4: needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"]
+#[ignore = "R51 S6: the struct-literal construction cast (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"]
 fn a_confused_field_is_refused_at_construction() {
     let suite = "@[test]\nfn t() {\n    assert(H.v.ok())\n}\n";
     let ty = "type Holder = { v: i64 }\n";
@@ -274,7 +274,7 @@ fn a_confused_argument_never_enters_a_declared_parameter() {
 
 /// A closure's RESULT under the `fn` type it crossed.
 #[test]
-#[ignore = "R51 S4: needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"]
+#[ignore = "R51 S6: the closure-result cast (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"]
 fn a_closures_confused_result_never_crosses_its_declared_type() {
     let suite = "@[test]\nfn t() {\n    let f = mk()\n    assert(f(3).ok())\n}\n";
     live(
@@ -297,7 +297,7 @@ fn a_closures_confused_result_never_crosses_its_declared_type() {
 /// A closure's ARGUMENTS: the candidate calls the operator's listener
 /// with a confused value under the `fn(i64) -> ()` it declared.
 #[test]
-#[ignore = "R51 S4: needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"]
+#[ignore = "R51 S6: the closure-argument cast (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"]
 fn a_closures_confused_argument_never_crosses_its_declared_type() {
     let suite = "@[test]\nfn t() {\n    visit(|r| assert(r.ok()))\n}\n";
     live(
@@ -320,7 +320,7 @@ fn a_closures_confused_argument_never_crosses_its_declared_type() {
 /// The listener's OWN annotation: the candidate declares `fn(T) -> ()`,
 /// so only the operator's `|r: i64|` states the type.
 #[test]
-#[ignore = "R51 S4: needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"]
+#[ignore = "R51 S6: the lambda parameter-annotation cast (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"]
 fn a_lambdas_annotated_parameter_is_cast() {
     let suite = "@[test]\nfn t() {\n    visit(|r: i64| assert(r.ok()))\n}\n";
     live(
@@ -343,7 +343,7 @@ fn a_lambdas_annotated_parameter_is_cast() {
 /// A channel is one invariant object: what the candidate sends on a
 /// `Chan<i64>` is cast.
 #[test]
-#[ignore = "R51 S4: needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"]
+#[ignore = "R51 S6: the channel send cast (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"]
 fn a_confused_value_is_never_sent_on_a_declared_channel() {
     let suite =
         "@[test]\nfn t() {\n    let c = chan<i64>()\n    fill(c)\n    assert(c.recv().ok())\n}\n";
@@ -381,7 +381,7 @@ fn a_let_annotation_is_cast() {
 /// cast to `T`; or a plain value cast to `T` (soft typing); the bare name
 /// takes only its wrapper.
 #[test]
-#[ignore = "R51 S4: needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"]
+#[ignore = "R51 S6: the soft-type cast (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"]
 fn a_declared_soft_type_casts_its_wrapper_and_its_inner_value() {
     let soft =
         "impl Judge for Uncertain {\n    fn ok(self: Uncertain) -> bool { self.value == 9 }\n}\n\
@@ -476,7 +476,7 @@ fn a_declared_soft_type_casts_its_wrapper_and_its_inner_value() {
 /// `Other::A` laundered into a declared `-> Grade` ran the operator's
 /// lenient `impl Judge for Other`.
 #[test]
-#[ignore = "R51 S4: needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"]
+#[ignore = "R51 S6: the declared-return cast's enum-name check (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"]
 fn a_confused_enum_never_crosses_as_another_enum() {
     let suite = "impl Judge for Grade {\n    fn ok(self: Grade) -> bool { match self { Grade::A { x } => x == 9  Grade::B { x } => false } }\n}\n\
                  impl Judge for Other {\n    fn ok(self: Other) -> bool { true }\n}\n\
@@ -507,7 +507,7 @@ fn a_confused_enum_never_crosses_as_another_enum() {
 /// candidate re-declares the channel `Chan<u8>` (a determined type of its
 /// OWN choosing), which the send-side rule accepts.
 #[test]
-#[ignore = "R51 S4: needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"]
+#[ignore = "R51 S6: the channel element-type stamp (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"]
 fn a_channel_carries_the_element_type_its_creation_states() {
     let suite =
         "@[test]\nfn t() {\n    let c = chan<i64>()\n    fill(c)\n    assert(c.recv().ok())\n}\n";
@@ -546,7 +546,7 @@ fn a_channel_carries_the_element_type_its_creation_states() {
 /// nothing determined is refused — even with values queued, which the
 /// candidate chose.
 #[test]
-#[ignore = "R51 S4: needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"]
+#[ignore = "R51 S6: the undetermined Chan<T> return refusal (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"]
 fn a_channel_returned_at_an_undetermined_element_type_is_refused() {
     let suite = "@[test]\nfn t() {\n    let c = mk(9)\n    assert(c.recv().ok())\n}\n";
     honest8(
@@ -569,7 +569,7 @@ fn a_channel_returned_at_an_undetermined_element_type_is_refused() {
 /// caller's `T` stays `T`, so the operator's argument binds it and the
 /// candidate's field of another type is refused at the return.
 #[test]
-#[ignore = "R51 S4: needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"]
+#[ignore = "R51 S6: the generic type-argument binding (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"]
 fn a_generic_struct_or_enum_argument_binds_its_type_parameter() {
     let wrap = "type Wrap<T> = { v: T }\n";
     let suite = "@[test]\nfn t() {\n    let w = solve(Wrap { v: 3 })\n    assert(w.v.ok())\n}\n";
@@ -622,7 +622,7 @@ fn a_generic_struct_or_enum_argument_binds_its_type_parameter() {
 /// dispatch on. (The checker now also refuses `.ok()` on `()` with no
 /// impl; this test reaches the runtime rule without the checker.)
 #[test]
-#[ignore = "R51 S4: needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"]
+#[ignore = "R51 S6: the unit return of an undeclared return type (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"]
 fn a_fn_with_no_declared_return_type_hands_the_operator_unit() {
     let suite = "@[test]\nfn t() {\n    assert(solve(3).ok())\n}\n";
     live8(
@@ -701,7 +701,7 @@ fn a_host_await_crossing_is_unavailable_inside_a_sealed_test_run() {
 /// calls (the operator's `|x| …` reads it untyped), over a channel, and
 /// through the candidate's own closure the operator calls.
 #[test]
-#[ignore = "R51 S4: needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"]
+#[ignore = "R51 S6: the dict snapshot edge (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"]
 fn a_dict_the_candidate_mutated_is_verified_at_every_edge_back() {
     let closure_suite = "@[test]\nfn t() {\n    let d = dict_new()\n    dict_set(d, \"a\", 3)\n    assert(run(d, |x| {\n        match dict_get(x, \"a\") {\n            Some(y) => y.ok()\n            None => false\n        }\n    }))\n}\n";
     honest8(
@@ -778,7 +778,7 @@ fn a_dict_the_candidate_mutated_is_verified_at_every_edge_back() {
 /// candidate builds, the same type written again, and a dict the operator
 /// itself retypes between two calls (the snapshot is retaken).
 #[test]
-#[ignore = "R51 S4: needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"]
+#[ignore = "R51 S6: the dict snapshot edge's control (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"]
 fn a_dict_the_candidate_adds_to_or_builds_still_crosses() {
     let suite = dict_suite("solve(d)");
     honest8(
@@ -803,7 +803,7 @@ fn a_dict_the_candidate_adds_to_or_builds_still_crosses() {
 /// moved into the operator's binding with no seal edge. Cast at the edge
 /// back against the DECLARED parameter type (dispatch arm and width arm).
 #[test]
-#[ignore = "R51 S4: needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"]
+#[ignore = "R51 S6: the `&mut` edge-back cast (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"]
 fn a_mut_write_through_value_is_cast_at_the_seal_edge_back() {
     let dispatch = "@[test]\nfn t() {\n    let mut a = [1, 2, 3]\n    fill(&mut a)\n    assert(a[0].ok())\n}\n";
     let width = "@[test]\nfn t() {\n    let mut a = [1, 2, 3]\n    fill(&mut a)\n    assert((a[0] << 1) == 254)\n}\n";
@@ -866,7 +866,7 @@ fn a_mut_write_through_value_is_cast_at_the_seal_edge_back() {
 /// (`HandlerDone`) after the candidate wrote a `u8` must not leave it in the
 /// operator's binding.
 #[test]
-#[ignore = "R51 S4: needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"]
+#[ignore = "R51 S6: the `&mut` edge-back cast on a handler abort (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"]
 fn a_mut_value_is_cast_when_an_operator_handler_aborts_the_call() {
     let suite = "@[test]\nfn t() {\n    let mut a = [1, 2, 3]\n    let _r = with handler { on IO(p) => 0 } {\n        fill(&mut a)\n        1\n    }\n    assert(a[0].ok())\n}\n";
     // Control: an honest write then an aborted call keeps the honest value.
@@ -895,10 +895,7 @@ fn a_mut_value_is_cast_when_an_operator_handler_aborts_the_call() {
 #[test]
 #[ignore = "R51 S6: the sealed_fnval mark, closure_args_check and replaced_ok ported (S3); needs a live sealed run"]
 fn a_candidates_own_fn_value_takes_arguments_and_an_operators_still_does_not() {
-    // R51 adaptation: v0.22 ran this with `sealed_outcome_rule(.., true)`
-    // (the receiver dispatch rule on); that switch arrives with S4, whose merge
-    // restores the call (it passes either way with the seal flipped).
-    let run = |suite: &str, cand: &str| sealed_outcome("r9-fnval", suite, cand, "t");
+    let run = |suite: &str, cand: &str| sealed_outcome_rule("r9-fnval", suite, cand, "t", true);
     let s = "@[test]\nfn t() { assert_eq(solve(3), 4) }\n";
     let own = "fn inc(n: i64) -> i64 { n + 1 }\nfn solve(n: i64) -> i64 {\n    let g = inc\n    g(n)\n}\n";
     assert_eq!(
@@ -952,14 +949,12 @@ fn a_candidate_fn_value_the_operator_calls_still_cannot_reach_operator_fns() {
         "fn secret() -> i64 { 9 }\n@[test]\nfn t() { let g = give()\n    assert_eq(g(), 9) }\n";
     // The candidate's own fn calls the operator's `secret`: refused whether the
     // call is direct or through the value the operator invokes.
-    // R51 adaptation: v0.22 ran this with `sealed_outcome_rule(.., true)`
-    // (the receiver dispatch rule on); that switch arrives with S4, whose merge
-    // restores the call (it passes either way with the seal flipped).
-    let out = sealed_outcome(
+    let out = sealed_outcome_rule(
         "r8-fnval2",
         suite,
         "fn mine() -> i64 { secret() }\nfn give() -> fn() -> i64 { mine }\n",
         "t",
+        true,
     );
     assert!(
         out != Ok(TestEnd::Completed) && matches!(&out, Err(m) if m.contains("cannot use")),
@@ -972,7 +967,7 @@ fn a_candidate_fn_value_the_operator_calls_still_cannot_reach_operator_fns() {
 /// from the hand-over). Refused by the dict layer (rule off) AND by the
 /// dispatch rule (rule on); the pinned suite refuses it by the cast.
 #[test]
-#[ignore = "R51 S4: needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"]
+#[ignore = "R51 S6: the dict snapshot edge over a closure's capture (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"]
 fn a_closure_that_captured_the_operators_dict_cannot_retype_after_an_operator_write() {
     let suite = "@[test]\nfn t() {\n    let d = dict_new()\n    let f = make(d)\n    dict_set(d, \"answer\", 3)\n    f()\n    match dict_get(d, \"answer\") {\n        Some(v) => assert(v.ok())\n        None => assert(false)\n    }\n}\n";
     let cand = |v: &str| {
@@ -1015,7 +1010,7 @@ fn a_dict_over_the_snapshot_bound_is_refused_not_skipped() {
 /// on it needs an element type something on the operator side
 /// determined. A free `T` of the candidate's never counts.
 #[test]
-#[ignore = "R51 S4: needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"]
+#[ignore = "R51 S6: the determined-element-type rule for a sealed send (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"]
 fn a_sealed_send_on_an_operator_channel_needs_a_determined_element_type() {
     let suite = "@[test]\nfn t() {\n    assert(run(9))\n}\nfn run<T: Judge>(x: T) -> bool {\n    let c = chan<T>()\n    c.send(x)\n    fill(c)\n    c.recv().ok()\n}\n";
     // Control: an honest generic relay — `U` is bound from the value the
@@ -1076,10 +1071,7 @@ fn a_sealed_frame_cannot_take_an_operator_fn_as_a_value() {
                  @[test]\nfn t_pass() { assert_eq(take(secret), 9) }\n\
                  @[test]\nfn t_back() { let g = give()\n    assert_eq(g(), 9) }\n\
                  @[test]\nfn t_arg() { assert_eq(solve(), 9) }\n";
-    // R51 adaptation: v0.22 ran this with `sealed_outcome_rule(.., true)`
-    // (the receiver dispatch rule on); that switch arrives with S4, whose merge
-    // restores the call.
-    let run = |cand: &str, t: &str| sealed_outcome("r8-fnval", suite, cand, t);
+    let run = |cand: &str, t: &str| sealed_outcome_rule("r8-fnval", suite, cand, t, true);
     // Controls: the candidate names ITS OWN fn as a value and calls it; the
     // operator names ITS OWN fn as a value and hands it to the candidate;
     // a candidate fn value returned to the operator runs.

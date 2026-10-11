@@ -1259,12 +1259,9 @@ pub(super) enum Rules {
 /// R51: v0.22 published the sealed directory process-wide under
 /// `SEALED_DIRS_TEST_LOCK`; on main a published set refuses every concurrent
 /// build, so the set goes to this run's build only (as `interp::tests`'
-/// `sealed_outcome` does). v0.22 also switched the static layer
-/// (`DISPATCH_RULE_OFF`) and the taint rules (`TAINT_FORCE_ON`) per `rules`;
-/// main has neither switch on this branch (in a sealed run both layers always
-/// apply), so only `Rules::Both` is a run main can make. Any other run is
-/// refused here rather than silently measured as `Both`. (v0.22's
-/// `Rules::StaticOnly` and its `HTAB` table served only
+/// `sealed_outcome` does), and the per-thread switches are set on the run's
+/// own thread ([`on_deep_stack`] spawns it, which starts with both off).
+/// (v0.22's `Rules::StaticOnly` and its `HTAB` table served only
 /// `an_operator_closure_the_candidate_picked_is_never_called`, which main
 /// runs in `axon-psv/tests/sealed_frames.rs`; not ported here.)
 pub(super) fn run(suite: &str, cand: &str, rules: Rules) -> Result<TestEnd, String> {
@@ -1282,12 +1279,12 @@ pub(super) fn run(suite: &str, cand: &str, rules: Rules) -> Result<TestEnd, Stri
         Rules::TaintOnly => (false, true),
         Rules::Neither => (false, false),
     };
-    assert!(
-        static_on && taint_on,
-        "R51: a {rules:?} run needs the DISPATCH_RULE_OFF / TAINT_FORCE_ON switches, which main lacks"
-    );
     let sealed = [std::path::PathBuf::from(sdir)];
-    on_deep_stack(|| run_test_fn_inner(&prog, "t", &sealed))
+    on_deep_stack(|| {
+        DISPATCH_RULE_OFF.with(|c| c.set(!static_on));
+        TAINT_FORCE_ON.with(|c| c.set(taint_on));
+        run_test_fn_inner(&prog, "t", &sealed)
+    })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1463,7 +1460,7 @@ fn name_cases() -> Vec<Case> {
 }
 
 #[test]
-#[ignore = "R51 S6: taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"]
+#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn a_name_sealed_code_had_a_hand_in_never_selects_an_operator_fn() {
     let cases = name_cases();
     check(&cases, Rules::TaintOnly);
@@ -1520,7 +1517,7 @@ fn dispatch_cases() -> Vec<Case> {
 }
 
 #[test]
-#[ignore = "R51 S6: taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"]
+#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn a_type_or_width_sealed_code_chose_is_never_dispatched_on() {
     let cases = dispatch_cases();
     check(&cases, Rules::TaintOnly);
@@ -1586,7 +1583,7 @@ fn hunted_cases() -> Vec<Case> {
 }
 
 #[test]
-#[ignore = "R51 S6: taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"]
+#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn bypass_shapes_hunted_after_the_first_cut() {
     let cases = hunted_cases();
     check(&cases, Rules::TaintOnly);
@@ -1668,7 +1665,7 @@ fn hook_cases() -> Vec<Case> {
 }
 
 #[test]
-#[ignore = "R51 S6: taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"]
+#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn every_hook_of_the_taint_has_an_attack_of_its_own() {
     let cases = hook_cases();
     check(&cases, Rules::TaintOnly);
@@ -1676,7 +1673,7 @@ fn every_hook_of_the_taint_has_an_attack_of_its_own() {
 }
 
 #[test]
-#[ignore = "R51 S6: taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"]
+#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn the_remaining_routes_a_selection_can_take() {
     let cases = more_cases();
     check(&cases, Rules::TaintOnly);
@@ -1981,7 +1978,7 @@ fn channel_cases() -> Vec<Case> {
 }
 
 #[test]
-#[ignore = "R51 S6: taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"]
+#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn a_channel_the_candidate_touched_never_selects_an_operator_closure_or_name() {
     let cases = channel_cases();
     check(&cases, Rules::TaintOnly);
@@ -2101,7 +2098,7 @@ fn dict_state_cases() -> Vec<Case> {
 }
 
 #[test]
-#[ignore = "R51 S6: taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"]
+#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn a_dict_reader_is_tainted_after_a_sealed_write_and_clean_after_the_operators() {
     let cases = dict_state_cases();
     check(&cases, Rules::TaintOnly);
@@ -2299,7 +2296,7 @@ fn kernel_state_cases() -> Vec<Case> {
 }
 
 #[test]
-#[ignore = "R51 S6: taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"]
+#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn a_kernel_getter_is_tainted_after_a_write_the_candidate_steered() {
     let cases = kernel_state_cases();
     check(&cases, Rules::TaintOnly);
@@ -2372,7 +2369,7 @@ fn array_state_cases() -> Vec<Case> {
 }
 
 #[test]
-#[ignore = "R51 S6: taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"]
+#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn a_shared_array_is_tainted_after_a_sealed_write() {
     let cases = array_state_cases();
     check(&cases, Rules::TaintOnly);
@@ -2437,7 +2434,7 @@ fn hunt_r11_cases() -> Vec<Case> {
 }
 
 #[test]
-#[ignore = "R51 S6: taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"]
+#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn areas_the_psv3_reviewer_did_not_hunt() {
     let cases = hunt_r11_cases();
     check(&cases, Rules::TaintOnly);
@@ -2659,7 +2656,7 @@ fn compare_cases() -> Vec<Case> {
 }
 
 #[test]
-#[ignore = "R51 S6: taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"]
+#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn comparing_or_searching_a_dict_the_candidate_wrote_is_a_read_of_it() {
     let cases = compare_cases();
     check(&cases, Rules::TaintOnly);
@@ -2672,7 +2669,7 @@ fn comparing_or_searching_a_dict_the_candidate_wrote_is_a_read_of_it() {
 /// operator fn by it is refused). Driven off the builtin table, so a new one is
 /// covered without being listed.
 #[test]
-#[ignore = "R51 S6: taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"]
+#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn every_builtin_that_can_read_a_container_of_a_tainted_dict_taints_its_result() {
     let pre = CMP_REF.to_string();
     let mut cases = Vec::new();
@@ -2774,7 +2771,7 @@ fn every_comparison_and_every_builtin_argument_is_walked_deep() {
 /// A native call (`gfx::present` on a surface) writes a registry every frame
 /// shares: what a sealed call did is something the candidate decided.
 #[test]
-#[ignore = "R51 S6: taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"]
+#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn a_native_registry_a_sealed_frame_wrote_taints_what_the_operator_reads_back() {
     use Expect::*;
     let ops = "    let ops = [lax, reference]\n".to_string();
@@ -3095,7 +3092,7 @@ fn control_flow_cases() -> Vec<Case> {
 }
 
 #[test]
-#[ignore = "R51 S6: taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"]
+#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn operator_side_control_flow_on_candidate_data_carries_its_taint_into_what_it_runs() {
     let cases = control_flow_cases();
     check(&cases, Rules::TaintOnly);
@@ -3707,7 +3704,7 @@ fn carrier_cases() -> Vec<Case> {
 /// R51: v0.22's interp unit test (main's same-named `axon-psv` test in
 /// `sealed_frames.rs` is a different, runner-level test, left as is).
 #[test]
-#[ignore = "R51 S6: taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"]
+#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn taint_survives_every_carrier_a_value_can_travel_by() {
     let cases = carrier_cases();
     check(&cases, Rules::TaintOnly);

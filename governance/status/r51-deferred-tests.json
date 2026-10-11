@@ -7,8 +7,8 @@
     "S5": 0,
     "S2": 0,
     "S3": 0,
-    "S4": 23,
-    "S6": 248
+    "S4": 0,
+    "S6": 271
   },
   "tests": [
     {
@@ -1280,44 +1280,44 @@
     {
       "name": "a_confused_scalar_never_crosses_a_declared_return",
       "file": "crates/axon-core/src/interp/tests_v022_a.rs",
-      "slice": "S4",
-      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the declared-return cast (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"
     },
     {
       "name": "a_confused_struct_never_crosses_as_another_struct",
       "file": "crates/axon-core/src/interp/tests_v022_a.rs",
-      "slice": "S4",
-      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the declared-return cast's struct-name check (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"
     },
     {
       "name": "a_confused_element_never_crosses_inside_an_array",
       "file": "crates/axon-core/src/interp/tests_v022_a.rs",
-      "slice": "S4",
-      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the declared-return cast's array elements (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"
     },
     {
       "name": "a_confused_payload_never_crosses_inside_an_option",
       "file": "crates/axon-core/src/interp/tests_v022_a.rs",
-      "slice": "S4",
-      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the declared-return cast's Option payload (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"
     },
     {
       "name": "a_confused_element_never_crosses_inside_a_tuple",
       "file": "crates/axon-core/src/interp/tests_v022_a.rs",
-      "slice": "S4",
-      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the declared-return cast's tuple elements (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"
     },
     {
       "name": "a_confused_field_never_crosses_inside_a_struct",
       "file": "crates/axon-core/src/interp/tests_v022_a.rs",
-      "slice": "S4",
-      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the deep declared-return cast's struct fields (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"
     },
     {
       "name": "a_confused_field_is_refused_at_construction",
       "file": "crates/axon-core/src/interp/tests_v022_a.rs",
-      "slice": "S4",
-      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the struct-literal construction cast (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"
     },
     {
       "name": "a_confused_argument_never_enters_a_declared_parameter",
@@ -1328,26 +1328,26 @@
     {
       "name": "a_closures_confused_result_never_crosses_its_declared_type",
       "file": "crates/axon-core/src/interp/tests_v022_a.rs",
-      "slice": "S4",
-      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the closure-result cast (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"
     },
     {
       "name": "a_closures_confused_argument_never_crosses_its_declared_type",
       "file": "crates/axon-core/src/interp/tests_v022_a.rs",
-      "slice": "S4",
-      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the closure-argument cast (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"
     },
     {
       "name": "a_lambdas_annotated_parameter_is_cast",
       "file": "crates/axon-core/src/interp/tests_v022_a.rs",
-      "slice": "S4",
-      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the lambda parameter-annotation cast (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"
     },
     {
       "name": "a_confused_value_is_never_sent_on_a_declared_channel",
       "file": "crates/axon-core/src/interp/tests_v022_a.rs",
-      "slice": "S4",
-      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the channel send cast (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"
     },
     {
       "name": "a_let_annotation_is_cast",
@@ -1358,38 +1358,38 @@
     {
       "name": "a_declared_soft_type_casts_its_wrapper_and_its_inner_value",
       "file": "crates/axon-core/src/interp/tests_v022_a.rs",
-      "slice": "S4",
-      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the soft-type cast (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"
     },
     {
       "name": "a_confused_enum_never_crosses_as_another_enum",
       "file": "crates/axon-core/src/interp/tests_v022_a.rs",
-      "slice": "S4",
-      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the declared-return cast's enum-name check (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"
     },
     {
       "name": "a_channel_carries_the_element_type_its_creation_states",
       "file": "crates/axon-core/src/interp/tests_v022_a.rs",
-      "slice": "S4",
-      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the channel element-type stamp (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"
     },
     {
       "name": "a_channel_returned_at_an_undetermined_element_type_is_refused",
       "file": "crates/axon-core/src/interp/tests_v022_a.rs",
-      "slice": "S4",
-      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the undetermined Chan<T> return refusal (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"
     },
     {
       "name": "a_generic_struct_or_enum_argument_binds_its_type_parameter",
       "file": "crates/axon-core/src/interp/tests_v022_a.rs",
-      "slice": "S4",
-      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the generic type-argument binding (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"
     },
     {
       "name": "a_fn_with_no_declared_return_type_hands_the_operator_unit",
       "file": "crates/axon-core/src/interp/tests_v022_a.rs",
-      "slice": "S4",
-      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the unit return of an undeclared return type (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"
     },
     {
       "name": "a_handle_binding_admits_only_that_handle",
@@ -1406,26 +1406,26 @@
     {
       "name": "a_dict_the_candidate_mutated_is_verified_at_every_edge_back",
       "file": "crates/axon-core/src/interp/tests_v022_a.rs",
-      "slice": "S4",
-      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the dict snapshot edge (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"
     },
     {
       "name": "a_dict_the_candidate_adds_to_or_builds_still_crosses",
       "file": "crates/axon-core/src/interp/tests_v022_a.rs",
-      "slice": "S4",
-      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the dict snapshot edge's control (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"
     },
     {
       "name": "a_mut_write_through_value_is_cast_at_the_seal_edge_back",
       "file": "crates/axon-core/src/interp/tests_v022_a.rs",
-      "slice": "S4",
-      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the `&mut` edge-back cast (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"
     },
     {
       "name": "a_mut_value_is_cast_when_an_operator_handler_aborts_the_call",
       "file": "crates/axon-core/src/interp/tests_v022_a.rs",
-      "slice": "S4",
-      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the `&mut` edge-back cast on a handler abort (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"
     },
     {
       "name": "a_candidates_own_fn_value_takes_arguments_and_an_operators_still_does_not",
@@ -1442,8 +1442,8 @@
     {
       "name": "a_closure_that_captured_the_operators_dict_cannot_retype_after_an_operator_write",
       "file": "crates/axon-core/src/interp/tests_v022_a.rs",
-      "slice": "S4",
-      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the dict snapshot edge over a closure's capture (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"
     },
     {
       "name": "a_dict_over_the_snapshot_bound_is_refused_not_skipped",
@@ -1454,8 +1454,8 @@
     {
       "name": "a_sealed_send_on_an_operator_channel_needs_a_determined_element_type",
       "file": "crates/axon-core/src/interp/tests_v022_a.rs",
-      "slice": "S4",
-      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the determined-element-type rule for a sealed send (S3) and sealed_outcome's dispatch-rule switch, off as in v0.22 (S4), ported; needs a live sealed run"
     },
     {
       "name": "a_sealed_frame_cannot_take_an_operator_fn_as_a_value",
@@ -1467,19 +1467,19 @@
       "name": "a_value_at_an_undetermined_type_parameter_never_crosses_the_seal",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "the strict cast's undetermined-position refusal (conform::cast_at, UNDET) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
+      "reason": "the strict cast's undetermined-position refusal (conform::cast_at, UNDET) is ported (S3); needs a live sealed run"
     },
     {
       "name": "a_type_parameters_trait_bound_is_cast",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "the cast's trait-bound arm (conform::cast_tparam) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
+      "reason": "the cast's trait-bound arm (conform::cast_tparam) is ported (S3); needs a live sealed run"
     },
     {
       "name": "a_value_of_another_integer_width_never_crosses_a_declared_integer",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "the cast's integer-width arm (conform::cast_at) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
+      "reason": "the cast's integer-width arm (conform::cast_at) is ported (S3); needs a live sealed run"
     },
     {
       "name": "a_value_of_another_fixed_width_never_crosses_a_declared_fixed_width",
@@ -1491,13 +1491,13 @@
       "name": "an_i64_at_a_declared_fixed_width_takes_the_width",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "the cast's width conversion at a declared fixed width (conform::cast_at) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
+      "reason": "the cast's width conversion at a declared fixed width (conform::cast_at) is ported (S3); needs a live sealed run"
     },
     {
       "name": "width_correct_values_cross_unchanged",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "control of the cast's width arm (conform::cast_at, S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
+      "reason": "control of the cast's width arm (conform::cast_at, S3); needs a live sealed run"
     },
     {
       "name": "a_non_closure_never_crosses_a_declared_fn_type",
@@ -1509,7 +1509,7 @@
       "name": "a_soft_wrapper_takes_the_declared_plain_type",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "the cast's soft-wrapper unwrap (conform::cast_at) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
+      "reason": "the cast's soft-wrapper unwrap (conform::cast_at) is ported (S3); needs a live sealed run"
     },
     {
       "name": "every_declared_type_refuses_a_value_of_another_type",
@@ -1521,7 +1521,7 @@
       "name": "the_remaining_cast_arms_refuse_a_value_of_another_type",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "the cast's binding, dyn, enum-field, queued-channel, width and refinement arms (conform) are ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
+      "reason": "the cast's binding, dyn, enum-field, queued-channel, width and refinement arms (conform) are ported (S3); needs a live sealed run"
     },
     {
       "name": "runtime_sealing_holds_without_the_static_check",
@@ -1533,13 +1533,13 @@
       "name": "a_value_at_an_undetermined_position_never_crosses_a_seal",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "the strict cast's undetermined-position refusal (conform::cast_at, UNDET) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
+      "reason": "the strict cast's undetermined-position refusal (conform::cast_at, UNDET) is ported (S3); needs a live sealed run"
     },
     {
       "name": "an_operator_closure_called_from_sealed_code_takes_only_determined_arguments",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "the closure-argument edge (conform::closure_args_check) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
+      "reason": "the closure-argument edge (conform::closure_args_check) is ported (S3); needs a live sealed run"
     },
     {
       "name": "a_type_parameter_inside_any_shape_is_never_filled_by_the_candidate",
@@ -1551,25 +1551,25 @@
       "name": "sealed_code_cannot_retype_a_dict_entry_the_operator_held",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "the dict snapshot edge (dict_edge_in/dict_edge_out) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
+      "reason": "the dict snapshot edge (dict_edge_in/dict_edge_out) is ported (S3); needs a live sealed run"
     },
     {
       "name": "a_position_the_operator_held_is_judged_by_what_it_held_when_replaced",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "the dict snapshot edge's held-position judgement (conform, amendment 78) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
+      "reason": "the dict snapshot edge's held-position judgement (conform, amendment 78) is ported (S3); needs a live sealed run"
     },
     {
       "name": "a_placeholder_the_operator_held_is_not_filled_by_the_candidate",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "the dict snapshot edge's strict store at an undetermined held position (conform, amendment 78) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
+      "reason": "the dict snapshot edge's strict store at an undetermined held position (conform, amendment 78) is ported (S3); needs a live sealed run"
     },
     {
       "name": "a_mut_write_through_value_is_judged_by_what_the_operator_held",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "the `&mut` edge-back cast (left holding / did not allow) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
+      "reason": "the `&mut` edge-back cast (left holding / did not allow) is ported (S3); needs a live sealed run"
     },
     {
       "name": "an_annotated_operator_array_lent_as_mut_is_still_cast_at_the_edge_back",
@@ -1623,61 +1623,61 @@
       "name": "a_name_sealed_code_had_a_hand_in_never_selects_an_operator_fn",
       "file": "crates/axon-core/src/interp/taint_tests.rs",
       "slice": "S6",
-      "reason": "taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"
+      "reason": "taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"
     },
     {
       "name": "a_type_or_width_sealed_code_chose_is_never_dispatched_on",
       "file": "crates/axon-core/src/interp/taint_tests.rs",
       "slice": "S6",
-      "reason": "taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"
+      "reason": "taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"
     },
     {
       "name": "bypass_shapes_hunted_after_the_first_cut",
       "file": "crates/axon-core/src/interp/taint_tests.rs",
       "slice": "S6",
-      "reason": "taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"
+      "reason": "taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"
     },
     {
       "name": "every_hook_of_the_taint_has_an_attack_of_its_own",
       "file": "crates/axon-core/src/interp/taint_tests.rs",
       "slice": "S6",
-      "reason": "taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"
+      "reason": "taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"
     },
     {
       "name": "the_remaining_routes_a_selection_can_take",
       "file": "crates/axon-core/src/interp/taint_tests.rs",
       "slice": "S6",
-      "reason": "taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"
+      "reason": "taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"
     },
     {
       "name": "a_channel_the_candidate_touched_never_selects_an_operator_closure_or_name",
       "file": "crates/axon-core/src/interp/taint_tests.rs",
       "slice": "S6",
-      "reason": "taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"
+      "reason": "taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"
     },
     {
       "name": "a_dict_reader_is_tainted_after_a_sealed_write_and_clean_after_the_operators",
       "file": "crates/axon-core/src/interp/taint_tests.rs",
       "slice": "S6",
-      "reason": "taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"
+      "reason": "taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"
     },
     {
       "name": "a_kernel_getter_is_tainted_after_a_write_the_candidate_steered",
       "file": "crates/axon-core/src/interp/taint_tests.rs",
       "slice": "S6",
-      "reason": "taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"
+      "reason": "taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"
     },
     {
       "name": "a_shared_array_is_tainted_after_a_sealed_write",
       "file": "crates/axon-core/src/interp/taint_tests.rs",
       "slice": "S6",
-      "reason": "taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"
+      "reason": "taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"
     },
     {
       "name": "areas_the_psv3_reviewer_did_not_hunt",
       "file": "crates/axon-core/src/interp/taint_tests.rs",
       "slice": "S6",
-      "reason": "taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"
+      "reason": "taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"
     },
     {
       "name": "a_sealed_caller_cannot_tell_an_operator_name_from_a_missing_one_on_any_path",
@@ -1695,31 +1695,31 @@
       "name": "comparing_or_searching_a_dict_the_candidate_wrote_is_a_read_of_it",
       "file": "crates/axon-core/src/interp/taint_tests.rs",
       "slice": "S6",
-      "reason": "taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"
+      "reason": "taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"
     },
     {
       "name": "every_builtin_that_can_read_a_container_of_a_tainted_dict_taints_its_result",
       "file": "crates/axon-core/src/interp/taint_tests.rs",
       "slice": "S6",
-      "reason": "taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"
+      "reason": "taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"
     },
     {
       "name": "a_native_registry_a_sealed_frame_wrote_taints_what_the_operator_reads_back",
       "file": "crates/axon-core/src/interp/taint_tests.rs",
       "slice": "S6",
-      "reason": "taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"
+      "reason": "taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"
     },
     {
       "name": "operator_side_control_flow_on_candidate_data_carries_its_taint_into_what_it_runs",
       "file": "crates/axon-core/src/interp/taint_tests.rs",
       "slice": "S6",
-      "reason": "taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"
+      "reason": "taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"
     },
     {
       "name": "taint_survives_every_carrier_a_value_can_travel_by",
       "file": "crates/axon-core/src/interp/taint_tests.rs",
       "slice": "S6",
-      "reason": "taint rules ported (S2/S3); needs a live sealed run, and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle"
+      "reason": "taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"
     }
   ]
 }
