@@ -163,7 +163,10 @@ for row in "${ROWS[@]}"; do
     else
       fn="$n"; f="crates/$pkg/tests/$target.rs"
     fi
-    grep -qs "fn $fn(" "$f" || { echo "  FAIL PCI $sid: test $n not found in $f"; fail=1; }
+    # R51: main's `interp::tests` also holds the v0.22 rows in files `include!`d into
+    # interp.rs's `mod tests` (interp/tests_v022_*.rs); the module is the file plus those.
+    fs=("$f"); for inc in $(sed -n 's/^ *include!("\([^"]*\)");.*/\1/p' "$f" 2>/dev/null); do fs+=("$(dirname "$f")/$inc"); done
+    grep -qs "fn $fn(" "${fs[@]}" || { echo "  FAIL PCI $sid: test $n not found in $f"; fail=1; }
   done
   if [ "$target" = lib ]; then sel=(--lib); else sel=(--test "$target"); fi
   # --exact: precisely these tests, nothing matched by substring.

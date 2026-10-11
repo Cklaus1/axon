@@ -1778,3 +1778,23 @@ fn unshown_fn(t: &T) -> T {
         T::Named(_) | T::TypeParam(_) | T::DynTrait(_) => t.clone(),
     }
 }
+
+#[cfg(test)]
+mod walk_bound_tests {
+    use super::*;
+
+    /// The walk for a handed value's dicts REFUSES a value nested deeper than
+    /// the cast's own bound; it never returns with the rest unvisited. (A real
+    /// value that deep overflows the thread stack first, so the bound's
+    /// logic is tested directly.)
+    #[test]
+    fn a_value_nested_past_the_bound_is_refused_not_left_unvisited() {
+        assert!(Interp::walk_depth_ok(0).is_ok());
+        assert!(Interp::walk_depth_ok(MAX_CAST_DEPTH).is_ok());
+        let past = Interp::walk_depth_ok(MAX_CAST_DEPTH + 1);
+        assert!(
+            matches!(&past, Err(Flow::Panic(m)) if m.contains("cannot cross a seal")),
+            "ATTACK: a value nested past the walk bound crossed unvisited: {past:?}"
+        );
+    }
+}

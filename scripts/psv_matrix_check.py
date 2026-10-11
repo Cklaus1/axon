@@ -19,6 +19,15 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DOC = os.path.join(ROOT, "governance/specs/v022-psv-negative-matrix.md")
 
 
+def source(p):
+    """The file's text plus every file it `include!`s (R51: main's interp.rs `mod tests`
+    pulls the v0.22 rows in from interp/tests_v022_*.rs; they are interp.rs's tests)."""
+    text = open(p).read()
+    for inc in re.findall(r'^\s*include!\("([^"]+)"\);', text, re.M):
+        text += open(os.path.join(os.path.dirname(p), inc)).read()
+    return text
+
+
 def main():
     text = open(DOC).read()
     rows = {}
@@ -48,7 +57,7 @@ def main():
                 p = os.path.join(ROOT, path)
                 if not os.path.isfile(p):
                     bad.append(f"{k}: {path} does not exist")
-                elif not re.search(rf"\bfn\s+{re.escape(fn)}\s*\(", open(p).read()):
+                elif not re.search(rf"\bfn\s+{re.escape(fn)}\s*\(", source(p)):
                     bad.append(f"{k}: {path} defines no fn {fn}")
             elif not os.path.isfile(os.path.join(ROOT, t)):
                 bad.append(f"{k}: {t} does not exist")
