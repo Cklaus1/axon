@@ -190,51 +190,16 @@
     },
     {
       "mutation": "M58",
-      "status": "EQUIVALENT_DID",
-      "kind": "pair",
+      "status": "STALE_REFACTORED",
       "property": "a break/continue raised in a FUNCTION BODY does not escape into the caller's loop",
-      "original_guard": {
-        "file": "crates/axon-core/src/interp.rs"
-      },
-      "subsumed_by": [
-        "M59"
-      ],
-      "live_killing_mutant": "M59",
-      "all_paths": null,
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "retired_guard_disabled": "ATTACK_REFUSED",
-        "guard_set_disabled": "ATTACK_SUCCEEDS",
-        "guard_set": [
-          "M58",
-          "M59"
-        ],
-        "retired_guard_full_suite": "SUITE_OK",
-        "full_suite_packages": [
-          "axon-core",
-          "axon-cortex",
-          "axon-fabric",
-          "axon-intent",
-          "axon-os",
-          "axon-psv",
-          "axon-wasm",
-          "axon-web"
-        ],
-        "consumer_suites": {
-          "axon-cortex": "SUITE_OK",
-          "axon-fabric": "SUITE_OK",
-          "axon-intent": "SUITE_OK",
-          "axon-os": "SUITE_OK",
-          "axon-psv": "SUITE_OK",
-          "axon-wasm": "SUITE_OK",
-          "axon-web": "SUITE_OK"
-        },
-        "retired_guard_full_suite_skipped": {},
-        "sibling_set_disabled": "ATTACK_REFUSED"
-      },
+      "original_guard": "v0.22's call_fn break/continue arm is gone on R51; the guard lives on as the single Flow::Break | Flow::Continue arm of frame_edge in interp.rs (reached from call_fn, contain_frame and contain_loop_control), which M59 mutates (e41d6225 had re-anchored M58 onto M59's text by mistake)",
+      "old_string_present": false,
+      "replacement": "M59",
+      "replacement_state": "REPLACEMENT_KILLED",
+      "matrix": null,
       "holds": true,
-      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
-      "edits_sha256": "9355dd70d455b0b2d7385f420ddfb6be9a915919d4a5d0f06669eb302a0a5c1a",
+      "commit": "c7dffde561e4423655f7a44e514290fccfcfad6b",
+      "edits_sha256": "ff0f4cd83ccd7c524fc499bf3930757f7191b835de90279d3da672e3c7491b25",
       "environment": {
         "euid": 0,
         "etc_axon_present": true,
@@ -243,7 +208,21 @@
           "AXON_BIN",
           "CORTEX_BIN"
         ],
-        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-3/debug/axon"
+        "consumer_axon_bin": "AXON_BIN=/home/cklaus/projects/axon-lanes/.r51-build/target-m58/debug/axon",
+        "host": {
+          "hostname": "gpumaster",
+          "kernel": "Linux 7.0.0-34-generic",
+          "nproc": 32,
+          "mem_total": "257022384 kB",
+          "toolchain": {
+            "rustc": "rustc 1.99.0-nightly (375b1431b 2026-07-10)\nbinary: rustc\ncommit-hash: 375b1431b7d89d1c2e2bc168c011848ae12b7d14\ncommit-date: 2026-07-10\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0-nightly\nLLVM version: 22.1.8",
+            "cargo": "cargo 1.99.0-nightly (59800466c 2026-07-07)",
+            "llvm_system": "17.0.6"
+          }
+        }
+      },
+      "consumer_selection": {
+        "not_applicable": "a stale record's replacement cell runs no full suite"
       }
     },
     {
@@ -2715,5 +2694,5 @@
       }
     }
   ],
-  "note": "Joined 4-shard run at aad46c05 (58/59 hold; M418's joint cell and full-suite cell failed on stale tests). M418 and 9 readiness records re-executed at c9647b35 (c9r4/pdfix, test-only) and hold. Records are evidence about the commit each names; a full exact-head run is part of the freeze proof."
+  "note": "Joined 4-shard run at aad46c05 (58/59 hold; M418's joint cell and full-suite cell failed on stale tests). M418 and 9 readiness records re-executed at c9647b35 (c9r4/pdfix, test-only) and hold. Records are evidence about the commit each names; a full exact-head run is part of the freeze proof. R51: M58 reclassified STALE_REFACTORED -> M59 (v0.22 call_fn arm gone; e41d6225 re-anchor was mistaken); its record is the single --only=M58 record re-executed at c7dffde5 (holds: old text absent, M59 REPLACEMENT_KILLED), substituted for the old EQUIVALENT_DID record; no other record touched."
 }

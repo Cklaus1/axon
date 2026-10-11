@@ -348,13 +348,14 @@ MUTATIONS = [
     # M56 (the test runner's escaped-break arm) is RETIRED as an equivalent
     # mutant since bcf9c0a7: call_fn now stops loop control at every function
     # boundary, the test fn's own included, so that arm cannot be reached. It
-    # stays in the code as defense in depth; M58 is the guard that decides.
+    # stays in the code as defense in depth; M59 is the guard that decides
+    # (M58, v0.22's call_fn arm, is STALE_REFACTORED into M59 on R51).
     ('M57', 'Fabric: a candidate holding a symlink is refused',
      'crates/axon-fabric/src/submit.rs',
      '    refuse_links(\n        cv.entries\n            .iter()\n            .map(|e| (e.path.as_str(), e.mode == workspace::MODE_LINK)),\n        "the candidate",\n    )?;',
      '    let _ = &cv;',
      'axon-fabric', '--test check_effects', 'a_candidate_holding_a_symlink_is_refused'),
-    ('M58', 'interpreter: loop control does not cross a function boundary', 'crates/axon-core/src/interp.rs', '        Flow::Break | Flow::Continue => format!("`break`/`continue` outside a loop in {edge}"),', '        Flow::Break | Flow::Continue => return f,', 'axon-core', '--no-default-features --lib', 'interp::tests::an_escaped_break_or_continue_from_a_function_body_does_not_pass_a_test'),
+    ('M58', 'interpreter: loop control does not cross a function boundary', 'crates/axon-core/src/interp.rs', '            Err(Flow::Break) | Err(Flow::Continue) => {\n                return panic(format!("`break`/`continue` outside a loop in `{}`", f.name))\n            }\n', '', 'axon-core', '--no-default-features --lib', 'interp::tests::an_escaped_break_or_continue_from_a_function_body_does_not_pass_a_test'),
     ('M59', 'interpreter: loop control is contained at every frame edge (fn, closure, predicate)',
      'crates/axon-core/src/interp.rs',
      '        Flow::Break | Flow::Continue => format!("`break`/`continue` outside a loop in {edge}"),',
@@ -2383,8 +2384,8 @@ MUTATIONS += [
 # Protected Check Isolation guards (governance/specs/v022-protected-check-isolation.md):
 # candidate code must not alter what the operator's check runs or what PASS
 # means. Kept here so nothing is lost, but certified under PCI, not G01
-# (user decision 2026-09-26). M58 is equivalent since M59 (whole-call
-# containment) and is excluded from every scope's kill list. M66 (a test's
+# (user decision 2026-09-26). M58 is STALE_REFACTORED into M59 (R51: one
+# contain_loop_control arm) and is excluded from every scope's kill list. M66 (a test's
 # `Flow::Return(Err)` arm) was removed before any certified run: `call_fn`
 # ends a `return` at the callee, so the arm was unreachable and the mutant
 # equivalent; the arm now fails closed and M65 guards the one live path.
@@ -2428,7 +2429,6 @@ PCI_IDS = {"M04", "M44", "M49", "M52", "M53", "M57", "M59", "M60", "M61", "M62",
 # NOT count as killed. `killer` is a live ACTIVE row that turns the property's
 # discriminator red.
 EQUIV_RECORD = {
-    "M58": {"property": "a break/continue raised in a FUNCTION BODY does not escape into the caller's loop", "subsumed_by": ["M59"], "killer": "M59"},
     "M245": {"property": "a protected clearance is a real monitor signature under the operator monitor root", "subsumed_by": ["M264"], "killer": "M264"},
     # ── C9 round 1 (harness workstream): rows whose recorded kill was ANOTHER
     # check refusing the attack. Each has an all-paths argument (`all_paths`)
@@ -2822,6 +2822,23 @@ STALE_REFACTORED = {
     # the guard lives on exactly as that arm, and M293 (ACTIVE) mutates it.
     "M176": {"property": "a pass needs exit 0", "replacement": "M293",
              "how": "the exit-0 guard became the Some(0) of the Passed arm in runner.rs (C9 re-audit)"},
+    # R51: M58 was v0.22's separate call_fn arm (`Err(Flow::Break) |
+    # Err(Flow::Continue) => return panic(...)`); main's interpreter has no
+    # such arm (old string absent). Loop control at every frame edge (fn body,
+    # closure, predicate, handler arm) is classified by ONE arm, `Flow::Break |
+    # Flow::Continue => format!(...outside a loop in {edge})` in frame_edge
+    # (interp.rs), which call_fn (FrameEdge::Fn), contain_frame and
+    # contain_loop_control all route through; M59 (ACTIVE) mutates it, and with
+    # M59's edit applied M58's own fn-boundary attack succeeds on its marker.
+    # Commit e41d6225 (S6.2b) mistakenly re-anchored M58 onto M59's exact text,
+    # so both rows mutated the same line and the EQUIVALENT_DID four-cell could
+    # not hold (set_off read EDIT_NOT_APPLICABLE at 986ec715).
+    "M58": {"property": "a break/continue raised in a FUNCTION BODY does not escape into the caller's loop",
+            "replacement": "M59",
+            "how": "v0.22's call_fn break/continue arm is gone on R51; the guard lives on as the single "
+                   "Flow::Break | Flow::Continue arm of frame_edge in interp.rs (reached from call_fn, "
+                   "contain_frame and contain_loop_control), which M59 mutates (e41d6225 had "
+                   "re-anchored M58 onto M59's text by mistake)"},
 }
 
 # M176 (the runner's exit-0 guard) is equivalent since `--exact` (PSV review
@@ -2830,8 +2847,9 @@ STALE_REFACTORED = {
 # Its killing test (a failing SIBLING beside a passing named test) described
 # the very behaviour B1 removed. The guard stays as defence in depth; M184
 # (Fabric's own exit-0 check) remains killed.
-# C9 re-audit: the legacy set is EMPTY. M176 is stale (above). M58 had no recorded
-# property, subsuming guard or killer, so under the four-cell rule it is ACTIVE.
+# C9 re-audit: the legacy set is EMPTY. M176 is stale (above). M58 (then with no
+# recorded property, subsuming guard or killer) was made ACTIVE, later EQUIVALENT_DID
+# vs M59 (C9), and on R51 is STALE_REFACTORED -> M59 (above).
 LEGACY_EQUIV = set()
 RETIRED = LEGACY_EQUIV | EQUIVALENT_DID | set(STALE_REFACTORED)
 # ── C9 round 4 fix wave, ROWS2 workstream (M760-M819; amendment 58): the
