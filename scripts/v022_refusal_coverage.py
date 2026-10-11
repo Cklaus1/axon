@@ -4007,15 +4007,28 @@ def code_lines(text):
 
 def cfg_test_only_files(dirs):
     """Source files only a test build compiles: declared `#[cfg(test)] mod X;`
-    in a sibling file (the module file is test code, not a protected path)."""
+    in a sibling file (the module file is test code, not a protected path),
+    or `include!`d inside a `#[cfg(test)]` item (R51 S6: main's interp.rs
+    pulls the ported v0.22 tests into its `#[cfg(test)] mod tests` with
+    `include!("interp/tests_v022_a.rs")`). A module declared in `X.rs` that
+    is not lib.rs/main.rs/mod.rs lives in `X/` (Rust's non-mod-rs rule: main's
+    `interp.rs` declares `mod taint_tests;`, the file interp/taint_tests.rs);
+    `include!` paths are relative to the including file's directory."""
     out = set()
-    pat = re.compile(r"#\[cfg\(test\)\]\s*(?:pub(?:\([a-z]+\))?\s+)?mod\s+(\w+)\s*;")
+    pat = re.compile(r"#\[cfg\((?:test|all\(test,[^\]\n]*\))\)\]\s*(?:pub(?:\([a-z]+\))?\s+)?mod\s+(\w+)\s*;")
+    inc = re.compile(r'\binclude!\(\s*"([^"]+)"\s*\)')
     for d in dirs:
         for f in _rs_under(d):
-            base = os.path.dirname(f)
-            for name in pat.findall(open(os.path.join(ROOT, f)).read()):
+            here = os.path.dirname(f)
+            stem = os.path.basename(f)
+            base = here if stem in ("lib.rs", "main.rs", "mod.rs") else f.removesuffix(".rs")
+            text = open(os.path.join(ROOT, f)).read()
+            for name in pat.findall(text):
                 out.add(os.path.normpath(os.path.join(base, f"{name}.rs")))
                 out.add(os.path.normpath(os.path.join(base, name, "mod.rs")))
+            for m in CFG_TEST.finditer(text):
+                for p in inc.findall(text[m.end():_cfg_test_extent(text, m.end())]):
+                    out.add(os.path.normpath(os.path.join(here, p)))
     return out
 
 
@@ -4957,11 +4970,15 @@ def changed_lines(text, old, new):
 
 def in_scope_files():
     """The rule's file set (amendment 61), sorted: every .rs under SCOPE_DIRS,
-    SCOPE_FILES, and the SCOPE_FN_REGIONS files."""
+    SCOPE_FILES, and the SCOPE_FN_REGIONS files. A file only a test build
+    compiles is not in it, in a language crate too (R51 S6: main's split-out
+    interp/*_tests.rs and the include!d tests_v022_*.rs are the test code
+    v0.22 kept inside interp.rs's blanked `#[cfg(test)] mod tests`)."""
     found = set(SCOPE_FILES) | set(SCOPE_FN_REGIONS) | set(REGIONS)
     for d in SCOPE_DIRS:
         found.update(_rs_under(d))
-    return sorted(found - linked_only_as_library() - cfg_test_only_files(SCOPE_DIRS))
+    lang = tuple(f"{d}/src" for d in language_crates().values())
+    return sorted(found - linked_only_as_library() - cfg_test_only_files(SCOPE_DIRS + lang))
 
 
 # Amendment 95 (C9 round 8, eqgate4): a COMPOUND guard is judged PER TERM and a
