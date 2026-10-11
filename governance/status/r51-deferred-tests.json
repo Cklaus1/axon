@@ -6,9 +6,9 @@
     "S0b": 14,
     "S5": 0,
     "S2": 0,
-    "S3": 39,
-    "S4": 13,
-    "S6": 135
+    "S3": 25,
+    "S4": 15,
+    "S6": 147
   },
   "tests": [
     {
@@ -104,8 +104,8 @@
     {
       "name": "sandbox_run_runs_no_function_name_the_candidate_chose",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S3",
-      "reason": "the name rule (seal_name_args) that reads pin.rs Ctx::npure (ported in S5) is not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edge seal_name_args (pin.rs Ctx::npure) ported (S3); needs a live sealed run"
     },
     {
       "name": "a_candidate_cannot_read_or_drive_the_clock_through_the_temporal_builtins",
@@ -116,26 +116,26 @@
     {
       "name": "a_name_built_out_of_the_candidates_bit_never_selects_an_operator_fn",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S3",
-      "reason": "the taint name sink (t_check_names) is a seal edge; the S2 channel feeds it; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edge t_check_names ported (S3); needs a live sealed run"
     },
     {
       "name": "comparing_a_dict_the_candidate_filled_never_selects_operator_code",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S3",
-      "reason": "deep comparison taint is ported (S2); the refusing sinks (t_check_names, t_check_call_picked) are seal edges; sealed runs refused until S6, not by the taint rule"
+      "slice": "S4",
+      "reason": "seal edge t_check_names ported (S3); the refusing sink t_check_call_picked needs PICK (S4) and a live sealed run (S6)"
     },
     {
       "name": "operator_negation_never_runs_at_a_width_the_candidate_chose",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S3",
-      "reason": "the width sink (seal_width, t_check_width) is a seal edge; the S2 channel feeds it; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edges seal_width_unary and t_check_width ported (S3); needs a live sealed run"
     },
     {
       "name": "operator_side_control_flow_on_candidate_data_never_selects_operator_code",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S3",
-      "reason": "control (pc) taint is ported (S2); the refusing sinks (t_check_names, t_check_call_picked) are seal edges; sealed runs refused until S6, not by the taint rule"
+      "slice": "S4",
+      "reason": "seal edge t_check_names ported (S3); the refusing sink t_check_call_picked needs PICK (S4) and a live sealed run (S6)"
     },
     {
       "name": "taint_survives_every_carrier_a_value_can_travel_by",
@@ -146,14 +146,14 @@
     {
       "name": "the_candidate_never_selects_the_operators_code_by_width_or_by_name",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S3",
-      "reason": "the width and name sinks (seal_width, t_check_width, t_check_names) are seal edges; the S2 channel feeds them; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edges seal_width, t_check_width and t_check_names ported (S3); needs a live sealed run"
     },
     {
       "name": "the_taint_name_rule_refuses_what_the_static_name_analysis_lets_through",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S3",
-      "reason": "the taint name sink (t_check_names) is a seal edge; the S2 channel feeds it; sealed runs refused until S6, not by the taint rule"
+      "slice": "S6",
+      "reason": "seal edge t_check_names ported (S3); needs a live sealed run"
     },
     {
       "name": "a_candidate_cannot_steer_the_operators_challenge_through_its_closure",
@@ -518,8 +518,8 @@
     {
       "name": "a_sealed_candidate_cannot_reach_the_operators_names",
       "file": "crates/axon-fabric/tests/check_effects.rs",
-      "slice": "S3",
-      "reason": "no_such_fn uniform text and seal edges not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edges and the uniform no_such_fn text ported (S3); needs a live sealed run"
     },
     {
       "name": "a_suites_runtime_fixture_is_the_pinned_one",
@@ -584,14 +584,14 @@
     {
       "name": "a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S3",
-      "reason": "no_such_fn uniform text not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the uniform no_such_fn text ported (S3); needs a live sealed run"
     },
     {
       "name": "a_sealed_frame_cannot_take_an_operator_fn_as_a_value",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S3",
-      "reason": "fn-value marks at the seal edge not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edge seal_call on a fn named in value position (ident_unbound) ported (S3); needs a live sealed run"
     },
     {
       "name": "a_sealed_handler_cannot_abort_the_operators_listener",
@@ -1166,26 +1166,26 @@
     {
       "name": "a_function_name_the_candidate_chose_never_selects_an_operator_fn",
       "file": "crates/axon-core/src/interp.rs",
-      "slice": "S3",
-      "reason": "the name rule at builtin call sites (seal_name_args) is not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edge seal_name_args ported (S3); needs a live sealed run"
     },
     {
       "name": "goal_eval_takes_no_function_name_the_candidate_chose",
       "file": "crates/axon-core/src/interp.rs",
-      "slice": "S3",
-      "reason": "the name rule at builtin call sites (seal_name_args) is not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edge seal_name_args ported (S3); needs a live sealed run"
     },
     {
       "name": "scheduler_spawn_takes_no_function_name_the_candidate_chose",
       "file": "crates/axon-core/src/interp.rs",
-      "slice": "S3",
-      "reason": "the name rule at builtin call sites (seal_name_args) is not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edge seal_name_args ported (S3); needs a live sealed run"
     },
     {
       "name": "a_goal_constraint_and_a_kernel_goal_take_no_function_name_the_candidate_chose",
       "file": "crates/axon-core/src/interp.rs",
-      "slice": "S3",
-      "reason": "the name rule at builtin call sites (seal_name_args) is not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edges seal_name_args and fn_by_name ported (S3); needs a live sealed run"
     },
     {
       "name": "a_candidates_global_and_a_sibling_fns_site_determine_nothing",

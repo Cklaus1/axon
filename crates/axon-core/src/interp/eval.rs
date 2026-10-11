@@ -375,6 +375,13 @@ impl<'p> Interp<'p> {
 
             Expr::UnaryOp { op, operand } => {
                 let v = self.eval_t::<T>(operand, env)?;
+                if T {
+                    let vt = self.tl::<T>();
+                    self.seal_width_unary(op, operand, &v)?;
+                    if vt & taint::TYP != 0 && matches!(op, UnaryOp::Neg | UnaryOp::BitNot) {
+                        self.t_check_width(&v, vt, &format!("{op:?}"))?;
+                    }
+                }
                 if T && matches!(op, UnaryOp::Not) {
                     self.t_untype();
                 }
@@ -611,7 +618,16 @@ impl<'p> Interp<'p> {
                     // same as `chan<T>()`. Its BUILTINS doc said "bounded
                     // channel with the given capacity" and now says what it does.
                     if name.starts_with("chan::<") || name == "Chan::new" {
-                        return Ok(Value::Chan(Rc::new(RefCell::new(VecDeque::new()))));
+                        let q = Rc::new(RefCell::new(VecDeque::new()));
+                        if T {
+                            // Stamped with its stated element type, and its
+                            // creating side recorded (amendment 72; veto
+                            // eval.rs:621-625).
+                            let elem =
+                                name.strip_prefix("chan::<").and_then(|s| s.strip_suffix('>'));
+                            self.chan_created(&q, elem);
+                        }
+                        return Ok(Value::Chan(q));
                     }
                     // R13 native FFI: a native `M::fn(...)` call dispatches to the
                     // in-process mock shim (one impl, two engines — I-2).
@@ -648,6 +664,9 @@ impl<'p> Interp<'p> {
                 argv.push(recv);
                 for a in args {
                     argv.push(self.eval_t::<T>(a, env)?);
+                }
+                if T {
+                    return self.impl_method_sealed(receiver, method, argv);
                 }
                 self.impl_method(method, argv)
             }
@@ -689,7 +708,7 @@ impl<'p> Interp<'p> {
                 // makes in-place algorithms over `&mut [T]` (AX-08) quadratic.
                 if let Expr::Ident(name) = receiver.as_ref() {
                     let (s, slot) = self.res.var(receiver, name);
-                    if env.get_var(s, slot).is_some() || self.globals.contains_key(&s) {
+                    if env.get_var(s, slot).is_some() || self.is_global(s) {
                         let idx = strict_int(self.eval_t::<T>(index, env)?)?;
                         return self.index_in_place(s, slot, name, idx, env);
                     }
@@ -883,6 +902,7 @@ impl<'p> Interp<'p> {
         if !self.refine_preds.is_empty() {
             if let Some(crate::ast::AxonType::Named(rn)) = ty {
                 if let Some(pred) = self.refine_preds.get(rn.as_str()).copied() {
+                    self.seal_refine(rn)?;
                     // The predicate's env is fresh: it keeps the bound value's
                     // taint (T8.3).
                     let mut pe = self.new_env();
@@ -911,11 +931,32 @@ impl<'p> Interp<'p> {
         // Completeness requirement: EVERY static-type-introduction site must
         // coerce so no SizedInt value is left as a bare Int at any missed site,
         // which would silently compute in i64 (I-9).
-        let v = if let Some(width) = ty.and_then(axon_type_to_width) {
+        let mut v = if let Some(width) = ty.and_then(axon_type_to_width) {
             coerce_to_sized(v, width)
         } else {
             v
         };
+        let mut vt = vt;
+        // The annotation is a declared type: in a sealed run (`T`) the value
+        // is cast to it (amendment 53; veto eval.rs:241-255). A closed
+        // declared type the cast verified is a PIN: the runtime type is the
+        // operator's, whatever produced the value. It pins a type, never a
+        // value (amendment 102).
+        if T {
+            if let Some(t) = ty {
+                if let Err(why) = self.cast(&mut v, t, &Default::default()) {
+                    return panic(format!(
+                        "`{name}` is declared `{}` but was bound to {} — a runtime type \
+                         confusion ({why})",
+                        crate::doc::render_type(t),
+                        display(&v)
+                    ));
+                }
+                if vt & taint::TYP != 0 && self.t_pins(t) {
+                    vt &= !taint::TYP;
+                }
+            }
+        }
         env.define_var_t::<T>(s, slot, v, vt);
         Ok(())
     }
@@ -993,11 +1034,20 @@ impl<'p> Interp<'p> {
         nest_guard!(self, CHAN_METHOD);
         match method {
             "send" => {
-                let v = self.eval_t::<T>(&args[0], env)?;
+                let mut v = self.eval_t::<T>(&args[0], env)?;
                 if T && !self.frame_sealed.get() {
                     // The queue now holds what was sent, and whoever reads it
                     // back inherits that (amendment 102).
                     self.t_mark_obj(&Value::Chan(q.clone()), self.ts::<T>(self.tl::<T>()));
+                }
+                if T {
+                    // Cast to every element type the channel crossed; the
+                    // operator sends sealed code a value: dicts in it are
+                    // snapshotted (amendment 72 part 2; veto eval.rs:664-675).
+                    self.chan_send_check(q, &mut v)?;
+                    if !self.frame_sealed.get() {
+                        self.dict_edge_in(&v)?;
+                    }
                 }
                 q.borrow_mut().push_back(v);
                 Ok(Value::Unit)
@@ -1040,6 +1090,27 @@ impl<'p> Interp<'p> {
             self.call_fn(f, argv)
         } else {
             panic(format!("no method `{method}` on type `{tn}`"))
+        }
+    }
+
+    /// [`Interp::impl_method`] in a sealed run (the tree's `MethodCall` arm
+    /// under `T`; the VM's `Op::MethodCall` never runs sealed, R51 Fork 1):
+    /// the method-dispatch edges (`seal_method`, `seal_dispatch`) before the
+    /// call, and the sealed caller's common miss text (veto eval.rs:713-724).
+    /// The runtime-taint dispatch check (`t_check_dispatch`) is R51 S4.
+    #[inline(never)]
+    fn impl_method_sealed(&self, receiver: &Expr, method: &str, argv: Vec<Value>) -> R {
+        nest_guard!(self, IMPL_METHOD);
+        let tn = argv[0].type_name();
+        if let Some(f) = self.methods.get(&(tn.clone(), method.to_string())) {
+            self.seal_method(f, &tn)?;
+            self.seal_dispatch(receiver, f, &argv[0], &tn)?;
+            self.call_fn(f, argv)
+        } else {
+            // A sealed caller is told what it is told for an operator method
+            // it may not use (`seal_method`): the miss and the refusal read
+            // the same (existence oracle, amendment 108).
+            self.no_such_fn(method, format!("no method `{method}` on type `{tn}`"))
         }
     }
 
@@ -1343,10 +1414,48 @@ impl<'p> Interp<'p> {
 
         // Evaluate arguments left-to-right, into a reused buffer (AX-54).
         let mut argv = self.take_args(args.len());
+        // The NAME rule (R51 S3): a sealed run's call of a name-resolving
+        // builtin. `T` is set only in a sealed run.
+        if T {
+            if let Expr::Ident(name) = callee {
+                if super::pin::name_sink(name).is_some() {
+                    return self.eval_name_sink_call(name, callee, args, argv, tier, env);
+                }
+            }
+        }
         for a in args {
             argv.push(self.eval_t::<T>(a, env)?);
         }
         self.dispatch_call::<T>(callee, argv, tier, env)
+    }
+
+    /// [`Interp::eval_call`] of a NAME-RESOLVING builtin (`pin::NAME_SINKS`)
+    /// in a sealed run: the arguments are evaluated with their taints, then,
+    /// unless a local closure of that name is what runs, the name rule is
+    /// applied by the static analysis (`seal_name_args`) and by the runtime
+    /// taint (`t_check_names`) before the builtin is dispatched (veto
+    /// eval.rs:1481-1484).
+    #[inline(never)]
+    fn eval_name_sink_call(
+        &self,
+        name: &str,
+        callee: &Expr,
+        args: &[Expr],
+        mut argv: Vec<Value>,
+        tier: Option<&str>,
+        env: &mut Env,
+    ) -> R {
+        let mut ats = Vec::with_capacity(args.len());
+        for a in args {
+            argv.push(self.eval_t::<true>(a, env)?);
+            ats.push(self.tl::<true>());
+        }
+        let (s, slot) = self.res.var(callee, name);
+        if !matches!(env.get_var(s, slot), Some(Value::Closure { .. })) {
+            self.seal_name_args(name, args)?;
+            self.t_check_names(name, &ats)?;
+        }
+        self.dispatch_call::<true>(callee, argv, tier, env)
     }
 
     /// Dispatch a call whose arguments `argv` are already evaluated: `resume`,
@@ -1484,10 +1593,10 @@ impl<'p> Interp<'p> {
             return self.call_fn_entry(&self.fn_table[(resolved - CALLEE_FN) as usize], argv);
         }
         // 4. A module-level closure constant.
-        if let Some(c @ Value::Closure { .. }) = self.globals.get(&s) {
+        if let Some(c @ Value::Closure { .. }) = self.global_ref(s)? {
             return self.call_closure(c.clone(), argv.into_vec(self));
         }
-        panic(format!("call to unknown function `{name}`"))
+        self.no_such_fn(name, format!("call to unknown function `{name}`"))
     }
 
     /// AX-08: `f(.., &mut a, ..)`. The checker (E0605/E0606) guarantees the
@@ -1902,7 +2011,12 @@ impl<'p> Interp<'p> {
             // No in-place operand read: each operand goes through the
             // evaluator so its taint is accumulated.
             let l = self.eval_t::<T>(left, env)?;
+            let lt = self.tl::<T>();
             let r = self.eval_t::<T>(right, env)?;
+            let rt = self.tl::<T>();
+            // The width edges (R51 S3): `T` is set only in a sealed run, so
+            // the unsealed instantiation carries none of this.
+            self.seal_width(op, left, right, &l, &r)?;
             // A comparison READS the content of every shared object (dict,
             // channel) inside either operand, however deep (`d == e`,
             // `[d] == [e]`, a struct or tuple holding one): the answer is a
@@ -1912,6 +2026,19 @@ impl<'p> Interp<'p> {
                 BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq
             ) {
                 self.t_touch(self.t_obj_deep(&l) | self.t_obj_deep(&r));
+            }
+            if (lt | rt) & taint::TYP != 0
+                && !matches!(
+                    op,
+                    BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq
+                )
+            {
+                if lt & taint::TYP != 0 {
+                    self.t_check_width(&l, lt, &format!("{op:?}"))?;
+                }
+                if rt & taint::TYP != 0 {
+                    self.t_check_width(&r, rt, &format!("{op:?}"))?;
+                }
             }
             return binop_operands(op, Operand::of(l), Operand::of(r));
         }
@@ -2073,12 +2200,16 @@ impl<'p> Interp<'p> {
     /// the existence test, then evaluated and converted the index
     /// (`strict_int`).
     pub(super) fn index_in_place(&self, s: Sym, slot: u32, name: &str, idx: i64, env: &Env) -> R {
-        match env.get_var(s, slot).or_else(|| self.globals.get(&s)) {
+        let v = match env.get_var(s, slot) {
+            Some(v) => Some(v),
+            None => self.global_ref(s)?,
+        };
+        match v {
             Some(Value::Array(items)) => items.get(idx as usize).cloned().ok_or_else(|| {
                 Flow::Panic(format!("index {idx} out of bounds (len {})", items.len()).into())
             }),
             Some(other) => panic(format!("indexing non-array ({})", other.type_name())),
-            None => panic(format!("undefined identifier `{name}`")),
+            None => self.no_such_fn(name, format!("undefined identifier `{name}`")),
         }
     }
 
@@ -2097,9 +2228,9 @@ impl<'p> Interp<'p> {
     ) -> R {
         let v = match env.get_var(s, slot) {
             Some(v) => v,
-            None => match self.globals.get(&s) {
+            None => match self.global_ref(s)? {
                 Some(v) => v,
-                None => return panic(format!("undefined identifier `{name}`")),
+                None => return self.no_such_fn(name, format!("undefined identifier `{name}`")),
             },
         };
         field_of(v, f, field)
@@ -2138,7 +2269,12 @@ impl<'p> Interp<'p> {
                     .map(|(&n, v)| (n, v.expect("every named field is given"))),
             );
         }
-        let fields = Fields(out);
+        let mut fields = Fields(out);
+        // A field is a declared type: in a sealed run each value is cast to it
+        // (amendment 53; veto eval.rs:842-850).
+        if self.seal.active {
+            self.cast_fields(name, &mut fields)?;
+        }
         let (sname, fields) = match lit.kind {
             RecordKind::Enum(enum_name, variant) => {
                 return Ok(Value::Enum(Rc::new(EnumVal {
@@ -2166,6 +2302,7 @@ impl<'p> Interp<'p> {
                 for tf in &td.fields {
                     if let crate::ast::AxonType::Named(rn) = &tf.ty {
                         if let Some(pred) = self.refine_preds.get(rn.as_str()).copied() {
+                            self.seal_refine(rn)?;
                             if let Some(fv) = fields.named(&tf.name) {
                                 let mut pe = self.new_env();
                                 pe.define(SYM_UNDERSCORE, fv.clone(), self.t_acc());
@@ -2194,9 +2331,19 @@ impl<'p> Interp<'p> {
                     let sv = Value::record(sname, fields);
                     let mut pe = self.new_env();
                     pe.define(SYM_UNDERSCORE, sv.clone(), self.t_acc());
-                    if let Value::Bool(false) =
+                    // A DEFINITION-owned predicate runs under its definition's
+                    // provenance: a candidate struct's `where` ran unsealed
+                    // when the OPERATOR built one, and called operator code
+                    // from there (PCI candidate-4 review; veto eval.rs:908).
+                    let held = if self.seal.active {
+                        let sealed = self.frame_sealed.get() || self.seal_type(name);
+                        self.with_frame(sealed, || {
+                            contain_frame(self.eval(pred, &mut pe), FrameEdge::Predicate)
+                        })?
+                    } else {
                         contain_frame(self.eval(pred, &mut pe), FrameEdge::Predicate)?
-                    {
+                    };
+                    if let Value::Bool(false) = held {
                         return Err(Flow::RefineViolation(
                             format!(
                                 "the constructed `{name}` violates its struct refinement \
@@ -2212,12 +2359,30 @@ impl<'p> Interp<'p> {
         Ok(Value::record(sname, fields))
     }
 
+    /// Cast each field value of a record literal `name { .. }` to its declared
+    /// field type (sealed runs only, from [`Interp::finish_record`]): a field
+    /// is a declared type (amendment 53, veto eval.rs:842-850).
+    #[inline(never)]
+    fn cast_fields(&self, name: &str, fields: &mut Fields) -> Result<(), Flow> {
+        for (n, v) in fields.0.iter_mut() {
+            let fname = sym_name(*n);
+            if let Err(why) = self.cast_field(name, &fname, v) {
+                return panic(format!(
+                    "field `{fname}` of `{name}` was given {} — a runtime type confusion \
+                     ({why})",
+                    display(v)
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// The rest of an identifier read once `get_var` found no local: a
     /// module-level `let`, then a top-level fn as a value, then the
     /// undefined-identifier panic. Shared by the `Ident` arm and the bytecode
     /// engine's local reads (R50).
     pub(super) fn ident_unbound(&self, name: &str, s: Sym) -> R {
-        if let Some(v) = self.globals.get(&s) {
+        if let Some(v) = self.global_ref(s)? {
             Ok(v.clone())
         } else if let Some(&i) = self.fn_of_sym.get(&s) {
             let f = self.fn_table[i as usize].def;
@@ -2229,14 +2394,18 @@ impl<'p> Interp<'p> {
             // `@[verify]` gates, effect/capability gates and provenance
             // included. The resolver refuses builtins and generic fns here.
             // In a sealed run, a fn value a SEALED frame took is marked
-            // (veto eval.rs:175-179; the call edge `seal_call` is S3c).
+            // (veto eval.rs:175-179). PCI: naming a fn in value position is a
+            // REFERENCE to it, so the call edge applies HERE: a sealed frame
+            // may not take an operator fn as a value (the forwarding body would
+            // run it in an operator frame, where the edge no longer applies).
+            self.seal_call(f)?;
             Ok(fn_value(
                 name,
                 f.params.len(),
                 self.seal.active && self.frame_sealed.get(),
             ))
         } else {
-            panic(format!("undefined identifier `{name}`"))
+            self.no_such_fn(name, format!("undefined identifier `{name}`"))
         }
     }
 

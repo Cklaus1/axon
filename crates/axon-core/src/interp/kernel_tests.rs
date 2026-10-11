@@ -145,7 +145,9 @@ fn a_sealed_frames_kernel_state_is_disjoint_from_the_operators() {
                 call(ix, "sandbox_run", &[Value::Int(sb), s("w"), Value::Int(3)]).is_err(),
                 "an operator sandbox handle is unknown in a sealed frame"
             );
-            assert_eq!(int(ix, "scheduler_spawn", &[s("w"), Value::Int(2)]), 0);
+            // A sealed frame queues only its own fns (the call edge at
+            // resolution, `fn_by_name`, R51 S3).
+            assert_eq!(int(ix, "scheduler_spawn", &[s("solve"), Value::Int(2)]), 0);
             ok(ix, "corrigible_halt", &[]);
             let c = int(
                 ix,

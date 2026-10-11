@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 0faf4372bb7a4fc91843873fa7cd74ad270d9711
+generated-at: 56095a128e52c8978ebda24013d6983227ab91ec
 
-`git diff --numstat 31413ca7..0faf4372 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..56095a12 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -49,20 +49,21 @@ generated-at: 0faf4372bb7a4fc91843873fa7cd74ad270d9711
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 4174 | 1436 |
-| `crates/axon-core/src/interp/builtins.rs` | 584 | 503 |
-| `crates/axon-core/src/interp/conform.rs` | 1816 | 0 |
-| `crates/axon-core/src/interp/conform_tests.rs` | 1411 | 0 |
+| `crates/axon-core/src/interp.rs` | 4517 | 1518 |
+| `crates/axon-core/src/interp/builtins.rs` | 604 | 508 |
+| `crates/axon-core/src/interp/conform.rs` | 1806 | 0 |
+| `crates/axon-core/src/interp/conform_tests.rs` | 1413 | 0 |
 | `crates/axon-core/src/interp/env.rs` | 1193 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 1573 | 596 |
+| `crates/axon-core/src/interp/eval.rs` | 1742 | 596 |
 | `crates/axon-core/src/interp/goal.rs` | 57 | 35 |
-| `crates/axon-core/src/interp/kernel_tests.rs` | 399 | 0 |
+| `crates/axon-core/src/interp/kernel_tests.rs` | 401 | 0 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 48 | 21 |
+| `crates/axon-core/src/interp/sink_tests.rs` | 870 | 0 |
 | `crates/axon-core/src/interp/sym.rs` | 1188 | 0 |
-| `crates/axon-core/src/interp/taint.rs` | 1128 | 0 |
-| `crates/axon-core/src/interp/taint_tests.rs` | 1058 | 0 |
-| `crates/axon-core/src/interp/value.rs` | 491 | 514 |
+| `crates/axon-core/src/interp/taint.rs` | 1185 | 0 |
+| `crates/axon-core/src/interp/taint_tests.rs` | 1061 | 0 |
+| `crates/axon-core/src/interp/value.rs` | 506 | 514 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
 | `crates/axon-core/src/interp/vm/mod.rs` | 3426 | 0 |
 | `crates/axon-core/src/interp/vm/pure.rs` | 964 | 0 |
@@ -72,15 +73,15 @@ generated-at: 0faf4372bb7a4fc91843873fa7cd74ad270d9711
 | `crates/axon-core/src/main.rs` | 799 | 243 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
 | `crates/axon-core/src/mut_borrow.rs` | 800 | 0 |
-| `crates/axon-core/src/parser.rs` | 86 | 3 |
+| `crates/axon-core/src/parser.rs` | 84 | 3 |
 | `crates/axon-core/src/replay.rs` | 40 | 17 |
 | `crates/axon-core/src/resolver.rs` | 534 | 66 |
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 34346 | 5217 |
+| total | 35815 | 5304 |
 
-`git log --reverse 31413ca7..0faf4372 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..56095a12 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -253,7 +254,9 @@ generated-at: 0faf4372bb7a4fc91843873fa7cd74ad270d9711
 | 1215159c | R51 S3b | TEST-ONLY unit tests (interp/conform_tests.rs, cfg(test)) for the channel access hooks t_chan_access/t_chan_choice in the method-call and select arms, plus their drift test. Interpreter behaviour unchanged: not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 769f45f2 | R51 S3b | TEST-ONLY unit tests (interp/conform_tests.rs) that kill the conform.rs mutation survivors (dict snapshot bound, epoch retake, first sealed mutation, fresh snapshot kept, dict-in-dict walk, array element judgement, cast depth bound, enum name); cast_at widened to pub(super) for the depth test, no behaviour change. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 0faf4372 | R51 S3 merge | joins S3a (fd3c3ff0..51a993cf, Kernel split) and S3b (be0636cb..769f45f2, closure representation A, conform.rs); only the interp.rs mod declarations, this table and the note conflicted, resolved by keeping both sides; no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 169 commits | | |
+| 0cc34976 | R51 S3d | INTERPRETER seal sinks inside evaluation, every check gated on seal.active or the sealed instantiation (T): globals read only through global_ref (seal_global; is_global for the in-place existence tests, eval.rs and vm/mod.rs), the name rule at the eval call site and the name-resolving builtins (seal_name_args via pin.rs Ctx::npure, t_check_names), fn_by_name/no_such_fn with the uniform sealed text (scheduler_spawn, kernel_goal_create, goal_run_constrained, ident_unbound, unknown call), seal_width/seal_width_unary/t_check_width in eval_binop and the unary arm, seal_refine at the param/return/let/record refinement sites, seal_type and cast_field in finish_record, the let-annotation cast with the t_pins TYP strip, seal_method/seal_dispatch in the tree MethodCall arm (impl_method_sealed), chan_created and chan_send_check/dict_edge_in on the chan builtin and send; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 56095a12 | R51 S3d | TEST-ONLY: interp/sink_tests.rs drives every S3d edge on a build_with sealed Interp, pins global_ref and the main-only sink classification by source sweep, ports the Pure-builtin ambient-state sweep (veto taint_tests.rs:2427); taint_tests' call_builtin site sweep skips the new test module; 14 deferred-registry entries re-slotted (edge ported, needs a live sealed run); no behaviour change |
+| 171 commits | | |
 <!-- END MECHANICAL -->
 
 

@@ -3979,10 +3979,18 @@ impl<'p> Interp<'p> {
                 // Fail loudly if the constraint names no defined fn — silently
                 // ignoring it would defeat the whole point (the caller believes
                 // the search is constrained when it is not).
-                if !self.fns.contains_key(constraint.as_str()) {
-                    return panic(format!(
-                        "goal_run_constrained: constraint fn `{constraint}` is not defined"
-                    ));
+                // A sealed caller sees only its own fns (veto builtins.rs:3983).
+                let visible = match self.fns.get(constraint.as_str()) {
+                    Some(f) => {
+                        !(self.seal.active && self.frame_sealed.get()) || self.fn_is_sealed(f)
+                    }
+                    None => false,
+                };
+                if !visible {
+                    return self.no_such_fn(
+                        &constraint,
+                        format!("goal_run_constrained: constraint fn `{constraint}` is not defined"),
+                    );
                 }
                 *self.k().goal_constraint.borrow_mut() = Some(constraint);
                 let result = self.run_goal(&name, target, max_evals);
@@ -4527,10 +4535,14 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let fn_name = as_str(&args[0])?.to_string();
                 let arg = as_int(&args[1])?;
-                if !self.fns.contains_key(&fn_name) {
-                    return panic(format!(
-                        "[E1602] scheduler_spawn: no function `{fn_name}` to run as a fiber"
-                    ));
+                // Resolved (and seal-checked) NOW: a fiber runs later, maybe in
+                // the operator's frame, so a sealed spawner may queue only its
+                // own functions.
+                if self.fn_by_name(&fn_name)?.is_none() {
+                    return self.no_such_fn(
+                        &fn_name,
+                        format!("[E1602] scheduler_spawn: no function `{fn_name}` to run as a fiber"),
+                    );
                 }
                 let id = self.k().scheduler.borrow_mut().spawn(fn_name, arg);
                 ok!(Value::Int(id as i64));
@@ -4987,10 +4999,13 @@ impl<'p> Interp<'p> {
                 let name = as_str(&args[1])?.to_string();
                 let target = as_float(&args[2])?;
                 // Typo guard: `name` must be a defined fn or already-recorded goal.
-                if !self.fns.contains_key(&name) && !self.k().provenance.borrow().contains_key(&name) {
-                    return panic(format!(
-                        "kernel_goal_create: `{name}` is neither a defined function nor a recorded goal"
-                    ));
+                if self.fn_by_name(&name)?.is_none() && !self.k().provenance.borrow().contains_key(&name) {
+                    return self.no_such_fn(
+                        &name,
+                        format!(
+                            "kernel_goal_create: `{name}` is neither a defined function nor a recorded goal"
+                        ),
+                    );
                 }
                 // AUDIT T20 (finding F006): this was `principal.max(0) as usize`,
                 // which silently coerces ANY invalid handle — negative, or past

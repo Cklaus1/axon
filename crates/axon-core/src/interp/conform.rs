@@ -439,9 +439,6 @@ impl<'p> Interp<'p> {
     /// Cast `v` to the declared type `ty` read in `cx`: `Ok` when the value
     /// conforms (closures are wrapped and channels stamped in place), `Err`
     /// with the reason when it is shown to be another type.
-    // S3c: the seal edges (`seal_call`, `seal_global`, `seal_method`,
-    // `seal_ret`, `let x: T` under seal, the `&mut` hand-back).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn cast(&self, v: &mut Value, ty: &T, cx: &Cx) -> Result<(), String> {
         self.cast_at(v, ty, cx, 0)
     }
@@ -1019,8 +1016,6 @@ impl<'p> Interp<'p> {
     /// generic `Chan<T>` it later crosses binds `T` from it, and a send of
     /// another type is refused (C9 round 4c, amendment 72). The text is the
     /// type rendered into the lowered callee name (`chan::<T>`).
-    // S3c: the `chan` builtin call (veto eval.rs:625).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn chan_created(&self, q: &Rc<RefCell<VecDeque<Value>>>, elem: Option<&str>) {
         let stamp = elem
             .and_then(crate::parser::parse_type_text)
@@ -1143,8 +1138,6 @@ impl<'p> Interp<'p> {
     /// channel crossed. A SEALED frame's send is a seal crossing: it is cast
     /// strictly, and on a channel the operator created it needs an element
     /// type some operator-side value determined (amendment 72).
-    // S3c: the channel `send` (veto eval.rs:665, `chan_method` on main).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn chan_send_check(
         &self,
         q: &Rc<RefCell<VecDeque<Value>>>,
@@ -1288,9 +1281,6 @@ impl<'p> Interp<'p> {
     /// Cast the value given for field `field` of the struct `owner` (or the
     /// enum variant `Enum::Variant`) to the field's declared type. The
     /// definition's own type parameters are unconstrained here.
-    // S3c: record and variant construction under seal (veto eval.rs
-    // `Expr::StructLit`/`EnumLit`; main `finish_record`).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn cast_field(&self, owner: &str, field: &str, v: &mut Value) -> Result<(), String> {
         let (generics, fields) = match owner.split_once("::") {
             Some((e, var)) => match self.enums.get(e).copied() {

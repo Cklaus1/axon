@@ -881,26 +881,23 @@ pub fn sealed_run_refusal(sealed: bool) -> Result<(), String> {
 ///
 /// Readers by slice (R51 §11): `active` here (the VM compile refusal); the
 /// sets, [`Interp::fn_is_sealed`] and the frame counters are read by the S2
-/// taint and the S3 seal edges and S4 dispatch rule, so until those land only
-/// the unit tests read them.
+/// taint and the S3 seal edges (`globals` by `seal_global`, `refines` by
+/// `seal_refine`, `types` by `seal_type`, `operator_methods` by
+/// `seal_method`); `fns` is read through `fn_is_sealed` by the S3 call edge.
 #[derive(Default)]
 pub(crate) struct Seal {
     pub(crate) active: bool,
     #[cfg_attr(not(test), allow(dead_code))]
     fns: std::collections::HashSet<usize>,
-    #[cfg_attr(not(test), allow(dead_code))]
     globals: std::collections::HashSet<Sym>,
-    #[cfg_attr(not(test), allow(dead_code))]
     refines: std::collections::HashSet<String>,
     /// Struct types defined in a sealed module: their whole-struct `where`
     /// runs under THEIR provenance, whoever constructs one.
-    #[cfg_attr(not(test), allow(dead_code))]
     types: std::collections::HashSet<String>,
     /// Method names the OPERATOR's code defines (in its impls and traits).
     /// In operator code such a name means the operator's method: a call that
     /// would dispatch it to a sealed method (the receiver's runtime type is
     /// one the candidate chose) is refused (C9 round 4, PSV-1, amendment 53).
-    #[cfg_attr(not(test), allow(dead_code))]
     operator_methods: std::collections::HashSet<String>,
 }
 
@@ -1196,6 +1193,9 @@ pub struct Interp<'p> {
     /// Frame provenance: whether the frame now running is a sealed
     /// (candidate) frame. Changed only by [`Interp::with_frame`].
     frame_sealed: Cell<bool>,
+    /// The fn whose body is running, for the pin analysis (its `FnDef`
+    /// address; a closure carries its creator's). 0 outside any fn.
+    pin_fn: Cell<usize>,
     /// How many frames of each provenance are active (entered through
     /// [`Interp::with_frame`] and not yet left). `with_frame` is the ONLY
     /// place provenance changes, so these are exact. A sealed handler frame
@@ -4033,6 +4033,7 @@ impl<'p> Interp<'p> {
             seal,
             pins,
             frame_sealed: Cell::new(false),
+            pin_fn: Cell::new(0),
             sealed_frames: Cell::new(0),
             operator_frames: Cell::new(0),
             taint: taint::Taint::default(),
@@ -4087,6 +4088,26 @@ impl<'p> Interp<'p> {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn fn_is_sealed(&self, f: &FnDef) -> bool {
         self.seal.active && self.seal.fns.contains(&(f as *const FnDef as usize))
+    }
+
+    /// What sealed code is told when a name does not resolve FOR IT: the
+    /// operator's fn and a fn that does not exist read the same, so a sealed
+    /// caller cannot use the refusal to learn which names the operator defines
+    /// (existence oracle, C9 round 10).
+    pub(crate) fn sealed_no_fn_msg(name: &str) -> String {
+        format!(
+            "sealed code (the candidate under test) cannot use `{name}`: no such function or \
+             value is visible to it"
+        )
+    }
+
+    /// The error for a name that resolves to nothing: the common text above for
+    /// a sealed caller, `plain` for anyone else.
+    pub(crate) fn no_such_fn<T>(&self, name: &str, plain: String) -> Result<T, Flow> {
+        if self.seal.active && self.frame_sealed.get() {
+            return panic(Self::sealed_no_fn_msg(name));
+        }
+        panic(plain)
     }
 
     /// Run `g` with the frame's provenance set to `sealed`, restoring it
@@ -4151,6 +4172,232 @@ impl<'p> Interp<'p> {
             );
         }
         Ok(())
+    }
+
+    /// The NAME rule's edge (C9 round 10, amendment 100): operator code does not
+    /// hand a name-resolving builtin (`sandbox_run`, `scheduler_spawn`,
+    /// `goal_eval` ...) a name the candidate could have chosen. A `str` the
+    /// candidate returned is a perfectly good `str`, and the builtin then ran
+    /// whichever operator fn it named. Judged at the CALL SITE, by the static
+    /// name-purity analysis (`interp/pin.rs`): an operator literal, constant or
+    /// operator fn result passes; a candidate fn's result, a parameter or any
+    /// untyped read does not. Fail-closed: an unrecorded site is refused.
+    pub(crate) fn seal_name_args(&self, builtin: &str, args: &[Expr]) -> Result<(), Flow> {
+        if !self.seal.active || self.frame_sealed.get() {
+            return Ok(());
+        }
+        let Some(idxs) = pin::name_sink(builtin) else {
+            return Ok(());
+        };
+        for &i in idxs {
+            if let Some(a) = args.get(i) {
+                if !self.pins.name_determined(self.pin_fn.get(), a) {
+                    return panic(format!(
+                        "operator code gave `{builtin}` a function name nothing on the operator \
+                         side determined (argument {}) — the candidate would choose which \
+                         function runs; name it with a literal or a constant the operator wrote",
+                        i + 1
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The method-dispatch edge: in operator code, a method name the operator
+    /// defines is the operator's. A method call selects its method by the
+    /// receiver's RUNTIME type, which the candidate chooses (its declared
+    /// return type, or a type confusion), so without this edge the candidate
+    /// chose which code ran under the operator's judging method's name — the
+    /// C9 round-4 review's keyed pass. A candidate's OWN method names (its
+    /// API, which the suite may call) are not affected.
+    pub(crate) fn seal_method(&self, f: &FnDef, tn: &str) -> Result<(), Flow> {
+        if self.seal.active
+            && !self.frame_sealed.get()
+            && self.fn_is_sealed(f)
+            && self.seal.operator_methods.contains(&f.name)
+        {
+            return panic(format!(
+                "operator code called `.{}()`, a method the operator defines, on a value of type \
+                 `{tn}` whose `{}` is the candidate's — the candidate would choose the code that \
+                 runs under the operator's method",
+                f.name, f.name
+            ));
+        }
+        Ok(())
+    }
+
+    /// The DISPATCH rule (C9 round 6, amendment 83): in a sealed run, operator
+    /// code does not select an operator impl's method by the runtime type of a
+    /// receiver nothing on the operator side determined (`interp/pin.rs`). The
+    /// impl is chosen by that type, which for a value read from a dict, a
+    /// channel, an unannotated lambda parameter or an unbound generic position
+    /// is the candidate's choice. Applies only where there is an impl to choose
+    /// between (two or more operator impl types define the method). The
+    /// receiver-dispatch rule's test toggle (`DISPATCH_RULE_OFF`) is R51 S4.
+    pub(crate) fn seal_dispatch(
+        &self,
+        receiver: &Expr,
+        f: &FnDef,
+        recv: &Value,
+        tn: &str,
+    ) -> Result<(), Flow> {
+        if !self.seal.active || self.frame_sealed.get() || self.fn_is_sealed(f) {
+            return Ok(());
+        }
+        if !self.pins.selects_between_impls(&f.name) {
+            return Ok(());
+        }
+        // A receiver that is an operator-defined struct or enum selects an
+        // impl the operator chose: sealed code cannot build one (E0004).
+        let operator_value = match recv {
+            Value::Struct(s) => self.pins.is_operator_type(&sym_name(s.name)),
+            Value::Enum(e) => self.pins.is_operator_type(&sym_name(e.enum_name)),
+            _ => false,
+        };
+        if operator_value {
+            return Ok(());
+        }
+        if !self.pins.determined(self.pin_fn.get(), receiver, &f.name) {
+            return panic(format!(
+                "operator code dispatched `{}` on a value whose type nothing on the operator side \
+                 determined (here `{tn}`) — the candidate would choose the impl; pin it with \
+                 `let x: T = ...`",
+                f.name
+            ));
+        }
+        Ok(())
+    }
+
+    /// The dispatch rule's arithmetic arm (amendment 83): operator code does
+    /// not do arithmetic on a fixed-width integer whose WIDTH nothing on the
+    /// operator side determined — a `u8` the candidate chose wraps where the
+    /// operator's `i64` does not (`(v << 1) == 254` with `v = 255 as u8`).
+    pub(crate) fn seal_width(
+        &self,
+        op: &BinOp,
+        left: &Expr,
+        right: &Expr,
+        l: &Value,
+        r: &Value,
+    ) -> Result<(), Flow> {
+        if !self.seal.active || self.frame_sealed.get() {
+            return Ok(());
+        }
+        if !(width_sized(l) || width_sized(r)) {
+            return Ok(());
+        }
+        if matches!(
+            op,
+            BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq
+        ) {
+            return Ok(());
+        }
+        if !self
+            .pins
+            .determined_arith(self.pin_fn.get(), op, left, right)
+        {
+            return panic(format!(
+                "operator code did arithmetic on a fixed-width integer whose width nothing on the \
+                 operator side determined ({} {:?} {}) — the candidate would choose the \
+                 wrapping; pin it with `let x: T = ...`",
+                l.type_name(),
+                op,
+                r.type_name()
+            ));
+        }
+        Ok(())
+    }
+
+    /// The arithmetic arm's UNARY form: `-x` and `~x` on a fixed-width integer
+    /// wrap at a width the candidate chose exactly as `x + y` does, and the
+    /// binary arm never saw them (C9 round 9 sweep: `(-xs[0]) == 252` completed
+    /// for a candidate `4 as u8`).
+    pub(crate) fn seal_width_unary(
+        &self,
+        op: &UnaryOp,
+        operand: &Expr,
+        v: &Value,
+    ) -> Result<(), Flow> {
+        if !self.seal.active || self.frame_sealed.get() {
+            return Ok(());
+        }
+        if !width_sized(v) || !matches!(op, UnaryOp::Neg | UnaryOp::BitNot) {
+            return Ok(());
+        }
+        if !self.pins.determined_unary(self.pin_fn.get(), op, operand) {
+            return panic(format!(
+                "operator code did arithmetic on a fixed-width integer whose width nothing on the \
+                 operator side determined ({op:?} {}) — the candidate would choose the wrapping; \
+                 pin it with `let x: T = ...`",
+                v.type_name()
+            ));
+        }
+        Ok(())
+    }
+
+    /// The global-read edge: a sealed frame may not read an operator global.
+    pub(crate) fn seal_global(&self, s: Sym) -> Result<(), Flow> {
+        if self.seal.active && self.frame_sealed.get() && !self.seal.globals.contains(&s) {
+            return panic(Self::sealed_no_fn_msg(&sym_name(s)));
+        }
+        Ok(())
+    }
+
+    /// Whether `s` is a module-level `let`: existence only, no value.
+    #[inline(always)]
+    pub(crate) fn is_global(&self, s: Sym) -> bool {
+        self.globals.contains_key(&s)
+    }
+
+    /// THE ONLY read of a module-level `let` by name from running code: the
+    /// global-read edge ([`Interp::seal_global`]) applied at the one lookup, so
+    /// no arm (a receiver fast path, an index fast path, a closure-constant
+    /// call) can reach `self.globals` around it (C9 round 9: `TABLE[0]`,
+    /// `CFG.k`, `PAIR.0` read an operator global from sealed code because two
+    /// fast paths skipped the edge). `Ok(None)`: no such global.
+    /// Drift: `every_global_read_goes_through_global_ref`.
+    #[inline(always)]
+    pub(crate) fn global_ref(&self, s: Sym) -> Result<Option<&Value>, Flow> {
+        match self.globals.get(&s) {
+            Some(v) => {
+                if self.seal.active {
+                    self.seal_global(s)?;
+                }
+                Ok(Some(v))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// The refinement edge: a candidate's refinement never runs in operator
+    /// code (a refinement attaches BY NAME, so a candidate `type DictTable =
+    /// … where P` ran P inside the operator's helper — PCI candidate-3 review).
+    pub(crate) fn seal_refine(&self, rname: &str) -> Result<(), Flow> {
+        if self.seal.active && !self.frame_sealed.get() && self.seal.refines.contains(rname) {
+            return panic(format!(
+                "the refinement `{rname}` is the candidate's and cannot run in the operator's code"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Look up a function by NAME for a builtin that will run it (scheduler,
+    /// goal, sandbox …). The call edge applies at RESOLUTION time, so a name a
+    /// sealed frame queues cannot run later on the operator's behalf.
+    pub(crate) fn fn_by_name(&self, name: &str) -> Result<Option<&'p FnDef>, Flow> {
+        match self.fns.get(name).copied() {
+            Some(f) => {
+                self.seal_call(f)?;
+                Ok(Some(f))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Whether struct type `name` was defined in a sealed module.
+    pub(crate) fn seal_type(&self, name: &str) -> bool {
+        self.seal.active && self.seal.types.contains(name)
     }
 
     /// Evaluate module-level constants in source order, so each may reference
@@ -4351,6 +4598,14 @@ impl<'p> Interp<'p> {
             // that is the site that turns into a hole, not this one.
             None => false,
         }
+    }
+
+    /// The call edge: a sealed frame may run only sealed functions.
+    pub(crate) fn seal_call(&self, f: &FnDef) -> Result<(), Flow> {
+        if self.seal.active && self.frame_sealed.get() && !self.fn_is_sealed(f) {
+            return panic(Self::sealed_no_fn_msg(&f.name));
+        }
+        Ok(())
     }
 
     fn call_fn(&self, f: &'p FnDef, args: impl CallArgs) -> R {
@@ -4652,6 +4907,7 @@ impl<'p> Interp<'p> {
             for (p, s) in f.params.iter().zip(params.iter()) {
                 if let crate::ast::AxonType::Named(rname) = &p.ty {
                     if let Some(pred) = self.refine_preds.get(rname.as_str()).copied() {
+                        self.seal_refine(rname)?;
                         let val = env.get(*s).cloned().unwrap_or(Value::Unit);
                         // The predicate frame sees the value with the taint
                         // the arguments arrived with (veto interp.rs:4168-4173).
@@ -4905,6 +5161,7 @@ impl<'p> Interp<'p> {
         if !self.refine_preds.is_empty() && !self.discharged.refine_return_proven(&f.name) {
             if let Some(crate::ast::AxonType::Named(rname)) = &f.return_type {
                 if let Some(pred) = self.refine_preds.get(rname.as_str()).copied() {
+                    self.seal_refine(rname)?;
                     // R20 Slice 2: evaluate the predicate with `_` bound to the
                     // return value AND the fn's params still in scope, so a
                     // RELATIONAL return refinement (e.g.
@@ -5611,6 +5868,10 @@ mod kernel_tests;
 // v0.22 C9 round 4, amendments 53/72/78): casts, closure and channel
 // contracts, the operator's dict snapshots.
 mod conform;
+// The seal sinks inside evaluation (R51 S3): global, name, width, refine,
+// type and method edges on a `build_with` sealed `Interp`.
+#[cfg(test)]
+mod sink_tests;
 // Its unit tests (R51 S3: the casts and dict edges, driven directly).
 #[cfg(test)]
 mod conform_tests;
@@ -7862,7 +8123,7 @@ fn main() { }
     /// name-resolving builtin runs. The name argument is a SINK: operator code
     /// must give it a name-pure expression.
     #[test]
-    #[ignore = "R51 S3: the name rule at builtin call sites (seal_name_args) is not ported; sealed control refused until S6"]
+    #[ignore = "R51 S6: seal edge seal_name_args ported (S3); needs a live sealed run"]
     fn a_function_name_the_candidate_chose_never_selects_an_operator_fn() {
         let sbx = |name_expr: &str, pre: &str| {
             format!(
@@ -7950,7 +8211,7 @@ fn main() { }
     }
 
     #[test]
-    #[ignore = "R51 S3: the name rule at builtin call sites (seal_name_args) is not ported; sealed control refused until S6"]
+    #[ignore = "R51 S6: seal edge seal_name_args ported (S3); needs a live sealed run"]
     fn goal_eval_takes_no_function_name_the_candidate_chose() {
         let suite = "fn easy(x: i64) -> i64 { 100 }\nfn hard(x: i64) -> i64 { 0 }\n@[test]\nfn t() {\n    let s = goal_eval(NAME, 5)\n    assert(s > 50.0)\n}\n";
         assert_eq!(
@@ -7979,7 +8240,7 @@ fn main() { }
     }
 
     #[test]
-    #[ignore = "R51 S3: the name rule at builtin call sites (seal_name_args) is not ported; sealed control refused until S6"]
+    #[ignore = "R51 S6: seal edge seal_name_args ported (S3); needs a live sealed run"]
     fn scheduler_spawn_takes_no_function_name_the_candidate_chose() {
         let suite = "fn grade(x: i64) -> i64 { 9 }\n@[test]\nfn t() {\n    let id = scheduler_spawn(NAME, 0)\n    let n = scheduler_run()\n    assert(scheduler_result(id) == 9)\n}\n";
         assert_eq!(
@@ -7999,7 +8260,7 @@ fn main() { }
     }
 
     #[test]
-    #[ignore = "R51 S3: the name rule at builtin call sites (seal_name_args) is not ported; sealed control refused until S6"]
+    #[ignore = "R51 S6: seal edges seal_name_args and fn_by_name ported (S3); needs a live sealed run"]
     fn a_goal_constraint_and_a_kernel_goal_take_no_function_name_the_candidate_chose() {
         let pre = "@[adaptive]\nfn metric(x: i64) -> i64 { x }\nfn ok_c(x: i64) -> bool { true }\n";
         let constrained = format!("{pre}@[test]\nfn t() {{\n    let r = goal_run_constrained(\"metric\", CNAME, 10.0, 5)\n    assert(r >= 0.0)\n}}\n");
