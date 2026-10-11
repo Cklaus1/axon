@@ -1133,6 +1133,12 @@ fn changed() -> [i64] {
     a[1] = h
     a
 }
+fn changed_sized() -> [i64] {
+    let w: i8 = 5
+    let a = arr_range(0, 3)
+    a[1] = w
+    a
+}
 fn builtin_push() -> [[i64]] {
     let a = arr_range(0, 3)
     let b = arr_push(a, 7)
@@ -1186,6 +1192,17 @@ fn fill_lt() -> [i64] {
         x = x + 3
     }
     fl
+}
+fn fill_mod() -> [i64] {
+    let fm = arr_repeat(0, 10)
+    let jm = 1
+    let sm = 3
+    let bm = 6
+    while jm <= bm {
+        fm[jm] = 7
+        jm = jm + sm
+    }
+    fm
 }
 fn fill_none() -> [i64] {
     let fi = arr_range(0, 10)
@@ -1290,7 +1307,8 @@ fn form_of(v: &Value) -> &'static str {
 /// R50 S13 (spec §4 S13 "Test probes"): each packed constructor's form; an
 /// `Ints` array stays `Ints` through a `LoopMem` store, an S8 `swap`, a
 /// `write_place` and the in-place append paths, and becomes `Vals` on a
-/// kind-changing write; a builtin's result is `Vals`; and every
+/// kind-changing write (a `Float`, an `i8`: a `SizedInt` is never packed);
+/// a builtin's result is `Vals`; and every
 /// `vm_bulk_fill_runs` and `vm_bulk_count_runs` shape, run with `vm_eager`
 /// (as the cli `vm` leg runs), moves the bulk counter of its array's kind.
 /// A build that packs only `Bools`, or converts an array to `Vals` on its
@@ -1338,6 +1356,7 @@ fn packed_forms_persist() {
         ("pushed", "Ints"),
         ("added", "Ints"),
         ("changed", "Vals"),
+        ("changed_sized", "Vals"),
     ] {
         assert_eq!(form_of(&call(name, vec![])), form, "{name}");
     }
@@ -1374,12 +1393,13 @@ fn packed_forms_persist() {
     // Each bulk shape and the counter it moves, as `[Bools, Ints, Floats]`
     // deltas, with the shape's result.
     let runs = super::pure::probe::bulk_runs;
-    let fills: [(&str, [u32; 3], &str); 7] = [
+    let fills: [(&str, [u32; 3], &str); 8] = [
         ("fill_bools", [1, 0, 0], "Bools"),
         ("fill_ints", [0, 1, 0], "Ints"),
         ("fill_floats", [0, 0, 1], "Floats"),
         ("fill_last", [1, 0, 0], "Bools"),
         ("fill_lt", [0, 1, 0], "Ints"),
+        ("fill_mod", [0, 1, 0], "Ints"),
         ("fill_none", [0, 2, 0], "Ints"),
         ("fill_shared", [0, 1, 0], "Ints"),
     ];

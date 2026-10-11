@@ -281,12 +281,13 @@ fn main() -> i64 {
     ki[1] = half
     lki[1] = half
     both("write_float_into_ints", "{ki} {ki == lki}", "{lki} {lki == ki}")
-    let w: i32 = 5
+    let w: i8 = 5
+    let big = 200
     let ks = arr_repeat(7, 3)
     let lks = id([7, 7, 7])
     ks[2] = w
     lks[2] = w
-    both("write_sized_into_ints", "{ks} {ks == lks}", "{lks} {lks == ks}")
+    both("write_sized_into_ints", "{ks} {ks == lks} {ks[2] < big}", "{lks} {lks == ks} {lks[2] < big}")
     let three = 3
     let kf = arr_repeat(0.5, 2)
     let lkf = id([0.5, 0.5])

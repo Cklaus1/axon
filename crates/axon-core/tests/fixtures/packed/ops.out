@@ -305,8 +305,8 @@ P write_int_into_bools [true, 1, true] 3
 L write_int_into_bools [true, 1, true] 3
 P write_float_into_ints [0, 2.5, 2] true
 L write_float_into_ints [0, 2.5, 2] true
-P write_sized_into_ints [7, 7, 5] true
-L write_sized_into_ints [7, 7, 5] true
+P write_sized_into_ints [7, 7, 5] true false
+L write_sized_into_ints [7, 7, 5] true false
 P write_int_into_floats [3, 0.5]
 L write_int_into_floats [3, 0.5]
 P push_int_onto_bools [true, true, 1] 3
