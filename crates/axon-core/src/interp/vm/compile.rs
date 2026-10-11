@@ -34,7 +34,7 @@ use crate::interp::{lit_to_val, Interp, Resolution, Value};
 /// this is its only constructor, so no body is ever built for a sealed run.
 pub(in crate::interp) fn compile<'p>(ix: &Interp<'_>, body: &'p Expr) -> Option<Body<'p>> {
     assert!(
-        !ix.sealed,
+        !ix.seal.active,
         "R51: a sealed run never compiles a VM body (sealed code runs on the tree only)"
     );
     let mut c = Compiler {

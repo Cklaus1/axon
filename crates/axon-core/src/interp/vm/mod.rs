@@ -29,7 +29,7 @@ use crate::ast::{AxonType, UnaryOp};
 mod compile;
 mod pure;
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
 
 pub(super) use compile::compile;
 use pure::{PureExpr, PureLoop, PureOp};
