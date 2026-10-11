@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S6 gaps",
+  "text": "INTERPRETER revert of 5205763e's goal-name seal edge (the seal_call after the lookup in run_goal_random/categorical/multistart/tournament and the seal-aware unknown_goal_name): r51/s4b 65eda84a ports the same edge and merges first, so goal.rs and unknown_goal_name return to the base exactly; the unsealed path never changed. TEST-ONLY: the duplicate sink_tests goal-search test is dropped (S4b's dispatch_tests cover it). Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

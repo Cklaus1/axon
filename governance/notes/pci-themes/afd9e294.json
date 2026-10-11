@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S0b perf",
+  "text": "INTERPRETER cost only: S0b's return boundary (sum_return) tests the value's tag first (ret_needs_check: only Struct..=Err can be asked anything) and reads one FnEntry::ret byte (RetCheck replaces ret_is_scalar + ret_sum); leaf_call checks such a result out of line (leaf_return_checked), declining a confused Result/Option to the full path as before. Same refusals on both engines (soft unwrap, Result/Option confusion); new cli_run test + fixture for the leaf-call refusal; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

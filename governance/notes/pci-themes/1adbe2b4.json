@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S7 merge",
+  "text": "joins r51/int 9e67b796 (30e6638c, R51 S7 decl) onto r51/s7reg (5842278b and its registry/note follow-ups); only this table and the note conflicted, resolved by keeping both sides; no change beyond the commits it joins"
+}

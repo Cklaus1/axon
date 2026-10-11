@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S1",
+  "text": "engine pin: Interp::build selects the engine through the pure vm::engine_for(sealed, SEAL_RUNTIME_COMPLETE, override, AXON_ENGINE), which decides a sealed run first: refused while the seal is incomplete (unchanged on this tree, SEAL_RUNTIME_COMPLETE = false), refused when the VM is requested (AXON_ENGINE=vm or set_engine(Vm)) or AXON_ENGINE is invalid, else the tree; `axon test --seal` refuses the same before any result line. Unsealed selection unchanged. T1a-d (truth table, no compiled body under seal, CLI, drift sweeps over interp/ incl. vm/): no change in what is refused on this tree (every sealed run still is)"
+}

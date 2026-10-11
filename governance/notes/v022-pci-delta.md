@@ -10,9 +10,10 @@ relative to that, and how much of the difference is covered.
 
 The block below is produced by `scripts/pci_delta.py` from git, not written by hand. A drift test
 (`crates/axon-core/tests/pci_delta_note.rs`) regenerates it at the head it names and fails if it
-differs, if a commit under `crates/axon-core/src` is not classified in the script's `THEMES`, or if a
-later commit touches `crates/axon-core/src` (the note is then stale: `python3 scripts/pci_delta.py
---emit HEAD`, paste between the markers).
+differs, if a commit under `crates/axon-core/src` is not classified (one file per commit in
+`governance/notes/pci-themes/`; a merge without one only if it is a pure join, `PURE_JOIN` in the
+script), or if a later commit touches `crates/axon-core/src` (the note is then stale:
+`python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
 generated-at: 91babccf82e1b182e0f584b7a129a97ebd1d01e5

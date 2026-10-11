@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (AX findings)",
+  "text": "native codegen only (non-escaping array literals on the stack): the interpreter is untouched"
+}

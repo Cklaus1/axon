@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S7 native stack cap",
+  "text": "INTERPRETER (native thread stack size only; no change in what any run computes, accepts or refuses): stack_size_for_depth clamps the reserve at MAX_STACK_BYTES = MAX_DEPTH_CEILING x 256 KiB, the largest reserve 5864c423 made; with f89f4d43's x1.25 alone, AXON_MAX_DEPTH past ~800,000 asked for more than Linux heuristic overcommit maps in one go and the interpreter thread failed to spawn (exit 101) where 5864c423 ran (900,000 and 1,000,000 observed); unsealed behaviour change: none against 5864c423 (every depth reserves at least what it did there; AXON_MAX_DEPTH 800,000/900,000/1,000,000 run hello, release and debug); sealed runs as at 04d3ad7b"
+}

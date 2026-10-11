@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S4a",
+  "text": "merges r51/s4b 5fea0339 (dispatch rule, test switches) for the T5 port; the switch block conflict resolved to S4b's side; no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

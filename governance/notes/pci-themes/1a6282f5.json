@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R51 S0)",
+  "text": "outside the interpreter (codegen/mod.rs): fix(codegen): give a tuple element binding its semantic type so an inner tuple destructures natively (AX-48): the interpreter is untouched"
+}

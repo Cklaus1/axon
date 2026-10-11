@@ -1,0 +1,4 @@
+{
+  "theme": "amendment 121",
+  "text": "the split moves to `seal_split.rs` (library, so a gate row runs its test), the honest-registry control is made to bind the candidate's taint, doc and test wording: no change in what is refused beyond b7aaa9c1"
+}

@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S3 merge",
+  "text": "joins S3a (fd3c3ff0..51a993cf, Kernel split) and S3b (be0636cb..769f45f2, closure representation A, conform.rs); only the interp.rs mod declarations, this table and the note conflicted, resolved by keeping both sides; no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

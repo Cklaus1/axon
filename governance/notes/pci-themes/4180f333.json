@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S0b merge",
+  "text": "joins r51/hdone (28e02cad, addressed handler completion) onto the S4a merge; only this table and the note conflicted, resolved by keeping both sides; the registry drops interp::tests::no_control_transfer_escapes_a_frame's S0b entry (the gap it named is closed); no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}
