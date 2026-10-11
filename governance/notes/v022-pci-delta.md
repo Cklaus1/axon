@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: c6e389b156c5280d8c106efae2dd40e39935238c
+generated-at: dd1ea380950867e7c0802c54e224e7143facb5ff
 
-`git diff --numstat 31413ca7..c6e389b1 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..dd1ea380 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -51,8 +51,8 @@ generated-at: c6e389b156c5280d8c106efae2dd40e39935238c
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
 | `crates/axon-core/src/interp.rs` | 4885 | 1448 |
 | `crates/axon-core/src/interp/builtins.rs` | 672 | 512 |
-| `crates/axon-core/src/interp/conform.rs` | 1780 | 0 |
-| `crates/axon-core/src/interp/conform_tests.rs` | 1369 | 0 |
+| `crates/axon-core/src/interp/conform.rs` | 1800 | 0 |
+| `crates/axon-core/src/interp/conform_tests.rs` | 1354 | 0 |
 | `crates/axon-core/src/interp/crossing_tests.rs` | 417 | 0 |
 | `crates/axon-core/src/interp/dispatch_tests.rs` | 615 | 0 |
 | `crates/axon-core/src/interp/env.rs` | 1181 | 0 |
@@ -86,9 +86,9 @@ generated-at: c6e389b156c5280d8c106efae2dd40e39935238c
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 45437 | 5256 |
+| total | 45442 | 5256 |
 
-`git log --reverse 31413ca7..c6e389b1 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..dd1ea380 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -306,7 +306,8 @@ generated-at: c6e389b156c5280d8c106efae2dd40e39935238c
 | 9eb70ac1 | R51 T3 | TEST-ONLY: interp::tests::no_control_transfer_escapes_a_frame (interp/tests_v022_c.rs) loses its R51 S0b ignore and runs: 28e02cad ported v0.22's addressed handler completion, so the foreign arm's completion now unwinds to its own with (7, not 107); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 5f748b86 | R51 S4 follow-up merge | joins r51/int d2353962 (hdone merge 4180f333, 9eb70ac1) onto the S4 follow-up (662b7329, e7cf7f59); this table resolved by keeping both sides, the note regenerated, the registry merged per entry (285 entries, S0b 14, S4 0, S6 271); no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 04d3ad7b | R51 S6.1 | INTERPRETER the seal flip: SEAL_RUNTIME_COMPLETE = true, so a sealed run builds (Interp::build_in through engine_for) on the tree engine with the S2-S5 runtime seal instead of being refused; AXON_ENGINE=vm or set_engine(Vm) on a sealed run stays refused (exit 2), and engine_for keeps its complete input, so setting the const back to false is the rollback. The rest of its crates/axon-core/src diff is TEST-ONLY or docs: the 285 R51 ignores removed (registry empty), the three refuse-all guard tests retired or turned into a positive sealed-harness test, the width row's pre-S6 branch dropped, the AXON_ENGINE env_registry row loses its incomplete-seal sentence, stale 'refused until S6' module docs. No unsealed behaviour change: engine_for's unsealed rows read neither changed input |
-| 214 commits | | |
+| dd1ea380 | R51 S6.1 | TEST-ONLY: interp::conform::walk_bound_tests::a_value_nested_past_the_bound_is_refused_not_left_unvisited moves back from interp/conform_tests.rs to its v0.22 module (end of interp/conform.rs, v0.22 body verbatim), the path the PCI am78 row and M1847 name; scripts v022_pci_gates.sh and psv_matrix_check.py read a file's include!d files too, so main's interp::tests rows in interp/tests_v022_*.rs resolve; no behaviour change; sealed runs as at 04d3ad7b |
+| 215 commits | | |
 <!-- END MECHANICAL -->
 
 
