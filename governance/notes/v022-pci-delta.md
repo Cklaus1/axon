@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 40cbaa178dc257c14da0a914bc78a516e25b1c67
+generated-at: 769f45f2aba283e3d9e695b573817a3510a1d326
 
-`git diff --numstat 31413ca7..40cbaa17 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..769f45f2 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -51,8 +51,8 @@ generated-at: 40cbaa178dc257c14da0a914bc78a516e25b1c67
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
 | `crates/axon-core/src/interp.rs` | 4039 | 1456 |
 | `crates/axon-core/src/interp/builtins.rs` | 593 | 542 |
-| `crates/axon-core/src/interp/conform.rs` | 1810 | 0 |
-| `crates/axon-core/src/interp/conform_tests.rs` | 1035 | 0 |
+| `crates/axon-core/src/interp/conform.rs` | 1816 | 0 |
+| `crates/axon-core/src/interp/conform_tests.rs` | 1411 | 0 |
 | `crates/axon-core/src/interp/env.rs` | 1193 | 0 |
 | `crates/axon-core/src/interp/eval.rs` | 1573 | 596 |
 | `crates/axon-core/src/interp/goal.rs` | 68 | 53 |
@@ -77,9 +77,9 @@ generated-at: 40cbaa178dc257c14da0a914bc78a516e25b1c67
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 33411 | 5282 |
+| total | 33793 | 5282 |
 
-`git log --reverse 31413ca7..40cbaa17 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..769f45f2 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -247,7 +247,9 @@ generated-at: 40cbaa178dc257c14da0a914bc78a516e25b1c67
 | 6afab02a | R51 S2.3 step 4 | INTERPRETER frame and closure taint on the sealed instantiation only: call_fn_in_general and the closure call become const-generic frames (call_fn_frame / call_closure_frame::<T>); call_fn_common (plain entries only, and FnEntry::new now takes seal.active so no entry of a sealed run is plain) binds with 0. A frame binds its parameters with the arguments' taint plus pc (t_params), saves and restores the caller's pc/sticky (FrameCtl), reads taint.ret or taint.last at exit (t_body) and leaves entry|body|sticky in acc (t_frame_exit); refinement predicates, the postcondition, goal_met (ALL when a goal search ran) and struct-refinement predicates carry the frame's taints. A closure's capture cell becomes a typed Captures (bindings plus one taint per binding, sealed run only) moved by the lend, copied by the copy path and written back (TaintPort-5). t_loop_pc after builtin callbacks, goal evaluations and scheduler fibers; t_provenance_write at the zoned-call provenance writes. Unsealed: same code via ::<false>; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 191c8f51 | R51 S2.3 step 4 | TEST-ONLY drift lists: the T1d VM-entry allow-list (vm/tests.rs) and user_code_runners' PRIMITIVES (interp.rs, cfg(test)) name the const-generic frames call_fn_frame and call_closure_frame that 6afab02a moved the VM entries into; spec T1d text revised to match. Interpreter behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | be0636cb | R51 S3b | INTERPRETER closure representation A (spec Fork 3, TaintPort-5/-15): ClosureVal holds its capture cell as Rc<RefCell<Captures>> plus a per-reference contract and typed SealMarks (sealed_origin, sealed_fnval), never capture entries; make_closure/fn_value set them only in a sealed run, the lend test counts the cell's holders, Value stays 16 bytes. Ports v0.22 interp/conform.rs (casts, Cx, closure and channel contracts, dict snapshots and edges, replaced_ok, handler edges) onto main's Sym/Rc value model with Interp fields chan_contracts/dict_snaps/dict_epoch/user_traits/trait_impls/refine_bases, parse_type_text, Fields::iter_mut, t_chan_access/t_chan_choice in the select and method-call arms (sealed instantiation only), addr_of covering a closure's capture cell. The seal edges are not called from production yet (S3c); unit tests in interp/conform_tests.rs. Unsealed behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 164 commits | | |
+| 1215159c | R51 S3b | TEST-ONLY unit tests (interp/conform_tests.rs, cfg(test)) for the channel access hooks t_chan_access/t_chan_choice in the method-call and select arms, plus their drift test. Interpreter behaviour unchanged: not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 769f45f2 | R51 S3b | TEST-ONLY unit tests (interp/conform_tests.rs) that kill the conform.rs mutation survivors (dict snapshot bound, epoch retake, first sealed mutation, fresh snapshot kept, dict-in-dict walk, array element judgement, cast depth bound, enum name); cast_at widened to pub(super) for the depth test, no behaviour change. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 166 commits | | |
 <!-- END MECHANICAL -->
 
 
