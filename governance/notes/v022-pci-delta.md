@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 99f7927fdda629a7ae78066efd6fcf7f827f5dac
+generated-at: 2ccc64c357fec8ffd4fa7942638c70ca2866992f
 
-`git diff --numstat 31413ca7..99f7927f -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..2ccc64c3 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -52,12 +52,12 @@ generated-at: 99f7927fdda629a7ae78066efd6fcf7f827f5dac
 | `crates/axon-core/src/interp.rs` | 3815 | 1465 |
 | `crates/axon-core/src/interp/builtins.rs` | 587 | 542 |
 | `crates/axon-core/src/interp/env.rs` | 1080 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 1167 | 550 |
+| `crates/axon-core/src/interp/eval.rs` | 1241 | 585 |
 | `crates/axon-core/src/interp/goal.rs` | 55 | 52 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 18 | 9 |
 | `crates/axon-core/src/interp/sym.rs` | 1180 | 0 |
-| `crates/axon-core/src/interp/taint.rs` | 970 | 0 |
+| `crates/axon-core/src/interp/taint.rs` | 1009 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 491 | 514 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
 | `crates/axon-core/src/interp/vm/mod.rs` | 3398 | 0 |
@@ -74,9 +74,9 @@ generated-at: 99f7927fdda629a7ae78066efd6fcf7f827f5dac
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 28537 | 5244 |
+| total | 28650 | 5279 |
 
-`git log --reverse 31413ca7..99f7927f -- crates/axon-core/src`:
+`git log --reverse 31413ca7..2ccc64c3 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -236,7 +236,8 @@ generated-at: 99f7927fdda629a7ae78066efd6fcf7f827f5dac
 | 6be3a637 | R51 S2.2 | INTERPRETER Env factory: Env's constructors become private to interp/env.rs and every Env of a run is made by the Interp (new_env, env_from_snapshot, the frame pool moved into env.rs), which gives it a taint store exactly when seal.active; a given frame is emptied (taints with bindings), a snapshot whose store does not match the run panics, and a taint read from a store-less Env panics (never reads 0). Unsealed runs: same envs, no store, behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 8a0a268c | R51 S2 perf | INTERPRETER cost-only: the Bindings taint store becomes a Vec plus a store flag, and the bytecode engine (never sealed) writes and removes bindings through const-generic _t::<false> forms, so the unsealed call path has no branch on the store (R50 §10 call-path budget restored); the release-mode in-step check runs on sealed writes and taint reads only (debug builds check every mutation); two pre-existing clippy lints in interp tests fixed. Behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 99f7927f | R51 S2.3 step 1 | INTERPRETER taint state: ports v0.22 interp/taint.rs (taint bits, Taint accumulator/pc/sticky cells, builtin class tables with now_ns classed WORLD like now_ms, builtin/provenance/native/loop hooks) onto main's Sym/slot Bindings, adds the Interp.taint field and records a module-level let's taint at init_globals in a sealed run. Nothing reads the taint yet (eval_t hook sites are the next step); behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 156 commits | | |
+| 2ccc64c3 | R51 S2.3 step 2a | INTERPRETER evaluator dispatch: eval() branches once on seal.active to eval_tainted (the v0.22 accumulator wrapper, reading a binding's taint through the same slot lookup as its value) or eval_arm::<false>; eval_arm, eval_block, run_loop_body, eval_binop, eval_call and operand are const-generic over the run, recursing through eval_t::<T>, so the unsealed instantiation is main's evaluator. No taint hook yet; behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 157 commits | | |
 <!-- END MECHANICAL -->
 
 
