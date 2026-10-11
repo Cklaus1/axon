@@ -87,6 +87,8 @@ fn confuse() -> i64 {
     match dict_get(d, \"k\") { Some(v) => v, None => 0 }
 }
 fn calls_operator() -> i64 { w(1) }
+fn goal_operator() -> f64 { goal_eval(\"w\", 1) }
+fn goal_missing() -> f64 { goal_eval(\"nope\", 1) }
 fn mutate(a: &mut i64) { a = \"s\" }
 fn bump(a: &mut i64) { a = a + 1 }
 fn swap_dict(d: &mut Dict) {
@@ -204,6 +206,25 @@ fn a_sealed_frame_cannot_call_an_operator_fn() {
             Interp::sealed_no_fn_msg("nope"),
             "one text for an operator name and a missing one"
         );
+    });
+}
+
+/// `goal_eval` (v0.22 M3343, veto goal.rs:1320): a sealed caller's lookup sees
+/// only its own fns, and a name it cannot see - the operator's `w` or the
+/// missing `nope` - is refused in the common no-such-name text every other
+/// path gives, not goal_eval's own plain text.
+#[test]
+fn a_sealed_goal_eval_is_told_the_common_text_for_a_name_it_cannot_see() {
+    with_sealed("r51-s3c-goal", |ix| {
+        for (probe, name) in [("goal_operator", "w"), ("goal_missing", "nope")] {
+            match run(ix, probe, vec![]) {
+                Err(Flow::Panic(m)) => assert!(
+                    *m == *Interp::sealed_no_fn_msg(name),
+                    "ATTACK: a sealed goal_eval of `{name}` was told its own text: {m:?}"
+                ),
+                other => panic!("{probe}: expected the no-such-name refusal, got {other:?}"),
+            }
+        }
     });
 }
 
