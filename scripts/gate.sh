@@ -44,6 +44,10 @@
 # rebuild target/debug/axon in a different feature set, and the harnesses read
 # that one path. managed_run_gate.sh (poll windows, a 2 s deadline job, a count
 # of host-wide axon_run_* cgroups) runs alone, after the group has drained.
+# One stage runs in the BACKGROUND of the serial spine: the trust-root preflight
+# (root only; mostly waiting), on private copies of the binaries it probes,
+# from after the PCI surfaces to a join before the manifest stage. If the gate
+# fails while it runs, fail() stops its whole process tree (`par_abort`).
 #
 # THE FAST TIER (`--fast`) is the lane-acceptance subset, for the inner loop:
 # cargo fmt, clippy -D warnings on the crates changed since `git merge-base REF
@@ -114,12 +118,15 @@ fi
 
 # Inside a parallel stage (PAR_FAILFILE set by `par`, below) fail() ends only
 # that stage's subshell and records the message; `par_join` then fails the gate
-# with it. Everywhere else it fails the whole run, under the run's own name.
+# with it. Everywhere else it fails the whole run, under the run's own name, and
+# first stops any stage still running in the background (`par_abort`), so a
+# failed gate leaves no orphan behind it.
 fail() {
   if [ -n "${PAR_FAILFILE:-}" ]; then
     printf '%s\n' "$1" > "$PAR_FAILFILE"
     echo ""; echo "❌ stage FAILED: $1"; exit 1
   fi
+  par_abort
   echo ""; echo "❌ $TIER FAILED at: $1"; exit 1
 }
 
@@ -226,6 +233,23 @@ par_join() {
   fi
   fail "${failed[0]}"
 }
+# Stop every stage still running (the whole process tree of each, stopped
+# first so it cannot fork past the walk) and drop the group. fail() calls it:
+# a stage left running in the background of a failed gate is an orphan nobody
+# owns, which is how gate runs once leaked CPU spinners for hours.
+kill_tree() {
+  local c
+  kill -STOP "$1" 2>/dev/null
+  for c in $(pgrep -P "$1"); do kill_tree "$c"; done
+  kill -TERM "$1" 2>/dev/null; kill -CONT "$1" 2>/dev/null
+}
+par_abort() {
+  local p
+  for p in "${PAR_PIDS[@]}"; do kill_tree "$p"; done
+  for p in "${PAR_PIDS[@]}"; do wait "$p" 2>/dev/null; done
+  [ -z "$PAR_DIR" ] || rm -rf "$PAR_DIR"
+  PAR_DIR=""; PAR_NAMES=(); PAR_PIDS=()
+}
 
 # SELF-CHECK, for the same reason as run_quiet's: the failure path is the whole
 # value and almost never runs. A group with a passing stage, a stage that calls
@@ -252,6 +276,20 @@ case "$_pj" in
 esac
 [ "$_pj_bad" = 0 ] || { echo "$_pj"; fail "par/par_join self-check: a passing group must join and continue"; }
 unset _pj _pj_bad
+
+# And the gate failing while a stage runs in the background must stop that
+# stage's whole tree at once, not wait for it: the stage's grandchild sleeps
+# 30 s, so a fail() that does not kill it returns only after 30 s.
+_pa=$(mktemp); _pa_t0=$SECONDS
+( par "selftest-bg" bash -c 'sleep 30 & echo $! > "$1"; wait' _ "$_pa"
+  for _ in $(seq 100); do [ -s "$_pa" ] && break; sleep 0.05; done
+  fail "PA_SELFTEST" ) >/dev/null 2>&1
+_pa_pid="$(cat "$_pa")"; rm -f "$_pa"
+if [ -z "$_pa_pid" ] || kill -0 "$_pa_pid" 2>/dev/null || [ $((SECONDS - _pa_t0)) -ge 10 ]; then
+  [ -z "$_pa_pid" ] || kill "$_pa_pid" 2>/dev/null
+  fail "par_abort self-check: a failing gate must stop the stages still running in the background"
+fi
+unset _pa _pa_pid _pa_t0
 
 # The harness-skip log (O006b) is APPEND-only across runs, so the coverage notice
 # at the end of this script would otherwise report skips from previous runs as if
@@ -643,11 +681,41 @@ echo "── gate: v0.22 Stage-5 executed gates (G03 G08 G10 G11 G13 G28 G32) �
 # (G01 alone is never sufficient): one row per surface, exact test names.
 echo "── gate: v0.22 Protected Check Isolation surfaces ──"
 ./scripts/v022_pci_gates.sh || fail "v0.22 Protected Check Isolation surfaces"
-# The trust-root preflight MECHANISM on a dev fixture. As root it builds
-# axon-fabric's binaries, so it stays here in the serial cargo spine rather than
-# in the source-only group with the readiness checks it belongs beside.
+# The trust-root preflight MECHANISM on a dev fixture. As root it is the longest
+# single stage of the gate (~25 min measured at 9e67b796 on a loaded host: ~50
+# fixtures, each probed as six service UIDs) and almost all of it is waiting, so
+# it runs in the BACKGROUND, beside the serial spine from here to the manifest
+# stage, and joins (`par_join`, its output printed whole) before the manifest
+# stage runs axon-fabric's suite again. The only state it shares with the spine
+# is the two binaries it probes: it builds them itself with exactly this
+# command, and later stages rebuild target/debug/axon-fabric in other feature
+# sets. So the gate builds them here and hands the stage PRIVATE COPIES under
+# target/ (same ancestry as target/debug, so the fixture sees the same path
+# modes), through the script's own AXON_FABRIC_BIN / AXON_PROTECTED_LAUNCHER_BIN
+# inputs. It measures no time. Not root: the script prints NOT_RUN and builds
+# nothing, so it runs inline as before.
 echo "── gate: v0.22 trust-root preflight mechanism (dev mode) ──"
-bash scripts/test_trust_root_preflight.sh || fail "v0.22 trust-root preflight mechanism (dev mode)"
+TR_BINS=""
+stage_trust_root_preflight() {
+  if [ -n "$TR_BINS" ]; then
+    AXON_FABRIC_BIN="$TR_BINS/axon-fabric" AXON_PROTECTED_LAUNCHER_BIN="$TR_BINS/axon-protected-launcher" \
+      bash scripts/test_trust_root_preflight.sh || fail "v0.22 trust-root preflight mechanism (dev mode)"
+  else
+    bash scripts/test_trust_root_preflight.sh || fail "v0.22 trust-root preflight mechanism (dev mode)"
+  fi
+}
+if [ "$(id -u)" = 0 ]; then
+  cargo build -q -p axon-fabric --bins || fail "cargo build -p axon-fabric --bins (trust-root preflight)"
+  tr_built="$(built_bin axon-fabric)" || fail "cannot tell where cargo built axon-fabric (trust-root preflight)"
+  TR_BINS="$ROOT/target/gate-trust-root-bins"
+  rm -rf "$TR_BINS" && mkdir -m 0755 "$TR_BINS" \
+    && cp "$tr_built" "$(dirname "$tr_built")/axon-protected-launcher" "$TR_BINS/" \
+    || fail "copying axon-fabric's binaries for the trust-root preflight"
+  echo "  started in the background on copies of the binaries just built; output and verdict at its join, before the manifest stage"
+  par "v0.22 trust-root preflight mechanism (dev mode)" stage_trust_root_preflight
+else
+  stage_trust_root_preflight
+fi
 # PSV in a REAL Firecracker guest. SKIP (77: no root/KVM/built image) is a
 # NON-RESULT, reported as such, never as a pass.
 cargo build -q -p axon-psv --example psv_dev || fail "v0.22 PSV dev tool build"
@@ -799,6 +867,14 @@ fi
 # only reason it was visible rather than a silent 14-harness gap.
 echo "── gate: restore the codegen binary after the no-default test stage ──"
 cargo build --locked -q -p axon-core --bin axon || fail "codegen rebuild after tests"
+
+# Join the background trust-root preflight (started after the PCI surfaces)
+# before the manifest stage, so no axon-fabric test run ever overlaps it.
+if [ "${#PAR_PIDS[@]}" -gt 0 ]; then
+  echo "── gate: join: v0.22 trust-root preflight mechanism (ran in the background) ──"
+  par_join
+fi
+[ -z "$TR_BINS" ] || rm -rf "$TR_BINS"
 
 # ── REQUIRED CRATE VERIFICATION, driven by the manifest ────────────────────
 #
