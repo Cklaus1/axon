@@ -2284,7 +2284,7 @@ impl<'p> Interp<'p> {
 
     /// [`Interp::match_pattern`] for a caller that does not know which run it
     /// is in (the effect-handler arms): the run picks the instantiation.
-    fn match_pattern_rt(
+    pub(super) fn match_pattern_rt(
         &self,
         pat: &Pattern,
         val: &Value,

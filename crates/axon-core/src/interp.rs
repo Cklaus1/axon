@@ -5235,6 +5235,9 @@ mod pin;
 // The runtime taint of a sealed run (R51 S2, from v0.22 C9 round 11,
 // amendment 102): the accumulator, the control taints, the builtin classes.
 mod taint;
+// Its unit tests (R51 S2: the hooks of `eval_t::<true>`, driven directly).
+#[cfg(test)]
+mod taint_tests;
 // Core tree-walking evaluator (eval/eval_block/eval_call/eval_binop/
 // match_pattern) extracted to interp/eval.rs (R0 slice 5). Its methods live in a
 // second `impl Interp` block there; inherent methods resolve across split impl
