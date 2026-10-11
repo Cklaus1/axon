@@ -45,3 +45,4 @@ Every registry entry run with `SEAL_RUNTIME_COMPLETE = true`: 199 entries, 148 r
 
 ## T3 non-interp lib tests (05c19cd1)
 All 8 present and passing on r51/int: kernel 1, parser 1, resolver 5, seal_split 1 (`cargo test -p axon-core --no-default-features --lib <name>`). Integration files: all 10 present (port map §B). Remaining T3: 74 interp::tests + 30 taint_tests absent by name; S3/S0b/S2 rows in lanes t3a/t3b/t3c, S4 rows (14) in the S4 lanes.
+| 27836b1c | S4b merged (receiver dispatch, switches, goal-name edge) | fmt, clippy -D warnings clean; `cargo test -p axon-core --no-default-features --no-fail-fast` 1993 passed, 0 failed, 90 ignored; vm_parity 333 files 0 differ |
