@@ -48,7 +48,8 @@ Reviewed. Revision 38 (§15 "Revision 38") adds S13 (packed scalar arrays and bu
 compilebench `sieve`), measured first; revision 39 answers the thirty-fourth review, its first
 (4 must-fix, 5 nits; §15 "Revision 39"); revision 40 answers the thirty-fifth (4 must-fix, 5 nits;
 §15 "Revision 40"); revision 41 answers the thirty-sixth (2 must-fix, 4 nits; §15 "Revision 41"); revision 42 answers
-the thirty-seventh (3 must-fix, 2 nits; §15 "Revision 42"). S13 is Draft until an adversarial review passes it.
+the thirty-seventh (3 must-fix, 2 nits; §15 "Revision 42"); revision 43 answers the thirty-eighth
+(3 must-fix, 1 nit; §15 "Revision 43"). S13 is Draft until an adversarial review passes it.
 **Risk class:** Structural (a second execution path for the reference engine)
 **Author / date:** 2026-10-09, from compilebench AX-18 (interpreter cost) after AX-53..AX-55.
 
@@ -1009,6 +1010,10 @@ bounds check hoisted out of the marking loop and a chunked count it retires 294,
   the message's form and exit code (101) are unchanged. A later conversion or temporary view of such
   an array allocates 16 bytes per element with the infallible allocator, so where the old code
   stopped at the constructor with 101 the new code can print more output and then abort (134) there.
+  Peak memory moves the other way too: a conversion (a kind-changing write or push) or a temporary
+  view holds the packed buffer and the 16-byte `Vec<Value>` at once (24 bytes per element for `Ints`
+  and `Floats`, 17 for `Bools`, against S12's 16), so a large array converted once can exceed a
+  memory limit (a cgroup cap, wasm32's 4 GiB) that S12 stayed under, and fail where S12 succeeded.
   In S10's `LoopMem` a packed array's kind is its packed kind; a write of another kind declines, as
   S10's old-element rule would (vm/pure.rs:812), and the generic path converts the array.
 - **Bulk loops.** Two loop shapes, recognised when the body's `PureLoop` or `PureFor` op is compiled
@@ -1095,8 +1100,9 @@ code under `AXON_ENGINE=tree` and `vm`, and stdout equal to the tree's at `0f3b1
   and a literal array `Vals`; an `Ints` array stays `Ints` after a `LoopMem` store (a `PureFor`
   writing `a[i] = x`, qsort's first loop), an S8 `swap`, a `write_place`, `a = arr_push(a, 7)` and
   `a = a + [7]` (the in-place append paths, `AppendOp::Push`/`Add` and the VM's `appendable`), and
-  becomes `Vals` after a kind-changing write (a `Float`, and an `i8` `SizedInt`: a `SizedInt` is never
-  packed); `let b = arr_push(a, 7)` gives a `Vals` `b` (builtin
+  becomes `Vals` after a kind-changing write and after `a = arr_push(a, w)` with an `i8` `w` (a
+  `Float`, and an `i8` `SizedInt`: a `SizedInt` is never packed); no bulk counter moves for any
+  shape of `vm_bulk_near_miss_shapes`; `let b = arr_push(a, 7)` gives a `Vals` `b` (builtin
   results are `Vals`) while `a` stays `Ints`; and each `vm_bulk_fill_runs` and `vm_bulk_count_runs`
   shape, run in-process under `AXON_ENGINE=vm` with `vm_eager` set (as the cli `vm` leg sets
   `AXON_VM_EAGER=1`; deferred, a short literal-bound `for` stays on the tree), moves the bulk counter
@@ -1112,9 +1118,20 @@ code under `AXON_ENGINE=tree` and `vm`, and stdout equal to the tree's at `0f3b1
   literal array of the same elements, in both orders, for each kind, with `NaN`, `-0.0` and
   `SizedInt` elements among them. `write_sized_into_ints` also prints `{ks[2] < big}` after
   `ks[2] = w` with `w: i8 = 5` and `big = 200` (the tree prints `false`, an `i8`-width compare; a
-  set that stores a plain `Int` prints `true`). The test asserts each pair of lines agrees under both
+  set that stores a plain `Int` prints `true`), and the same compare after each append of `w` to a
+  packed `Ints` array: `ks = arr_push(ks, w)` (the tree prints `[0, 1, 2, 5] false` for
+  `ks = arr_range(0, 3)`), `ms = ms + t` and `ns = arr_concat(ns, t)` with `let t = [id(w)]`; and
+  `ps = arr_push(ps, v)` with `v: i8 = 127`, then `ps[3] + one` (the tree panics `integer overflow:
+  i8 127 + 1 out of range`; run last). The test asserts each pair of lines agrees under both
   engines and that the whole stdout equals `tests/fixtures/packed/ops.out`, the tree's output at
   `0f3b182b`.
+- `vm_bulk_near_miss_shapes`: loops one step outside the two shapes, each over packed arrays, print
+  the tree's results under both engines, and print no `vm: bulk` line: a count with an `else`
+  (`if a[v] { n = n + c } else { m = m + 1 }`), a count indexed by another local (`if a[w]`), a
+  count with `n = n - c` or `n = m + c`, a fill indexed by another local (`b[k] = 7`), a fill with
+  the increment before the store, a fill with a third statement (`x = x + 1`), and a fill with
+  `j = j - s`. A recogniser that skips any one structural check (the `else`, the index variable,
+  statement order or count, the operator, the accumulated local) gives different output.
 
 Also: `interp_arr_repeat_unallocatable_size_is_a_runtime_error_naming_n` still passes;
 `vm_perf_gate.sh` with sieve's budget CPython's median (§10; S12 fails it at about 24.4 G), every
@@ -1200,9 +1217,11 @@ Preserves:
 - **I-11:** capability gates stay in `call_builtin`/`call_fn_in`.
 - **I-13:** provenance stays in `call_fn_in`, and S5 excludes every zone fn.
 
-Changes none, apart from S13's allocation edge (§4 S13): `arr_repeat`/`arr_range` of a count the
+Changes none, apart from S13's two memory edges (§4 S13): `arr_repeat`/`arr_range` of a count the
 allocator refused at 16 bytes per element (exit 101) can now succeed, and a later conversion of that
-array can abort (134). In S6, `ARCHITECTURE.md`'s I-2 paragraph (line 50, "There are two execution engines") gains
+array can abort (134); and a conversion or temporary view of a packed array peaks at 24 (or 17)
+bytes per element against S12's 16, so a program near a memory limit can fail where S12 succeeded.
+In S6, `ARCHITECTURE.md`'s I-2 paragraph (line 50, "There are two execution engines") gains
 one sentence: the interpreter runs fn bodies either by walking the tree or by executing compiled ops
 against the same frames, and the tree-walker is the reference for both.
 
@@ -1424,9 +1443,11 @@ The total is 18.92 G, about 0.05 G under budget (the residual uses the same base
 `loop_generic.ax`, 2,638 per call at S4, so a base bias cancels between them), so the `swap` row's 730 is derived, not padded. The
 slice budgets still do not by themselves prove qsort's gate; Q3 applies after S8.
 
-sieve (S10) is gated against half the S9 VM's median instead: CPython clears multiples with one slice
-assignment that runs in C (CPython 3.14.4: 1,085,960,442), which no loop compiler reaches. The S9 VM
-retired 53,528,608,080 on it (run `20261010T015516Z`, Axon `5864c423`); the budget is 26,764,304,040.
+sieve (S10) was gated against half the S9 VM's median: CPython clears multiples with one slice
+assignment that runs in C (CPython 3.14.4: 1,085,960,442), which no per-iteration loop code reaches.
+The S9 VM retired 53,528,608,080 on it (run `20261010T015516Z`, Axon `5864c423`); the S10-S12 budget
+is 26,764,304,040. From S13 the budget is CPython's median, 1,085,960,442 (§4 S13: packed `Bools`
+and a bulk fill and count).
 
 From S11 fib-recursive's budget is a third of CPython's median, 1,141,214,164: at S10 (`944fe056`)
 the VM retired 0.67× CPython's instructions on it (2,295,409,337 against 3,423,642,492, run
@@ -1446,10 +1467,11 @@ within 0.5 % of; its budget stays 1,141,214,164.
 Five changes touch the reference tree-walker, each with a CHANGELOG entry: the S0 scope-leak fix
 (behaviour), the S4 pooled closure call, S5 allocation-free `call_mut` and S7 `arr_fold` loop that
 offers `fold_leaf` the remaining elements (cost only; `fold_leaf` never runs under the tree), and
-S13's packed `Elems` (cost, plus the allocation edge of §7 at counts the allocator refuses).
+S13's packed `Elems` (cost, plus the two memory edges of §7: counts the allocator refuses, and peak
+memory on conversion).
 
-- The scope-leak fix is the one intended change to reference behaviour on programs whose arrays fit
-  in memory (S13's allocation edge is the other, §7). Today an `Err` out of
+- The scope-leak fix is the one intended change to reference behaviour on programs that stay well
+  inside their memory limit (S13's memory edges are the other, §7). Today an `Err` out of
   `match_pattern` or a guard (eval.rs:306, 308, 358 at `886aae53`) skips the arm's `env.pop()`. The catcher's single
   pop (`run_loop_body` or `eval_block`, eval.rs:723-764) then removes the arm's mark instead of its own,
   so one scope mark too many survives and the enclosing scope's bindings stay visible. When the error is
@@ -1516,7 +1538,7 @@ the reference code, gaps cost speed, never correctness.
 | R50.S10 array elements in pure loops (§4 S10); `PureFor`; `sieve.ax` and its `--programs` row; never-taken `if` in the repro bases made impure | R50.S9 | `cli_run vm_index_` (incl. `vm_index_sieve_loops`) + `vm_perf_gate.sh` (all six) + `--repros` (every row) + `vm_parity.sh` + `vm_wasm_depth.sh --require-default-stack` + whole suite under the S9 modes | code `944fe056`, which fails `vm_wasm_depth.sh` (`wasm_stack_budget.py`: `pure_stmts`/`pure_if` recursion not in `ALLOW`, `COMPILE_STMT` 16 bytes short in release); fixed with S11 |
 | R50.S11 pure-`i64` function tier (§4 S11); `vm: purefn` trace line; fib-recursive budget a third of CPython's | R50.S10 | `cli_run vm_purefn_` (incl. `vm_purefn_fib_in_registers`) + `purefn_build_validates` + `vm_perf_gate.sh` (all six; `REF` check: others at most 0.5 % above S10) + `--repros` (every row) + `vm_parity.sh` + `vm_wasm_depth.sh --require-default-stack` (`plain` on the tier, `plain_generic` off it) + whole suite under the S9 modes | code `2627dad7`; review fixes `faf25a22`, `e5f754ab` |
 | R50.S12 wasm32 traps (§4 S12): bounded drop of every `Value` container, front-end nesting limit 224 (interpolation slots included), no payload copy for `host_await_val`; `DictMap`/`Elems`/`VBox`/`Queue`/`Held`; nest probes; four `wasm_stack_budget.py` checks | R50.S10 | `cli_run wasm_drops_deep_values_ax59`, `wasm_deep_source_gives_e0000_ax60`, `native_nesting_limit_unchanged_ax60`, `native_guard_borrow_e0606`, `native_guard_w0002`, `native_guard_assign_in_place`, `native_guard_pure_e1207`, `native_guard_tier_e0910`, `native_guard_write_unaliases`, `wasm_host_await_val_no_copy_ax61` + `wasm_nesting_parity.sh` (debug and release; out-of-root refusals `tdef_*`, `attr_*`, `handler_*`, `*_chain`, `*_pred`) + `vm_wasm_depth.sh --require-default-stack` (debug and release; no probe exits 134) + `wasm_stack_budget.py` + `vm_perf_gate.sh` (every `REF` within 0.5 %, fib-recursive's from `2627dad7`) + whole suite under the S9 modes | code `a9c89e5e`, merged `e0f29182`; review fixes `91b13427`, `c33f521b`, `e5f754ab`, `fcd18f2b`, `2fdf7cc1`, `a875d2b8`, `8e4bd760`, `6ae2c76f`, `2d0940c2`, `da151a79` |
-| R50.S13 packed scalar arrays and bulk loops (§4 S13): `Elems` representation (`Vals`/`Bools`/`Ints`/`Floats`, no `Deref` to `Vec<Value>`), packed `arr_repeat`/`arr_range`, bulk fill and count on `PureLoop` entry, `vm: bulk` trace line, `AXON_REF_BIN` in `vm_parity.sh`, `REPROS` engine field and `packed.ax`/`packed_base.ax`, `tests/fixtures/packed/` | R50.S12 | `cli_run vm_bulk_` (`vm_bulk_sieve_loops`, `vm_bulk_fill_runs`, `vm_bulk_fill_bounds_and_declines`, `vm_bulk_fill_other_kind_declines`, `vm_bulk_count_runs`, `vm_bulk_count_declines`) + `packed_arrays_match_literal_arrays` + `packed_forms_persist` + `interp_arr_repeat_unallocatable_size_is_a_runtime_error_naming_n` + `vm_perf_gate.sh` (all six; sieve at CPython's median, others within 0.5 % of `REF`) + `--repros` (every row, `packed` and `packed-tree` included) + `AXON_REF_BIN=<0f3b182b, --no-default-features release> vm_parity.sh` + `vm_wasm_depth.sh --require-default-stack` + `wasm_nesting_parity.sh` + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` + whole suite under the S9 modes | todo |
+| R50.S13 packed scalar arrays and bulk loops (§4 S13): `Elems` representation (`Vals`/`Bools`/`Ints`/`Floats`, no `Deref` to `Vec<Value>`), packed `arr_repeat`/`arr_range`, bulk fill and count on `PureLoop` entry, `vm: bulk` trace line, `AXON_REF_BIN` in `vm_parity.sh`, `REPROS` engine field and `packed.ax`/`packed_base.ax`, `tests/fixtures/packed/` | R50.S12 | `cli_run vm_bulk_` (`vm_bulk_sieve_loops`, `vm_bulk_fill_runs`, `vm_bulk_fill_bounds_and_declines`, `vm_bulk_fill_other_kind_declines`, `vm_bulk_count_runs`, `vm_bulk_count_declines`, `vm_bulk_near_miss_shapes`) + `packed_arrays_match_literal_arrays` + `packed_forms_persist` + `interp_arr_repeat_unallocatable_size_is_a_runtime_error_naming_n` + `vm_perf_gate.sh` (all six; sieve at CPython's median, others within 0.5 % of `REF`) + `--repros` (every row, `packed` and `packed-tree` included) + `AXON_REF_BIN=<0f3b182b, --no-default-features release> vm_parity.sh` + `vm_wasm_depth.sh --require-default-stack` + `wasm_nesting_parity.sh` + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` + whole suite under the S9 modes | todo |
 
 ### 14. Evidence ledger
 
@@ -2078,3 +2100,14 @@ count, the packed repro (1,230 vm / 1,469 tree) and sieve (24,368,536,393), all 
 | [must-fix] Nothing tells a `SizedInt` written into `Ints` apart from a plain `Int` (display and `values_equal` agree) | ops.ax `write_sized_into_ints` prints `{ks[2] < big}` (tree `false`); `packed_forms_persist` names an `i8` write as kind-changing; an `i32` `c` fill followed by `a[0] + one` (tree panics) |
 | [nit] Two Revision 41 citations used `2ba136b5` lines | interp.rs:5336-5346 and builtins.rs:1768-1781 at `0f3b182b` |
 | [nit] No fill had `j0 mod s0 != 0` | `j = 1`, `s = 3`, `b = 6`, `<=`: `[0, 7, 0, 0, 7, 0, 0, 0, 0, 0]`, `j = 7` |
+
+Revision 43 (2026-10-11) answers the thirty-eighth review (`reviewer`, verdict "incorrect": 0
+blockers, 3 must-fix, 1 nit). It re-ran all five revision-42 resolutions under both engines on the
+S12 binary, each as stated.
+
+| Finding | Resolution |
+|---|---|
+| [must-fix] Every gate used shapes that match exactly, so a loose recogniser (ignoring an `else`, the index variable, statement order or count, or the operator) passes | `vm_bulk_near_miss_shapes`: seven near-miss loops with the tree's output and no `vm: bulk` line; `packed_forms_persist` asserts no bulk counter moves for them |
+| [must-fix] The `SizedInt`-into-`Ints` width probe covered element writes only | `write_sized_into_ints` compares after `arr_push`, `+` and `arr_concat` of an `i8` (tree `[0, 1, 2, 5] false`), and `ps[3] + one` panics `i8 127 + 1 out of range`; `packed_forms_persist` asserts an `i8` push makes `Vals` |
+| [must-fix, wording] §7 and §11 said nothing else changes, but a conversion or temporary view peaks at 24 (or 17) bytes per element against S12's 16 | Stated in §4 S13, §7 and §11 as S13's second memory edge |
+| [nit] §10's sieve paragraph still gave the S10 budget in the present tense | Past tense for S10-S12; from S13 the budget is CPython's median |
