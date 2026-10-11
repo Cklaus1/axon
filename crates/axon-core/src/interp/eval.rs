@@ -970,7 +970,7 @@ impl<'p> Interp<'p> {
         // coerce so no SizedInt value is left as a bare Int at any missed site,
         // which would silently compute in i64 (I-9).
         let mut v = if let Some(width) = ty.and_then(axon_type_to_width) {
-            coerce_to_sized(v, width)
+            coerce_to_sized::<T>(v, width)
         } else {
             v
         };
@@ -2518,10 +2518,13 @@ impl<'p> Interp<'p> {
     /// per-field and whole-struct refinement checks.
     pub(super) fn finish_record(&self, lit: &RecordLit, name: &str, vals: &mut [Value]) -> R {
         nest_guard!(self, FINISH_RECORD);
+        // In a sealed run a value of another width is left for `cast_fields`.
+        let sealed = self.seal.active;
         let take = |v: &mut Value, width: Option<IntWidth>| {
             let v = std::mem::replace(v, Value::Unit);
             match width {
-                Some(w) => coerce_to_sized(v, w),
+                Some(w) if sealed => coerce_to_sized::<true>(v, w),
+                Some(w) => coerce_to_sized::<false>(v, w),
                 None => v,
             }
         };

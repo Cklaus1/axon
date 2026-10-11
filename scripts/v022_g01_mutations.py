@@ -10539,10 +10539,12 @@ MUTATIONS += [
 # PSV1W (amendment 114): control taint for the conditional/repeated/exiting forms; one check for the sealed files.
 MUTATIONS += [
     ('M3230', 'CONTROL (am114): the right operand of && runs under no control taint', 'crates/axon-core/src/interp/eval.rs',
-     '        let exits = ct != 0 && taint::has_exit(right);', '        let ct = if and { 0u8 } else { ct };\n        let exits = ct != 0 && taint::has_exit(right);',
+     # R51 T7: main's short_circuit_tainted has no `and` local (v0.22's had one); the
+     # operator is read from `op`, the same && / || split.
+     '        let exits = ct != 0 && taint::has_exit(right);', '        let ct = if matches!(op, BinOp::And) { 0u8 } else { ct };\n        let exits = ct != 0 && taint::has_exit(right);',
      'axon-core', '--lib', 'interp::taint_tests::operator_side_control_flow_on_candidate_data_carries_its_taint_into_what_it_runs'),
     ('M3231', 'CONTROL (am114): the right operand of || runs under no control taint', 'crates/axon-core/src/interp/eval.rs',
-     '        let exits = ct != 0 && taint::has_exit(right);', '        let ct = if and { ct } else { 0u8 };\n        let exits = ct != 0 && taint::has_exit(right);',
+     '        let exits = ct != 0 && taint::has_exit(right);', '        let ct = if matches!(op, BinOp::And) { ct } else { 0u8 };\n        let exits = ct != 0 && taint::has_exit(right);',
      'axon-core', '--lib', 'interp::taint_tests::operator_side_control_flow_on_candidate_data_carries_its_taint_into_what_it_runs'),
     ('M3232', 'CONTROL (am114): a skipped right operand of && that could exit raises no sticky taint', 'crates/axon-core/src/interp/eval.rs',
      '            if exits {\n                self.t_branch(ct, exits, || Ok(()))?;', '            if exits && !matches!(op, BinOp::And) {\n                self.t_branch(ct, exits, || Ok(()))?;',
@@ -10614,7 +10616,7 @@ MUTATIONS += [
      '    ("Or", "eval_binop: t_branch(left taint) around the right operand; sticky when the right operand can exit", "or"),\n', '',
      'axon-core', '--lib', 'interp::taint_tests::every_conditional_evaluation_form_in_the_ast_has_a_row_with_an_attack'),
     ('M3256', 'CONTROL (am114, runner): the right operand of && runs under no control taint', 'crates/axon-core/src/interp/eval.rs',
-     '        let exits = ct != 0 && taint::has_exit(right);', '        let ct = if and { 0u8 } else { ct };\n        let exits = ct != 0 && taint::has_exit(right);',
+     '        let exits = ct != 0 && taint::has_exit(right);', '        let ct = if matches!(op, BinOp::And) { 0u8 } else { ct };\n        let exits = ct != 0 && taint::has_exit(right);',
      'axon-psv', '--test sealed_frames', 'operator_side_control_flow_on_candidate_data_never_selects_operator_code'),
     ('M3257', 'CONTROL (am114, runner): a later arm after a refused guard runs under no control taint', 'crates/axon-core/src/interp/eval.rs',
      '                        let ct = st | gt | lost;', '                        let ct = st | gt;',

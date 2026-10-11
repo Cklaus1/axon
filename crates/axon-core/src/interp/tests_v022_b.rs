@@ -230,6 +230,48 @@ fn a_value_of_another_fixed_width_never_crosses_a_declared_fixed_width() {
     );
 }
 
+/// R51 T7 (M921): the declared-type cast is what refuses another fixed width
+/// at a sealed run's `let`, parameter and field, as at a return. Main's
+/// sized-int coercion RE-TAGGED a `SizedInt` of another width to the declared
+/// one before that cast ran (a `u8` 4 bound to `let r: u16` became a `u16` 4),
+/// so the cast never saw the width; v0.22 leaves it unchanged for the cast
+/// (C9 round 4b, amendment 60). Here the operator itself reads the
+/// candidate's `u8` untyped from a dict, so no return check stands in front
+/// of the declared type.
+#[test]
+fn a_sealed_let_param_or_field_never_retags_another_fixed_width() {
+    let read = "match dict_get(solve(3), \"k\") { Some(v) => v  None => 0 as u16 }";
+    let sites = [
+        ("let", format!("    let r: u16 = {read}\n    assert(r.ok())\n")),
+        ("param", format!("    assert(take({read}))\n")),
+        (
+            "field",
+            format!("    let b = Box16 {{ w: {read} }}\n    assert(b.w.ok())\n"),
+        ),
+    ];
+    let honest = "fn solve(n: i64) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", (n * n) as u16)\n    d\n}\n";
+    for (tag, body) in sites {
+        let suite = format!(
+            "type Box16 = {{ w: u16 }}\nfn take(x: u16) -> bool {{ x.ok() }}\n@[test]\nfn t() {{\n{body}}}\n"
+        );
+        assert_eq!(
+            widened("w4site", &suite, honest, "0 as u16"),
+            Ok(TestEnd::Completed),
+            "control ({tag}): an operator-side read of the candidate's honest u16"
+        );
+        let out = widened(
+            "w4site",
+            &suite,
+            "fn solve(n: i64) -> Dict { wstash(narrow(4)) }\n",
+            "0 as u16",
+        );
+        assert!(
+            confusion_refused(&out),
+            "ATTACK: a u8 was re-tagged to a declared u16 ({tag}): {out:?}"
+        );
+    }
+}
+
 /// The other direction: an `i64` at a declared `u8` is CONVERTED to the
 /// width (as a `u8` parameter, `let` or field always converted it), so it
 /// dispatches as the `u8` it is declared — never on the `i64` impl.
