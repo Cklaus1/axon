@@ -50,8 +50,8 @@ compilebench `sieve`), measured first; revision 39 answers the thirty-fourth rev
 §15 "Revision 40"); revision 41 answers the thirty-sixth (2 must-fix, 4 nits; §15 "Revision 41"); revision 42 answers
 the thirty-seventh (3 must-fix, 2 nits; §15 "Revision 42"); revision 43 answers the thirty-eighth
 (3 must-fix, 1 nit; §15 "Revision 43"); revision 44 answers the thirty-ninth (1 must-fix, 1 nit;
-§15 "Revision 44"); revision 45 answers the fortieth (2 must-fix, 1 nit; §15 "Revision 45"). S13 is
-Draft until an adversarial review passes it.
+§15 "Revision 44"); revision 45 answers the fortieth (2 must-fix, 1 nit; §15 "Revision 45"); revision 46 answers the
+forty-first (3 must-fix, 1 nit; §15 "Revision 46"). S13 is Draft until an adversarial review passes it.
 **Risk class:** Structural (a second execution path for the reference engine)
 **Author / date:** 2026-10-09, from compilebench AX-18 (interpreter cost) after AX-53..AX-55.
 
@@ -1038,7 +1038,8 @@ bounds check hoisted out of the marking loop and a chunked count it retires 294,
   writes `c` at every index in one strided pass, sets `j` to `j0 + n * s0`, and the loop is done.
   Count runs when `a` holds a packed `Bools` array, `n` and `c` hold plain `Value::Int`s `n0` and `c0`
   (a `SizedInt` in either declines), and either
-  the range is empty (nothing changes) or every index from `lo` to the last one is in bounds and
+  the range is empty (nothing changes) or every index from `lo` to the last one is in bounds (the
+  range's end computed in 128-bit arithmetic, so `lo..=hi` with `hi` = `i64::MAX` does not wrap) and
   `n0 + c0 * t` (in 128-bit arithmetic), with `t` the number of `true` elements there, fits in an
   `i64`; it then sets `n` to that sum, and the loop is done. `c0` may have either sign. The partial
   sums are monotone in the number of `true`s counted, so
@@ -1072,7 +1073,10 @@ code under `AXON_ENGINE=tree` and `vm`, and stdout equal to the tree's at `0f3b1
   bulk path that divides by `s0` before checking `s0 > 0` crashes instead), a negative step with
   `b0 - j0 < |s0|` (`a = arr_repeat(1, 5)`, `j = 2`, `b = 4`, `s = 0 - 3`, `<=`: the tree writes
   `a[2]` and then panics `negative index -1`; a path that checks only `s0 != 0` computes one
-  iteration, sets `j = -1` and exits 0), a `j + s` overflow in the last iteration, and `SizedInt`
+  iteration, sets `j = -1` and exits 0), a `j + s` overflow in the last iteration, a bound at
+  `i64::MAX` (`a = arr_repeat(0, 10)`, `j = 0`, `s = 1`, `b = 9223372036854775807`, `<=`: the tree
+  panics `index 10 out of bounds (len 10)`; a path computing `b0 + 1` in `i64` wraps, takes the range
+  as empty and exits 0 with the array unchanged), and `SizedInt`
   operands, each gated alone with the others plain (a narrow local is passed through
   `let id = |x| x` so the checker accepts the mixed arithmetic): all three `i8`
   (`a = arr_repeat(false, 200)`, `j: i8 = 120`, `s: i8 = 5`, `b: i8 = 126`, `<=`: the tree panics
@@ -1096,7 +1100,10 @@ code under `AXON_ENGINE=tree` and `vm`, and stdout equal to the tree's at `0f3b1
   `integer overflow: i32 2147483647 + 1 out of range`), an `i32` `c` alone (`let id = |x| x`,
   `w: i32 = 1`, `c = id(w)`, `n = 2147483000` over 1,000 `true`s: the tree panics with the same
   message; a path reading `c` as `i64` exits 0 printing `2147484000`), an out-of-bounds `hi`, a
-  negative `lo` (the tree panics `index -2 out of bounds`), and a `Vals` `bool` array.
+  `hi` of `i64::MAX` (`for v in 0..=9223372036854775807` over a 20-element array with five
+  `true`s: the tree panics `index 20 out of bounds (len 20)`; a path computing `hi + 1` in `i64`
+  wraps and prints `n=0`), a negative `lo` (the tree panics `index -2 out of bounds`), and a `Vals`
+  `bool` array.
 - `packed_forms_persist` (unit test, interp/vm/tests.rs, through the test probes): `arr_range(0, 3)`
   is `Ints`, `arr_repeat(1.5, 3)` `Floats`, `arr_repeat(true, 3)` `Bools`, a `SizedInt` `arr_repeat`
   and a literal array `Vals`; an `Ints` array stays `Ints` after a `LoopMem` store (a `PureFor`
@@ -1130,26 +1137,33 @@ code under `AXON_ENGINE=tree` and `vm`, and stdout equal to the tree's at `0f3b1
   `0f3b182b`.
 - `vm_bulk_near_miss_shapes`: loops one step outside the two shapes, each over packed arrays and
   each `PureLoop`/`PureFor`-eligible (the trace shows its `vm: pure` line), print the tree's results
-  under both engines, and print no `vm: bulk` line. Seventeen loops, eight counts and nine fills.
+  under both engines, and print no `vm: bulk` line. Twenty loops, nine counts and eleven fills.
   Counts: with an `else` (`if a[v] { n = n + c } else { m = m + 1 }`); indexed by another local
   (`if a[w]`); with `n = n - c`; with `n = m + c`; with a second statement in the `then` block
   (`if a[v] { n = n + c\n m = m + 1 }`); with a statement after the `if` (`m = m + 1`); with
   `n = n + v` where an outer `let v = 3` is shadowed by the loop variable (the tree reads the loop
   `v`; a recogniser that does not exclude `v` from `c` reads 3 through `Env::get_var`'s by-name
-  fallback, interp.rs:1122-1128 at `0f3b182b`); and with `n = n + n` (`p = 1` over trues at 1, 2,
-  4, 8 and 16 of 20: the tree prints `p=32`). Fills: indexed by another local (`q[k] = 7`, `q` a
-  second packed array); with the increment before the store; with a third statement
-  (`x = x + 1`); with `j = j - s`; with `while j > b` (`j = 1`, `s = 2`, `b = 0`: the tree
-  panics `index 11 out of bounds (len 10)`) and with a condition on another local (`while k <= b`,
-  `k = 0`, `j = 0`, `s = 3`, `b = 8`: the tree panics `index 12 out of bounds (len 10)`); with `j = k + s`
-  (`a = arr_repeat(0, 10)`, `j = 0`, `k = 7`, `s = 3`, `b = 8`, `<=`: the tree prints
-  `[7, 0, 0, 0, 0, 0, 0, 0, 0, 0] j=10`); with `a[j] = j` (`j = 1`, `s = 2`, `< 10`: the tree prints
-  `[0, 1, 0, 3, 0, 5, 0, 7, 0, 9]` and `j=11`); and with `j = j + j` (`f = arr_repeat(false, 20)`,
-  `j = 1`, `< 20`, store `true`: the tree sets indices 1, 2, 4, 8, 16 and `j=32`). A recogniser that
-  skips any one structural check (the `else`, the index variable, the compared variable, the
-  comparison operator, the step's left operand, statement order or count in the body or the `then`
-  block, the arithmetic operator, the accumulated local, `j` in the exclusions of `b`, `c` and `s`,
-  or `v` and `n` in `c`'s) runs a bulk path and prints a `vm: bulk` line, and most also print
+  fallback, interp.rs:1122-1128 at `0f3b182b`); with `n = n + n` (`p = 1` over trues at 1, 2, 4, 8
+  and 16 of 20: the tree prints `p=32`); and with `n` the loop variable (`let v = 3`, then
+  `for v in 0..20 { if a[v] { v = v + 1 } }` over the same trues: the tree prints `v=3`; a
+  recogniser that does not exclude `v` from `n` adds 5 to the outer `v` through the same fallback).
+  Fills: indexed by another local (`q[k] = 7`, `q` a second packed array); with the increment
+  before the store; with a third statement (`x = x + 1`); with `j = j - s`; with `while j > b`
+  (`j = 1`, `s = 2`, `b = 0`: the tree panics `index 11 out of bounds (len 10)`) and with a
+  condition on another local (`while k <= b`, `k = 0`, `j = 0`, `s = 3`, `b = 8`: the tree panics
+  `index 12 out of bounds (len 10)`); with `while j <= j` (`j = 0`, `s = 3`: the tree panics
+  `index 12 out of bounds (len 10)`; a recogniser that does not exclude `j` from `b` writes `a[0]`
+  and exits 0 with `j=3`); with `j = k + s` (`a = arr_repeat(0, 10)`, `j = 0`, `k = 7`, `s = 3`,
+  `b = 8`, `<=`: the tree prints `[7, 0, 0, 0, 0, 0, 0, 0, 0, 0] j=10`); with the step assigning
+  another local (`k = j + s`, `j = 10`, `k = 0`, `s = 3`, `b = 5`, `<`: zero iterations, the tree
+  prints the array unchanged, `j=10 k=0`; any nonzero-iteration version never ends on the tree);
+  with `a[j] = j` (`j = 1`, `s = 2`, `< 10`: the tree prints `[0, 1, 0, 3, 0, 5, 0, 7, 0, 9]` and
+  `j=11`); and with `j = j + j` (`f = arr_repeat(false, 20)`, `j = 1`, `< 20`, store `true`: the tree
+  sets indices 1, 2, 4, 8, 16 and `j=32`). A recogniser that skips any one structural check (the
+  `else`, the index variable, the compared variable, the comparison operator, the step's assigned
+  variable and left operand, statement order or count in the body or the `then` block, the
+  arithmetic operator, the accumulated local, `j` in the exclusions of `b`, `c` and `s`, `v` in
+  `n`'s, or `v` and `n` in `c`'s) runs a bulk path and prints a `vm: bulk` line, and most also print
   different output.
 
 Also: `interp_arr_repeat_unallocatable_size_is_a_runtime_error_naming_n` still passes;
@@ -2147,6 +2161,18 @@ S12 binary under both engines (`vm: pure main 0 exprs, 4 loops`).
 
 | Finding | Resolution |
 |---|---|
-| [must-fix] `j` in the fill's `b`/`c`/`s` exclusions and `n` in the count's `c` exclusions were ungated; `a[j] = j` (an iota fill) with a loose leaf list fills one value | Three loops added: `a[j] = j` (tree `[0, 1, 0, 3, 0, 5, 0, 7, 0, 9]`, `j=11`), `j = j + j` (indices 1, 2, 4, 8, 16, `j=32`), `n = n + n` (`p=32`); both exclusions named in the list of checks |
+| [must-fix] `j` in the fill's `b`/`c`/`s` exclusions and `n` in the count's `c` exclusions were ungated; `a[j] = j` (an iota fill) with a loose leaf list fills one value | Three loops added: `a[j] = j` (tree `[0, 1, 0, 3, 0, 5, 0, 7, 0, 9]`, `j=11`), `j = j + j` (indices 1, 2, 4, 8, 16, `j=32`), `n = n + n` (`p=32`); both exclusions named in the list of checks (`b = j` had no loop until revision 46) |
 | [must-fix, wording] "Thirteen loops" was fourteen | Seventeen loops, eight counts and nine fills, counted in §4 S13; the Revision 44 row corrected |
 | [nit] `j = k + s` had no values and can loop forever on the tree | `j = 0`, `k = 7`, `s = 3`, `b = 8`, `<=`: tree `[7, 0, ...]`, `j=10`; `while j > b` and `while k <= b` given values whose tree runs panic out of bounds (index 11 and 12) |
+
+Revision 46 (2026-10-11) answers the forty-first review (`reviewer`, verdict "incorrect": 0
+blockers, 3 must-fix, 1 nit). It confirmed all 17 revision-45 loops eligible, engine-agreeing and as
+stated on the S12 binary. Each new case below was re-run on the S12 binary under both engines
+(`vm: pure main 0 exprs, 1 loops`, outputs as stated).
+
+| Finding | Resolution |
+|---|---|
+| [must-fix] No near-miss fill had `b = j`, though the list of checks named it | `while j <= j` (`j = 0`, `s = 3`): tree panics `index 12 out of bounds (len 10)` |
+| [must-fix] The count's "`n` other than `v`" had no loop | `for v in 0..20 { if a[v] { v = v + 1 } }` under an outer `let v = 3`: tree prints `v=3` |
+| [must-fix] An inclusive bound at `i64::MAX` was ungated for both shapes; an `i64` `hi + 1`/`b0 + 1` wraps to an empty range | The count's range end stated in 128-bit arithmetic; `vm_bulk_count_declines` adds `0..=i64::MAX` (tree panics `index 20 out of bounds (len 20)`), `vm_bulk_fill_bounds_and_declines` adds `b = i64::MAX` (tree panics `index 10 out of bounds (len 10)`) |
+| [nit] The step's assigned variable was ungated | Zero-iteration `k = j + s` fill (`j = 10`, `b = 5`): tree prints the array unchanged, `j=10 k=0`; twenty loops, nine counts and eleven fills |
