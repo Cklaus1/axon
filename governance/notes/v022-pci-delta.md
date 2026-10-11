@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 51a993cfe8f3cf6db84ff1650477ea182e3b26a1
+generated-at: 0faf4372bb7a4fc91843873fa7cd74ad270d9711
 
-`git diff --numstat 31413ca7..51a993cf -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..0faf4372 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -49,16 +49,18 @@ generated-at: 51a993cfe8f3cf6db84ff1650477ea182e3b26a1
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 4075 | 1442 |
+| `crates/axon-core/src/interp.rs` | 4174 | 1436 |
 | `crates/axon-core/src/interp/builtins.rs` | 584 | 503 |
+| `crates/axon-core/src/interp/conform.rs` | 1816 | 0 |
+| `crates/axon-core/src/interp/conform_tests.rs` | 1411 | 0 |
 | `crates/axon-core/src/interp/env.rs` | 1193 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 1538 | 597 |
+| `crates/axon-core/src/interp/eval.rs` | 1573 | 596 |
 | `crates/axon-core/src/interp/goal.rs` | 57 | 35 |
 | `crates/axon-core/src/interp/kernel_tests.rs` | 399 | 0 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 48 | 21 |
 | `crates/axon-core/src/interp/sym.rs` | 1188 | 0 |
-| `crates/axon-core/src/interp/taint.rs` | 1087 | 0 |
+| `crates/axon-core/src/interp/taint.rs` | 1128 | 0 |
 | `crates/axon-core/src/interp/taint_tests.rs` | 1058 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 491 | 514 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
@@ -70,15 +72,15 @@ generated-at: 51a993cfe8f3cf6db84ff1650477ea182e3b26a1
 | `crates/axon-core/src/main.rs` | 799 | 243 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
 | `crates/axon-core/src/mut_borrow.rs` | 800 | 0 |
-| `crates/axon-core/src/parser.rs` | 69 | 3 |
+| `crates/axon-core/src/parser.rs` | 86 | 3 |
 | `crates/axon-core/src/replay.rs` | 40 | 17 |
 | `crates/axon-core/src/resolver.rs` | 534 | 66 |
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 30927 | 5224 |
+| total | 34346 | 5217 |
 
-`git log --reverse 31413ca7..51a993cf -- crates/axon-core/src`:
+`git log --reverse 31413ca7..0faf4372 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -247,7 +249,11 @@ generated-at: 51a993cfe8f3cf6db84ff1650477ea182e3b26a1
 | 191c8f51 | R51 S2.3 step 4 | TEST-ONLY drift lists: the T1d VM-entry allow-list (vm/tests.rs) and user_code_runners' PRIMITIVES (interp.rs, cfg(test)) name the const-generic frames call_fn_frame and call_closure_frame that 6afab02a moved the VM entries into; spec T1d text revised to match. Interpreter behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | fd3c3ff0 | R51 S3a | INTERPRETER per-frame Kernel: the handle-addressed kernel tables (provenance stores, corrigibility latch, current principal, goal constraint, principals, scheduler, supervisors, stores, LLM gateways, kernel goals, sandboxes, active sandbox) move into a Kernel struct, kernels: [Kernel; 2] selected by k() from frame_sealed, so a sealed frame reaches only its own (the sealed registry draws tokens from TOKEN_DOMAIN_SEALED). Every RNG draw and reseed goes through Interp::rng_next/rng_reseed, refused for operator code above a sealed frame; the sealed kernel has its own stream seeded by a SHA-256 derivation, the operator kernel keeps main's process-global stream (unsealed sequence pinned bit-identical). sandbox_run copies the entered ceiling into the sealed kernel for the call. frame_sealed is never set in an unsealed run, so it reaches kernels[0] only; no seal edge enters a sealed frame yet; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 51a993cf | R51 S3a | TEST-ONLY: PrincipalRegistry::is_sealed (cfg(test)) so a kernel unit test pins that the sealed kernel's registry is built with new_sealed; the call_builtin drift scan skips interp/kernel_tests.rs (a unit-test module calling the dispatcher directly, as taint_tests.rs does). Interpreter behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 165 commits | | |
+| be0636cb | R51 S3b | INTERPRETER closure representation A (spec Fork 3, TaintPort-5/-15): ClosureVal holds its capture cell as Rc<RefCell<Captures>> plus a per-reference contract and typed SealMarks (sealed_origin, sealed_fnval), never capture entries; make_closure/fn_value set them only in a sealed run, the lend test counts the cell's holders, Value stays 16 bytes. Ports v0.22 interp/conform.rs (casts, Cx, closure and channel contracts, dict snapshots and edges, replaced_ok, handler edges) onto main's Sym/Rc value model with Interp fields chan_contracts/dict_snaps/dict_epoch/user_traits/trait_impls/refine_bases, parse_type_text, Fields::iter_mut, t_chan_access/t_chan_choice in the select and method-call arms (sealed instantiation only), addr_of covering a closure's capture cell. The seal edges are not called from production yet (S3c); unit tests in interp/conform_tests.rs. Unsealed behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 1215159c | R51 S3b | TEST-ONLY unit tests (interp/conform_tests.rs, cfg(test)) for the channel access hooks t_chan_access/t_chan_choice in the method-call and select arms, plus their drift test. Interpreter behaviour unchanged: not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 769f45f2 | R51 S3b | TEST-ONLY unit tests (interp/conform_tests.rs) that kill the conform.rs mutation survivors (dict snapshot bound, epoch retake, first sealed mutation, fresh snapshot kept, dict-in-dict walk, array element judgement, cast depth bound, enum name); cast_at widened to pub(super) for the depth test, no behaviour change. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 0faf4372 | R51 S3 merge | joins S3a (fd3c3ff0..51a993cf, Kernel split) and S3b (be0636cb..769f45f2, closure representation A, conform.rs); only the interp.rs mod declarations, this table and the note conflicted, resolved by keeping both sides; no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 169 commits | | |
 <!-- END MECHANICAL -->
 
 
