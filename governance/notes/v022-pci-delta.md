@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: d60ea2378af6a7070ceee6d3d0eb1d0b67bed632
+generated-at: afd9e294d518d37d6277644b039c13948b7c8f80
 
-`git diff --numstat 31413ca7..d60ea237 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..afd9e294 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -49,16 +49,16 @@ generated-at: d60ea2378af6a7070ceee6d3d0eb1d0b67bed632
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 3980 | 1424 |
+| `crates/axon-core/src/interp.rs` | 4001 | 1421 |
 | `crates/axon-core/src/interp/builtins.rs` | 587 | 542 |
 | `crates/axon-core/src/interp/eval.rs` | 1164 | 547 |
 | `crates/axon-core/src/interp/goal.rs` | 55 | 52 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 18 | 9 |
-| `crates/axon-core/src/interp/sym.rs` | 1180 | 0 |
+| `crates/axon-core/src/interp/sym.rs` | 1184 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 491 | 514 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
-| `crates/axon-core/src/interp/vm/mod.rs` | 3386 | 0 |
+| `crates/axon-core/src/interp/vm/mod.rs` | 3398 | 0 |
 | `crates/axon-core/src/interp/vm/pure.rs` | 959 | 0 |
 | `crates/axon-core/src/interp/vm/tests.rs` | 1536 | 0 |
 | `crates/axon-core/src/kernel.rs` | 89 | 23 |
@@ -72,9 +72,9 @@ generated-at: d60ea2378af6a7070ceee6d3d0eb1d0b67bed632
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 26632 | 5200 |
+| total | 26669 | 5197 |
 
-`git log --reverse 31413ca7..d60ea237 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..afd9e294 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -230,7 +230,8 @@ generated-at: d60ea2378af6a7070ceee6d3d0eb1d0b67bed632
 | ea565f8e | R51 S1 merge | joins R51 S0b (56389c53) and S1 (a45dc364); the only overlaps are appended tests (vm/tests.rs, cli_run.rs) and this table; interp.rs, vm/mod.rs and main.rs auto-merged: no change beyond the two commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | f7ccb9e6 | R51 S1 | test only (vm/tests.rs T1d): S0b's run_test_body is listed as an engine gate and exec_raw as a VM entry; no production change; every sealed run is still refused |
 | d60ea237 | R51 S5 | INTERPRETER static layer: ports v0.22's interp/pin.rs verbatim and adds the Seal state (sealed fns/globals/refines/types, operator method names), pins and frame provenance (with_frame, fn_is_sealed) to Interp; Interp::build reads the sealed set once and hands it to build_in, so tests pass it without publishing it; Seal and Pins are computed only for a non-empty sealed set (an unsealed build does no new work). No seal edge consumes them yet (S2/S3/S4); not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 152 commits | | |
+| afd9e294 | R51 S0b perf | INTERPRETER cost only: S0b's return boundary (sum_return) tests the value's tag first (ret_needs_check: only Struct..=Err can be asked anything) and reads one FnEntry::ret byte (RetCheck replaces ret_is_scalar + ret_sum); leaf_call checks such a result out of line (leaf_return_checked), declining a confused Result/Option to the full path as before. Same refusals on both engines (soft unwrap, Result/Option confusion); new cli_run test + fixture for the leaf-call refusal; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 153 commits | | |
 <!-- END MECHANICAL -->
 
 

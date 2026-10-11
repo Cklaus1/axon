@@ -388,13 +388,10 @@ pub(super) struct FnEntry<'p> {
     pub(super) experiment: Option<String>,
     /// Has a `@[goal(...)]` attribute (R5).
     pub(super) has_goal: bool,
-    /// The declared return type is a plain scalar (`i64`/`i32`/`f64`/`bool`),
-    /// so a soft result unwraps at the return boundary.
-    pub(super) ret_is_scalar: bool,
-    /// The declared return type is a `Result` or an `Option`, so a value of
-    /// the other constructor family is refused at the return boundary
-    /// (`Interp::sum_return`).
-    pub(super) ret_sum: Option<RetSum>,
+    /// What the return boundary (`Interp::sum_return`) checks of a result
+    /// against the declared return type: one byte, read only for a result
+    /// that is a struct or a `Result`/`Option` constructor.
+    pub(super) ret: RetCheck,
     /// Named `main` (the binding-dump capture applies to it).
     pub(super) is_main: bool,
     /// No attribute-driven step around the body: not `@[agent]`, `@[ai]`
@@ -417,11 +414,17 @@ pub(super) struct FnEntry<'p> {
     pub(super) hot: bool,
 }
 
-/// [`FnEntry::ret_sum`]: which constructor family a fn's declared return
-/// type admits.
+/// [`FnEntry::ret`]: the declared return type as the return boundary sees it.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum RetSum {
+pub(super) enum RetCheck {
+    /// Nothing to check: any value returns as is.
+    Plain,
+    /// A plain scalar (`i64`/`i32`/`f64`/`bool`): a soft result
+    /// (`Uncertain<T>`/`Temporal<T>`) unwraps to its inner value.
+    Scalar,
+    /// A `Result`: an `Option` constructor is a runtime type confusion.
     Result,
+    /// An `Option`: a `Result` constructor is a runtime type confusion.
     Option,
 }
 
@@ -461,16 +464,17 @@ impl<'p> FnEntry<'p> {
                 .find(|a| a.name == "experiment")
                 .map(|a| a.args.first().cloned().unwrap_or_default()),
             has_goal: has_attr("goal"),
-            ret_is_scalar: matches!(
-                &def.return_type,
-                Some(AxonType::Named(n)) if matches!(n.as_str(), "i64" | "i32" | "f64" | "bool")
-            ),
-            ret_sum: match &def.return_type {
-                Some(AxonType::Result { .. }) => Some(RetSum::Result),
-                Some(AxonType::Option(_)) => Some(RetSum::Option),
-                Some(AxonType::Generic { base, .. }) if base == "Result" => Some(RetSum::Result),
-                Some(AxonType::Generic { base, .. }) if base == "Option" => Some(RetSum::Option),
-                _ => None,
+            ret: match &def.return_type {
+                Some(AxonType::Named(n))
+                    if matches!(n.as_str(), "i64" | "i32" | "f64" | "bool") =>
+                {
+                    RetCheck::Scalar
+                }
+                Some(AxonType::Result { .. }) => RetCheck::Result,
+                Some(AxonType::Option(_)) => RetCheck::Option,
+                Some(AxonType::Generic { base, .. }) if base == "Result" => RetCheck::Result,
+                Some(AxonType::Generic { base, .. }) if base == "Option" => RetCheck::Option,
+                _ => RetCheck::Plain,
             },
             is_main: def.name == "main",
             has_epilogue: has_attr("adaptive") || has_attr("experiment") || def.verify.is_some(),

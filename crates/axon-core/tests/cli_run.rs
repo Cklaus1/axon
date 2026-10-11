@@ -37110,6 +37110,26 @@ fn r51_s0b_a_confused_result_is_refused_at_the_return_on_either_engine() {
     );
 }
 
+/// R51 §3 row 6 at the VM's leaf call: `pass`'s body is one `Load` of its
+/// parameter, so the eager VM's compiled `drive` reaches it through
+/// `leaf_call`, whose return check runs out of line
+/// (`leaf_return_checked`). The confused `None` declines to the full path,
+/// which refuses it as the tree does.
+#[test]
+fn r51_s0b_a_confused_result_is_refused_at_a_leaf_return_on_either_engine() {
+    let (code, stdout, stderr) =
+        vm_same_both_engines("s0b_leaf_sum", s0b_src!("leaf_sum_confusion"));
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(101), "0\n2\n4\n"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("`pass` is declared to return Result but produced None"),
+        "{stderr}"
+    );
+}
+
 /// R51 §3 row 7 (veto ea9ba38d, 6de01247): `ai_extract_uncertain_*` results
 /// are AI-sourced, and a derived `Uncertain` keeps the least-trusted
 /// operand's `source_tag`, on the tree and on both VM entry modes.

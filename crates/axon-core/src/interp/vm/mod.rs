@@ -2949,7 +2949,19 @@ impl<'p> Interp<'p> {
             },
             _ => return None,
         };
-        // A confused `Result`/`Option` declines: the full path refuses it.
+        if ret_needs_check(&v) {
+            return self.leaf_return_checked(entry, v);
+        }
+        self.set_call_tier(None);
+        Some(v)
+    }
+
+    /// [`Interp::leaf_call`]'s end for a result the return boundary can ask
+    /// something of ([`sum_return`]): out of line, so the common result
+    /// (anything else) never joins this path (cost only, R51 S0b). A
+    /// confused `Result`/`Option` declines: the full path refuses it.
+    #[inline(never)]
+    fn leaf_return_checked(&self, entry: &FnEntry<'p>, v: Value) -> Option<Value> {
         let v = sum_return(entry, v).ok()?;
         self.set_call_tier(None);
         Some(v)
