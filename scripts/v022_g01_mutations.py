@@ -11019,7 +11019,7 @@ MUTATIONS += [
     # operator name and a missing one take that branch alike.
     ('M3343', 'ORACLE (am117): goal_eval gives a sealed caller a different text for a missing name', 'crates/axon-core/src/interp/goal.rs',
      'return self.no_such_fn(\n                name,\n                format!("goal_eval: `{name}` is not a defined function"),\n            );', 'return panic(format!(\n                "goal_eval: `{name}` is not a defined function"\n            ));',
-     'axon-core', '--no-default-features --lib', 'interp::crossing_tests::a_sealed_goal_eval_is_told_the_common_text_for_a_name_it_cannot_see'),
+     'axon-core', '--lib', 'interp::crossing_tests::a_sealed_goal_eval_is_told_the_common_text_for_a_name_it_cannot_see'),
     ('M3344', 'DRIFT (am117): one arr_* arm calls its closure around the control taint', 'crates/axon-core/src/interp/builtins.rs',
      '                    let mapped = self.call_closure_arg(f, [x.clone()])?;', '                    let mapped = self.call_closure(f.clone(), vec![x.clone()])?;',
      'axon-core', '--lib', 'interp::taint_tests::every_builtin_that_takes_a_closure_has_a_callback_row_and_calls_through_call_cb'),

@@ -131,6 +131,7 @@ ROWS=(
   "am117 the sealed kernel's token stream is its own|axon-core|lib|kernel::tests::a_sealed_registry_drawing_tokens_does_not_move_the_operators_stream"
   "am117 the clock is not a Pure builtin (runner: the Time ceiling refuses it)|axon-psv|sealed_frames|a_candidate_cannot_read_or_drive_the_clock_through_the_temporal_builtins"
   "am117 the PSV-1 non-claim list names every NARROW-CLAIM finding of the triage table|axon-core|pci_delta_note|every_narrow_claim_finding_of_the_loop_is_in_the_non_claim_list_and_no_other_is"
+  "am117 goal_eval tells a sealed caller the common no-such-name text for a name it cannot see (v0.22 M3343)|axon-core|lib|interp::crossing_tests::a_sealed_goal_eval_is_told_the_common_text_for_a_name_it_cannot_see"
   # Amendment 121 (round 15): the existence oracle at every placement of the item, the operator-typed value the
   # candidate picked, the closure-helper scan, the observer's prune.
   "am121 a diagnostic about a sealed item names the sealed file wherever the item sits|axon-core|lib|resolver::tests::a_diagnostic_about_a_sealed_item_names_the_sealed_file_wherever_the_item_sits"

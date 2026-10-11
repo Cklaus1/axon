@@ -268,7 +268,8 @@ Unknown, cortex to Err ("no summary"). T1 asserts all three.
   parser, kernel, conform 1 each; and the integration files axon_test_outcomes, dispatch_rule_switch_is_test_only,
   harness_binaries, harness_integrity, pci_delta_note, pci_isolation, postc9_spec, psv_test_selection,
   refusal_coverage_gate, test_completion) is ported under the same name and passes;
-  `scripts/v022_pci_gates.sh` PASS (93 rows). Drift tests are re-derived for main's identifiers, sweep
+  `scripts/v022_pci_gates.sh` PASS ([REVISED: was "93 rows", reason: S7-Evidence-5: a row for v0.22 M3343's
+  goal_eval no-such-name text killer] 94 rows). Drift tests are re-derived for main's identifiers, sweep
   `interp/sym.rs` and `interp/vm/*.rs` (except `vm/tests.rs`) with a cut that matches `mod tests {` only, and
   each asserts a minimum number of matched sites (TaintPort-9, VmPin-10).
 - **T4 oracle twin** [REVISED: wording, reason: EG-10]: `sealed_frames::a_sealed_caller_is_refused_in_the_same_
