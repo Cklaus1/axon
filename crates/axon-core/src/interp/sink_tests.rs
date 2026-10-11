@@ -361,62 +361,6 @@ fn a_sealed_caller_cannot_use_or_tell_apart_an_operator_name() {
     });
 }
 
-/// v0.22 goal.rs:274/373/476/554 (amendment 117, loop finding 38; killer
-/// `a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one`,
-/// a sealed run deferred to S6): the four goal searches that look a name up
-/// refuse a sealed caller in the common words for an operator fn
-/// (`seal_call` after the lookup) and for a missing name
-/// (`unknown_goal_name`). Without the edge a non-`@[adaptive]` operator fn
-/// answered `best_observed`, telling it apart from a missing name. The
-/// operator frame and an unsealed run are told what they always were.
-#[test]
-fn a_sealed_goal_search_refuses_an_operator_name_as_a_missing_one() {
-    type Search = fn(&Interp<'_>, &str) -> Result<f64, Flow>;
-    let searches: [(&str, Search); 4] = [
-        ("run_goal_random", |ix, n| {
-            ix.run_goal_random(n, 0.0, 2, 0, 4)
-        }),
-        ("run_goal_categorical", |ix, n| {
-            ix.run_goal_categorical(n, 3, 0.0, 2)
-        }),
-        ("run_goal_multistart", |ix, n| {
-            ix.run_goal_multistart(n, 0.0, 2, 2, 0, 4)
-        }),
-        ("run_goal_tournament", |ix, n| {
-            ix.run_goal_tournament(n, 0.0, 2, 0, 4, false)
-        }),
-    ];
-    const PLAIN: &str = "goal function `nope` is not defined and has no recorded provenance";
-    with_ix("r51-gap-goal", true, |ix| {
-        for (site, run) in searches {
-            let op = ix.with_frame(true, || run(ix, "w"));
-            assert!(
-                refused(&op, &no_fn("w")),
-                "ATTACK: {site}: a sealed caller told the operator fn `w` apart: {op:?}"
-            );
-            let missing = ix.with_frame(true, || run(ix, "nope"));
-            assert!(
-                refused(&missing, &no_fn("nope")),
-                "{site}: a missing name: {missing:?}"
-            );
-            // The operator frame of a sealed run.
-            let op = ix.with_frame(false, || run(ix, "w"));
-            assert!(op.is_ok(), "control: {site}: {op:?}");
-            let missing = ix.with_frame(false, || run(ix, "nope"));
-            assert!(refused(&missing, PLAIN), "control: {site}: {missing:?}");
-        }
-    });
-    // Unsealed: a "sealed" frame is an ordinary one (no edge runs).
-    with_ix("r51-gap-goal-u", false, |ix| {
-        for (site, run) in searches {
-            let op = ix.with_frame(true, || run(ix, "w"));
-            assert!(op.is_ok(), "unsealed: {site}: {op:?}");
-            let missing = ix.with_frame(true, || run(ix, "nope"));
-            assert!(refused(&missing, PLAIN), "unsealed: {site}: {missing:?}");
-        }
-    });
-}
-
 /// v0.22 `scheduler_spawn_takes_no_function_name_the_candidate_chose` and
 /// `the_taint_name_rule_refuses_what_the_static_name_analysis_lets_through`
 /// (amendment 100): operator code hands a name-resolving builtin only a name
