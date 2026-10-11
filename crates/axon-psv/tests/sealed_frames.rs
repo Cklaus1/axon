@@ -415,7 +415,7 @@ fn refused_unkeyed(s: &Seen) -> bool {
 }
 
 #[test]
-#[ignore = "R51 S4: the receiver dispatch rule (A86) not ported; sealed control refused until S6"]
+#[ignore = "R51 S6: the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
 fn the_candidate_never_chooses_the_operators_judging_method() {
     // Controls: the suites discriminate.
     for (suite, good, wrong) in [
@@ -544,7 +544,7 @@ fn accept() {
 "#;
 
 #[test]
-#[ignore = "R51 S6: seal edges seal_width, t_check_width and t_check_names ported (S3); needs a live sealed run"]
+#[ignore = "R51 S6: seal edges seal_width, t_check_width, t_check_names (S3) and the receiver dispatch rule t_check_dispatch ported (S4); needs a live sealed run"]
 fn the_candidate_never_selects_the_operators_code_by_width_or_by_name() {
     let table = |v: &str| {
         format!("pub fn table() -> Dict {{\n    let d = dict_new()\n    dict_set(d, \"sq\", {v})\n    d\n}}\n")
@@ -625,7 +625,7 @@ fn the_candidate_never_selects_the_operators_code_by_width_or_by_name() {
 /// stays a keyed pass and WRONG a keyed failure on every suite; every attack
 /// is refused without a keyed pass.
 #[test]
-#[ignore = "R51 S4: the receiver dispatch rule not ported; sealed control refused until S6"]
+#[ignore = "R51 S6: the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
 fn an_undetermined_type_position_never_selects_the_operators_impl() {
     const J: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
     const L: &str = "fn narrow(n: i64) -> u8 { n as u8 }\nfn stash(v: u8) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}\n";
@@ -832,7 +832,7 @@ fn a_replaced_or_filled_position_is_judged_by_what_the_operator_held() {
 /// keeps GOOD a keyed pass and WRONG a keyed failure; the pinned `u8` is
 /// refused by the cast.
 #[test]
-#[ignore = "R51 S4: the receiver dispatch rule that reads interp/pin.rs (ported in S5) is not ported; sealed control refused until S6"]
+#[ignore = "R51 S6: the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
 fn operator_code_never_dispatches_on_an_untyped_read_and_a_pinned_suite_passes() {
     const J: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
     let suite = |body: &str| {
@@ -918,7 +918,7 @@ fn operator_code_never_dispatches_on_an_untyped_read_and_a_pinned_suite_passes()
 /// annotation pins nothing. The operator's own `let r: i64 = solve(3)` is the
 /// pin: GOOD a keyed pass, WRONG a keyed failure, the candidate's u8 refused.
 #[test]
-#[ignore = "R51 S4: the receiver dispatch rule not ported; sealed control refused until S6"]
+#[ignore = "R51 S6: the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
 fn operator_code_never_dispatches_on_a_type_the_candidate_declared() {
     const J: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
     let suite = |body: &str| {
@@ -1924,7 +1924,7 @@ fn existence_placements() -> Vec<(&'static str, &'static str, &'static str, &'st
 /// annotation... and for a name nothing defines is the same text, and the same
 /// ACCEPT/REFUSE.
 #[test]
-#[ignore = "R51 S6: seal edge no_such_fn uniform text ported (S3); needs a live sealed run"]
+#[ignore = "R51 S6: seal edge no_such_fn uniform text (S3) and the goal-name call edge seal_call ported (S4); needs a live sealed run"]
 fn a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one() {
     let su = "mod sol\nmod opmod\nuse sol.{solve}\ntrait Sc {\n    fn score(self) -> i64\n}\nimpl Sc for i64 {\n    fn score(self: i64) -> i64 { 41 }\n}\ntype OT = { k: i64 }\ntype OE = P | Q\ntype DictTable = { k: i64 }\nlet OG = 5\nlet TABLE = [41, 42]\nfn ofn(x: i64) -> i64 { x }\nfn secret() -> i64 { 41 }\nfn nonadapt(n: i64) -> i64 { n }\n@[test]\nfn accept() {\n  assert_eq(solve(), 41)\n}\n";
     // (position, body naming the operator's, body naming the same shape of a
