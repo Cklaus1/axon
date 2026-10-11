@@ -53,8 +53,9 @@ the thirty-seventh (3 must-fix, 2 nits; §15 "Revision 42"); revision 43 answers
 §15 "Revision 44"); revision 45 answers the fortieth (2 must-fix, 1 nit; §15 "Revision 45"); revision 46 answers the
 forty-first (3 must-fix, 1 nit; §15 "Revision 46"); revision 47 answers the forty-second (2 must-fix,
 1 nit; §15 "Revision 47"); revision 48 answers the forty-third (1 must-fix, 2 nits; §15 "Revision 48");
-revision 49 answers the forty-fourth (2 must-fix, 2 nits; §15 "Revision 49").
-S13 is Draft until an adversarial review passes it.
+revision 49 answers the forty-fourth (2 must-fix, 2 nits; §15 "Revision 49"). The forty-fifth,
+verdict "correct" (0 blockers, 0 must-fix, 2 nits), judged revision 49 ready; revision 50 fixes its
+nits (§15 "Revision 50"), so S13 is Reviewed.
 **Risk class:** Structural (a second execution path for the reference engine)
 **Author / date:** 2026-10-09, from compilebench AX-18 (interpreter cost) after AX-53..AX-55.
 
@@ -1159,10 +1160,12 @@ code under `AXON_ENGINE=tree` and `vm`, and stdout equal to the tree's at `0f3b1
   `0f3b182b`.
 - `vm_bulk_near_miss_shapes`: loops one step outside the two shapes, each over packed arrays and
   each `PureLoop`/`PureFor`-eligible (the trace shows its `vm: pure` line), print the tree's results
-  under both engines, and print no `vm: bulk` line. Twenty-one loops, nine counts and twelve fills.
-  Counts: with an `else` (`if a[v] { n = n + c } else { m = m + 1 }`); indexed by another local
-  (`if a[w]`); with `n = n - c`; with `n = m + c`; with a second statement in the `then` block
-  (`if a[v] { n = n + c\n m = m + 1 }`); with a statement after the `if` (`m = m + 1`); with
+  under both engines, and print no `vm: bulk` line. Twenty-three loops, ten counts and thirteen
+  fills. Counts: with an `else` (`if a[v] { n = n + c } else { m = m + 1 }`); indexed by another
+  local (`if a[w]`); with `n = n - c`; with `n = m + c`; with a second statement in the `then` block
+  (`if a[v] { n = n + c\n m = m + 1 }`); with a statement after the `if` (`m = m + 1`); with a
+  statement before it (`for v in 0..12 { m = m + 1\n if a[v] { n = n + c } }`, `c = 2` over
+  `arr_repeat(true, 12)` with `a[1]` and `a[4]` false: the tree prints `n=20 m=12`); with
   `n = n + v` where an outer `let v = 3` is shadowed by the loop variable (the tree reads the loop
   `v`; a recogniser that does not exclude `v` from `c` reads 3 through `Env::get_var`'s by-name
   fallback, interp.rs:1122-1128 at `0f3b182b`); with `n = n + n` (`p = 1` over trues at 1, 2, 4, 8
@@ -1170,7 +1173,9 @@ code under `AXON_ENGINE=tree` and `vm`, and stdout equal to the tree's at `0f3b1
   `for v in 0..20 { if a[v] { v = v + 1 } }` over the same trues: the tree prints `v=3`; a
   recogniser that does not exclude `v` from `n` adds 5 to the outer `v` through the same fallback).
   Fills: indexed by another local (`q[k] = 7`, `q` a second packed array); with the increment
-  before the store; with a third statement (`x = x + 1`); with `j = j - s`; with `while j > b`
+  before the store; with a third statement after the step (`x = x + 1`) and one before the store
+  (`while j <= b { x = x + 1\n f[j] = 7\n j = j + s }`, `j = 1`, `s = 3`, `b = 8`: the tree prints
+  `[0, 7, 0, 0, 7, 0, 0, 7, 0, 0] j=10 x=3`); with `j = j - s`; with `while j > b`
   (`j = 1`, `s = 2`, `b = 0`: the tree panics `index 11 out of bounds (len 10)`) and with a
   condition on another local (`while k <= b`, `k = 0`, `j = 0`, `s = 3`, `b = 8`: the tree panics
   `index 12 out of bounds (len 10)`); with `while j <= j` (`j = 0`, `s = 3`: the tree panics
@@ -1181,16 +1186,18 @@ code under `AXON_ENGINE=tree` and `vm`, and stdout equal to the tree's at `0f3b1
   prints the array unchanged, `j=10 k=0`; a version whose first write is in bounds never ends on
   the tree, and one whose first write is out of bounds panics there while a loose bulk path declines
   too); with `let j = j + s` in place of the assignment (`f = arr_repeat(0, 10)`, `j = 10`, `s = 3`,
-  `b = 5`, `<`: zero iterations, the tree prints the array unchanged and `j=10`; a recogniser that
-  ignores `let` versus assignment in the step runs a bulk path);
+  `b = 5`, `<`: zero iterations, the tree prints the array unchanged and `j=10`, and stderr carries
+  the checker's W0002 line under both engines, so it runs as its own program like the panicking
+  near-misses; the step's slot identity already declines it, so this case fails only a recogniser
+  that ignores `let` and compares the step target by name);
   with `a[j] = j` (`j = 1`, `s = 2`, `< 10`: the tree prints `[0, 1, 0, 3, 0, 5, 0, 7, 0, 9]` and
   `j=11`); and with `j = j + j` (`f = arr_repeat(false, 20)`, `j = 1`, `< 20`, store `true`: the tree
   sets indices 1, 2, 4, 8, 16 and `j=32`). A recogniser that skips any one structural check (the
   `else`, the index variable, the compared variable, the comparison operator, the step's assigned
-  variable, its left operand and `let` versus assignment, statement order or count in the body or
-  the `then` block, the arithmetic operator, the accumulated local, `j` in the exclusions of `b`,
-  `c` and `s`, `v` in `n`'s, or `v` and `n` in `c`'s) runs a bulk path and prints a `vm: bulk`
-  line, and most also print different output.
+  variable and its left operand, statement order or count in the body or the `then` block, the
+  arithmetic operator, the accumulated local, `j` in the exclusions of `b`, `c` and `s`, `v` in
+  `n`'s, or `v` and `n` in `c`'s) runs a bulk path and prints a `vm: bulk` line, and most also
+  print different output.
 
 Also: `interp_arr_repeat_unallocatable_size_is_a_runtime_error_naming_n` still passes, and
 `packed_constructors_refuse_unallocatable_sizes` runs `arr_repeat(true, 9223372036854775807)`,
@@ -2241,3 +2248,15 @@ on the S12 binary under both engines, outputs as stated.
 | [must-fix] The 101 allocation refusal was gated for `Ints` only, where `i64::MAX` elements overflow capacity before the allocator is asked | `packed_constructors_refuse_unallocatable_sizes`: `arr_repeat(true, …)`, `arr_repeat(1.5, …)`, `arr_range(0, …)` at `i64::MAX` exit 101, empty stdout, message prefix (S12 prints it on both engines); named in the DAG row |
 | [nit] The all-`bool` `Vals` count case cannot fail | Kept, plus a mixed `Vals` array laundered through `id` with `f[1] = one`: tree panics `if condition must be bool, got i64` |
 | [nit] `let j = j + s` in the fill's step was ungated | Zero-iteration near-miss loop (`j = 10`, `b = 5`): tree prints the array unchanged, `j=10`; twenty-one loops, nine counts and twelve fills; "`let` versus assignment" added to the checks |
+
+Revision 50 (2026-10-11) answers the forty-fifth review (`reviewer`, verdict "correct": 0 blockers,
+0 must-fix, 2 nits), which re-ran the four revision-49 resolutions on the S12 binary under both
+engines and judged S13 ready. S13 is Reviewed. The builder's implementation of the revision-49
+cases also found one overstated claim, fixed here. Both new loops were re-run on the S12 binary
+under both engines (`vm: pure main 0 exprs, 2 loops`), outputs as stated.
+
+| Finding | Resolution |
+|---|---|
+| [nit] Extra statements were gated only after each shape, so a recogniser matching the body's tail passed | A count with `m = m + 1` before the `if` (tree `n=20 m=12`) and a fill with `x = x + 1` before the store (tree `[0, 7, 0, 0, 7, 0, 0, 7, 0, 0] j=10 x=3`); twenty-three loops, ten counts and thirteen fills |
+| [nit] The `let j = j + s` near-miss prints W0002 on stderr, which breaks the combined program's empty-stderr assertion | Stated; it runs as its own program |
+| [builder] "Skipping `let` versus assignment runs a bulk path" was false: the step target's slot identity already declines a `let` step | Removed from the list of single checks; the case is stated to fail a recogniser that ignores `let` and compares the step target by name |
