@@ -1663,6 +1663,9 @@ impl<'p> Interp<'p> {
         tier: Option<&str>,
         env: &mut Env,
     ) -> R {
+        if self.seal.active {
+            return self.call_mut_sealed(entry, args, argv, tier, env);
+        }
         for (i, a) in args.iter().enumerate() {
             if let Expr::UnaryOp {
                 op: UnaryOp::RefMut,
@@ -1715,6 +1718,124 @@ impl<'p> Interp<'p> {
         result
     }
 
+    /// [`Interp::call_mut_with`] in a sealed run (veto `call_fn_mut`,
+    /// interp.rs:3495-3577; eval.rs:1575-1593). A borrowed binding's taint
+    /// goes into the callee with its value, and what the binding holds when
+    /// the call ends is a second return channel, for the value and its taint
+    /// (the callee's binding for an operator fn, everything for a
+    /// candidate's: amendment 102). A candidate fn writing through `&mut`
+    /// returns control to operator code with the parameter's FINAL value, so
+    /// that value is a seal crossing exactly as the return value is (C9 round
+    /// 8, PSV-1 blocker): cast strictly to the declared type, and a
+    /// replacement judged against what the operator held (amendment 78). A
+    /// refused value is never handed back: the binding is left `()` and the
+    /// call's result is the refusal.
+    #[inline(never)]
+    fn call_mut_sealed(
+        &self,
+        entry: &FnEntry<'p>,
+        args: &[Expr],
+        mut argv: impl CallArgs,
+        tier: Option<&str>,
+        env: &mut Env,
+    ) -> R {
+        let f = entry.def;
+        let crossing = self.fn_is_sealed(f) && !self.frame_sealed.get();
+        let is_ref_mut = |i: usize| {
+            f.params
+                .get(i)
+                .is_some_and(|p| matches!(p.ty, crate::ast::AxonType::RefMut(_)))
+        };
+        let mut held: Vec<Option<Value>> = Vec::new();
+        if crossing {
+            held.resize(args.len(), None);
+        }
+        for (i, a) in args.iter().enumerate() {
+            if let Expr::UnaryOp {
+                op: UnaryOp::RefMut,
+                operand,
+            } = a
+            {
+                let Expr::Ident(name) = operand.as_ref() else {
+                    return panic("`&mut` of something other than a local variable".to_string());
+                };
+                let (s, slot) = self.res.var(operand, name);
+                let Some(idx) = env.get_var_idx(s, slot) else {
+                    return panic(format!("`&mut {name}`: `{name}` is not a local variable"));
+                };
+                self.t_touch(env.taint(idx));
+                let v = std::mem::replace(env.value_mut(idx, 0), Value::Unit);
+                if crossing && is_ref_mut(i) {
+                    held[i] = Some(v.clone());
+                }
+                forget_scalar(std::mem::replace(&mut argv.values()[i], v));
+            }
+        }
+        self.set_call_tier(tier);
+        let mut frame = self.take_frame();
+        let mut result = self.call_fn_in(entry, argv, &mut frame);
+        let cx = if crossing {
+            Some(self.fn_cx(f).strict(true))
+        } else {
+            None
+        };
+        for (i, a) in args.iter().enumerate() {
+            if let Expr::UnaryOp {
+                op: UnaryOp::RefMut,
+                operand,
+            } = a
+            {
+                let Expr::Ident(name) = operand.as_ref() else {
+                    continue;
+                };
+                let (mut out, out_t) = match (is_ref_mut(i), entry.params.get(i)) {
+                    (true, Some(s)) => match frame.find(*s) {
+                        Some(j) => {
+                            let t = if crossing { taint::ALL } else { frame.taint(j) };
+                            (std::mem::replace(frame.value_mut(j, 0), Value::Unit), t)
+                        }
+                        None => (Value::Unit, 0),
+                    },
+                    _ => (Value::Unit, 0),
+                };
+                if let (Some(cx), Some(p)) = (&cx, f.params.get(i).filter(|_| is_ref_mut(i))) {
+                    let why = match self.cast(&mut out, &p.ty, cx) {
+                        Err(why) => Some(format!(
+                            "`&mut` argument `{}` of `{}` is declared `{}` but was left holding {} — \
+                             a runtime type confusion ({why})",
+                            p.name,
+                            f.name,
+                            crate::doc::render_type(&p.ty),
+                            value::display(&out)
+                        )),
+                        Ok(()) => held[i]
+                            .as_ref()
+                            .and_then(|old| self.replaced_ok_top(old, &out).err())
+                            .map(|why| {
+                                format!(
+                                    "`&mut` argument `{}` of `{}` was left holding a value the \
+                                     operator's did not allow — a runtime type confusion ({why})",
+                                    p.name, f.name
+                                )
+                            }),
+                    };
+                    if let Some(msg) = why {
+                        out = Value::Unit;
+                        if !matches!(result, Err(Flow::Panic(_))) {
+                            result = panic(msg);
+                        }
+                    }
+                }
+                let (s, slot) = self.res.var(operand, name);
+                if let Some(b) = env.get_var_mut(s, slot, out_t) {
+                    forget_scalar(std::mem::replace(b, out));
+                }
+            }
+        }
+        self.give_frame(frame);
+        result
+    }
+
     /// Phase 6: evaluate `with handler { … } { body }`. Installs the inline
     /// handler's arms as an active frame for the duration of `body`, then (if an
     /// inline `return(v) => e` arm is present) rewrites the body's value. A
@@ -1749,6 +1870,9 @@ impl<'p> Interp<'p> {
             // can replay the continuation.
             body: SrcRef::new(body),
             env_snapshot: env.snapshot(),
+            sealed: self.frame_sealed.get(),
+            operator_frames: self.operator_frames.get(),
+            pin_owner: self.pin_fn.get(),
         };
         self.handlers.borrow_mut().push(frame);
         // An arm that is not a bare tail `resume(..)` can ABORT the body at the
@@ -1836,11 +1960,23 @@ impl<'p> Interp<'p> {
             effect: ctx.effect.clone(),
             feed: v,
             consumed: false,
+            feed_t: if self.seal.active {
+                self.t_stored(self.taint.acc.get())
+            } else {
+                0
+            },
+            sealed: ctx.sealed,
+            operator_frames: self.operator_frames.get(),
         });
         let mut body_env = self.env_from_snapshot(ctx.env_snapshot);
         // SAFETY: `ctx` came from the live resume context, whose `with` is
         // still evaluating (`SrcRef`'s invariant).
         let body = unsafe { ctx.body.get() };
+        // The replayed body is the installing fn's own text (amendment 100).
+        let _pin_guard = crate::interp::PinGuard {
+            cell: &self.pin_fn,
+            prev: self.pin_fn.replace(ctx.pin_owner),
+        };
         let result = self.eval(body, &mut body_env);
         // Disarm regardless of outcome so a later resume (or the arm's own code)
         // is not mistaken for a replay.
@@ -1861,19 +1997,28 @@ impl<'p> Interp<'p> {
         // (multi-shot).
         let hit = {
             let stack = self.handlers.borrow();
-            stack.iter().enumerate().rev().find_map(|(i, frame)| {
-                frame.arms.iter().find(|a| a.effect() == eff).map(|a| {
-                    (
-                        i,
-                        a.arm,
-                        a.captured.clone(),
-                        frame.body,
-                        frame.env_snapshot.clone(),
-                    )
+            // A sealed frame is skipped (the search goes on outward) when the
+            // operation is the operator's: see `handler_may_answer` (PSV-1).
+            stack
+                .iter()
+                .enumerate()
+                .rev()
+                .filter(|(_, f)| self.handler_may_answer(f.sealed, f.operator_frames))
+                .find_map(|(i, frame)| {
+                    frame.arms.iter().find(|a| a.effect() == eff).map(|a| {
+                        (
+                            i,
+                            a.arm,
+                            a.captured.clone(),
+                            frame.body,
+                            frame.env_snapshot.clone(),
+                            frame.sealed,
+                            frame.pin_owner,
+                        )
+                    })
                 })
-            })
         };
-        let Some((idx, arm, captured, with_body, with_env)) = hit else {
+        let Some((idx, arm, captured, with_body, with_env, arm_sealed, pin_owner)) = hit else {
             return Ok(None);
         };
         // SAFETY: the frame holding `arm` is live (it is split off below and
@@ -1906,13 +2051,27 @@ impl<'p> Interp<'p> {
             let mut arm_env = self.env_from_snapshot(captured);
             arm_env.push();
             let bound = self.match_pattern_rt(binding, &payload, &mut arm_env, pt);
-            let outcome = contain_loop_control(
-                bound.and_then(|_| self.eval(arm_body, &mut arm_env)),
-                FrameEdge::HandlerArm,
-            );
+            // The arm runs under the provenance of the `with` that installed
+            // it, and under the pin owner of the fn that installed it
+            // (amendment 100).
+            let outcome = self.handler_edge_into(arm_sealed, &payload).and_then(|()| {
+                let _pin_guard = crate::interp::PinGuard {
+                    cell: &self.pin_fn,
+                    prev: self.pin_fn.replace(pin_owner),
+                };
+                self.with_frame(arm_sealed, || {
+                    contain_loop_control(
+                        bound.and_then(|_| self.eval(arm_body, &mut arm_env)),
+                        FrameEdge::HandlerArm,
+                    )
+                })
+            });
             self.handlers.borrow_mut().extend(suspended);
             return match outcome {
-                Err(Flow::Resume(v)) => Ok(Some(v)),
+                Err(Flow::Resume(v)) => {
+                    self.handler_edge_back(arm_sealed, &v)?;
+                    Ok(Some(v))
+                }
                 Ok(v) => {
                     // The arm's value leaves the fn that performed the operation.
                     if self.seal.active {
@@ -1932,14 +2091,24 @@ impl<'p> Interp<'p> {
             effect: eff.to_string(),
             body: with_body,
             env_snapshot: with_env,
+            sealed: arm_sealed,
+            pin_owner,
         });
         let mut arm_env = self.env_from_snapshot(captured);
         arm_env.push();
         let bound = self.match_pattern_rt(binding, &payload, &mut arm_env, pt);
-        let outcome = contain_loop_control(
-            bound.and_then(|_| self.eval(arm_body, &mut arm_env)),
-            FrameEdge::HandlerArm,
-        );
+        let outcome = self.handler_edge_into(arm_sealed, &payload).and_then(|()| {
+            let _pin_guard = crate::interp::PinGuard {
+                cell: &self.pin_fn,
+                prev: self.pin_fn.replace(pin_owner),
+            };
+            self.with_frame(arm_sealed, || {
+                contain_loop_control(
+                    bound.and_then(|_| self.eval(arm_body, &mut arm_env)),
+                    FrameEdge::HandlerArm,
+                )
+            })
+        });
         self.resume_ctx.borrow_mut().pop();
         self.handlers.borrow_mut().extend(suspended);
 

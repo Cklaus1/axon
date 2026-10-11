@@ -96,6 +96,10 @@ pub(crate) struct Taint {
     /// (see `eval_with_handler`): inside one, every branch on tainted data is a
     /// possible exit.
     pub(crate) abortable: Cell<u32>,
+    /// How many scheduler fibers are running: a panic in one is caught and
+    /// recorded, so a call into sealed code from operator code in a fiber is a
+    /// possible exit (sticky once it returns; veto taint.rs:104).
+    pub(crate) catchable: Cell<u32>,
     /// The taint of the value the last `return` carried (a `return` unwinds past
     /// the statements around it, whose accumulation must not become the fn's
     /// result, so the fn's frame reads it from here).
@@ -703,17 +707,18 @@ impl<'p> Interp<'p> {
 
     /// The taint a frame's parameters are bound with (veto interp.rs:4141-4147,
     /// 4754-4760): what the arguments arrived with (`entry_t`, their union in
-    /// `acc`) and the control the call runs under. A `closure` called from a
-    /// sealed frame takes everything: the closure frame runs
-    /// under its caller's provenance until S3's `with_frame` (a fn frame's
-    /// `frame_sealed` will be the callee's then, as on veto). Veto's TYP strip
-    /// on a parameter whose closed type pins the cast argument (`t_pins`)
-    /// comes with the casts in S3.
+    /// `acc`) and the control the call runs under; a sealed frame takes
+    /// everything. A fn binds its parameters inside its own `with_frame`, so
+    /// a sealed fn's parameters take ALL; a closure's are read in the
+    /// CALLER's frame (before the closure's `with_frame`), so a closure
+    /// called from a sealed frame takes ALL. The TYP strip on a parameter
+    /// whose closed type pins the cast argument (`t_pins`) is the caller's
+    /// to apply.
     #[inline(always)]
-    pub(super) fn t_params<const T: bool>(&self, entry_t: u8, closure: bool) -> u8 {
+    pub(super) fn t_params<const T: bool>(&self, entry_t: u8) -> u8 {
         if !T {
             0
-        } else if closure && self.frame_sealed.get() {
+        } else if self.frame_sealed.get() {
             ALL
         } else {
             entry_t | self.taint.pc.get()

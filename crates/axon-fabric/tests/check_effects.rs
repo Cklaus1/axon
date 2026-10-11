@@ -1095,7 +1095,7 @@ fn a_pass_needs_evidence_that_the_test_completed() {
 /// operator's, a write to it is refused, and nothing lands beside the
 /// launcher. Mutation: drop `current_dir` in the runner → red.
 #[test]
-#[ignore = "R51 S3: handler with_frame / sealed fixture reads not ported; sealed control refused until S6"]
+#[ignore = "R51 S6: seal edge handler with_frame / handler_may_answer ported (S3); needs a live sealed run"]
 fn a_suites_runtime_fixture_is_the_pinned_one() {
     const FIXTURE: &str = "pci_expected_fixture.txt";
     let accept = format!(
@@ -1226,7 +1226,7 @@ cost_micro = 1000
 ///
 /// Mutation: drop `with_sealed_dir` in submit → red.
 #[test]
-#[ignore = "R51 S6: seal edges and the uniform no_such_fn text ported (S3); needs a live sealed run"]
+#[ignore = "R51 S6: seal edge no_such_fn uniform text and the call crossing ported (S3); needs a live sealed run"]
 fn a_sealed_candidate_cannot_reach_the_operators_names() {
     const GRANT_PURE: &str = "\
 profile = \"restricted\"

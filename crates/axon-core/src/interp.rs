@@ -376,9 +376,8 @@ pub(crate) fn cell_is_private(cv: &Rc<ClosureVal>, private_refs: usize) -> bool 
 }
 
 /// Where a closure came from, in a sealed run (veto's capture-cell keys
-/// `SEALED_CLOSURE_MARK` and `SEALED_FNVAL_MARK`, interp.rs:490-494). Always
-/// the default in an unsealed run. The creator's pin owner (veto
-/// `PIN_FN_MARK`) joins these with `pin_fn` in R51 S4.
+/// `SEALED_CLOSURE_MARK`, `SEALED_FNVAL_MARK` and `PIN_FN_MARK`,
+/// interp.rs:490-497). Always the default in an unsealed run.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SealMarks {
     /// A SEALED frame created the closure: it runs sealed wherever it is
@@ -388,6 +387,10 @@ pub struct SealMarks {
     /// of it from sealed code is not a call of an operator closure, and an
     /// operator closure may not be replaced by it.
     pub sealed_fnval: bool,
+    /// The pin owner of the frame that created the closure (its `FnDef`
+    /// address, 0 outside any fn): the closure's body is judged by the
+    /// static pin analysis as that fn's code (veto `PIN_FN_MARK`).
+    pub pin_owner: usize,
 }
 
 impl SealMarks {
@@ -887,7 +890,6 @@ pub fn sealed_run_refusal(sealed: bool) -> Result<(), String> {
 #[derive(Default)]
 pub(crate) struct Seal {
     pub(crate) active: bool,
-    #[cfg_attr(not(test), allow(dead_code))]
     fns: std::collections::HashSet<usize>,
     globals: std::collections::HashSet<Sym>,
     refines: std::collections::HashSet<String>,
@@ -949,6 +951,17 @@ impl Seal {
             }
         }
         seal
+    }
+}
+
+/// Restores the caller's `pin_fn` on drop.
+struct PinGuard<'a> {
+    cell: &'a Cell<usize>,
+    prev: usize,
+}
+impl Drop for PinGuard<'_> {
+    fn drop(&mut self) {
+        self.cell.set(self.prev);
     }
 }
 
@@ -1188,7 +1201,6 @@ pub struct Interp<'p> {
     pub(crate) seal: Seal,
     /// The static pin analysis (`interp/pin.rs`) of a sealed run; empty, and
     /// never computed, for an unsealed one.
-    #[cfg_attr(not(test), allow(dead_code))]
     pins: pin::Pins,
     /// Frame provenance: whether the frame now running is a sealed
     /// (candidate) frame. Changed only by [`Interp::with_frame`].
@@ -1225,6 +1237,12 @@ pub struct Interp<'p> {
     /// Bumped by every operator-side dict mutation: a snapshot from an older
     /// epoch is retaken at the next hand-over.
     dict_epoch: Cell<u64>,
+    /// The impl block each method was defined in (by `FnDef` address), for
+    /// reading its signature: `Self` and the impl's type parameters. Built
+    /// for a sealed run only (its one reader is [`Interp::fn_cx`]).
+    impl_of: HashMap<usize, &'p ImplBlock>,
+    /// [`Interp::fn_cx`]'s per-fn signature environments.
+    fn_cx_cache: RefCell<HashMap<usize, conform::Cx>>,
     /// R50: which engine runs fn bodies (`AXON_ENGINE`, or `set_engine` on a
     /// target without an environment). Read once, at build.
     engine: Engine,
@@ -1393,6 +1411,20 @@ struct HandlerFrame {
     /// intercepted op). Unused by the bare-tail-resume fast path.
     body: SrcRef<crate::ast::Expr>,
     env_snapshot: Snapshot,
+    /// Provenance of the frame that installed this handler: its arms run
+    /// under it (PCI runtime sealing).
+    sealed: bool,
+    /// `Interp::operator_frames` when this handler was installed. A SEALED
+    /// frame may answer an operation only while the count is unchanged, i.e.
+    /// no operator code lies between the `with` and the operation (PSV-1,
+    /// C9 round 3). See [`Interp::handler_may_answer`].
+    operator_frames: usize,
+    /// `Interp::pin_fn` when this handler was installed: the fn that OWNS the
+    /// `with` and so the arms' source text. The arm runs under THIS owner, not
+    /// under whichever fn happened to perform the effect (C9 round 10, PSV-1,
+    /// amendment 100): pin sites are keyed (owner, site text), so an arm run
+    /// under the performer's owner read the performer's verdicts.
+    pin_owner: usize,
 }
 
 /// A runtime handler arm: the arm as written, and a snapshot of the
@@ -1467,6 +1499,18 @@ struct ResumeReplay {
     /// Whether the feed has been consumed yet (the first hit consumes it; a
     /// second effect hit in the same replay is the unsound case → E1314).
     consumed: bool,
+    /// The taint of `feed` (the `resume(..)` argument, with the control it was
+    /// evaluated under): read when the replay yields it, so a value derived from
+    /// a candidate-chosen resume value stays tainted inside the replayed body
+    /// (amendment 117, loop finding 28). `0` in an unsealed run.
+    feed_t: u8,
+    /// Provenance of the handler whose arm armed this replay, and
+    /// `Interp::operator_frames` when it did. The feed answers an operation
+    /// only under the same rule as a live handler frame
+    /// ([`Interp::handler_may_answer`]): a sealed arm's `resume(v)` never
+    /// becomes the result of an operation the operator's code performs.
+    sealed: bool,
+    operator_frames: usize,
 }
 
 /// Phase 6 (multi-shot resume): the suspended computation a handler arm is
@@ -1482,6 +1526,11 @@ struct ResumeCtx {
     body: SrcRef<crate::ast::Expr>,
     /// The environment snapshot the body originally evaluated in.
     env_snapshot: Snapshot,
+    /// Provenance of the handler frame whose arm is servicing this body.
+    sealed: bool,
+    /// The pin owner of the fn that installed the handler: the replayed body is
+    /// that fn's own text, so it replays under that owner (amendment 100).
+    pin_owner: usize,
 }
 
 /// Default max interpreter call depth before a graceful "recursion limit"
@@ -1868,6 +1917,29 @@ fn not_callable(c: &Value) -> R {
 #[inline(never)]
 fn lambda_arity_mismatch(want: usize, got: usize) -> R {
     panic(format!("lambda: expected {want} args, got {got}"))
+}
+
+/// Bind a closure call's arguments as the parameters of `code` in the
+/// fresh scope above `base` (the cell's bindings), each with taint `t(i)`.
+/// Slotted parameters are the next bindings, so they are pushed in place, as
+/// `define_var` would (cost only).
+#[inline(always)]
+fn bind_closure_params(
+    frame: &mut Env,
+    code: &ClosureCode,
+    base: usize,
+    args: impl ClosureArgs,
+    t: impl Fn(usize) -> u8,
+) {
+    if code.param_base.map(|b| b as usize) == Some(base) {
+        frame.reserve(code.params.len());
+        args.bind(|i, v| frame.push_var(code.params[i], v, t(i)));
+    } else {
+        args.bind(|i, v| {
+            let slot = code.param_base.map_or(NAMED, |b| b + i as u32);
+            frame.define_var(code.params[i], slot, v, t(i));
+        });
+    }
 }
 
 /// Whether the return boundary ([`sum_return`]) can ask anything of `v`:
@@ -3929,6 +4001,7 @@ impl<'p> Interp<'p> {
         let mut user_traits = std::collections::HashSet::new();
         let mut trait_impls = std::collections::HashSet::new();
         let mut refine_bases = HashMap::new();
+        let mut impl_of = HashMap::new();
 
         for item in &program.items {
             match item {
@@ -3950,18 +4023,23 @@ impl<'p> Interp<'p> {
                 Item::EnumDef(e) => {
                     enums.insert(e.name.clone(), e);
                 }
-                Item::ImplBlock(ImplBlock {
-                    trait_name,
-                    for_type,
-                    methods: ms,
-                    ..
-                }) => {
+                Item::ImplBlock(
+                    b @ ImplBlock {
+                        trait_name,
+                        for_type,
+                        methods: ms,
+                        ..
+                    },
+                ) => {
                     let tn = type_name_of(for_type);
                     if !trait_name.is_empty() {
                         trait_impls.insert((tn.clone(), trait_name.clone()));
                     }
                     for m in ms {
                         methods.insert((tn.clone(), m.name.clone()), m);
+                        if seal.active {
+                            impl_of.insert(m as *const FnDef as usize, b);
+                        }
                     }
                 }
                 Item::LetDef { name, value, .. } => {
@@ -4043,6 +4121,8 @@ impl<'p> Interp<'p> {
             chan_contracts: RefCell::new(HashMap::new()),
             dict_snaps: RefCell::new(HashMap::new()),
             dict_epoch: Cell::new(0),
+            impl_of,
+            fn_cx_cache: RefCell::new(HashMap::new()),
             engine,
             vm_trace: vm::trace_at_build(),
             vm_eager: vm::eager_at_build(),
@@ -4085,7 +4165,6 @@ impl<'p> Interp<'p> {
 
     /// Whether `f` was defined in a sealed (candidate) module of this run.
     /// Read by the S2 taint and the S3 call crossing (R51 §11).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn fn_is_sealed(&self, f: &FnDef) -> bool {
         self.seal.active && self.seal.fns.contains(&(f as *const FnDef as usize))
     }
@@ -4110,10 +4189,19 @@ impl<'p> Interp<'p> {
         panic(plain)
     }
 
+    /// Whether handler `frame` may answer (or abort) the operation being
+    /// performed now. An operator frame may answer anything. A SEALED frame
+    /// may answer only while no operator frame has been entered since it was
+    /// installed: otherwise the operation belongs to — or unwinds through —
+    /// the operator's code, and the candidate would choose its result or skip
+    /// the rest of it (C9 round 3, PSV-1). The single predicate for live
+    /// frames (`run_handler_arm`) and the replay feed.
+    pub(crate) fn handler_may_answer(&self, sealed: bool, operator_frames: usize) -> bool {
+        !sealed || operator_frames == self.operator_frames.get()
+    }
     /// Run `g` with the frame's provenance set to `sealed`, restoring it
     /// after: the ONE place provenance changes, so the per-provenance frame
     /// counts stay exact. The S3 seal edges enter frames through it.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn with_frame<T>(&self, sealed: bool, g: impl FnOnce() -> T) -> T {
         let prev = self.frame_sealed.replace(sealed);
         let count = if sealed {
@@ -4798,10 +4886,73 @@ impl<'p> Interp<'p> {
     #[inline(always)]
     fn call_fn_in_general(&self, entry: &FnEntry<'p>, args: Vec<Value>, env: &mut Env) -> R {
         if self.seal.active {
-            self.call_fn_frame::<true>(entry, args, env)
+            self.call_fn_sealed(entry, args, env)
         } else {
-            self.call_fn_frame::<false>(entry, args, env)
+            self.call_fn_frame::<false>(entry, args, env, false)
         }
+    }
+
+    /// A sealed run's call (veto `call_fn_sealed`, interp.rs:3579-3632): the
+    /// call edge, then the callee's frame entered through
+    /// [`Interp::with_frame`] under the callee's provenance and pin owner. A
+    /// candidate fn called from operator code is the seal CROSSING: every
+    /// dict in the arguments is snapshotted on the way in and every dict
+    /// sealed code mutated is checked on the way out (amendment 72 part 2),
+    /// the arguments and result are cast in the frame (strictly, the result),
+    /// and from inside a scheduler fiber or an abortable handler body what
+    /// follows is control-dependent on the candidate (amendment 117).
+    #[inline(never)]
+    fn call_fn_sealed(&self, entry: &FnEntry<'p>, args: Vec<Value>, env: &mut Env) -> R {
+        let f = entry.def;
+        self.seal_call(f)?;
+        let callee = self.fn_is_sealed(f);
+        let crossing = callee && !self.frame_sealed.get();
+        if crossing {
+            for a in &args {
+                self.dict_edge_in(a)?;
+            }
+        }
+        let r = {
+            let _pin_guard = PinGuard {
+                cell: &self.pin_fn,
+                prev: self.pin_fn.replace(f as *const FnDef as usize),
+            };
+            self.with_frame(callee, || {
+                self.call_fn_frame::<true>(entry, args, env, crossing)
+            })
+        };
+        // The frame restored the caller's control taints (`t_frame`). Operator
+        // code in a scheduler fiber (or in the body of a `with handler` that
+        // can abort it) that called sealed code: a panic in the callee would
+        // have ended the fiber here, and an operation it performed would have
+        // ended the body, so what follows is control-dependent on the
+        // candidate whether or not it panicked (amendment 117, loop finding
+        // 15; veto interp.rs:3615-3623).
+        if crossing && (self.taint.catchable.get() | self.taint.abortable.get()) != 0 {
+            let st = &self.taint.sticky;
+            st.set(st.get() | taint::VAL);
+        }
+        if crossing && r.is_ok() {
+            self.dict_edge_out()?;
+        }
+        r
+    }
+
+    /// The type environment of `f`'s signature for ONE activation: the
+    /// signature part is cached per fn; the type-parameter bindings are fresh
+    /// (veto interp.rs:3640-3653). A sealed run's only.
+    fn fn_cx(&self, f: &FnDef) -> conform::Cx {
+        let key = f as *const FnDef as usize;
+        let cached = self.fn_cx_cache.borrow().get(&key).cloned();
+        let cx = match cached {
+            Some(cx) => cx,
+            None => {
+                let cx = conform::Cx::of_fn(f, self.impl_of.get(&key).copied());
+                self.fn_cx_cache.borrow_mut().insert(key, cx.clone());
+                cx
+            }
+        };
+        cx.fresh()
     }
 
     #[inline(never)]
@@ -4810,6 +4961,7 @@ impl<'p> Interp<'p> {
         entry: &FnEntry<'p>,
         mut args: Vec<Value>,
         env: &mut Env,
+        crossing: bool,
     ) -> R {
         nest_guard!(self, CALL_FN_IN_GENERAL);
         let f = entry.def;
@@ -4889,7 +5041,14 @@ impl<'p> Interp<'p> {
             Some(Value::Int(n)) => Some(*n),
             _ => None,
         };
-        self.bind_params(entry, &mut args, env, self.t_params::<T>(entry_t, false));
+        // A sealed run casts every argument to its parameter's declared type
+        // in the signature's environment for this activation, and the result
+        // to the declared return type (amendment 53, `interp/conform.rs`).
+        let cx = if T { Some(self.fn_cx(f)) } else { None };
+        match &cx {
+            Some(cx) => self.bind_params_sealed(entry, &mut args, env, entry_t, cx)?,
+            None => self.bind_params(entry, &mut args, env, 0),
+        }
         args.clear();
         self.recycle_args(args);
         // Phase 5: refinement-type PRECONDITIONS. A parameter `p: T where P`
@@ -5012,6 +5171,10 @@ impl<'p> Interp<'p> {
             // running (v0.22 G01 final re-audit of candidate 2, executed).
             Err(other) => return Err(frame_edge(other, FrameEdge::Fn(&f.name))),
         };
+        let (result, body_t) = match &cx {
+            Some(cx) => self.seal_ret(f, result, cx, crossing, body_t)?,
+            None => (result, body_t),
+        };
         let result = sum_return(entry, result)?;
 
         let result = if entry.has_epilogue || !self.refine_preds.is_empty() {
@@ -5054,6 +5217,99 @@ impl<'p> Interp<'p> {
                 .map(|(i, (&p, a))| (p, param_value(entry, i, std::mem::replace(a, Value::Unit)))),
             |_| t,
         );
+    }
+
+    /// [`Interp::bind_params`] in a sealed run (veto interp.rs:4106-4148):
+    /// each argument, after the soft unwrap and the sized-int coercion, is
+    /// CAST to its parameter's declared type in `cx` and refused when it is
+    /// another type. A parameter whose declared type is closed is a pin:
+    /// the cast verified the argument against a type the OPERATOR wrote, so
+    /// in an operator frame it does not carry the TYPE taint (amendment 102).
+    #[inline(never)]
+    fn bind_params_sealed(
+        &self,
+        entry: &FnEntry<'p>,
+        args: &mut [Value],
+        env: &mut Env,
+        entry_t: u8,
+        cx: &conform::Cx,
+    ) -> Result<(), Flow> {
+        let f = entry.def;
+        for (i, (p, a)) in f.params.iter().zip(args.iter_mut()).enumerate() {
+            *a = param_value(entry, i, std::mem::replace(a, Value::Unit));
+            if let Err(why) = self.cast(a, &p.ty, cx) {
+                return panic(format!(
+                    "argument `{}` of `{}` is declared `{}` but is {} — a runtime type confusion \
+                     ({why})",
+                    p.name,
+                    f.name,
+                    crate::doc::render_type(&p.ty),
+                    value::display(a)
+                ));
+            }
+        }
+        let t = self.t_params::<true>(entry_t);
+        let operator = !self.frame_sealed.get();
+        env.bind_fresh(
+            entry
+                .params
+                .iter()
+                .zip(args.iter_mut())
+                .map(|(&p, a)| (p, std::mem::replace(a, Value::Unit))),
+            |i| {
+                if t & taint::TYP != 0 && operator && self.t_pins(&f.params[i].ty) {
+                    t & !taint::TYP
+                } else {
+                    t
+                }
+            },
+        );
+        Ok(())
+    }
+
+    /// The result of a sealed run's call, CAST to the declared return type
+    /// (veto interp.rs:4331-4378; C9 round 3/4, amendment 53): the whole
+    /// declared type, so a value an untyped `dict_get` produced never reaches
+    /// a caller that would dispatch on its runtime type. At a seal `crossing`
+    /// a value at a type parameter no argument determined is refused too,
+    /// and a fn with no declared return hands the operator exactly `()`
+    /// (amendment 72). An OPERATOR fn's closed declared return is a pin: its
+    /// result drops the TYPE taint.
+    #[inline(never)]
+    fn seal_ret(
+        &self,
+        f: &FnDef,
+        mut result: Value,
+        cx: &conform::Cx,
+        crossing: bool,
+        mut body_t: u8,
+    ) -> Result<(Value, u8), Flow> {
+        let mismatch = match f.return_type.as_ref() {
+            Some(rt) => self.cast(&mut result, rt, &cx.strict(crossing)).err(),
+            None if crossing => {
+                result = Value::Unit;
+                None
+            }
+            None => None,
+        };
+        if let Some(why) = mismatch {
+            return panic(format!(
+                "`{}` is declared to return `{}` but produced {} — a runtime type confusion ({why})",
+                f.name,
+                f.return_type
+                    .as_ref()
+                    .map(crate::doc::render_type)
+                    .unwrap_or_default(),
+                value::display(&result),
+            ));
+        }
+        if body_t & taint::TYP != 0
+            && !self.frame_sealed.get()
+            && f.return_type.as_ref().is_some_and(|rt| self.t_pins(rt))
+        {
+            body_t &= !taint::TYP;
+        }
+        Ok((result, body_t))
     }
 
     /// R5 `@[goal(...)]` sugar for [`Interp::call_fn_in`]: whether the goal is
@@ -5529,8 +5785,58 @@ impl<'p> Interp<'p> {
         // caller's control taints, restored when the frame ends (veto
         // interp.rs:4753-4760, 4785-4789).
         let entry_t = self.ta::<T>();
-        let in_t = self.t_params::<T>(entry_t, true);
+        let in_t = self.t_params::<T>(entry_t);
         let _ctl = self.t_frame::<T>();
+        // The seal edges of a closure call (veto interp.rs:4760-4783). A
+        // sealed frame calling an OPERATOR closure (not a candidate fn value)
+        // is `entering` operator code: the arguments are cast strictly, the
+        // dicts sealed code mutated are verified, and the operator code runs
+        // control-dependent on the candidate. A candidate closure called by
+        // operator code is the `crossing` the other way: the operator hands
+        // it the arguments (dict snapshot) and verifies on its return. The
+        // arguments are moved out here so they can be cast in place.
+        let mut pending = Some(args);
+        let mut checked: Vec<Value> = Vec::new();
+        let (entering, crossing) = if T {
+            let origin = cv.seal.sealed_origin;
+            let in_sealed = self.frame_sealed.get();
+            let entering = in_sealed && !origin && !cv.seal.sealed_fnval;
+            let crossing = origin && !in_sealed;
+            if let Some(a) = pending.take() {
+                checked.reserve(n);
+                a.bind(|_, v| checked.push(v));
+            }
+            if crossing {
+                for a in &checked {
+                    self.dict_edge_in(a)?;
+                }
+            }
+            if entering {
+                self.dict_edge_out()?;
+            }
+            self.closure_args_check(&cv.contract, &mut checked, entering)?;
+            if entering {
+                self.taint.pc.set(self.taint.pc.get() | taint::ALL);
+            }
+            (entering, crossing)
+        } else {
+            (false, false)
+        };
+        // A parameter whose declared type (at any layer of the closure's
+        // contract) is closed is a pin: the argument was cast to it (strictly,
+        // from a sealed caller), so its runtime type is the operator's; the
+        // value is not (amendment 102, veto interp.rs:4826-4837).
+        let pt = |i: usize| {
+            if T && in_t & taint::TYP != 0
+                && Self::param_types(&cv.contract, i)
+                    .iter()
+                    .any(|ty| self.t_pins(ty))
+            {
+                in_t & !taint::TYP
+            } else {
+                in_t
+            }
+        };
         let mut env = self.take_frame();
         if lend {
             // The cell's vectors become the frame's bindings (and their
@@ -5545,23 +5851,28 @@ impl<'p> Interp<'p> {
         // they are pushed in place, as `define_var` would (cost only).
         let base = env.len();
         env.push();
-        let frame = &mut *env;
-        if code.param_base.map(|b| b as usize) == Some(base) {
-            frame.reserve(n);
-            args.bind(|i, v| frame.push_var(code.params[i], v, in_t));
-        } else {
-            args.bind(|i, v| {
-                let slot = code.param_base.map_or(NAMED, |b| b + i as u32);
-                frame.define_var(code.params[i], slot, v, in_t);
-            });
+        match pending {
+            Some(a) => bind_closure_params(&mut env, code, base, a, pt),
+            None => bind_closure_params(&mut env, code, base, &mut checked, pt),
         }
         // A closure's own `return` ends the closure (`run_lambda`); every
         // other transfer is refused at its edge, as for a named fn. A sealed
         // run is pinned to the tree (spec Fork 1), so its body runs through
         // the sealed evaluator here, which tells a `return`'s taint from the
         // body's (`run_lambda` folds the `return` into its value).
+        // A closure runs under the provenance of the frame that CREATED it and
+        // is judged by the pin analysis as its creator's code (veto
+        // interp.rs:4790-4803, 4848).
         let (out, body_t) = if T {
-            let r = self.eval_t::<true>(&code.body, &mut env);
+            let r = {
+                let _pin_guard = PinGuard {
+                    cell: &self.pin_fn,
+                    prev: self.pin_fn.replace(cv.seal.pin_owner),
+                };
+                self.with_frame(cv.seal.sealed_origin, || {
+                    self.eval_t::<true>(&code.body, &mut env)
+                })
+            };
             let body_t = self.t_body::<true>(&r);
             match r {
                 Err(Flow::Return(v)) => (Ok(v), body_t),
@@ -5586,8 +5897,21 @@ impl<'p> Interp<'p> {
             env.write_back(base, &mut captured.borrow_mut());
         }
         self.give_frame(env);
-        if T && out.is_ok() {
+        if T {
+            let mut v = out?;
+            // The result is cast to every `fn` type this reference crossed
+            // (strictly when a candidate closure returns to operator code); a
+            // candidate closure returning to operator code is verified, an
+            // operator closure's result is handed to sealed code (veto
+            // interp.rs:4888-4897).
+            self.closure_ret_check(&cv.contract, &mut v, crossing)?;
+            if crossing {
+                self.dict_edge_out()?;
+            } else if entering {
+                self.dict_edge_in(&v)?;
+            }
             self.t_frame_exit(entry_t, body_t);
+            return Ok(v);
         }
         out
     }
@@ -5864,6 +6188,9 @@ mod taint_tests;
 // The per-frame `Kernel` split's unit tests (R51 S3).
 #[cfg(test)]
 mod kernel_tests;
+// The seal crossing's unit tests (R51 S3: calls between operator and sealed code).
+#[cfg(test)]
+mod crossing_tests;
 // Declared-type conformance at the seal's value boundaries (R51 S3, from
 // v0.22 C9 round 4, amendments 53/72/78): casts, closure and channel
 // contracts, the operator's dict snapshots.
@@ -8552,7 +8879,6 @@ fn main() { }
     /// (`every_builtin_that_runs_user_code_is_classified`); this half needs
     /// the cast S3 ports.
     #[test]
-    #[ignore = "R51 S3: the sandbox_run result cast at the seal crossing not ported"]
     fn a_crossing_builtin_casts_a_sealed_fns_result_in_its_arm() {
         let sources = vm::tests::r51_interp_sources();
         let src = &sources
