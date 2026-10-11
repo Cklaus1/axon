@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S4b",
+  "text": "TEST-ONLY: #[ignore] reasons of the dispatch-rule deferred tests (interp.rs unit tests, axon-psv sealed_frames) re-slotted to S6 with the registry; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

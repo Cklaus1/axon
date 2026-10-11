@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S7 merge",
+  "text": "joins r51/int 2eaef86b (7defe71d, f89f4d43, 4bb4a0e1: native thread stack reserve only; r51/speed4 require_idle) onto r51/s7reg (f83da0f3 and the registry's _CXL fix); only this table, the note and tasks/opportunities.md conflicted, resolved by keeping both sides; no change beyond the commits it joins"
+}

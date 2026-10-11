@@ -1,0 +1,4 @@
+{
+  "theme": "R51 T3 merge",
+  "text": "joins r51/t3a (03ba80ff..3aef1f44: v0.22 sealed-run helpers, 29+3 S3 rows, the tests_v022_*.rs sweep skip, the bare-Uncertain param_coerce fix) onto the gaps merge (e15a4fb6); conflicts were the include! lines at the end of interp.rs's mod tests, this table, the note and the registry, all resolved by keeping both sides (registry entries unioned by (file, name), count and by_slice recounted); no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

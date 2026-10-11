@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R51 S0)",
+  "text": "INTERPRETER (via merge): merge commit (Merge branch 'ax/interp-closures' into ax/cb-integration); joins its branch, no change beyond its parents; not PCI-reviewed, sealed runs refused on this tree (R51 SEAL_RUNTIME_COMPLETE = false)"
+}

@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S4 follow-up merge",
+  "text": "joins r51/int d2353962 (hdone merge 4180f333, 9eb70ac1) onto the S4 follow-up (662b7329, e7cf7f59); this table resolved by keeping both sides, the note regenerated, the registry merged per entry (285 entries, S0b 14, S4 0, S6 271); no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S4a",
+  "text": "TEST-ONLY: T5 port taint_tests::an_operator_value_the_candidate_picked_is_never_dispatched_on (veto taint_tests.rs:316-374, 11 Ok / 1 Fails / 19 Refused) and the PICK hook drift test; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

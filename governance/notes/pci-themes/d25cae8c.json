@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S3e",
+  "text": "TEST-ONLY: rustfmt of interp/sink_tests.rs (line wrapping of the S3e tests); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

@@ -1,0 +1,4 @@
+{
+  "theme": "R51 T3a",
+  "text": "TEST-ONLY: three v0.22 interp::tests rows at their v0.22 path: every_global_read_goes_through_global_ref moved from interp/sink_tests.rs (with field_sites, body unchanged); a_sealed_send_on_an_operator_channel_needs_a_determined_element_type and a_sealed_frame_cannot_take_an_operator_fn_as_a_value ported (verbatim but the second's sealed_outcome_rule(.., true) runs through sealed_outcome until S4; main's same-named conform unit test and axon-psv integration test left alone), ignored and registered (S4, S6); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

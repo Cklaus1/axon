@@ -2378,6 +2378,20 @@ of in every VM fast path. Needs an adversarial review against PSV-1 (control tai
 first; it may not cover all of them. Note the Firecracker real-guest boot test is SKIP on this host (no guest kernel
 image), so the microVM path is not proven here.
 
+## R51 S7: a symlinked candidate module under a sealed directory is judged as operator code (S7-Seal-1, NOTE)
+
+`crates/axon-core/src/resolver.rs` (the sealed-file test: `p.canonicalize().unwrap_or(p)` then
+`sealed.iter().any(|d| p.starts_with(d))`); v0.22 has the same line (v022-ref resolver.rs:2438). A candidate
+file that is a symlink to a file outside the sealed directory canonicalizes outside it, so its code is judged as
+operator code: observed with the c01 attack candidate as `cand/sol.ax -> <outside>/sol.ax`, head and v0.22 both
+`p1f0` (the attack passes); the same candidate as a regular file is refused on both. Not introduced by R51.
+
+Impact today: none under the protected runner, which refuses any symlink in a guest input
+(`crates/axon-psv/src/lib.rs`, the input symlink check). It matters only to a caller of `axon test --seal` outside
+axon-psv: the seal assumes symlink-free inputs. Proposed severity [low]. Smallest fix: refuse a symlinked module
+file under a sealed directory where the loader reads it (or in `set_sealed_module_dirs`' callers), or also match
+the un-canonicalized path. Needs a sealed_frames attack test (symlinked candidate refused) and a mutation row.
+
 ## R51 S7: native recursion nested in expressions can still abort the tree engine (BUG_HUNT #28 gap, pre-existing)
 
 [medium] The native recursion guard counts call depth only; the interpreter thread stack is

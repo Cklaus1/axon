@@ -1,0 +1,4 @@
+{
+  "theme": "amendment 117",
+  "text": "follow-up to 3849fadb found by the full mutation run: two guards that proved redundant are removed (a sealed-caller check after goal_name_is_known; the operator-pop branch of t_chan_access, covered by t_chan_choice) and a test case for an aborting arm's value: no change in what is refused"
+}

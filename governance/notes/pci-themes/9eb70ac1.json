@@ -1,0 +1,4 @@
+{
+  "theme": "R51 T3",
+  "text": "TEST-ONLY: interp::tests::no_control_transfer_escapes_a_frame (interp/tests_v022_c.rs) loses its R51 S0b ignore and runs: 28e02cad ported v0.22's addressed handler completion, so the foreign arm's completion now unwinds to its own with (7, not 107); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

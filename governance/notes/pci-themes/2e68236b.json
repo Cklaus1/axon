@@ -1,0 +1,4 @@
+{
+  "theme": "amendment 114",
+  "text": "the sealed-only check holds the operator's `mod` of a candidate module (found by the fabric suite), so a candidate whose module uses its own helper resolves; an operator module the candidate does not ship is still missing: narrowing relative to the first form of amendment 114, no widening of what base accepted"
+}

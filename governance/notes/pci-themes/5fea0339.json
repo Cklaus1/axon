@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S4b",
+  "text": "INTERPRETER make_closure records the creating frame's pin owner in a sealed run (cv.seal.pin_owner = pin_fn, veto PIN_FN_MARK eval.rs:967-972); dispatch_named in a sealed run refuses a non-closure value a local holds (not_callable) instead of falling through to a fn of the same name (veto eval.rs local-call rule, amendment 60); both under seal.active, so an unsealed run is unchanged. TEST-ONLY T8.1 dispatch tests (undetermined positions, width/name, goal names) under Both/TaintOnly/StaticOnly/Neither with controls; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

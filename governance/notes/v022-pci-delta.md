@@ -10,14 +10,15 @@ relative to that, and how much of the difference is covered.
 
 The block below is produced by `scripts/pci_delta.py` from git, not written by hand. A drift test
 (`crates/axon-core/tests/pci_delta_note.rs`) regenerates it at the head it names and fails if it
-differs, if a commit under `crates/axon-core/src` is not classified in the script's `THEMES`, or if a
-later commit touches `crates/axon-core/src` (the note is then stale: `python3 scripts/pci_delta.py
---emit HEAD`, paste between the markers).
+differs, if a commit under `crates/axon-core/src` is not classified (one file per commit in
+`governance/notes/pci-themes/`; a merge without one only if it is a pure join, `PURE_JOIN` in the
+script), or if a later commit touches `crates/axon-core/src` (the note is then stale:
+`python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 7defe71dd7c3437da41edce1529600d9e7e9a70b
+generated-at: 91babccf82e1b182e0f584b7a129a97ebd1d01e5
 
-`git diff --numstat 31413ca7..7defe71d -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..91babccf -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -54,7 +55,7 @@ generated-at: 7defe71dd7c3437da41edce1529600d9e7e9a70b
 | `crates/axon-core/src/interp/builtins.rs` | 672 | 512 |
 | `crates/axon-core/src/interp/conform.rs` | 1800 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1354 | 0 |
-| `crates/axon-core/src/interp/crossing_tests.rs` | 417 | 0 |
+| `crates/axon-core/src/interp/crossing_tests.rs` | 438 | 0 |
 | `crates/axon-core/src/interp/dispatch_tests.rs` | 639 | 0 |
 | `crates/axon-core/src/interp/env.rs` | 1205 | 0 |
 | `crates/axon-core/src/interp/eval.rs` | 2192 | 605 |
@@ -68,7 +69,7 @@ generated-at: 7defe71dd7c3437da41edce1529600d9e7e9a70b
 | `crates/axon-core/src/interp/taint.rs` | 1654 | 0 |
 | `crates/axon-core/src/interp/taint_tests.rs` | 4172 | 0 |
 | `crates/axon-core/src/interp/tests_v022_a.rs` | 1184 | 0 |
-| `crates/axon-core/src/interp/tests_v022_b.rs` | 2057 | 0 |
+| `crates/axon-core/src/interp/tests_v022_b.rs` | 2079 | 0 |
 | `crates/axon-core/src/interp/tests_v022_c.rs` | 152 | 0 |
 | `crates/axon-core/src/interp/tests_v022_s4.rs` | 600 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 506 | 514 |
@@ -87,9 +88,9 @@ generated-at: 7defe71dd7c3437da41edce1529600d9e7e9a70b
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 46649 | 5385 |
+| total | 46692 | 5385 |
 
-`git log --reverse 31413ca7..7defe71d -- crates/axon-core/src`:
+`git log --reverse 31413ca7..91babccf -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -321,11 +322,15 @@ generated-at: 7defe71dd7c3437da41edce1529600d9e7e9a70b
 | 1276b9e9 | R51 S6 T7 merge | joins r51/t7oracle (11172ce5, 6ae5d56c: oracle rows M2622/M2623/M2925/M2946/M3343, new row M3495 sealed `&mut` direct-call oracle) onto r51/int 15cbfa4a (t7shape: sealed width re-tag, M3230/M3231/M3256 text, M1996 marker); only this table and the note conflicted, resolved by keeping both sides; no change beyond the commits it joins |
 | ffe2b413 | R51 T2 wasm32 depth | INTERPRETER (stack layout and wasm32 recursion budget only; no change in what any run computes, accepts or refuses): the const-generic frames charge per-instance nest_cost constants (nest_guard!(self, if T { X_SEALED } else { X }); EVAL/CALL_FN_IN_GENERAL/CALL_CLOSURE_OWNED_BY renamed EVAL_ARM/CALL_FN_FRAME/CALL_CLOSURE_FRAME after the fns that charge them, RUN_TEST_BODY its own; the sealed-only call_fn_sealed/call_mut_sealed/eval_tainted guarded); sealed-only code moves out of the unsealed frames into #[cold] #[inline(never)] helpers: sealed_branch! runs a branch body in place in the ::<false> instance and through t_branch in the ::<true> one, call_mut hands a sealed run to call_mut_sealed before its arguments (which evaluates them in the same order), call_mut_with is unsealed-only with the ::<false> Env accessors, struct_refine_sealed out of finish_record, run_arm_sealed out of run_handler_arm (match instead of and_then), with_abort_enter/with_abort_exit out of eval_with_handler, eval_prob_pred guarded with prob_pred inline, Bindings' debug checks out of line, the unused Env::get_mut dropped (vm test uses get_mut_t::<false>); drift-test needles (sink_tests, tests_v022_b) and a taint_tests doc follow the moved code; unsealed behaviour change: none on native; sealed runs as at 04d3ad7b |
 | 3561022b | R51 T2 wasm32 depth | INTERPRETER (stack layout and wasm32 recursion budget only): finish_call_cold's R4 zone provenance injection moves verbatim into #[inline(never)] record_zone_provenance; eval_with_handler is #[inline(always)] in an optimised build (as before R51 split the evaluator); every nest_cost constant whose frame grew is set to its measured need (wasm_stack_budget.py; e.g. EVAL_ARM release 288 -> 304, CALL_FN_FRAME 224/528 -> 272/576), the sealed ones to their measured need; unsealed behaviour change: none on native; on wasm32 the recursion-limit panic fires a few levels earlier on some nest probes (vm_wasm_depth.sh PASS, VM >= tree everywhere); sealed runs as at 04d3ad7b |
+| 5842278b | R51 S7 mutation rows | TEST-ONLY (interp/crossing_tests.rs, cfg(test)): a_sealed_goal_eval_is_told_the_common_text_for_a_name_it_cannot_see, the killer of v0.22's M3343 (goal_eval's no_such_fn text) restored on its v0.22 text; two candidate fns added to the crossing fixture; the registry re-anchors M3471/M3472 on t_frame_exit's two callers and M2600/M2601 on run_handler_arm's per-path seal routing, moves the goal_eval lookup filter row to M3496 and adds routing rows; no interpreter code changed, no unsealed behaviour change |
 | 30e6638c | R51 S7 decl | INTERPRETER + RESOLVER (S7-UnsealedParity-1,6,7,8,9, S7-Seal-2): frame_edge's loop-control text comes from FrameEdge::loop_control_escape, so a handler arm reads "`break`/`continue` cannot leave an effect-handler arm (a loop around the `with` is not the arm's loop)" (other edges unchanged); the resolver's refinement-name rule takes checker::DEFERRED_PREFIXES as exact names (v0.22's prefix rule predates amendment 117), so `type GoalScore = i64 where …` is accepted and `type Goal = …` refused, and the duplicate-impl E0002 prints checker::axon_type_name; TEST_ENDED_ON_FAILURE names an early None; run_test_fn returns Err on TestEnd::failure_exit, so improve.rs G3 reads axon test's verdict; vm run_test_body runs a test body holding its own Op::Return on the tree (the eager VM read an early return as a completion); depth_exceeded decides seal_call first (v0.22 order). Unsealed behaviour change: the handler-arm and early-None panic/failure texts, refinement names that merely start with Uncertain/Temporal/Goal/Dict now resolve, the duplicate-impl text, axon improve's G3 verdict on an Err/early-None test, and AXON_VM_EAGER=1 test completion after an early return (now as the tree); spec §3 declares the v0.22 rows; sealed runs: a depth-limit call of an operator fn reads the uniform no-such-fn text |
 | f89f4d43 | R51 S7 native stack | INTERPRETER (native thread stack size only; no change in what any run computes, accepts or refuses): STACK_BYTES_PER_FRAME 256 KiB -> 320 KiB and MIN_STACK_BYTES 1 GiB -> 1.25 GiB, so the interpreter thread reserves 1.25x the address space, covering the unsealed native frames R51's per-run-kind evaluator grew (release eval_arm::<false> 1024 B, was eval 912 B; at 3921a309 a recursion nested 260-280 expressions deep at down(5990) aborted where 5864c423 ran it, S7-UnsealedParity-10); unsealed behaviour change: none against 5864c423 (every call depth x paren depth cell that completed or hit the recursion limit there does so again, release and debug, tree and VM; cells that aborted there reach further before aborting); wasm32 unaffected (no thread); cli_run regression test; sealed runs as at 04d3ad7b |
+| 1adbe2b4 | R51 S7 merge | joins r51/int 9e67b796 (30e6638c, R51 S7 decl) onto r51/s7reg (5842278b and its registry/note follow-ups); only this table and the note conflicted, resolved by keeping both sides; no change beyond the commits it joins |
 | 4bb4a0e1 | R51 S7 native stack cap | INTERPRETER (native thread stack size only; no change in what any run computes, accepts or refuses): stack_size_for_depth clamps the reserve at MAX_STACK_BYTES = MAX_DEPTH_CEILING x 256 KiB, the largest reserve 5864c423 made; with f89f4d43's x1.25 alone, AXON_MAX_DEPTH past ~800,000 asked for more than Linux heuristic overcommit maps in one go and the interpreter thread failed to spawn (exit 101) where 5864c423 ran (900,000 and 1,000,000 observed); unsealed behaviour change: none against 5864c423 (every depth reserves at least what it did there; AXON_MAX_DEPTH 800,000/900,000/1,000,000 run hello, release and debug); sealed runs as at 04d3ad7b |
 | 7defe71d | R51 S7 merge | joins r51/int 9e67b796 (r51/s7decl, 30e6638c) onto r51/s7stack (f89f4d43, 4bb4a0e1: native thread stack reserve only); only this table and the note conflicted, resolved by keeping both sides; no change beyond the commits it joins; sealed runs as at 04d3ad7b |
-| 232 commits | | |
+| f83da0f3 | R51 S7 mutation rows | TEST-ONLY (interp/tests_v022_b.rs, cfg(test)): a_sealed_call_that_binds_nothing_still_meets_the_seal_edge, a sealed candidate's parameter-free call of an operator fn that binds nothing, refused by the seal edge (control: the candidate's own answer completes); the killer of M3493/M3494, whose cells now run with debug assertions off (the debug store assertion stopped their mutants before the attack; without it check_store misses a bindless chain and the mutant completes); no interpreter code changed, no unsealed behaviour change |
+| 0a9731f2 | R51 S7 merge | joins r51/int 2eaef86b (7defe71d, f89f4d43, 4bb4a0e1: native thread stack reserve only; r51/speed4 require_idle) onto r51/s7reg (f83da0f3 and the registry's _CXL fix); only this table, the note and tasks/opportunities.md conflicted, resolved by keeping both sides; no change beyond the commits it joins |
+| 236 commits | | |
 <!-- END MECHANICAL -->
 
 
@@ -373,7 +378,7 @@ account and are NOT mechanically verified; the files and commits above are):
 
 ## (b) Coverage: PCI gate rows, and the mutation rows
 
-`scripts/v022_pci_gates.sh` has 93 rows at this head: the original 18 (surfaces 1-21), ten
+`scripts/v022_pci_gates.sh` has 94 rows at this head: the original 18 (surfaces 1-21), ten
 added by amendment 84, one group per delta amendment (53, 60, 72 incl. its dict snapshot, 78), two for
 amendment 83's dispatch rule (integration), and six for amendment 94 (the `&mut` edge-back cast, the `&mut` operand in the dispatch analysis, the fn-value seal edge and the Rc/copy-on-write observation, each unit and runner where both exist), nine for amendment 96 (sandbox_run's cast, the one global-read edge, the fn-value mark, the unary width arm, the classified user-code builtins and the handler-expression cost), and six for amendment 100 (a handler arm's pin owner, the name sinks, the existence oracle and the drift tests), and seven for amendment 102 (the runtime taint: the closure picks, the names, the impl and width, the carriers, an ordinary run, the drift tests and the runner leg; plus the sweep step that runs every rule-on interpreter test with only the taint on), and five for amendment 106 (channel state and the areas not hunted before, every reader of shared state after a sealed write, the existence oracle on every path TESTED, the drift tests, and the runner leg), and five for amendment 108 (comparisons and builtin arguments read the shared objects inside them, the existence oracle on the method path, a native registry as world state, the runner leg of the comparison, and the runner row of the method path at check time), and six for amendment 114 (a module the operator declares for the candidate resolves its own helper, the control taint of every conditional, repeated or exiting form, the drift test of the control table, its runner leg, the existence oracle on the static path, and the note's own planted-change checks), each with
 unit tests in `interp.rs`/`conform.rs` AND a real-runner test (`axon_psv::runner::run`, in
@@ -473,6 +478,7 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am117 the sealed kernel's token stream is its own | axon-core/lib | PASS 1/1 |
 | am117 the clock is not a Pure builtin (runner: the Time ceiling refuses it) | axon-psv/sealed_frames | PASS 1/1 |
 | am117 the PSV-1 non-claim list names every NARROW-CLAIM finding of the triage table | axon-core/pci_delta_note | PASS 1/1 |
+| am117 goal_eval tells a sealed caller the common no-such-name text for a name it cannot see (v0.22 M3343) | axon-core/lib | PASS 1/1 |
 | am121 a diagnostic about a sealed item names the sealed file wherever the item sits | axon-core/lib | PASS 1/1 |
 | am121 an item that ends a file has a real span in its own file | axon-core/lib | PASS 1/1 |
 | am121 a spanless merged diagnostic joins the backstop | axon-core/lib | PASS 1/1 |
@@ -483,7 +489,7 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am121 a live nonce's record survives another request's prune | axon-fabric/observer_service | PASS 1/1 |
 | am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 439 rows at this head, recomputed from the script): M59, M61-M62, M65, M67-M70, M72-M79, M82-M83, M85-M88, M90-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3251, M3253-M3259, M3267-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3458, M3460-M3479, M3483-M3495
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 442 rows at this head, recomputed from the script): M59, M61-M62, M65, M67-M70, M72-M79, M82-M83, M85-M88, M90-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3251, M3253-M3259, M3267-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3458, M3460-M3479, M3483-M3498
 
 | delta | rows (named in the amendment's own text) |
 |---|---|

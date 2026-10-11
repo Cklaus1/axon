@@ -1,0 +1,4 @@
+{
+  "theme": "R51 T3a merge",
+  "text": "joins r51/t3a-sweep (64e3d9af, made atop 4a29c0a0 so the t3b lane can merge it alone) into r51/t3a; no conflict, no change beyond it; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

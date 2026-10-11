@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S6.2",
+  "text": "TEST-ONLY: the T3 drift sweeps in interp/taint_tests.rs read the shared mod-tests-cut source list (vm::tests::r51_interp_sources), so production code after `mod taint_tests;` is swept and vm/tests.rs, tests_v022_*.rs are skipped; taint_tests and tests_v022_b split builtins.rs through interp::tests::builtin_arms (asserts >= 250 arms); no behaviour change"
+}

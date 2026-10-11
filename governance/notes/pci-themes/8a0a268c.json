@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S2 perf",
+  "text": "INTERPRETER cost-only: the Bindings taint store becomes a Vec plus a store flag, and the bytecode engine (never sealed) writes and removes bindings through const-generic _t::<false> forms, so the unsealed call path has no branch on the store (R50 §10 call-path budget restored); the release-mode in-step check runs on sealed writes and taint reads only (debug builds check every mutation); two pre-existing clippy lints in interp tests fixed. Behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

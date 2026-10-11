@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R51 S0)",
+  "text": "INTERPRETER: R50 S1: current_fn holds the executing fn's &FnDef in a Cell (no Rc clone, no RefCell flag); one CallGuard restores it and the call depth: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it"
+}

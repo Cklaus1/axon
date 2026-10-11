@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S4 merge",
+  "text": "joins r51/s4 (S4a: ce3d8646..ecbdf307, PICK mark, edges, frame-exit and builtin pick, t_check_call_picked, T8.1, T5) onto the T3 merges; interp/taint_tests.rs had two pure appends after the same base line and keeps both (T3c's first), no duplicate names; this table, the note and the registry (3-way per entry) resolved by keeping both sides; no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

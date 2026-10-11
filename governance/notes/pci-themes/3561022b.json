@@ -1,0 +1,4 @@
+{
+  "theme": "R51 T2 wasm32 depth",
+  "text": "INTERPRETER (stack layout and wasm32 recursion budget only): finish_call_cold's R4 zone provenance injection moves verbatim into #[inline(never)] record_zone_provenance; eval_with_handler is #[inline(always)] in an optimised build (as before R51 split the evaluator); every nest_cost constant whose frame grew is set to its measured need (wasm_stack_budget.py; e.g. EVAL_ARM release 288 -> 304, CALL_FN_FRAME 224/528 -> 272/576), the sealed ones to their measured need; unsealed behaviour change: none on native; on wasm32 the recursion-limit panic fires a few levels earlier on some nest probes (vm_wasm_depth.sh PASS, VM >= tree everywhere); sealed runs as at 04d3ad7b"
+}
