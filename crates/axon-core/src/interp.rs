@@ -6283,6 +6283,10 @@ mod conform;
 // type and method edges on a `build_with` sealed `Interp`.
 #[cfg(test)]
 mod sink_tests;
+// The PICK mark and the refusing closure sink (R51 S4: `t_note`, the pick
+// edges, `t_check_call_picked`), T8.1's laundering attacks.
+#[cfg(test)]
+mod pick_tests;
 // The receiver dispatch rule's unit tests (R51 S4: `t_check_dispatch`, the
 // dispatch-rule and taint-rule test switches, the goal-name refusal).
 #[cfg(test)]
