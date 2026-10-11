@@ -1948,23 +1948,9 @@ fn every_name_resolving_lookup_is_a_listed_sink() {
         .find(|(f, _)| *f == "interp/builtins.rs")
         .unwrap()
         .1;
-    let mut arms: Vec<(Vec<String>, String)> = Vec::new();
-    for line in src.lines() {
-        let indent = line.len() - line.trim_start().len();
-        let t = line.trim_start();
-        if indent == 12 && t.starts_with('"') && t.contains("=>") {
-            let head = &t[..t.find("=>").unwrap()];
-            arms.push((
-                head.split('|')
-                    .map(|n| n.trim().trim_matches('"').to_string())
-                    .collect(),
-                String::new(),
-            ));
-        } else if let Some(last) = arms.last_mut() {
-            last.1.push_str(line);
-            last.1.push('\n');
-        }
-    }
+    // The shared splitter asserts it found at least 250 arms (R51 T3), so the
+    // loop below never runs over an empty cut.
+    let arms = builtin_arms(&src);
     for (names, body) in &arms {
         let resolves = [
             "fn_by_name(",

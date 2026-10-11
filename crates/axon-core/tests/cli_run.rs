@@ -37222,7 +37222,8 @@ fn r51_s0b_a_confused_result_is_refused_at_a_leaf_return_on_either_engine() {
 
 /// R51 §3 row 7 (veto ea9ba38d, 6de01247): `ai_extract_uncertain_*` results
 /// are AI-sourced, and a derived `Uncertain` keeps the least-trusted
-/// operand's `source_tag`, on the tree and on both VM entry modes.
+/// operand's `source_tag`, on the tree and on both VM entry modes, a
+/// `CallFastLocalInt` call (`tag_of(u + 0)` in a loop) included.
 #[test]
 fn r51_s0b_uncertain_provenance_is_the_same_on_either_engine() {
     let f = tmp_ax("s0b_uncertain_tag", s0b_src!("uncertain_source_tag"));
@@ -37241,7 +37242,7 @@ fn r51_s0b_uncertain_provenance_is_the_same_on_either_engine() {
                 out.status.code(),
                 String::from_utf8_lossy(&out.stdout).into_owned()
             ),
-            (Some(0), "1\n1\n1\n1\n1\n2\n2\n0\n0\n".to_string()),
+            (Some(0), "1\n1\n1\n1\n1\n1\n1\n1\n2\n2\n0\n0\n".to_string()),
             "[{engine}] {}",
             String::from_utf8_lossy(&out.stderr)
         );

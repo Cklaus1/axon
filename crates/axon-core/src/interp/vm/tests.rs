@@ -1020,6 +1020,34 @@ fn loop_control_never_leaves_a_fast_call() {
     }
 }
 
+/// R51 S0b (§3 row 7, §8 T9): a derived `Uncertain` keeps the least-trusted
+/// operand's `source_tag` through `CallFastLocalInt` (`tag_of(u + 0)`, the
+/// one-parameter `local op int` argument) exactly as on the tree: a runtime
+/// value (2) stays runtime, a user value (0) stays user, every iteration.
+#[test]
+fn uncertain_provenance_survives_a_fast_local_int_call() {
+    let src = "fn tag_of(u: Uncertain<i64>) -> i64 {\n u.source_tag\n}\n\
+               fn a() -> i64 {\n let u = uncertain_dyn_i64(2, 0.5)\n let v = uncertain_new(1, 0.9)\n \
+               let s = 0\n let i = 0\n while i < 3 {\n s = s * 100 + tag_of(u + 0) * 10 + tag_of(v + 0)\n \
+               i = i + 1\n }\n s\n}\n";
+    let prog = crate::parse_source(src).expect("parses");
+    let interp = Interp::build(&prog).expect("unsealed build");
+    let body = compile(&interp, body_of(&interp, "a"));
+    assert!(
+        kinds(&body).contains(&"call-fast-local-int"),
+        "{:?}",
+        kinds(&body)
+    );
+    let mut env = interp.new_env();
+    env.push();
+    let tree = format!("{:?}", interp.eval(body_of(&interp, "a"), &mut env));
+    let mut env = interp.new_env();
+    env.push();
+    let vm = format!("{:?}", interp.exec(&body, &mut env));
+    assert_eq!(vm, tree);
+    assert_eq!(vm, "Ok(Int(202020))");
+}
+
 // ── R51 T1: the sealed-engine pin (spec §4 Fork 1, §8 T1) ───────────────────
 
 /// R51 T1a: [`engine_for`] over every input, 48 rows. A sealed run is

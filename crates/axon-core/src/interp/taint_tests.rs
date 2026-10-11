@@ -353,6 +353,101 @@ fn ret_pin(c: i64, k: i64) -> i64 {
 fn sealed_direct(c: i64, k: i64) -> i64 {
     solve()
 }
+fn push_in_place_clean(c: i64, k: i64) -> [i64] {
+    let ys = [c]
+    let xs = [k]
+    xs = arr_push(xs, k)
+    xs
+}
+fn concat_in_place_clean(c: str, k: str) -> str {
+    let t = c
+    let s = k
+    s = s + k
+    s
+}
+fn place_write_clean(c: i64, k: i64) -> i64 {
+    let ys = [c]
+    let xs = [k, k]
+    xs[0] = k
+    xs[0]
+}
+fn place_index_clean(c: i64, k: i64) -> i64 {
+    let ys = [c]
+    let xs = [k, k]
+    xs[k] = k
+    xs[k]
+}
+fn add_clean(c: i64, k: i64) -> i64 {
+    let a = c + k
+    k + k
+}
+fn capture_lend_clean(c: i64, k: i64) -> i64 {
+    let x = c
+    let y = k
+    let f = || { let z = x
+        y }
+    f()
+}
+fn capture_copy_clean(c: i64, k: i64) -> i64 {
+    let x = c
+    let y = k
+    let f = || { let z = x
+        y }
+    let g = f
+    g()
+}
+fn capture_write_lend_clean(c: i64, k: i64) -> i64 {
+    let x = k
+    let f = |v| { let o = x
+        x = v
+        o }
+    let a = f(k)
+    f(k)
+}
+fn capture_write_copy_clean(c: i64, k: i64) -> i64 {
+    let x = k
+    let f = |v| { let o = x
+        x = v
+        o }
+    let g = f
+    let a = g(k)
+    g(k)
+}
+fn pnote(d: Dict, x: i64) -> bool {
+    dict_set(d, \"k\", x)
+    true
+}
+let PA = dict_new()
+let PB = dict_new()
+let PC = dict_new()
+let PD = dict_new()
+let PE = dict_new()
+type PosA = i64 where pnote(PA, _)
+type PosB = i64 where pnote(PB, _)
+type Fld = { n: PosB }
+type Whole = { n: i64 } where pnote(PC, _.n)
+fn takes(p: PosA) -> i64 { 0 }
+fn param_pred(c: i64, k: i64) -> i64 { takes(c) }
+fn field_pred(c: i64, k: i64) -> i64 {
+    let s = Fld { n: c }
+    0
+}
+fn whole_pred(c: i64, k: i64) -> i64 {
+    let s = Whole { n: c }
+    0
+}
+@[verify(value > 0 && pnote(PD, value))]
+fn vscalar(x: i64) -> i64 { x }
+fn verify_pred(c: i64, k: i64) -> i64 {
+    let v = vscalar(c)
+    0
+}
+@[verify(value > 0 && pnote(PE, value))]
+fn vunc(x: i64) -> Uncertain<i64> { uncertain_dyn_i64(x, 0.9) }
+fn verify_unc_pred(c: i64, k: i64) -> i64 {
+    let u = vunc(c)
+    0
+}
 ";
 
 const CAND: &str = "fn solve() -> i64 { 41 }\n";
@@ -479,6 +574,38 @@ fn a_predicate_env_keeps_the_values_taint() {
     });
 }
 
+/// T8.3: every other fresh predicate env keeps the value's taint too: the
+/// parameter refinement's (`call_fn_frame`), a struct field's `where` and a
+/// whole struct's `where` (the struct literal), and the `@[verify]`
+/// composite's on a scalar and on an `Uncertain` return. Each predicate hands
+/// `_` (`value`) to `pnote`, which stores it in its own operator dict: the
+/// dict carries VAL after a tainted value and nothing after a clean one.
+#[test]
+fn every_fresh_predicate_env_keeps_the_values_taint() {
+    let (prog, sdir) = prog("r51-s6-t83");
+    let mut ix = Interp::build_with(&prog, std::slice::from_ref(&sdir), Engine::Tree);
+    assert!(ix.seal.active);
+    ix.init_globals().expect("the probes' dicts");
+    for (probe, dict) in [
+        ("param_pred", "PA"),
+        ("field_pred", "PB"),
+        ("whole_pred", "PC"),
+        ("verify_pred", "PD"),
+        ("verify_unc_pred", "PE"),
+    ] {
+        let d = ix.globals.get(&intern(dict)).expect("the probe's dict");
+        // The clean value first: an object's taint only grows.
+        for (vt, want) in [(0, 0), (ALL, VAL)] {
+            probe_in(&ix, probe, vec![(int(3), vt), (int(0), 0)]);
+            assert_eq!(
+                ix.t_obj(d) & VAL,
+                want,
+                "{probe}: what the predicate stored from `_` (taint {vt})"
+            );
+        }
+    }
+}
+
 /// T8.4: a handler arm's payload binding takes the taint it is given, and a
 /// handler or continuation snapshot carries every binding's taint.
 #[test]
@@ -507,6 +634,8 @@ fn handler_arm_bindings_and_snapshots_keep_taint() {
 
 /// T8.5: the AX-31 in-place appends and the place writes put the value's
 /// taint on the binding; the AX-55 operand read is not taken in a sealed run.
+/// The same shapes on clean operands, next to a tainted binding, stay clean
+/// (the control).
 #[test]
 fn in_place_reads_and_writes_carry_the_taint() {
     with_sealed("r51-s2-t85", |ix| {
@@ -539,6 +668,18 @@ fn in_place_reads_and_writes_carry_the_taint() {
             ALL,
             "an operand read in place"
         );
+        let clean = |name: &str, c: Value, k: Value, what: &str| {
+            assert_eq!(taint_of(ix, name, c, k), 0, "{what} on a clean operand");
+        };
+        clean("push_in_place_clean", int(1), int(1), "arr_push in place");
+        let (s, k) = (
+            Value::Str(Rc::new("c".into())),
+            Value::Str(Rc::new("k".into())),
+        );
+        clean("concat_in_place_clean", s, k, "`s = s + k` in place");
+        clean("place_write_clean", int(1), int(1), "`xs[0] = k`");
+        clean("place_index_clean", int(1), int(1), "`xs[k] = k`");
+        clean("add_clean", int(1), int(1), "an operand read in place");
     });
 }
 
@@ -732,16 +873,15 @@ fn every_builtin_has_a_taint_class() {
     }
 }
 
-/// An interpreter source file, its test module cut off.
+/// An interpreter source file of the shared sweep ([`sources`]), keyed as
+/// there (`interp.rs`, `interp/<rel>`): cut at its `mod tests {` only (spec
+/// T3), so the code `interp.rs` holds after `mod taint_tests;` is read.
 fn source(rel: &str) -> String {
-    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("src")
-        .join(rel);
-    let src = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
-    match src.find("\n#[cfg(test)]\nmod ") {
-        Some(i) => src[..i].to_string(),
-        None => src,
-    }
+    sources()
+        .into_iter()
+        .find(|(f, _)| *f == rel)
+        .unwrap_or_else(|| panic!("{rel} is not in the drift sweep's list"))
+        .1
 }
 
 /// Every builtin arm that turns a value into text is either a stringifier (its
@@ -793,39 +933,18 @@ fn every_builtin_that_renders_a_value_to_text_is_a_stringifier_or_an_emitter() {
 /// takes the appended value's taint itself) (veto taint_tests.rs:735).
 #[test]
 fn builtins_are_dispatched_only_where_the_taint_is_routed() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/interp");
-    let mut files = vec!["interp.rs".to_string()];
-    let mut walk = vec![dir.clone()];
-    while let Some(d) = walk.pop() {
-        for e in std::fs::read_dir(&d).expect("interp dir").flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                walk.push(p);
-            } else if p.extension().is_some_and(|x| x == "rs") {
-                let rel = p.strip_prefix(dir.parent().unwrap()).unwrap();
-                files.push(rel.to_string_lossy().into_owned());
-            }
-        }
-    }
-    files.sort();
+    // The shared sweep's files: the unit-test modules (which call the
+    // dispatcher directly; none is a dispatch site of a run), `vm/tests.rs`
+    // and the `tests_v022_*.rs` files are not in it.
     let mut sites = Vec::new();
-    for file in &files {
-        // The unit-test modules call the dispatcher directly; none is a
-        // dispatch site of a run.
-        if file.ends_with("taint_tests.rs")
-            || file.ends_with("kernel_tests.rs")
-            || file.ends_with("sink_tests.rs")
-            || file.ends_with("crossing_tests.rs")
-        {
-            continue;
-        }
-        for l in source(file).lines() {
+    for (file, src) in sources() {
+        for l in src.lines() {
             let t = l.trim();
             if t.starts_with("//") {
                 continue;
             }
             if t.contains("call_builtin(") && !t.contains("fn call_builtin") {
-                sites.push((file.clone(), t.to_string()));
+                sites.push((file.to_string(), t.to_string()));
             }
         }
     }
@@ -1039,17 +1158,29 @@ fn the_callers_pc_and_sticky_are_restored_after_the_call() {
 }
 
 /// TaintPort-5: a closure's capture keeps its binding's taint on the lend
-/// path (the only reference) and the copy path (a second reference).
+/// path (the only reference) and the copy path (a second reference); a clean
+/// capture next to a tainted one stays clean on both (the control).
 #[test]
 fn a_closure_capture_keeps_its_taint_through_lend_and_copy() {
     with_sealed("r51-s2-cap", |ix| {
         assert_eq!(taint_of(ix, "capture_lend", int(1), int(0)), ALL, "lend");
         assert_eq!(taint_of(ix, "capture_copy", int(1), int(0)), ALL, "copy");
+        assert_eq!(
+            taint_of(ix, "capture_lend_clean", int(1), int(0)),
+            0,
+            "a clean capture lent next to a tainted one"
+        );
+        assert_eq!(
+            taint_of(ix, "capture_copy_clean", int(1), int(0)),
+            0,
+            "a clean capture copied next to a tainted one"
+        );
     });
 }
 
 /// A capture written by one call and read by the next: the lend moves the
-/// written taint back into the cell, the copy path's write-back writes it.
+/// written taint back into the cell, the copy path's write-back writes it;
+/// a clean write moves and writes back clean (the control).
 #[test]
 fn a_captures_written_taint_survives_into_the_next_call() {
     with_sealed("r51-s2-capw", |ix| {
@@ -1062,6 +1193,16 @@ fn a_captures_written_taint_survives_into_the_next_call() {
             taint_of(ix, "capture_write_copy", int(1), int(0)),
             ALL,
             "write-back"
+        );
+        assert_eq!(
+            taint_of(ix, "capture_write_lend_clean", int(1), int(0)),
+            0,
+            "a clean write lent back"
+        );
+        assert_eq!(
+            taint_of(ix, "capture_write_copy_clean", int(1), int(0)),
+            0,
+            "a clean write written back"
         );
     });
 }
@@ -1590,6 +1731,12 @@ fn hook_cases() -> Vec<Case> {
         case("hook: append", REF, &with("    let nm = \"refer\"\n    nm = nm + entry()\n", "nm"), "fn entry() -> str { \"ence\" }\nfn double(x: i64) -> i64 { 0 }\n", Refused),
         case("hook: element of a binding", REF, &with("    let xs = [entry()]\n", "xs[0]"), ENT, Refused),
         case("hook: field of a binding", &format!("{REF}type Cfg = {{ n: str }}\n"), &with("    let c = Cfg { n: entry() }\n", "c.n"), ENT, Refused),
+        // T8.5 controls: the same four in-place paths on a clean value, next
+        // to a binding of the candidate's.
+        case("hook control: slot write", REF, &with("    let w = entry()\n    let names = [\"double\"]\n    names[0] = \"reference\"\n", "names[0]"), ENT, Ok),
+        case("hook control: append", REF, &with("    let w = entry()\n    let nm = \"refer\"\n    nm = nm + \"ence\"\n", "nm"), "fn entry() -> str { \"ence\" }\nfn double(x: i64) -> i64 { 0 }\n", Ok),
+        case("hook control: element of a binding", REF, &with("    let ys = [entry()]\n    let xs = [\"reference\"]\n", "xs[0]"), ENT, Ok),
+        case("hook control: field of a binding", &format!("{REF}type Cfg = {{ n: str }}\n"), &with("    let d = Cfg { n: entry() }\n    let c = Cfg { n: \"reference\" }\n", "c.n"), ENT, Ok),
         case("hook: field of a module-level let", &format!("{REF}type Cfg = {{ n: str }}\nlet CFG = Cfg {{ n: entry() }}\n"), &named("CFG.n"), ENT, Refused),
         case("hook: element of a module-level let", &format!("{REF}let TABLE = [entry()]\n"), &named("TABLE[0]"), ENT, Refused),
         case("hook: module-level let", &format!("{REF}let NAME = entry()\n"), &named("NAME"), ENT, Refused),
@@ -1649,6 +1796,97 @@ fn hook_cases() -> Vec<Case> {
 fn every_hook_of_the_taint_has_an_attack_of_its_own() {
     let cases = hook_cases();
     check(&cases, Rules::TaintOnly);
+    attacks_are_live(&cases);
+}
+
+/// An attack (`bad` read at `@R`) and its honest control (`good` read at the
+/// same place), on one program.
+fn pair(
+    attack: &'static str,
+    control: &'static str,
+    pre: &str,
+    body: &str,
+    bad: &str,
+    good: &str,
+) -> [Case; 2] {
+    let at = |r: &str| (pre.replace("@R", r), body.replace("@R", r));
+    let ((pb, bb), (pg, bg)) = (at(bad), at(good));
+    let cand = format!("{IDX}{ENT}");
+    [
+        case(attack, &pb, &bb, &cand, Expect::Refused),
+        case(control, &pg, &bg, &cand, Expect::Ok),
+    ]
+}
+
+/// T8.2: a positional probe at each binding writer main once wrote raw: a
+/// binding of the candidate's, then a clean one, read at the `sandbox_run`
+/// name sink. The tainted one is refused; the clean one, on the same path,
+/// runs (a taint shifted by one binding fails one or the other). The value
+/// is a scalar (`idx()`'s 1, or the operator's literal 1) picking from an
+/// operator array, so only the binding's taint carries it: a `str` the
+/// candidate built would also carry its object taint (`t_obj`), which hides
+/// a binding writer that drops the binding's.
+fn positional_cases() -> Vec<Case> {
+    let run = |e: &str| {
+        format!("    let got = sandbox_run(sb, {e}, 21)\n    assert(got == reference(21))")
+    };
+    let pick = |e: &str| format!("[\"double\", \"reference\"][{e}]");
+    let goal = "@[adaptive]\nfn quality(x: i64) -> i64 { 100 - abs_i64(x - 7) * 10 }\n@[goal(metric: quality, target: 60, max_evals: 40, test_set: [5, 7, 9])]\n";
+    let write_back = |alias: bool| {
+        let (via, def) = if alias {
+            ("other", "    let other = set\n")
+        } else {
+            ("set", "")
+        };
+        format!("{SB}    let nm = 0\n    let m = 0\n    let set = |v, w, pick| {{\n        if v >= 0 {{ nm = v }}\n        if w >= 0 {{ m = w }}\n        if pick {{ nm }} else {{ m }}\n    }}\n{def}    let r1 = {via}(idx(), -1, true)\n    let r2 = {via}(-1, 1, true)\n{}", run(&pick("set(-1, -1, @R)")))
+    };
+    [
+        // `bind_params_sealed`, then `goal_met` (0), then a `let`.
+        pair("positional: a fn's tainted parameter", "positional: a clean let after a tainted parameter", &format!("{REF}fn go(sb: i64, n: i64) -> i64 {{\n    let m = 1\n    sandbox_run(sb, @R, 21)\n}}\n"), &format!("{SB}    let got = go(sb, idx())\n    assert(got == reference(21))"), &pick("n"), &pick("m")),
+        pair("positional: a fn's tainted let", "positional: a clean let after a tainted let", &format!("{REF}fn go(sb: i64) -> i64 {{\n    let a = idx()\n    let m = 1\n    sandbox_run(sb, @R, 21)\n}}\n"), &format!("{SB}    let got = go(sb)\n    assert(got == reference(21))"), &pick("a"), &pick("m")),
+        // The general path's `goal_met` (`goal_t`, ALL after a goal search).
+        pair("positional: goal_met", "positional: a clean let after goal_met", &format!("{REF}{goal}fn opt(sb: i64) -> i64 {{\n    let m = 1\n    sandbox_run(sb, @R, 21)\n}}\n"), &format!("{SB}    let got = opt(sb)\n    assert(got == reference(21))"), &pick("goal_met"), &pick("m")),
+        // `bind_closure_params`: the slotted push and the by-name define. The
+        // sink is in the closure: its result carries its arguments' taint.
+        pair("positional: a closure's tainted parameter", "positional: a clean let after a closure's tainted parameter", REF, &format!("{SB}    let f = |a, b| {{\n        let m = 1\n        sandbox_run(sb, @R, 21)\n    }}\n    let got = f(idx(), 0)\n    assert(got == reference(21))"), &pick("a"), &pick("m")),
+        pair("positional: a module-level closure's tainted parameter", "positional: a clean let after a module-level closure's tainted parameter", &format!("{REF}let F = |sb, a| {{\n    let m = 1\n    sandbox_run(sb, @R, 21)\n}}\n"), &format!("{SB}    let got = F(sb, idx())\n    assert(got == reference(21))"), &pick("a"), &pick("m")),
+        // `lend_in` and `copy_in`: a tainted capture, then a clean one.
+        pair("positional: a lent tainted capture", "positional: a lent clean capture after a tainted one", REF, &format!("{SB}    let nm = idx()\n    let m = 1\n    let g = || {{\n        let z = nm\n        let y = m\n        @R\n    }}\n{}", run("g()")), &pick("nm"), &pick("m")),
+        pair("positional: a copied tainted capture", "positional: a copied clean capture after a tainted one", REF, &format!("{SB}    let nm = idx()\n    let m = 1\n    let g = || {{\n        let z = nm\n        let y = m\n        @R\n    }}\n    let h = g\n{}", run("h()")), &pick("nm"), &pick("m")),
+        // `lend_back` and `write_back`: a capture written tainted, then a
+        // clean one, by earlier calls.
+        pair("positional: a tainted capture lent back", "positional: a clean capture lent back after a tainted one", REF, &write_back(false), "true", "false"),
+        pair("positional: a tainted capture written back", "positional: a clean capture written back after a tainted one", REF, &write_back(true), "true", "false"),
+        // `&mut` read-back: a call's parameters all carry the union of its
+        // arguments' taint (`t_params`), so a clean `&mut` argument next to a
+        // tainted one reads back tainted; the control is the same call on
+        // clean arguments after a tainted caller binding.
+        [
+            case("positional: a clean &mut argument read back after a tainted one", &format!("{REF}fn touch(xs: &mut i64, ys: &mut i64) -> i64 {{ 0 }}\n"), &format!("{SB}    let w = idx()\n    let ys = 1\n    let r = touch(&mut w, &mut ys)\n{}", run(&pick("ys"))), &format!("{IDX}{ENT}"), Expect::Refused),
+            case("positional: a clean &mut argument read back after a tainted binding", &format!("{REF}fn touch(xs: &mut i64, ys: &mut i64) -> i64 {{ 0 }}\n"), &format!("{SB}    let w = idx()\n    let xs = 0\n    let ys = 1\n    let r = touch(&mut xs, &mut ys)\n{}", run(&pick("ys"))), &format!("{IDX}{ENT}"), Expect::Ok),
+        ],
+    ]
+    .into_iter()
+    .flatten()
+    // The static pin analysis does not follow a name through a capture cell
+    // or a `&mut` read-back, so it refuses these honest controls (the stated
+    // cost of the static layer): `Rules::Both` checks only their attacks.
+    .map(|c| match c.name {
+        "positional: a lent clean capture after a tainted one"
+        | "positional: a copied clean capture after a tainted one"
+        | "positional: a clean capture lent back after a tainted one"
+        | "positional: a clean capture written back after a tainted one"
+        | "positional: a clean &mut argument read back after a tainted binding" => stricter(c),
+        _ => c,
+    })
+    .collect()
+}
+
+#[test]
+fn a_binding_after_a_tainted_one_keeps_its_own_taint_at_a_sink() {
+    let cases = positional_cases();
+    check(&cases, Rules::TaintOnly);
+    check(&cases, Rules::Both);
     attacks_are_live(&cases);
 }
 
@@ -3345,32 +3583,22 @@ fn amendment_117_cases() -> Vec<Case> {
 
 // ── Amendment 117: the drift tests the loop's findings call for ───────────────
 
-/// The arms of `call_builtin`, split at their 12-space `"name" … =>` headers:
-/// (names, the arm's text up to the next header).
+/// The arms of `call_builtin`, split at their 12-space `"name" … =>` headers
+/// by the shared splitter (`interp::tests::builtin_arms`, which asserts it
+/// found at least 250, so the sweep never runs over an empty cut): (names,
+/// the arm's text up to the next header), a name holding a space (a guard)
+/// dropped.
 fn builtin_arms() -> Vec<(Vec<String>, String)> {
-    let src = sources()
+    let src = source("interp/builtins.rs");
+    super::tests::builtin_arms(&src)
         .into_iter()
-        .find(|(f, _)| *f == "interp/builtins.rs")
-        .expect("builtins.rs")
-        .1;
-    let mut arms: Vec<(Vec<String>, String)> = Vec::new();
-    for line in src.lines() {
-        let indent = line.len() - line.trim_start().len();
-        let t = line.trim_start();
-        if indent == 12 && t.starts_with('"') && t.contains("=>") {
-            let head = &t[..t.find("=>").unwrap()];
-            let names = head
-                .split('|')
-                .map(|n| n.trim().trim_matches('"').to_string())
-                .filter(|n| !n.contains(' '))
-                .collect();
-            arms.push((names, String::new()));
-        } else if let Some(last) = arms.last_mut() {
-            last.1.push_str(line);
-            last.1.push('\n');
-        }
-    }
-    arms
+        .map(|(names, body)| {
+            (
+                names.into_iter().filter(|n| !n.contains(' ')).collect(),
+                body,
+            )
+        })
+        .collect()
 }
 
 /// Loop finding 12: the durable store is a log file every kernel opens, not

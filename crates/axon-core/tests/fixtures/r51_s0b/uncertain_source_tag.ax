@@ -13,6 +13,14 @@ fn main() {
             println(to_str((1 + u).source_tag))
             println(to_str((u * uncertain_new(2, 0.99)).source_tag))
             println(to_str((uncertain_dyn_i64(2, 0.5) - u).source_tag))
+            // `tag_of(u + 0)` is a `CallFastLocalInt` call on the VM from
+            // the loop's second iteration on: the tag is the tree's.
+            let i = 0
+            while i < 3 {
+                let t = tag_of(u + 0)
+                println(to_str(t))
+                i = i + 1
+            }
         }
         Err(e) => println(e)
     }

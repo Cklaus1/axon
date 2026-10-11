@@ -33,6 +33,9 @@
 #   5. AXON_ENGINE=vm AXON_VM_EAGER=1 AXON_VM_TRACE=1 — not diffed (trace lines
 #      go to stderr); its `vm: ...` lines give the coverage counts and the
 #      lowered-list check.
+# Test leg (R51 §8 T9): `axon test --json` over every
+# crates/axon-core/tests/fixtures/r51_s0b/test_*.ax under tree, vm eager and vm
+# default; stdout (durations dropped) and exit code must agree (see below).
 # Any run hitting the time limit fails the gate.
 #
 # Lowered-list check: a `vm: tree-op <name> <Variant>[(<shape>)]` line whose
@@ -305,6 +308,61 @@ done <"$WORK/corpus"
 
 echo "vm_parity: $excluded fixtures not run (rejected by axon check)"
 echo "vm_parity: $files files, $bodies bodies, $lowered lowered ops, $treeops tree ops, $differ differ"
+
+# ── Test-completion leg (R51 §8 T9) ─────────────────────────────────────────
+# `axon test --json --jobs 1` over crates/axon-core/tests/fixtures/r51_s0b/
+# test_*.ax (no `main`, so not in the corpus above) under AXON_ENGINE=tree,
+# then AXON_ENGINE=vm AXON_VM_EAGER=1 and AXON_ENGINE=vm: stdout (every
+# `"duration_ms":N` key dropped, the one normalisation) and the exit code
+# must equal the tree run's. Same isolation as run_once.
+test_once() { # <src> <out dir> <engine> [eager] — stdout and exit code into <out dir>
+  local src="$1" out="$2" engine="$3" eager="${4:-}" run="$WORK/trun"
+  rm -rf "$run" "$out"
+  mkdir -p "$run/tmp" "$run/cache" "$out"
+  local -a extra=()
+  [ -n "$eager" ] && extra+=(AXON_VM_EAGER=1)
+  (
+    cd "$run" &&
+      env -u AXON_VM_TRACE -u AXON_VM_EAGER -u AXON_DUMP_BINDINGS -u AXON_DUMP_SHAPES -u AXON_RECORD -u AXON_REPLAY \
+        TMPDIR="$run/tmp" XDG_CACHE_HOME="$run/cache" AXON_AUDIT_LEDGER="$run/audit.ledger" \
+        AXON_LEARNER_STATE=learner.state AXON_BANDIT_STATE=bandit.state \
+        AXON_AI_MOCK=1 AXON_SEED=42 AXON_CLOCK=0:1 AXON_AUDIT_DETERMINISTIC=1 \
+        AXON_ENGINE="$engine" "${extra[@]}" \
+        timeout -k 5 30 "$AXON" test --json --jobs 1 "$src" </dev/null >"$out/raw" 2>/dev/null
+  )
+  echo $? >"$out/exit"
+  sed -E 's/,"duration_ms":[0-9]+//g; s/"duration_ms":[0-9]+,//g' <"$out/raw" >"$out/stdout"
+  rm -rf "$run"
+}
+tfiles=0
+for src in "$ROOT"/crates/axon-core/tests/fixtures/r51_s0b/test_*.ax; do
+  [ -f "$src" ] || continue
+  rel="${src#"$ROOT"/}"
+  tfiles=$((tfiles + 1))
+  test_once "$src" "$WORK/tA" tree
+  if timed_out "$WORK/tA" || ! grep -q '"status"' "$WORK/tA/stdout"; then
+    echo "FAIL test $rel: the tree run reported no test (exit $(cat "$WORK/tA/exit"))"
+    other=$((other + 1))
+    continue
+  fi
+  for leg in "vm eager" "vm"; do
+    # shellcheck disable=SC2086 # "<engine> [eager]" splits on purpose
+    test_once "$src" "$WORK/tV" $leg
+    for ch in stdout exit; do
+      if ! cmp -s "$WORK/tA/$ch" "$WORK/tV/$ch"; then
+        echo "FAIL differ $rel: axon test under tree and $leg differ ($ch)"
+        diff "$WORK/tA/$ch" "$WORK/tV/$ch" | head -8 | sed 's/^/      /'
+        differ=$((differ + 1))
+        break
+      fi
+    done
+  done
+done
+if [ "$tfiles" -lt 3 ]; then
+  echo "FAIL test: only $tfiles r51_s0b/test_*.ax fixtures (the completed, early-? and Err-return cases are 3)"
+  other=$((other + 1))
+fi
+echo "vm_parity: $tfiles axon test files, tree vs vm (eager, default)"
 if [ "$differ" -ne 0 ] || [ "$other" -ne 0 ]; then
   echo "vm_parity: FAILED — $differ differ, $other other failure(s) (timeouts, check rejections, lowered-list violations)"
   exit 1
