@@ -347,46 +347,354 @@ impl From<std::collections::BTreeMap<String, Value>> for DictMap {
     }
 }
 
-/// The elements of an array or a tuple. A newtype only so that, on wasm32,
-/// it can carry the AX-59 bounded `Drop`; it derefs to the vector.
-#[derive(Clone, Default)]
-pub struct Elems(Slot<Vec<Value>>);
+/// The elements of an array or a tuple (R50 S13). The representation is
+/// private: `Vals` (a `Vec<Value>` in a [`Slot`], with the AX-59 bounded
+/// `Drop` on wasm32) or a packed form (`Bools`, `Ints`, `Floats`) whose
+/// elements stand for the plain `Value::Bool`, `Value::Int` and
+/// `Value::Float` with those bits (a `SizedInt` is never packed). Only
+/// `arr_repeat` of a plain scalar and `arr_range` build packed arrays
+/// ([`Elems::repeat`], [`Elems::range`]); everything else is `Vals`. Every
+/// reader sees the element `Value`s, so which arrays are packed is not
+/// observable. A write or push of a plain scalar of the packed kind stays
+/// packed; any other write, and any caller that needs the `Vec<Value>`
+/// ([`Elems::vals_mut`], [`Elems::into_vec`]), converts the array to `Vals`
+/// in place, once and for good. [`Elems::vals`] lends a read-only
+/// `[Value]` (a temporary copy for a packed array; never on an element
+/// read or write path).
+#[derive(Clone)]
+pub struct Elems(Rep);
 
-slot_deref!(Elems => Vec<Value>);
+/// [`Elems`]' representation.
+#[derive(Clone)]
+enum Rep {
+    Vals(Slot<Vec<Value>>),
+    Bools(Vec<bool>),
+    Ints(Vec<i64>),
+    Floats(Vec<f64>),
+}
+
+/// A borrowed view of an [`Elems`]' storage, for the element read paths
+/// that work on packed storage in place.
+pub(crate) enum ElemsRef<'a> {
+    Vals(&'a [Value]),
+    Bools(&'a [bool]),
+    Ints(&'a [i64]),
+    Floats(&'a [f64]),
+}
+
+/// A mutable view of an [`Elems`]' storage (element writes in place; the
+/// length is fixed).
+pub(crate) enum ElemsMut<'a> {
+    Vals(&'a mut [Value]),
+    Bools(&'a mut [bool]),
+    Ints(&'a mut [i64]),
+    Floats(&'a mut [f64]),
+}
+
+impl Default for Elems {
+    #[inline]
+    fn default() -> Elems {
+        Elems(Rep::Vals(slot(Vec::new())))
+    }
+}
 
 impl std::fmt::Debug for Elems {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Debug::fmt(&**self, f)
+        f.debug_list().entries(self.iter()).finish()
     }
 }
 
 impl From<Vec<Value>> for Elems {
     #[inline]
     fn from(v: Vec<Value>) -> Elems {
-        Elems(slot(v))
+        Elems(Rep::Vals(slot(v)))
     }
 }
 
 impl FromIterator<Value> for Elems {
     #[inline]
     fn from_iter<I: IntoIterator<Item = Value>>(it: I) -> Elems {
-        Elems(slot(it.into_iter().collect()))
+        Elems(Rep::Vals(slot(it.into_iter().collect())))
     }
 }
 
+/// `n` copies of `x`, or the allocator's refusal.
+fn try_filled<T: Clone>(x: T, n: usize) -> Result<Vec<T>, std::collections::TryReserveError> {
+    let mut v = Vec::new();
+    v.try_reserve_exact(n)?;
+    v.resize(n, x);
+    Ok(v)
+}
+
 impl Elems {
-    /// The vector, moved out.
+    /// `arr_repeat(v, n)`: packed when `v` is a plain `Bool`, `Int` or
+    /// `Float`, else `n` clones of `v`. `Err` is the allocator's refusal of
+    /// the storage.
+    pub(crate) fn repeat(v: &Value, n: usize) -> Result<Elems, std::collections::TryReserveError> {
+        Ok(Elems(match v {
+            Value::Bool(b) => Rep::Bools(try_filled(*b, n)?),
+            Value::Int(i) => Rep::Ints(try_filled(*i, n)?),
+            Value::Float(x) => Rep::Floats(try_filled(*x, n)?),
+            _ => Rep::Vals(slot(try_filled(v.clone(), n)?)),
+        }))
+    }
+
+    /// `arr_range`: the integers of `r` (empty when `r.end <= r.start`),
+    /// packed, with `len` (the caller's count of them) reserved first. `Err`
+    /// is the allocator's refusal of the storage.
+    pub(crate) fn range(
+        r: std::ops::Range<i64>,
+        len: usize,
+    ) -> Result<Elems, std::collections::TryReserveError> {
+        let mut v = Vec::new();
+        v.try_reserve_exact(len)?;
+        v.extend(r);
+        Ok(Elems(Rep::Ints(v)))
+    }
+
+    /// The number of elements.
+    #[inline]
+    pub(crate) fn len(&self) -> usize {
+        match &self.0 {
+            Rep::Vals(v) => v.len(),
+            Rep::Bools(v) => v.len(),
+            Rep::Ints(v) => v.len(),
+            Rep::Floats(v) => v.len(),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Element `i`, the `Value` it stands for.
+    #[inline]
+    pub(crate) fn get(&self, i: usize) -> Option<Value> {
+        match &self.0 {
+            Rep::Vals(v) => v.get(i).cloned(),
+            Rep::Bools(v) => v.get(i).map(|&b| Value::Bool(b)),
+            Rep::Ints(v) => v.get(i).map(|&x| Value::Int(x)),
+            Rep::Floats(v) => v.get(i).map(|&x| Value::Float(x)),
+        }
+    }
+
+    /// The first element.
+    #[inline]
+    pub(crate) fn first(&self) -> Option<Value> {
+        self.get(0)
+    }
+
+    /// The elements in order, as the `Value`s they stand for.
+    #[inline]
+    pub(crate) fn iter(&self) -> ElemsIter<'_> {
+        ElemsIter {
+            elems: self,
+            at: 0,
+            end: self.len(),
+        }
+    }
+
+    /// The elements as a `[Value]`: borrowed for `Vals`, a temporary copy
+    /// (O(n)) for a packed array. Read-only sites off the element paths.
+    pub(crate) fn vals(&self) -> std::borrow::Cow<'_, [Value]> {
+        match &self.0 {
+            Rep::Vals(v) => std::borrow::Cow::Borrowed(&v[..]),
+            _ => std::borrow::Cow::Owned(self.iter().collect()),
+        }
+    }
+
+    /// The storage, borrowed.
+    #[inline]
+    pub(crate) fn view(&self) -> ElemsRef<'_> {
+        match &self.0 {
+            Rep::Vals(v) => ElemsRef::Vals(v),
+            Rep::Bools(v) => ElemsRef::Bools(v),
+            Rep::Ints(v) => ElemsRef::Ints(v),
+            Rep::Floats(v) => ElemsRef::Floats(v),
+        }
+    }
+
+    /// The storage, mutably borrowed (its length fixed).
+    #[inline]
+    pub(crate) fn view_mut(&mut self) -> ElemsMut<'_> {
+        match &mut self.0 {
+            Rep::Vals(v) => ElemsMut::Vals(v),
+            Rep::Bools(v) => ElemsMut::Bools(v),
+            Rep::Ints(v) => ElemsMut::Ints(v),
+            Rep::Floats(v) => ElemsMut::Floats(v),
+        }
+    }
+
+    /// Write element `i` (which must be in bounds): in place when the array
+    /// is `Vals` or `v` is a plain scalar of its packed kind, else after
+    /// converting it to `Vals`.
+    #[inline]
+    pub(crate) fn set(&mut self, i: usize, v: Value) {
+        match (&mut self.0, v) {
+            (Rep::Vals(xs), v) => xs[i] = v,
+            (Rep::Bools(xs), Value::Bool(b)) => xs[i] = b,
+            (Rep::Ints(xs), Value::Int(x)) => xs[i] = x,
+            (Rep::Floats(xs), Value::Float(x)) => xs[i] = x,
+            (_, v) => self.vals_mut_cold()[i] = v,
+        }
+    }
+
+    /// Append `v`: packed when `v` is a plain scalar of the packed kind,
+    /// else after converting the array to `Vals`.
+    #[inline]
+    pub(crate) fn push(&mut self, v: Value) {
+        match (&mut self.0, v) {
+            (Rep::Vals(xs), v) => xs.push(v),
+            (Rep::Bools(xs), Value::Bool(b)) => xs.push(b),
+            (Rep::Ints(xs), Value::Int(x)) => xs.push(x),
+            (Rep::Floats(xs), Value::Float(x)) => xs.push(x),
+            (_, v) => self.vals_mut_cold().push(v),
+        }
+    }
+
+    /// [`Elems::set`], forgetting an old `Vals` element that is a scalar
+    /// instead of running its drop glue ([`forget_scalar`]). It returns no
+    /// old element, so the element writes inlined into `call_mut_op` (S5's
+    /// leaf store) keep its wasm32 frame within its budget (cost only).
+    #[inline]
+    pub(crate) fn put(&mut self, i: usize, v: Value) {
+        match (&mut self.0, v) {
+            (Rep::Vals(xs), v) => forget_scalar(std::mem::replace(&mut xs[i], v)),
+            (Rep::Bools(xs), Value::Bool(b)) => xs[i] = b,
+            (Rep::Ints(xs), Value::Int(x)) => xs[i] = x,
+            (Rep::Floats(xs), Value::Float(x)) => xs[i] = x,
+            (_, v) => self.vals_mut_cold()[i] = v,
+        }
+    }
+
+    /// Append every value of `it`, each as [`Elems::push`] would.
+    pub(crate) fn extend<I: IntoIterator<Item = Value>>(&mut self, it: I) {
+        let it = it.into_iter();
+        if let Rep::Vals(v) = &mut self.0 {
+            v.extend(it);
+            return;
+        }
+        for v in it {
+            self.push(v);
+        }
+    }
+
+    /// Swap elements `i` and `j` (both in bounds), in place in any form.
+    #[inline]
+    pub(crate) fn swap(&mut self, i: usize, j: usize) {
+        match &mut self.0 {
+            Rep::Vals(v) => v.swap(i, j),
+            Rep::Bools(v) => v.swap(i, j),
+            Rep::Ints(v) => v.swap(i, j),
+            Rep::Floats(v) => v.swap(i, j),
+        }
+    }
+
+    /// The elements as a `Vec<Value>`, converting a packed array to `Vals`
+    /// in place first (O(n), once; it stays `Vals`).
+    pub(crate) fn vals_mut(&mut self) -> &mut Vec<Value> {
+        if !matches!(self.0, Rep::Vals(_)) {
+            let v: Vec<Value> = self.iter().collect();
+            self.0 = Rep::Vals(slot(v));
+        }
+        match &mut self.0 {
+            Rep::Vals(v) => v,
+            _ => unreachable!("converted to Vals above"),
+        }
+    }
+
+    /// [`Elems::vals_mut`] for a write or push of another kind into a packed
+    /// array: out of line, so the element write paths inlined into the VM's
+    /// dispatch loop stay small (cost only).
+    #[cold]
+    #[inline(never)]
+    fn vals_mut_cold(&mut self) -> &mut Vec<Value> {
+        self.vals_mut()
+    }
+
+    /// The elements, moved out as a `Vec<Value>`.
     #[cfg(not(target_arch = "wasm32"))]
     #[inline]
     pub(crate) fn into_vec(self) -> Vec<Value> {
-        self.0
+        match self.0 {
+            Rep::Vals(v) => v,
+            Rep::Bools(v) => v.into_iter().map(Value::Bool).collect(),
+            Rep::Ints(v) => v.into_iter().map(Value::Int).collect(),
+            Rep::Floats(v) => v.into_iter().map(Value::Float).collect(),
+        }
     }
 
-    /// The vector, moved out (an empty one is left to the `Drop`).
+    /// The elements, moved out as a `Vec<Value>` (an empty one is left to
+    /// the `Drop`).
     #[cfg(target_arch = "wasm32")]
     #[inline]
     pub(crate) fn into_vec(mut self) -> Vec<Value> {
-        std::mem::take(&mut *self.0)
+        std::mem::take(self.vals_mut())
+    }
+
+    /// Test probe (spec §4 S13): the name of the array's form, `Vals`,
+    /// `Bools`, `Ints` or `Floats`. Test builds only.
+    #[cfg(test)]
+    pub(crate) fn form(&self) -> &'static str {
+        match &self.0 {
+            Rep::Vals(_) => "Vals",
+            Rep::Bools(_) => "Bools",
+            Rep::Ints(_) => "Ints",
+            Rep::Floats(_) => "Floats",
+        }
+    }
+}
+
+/// [`Elems::iter`]: the elements in order, as owned `Value`s (a clone for
+/// `Vals`, built from the bits for a packed form).
+#[derive(Clone)]
+pub struct ElemsIter<'a> {
+    elems: &'a Elems,
+    at: usize,
+    end: usize,
+}
+
+impl Iterator for ElemsIter<'_> {
+    type Item = Value;
+    #[inline]
+    fn next(&mut self) -> Option<Value> {
+        if self.at < self.end {
+            let v = self.elems.get(self.at);
+            self.at += 1;
+            v
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = self.end - self.at;
+        (n, Some(n))
+    }
+}
+
+impl DoubleEndedIterator for ElemsIter<'_> {
+    #[inline]
+    fn next_back(&mut self) -> Option<Value> {
+        if self.at < self.end {
+            self.end -= 1;
+            self.elems.get(self.end)
+        } else {
+            None
+        }
+    }
+}
+
+impl ExactSizeIterator for ElemsIter<'_> {}
+
+impl<'a> IntoIterator for &'a Elems {
+    type Item = Value;
+    type IntoIter = ElemsIter<'a>;
+    #[inline]
+    fn into_iter(self) -> ElemsIter<'a> {
+        self.iter()
     }
 }
 
@@ -537,11 +845,15 @@ mod bounded_drop {
         }
     }
 
+    /// Only `Vals` holds `Value`s; a packed form's scalars drop as plain
+    /// glue with no recursion.
     impl Drop for Elems {
         #[inline]
         fn drop(&mut self) {
-            if !self.0.is_empty() {
-                drop_bounded(take(&mut *self.0));
+            if let super::Rep::Vals(v) = &mut self.0 {
+                if !v.is_empty() {
+                    drop_bounded(take(&mut **v));
+                }
             }
         }
     }
@@ -2227,14 +2539,14 @@ pub fn value_shape(v: &Value) -> String {
             Value::Str(_) => "str".to_string(),
             Value::Array(items) => {
                 if let (Some(first), true) = (items.first(), d < 2) {
-                    format!("[{}], len={}", go(first, d + 1), items.len())
+                    format!("[{}], len={}", go(&first, d + 1), items.len())
                 } else {
                     format!("[], len={}", items.len())
                 }
             }
             Value::Tuple(items) => {
                 if d < 2 {
-                    let inner: Vec<String> = items.iter().map(|i| go(i, d + 1)).collect();
+                    let inner: Vec<String> = items.iter().map(|i| go(&i, d + 1)).collect();
                     format!("({})", inner.join(", "))
                 } else {
                     format!("tuple, len={}", items.len())
@@ -2334,7 +2646,7 @@ pub fn value_as_literal(v: &Value) -> std::result::Result<String, String> {
         }
         Value::Array(items) => {
             let mut out = Vec::with_capacity(items.len());
-            for it in items.iter() {
+            for it in items.vals().iter() {
                 out.push(value_as_literal(it)?);
             }
             Ok(format!("[{}]", out.join(", ")))
@@ -2361,7 +2673,7 @@ pub fn value_as_literal(v: &Value) -> std::result::Result<String, String> {
         Value::Err(inner) => Ok(format!("Err({})", value_as_literal(inner)?)),
         Value::Tuple(items) => {
             let mut out = Vec::with_capacity(items.len());
-            for it in items.iter() {
+            for it in items.vals().iter() {
                 out.push(value_as_literal(it)?);
             }
             // A 1-tuple needs the trailing comma or it re-parses as a
@@ -2763,7 +3075,7 @@ impl SendValue {
             Value::Bool(b) => SendValue::Bool(*b),
             Value::Str(s) => SendValue::Str(String::clone(s)),
             Value::Unit => SendValue::Unit,
-            Value::Array(xs) => SendValue::Array(arr(xs, &path)?),
+            Value::Array(xs) => SendValue::Array(arr(&xs.vals(), &path)?),
             Value::Struct(s) => SendValue::Struct {
                 name: sym_name(s.name).to_string(),
                 fields: fields(&s.fields, &path)?,
@@ -2806,7 +3118,7 @@ impl SendValue {
                     captured: cap?,
                 }
             }
-            Value::Tuple(xs) => SendValue::Tuple(arr(xs, &path)?),
+            Value::Tuple(xs) => SendValue::Tuple(arr(&xs.vals(), &path)?),
             Value::Dict(d) => {
                 let borrowed = d.borrow();
                 let mut out = Vec::with_capacity(borrowed.len());
@@ -3641,12 +3953,12 @@ fn materialise_bindings(interp: &Interp) -> String {
                 }
             }
             Value::Array(items) => {
-                for it in items.iter() {
+                for it in items.vals().iter() {
                     count_dicts(it, seen);
                 }
             }
             Value::Tuple(items) => {
-                for it in items.iter() {
+                for it in items.vals().iter() {
                     count_dicts(it, seen);
                 }
             }
@@ -5302,8 +5614,11 @@ fn write_place(
                 .get_mut(*f)
                 .ok_or_else(|| Flow::Panic(format!("no field `{}`", sym_name(*f)).into()))?,
             (PlaceStep::Index(i), Value::Array(items)) => {
+                // A step through an element needs the element as a `Value`
+                // (a packed array's elements are scalars, so the next step
+                // panics on it either way).
                 let n = items.len();
-                Rc::make_mut(items).get_mut(*i).ok_or_else(|| {
+                Rc::make_mut(items).vals_mut().get_mut(*i).ok_or_else(|| {
                     Flow::Panic(format!("index {i} out of bounds (len {n})").into())
                 })?
             }
@@ -5321,7 +5636,7 @@ fn write_place(
             if *i >= items.len() {
                 return panic(format!("index {i} out of bounds (len {})", items.len()));
             }
-            Rc::make_mut(items)[*i] = v;
+            Rc::make_mut(items).set(*i, v);
         }
         (_, other) => {
             return panic(format!(
@@ -6304,7 +6619,7 @@ fn main() { }
         // Spot-check the reconstructed shape.
         if let Value::Array(xs) = &back {
             assert_eq!(xs.len(), 2);
-            if let Value::Struct(sv) = &xs[0] {
+            if let Some(Value::Struct(sv)) = xs.first() {
                 assert_eq!(&*sym_name(sv.name), "S");
                 assert!(matches!(sv.fields.named("n"), Some(Value::Int(1))));
                 if let Some(Value::Dict(d)) = sv.fields.named("d") {

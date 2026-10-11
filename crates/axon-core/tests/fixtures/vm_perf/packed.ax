@@ -1,0 +1,13 @@
+type Grid = { xs: [i64] }
+fn main() -> i64 {
+    let a = arr_range(0, 1000000)
+    let g = Grid { xs: a }
+    let s = 0
+    let i = 0
+    while i < 1000000 {
+        s = s + len(a) + a[i] + g.xs[i]
+        i = i + 1
+    }
+    println(to_str(s))
+    0
+}

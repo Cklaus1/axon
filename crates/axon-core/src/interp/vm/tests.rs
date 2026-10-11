@@ -1069,3 +1069,682 @@ fn main() -> i64 {
     built.sort();
     assert_eq!(built, ["bits", "fib", "is_even", "is_odd", "k"]);
 }
+
+/// R50 S13 `packed_forms_persist`: the program each check of the test runs,
+/// one fn per check, each returning what it checks.
+const FORMS: &str = r#"fn ints() -> [i64] {
+    arr_range(0, 3)
+}
+fn floats() -> [f64] {
+    arr_repeat(1.5, 3)
+}
+fn bools() -> [bool] {
+    arr_repeat(true, 3)
+}
+fn sized() -> [i32] {
+    let x: i32 = 5
+    arr_repeat(x, 3)
+}
+fn literal() -> [i64] {
+    [1, 2, 3]
+}
+fn loop_mem() -> [i64] {
+    let n = 8
+    let a = arr_repeat(0, n)
+    let x = 1
+    for i in 0..n {
+        x = (x * 48271) % 2147483647
+        a[i] = x
+    }
+    a
+}
+fn swap(a: &mut [i64], i: i64, j: i64) {
+    let t = a[i]
+    a[i] = a[j]
+    a[j] = t
+}
+fn swapped() -> [i64] {
+    let a = arr_range(0, 8)
+    for k in 0..4 {
+        swap(&mut a, k, 7 - k)
+    }
+    a
+}
+fn placed() -> [i64] {
+    let a = arr_range(0, 4)
+    let k = 1
+    a[k + 1] = 9
+    a
+}
+fn pushed() -> [i64] {
+    let a = arr_range(0, 3)
+    a = arr_push(a, 7)
+    a
+}
+fn added() -> [i64] {
+    let a = arr_range(0, 3)
+    a = a + [7]
+    a
+}
+fn changed() -> [i64] {
+    let id = |x| x
+    let a = arr_range(0, 3)
+    let h = id(1.5)
+    a[1] = h
+    a
+}
+fn changed_sized() -> [i64] {
+    let w: i8 = 5
+    let a = arr_range(0, 3)
+    a[1] = w
+    a
+}
+fn pushed_sized() -> [i64] {
+    let w: i8 = 5
+    let a = arr_range(0, 3)
+    a = arr_push(a, w)
+    a
+}
+fn builtin_push() -> [[i64]] {
+    let a = arr_range(0, 3)
+    let b = arr_push(a, 7)
+    [a, b]
+}
+fn fill_bools() -> [bool] {
+    let fb = arr_repeat(true, 10)
+    let j = 2
+    let lim = 6
+    while j <= lim {
+        fb[j] = false
+        j = j + 3
+    }
+    fb
+}
+fn fill_ints() -> [i64] {
+    let fi = arr_range(0, 10)
+    let m5 = 0 - 5
+    let k = 1
+    while k < 7 {
+        fi[k] = m5
+        k = k + 2
+    }
+    fi
+}
+fn fill_floats() -> [f64] {
+    let ff = arr_repeat(1.5, 9)
+    let f = 0
+    let four = 4
+    while f <= 4 {
+        ff[f] = 0.25
+        f = f + four
+    }
+    ff
+}
+fn fill_last() -> [bool] {
+    let fz = arr_repeat(false, 10)
+    let z = 1
+    while z <= 9 {
+        fz[z] = true
+        z = z + 4
+    }
+    fz
+}
+fn fill_lt() -> [i64] {
+    let fl = arr_range(0, 8)
+    let x = 1
+    let top = 8
+    while x < top {
+        fl[x] = 0
+        x = x + 3
+    }
+    fl
+}
+fn fill_mod() -> [i64] {
+    let fm = arr_repeat(0, 10)
+    let jm = 1
+    let sm = 3
+    let bm = 6
+    while jm <= bm {
+        fm[jm] = 7
+        jm = jm + sm
+    }
+    fm
+}
+fn fill_none() -> [i64] {
+    let fi = arr_range(0, 10)
+    let e1 = 5
+    while e1 < 5 {
+        fi[e1] = 99
+        e1 = e1 + 1
+    }
+    let e2 = 7
+    while e2 <= 6 {
+        fi[e2] = 99
+        e2 = e2 + 1
+    }
+    fi
+}
+fn fill_step3() -> [i64] {
+    let s = 3
+    let a = arr_repeat(0, 10)
+    let j = 5
+    let b = 5
+    while j < b {
+        a[j] = 7
+        j = j + s
+    }
+    let f = arr_repeat(0, 10)
+    let k = 7
+    let c = 6
+    while k <= c {
+        f[k] = 7
+        k = k + s
+    }
+    let g = arr_repeat(0, 10)
+    let x = 4
+    let y = 4
+    while x <= y {
+        g[x] = 7
+        x = x + s
+    }
+    g
+}
+fn fill_shared() -> [[i64]] {
+    let sh = arr_repeat(7, 6)
+    let keep = sh
+    let w = 0
+    while w < 6 {
+        sh[w] = 0
+        w = w + 1
+    }
+    [sh, keep]
+}
+fn count_sub() -> i64 {
+    let a = arr_repeat(true, 20)
+    a[2] = false
+    a[3] = false
+    a[9] = false
+    a[15] = false
+    a[16] = false
+    let n = 0
+    for k in 3..15 {
+        if a[k] { n = n + 1 }
+    }
+    let m = 100
+    for k in 3..=15 {
+        if a[k] { m = m + 2 }
+    }
+    n * 1000 + m
+}
+fn count_tail(len: i64) -> i64 {
+    let a = arr_repeat(false, len)
+    let i = 1
+    while i < len {
+        a[i] = true
+        i = i + 3
+    }
+    a[len - 1] = true
+    let n = 0
+    for k in 0..len {
+        if a[k] { n = n + 1 }
+    }
+    n
+}
+fn count_mid() -> i64 {
+    let b = arr_repeat(false, 1001)
+    let i = 13
+    while i < 1001 {
+        b[i] = true
+        i = i + 5
+    }
+    let c = 0
+    for k in 13..1001 {
+        if b[k] { c = c + 1 }
+    }
+    let d = 0
+    for k in 14..=998 {
+        if b[k] { d = d + 1 }
+    }
+    let x = 0
+    for k in 60..140 {
+        if b[k] { x = x + 1 }
+    }
+    c * 1000000 + d * 1000 + x
+}
+fn count_neg() -> i64 {
+    let b = arr_repeat(false, 1001)
+    let i = 13
+    while i < 1001 {
+        b[i] = true
+        i = i + 5
+    }
+    let neg = 0 - 3
+    let e = 7
+    for k in 0..1001 {
+        if b[k] { e = e + neg }
+    }
+    e
+}
+fn count_single() -> i64 {
+    let h = arr_repeat(true, 8)
+    let m = 0
+    for v in 5..=5 {
+        if h[v] { m = m + 1 }
+    }
+    m
+}
+fn count_empty() -> i64 {
+    let t = arr_repeat(true, 4)
+    let one = 1
+    let z = 0
+    let y = 7
+    for k in 0..z {
+        if t[k] { y = y + one }
+    }
+    let r = 7
+    for k in 9..2 {
+        if t[k] { r = r + one }
+    }
+    y * 100 + r
+}
+fn near_miss() -> [i64] {
+    let a = arr_repeat(true, 12)
+    a[1] = false
+    a[4] = false
+    a[5] = false
+    a[9] = false
+    let c = 2
+    let n1 = 0
+    let m1 = 0
+    for v in 0..12 {
+        if a[v] { n1 = n1 + c } else { m1 = m1 + 1 }
+    }
+    let w = 4
+    let n2 = 0
+    for v in 0..12 {
+        if a[w] { n2 = n2 + c }
+    }
+    let n3 = 5
+    for v in 0..12 {
+        if a[v] { n3 = n3 - c }
+    }
+    let m4 = 100
+    let n4 = 5
+    for v in 0..12 {
+        if a[v] { n4 = m4 + c }
+    }
+    let n5 = 0
+    let m5 = 0
+    for v in 0..12 {
+        if a[v] {
+            n5 = n5 + c
+            m5 = m5 + 1
+        }
+    }
+    let n6 = 0
+    let m6 = 0
+    for v in 0..12 {
+        if a[v] { n6 = n6 + c }
+        m6 = m6 + 1
+    }
+    let v = 3
+    let n7 = 0
+    for v in 0..12 {
+        if a[v] { n7 = n7 + v }
+    }
+    let d = arr_repeat(false, 20)
+    d[1] = true
+    d[2] = true
+    d[4] = true
+    d[8] = true
+    d[16] = true
+    let p = 1
+    for v in 0..20 {
+        if d[v] { p = p + p }
+    }
+    for v in 0..20 {
+        if d[v] { v = v + 1 }
+    }
+    let s = 2
+    let b = 8
+    let q = arr_range(0, 10)
+    let k = 4
+    let j1 = 0
+    while j1 < b {
+        q[k] = 7
+        j1 = j1 + s
+    }
+    let f2 = arr_range(0, 10)
+    let j2 = 0
+    while j2 < b {
+        j2 = j2 + s
+        f2[j2] = 7
+    }
+    let f3 = arr_repeat(0.5, 10)
+    let j3 = 1
+    let x = 0
+    while j3 <= b {
+        f3[j3] = 2.5
+        j3 = j3 + s
+        x = x + 1
+    }
+    let f6 = arr_repeat(0, 10)
+    let j6 = 0
+    let k6 = 7
+    let s6 = 3
+    while j6 <= b {
+        f6[j6] = 7
+        j6 = k6 + s6
+    }
+    let f8 = arr_repeat(0, 10)
+    let j8 = 1
+    while j8 < 10 {
+        f8[j8] = j8
+        j8 = j8 + s
+    }
+    let f9 = arr_repeat(false, 20)
+    let j9 = 1
+    while j9 < 20 {
+        f9[j9] = true
+        j9 = j9 + j9
+    }
+    let f10 = arr_repeat(0, 10)
+    let j10 = 10
+    let k10 = 0
+    let s10 = 3
+    let b10 = 5
+    while j10 < b10 {
+        f10[j10] = 7
+        k10 = j10 + s10
+    }
+    let f11 = arr_repeat(0, 10)
+    let j11 = 10
+    let s11 = 3
+    let b11 = 5
+    while j11 < b11 {
+        f11[j11] = 7
+        let j11 = j11 + s11
+    }
+    let g12 = arr_repeat(true, 12)
+    g12[1] = false
+    g12[4] = false
+    let c12 = 2
+    let n12 = 0
+    let m12 = 0
+    for v in 0..12 {
+        m12 = m12 + 1
+        if g12[v] { n12 = n12 + c12 }
+    }
+    let f12 = arr_repeat(0, 10)
+    let j12 = 1
+    let s12 = 3
+    let b12 = 8
+    let x12 = 0
+    while j12 <= b12 {
+        x12 = x12 + 1
+        f12[j12] = 7
+        j12 = j12 + s12
+    }
+    [
+        n1, m1, n2, n3, n4, n5, m5, n6, m6, n7, p, j1, j2, j3, x, j6, j8, j9, v, j10, k10, j11, n12,
+        m12, j12, x12,
+    ]
+}
+fn near_miss_sub() -> i64 {
+    let a = arr_repeat(false, 10)
+    let j = 5
+    let s = 2
+    let b = 8
+    while j < b {
+        a[j] = true
+        j = j - s
+    }
+    j
+}
+fn near_miss_gt() -> i64 {
+    let a = arr_repeat(0, 10)
+    let j = 1
+    let s = 2
+    let b = 0
+    while j > b {
+        a[j] = 7
+        j = j + s
+    }
+    j
+}
+fn near_miss_cond() -> i64 {
+    let a = arr_repeat(0, 10)
+    let k = 0
+    let j = 0
+    let s = 3
+    let b = 8
+    while k <= b {
+        a[j] = 7
+        j = j + s
+    }
+    j
+}
+fn near_miss_same() -> i64 {
+    let a = arr_repeat(0, 10)
+    let j = 0
+    let s = 3
+    while j <= j {
+        a[j] = 7
+        j = j + s
+    }
+    j
+}
+"#;
+
+/// The form of array `v` (the `Elems::form` probe).
+fn form_of(v: &Value) -> &'static str {
+    match v {
+        Value::Array(items) => items.form(),
+        other => panic!("not an array: {other:?}"),
+    }
+}
+
+/// R50 S13 (spec §4 S13 "Test probes"): each packed constructor's form; an
+/// `Ints` array stays `Ints` through a `LoopMem` store, an S8 `swap`, a
+/// `write_place` and the in-place append paths, and becomes `Vals` on a
+/// kind-changing write (a `Float`, an `i8`: a `SizedInt` is never packed)
+/// and on an in-place push of an `i8`; a builtin's result is `Vals`; no
+/// `vm_bulk_near_miss_shapes` loop moves a bulk counter; and every
+/// `vm_bulk_fill_runs` and `vm_bulk_count_runs` shape, run with `vm_eager`
+/// (as the cli `vm` leg runs), moves the bulk counter of its array's kind.
+/// A build that packs only `Bools`, or converts an array to `Vals` on its
+/// first write, fails here though its output is the same.
+#[test]
+fn packed_forms_persist() {
+    let prog = crate::parse_source(FORMS).expect("parses");
+    let mut interp = Interp::build(&prog);
+    interp.engine = Engine::Vm;
+    interp.vm_trace = false;
+    interp.vm_eager = true;
+    let index = |name: &str| {
+        interp
+            .fn_table
+            .iter()
+            .position(|e| e.def.name == name)
+            .unwrap_or_else(|| panic!("{name} is in the fn table"))
+    };
+    let call = |name: &str, args: Vec<Value>| {
+        interp
+            .call_fn_entry(&interp.fn_table[index(name)], args)
+            .unwrap_or_else(|e| panic!("{name}: {e:?}"))
+    };
+    let body = |name: &str| {
+        interp.fn_table[index(name)]
+            .compiled
+            .as_ref()
+            .and_then(|c| c.get())
+            .unwrap_or_else(|| panic!("{name} is compiled"))
+    };
+    let pair = |v: &Value| match v {
+        Value::Array(items) if items.len() == 2 => (items.get(0).unwrap(), items.get(1).unwrap()),
+        other => panic!("not a pair: {other:?}"),
+    };
+
+    for (name, form) in [
+        ("ints", "Ints"),
+        ("floats", "Floats"),
+        ("bools", "Bools"),
+        ("sized", "Vals"),
+        ("literal", "Vals"),
+        ("loop_mem", "Ints"),
+        ("swapped", "Ints"),
+        ("placed", "Ints"),
+        ("pushed", "Ints"),
+        ("added", "Ints"),
+        ("changed", "Vals"),
+        ("changed_sized", "Vals"),
+        ("pushed_sized", "Vals"),
+    ] {
+        assert_eq!(form_of(&call(name, vec![])), form, "{name}");
+    }
+    // The paths those checks name are the ones that ran: the store is a
+    // `PureFor`'s, the swap went through the resolved S8 moves (the first
+    // call resolves them, the other three run them), the write is a
+    // `WritePlace`.
+    assert!(
+        body("loop_mem")
+            .ops
+            .iter()
+            .any(|op| matches!(op, Op::PureFor { .. })),
+        "loop_mem: {:?}",
+        kinds(body("loop_mem"))
+    );
+    assert!(
+        body("swapped").ops.iter().any(
+            |op| matches!(op, Op::CallMut { moves, .. } if matches!(moves.get(), Some(Some(_))))
+        ),
+        "swapped: {:?}",
+        kinds(body("swapped"))
+    );
+    assert!(
+        body("placed")
+            .ops
+            .iter()
+            .any(|op| matches!(op, Op::WritePlace { .. })),
+        "placed: {:?}",
+        kinds(body("placed"))
+    );
+    let (a, b) = pair(&call("builtin_push", vec![]));
+    assert_eq!((form_of(&a), form_of(&b)), ("Ints", "Vals"));
+
+    let runs = super::pure::probe::bulk_runs;
+
+    // No near-miss shape (`vm_bulk_near_miss_shapes`) runs a bulk path,
+    // though each is a `PureLoop`/`PureFor` whose recogniser looked at it.
+    let before = runs();
+    let v = call("near_miss", vec![]);
+    let got: Vec<Value> = match &v {
+        Value::Array(items) => items.iter().collect(),
+        other => panic!("not an array: {other:?}"),
+    };
+    let want = [
+        16, 4, 0, -11, 102, 16, 8, 16, 12, 47, 32, 8, 8, 9, 4, 10, 11, 32, 3, 10, 0, 10, 20, 12,
+        10, 3,
+    ];
+    assert!(
+        got.len() == want.len()
+            && got
+                .iter()
+                .zip(want)
+                .all(|(g, w)| matches!(g, Value::Int(n) if *n == w)),
+        "near_miss: {got:?}"
+    );
+    for (name, panic) in [
+        ("near_miss_sub", "negative index -1"),
+        ("near_miss_gt", "index 11 out of bounds (len 10)"),
+        ("near_miss_cond", "index 12 out of bounds (len 10)"),
+        ("near_miss_same", "index 12 out of bounds (len 10)"),
+    ] {
+        let r = interp.call_fn_entry(&interp.fn_table[index(name)], vec![]);
+        assert!(
+            matches!(&r, Err(Flow::Panic(m)) if &**m == panic),
+            "{name}: {r:?}"
+        );
+    }
+    let after = runs();
+    assert_eq!(
+        (after.fills, after.counts),
+        (before.fills, before.counts),
+        "near-miss shapes ran a bulk path"
+    );
+    let pure_loops = |name: &str| {
+        body(name)
+            .ops
+            .iter()
+            .filter(|op| matches!(op, Op::PureLoop { .. } | Op::PureFor { .. }))
+            .count()
+    };
+    assert_eq!(
+        [
+            pure_loops("near_miss"),
+            pure_loops("near_miss_sub"),
+            pure_loops("near_miss_gt"),
+            pure_loops("near_miss_cond"),
+            pure_loops("near_miss_same"),
+        ],
+        [19, 1, 1, 1, 1]
+    );
+
+    // Each bulk shape and the counter it moves, as `[Bools, Ints, Floats]`
+    // deltas, with the shape's result.
+    let fills: [(&str, [u32; 3], &str); 9] = [
+        ("fill_bools", [1, 0, 0], "Bools"),
+        ("fill_ints", [0, 1, 0], "Ints"),
+        ("fill_floats", [0, 0, 1], "Floats"),
+        ("fill_last", [1, 0, 0], "Bools"),
+        ("fill_lt", [0, 1, 0], "Ints"),
+        ("fill_mod", [0, 1, 0], "Ints"),
+        ("fill_none", [0, 2, 0], "Ints"),
+        ("fill_step3", [0, 3, 0], "Ints"),
+        ("fill_shared", [0, 1, 0], "Ints"),
+    ];
+    for (name, moved, form) in fills {
+        let before = runs();
+        let v = call(name, vec![]);
+        let after = runs();
+        let delta: [u32; 3] = std::array::from_fn(|k| after.fills[k] - before.fills[k]);
+        assert_eq!(delta, moved, "{name}: fills");
+        assert_eq!(after.counts, before.counts, "{name}: counts");
+        if name == "fill_shared" {
+            let (sh, keep) = pair(&v);
+            assert_eq!((form_of(&sh), form_of(&keep)), (form, form), "{name}");
+        } else {
+            assert_eq!(form_of(&v), form, "{name}");
+        }
+    }
+    let mut counts: Vec<(&str, Vec<Value>, u32, i64)> = vec![
+        ("count_sub", vec![], 2, 10_120),
+        ("count_mid", vec![], 3, 198_197_016),
+        ("count_neg", vec![], 1, -587),
+        // Both empty ranges take the bulk path, which changes nothing.
+        ("count_empty", vec![], 2, 707),
+        ("count_single", vec![], 1, 1),
+    ];
+    for (len, n) in [
+        (1, 1),
+        (7, 3),
+        (8, 3),
+        (9, 4),
+        (63, 22),
+        (64, 22),
+        (65, 22),
+        (129, 44),
+        (1001, 334),
+    ] {
+        counts.push(("count_tail", vec![Value::Int(len)], 1, n));
+    }
+    for (name, args, moved, want) in counts {
+        let at = format!("{name}{args:?}");
+        let before = runs();
+        let v = call(name, args);
+        let after = runs();
+        assert!(matches!(v, Value::Int(n) if n == want), "{at}: {v:?}");
+        let delta: [u32; 3] = std::array::from_fn(|k| after.counts[k] - before.counts[k]);
+        assert_eq!(delta, [moved, 0, 0], "{at}: counts");
+    }
+}

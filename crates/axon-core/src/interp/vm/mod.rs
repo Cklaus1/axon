@@ -227,6 +227,19 @@ impl Body<'_> {
         (p, q)
     }
 
+    /// The bulk fills and counts of its [`Op::PureLoop`] and [`Op::PureFor`]
+    /// ops, the trace's `vm: bulk` line's `<f> fills, <k> counts` (spec §4
+    /// S13).
+    fn bulk_loops(&self) -> (usize, usize) {
+        self.ops.iter().fold((0, 0), |(f, k), op| match op {
+            Op::PureLoop { lp, .. } | Op::PureFor { lp, .. } => {
+                let (df, dk) = lp.bulk_shape();
+                (f + df, k + dk)
+            }
+            _ => (f, k),
+        })
+    }
+
     /// The innermost loop of this body whose iteration holds op `at`: the
     /// one a `Flow::Break`/`Flow::Continue` out of that op belongs to, as
     /// `run_loop_body` catches them on the tree.
@@ -1171,8 +1184,13 @@ fn index_int(env: &Env, arr: &Var<'_>, idx: &Var<'_>) -> Option<i64> {
     let Value::Array(items) = env.get_var(arr.s, arr.slot)? else {
         return None;
     };
-    match items.get(local_int(env, idx)? as usize)? {
-        Value::Int(n) => Some(*n),
+    let i = local_int(env, idx)? as usize;
+    match items.view() {
+        ElemsRef::Vals(xs) => match xs.get(i)? {
+            Value::Int(n) => Some(*n),
+            _ => None,
+        },
+        ElemsRef::Ints(xs) => xs.get(i).copied(),
         _ => None,
     }
 }
@@ -1181,7 +1199,12 @@ fn index_int(env: &Env, arr: &Var<'_>, idx: &Var<'_>) -> Option<i64> {
 /// literal or a local holding an int that is in bounds: the element, as
 /// `index_in_place` reads it. `None` in every other case (nothing was read
 /// out); the slow path then runs the arm's whole protocol.
-#[inline(always)]
+///
+/// Out of line since S13 (cost only): inlined with its packed arms, it left
+/// the op loop short of a callee-saved register, so `run` kept `st` on the
+/// stack and reloaded it in every op that touches the operand stack
+/// (collatz, which reads no array, +1 %).
+#[inline(never)]
 fn index_fast(env: &Env, arr: &Var<'_>, idx: &Opnd<'_>) -> Option<Value> {
     let Value::Array(items) = env.get_var(arr.s, arr.slot)? else {
         return None;
@@ -1194,11 +1217,14 @@ fn index_fast(env: &Env, arr: &Var<'_>, idx: &Opnd<'_>) -> Option<Value> {
         },
         _ => return None,
     };
-    Some(match items.get(i as usize)? {
-        Value::Int(n) => Value::Int(*n),
-        Value::Float(f) => Value::Float(*f),
-        v => v.clone(),
-    })
+    match items.view() {
+        ElemsRef::Vals(xs) => Some(match xs.get(i as usize)? {
+            Value::Int(n) => Value::Int(*n),
+            Value::Float(f) => Value::Float(*f),
+            v => v.clone(),
+        }),
+        _ => items.get(i as usize),
+    }
 }
 
 /// [`Op::WriteIndexLocal`] when the local holds a uniquely owned array and
@@ -1211,12 +1237,12 @@ fn write_index_unique(env: &mut Env, base: &Var<'_>, i: usize, v: Value) -> Opti
     let Some(Value::Array(items)) = env.get_var_mut(base.s, base.slot) else {
         return Some(v);
     };
-    match Rc::get_mut(items).and_then(|a| a.get_mut(i)) {
-        Some(slot) => {
-            forget_scalar(std::mem::replace(slot, v));
+    match Rc::get_mut(items) {
+        Some(a) if i < a.len() => {
+            a.put(i, v);
             None
         }
-        None => Some(v),
+        _ => Some(v),
     }
 }
 
@@ -3254,17 +3280,19 @@ impl<'p> Interp<'p> {
             let (i, x) = (i as usize, x as usize);
             match step {
                 Move::Swap { .. } => items.swap(i, x),
-                Move::Read { dst, .. } => regs[*dst as usize] = items[i].clone(),
+                Move::Read { dst, .. } => {
+                    regs[*dst as usize] = items.get(i).unwrap_or_else(|| malformed())
+                }
                 Move::Copy { .. } => {
-                    let v = items[x].clone();
-                    forget_scalar(std::mem::replace(&mut items[i], v));
+                    let v = items.get(x).unwrap_or_else(|| malformed());
+                    items.put(i, v);
                 }
                 Move::Write { val, .. } => {
                     let v = match val {
                         Src::Reg(r) => regs[*r as usize].clone(),
                         _ => Value::Int(x as i64),
                     };
-                    forget_scalar(std::mem::replace(&mut items[i], v));
+                    items.put(i, v);
                 }
             }
         }
@@ -3336,6 +3364,10 @@ impl<'p> Interp<'p> {
         let (p, q) = body.pure_ops();
         if p + q > 0 {
             eprintln!("vm: pure {name} {p} exprs, {q} loops");
+        }
+        let (f, k) = body.bulk_loops();
+        if f + k > 0 {
+            eprintln!("vm: bulk {name} {f} fills, {k} counts");
         }
         for op in body.ops.iter() {
             match op {
