@@ -71,6 +71,13 @@ pub(crate) const VAL: u8 = 1;
 pub(crate) const TYP: u8 = 2;
 /// Everything a sealed frame produces.
 pub(crate) const ALL: u8 = VAL | TYP;
+/// The value is an operator-typed value sealed code PICKED (out of a table by a
+/// key or index it chose, by a branch on a value it chose, by handing it back):
+/// which operator value it is was the candidate's choice. Raised only by a
+/// "pick" (`t_note`): a value carries it only while it IS or HOLDS an
+/// operator-typed value, so field data from sealed code (`Sq { s: val() }`) never
+/// raises it. The dispatch rule no longer exempts a receiver that carries it.
+pub(crate) const PICK: u8 = 4;
 /// The evaluator's taint state (one per `Interp`).
 #[derive(Default)]
 pub(crate) struct Taint {
@@ -115,6 +122,15 @@ pub(crate) struct Taint {
     /// Shared objects (dict, channel) by address, with a clone that keeps the
     /// address from being reused.
     objs: RefCell<HashMap<usize, (u8, Value)>>,
+    /// Operator closures a candidate chose, by capture-cell address
+    /// (`Rc::as_ptr(&captured)`, spec Fork 3: every reference a cast made of
+    /// one closure shares it), with a clone that keeps the address from being
+    /// reused (veto taint.rs:120).
+    picked: RefCell<HashMap<usize, Value>>,
+    /// The argument taints of the named call a sealed `eval_call` is about to
+    /// dispatch, for [`Interp::dispatch_named`]'s builtin pick (R51 S4; veto
+    /// passed them as a local). Taken there; a stale entry only over-picks.
+    pub(super) call_ats: RefCell<Vec<u8>>,
     /// Module-level lets by interned name.
     lets: RefCell<HashMap<Sym, u8>>,
 }
@@ -613,6 +629,22 @@ pub(super) fn addr_of(v: &Value) -> Option<usize> {
 }
 
 impl<'p> Interp<'p> {
+    /// Whether the taint rules refuse. A unit test of ANOTHER seal layer runs
+    /// with the selection rules off (as a paired-disable cell does), so each
+    /// layer is judged by its own attack; the rules' own tests run with them on
+    /// (v0.22 taint.rs:725).
+    pub(super) fn t_rules(&self) -> bool {
+        // In a unit test the taint rules apply only when the test asks for them
+        // (`TAINT_FORCE_ON`): every older test was written to judge one STATIC
+        // layer by its own attack, and the taint refusing the same attack first
+        // would hide a removed static guard (a REFUSED_ELSEWHERE row).
+        #[cfg(test)]
+        let on = TAINT_FORCE_ON.with(Cell::get);
+        #[cfg(not(test))]
+        let on = true;
+        on
+    }
+
     /// OR `t` into the expression being evaluated.
     #[inline(always)]
     pub(super) fn t_touch(&self, t: u8) {
@@ -749,12 +781,18 @@ impl<'p> Interp<'p> {
     /// A frame's exit (veto interp.rs:4670-4678, 4869, 4925): the call's
     /// value carries what the arguments arrived with (`entry_t`), what the
     /// body produced (`body_t`) and an early exit's condition (`sticky`, the
-    /// frame's own, before [`FrameCtl`] restores the caller's). Veto's PICK
-    /// mark on an operator-typed result is S4's.
+    /// frame's own, before [`FrameCtl`] restores the caller's). An
+    /// operator-typed result `v` that an early exit on sealed code's data
+    /// decided is a pick (amendment 121, veto interp.rs:4675, 4870-4876).
     #[inline(always)]
-    pub(super) fn t_frame_exit(&self, entry_t: u8, body_t: u8) {
+    pub(super) fn t_frame_exit(&self, entry_t: u8, body_t: u8, v: &Value) {
         let sticky = self.taint.sticky.get() & VAL;
-        self.taint.acc.set(entry_t | body_t | sticky);
+        let pick = if sticky != 0 && self.t_holds_op(v) {
+            PICK
+        } else {
+            0
+        };
+        self.taint.acc.set(entry_t | body_t | sticky | pick);
     }
 
     /// The provenance a zoned (`@[adaptive]` / `@[experiment]`) call records
@@ -965,6 +1003,47 @@ impl<'p> Interp<'p> {
         go(self, v, t, 3);
     }
 
+    /// A value left an evaluation (or was read out of a binding) carrying `t`:
+    /// an OPERATOR closure in it that carries VAL is PICKED (sealed code chose
+    /// it: out of a table by a key or index, by a branch, by being handed back),
+    /// which makes calling it a selection. One call-time check
+    /// ([`Interp::t_check_call_picked`]) then covers every way of reading it
+    /// (veto taint.rs:961-993). Keyed by the capture cell (spec Fork 3), so a
+    /// cast's re-wrap of the closure is the same pick.
+    pub(super) fn t_note(&self, v: &Value, t: u8) {
+        if t & VAL == 0 {
+            return;
+        }
+        fn go(i: &Interp<'_>, v: &Value, d: u8) {
+            match v {
+                Value::Closure(cv) => {
+                    if cv.seal.is_candidates() {
+                        return;
+                    }
+                    let a = Rc::as_ptr(&cv.captured) as *const u8 as usize;
+                    i.taint
+                        .picked
+                        .borrow_mut()
+                        .entry(a)
+                        .or_insert_with(|| v.clone());
+                }
+                Value::Some(b) | Value::Ok(b) | Value::Err(b) if d > 0 => go(i, b, d - 1),
+                Value::Tuple(xs) if d > 0 && xs.len() <= 8 => {
+                    xs.iter().for_each(|x| go(i, x, d - 1))
+                }
+                _ => {}
+            }
+        }
+        go(self, v, 3);
+    }
+
+    /// Whether `cv` is an operator closure sealed code picked: its capture
+    /// cell is (veto taint.rs:995-999).
+    pub(super) fn t_is_picked(&self, cv: &ClosureVal) -> bool {
+        let a = Rc::as_ptr(&cv.captured) as *const u8 as usize;
+        self.taint.picked.borrow().contains_key(&a)
+    }
+
     /// The taint of what variable `s` (resolved to `slot`) holds: its
     /// binding's, read through the one index lookup the value is read
     /// through ([`Bindings::get_var_idx`]), or (no binding) the module-level
@@ -1020,10 +1099,144 @@ impl<'p> Interp<'p> {
             }
             _ => {}
         }
-        let mine = tn.acc.get();
+        let mut mine = tn.acc.get();
+        if let Ok(v) = &r {
+            // The mark lives only while the value is or holds an operator-typed
+            // value (field data from sealed code is not a pick of the value).
+            if mine & PICK != 0 && !self.t_holds_op(v) {
+                mine &= !PICK;
+            }
+        }
         tn.last.set(mine);
+        if let Ok(v) = &r {
+            if mine != 0 {
+                self.t_note(v, mine);
+            }
+        }
         tn.acc.set(saved | mine);
         r
+    }
+
+    /// Whether `v` is, or holds (through options, results, tuples, arrays, records,
+    /// enum payloads and dict values, to a small depth), a struct or enum only the
+    /// operator defines (veto taint.rs:1067-1073).
+    pub(super) fn t_holds_op(&self, v: &Value) -> bool {
+        let mut budget = 256u32;
+        self.t_op_values(v, 4, &mut budget, &mut |_| true)
+    }
+
+    /// Walk `v` for operator-typed values; `f` returns true to stop (veto
+    /// taint.rs:1075-1119).
+    fn t_op_values(
+        &self,
+        v: &Value,
+        d: u8,
+        budget: &mut u32,
+        f: &mut dyn FnMut(&Value) -> bool,
+    ) -> bool {
+        if *budget == 0 {
+            return false;
+        }
+        *budget -= 1;
+        match v {
+            Value::Struct(s) => {
+                if self.pins.is_operator_type(&sym_name(s.name)) && f(v) {
+                    return true;
+                }
+                d > 0
+                    && s.fields
+                        .iter()
+                        .any(|(_, x)| self.t_op_values(x, d - 1, budget, f))
+            }
+            Value::Enum(e) => {
+                if self.pins.is_operator_type(&sym_name(e.enum_name)) && f(v) {
+                    return true;
+                }
+                d > 0
+                    && e.fields
+                        .iter()
+                        .any(|(_, x)| self.t_op_values(x, d - 1, budget, f))
+            }
+            Value::Some(b) | Value::Ok(b) | Value::Err(b) if d > 0 => {
+                self.t_op_values(b, d - 1, budget, f)
+            }
+            Value::Tuple(xs) | Value::Array(xs) if d > 0 => {
+                xs.iter().any(|x| self.t_op_values(x, d - 1, budget, f))
+            }
+            Value::Dict(m) if d > 0 => m
+                .borrow()
+                .values()
+                .any(|x| self.t_op_values(x, d - 1, budget, f)),
+            _ => false,
+        }
+    }
+
+    /// A builtin returned an operator-typed value that was already in its
+    /// arguments (it read it out of a container, filtered or sorted it out of an
+    /// array), while the arguments carried sealed code's choice (a key, an index, a
+    /// predicate's answers): the value is a pick. A value the operator's own
+    /// callback built inside the builtin (`arr_map(xs, |v| Sq { s: v })`) is not in
+    /// the arguments and is not (veto taint.rs:1121-1145).
+    pub(super) fn t_builtin_picks(&self, args: &[Value], res: &Value) -> bool {
+        let mut got: Vec<Value> = Vec::new();
+        let mut budget = 256u32;
+        self.t_op_values(res, 4, &mut budget, &mut |x| {
+            got.push(x.clone());
+            false
+        });
+        if got.is_empty() {
+            return false;
+        }
+        let mut hit = false;
+        for a in args {
+            let mut budget = 256u32;
+            hit |= self.t_op_values(a, 4, &mut budget, &mut |x| {
+                got.iter().any(|g| super::value::values_equal(g, x))
+            });
+        }
+        hit
+    }
+
+    /// An element was read out of an array at an index of taint `it`: an
+    /// operator-typed value in it was picked when sealed code chose the index
+    /// (veto taint.rs:1147-1154).
+    #[inline(always)]
+    pub(super) fn t_pick_index(&self, it: u8, el: &Value) {
+        if it & VAL != 0 && self.t_holds_op(el) {
+            self.t_touch(PICK);
+        }
+    }
+
+    /// Whether the control the code now running is under is sealed code's
+    /// choice (veto taint.rs:1156-1159).
+    pub(super) fn t_ctl_val(&self) -> bool {
+        (self.taint.pc.get() | self.taint.sticky.get()) & VAL != 0
+    }
+
+    /// A branch on sealed code's data (`ct`) yielded `r`: an operator-typed value
+    /// it yielded was picked by that data (veto taint.rs:1161-1172).
+    #[inline(always)]
+    pub(super) fn t_pick_branch(&self, ct: u8, r: &R) {
+        if ct & VAL != 0 {
+            if let Ok(v) = r {
+                if self.t_holds_op(v) {
+                    self.t_touch(PICK);
+                }
+            }
+        }
+    }
+
+    /// The taint a store of `v` keeps: [`Interp::t_stored`], plus the pick when the
+    /// store ran under sealed code's control and `v` is an operator-typed value
+    /// (`if cand() { x = A {..} } else { x = B {..} }`; veto taint.rs:1174-1185).
+    #[inline(always)]
+    pub(super) fn t_stored_v(&self, value_taint: u8, v: &Value) -> u8 {
+        let t = self.t_stored(value_taint);
+        if self.t_ctl_val() && self.t_holds_op(v) {
+            t | PICK
+        } else {
+            t
+        }
     }
 
     /// Before a builtin runs: the taint of the state it reads goes into the
@@ -1115,6 +1328,61 @@ impl<'p> Interp<'p> {
                 self.taint.acc.set(self.taint.acc.get() & !TYP);
             }
         }
+    }
+
+    /// An operator-typed value a builtin read out of its arguments, on a SELECTOR
+    /// sealed code chose, is a pick (see [`PICK`]). A selector is an argument that
+    /// carries sealed code's choice and holds no operator-typed value itself (a
+    /// key, an index, a predicate or comparator closure): the container the value
+    /// was read from is excluded, because a dict the operator filled with values
+    /// built from sealed code's data (`dict_set(reg, "sq", Sq { s: val() })`) carries
+    /// that data's taint and is read by a key the operator wrote. Sealed code that ran
+    /// inside the builtin (`ran_sealed`) counts as a selector too (veto
+    /// taint.rs:1323-1345).
+    pub(super) fn t_builtin_pick(&self, args: &[Value], ats: &[u8], ran_sealed: bool, res: &Value) {
+        if self.frame_sealed.get() {
+            return;
+        }
+        // Sealed code ran inside the builtin (a comparator or predicate callback
+        // that called it): the order or the survivors are its answers.
+        let selector = ran_sealed
+            || args
+                .iter()
+                .zip(ats)
+                .any(|(a, t)| t & VAL != 0 && !self.t_holds_op(a));
+        if selector && self.t_builtin_picks(args, res) {
+            self.t_touch(PICK);
+        }
+    }
+
+    /// The CLOSURE rule: operator code does not call an operator closure that
+    /// sealed code picked (out of a table by a key or index it chose, or by a
+    /// branch on a value it chose). R51 S4, from v0.22 taint.rs:1381-1412;
+    /// main's one closure frame ([`Interp::call_closure_frame`]) runs it for
+    /// every call of a closure value: by local name, through an expression, a
+    /// `fn(..)`-typed parameter or a builtin's callback.
+    #[inline(always)]
+    pub(crate) fn t_check_call_picked(&self, cv: &ClosureVal) -> Result<(), Flow> {
+        if !self.seal.active {
+            return Ok(());
+        }
+        self.t_check_call_picked_sealed(cv)
+    }
+
+    #[inline(never)]
+    fn t_check_call_picked_sealed(&self, cv: &ClosureVal) -> Result<(), Flow> {
+        if self.frame_sealed.get() || !self.t_rules() {
+            return Ok(());
+        }
+        if self.t_is_picked(cv) {
+            return panic(
+                "operator code called an operator closure that the candidate picked (out of a \
+                 table by a key or index it chose, or by a branch on a value it chose) — the \
+                 candidate would choose which operator code runs"
+                    .to_string(),
+            );
+        }
+        Ok(())
     }
 
     /// The NAME rule at run time: operator code gives a name-resolving builtin

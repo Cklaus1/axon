@@ -903,6 +903,13 @@ pub(crate) struct Seal {
     operator_methods: std::collections::HashSet<String>,
 }
 
+// Test-only: the runtime taint rules apply ([`Interp::t_rules`], v0.22
+// interp.rs:480). Off by default in a unit test, so each older test judges
+// one STATIC layer by its own attack and the taint cannot refuse the same
+// attack first and hide a removed guard; the taint's own tests turn it on.
+#[cfg(test)]
+thread_local! { pub(crate) static TAINT_FORCE_ON: Cell<bool> = const { Cell::new(false) } }
+
 impl Seal {
     /// The seal of `program` when `sealed` says which spans lie in the
     /// sealed set. An impl method is sealed when the method or its block is.
@@ -4950,6 +4957,16 @@ impl<'p> Interp<'p> {
         if crossing && r.is_ok() {
             self.dict_edge_out()?;
         }
+        // An operator-typed value a sealed fn hands back is a pick: sealed
+        // code cannot build one, so it got it from an argument or a closure
+        // and chose which (amendment 121; veto interp.rs:3627-3636).
+        if crossing {
+            if let Ok(v) = &r {
+                if self.t_holds_op(v) {
+                    self.t_touch(taint::PICK);
+                }
+            }
+        }
         r
     }
 
@@ -5206,7 +5223,7 @@ impl<'p> Interp<'p> {
             result
         };
         if T {
-            self.t_frame_exit(entry_t, body_t);
+            self.t_frame_exit(entry_t, body_t, &result);
         }
         Ok(result)
     }
@@ -5782,6 +5799,14 @@ impl<'p> Interp<'p> {
             args.bind(|_, v| drop(v));
             return lambda_arity_mismatch(n, got);
         }
+        // Operator code does not run an operator closure the candidate picked
+        // (amendment 102; veto interp.rs:4747-4751).
+        if T {
+            if let Err(e) = self.t_check_call_picked(cv) {
+                args.bind(|_, v| drop(v));
+                return Err(e);
+            }
+        }
         // Base scope = captured bindings; a fresh scope holds the parameters.
         // Assignments land in the base scope and are written back below, which
         // is what makes them survive to the next call (T40).
@@ -5925,7 +5950,12 @@ impl<'p> Interp<'p> {
             } else if entering {
                 self.dict_edge_in(&v)?;
             }
-            self.t_frame_exit(entry_t, body_t);
+            self.t_frame_exit(entry_t, body_t, &v);
+            // A candidate closure hands an operator-typed value back to
+            // operator code: a pick (amendment 121; veto interp.rs:4919-4924).
+            if crossing && self.t_holds_op(&v) {
+                self.t_touch(taint::PICK);
+            }
             return Ok(v);
         }
         out
