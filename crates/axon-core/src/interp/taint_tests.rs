@@ -1811,20 +1811,26 @@ fn pair(
 ) -> [Case; 2] {
     let at = |r: &str| (pre.replace("@R", r), body.replace("@R", r));
     let ((pb, bb), (pg, bg)) = (at(bad), at(good));
+    let cand = format!("{IDX}{ENT}");
     [
-        case(attack, &pb, &bb, ENT, Expect::Refused),
-        case(control, &pg, &bg, ENT, Expect::Ok),
+        case(attack, &pb, &bb, &cand, Expect::Refused),
+        case(control, &pg, &bg, &cand, Expect::Ok),
     ]
 }
 
 /// T8.2: a positional probe at each binding writer main once wrote raw: a
 /// binding of the candidate's, then a clean one, read at the `sandbox_run`
 /// name sink. The tainted one is refused; the clean one, on the same path,
-/// runs (a taint shifted by one binding fails one or the other).
+/// runs (a taint shifted by one binding fails one or the other). The value
+/// is a scalar (`idx()`'s 1, or the operator's literal 1) picking from an
+/// operator array, so only the binding's taint carries it: a `str` the
+/// candidate built would also carry its object taint (`t_obj`), which hides
+/// a binding writer that drops the binding's.
 fn positional_cases() -> Vec<Case> {
     let run = |e: &str| {
         format!("    let got = sandbox_run(sb, {e}, 21)\n    assert(got == reference(21))")
     };
+    let pick = |e: &str| format!("[\"double\", \"reference\"][{e}]");
     let goal = "@[adaptive]\nfn quality(x: i64) -> i64 { 100 - abs_i64(x - 7) * 10 }\n@[goal(metric: quality, target: 60, max_evals: 40, test_set: [5, 7, 9])]\n";
     let write_back = |alias: bool| {
         let (via, def) = if alias {
@@ -1832,21 +1838,21 @@ fn positional_cases() -> Vec<Case> {
         } else {
             ("set", "")
         };
-        format!("{SB}    let nm = \"double\"\n    let m = \"double\"\n    let set = |v, w, pick| {{\n        if v != \"\" {{ nm = v }}\n        if w != \"\" {{ m = w }}\n        if pick {{ nm }} else {{ m }}\n    }}\n{def}    let r1 = {via}(entry(), \"\", true)\n    let r2 = {via}(\"\", \"reference\", true)\n{}", run("set(\"\", \"\", @R)"))
+        format!("{SB}    let nm = 0\n    let m = 0\n    let set = |v, w, pick| {{\n        if v >= 0 {{ nm = v }}\n        if w >= 0 {{ m = w }}\n        if pick {{ nm }} else {{ m }}\n    }}\n{def}    let r1 = {via}(idx(), -1, true)\n    let r2 = {via}(-1, 1, true)\n{}", run(&pick("set(-1, -1, @R)")))
     };
     [
         // `bind_params_sealed`, then `goal_met` (0), then a `let`.
-        pair("positional: a fn's tainted parameter", "positional: a clean let after a tainted parameter", &format!("{REF}fn go(sb: i64, n: str) -> i64 {{\n    let m = \"reference\"\n    sandbox_run(sb, @R, 21)\n}}\n"), &format!("{SB}    let got = go(sb, entry())\n    assert(got == reference(21))"), "n", "m"),
-        pair("positional: a fn's tainted let", "positional: a clean let after a tainted let", &format!("{REF}fn go(sb: i64) -> i64 {{\n    let a = entry()\n    let m = \"reference\"\n    sandbox_run(sb, @R, 21)\n}}\n"), &format!("{SB}    let got = go(sb)\n    assert(got == reference(21))"), "a", "m"),
+        pair("positional: a fn's tainted parameter", "positional: a clean let after a tainted parameter", &format!("{REF}fn go(sb: i64, n: i64) -> i64 {{\n    let m = 1\n    sandbox_run(sb, @R, 21)\n}}\n"), &format!("{SB}    let got = go(sb, idx())\n    assert(got == reference(21))"), &pick("n"), &pick("m")),
+        pair("positional: a fn's tainted let", "positional: a clean let after a tainted let", &format!("{REF}fn go(sb: i64) -> i64 {{\n    let a = idx()\n    let m = 1\n    sandbox_run(sb, @R, 21)\n}}\n"), &format!("{SB}    let got = go(sb)\n    assert(got == reference(21))"), &pick("a"), &pick("m")),
         // The general path's `goal_met` (`goal_t`, ALL after a goal search).
-        pair("positional: goal_met", "positional: a clean let after goal_met", &format!("{REF}{goal}fn opt(sb: i64) -> i64 {{\n    let m = \"reference\"\n    sandbox_run(sb, @R, 21)\n}}\n"), &format!("{SB}    let got = opt(sb)\n    assert(got == reference(21))"), "[\"double\", \"reference\"][goal_met]", "m"),
+        pair("positional: goal_met", "positional: a clean let after goal_met", &format!("{REF}{goal}fn opt(sb: i64) -> i64 {{\n    let m = 1\n    sandbox_run(sb, @R, 21)\n}}\n"), &format!("{SB}    let got = opt(sb)\n    assert(got == reference(21))"), &pick("goal_met"), &pick("m")),
         // `bind_closure_params`: the slotted push and the by-name define. The
         // sink is in the closure: its result carries its arguments' taint.
-        pair("positional: a closure's tainted parameter", "positional: a clean let after a closure's tainted parameter", REF, &format!("{SB}    let f = |a, b| {{\n        let m = \"reference\"\n        sandbox_run(sb, @R, 21)\n    }}\n    let got = f(entry(), \"x\")\n    assert(got == reference(21))"), "a", "m"),
-        pair("positional: a module-level closure's tainted parameter", "positional: a clean let after a module-level closure's tainted parameter", &format!("{REF}let F = |sb, a| {{\n    let m = \"reference\"\n    sandbox_run(sb, @R, 21)\n}}\n"), &format!("{SB}    let got = F(sb, entry())\n    assert(got == reference(21))"), "a", "m"),
+        pair("positional: a closure's tainted parameter", "positional: a clean let after a closure's tainted parameter", REF, &format!("{SB}    let f = |a, b| {{\n        let m = 1\n        sandbox_run(sb, @R, 21)\n    }}\n    let got = f(idx(), 0)\n    assert(got == reference(21))"), &pick("a"), &pick("m")),
+        pair("positional: a module-level closure's tainted parameter", "positional: a clean let after a module-level closure's tainted parameter", &format!("{REF}let F = |sb, a| {{\n    let m = 1\n    sandbox_run(sb, @R, 21)\n}}\n"), &format!("{SB}    let got = F(sb, idx())\n    assert(got == reference(21))"), &pick("a"), &pick("m")),
         // `lend_in` and `copy_in`: a tainted capture, then a clean one.
-        pair("positional: a lent tainted capture", "positional: a lent clean capture after a tainted one", REF, &format!("{SB}    let nm = entry()\n    let m = \"reference\"\n    let g = || {{\n        let z = nm\n        let y = m\n        @R\n    }}\n{}", run("g()")), "nm", "m"),
-        pair("positional: a copied tainted capture", "positional: a copied clean capture after a tainted one", REF, &format!("{SB}    let nm = entry()\n    let m = \"reference\"\n    let g = || {{\n        let z = nm\n        let y = m\n        @R\n    }}\n    let h = g\n{}", run("h()")), "nm", "m"),
+        pair("positional: a lent tainted capture", "positional: a lent clean capture after a tainted one", REF, &format!("{SB}    let nm = idx()\n    let m = 1\n    let g = || {{\n        let z = nm\n        let y = m\n        @R\n    }}\n{}", run("g()")), &pick("nm"), &pick("m")),
+        pair("positional: a copied tainted capture", "positional: a copied clean capture after a tainted one", REF, &format!("{SB}    let nm = idx()\n    let m = 1\n    let g = || {{\n        let z = nm\n        let y = m\n        @R\n    }}\n    let h = g\n{}", run("h()")), &pick("nm"), &pick("m")),
         // `lend_back` and `write_back`: a capture written tainted, then a
         // clean one, by earlier calls.
         pair("positional: a tainted capture lent back", "positional: a clean capture lent back after a tainted one", REF, &write_back(false), "true", "false"),
@@ -1856,8 +1862,8 @@ fn positional_cases() -> Vec<Case> {
         // tainted one reads back tainted; the control is the same call on
         // clean arguments after a tainted caller binding.
         [
-            case("positional: a tainted &mut argument read back", &format!("{REF}fn touch(xs: &mut [str], ys: &mut [str]) -> i64 {{ 0 }}\n"), &format!("{SB}    let w = [entry()]\n    let ys = [\"reference\"]\n    let r = touch(&mut w, &mut ys)\n{}", run("w[0]")), ENT, Expect::Refused),
-            case("positional: a clean &mut argument read back after a tainted binding", &format!("{REF}fn touch(xs: &mut [str], ys: &mut [str]) -> i64 {{ 0 }}\n"), &format!("{SB}    let w = [entry()]\n    let xs = [\"double\"]\n    let ys = [\"reference\"]\n    let r = touch(&mut xs, &mut ys)\n{}", run("ys[0]")), ENT, Expect::Ok),
+            case("positional: a clean &mut argument read back after a tainted one", &format!("{REF}fn touch(xs: &mut i64, ys: &mut i64) -> i64 {{ 0 }}\n"), &format!("{SB}    let w = idx()\n    let ys = 1\n    let r = touch(&mut w, &mut ys)\n{}", run(&pick("ys"))), &format!("{IDX}{ENT}"), Expect::Refused),
+            case("positional: a clean &mut argument read back after a tainted binding", &format!("{REF}fn touch(xs: &mut i64, ys: &mut i64) -> i64 {{ 0 }}\n"), &format!("{SB}    let w = idx()\n    let xs = 0\n    let ys = 1\n    let r = touch(&mut xs, &mut ys)\n{}", run(&pick("ys"))), &format!("{IDX}{ENT}"), Expect::Ok),
         ],
     ]
     .into_iter()
