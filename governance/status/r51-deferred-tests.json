@@ -7,8 +7,8 @@
     "S5": 0,
     "S2": 0,
     "S3": 0,
-    "S4": 16,
-    "S6": 169
+    "S4": 11,
+    "S6": 174
   },
   "tests": [
     {
@@ -122,8 +122,8 @@
     {
       "name": "comparing_a_dict_the_candidate_filled_never_selects_operator_code",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S4",
-      "reason": "seal edge t_check_names ported (S3); the refusing sink t_check_call_picked needs PICK (S4) and a live sealed run (S6)"
+      "slice": "S6",
+      "reason": "the refusing sink t_check_call_picked and the PICK mark ported (S4); needs a live sealed run"
     },
     {
       "name": "operator_negation_never_runs_at_a_width_the_candidate_chose",
@@ -134,8 +134,8 @@
     {
       "name": "operator_side_control_flow_on_candidate_data_never_selects_operator_code",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S4",
-      "reason": "seal edge t_check_names ported (S3); the refusing sink t_check_call_picked needs PICK (S4) and a live sealed run (S6)"
+      "slice": "S6",
+      "reason": "the refusing sink t_check_call_picked and the branch PICK ported (S4); needs a live sealed run"
     },
     {
       "name": "taint_survives_every_carrier_a_value_can_travel_by",
@@ -554,8 +554,8 @@
     {
       "name": "a_channel_the_candidate_touched_never_selects_operator_code",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S4",
-      "reason": "seal edge channel contracts and channel taint ported (S3); the refusing sink t_check_call_picked needs PICK (S4) and a live sealed run (S6)"
+      "slice": "S6",
+      "reason": "the refusing sink t_check_call_picked and the PICK mark ported (S4); needs a live sealed run"
     },
     {
       "name": "a_dict_entry_the_operator_held_is_never_retyped_by_the_candidate",
@@ -632,14 +632,14 @@
     {
       "name": "an_operator_closure_the_candidate_picked_is_never_called",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S4",
-      "reason": "the PICK bit not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the PICK mark and the refusing sink t_check_call_picked ported (S4); needs a live sealed run"
     },
     {
       "name": "an_operator_value_the_candidate_picked_is_refused_through_the_runner",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S4",
-      "reason": "the PICK bit not ported; sealed runs refused until S6, not by the taint rule"
+      "slice": "S6",
+      "reason": "the PICK mark (pick edges, frame-exit pick) ported (S4); needs a live sealed run"
     },
     {
       "name": "an_undetermined_type_position_never_selects_the_operators_impl",

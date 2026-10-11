@@ -1545,7 +1545,7 @@ const OPS11: &str = "  let ops = [|x| 0, |x| x * 2]\n";
 /// selected by a key or index the candidate chose. Every spelling of the choice is
 /// refused; the operator naming its own row is not.
 #[test]
-#[ignore = "R51 S4: the PICK bit not ported; sealed control refused until S6"]
+#[ignore = "R51 S6: the PICK mark and the refusing sink t_check_call_picked ported (S4); needs a live sealed run"]
 fn an_operator_closure_the_candidate_picked_is_never_called() {
     let suite = |uses: &str, body: &str| {
         format!("mod sol\nuse sol.{{{uses}}}\n{REF11}@[test]\nfn accept() {{\n{body}\n}}\n")
@@ -1669,7 +1669,7 @@ fn taint_survives_every_carrier_a_value_can_travel_by() {
 /// operator's closure or the NAME of the fn it runs. The honest operator's own
 /// channel, used the same ways, passes.
 #[test]
-#[ignore = "R51 S4: seal edge channel contracts and channel taint ported (S3); the refusing sink t_check_call_picked needs PICK (S4) and a live sealed run (S6)"]
+#[ignore = "R51 S6: the refusing sink t_check_call_picked and the PICK mark ported (S4); needs a live sealed run"]
 fn a_channel_the_candidate_touched_never_selects_operator_code() {
     let suite = |uses: &str, body: &str| {
         format!("mod sol\nuse sol.{{{uses}}}\n{REF11}@[test]\nfn accept() {{\n{body}\n}}\n")
@@ -2128,7 +2128,7 @@ fn every_position_the_sealed_walk_visits_has_a_twin_row() {
 /// candidate's data (`Sq { s: val() }.area()`, a factory fn, a registry the operator
 /// filled and reads by its own key) pass keyed.
 #[test]
-#[ignore = "R51 S4: the PICK bit not ported; sealed runs refused until S6, not by the taint rule"]
+#[ignore = "R51 S6: the PICK mark (pick edges, frame-exit pick) ported (S4); needs a live sealed run"]
 fn an_operator_value_the_candidate_picked_is_refused_through_the_runner() {
     let su = |body: &str| {
         format!("mod sol\nuse sol.{{key, val, pickb}}\ntype A = {{ v: i64 }}\ntype B = {{ v: i64 }}\ntype Sq = {{ s: i64 }}\ntype Ci = {{ r: i64 }}\ntrait Rub {{\n    fn rub(self) -> bool\n}}\nimpl Rub for A {{\n    fn rub(self: A) -> bool {{ self.v == 9 }}\n}}\nimpl Rub for B {{\n    fn rub(self: B) -> bool {{ true }}\n}}\ntrait Area {{\n    fn area(self) -> i64\n}}\nimpl Area for Sq {{\n    fn area(self: Sq) -> i64 {{ self.s * self.s }}\n}}\nimpl Area for Ci {{\n    fn area(self: Ci) -> i64 {{ self.r * 3 }}\n}}\nfn mka() -> A {{ A {{ v: 1 }} }}\nfn mkb() -> B {{ B {{ v: 1 }} }}\nfn mk_sq(n: i64) -> Sq {{ Sq {{ s: n }} }}\n@[test]\nfn accept() {{\n{body}\n}}\n")
@@ -2180,7 +2180,7 @@ fn an_operator_value_the_candidate_picked_is_refused_through_the_runner() {
 /// the lenient check or fails under the strict one depending on what the
 /// candidate wrote.
 #[test]
-#[ignore = "R51 S4: seal edge t_check_names ported (S3); the refusing sink t_check_call_picked needs PICK (S4) and a live sealed run (S6)"]
+#[ignore = "R51 S6: the refusing sink t_check_call_picked and the PICK mark ported (S4); needs a live sealed run"]
 fn comparing_a_dict_the_candidate_filled_never_selects_operator_code() {
     let cand = "pub fn cand() -> i64 { 4 }\npub fn fill(d: Dict) { dict_set(d, \"k\", 1) }\n";
     let suite = |pre: &str, body: &str| {
@@ -2292,7 +2292,7 @@ fn a_sealed_method_call_is_refused_in_the_same_words_for_an_operator_method_and_
 // pass; its control (the SAME code under a condition the operator wrote) passes.
 
 #[test]
-#[ignore = "R51 S4: seal edge t_check_names ported (S3); the refusing sink t_check_call_picked needs PICK (S4) and a live sealed run (S6)"]
+#[ignore = "R51 S6: the refusing sink t_check_call_picked and the branch PICK ported (S4); needs a live sealed run"]
 fn operator_side_control_flow_on_candidate_data_never_selects_operator_code() {
     let cand = "pub fn cand() -> i64 { 4 }\npub fn candr() -> Result<i64, str> { Ok(4) }\npub fn fill(d: Dict) { dict_set(d, \"k\", 1) }\npub fn drain(c: Chan<i64>) { let x = c.recv() }\npub fn crd() -> i64 {\n  if cand() == 5 {\n    match read_file(\"/nonexistent/c9r14\") { Ok(s) => 1  Err(e) => 2 }\n  } else { 0 }\n}\n";
     let pre = "fn strict(x: i64) -> bool { x == 9 }\nfn lenient(x: i64) -> bool { true }\nlet TBL = [lenient, strict]\nfn mark(op: Dict) -> bool {\n  dict_set(op, \"x\", 1)\n  true\n}\nfn bump(op: Dict, x: i64) -> i64 {\n  dict_set(op, to_str(x), 1)\n  x\n}\nfn okr() -> Result<i64, str> { Ok(4) }\nfn tq(op: Dict) -> Result<i64, str> {\n  let v = candr()?\n  let u = mark(op)\n  Ok(v)\n}\nfn tq_ok(op: Dict) -> Result<i64, str> {\n  let v = okr()?\n  let u = mark(op)\n  Ok(v)\n}\n";

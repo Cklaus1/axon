@@ -827,7 +827,12 @@ fn judge_probes(tag: &str, attacks: &[&str], honest: &[&str]) -> Vec<String> {
     let mut fails = Vec::new();
     for probe in attacks {
         let r = run(probe);
-        if !(refused(&r, NAME) && refused(&r, TAINT_NAME)) {
+        // The closure sealed code called (`run_cb(cb)`) is noted at that call
+        // (R51 S4, veto eval.rs:1460-1468), so the operator's next `cb(0)` is
+        // refused by the closure rule before the name rule is reached; veto's
+        // `closure state the candidate set` row expects only `Refused`.
+        let by_pick = *probe == "via_capture" && refused(&r, "that the candidate picked");
+        if !by_pick && !(refused(&r, NAME) && refused(&r, TAINT_NAME)) {
             fails.push(format!("ATTACK: {probe}: {r:?}"));
         }
     }
