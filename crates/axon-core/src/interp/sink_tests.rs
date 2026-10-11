@@ -719,7 +719,7 @@ fn every_main_only_sink_is_classified() {
         ("bind_let", "seal edge (declared-type cast, refinement edge) and taint touch point (TYP strip by pin)", "bind_let", &["self.cast(&mut v, t,", "self.t_pins(t)", "self.seal_refine(rn)?", "define_var_t::<T>(s, slot, v, vt)"]),
         ("bind_params", "taint touch point: every parameter binds with the frame's taint", "bind_params", &["|_| t,"]),
         ("call_fn_common", "neither: only a plain entry takes it, and no entry of a sealed run is plain", "call_fn_in", &["if !entry.plain"]),
-        ("call_fn_in_general", "taint touch point: the frame's sealed instantiation in a sealed run", "call_fn_in_general", &["self.call_fn_frame::<true>(entry, args, env)"]),
+        ("call_fn_in_general", "seal edge and taint touch point: a sealed run's call goes through call_fn_sealed (the crossing, then the frame's sealed instantiation)", "call_fn_in_general", &["self.call_fn_sealed(entry, args, env)"]),
         ("scalar_return", "neither: a value-shape check; the declared-return cast is the crossing edge", "scalar_return", &["match (entry.ret, &result) {"]),
     ];
     const FORK3: &[&str] = &[

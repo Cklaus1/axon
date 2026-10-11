@@ -5297,9 +5297,7 @@ impl<'p> Interp<'p> {
                     }
                 };
                 let k = as_str(&args[1])?.to_string();
-                if self.seal.active {
-                    self.dict_mutated(&d);
-                }
+                self.dict_mutated(&d);
                 d.borrow_mut().insert(k, args[2].clone());
                 ok!(Value::Unit);
             }
@@ -5331,9 +5329,7 @@ impl<'p> Interp<'p> {
                     }
                 };
                 let k = as_str(&args[1])?.to_string();
-                if self.seal.active {
-                    self.dict_mutated(&d);
-                }
+                self.dict_mutated(&d);
                 ok!(match d.borrow_mut().remove(&k) {
                     Some(v) => Value::Some(Box::new(v)),
                     None => Value::None,
@@ -5485,9 +5481,7 @@ impl<'p> Interp<'p> {
                     }
                 };
                 let k = as_str(&args[1])?.to_string();
-                if self.seal.active {
-                    self.dict_mutated(&d);
-                }
+                self.dict_mutated(&d);
                 let mut m = d.borrow_mut();
                 let cur = m.get(&k).cloned().unwrap_or(Value::Int(0));
                 let n = match cur {
