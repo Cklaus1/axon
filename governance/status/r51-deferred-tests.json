@@ -1,14 +1,14 @@
 {
   "spec": "governance/specs/R51-sealed-engine-unification.md",
   "about": "Tests deferred by R51 S0 (merge with the refuse-all pin). Each carries #[ignore = \"R51 <slice>: <reason>\"]; `slice` is the slice that ports what the test exercises. Every sealed run is refused until S6 flips SEAL_RUNTIME_COMPLETE, so a test whose control is an honest sealed run re-enables at S6 at the earliest; S6 empties this list. crates/axon-core/tests/r51_deferred_tests.rs fails if this list and the ignored set differ.",
-  "count": 199,
+  "count": 211,
   "by_slice": {
     "S0b": 14,
     "S5": 0,
     "S2": 0,
     "S3": 0,
-    "S4": 16,
-    "S6": 169
+    "S4": 5,
+    "S6": 192
   },
   "tests": [
     {
@@ -98,8 +98,8 @@
     {
       "name": "operator_code_never_dispatches_on_an_untyped_read_and_a_pinned_suite_passes",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S4",
-      "reason": "the receiver dispatch rule that reads interp/pin.rs (ported in S5) is not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"
     },
     {
       "name": "sandbox_run_runs_no_function_name_the_candidate_chose",
@@ -147,7 +147,7 @@
       "name": "the_candidate_never_selects_the_operators_code_by_width_or_by_name",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
       "slice": "S6",
-      "reason": "seal edges seal_width, t_check_width and t_check_names ported (S3); needs a live sealed run"
+      "reason": "seal edges seal_width, t_check_width, t_check_names (S3) and the receiver dispatch rule t_check_dispatch ported (S4); needs a live sealed run"
     },
     {
       "name": "the_taint_name_rule_refuses_what_the_static_name_analysis_lets_through",
@@ -585,7 +585,7 @@
       "name": "a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
       "slice": "S6",
-      "reason": "seal edge no_such_fn uniform text ported (S3); needs a live sealed run"
+      "reason": "seal edge no_such_fn uniform text (S3) and the goal-name call edge seal_call ported (S4); needs a live sealed run"
     },
     {
       "name": "a_sealed_frame_cannot_take_an_operator_fn_as_a_value",
@@ -624,12 +624,6 @@
       "reason": "seal edge handler with_frame / handler_may_answer ported (S3); needs a live sealed run"
     },
     {
-      "name": "the_dispatch_rule_off_switch_is_compiled_only_into_unit_tests",
-      "file": "crates/axon-core/tests/dispatch_rule_switch_is_test_only.rs",
-      "slice": "S4",
-      "reason": "the dispatch-rule off switch lives in interp/pin.rs and the receiver dispatch rule, not on this interpreter yet"
-    },
-    {
       "name": "an_operator_closure_the_candidate_picked_is_never_called",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
       "slice": "S4",
@@ -644,20 +638,20 @@
     {
       "name": "an_undetermined_type_position_never_selects_the_operators_impl",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S4",
-      "reason": "the receiver dispatch rule not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"
     },
     {
       "name": "operator_code_never_dispatches_on_a_type_the_candidate_declared",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S4",
-      "reason": "the receiver dispatch rule not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"
     },
     {
       "name": "the_candidate_never_chooses_the_operators_judging_method",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S4",
-      "reason": "the receiver dispatch rule (A86) not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"
     },
     {
       "name": "a_candidate_that_does_not_type_check_is_never_tested",
@@ -1142,20 +1136,20 @@
     {
       "name": "a_mut_operand_is_open_in_the_dispatch_analysis",
       "file": "crates/axon-core/src/interp.rs",
-      "slice": "S4",
-      "reason": "the receiver dispatch rule (seal_dispatch) is not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"
     },
     {
       "name": "the_value_of_a_with_handler_expression_is_undetermined_until_pinned",
       "file": "crates/axon-core/src/interp.rs",
-      "slice": "S4",
-      "reason": "the receiver dispatch rule (seal_dispatch) is not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"
     },
     {
       "name": "a_local_binding_named_like_an_operator_fn_is_not_judged_by_it",
       "file": "crates/axon-core/src/interp.rs",
-      "slice": "S4",
-      "reason": "the receiver dispatch rule (seal_dispatch) is not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the receiver dispatch rule and the sealed-local call (dispatch_named never falls through to a fn by name) ported (S4); needs a live sealed run"
     },
     {
       "name": "a_call_through_a_local_never_resolves_the_name_elsewhere",
@@ -1190,20 +1184,98 @@
     {
       "name": "a_candidates_global_and_a_sibling_fns_site_determine_nothing",
       "file": "crates/axon-core/src/interp.rs",
-      "slice": "S4",
-      "reason": "the receiver dispatch rule (seal_dispatch) is not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"
     },
     {
       "name": "a_verdict_belongs_to_its_own_fn_and_the_candidate_steers_none",
       "file": "crates/axon-core/src/interp.rs",
-      "slice": "S4",
-      "reason": "the receiver dispatch rule and pin owner (pin_fn) are not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the receiver dispatch rule and the closure pin owner (make_closure) ported (S4); needs a live sealed run"
     },
     {
       "name": "a_trait_annotation_does_not_pin_the_runtime_type",
       "file": "crates/axon-core/src/interp.rs",
-      "slice": "S4",
-      "reason": "the receiver dispatch rule (seal_dispatch) is not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"
+    },
+    {
+      "name": "a_determined_receiver_dispatches_and_so_does_an_unambiguous_method",
+      "file": "crates/axon-core/src/interp/tests_v022_s4.rs",
+      "slice": "S6",
+      "reason": "the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"
+    },
+    {
+      "name": "a_type_the_candidate_declared_does_not_determine_the_receiver",
+      "file": "crates/axon-core/src/interp/tests_v022_s4.rs",
+      "slice": "S6",
+      "reason": "the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"
+    },
+    {
+      "name": "operator_code_never_dispatches_on_a_value_from_any_untyped_position",
+      "file": "crates/axon-core/src/interp/tests_v022_s4.rs",
+      "slice": "S6",
+      "reason": "the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"
+    },
+    {
+      "name": "operator_code_never_dispatches_on_a_value_read_untyped_from_a_dict",
+      "file": "crates/axon-core/src/interp/tests_v022_s4.rs",
+      "slice": "S6",
+      "reason": "the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"
+    },
+    {
+      "name": "interpolation_and_comparison_of_an_untyped_read_select_no_operator_impl",
+      "file": "crates/axon-core/src/interp/tests_v022_s4.rs",
+      "slice": "S6",
+      "reason": "the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"
+    },
+    {
+      "name": "an_operator_method_named_like_a_channel_method_does_not_determine_a_recv",
+      "file": "crates/axon-core/src/interp/tests_v022_s4.rs",
+      "slice": "S6",
+      "reason": "the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"
+    },
+    {
+      "name": "operator_unary_arithmetic_never_runs_at_a_width_the_candidate_chose",
+      "file": "crates/axon-core/src/interp/tests_v022_s4.rs",
+      "slice": "S6",
+      "reason": "seal edge seal_width_unary ported (S3) under the dispatch-rule switch (S4); needs a live sealed run"
+    },
+    {
+      "name": "operator_only_polymorphism_dispatches_and_a_candidate_influenced_one_does_not",
+      "file": "crates/axon-core/src/interp/tests_v022_s4.rs",
+      "slice": "S6",
+      "reason": "the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"
+    },
+    {
+      "name": "a_candidates_method_never_runs_under_the_operators_method_name",
+      "file": "crates/axon-core/src/interp/tests_v022_s4.rs",
+      "slice": "S6",
+      "reason": "seal edge seal_method ported (S3) under the dispatch-rule switch (S4); needs a live sealed run"
+    },
+    {
+      "name": "a_handler_arm_dispatch_runs_under_the_installers_pin_owner",
+      "file": "crates/axon-core/src/interp/tests_v022_s4.rs",
+      "slice": "S6",
+      "reason": "handler arm pin owner (S3) and the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"
+    },
+    {
+      "name": "a_handler_arm_replay_runs_under_the_installers_pin_owner",
+      "file": "crates/axon-core/src/interp/tests_v022_s4.rs",
+      "slice": "S6",
+      "reason": "handler arm pin owner (S3) and the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"
+    },
+    {
+      "name": "a_handler_arm_arithmetic_runs_under_the_installers_pin_owner",
+      "file": "crates/axon-core/src/interp/tests_v022_s4.rs",
+      "slice": "S6",
+      "reason": "handler arm pin owner (S3) and the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"
+    },
+    {
+      "name": "a_closure_made_in_a_handler_arm_is_judged_by_the_installing_fn",
+      "file": "crates/axon-core/src/interp/tests_v022_s4.rs",
+      "slice": "S6",
+      "reason": "closure pin owner (make_closure, S4) and the receiver dispatch rule ported (S4); needs a live sealed run"
     }
   ]
 }

@@ -8375,7 +8375,7 @@ fn main() { }
     /// The dispatch rule sees a `&mut` operand as OPEN: what the callee left in
     /// it was not chosen by the operator. The honest suite re-pins.
     #[test]
-    #[ignore = "R51 S4: the receiver dispatch rule (seal_dispatch) is not ported; sealed control refused until S6"]
+    #[ignore = "R51 S6: the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
     fn a_mut_operand_is_open_in_the_dispatch_analysis() {
         let unpinned = "@[test]\nfn t() {\n    let mut a = [1, 2, 3]\n    fill(&mut a)\n    assert(a[0].ok())\n}\n";
         let repinned = "@[test]\nfn t() {\n    let mut a = [1, 2, 3]\n    fill(&mut a)\n    let b: [i64] = a\n    assert(b[0].ok())\n}\n";
@@ -8451,7 +8451,7 @@ fn main() { }
     /// is refused until it is pinned. Dispatch on determined values INSIDE a
     /// handler body or arm is unaffected.
     #[test]
-    #[ignore = "R51 S4: the receiver dispatch rule (seal_dispatch) is not ported; sealed control refused until S6"]
+    #[ignore = "R51 S6: the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
     fn the_value_of_a_with_handler_expression_is_undetermined_until_pinned() {
         let h = "with handler { on IO(p) => resume(Ok(\"x\")) } {\n        9\n    }";
         let run = |suite: String| judged_on("r9-wh", &suite, "fn mk() -> i64 { 9 }\n");
@@ -8477,7 +8477,7 @@ fn main() { }
 
     /// B2: a LOCAL binding named like an operator fn is not that fn.
     #[test]
-    #[ignore = "R51 S4: the receiver dispatch rule (seal_dispatch) is not ported; sealed control refused until S6"]
+    #[ignore = "R51 S6: the receiver dispatch rule and the sealed-local call (dispatch_named never falls through to a fn by name) ported (S4); needs a live sealed run"]
     fn a_local_binding_named_like_an_operator_fn_is_not_judged_by_it() {
         let suite = "fn f() -> i64 { 5 }\n@[test]\nfn t() {\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"f\") {\n        Some(f) => assert(f().ok())\n        None => assert(false)\n    }\n}\n";
         r7_refused(
@@ -8710,7 +8710,7 @@ fn main() { }
     /// A candidate's module-level `let` is the candidate's value; the verdict
     /// of one fn's site never decides another's (the key carries the owner).
     #[test]
-    #[ignore = "R51 S4: the receiver dispatch rule (seal_dispatch) is not ported; sealed control refused until S6"]
+    #[ignore = "R51 S6: the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
     fn a_candidates_global_and_a_sibling_fns_site_determine_nothing() {
         r7_refused(
             "a candidate global `let X = 4 as u8`",
@@ -8728,7 +8728,7 @@ fn main() { }
     /// Adjacent (a)/(b): a verdict belongs to its own fn, and a candidate's
     /// methods never steer an operator site.
     #[test]
-    #[ignore = "R51 S4: the receiver dispatch rule and pin owner (pin_fn) are not ported; sealed control refused until S6"]
+    #[ignore = "R51 S6: the receiver dispatch rule and the closure pin owner (make_closure) ported (S4); needs a live sealed run"]
     fn a_verdict_belongs_to_its_own_fn_and_the_candidate_steers_none() {
         // An unrelated, never-called fn with `|p| p.ok()` does not refuse an
         // honest fully annotated `check(p: i64)`.
@@ -8753,7 +8753,7 @@ fn main() { }
     /// B3: a trait name, `dyn`, `Option<Trait>`, `[Trait]` and a fn type
     /// returning one do not constrain the runtime type.
     #[test]
-    #[ignore = "R51 S4: the receiver dispatch rule (seal_dispatch) is not ported; sealed control refused until S6"]
+    #[ignore = "R51 S6: the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
     fn a_trait_annotation_does_not_pin_the_runtime_type() {
         let cand = "fn solve(d: Dict) { dict_set(d, \"k\", 4 as u8) }\n";
         let read = |ann: &str, use_: &str| {
