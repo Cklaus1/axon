@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 1c3af54aa0c361f081270562d7fe6898e7bb1613
+generated-at: 3e05753244aa74ab5e38da3d948a66f91a3711c4
 
-`git diff --numstat 31413ca7..1c3af54a -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..3e057532 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -49,14 +49,14 @@ generated-at: 1c3af54aa0c361f081270562d7fe6898e7bb1613
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 4895 | 1448 |
+| `crates/axon-core/src/interp.rs` | 4910 | 1448 |
 | `crates/axon-core/src/interp/builtins.rs` | 672 | 512 |
 | `crates/axon-core/src/interp/conform.rs` | 1800 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1354 | 0 |
 | `crates/axon-core/src/interp/crossing_tests.rs` | 417 | 0 |
 | `crates/axon-core/src/interp/dispatch_tests.rs` | 615 | 0 |
 | `crates/axon-core/src/interp/env.rs` | 1181 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 2026 | 607 |
+| `crates/axon-core/src/interp/eval.rs` | 2029 | 607 |
 | `crates/axon-core/src/interp/goal.rs` | 88 | 42 |
 | `crates/axon-core/src/interp/kernel_tests.rs` | 336 | 0 |
 | `crates/axon-core/src/interp/pick_tests.rs` | 394 | 0 |
@@ -67,12 +67,12 @@ generated-at: 1c3af54aa0c361f081270562d7fe6898e7bb1613
 | `crates/axon-core/src/interp/taint.rs` | 1653 | 0 |
 | `crates/axon-core/src/interp/taint_tests.rs` | 4170 | 0 |
 | `crates/axon-core/src/interp/tests_v022_a.rs` | 1184 | 0 |
-| `crates/axon-core/src/interp/tests_v022_b.rs` | 1987 | 0 |
+| `crates/axon-core/src/interp/tests_v022_b.rs` | 2029 | 0 |
 | `crates/axon-core/src/interp/tests_v022_c.rs` | 152 | 0 |
 | `crates/axon-core/src/interp/tests_v022_s4.rs` | 600 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 506 | 514 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1698 | 0 |
-| `crates/axon-core/src/interp/vm/mod.rs` | 3460 | 0 |
+| `crates/axon-core/src/interp/vm/mod.rs` | 3469 | 0 |
 | `crates/axon-core/src/interp/vm/pure.rs` | 964 | 0 |
 | `crates/axon-core/src/interp/vm/tests.rs` | 1796 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
@@ -86,9 +86,9 @@ generated-at: 1c3af54aa0c361f081270562d7fe6898e7bb1613
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 45898 | 5256 |
+| total | 45967 | 5256 |
 
-`git log --reverse 31413ca7..1c3af54a -- crates/axon-core/src`:
+`git log --reverse 31413ca7..3e057532 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -315,7 +315,8 @@ generated-at: 1c3af54aa0c361f081270562d7fe6898e7bb1613
 | 9ac6de6c | R51 S6.2 | TEST-ONLY: interp/vm/tests.rs case for Uncertain source_tag through CallFastLocalInt (VM == tree); fixture r51_s0b/uncertain_source_tag.ax loop and cli_run expectation; vm_parity.sh axon test --json leg over r51_s0b/test_*.ax; no behaviour change |
 | 7bc0bfd4 | R51 S6.2 | TEST-ONLY: interp/taint_tests.rs T8.2 positional probes carry a scalar the candidate chose (idx()) so only the binding's taint carries it; the &mut attack reads the clean neighbour; no behaviour change |
 | 1c3af54a | R51 S6.2 merge | joins r51/s6tests (bff841fe..7bc0bfd4: T8.2/8.3/8.5/8.6 probes and controls, T3 drift sweeps, T9 call-fast Uncertain + vm_parity test leg) onto r51/int 58a8a864 (S6 T7 rows, T6 legs); only this table and the note conflicted, resolved by keeping both sides; no change beyond the commits it joins |
-| 223 commits | | |
+| 3e057532 | R51 S6 T7 | INTERPRETER (sealed runs only, v0.22 C9 round 4b amendment 60; M921): coerce_to_sized::<SEALED> leaves a SizedInt of another width unchanged at a sealed let (T), parameter (bind_params_sealed) and record field (seal.active), so the declared-type cast refuses it as a runtime type confusion instead of the value being re-tagged to the declared width before the cast sees it; unsealed runs and the VM (VM_SEALED = false) re-tag as before, no unsealed behaviour change. Attack test a_sealed_let_param_or_field_never_retags_another_fixed_width (interp/tests_v022_b.rs) with honest controls; mutation rows M3230/M3231/M3256 new text and M1996 marker (scripts only) |
+| 224 commits | | |
 <!-- END MECHANICAL -->
 
 

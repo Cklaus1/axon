@@ -260,6 +260,7 @@ THEMES = {
     "9ac6de6c": ("R51 S6.2", "TEST-ONLY: interp/vm/tests.rs case for Uncertain source_tag through CallFastLocalInt (VM == tree); fixture r51_s0b/uncertain_source_tag.ax loop and cli_run expectation; vm_parity.sh axon test --json leg over r51_s0b/test_*.ax; no behaviour change"),
     "7bc0bfd4": ("R51 S6.2", "TEST-ONLY: interp/taint_tests.rs T8.2 positional probes carry a scalar the candidate chose (idx()) so only the binding's taint carries it; the &mut attack reads the clean neighbour; no behaviour change"),
     "1c3af54a": ("R51 S6.2 merge", "joins r51/s6tests (bff841fe..7bc0bfd4: T8.2/8.3/8.5/8.6 probes and controls, T3 drift sweeps, T9 call-fast Uncertain + vm_parity test leg) onto r51/int 58a8a864 (S6 T7 rows, T6 legs); only this table and the note conflicted, resolved by keeping both sides; no change beyond the commits it joins"),
+    "3e057532": ("R51 S6 T7", "INTERPRETER (sealed runs only, v0.22 C9 round 4b amendment 60; M921): coerce_to_sized::<SEALED> leaves a SizedInt of another width unchanged at a sealed let (T), parameter (bind_params_sealed) and record field (seal.active), so the declared-type cast refuses it as a runtime type confusion instead of the value being re-tagged to the declared width before the cast sees it; unsealed runs and the VM (VM_SEALED = false) re-tag as before, no unsealed behaviour change. Attack test a_sealed_let_param_or_field_never_retags_another_fixed_width (interp/tests_v022_b.rs) with honest controls; mutation rows M3230/M3231/M3256 new text and M1996 marker (scripts only)"),
 }
 
 
