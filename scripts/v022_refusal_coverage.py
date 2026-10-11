@@ -804,7 +804,7 @@ EXEMPT += [
      "construction copies and casts what it nests; measured 2,000/4,000/8,000 levels of a "
      "recursive struct at 1.7s/7.8s/78s), and a declared type is that deep only through "
      "recursion the value itself must supply"),
-    (CF, "                    if ps.len() != params.len() {",
+    (CF, "                    if arity != params.len() {",
      "NO CONSEQUENCE: a closure of another arity panics at its first call (call_closure checks "
      "the count) and dispatches on `fn` whatever its arity, so it selects no other code"),
 ]
@@ -2233,7 +2233,7 @@ EXEMPT += [
      "value). Its one caller is that fast path, whose value read is `global_ref` (M2472 mutates it to a raw "
      "read); when it answers false the generic path evaluates the receiver through the identifier arm, "
      "which reads through `global_ref` too (M2470). Neither answer reaches a value without the edge"),
-    (CF, "            let Some(vd) = ed.variants.iter().find(|x| x.name == *variant) else {",
+    (CF, "            let Some(vd) = ed.variants.iter().find(|x| *x.name == *variant) else {",
      "NOTHING TO ADMIT: the declared enum has no such variant, so there are no declared field types to "
      "cast the payload's fields at (the casts below read `vd`)"),
     (CF, "            tparams: (!generics.is_empty()).then(|| Rc::new(generics.clone())),",
