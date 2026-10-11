@@ -36763,12 +36763,18 @@ fn vm_bulk_counts(trace: &str, name: &str) -> Option<(usize, usize)> {
     Some(parsed.unwrap_or_else(|| panic!("malformed `vm: bulk` line `{rest}`:\n{trace}")))
 }
 
+/// What [`vm_bulk_case`] returns: exit code, stdout, stderr, the body's
+/// `vm: pure` counts and its `vm: bulk` counts.
+type BulkCase = (
+    Option<i32>,
+    String,
+    String,
+    (usize, usize),
+    Option<(usize, usize)>,
+);
+
 /// R50 S13: [`vm_pure_case`], then body `name`'s `vm: bulk` counts.
-fn vm_bulk_case(
-    tag: &str,
-    src: &str,
-    name: &str,
-) -> (Option<i32>, String, String, (usize, usize), Option<(usize, usize)>) {
+fn vm_bulk_case(tag: &str, src: &str, name: &str) -> BulkCase {
     let (code, stdout, stderr, counts) = vm_pure_case(tag, src, &[(name, 0)], name);
     let traced = vm_run(tag, src, "vm", true);
     let err = String::from_utf8_lossy(&traced.stderr).into_owned();
@@ -36787,6 +36793,349 @@ fn vm_bulk_sieve_loops() {
     assert_eq!((code, stdout.as_str()), (Some(0), "168\n"), "{stderr}");
     assert_eq!(counts, (1, 2));
     assert_eq!(bulk, Some((1, 1)));
+}
+
+/// R50 S13: [`vm_bulk_case`] on `src`, whose body `name` must hold `bulk`
+/// bulk loops, asserting the exit code and stdout (the tree's at `0f3b182b`,
+/// which the spec gates against) and, for a panic, its message.
+fn vm_bulk_expect(
+    tag: &str,
+    src: &str,
+    name: &str,
+    bulk: (usize, usize),
+    code: i32,
+    stdout: &str,
+    panic: &str,
+) {
+    let (got, out, err, _, b) = vm_bulk_case(tag, src, name);
+    assert_eq!((got, out.as_str()), (Some(code), stdout), "[{tag}] {err}");
+    assert_eq!(b, Some(bulk), "[{tag}]");
+    if panic.is_empty() {
+        assert_eq!(err, "", "[{tag}]");
+    } else {
+        assert_eq!(err, format!("axon: panic: {panic}\n"), "[{tag}]");
+    }
+}
+
+/// R50 S13: bulk fills that run: each packed kind with `b` below the last
+/// index, a fill ending at the last element, a `<` fill whose `b0 - j0` is a
+/// multiple of `s0`, `j` after `<`, `<=` and zero-iteration loops, and a
+/// shared array whose other binding keeps its elements.
+#[test]
+fn vm_bulk_fill_runs() {
+    let src = r#"fn main() -> i64 {
+    let fb = arr_repeat(true, 10)
+    let j = 2
+    let lim = 6
+    while j <= lim {
+        fb[j] = false
+        j = j + 3
+    }
+    println("bools {fb} j={j}")
+    let fi = arr_range(0, 10)
+    let m5 = 0 - 5
+    let k = 1
+    while k < 7 {
+        fi[k] = m5
+        k = k + 2
+    }
+    println("ints {fi} k={k}")
+    let ff = arr_repeat(1.5, 9)
+    let f = 0
+    let four = 4
+    while f <= 4 {
+        ff[f] = 0.25
+        f = f + four
+    }
+    println("floats {ff} f={f}")
+    let fz = arr_repeat(false, 10)
+    let z = 1
+    while z <= 9 {
+        fz[z] = true
+        z = z + 4
+    }
+    println("last {fz} z={z}")
+    let fl = arr_range(0, 8)
+    let x = 1
+    let top = 8
+    while x < top {
+        fl[x] = 0
+        x = x + 3
+    }
+    println("lt {fl} x={x}")
+    let e1 = 5
+    while e1 < 5 {
+        fi[e1] = 99
+        e1 = e1 + 1
+    }
+    let e2 = 7
+    while e2 <= 6 {
+        fi[e2] = 99
+        e2 = e2 + 1
+    }
+    println("none {fi} e1={e1} e2={e2}")
+    let sh = arr_repeat(7, 6)
+    let keep = sh
+    let w = 0
+    while w < 6 {
+        sh[w] = 0
+        w = w + 1
+    }
+    println("shared {sh} {keep} w={w}")
+    0
+}
+"#;
+    let want = "bools [true, true, false, true, true, false, true, true, true, true] j=8\n\
+                ints [0, -5, 2, -5, 4, -5, 6, 7, 8, 9] k=7\n\
+                floats [0.25, 1.5, 1.5, 1.5, 0.25, 1.5, 1.5, 1.5, 1.5] f=8\n\
+                last [false, true, false, false, false, true, false, false, false, true] z=13\n\
+                lt [0, 0, 2, 3, 0, 5, 6, 0] x=10\n\
+                none [0, -5, 2, -5, 4, -5, 6, 7, 8, 9] e1=5 e2=7\n\
+                shared [0, 0, 0, 0, 0, 0] [7, 7, 7, 7, 7, 7] w=6\n";
+    vm_bulk_expect("bulk_fill_runs", src, "main", (8, 0), 0, want, "");
+}
+
+/// R50 S13: fills the bulk path declines, each giving the tree's panic: one
+/// past the last index, a negative start, a zero step from `j0 = len(a)`
+/// with `b0 > j0` (a bulk path dividing by `s0` first would crash), and a
+/// `j + s` overflow in the last iteration.
+#[test]
+fn vm_bulk_fill_bounds_and_declines() {
+    let cases: [(&str, &str, &str, &str, &str); 4] = [
+        (
+            "past",
+            "let a = arr_repeat(0, 10)\n    let j = 1\n    let b = 10",
+            "3",
+            "7",
+            "index 10 out of bounds (len 10)",
+        ),
+        (
+            "negative",
+            "let a = arr_repeat(0, 10)\n    let j = 0 - 2\n    let b = 4",
+            "2",
+            "7",
+            "negative index -2",
+        ),
+        (
+            "zero_step",
+            "let a = arr_repeat(false, 10)\n    let j = len(a)\n    let b = 20",
+            "0",
+            "true",
+            "index 10 out of bounds (len 10)",
+        ),
+        (
+            "overflow",
+            "let a = arr_repeat(1.0, 10)\n    let j = 5\n    let b = 9",
+            "9223372036854775806",
+            "0.0",
+            "integer overflow: 5 + 9223372036854775806 exceeds i64",
+        ),
+    ];
+    for (tag, init, step, value, panic) in cases {
+        let src = format!(
+            "fn main() -> i64 {{\n    {init}\n    let s = {step}\n    while j <= b {{\n        a[j] = {value}\n        j = j + s\n    }}\n    println(\"{{a}} j={{j}}\")\n    0\n}}\n"
+        );
+        vm_bulk_expect(
+            &format!("bulk_fill_{tag}"),
+            &src,
+            "main",
+            (1, 0),
+            101,
+            "",
+            panic,
+        );
+    }
+}
+
+/// R50 S13: a fill whose value is not the packed array's kind (an `Int` into
+/// `Bools`, through an untyped lambda the checker cannot see past) and a fill
+/// of a `Vals` array decline, and the loops give the tree's output.
+#[test]
+fn vm_bulk_fill_other_kind_declines() {
+    let src = r#"fn main() -> i64 {
+    let id = |x| x
+    let one = 1
+    let f = id(arr_repeat(true, 6))
+    let j = 0
+    while j < 6 {
+        f[j] = one
+        j = j + 2
+    }
+    println("{f} j={j}")
+    let v = [true, true, true, true]
+    let no = false
+    let k = 1
+    while k < 4 {
+        v[k] = no
+        k = k + 1
+    }
+    println("{v} k={k}")
+    0
+}
+"#;
+    let want = "[1, true, 1, true, 1, true] j=6\n[true, false, false, false] k=4\n";
+    vm_bulk_expect("bulk_fill_other_kind", src, "main", (2, 0), 0, want, "");
+}
+
+/// R50 S13: bulk counts that run: sub-ranges (`lo > 0`, `hi < len - 1`) for
+/// `..` and `..=`, lengths 1 to 1,001 with a `true` in the last partial
+/// chunk, a range starting mid-chunk, and a negative `c`.
+#[test]
+fn vm_bulk_count_runs() {
+    let src = r#"fn tail(len: i64) -> i64 {
+    let a = arr_repeat(false, len)
+    let i = 1
+    while i < len {
+        a[i] = true
+        i = i + 3
+    }
+    a[len - 1] = true
+    let n = 0
+    for k in 0..len {
+        if a[k] { n = n + 1 }
+    }
+    n
+}
+
+fn main() -> i64 {
+    let a = arr_repeat(true, 20)
+    a[2] = false
+    a[3] = false
+    a[9] = false
+    a[15] = false
+    a[16] = false
+    let n = 0
+    for k in 3..15 {
+        if a[k] { n = n + 1 }
+    }
+    let m = 100
+    for k in 3..=15 {
+        if a[k] { m = m + 2 }
+    }
+    println("sub n={n} m={m}")
+    println("tails {tail(1)} {tail(7)} {tail(8)} {tail(9)} {tail(63)} {tail(65)} {tail(1001)}")
+    let b = arr_repeat(false, 1001)
+    let i = 13
+    while i < 1001 {
+        b[i] = true
+        i = i + 5
+    }
+    let c = 0
+    for k in 13..1001 {
+        if b[k] { c = c + 1 }
+    }
+    let d = 0
+    for k in 14..=998 {
+        if b[k] { d = d + 1 }
+    }
+    let neg = 0 - 3
+    let e = 7
+    for k in 0..1001 {
+        if b[k] { e = e + neg }
+    }
+    println("mid c={c} d={d} neg e={e}")
+    0
+}
+"#;
+    let want = "sub n=10 m=120\ntails 1 3 3 4 22 22 334\nmid c=198 d=197 neg e=-587\n";
+    vm_bulk_expect("bulk_count_runs", src, "main", (1, 5), 0, want, "");
+    let traced = vm_run("bulk_count_runs", src, "vm", true);
+    let err = String::from_utf8_lossy(&traced.stderr);
+    assert_eq!(vm_bulk_counts(&err, "tail"), Some((1, 1)), "{err}");
+}
+
+/// R50 S13: counts the bulk path declines: an `n + c` overflow, `c = 2^62`
+/// over four `true`s (the sum wraps to 0 in `i64`, so the check is 128-bit),
+/// an out-of-bounds `hi`, and a `Vals` array.
+#[test]
+fn vm_bulk_count_declines() {
+    let cases: [(&str, &str, &str, &str, i32, &str, &str); 4] = [
+        (
+            "overflow",
+            "arr_repeat(true, 4)",
+            "9223372036854775805",
+            "0..4",
+            101,
+            "",
+            "integer overflow: 9223372036854775807 + 1 exceeds i64",
+        ),
+        (
+            "wrap",
+            "arr_repeat(true, 4)",
+            "0",
+            "0..4",
+            101,
+            "",
+            "integer overflow: 4611686018427387904 + 4611686018427387904 exceeds i64",
+        ),
+        (
+            "out_of_bounds",
+            "arr_repeat(true, 4)",
+            "0",
+            "1..5",
+            101,
+            "",
+            "index 4 out of bounds (len 4)",
+        ),
+        (
+            "vals",
+            "[true, false, true, true]",
+            "0",
+            "0..4",
+            0,
+            "n=3\n",
+            "",
+        ),
+    ];
+    for (tag, arr, n0, range, code, stdout, panic) in cases {
+        let c = if tag == "wrap" {
+            "4611686018427387904"
+        } else {
+            "1"
+        };
+        let src = format!(
+            "fn main() -> i64 {{\n    let f = {arr}\n    let c = {c}\n    let n = {n0}\n    for k in {range} {{\n        if f[k] {{ n = n + c }}\n    }}\n    println(\"n={{n}}\")\n    0\n}}\n"
+        );
+        vm_bulk_expect(
+            &format!("bulk_count_{tag}"),
+            &src,
+            "main",
+            (0, 1),
+            code,
+            stdout,
+            panic,
+        );
+    }
+}
+
+/// R50 S13: `tests/fixtures/packed/ops.ax` applies every array-taking
+/// builtin and array operation to packed arrays and to literal arrays of the
+/// same elements. Each `P <label> ..` line equals the `L <label> ..` line
+/// after it, both engines agree, and the whole stdout is `ops.out`, the
+/// tree's output at `0f3b182b` (S12).
+#[test]
+fn packed_arrays_match_literal_arrays() {
+    let src = std::fs::read_to_string(fixture("packed/ops.ax")).expect("read ops.ax");
+    let want = std::fs::read_to_string(fixture("packed/ops.out")).expect("read ops.out");
+    let (code, stdout, stderr) = vm_same_both_engines("packed_ops", &src);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stderr, "");
+    assert_eq!(stdout, want);
+    let lines: Vec<&str> = stdout.lines().collect();
+    let mut pairs = 0;
+    for (i, l) in lines.iter().enumerate() {
+        if let Some(p) = l.strip_prefix("P ") {
+            let next = lines.get(i + 1).copied().unwrap_or("");
+            assert_eq!(
+                next.strip_prefix("L "),
+                Some(p),
+                "line {}: `{l}` then `{next}`",
+                i + 1
+            );
+            pairs += 1;
+        }
+    }
+    assert!(pairs > 150, "only {pairs} P/L pairs");
 }
 
 // ── R50 S5: call costs (`vm_fastcall_`) ─────────────────────────────────────

@@ -1021,7 +1021,7 @@ impl<'p> Interp<'p> {
                 Value::Array(items) => {
                     // Only `[i64]` is representable at the boundary.
                     let mut ints = Vec::with_capacity(items.len());
-                    for it in items.iter() {
+                    for it in items.vals().iter() {
                         match it {
                             Value::Int(n) => ints.push(*n),
                             Value::SizedInt { val, .. } => ints.push(*val),
@@ -1687,7 +1687,7 @@ impl<'p> Interp<'p> {
         match (op, slot, y) {
             (AppendOp::Push, Value::Array(xs), y) => Rc::make_mut(xs).push(y),
             (AppendOp::Concat | AppendOp::Add, Value::Array(xs), Value::Array(ys)) => {
-                Rc::make_mut(xs).extend(ys.iter().cloned())
+                Rc::make_mut(xs).extend(ys.iter())
             }
             (AppendOp::Add, Value::Str(s), Value::Str(t)) => Rc::make_mut(s).push_str(&t),
             // An operand of another type (`Uncertain`, a type error): the
@@ -1732,7 +1732,7 @@ impl<'p> Interp<'p> {
     /// (`strict_int`).
     pub(super) fn index_in_place(&self, s: Sym, slot: u32, name: &str, idx: i64, env: &Env) -> R {
         match env.get_var(s, slot).or_else(|| self.globals.get(&s)) {
-            Some(Value::Array(items)) => items.get(idx as usize).cloned().ok_or_else(|| {
+            Some(Value::Array(items)) => items.get(idx as usize).ok_or_else(|| {
                 Flow::Panic(format!("index {idx} out of bounds (len {})", items.len()).into())
             }),
             Some(other) => panic(format!("indexing non-array ({})", other.type_name())),
@@ -1986,7 +1986,7 @@ impl<'p> Interp<'p> {
                         if let Some(Value::Array(probs)) = s.fields.named("probs") {
                             let ki = k as i64;
                             if ki >= 0 && (ki as usize) < probs.len() {
-                                if let Value::Float(p) = probs[ki as usize] {
+                                if let Some(Value::Float(p)) = probs.get(ki as usize) {
                                     return Some(p);
                                 }
                             }
@@ -2101,7 +2101,7 @@ fn eval_dist_cdf(dist: &Value, k: f64) -> Option<f64> {
 /// path, after the index went through `strict_int`).
 pub(super) fn index_value(arr: Value, idx: i64) -> R {
     match arr {
-        Value::Array(items) => items.get(idx as usize).cloned().ok_or_else(|| {
+        Value::Array(items) => items.get(idx as usize).ok_or_else(|| {
             Flow::Panic(format!("index {idx} out of bounds (len {})", items.len()).into())
         }),
         other => panic(format!("indexing non-array ({})", other.type_name())),
@@ -2131,7 +2131,7 @@ fn field_of_tuple(v: &Value, field: &str) -> R {
             let i: usize = field.parse().map_err(|_| {
                 Flow::Panic(format!("tuple access expects a numeric index, got `.{field}`").into())
             })?;
-            items.get(i).cloned().ok_or_else(|| {
+            items.get(i).ok_or_else(|| {
                 Flow::Panic(format!("tuple index {i} out of bounds (len {})", items.len()).into())
             })
         }
@@ -2154,7 +2154,7 @@ fn get_f64_array_field(fields: &Fields, key: &str) -> Option<Vec<f64>> {
     match fields.named(key)? {
         Value::Array(items) => {
             let mut out = Vec::with_capacity(items.len());
-            for v in items.iter() {
+            for v in items.vals().iter() {
                 match v {
                     Value::Float(f) => out.push(*f),
                     Value::Int(n) => out.push(*n as f64),

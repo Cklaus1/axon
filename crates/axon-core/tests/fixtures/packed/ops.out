@@ -1,0 +1,366 @@
+bools
+P len 6
+L len 6
+P eq true true
+L eq true true
+P read true false
+L read true false
+P display [true, false, true, true, false, true]
+L display [true, false, true, true, false, true]
+P arr_all false
+L arr_all false
+P arr_any true
+L arr_any true
+P arr_count_if 4
+L arr_count_if 4
+P arr_filter [true, true, true, true]
+L arr_filter [true, true, true, true]
+P arr_find Some(false)
+L arr_find Some(false)
+P arr_index_of Some(1)
+L arr_index_of Some(1)
+P arr_contains true
+L arr_contains true
+P arr_take [true, false]
+L arr_take [true, false]
+P arr_drop [true, true, false, true]
+L arr_drop [true, true, false, true]
+P arr_take_while [true]
+L arr_take_while [true]
+P arr_drop_while [false, true, true, false, true]
+L arr_drop_while [false, true, true, false, true]
+P arr_reverse [true, false, true, true, false, true]
+L arr_reverse [true, false, true, true, false, true]
+P arr_chunk [[true, false, true, true], [false, true]]
+L arr_chunk [[true, false, true, true], [false, true]]
+P arr_concat [true, false, true, true, false, true, true, false, true, true, false, true]
+L arr_concat [true, false, true, true, false, true, true, false, true, true, false, true]
+P arr_flatten [true, false, true, true, false, true, true, false, true, true, false, true]
+L arr_flatten [true, false, true, true, false, true, true, false, true, true, false, true]
+P arr_enumerate [(0, true), (1, false), (2, true), (3, true), (4, false), (5, true)]
+L arr_enumerate [(0, true), (1, false), (2, true), (3, true), (4, false), (5, true)]
+P arr_map [false, true, false, false, true, false]
+L arr_map [false, true, false, false, true, false]
+P arr_fold 45
+L arr_fold 45
+P arr_partition ([true, true, true, true], [false, false])
+L arr_partition ([true, true, true, true], [false, false])
+P arr_unique [true, false]
+L arr_unique [true, false]
+P arr_zip [(true, true), (false, false), (true, true), (true, true), (false, false), (true, true)]
+L arr_zip [(true, true), (false, false), (true, true), (true, true), (false, false), (true, true)]
+P arr_zip_with [true, false, true, true, false, true]
+L arr_zip_with [true, false, true, true, false, true]
+P arr_sort_by [false, false, true, true, true, true]
+L arr_sort_by [false, false, true, true, true, true]
+P arr_group_by {false: [false, false], true: [true, true, true, true]}
+L arr_group_by {false: [false, false], true: [true, true, true, true]}
+P arr_sum_by 14
+L arr_sum_by 14
+P arr_sum_by_f64 2.5
+L arr_sum_by_f64 2.5
+P arr_max_by true
+L arr_max_by true
+P arr_min_by false
+L arr_min_by false
+P arr_push [true, false, true, true, false, true, false]
+L arr_push [true, false, true, true, false, true, false]
+ints range
+P len 6
+L len 6
+P eq true true
+L eq true true
+P read 1 5
+L read 1 5
+P display [0, 1, 2, 3, 4, 5]
+L display [0, 1, 2, 3, 4, 5]
+P arr_sum_i64 15
+L arr_sum_i64 15
+P arr_mean_i64 2.5
+L arr_mean_i64 2.5
+P arr_max_i64 5
+L arr_max_i64 5
+P arr_min_i64 0
+L arr_min_i64 0
+P arr_argmax_i64 5
+L arr_argmax_i64 5
+P arr_argmin_i64 0
+L arr_argmin_i64 0
+P arr_all true
+L arr_all true
+P arr_any true
+L arr_any true
+P arr_count_if 3
+L arr_count_if 3
+P arr_filter [1, 3, 5]
+L arr_filter [1, 3, 5]
+P arr_find Some(3)
+L arr_find Some(3)
+P arr_index_of Some(3)
+L arr_index_of Some(3)
+P arr_contains true false
+L arr_contains true false
+P arr_take [0, 1, 2]
+L arr_take [0, 1, 2]
+P arr_drop [3, 4, 5]
+L arr_drop [3, 4, 5]
+P arr_take_while [0, 1, 2]
+L arr_take_while [0, 1, 2]
+P arr_drop_while [3, 4, 5]
+L arr_drop_while [3, 4, 5]
+P arr_reverse [5, 4, 3, 2, 1, 0]
+L arr_reverse [5, 4, 3, 2, 1, 0]
+P arr_chunk [[0, 1, 2, 3], [4, 5]]
+L arr_chunk [[0, 1, 2, 3], [4, 5]]
+P arr_concat [0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5]
+L arr_concat [0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5]
+P arr_flatten [0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5]
+L arr_flatten [0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5]
+P arr_enumerate [(0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)]
+L arr_enumerate [(0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)]
+P arr_map [0, 10, 20, 30, 40, 50]
+L arr_map [0, 10, 20, 30, 40, 50]
+P arr_fold 15
+L arr_fold 15
+P arr_fold_leaf 908
+L arr_fold_leaf 908
+P arr_partition ([0, 1, 2], [3, 4, 5])
+L arr_partition ([0, 1, 2], [3, 4, 5])
+P arr_unique [0, 1, 2, 3, 4, 5]
+L arr_unique [0, 1, 2, 3, 4, 5]
+P arr_zip [(0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)]
+L arr_zip [(0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)]
+P arr_zip_with [0, 1, 4, 9, 16, 25]
+L arr_zip_with [0, 1, 4, 9, 16, 25]
+P arr_sort_by [5, 4, 3, 2, 1, 0]
+L arr_sort_by [5, 4, 3, 2, 1, 0]
+P arr_group_by {even: [0, 2, 4], odd: [1, 3, 5]}
+L arr_group_by {even: [0, 2, 4], odd: [1, 3, 5]}
+P arr_sum_by 55
+L arr_sum_by 55
+P arr_sum_by_f64 3
+L arr_sum_by_f64 3
+P arr_max_by 3
+L arr_max_by 3
+P arr_min_by 4
+L arr_min_by 4
+P json_arr_from_i64 [0,1,2,3,4,5]
+L json_arr_from_i64 [0,1,2,3,4,5]
+P arr_push [0, 1, 2, 3, 4, 5, 6]
+L arr_push [0, 1, 2, 3, 4, 5, 6]
+ints repeat
+P len 5
+L len 5
+P eq true true
+L eq true true
+P read 3 3
+L read 3 3
+P display [3, 3, 3, 1, 3]
+L display [3, 3, 3, 1, 3]
+P arr_sum_i64 13
+L arr_sum_i64 13
+P arr_mean_i64 2.6
+L arr_mean_i64 2.6
+P arr_max_i64 3
+L arr_max_i64 3
+P arr_min_i64 1
+L arr_min_i64 1
+P arr_argmax_i64 0
+L arr_argmax_i64 0
+P arr_argmin_i64 3
+L arr_argmin_i64 3
+P arr_all true
+L arr_all true
+P arr_any false
+L arr_any false
+P arr_count_if 0
+L arr_count_if 0
+P arr_filter [3, 3, 3, 1, 3]
+L arr_filter [3, 3, 3, 1, 3]
+P arr_find Some(3)
+L arr_find Some(3)
+P arr_index_of Some(0)
+L arr_index_of Some(0)
+P arr_contains true false
+L arr_contains true false
+P arr_take [3, 3, 3]
+L arr_take [3, 3, 3]
+P arr_drop [1, 3]
+L arr_drop [1, 3]
+P arr_take_while []
+L arr_take_while []
+P arr_drop_while [3, 3, 3, 1, 3]
+L arr_drop_while [3, 3, 3, 1, 3]
+P arr_reverse [3, 1, 3, 3, 3]
+L arr_reverse [3, 1, 3, 3, 3]
+P arr_chunk [[3, 3, 3, 1], [3]]
+L arr_chunk [[3, 3, 3, 1], [3]]
+P arr_concat [3, 3, 3, 1, 3, 3, 3, 3, 1, 3]
+L arr_concat [3, 3, 3, 1, 3, 3, 3, 3, 1, 3]
+P arr_flatten [3, 3, 3, 1, 3, 3, 3, 3, 1, 3]
+L arr_flatten [3, 3, 3, 1, 3, 3, 3, 3, 1, 3]
+P arr_enumerate [(0, 3), (1, 3), (2, 3), (3, 1), (4, 3)]
+L arr_enumerate [(0, 3), (1, 3), (2, 3), (3, 1), (4, 3)]
+P arr_map [30, 30, 30, 10, 30]
+L arr_map [30, 30, 30, 10, 30]
+P arr_fold 13
+L arr_fold 13
+P arr_fold_leaf 600
+L arr_fold_leaf 600
+P arr_partition ([1], [3, 3, 3, 3])
+L arr_partition ([1], [3, 3, 3, 3])
+P arr_unique [3, 1]
+L arr_unique [3, 1]
+P arr_zip [(3, 3), (3, 3), (3, 3), (1, 1), (3, 3)]
+L arr_zip [(3, 3), (3, 3), (3, 3), (1, 1), (3, 3)]
+P arr_zip_with [9, 9, 9, 1, 9]
+L arr_zip_with [9, 9, 9, 1, 9]
+P arr_sort_by [3, 3, 3, 3, 1]
+L arr_sort_by [3, 3, 3, 3, 1]
+P arr_group_by {odd: [3, 3, 3, 1, 3]}
+L arr_group_by {odd: [3, 3, 3, 1, 3]}
+P arr_sum_by 37
+L arr_sum_by 37
+P arr_sum_by_f64 2.5
+L arr_sum_by_f64 2.5
+P arr_max_by 3
+L arr_max_by 3
+P arr_min_by 1
+L arr_min_by 1
+P json_arr_from_i64 [3,3,3,1,3]
+L json_arr_from_i64 [3,3,3,1,3]
+P arr_push [3, 3, 3, 1, 3, 6]
+L arr_push [3, 3, 3, 1, 3, 6]
+floats
+P len 5
+L len 5
+P eq true true
+L eq true true
+P read 0.25 1.5
+L read 0.25 1.5
+P display [1.5, 1.5, 0.25, 1.5, 1.5]
+L display [1.5, 1.5, 0.25, 1.5, 1.5]
+P arr_sum_f64 6.25
+L arr_sum_f64 6.25
+P arr_mean_f64 1.25
+L arr_mean_f64 1.25
+P arr_max_f64 1.5
+L arr_max_f64 1.5
+P arr_min_f64 0.25
+L arr_min_f64 0.25
+P arr_std_f64 0.559017
+L arr_std_f64 0.559017
+P arr_argmax_f64 0
+L arr_argmax_f64 0
+P arr_argmin_f64 2
+L arr_argmin_f64 2
+P arr_index_of Some(2)
+L arr_index_of Some(2)
+P arr_contains true
+L arr_contains true
+P arr_map [3, 3, 0.5, 3, 3]
+L arr_map [3, 3, 0.5, 3, 3]
+P arr_fold 6.25
+L arr_fold 6.25
+P arr_filter [1.5, 1.5, 1.5, 1.5]
+L arr_filter [1.5, 1.5, 1.5, 1.5]
+P arr_unique [1.5, 0.25]
+L arr_unique [1.5, 0.25]
+P arr_reverse [1.5, 1.5, 0.25, 1.5, 1.5]
+L arr_reverse [1.5, 1.5, 0.25, 1.5, 1.5]
+P arr_sort_by [0.25, 1.5, 1.5, 1.5, 1.5]
+L arr_sort_by [0.25, 1.5, 1.5, 1.5, 1.5]
+P arr_max_by 1.5
+L arr_max_by 1.5
+P arr_min_by 0.25
+L arr_min_by 0.25
+P arr_sum_by_f64 9.0625
+L arr_sum_by_f64 9.0625
+P json_arr_from_f64 [1.5,1.5,0.25,1.5,1.5]
+L json_arr_from_f64 [1.5,1.5,0.25,1.5,1.5]
+P categorical_mean 12.5
+L categorical_mean 12.5
+P categorical_variance -116.25
+L categorical_variance -116.25
+P categorical_cdf 1
+L categorical_cdf 1
+P arr_push [1.5, 1.5, 0.25, 1.5, 1.5, 9.75]
+L arr_push [1.5, 1.5, 0.25, 1.5, 1.5, 9.75]
+loops
+P for_in 4
+L for_in 4
+P loop_read 55
+L loop_read 55
+writes
+P write_bool [true, false, false, true, false, true] [true, false, true, true, false, true]
+L write_bool [true, false, false, true, false, true] [true, false, true, true, false, true]
+P loop_write_bool [false, true, true, false, true, false] [true, false, true, true, false, true]
+L loop_write_bool [false, true, true, false, true, false] [true, false, true, true, false, true]
+P loop_write_int [140, 101, 102, 103, 104, 105] [0, 1, 2, 3, 4, 5]
+L loop_write_int [140, 101, 102, 103, 104, 105] [0, 1, 2, 3, 4, 5]
+P loop_write_float [6, 0.5, 1, 6, 6] [1.5, 1.5, 0.25, 1.5, 1.5]
+L loop_write_float [6, 0.5, 1, 6, 6] [1.5, 1.5, 0.25, 1.5, 1.5]
+kind changes
+P write_int_into_bools [true, 1, true] 3
+L write_int_into_bools [true, 1, true] 3
+P write_float_into_ints [0, 2.5, 2] true
+L write_float_into_ints [0, 2.5, 2] true
+P write_sized_into_ints [7, 7, 5] true
+L write_sized_into_ints [7, 7, 5] true
+P write_int_into_floats [3, 0.5]
+L write_int_into_floats [3, 0.5]
+P push_int_onto_bools [true, true, 1] 3
+L push_int_onto_bools [true, true, 1] 3
+edges
+P empty [] [] [] 0 0 0
+L empty [] [] [] 0 0 0
+P push_empty [8]
+L push_empty [8]
+P cross_eq true true
+L cross_eq true true
+P range_neg [-3, -2, -1, 0]
+L range_neg [-3, -2, -1, 0]
+P repeat_of_array [[0, 1, 2, 3, 4, 5], [0, 1, 2, 3, 4, 5]]
+L repeat_of_array [[0, 1, 2, 3, 4, 5], [0, 1, 2, 3, 4, 5]]
+P dict_value {k: [1.5, 1.5, 0.25, 1.5, 1.5]} [1.5, 1.5, 0.25, 1.5, 1.5]
+L dict_value {k: [1.5, 1.5, 0.25, 1.5, 1.5]} [1.5, 1.5, 0.25, 1.5, 1.5]
+P categorical_sample 3 3
+L categorical_sample 3 3
+array plus
+P plus_same [0, 1, 2, 3, 4, 5, 3, 3, 3, 1, 3] [true, false, true, true, false, true, true, false, true, true, false, true] [1.5, 1.5, 0.25, 1.5, 1.5, 1.5, 1.5, 0.25, 1.5, 1.5]
+L plus_same [0, 1, 2, 3, 4, 5, 3, 3, 3, 1, 3] [true, false, true, true, false, true, true, false, true, true, false, true] [1.5, 1.5, 0.25, 1.5, 1.5, 1.5, 1.5, 0.25, 1.5, 1.5]
+P plus_packed_and_literal [0, 1, 2, 3, 4, 5, 3, 3, 3, 1, 3] [true, false, true, true, false, true, true, false, true, true, false, true]
+L plus_packed_and_literal [0, 1, 2, 3, 4, 5, 3, 3, 3, 1, 3] [true, false, true, true, false, true, true, false, true, true, false, true]
+P plus_mixed_kinds [0, 1, 2, 3, 4, 5, true, false, true, true, false, true] [1.5, 1.5, 0.25, 1.5, 1.5, 0, 1, 2, 3, 4, 5]
+L plus_mixed_kinds [0, 1, 2, 3, 4, 5, true, false, true, true, false, true] [1.5, 1.5, 0.25, 1.5, 1.5, 0, 1, 2, 3, 4, 5]
+self appends
+P append_same_kind [0, 1, 2, 3, 4, 5, 6, 6] 8
+L append_same_kind [0, 1, 2, 3, 4, 5, 6, 6] 8
+P append_other_kind [true, true, 1] [0.5, 0.5, 0, 1] [0, 1, false, false]
+L append_other_kind [true, true, 1] [0.5, 0.5, 0, 1] [0, 1, false, false]
+P append_loop [1, 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4] 16
+L append_loop [1, 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4] 16
+struct fields
+P field Grid { flags: [false, false, true], xs: [0, 50, 2, 3] } 53 4 true
+L field Grid { flags: [false, false, true], xs: [0, 50, 2, 3] } 53 4 true
+P field_eq true true
+L field_eq true true
+mut params
+P mut_ints [0, 1, 12, 3, 77] 5
+L mut_ints [0, 1, 12, 3, 77] 5
+P mut_bools [false, true, true] 3
+L mut_bools [false, true, true] 3
+P mut_floats [3, 3, 3] 3
+L mut_floats [3, 3, 3] 3
+channels
+P chan [9, 1, 2, 3, 4, 5] [0, 1, 2, 3, 4, 5] false
+L chan [9, 1, 2, 3, 4, 5] [0, 1, 2, 3, 4, 5] false
+P chan_bools [true, false, true, true, false, true]
+L chan_bools [true, false, true, true, false, true]
+equality
+P nan false false [nan, nan]
+L nan false false [nan, nan]
+P neg_zero true true [0, 0]
+L neg_zero true true [0, 0]
+P sized true true [5, 5]
+L sized true true [5, 5]

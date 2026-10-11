@@ -724,7 +724,7 @@ pub(super) fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
         // operands are unaffected and a fresh array is returned.
         (Add, Value::Array(a), Value::Array(b)) => {
             let mut out = a;
-            Rc::make_mut(&mut out).extend(b.iter().cloned());
+            Rc::make_mut(&mut out).extend(b.iter());
             Ok(Value::Array(out))
         }
         // Bool / string equality
@@ -835,14 +835,22 @@ pub(super) fn values_equal(a: &Value, b: &Value) -> bool {
         (None, None) => true,
         (Some(x), Some(y)) | (Ok(x), Ok(y)) | (Err(x), Err(y)) => values_equal(x, y),
         (Array(x), Array(y)) => {
-            x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| values_equal(p, q))
+            x.len() == y.len()
+                && x.vals()
+                    .iter()
+                    .zip(y.vals().iter())
+                    .all(|(p, q)| values_equal(p, q))
         }
         (Struct(x), Struct(y)) => x.name == y.name && x.fields.equal(&y.fields),
         (Enum(x), Enum(y)) => {
             x.enum_name == y.enum_name && x.variant == y.variant && x.fields.equal(&y.fields)
         }
         (Tuple(x), Tuple(y)) => {
-            x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| values_equal(p, q))
+            x.len() == y.len()
+                && x.vals()
+                    .iter()
+                    .zip(y.vals().iter())
+                    .all(|(p, q)| values_equal(p, q))
         }
         (Dict(d1), Dict(d2)) => {
             // Two dicts are equal iff they have the same key set and the
@@ -876,7 +884,7 @@ pub(super) fn display(v: &Value) -> String {
         Value::Ok(x) => format!("Ok({})", display(x)),
         Value::Err(x) => format!("Err({})", display(x)),
         Value::Array(items) => {
-            let inner: Vec<String> = items.iter().map(display).collect();
+            let inner: Vec<String> = items.vals().iter().map(display).collect();
             format!("[{}]", inner.join(", "))
         }
         Value::Struct(s) => format!("{} {{ {} }}", sym_name(s.name), fields_display(&s.fields)),
@@ -895,7 +903,7 @@ pub(super) fn display(v: &Value) -> String {
         Value::Closure { .. } => "<fn>".into(),
         Value::Chan(q) => format!("<chan len={}>", q.borrow().len()),
         Value::Tuple(items) => {
-            let parts: Vec<String> = items.iter().map(display).collect();
+            let parts: Vec<String> = items.vals().iter().map(display).collect();
             format!("({})", parts.join(", "))
         }
         Value::Dict(d) => {

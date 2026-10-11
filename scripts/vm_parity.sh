@@ -21,6 +21,11 @@
 # absolute AXON_PATH (examples/stdlib:asi:modular:domain):
 #   1. AXON_ENGINE=tree, 2. AXON_ENGINE=tree — must agree, else the file keeps
 #      state the isolation does not reach (fail);
+#   R. only with AXON_REF_BIN (S13): AXON_ENGINE=tree on that binary, diffed
+#      against run 1 the same way as runs 3 and 4, so a representation change
+#      is checked against the code before it, not only engine against engine.
+#      Build the reference with the flags this script builds its own binary
+#      with (`--release -p axon-core --no-default-features --bin axon`);
 #   3. AXON_ENGINE=vm AXON_VM_EAGER=1 — every body compiled on its first entry
 #      (S9), so the compiled code of a body called once is exercised too;
 #      diffed against run 1: stdout, stderr, exit code, audit ledger and
@@ -46,6 +51,7 @@
 #
 # Env:
 #   AXON_BIN          binary under test (skips the build)
+#   AXON_REF_BIN      reference binary (an earlier commit) for run R; unset: no run R
 #   VM_PARITY_SLICE   which slice's lowered list to enforce (default: newest)
 #   VM_PARITY_JOBS    parallel files (default: nproc)
 set -uo pipefail
@@ -128,6 +134,12 @@ else
 fi
 case "$AXON" in /*) ;; *) AXON="$ROOT/$AXON" ;; esac
 [ -x "$AXON" ] || { echo "vm_parity: $AXON is not executable" >&2; exit 2; }
+AXON_REF=""
+if [ -n "${AXON_REF_BIN:-}" ]; then
+  AXON_REF="$AXON_REF_BIN"
+  case "$AXON_REF" in /*) ;; *) AXON_REF="$ROOT/$AXON_REF" ;; esac
+  [ -x "$AXON_REF" ] || { echo "vm_parity: AXON_REF_BIN $AXON_REF is not executable" >&2; exit 2; }
+fi
 
 export AXON_PATH="$ROOT/examples/stdlib:$ROOT/examples/asi:$ROOT/examples/modular:$ROOT/examples/domain"
 
@@ -175,9 +187,10 @@ normalise_provenance() {
   sed -E 's/^\{"ts_ms":-?[0-9]+,/{/; s/,"run_id":"([^"\\]|\\.)*"//'
 }
 
-# run_once <src> <base> <tag> <engine> [trace] [eager] — one isolated run into <base>/<tag>.
+# run_once <src> <base> <tag> <engine> [trace] [eager] [bin] — one isolated run
+# into <base>/<tag>, of <bin> (default: the binary under test).
 run_once() {
-  local src="$1" base="$2" tag="$3" engine="$4" trace="${5:-}" eager="${6:-}"
+  local src="$1" base="$2" tag="$3" engine="$4" trace="${5:-}" eager="${6:-}" bin="${7:-$AXON}"
   local run="$base/run" out="$base/$tag"
   rm -rf "$run" "$out"
   mkdir -p "$run/tmp" "$run/cache" "$out"
@@ -191,7 +204,7 @@ run_once() {
         AXON_LEARNER_STATE=learner.state AXON_BANDIT_STATE=bandit.state \
         AXON_AI_MOCK=1 AXON_SEED=42 AXON_CLOCK=0:1 AXON_AUDIT_DETERMINISTIC=1 \
         AXON_ENGINE="$engine" "${extra[@]}" \
-        timeout -k 5 30 "$AXON" run "$src" </dev/null >"$out/stdout" 2>"$out/stderr"
+        timeout -k 5 30 "$bin" run "$src" </dev/null >"$out/stdout" 2>"$out/stderr"
   )
   echo $? >"$out/exit"
   if [ -f "$run/audit.ledger" ]; then cp "$run/audit.ledger" "$out/ledger"; else echo "<absent>" >"$out/ledger"; fi
@@ -244,6 +257,15 @@ check_one() {
       first_diff "$base/A" "$base/B" "$d"; } >"$res"
     rm -rf "$base"; return
   fi
+  if [ -n "$AXON_REF" ]; then
+    run_once "$src" "$base" R tree "" "" "$AXON_REF"
+    if timed_out "$base/R"; then echo "FAIL timeout $rel: reference tree run hit the 30 s limit" >"$res"; rm -rf "$base"; return; fi
+    d="$(differs "$base/A" "$base/R")"
+    if [ -n "$d" ]; then
+      { echo "FAIL differ $rel: tree and the reference binary's tree differ ($d)"; first_diff "$base/R" "$base/A" "$d"; } >"$res"
+      rm -rf "$base"; return
+    fi
+  fi
   run_once "$src" "$base" V vm "" eager
   if timed_out "$base/V"; then echo "FAIL timeout $rel: vm (eager) run hit the 30 s limit" >"$res"; rm -rf "$base"; return; fi
   d="$(differs "$base/A" "$base/V")"
@@ -265,11 +287,11 @@ check_one() {
 }
 
 export -f run_once timed_out differs first_diff check_one normalise_provenance
-export WORK AXON ROOT
+export WORK AXON AXON_REF ROOT
 
 JOBS="${VM_PARITY_JOBS:-$(nproc)}"
 ncorpus="$(wc -l <"$WORK/corpus")"
-echo "vm_parity: slice $SLICE, $ncorpus candidate files ($(cat "$WORK/nskip") skip-listed), $JOBS jobs, binary $AXON"
+echo "vm_parity: slice $SLICE, $ncorpus candidate files ($(cat "$WORK/nskip") skip-listed), $JOBS jobs, binary $AXON${AXON_REF:+, reference $AXON_REF}"
 xargs -d '\n' -n 1 -P "$JOBS" bash -c 'check_one "$1"' _ <"$WORK/corpus"
 
 files=0; bodies=0; lowered=0; treeops=0; differ=0; other=0; excluded=0

@@ -5,7 +5,8 @@
 # (workspace release profile). Set AXON_BIN=<path> to use an already-built one.
 #
 # Every measurement runs the program with AXON_ENGINE=vm (the default deferred
-# compile: AXON_VM_EAGER and AXON_VM_TRACE are unset, S9), stdin /dev/null,
+# compile: AXON_VM_EAGER and AXON_VM_TRACE are unset, S9; the `--repros` rows
+# with an engine field and `--compile` name another engine), stdin /dev/null,
 # under `perf stat -e instructions:u` pinned with `taskset -c $VM_PERF_CPU`
 # (default 6), three times; the gate uses the median of the three counts (perf's
 # own `-r 3` reports a mean, so the three runs are separate perf invocations).
@@ -16,9 +17,9 @@
 #   scripts/vm_perf_gate.sh [--programs SEL]
 #       Six compilebench programs (verbatim copies of compilebench's
 #       benchmarks/<b>/axon/main.ax in tests/fixtures/vm_perf/). Budget: the
-#       CPython 3.14.4 median from compilebench run 20261008T142344Z, except
-#       sieve (S10), whose CPython is a C-speed slice assignment: half the S9
-#       VM's median from run 20261010T015516Z (Axon 5864c423). A median
+#       CPython 3.14.4 median from compilebench run 20261008T142344Z (sieve
+#       too from S13; S10 budgeted it at half the S9 VM's median from run
+#       20261010T015516Z, Axon 5864c423). A median
 #       passes when it is at or below the budget; no rounding. SEL is a
 #       comma-separated subset of the programs; without it, all six run.
 #       Relative check (always on, R50 §10 S11 "every other program within
@@ -41,8 +42,9 @@
 #       Rows (cost = (prog - base) / units; `loop` has no base). From S7
 #       `loop.ax` is a `PureLoop`, so the call rows subtract loop_generic.ax
 #       (loop.ax plus a never-taken `if`, which call1.ax, mutcall.ax and
-#       swapcall.ax carry too, so it cancels):
-#         row       slice  prog      base          units  budget
+#       swapcall.ax carry too, so it cancels). A row runs under
+#       AXON_ENGINE=vm unless its seventh field names another engine (S13):
+#         row       slice  prog      base          units  budget engine
 #         loop      S1     loop      -             1M     300   per iteration
 #         call      S1     call1     loop_generic  1M     800   one-arg call via dispatch_call -> call_fn_in
 #         part      S2     part      part_base     1M     250   per partition iteration
@@ -51,6 +53,8 @@
 #         mutcall   S5     mutcall   loop_generic  1M     600   one-&mut-arg call via call_mut
 #         foldmod   S7     foldmod   fold_base     10M    200   per element, arr-sum's body `acc + x % m`
 #         swap      S8     swapcall  loop_generic  1M     730   per `swap(&mut a, 0, 1)` call, body included
+#         packed    S13    packed    packed_base   1M     1500  per `len(a) + a[i] + g.xs[i]` over a packed array
+#         packed    S13    packed    packed_base   1M     1800  tree: the same under the tree-walker
 #       A row passes when (prog - base) <= budget * units, compared exactly.
 #
 #   scripts/vm_perf_gate.sh --compile
@@ -90,9 +94,9 @@ PROGRAMS=(
   "mandelbrot    15023124683   5039973411"
   "arr-sum       23624147901   4979381330"
   "qsort         18967575334   10939169020"
-  "sieve         26764304040   24568573662"
+  "sieve         1085960442    24568573662"
 )
-# row       slice prog     base          units     budget
+# row       slice prog     base          units     budget [engine, default vm]
 REPROS=(
   "loop      S1    loop     -             1000000   300"
   "call      S1    call1    loop_generic  1000000   800"
@@ -102,6 +106,8 @@ REPROS=(
   "mutcall   S5    mutcall  loop_generic  1000000   600"
   "foldmod   S7    foldmod  fold_base     10000000  200"
   "swap      S8    swapcall loop_generic  1000000   730"
+  "packed    S13   packed   packed_base   1000000   1500"
+  "packed    S13   packed   packed_base   1000000   1800  tree"
 )
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -257,24 +263,29 @@ else
         if [ "$t" = "$name" ] || [ "$t" = "$slice" ]; then want[$name]=1; hit=1; fi
       done
       if [ "$hit" = 0 ]; then
-        echo "vm_perf_gate: --repros: '$t' is neither a row (loop call part fold fastcall mutcall foldmod swap) nor a slice with rows (S1 S2 S4 S5 S7 S8)" >&2
+        echo "vm_perf_gate: --repros: '$t' is neither a row (loop call part fold fastcall mutcall foldmod swap packed) nor a slice with rows (S1 S2 S4 S5 S7 S8 S13)" >&2
         exit 2
       fi
     done
   fi
   for r in "${REPROS[@]}"; do
-    read -r name slice prog base units budget <<<"$r"
+    read -r name slice prog base units budget engine <<<"$r"
     [ -n "${want[$name]+x}" ] || continue
-    measure "$prog"
-    delta="${MEDIAN[$prog]}"
+    engine="${engine:-vm}"
+    # The shipping configuration keys by program alone; another engine's
+    # medians are kept apart.
+    sfx=""
+    [ "$engine" = vm ] || sfx=".$engine"
+    measure_as "$prog$sfx" "$prog" 3 "$engine" ""
+    delta="${MEDIAN[$prog$sfx]}"
     if [ "$base" != - ]; then
-      measure "$base"
-      delta=$((delta - MEDIAN[$base]))
+      measure_as "$base$sfx" "$base" 3 "$engine" ""
+      delta=$((delta - MEDIAN[$base$sfx]))
     fi
     cost="$(awk -v d="$delta" -v u="$units" 'BEGIN { printf "%.1f", d / u }')"
     if [ "$delta" -le $((budget * units)) ]; then v="PASS"; else v="OVER"; fails=$((fails + 1)); fi
-    printf 'vm_perf_gate: repro %-8s (%s) %-8s - %-9s / %-8s = %9s per unit  budget %4s  %s\n' \
-      "$name" "$slice" "$prog" "$base" "$units" "$cost" "$budget" "$v"
+    printf 'vm_perf_gate: repro %-8s (%s) %-8s - %-9s / %-8s = %9s per unit  budget %4s  %-4s %s\n' \
+      "$name" "$slice" "$prog" "$base" "$units" "$cost" "$budget" "$engine" "$v"
   done
 fi
 

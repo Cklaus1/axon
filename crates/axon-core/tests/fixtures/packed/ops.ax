@@ -1,0 +1,423 @@
+// R50 S13 (`packed_arrays_match_literal_arrays`): every builtin that accepts
+// an array (the `arr_*` family, `len`, `json_arr_from_*`, `categorical_*`),
+// element reads and writes (kind-changing writes included), array `+`, the
+// self-assigning append forms, struct fields, `&mut [T]` parameters, channel
+// sends, `to_str` and `==` on packed arrays (built by `arr_repeat` of a plain
+// scalar and by `arr_range`) and on literal arrays of the same elements.
+// Each result prints twice, `P <label> ..` for the packed array, then
+// `L <label> ..` for the literal one; the two lines agree after the tag.
+
+type Grid = { xs: [i64], flags: [bool] }
+
+fn bump(a: &mut [i64], i: i64) -> i64 {
+    a[i] = a[i] + 10
+    a = arr_push(a, 77)
+    len(a)
+}
+
+fn flip(a: &mut [bool], i: i64) -> i64 {
+    a[i] = !a[i]
+    len(a)
+}
+
+fn scale(a: &mut [f64], k: f64) -> i64 {
+    let i = 0
+    while i < len(a) {
+        a[i] = a[i] * k
+        i = i + 1
+    }
+    len(a)
+}
+
+fn both(label: str, p: str, l: str) -> i64 {
+    println("P " + label + " " + p)
+    println("L " + label + " " + l)
+    0
+}
+
+fn bools(p: [bool], l: [bool]) -> i64 {
+    let id = |x: bool| x
+    let neg = |x: bool| !x
+    let bits = |acc: i64, x: bool| if x { acc * 2 + 1 } else { acc * 2 }
+    let and2 = |x: bool, y: bool| x && y
+    let cmp = |x: bool, y: bool| if x == y { 0 } else if x { 1 } else { 0 - 1 }
+    let key = |x: bool| to_str(x)
+    let weight = |x: bool| if x { 3 } else { 1 }
+    let half = |x: bool| if x { 0.5 } else { 0.25 }
+    let score = |x: bool| if x { 1.0 } else { 0.0 }
+    both("len", "{len(p)}", "{len(l)}")
+    both("eq", "{p == l} {p == p}", "{l == p} {l == l}")
+    both("read", to_str(p[0]) + " " + to_str(p[1]), to_str(l[0]) + " " + to_str(l[1]))
+    both("display", "{p}", "{l}")
+    both("arr_all", "{arr_all(p, id)}", "{arr_all(l, id)}")
+    both("arr_any", "{arr_any(p, neg)}", "{arr_any(l, neg)}")
+    both("arr_count_if", "{arr_count_if(p, id)}", "{arr_count_if(l, id)}")
+    both("arr_filter", "{arr_filter(p, id)}", "{arr_filter(l, id)}")
+    both("arr_find", "{arr_find(p, neg)}", "{arr_find(l, neg)}")
+    both("arr_index_of", "{arr_index_of(p, false)}", "{arr_index_of(l, false)}")
+    both("arr_contains", "{arr_contains(p, false)}", "{arr_contains(l, false)}")
+    both("arr_take", "{arr_take(p, 2)}", "{arr_take(l, 2)}")
+    both("arr_drop", "{arr_drop(p, 2)}", "{arr_drop(l, 2)}")
+    both("arr_take_while", "{arr_take_while(p, id)}", "{arr_take_while(l, id)}")
+    both("arr_drop_while", "{arr_drop_while(p, id)}", "{arr_drop_while(l, id)}")
+    both("arr_reverse", "{arr_reverse(p)}", "{arr_reverse(l)}")
+    both("arr_chunk", "{arr_chunk(p, 4)}", "{arr_chunk(l, 4)}")
+    both("arr_concat", "{arr_concat(p, l)}", "{arr_concat(l, p)}")
+    both("arr_flatten", "{arr_flatten([p, l])}", "{arr_flatten([l, p])}")
+    both("arr_enumerate", "{arr_enumerate(p)}", "{arr_enumerate(l)}")
+    both("arr_map", "{arr_map(p, neg)}", "{arr_map(l, neg)}")
+    both("arr_fold", "{arr_fold(p, 0, bits)}", "{arr_fold(l, 0, bits)}")
+    both("arr_partition", "{arr_partition(p, id)}", "{arr_partition(l, id)}")
+    both("arr_unique", "{arr_unique(p)}", "{arr_unique(l)}")
+    both("arr_zip", "{arr_zip(p, l)}", "{arr_zip(l, p)}")
+    both("arr_zip_with", "{arr_zip_with(p, l, and2)}", "{arr_zip_with(l, p, and2)}")
+    both("arr_sort_by", "{arr_sort_by(p, cmp)}", "{arr_sort_by(l, cmp)}")
+    both("arr_group_by", "{arr_group_by(p, key)}", "{arr_group_by(l, key)}")
+    both("arr_sum_by", "{arr_sum_by(p, weight)}", "{arr_sum_by(l, weight)}")
+    both("arr_sum_by_f64", "{arr_sum_by_f64(p, half)}", "{arr_sum_by_f64(l, half)}")
+    both("arr_max_by", "{arr_max_by(p, score)}", "{arr_max_by(l, score)}")
+    both("arr_min_by", "{arr_min_by(p, score)}", "{arr_min_by(l, score)}")
+    both("arr_push", "{arr_push(p, false)}", "{arr_push(l, false)}")
+    0
+}
+
+fn ints(p: [i64], l: [i64]) -> i64 {
+    let nonneg = |x: i64| x >= 0
+    let big = |x: i64| x > 4
+    let even = |x: i64| x % 2 == 0
+    let odd = |x: i64| x % 2 == 1
+    let gt2 = |x: i64| x > 2
+    let lt3 = |x: i64| x < 3
+    let times10 = |x: i64| x * 10
+    let add = |acc: i64, x: i64| acc + x
+    let k = 7
+    let mix = |acc: i64, x: i64| acc * 3 + x % k
+    let mul = |x: i64, y: i64| x * y
+    let desc = |x: i64, y: i64| y - x
+    let parity = |x: i64| if x % 2 == 0 { "even" } else { "odd" }
+    let sq = |x: i64| x * x
+    let half = |x: i64| 0.5
+    let negf = |x: i64| if x == 3 { 9.0 } else if x > 3 { 1.0 } else { 2.0 }
+    both("len", "{len(p)}", "{len(l)}")
+    both("eq", "{p == l} {p == p}", "{l == p} {l == l}")
+    both("read", to_str(p[1]) + " " + to_str(p[len(p) - 1]), to_str(l[1]) + " " + to_str(l[len(l) - 1]))
+    both("display", "{p}", "{l}")
+    both("arr_sum_i64", "{arr_sum_i64(p)}", "{arr_sum_i64(l)}")
+    both("arr_mean_i64", "{arr_mean_i64(p)}", "{arr_mean_i64(l)}")
+    both("arr_max_i64", "{arr_max_i64(p)}", "{arr_max_i64(l)}")
+    both("arr_min_i64", "{arr_min_i64(p)}", "{arr_min_i64(l)}")
+    both("arr_argmax_i64", "{arr_argmax_i64(p)}", "{arr_argmax_i64(l)}")
+    both("arr_argmin_i64", "{arr_argmin_i64(p)}", "{arr_argmin_i64(l)}")
+    both("arr_all", "{arr_all(p, nonneg)}", "{arr_all(l, nonneg)}")
+    both("arr_any", "{arr_any(p, big)}", "{arr_any(l, big)}")
+    both("arr_count_if", "{arr_count_if(p, even)}", "{arr_count_if(l, even)}")
+    both("arr_filter", "{arr_filter(p, odd)}", "{arr_filter(l, odd)}")
+    both("arr_find", "{arr_find(p, gt2)}", "{arr_find(l, gt2)}")
+    both("arr_index_of", "{arr_index_of(p, 3)}", "{arr_index_of(l, 3)}")
+    both("arr_contains", "{arr_contains(p, 1)} {arr_contains(p, 9)}", "{arr_contains(l, 1)} {arr_contains(l, 9)}")
+    both("arr_take", "{arr_take(p, 3)}", "{arr_take(l, 3)}")
+    both("arr_drop", "{arr_drop(p, 3)}", "{arr_drop(l, 3)}")
+    both("arr_take_while", "{arr_take_while(p, lt3)}", "{arr_take_while(l, lt3)}")
+    both("arr_drop_while", "{arr_drop_while(p, lt3)}", "{arr_drop_while(l, lt3)}")
+    both("arr_reverse", "{arr_reverse(p)}", "{arr_reverse(l)}")
+    both("arr_chunk", "{arr_chunk(p, 4)}", "{arr_chunk(l, 4)}")
+    both("arr_concat", "{arr_concat(p, l)}", "{arr_concat(l, p)}")
+    both("arr_flatten", "{arr_flatten([p, l])}", "{arr_flatten([l, p])}")
+    both("arr_enumerate", "{arr_enumerate(p)}", "{arr_enumerate(l)}")
+    both("arr_map", "{arr_map(p, times10)}", "{arr_map(l, times10)}")
+    both("arr_fold", "{arr_fold(p, 0, add)}", "{arr_fold(l, 0, add)}")
+    both("arr_fold_leaf", "{arr_fold(p, 1, mix)}", "{arr_fold(l, 1, mix)}")
+    both("arr_partition", "{arr_partition(p, lt3)}", "{arr_partition(l, lt3)}")
+    both("arr_unique", "{arr_unique(arr_concat(p, p))}", "{arr_unique(arr_concat(l, l))}")
+    both("arr_zip", "{arr_zip(p, l)}", "{arr_zip(l, p)}")
+    both("arr_zip_with", "{arr_zip_with(p, l, mul)}", "{arr_zip_with(l, p, mul)}")
+    both("arr_sort_by", "{arr_sort_by(p, desc)}", "{arr_sort_by(l, desc)}")
+    both("arr_group_by", "{arr_group_by(p, parity)}", "{arr_group_by(l, parity)}")
+    both("arr_sum_by", "{arr_sum_by(p, sq)}", "{arr_sum_by(l, sq)}")
+    both("arr_sum_by_f64", "{arr_sum_by_f64(p, half)}", "{arr_sum_by_f64(l, half)}")
+    both("arr_max_by", "{arr_max_by(p, negf)}", "{arr_max_by(l, negf)}")
+    both("arr_min_by", "{arr_min_by(p, negf)}", "{arr_min_by(l, negf)}")
+    both("json_arr_from_i64", json_arr_from_i64(p), json_arr_from_i64(l))
+    both("arr_push", "{arr_push(p, 6)}", "{arr_push(l, 6)}")
+    0
+}
+
+fn floats(p: [f64], l: [f64]) -> i64 {
+    let dbl = |x: f64| x * 2.0
+    let add = |acc: f64, x: f64| acc + x
+    let gt1 = |x: f64| x > 1.0
+    let cmp = |x: f64, y: f64| if x < y { 0 - 1 } else if x > y { 1 } else { 0 }
+    let id = |x: f64| x
+    let sq = |x: f64| x * x
+    both("len", "{len(p)}", "{len(l)}")
+    both("eq", "{p == l} {p == p}", "{l == p} {l == l}")
+    both("read", to_str(p[2]) + " " + to_str(p[0]), to_str(l[2]) + " " + to_str(l[0]))
+    both("display", "{p}", "{l}")
+    both("arr_sum_f64", "{arr_sum_f64(p)}", "{arr_sum_f64(l)}")
+    both("arr_mean_f64", "{arr_mean_f64(p)}", "{arr_mean_f64(l)}")
+    both("arr_max_f64", "{arr_max_f64(p)}", "{arr_max_f64(l)}")
+    both("arr_min_f64", "{arr_min_f64(p)}", "{arr_min_f64(l)}")
+    both("arr_std_f64", "{arr_std_f64(p)}", "{arr_std_f64(l)}")
+    both("arr_argmax_f64", "{arr_argmax_f64(p)}", "{arr_argmax_f64(l)}")
+    both("arr_argmin_f64", "{arr_argmin_f64(p)}", "{arr_argmin_f64(l)}")
+    both("arr_index_of", "{arr_index_of(p, 0.25)}", "{arr_index_of(l, 0.25)}")
+    both("arr_contains", "{arr_contains(p, 1.5)}", "{arr_contains(l, 1.5)}")
+    both("arr_map", "{arr_map(p, dbl)}", "{arr_map(l, dbl)}")
+    both("arr_fold", "{arr_fold(p, 0.0, add)}", "{arr_fold(l, 0.0, add)}")
+    both("arr_filter", "{arr_filter(p, gt1)}", "{arr_filter(l, gt1)}")
+    both("arr_unique", "{arr_unique(p)}", "{arr_unique(l)}")
+    both("arr_reverse", "{arr_reverse(p)}", "{arr_reverse(l)}")
+    both("arr_sort_by", "{arr_sort_by(p, cmp)}", "{arr_sort_by(l, cmp)}")
+    both("arr_max_by", "{arr_max_by(p, id)}", "{arr_max_by(l, id)}")
+    both("arr_min_by", "{arr_min_by(p, id)}", "{arr_min_by(l, id)}")
+    both("arr_sum_by_f64", "{arr_sum_by_f64(p, sq)}", "{arr_sum_by_f64(l, sq)}")
+    both("json_arr_from_f64", json_arr_from_f64(p), json_arr_from_f64(l))
+    both("categorical_mean", "{categorical_mean(p)}", "{categorical_mean(l)}")
+    both("categorical_variance", "{categorical_variance(p)}", "{categorical_variance(l)}")
+    both("categorical_cdf", "{categorical_cdf(p, 2)}", "{categorical_cdf(l, 2)}")
+    both("arr_push", "{arr_push(p, 9.75)}", "{arr_push(l, 9.75)}")
+    0
+}
+
+fn main() -> i64 {
+    println("bools")
+    let pb = arr_repeat(true, 6)
+    pb[1] = false
+    pb[4] = false
+    let lb = [true, false, true, true, false, true]
+    bools(pb, lb)
+    println("ints range")
+    let pr = arr_range(0, 6)
+    let lr = [0, 1, 2, 3, 4, 5]
+    ints(pr, lr)
+    println("ints repeat")
+    let pi = arr_repeat(3, 5)
+    pi[3] = 1
+    let li = [3, 3, 3, 1, 3]
+    ints(pi, li)
+    println("floats")
+    let pf = arr_repeat(1.5, 5)
+    pf[2] = 0.25
+    let lf = [1.5, 1.5, 0.25, 1.5, 1.5]
+    floats(pf, lf)
+
+    println("loops")
+    let c = 0
+    for x in pb {
+        if x { c = c + 1 }
+    }
+    let d = 0
+    for x in lb {
+        if x { d = d + 1 }
+    }
+    both("for_in", "{c}", "{d}")
+    let s = 0
+    for i in 0..len(pr) {
+        s = s + pr[i] * i
+    }
+    let t = 0
+    for i in 0..len(lr) {
+        t = t + lr[i] * i
+    }
+    both("loop_read", "{s}", "{t}")
+
+    println("writes")
+    let qb = pb
+    let rb = lb
+    qb[2] = false
+    rb[2] = false
+    both("write_bool", "{qb} {pb}", "{rb} {lb}")
+    let i = 0
+    while i < len(qb) {
+        qb[i] = !qb[i]
+        i = i + 1
+    }
+    let j = 0
+    while j < len(rb) {
+        rb[j] = !rb[j]
+        j = j + 1
+    }
+    both("loop_write_bool", "{qb} {pb}", "{rb} {lb}")
+    let qi = pr
+    let ri = lr
+    qi[0] = 40
+    ri[0] = 40
+    for k in 0..len(qi) {
+        qi[k] = qi[k] + 100
+    }
+    for k in 0..len(ri) {
+        ri[k] = ri[k] + 100
+    }
+    both("loop_write_int", "{qi} {pr}", "{ri} {lr}")
+    let qf = pf
+    let rf = lf
+    qf[1] = 0.125
+    rf[1] = 0.125
+    let m = 0
+    while m < len(qf) {
+        qf[m] = qf[m] * 4.0
+        m = m + 1
+    }
+    let n = 0
+    while n < len(rf) {
+        rf[n] = rf[n] * 4.0
+        n = n + 1
+    }
+    both("loop_write_float", "{qf} {pf}", "{rf} {lf}")
+
+    println("kind changes")
+    // An untyped lambda hides the element type from the checker, so a write
+    // or push of another kind type-checks on either array.
+    let id = |x| x
+    let one = 1
+    let kb = arr_repeat(true, 3)
+    let lkb = id([true, true, true])
+    kb[1] = one
+    lkb[1] = one
+    both("write_int_into_bools", "{kb} {len(kb)}", "{lkb} {len(lkb)}")
+    let half = 2.5
+    let ki = id(arr_range(0, 3))
+    let lki = id([0, 1, 2])
+    ki[1] = half
+    lki[1] = half
+    both("write_float_into_ints", "{ki} {ki == lki}", "{lki} {lki == ki}")
+    let w: i32 = 5
+    let ks = arr_repeat(7, 3)
+    let lks = id([7, 7, 7])
+    ks[2] = w
+    lks[2] = w
+    both("write_sized_into_ints", "{ks} {ks == lks}", "{lks} {lks == ks}")
+    let three = 3
+    let kf = arr_repeat(0.5, 2)
+    let lkf = id([0.5, 0.5])
+    kf[0] = three
+    lkf[0] = three
+    both("write_int_into_floats", "{kf}", "{lkf}")
+    let pp = arr_push(arr_repeat(true, 2), one)
+    let lp = arr_push(id([true, true]), one)
+    both("push_int_onto_bools", "{pp} {len(pp)}", "{lp} {len(lp)}")
+
+    println("edges")
+    let e1 = arr_repeat(false, 0)
+    let e2 = arr_range(4, 4)
+    let e3 = arr_repeat(1.0, 0 - 2)
+    let l1 = arr_take([false], 0)
+    let l2 = arr_take([4], 0)
+    let l3 = arr_take([1.0], 0)
+    both("empty", "{e1} {e2} {e3} {len(e1)} {len(e2)} {arr_sum_i64(e2)}", "{l1} {l2} {l3} {len(l1)} {len(l2)} {arr_sum_i64(l2)}")
+    both("push_empty", "{arr_push(e2, 8)}", "{arr_push(l2, 8)}")
+    both("cross_eq", "{arr_range(1, 4) == [1, 2, 3]} {arr_repeat(2.0, 2) == [2.0, 2.0]}", "{[1, 2, 3] == arr_range(1, 4)} {[2.0, 2.0] == arr_repeat(2.0, 2)}")
+    both("range_neg", "{arr_range(0 - 3, 1)}", "{[0 - 3, 0 - 2, 0 - 1, 0]}")
+    both("repeat_of_array", "{arr_repeat(pr, 2)}", "{arr_repeat(lr, 2)}")
+    let dp = dict_new()
+    let dl = dict_new()
+    dict_set(dp, "k", pf)
+    dict_set(dl, "k", lf)
+    both("dict_value", "{dp} {dict_get_or(dp, \"k\", lf)}", "{dl} {dict_get_or(dl, \"k\", pf)}")
+    // A probability vector with all its mass on the last index, so the draw
+    // does not depend on the random stream.
+    let cp = arr_repeat(0.0, 4)
+    cp[3] = 1.0
+    let cl = [0.0, 0.0, 0.0, 1.0]
+    both("categorical_sample", "{categorical_sample(cp)} {categorical_mean(cp)}", "{categorical_sample(cl)} {categorical_mean(cl)}")
+
+    println("array plus")
+    both("plus_same", "{pr + pi} {pb + pb} {pf + pf}", "{lr + li} {lb + lb} {lf + lf}")
+    both("plus_packed_and_literal", "{pr + li} {pb + lb}", "{lr + pi} {lb + pb}")
+    both("plus_mixed_kinds", "{id(pr) + id(pb)} {id(pf) + id(pr)}", "{id(lr) + id(lb)} {id(lf) + id(lr)}")
+
+    println("self appends")
+    let ap = arr_range(0, 3)
+    let al = [0, 1, 2]
+    ap = arr_push(ap, 3)
+    al = arr_push(al, 3)
+    ap = ap + arr_range(4, 6)
+    al = al + [4, 5]
+    ap = arr_concat(ap, arr_repeat(6, 2))
+    al = arr_concat(al, [6, 6])
+    both("append_same_kind", "{ap} {len(ap)}", "{al} {len(al)}")
+    let bp = arr_repeat(true, 2)
+    let bl = id([true, true])
+    bp = arr_push(bp, one)
+    bl = arr_push(bl, one)
+    let fp = arr_repeat(0.5, 2)
+    let fl = id([0.5, 0.5])
+    fp = fp + id(arr_range(0, 2))
+    fl = fl + id([0, 1])
+    let ip = arr_range(0, 2)
+    let il = id([0, 1])
+    ip = arr_concat(ip, id(arr_repeat(false, 2)))
+    il = arr_concat(il, id([false, false]))
+    both("append_other_kind", "{bp} {fp} {ip}", "{bl} {fl} {il}")
+    let lp2 = arr_repeat(1, 1)
+    let ll2 = [1]
+    let r = 0
+    while r < 5 {
+        lp2 = arr_push(lp2, r)
+        lp2 = lp2 + arr_range(r, r + 1)
+        lp2 = arr_concat(lp2, arr_repeat(r, 1))
+        ll2 = arr_push(ll2, r)
+        ll2 = ll2 + [r]
+        ll2 = arr_concat(ll2, [r])
+        r = r + 1
+    }
+    both("append_loop", "{lp2} {len(lp2)}", "{ll2} {len(ll2)}")
+
+    println("struct fields")
+    let gp = Grid { xs: arr_range(0, 4), flags: arr_repeat(false, 3) }
+    let gl = Grid { xs: [0, 1, 2, 3], flags: [false, false, false] }
+    gp.xs[1] = 50
+    gl.xs[1] = 50
+    gp.flags[2] = true
+    gl.flags[2] = true
+    both("field", "{gp} {gp.xs[1] + gp.xs[3]} {len(gp.xs)} {gp.flags[2]}", "{gl} {gl.xs[1] + gl.xs[3]} {len(gl.xs)} {gl.flags[2]}")
+    both("field_eq", "{gp == gl} {gp.xs == gl.xs}", "{gl == gp} {gl.xs == gp.xs}")
+
+    println("mut params")
+    let mp = arr_range(0, 4)
+    let ml = [0, 1, 2, 3]
+    let np = bump(&mut mp, 2)
+    let nl = bump(&mut ml, 2)
+    both("mut_ints", "{mp} {np}", "{ml} {nl}")
+    let fbp = arr_repeat(true, 3)
+    let fbl = [true, true, true]
+    let nbp = flip(&mut fbp, 0)
+    let nbl = flip(&mut fbl, 0)
+    both("mut_bools", "{fbp} {nbp}", "{fbl} {nbl}")
+    let sp = arr_repeat(1.5, 3)
+    let sl = [1.5, 1.5, 1.5]
+    let nsp = scale(&mut sp, 2.0)
+    let nsl = scale(&mut sl, 2.0)
+    both("mut_floats", "{sp} {nsp}", "{sl} {nsl}")
+
+    println("channels")
+    let chp = chan<[i64]>()
+    let chl = chan<[i64]>()
+    chp.send(pr)
+    chl.send(lr)
+    let gotp = chp.recv()
+    let gotl = chl.recv()
+    gotp[0] = 9
+    gotl[0] = 9
+    both("chan", "{gotp} {pr} {gotp == lr}", "{gotl} {lr} {gotl == pr}")
+    let cbp = chan<[bool]>()
+    let cbl = chan<[bool]>()
+    cbp.send(pb)
+    cbl.send(lb)
+    both("chan_bools", "{cbp.recv()}", "{cbl.recv()}")
+
+    println("equality")
+    let nan = 0.0 / 0.0
+    let negz = 0.0 * (0.0 - 1.0)
+    let np1 = arr_repeat(nan, 2)
+    let nl1 = [nan, nan]
+    both("nan", "{np1 == np1} {np1 == nl1} {np1}", "{nl1 == nl1} {nl1 == np1} {nl1}")
+    let zp = arr_repeat(negz, 2)
+    let zl = [negz, negz]
+    both("neg_zero", "{zp == arr_repeat(0.0, 2)} {zp == [0.0, 0.0]} {zp}", "{zl == [0.0, 0.0]} {zl == arr_repeat(0.0, 2)} {zl}")
+    let sw: i32 = 5
+    let sp5 = arr_repeat(sw, 2)
+    let sl5 = [sw, sw]
+    both("sized", "{sp5 == sl5} {id(arr_repeat(5, 2)) == id(sl5)} {sp5}", "{sl5 == sp5} {id([5, 5]) == id(sp5)} {sl5}")
+    0
+}

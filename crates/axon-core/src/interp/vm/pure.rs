@@ -606,9 +606,9 @@ pub(super) fn pure_eval(p: &Pure<'_>, env: &Env) -> Option<Scalar> {
                 return None;
             };
             match xs.get(usize::try_from(i).ok()?)? {
-                Value::Int(n) => Scalar::Int(*n),
-                Value::Float(f) => Scalar::Float(*f),
-                Value::Bool(b) => Scalar::Bool(*b),
+                Value::Int(n) => Scalar::Int(n),
+                Value::Float(f) => Scalar::Float(f),
+                Value::Bool(b) => Scalar::Bool(b),
                 _ => return None,
             }
         }
@@ -728,6 +728,295 @@ pub(in crate::interp) struct PureLoop<'p> {
     for_: Option<(Var<'p>, bool)>,
     body: Box<[PureStmt<'p>]>,
     code: OnceCell<Option<LoopCode>>,
+    /// The bulk path for a fill or a count shape (spec §4 S13).
+    bulk: Option<Bulk<'p>>,
+}
+
+/// R50 S13: a [`PureLoop`] shape with a bulk path, recognised when the op is
+/// compiled and tried on each entry before the register code. It runs the
+/// whole loop in one pass when the entry values allow it, else declines
+/// having read only its locals and changed nothing.
+enum Bulk<'p> {
+    /// `while j < b { a[j] = c; j = j + s }` (`le`: `j <= b`).
+    Fill {
+        j: Var<'p>,
+        a: Var<'p>,
+        b: Leaf<'p>,
+        c: Leaf<'p>,
+        s: Leaf<'p>,
+        le: bool,
+    },
+    /// `for v in lo..hi { if a[v] { n = n + c } }` (or `lo..=hi`).
+    Count { a: Var<'p>, n: Var<'p>, c: Leaf<'p> },
+}
+
+/// An operand of a [`Bulk`] loop the body does not assign: a literal, or a
+/// local other than the loop's own.
+#[derive(Clone, Copy)]
+enum Leaf<'p> {
+    Lit(Scalar),
+    Local(Var<'p>),
+}
+
+impl<'p> Leaf<'p> {
+    /// `p` as a leaf: a literal, or a local named none of `not`.
+    fn of(p: &Pure<'p>, not: &[Var<'p>]) -> Option<Leaf<'p>> {
+        Some(match p {
+            Pure::Int(n) => Leaf::Lit(Scalar::Int(*n)),
+            Pure::Float(f) => Leaf::Lit(Scalar::Float(*f)),
+            Pure::Bool(b) => Leaf::Lit(Scalar::Bool(*b)),
+            Pure::Local(v) if !not.iter().any(|w| w.s == v.s) => Leaf::Local(*v),
+            _ => return None,
+        })
+    }
+
+    /// The plain scalar the leaf holds in `env` (`None` when unbound or
+    /// anything else).
+    #[inline(always)]
+    fn get(&self, env: &Env) -> Option<Scalar> {
+        match self {
+            Leaf::Lit(x) => Some(*x),
+            Leaf::Local(v) => local_scalar(env, v),
+        }
+    }
+
+    /// The plain `Int` the leaf holds in `env`.
+    #[inline(always)]
+    fn int(&self, env: &Env) -> Option<i64> {
+        match self.get(env)? {
+            Scalar::Int(n) => Some(n),
+            _ => None,
+        }
+    }
+}
+
+/// The plain scalar local `v` holds in `env`.
+#[inline(always)]
+fn local_scalar(env: &Env, v: &Var<'_>) -> Option<Scalar> {
+    match env.get_var(v.s, v.slot)? {
+        Value::Int(n) => Some(Scalar::Int(*n)),
+        Value::Float(f) => Some(Scalar::Float(*f)),
+        Value::Bool(b) => Some(Scalar::Bool(*b)),
+        _ => None,
+    }
+}
+
+/// The plain `Int` local `v` holds in `env`.
+#[inline(always)]
+fn local_int(env: &Env, v: &Var<'_>) -> Option<i64> {
+    match env.get_var(v.s, v.slot)? {
+        Value::Int(n) => Some(*n),
+        _ => None,
+    }
+}
+
+/// Overwrite the plain `Int` local `v` (read as one on this entry) with `x`.
+#[inline(always)]
+fn set_local_int(env: &mut Env, v: &Var<'_>, x: i64) {
+    match env.get_var_mut(v.s, v.slot) {
+        Some(Value::Int(d)) => *d = x,
+        _ => unreachable!("vm: a bulk loop's local changed kind"),
+    }
+}
+
+/// Whether `p` is local `v` (same binding).
+fn is_local(p: &Pure<'_>, v: &Var<'_>) -> bool {
+    matches!(p, Pure::Local(w) if (w.s, w.slot) == (v.s, v.slot))
+}
+
+impl<'p> Bulk<'p> {
+    /// The bulk shape of a loop with this condition (a `while`), or this
+    /// `for` variable, and body, if any (spec §4 S13).
+    fn recognise(
+        cond: Option<&Pure<'p>>,
+        for_: Option<Var<'p>>,
+        body: &[PureStmt<'p>],
+    ) -> Option<Bulk<'p>> {
+        match (cond, for_, body) {
+            (
+                Some(Pure::Bin(op @ (BinOp::Lt | BinOp::LtEq), test)),
+                None,
+                [PureStmt::Store {
+                    arr: a,
+                    idx: Pure::Local(j),
+                    value: c,
+                }, PureStmt::Set {
+                    var: j2,
+                    is_let: false,
+                    value: Pure::Bin(BinOp::Add, step),
+                }],
+            ) => {
+                if !is_local(&test[0], j) || !is_local(&step[0], j) {
+                    return None;
+                }
+                if (j2.s, j2.slot) != (j.s, j.slot) || a.s == j.s {
+                    return None;
+                }
+                let not = [*j, *a];
+                Some(Bulk::Fill {
+                    j: *j,
+                    a: *a,
+                    b: Leaf::of(&test[1], &not)?,
+                    c: Leaf::of(c, &not)?,
+                    s: Leaf::of(&step[1], &not)?,
+                    le: matches!(op, BinOp::LtEq),
+                })
+            }
+            (None, Some(v), [PureStmt::If { cond, then, else_ }]) if else_.is_empty() => {
+                let Pure::Index(a, i) = cond else {
+                    return None;
+                };
+                let [PureStmt::Set {
+                    var: n,
+                    is_let: false,
+                    value: Pure::Bin(BinOp::Add, sum),
+                }] = &then[..]
+                else {
+                    return None;
+                };
+                if !is_local(i, &v) || !is_local(&sum[0], n) || a.s == v.s || n.s == v.s {
+                    return None;
+                }
+                let c = Leaf::of(&sum[1], &[v, *a, *n])?;
+                if matches!(c, Leaf::Lit(Scalar::Float(_) | Scalar::Bool(_))) {
+                    return None;
+                }
+                Some(Bulk::Count { a: *a, n: *n, c })
+            }
+            _ => None,
+        }
+    }
+
+    /// Run the whole loop in bulk: `true` when it did (the loop is done),
+    /// `false` when it declined, having changed nothing. `range` is a `for`
+    /// loop's counter and bound, and whether the bound is inclusive.
+    #[inline(always)]
+    fn run(&self, env: &mut Env, range: Option<(i64, i64, bool)>) -> bool {
+        match self {
+            Bulk::Fill { j, a, b, c, s, le } => fill(env, j, a, b, c, s, *le).is_some(),
+            Bulk::Count { a, n, c } => match range {
+                Some((lo, hi, inclusive)) => count(env, a, n, c, lo, hi, inclusive).is_some(),
+                None => false,
+            },
+        }
+    }
+}
+
+/// [`Bulk::Fill`]: `Some` when it ran the loop (spec §4 S13's conditions).
+#[inline(always)]
+fn fill(
+    env: &mut Env,
+    j: &Var<'_>,
+    a: &Var<'_>,
+    b: &Leaf<'_>,
+    c: &Leaf<'_>,
+    s: &Leaf<'_>,
+    le: bool,
+) -> Option<()> {
+    let j0 = local_int(env, j)?;
+    let b0 = b.int(env)?;
+    let s0 = s.int(env)?;
+    if !(if le { j0 <= b0 } else { j0 < b0 }) {
+        return Some(());
+    }
+    if s0 <= 0 || j0 < 0 {
+        return None;
+    }
+    let c0 = c.get(env)?;
+    // The tree's iteration count, its last index and its last `j = j + s`.
+    let top = if le { b0 as i128 } else { b0 as i128 - 1 };
+    let n = (top - j0 as i128) / s0 as i128 + 1;
+    let last = j0 as i128 + (n - 1) * s0 as i128;
+    let end = i64::try_from(j0 as i128 + n * s0 as i128).ok()?;
+    let Some(Value::Array(items)) = env.get_var_mut(a.s, a.slot) else {
+        return None;
+    };
+    let fits = match (items.view(), c0) {
+        (ElemsRef::Bools(xs), Scalar::Bool(_)) => last < xs.len() as i128,
+        (ElemsRef::Ints(xs), Scalar::Int(_)) => last < xs.len() as i128,
+        (ElemsRef::Floats(xs), Scalar::Float(_)) => last < xs.len() as i128,
+        _ => false,
+    };
+    if !fits {
+        return None;
+    }
+    // `0 <= j0 <= last < len`, so both are `usize`; a stride past `usize`
+    // only occurs with one iteration, which never adds it.
+    let (j0, last) = (j0 as usize, last as usize);
+    let s0 = usize::try_from(s0).unwrap_or(usize::MAX);
+    match (Rc::make_mut(items).view_mut(), c0) {
+        (ElemsMut::Bools(xs), Scalar::Bool(x)) => fill_strided(xs, j0, s0, last, x),
+        (ElemsMut::Ints(xs), Scalar::Int(x)) => fill_strided(xs, j0, s0, last, x),
+        (ElemsMut::Floats(xs), Scalar::Float(x)) => fill_strided(xs, j0, s0, last, x),
+        _ => unreachable!("vm: checked above"),
+    }
+    set_local_int(env, j, end);
+    Some(())
+}
+
+/// Write `x` at `j0`, `j0 + s`, ... up to and including `last`, which is
+/// `j0` plus a multiple of `s`.
+#[inline(always)]
+fn fill_strided<T: Copy>(xs: &mut [T], j0: usize, s: usize, last: usize, x: T) {
+    assert!(j0 <= last && last < xs.len() && (last - j0).is_multiple_of(s));
+    let p = xs.as_mut_ptr();
+    let mut k = j0;
+    loop {
+        // SAFETY: `j0 <= k <= last < xs.len()`: `k` starts at `j0` and
+        // steps by `s` until it reaches `last`, which `fill` computed as
+        // `j0 + (n - 1) * s` for the exact iteration count `n` and checked
+        // against the length (asserted above), so every write is in bounds.
+        unsafe { p.add(k).write(x) };
+        if k == last {
+            break;
+        }
+        k += s;
+    }
+}
+
+/// [`Bulk::Count`]: `Some` when it ran the loop over `lo..hi` (or `lo..=hi`)
+/// (spec §4 S13's conditions).
+#[inline(always)]
+fn count(
+    env: &mut Env,
+    a: &Var<'_>,
+    n: &Var<'_>,
+    c: &Leaf<'_>,
+    lo: i64,
+    hi: i64,
+    inclusive: bool,
+) -> Option<()> {
+    let Some(Value::Array(items)) = env.get_var(a.s, a.slot) else {
+        return None;
+    };
+    let ElemsRef::Bools(xs) = items.view() else {
+        return None;
+    };
+    let n0 = local_int(env, n)?;
+    let c0 = c.int(env)?;
+    let last = if inclusive {
+        hi as i128
+    } else {
+        hi as i128 - 1
+    };
+    if last < lo as i128 {
+        return Some(());
+    }
+    if lo < 0 || last >= xs.len() as i128 {
+        return None;
+    }
+    let t = count_true(&xs[lo as usize..=last as usize]);
+    let sum = i64::try_from(n0 as i128 + c0 as i128 * t as i128).ok()?;
+    set_local_int(env, n, sum);
+    Some(())
+}
+
+/// The number of `true`s in `xs`, in chunks small enough for a byte sum.
+#[inline(always)]
+fn count_true(xs: &[bool]) -> u64 {
+    xs.chunks(255)
+        .map(|ch| ch.iter().fold(0u8, |t, &b| t + b as u8) as u64)
+        .sum()
 }
 
 /// A local of the env a [`PureLoop`] holds in register `i` (its index).
@@ -768,7 +1057,8 @@ struct LoopCode {
 /// The arrays of a running [`PureLoop`], taken out of the env, and the
 /// element writes of the current iteration (array, index, old element's
 /// bits). A write needs the old element to be a scalar of the store's kind
-/// (else it declines), so undoing one is a write of the same kind.
+/// (else it declines; R50 S13: a packed array's elements are all of its
+/// packed kind), so undoing one is a write of the same kind.
 struct LoopMem {
     arrs: [Option<Rc<Elems>>; LOOP_ARRS],
     undo: Vec<(u8, usize, u64)>,
@@ -785,16 +1075,41 @@ fn put_bits(v: &mut Value, x: u64) {
     }
 }
 
+/// Element `i` of `items` as bits of kind `k`, read in place, when it is
+/// in bounds and a plain scalar of kind `k`.
+#[inline(always)]
+fn elem_bits(items: &Elems, i: usize, k: Kind) -> Option<u64> {
+    match (items.view(), k) {
+        (ElemsRef::Vals(xs), k) => bits(xs.get(i)?, k),
+        (ElemsRef::Ints(xs), Kind::I) => xs.get(i).map(|&n| n as u64),
+        (ElemsRef::Floats(xs), Kind::F) => xs.get(i).map(|f| f.to_bits()),
+        (ElemsRef::Bools(xs), Kind::B) => xs.get(i).map(|&b| b as u64),
+        _ => None,
+    }
+}
+
+/// Overwrite element `i` of `items`, in bounds and of the kind [`elem_bits`]
+/// accepted, with bits `x`.
+#[inline(always)]
+fn put_elem_bits(items: &mut Elems, i: usize, x: u64) {
+    match items.view_mut() {
+        ElemsMut::Vals(xs) => put_bits(&mut xs[i], x),
+        ElemsMut::Ints(xs) => xs[i] = x as i64,
+        ElemsMut::Floats(xs) => xs[i] = f64::from_bits(x),
+        ElemsMut::Bools(xs) => xs[i] = x != 0,
+    }
+}
+
 impl LoopMem {
     /// Array `arr` for writing: unique (copied first when shared, as the
     /// tree's element write does).
     #[inline(always)]
-    fn items_mut(&mut self, arr: u8) -> Option<&mut Vec<Value>> {
+    fn items_mut(&mut self, arr: u8) -> Option<&mut Elems> {
         let items = self.arrs[arr as usize % LOOP_ARRS].as_mut()?;
         if Rc::get_mut(items).is_none() {
-            return Some(&mut **Rc::make_mut(items));
+            return Some(Rc::make_mut(items));
         }
-        Rc::get_mut(items).map(|e| &mut **e)
+        Rc::get_mut(items)
     }
 }
 
@@ -802,15 +1117,15 @@ impl Mem for LoopMem {
     #[inline(always)]
     fn load(&self, arr: u8, i: u64, k: Kind) -> Option<u64> {
         let items = self.arrs[arr as usize % LOOP_ARRS].as_ref()?;
-        bits(items.get(usize::try_from(i).ok()?)?, k)
+        elem_bits(items, usize::try_from(i).ok()?, k)
     }
 
     #[inline(always)]
     fn store(&mut self, arr: u8, i: u64, x: u64, k: Kind) -> Option<()> {
         let i = usize::try_from(i).ok()?;
         let items = self.arrs[arr as usize % LOOP_ARRS].as_ref()?;
-        let old = bits(items.get(i)?, k)?;
-        put_bits(&mut self.items_mut(arr)?[i], x);
+        let old = elem_bits(items, i, k)?;
+        put_elem_bits(self.items_mut(arr)?, i, x);
         self.undo.push((arr, i, old));
         Some(())
     }
@@ -823,7 +1138,7 @@ impl Mem for LoopMem {
     fn rollback(&mut self) {
         while let Some((arr, i, old)) = self.undo.pop() {
             if let Some(items) = self.items_mut(arr) {
-                put_bits(&mut items[i], old);
+                put_elem_bits(items, i, old);
             }
         }
     }
@@ -835,11 +1150,23 @@ impl<'p> PureLoop<'p> {
         for_: Option<(Var<'p>, bool)>,
         body: Vec<PureStmt<'p>>,
     ) -> PureLoop<'p> {
+        let bulk = Bulk::recognise(cond.as_ref(), for_.map(|(v, _)| v), &body);
         PureLoop {
             cond,
             for_,
             body: body.into_boxed_slice(),
             code: OnceCell::new(),
+            bulk,
+        }
+    }
+
+    /// The trace's `vm: bulk` counts for this loop: `(1, 0)` for a fill,
+    /// `(0, 1)` for a count, else `(0, 0)` (spec §4 S13).
+    pub(super) fn bulk_shape(&self) -> (usize, usize) {
+        match self.bulk {
+            Some(Bulk::Fill { .. }) => (1, 0),
+            Some(Bulk::Count { .. }) => (0, 1),
+            None => (0, 0),
         }
     }
 
@@ -848,6 +1175,11 @@ impl<'p> PureLoop<'p> {
     /// its condition (the env holds the current iteration's start).
     #[inline(never)]
     pub(super) fn run(&self, env: &mut Env) -> bool {
+        if let Some(b) = &self.bulk {
+            if b.run(env, None) {
+                return true;
+            }
+        }
         self.drive(env, None)
     }
 
@@ -856,6 +1188,11 @@ impl<'p> PureLoop<'p> {
     /// iteration `i` now holds (the env holds that iteration's start).
     #[inline(never)]
     pub(super) fn run_for(&self, env: &mut Env, i: &mut i64, e: i64) -> bool {
+        if let (Some(b), Some((_, inclusive))) = (&self.bulk, self.for_) {
+            if b.run(env, Some((*i, e, inclusive))) {
+                return true;
+            }
+        }
         self.drive(env, Some((i, e)))
     }
 
@@ -1028,7 +1365,7 @@ impl<'p> PureLoop<'p> {
             let Value::Array(items) = env.get_var(s, slot)? else {
                 return None;
             };
-            let kind = kind_of(items.first()?)?;
+            let kind = kind_of(&items.first()?)?;
             arrs.push(LoopArr { s, slot, kind });
         }
         // Two bindings of one name (a body `let` shadowing a local, say):
@@ -1291,23 +1628,33 @@ impl LoopBuilder<'_> {
 }
 
 impl Interp<'_> {
-    /// R50 S7 `fold_leaf` (spec §4 S7): `arr_fold`'s later elements `xs`
-    /// (after the first or second, once a general call compiled the closure's
-    /// body; 0 while it is not compiled) in
+    /// R50 S7 `fold_leaf` (spec §4 S7): `arr_fold`'s later elements, `xs`
+    /// from index `from` (after the first or second, once a general call
+    /// compiled the closure's body; 0 while it is not compiled) in
     /// registers, when the engine is `vm` and `f` is a closure of two
     /// parameters whose compiled body is one pure tree over them, its
     /// captures and literals. The captures are read once (a pure body cannot
     /// write them), the accumulator stays in a register, and each element
-    /// gets the kind check. Returns how many of `xs` it folded into `acc`;
+    /// gets the kind check (R50 S13: a packed array's elements are read in
+    /// place). Returns how many elements from `from` it folded into `acc`;
     /// it stops before an element whose step declines, which with every
     /// later one the caller runs through the general call (its panic
     /// included). Skipping the closure frame is unobservable: a lambda call
     /// binds its parameters without coercion and has no depth guard, and a
     /// pure body neither writes its captures nor calls out.
-    pub(in crate::interp) fn fold_leaf(&self, f: &Value, xs: &[Value], acc: &mut Value) -> usize {
-        if self.engine != Engine::Vm || xs.is_empty() {
+    pub(in crate::interp) fn fold_leaf(
+        &self,
+        f: &Value,
+        xs: &Elems,
+        from: usize,
+        acc: &mut Value,
+    ) -> usize {
+        if self.engine != Engine::Vm {
             return 0;
         }
+        let Some(x0) = xs.get(from) else {
+            return 0;
+        };
         let Value::Closure(cv) = f else {
             return 0;
         };
@@ -1329,7 +1676,7 @@ impl Interp<'_> {
         let value_at = |s: Sym, slot: u32| -> Option<&Value> {
             match slot.checked_sub(pb) {
                 Some(0) => (s == p0).then_some(&*acc),
-                Some(1) => (s == p1).then_some(&xs[0]),
+                Some(1) => (s == p1).then_some(&x0),
                 Some(_) => None,
                 None => cell.get(slot as usize).filter(|c| c.0 == s).map(|c| &c.1),
             }
@@ -1352,32 +1699,71 @@ impl Interp<'_> {
             }
         }
         drop(cell);
-        let Some(mut a) = bits(acc, t.out) else {
+        let Some(a) = bits(acc, t.out) else {
             return 0;
         };
         if self.vm_trace && !lb.fold_traced.replace(true) {
             eprintln!("vm: fold-leaf {}", lb.name);
         }
-        let mut n = 0;
-        for x in xs {
-            if let Some(rx) = rx {
-                match bits(x, kx) {
-                    Some(b) => r[rx] = b,
-                    None => break,
-                }
-            }
-            if let Some(ra) = ra {
-                r[ra] = a;
-            }
-            if exec(&t.code, &mut r, &mut NoMem).is_none() {
-                break;
-            }
-            a = r[t.res as usize & 15];
-            n += 1;
-        }
+        let run = FoldRun { t, r, ra, rx, a };
+        let (n, a) = match xs.view() {
+            ElemsRef::Vals(v) => run.fold(v[from..].iter().map(|x| bits(x, kx))),
+            ElemsRef::Ints(v) => run.fold(
+                v[from..]
+                    .iter()
+                    .map(|&x| (kx == Kind::I).then_some(x as u64)),
+            ),
+            ElemsRef::Floats(v) => run.fold(
+                v[from..]
+                    .iter()
+                    .map(|x| (kx == Kind::F).then_some(x.to_bits())),
+            ),
+            ElemsRef::Bools(v) => run.fold(
+                v[from..]
+                    .iter()
+                    .map(|&x| (kx == Kind::B).then_some(x as u64)),
+            ),
+        };
         if n > 0 {
             *acc = scalar(a, t.out).value();
         }
         n
+    }
+}
+
+/// The register state of a [`Interp::fold_leaf`] run.
+struct FoldRun<'t> {
+    t: &'t Typed,
+    r: [u64; 16],
+    ra: Option<usize>,
+    rx: Option<usize>,
+    a: u64,
+}
+
+impl FoldRun<'_> {
+    /// Fold the elements' bits (`None` for an element not of the parameter's
+    /// kind) into the accumulator, up to the first step that declines:
+    /// how many were folded, and the accumulator's bits.
+    #[inline(always)]
+    fn fold(mut self, xs: impl Iterator<Item = Option<u64>>) -> (usize, u64) {
+        let t = self.t;
+        let mut n = 0;
+        for x in xs {
+            if let Some(rx) = self.rx {
+                match x {
+                    Some(b) => self.r[rx] = b,
+                    None => break,
+                }
+            }
+            if let Some(ra) = self.ra {
+                self.r[ra] = self.a;
+            }
+            if exec(&t.code, &mut self.r, &mut NoMem).is_none() {
+                break;
+            }
+            self.a = self.r[t.res as usize & 15];
+            n += 1;
+        }
+        (n, self.a)
     }
 }

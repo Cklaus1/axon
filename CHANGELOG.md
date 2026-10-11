@@ -1,5 +1,13 @@
 # Axon Changelog
 
+## Packed scalar arrays and bulk loops (R50 S13)
+
+An array built by `arr_repeat` of a plain `Bool`, `Int` or `Float`, or by `arr_range`, now keeps its elements packed (one byte per `Bool`, eight per `Int` or `Float`) instead of one 16-byte `Value` each. Element reads and writes of the packed kind, `len`, `arr_fold`, the S8 moves and S10 register loops work on packed storage in place. Any other write (another kind, a `SizedInt`) or a caller that needs the elements as values converts the array to plain values once; every builtin, `==`, `to_str`, interpolation and channel send gives the same result as for a literal array of the same elements, under both engines. One edge moves: `arr_repeat` and `arr_range` reserve the packed size, so an element count the allocator refused before (`cannot allocate an array of <n> elements`, exit 101) may now succeed, and a later conversion of that array allocates 16 bytes per element infallibly, so it can abort (134) after more output.
+
+Under `AXON_ENGINE=vm` two register-loop shapes also run in one pass on entry when the entry values allow it: a fill, `while j <= b { a[j] = c; j = j + s }` (or `<`) with `s > 0`, every written index in bounds, no overflow of `j + s` and `c` of the packed array's kind; and a count, `for k in lo..hi { if a[k] { n = n + c } }` (or `..=`) over a packed `Bool` array, with every index in bounds and `n + c × count` within `i64` (checked in 128-bit). Otherwise the bulk path changes nothing and the register loop runs as before, so a panic gives the tree-walker's text. `AXON_VM_TRACE=1` prints `vm: bulk <name> <f> fills, <k> counts` right after the `vm: pure` line of a body that holds either shape. `scripts/vm_parity.sh` also diffs each file's tree run against `AXON_REF_BIN`'s tree run when it is set, and `scripts/vm_perf_gate.sh --repros` adds a `packed` row run under both engines.
+
+Instructions retired (release): compilebench `sieve` 24,368,535,259 → 510,134,065 (CPython 3.14.4: 1,085,960,442); wall time 1.89 s → 0.13 s and peak resident memory 789 MB → 57 MB. Every other `vm_perf_gate.sh` program stays within 0.5 % of its `REF`.
+
 ## wasm32: deep values drop, deep source is refused, `host_await_val` copies nothing (compilebench AX-59, AX-60, AX-61)
 
 Under wasmtime's default 512 KiB stack the wasm32 interpreter no longer traps (exit 134) on three shapes. Native behaviour is unchanged, apart from the match-guard walk under AX-60.
