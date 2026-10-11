@@ -1,0 +1,22 @@
+vm_perf_gate: measured fib-recursive: 2291908991 2291907385 2291907082 -> median 2291907385
+vm_perf_gate: fib-recursive  median    2,291,907,385  budget    3,423,642,492  PASS
+vm_perf_gate: measured collatz: 18366347050 18366336010 18366339298 -> median 18366339298
+vm_perf_gate: collatz        median   18,366,339,298  budget   26,058,032,109  PASS
+vm_perf_gate: measured mandelbrot: 5067022239 5067026289 5067023953 -> median 5067023953
+vm_perf_gate: mandelbrot     median    5,067,023,953  budget   15,023,124,683  PASS
+vm_perf_gate: measured arr-sum: 4879408019 4879412723 4879412583 -> median 4879412583
+vm_perf_gate: arr-sum        median    4,879,412,583  budget   23,624,147,901  PASS
+vm_perf_gate: measured qsort: 11353799516 11353798948 11353792013 -> median 11353798948
+vm_perf_gate: qsort          median   11,353,798,948  budget   18,967,575,334  PASS
+vm_perf_gate: PASS
+gate rc=0
+vm_perf_gate: measured loop: 92217547 92221761 92221627 -> median 92221627
+vm_perf_gate: repro loop     (S1) loop     - -         / 1000000  =      92.2 per unit  budget  300  PASS
+vm_perf_gate: measured call1: 489321437 489322913 489323405 -> median 489322913
+vm_perf_gate: measured loop_generic: 257257092 257258582 257255757 -> median 257257092
+vm_perf_gate: repro call     (S1) call1    - loop_generic / 1000000  =     232.1 per unit  budget  800  PASS
+vm_perf_gate: measured part: 273298600 273294990 273294987 -> median 273294990
+vm_perf_gate: measured part_base: 56205511 56217841 56218651 -> median 56217841
+vm_perf_gate: repro part     (S2) part     - part_base / 1000000  =     217.1 per unit  budget  250  PASS
+vm_perf_gate: PASS
+repros rc=0

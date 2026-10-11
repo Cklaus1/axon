@@ -2377,3 +2377,26 @@ Alternative to evaluate before step 4 [INFERENCE, not designed]: run candidate c
 of in every VM fast path. Needs an adversarial review against PSV-1 (control taint, the PICK bit, receiver dispatch)
 first; it may not cover all of them. Note the Firecracker real-guest boot test is SKIP on this host (no guest kernel
 image), so the microVM path is not proven here.
+
+## R51 S7: native recursion nested in expressions can still abort the tree engine (BUG_HUNT #28 gap, pre-existing)
+
+[medium] The native recursion guard counts call depth only; the interpreter thread stack is
+`max_depth × STACK_BYTES_PER_FRAME` (floor `MIN_STACK_BYTES`). Each level of expression nesting around a call is one
+more evaluator frame (release `eval_arm::<false>` 1024 B, debug ~11 KB with `eval_binop`), so a call level nested
+deep enough in expressions overflows the real stack (exit 134 `has overflowed its stack`) before the guard trips.
+Pre-existing: 5864c423 aborts the same way. Measured 2026-10-11 (`fn down(n) { … (((down(n - 1) + 0) + 0) …) + 1 }`,
+k parens, `AXON_ENGINE=tree`, default limit 6000; sweep script `/var/tmp/r51-tmp/s7stack-sweep.py`):
+
+| build | deepest k completing at down(5990) | first aborting k at down(2000) |
+|---|---|---|
+| 5864c423 release | 280 (285 aborts) | 1000 |
+| f89f4d43 release (stack ×1.25, S7-UnsealedParity-10) | 300 (350 aborts) | 1000 |
+| 5864c423 debug | 20 (22 aborts) | 100 |
+| f89f4d43 debug | 24 (26 aborts) | 100 |
+
+The default VM completes every cell up to k = 1000 (release) / 200 (debug): its compiled bodies do not recurse per
+nesting level. Candidate fix (needs a spec row: base-134 cells would become exit 101, an unsealed behaviour change):
+on native, `eval_arm` compares the stack pointer against a floor recorded when `on_deep_stack` starts the thread
+(stack size minus a fixed reserve for the unguarded frames above the last evaluator frame) and returns the
+recursion-limit panic past it; one load and compare per evaluation on the tree engine, measured against §10 before
+landing. Raising the reserve further only moves the edge.
