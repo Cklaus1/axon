@@ -36743,6 +36743,52 @@ fn vm_index_decline_undoes_a_double_write() {
     assert_eq!(counts, (0, 1));
 }
 
+// ── R50 S13: packed scalar arrays and bulk loops (`vm_bulk_`) ───────────────
+
+/// R50 S13: the `(f, k)` of body `name`'s `vm: bulk <name> <f> fills, <k>
+/// counts` line, which must come right after its `vm: pure` line; `None`
+/// when the line after `vm: pure` is not a `vm: bulk` line for `name`.
+fn vm_bulk_counts(trace: &str, name: &str) -> Option<(usize, usize)> {
+    let pure = format!("vm: pure {name} ");
+    let bulk = format!("vm: bulk {name} ");
+    let lines: Vec<&str> = trace.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.starts_with(&pure))
+        .unwrap_or_else(|| panic!("no `vm: pure {name}` line:\n{trace}"));
+    let rest = lines.get(at + 1)?.strip_prefix(&bulk)?;
+    let parsed = rest
+        .split_once(" fills, ")
+        .and_then(|(f, k)| Some((f.parse().ok()?, k.strip_suffix(" counts")?.parse().ok()?)));
+    Some(parsed.unwrap_or_else(|| panic!("malformed `vm: bulk` line `{rest}`:\n{trace}")))
+}
+
+/// R50 S13: [`vm_pure_case`], then body `name`'s `vm: bulk` counts.
+fn vm_bulk_case(
+    tag: &str,
+    src: &str,
+    name: &str,
+) -> (Option<i32>, String, String, (usize, usize), Option<(usize, usize)>) {
+    let (code, stdout, stderr, counts) = vm_pure_case(tag, src, &[(name, 0)], name);
+    let traced = vm_run(tag, src, "vm", true);
+    let err = String::from_utf8_lossy(&traced.stderr).into_owned();
+    (code, stdout, stderr, counts, vm_bulk_counts(&err, name))
+}
+
+/// R50 S13 red test (§8): sieve's marking loop is a bulk fill and its
+/// counting loop a bulk count, traced right after the `vm: pure` line. S12
+/// prints no `vm: bulk` line.
+#[test]
+fn vm_bulk_sieve_loops() {
+    let src = std::fs::read_to_string(fixture("vm_perf/sieve.ax"))
+        .expect("read sieve.ax")
+        .replace("50000000", "1000");
+    let (code, stdout, stderr, counts, bulk) = vm_bulk_case("bulk_sieve", &src, "main");
+    assert_eq!((code, stdout.as_str()), (Some(0), "168\n"), "{stderr}");
+    assert_eq!(counts, (1, 2));
+    assert_eq!(bulk, Some((1, 1)));
+}
+
 // ── R50 S5: call costs (`vm_fastcall_`) ─────────────────────────────────────
 
 /// R50 S5: `axon run` on `src` under `engine`, with the AI mock on and a
