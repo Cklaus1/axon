@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 2bf3e4a464705f7da4e2d1e7f93f507d3f731ecb
+generated-at: d25cae8c1ab68e8659ed6d66e1cf235a9bf83982
 
-`git diff --numstat 31413ca7..2bf3e4a4 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..d25cae8c -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -60,7 +60,7 @@ generated-at: 2bf3e4a464705f7da4e2d1e7f93f507d3f731ecb
 | `crates/axon-core/src/interp/kernel_tests.rs` | 401 | 0 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 48 | 21 |
-| `crates/axon-core/src/interp/sink_tests.rs` | 1312 | 0 |
+| `crates/axon-core/src/interp/sink_tests.rs` | 1335 | 0 |
 | `crates/axon-core/src/interp/sym.rs` | 1188 | 0 |
 | `crates/axon-core/src/interp/taint.rs` | 1190 | 0 |
 | `crates/axon-core/src/interp/taint_tests.rs` | 1128 | 0 |
@@ -80,9 +80,9 @@ generated-at: 2bf3e4a464705f7da4e2d1e7f93f507d3f731ecb
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 37253 | 5265 |
+| total | 37276 | 5265 |
 
-`git log --reverse 31413ca7..2bf3e4a4 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..d25cae8c -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -262,7 +262,8 @@ generated-at: 2bf3e4a464705f7da4e2d1e7f93f507d3f731ecb
 | 9453352e | R51 S3 merge | joins S3c (57e4b8cc..582ced51, the seal crossing) onto S3d (0cc34976..d9881963, seal sinks); conflicts resolved by keeping both sides (handler_may_answer from S3c, both drift-scan skips, both THEMES blocks) and S3c's more specific ignore reasons, with the registry's by_slice recounted from its entries; no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 72009129 | R51 S3 merge | INTERPRETER dict_set/dict_remove/dict_inc call dict_mutated without an outer seal.active guard, as veto does (builtins.rs:5286/5318/5470); dict_mutated returns at once when the seal is inactive, so an unsealed run does the same work less one branch. TEST-ONLY: the main-only sink classification names call_fn_sealed for call_fn_in_general (S3c moved the sealed instantiation behind the crossing). Both were drift tests from S3d that S3c's code tripped at the merge. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 2bf3e4a4 | R51 S3e | INTERPRETER init_globals in a sealed run (veto interp.rs:3292-3303): init_globals_sealed runs each module-level initialiser under its own definition's provenance (with_frame) in a fresh env, so a candidate's `let` meets the call and global-read edges (an earlier global is read through global_ref) and its kernel effects land in the candidate's kernel; the let's taint is recorded by t_set_global. The unsealed path is unchanged (one shared env, no taint bookkeeping, now without the dead seal.active branch). Plus TEST-ONLY sink tests (every taint carrier into the name rule, the name half of channel taint, own fn values, definition provenance, a candidate impl answering an operator method) and the last 5 S3 deferred-registry entries re-slotted (4 to S6, 1 to S4 for PICK). Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 176 commits | | |
+| d25cae8c | R51 S3e | TEST-ONLY: rustfmt of interp/sink_tests.rs (line wrapping of the S3e tests); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 177 commits | | |
 <!-- END MECHANICAL -->
 
 
