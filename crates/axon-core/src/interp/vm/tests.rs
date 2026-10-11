@@ -1067,13 +1067,21 @@ fn r51_t1a_engine_for_truth_table() {
                     let at = format!(
                         "sealed={sealed} complete={complete} override={override_:?} env={env:?}"
                     );
-                    assert_eq!(got, want, "{at}");
+                    // The pin's own attacks first (spec §8 T7): a sealed run
+                    // it refuses was selected, or a sealed run got the VM.
+                    if sealed && want.is_err() {
+                        assert!(
+                            got.is_err(),
+                            "ATTACK: {at}: a sealed run the pin refuses was selected: {got:?}"
+                        );
+                    }
                     if sealed {
                         assert!(
                             got.is_err() || got == Ok(Tree),
-                            "{at}: a sealed run got {got:?}"
+                            "ATTACK: {at}: a sealed run got the VM: {got:?}"
                         );
                     }
+                    assert_eq!(got, want, "{at}");
                     rows += 1;
                 }
             }
@@ -1092,7 +1100,11 @@ fn r51_t1a_engine_for_truth_table() {
     );
     // Nor does the live selection read `AXON_VM_EAGER`.
     let src = r51_source("vm/mod.rs");
-    for f in ["fn engine_for(", "fn engine_at_build("] {
+    for f in [
+        "fn engine_for(",
+        "fn seal_engine_pin(",
+        "fn engine_at_build(",
+    ] {
         let start = src.find(f).unwrap_or_else(|| panic!("{f} in vm/mod.rs"));
         let body = &src[start..start + src[start..].find("\n}\n").expect("fn end")];
         assert!(
@@ -1208,6 +1220,128 @@ fn r51_t1b_a_sealed_run_compiles_nothing() {
     assert_eq!(got, want);
     assert!(bodies.is_empty(), "sealed run compiled {bodies:?}");
     assert_eq!(lambdas, 0, "sealed run compiled a lambda body");
+}
+
+/// The S9 first-entry marks `interp`'s run set: (some fn-table entry, some
+/// resolved lambda body). Only a VM path sets one (`first_entry_on_tree`,
+/// `compile_lambda`); the tree never does.
+fn r51_entry_marks(interp: &Interp<'_>) -> (bool, bool) {
+    let fns = interp.fn_table.iter().any(|e| e.entered.get());
+    let lambdas = interp
+        .res
+        .lambda_codes()
+        .any(|c| c.compiled.as_ref().is_some_and(|lb| lb.entered.get()));
+    (fns, lambdas)
+}
+
+/// R51 T7 (spec §8): each engine gate's consult, on its own. A sealed run
+/// (the pin's engine, deferred compile) runs one program per gate, each
+/// body entered once: a first-entry mark set means the run consulted the
+/// VM's first-entry rule, i.e. entered a VM path through that gate. `t` is
+/// run by `call_fn` (its body through `run_body`) or as the test frame
+/// (`run_test_body`); the lambda program's own frame is the test frame, so
+/// only `run_lambda` reaches its lambda. Control: unsealed on the VM, the
+/// gate's mark is set.
+#[test]
+fn r51_t7_a_sealed_run_enters_no_vm_path_at_any_gate() {
+    // (gate, program, `t` is the test frame, the gate marks a lambda)
+    const CASES: [(&str, &str, bool, bool); 3] = [
+        ("run_body", "fn t() -> i64 { 1 }\n", false, false),
+        ("run_test_body", "fn t() -> i64 { 1 }\n", true, false),
+        (
+            "run_lambda",
+            "fn t() -> i64 {\n    let f = |x: i64| x + 1\n    f(1)\n}\n",
+            true,
+            true,
+        ),
+    ];
+    for (gate, src, test_frame, lambda) in CASES {
+        let prog = crate::parse_source(src).expect("parses");
+        for sealed in [false, true] {
+            let (dirs, engine) = if sealed {
+                let pinned = engine_for(true, true, None, None).expect("a sealed run is allowed");
+                (vec![std::path::PathBuf::from("/r51-t7-sealed")], pinned)
+            } else {
+                (Vec::new(), Engine::Vm)
+            };
+            let mut interp = Interp::build_with(&prog, &dirs, engine);
+            assert_eq!(interp.seal.active, sealed);
+            interp.vm_eager = false;
+            interp.vm_trace = false;
+            interp.init_globals().expect("no globals");
+            let f = interp.fns["t"];
+            if test_frame {
+                assert_eq!(
+                    interp.test_outcome(f),
+                    Ok(crate::interp::TestEnd::Completed),
+                    "{gate}: sealed={sealed}"
+                );
+            } else {
+                let got = interp.call_fn(f, vec![]).expect("t runs");
+                assert!(matches!(got, Value::Int(1)), "{gate}: {got:?}");
+            }
+            let (fns, lambdas) = r51_entry_marks(&interp);
+            if sealed {
+                assert!(
+                    !fns && !lambdas,
+                    "ATTACK: a sealed run entered the VM through {gate}"
+                );
+            } else {
+                assert!(
+                    if lambda { lambdas } else { fns },
+                    "control: an unsealed VM run of the {gate} program marks no first entry"
+                );
+            }
+        }
+    }
+}
+
+/// R51 T7 (spec §8): the `compile` refusal, on its own. A sealed `Interp`
+/// handed the VM anyway (the pin bypassed, which `engine_for` never does),
+/// eager, runs the T1b program: `compile` panics before any body exists, so
+/// no fn-table or lambda cell is ever filled.
+#[test]
+fn r51_t7_a_sealed_run_given_the_vm_builds_no_vm_body() {
+    let prog = crate::parse_source(R51_T1B_SRC).expect("parses");
+    let dirs = [std::path::PathBuf::from("/r51-t7-sealed")];
+    let mut interp = Interp::build_with(&prog, &dirs, Engine::Vm);
+    assert!(interp.seal.active);
+    interp.vm_eager = true;
+    interp.vm_trace = false;
+    interp.init_globals().expect("no globals");
+    let f = interp.fns["t"];
+    let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| interp.call_fn(f, vec![])));
+    let bodies: Vec<&str> = interp
+        .fn_table
+        .iter()
+        .filter(|e| e.compiled.as_ref().is_some_and(|c| c.get().is_some()))
+        .map(|e| e.def.name.as_str())
+        .collect();
+    let lambdas = interp
+        .res
+        .lambda_codes()
+        .filter(|c| {
+            c.compiled
+                .as_ref()
+                .is_some_and(|lb| lb.compiled().is_some())
+        })
+        .count();
+    assert!(
+        bodies.is_empty() && lambdas == 0,
+        "ATTACK: a sealed run on the VM built VM bodies: {bodies:?}, {lambdas} lambda bodies"
+    );
+    let msg = match &run {
+        Ok(v) => panic!("the sealed VM run was not refused: {v:?}"),
+        Err(p) => p
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| p.downcast_ref::<&str>().copied())
+            .unwrap_or_default(),
+    };
+    assert!(
+        msg.contains("R51: a sealed run never compiles a VM body"),
+        "refused by another check: {msg}"
+    );
 }
 
 /// The source of `interp/<rel>` (`interp.rs` for `""`).
@@ -1359,9 +1493,10 @@ fn r51_fns(sites: &[&R51Site<'_>]) -> Vec<String> {
     v
 }
 
-/// R51 T1d (1, 2): the `engine` field is read only at the four engine
-/// gates (`run_test_body` is S0b's `@[test]`-frame twin of `run_body`) and
-/// the trace, and written after build only by `vm/tests.rs`.
+/// R51 T1d (1, 2): the `engine` field is read only by `seal_pin_vm`, which
+/// the four engine gates (`run_test_body` is S0b's `@[test]`-frame twin of
+/// `run_body`) and the trace consult, and written after build only by
+/// `vm/tests.rs`.
 #[test]
 fn r51_t1d_engine_is_read_only_at_the_gates() {
     let sources = r51_interp_sources();
@@ -1373,13 +1508,23 @@ fn r51_t1d_engine_is_read_only_at_the_gates() {
         let a = s.after.trim_start();
         a.starts_with('=') && !a.starts_with("==")
     });
-    assert!(
-        reads.len() >= 4,
-        "the sweep found {} `.engine` reads",
-        reads.len()
-    );
     assert_eq!(
         r51_fns(&reads),
+        ["interp/vm/mod.rs::seal_pin_vm"],
+        "DRIFT: a new reader of `Interp::engine` is a new engine gate; a sealed run must not reach the VM through it"
+    );
+    let gates: Vec<_> = r51_sites(&sources, "seal_pin_vm(")
+        .into_iter()
+        .filter(|s| !s.before.trim_end().ends_with("fn"))
+        .collect();
+    let gates: Vec<&R51Site<'_>> = gates.iter().collect();
+    assert!(
+        gates.len() >= 5,
+        "the sweep found {} engine consults",
+        gates.len()
+    );
+    assert_eq!(
+        r51_fns(&gates),
         [
             "interp/vm/mod.rs::run_body",
             "interp/vm/mod.rs::run_lambda",
@@ -1387,7 +1532,7 @@ fn r51_t1d_engine_is_read_only_at_the_gates() {
             "interp/vm/mod.rs::vm_trace_tree",
             "interp/vm/pure.rs::fold_leaf",
         ],
-        "DRIFT: a new reader of `Interp::engine` is a new engine gate; a sealed run must not reach the VM through it"
+        "DRIFT: a new engine gate; a sealed run must not reach the VM through it"
     );
     assert!(
         writes.is_empty(),
@@ -1437,11 +1582,17 @@ fn r51_t1d_compile_has_two_callers() {
         "DRIFT: a new caller of vm::compile::compile builds a VM body outside the two gated paths"
     );
     let src = r51_source("vm/compile.rs");
-    let start = src.find("fn compile<").expect("fn compile");
-    let body = &src[start..start + src[start..].find("\n}\n").expect("fn end")];
+    let fn_body = |head: &str| -> String {
+        let start = src.find(head).unwrap_or_else(|| panic!("{head}"));
+        src[start..start + src[start..].find("\n}\n").expect("fn end")].to_string()
+    };
     assert!(
-        body.contains("!ix.seal.active"),
+        fn_body("fn compile<").contains("    seal_compile_refusal(ix);\n"),
         "compile refuses a sealed run"
+    );
+    assert!(
+        fn_body("fn seal_compile_refusal(").contains("!ix.seal.active"),
+        "compile's refusal reads the seal"
     );
     assert_eq!(
         src.matches("Body {").count(),

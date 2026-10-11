@@ -33,10 +33,7 @@ use crate::interp::{lit_to_val, Interp, Resolution, Value};
 /// R51 §4 Fork 1 (defence in depth): every VM execution needs a `Body` and
 /// this is its only constructor, so no body is ever built for a sealed run.
 pub(in crate::interp) fn compile<'p>(ix: &Interp<'_>, body: &'p Expr) -> Option<Body<'p>> {
-    assert!(
-        !ix.seal.active,
-        "R51: a sealed run never compiles a VM body (sealed code runs on the tree only)"
-    );
+    seal_compile_refusal(ix);
     let mut c = Compiler {
         res: &ix.res,
         ix,
@@ -64,6 +61,16 @@ pub(in crate::interp) fn compile<'p>(ix: &Interp<'_>, body: &'p Expr) -> Option<
         max_stack: c.max_height as usize,
         leaf,
     })
+}
+
+/// [`compile`]'s refusal (R51 §4 Fork 1, defence in depth): a sealed run
+/// never builds a VM body. Named so the refusal-coverage gate's `SEAL_FN`
+/// scans it (spec §8 T7).
+fn seal_compile_refusal(ix: &Interp<'_>) {
+    assert!(
+        !ix.seal.active,
+        "R51: a sealed run never compiles a VM body (sealed code runs on the tree only)"
+    );
 }
 
 struct Compiler<'r, 'i, 'p> {
