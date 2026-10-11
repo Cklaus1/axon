@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: dd1ea380950867e7c0802c54e224e7143facb5ff
+generated-at: 7bc0bfd45b434a4b2bf49279004298b8fbf058d4
 
-`git diff --numstat 31413ca7..dd1ea380 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..7bc0bfd4 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -65,16 +65,16 @@ generated-at: dd1ea380950867e7c0802c54e224e7143facb5ff
 | `crates/axon-core/src/interp/sink_tests.rs` | 1098 | 0 |
 | `crates/axon-core/src/interp/sym.rs` | 1187 | 0 |
 | `crates/axon-core/src/interp/taint.rs` | 1653 | 0 |
-| `crates/axon-core/src/interp/taint_tests.rs` | 3942 | 0 |
+| `crates/axon-core/src/interp/taint_tests.rs` | 4170 | 0 |
 | `crates/axon-core/src/interp/tests_v022_a.rs` | 1184 | 0 |
-| `crates/axon-core/src/interp/tests_v022_b.rs` | 2001 | 0 |
+| `crates/axon-core/src/interp/tests_v022_b.rs` | 1987 | 0 |
 | `crates/axon-core/src/interp/tests_v022_c.rs` | 152 | 0 |
 | `crates/axon-core/src/interp/tests_v022_s4.rs` | 600 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 506 | 514 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
 | `crates/axon-core/src/interp/vm/mod.rs` | 3426 | 0 |
 | `crates/axon-core/src/interp/vm/pure.rs` | 964 | 0 |
-| `crates/axon-core/src/interp/vm/tests.rs` | 1615 | 0 |
+| `crates/axon-core/src/interp/vm/tests.rs` | 1643 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
 | `crates/axon-core/src/lib.rs` | 116 | 21 |
 | `crates/axon-core/src/main.rs` | 799 | 243 |
@@ -86,9 +86,9 @@ generated-at: dd1ea380950867e7c0802c54e224e7143facb5ff
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 45442 | 5256 |
+| total | 45684 | 5256 |
 
-`git log --reverse 31413ca7..dd1ea380 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..7bc0bfd4 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -307,7 +307,11 @@ generated-at: dd1ea380950867e7c0802c54e224e7143facb5ff
 | 5f748b86 | R51 S4 follow-up merge | joins r51/int d2353962 (hdone merge 4180f333, 9eb70ac1) onto the S4 follow-up (662b7329, e7cf7f59); this table resolved by keeping both sides, the note regenerated, the registry merged per entry (285 entries, S0b 14, S4 0, S6 271); no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 04d3ad7b | R51 S6.1 | INTERPRETER the seal flip: SEAL_RUNTIME_COMPLETE = true, so a sealed run builds (Interp::build_in through engine_for) on the tree engine with the S2-S5 runtime seal instead of being refused; AXON_ENGINE=vm or set_engine(Vm) on a sealed run stays refused (exit 2), and engine_for keeps its complete input, so setting the const back to false is the rollback. The rest of its crates/axon-core/src diff is TEST-ONLY or docs: the 285 R51 ignores removed (registry empty), the three refuse-all guard tests retired or turned into a positive sealed-harness test, the width row's pre-S6 branch dropped, the AXON_ENGINE env_registry row loses its incomplete-seal sentence, stale 'refused until S6' module docs. No unsealed behaviour change: engine_for's unsealed rows read neither changed input |
 | dd1ea380 | R51 S6.1 | TEST-ONLY: interp::conform::walk_bound_tests::a_value_nested_past_the_bound_is_refused_not_left_unvisited moves back from interp/conform_tests.rs to its v0.22 module (end of interp/conform.rs, v0.22 body verbatim), the path the PCI am78 row and M1847 name; scripts v022_pci_gates.sh and psv_matrix_check.py read a file's include!d files too, so main's interp::tests rows in interp/tests_v022_*.rs resolve; no behaviour change; sealed runs as at 04d3ad7b |
-| 215 commits | | |
+| bff841fe | R51 S6.2 | TEST-ONLY: interp/taint_tests.rs gains T8.2 positional probes (a tainted binding then a clean one at the sandbox_run name sink, per former raw vars writer: bind_params, bind_params_sealed, goal_met, slotted and by-name closure params, capture lend/copy/write-back, &mut read-back), T8.3 every fresh predicate env (parameter refinement, struct field and whole-struct where, @[verify] scalar and Uncertain), T8.5/T8.6 honest controls (in-place hook rows, clean operands, clean captures); no behaviour change |
+| a55dcfcb | R51 S6.2 | TEST-ONLY: the T3 drift sweeps in interp/taint_tests.rs read the shared mod-tests-cut source list (vm::tests::r51_interp_sources), so production code after `mod taint_tests;` is swept and vm/tests.rs, tests_v022_*.rs are skipped; taint_tests and tests_v022_b split builtins.rs through interp::tests::builtin_arms (asserts >= 250 arms); no behaviour change |
+| 9ac6de6c | R51 S6.2 | TEST-ONLY: interp/vm/tests.rs case for Uncertain source_tag through CallFastLocalInt (VM == tree); fixture r51_s0b/uncertain_source_tag.ax loop and cli_run expectation; vm_parity.sh axon test --json leg over r51_s0b/test_*.ax; no behaviour change |
+| 7bc0bfd4 | R51 S6.2 | TEST-ONLY: interp/taint_tests.rs T8.2 positional probes carry a scalar the candidate chose (idx()) so only the binding's taint carries it; the &mut attack reads the clean neighbour; no behaviour change |
+| 219 commits | | |
 <!-- END MECHANICAL -->
 
 
