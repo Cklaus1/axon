@@ -1136,7 +1136,7 @@ fn every_global_read_goes_through_global_ref() {
 
 /// The body of the first `fn name` in the interpreter sources (test modules
 /// excluded): its lines up to the closing brace at the `fn`'s indent.
-fn fn_body(name: &str) -> String {
+pub(super) fn fn_body(name: &str) -> String {
     for (file, src) in vm::tests::r51_interp_sources() {
         if file.ends_with("_tests.rs") {
             continue;
