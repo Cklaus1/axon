@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 5205763ea63155a656946f13cf19d97f47954d29
+generated-at: 748f071576ba44ecc05d928979a4b5a183277cd8
 
-`git diff --numstat 31413ca7..5205763e -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..748f0715 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -60,10 +60,10 @@ generated-at: 5205763ea63155a656946f13cf19d97f47954d29
 | `crates/axon-core/src/interp/kernel_tests.rs` | 401 | 0 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 48 | 21 |
-| `crates/axon-core/src/interp/sink_tests.rs` | 1410 | 0 |
+| `crates/axon-core/src/interp/sink_tests.rs` | 1302 | 0 |
 | `crates/axon-core/src/interp/sym.rs` | 1188 | 0 |
 | `crates/axon-core/src/interp/taint.rs` | 1190 | 0 |
-| `crates/axon-core/src/interp/taint_tests.rs` | 1128 | 0 |
+| `crates/axon-core/src/interp/taint_tests.rs` | 1236 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 506 | 514 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
 | `crates/axon-core/src/interp/vm/mod.rs` | 3426 | 0 |
@@ -82,7 +82,7 @@ generated-at: 5205763ea63155a656946f13cf19d97f47954d29
 | `crates/axon-core/src/types.rs` | 28 | 0 |
 | total | 37414 | 5268 |
 
-`git log --reverse 31413ca7..5205763e -- crates/axon-core/src`:
+`git log --reverse 31413ca7..748f0715 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -264,7 +264,8 @@ generated-at: 5205763ea63155a656946f13cf19d97f47954d29
 | 2bf3e4a4 | R51 S3e | INTERPRETER init_globals in a sealed run (veto interp.rs:3292-3303): init_globals_sealed runs each module-level initialiser under its own definition's provenance (with_frame) in a fresh env, so a candidate's `let` meets the call and global-read edges (an earlier global is read through global_ref) and its kernel effects land in the candidate's kernel; the let's taint is recorded by t_set_global. The unsealed path is unchanged (one shared env, no taint bookkeeping, now without the dead seal.active branch). Plus TEST-ONLY sink tests (every taint carrier into the name rule, the name half of channel taint, own fn values, definition provenance, a candidate impl answering an operator method) and the last 5 S3 deferred-registry entries re-slotted (4 to S6, 1 to S4 for PICK). Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | d25cae8c | R51 S3e | TEST-ONLY: rustfmt of interp/sink_tests.rs (line wrapping of the S3e tests); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 5205763e | R51 S6 gaps | INTERPRETER (both engines, S0b-class correctness fix) assert_eq_f64 is stated positively, !(a == b || |a-b| <= 1e-9), as veto builtins.rs:3745, so a NaN operand FAILS on the tree and the VM (they share the arm) as it does natively (OEQ); inf == inf still passes, and every non-NaN pair behaves as before. INTERPRETER seal edge (veto goal.rs:274/373/476/554, interp.rs:4959): run_goal_random/categorical/multistart/tournament call seal_call after the name lookup and unknown_goal_name gives a sealed caller the uniform no-such-fn text, so a sealed caller cannot tell an operator fn from a missing name; both are no-ops unless seal.active and the frame is sealed, so an unsealed run is unchanged. TEST-ONLY: vm/tests.rs NaN parity test, sink_tests.rs goal-search seal test and the clock-builtin World/Time check (veto taint_tests.rs:2498-2516), an ATTACK marker on the T1c CLI refusal asserts. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 178 commits | | |
+| 748f0715 | R51 S6 gaps | TEST-ONLY: no_arm_of_a_pure_builtin_reads_or_advances_ambient_state moves verbatim from interp/sink_tests.rs to interp/taint_tests.rs, v0.22's module path, so the M3323/M3329 rows and the am117 gate row name a test that exists; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 179 commits | | |
 <!-- END MECHANICAL -->
 
 
