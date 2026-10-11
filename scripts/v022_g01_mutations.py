@@ -6142,7 +6142,11 @@ MUTATIONS += [
 # submit's axon-os admission (the approval token's four bindings).
 PSV_IDS |= {f"M{n}" for n in range(1760, 2000)}
 _CR = 'crates/axon-cortex/src/runner.rs'
-_CL = 'crates/axon-cortex/src/lib.rs'
+# The cortex library FILE has its own name: `_CL` is the axon-core lib TARGET (line ~1599) and
+# rebinding it here sent every later axon-core row that names `_CL` as its target to
+# `cargo test -p axon-core crates/axon-cortex/src/lib.rs` (default features, every test target,
+# the path as a name filter) until R51 S7.
+_CXL = 'crates/axon-cortex/src/lib.rs'
 _CM = 'crates/axon-core/src/main.rs'
 _OA = 'crates/axon-os/src/approval.rs'
 _PSEL = '--no-default-features --test psv_test_selection'
@@ -6159,7 +6163,7 @@ MUTATIONS += [
      "    if version.is_empty() || version.contains(['@', '#']) || entry.is_empty() {",
      "    if false && (version.is_empty() || version.contains(['@', '#']) || entry.is_empty()) {",
      'axon-loop', '--test intake', 'a_suite_reference_with_a_second_reading_is_never_pinned'),
-    ('M1763', "LOOP (sites): a document holding one key twice is refused on its raw bytes (parse_strict)", _CL,
+    ('M1763', "LOOP (sites): a document holding one key twice is refused on its raw bytes (parse_strict)", _CXL,
      '                    if out.contains_key(&k) {', '                    if false && out.contains_key(&k) {',
      'axon-loop', '--test intake', 'an_episode_holding_one_key_twice_is_never_recorded'),
     ('M1764', "PSV-3 (sites): `axon test` runs no test of a program that does not type-check", _CM,
