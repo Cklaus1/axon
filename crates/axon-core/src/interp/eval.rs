@@ -208,11 +208,17 @@ pub(super) fn question(v: Value) -> R {
 /// capture-free forwarding lambda `|#0, #1, ..| name(#0, #1, ..)`. The `#n`
 /// parameter names cannot be written in source, so they never shadow a name the
 /// callee's body or arguments could refer to.
-fn fn_value(name: &str, arity: usize) -> Value {
+///
+/// `sealed`: a SEALED frame took the value (veto eval.rs:95-118). It carries
+/// the `sealed_fnval` mark: a call of it from sealed code is the candidate's
+/// own, not a call of an operator closure. It is NOT `sealed_origin`: the
+/// body still runs in the operator frame and reaches the candidate fn through
+/// the call edge. The operator's fn values stay unmarked.
+fn fn_value(name: &str, arity: usize, sealed: bool) -> Value {
     let params: Vec<String> = (0..arity).map(|i| format!("#{i}")).collect();
     let args = params.iter().map(|p| Expr::Ident(p.clone())).collect();
-    Value::Closure(Rc::new(ClosureVal {
-        code: Rc::new(ClosureCode::unresolved(
+    let mut cv = ClosureVal::plain(
+        Rc::new(ClosureCode::unresolved(
             params.iter().map(|p| intern(p)).collect(),
             Expr::Call {
                 callee: Box::new(Expr::Ident(name.to_string())),
@@ -220,8 +226,10 @@ fn fn_value(name: &str, arity: usize) -> Value {
                 tier: None,
             },
         )),
-        captured: std::cell::RefCell::new(Captures::default()),
-    }))
+        Captures::default(),
+    );
+    cv.seal.sealed_fnval = sealed;
+    Value::Closure(Rc::new(cv))
 }
 
 impl<'p> Interp<'p> {
@@ -627,6 +635,13 @@ impl<'p> Interp<'p> {
             } => {
                 let recv = self.eval_t::<T>(receiver, env)?;
                 if let Value::Chan(q) = &recv {
+                    if T {
+                        // One access helper before any channel method runs
+                        // (amendments 106, 117; veto eval.rs:650-658).
+                        let rt = self.tl::<T>();
+                        self.t_chan_access(&recv, method);
+                        self.t_chan_choice(&recv, rt);
+                    }
                     return self.chan_method::<T>(q, method, args, env);
                 }
                 let mut argv = Vec::with_capacity(args.len() + 1);
@@ -786,7 +801,15 @@ impl<'p> Interp<'p> {
                         return panic("select arm `recv` on a non-channel");
                     };
                     if T {
-                        lost |= self.t_obj(&Value::Chan(q.clone())) & taint::VAL;
+                        // The channel looked at may itself be the candidate's
+                        // pick; whether it is ready is a READ of its queue,
+                        // ready or not (amendments 106, 117; veto
+                        // eval.rs:1019-1034).
+                        let rt = self.tl::<T>();
+                        let ch = Value::Chan(q.clone());
+                        self.t_chan_access(&ch, "recv");
+                        self.t_chan_choice(&ch, rt);
+                        lost |= self.t_obj(&ch) & taint::VAL;
                     }
                     let ready = q.borrow_mut().pop_front();
                     if ready.is_some() {
@@ -821,10 +844,17 @@ impl<'p> Interp<'p> {
         // In a sealed run each capture keeps its binding's taint (R51 S2.3).
         let captured = env.capture(info.captures.iter().copied());
         // T40: a SHARED, persistent capture cell — see Value::Closure.
-        Value::Closure(Rc::new(ClosureVal {
-            code: Rc::clone(&info.code),
-            captured: std::cell::RefCell::new(captured),
-        }))
+        let mut cv = ClosureVal::plain(Rc::clone(&info.code), captured);
+        if self.seal.active {
+            // Its own parameter annotations are its first contract, and a
+            // closure a SEALED frame created runs sealed wherever it is later
+            // called (veto eval.rs:961-977; R51 Fork 3, typed marks).
+            if let Expr::Lambda { params, .. } = expr {
+                cv.contract = Self::lambda_contract(params);
+            }
+            cv.seal.sealed_origin = self.frame_sealed.get();
+        }
+        Value::Closure(Rc::new(cv))
     }
 
     /// Bind the evaluated value `v` of a `let`/`own`/`ref` (all three behave
@@ -2198,7 +2228,13 @@ impl<'p> Interp<'p> {
             // exactly the path a direct `f(..)` call takes — contracts,
             // `@[verify]` gates, effect/capability gates and provenance
             // included. The resolver refuses builtins and generic fns here.
-            Ok(fn_value(name, f.params.len()))
+            // In a sealed run, a fn value a SEALED frame took is marked
+            // (veto eval.rs:175-179; the call edge `seal_call` is S3c).
+            Ok(fn_value(
+                name,
+                f.params.len(),
+                self.seal.active && self.frame_sealed.get(),
+            ))
         } else {
             panic(format!("undefined identifier `{name}`"))
         }
