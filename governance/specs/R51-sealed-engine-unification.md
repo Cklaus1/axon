@@ -394,7 +394,9 @@ decision taken:
   debug VM, and a recursion nested 260–280 expressions deep at `down(5990)` aborted with a stack overflow where
   5864c423 completed it (S7-UnsealedParity-10). f89f4d43 scales the reserve ×1.25 (`STACK_BYTES_PER_FRAME`
   256 → 320 KiB, `MIN_STACK_BYTES` 1 → 1.25 GiB; at the default limit 6000 the thread reserves 1.83 GiB, was
-  1.46 GiB). It is address space: resident memory is unchanged (max RSS of the same program equal within noise).
+  1.46 GiB), capped (4bb4a0e1) at 5864c423's largest reserve, 1,000,000 × 256 KiB, so `AXON_MAX_DEPTH` near the
+  ceiling still spawns its thread (uncapped, ×1.25 asked for more than heuristic overcommit maps past ~800,000).
+  It is address space: resident memory is unchanged (max RSS of the same program equal within noise).
   Every call depth × nesting depth cell that completed or hit the recursion limit on 5864c423 does so again,
   release and debug, tree and VM. Nesting deep enough still overflows, on 5864c423 too (tasks/opportunities.md).
 
