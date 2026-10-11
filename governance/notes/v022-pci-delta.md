@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 4bb4a0e160c326952ba74cbf0b75f93d1dec5db7
+generated-at: 7defe71dd7c3437da41edce1529600d9e7e9a70b
 
-`git diff --numstat 31413ca7..4bb4a0e1 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..7defe71d -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -25,7 +25,7 @@ generated-at: 4bb4a0e160c326952ba74cbf0b75f93d1dec5db7
 | `crates/axon-core/src/builtins.rs` | 44 | 10 |
 | `crates/axon-core/src/cache.rs` | 284 | 40 |
 | `crates/axon-core/src/capabilities.rs` | 18 | 1 |
-| `crates/axon-core/src/checker.rs` | 608 | 106 |
+| `crates/axon-core/src/checker.rs` | 610 | 108 |
 | `crates/axon-core/src/clock.rs` | 58 | 3 |
 | `crates/axon-core/src/codegen/asi.rs` | 14 | 18 |
 | `crates/axon-core/src/codegen/build_wrappers.rs` | 25 | 1 |
@@ -48,8 +48,9 @@ generated-at: 4bb4a0e160c326952ba74cbf0b75f93d1dec5db7
 | `crates/axon-core/src/error.rs` | 22 | 13 |
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
+| `crates/axon-core/src/improve.rs` | 22 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 5206 | 1583 |
+| `crates/axon-core/src/interp.rs` | 5278 | 1557 |
 | `crates/axon-core/src/interp/builtins.rs` | 672 | 512 |
 | `crates/axon-core/src/interp/conform.rs` | 1800 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1354 | 0 |
@@ -72,7 +73,7 @@ generated-at: 4bb4a0e160c326952ba74cbf0b75f93d1dec5db7
 | `crates/axon-core/src/interp/tests_v022_s4.rs` | 600 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 506 | 514 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1698 | 0 |
-| `crates/axon-core/src/interp/vm/mod.rs` | 3469 | 0 |
+| `crates/axon-core/src/interp/vm/mod.rs` | 3474 | 0 |
 | `crates/axon-core/src/interp/vm/pure.rs` | 964 | 0 |
 | `crates/axon-core/src/interp/vm/tests.rs` | 1796 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
@@ -82,13 +83,13 @@ generated-at: 4bb4a0e160c326952ba74cbf0b75f93d1dec5db7
 | `crates/axon-core/src/mut_borrow.rs` | 800 | 0 |
 | `crates/axon-core/src/parser.rs` | 84 | 3 |
 | `crates/axon-core/src/replay.rs` | 40 | 17 |
-| `crates/axon-core/src/resolver.rs` | 534 | 66 |
+| `crates/axon-core/src/resolver.rs` | 578 | 86 |
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 46504 | 5389 |
+| total | 46649 | 5385 |
 
-`git log --reverse 31413ca7..4bb4a0e1 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..7defe71d -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -320,9 +321,11 @@ generated-at: 4bb4a0e160c326952ba74cbf0b75f93d1dec5db7
 | 1276b9e9 | R51 S6 T7 merge | joins r51/t7oracle (11172ce5, 6ae5d56c: oracle rows M2622/M2623/M2925/M2946/M3343, new row M3495 sealed `&mut` direct-call oracle) onto r51/int 15cbfa4a (t7shape: sealed width re-tag, M3230/M3231/M3256 text, M1996 marker); only this table and the note conflicted, resolved by keeping both sides; no change beyond the commits it joins |
 | ffe2b413 | R51 T2 wasm32 depth | INTERPRETER (stack layout and wasm32 recursion budget only; no change in what any run computes, accepts or refuses): the const-generic frames charge per-instance nest_cost constants (nest_guard!(self, if T { X_SEALED } else { X }); EVAL/CALL_FN_IN_GENERAL/CALL_CLOSURE_OWNED_BY renamed EVAL_ARM/CALL_FN_FRAME/CALL_CLOSURE_FRAME after the fns that charge them, RUN_TEST_BODY its own; the sealed-only call_fn_sealed/call_mut_sealed/eval_tainted guarded); sealed-only code moves out of the unsealed frames into #[cold] #[inline(never)] helpers: sealed_branch! runs a branch body in place in the ::<false> instance and through t_branch in the ::<true> one, call_mut hands a sealed run to call_mut_sealed before its arguments (which evaluates them in the same order), call_mut_with is unsealed-only with the ::<false> Env accessors, struct_refine_sealed out of finish_record, run_arm_sealed out of run_handler_arm (match instead of and_then), with_abort_enter/with_abort_exit out of eval_with_handler, eval_prob_pred guarded with prob_pred inline, Bindings' debug checks out of line, the unused Env::get_mut dropped (vm test uses get_mut_t::<false>); drift-test needles (sink_tests, tests_v022_b) and a taint_tests doc follow the moved code; unsealed behaviour change: none on native; sealed runs as at 04d3ad7b |
 | 3561022b | R51 T2 wasm32 depth | INTERPRETER (stack layout and wasm32 recursion budget only): finish_call_cold's R4 zone provenance injection moves verbatim into #[inline(never)] record_zone_provenance; eval_with_handler is #[inline(always)] in an optimised build (as before R51 split the evaluator); every nest_cost constant whose frame grew is set to its measured need (wasm_stack_budget.py; e.g. EVAL_ARM release 288 -> 304, CALL_FN_FRAME 224/528 -> 272/576), the sealed ones to their measured need; unsealed behaviour change: none on native; on wasm32 the recursion-limit panic fires a few levels earlier on some nest probes (vm_wasm_depth.sh PASS, VM >= tree everywhere); sealed runs as at 04d3ad7b |
+| 30e6638c | R51 S7 decl | INTERPRETER + RESOLVER (S7-UnsealedParity-1,6,7,8,9, S7-Seal-2): frame_edge's loop-control text comes from FrameEdge::loop_control_escape, so a handler arm reads "`break`/`continue` cannot leave an effect-handler arm (a loop around the `with` is not the arm's loop)" (other edges unchanged); the resolver's refinement-name rule takes checker::DEFERRED_PREFIXES as exact names (v0.22's prefix rule predates amendment 117), so `type GoalScore = i64 where …` is accepted and `type Goal = …` refused, and the duplicate-impl E0002 prints checker::axon_type_name; TEST_ENDED_ON_FAILURE names an early None; run_test_fn returns Err on TestEnd::failure_exit, so improve.rs G3 reads axon test's verdict; vm run_test_body runs a test body holding its own Op::Return on the tree (the eager VM read an early return as a completion); depth_exceeded decides seal_call first (v0.22 order). Unsealed behaviour change: the handler-arm and early-None panic/failure texts, refinement names that merely start with Uncertain/Temporal/Goal/Dict now resolve, the duplicate-impl text, axon improve's G3 verdict on an Err/early-None test, and AXON_VM_EAGER=1 test completion after an early return (now as the tree); spec §3 declares the v0.22 rows; sealed runs: a depth-limit call of an operator fn reads the uniform no-such-fn text |
 | f89f4d43 | R51 S7 native stack | INTERPRETER (native thread stack size only; no change in what any run computes, accepts or refuses): STACK_BYTES_PER_FRAME 256 KiB -> 320 KiB and MIN_STACK_BYTES 1 GiB -> 1.25 GiB, so the interpreter thread reserves 1.25x the address space, covering the unsealed native frames R51's per-run-kind evaluator grew (release eval_arm::<false> 1024 B, was eval 912 B; at 3921a309 a recursion nested 260-280 expressions deep at down(5990) aborted where 5864c423 ran it, S7-UnsealedParity-10); unsealed behaviour change: none against 5864c423 (every call depth x paren depth cell that completed or hit the recursion limit there does so again, release and debug, tree and VM; cells that aborted there reach further before aborting); wasm32 unaffected (no thread); cli_run regression test; sealed runs as at 04d3ad7b |
 | 4bb4a0e1 | R51 S7 native stack cap | INTERPRETER (native thread stack size only; no change in what any run computes, accepts or refuses): stack_size_for_depth clamps the reserve at MAX_STACK_BYTES = MAX_DEPTH_CEILING x 256 KiB, the largest reserve 5864c423 made; with f89f4d43's x1.25 alone, AXON_MAX_DEPTH past ~800,000 asked for more than Linux heuristic overcommit maps in one go and the interpreter thread failed to spawn (exit 101) where 5864c423 ran (900,000 and 1,000,000 observed); unsealed behaviour change: none against 5864c423 (every depth reserves at least what it did there; AXON_MAX_DEPTH 800,000/900,000/1,000,000 run hello, release and debug); sealed runs as at 04d3ad7b |
-| 230 commits | | |
+| 7defe71d | R51 S7 merge | joins r51/int 9e67b796 (r51/s7decl, 30e6638c) onto r51/s7stack (f89f4d43, 4bb4a0e1: native thread stack reserve only); only this table and the note conflicted, resolved by keeping both sides; no change beyond the commits it joins; sealed runs as at 04d3ad7b |
+| 232 commits | | |
 <!-- END MECHANICAL -->
 
 
