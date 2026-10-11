@@ -213,3 +213,359 @@ fn judge_dict(d: Dict) -> bool {
 }
 fn judge_lit() -> bool { 9.ok() }
 ";
+
+/// The operator's judge: a strict `i64` impl, a lenient `u8` one.
+/// The operator's judge: a strict `i64` impl, a lenient `u8` one.
+const J: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
+
+/// The undetermined-position operator: it reads back a value the candidate
+/// stored (a key it never held), through a channel it filled, a fn with no
+/// declared return type, an erased `Wrap<T>` and a free `fn(T)` (veto
+/// sealed_frames.rs:629, cases B1-B4), and judges each with `.ok()`.
+const SUITE_POS: &str = "\
+fn t_dict() -> bool {
+    let d = dict_new()
+    fill_d(d)
+    match dict_get(d, \"k\") {
+        Some(v) => v.ok()
+        None => false
+    }
+}
+fn t_dict_pinned() -> bool {
+    let d = dict_new()
+    fill_d(d)
+    match dict_get(d, \"k\") {
+        Some(v) => {
+            let y: i64 = v
+            y.ok()
+        }
+        None => false
+    }
+}
+fn t_chan() -> bool {
+    let c = chan<i64>()
+    fill(c)
+    let r: i64 = c.recv()
+    r.ok()
+}
+fn t_noret() -> bool {
+    let r: i64 = solve(3)
+    r.ok()
+}
+fn t_wrap() -> bool {
+    let w = solve_w(Wrap { v: 3 })
+    let x: i64 = w.v
+    x.ok()
+}
+fn t_clos() -> bool { apply(|x: i64| x.ok()) }
+";
+
+/// The candidate's laundering helpers (veto sealed_frames.rs:631): a `u8`
+/// made out of an `i64`, read back untyped out of a dict.
+const LAUNDER: &str = "\
+fn narrow(n: i64) -> u8 { n as u8 }
+fn stash(v: u8) -> Dict {
+    let d = dict_new()
+    dict_set(d, \"k\", v)
+    d
+}
+pub type Wrap<T> = { v: T }
+";
+
+/// A candidate for [`SUITE_POS`]: `v` is the value each entry point hands
+/// back (`9` GOOD, `4` WRONG, `LAUNDERED` the attack's `u8`).
+fn pos_cand(v: &str) -> String {
+    let some = |use_v: &str| {
+        if v == LAUNDERED {
+            let use_v = use_v.replace("{V}", "v");
+            format!("match dict_get(stash(narrow(4)), \"k\") {{\n        Some(v) => {use_v}\n        None => {{}}\n    }}")
+        } else {
+            use_v.replace("{V}", v)
+        }
+    };
+    format!(
+        "{LAUNDER}pub fn fill_d(d: Dict) {{\n    {}\n}}\npub fn fill<T>(c: Chan<T>) {{\n    {}\n}}\npub fn solve(n: i64) -> i64 {{\n    {}\n    0\n}}\npub fn solve_w<T>(w: Wrap<T>) -> Wrap<T> {{\n    {}\n    w\n}}\npub fn apply<T>(f: fn(T) -> bool) -> bool {{\n    {}\n    false\n}}\n",
+        some("dict_set(d, \"k\", {V})"),
+        some("c.send({V})"),
+        some("return {V}"),
+        some("return Wrap { v: {V} }"),
+        some("return f({V})"),
+    )
+}
+
+/// Marks [`pos_cand`]'s attack.
+const LAUNDERED: &str = "laundered";
+
+/// Which seal layers judge a run (veto taint_tests.rs:14-24).
+#[derive(Clone, Copy, Debug)]
+enum Rules {
+    /// The static pin analysis and the runtime taint.
+    Both,
+    /// The runtime taint only (`DISPATCH_RULE_OFF`): what it refuses alone.
+    TaintOnly,
+    /// The static pin analysis only: the earlier rounds' layer.
+    StaticOnly,
+    /// Neither: the attack is live.
+    Neither,
+}
+
+/// Set this thread's switches for `r`.
+fn rules(r: Rules) {
+    let (static_on, taint_on) = match r {
+        Rules::Both => (true, true),
+        Rules::TaintOnly => (false, true),
+        Rules::StaticOnly => (true, false),
+        Rules::Neither => (false, false),
+    };
+    DISPATCH_RULE_OFF.with(|c| c.set(!static_on));
+    TAINT_FORCE_ON.with(|c| c.set(taint_on));
+}
+
+const ALL_RULES: [Rules; 4] = [
+    Rules::Both,
+    Rules::TaintOnly,
+    Rules::StaticOnly,
+    Rules::Neither,
+];
+
+/// v0.22 `an_undetermined_type_position_never_selects_the_operators_impl`
+/// (veto sealed_frames.rs:629, C9 round 4c, amendment 72), unit level: the
+/// operator never runs its lenient `u8` impl of `Judge` on a value whose
+/// type a candidate chose at a position nothing on the operator side
+/// determined. An untyped read back out of a dict the candidate filled is
+/// refused by the static rule (`seal_dispatch`) and, with it off, by the
+/// runtime one (`t_check_dispatch`): live only with both off. The four
+/// positions veto names (a generic `Chan<T>`, no declared return, an erased
+/// `Wrap<T>`, a free `fn(T)`) are refused under every rule setting by the
+/// declared-type casts (S3), which is where main closes them. Controls:
+/// GOOD (`9`) is a pass and WRONG (`4`) a failure everywhere a pin decides.
+#[test]
+fn an_undetermined_type_position_never_selects_the_operators_impl() {
+    let cases = ["t_chan", "t_noret", "t_wrap", "t_clos"];
+    let mut fails = Vec::new();
+    for r in ALL_RULES {
+        rules(r);
+        let tag = format!("r51-s4-pos-{r:?}");
+        with_src(
+            &tag,
+            &format!("{J}{SUITE_POS}"),
+            &pos_cand("9"),
+            true,
+            |ix| {
+                for p in cases.iter().chain(&["t_dict_pinned"]) {
+                    let o = go(ix, p, false, vec![]);
+                    if !yields(&o, &Value::Bool(true)) {
+                        fails.push(format!("control GOOD {r:?} {p}: {o:?}"));
+                    }
+                }
+            },
+        );
+        with_src(
+            &format!("{tag}-w"),
+            &format!("{J}{SUITE_POS}"),
+            &pos_cand("4"),
+            true,
+            |ix| {
+                for p in cases.iter().chain(&["t_dict_pinned"]) {
+                    let o = go(ix, p, false, vec![]);
+                    if !yields(&o, &Value::Bool(false)) {
+                        fails.push(format!("control WRONG {r:?} {p}: {o:?}"));
+                    }
+                }
+            },
+        );
+        with_src(
+            &format!("{tag}-a"),
+            &format!("{J}{SUITE_POS}"),
+            &pos_cand(LAUNDERED),
+            true,
+            |ix| {
+                for p in cases.iter().chain(&["t_dict_pinned"]) {
+                    let o = go(ix, p, false, vec![]);
+                    if o.is_ok() {
+                        fails.push(format!(
+                            "ATTACK {r:?} {p} (an undetermined position): {o:?}"
+                        ));
+                    }
+                }
+                let o = go(ix, "t_dict", false, vec![]);
+                let want = match r {
+                    Rules::Neither => None,
+                    Rules::TaintOnly => Some(TAINT),
+                    Rules::Both | Rules::StaticOnly => Some(UNDETERMINED),
+                };
+                match want {
+                    None if !yields(&o, &Value::Bool(true)) => {
+                        fails.push(format!("rules off: the attack is live: {o:?}"));
+                    }
+                    Some(w) if !(refused(&o, UNDETERMINED) && refused(&o, w)) => {
+                        fails.push(format!("ATTACK {r:?} t_dict (an untyped read): {o:?}"));
+                    }
+                    _ => {}
+                }
+            },
+        );
+    }
+    rules_reset();
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}
+
+/// Back to a unit test's defaults: the static rule on, the taint rules off.
+fn rules_reset() {
+    DISPATCH_RULE_OFF.with(|c| c.set(false));
+    TAINT_FORCE_ON.with(|c| c.set(false));
+}
+
+/// The by-name half (veto sealed_frames.rs:548, amendment 60): a table the
+/// candidate filled holds `0` where the operator expects a closure; the
+/// operator calls it through the local `square`, which also names its own
+/// `fn square`. In a sealed run the local is what the name means, and a `0`
+/// is not callable: the call never falls through to the operator's fn. The
+/// by-width half: a `u8` at a declared `i64` return is refused by the return
+/// cast, pinned or not. Under every rule setting. Controls: a closure table
+/// (GOOD `n * n`, WRONG `n + 1`), and an unsealed run, which keeps main's
+/// fall-through to the fn.
+#[test]
+fn the_candidate_never_selects_the_operators_code_by_width_or_by_name() {
+    const SUITE_T: &str = "\
+fn square(n: i64) -> i64 { n * n }
+fn t_table() -> bool {
+    match dict_get(table(), \"sq\") {
+        Some(square) => square(3) == 9 && square(5) == 25
+        None => false
+    }
+}
+fn judge(x: i64) -> bool { x.ok() }
+fn t_width() -> bool {
+    let r: i64 = solve_width(3)
+    judge(r)
+}
+fn t_width_bare() -> bool {
+    let r: i64 = solve_width(3)
+    r.ok()
+}
+";
+    let cand = |sq: &str, width: &str| {
+        format!(
+            "{LAUNDER}pub fn table() -> Dict {{\n    let d = dict_new()\n    dict_set(d, \"sq\", {sq})\n    d\n}}\npub fn solve_width(n: i64) -> i64 {{\n    {width}\n}}\n"
+        )
+    };
+    let laundered =
+        "match dict_get(stash(narrow(4)), \"k\") {\n        Some(v) => v\n        None => 0\n    }";
+    let suite = format!("{J}{SUITE_T}");
+    let mut fails = Vec::new();
+    for r in ALL_RULES {
+        rules(r);
+        let tag = format!("r51-s4-wn-{r:?}");
+        for (k, sq, w, want) in [
+            ("g", "|n: i64| n * n", "n * n", true),
+            ("w", "|n: i64| n + 1", "n + 1", false),
+        ] {
+            with_src(&format!("{tag}-{k}"), &suite, &cand(sq, w), true, |ix| {
+                for p in ["t_table", "t_width", "t_width_bare"] {
+                    let o = go(ix, p, false, vec![]);
+                    if !yields(&o, &Value::Bool(want)) {
+                        fails.push(format!("control {k} {r:?} {p}: {o:?}"));
+                    }
+                }
+            });
+        }
+        with_src(
+            &format!("{tag}-a"),
+            &suite,
+            &cand("0", laundered),
+            true,
+            |ix| {
+                let o = go(ix, "t_table", false, vec![]);
+                if !refused(&o, "value of type i64 is not callable") {
+                    fails.push(format!(
+                        "ATTACK {r:?}: a 0 in a table ran the operator's `square`: {o:?}"
+                    ));
+                }
+                for p in ["t_width", "t_width_bare"] {
+                    let o = go(ix, p, false, vec![]);
+                    if !refused(&o, "runtime type confusion") {
+                        fails.push(format!("ATTACK {r:?} {p}: a u8 at a declared i64: {o:?}"));
+                    }
+                }
+            },
+        );
+    }
+    rules_reset();
+    with_src("r51-s4-wn-u", &suite, &cand("0", "n * n"), false, |ix| {
+        let o = go(ix, "t_table", false, vec![]);
+        if !yields(&o, &Value::Bool(true)) {
+            fails.push(format!(
+                "unsealed: main's fall-through to the fn is unchanged: {o:?}"
+            ));
+        }
+    });
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}
+
+/// v0.22 amendment 117 (loop findings 38/39; veto goal.rs:272-554,
+/// interp.rs:4946-4967), the goal-name half of
+/// `a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one`
+/// (sealed_frames.rs:1847-1852): a sealed caller naming an operator fn at a
+/// goal builtin is told the same words as for a name nothing defines - the
+/// common no-such-name text - for `goal_run`, `goal_run_categorical`,
+/// `goal_run_random` and `goal_run_multistart`, including an operator goal
+/// that already has recorded provenance (the call edge, `seal_call`).
+/// Controls: the operator's own call of the same goal runs, and its call of
+/// a missing name keeps the goal-specific text.
+#[test]
+fn a_sealed_caller_is_refused_in_the_same_words_for_an_operator_goal_name_and_a_missing_one() {
+    const SUITE_G: &str = "\
+fn nonadapt(n: i64) -> i64 { n }
+fn op_run() -> f64 { goal_run(\"nonadapt\", 100.0, 3) }
+fn op_missing() -> f64 { goal_run(\"zznosuch\", 100.0, 3) }
+";
+    let calls = [
+        "goal_run(\"N\", 100.0, 5)",
+        "goal_run_categorical(\"N\", 3, 100.0, 5)",
+        "goal_run_random(\"N\", 100.0, 5, 0, 10)",
+        "goal_run_multistart(\"N\", 100.0, 2, 3, 0, 10)",
+    ];
+    let mut cand = String::new();
+    for (i, c) in calls.iter().enumerate() {
+        for (k, n) in [("op", "nonadapt"), ("miss", "zznosuch")] {
+            cand.push_str(&format!(
+                "pub fn c{i}_{k}() -> f64 {{ {} }}\n",
+                c.replace('N', n)
+            ));
+        }
+    }
+    let mut fails = Vec::new();
+    for (fresh, tag) in [(true, "fresh"), (false, "recorded")] {
+        with_src(&format!("r51-s4-goal-{tag}"), SUITE_G, &cand, true, |ix| {
+            if !fresh {
+                // The operator's own run records `nonadapt`'s provenance.
+                let o = go(ix, "op_run", false, vec![]);
+                if o.is_err() {
+                    fails.push(format!("control: the operator's own goal_run: {o:?}"));
+                }
+            }
+            for i in 0..calls.len() {
+                let text = |k: &str, name: &str| match go(ix, &format!("c{i}_{k}"), true, vec![]) {
+                    Err(Flow::Panic(m)) => m.replace(name, "NAME"),
+                    o => format!("not refused: {o:?}"),
+                };
+                let (op, miss) = (text("op", "nonadapt"), text("miss", "zznosuch"));
+                let want = sink_tests::no_fn("NAME");
+                if op != want || miss != want {
+                    fails.push(format!(
+                        "ATTACK ({tag}) {}: operator {op:?} vs missing {miss:?}",
+                        calls[i]
+                    ));
+                }
+            }
+        });
+    }
+    with_src("r51-s4-goal-op", SUITE_G, &cand, true, |ix| {
+        let o = go(ix, "op_missing", false, vec![]);
+        if !refused(&o, "goal function `zznosuch` is not defined") {
+            fails.push(format!("control: the operator's missing goal: {o:?}"));
+        }
+    });
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}

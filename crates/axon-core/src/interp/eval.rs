@@ -874,6 +874,9 @@ impl<'p> Interp<'p> {
                 cv.contract = Self::lambda_contract(params);
             }
             cv.seal.sealed_origin = self.frame_sealed.get();
+            // Its body is judged by the pin analysis as the code of the fn
+            // that created it (veto `PIN_FN_MARK`, eval.rs:967-972; R51 S4).
+            cv.seal.pin_owner = self.pin_fn.get();
         }
         Value::Closure(Rc::new(cv))
     }
@@ -1548,6 +1551,16 @@ impl<'p> Interp<'p> {
         if let Some(c @ Value::Closure { .. }) = env.get_var(s, slot) {
             let c = c.clone();
             return self.call_local_closure(c, argv.into_vec(self));
+        }
+        // A sealed run: any other value a local holds is what the name means
+        // here, and it is not callable. It never falls through to a builtin or
+        // fn of the same NAME: a confused value in a local `square` would run
+        // the operator's own `fn square` (veto eval.rs:1453-1473, amendment 60;
+        // R51 S4). Unsealed runs keep main's fall-through.
+        if self.seal.active {
+            if let Some(c) = env.get_var(s, slot) {
+                return super::not_callable(c);
+            }
         }
         // 2. A builtin — skipped for a name already proven not to be one
         //    (see `callees`), which also caches step 3's lookup.
