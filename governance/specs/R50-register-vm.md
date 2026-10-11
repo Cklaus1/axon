@@ -52,7 +52,8 @@ the thirty-seventh (3 must-fix, 2 nits; §15 "Revision 42"); revision 43 answers
 (3 must-fix, 1 nit; §15 "Revision 43"); revision 44 answers the thirty-ninth (1 must-fix, 1 nit;
 §15 "Revision 44"); revision 45 answers the fortieth (2 must-fix, 1 nit; §15 "Revision 45"); revision 46 answers the
 forty-first (3 must-fix, 1 nit; §15 "Revision 46"); revision 47 answers the forty-second (2 must-fix,
-1 nit; §15 "Revision 47"). S13 is Draft until an adversarial review passes it.
+1 nit; §15 "Revision 47"); revision 48 answers the forty-third (1 must-fix, 2 nits; §15 "Revision 48").
+S13 is Draft until an adversarial review passes it.
 **Risk class:** Structural (a second execution path for the reference engine)
 **Author / date:** 2026-10-09, from compilebench AX-18 (interpreter cost) after AX-53..AX-55.
 
@@ -1067,8 +1068,14 @@ code under `AXON_ENGINE=tree` and `vm`, and stdout equal to the tree's at `0f3b1
   index; a fill whose last index is the array's last element; a `<` fill whose `b0 - j0` is a
   multiple of `s0`; a fill whose `j0` is not a multiple of `s0` (`a = arr_repeat(0, 10)`, `j = 1`,
   `s = 3`, `b = 6`, `<=`, `c = 7`: `[0, 7, 0, 0, 7, 0, 0, 0, 0, 0]`, `j = 7`; a count from
-  `b0/s0 - j0/s0 + 1` writes `a[7]` too); `j` after the loop for `<`, `<=` and zero iterations; a
-  fill of an array another binding shares leaves that binding's elements.
+  `b0/s0 - j0/s0 + 1` writes `a[7]` too); `j` after the loop for `<` and `<=`; zero iterations with
+  `s0 = 3`, `<` with `j0 = b0 = 5` (the tree prints `a = arr_repeat(0, 10)` unchanged and `j=5`; a
+  path that takes emptiness from `n <= 0` instead of the condition at `j0` computes `n = 1`, since
+  the formula's division truncates toward zero, writes `a[5]` and prints `j=8`) and `<=` with
+  `j0 = 7`, `b0 = 6` (unchanged, `j=7`; that path prints `j=10`); a one-iteration `<=` fill with
+  `j0 = b0 = 4`, `s0 = 3` (the tree writes `a[4]` and prints `j=7`; an emptiness test of `j0 >= b0`
+  for both operators leaves it unwritten); a fill of an array another binding shares leaves that
+  binding's elements.
 - `vm_bulk_fill_bounds_and_declines`: a fill one past the last index, a negative start, a zero step
   with `j0 = len(a)` and `b0 > j0` (the tree panics `index <len> out of bounds` on the first write; a
   bulk path that divides by `s0` before checking `s0 > 0` crashes instead), a negative step with
@@ -1097,9 +1104,11 @@ code under `AXON_ENGINE=tree` and `vm`, and stdout equal to the tree's at `0f3b1
 - `vm_bulk_count_runs`: `lo..hi` and `lo..=hi` with `lo > 0` and `hi < len - 1`; lengths 1, 7, 8, 9,
   63, 64, 65, 129 and 1001 with `true` elements in the last partial chunk; a range starting
   mid-chunk and crossing a chunk boundary; a count starting from `n0 != 0`; a negative `c` (`n` falls
-  by `|c|` per `true`); and two empty ranges over `arr_repeat(true, 4)` from `n0 = 7`, `0..z` with
+  by `|c|` per `true`); two empty ranges over `arr_repeat(true, 4)` from `n0 = 7`, `0..z` with
   `z = 0` and a reversed `9..2` (the tree prints `n=7` for each; a path that skips the emptiness
-  check computes `last < lo` and slices out of range).
+  check computes `last < lo` and slices out of range); and a one-element `5..=5` over
+  `arr_repeat(true, 8)` from `n0 = 0` (the tree prints `m=1`; an emptiness test of `hi <= lo` for
+  both range kinds prints `m=0`).
 - `vm_bulk_count_declines`: an `n + c` overflow, from `n0 = 0` a `c = 2^62` over four `true`s (wraps
   to `n0` in `i64`), an `i32` `n` (`n: i32 = 2147483000` over 1,000 `true`s: the tree panics
   `integer overflow: i32 2147483647 + 1 out of range`), an `i32` `c` alone (`let id = |x| x`,
@@ -1107,8 +1116,10 @@ code under `AXON_ENGINE=tree` and `vm`, and stdout equal to the tree's at `0f3b1
   message; a path reading `c` as `i64` exits 0 printing `2147484000`), an out-of-bounds `hi`, a
   `hi` of `i64::MAX` (`for v in 0..=9223372036854775807` over a 20-element array with five
   `true`s: the tree panics `index 20 out of bounds (len 20)`; a path computing `hi + 1` in `i64`
-  wraps and prints `n=0`), a negative `lo` (the tree panics `index -2 out of bounds`), and a `Vals`
-  `bool` array.
+  wraps and prints `n=0`), a negative `lo` (the tree panics `index -2 out of bounds`), a downward
+  overflow (`f = arr_repeat(true, 2)`, `c = 0 - 1`, `n = 0 - 9223372036854775807`, `0..2`: the tree
+  panics `integer overflow: -9223372036854775808 + -1 exceeds i64`; a check of the upper bound only
+  wraps and exits 0), and a `Vals` `bool` array.
 - `packed_forms_persist` (unit test, interp/vm/tests.rs, through the test probes): `arr_range(0, 3)`
   is `Ints`, `arr_repeat(1.5, 3)` `Floats`, `arr_repeat(true, 3)` `Bools`, a `SizedInt` `arr_repeat`
   and a literal array `Vals`; an `Ints` array stays `Ints` after a `LoopMem` store (a `PureFor`
@@ -2193,3 +2204,14 @@ loops on the S12 binary. Both new cases were re-run on the S12 binary under both
 | [must-fix] No fill had `j` the only `SizedInt` operand; a path strict on `b`/`s` but reading `j` as `i64` passed | `vm_bulk_fill_bounds_and_declines` adds `j = id(w)` alone (`w: i8 = 120`, `b = 126`, `s = 5`): tree panics `integer overflow: i8 125 + 5 out of range` |
 | [must-fix] No count ran over an empty range; a path without the emptiness branch slices out of range | `vm_bulk_count_runs` adds `0..z` (`z = 0`) and `9..2` over `arr_repeat(true, 4)` from `n0 = 7`: tree prints `n=7` twice |
 | [nit] "Any nonzero-iteration version never ends" was false for an out-of-bounds first write | Reason restated: in-bounds first write never ends, out-of-bounds first write panics and a loose path declines too |
+
+Revision 48 (2026-10-11) answers the forty-third review (`reviewer`, verdict "incorrect": 0
+blockers, 1 must-fix, 2 nits). It confirmed both revision-47 cases on the S12 binary. Every new case
+was re-run on the S12 binary under both engines (`vm: pure main 0 exprs, 4 loops` and `1 loops`),
+outputs as stated.
+
+| Finding | Resolution |
+|---|---|
+| [must-fix] The zero-iteration fill used `s0 = 1`, where the truncating count formula gives `n = 0`; with a larger step it gives `n = 1`, so a path taking emptiness from `n <= 0` passed | `vm_bulk_fill_runs` pins zero iterations at `s0 = 3`: `<` with `j0 = b0 = 5` (tree `j=5`, unchanged) and `<=` with `j0 = 7`, `b0 = 6` (tree `j=7`, unchanged); plus a one-iteration `<=` fill with `j0 = b0 = 4` (tree writes `a[4]`, `j=7`) |
+| [nit] No one-element inclusive count range | `5..=5` over `arr_repeat(true, 8)`: tree `m=1` |
+| [nit] The count's overflow check was gated upward only | `vm_bulk_count_declines` adds `n = -(2^63 - 1)`, `c = -1` over two `true`s: tree panics `integer overflow: -9223372036854775808 + -1 exceeds i64` |
