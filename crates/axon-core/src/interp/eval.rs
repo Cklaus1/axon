@@ -1972,6 +1972,7 @@ impl<'p> Interp<'p> {
             operator_frames: self.operator_frames.get(),
             pin_owner: self.pin_fn.get(),
         };
+        let depth = self.handlers.borrow().len();
         self.handlers.borrow_mut().push(frame);
         // An arm that is not a bare tail `resume(..)` can ABORT the body at the
         // operation it answers (or replay it): what runs after that point is
@@ -1998,22 +1999,26 @@ impl<'p> Interp<'p> {
                 st.set(st.get() | taint::VAL);
             }
         }
-        // The block's value: the body's, or (when an arm finished the block)
-        // the arm's, whose accumulation unwound into this expression's.
+        // The block's value: the body's, or (when one of THIS block's arms
+        // finished it) the arm's, whose accumulation unwound into this
+        // expression's.
         let vt = match (self.seal.active, &result) {
             (false, _) => 0,
-            (true, Err(Flow::HandlerDone(_))) => self.taint.acc.get(),
+            (true, Err(Flow::HandlerDone(done))) if done.1 == depth => self.taint.acc.get(),
             (true, _) => self.t_last(),
         };
         self.handlers.borrow_mut().pop();
         // Phase 6 multi-shot: a non-tail / multi-resume arm reifies the
         // continuation by replay and finishes the WHOLE block with
-        // `Flow::HandlerDone(v)` — the original suspended body is abandoned, so
-        // catch it here and use `v` as the block value (the single-shot tail path
-        // never raises this, so its behavior is unchanged).
+        // `Flow::HandlerDone((v, depth))` — the original suspended body is
+        // abandoned, so catch it here and use `v` as the block value (the
+        // single-shot tail path never raises this, so its behavior is
+        // unchanged). Only the completion addressed to this block's frame is
+        // caught: one raised by an outer handler's arm passes through to the
+        // `with` that installed it.
         let mut value = match result {
             Ok(v) => v,
-            Err(Flow::HandlerDone(v)) => v,
+            Err(Flow::HandlerDone(done)) if done.1 == depth => done.0,
             Err(e) => return Err(e),
         };
 
@@ -2215,9 +2220,10 @@ impl<'p> Interp<'p> {
             // one-or-more times (each `resume` was a replay returning a value),
             // the arm's final value `v` is the value of the WHOLE `with` block.
             // The original suspended body is abandoned (the continuation was
-            // reified via replay), so finish the block with HandlerDone — caught
-            // by `eval_with_handler`.
-            Ok(v) => Err(Flow::HandlerDone(v)),
+            // reified via replay), so finish the block with HandlerDone —
+            // addressed to the frame at `idx`, caught by the `eval_with_handler`
+            // that pushed it and by no `with` in between.
+            Ok(v) => Err(Flow::HandlerDone(Box::new((v, idx)))),
             // A stray tail `resume` that escaped without a ctx (shouldn't happen
             // on this path, but be safe): treat as a single-shot resume.
             Err(Flow::Resume(v)) => Ok(Some(v)),

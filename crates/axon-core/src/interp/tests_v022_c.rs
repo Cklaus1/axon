@@ -47,7 +47,6 @@ fn a_second_impl_never_replaces_the_first_impls_method() {
 }
 
 #[test]
-#[ignore = "R51 S0b: v0.22's addressed handler completion (Flow::HandlerDone carrying its with-depth) is not ported, so main's nearest `with` catches a foreign arm's completion (107 != 7); an unsealed-semantics change outside T3"]
 fn no_control_transfer_escapes_a_frame() {
     // PCI candidate-1 review: `return` out of a predicate, and a `resume`
     // smuggled out of a handler arm in a closure, both unwound the

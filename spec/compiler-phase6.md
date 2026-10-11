@@ -299,7 +299,9 @@ size 0 or 1.
 > single-shot, tail-resumptive handlers: a `with handler { on E(p) => arm } { body }`
 > intercepts a builtin in `body` carrying effect `E`; `resume(v)` makes `v` the
 > operation's result and the body continues; an arm that returns without resuming
-> replaces the `with` block; a `return(v)` arm rewrites the body value. The arm runs
+> replaces the `with` block that installed its handler (a `with` nested inside that
+> body, in the same fn or a callee, handling some other effect, is unwound past, not
+> finished with the arm's value); a `return(v)` arm rewrites the body value. The arm runs
 > *outside* its own handler (shallow), so a self-effecting arm does not loop.
 > **Codegen handler lowering (this section) is NOT yet implemented** — native codegen
 > still *erases* handlers (lowers `with H { body }` to `body`). This is a documented,
