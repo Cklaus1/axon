@@ -4,10 +4,10 @@
   "count": 200,
   "by_slice": {
     "S0b": 14,
-    "S5": 2,
+    "S5": 0,
     "S2": 8,
-    "S3": 83,
-    "S4": 12,
+    "S3": 84,
+    "S4": 13,
     "S6": 81
   },
   "tests": [
@@ -98,14 +98,14 @@
     {
       "name": "operator_code_never_dispatches_on_an_untyped_read_and_a_pinned_suite_passes",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S5",
-      "reason": "interp/pin.rs static pin analysis not ported; sealed control refused until S6"
+      "slice": "S4",
+      "reason": "the receiver dispatch rule that reads interp/pin.rs (ported in S5) is not ported; sealed control refused until S6"
     },
     {
       "name": "sandbox_run_runs_no_function_name_the_candidate_chose",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S5",
-      "reason": "operator-chosen name analysis (pin.rs Ctx::npure) not ported; sealed control refused until S6"
+      "slice": "S3",
+      "reason": "the name rule (seal_name_args) that reads pin.rs Ctx::npure (ported in S5) is not ported; sealed control refused until S6"
     },
     {
       "name": "a_candidate_cannot_read_or_drive_the_clock_through_the_temporal_builtins",

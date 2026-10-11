@@ -832,7 +832,7 @@ fn a_replaced_or_filled_position_is_judged_by_what_the_operator_held() {
 /// keeps GOOD a keyed pass and WRONG a keyed failure; the pinned `u8` is
 /// refused by the cast.
 #[test]
-#[ignore = "R51 S5: interp/pin.rs static pin analysis not ported; sealed control refused until S6"]
+#[ignore = "R51 S4: the receiver dispatch rule that reads interp/pin.rs (ported in S5) is not ported; sealed control refused until S6"]
 fn operator_code_never_dispatches_on_an_untyped_read_and_a_pinned_suite_passes() {
     const J: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
     let suite = |body: &str| {
@@ -1410,7 +1410,7 @@ fn name_attack(what: &str, suite: &str, cand: &str) {
 /// BLOCKER B: a `str` the candidate returned selected which OPERATOR fn a
 /// name-resolving builtin ran.
 #[test]
-#[ignore = "R51 S5: operator-chosen name analysis (pin.rs Ctx::npure) not ported; sealed control refused until S6"]
+#[ignore = "R51 S3: the name rule (seal_name_args) that reads pin.rs Ctx::npure (ported in S5) is not ported; sealed control refused until S6"]
 fn sandbox_run_runs_no_function_name_the_candidate_chose() {
     let sandbox = format!("mod sol\nuse sol.{{entry}}\nfn reference(x: i64) -> i64 {{ x * 2 }}\n@[test]\nfn accept() {{\n{SB10}    let got = sandbox_run(sb, entry(), 21)\n    assert(got == reference(21))\n}}\n");
     // Honest: the suite names the candidate's fn with a literal, or builds the
