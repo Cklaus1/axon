@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 00ae0e525950bfd8337d39a5f3a10f722a9f16cf
+generated-at: 9eb70ac1c2bb4ae0b3a886d262c02faedea61212
 
-`git diff --numstat 31413ca7..00ae0e52 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..9eb70ac1 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -49,14 +49,14 @@ generated-at: 00ae0e525950bfd8337d39a5f3a10f722a9f16cf
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 4894 | 1453 |
+| `crates/axon-core/src/interp.rs` | 4899 | 1448 |
 | `crates/axon-core/src/interp/builtins.rs` | 672 | 512 |
 | `crates/axon-core/src/interp/conform.rs` | 1780 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1369 | 0 |
 | `crates/axon-core/src/interp/crossing_tests.rs` | 418 | 0 |
 | `crates/axon-core/src/interp/dispatch_tests.rs` | 616 | 0 |
 | `crates/axon-core/src/interp/env.rs` | 1193 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 2016 | 603 |
+| `crates/axon-core/src/interp/eval.rs` | 2026 | 607 |
 | `crates/axon-core/src/interp/goal.rs` | 88 | 42 |
 | `crates/axon-core/src/interp/kernel_tests.rs` | 337 | 0 |
 | `crates/axon-core/src/interp/pick_tests.rs` | 395 | 0 |
@@ -68,13 +68,13 @@ generated-at: 00ae0e525950bfd8337d39a5f3a10f722a9f16cf
 | `crates/axon-core/src/interp/taint_tests.rs` | 3978 | 0 |
 | `crates/axon-core/src/interp/tests_v022_a.rs` | 1223 | 0 |
 | `crates/axon-core/src/interp/tests_v022_b.rs` | 2030 | 0 |
-| `crates/axon-core/src/interp/tests_v022_c.rs` | 153 | 0 |
+| `crates/axon-core/src/interp/tests_v022_c.rs` | 152 | 0 |
 | `crates/axon-core/src/interp/tests_v022_s4.rs` | 623 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 506 | 514 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
 | `crates/axon-core/src/interp/vm/mod.rs` | 3426 | 0 |
 | `crates/axon-core/src/interp/vm/pure.rs` | 964 | 0 |
-| `crates/axon-core/src/interp/vm/tests.rs` | 1576 | 0 |
+| `crates/axon-core/src/interp/vm/tests.rs` | 1615 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
 | `crates/axon-core/src/lib.rs` | 116 | 21 |
 | `crates/axon-core/src/main.rs` | 799 | 243 |
@@ -86,9 +86,9 @@ generated-at: 00ae0e525950bfd8337d39a5f3a10f722a9f16cf
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 45543 | 5257 |
+| total | 45596 | 5256 |
 
-`git log --reverse 31413ca7..00ae0e52 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..9eb70ac1 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -298,9 +298,12 @@ generated-at: 00ae0e525950bfd8337d39a5f3a10f722a9f16cf
 | fdf795a4 | R51 T3 merge | joins r51/t3a (03ba80ff..3aef1f44: v0.22 sealed-run helpers, 29+3 S3 rows, the tests_v022_*.rs sweep skip, the bare-Uncertain param_coerce fix) onto the gaps merge (e15a4fb6); conflicts were the include! lines at the end of interp.rs's mod tests, this table, the note and the registry, all resolved by keeping both sides (registry entries unioned by (file, name), count and by_slice recounted); no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 0f6c5a50 | R51 T3 merge | joins r51/t3b (be195107..91dd0f67: 28 S3 rows, the sandbox_run unit-to-0 crossing arm) onto the t3a merge; conflicts were this table (64e3d9af's identical entry kept once), the note and the registry (3-way merged per entry by tasks/r51-registry-merge.py); no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 754d7874 | R51 T3 merge | joins r51/t3c (4e6747b1: 31+3 taint_tests / interp::tests rows, the Case harness, taint.rs cfg(test) tables) onto the t3b merge; interp/taint_tests.rs had two pure appends after the same base line (gaps' no_arm move, t3c's harness) and keeps both, gaps' first; the include! lines, this table, the note and the registry resolved by keeping both sides; no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 28e02cad | R51 S0b handler completion | INTERPRETER (both engines, S0b-class correctness fix, veto interp.rs:231, eval.rs:1634/1662/1675/1862): Flow::HandlerDone carries the handler-stack index of the frame whose arm completed without resume (boxed with the value, Box<(Value, usize)>, so Flow's layout and the hot path are unchanged), and eval_with_handler catches it only at that depth (the sealed block-value taint reads acc only then). UNSEALED BEHAVIOUR CHANGES: a completion used to be caught by the nearest with, so an inner with handling another effect (same body or a callee) took an outer arm's value and the outer body ran on (107 instead of 7); it now unwinds to the with that installed the arm, and a with it passes through does not run its return arm. The VM lowers WithHandler to one Tree op, so the fix is shared. TEST-ONLY: vm/tests.rs handler_completion_finishes_its_own_with_on_both_engines; M74 re-anchored. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 6007bea4 | R51 T3 merge | TEST-ONLY: integration fixes after the T3 merges: interp/tests_v022_s4.rs drops its six helpers (JUDGE, LAUNDER, CONFUSED, judged, live, confusion_refused) that tests_v022_a.rs's byte-identical copies shadow, dead after the merge under clippy -D; the name-sink drift test (tests_v022_b.rs) re-lists goal_name_is_known's lookup in its seal-aware form from S4b; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 00ae0e52 | R51 S4 merge | joins r51/s4 (S4a: ce3d8646..ecbdf307, PICK mark, edges, frame-exit and builtin pick, t_check_call_picked, T8.1, T5) onto the T3 merges; interp/taint_tests.rs had two pure appends after the same base line and keeps both (T3c's first), no duplicate names; this table, the note and the registry (3-way per entry) resolved by keeping both sides; no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 208 commits | | |
+| 4180f333 | R51 S0b merge | joins r51/hdone (28e02cad, addressed handler completion) onto the S4a merge; only this table and the note conflicted, resolved by keeping both sides; the registry drops interp::tests::no_control_transfer_escapes_a_frame's S0b entry (the gap it named is closed); no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 9eb70ac1 | R51 T3 | TEST-ONLY: interp::tests::no_control_transfer_escapes_a_frame (interp/tests_v022_c.rs) loses its R51 S0b ignore and runs: 28e02cad ported v0.22's addressed handler completion, so the foreign arm's completion now unwinds to its own with (7, not 107); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 211 commits | | |
 <!-- END MECHANICAL -->
 
 
