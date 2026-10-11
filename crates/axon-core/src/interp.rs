@@ -4984,6 +4984,16 @@ impl<'p> Interp<'p> {
         if crossing && r.is_ok() {
             self.dict_edge_out()?;
         }
+        // An operator-typed value a sealed fn hands back is a pick: sealed
+        // code cannot build one, so it got it from an argument or a closure
+        // and chose which (amendment 121; veto interp.rs:3627-3636).
+        if crossing {
+            if let Ok(v) = &r {
+                if self.t_holds_op(v) {
+                    self.t_touch(taint::PICK);
+                }
+            }
+        }
         r
     }
 
@@ -5240,7 +5250,7 @@ impl<'p> Interp<'p> {
             result
         };
         if T {
-            self.t_frame_exit(entry_t, body_t);
+            self.t_frame_exit(entry_t, body_t, &result);
         }
         Ok(result)
     }
@@ -5816,6 +5826,14 @@ impl<'p> Interp<'p> {
             args.bind(|_, v| drop(v));
             return lambda_arity_mismatch(n, got);
         }
+        // Operator code does not run an operator closure the candidate picked
+        // (amendment 102; veto interp.rs:4747-4751).
+        if T {
+            if let Err(e) = self.t_check_call_picked(cv) {
+                args.bind(|_, v| drop(v));
+                return Err(e);
+            }
+        }
         // Base scope = captured bindings; a fresh scope holds the parameters.
         // Assignments land in the base scope and are written back below, which
         // is what makes them survive to the next call (T40).
@@ -5959,7 +5977,12 @@ impl<'p> Interp<'p> {
             } else if entering {
                 self.dict_edge_in(&v)?;
             }
-            self.t_frame_exit(entry_t, body_t);
+            self.t_frame_exit(entry_t, body_t, &v);
+            // A candidate closure hands an operator-typed value back to
+            // operator code: a pick (amendment 121; veto interp.rs:4919-4924).
+            if crossing && self.t_holds_op(&v) {
+                self.t_touch(taint::PICK);
+            }
             return Ok(v);
         }
         out
@@ -6260,6 +6283,10 @@ mod conform;
 // type and method edges on a `build_with` sealed `Interp`.
 #[cfg(test)]
 mod sink_tests;
+// The PICK mark and the refusing closure sink (R51 S4: `t_note`, the pick
+// edges, `t_check_call_picked`), T8.1's laundering attacks.
+#[cfg(test)]
+mod pick_tests;
 // The receiver dispatch rule's unit tests (R51 S4: `t_check_dispatch`, the
 // dispatch-rule and taint-rule test switches, the goal-name refusal).
 #[cfg(test)]

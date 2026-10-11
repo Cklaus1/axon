@@ -3822,3 +3822,157 @@ fn every_kernel_builtin_that_draws_the_rng_is_coupled_to_the_world_cell() {
         );
     }
 }
+
+/// v0.22 taint_tests.rs:316: the operator's side of the pick cases.
+const PICK_PRE: &str = "type A = { v: i64 }\ntype B = { v: i64 }\ntype Mode = Lax | Tight\ntrait Rub {\n    fn rub(self) -> bool\n}\nimpl Rub for A {\n    fn rub(self: A) -> bool { self.v == 9 }\n}\nimpl Rub for B {\n    fn rub(self: B) -> bool { true }\n}\nimpl Rub for Mode {\n    fn rub(self: Mode) -> bool { true }\n}\ntype Sq = { s: i64 }\ntype Ci = { r: i64 }\ntrait Area {\n    fn area(self) -> i64\n}\nimpl Area for Sq {\n    fn area(self: Sq) -> i64 { self.s * self.s }\n}\nimpl Area for Ci {\n    fn area(self: Ci) -> i64 { self.r * 3 }\n}\nfn mka() -> A { A { v: 1 } }\nfn mkb() -> B { B { v: 1 } }\nfn mk_sq(n: i64) -> Sq { Sq { s: n } }\nfn mkreg(n: i64) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"sq\", Sq { s: n })\n    dict_set(d, \"ci\", Ci { r: n })\n    d\n}\nfn regarr() -> [A] { [A { v: 1 }, A { v: 9 }] }\nfn lookup(reg: Dict, k: str) -> B { dict_get_or(reg, k, B { v: 1 }) }\nfn regab() -> Dict {\n    let d = dict_new()\n    dict_set(d, \"a\", A { v: 1 })\n    dict_set(d, \"b\", B { v: 1 })\n    d\n}\n";
+/// The candidate's side of the pick cases: a key, a number, a generic that picks.
+const PICK_CAND: &str = "fn key() -> str { \"b\" }\nfn val() -> i64 { 3 }\nfn pickb<T>(a: fn() -> T, b: fn() -> T) -> T { b() }\nfn cmpc(a: i64, b: i64) -> i64 { b - a }\n";
+
+/// C9 round 15 (amendment 121), v0.22 taint_tests.rs:320-366 verbatim: an
+/// operator-typed value (a struct or enum only the operator defines) that sealed
+/// code SELECTED is never dispatched on; one built from sealed code's DATA is.
+/// Run on the unit-level sealed runner (`pick_tests::run_unit`) until S6.
+fn pick_cases() -> Vec<super::pick_tests::PickCase> {
+    use super::pick_tests::{PickCase, Verdict::*};
+    let case = |name: &'static str, pre: &str, body: &str, cand: &str, expect| PickCase {
+        name,
+        pre: pre.to_string(),
+        body: body.to_string(),
+        cand: cand.to_string(),
+        expect,
+    };
+    let body = |s: &str| format!("    {s}");
+    let cand = |extra: &str| format!("{PICK_CAND}{extra}");
+    let pre = |extra: &str| format!("{PICK_PRE}{extra}");
+    vec![
+        // Honest: the operator named the value, or built it from the candidate's data.
+        case("HONEST pick: an operator struct holding the candidate's number", &pre(""), &body("assert(Sq { s: val() }.area() == 9)"), &cand(""), Ok),
+        case("HONEST pick: a factory fn given the candidate's number", &pre(""), &body("assert(mk_sq(val()).area() == 9)"), &cand(""), Ok),
+        case("HONEST pick: a struct bound, then dispatched on", &pre(""), &body("let sq = Sq { s: val() }\n    let n = sq.area()\n    assert(n == 9)"), &cand(""), Ok),
+        case("HONEST pick: a struct whose field comes from a branch on the candidate's data", &pre(""), &body("let sq = Sq { s: if val() > 1 { 3 } else { 4 } }\n    assert(sq.area() == 9)"), &cand(""), Ok),
+        case("HONEST pick: a registry the operator filled from the candidate's data, read by the operator's key", &pre(""), &body("let reg = mkreg(val())\n    assert(dict_get_or(reg, \"sq\", Sq { s: 1 }).area() == 9)"), &cand(""), Ok),
+        case("HONEST pick: structs the operator's closure builds from candidate numbers", &pre(""), &body("let ss = arr_map([val(), 2], |v| Sq { s: v })\n    assert(ss[0].area() == 9)"), &cand(""), Ok),
+        case("HONEST pick: a field read through the candidate's index, into a new struct", &pre(""), &body("let a = [Sq { s: 3 }, Sq { s: 3 }]\n    let sq = Sq { s: a[len(key()) - 1].s }\n    assert(sq.area() == 9)"), &cand(""), Ok),
+        case("HONEST pick: the operator's own key into a table of operator values", &pre(""), &body("let d = regab()\n    assert(dict_get_or(d, \"b\", A { v: 1 }).rub())"), &cand(""), Ok),
+        case("HONEST pick: a branch on the candidate's data that dispatches inside each arm", &pre(""), &body("if val() > 1 { assert(B { v: 1 }.rub()) } else { assert(A { v: 9 }.rub()) }"), &cand(""), Ok),
+        case("HONEST pick: the operator's own index loop over structs built from candidate data", &pre(""), &body("let shapes = [Sq { s: val() }, Sq { s: 2 }]\n    let total = 0\n    let i = 0\n    while i < 2 {\n        total = total + shapes[i].area()\n        i = i + 1\n    }\n    assert(total == 13)"), &cand(""), Ok),
+        case("HONEST pick: filtered by the operator's own predicate", &pre(""), &body("let ys = arr_filter([A { v: 9 }, A { v: 1 }], |a| a.v > 0)\n    assert(ys[0].rub())"), &cand(""), Ok),
+        case("the wrong answer on the operator's own strict impl still fails keyed", &pre(""), &body("let d = regab()\n    assert(dict_get_or(d, \"a\", A { v: 1 }).rub())"), &cand(""), Fails),
+        // Attacks: sealed code decides which operator value, so which impl, answers.
+        case("pick: dict_get_or by the candidate's key", &pre(""), &body("let d = regab()\n    assert(dict_get_or(d, key(), A { v: 1 }).rub())"), &cand(""), Refused),
+        case("pick: dict_get by the candidate's key", &pre(""), &body("let d = regab()\n    match dict_get(d, key()) { Some(v) => assert(v.rub())  None => assert(false) }"), &cand(""), Refused),
+        case("pick: through an operator fn that wraps the lookup", &pre(""), &body("assert(lookup(regab(), key()).rub())"), &cand(""), Refused),
+        case("pick: the key pinned to a closed type first", &pre(""), &body("let k: str = key()\n    let d = regab()\n    assert(dict_get_or(d, k, A { v: 1 }).rub())"), &cand(""), Refused),
+        case("pick: an operator enum out of a table by the candidate's key", &pre(""), &body("let d = dict_new()\n    dict_set(d, \"a\", Mode::Tight)\n    dict_set(d, \"b\", Mode::Lax)\n    assert(dict_get_or(d, key(), Mode::Tight).rub())"), &cand(""), Refused),
+        case("pick: an array index the candidate chose", &pre(""), &body("let xs = [A { v: 1 }, A { v: 9 }]\n    assert(xs[val() - 2].rub())"), &cand(""), Refused),
+        case("pick: an index into an array an operator fn returned", &pre(""), &body("assert(regarr()[val() - 2].rub())"), &cand(""), Refused),
+        case("pick: a global array index the candidate chose", &format!("{PICK_PRE}let XS = [A {{ v: 1 }}, A {{ v: 9 }}]\n"), &body("assert(XS[val() - 2].rub())"), &cand(""), Refused),
+        case("pick: a sealed generic hands one of two operator constructors' values back", &pre(""), &body("assert(pickb(mka, mkb).rub())"), &cand(""), Refused),
+        case("pick: a sealed closure hands an operator value back", &pre(""), &body("let g = cb()\n    assert(g(mkb).rub())"), &cand("fn cb<T>() -> fn(fn() -> T) -> T { |f| f() }\n"), Refused),
+        case("pick: the true arm of a branch on the candidate's data", &pre(""), &body("let r = if val() > 1 { A { v: 9 } } else { A { v: 1 } }\n    assert(r.rub())"), &cand(""), Refused),
+        case("pick: the false arm of a branch on the candidate's data", &pre(""), &body("let r = if val() > 5 { A { v: 1 } } else { A { v: 9 } }\n    assert(r.rub())"), &cand(""), Refused),
+        case("pick: a match on the candidate's data", &pre(""), &body("let r = match val() {\n        3 => A { v: 9 }\n        _ => A { v: 1 }\n    }\n    assert(r.rub())"), &cand(""), Refused),
+        case("pick: an assignment under a branch on the candidate's data", &pre(""), &body("let r = A { v: 1 }\n    if val() > 1 {\n        r = A { v: 9 }\n    }\n    assert(r.rub())"), &cand(""), Refused),
+        case("pick: an element written under a branch on the candidate's data", &pre(""), &body("let xs = [A { v: 1 }]\n    if val() > 1 {\n        xs[0] = A { v: 9 }\n    }\n    assert(xs[0].rub())"), &cand(""), Refused),
+        case("pick: an exit out of an operator fn chosen by the candidate's data", &format!("{PICK_PRE}fn early() -> Option<A> {{\n    if val() > 100 {{\n        return None\n    }}\n    Some(A {{ v: 9 }})\n}}\n"), &body("match early() { Some(a) => assert(a.rub())  None => assert(false) }"), &cand(""), Refused),
+        case("pick: an exit out of an operator closure chosen by the candidate's data", &pre(""), &body("let f = |x| {\n        if val() > 100 {\n            return None\n        }\n        Some(A { v: 9 })\n    }\n    match f(1) { Some(a) => assert(a.rub())  None => assert(false) }"), &cand(""), Refused),
+        case("pick: the order a sealed comparator gives", &pre(""), &body("let xs = arr_sort_by([A { v: 1 }, A { v: 9 }], |p, q| cmpc(p.v, q.v))\n    assert(xs[0].rub())"), &cand(""), Refused),
+        case("pick: the survivors of a sealed predicate", &pre(""), &body("let ys = arr_filter([A { v: 1 }, A { v: 9 }], |a| cmpc(a.v, 5) < 0)\n    assert(ys[0].rub())"), &cand(""), Refused),
+    ]
+}
+
+/// T5 (spec §8): v0.22 taint_tests.rs:368-374. `TaintOnly` is the taint
+/// layer alone (dispatch rule off, taint on), `Both` both layers.
+#[test]
+fn an_operator_value_the_candidate_picked_is_never_dispatched_on() {
+    use super::pick_tests::{attacks_are_live_unit, check_unit};
+    let cases = pick_cases();
+    // v0.22's table: 11 honest, 1 answer-failing control, 19 attacks.
+    let n = |v| cases.iter().filter(|c| c.expect == v).count();
+    use super::pick_tests::Verdict;
+    assert_eq!(
+        (n(Verdict::Ok), n(Verdict::Fails), n(Verdict::Refused)),
+        (11, 1, 19)
+    );
+    check_unit(&cases, false, true);
+    check_unit(&cases, true, true);
+    attacks_are_live_unit(&cases);
+}
+
+// v0.22 taint_tests.rs:178-183.
+const V_REF: &str = "fn reference(x: i64) -> i64 { x * 2 }\n";
+const V_OPS: &str = "    let ops = [|x| 0, |x| x * 2]\n";
+const V_HTAB: &str = "    let h = dict_new()\n    dict_set(h, \"double\", |x| 0)\n    dict_set(h, \"reference\", |x| x * 2)\n";
+const V_IDX: &str = "fn idx() -> i64 { 1 }\n";
+const V_ENT: &str = "fn entry() -> str { \"reference\" }\nfn double(x: i64) -> i64 { 0 }\n";
+const V_SB: &str = "    let p = principal_root(\"r\", true, true, true, 100)\n    let sb = sandbox_create(p, \"IO\")\n";
+
+/// v0.22 taint_tests.rs:185-231 verbatim (C9 round 10/11, amendment 102): an
+/// operator closure sealed code picked is never called; the operator naming it,
+/// or branching on data to run closures it listed, is honest.
+fn closure_cases() -> Vec<super::pick_tests::PickCase> {
+    use super::pick_tests::{PickCase, Verdict::*};
+    let case = |name: &'static str, pre: &str, body: &str, cand: &str, expect| PickCase {
+        name,
+        pre: pre.to_string(),
+        body: body.to_string(),
+        cand: cand.to_string(),
+        expect,
+    };
+    let wrong = |s: &str| s.replace("-> i64 { 1 }", "-> i64 { 0 }");
+    let table = |body: &str| format!("{V_OPS}{body}");
+    let dtab = |body: &str| format!("{V_HTAB}{body}");
+    vec![
+        // Honest: the operator names the closure, or branches on data to
+        // run closures it listed.
+        case("lit index", V_REF, &table("    let f = ops[1]\n    assert(f(21) == reference(21))"), V_IDX, Ok),
+        case("lit key", V_REF, &dtab("    match dict_get(h, \"reference\") { Some(f) => assert(f(21) == reference(21))  None => assert(false) }"), V_ENT, Ok),
+        case("statement branch", V_REF, &table("    if idx() == 1 { assert(ops[1](21) == reference(21)) } else { assert(false) }"), V_IDX, Ok),
+        case("operator loop over a table", V_REF, &table("    for i in 0..2 { if i == 1 { assert(ops[i](21) == reference(21)) } }"), V_IDX, Ok),
+        case("a tainted ARGUMENT, not a tainted callee", V_REF, &table("    assert(ops[1](idx() * 21) == reference(21))"), V_IDX, Ok),
+        case("the candidate's own closure", V_REF, "    let g = mk()\n    assert(g(21) == reference(21))", "fn mk() -> fn(i64) -> i64 { |x| x * 2 }\n", Ok),
+        case("a wrong answer still fails keyed", V_REF, &table("    assert(ops[0](21) == reference(21))"), V_IDX, Fails),
+        // Attacks: sealed code picks the closure.
+        case("index", V_REF, &table("    let f = ops[idx()]\n    assert(f(21) == reference(21))"), V_IDX, Refused),
+        case("dict key", V_REF, &dtab("    match dict_get(h, entry()) { Some(f) => assert(f(21) == reference(21))  None => assert(false) }"), V_ENT, Refused),
+        case("dict key via a local", V_REF, &dtab("    let k = entry()\n    match dict_get(h, k) { Some(f) => assert(f(21) == reference(21))  None => assert(false) }"), V_ENT, Refused),
+        case("dict key built from it", V_REF, &dtab("    match dict_get(h, \"refer\" + str_slice(entry(), 5, 9)) { Some(f) => assert(f(21) == reference(21))  None => assert(false) }"), V_ENT, Refused),
+        case("dict key interpolated", V_REF, &dtab("    match dict_get(h, \"{entry()}\") { Some(f) => assert(f(21) == reference(21))  None => assert(false) }"), V_ENT, Refused),
+        case("index spelled as a comparison", V_REF, &table("    let f = ops[if idx() == 1 { 1 } else { 0 }]\n    assert(f(21) == reference(21))"), V_IDX, Refused),
+        case("index assigned under a tainted branch", V_REF, &table("    let k = 0\n    if idx() == 1 { k = 1 }\n    let f = ops[k]\n    assert(f(21) == reference(21))"), V_IDX, Refused),
+        case("closure assigned under a tainted branch", V_REF, &table("    let f = ops[0]\n    if idx() == 1 { f = ops[1] }\n    assert(f(21) == reference(21))"), V_IDX, Refused),
+        case("closure chosen by an if expression", V_REF, &table("    let f = if idx() == 1 { ops[1] } else { ops[0] }\n    assert(f(21) == reference(21))"), V_IDX, Refused),
+        case("closure chosen by a match", V_REF, &table("    let f = match idx() { 1 => ops[1]  _ => ops[0] }\n    assert(f(21) == reference(21))"), V_IDX, Refused),
+        case("index returned from a tainted branch", &format!("{V_REF}fn pick() -> i64 {{\n    if idx() == 1 {{ return 1 }}\n    0\n}}\n"), &table("    let f = ops[pick()]\n    assert(f(21) == reference(21))"), V_IDX, Refused),
+        case("closure returned from a tainted branch", &format!("{V_REF}fn pickf() -> fn(i64) -> i64 {{\n    if idx() == 1 {{ return |x| x * 2 }}\n    |x| 0\n}}\n"), "    let f = pickf()\n    assert(f(21) == reference(21))", V_IDX, Refused),
+        case("index through a helper's parameter", &format!("{V_REF}fn get(ops: [fn(i64) -> i64], i: i64) -> fn(i64) -> i64 {{ ops[i] }}\n"), &table("    let f = get(ops, idx())\n    assert(f(21) == reference(21))"), V_IDX, Refused),
+        case("dict_values then index", V_REF, &dtab("    let vs = dict_values(h)\n    let f = vs[idx()]\n    assert(f(21) == reference(21))"), V_IDX, Refused),
+        case("closure handed to a builtin that calls it", V_REF, &table("    let r = arr_map([21], ops[idx()])\n    assert(r[0] == reference(21))"), V_IDX, Refused),
+        case("assigned in a loop the candidate sized", V_REF, &table("    let f = ops[0]\n    for i in 0..idx() { f = ops[1] }\n    assert(f(21) == reference(21))"), V_IDX, Refused),
+        case("assigned in a while the candidate bounds", V_REF, &table("    let f = ops[0]\n    let n = 0\n    while n < idx() {\n        f = ops[1]\n        n = n + 1\n    }\n    assert(f(21) == reference(21))"), V_IDX, Refused),
+        case("held in a struct", &format!("{V_REF}type H = {{ f: fn(i64) -> i64 }}\n"), &table("    let s = H { f: ops[idx()] }\n    assert((s.f)(21) == reference(21))"), V_IDX, Refused),
+        case("held in a tuple", V_REF, &table("    let t = (ops[idx()], 1)\n    let f = t.0\n    assert(f(21) == reference(21))"), V_IDX, Refused),
+        case("through a captured index", V_REF, &table("    let k = idx()\n    let g = || ops[k]\n    let f = g()\n    assert(f(21) == reference(21))"), V_IDX, Refused),
+        case("through a closure that calls the candidate", V_REF, &table("    let g = || ops[idx()]\n    let f = g()\n    assert(f(21) == reference(21))"), V_IDX, Refused),
+        case("index through an operator channel", V_REF, &table("    let c = chan<i64>()\n    c.send(idx())\n    let f = ops[c.recv()]\n    assert(f(21) == reference(21))"), V_IDX, Refused),
+        case("index through an operator dict", V_REF, &table("    let d = dict_new()\n    dict_set(d, \"i\", idx())\n    let f = match dict_get(d, \"i\") { Some(i) => ops[i]  None => ops[0] }\n    assert(f(21) == reference(21))"), V_IDX, Refused),
+        case("key built with to_str", V_REF, &format!("{V_HTAB}    match dict_get(h, \"r\" + to_str(idx())) {{ Some(f) => assert(f(21) == reference(21))  None => assert(false) }}").replace("\"reference\"", "\"r1\""), V_IDX, Refused),
+        case("index from sandbox_run", V_REF, &format!("{V_OPS}{V_SB}    let f = ops[sandbox_run(sb, \"idx1\", 0)]\n    assert(f(21) == reference(21))"), &format!("{V_IDX}fn idx1(x: i64) -> i64 {{ 1 }}\n"), Refused),
+        case("index from the scheduler", V_REF, &format!("{V_OPS}    let id = scheduler_spawn(\"idx1\", 0)\n    let n = scheduler_run()\n    let f = ops[scheduler_result(id)]\n    assert(f(21) == reference(21))"), &format!("{V_IDX}fn idx1(x: i64) -> i64 {{ 1 }}\n"), Refused),
+        case("index from a goal", V_REF, &format!("{V_OPS}    let s = goal_eval(\"idx\", 0)\n    let f = ops[f64_to_i64(s)]\n    assert(f(21) == reference(21))"), "@[adaptive]\nfn idx(x: i64) -> i64 { 1 }\n", Refused),
+        // The wrong key is refused too: the rule is on WHO chose, not on the answer.
+        case("the wrong key is refused as well", V_REF, &dtab("    match dict_get(h, entry()) { Some(f) => assert(f(21) == reference(21))  None => assert(false) }"), &wrong(V_ENT).replace("\"reference\"", "\"double\""), Refused),
+    ]
+}
+
+/// v0.22's `an_operator_closure_the_candidate_picked_is_never_called`
+/// (taint_tests.rs:233-258) on the unit-level runner (`pick_tests::run_unit`)
+/// until S6: the closure sink.
+#[test]
+fn an_operator_closure_the_candidate_picked_is_never_called() {
+    use super::pick_tests::{attacks_are_live_unit, check_unit};
+    let cases = closure_cases();
+    check_unit(&cases, false, true);
+    check_unit(&cases, true, true);
+    attacks_are_live_unit(&cases);
+}

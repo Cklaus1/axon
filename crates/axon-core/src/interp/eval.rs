@@ -322,7 +322,13 @@ impl<'p> Interp<'p> {
                     return Ok(Value::Unit);
                 }
                 let v = self.eval_t::<T>(value, env)?;
-                let vt = self.ts::<T>(self.tl::<T>());
+                // An operator-typed value stored under sealed code's control is
+                // a pick (veto eval.rs:269-272).
+                let vt = if T {
+                    self.t_stored_v(self.tl::<T>(), &v)
+                } else {
+                    0
+                };
                 if env.assign_var_t::<T>(s, slot, v, vt) {
                     Ok(Value::Unit)
                 } else {
@@ -343,7 +349,7 @@ impl<'p> Interp<'p> {
                 // into the container the binding holds: the binding now
                 // carries it. Read through the lookup `write_place` uses.
                 if T {
-                    let wt = self.ts::<T>(self.ta::<T>());
+                    let wt = self.t_stored_v(self.ta::<T>(), &v);
                     env.get_var_mut_t::<T>(base, base_slot, wt);
                 }
                 write_place(base, base_slot, &steps, v, env)?;
@@ -404,14 +410,20 @@ impl<'p> Interp<'p> {
                 let exits = T
                     && ct != 0
                     && (taint::has_exit(then) || else_.as_ref().is_some_and(|e| taint::has_exit(e)));
-                if cond_bool(cv, "if")? {
+                // An operator-typed value the branch yields was picked by the
+                // condition (veto eval.rs:400-415).
+                let r = if cond_bool(cv, "if")? {
                     self.t_branch(ct, exits, || self.eval_t::<T>(then, env))
                 } else {
                     match else_ {
                         Some(e) => self.t_branch(ct, exits, || self.eval_t::<T>(e, env)),
                         None => self.t_branch(ct, exits, || Ok(Value::Unit)),
                     }
+                };
+                if T {
+                    self.t_pick_branch(ct, &r);
                 }
+                r
             }
 
             Expr::Match { subject, arms } => {
@@ -466,6 +478,9 @@ impl<'p> Interp<'p> {
                             });
                         let r = self.t_branch(ct, exits, || self.eval_t::<T>(&arm.body, env));
                         env.pop();
+                        if T {
+                            self.t_pick_branch(ct, &r);
+                        }
                         return r;
                     }
                     env.pop();
@@ -712,11 +727,29 @@ impl<'p> Interp<'p> {
                     let (s, slot) = self.res.var(receiver, name);
                     if env.get_var(s, slot).is_some() || self.is_global(s) {
                         let idx = strict_int(self.eval_t::<T>(index, env)?)?;
+                        if T {
+                            // An operator-typed element read at an index sealed
+                            // code chose is a pick (veto eval.rs:772-789).
+                            let it = self.tl::<T>();
+                            let r = self.index_in_place(s, slot, name, idx, env);
+                            if let Ok(el) = &r {
+                                self.t_pick_index(it, el);
+                            }
+                            return r;
+                        }
                         return self.index_in_place(s, slot, name, idx, env);
                     }
                 }
                 let arr = self.eval_t::<T>(receiver, env)?;
                 let idx = strict_int(self.eval_t::<T>(index, env)?)?;
+                if T {
+                    let it = self.tl::<T>();
+                    let r = index_value(arr, idx);
+                    if let Ok(el) = &r {
+                        self.t_pick_index(it, el);
+                    }
+                    return r;
+                }
                 index_value(arr, idx)
             }
 
@@ -1422,12 +1455,14 @@ impl<'p> Interp<'p> {
         // Evaluate arguments left-to-right, into a reused buffer (AX-54).
         let mut argv = self.take_args(args.len());
         // The NAME rule (R51 S3): a sealed run's call of a name-resolving
-        // builtin. `T` is set only in a sealed run.
+        // builtin. `T` is set only in a sealed run. Any other named callee
+        // keeps its arguments' taints for the builtin pick (R51 S4).
         if T {
             if let Expr::Ident(name) = callee {
                 if super::pin::name_sink(name).is_some() {
                     return self.eval_name_sink_call(name, callee, args, argv, tier, env);
                 }
+                return self.eval_ident_call_sealed(callee, args, argv, tier, env);
             }
         }
         for a in args {
@@ -1462,6 +1497,30 @@ impl<'p> Interp<'p> {
             self.seal_name_args(name, args)?;
             self.t_check_names(name, &ats)?;
         }
+        self.taint.call_ats.replace(ats);
+        self.dispatch_call::<true>(callee, argv, tier, env)
+    }
+
+    /// [`Interp::eval_call`] of any other identifier callee in a sealed run:
+    /// the arguments are evaluated with their taints, which wait in
+    /// `taint.call_ats` for [`Interp::dispatch_named`]'s builtin pick
+    /// (`t_builtin_pick`, veto eval.rs:1501-1506). A cell, not a parameter,
+    /// so `dispatch_named` keeps the signature the bytecode engine calls.
+    #[inline(never)]
+    fn eval_ident_call_sealed(
+        &self,
+        callee: &Expr,
+        args: &[Expr],
+        mut argv: Vec<Value>,
+        tier: Option<&str>,
+        env: &mut Env,
+    ) -> R {
+        let mut ats = Vec::with_capacity(args.len());
+        for a in args {
+            argv.push(self.eval_t::<true>(a, env)?);
+            ats.push(self.tl::<true>());
+        }
+        self.taint.call_ats.replace(ats);
         self.dispatch_call::<true>(callee, argv, tier, env)
     }
 
@@ -1547,9 +1606,23 @@ impl<'p> Interp<'p> {
     ) -> R {
         nest_guard!(self, DISPATCH_NAMED);
         self.set_call_tier(tier);
+        // The taints of the arguments, when a sealed `eval_call` left them.
+        let ats = if T {
+            self.taint.call_ats.take()
+        } else {
+            Vec::new()
+        };
         // 1. A local/captured variable holding a closure.
         if let Some(c @ Value::Closure { .. }) = env.get_var(s, slot) {
             let c = c.clone();
+            if T {
+                // The callee is read out of the binding without an `eval`: a
+                // closure the binding holds under a taint is picked (veto
+                // eval.rs:1460-1469).
+                if let Some(i) = env.get_var_idx(s, slot) {
+                    self.t_note(&c, env.taint(i));
+                }
+            }
             return self.call_local_closure(c, argv.into_vec(self));
         }
         // A sealed run: any other value a local holds is what the name means
@@ -1582,9 +1655,17 @@ impl<'p> Interp<'p> {
                 } else {
                     None
                 };
+                // Whether sealed code ran inside the builtin (a callback).
+                let entries = if T { self.taint.entries.get() } else { 0 };
                 if let Some(v) = self.call_builtin(name, argv.values())? {
                     if T {
                         self.t_builtin_out(name, argv.values(), &v);
+                        self.t_builtin_pick(
+                            argv.values(),
+                            &ats,
+                            self.taint.entries.get() != entries,
+                            &v,
+                        );
                     }
                     drop(pc);
                     argv.done(self);
