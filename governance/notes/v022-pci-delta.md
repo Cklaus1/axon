@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 3e05753244aa74ab5e38da3d948a66f91a3711c4
+generated-at: 1276b9e9b3000688b9a2f8a5ddd232e67463ae03
 
-`git diff --numstat 31413ca7..3e057532 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..1276b9e9 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -54,10 +54,10 @@ generated-at: 3e05753244aa74ab5e38da3d948a66f91a3711c4
 | `crates/axon-core/src/interp/conform.rs` | 1800 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1354 | 0 |
 | `crates/axon-core/src/interp/crossing_tests.rs` | 417 | 0 |
-| `crates/axon-core/src/interp/dispatch_tests.rs` | 615 | 0 |
+| `crates/axon-core/src/interp/dispatch_tests.rs` | 639 | 0 |
 | `crates/axon-core/src/interp/env.rs` | 1181 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 2029 | 607 |
-| `crates/axon-core/src/interp/goal.rs` | 88 | 42 |
+| `crates/axon-core/src/interp/eval.rs` | 2036 | 607 |
+| `crates/axon-core/src/interp/goal.rs` | 87 | 42 |
 | `crates/axon-core/src/interp/kernel_tests.rs` | 336 | 0 |
 | `crates/axon-core/src/interp/pick_tests.rs` | 394 | 0 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
@@ -65,9 +65,9 @@ generated-at: 3e05753244aa74ab5e38da3d948a66f91a3711c4
 | `crates/axon-core/src/interp/sink_tests.rs` | 1099 | 0 |
 | `crates/axon-core/src/interp/sym.rs` | 1196 | 0 |
 | `crates/axon-core/src/interp/taint.rs` | 1653 | 0 |
-| `crates/axon-core/src/interp/taint_tests.rs` | 4170 | 0 |
+| `crates/axon-core/src/interp/taint_tests.rs` | 4172 | 0 |
 | `crates/axon-core/src/interp/tests_v022_a.rs` | 1184 | 0 |
-| `crates/axon-core/src/interp/tests_v022_b.rs` | 2029 | 0 |
+| `crates/axon-core/src/interp/tests_v022_b.rs` | 2057 | 0 |
 | `crates/axon-core/src/interp/tests_v022_c.rs` | 152 | 0 |
 | `crates/axon-core/src/interp/tests_v022_s4.rs` | 600 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 506 | 514 |
@@ -86,9 +86,9 @@ generated-at: 3e05753244aa74ab5e38da3d948a66f91a3711c4
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 45967 | 5256 |
+| total | 46027 | 5256 |
 
-`git log --reverse 31413ca7..3e057532 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..1276b9e9 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -316,7 +316,9 @@ generated-at: 3e05753244aa74ab5e38da3d948a66f91a3711c4
 | 7bc0bfd4 | R51 S6.2 | TEST-ONLY: interp/taint_tests.rs T8.2 positional probes carry a scalar the candidate chose (idx()) so only the binding's taint carries it; the &mut attack reads the clean neighbour; no behaviour change |
 | 1c3af54a | R51 S6.2 merge | joins r51/s6tests (bff841fe..7bc0bfd4: T8.2/8.3/8.5/8.6 probes and controls, T3 drift sweeps, T9 call-fast Uncertain + vm_parity test leg) onto r51/int 58a8a864 (S6 T7 rows, T6 legs); only this table and the note conflicted, resolved by keeping both sides; no change beyond the commits it joins |
 | 3e057532 | R51 S6 T7 | INTERPRETER (sealed runs only, v0.22 C9 round 4b amendment 60; M921): coerce_to_sized::<SEALED> leaves a SizedInt of another width unchanged at a sealed let (T), parameter (bind_params_sealed) and record field (seal.active), so the declared-type cast refuses it as a runtime type confusion instead of the value being re-tagged to the declared width before the cast sees it; unsealed runs and the VM (VM_SEALED = false) re-tag as before, no unsealed behaviour change. Attack test a_sealed_let_param_or_field_never_retags_another_fixed_width (interp/tests_v022_b.rs) with honest controls; mutation rows M3230/M3231/M3256 new text and M1996 marker (scripts only) |
-| 224 commits | | |
+| 11172ce5 | R51 S6 T7 | INTERPRETER (tree engine, sealed runs only; the VM never runs sealed code): eval.rs dispatch_named applies seal_call before call_fn_entry for an entry with a `&mut` param, so a sealed direct call of an operator `&mut` fn is told the no-such-fn text a missing name gets instead of call_fn_entry's `&mut` refusal naming it (an existence oracle v0.22's call_fn shared; row M3495); goal.rs run_goal/run_goal_warm drop S4b's seal_call, which goal_name_is_known (a sealed caller knows only its own fns and its own kernel's provenance) already dominated with identical text, so the sealed result is unchanged (v0.22's shape). No unsealed behaviour change: seal_call is a no-op when the seal is inactive. TEST-ONLY: tests_v022_b's psv1h oracle test gains a direct-call leg and an honest control (M2622/M2623); dispatch_tests' goal-name test records an @[adaptive] operator goal in the operator's kernel and its drift test classifies goal.rs lookups as call-edged, behind goal_name_is_known or listed (M2925/M2946); taint_tests' am106 oracle gains a `&mut` operator fn pair (20 forms x 7); axon-psv sealed_frames gains a goal_eval form naming a `&mut` operator fn (M3343 re-anchored onto goal_eval's frame filter); lookup-listing reasons updated |
+| 1276b9e9 | R51 S6 T7 merge | joins r51/t7oracle (11172ce5, 6ae5d56c: oracle rows M2622/M2623/M2925/M2946/M3343, new row M3495 sealed `&mut` direct-call oracle) onto r51/int 15cbfa4a (t7shape: sealed width re-tag, M3230/M3231/M3256 text, M1996 marker); only this table and the note conflicted, resolved by keeping both sides; no change beyond the commits it joins |
+| 226 commits | | |
 <!-- END MECHANICAL -->
 
 
