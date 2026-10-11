@@ -36912,7 +36912,9 @@ fn vm_bulk_fill_runs() {
 /// with `b0 > j0` (a bulk path dividing by `s0` first would crash), a
 /// negative step with `b0 - j0 < |s0|` (the tree writes `a[2]`, then panics
 /// on `a[-1]`; a path checking only `s0 != 0` computes one iteration, sets
-/// `j = -1` and exits 0), a `j + s` overflow in the last iteration, and
+/// `j = -1` and exits 0), a `j + s` overflow in the last iteration, a bound
+/// at `i64::MAX` (the tree panics one past the end; a path computing
+/// `b0 + 1` in `i64` wraps, takes the range as empty and exits 0), and
 /// `SizedInt` operands: an `i8` `j`, `s` and `b` (the tree checks `j + s` at
 /// `i8` width; a path reading them as `i64` exits 0), and each of `b` and
 /// `s` alone an `i8` passed through `id` (the checker rejects the mixed
@@ -36927,7 +36929,7 @@ fn vm_bulk_fill_bounds_and_declines() {
             "fn main() -> i64 {{\n    {init}\n    {step}\n    while j <= b {{\n        a[j] = {value}\n        j = j + s\n    }}\n    println(\"{{a}} j={{j}}\")\n    0\n}}\n"
         )
     };
-    let cases: [(&str, &str, &str, &str, &str); 7] = [
+    let cases: [(&str, &str, &str, &str, &str); 8] = [
         (
             "past",
             "let a = arr_repeat(0, 10)\n    let j = 1\n    let b = 10",
@@ -36962,6 +36964,13 @@ fn vm_bulk_fill_bounds_and_declines() {
             "let s = 9223372036854775806",
             "0.0",
             "integer overflow: 5 + 9223372036854775806 exceeds i64",
+        ),
+        (
+            "max_bound",
+            "let a = arr_repeat(0, 10)\n    let j = 0\n    let b = 9223372036854775807",
+            "let s = 1",
+            "7",
+            "index 10 out of bounds (len 10)",
         ),
         (
             "sized",
@@ -37162,13 +37171,15 @@ type CountDecline = (
 /// so the check is 128-bit), an `i32` `n` and an `i32` `c` alone (the tree
 /// checks the overflow at `i32` width; a path reading `c` as `i64` exits 0
 /// with `n=2147484000`), an
-/// out-of-bounds `hi`, a negative `lo` (a path casting `lo` with `as usize`
+/// out-of-bounds `hi`, a `hi` of `i64::MAX` in `lo..=hi` (the tree panics one
+/// past the end; a path computing `hi + 1` in `i64` wraps and prints `n=0`),
+/// a negative `lo` (a path casting `lo` with `as usize`
 /// reads far out of bounds or counts the wrong slice), and a `Vals` array.
 #[test]
 fn vm_bulk_count_declines() {
     let one = "let c = 1";
     let zero = "let n = 0";
-    let cases: [CountDecline; 7] = [
+    let cases: [CountDecline; 8] = [
         (
             "overflow",
             "arr_repeat(true, 4)",
@@ -37222,6 +37233,17 @@ fn vm_bulk_count_declines() {
             "index 4 out of bounds (len 4)",
         ),
         (
+            "max_hi",
+            "arr_repeat(false, 20)",
+            "let c = 1\n    f[1] = true\n    f[2] = true\n    f[4] = true\n    f[8] = true\n    \
+             f[16] = true",
+            zero,
+            "0..=9223372036854775807",
+            101,
+            "",
+            "index 20 out of bounds (len 20)",
+        ),
+        (
             "negative_lo",
             "arr_repeat(true, 4)",
             one,
@@ -37263,12 +37285,15 @@ fn vm_bulk_count_declines() {
 /// counts it), give the tree's output under both engines and no `vm: bulk`
 /// line. Counts: an `else`; `a[w]` for another local `w`; `n = n - c`;
 /// `n = m + c`; a second statement in the `then` block; a statement after
-/// the `if`; `n = n + v` with an outer `v` shadowed by the loop's; and
-/// `p = p + p`. Fills: `q[k] = 7`; the increment before the store; a third
-/// statement; `j = k + s`; `a[j] = j`; `j = j + j`; and, each in a program
-/// of its own as the tree panics in it, `j = j - s`, `while j > b` and
-/// `while k <= b`. A recogniser that skips one of those checks runs a bulk
-/// path, and most of them print another result.
+/// the `if`; `n = n + v` with an outer `v` shadowed by the loop's;
+/// `p = p + p`; and `v = v + 1`, the loop variable as the accumulated local
+/// (the tree leaves the outer `v` at 3). Fills: `q[k] = 7`; the increment
+/// before the store; a third statement; `j = k + s`; `a[j] = j`; `j = j + j`;
+/// a step assigning another local (`k = j + s`, zero iterations); and, each
+/// in a program of its own as the tree panics in it, `j = j - s`,
+/// `while j > b`, `while k <= b` and `while j <= j`. A recogniser that skips
+/// one of those checks runs a bulk path, and most of them print another
+/// result.
 #[test]
 fn vm_bulk_near_miss_shapes() {
     let src = r#"fn main() -> i64 {
@@ -37334,6 +37359,10 @@ fn vm_bulk_near_miss_shapes() {
         if d[v] { p = p + p }
     }
     println("double p={p}")
+    for v in 0..20 {
+        if d[v] { v = v + 1 }
+    }
+    println("loopvar v={v}")
     let s = 2
     let b = 8
     let q = arr_range(0, 10)
@@ -37383,11 +37412,21 @@ fn vm_bulk_near_miss_shapes() {
         j9 = j9 + j9
     }
     println("twice {f9} j={j9}")
+    let f10 = arr_repeat(0, 10)
+    let j10 = 10
+    let k10 = 0
+    let s10 = 3
+    let b10 = 5
+    while j10 < b10 {
+        f10[j10] = 7
+        k10 = j10 + s10
+    }
+    println("target {f10} j={j10} k={k10}")
     0
 }
 "#;
     let want = "else n=16 m=4\nindex n=0\nminus n=-11\nother n=102\n\
-                then2 n=16 m=8\nafter n=16 m=12\nshadow n=47 v=3\ndouble p=32\n\
+                then2 n=16 m=8\nafter n=16 m=12\nshadow n=47 v=3\ndouble p=32\nloopvar v=3\n\
                 idx [0, 1, 2, 3, 7, 5, 6, 7, 8, 9] j=8\n\
                 order [0, 1, 7, 3, 7, 5, 7, 7, 7, 9] j=8\n\
                 third [0.5, 2.5, 0.5, 2.5, 0.5, 2.5, 0.5, 2.5, 0.5, 0.5] j=9 x=4\n\
@@ -37402,7 +37441,10 @@ fn vm_bulk_near_miss_shapes() {
             }
         })
         .collect();
-    let want = format!("{want}twice [{}] j=32\n", twice.join(", "));
+    let want = format!(
+        "{want}twice [{}] j=32\ntarget [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] j=10 k=0\n",
+        twice.join(", ")
+    );
     let (code, stdout, stderr, counts, bulk) = vm_bulk_case("bulk_near_miss", src, "main");
     assert_eq!(
         (code, stdout.as_str()),
@@ -37410,7 +37452,7 @@ fn vm_bulk_near_miss_shapes() {
         "{stderr}"
     );
     assert_eq!(stderr, "");
-    assert_eq!((counts, bulk), ((0, 14), None));
+    assert_eq!((counts, bulk), ((0, 16), None));
     let panics = [
         (
             "sub",
@@ -37428,6 +37470,12 @@ fn vm_bulk_near_miss_shapes() {
             "cond",
             "let a = arr_repeat(0, 10)\n    let k = 0\n    let j = 0\n    let s = 3\n    let b = 8\n    \
              while k <= b {\n        a[j] = 7\n        j = j + s\n    }",
+            "index 12 out of bounds (len 10)",
+        ),
+        (
+            "same",
+            "let a = arr_repeat(0, 10)\n    let j = 0\n    let s = 3\n    \
+             while j <= j {\n        a[j] = 7\n        j = j + s\n    }",
             "index 12 out of bounds (len 10)",
         ),
     ];

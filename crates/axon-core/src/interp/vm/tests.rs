@@ -1355,6 +1355,9 @@ fn near_miss() -> [i64] {
     for v in 0..20 {
         if d[v] { p = p + p }
     }
+    for v in 0..20 {
+        if d[v] { v = v + 1 }
+    }
     let s = 2
     let b = 8
     let q = arr_range(0, 10)
@@ -1398,7 +1401,16 @@ fn near_miss() -> [i64] {
         f9[j9] = true
         j9 = j9 + j9
     }
-    [n1, m1, n2, n3, n4, n5, m5, n6, m6, n7, p, j1, j2, j3, x, j6, j8, j9]
+    let f10 = arr_repeat(0, 10)
+    let j10 = 10
+    let k10 = 0
+    let s10 = 3
+    let b10 = 5
+    while j10 < b10 {
+        f10[j10] = 7
+        k10 = j10 + s10
+    }
+    [n1, m1, n2, n3, n4, n5, m5, n6, m6, n7, p, j1, j2, j3, x, j6, j8, j9, v, j10, k10]
 }
 fn near_miss_sub() -> i64 {
     let a = arr_repeat(false, 10)
@@ -1429,6 +1441,16 @@ fn near_miss_cond() -> i64 {
     let s = 3
     let b = 8
     while k <= b {
+        a[j] = 7
+        j = j + s
+    }
+    j
+}
+fn near_miss_same() -> i64 {
+    let a = arr_repeat(0, 10)
+    let j = 0
+    let s = 3
+    while j <= j {
         a[j] = 7
         j = j + s
     }
@@ -1543,7 +1565,7 @@ fn packed_forms_persist() {
         other => panic!("not an array: {other:?}"),
     };
     let want = [
-        16, 4, 0, -11, 102, 16, 8, 16, 12, 47, 32, 8, 8, 9, 4, 10, 11, 32,
+        16, 4, 0, -11, 102, 16, 8, 16, 12, 47, 32, 8, 8, 9, 4, 10, 11, 32, 3, 10, 0,
     ];
     assert!(
         got.len() == want.len()
@@ -1557,6 +1579,7 @@ fn packed_forms_persist() {
         ("near_miss_sub", "negative index -1"),
         ("near_miss_gt", "index 11 out of bounds (len 10)"),
         ("near_miss_cond", "index 12 out of bounds (len 10)"),
+        ("near_miss_same", "index 12 out of bounds (len 10)"),
     ] {
         let r = interp.call_fn_entry(&interp.fn_table[index(name)], vec![]);
         assert!(
@@ -1583,8 +1606,9 @@ fn packed_forms_persist() {
             pure_loops("near_miss_sub"),
             pure_loops("near_miss_gt"),
             pure_loops("near_miss_cond"),
+            pure_loops("near_miss_same"),
         ],
-        [14, 1, 1, 1]
+        [16, 1, 1, 1, 1]
     );
 
     // Each bulk shape and the counter it moves, as `[Bools, Ints, Floats]`
