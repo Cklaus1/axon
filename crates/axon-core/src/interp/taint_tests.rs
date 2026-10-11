@@ -1126,3 +1126,111 @@ fn a_closed_return_type_drops_the_type_taint() {
         assert_eq!(taint_of(ix, "ret_pin", int(0), int(0)) & (VAL | TYP), VAL);
     });
 }
+
+/// S2 leftover, v0.22 taint_tests.rs:2427 (loop findings 0, 1, 11, 13:
+/// `temporal_new` read the process clock from an arm classed Pure). Every arm
+/// of a builtin classed Pure is scanned: it may reach no ambient state (the
+/// clock, the host seam, the RNG, either kernel), and no interpreter state
+/// except the two it is allowed: `call_closure_arg` (main's `call_cb`, which
+/// carries the callbacks' taint) and `dict_mutated` (the dict edge's dirty
+/// flag).
+#[test]
+fn no_arm_of_a_pure_builtin_reads_or_advances_ambient_state() {
+    use super::taint::{info, Class};
+    const FORBIDDEN: &[&str] = &[
+        "program_now_ms",
+        "crate::clock",
+        "with_host",
+        "rng_next",
+        "rng_reseed",
+        "self.k()",
+        "self.kernels",
+        "std::env",
+        "std::fs",
+        "std::process",
+        "std::time",
+    ];
+    // `fold_leaf` (main only): `arr_fold`'s register fast path runs the same
+    // callback `call_closure_arg` would, on a compiled body - none exists in a
+    // sealed run (VmPin-3), so there it always declines.
+    const ALLOWED_SELF: &[&str] = &[
+        "self.call_closure_arg",
+        "self.dict_mutated",
+        "self.fold_leaf",
+    ];
+    let sources = vm::tests::r51_interp_sources();
+    let src = &sources
+        .iter()
+        .find(|(f, _)| f == "builtins.rs")
+        .expect("interp/builtins.rs")
+        .1;
+    let mut scanned = 0;
+    let mut bad: Vec<String> = Vec::new();
+    for (names, body) in super::tests::builtin_arms(src) {
+        if !names
+            .iter()
+            .any(|n| info(n).is_some_and(|i| i.class == Class::Pure))
+        {
+            continue;
+        }
+        scanned += 1;
+        if names
+            .iter()
+            .any(|n| info(n).is_some_and(|i| i.class != Class::Pure))
+        {
+            bad.push(format!(
+                "{names:?}: one arm serves a Pure and a non-Pure builtin"
+            ));
+        }
+        for line in body.lines() {
+            let t = line.trim_start();
+            if t.starts_with("//") {
+                continue;
+            }
+            for f in FORBIDDEN {
+                if t.contains(f) {
+                    bad.push(format!("{names:?}: `{f}` in `{t}`"));
+                }
+            }
+            let mut rest = t;
+            while let Some(i) = rest.find("self.") {
+                let tail = &rest[i..];
+                let word: String = tail
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
+                    .collect();
+                if !ALLOWED_SELF.iter().any(|a| word.starts_with(a)) {
+                    bad.push(format!(
+                        "{names:?}: `{word}` reads interpreter state in a Pure arm"
+                    ));
+                }
+                rest = &tail[4..];
+            }
+        }
+    }
+    assert!(scanned >= 20, "DRIFT: only {scanned} Pure arms found");
+    assert!(
+        bad.is_empty(),
+        "ATTACK: DRIFT: a Pure-classed builtin touches ambient state (classify it World):\n{}",
+        bad.join("\n")
+    );
+    // The two that did, and the clock row (v0.22 taint_tests.rs:2498-2516).
+    for n in [
+        "temporal_new",
+        "temporal_is_valid",
+        "temporal_now",
+        "now_ms",
+        "sleep_ms",
+    ] {
+        assert_eq!(
+            info(n).map(|i| i.class),
+            Some(Class::World),
+            "`{n}` reads the clock"
+        );
+        assert_eq!(
+            crate::builtins::builtin_effect_row(n),
+            &["Time"],
+            "`{n}` reads the clock, so it needs the Time effect"
+        );
+    }
+}
