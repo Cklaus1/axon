@@ -495,7 +495,8 @@ ATTACK_MARKERS = {
     # ── Retired EQUIVALENT rows: the JOINT cell's attack (paired-disable
     # matches it; the mutation run never scores a retired row). Carried from
     # C8 without markers, which made their joint cell unmatchable (C9 r1b).
-    'M58': r"ATTACK: `[^`]*` passed: a break/continue escaped a function body",
+    # (M58's marker left with it on R51: STALE_REFACTORED -> M59, whose stale
+    # cell is scored on M59's own marker, like M176 -> M293.)
     'M245': r'ATTACK: monitor: activated on a revoked key',
     # ── C9 round 2, workstream LOOP (M470-M479) ──
     'M470': r'ATTACK: an observation signed by a rooted key the store trusts for no observer was\s+ACCEPTED',
