@@ -1730,3 +1730,442 @@ std.time            clocks, duration
 std.path            cross-platform paths
 std.serial          JSON, MessagePack, Protobuf, CBOR, TOML, YAML
 ```
+
+---
+
+# Axon — ASI Review (2026-09-29)
+
+> A review of this PRD from the position of its intended primary user: an AI system that
+> writes, optimizes, and operates Axon programs with delegated authority. It is **appended**
+> rather than edited inline because code and specs cite this file by line number
+> (`infer.rs`, `builtins.rs`, `codegen/types.rs`, `governance/specs/R13/R14/R16/R7c`); inserting
+> text above line 1733 would silently break those references.
+>
+> Every "measured" claim below was run against `target/debug/axon` at `8b0d2dc9`. The repros
+> are listed so each one can become a gate that fails until the gap is closed.
+
+## A. Drift — where this PRD no longer describes the language
+
+The build has overtaken the PRD in some places and diverged from it in others. Treat
+`AXON_REFERENCE.md` (generated, drift-gated) as authoritative for *what exists*; this table
+records *which PRD statements a reader must discount*.
+
+| PRD says | The build does | Consequence for this doc |
+|---|---|---|
+| `#[attr]`, `struct P{…}`, `enum E{…}`, `.ai`, `ai-lang …` | `@[attr]`, `type P = {…}`, `type E = A{…} \| B{…}`, `.ax`, `axon …` | Syntax examples above are illustrative, not parseable |
+| Integers default to `i32` | Default is `i64`; checked operators panic on overflow; `wrapping_*` is the explicit opt-out | `test_overflow` (line 467) cannot type-check: `add` returns `i32`, not `Result` |
+| Reproducibility = pin model versions (§Critical 2) | Pins are necessary but insufficient (providers are not bit-deterministic). Shipped answer: host journal (`AXON_RECORD`/`AXON_REPLAY`, divergence ⇒ exit 11) + `AXON_AI_REPLAY` + seeded RNG + virtual clock | Reproducibility is a property of the **environment seam**, not of the model string |
+| `#[corrigible]` = "hard guarantee agents can be stopped (compile-time)" | Stopping is a **runtime** latch held by the `axon-os` supervisor, outside the agent's authority; monotonicity proved in TLA+/Coq (R32) | A compile-time stop guarantee is not possible; the design principle is *the kill switch lives outside what it kills* |
+| Self-improving compiler emits AI-generated asm, "verified correct" | Passes are **data** in a closed rewrite vocabulary, admitted by a 4-gate firewall (oracle, capability monotonicity, test preservation, perf) | The asm-graduation loop (§Self-Improving Compiler) should be retired, not built: an unverifiable asm path is a TCB hole |
+| `use "sha256:…" as x` — import by hash | `mod x` + `use x.{…}` resolved **ambiently** via `AXON_PATH` → `~/.axon/lib` → `<bindir>/../lib/axon`, first match wins, choice unrecorded; `axon lock`/`verify-lock` pin hashes after the fact | Content-addressed import is still a gap (see G12) |
+| Per-import capabilities `{allow:[pure]}` | Per-fn `@[contained]`, effect rows, `AXON_ALLOWED_EFFECTS`, job profiles | No module-boundary ceiling yet (G12) |
+| `comptime` = zero runtime cost | True under `axon build` only; the interpreter evaluates `comptime` bodies as ordinary runtime code on every pass | Performance claims hold for native only |
+| Not mentioned | Effect rows + handlers, refinement types (runtime-enforced, exit 6), `@[pure]`/`@[total]`, Principals with attenuation-by-construction, profiles (`developer`→`hermetic`), approval policy vs. evidence, Risk-typed deploy pipeline, hash-chained audit ledger, attestation (R26/R31), Cortex repair loop | These are now the load-bearing design; the "ASI Extensions" section above under-describes the language |
+
+## B. Contradictions inside the PRD
+
+An ASI reading this PRD as a spec would exploit or trip over each of these.
+
+1. **The flagship optimization example leaks the test set.** Experiment 5 (line 874) adds
+   "3 labeled examples from test set" as few-shot prompts and then reports 0.97 *on that test
+   set*. The headline result is contaminated: the optimizer was shown the answers. Cortex already
+   embodies the fix (*the adjudicating check is one the generator is never shown*); `#[goal]` must
+   adopt it as a language rule, not a convention. → G3.
+2. **"Loser deleted automatically" vs. `rollback: on_regression` and provenance.** You cannot roll
+   back to a variant you deleted, and you cannot replay or audit an experiment whose code is gone.
+   Losing variants should leave the *binary*, not the *record*: keep them content-addressed in the
+   provenance store.
+3. **Auto-serialization of every struct vs. `#[sensitive]`.** `user.to_json()` on a
+   `#[sensitive(pii)]` type is an exfiltration primitive the compiler generated for free.
+   Sensitive types must not auto-derive serializers; they get `to_redacted()` only, and an explicit,
+   audited `declassify` for the rest.
+4. **Money is `f64`.** `#[sensitive(financial)] struct Transaction{amount:f64}` and the
+   `#[verify] transfer(amount:f64)` proof example both reason about balances in binary floating
+   point, where `0.1+0.2≠0.3` and "decreases_by(amount)" is not an exact statement. The build
+   ships `Decimal` (i128, scale 9, explicit rounding mode on division); the PRD's money examples
+   should use it, and proofs over balances should be stated over it.
+5. **"AI can't generate unsafe code — language prevents it"** (line 1317) vs. the `unsafe{}` block
+   (line 494). Restate honestly: `unsafe` is a *capability* — refused unless granted, like `exec` —
+   not something the language makes impossible.
+6. **"No registry, no package manager"** (line 414) vs. the Shared Intelligence **Registry**
+   (line 750). There is a registry; the question is only what it is allowed to serve.
+7. **Supply-chain rigor stops at the code boundary.** `knowledge pull` and `adaptations/` import
+   prompts, routing rules, and model weights that *change program behavior* — code by another
+   name — with self-reported p-values as the trust signal. Those are trivially fabricated.
+   Imported knowledge must be treated as untrusted input (G1), carry replayable evidence (the
+   journal plus the eval set hash), and re-validate against the importer's own sealed holdout
+   before it can alter an `@[adaptive]` fn.
+8. **"Deterministic eval" with a nondeterministic metric.** `extract_accuracy` scores
+   `output.latency<500ms` (line 948). Latency is not a field of `Invoice`, and wall-clock latency
+   is not reproducible. Metrics must be pure over `(input, output, expected)`; latency and cost
+   belong in `constraints`, measured separately and reported with variance.
+9. **Queued agent actions are a TOCTOU bug.** "#[agent] queues actions, processes when AI
+   restored" (line 1240) executes a decision made against a world that has since changed. An
+   action must carry its preconditions and re-check them at execution time, or expire (it is a
+   `Temporal<Action>`). → G8.
+10. **The sandbox stage observes fiction.** "Real traffic, actions logged but NOT executed"
+    (line 1258) means every observation downstream of the first un-executed write is wrong, so
+    the sandbox scores a trajectory that cannot happen. A sandbox needs a *simulated* world
+    response for suppressed effects (a world model or a recorded journal), and must report
+    which observations were simulated.
+
+## C. Gaps — what an ASI author needs that neither the PRD nor the build provides
+
+Ranked by how much damage the gap permits, not by how interesting the feature is.
+
+### G1 (P0) — Untrusted data flow / prompt injection is not typed
+
+The PRD never mentions prompt injection. It is the dominant real attack on AI-operated software,
+and Axon's whole premise is AI-operated software.
+
+**Measured:** this program type-checks clean (exit 0). Model output flows straight into a
+subprocess's argv:
+
+```axon
+fn main() {
+    match ai_complete("give me a shell command") {
+        Ok(cmd) => { let _ = exec(cmd, []) }
+        Err(e) => { println(e) }
+    }
+}
+```
+
+`@[contained]` and `AXON_ALLOWED_EFFECTS` bound *whether* `exec` may run. Neither constrains
+*what the model gets to choose once it does*. The integrity lattice already exists in userland
+(`examples/stdlib/tainted.ax`, i64-only). It needs to be a compiler-tracked property:
+
+- **Sources** mark values `Untrusted`: `ai_complete`/`ai_extract*`, `http_*`, `read_file`,
+  `read_line`, `env_var`, `host_await*`, anything `knowledge pull` delivers.
+- **Sinks** refuse `Untrusted` arguments in authority-bearing positions: `exec` program and argv,
+  HTTP URL and host, `write_file`/`dir_*` paths, SQL text, agent **tool selection**, and the
+  *instruction* half of a prompt (data may be interpolated into a prompt; it may not become one).
+- **The only lift** is a parse into a type: `parse_int`, `ai_extract::<T>` into a closed enum, a
+  refinement predicate, or a declared validator fn. *Parse, don't validate*, enforced.
+- **Reuse:** the E1206 flow walker already tracks confidentiality to a set of sinks. Taint is
+  the same walker over the integrity axis with a different source/sink table.
+
+**Gate:** the repro above must fail `axon check` with a new E12xx, and
+`exec(allowlisted_enum_to_str(x), [])` must pass.
+
+### G2 (P0) — `@[sensitive]` stops at files and AI, not stdout/stderr
+
+**Measured:** `write_file(path, u.ssn)` is refused (E1206, good). `println(u.ssn)`,
+`eprintln(s)`, and `"id={u.ssn}"` interpolation are all accepted (exit 0). Stdout is not
+"inside the program": it lands in host journals, CI logs, the `axon-web` run pane, and agent
+transcripts that are then sent to a model. Extend the sink table to every output builtin, and
+treat string interpolation as propagation, not as laundering.
+
+### G3 (P0) — Sealed evaluation (Goodhart and winner's-curse guard)
+
+`goal { holdout: … }` exists. What an optimizer needs is a guarantee about **who has seen
+what**:
+
+| Split | Seen by | Used for |
+|---|---|---|
+| `train` | generator (few-shot, analysis) | proposing variants |
+| `dev` | optimizer's score function | selecting among variants |
+| `holdout` | nobody until approval; hash committed at goal creation | the number a human approves |
+
+- The compiler refuses any data flow from `holdout` into a prompt, generator, or `@[adaptive]`
+  parameter (G1's walker again).
+- Report the **optimism gap** `dev − holdout` on every approval. A large gap is overfitting, and
+  it is the single most useful number to show a human reviewer.
+- With 100 evals on 50–200 noisy LLM-scored examples, the best `dev` score is biased upward.
+  Keep a variant only when the delta's confidence interval excludes zero, and re-score the
+  finalist on fresh draws.
+
+### G4 (P1) — `Uncertain<T>` confidence is not calibrated
+
+A model's self-reported 0.94 is not a probability. `if result.confidence>0.9 {act}` is only
+safe if 0.9-confidence claims are right about 90% of the time. Nothing in the PRD or the build
+checks that. Proposal:
+
+- `confidence` carries its **provenance**: `SelfReported | Calibrated{set_hash, method}`.
+- A `calibrate(fn, labeled_set)` step fits split-conformal thresholds on held-out data and yields
+  a coverage guarantee ("the prediction set contains the truth ≥ 90% of the time").
+- Extend W0701: gating an action on `SelfReported` confidence warns; under `AXON_STRICT` or
+  `axon deploy`, it errors.
+- `confidence_calibration()` (the PRD's metacognition trait, line 1568) becomes a real report:
+  a reliability curve from the provenance log, not a promise.
+
+### G5 (P1) — Stable node identity and typed patches as the unit of AI edit
+
+The PRD's node IDs (`#fn_process.body.stmt_3`) are positional; inserting one statement renames
+every later node. AI edits today are text replacements. Proposal:
+
+- **Content-derived node IDs**, stable under unrelated edits.
+- **`axon patch`**, taking typed edit operations (`replace_expr`, `insert_stmt`,
+  `rename_symbol`, …). Each op names the hash of the node it expects to find, so an edit applies
+  to exactly the node that was reviewed or refuses. No fuzzy matching.
+- This also gives semantic merge for concurrent agents editing one file, and makes Cortex's
+  "restore between attempts" a patch inverse rather than a file copy.
+
+### G6 (P1) — Review authority, not text
+
+At ASI throughput, humans cannot read ASTs. `.ax.approved` binds to a whole-file hash: strict,
+but blind. A comment edit and a new `exec` are indistinguishable to the reviewer. Proposal:
+
+- **`axon ast diff A B`** reports the **authority delta**: effects added or removed,
+  `@[contained]` widening, budget changes, new sinks reached by untrusted data, and risk-tier
+  change.
+- The approval record stores the authority summary alongside the hash, so re-approval shows the
+  delta rather than a fresh wall of code.
+- **Monotonicity rule:** a self-modification (Cortex, `@[adaptive]`, `axon improve`) whose
+  authority delta is non-positive may proceed under policy. Any widening requires a human
+  signature. That rule is the one TCB property self-improvement must never be able to change.
+
+### G7 (P2) — Budgets and capabilities as affine values
+
+Axon already has `own`/`ref`. Budgets and capability grants are the resources that most need
+ownership semantics, and today they are runtime integers (`principal_mint(…, grant)`). An
+affine `Budget` can be **split** and **moved** into a sub-agent and **cannot be copied**, so
+"two sub-agents each got the whole budget" becomes a type error. R27's coalition ceiling stays
+as the runtime backstop for what cannot be proved statically.
+
+### G8 (P1) — Reversibility belongs in the effect row
+
+Risk derivation already consumes an *irreversibility annotation*. An annotation is declared and
+therefore forgettable. Proposal: split effect rows into `Reversible` and `Irreversible`
+(`http_post` to a payments host, `exec rm`, sending email), or require a declared compensating
+action (a saga). Then, mechanically:
+
+- `Irreversible` ⇒ Risk ≥ High ⇒ the full pipeline, with no override.
+- `Irreversible` actions never run in the sandbox or shadow stage (B10) and always re-check
+  their preconditions at execution time (B9).
+- `axon replay` can show a reviewer "this run did 3 irreversible things", leading the summary.
+
+### G9 (P3) — Typed agent protocols
+
+`Chan<T>` types each message but not their **order**. Multi-agent arbitration (PRD §5), R33
+quorum votes, and approval hand-offs are protocols ("propose → vote×N → commit | abort"). Session
+types over channels would make "committed before quorum" unrepresentable rather than tested.
+
+### G10 (P3) — Deliberation is a resource with no price
+
+The metacognition example returns `Plan::GatherInfo` or `Plan::Clarify`, but nothing prices
+thinking, asking a human, or gathering information against acting now. Proposal:
+`@[anytime(deadline)]` fns that return a best-so-far `Uncertain<T>` when the deadline or budget
+hits, plus a value-of-information helper that uses the calibrated uncertainty from G4. Without
+calibration, this is guesswork, so G4 comes first.
+
+### G11 (P3) — Rationalization is recorded as evidence
+
+The experiment log's `reasoning:` and `analysis:` fields are the generator's own story about why
+a change helped. That is a hypothesis, not a cause. Provenance should separate
+`claimed_reason` (text) from `measured_effect` (an ablation: revert just that mutation on the
+dev set). The same applies to shared knowledge: publish the ablation, not the narrative. This
+is where `std.causal` and the shipped `Counterfactual` type earn their place.
+
+### G12 (P2) — Content-addressed, capability-bounded modules
+
+This is the PRD's own §1 promise, still open. Minimum slice:
+
+1. Record the resolved path and hash of every module in the `run_start` record and the journal.
+   Today, nothing records which file was chosen.
+2. Support `use "axsha256:…"` so the hash is the import.
+3. Allow a module-boundary effect ceiling (`mod http allow {Net}`), checked by the existing
+   effect-row subsumption (E1310).
+
+### G13 (P2) — Units are written but not typed
+
+The PRD writes `500ms`, `5s`, `30d`, `$0.01`, and `budget: {cost:5.00, time:1h}` as if they
+were typed. They are not. `Duration`, `Money` (a `Decimal` plus a currency), and `Tokens` with
+dimensional checking would close the class of bugs where `budget_left` (micro-dollars) is
+compared with a token count.
+
+## D. Fold-in order
+
+| Priority | Item | First slice | Acceptance gate |
+|---|---|---|---|
+| P0 | G1 taint | Source/sink table + walker (reuse E1206); `exec`/`http`/path sinks only | §G1 repro fails `axon check`; enum-validated form passes |
+| P0 | G2 sensitive→stdout | Add output builtins + interpolation to the E1206 sink/propagation set | `println(u.ssn)` fails; `println(redact(u))` passes |
+| P0 | G3 sealed holdout | `train/dev/holdout` in `goal{}`; holdout hash committed; flow refusal | Few-shot-from-holdout (B1) fails to compile; approval shows optimism gap |
+| P1 | G6 authority diff | `axon ast diff` over the existing `ast review` effect/cap extraction | Adding one `exec` to an approved file reports `+Exec`, not just "hash changed" |
+| P1 | G8 reversibility | `Irreversible` effect row on a closed builtin list | An irreversible call cannot be deployed below Risk High |
+| P1 | G4 calibration | Confidence provenance + split-conformal `calibrate` | Gating on `SelfReported` warns; errors under `axon deploy` |
+| P1 | G5 stable IDs | Content-derived node IDs in `axon parse` JSON | IDs are unchanged for untouched nodes after an unrelated insert |
+| P2 | G12, G7, G13 | See above | — |
+| P3 | G9, G10, G11 | See above | — |
+
+B-items that are **doc fixes only** (apply when this PRD is next revised): B2, B4, B5, B6, B8.
+B3, B7, B9, and B10 need the matching G items.
+
+## E. Principles this review adds to the PRD
+
+These are already true of the best parts of the build (Cortex, axon-os, the replay journal).
+Stating them makes them binding on the parts that are not built yet.
+
+1. **The check that judges a candidate is one its generator never saw.**
+2. **The kill switch lives outside what it kills.**
+3. **Authority only narrows under self-modification.** Widening needs a human signature.
+4. **Every datum from a model or the world is untrusted until parsed into a type.**
+5. **Stated confidence without calibration is not evidence.**
+6. **Irreversibility is a type, not a comment.**
+7. **Reproducibility is a property of the environment seam, not of the model version.**
+8. **An absent gate is not a passed gate**, and a document may not imply completeness it does not have.
+
+---
+
+# Axon — Product Review (2026-09-29)
+
+> The ASI Review above asks *what the language must guarantee*. This section asks *what a
+> customer needs in order to adopt it*. It covers the jobs, surfaces, and operating model around
+> the language that neither this PRD nor the build provides yet. Grounded against `8b0d2dc9`.
+> "Absent" means it was searched for in `crates/*/src` and `scripts/` and not found; that is not
+> the same as "proved impossible".
+
+## P-A. Who is buying, and the job they hire Axon for
+
+ROADMAP §9 defaults the first customer to *"research lab building agent products with hard
+safety constraints."* Three roles meet in that account, and today the product serves only the
+first:
+
+| Persona | Job to be done | Served today? |
+|---|---|---|
+| **Builder** (engineer or AI author) | Write an agent, make it better, prove it is bounded | Yes: CLI, `goal`, Cortex, `axon-os explain` |
+| **Approver** (safety, security, compliance lead) | Decide what may run, see what did run, stop it | Partly: `ast approve`, kill-switch, ledger. No inbox, no authority diff (G6), no report they can hand to an auditor |
+| **Operator** (on-call, ops) | Keep it running, know when it misbehaves, roll back | No. `axon deploy` runs the program **once** and exits. There is no running service to operate |
+
+**The core product gap:** Axon has an excellent *pre-flight* story (prove, approve, gate) and an
+excellent *forensics* story (journal, replay, ledger), but no **in-flight** story. The PRD's
+§Governance promises sandbox → shadow → 10% → 50% → 100% rollout with automatic rollback on an
+error rate. None of that lifecycle exists. Acid Test 3 promises *"sees deploy + post-deploy
+metrics"*. The shipped pane shows the optimizer's score trajectory, which is pre-deploy.
+
+## P-B. Missing features, ranked by adoption impact
+
+### Tier 1: without these, a design partner cannot run Axon in production
+
+**PM1. Long-running deployments: versions, triggers, rollback.**
+A deployment should be an object: `{program hash, approval record, grant, version}`.
+- **Triggers:** schedule (cron), webhook, queue message, file arrival, manual. `host_await`
+  already gives the resume substrate. What's missing is the thing that wakes the program up.
+- **Commands:** `axon deploy` creates version N. `axon rollback` returns to N-1 in one step,
+  with the previous approval still valid, because it binds to the program hash.
+- **Staged rollout:** stages as the PRD describes (shadow, then percentage), with the promotion
+  criterion written as a `Goal` so it is typed and audited like everything else.
+- **Metric:** time from "approved" to "running on real traffic", and time to roll back. Both
+  should be minutes.
+
+**PM2. Live monitoring and alerting (the operator's pane).**
+Per deployment: runs/hour, error and exit-code mix, spend against budget, gate refusals, kill
+events, and the score of the declared `Goal` on live traffic versus its approved holdout score
+(the online counterpart of G3's optimism gap). Alert on budget burn rate, divergence from the
+approved score, and any `SandboxViolation` (exit 8). The R29 monitor already polls the ledger;
+it trips the kill-switch but tells no human.
+- **Notification sinks:** email, Slack, webhook. These are sinks, so they go through G1/G2 like
+  any other output.
+
+**PM3. Approval inbox with mid-run, human-in-the-loop actions.**
+Today approval is a file written before the run. Real agents need a person *during* the run:
+"refund $240? approve / deny / edit". Build it on `host_await` (the resume runtime exists):
+- the program suspends on an approval request, and the request lands in an inbox (web plus
+  Slack/email notification);
+- the decision resumes the run and is ledgered with the approver's authenticated identity;
+- requests carry a timeout with a declared default, which is always **deny** for irreversible
+  actions (G8);
+- **Metric:** median time-to-decision; the percentage auto-approved by policy versus sent to a
+  human. The second number is what makes the product scale.
+
+**PM4. Secrets broker.**
+`env_var` is refused inside `@[contained]` (correctly: it is an ambient secret channel), so a
+contained agent that calls a paid API has no sanctioned way to get the key. Needed: named
+secrets granted per job in the manifest (`secrets = ["stripe_live"]`). The value is injected
+at the sink (the HTTP header) and **never** materialises as an Axon `str`, so it cannot be
+printed, journaled, or sent to a model. Journals record the secret *name*, not the value. This
+also closes the "journals hold env-var values verbatim" hazard called out in `CLAUDE.md`.
+
+**PM5. Connectors and tool catalog, via MCP.**
+The PRD's agent example lists `tools: [db.query, email.send, ticket.update]`. The runtime has
+no tool ecosystem: no MCP client in `axon-core` (the only MCP code is in the ledger and signal
+side-products). Ship:
+- an **MCP client** in which each MCP tool is imported with a declared effect row and
+  capability, so `@[contained]` and G1 taint apply to tool calls exactly as they do to builtins;
+- an **MCP server mode** (`axon serve --mcp`) that exposes approved Axon functions *as* tools to
+  other agent stacks. This is the adoption wedge: teams keep their agent framework and route
+  consequential actions through a bounded, audited Axon function. It matches R38 ("Axon
+  Embedded") and is cheaper to build.
+
+### Tier 2: needed to win the evaluation against alternatives
+
+**PM6. Eval-set management.** G3 defines the discipline; the product needs the workflow:
+import labelled data (CSV/JSONL), version it by hash, split it (train/dev/holdout), keep it
+fresh by promoting reviewed production cases into it, and flag when production inputs drift
+away from the eval distribution. Today eval data is inline literals in `goal{ holdout: … }`.
+
+**PM7. Cost forecasting before a run, not just metering after.** The meter charges per call.
+An approver should see *"this goal will cost $3–$11 (p10–p90) and at most $15, the hard
+cap"* **before** approving. The approval should bind to that cap, and the Improve pane should
+show $/point-of-score so the optimizer's value is legible.
+
+**PM8. Incident reports generated from the journal.** When something goes wrong, an operator
+needs one document: what ran, under whose authority, what it touched (irreversible actions
+first), where it diverged from the last good run (`axon replay --diff`), and what gate would
+have caught it. Every ingredient exists; this is assembly work plus a plain-English renderer.
+This is the artifact a compliance buyer actually purchases.
+
+**PM9. Compliance evidence export.** `@[sensitive]`, the hash-chained ledger, attestation, and
+approval records map directly onto SOC 2 change management, the EU AI Act's record-keeping and
+human-oversight obligations, and HIPAA access logging. What's missing is the mapping and an
+exporter: "evidence pack for control X, date range Y", signed. The PRD's line
+*"Compliance … enforced by compiler, not by policy docs"* is a sales claim with no artifact
+behind it.
+
+**PM10. Teams, identity, and multi-tenancy.** The ledger has RBAC and uid-based admin
+authority. The runtime and web UI have no notion of *organization → project → member → role*.
+There is no SSO and no tenant isolation of journals or provenance (`provenance.jsonl` is
+per-user `$XDG_CACHE_HOME`). The Approver persona needs a real identity to sign with, and PM3
+needs someone to route to.
+
+### Tier 3: growth and retention
+
+**PM11. Template gallery.** "Examples define the language identity" (ROADMAP §2.7). Make them a
+product surface: support triage, invoice extraction, research summarizer, on-call runbook bot.
+Each ships with an eval set, a grant, and an approval policy, and runs green in ten minutes.
+This is the fastest route through Acid Tests 2–4 for a new user.
+
+**PM12. Authoring-success telemetry (opt-in).** The whole thesis is that *AI writes Axon*.
+Measure it: the percentage of `intent compile` outputs that type-check on the first try, the
+diagnostics that most often stall a model, and the time from intent to first green run. R38
+pre-registers exactly this hypothesis; make it a standing product metric. `axon-signal` already
+scores AI coding sessions and could host it.
+
+**PM13. Model and provider management.** Per organization: which providers are allowed, data
+residency (EU-only routing), zero-retention flags, model pins, and fallbacks. This is the
+product surface for `@[ai(policy)]`, tiers, and `AXON_AI_*`, which today are environment
+variables on one machine.
+
+**PM14. Pricing instrumentation.** ROADMAP §9's default is *"margin on user LLM spend +
+per-goal-compile + per-deploy fee."* Nothing counts goal-compiles or deploys per customer yet.
+Metering must exist before pricing can be tested.
+
+## P-C. Positioning risks
+
+1. **"New language" is the adoption tax.** The market has Python agent frameworks plus sandboxes
+   (E2B-, Modal-, Firecracker-style), guardrail libraries, and eval platforms. Each covers one
+   pillar well. Axon's advantage is that the pillars are *one* system: the proof, the grant,
+   the journal, and the approval all refer to the same typed artifact. Lead with PM5 (MCP
+   server) and R38 (embedded), so a team gets that advantage without rewriting its stack.
+   Treat the language as the upgrade path, not the entry fee.
+2. **The PRD sells breadth the build does not have.** GPU UI, 3D, mobile, HTTP framework, DB
+   query builder, and "every domain" (§Full Domain Coverage) set expectations a design partner
+   will test and find absent, which damages trust in the claims that *are* true. The
+   positioning doc should say: *"Axon is for software that acts with delegated authority."*
+   Present the rest as roadmap, labelled as such.
+3. **"Collective ASI / shared intelligence" (§Maturity Level 5) is a liability in a safety
+   pitch** until B7 is solved. A safety buyer hears "other people's prompts change my agent's
+   behavior." Park it publicly; keep it as research.
+
+## P-D. Sequencing
+
+| Quarter-sized step | Ships | Unlocks |
+|---|---|---|
+| 1 | PM1 (versions + cron/webhook + rollback), PM4 (secrets), PM2 minimal (spend + errors + Slack alert) | A design partner runs one real agent in production |
+| 2 | PM3 (approval inbox on `host_await`), PM5 (MCP client + server), G1 (taint) | Consequential actions with a human in the loop; plugs into existing agent stacks |
+| 3 | PM6 + G3 (eval sets, sealed holdout), PM7 (cost forecast), PM8 (incident report) | The Improve loop is trustworthy and its value is legible in dollars |
+| 4 | PM9 (compliance export), PM10 (orgs/SSO), PM11 (templates), PM13, PM14 | Sellable to a compliance-driven buyer; pricing testable |
+
+**North-star metric:** *consequential actions executed per week under an approved, bounded
+grant, with zero unbounded incidents.* It rises only if agents are genuinely useful
+(Builder), approvals scale (Approver), and runs stay healthy (Operator). It cannot be gamed by
+demos, because a demo runs once.
