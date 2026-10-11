@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:asi:experiment-profile:0.3.0",
+  "type": "object",
+  "properties": {
+    "profile_version": {
+      "const": "asi.experiment-profile/v0.3"
+    },
+    "canonical_experiment_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "strategy_ref": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "subject_ref": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "hypothesis": {
+      "type": "string",
+      "minLength": 1
+    },
+    "falsifier": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evaluator_ref": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "metric_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "hard_gate_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "stopping_rule_ref": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "corpus_role": {
+      "enum": [
+        "development",
+        "calibration",
+        "holdout",
+        "shadow",
+        "production_observation"
+      ]
+    },
+    "synthetic": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "profile_version",
+    "canonical_experiment_ref",
+    "strategy_ref",
+    "subject_ref",
+    "hypothesis",
+    "falsifier",
+    "evaluator_ref",
+    "metric_refs",
+    "hard_gate_refs",
+    "stopping_rule_ref",
+    "corpus_role",
+    "synthetic"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,680 @@
+{
+  "schema": "asi.semantic-compilation-cortex-crosswalk/0.3",
+  "basis": "requirement-level conceptual ownership crosswalk; not source-code similarity",
+  "semantic_requirement_count": 73,
+  "counts": {
+    "existing_owner": 56,
+    "integration_glue": 13,
+    "package_specific": 4
+  },
+  "rows": [
+    {
+      "requirement_id": "SC-001",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-19",
+        "CX-03",
+        "CX-24"
+      ]
+    },
+    {
+      "requirement_id": "SC-002",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-19",
+        "CX-03",
+        "CX-24"
+      ]
+    },
+    {
+      "requirement_id": "SC-003",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-19",
+        "CX-03",
+        "CX-24"
+      ]
+    },
+    {
+      "requirement_id": "SC-004",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-19",
+        "CX-03",
+        "CX-24"
+      ]
+    },
+    {
+      "requirement_id": "SC-005",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-19",
+        "CX-03",
+        "CX-24"
+      ]
+    },
+    {
+      "requirement_id": "SC-006",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-19",
+        "CX-03",
+        "CX-24"
+      ]
+    },
+    {
+      "requirement_id": "SC-007",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-19",
+        "CX-03",
+        "CX-24"
+      ]
+    },
+    {
+      "requirement_id": "IR-001",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-04",
+        "CX-03",
+        "CX-13",
+        "CX-34"
+      ]
+    },
+    {
+      "requirement_id": "IR-002",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-04",
+        "CX-03",
+        "CX-13",
+        "CX-34"
+      ]
+    },
+    {
+      "requirement_id": "IR-003",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-04",
+        "CX-03",
+        "CX-13",
+        "CX-34"
+      ]
+    },
+    {
+      "requirement_id": "IR-004",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-04",
+        "CX-03",
+        "CX-13",
+        "CX-34"
+      ]
+    },
+    {
+      "requirement_id": "IR-005",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-04",
+        "CX-03",
+        "CX-13",
+        "CX-34"
+      ]
+    },
+    {
+      "requirement_id": "IR-006",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-04",
+        "CX-03",
+        "CX-13",
+        "CX-34"
+      ]
+    },
+    {
+      "requirement_id": "IR-007",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-04",
+        "CX-03",
+        "CX-13",
+        "CX-34"
+      ]
+    },
+    {
+      "requirement_id": "OWN-001",
+      "classification": "integration_glue",
+      "canonical_owners": [
+        "CX-00",
+        "CX-04",
+        "CX-19",
+        "Forge"
+      ]
+    },
+    {
+      "requirement_id": "OWN-002",
+      "classification": "integration_glue",
+      "canonical_owners": [
+        "CX-00",
+        "CX-04",
+        "CX-19",
+        "Forge"
+      ]
+    },
+    {
+      "requirement_id": "OWN-003",
+      "classification": "integration_glue",
+      "canonical_owners": [
+        "CX-00",
+        "CX-04",
+        "CX-19",
+        "Forge"
+      ]
+    },
+    {
+      "requirement_id": "OWN-004",
+      "classification": "integration_glue",
+      "canonical_owners": [
+        "CX-00",
+        "CX-04",
+        "CX-19",
+        "Forge"
+      ]
+    },
+    {
+      "requirement_id": "OWN-005",
+      "classification": "integration_glue",
+      "canonical_owners": [
+        "CX-00",
+        "CX-04",
+        "CX-19",
+        "Forge"
+      ]
+    },
+    {
+      "requirement_id": "FORGE-001",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "Forge v0.3",
+        "CX-15",
+        "CX-16",
+        "CX-24",
+        "CX-30"
+      ]
+    },
+    {
+      "requirement_id": "FORGE-002",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "Forge v0.3",
+        "CX-15",
+        "CX-16",
+        "CX-24",
+        "CX-30"
+      ]
+    },
+    {
+      "requirement_id": "FORGE-003",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "Forge v0.3",
+        "CX-15",
+        "CX-16",
+        "CX-24",
+        "CX-30"
+      ]
+    },
+    {
+      "requirement_id": "FORGE-004",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "Forge v0.3",
+        "CX-15",
+        "CX-16",
+        "CX-24",
+        "CX-30"
+      ]
+    },
+    {
+      "requirement_id": "XPL-001",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-32",
+        "CX-33",
+        "CX-34",
+        "CX-21"
+      ]
+    },
+    {
+      "requirement_id": "XPL-002",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-32",
+        "CX-33",
+        "CX-34",
+        "CX-21"
+      ]
+    },
+    {
+      "requirement_id": "XPL-003",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-32",
+        "CX-33",
+        "CX-34",
+        "CX-21"
+      ]
+    },
+    {
+      "requirement_id": "XPL-004",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-32",
+        "CX-33",
+        "CX-34",
+        "CX-21"
+      ]
+    },
+    {
+      "requirement_id": "EV-001",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-21",
+        "CX-11",
+        "CX-27"
+      ]
+    },
+    {
+      "requirement_id": "EV-002",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-21",
+        "CX-11",
+        "CX-27"
+      ]
+    },
+    {
+      "requirement_id": "EV-003",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-21",
+        "CX-11",
+        "CX-27"
+      ]
+    },
+    {
+      "requirement_id": "EV-004",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-21",
+        "CX-11",
+        "CX-27"
+      ]
+    },
+    {
+      "requirement_id": "EV-005",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-21",
+        "CX-11",
+        "CX-27"
+      ]
+    },
+    {
+      "requirement_id": "EV-006",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-21",
+        "CX-11",
+        "CX-27"
+      ]
+    },
+    {
+      "requirement_id": "EV-007",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-21",
+        "CX-11",
+        "CX-27"
+      ]
+    },
+    {
+      "requirement_id": "EV-008",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-21",
+        "CX-11",
+        "CX-27"
+      ]
+    },
+    {
+      "requirement_id": "RP-001",
+      "classification": "integration_glue",
+      "canonical_owners": [
+        "CX-16",
+        "CX-13",
+        "CX-29"
+      ]
+    },
+    {
+      "requirement_id": "RP-002",
+      "classification": "integration_glue",
+      "canonical_owners": [
+        "CX-16",
+        "CX-13",
+        "CX-29"
+      ]
+    },
+    {
+      "requirement_id": "RP-003",
+      "classification": "integration_glue",
+      "canonical_owners": [
+        "CX-16",
+        "CX-13",
+        "CX-29"
+      ]
+    },
+    {
+      "requirement_id": "RP-004",
+      "classification": "integration_glue",
+      "canonical_owners": [
+        "CX-16",
+        "CX-13",
+        "CX-29"
+      ]
+    },
+    {
+      "requirement_id": "RP-005",
+      "classification": "integration_glue",
+      "canonical_owners": [
+        "CX-16",
+        "CX-13",
+        "CX-29"
+      ]
+    },
+    {
+      "requirement_id": "SEC-001",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-03",
+        "CX-11",
+        "CX-13"
+      ]
+    },
+    {
+      "requirement_id": "SEC-002",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-03",
+        "CX-11",
+        "CX-13"
+      ]
+    },
+    {
+      "requirement_id": "SEC-003",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-03",
+        "CX-11",
+        "CX-13"
+      ]
+    },
+    {
+      "requirement_id": "SEC-004",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-03",
+        "CX-11",
+        "CX-13"
+      ]
+    },
+    {
+      "requirement_id": "SEC-005",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-03",
+        "CX-11",
+        "CX-13"
+      ]
+    },
+    {
+      "requirement_id": "SEC-006",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-03",
+        "CX-11",
+        "CX-13"
+      ]
+    },
+    {
+      "requirement_id": "RT-001",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-04",
+        "CX-13",
+        "CX-34"
+      ]
+    },
+    {
+      "requirement_id": "RT-002",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-04",
+        "CX-13",
+        "CX-34"
+      ]
+    },
+    {
+      "requirement_id": "RT-003",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-04",
+        "CX-13",
+        "CX-34"
+      ]
+    },
+    {
+      "requirement_id": "RT-004",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-04",
+        "CX-13",
+        "CX-34"
+      ]
+    },
+    {
+      "requirement_id": "RT-005",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-04",
+        "CX-13",
+        "CX-34"
+      ]
+    },
+    {
+      "requirement_id": "RT-006",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-04",
+        "CX-13",
+        "CX-34"
+      ]
+    },
+    {
+      "requirement_id": "ID-001",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-32",
+        "CX-18",
+        "CX-29"
+      ]
+    },
+    {
+      "requirement_id": "ID-002",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-32",
+        "CX-18",
+        "CX-29"
+      ]
+    },
+    {
+      "requirement_id": "ID-003",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-32",
+        "CX-18",
+        "CX-29"
+      ]
+    },
+    {
+      "requirement_id": "ID-004",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-32",
+        "CX-18",
+        "CX-29"
+      ]
+    },
+    {
+      "requirement_id": "ID-005",
+      "classification": "integration_glue",
+      "canonical_owners": [
+        "CX-32",
+        "CX-18",
+        "CX-29"
+      ]
+    },
+    {
+      "requirement_id": "AX-001",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-29",
+        "CX-33",
+        "CX-21"
+      ]
+    },
+    {
+      "requirement_id": "AX-002",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-29",
+        "CX-33",
+        "CX-21"
+      ]
+    },
+    {
+      "requirement_id": "AX-003",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-29",
+        "CX-33",
+        "CX-21"
+      ]
+    },
+    {
+      "requirement_id": "AX-004",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-29",
+        "CX-33",
+        "CX-21"
+      ]
+    },
+    {
+      "requirement_id": "AX-005",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-29",
+        "CX-33",
+        "CX-21"
+      ]
+    },
+    {
+      "requirement_id": "AX-006",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-29",
+        "CX-33",
+        "CX-21"
+      ]
+    },
+    {
+      "requirement_id": "AX-007",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-29",
+        "CX-33",
+        "CX-21"
+      ]
+    },
+    {
+      "requirement_id": "CFG-001",
+      "classification": "integration_glue",
+      "canonical_owners": [
+        "existing config owner",
+        "CX-29"
+      ]
+    },
+    {
+      "requirement_id": "CFG-002",
+      "classification": "integration_glue",
+      "canonical_owners": [
+        "existing config owner",
+        "CX-29"
+      ]
+    },
+    {
+      "requirement_id": "OBS-001",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-32",
+        "CX-21"
+      ]
+    },
+    {
+      "requirement_id": "OBS-002",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-32",
+        "CX-21"
+      ]
+    },
+    {
+      "requirement_id": "OBS-003",
+      "classification": "existing_owner",
+      "canonical_owners": [
+        "CX-32",
+        "CX-21"
+      ]
+    },
+    {
+      "requirement_id": "REL-001",
+      "classification": "package_specific",
+      "canonical_owners": [
+        "Semantic Compilation release process"
+      ]
+    },
+    {
+      "requirement_id": "REL-002",
+      "classification": "package_specific",
+      "canonical_owners": [
+        "Semantic Compilation release process"
+      ]
+    },
+    {
+      "requirement_id": "REL-003",
+      "classification": "package_specific",
+      "canonical_owners": [
+        "Semantic Compilation release process"
+      ]
+    },
+    {
+      "requirement_id": "REL-004",
+      "classification": "package_specific",
+      "canonical_owners": [
+        "Semantic Compilation release process"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,111 @@
+{
+  "demonstration": "synthetic_only_not_a_model_benchmark",
+  "synthetic": true,
+  "original_plan_ref": "sha256:23436bf9c34d97525e5034b387e17612c7eb584a31c7b27d5227f1ec0f177f6e",
+  "repaired_plan_ref": "sha256:899bfa502259a0f463b8561fc819ca624574014050ff129e69d36bee0379a8e1",
+  "original_accepted": false,
+  "original_problems": [
+    "complete: fail",
+    "complete: deterministic check failed"
+  ],
+  "repaired_accepted": true,
+  "invalidated_nodes": [
+    "check",
+    "draft",
+    "finish",
+    "guard"
+  ],
+  "reused_nodes": [
+    "normalize"
+  ],
+  "final_output": "The system compiles intent into a plan, uses independent evaluation, and applies bounded repair.",
+  "final_output_digest": "sha256:84b9267f89ce37ed3ea46a2af905298faa3a56c8b3e62efac163cf0ef4787b58",
+  "repair_trace": [
+    {
+      "node": "normalize",
+      "mechanism": "transform",
+      "semantic_op": "rule",
+      "reused": true,
+      "synthetic": true
+    },
+    {
+      "node": "draft",
+      "mechanism": "model.call",
+      "semantic_op": "generate",
+      "reused": false,
+      "synthetic": true
+    },
+    {
+      "node": "check",
+      "mechanism": "evaluate",
+      "semantic_op": "check",
+      "reused": false,
+      "synthetic": true
+    },
+    {
+      "node": "guard",
+      "mechanism": "assert",
+      "semantic_op": "check",
+      "reused": false,
+      "synthetic": true
+    },
+    {
+      "node": "finish",
+      "mechanism": "return",
+      "semantic_op": null,
+      "reused": false,
+      "synthetic": true
+    }
+  ],
+  "final_evaluations": [
+    {
+      "result_version": "asi.evaluation-result/v0.3",
+      "criterion_id": "nonempty",
+      "evaluator": "eval.nonempty@1",
+      "target_digest": "sha256:84b9267f89ce37ed3ea46a2af905298faa3a56c8b3e62efac163cf0ef4787b58",
+      "status": "pass",
+      "decision": {
+        "kind": "deterministic",
+        "passed": true
+      },
+      "calibration_ref": null,
+      "evidence_refs": [
+        "sha256:0a289d49939f89cc0824ce5249192af1e63987483e2eadc0a068e32ae4ec8725"
+      ],
+      "usage": {
+        "cost_microusd": 0,
+        "input_tokens": null,
+        "cached_input_tokens": null,
+        "output_tokens": null,
+        "synthetic": true
+      },
+      "synthetic": true
+    },
+    {
+      "result_version": "asi.evaluation-result/v0.3",
+      "criterion_id": "complete",
+      "evaluator": "eval.contains@1",
+      "target_digest": "sha256:84b9267f89ce37ed3ea46a2af905298faa3a56c8b3e62efac163cf0ef4787b58",
+      "status": "pass",
+      "decision": {
+        "kind": "deterministic",
+        "passed": true
+      },
+      "calibration_ref": null,
+      "evidence_refs": [
+        "sha256:d2fa23465b42ef9784f210134e882cd7bd84c11a259167755e4a973174d6c472"
+      ],
+      "usage": {
+        "cost_microusd": 0,
+        "input_tokens": null,
+        "cached_input_tokens": null,
+        "output_tokens": null,
+        "synthetic": true
+      },
+      "synthetic": true
+    }
+  ],
+  "live_provider_calls": 0,
+  "external_effects": 0,
+  "limitations": "No compiler/model/repair provider, durable scheduler, real cost/quality evidence or live authorization is implemented."
+}

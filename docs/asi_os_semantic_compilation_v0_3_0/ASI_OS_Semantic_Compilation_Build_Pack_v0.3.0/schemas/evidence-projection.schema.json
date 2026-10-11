@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:asi:evidence-projection:0.3.0",
+  "type": "object",
+  "properties": {
+    "projection_version": {
+      "const": "asi.evidence-projection/v0.3"
+    },
+    "canonical_evidence_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "claim_type": {
+      "enum": [
+        "observation",
+        "checker_result",
+        "evaluation",
+        "execution_receipt",
+        "benchmark",
+        "semantic_diff",
+        "human_label"
+      ]
+    },
+    "artifact_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "minItems": 0,
+      "uniqueItems": true
+    },
+    "source_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "effective_input_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "minItems": 0,
+      "uniqueItems": true
+    },
+    "environment_ref": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "resource_epoch": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "synthetic": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "projection_version",
+    "canonical_evidence_ref",
+    "claim_type",
+    "artifact_refs",
+    "source_refs",
+    "effective_input_refs",
+    "environment_ref",
+    "resource_epoch",
+    "synthetic"
+  ],
+  "additionalProperties": false
+}

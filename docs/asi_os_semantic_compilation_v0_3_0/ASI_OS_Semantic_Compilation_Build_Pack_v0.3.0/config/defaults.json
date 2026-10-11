@@ -1,0 +1,19 @@
+{
+  "config_version": "asi.config/v0.3",
+  "mode": "captured",
+  "max_candidates": 1,
+  "max_nodes": 64,
+  "max_parallelism": 4,
+  "max_attempts_per_node": 2,
+  "max_repair_rounds": 1,
+  "max_run_cost_microusd": 2000000,
+  "max_node_cost_microusd": 500000,
+  "max_wall_time_ms": 1800000,
+  "max_node_time_ms": 300000,
+  "exploration_basis_points": 0,
+  "automatic_promotion": false,
+  "allow_external_effects": false,
+  "max_plan_bytes": 1048576,
+  "max_json_depth": 64,
+  "probability_tolerance_ppm": 1
+}

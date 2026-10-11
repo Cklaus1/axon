@@ -1,0 +1,15 @@
+{
+  "synthetic": true,
+  "cases": {
+    "flawed": {
+      "draft": {
+        "text": "The system compiles intent into a plan."
+      }
+    },
+    "repaired": {
+      "draft": {
+        "text": "The system compiles intent into a plan, uses independent evaluation, and applies bounded repair."
+      }
+    }
+  }
+}

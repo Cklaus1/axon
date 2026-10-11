@@ -1,0 +1,14 @@
+{
+  "event_version": "asi.event/v0.3",
+  "event_id": "fixture-event-1",
+  "sequence": 1,
+  "tenant": "fixture-tenant",
+  "run_id": "fixture-run-0001",
+  "plan_ref": "sha256:23436bf9c34d97525e5034b387e17612c7eb584a31c7b27d5227f1ec0f177f6e",
+  "config_ref": "sha256:fc3ca43827c75f856cd68bb6f09df80a2fd2e53a91694b94b0a7e26a7ef4136b",
+  "type": "RUN_STARTED",
+  "node_id": null,
+  "attempt": 0,
+  "metadata": {},
+  "synthetic": true
+}

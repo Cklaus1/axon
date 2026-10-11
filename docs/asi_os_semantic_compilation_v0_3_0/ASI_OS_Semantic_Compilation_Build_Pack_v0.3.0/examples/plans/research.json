@@ -1,0 +1,167 @@
+{
+  "name": "research-plan",
+  "revision": 1,
+  "intent_ref": "sha256:8962e91415475378f2d3d72ed1b39da8dd711456dac67e73b292247bebb7867a",
+  "evaluation_ref": "sha256:7ec1a671ab1492a650f251d7543952a087771520bca99fec05fed748f1d6b1d7",
+  "registry_ref": "sha256:5142d681bf71faff379a61733dc8c50aa37c17b9a9a90a6d8f28f7e68d8db3a0",
+  "config_ref": "sha256:fc3ca43827c75f856cd68bb6f09df80a2fd2e53a91694b94b0a7e26a7ef4136b",
+  "task_class": "research.compare",
+  "input_types": {
+    "topic": "string"
+  },
+  "limits": {
+    "max_cost_microusd": 2000000,
+    "wall_time_ms": 1800000,
+    "max_parallelism": 4
+  },
+  "nodes": [
+    {
+      "id": "retrieve",
+      "depends_on": [],
+      "args": {
+        "topic": {
+          "input": "topic"
+        }
+      },
+      "outputs": {
+        "evidence": "array"
+      },
+      "limits": {
+        "max_cost_microusd": 500000,
+        "timeout_ms": 300000
+      },
+      "retry": {
+        "max_attempts": 1
+      },
+      "capability": "research.retrieve@1",
+      "mechanism": "tool.call",
+      "semantic_op": "retrieve"
+    },
+    {
+      "id": "normalize",
+      "depends_on": [
+        "retrieve"
+      ],
+      "args": {
+        "evidence": {
+          "node": "retrieve",
+          "port": "evidence"
+        }
+      },
+      "outputs": {
+        "records": "array"
+      },
+      "limits": {
+        "max_cost_microusd": 500000,
+        "timeout_ms": 300000
+      },
+      "retry": {
+        "max_attempts": 1
+      },
+      "capability": "research.normalize@1",
+      "mechanism": "transform",
+      "semantic_op": "rule"
+    },
+    {
+      "id": "source_check",
+      "depends_on": [
+        "normalize"
+      ],
+      "args": {
+        "sources": {
+          "node": "normalize",
+          "port": "records"
+        }
+      },
+      "outputs": {
+        "passed": "boolean"
+      },
+      "limits": {
+        "max_cost_microusd": 500000,
+        "timeout_ms": 300000
+      },
+      "retry": {
+        "max_attempts": 1
+      },
+      "capability": "eval.sources_present@1",
+      "mechanism": "evaluate",
+      "semantic_op": "check"
+    },
+    {
+      "id": "guard",
+      "depends_on": [
+        "source_check"
+      ],
+      "args": {
+        "condition": {
+          "node": "source_check",
+          "port": "passed"
+        }
+      },
+      "outputs": {
+        "passed": "boolean"
+      },
+      "limits": {
+        "max_cost_microusd": 500000,
+        "timeout_ms": 300000
+      },
+      "retry": {
+        "max_attempts": 1
+      },
+      "mechanism": "assert",
+      "semantic_op": "check"
+    },
+    {
+      "id": "synthesize",
+      "depends_on": [
+        "guard"
+      ],
+      "args": {
+        "topic": {
+          "input": "topic"
+        },
+        "records": {
+          "node": "normalize",
+          "port": "records"
+        }
+      },
+      "outputs": {
+        "report": "string"
+      },
+      "limits": {
+        "max_cost_microusd": 500000,
+        "timeout_ms": 300000
+      },
+      "retry": {
+        "max_attempts": 1
+      },
+      "capability": "research.synthesize@1",
+      "mechanism": "model.call",
+      "semantic_op": "generate"
+    },
+    {
+      "id": "finish",
+      "depends_on": [
+        "synthesize"
+      ],
+      "args": {
+        "value": {
+          "node": "synthesize",
+          "port": "report"
+        }
+      },
+      "outputs": {
+        "value": "string"
+      },
+      "limits": {
+        "max_cost_microusd": 500000,
+        "timeout_ms": 300000
+      },
+      "retry": {
+        "max_attempts": 1
+      },
+      "mechanism": "return"
+    }
+  ],
+  "plan_version": "asi.semantic-plan/v0.3"
+}

@@ -1,0 +1,12 @@
+test_all_delta_gates_owned (test_v023_integration.V023Tests.test_all_delta_gates_owned) ... ok
+test_forge_is_standalone (test_v023_integration.V023Tests.test_forge_is_standalone) ... ok
+test_no_duplicate_authority (test_v023_integration.V023Tests.test_no_duplicate_authority) ... ok
+test_parent_is_immutable_zip (test_v023_integration.V023Tests.test_parent_is_immutable_zip) ... ok
+test_runtime_default_off (test_v023_integration.V023Tests.test_runtime_default_off) ... ok
+test_strategy_schema (test_v023_integration.V023Tests.test_strategy_schema) ... ok
+test_validator_passes (test_v023_integration.V023Tests.test_validator_passes) ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.950s
+
+OK

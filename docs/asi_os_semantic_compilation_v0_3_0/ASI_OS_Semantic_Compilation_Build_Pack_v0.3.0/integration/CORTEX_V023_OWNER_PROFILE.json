@@ -1,0 +1,32 @@
+{
+  "profile_version": "asi.owner-profile/v0.3",
+  "name": "cortex-v023-aligned",
+  "mode": "cortex_v0.23",
+  "dependency_locks": [
+    {
+      "name": "axon-cortex",
+      "version": "0.23",
+      "sha256": "3fd2834a17ad7a7cb339c99d2b79c853d4ecb57a27585d7f7edf5928c62405d4"
+    },
+    {
+      "name": "axon-forge",
+      "version": "0.3",
+      "sha256": "e126f400a40829303b0007c2a0a6de4da219de7f7df7bf8c06e21f7c4718baa7"
+    }
+  ],
+  "owners": {
+    "intent": "CX-19 IntentIR",
+    "execution_semantics": "CX-04 AIR",
+    "software_semantics": "Forge v0.3 SIR",
+    "authority": "CX-03",
+    "isolation": "CX-13",
+    "evaluation": "CX-21",
+    "admission": "CX-11",
+    "promotion": "CX-18",
+    "evidence": "CX-32 UEG",
+    "experiments": "CX-33",
+    "resources": "CX-34/Compute Fabric",
+    "coding_workflow": "CX-16/MiCode",
+    "self_application": "CX-29"
+  }
+}

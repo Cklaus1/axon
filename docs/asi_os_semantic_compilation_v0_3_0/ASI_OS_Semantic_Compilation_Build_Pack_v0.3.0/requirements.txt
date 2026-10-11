@@ -1,0 +1,3 @@
+# Direct dependency for the offline conformance harness.
+# Use requirements.lock for the exact tested dependency set.
+jsonschema==4.26.0

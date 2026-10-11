@@ -1,0 +1,30 @@
+{
+  "experience_version": "asi.experience/v0.3",
+  "experiment_id": "fixture-experiment",
+  "task_id": "fixture-document",
+  "trial_id": 0,
+  "arm_id": "compiled-repair",
+  "run_id": "fixture-run-0001",
+  "plan_ref": "sha256:23436bf9c34d97525e5034b387e17612c7eb584a31c7b27d5227f1ec0f177f6e",
+  "evaluation_ref": "sha256:5922133c4c67c7a6e2cc476260e5fd9f1ab8f2e0a4e35d3fd998991eeae0ab79",
+  "strategy_ref": "sha256:9f2df2a4c954e150906e0ceb56e226241845ca95b9e2835773cb2a6c92d52c06",
+  "config_ref": "sha256:fc3ca43827c75f856cd68bb6f09df80a2fd2e53a91694b94b0a7e26a7ef4136b",
+  "synthetic": true,
+  "selection_probability": null,
+  "outcome": {
+    "status": "accepted",
+    "success": true,
+    "quality": null,
+    "wall_time_ms": 0
+  },
+  "costs": {
+    "compile_microusd": 0,
+    "execute_microusd": 0,
+    "evaluate_microusd": 0,
+    "repair_microusd": 0,
+    "failed_attempts_microusd": 0
+  },
+  "evidence_refs": [
+    "sha256:5a3a612256fea8a737adc9233cd34d26d229c92b114cfc0370622920ca8b56e3"
+  ]
+}

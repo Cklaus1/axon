@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:asi:capability-registry:0.3.0",
+  "type": "object",
+  "properties": {
+    "registry_version": {
+      "const": "asi.registry/v0.3"
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,95}$"
+    },
+    "synthetic": {
+      "type": "boolean"
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_.-]*@[1-9][0-9]*$"
+          },
+          "implementation_digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "input_types": {
+            "$ref": "urn:asi:common:0.3.0#/$defs/port_map"
+          },
+          "output_types": {
+            "$ref": "urn:asi:common:0.3.0#/$defs/port_map"
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "read",
+                "write",
+                "network",
+                "communication",
+                "financial",
+                "code"
+              ]
+            },
+            "minItems": 0,
+            "uniqueItems": true
+          },
+          "replay_class": {
+            "enum": [
+              "pure",
+              "captured",
+              "external_read",
+              "idempotent_write",
+              "non_idempotent_write"
+            ]
+          },
+          "supports_idempotency": {
+            "type": "boolean"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "mechanism": {
+            "enum": [
+              "transform",
+              "model.call",
+              "tool.call",
+              "code.execute",
+              "evaluate",
+              "human.request"
+            ]
+          },
+          "semantic_ops": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "observe",
+                "rule",
+                "retrieve",
+                "decide",
+                "generate",
+                "reason",
+                "predict",
+                "check",
+                "act"
+              ]
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "id",
+          "mechanism",
+          "implementation_digest",
+          "input_types",
+          "output_types",
+          "effects",
+          "replay_class",
+          "supports_idempotency",
+          "description",
+          "semantic_ops"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    }
+  },
+  "required": [
+    "registry_version",
+    "name",
+    "synthetic",
+    "capabilities"
+  ],
+  "additionalProperties": false
+}

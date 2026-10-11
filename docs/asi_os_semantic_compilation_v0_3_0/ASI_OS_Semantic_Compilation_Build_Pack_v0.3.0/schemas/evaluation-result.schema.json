@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:asi:evaluation-result:0.3.0",
+  "type": "object",
+  "properties": {
+    "result_version": {
+      "const": "asi.evaluation-result/v0.3"
+    },
+    "criterion_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,95}$"
+    },
+    "evaluator": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]*@[1-9][0-9]*$"
+    },
+    "target_digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "status": {
+      "enum": [
+        "pass",
+        "fail",
+        "abstain",
+        "error"
+      ]
+    },
+    "decision": {
+      "anyOf": [
+        {
+          "$ref": "urn:asi:common:0.3.0#/$defs/decision"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "calibration_ref": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "minItems": 0
+    },
+    "usage": {
+      "$ref": "urn:asi:common:0.3.0#/$defs/usage"
+    },
+    "synthetic": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "result_version",
+    "criterion_id",
+    "evaluator",
+    "target_digest",
+    "status",
+    "decision",
+    "calibration_ref",
+    "evidence_refs",
+    "usage",
+    "synthetic"
+  ],
+  "additionalProperties": false
+}

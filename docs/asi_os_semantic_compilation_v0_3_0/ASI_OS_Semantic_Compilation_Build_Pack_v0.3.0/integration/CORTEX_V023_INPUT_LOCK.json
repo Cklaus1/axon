@@ -1,0 +1,8 @@
+{
+  "schema": "asi.input-lock/0.3",
+  "name": "Axon Cortex Build Files",
+  "version": "0.23",
+  "sha256": "3fd2834a17ad7a7cb339c99d2b79c853d4ecb57a27585d7f7edf5928c62405d4",
+  "role": "canonical Cortex alignment input",
+  "embedded": false
+}

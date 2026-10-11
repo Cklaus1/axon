@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:asi:strategy-artifact:0.3.0",
+  "type": "object",
+  "properties": {
+    "strategy_version": {
+      "const": "asi.strategy-artifact/v0.3"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "kind": {
+      "enum": [
+        "compiler",
+        "repair",
+        "evaluation",
+        "routing",
+        "retrieval",
+        "plan_optimization",
+        "resource_placement",
+        "software_transform"
+      ]
+    },
+    "parent_ref": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "configuration_ref": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "implementation_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "minItems": 0,
+      "uniqueItems": true
+    },
+    "provenance_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "minItems": 0,
+      "uniqueItems": true
+    },
+    "synthetic": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "strategy_version",
+    "id",
+    "revision",
+    "kind",
+    "parent_ref",
+    "configuration_ref",
+    "implementation_refs",
+    "provenance_refs",
+    "synthetic"
+  ],
+  "additionalProperties": false
+}

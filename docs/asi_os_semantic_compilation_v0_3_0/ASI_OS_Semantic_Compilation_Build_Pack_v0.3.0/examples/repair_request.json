@@ -1,0 +1,18 @@
+{
+  "repair_version": "asi.repair/v0.3",
+  "request_id": "fixture-repair-1",
+  "expected_parent_ref": "sha256:23436bf9c34d97525e5034b387e17612c7eb584a31c7b27d5227f1ec0f177f6e",
+  "evaluation_ref": "sha256:5922133c4c67c7a6e2cc476260e5fd9f1ab8f2e0a4e35d3fd998991eeae0ab79",
+  "failed_criteria": [
+    "complete"
+  ],
+  "allowed_nodes": [
+    "draft"
+  ],
+  "remaining_rounds": 1,
+  "remaining_cost_microusd": 0,
+  "evidence_refs": [
+    "sha256:a6c64f9b14ed274cd2b8f230e195da8b342da545269d3bbc24267c634fa546be"
+  ],
+  "synthetic": true
+}

@@ -1,0 +1,62 @@
+[
+  {
+    "path": "examples/invalid/duplicate_node.json",
+    "expected_code": "DUPLICATE_NODE",
+    "basis": "document"
+  },
+  {
+    "path": "examples/invalid/cycle.json",
+    "expected_code": "CYCLE",
+    "basis": "document"
+  },
+  {
+    "path": "examples/invalid/unordered_reference.json",
+    "expected_code": "UNORDERED_REFERENCE",
+    "basis": "document"
+  },
+  {
+    "path": "examples/invalid/missing_port.json",
+    "expected_code": "UNKNOWN_PORT",
+    "basis": "document"
+  },
+  {
+    "path": "examples/invalid/unknown_capability.json",
+    "expected_code": "UNKNOWN_CAPABILITY",
+    "basis": "document"
+  },
+  {
+    "path": "examples/invalid/type_mismatch.json",
+    "expected_code": "TYPE_MISMATCH",
+    "basis": "document"
+  },
+  {
+    "path": "examples/invalid/unsupported_loop.json",
+    "expected_code": "SCHEMA",
+    "basis": "document"
+  },
+  {
+    "path": "examples/invalid/unknown_field.json",
+    "expected_code": "SCHEMA",
+    "basis": "document"
+  },
+  {
+    "path": "examples/invalid/disconnected_work.json",
+    "expected_code": "DISCONNECTED_NODE",
+    "basis": "document"
+  },
+  {
+    "path": "examples/invalid/unsafe_write_retry.json",
+    "expected_code": "UNSAFE_RETRY",
+    "basis": "document"
+  },
+  {
+    "path": "examples/invalid/unknown_dependency.json",
+    "expected_code": "UNKNOWN_DEPENDENCY",
+    "basis": "document"
+  },
+  {
+    "path": "examples/invalid/wrong_evaluation_digest.json",
+    "expected_code": "DIGEST_MISMATCH",
+    "basis": "document"
+  }
+]

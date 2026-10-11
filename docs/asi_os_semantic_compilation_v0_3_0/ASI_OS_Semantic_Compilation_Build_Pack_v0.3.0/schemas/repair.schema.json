@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:asi:repair:0.3.0",
+  "type": "object",
+  "properties": {
+    "repair_version": {
+      "const": "asi.repair/v0.3"
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,95}$"
+    },
+    "expected_parent_ref": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "evaluation_ref": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "failed_criteria": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_.-]{0,95}$"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "allowed_nodes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_.-]{0,95}$"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "remaining_rounds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "remaining_cost_microusd": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "minItems": 0
+    },
+    "synthetic": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "repair_version",
+    "request_id",
+    "expected_parent_ref",
+    "evaluation_ref",
+    "failed_criteria",
+    "allowed_nodes",
+    "remaining_rounds",
+    "remaining_cost_microusd",
+    "evidence_refs",
+    "synthetic"
+  ],
+  "additionalProperties": false
+}

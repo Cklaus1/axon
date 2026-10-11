@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:asi:evaluation-contract:0.3.0",
+  "type": "object",
+  "properties": {
+    "contract_version": {
+      "const": "asi.evaluation/v0.3"
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,95}$"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "task_class": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,95}$"
+    },
+    "owner": {
+      "type": "string",
+      "minLength": 1
+    },
+    "authority_mode": {
+      "enum": [
+        "fixture",
+        "external_approval_required"
+      ]
+    },
+    "criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_.-]{0,95}$"
+          },
+          "evaluator": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_.-]*@[1-9][0-9]*$"
+          },
+          "target": {
+            "$ref": "urn:asi:common:0.3.0#/$defs/target"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "decision_kind": {
+            "enum": [
+              "deterministic",
+              "probability",
+              "choice",
+              "score"
+            ]
+          },
+          "arguments": {
+            "type": "object"
+          },
+          "evidence_requirement": {
+            "enum": [
+              "checker_result",
+              "source_evidence",
+              "human_label"
+            ]
+          },
+          "decision_policy_ref": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "evaluator",
+          "target",
+          "required",
+          "decision_kind",
+          "arguments",
+          "evidence_requirement",
+          "decision_policy_ref"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "learned_acceptance": {
+      "enum": [
+        "disabled",
+        "requires_calibration"
+      ]
+    },
+    "repair": {
+      "type": "object",
+      "properties": {
+        "max_rounds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "allowed_nodes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_.-]{0,95}$"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "max_rounds",
+        "allowed_nodes"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "contract_version",
+    "name",
+    "revision",
+    "task_class",
+    "owner",
+    "authority_mode",
+    "criteria",
+    "learned_acceptance",
+    "repair"
+  ],
+  "additionalProperties": false
+}

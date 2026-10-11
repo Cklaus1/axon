@@ -1,0 +1,49 @@
+{
+  "contract_version": "asi.evaluation/v0.3",
+  "name": "document-contract",
+  "revision": 1,
+  "task_class": "document.transform",
+  "owner": "fixture-owner-not-production-authority",
+  "authority_mode": "fixture",
+  "criteria": [
+    {
+      "id": "nonempty",
+      "evaluator": "eval.nonempty@1",
+      "target": {
+        "node": "draft",
+        "port": "text"
+      },
+      "required": true,
+      "decision_kind": "deterministic",
+      "arguments": {},
+      "evidence_requirement": "checker_result",
+      "decision_policy_ref": null
+    },
+    {
+      "id": "complete",
+      "evaluator": "eval.contains@1",
+      "target": {
+        "node": "draft",
+        "port": "text"
+      },
+      "required": true,
+      "decision_kind": "deterministic",
+      "arguments": {
+        "required_terms": [
+          "intent",
+          "evaluation",
+          "repair"
+        ]
+      },
+      "evidence_requirement": "checker_result",
+      "decision_policy_ref": null
+    }
+  ],
+  "learned_acceptance": "disabled",
+  "repair": {
+    "max_rounds": 1,
+    "allowed_nodes": [
+      "draft"
+    ]
+  }
+}

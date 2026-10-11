@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:asi:forge-binding:0.3.0",
+  "type": "object",
+  "properties": {
+    "binding_version": {
+      "const": "asi.forge-binding/v0.3"
+    },
+    "forge_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "forge_package_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "intent_ir_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "air_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sir_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "transform_ref": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "semantic_diff_ref": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "backend_ref": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "provenance_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidence_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "synthetic": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "binding_version",
+    "forge_version",
+    "forge_package_sha256",
+    "intent_ir_ref",
+    "air_ref",
+    "sir_ref",
+    "transform_ref",
+    "semantic_diff_ref",
+    "backend_ref",
+    "provenance_ref",
+    "evidence_ref",
+    "synthetic"
+  ],
+  "additionalProperties": false
+}

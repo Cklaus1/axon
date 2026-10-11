@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:asi:event:0.3.0",
+  "type": "object",
+  "properties": {
+    "event_version": {
+      "const": "asi.event/v0.3"
+    },
+    "event_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,95}$"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "tenant": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,95}$"
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,95}$"
+    },
+    "plan_ref": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "config_ref": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "type": {
+      "enum": [
+        "RUN_STARTED",
+        "NODE_STARTED",
+        "NODE_COMPLETED",
+        "NODE_FAILED",
+        "EVALUATED",
+        "REPAIR_PROPOSED",
+        "RUN_COMPLETED",
+        "RUN_FAILED"
+      ]
+    },
+    "node_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.-]{0,95}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "synthetic": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "event_version",
+    "event_id",
+    "sequence",
+    "tenant",
+    "run_id",
+    "plan_ref",
+    "config_ref",
+    "type",
+    "node_id",
+    "attempt",
+    "metadata",
+    "synthetic"
+  ],
+  "additionalProperties": false
+}

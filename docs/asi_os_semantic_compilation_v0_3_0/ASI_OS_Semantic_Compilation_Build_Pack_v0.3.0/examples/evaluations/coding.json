@@ -1,0 +1,44 @@
+{
+  "contract_version": "asi.evaluation/v0.3",
+  "name": "coding-contract",
+  "revision": 1,
+  "task_class": "repository.test_repair",
+  "owner": "fixture-owner-not-production-authority",
+  "authority_mode": "fixture",
+  "criteria": [
+    {
+      "id": "regressions",
+      "evaluator": "eval.is_true@1",
+      "target": {
+        "node": "regression",
+        "port": "passed"
+      },
+      "required": true,
+      "decision_kind": "deterministic",
+      "arguments": {},
+      "evidence_requirement": "checker_result",
+      "decision_policy_ref": null
+    },
+    {
+      "id": "scope",
+      "evaluator": "eval.patch_scope@1",
+      "target": {
+        "node": "propose",
+        "port": "patch"
+      },
+      "required": true,
+      "decision_kind": "deterministic",
+      "arguments": {},
+      "evidence_requirement": "checker_result",
+      "decision_policy_ref": null
+    }
+  ],
+  "learned_acceptance": "disabled",
+  "repair": {
+    "max_rounds": 1,
+    "allowed_nodes": [
+      "propose",
+      "apply"
+    ]
+  }
+}

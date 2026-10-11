@@ -1,0 +1,125 @@
+{
+  "status": "pass",
+  "scope": "offline_contract_and_fixture_checks_only",
+  "schema_count": 17,
+  "valid_bundles": [
+    "document",
+    "coding",
+    "research"
+  ],
+  "invalid_fixture_count": 12,
+  "invalid_fixture_results": [
+    {
+      "path": "examples/invalid/duplicate_node.json",
+      "expected_code": "DUPLICATE_NODE",
+      "observed_codes": [
+        "DUPLICATE_NODE"
+      ]
+    },
+    {
+      "path": "examples/invalid/cycle.json",
+      "expected_code": "CYCLE",
+      "observed_codes": [
+        "CYCLE"
+      ]
+    },
+    {
+      "path": "examples/invalid/unordered_reference.json",
+      "expected_code": "UNORDERED_REFERENCE",
+      "observed_codes": [
+        "DISCONNECTED_NODE",
+        "UNORDERED_REFERENCE"
+      ]
+    },
+    {
+      "path": "examples/invalid/missing_port.json",
+      "expected_code": "UNKNOWN_PORT",
+      "observed_codes": [
+        "TYPE_MISMATCH",
+        "UNKNOWN_PORT"
+      ]
+    },
+    {
+      "path": "examples/invalid/unknown_capability.json",
+      "expected_code": "UNKNOWN_CAPABILITY",
+      "observed_codes": [
+        "UNKNOWN_CAPABILITY"
+      ]
+    },
+    {
+      "path": "examples/invalid/type_mismatch.json",
+      "expected_code": "TYPE_MISMATCH",
+      "observed_codes": [
+        "TYPE_MISMATCH"
+      ]
+    },
+    {
+      "path": "examples/invalid/unsupported_loop.json",
+      "expected_code": "SCHEMA",
+      "observed_codes": [
+        "SCHEMA"
+      ]
+    },
+    {
+      "path": "examples/invalid/unknown_field.json",
+      "expected_code": "SCHEMA",
+      "observed_codes": [
+        "SCHEMA"
+      ]
+    },
+    {
+      "path": "examples/invalid/disconnected_work.json",
+      "expected_code": "DISCONNECTED_NODE",
+      "observed_codes": [
+        "DISCONNECTED_NODE"
+      ]
+    },
+    {
+      "path": "examples/invalid/unsafe_write_retry.json",
+      "expected_code": "UNSAFE_RETRY",
+      "observed_codes": [
+        "EVALUATION_TARGET",
+        "TYPE_MISMATCH",
+        "UNKNOWN_PORT",
+        "UNSAFE_RETRY"
+      ]
+    },
+    {
+      "path": "examples/invalid/unknown_dependency.json",
+      "expected_code": "UNKNOWN_DEPENDENCY",
+      "observed_codes": [
+        "UNKNOWN_DEPENDENCY"
+      ]
+    },
+    {
+      "path": "examples/invalid/wrong_evaluation_digest.json",
+      "expected_code": "DIGEST_MISMATCH",
+      "observed_codes": [
+        "DIGEST_MISMATCH"
+      ]
+    }
+  ],
+  "strict_json_file_count": 65,
+  "requirement_count": 73,
+  "backlog_task_count": 22,
+  "synthetic_demo": {
+    "original_accepted": false,
+    "repaired_accepted": true,
+    "reused_nodes": [
+      "normalize"
+    ],
+    "live_provider_calls": 0,
+    "external_effects": 0
+  },
+  "not_tested": [
+    "real compiler/provider adapters",
+    "durable/parallel runtime",
+    "policy enforcement",
+    "live external effects/reconciliation",
+    "model calibration",
+    "live Cortex IntentIR/AIR/UEG/experiment/resource adapters",
+    "live Forge SIR/build execution",
+    "live MiCode workflow integration",
+    "quality or cost improvements on real tasks"
+  ]
+}

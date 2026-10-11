@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:asi:resource-projection:0.3.0",
+  "type": "object",
+  "properties": {
+    "projection_version": {
+      "const": "asi.resource-projection/v0.3"
+    },
+    "authority_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "observation_epoch": {
+      "type": "string",
+      "minLength": 1
+    },
+    "observed_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "resources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "enum": [
+              "model_endpoint",
+              "cpu",
+              "gpu",
+              "memory",
+              "storage",
+              "sandbox",
+              "browser",
+              "human",
+              "tool"
+            ]
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 0,
+            "uniqueItems": true
+          },
+          "availability": {
+            "enum": [
+              "available",
+              "degraded",
+              "unavailable",
+              "unknown"
+            ]
+          },
+          "cost_ref": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "security_domain": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "capabilities",
+          "availability",
+          "cost_ref",
+          "security_domain"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    },
+    "synthetic": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "projection_version",
+    "authority_ref",
+    "observation_epoch",
+    "observed_at",
+    "resources",
+    "synthetic"
+  ],
+  "additionalProperties": false
+}

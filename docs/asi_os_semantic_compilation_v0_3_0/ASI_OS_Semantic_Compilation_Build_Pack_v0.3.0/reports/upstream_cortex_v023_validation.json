@@ -1,0 +1,14 @@
+{
+  "schema": "axon-cortex-v023-validation/1",
+  "package_version": "0.23",
+  "scope": "DOCUMENTATION_AND_INTEGRATION_ONLY",
+  "result": "PASS",
+  "parent_tasks": 287,
+  "parent_gates": 504,
+  "delta_tasks": 16,
+  "delta_gates": 31,
+  "composed_tasks": 303,
+  "composed_gates": 535,
+  "product_gates_executed": 0,
+  "errors": []
+}

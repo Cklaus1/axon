@@ -1,0 +1,8 @@
+{
+  "schema": "asi.input-lock/0.3",
+  "name": "Axon Forge Build Files",
+  "version": "0.3",
+  "sha256": "e126f400a40829303b0007c2a0a6de4da219de7f7df7bf8c06e21f7c4718baa7",
+  "role": "program-semantic substrate pinned by Cortex v0.23",
+  "embedded": false
+}

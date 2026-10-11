@@ -1,0 +1,344 @@
+{
+  "registry_version": "asi.registry/v0.3",
+  "name": "synthetic-registry",
+  "synthetic": true,
+  "capabilities": [
+    {
+      "id": "text.normalize@1",
+      "implementation_digest": "sha256:af723113f732725f75091e0d53cfac87f42af4248d092f7f5e34156f8e39bfe0",
+      "input_types": {
+        "text": "string"
+      },
+      "output_types": {
+        "text": "string"
+      },
+      "effects": [],
+      "replay_class": "pure",
+      "supports_idempotency": false,
+      "description": "Synthetic contract fixture; no live implementation supplied.",
+      "mechanism": "transform",
+      "semantic_ops": [
+        "rule"
+      ]
+    },
+    {
+      "id": "doc.draft@1",
+      "implementation_digest": "sha256:482b231b80c0d0c00ae5cc7dc39342f529443ec4d7c6759fc2e27d0fdd12e05e",
+      "input_types": {
+        "text": "string"
+      },
+      "output_types": {
+        "text": "string"
+      },
+      "effects": [
+        "network"
+      ],
+      "replay_class": "captured",
+      "supports_idempotency": false,
+      "description": "Synthetic contract fixture; no live implementation supplied.",
+      "mechanism": "model.call",
+      "semantic_ops": [
+        "generate"
+      ]
+    },
+    {
+      "id": "eval.nonempty@1",
+      "implementation_digest": "sha256:3f8286399b653b24a9a6e6d9777c2bb399c9c4e23870222237b1f0c8ac6eab8d",
+      "input_types": {
+        "text": "string"
+      },
+      "output_types": {
+        "passed": "boolean"
+      },
+      "effects": [],
+      "replay_class": "pure",
+      "supports_idempotency": false,
+      "description": "Synthetic contract fixture; no live implementation supplied.",
+      "mechanism": "evaluate",
+      "semantic_ops": [
+        "check"
+      ]
+    },
+    {
+      "id": "eval.contains@1",
+      "implementation_digest": "sha256:75355c1e4a5579657ca1176393965022b6535974b17bfe35b848823e224bf875",
+      "input_types": {
+        "text": "string",
+        "required_terms": "array"
+      },
+      "output_types": {
+        "passed": "boolean"
+      },
+      "effects": [],
+      "replay_class": "pure",
+      "supports_idempotency": false,
+      "description": "Synthetic contract fixture; no live implementation supplied.",
+      "mechanism": "evaluate",
+      "semantic_ops": [
+        "check"
+      ]
+    },
+    {
+      "id": "eval.is_true@1",
+      "implementation_digest": "sha256:e16f89d3685722d95ccb78778c357d048afa5303728fd6d86b36390e85c3b947",
+      "input_types": {
+        "value": "boolean"
+      },
+      "output_types": {
+        "passed": "boolean"
+      },
+      "effects": [],
+      "replay_class": "pure",
+      "supports_idempotency": false,
+      "description": "Synthetic contract fixture; no live implementation supplied.",
+      "mechanism": "evaluate",
+      "semantic_ops": [
+        "check"
+      ]
+    },
+    {
+      "id": "repo.snapshot@1",
+      "implementation_digest": "sha256:0f382c4c3c87d8bfd26ad960304d7332f9ce47358e717106268411bdffd6fdf1",
+      "input_types": {
+        "repository": "artifact"
+      },
+      "output_types": {
+        "workspace": "artifact"
+      },
+      "effects": [
+        "read"
+      ],
+      "replay_class": "external_read",
+      "supports_idempotency": false,
+      "description": "Synthetic contract fixture; no live implementation supplied.",
+      "mechanism": "tool.call",
+      "semantic_ops": [
+        "observe",
+        "retrieve"
+      ]
+    },
+    {
+      "id": "tests.run@1",
+      "implementation_digest": "sha256:ac96de791cca1751c9f496da9f874ec733908e0cc145cccd4ca763160d410db5",
+      "input_types": {
+        "workspace": "artifact"
+      },
+      "output_types": {
+        "passed": "boolean",
+        "report": "object"
+      },
+      "effects": [
+        "code"
+      ],
+      "replay_class": "captured",
+      "supports_idempotency": false,
+      "description": "Synthetic contract fixture; no live implementation supplied.",
+      "mechanism": "code.execute",
+      "semantic_ops": [
+        "check"
+      ]
+    },
+    {
+      "id": "code.propose@1",
+      "implementation_digest": "sha256:a985484a1345f403a4f105ded664a18e718d23a3bb0aecddb9a928b06a1fd85a",
+      "input_types": {
+        "workspace": "artifact",
+        "failures": "object"
+      },
+      "output_types": {
+        "patch": "artifact"
+      },
+      "effects": [
+        "network"
+      ],
+      "replay_class": "captured",
+      "supports_idempotency": false,
+      "description": "Synthetic contract fixture; no live implementation supplied.",
+      "mechanism": "model.call",
+      "semantic_ops": [
+        "generate",
+        "reason"
+      ]
+    },
+    {
+      "id": "patch.apply@1",
+      "implementation_digest": "sha256:930c1ba5d0be23807f03d76b1c100dc6bace97e19868e400b1ec405e921840bc",
+      "input_types": {
+        "workspace": "artifact",
+        "patch": "artifact"
+      },
+      "output_types": {
+        "workspace": "artifact"
+      },
+      "effects": [
+        "write"
+      ],
+      "replay_class": "idempotent_write",
+      "supports_idempotency": true,
+      "description": "Synthetic contract fixture; no live implementation supplied.",
+      "mechanism": "tool.call",
+      "semantic_ops": [
+        "act"
+      ]
+    },
+    {
+      "id": "eval.patch_scope@1",
+      "implementation_digest": "sha256:a5740833da939428dc3f153fea5c18f0537f2a9241631dca1e7e1ce098ce6424",
+      "input_types": {
+        "patch": "artifact"
+      },
+      "output_types": {
+        "passed": "boolean"
+      },
+      "effects": [],
+      "replay_class": "pure",
+      "supports_idempotency": false,
+      "description": "Synthetic contract fixture; no live implementation supplied.",
+      "mechanism": "evaluate",
+      "semantic_ops": [
+        "check"
+      ]
+    },
+    {
+      "id": "research.retrieve@1",
+      "implementation_digest": "sha256:03857e9dce2fa413693778316d248a6ebdf14884a1ca134bfcc27d16a7449e44",
+      "input_types": {
+        "topic": "string"
+      },
+      "output_types": {
+        "evidence": "array"
+      },
+      "effects": [
+        "read",
+        "network"
+      ],
+      "replay_class": "external_read",
+      "supports_idempotency": false,
+      "description": "Synthetic contract fixture; no live implementation supplied.",
+      "mechanism": "tool.call",
+      "semantic_ops": [
+        "retrieve"
+      ]
+    },
+    {
+      "id": "research.normalize@1",
+      "implementation_digest": "sha256:aed8a54bd6e3d6952016fefd692d38ae2a6223eb79efa951d3b836eca370a643",
+      "input_types": {
+        "evidence": "array"
+      },
+      "output_types": {
+        "records": "array"
+      },
+      "effects": [],
+      "replay_class": "pure",
+      "supports_idempotency": false,
+      "description": "Synthetic contract fixture; no live implementation supplied.",
+      "mechanism": "transform",
+      "semantic_ops": [
+        "rule"
+      ]
+    },
+    {
+      "id": "research.synthesize@1",
+      "implementation_digest": "sha256:eb143948f83d33a41fc4dfc030f56e0c089f4ffb149f20c6106430d76086bea5",
+      "input_types": {
+        "topic": "string",
+        "records": "array"
+      },
+      "output_types": {
+        "report": "string"
+      },
+      "effects": [
+        "network"
+      ],
+      "replay_class": "captured",
+      "supports_idempotency": false,
+      "description": "Synthetic contract fixture; no live implementation supplied.",
+      "mechanism": "model.call",
+      "semantic_ops": [
+        "generate",
+        "reason"
+      ]
+    },
+    {
+      "id": "eval.sources_present@1",
+      "implementation_digest": "sha256:6afcd7245718dcecc890bc1ba238364fa93dbe5c61bb553f4d63f8f390845108",
+      "input_types": {
+        "sources": "array"
+      },
+      "output_types": {
+        "passed": "boolean"
+      },
+      "effects": [],
+      "replay_class": "pure",
+      "supports_idempotency": false,
+      "description": "Synthetic contract fixture; no live implementation supplied.",
+      "mechanism": "evaluate",
+      "semantic_ops": [
+        "check"
+      ]
+    },
+    {
+      "id": "eval.citation_support@1",
+      "implementation_digest": "sha256:5c7dab7d7e293e69e3d2364e2efd58b0df5c7bb5399b76d01ba13a19d279ec68",
+      "input_types": {
+        "text": "string"
+      },
+      "output_types": {
+        "probability": "number"
+      },
+      "effects": [
+        "network"
+      ],
+      "replay_class": "captured",
+      "supports_idempotency": false,
+      "description": "Synthetic contract fixture; no live implementation supplied.",
+      "mechanism": "evaluate",
+      "semantic_ops": [
+        "check"
+      ]
+    },
+    {
+      "id": "messages.send@1",
+      "implementation_digest": "sha256:f5b004da35e69ec0d8465d228f32f12212bbe52588cad05067d898a21158e063",
+      "input_types": {
+        "text": "string"
+      },
+      "output_types": {
+        "receipt": "string"
+      },
+      "effects": [
+        "write",
+        "communication",
+        "network"
+      ],
+      "replay_class": "non_idempotent_write",
+      "supports_idempotency": false,
+      "description": "Synthetic contract fixture; no live implementation supplied.",
+      "mechanism": "tool.call",
+      "semantic_ops": [
+        "act"
+      ]
+    },
+    {
+      "id": "human.review@1",
+      "implementation_digest": "sha256:93a997aa92ed7fa80333d84c732e96669d2b7326490f4de143249b40118bd6e7",
+      "input_types": {
+        "text": "string"
+      },
+      "output_types": {
+        "decision": "string"
+      },
+      "effects": [
+        "network"
+      ],
+      "replay_class": "captured",
+      "supports_idempotency": false,
+      "description": "Synthetic contract fixture; no live implementation supplied.",
+      "mechanism": "human.request",
+      "semantic_ops": [
+        "check"
+      ]
+    }
+  ]
+}

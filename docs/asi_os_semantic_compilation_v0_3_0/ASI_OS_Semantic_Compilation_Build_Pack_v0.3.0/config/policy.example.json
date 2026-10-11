@@ -1,0 +1,22 @@
+{
+  "status": "illustrative_not_a_grant",
+  "default": "deny",
+  "scopes": {
+    "fixture": {
+      "external_effects": false,
+      "provider_egress": false
+    },
+    "sandbox_proposal": {
+      "requires_owner_approval": true,
+      "host_execution": false,
+      "network": "deny_by_default"
+    }
+  },
+  "protected": [
+    "required_acceptance_criteria",
+    "credential_broker",
+    "dispatch_policy",
+    "experiment_holdout"
+  ],
+  "automatic_promotion": false
+}

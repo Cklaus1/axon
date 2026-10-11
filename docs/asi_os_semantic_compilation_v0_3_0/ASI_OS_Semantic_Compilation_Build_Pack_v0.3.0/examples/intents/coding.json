@@ -1,0 +1,23 @@
+{
+  "id": "intent-coding",
+  "task_class": "repository.test_repair",
+  "goal": "Repair failing tests in an isolated repository workspace without pushing or changing files outside the approved scope.",
+  "input_types": {
+    "repository": "artifact"
+  },
+  "output_type": "artifact",
+  "risk": "moderate",
+  "requested_permissions": [
+    "sandbox.repository.read",
+    "sandbox.repository.write",
+    "sandbox.tests.execute"
+  ],
+  "acceptance_contract_name": "coding-contract",
+  "intent_version": "asi.intent/v0.3",
+  "limits": {
+    "max_cost_microusd": 2000000,
+    "wall_time_ms": 1800000,
+    "max_parallelism": 4
+  },
+  "assumptions": []
+}

@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:asi:intent:0.3.0",
+  "type": "object",
+  "properties": {
+    "intent_version": {
+      "const": "asi.intent/v0.3"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,95}$"
+    },
+    "task_class": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,95}$"
+    },
+    "goal": {
+      "type": "string",
+      "minLength": 1
+    },
+    "input_types": {
+      "$ref": "urn:asi:common:0.3.0#/$defs/port_map"
+    },
+    "output_type": {
+      "enum": [
+        "string",
+        "integer",
+        "number",
+        "boolean",
+        "object",
+        "array",
+        "artifact"
+      ]
+    },
+    "risk": {
+      "enum": [
+        "low",
+        "moderate",
+        "high"
+      ]
+    },
+    "requested_permissions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0,
+      "uniqueItems": true
+    },
+    "limits": {
+      "$ref": "urn:asi:common:0.3.0#/$defs/run_limits"
+    },
+    "acceptance_contract_name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,95}$"
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "origin": {
+            "enum": [
+              "user",
+              "inferred"
+            ]
+          },
+          "confirmed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "text",
+          "origin",
+          "confirmed"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    }
+  },
+  "required": [
+    "intent_version",
+    "id",
+    "task_class",
+    "goal",
+    "input_types",
+    "output_type",
+    "risk",
+    "requested_permissions",
+    "limits",
+    "acceptance_contract_name",
+    "assumptions"
+  ],
+  "additionalProperties": false
+}

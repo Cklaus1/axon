@@ -1,0 +1,97 @@
+{
+  "schema": "axon.forge-owner-map/1",
+  "package_version": "0.23",
+  "rows": [
+    {
+      "concern": "semantic_ir",
+      "authority": "Forge",
+      "consumer_or_provider": "CX-15",
+      "rule": "Forge owns SIR; CX-15 consumes it for language/compiler/proof integration.",
+      "new_authority": false
+    },
+    {
+      "concern": "intent_semantics",
+      "authority": "CX-19",
+      "consumer_or_provider": "Forge",
+      "rule": "IntentIR remains distinct; only explicit constraints/lowering bridge the representations.",
+      "new_authority": false
+    },
+    {
+      "concern": "meta_capability_authority",
+      "authority": "CX-03",
+      "consumer_or_provider": "Forge",
+      "rule": "Forge requests; CX-03 grants/rechecks.",
+      "new_authority": false
+    },
+    {
+      "concern": "meta_execution_isolation",
+      "authority": "CX-13",
+      "consumer_or_provider": "Forge",
+      "rule": "Forge meta/build code runs only through qualified isolation.",
+      "new_authority": false
+    },
+    {
+      "concern": "coding_workflow",
+      "authority": "CX-16/MiCode",
+      "consumer_or_provider": "Forge",
+      "rule": "MiCode drives compile/diagnose/repair and submits evidence.",
+      "new_authority": false
+    },
+    {
+      "concern": "external_repo_truth",
+      "authority": "CX-17/CX-24",
+      "consumer_or_provider": "Forge",
+      "rule": "Existing retrieval supplies scoped evidence; Forge applies coding truth precedence.",
+      "new_authority": false
+    },
+    {
+      "concern": "admission_native_promotion",
+      "authority": "CX-11/CX-18",
+      "consumer_or_provider": "Forge",
+      "rule": "Forge creates candidates; Axon owners admit/promote.",
+      "new_authority": false
+    },
+    {
+      "concern": "coding_evaluation",
+      "authority": "CX-21",
+      "consumer_or_provider": "Forge",
+      "rule": "CX-21 evaluates Forge-assisted strategies.",
+      "new_authority": false
+    },
+    {
+      "concern": "self_application_strategy",
+      "authority": "CX-29",
+      "consumer_or_provider": "Forge",
+      "rule": "Cortex may propose strategies; frozen evaluation/admission remains external.",
+      "new_authority": false
+    },
+    {
+      "concern": "repository_improvement",
+      "authority": "CX-30",
+      "consumer_or_provider": "Forge",
+      "rule": "CX-30 uses Forge semantic transform/migration substrate.",
+      "new_authority": false
+    },
+    {
+      "concern": "evidence_provenance",
+      "authority": "CX-32",
+      "consumer_or_provider": "Forge",
+      "rule": "Forge payloads attach to UEG.",
+      "new_authority": false
+    },
+    {
+      "concern": "experimentation",
+      "authority": "CX-33",
+      "consumer_or_provider": "Forge",
+      "rule": "Forge profiles attach to canonical causal experiments.",
+      "new_authority": false
+    },
+    {
+      "concern": "resource_truth",
+      "authority": "CX-34/Compute Fabric",
+      "consumer_or_provider": "Forge",
+      "rule": "Forge consumes non-authoritative resource projection.",
+      "new_authority": false
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "projection_version": "asi.resource-projection/v0.3",
+  "authority_ref": "cx34:fixture-fabric",
+  "observation_epoch": "fixture-epoch-1",
+  "observed_at": "2026-10-06T00:00:00Z",
+  "resources": [
+    {
+      "id": "fixture-model-endpoint",
+      "kind": "model_endpoint",
+      "capabilities": [
+        "reasoning",
+        "generation"
+      ],
+      "availability": "available",
+      "cost_ref": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "security_domain": "fixture"
+    }
+  ],
+  "synthetic": true
+}

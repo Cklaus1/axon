@@ -1,0 +1,23 @@
+{
+  "result_version": "asi.evaluation-result/v0.3",
+  "criterion_id": "complete",
+  "evaluator": "eval.contains@1",
+  "target_digest": "sha256:e8caa525fe54526fbfa0577c2e8604159b7509bb7879952b868e50e1e85696e3",
+  "status": "pass",
+  "decision": {
+    "kind": "deterministic",
+    "passed": true
+  },
+  "calibration_ref": null,
+  "evidence_refs": [
+    "sha256:f4837b000ff5be7050938531ada78fe8f609d9df08578196701d41eaefe0b221"
+  ],
+  "usage": {
+    "cost_microusd": 0,
+    "input_tokens": null,
+    "cached_input_tokens": null,
+    "output_tokens": null,
+    "synthetic": true
+  },
+  "synthetic": true
+}

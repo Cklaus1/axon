@@ -1,0 +1,15 @@
+{
+  "strategy_version": "asi.strategy-artifact/v0.3",
+  "id": "semantic-compiler.baseline",
+  "revision": 1,
+  "kind": "compiler",
+  "parent_ref": null,
+  "configuration_ref": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "implementation_refs": [
+    "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  ],
+  "provenance_refs": [
+    "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  ],
+  "synthetic": true
+}

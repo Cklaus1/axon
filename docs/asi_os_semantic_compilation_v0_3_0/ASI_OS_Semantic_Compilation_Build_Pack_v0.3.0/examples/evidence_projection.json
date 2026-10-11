@@ -1,0 +1,17 @@
+{
+  "projection_version": "asi.evidence-projection/v0.3",
+  "canonical_evidence_ref": "cx32:fixture-evidence-1",
+  "claim_type": "benchmark",
+  "artifact_refs": [
+    "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  ],
+  "source_refs": [
+    "fixture:benchmark-run"
+  ],
+  "effective_input_refs": [
+    "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  ],
+  "environment_ref": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "resource_epoch": "fixture-epoch-1",
+  "synthetic": true
+}

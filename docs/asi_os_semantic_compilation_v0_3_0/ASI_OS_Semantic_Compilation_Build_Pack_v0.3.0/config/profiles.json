@@ -1,0 +1,26 @@
+{
+  "status": "illustrative_preferences_not_authorization",
+  "profiles": {
+    "balanced": {
+      "priority": [
+        "required_quality",
+        "cost",
+        "latency"
+      ]
+    },
+    "fast": {
+      "priority": [
+        "required_quality",
+        "latency",
+        "cost"
+      ]
+    },
+    "reliable": {
+      "priority": [
+        "required_quality",
+        "independent_evidence",
+        "cost"
+      ]
+    }
+  }
+}

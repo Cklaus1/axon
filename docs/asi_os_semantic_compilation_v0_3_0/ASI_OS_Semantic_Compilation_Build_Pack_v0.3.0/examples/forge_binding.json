@@ -1,0 +1,14 @@
+{
+  "binding_version": "asi.forge-binding/v0.3",
+  "forge_version": "0.3",
+  "forge_package_sha256": "e126f400a40829303b0007c2a0a6de4da219de7f7df7bf8c06e21f7c4718baa7",
+  "intent_ir_ref": "cx19:fixture-intent",
+  "air_ref": "cx04:fixture-air",
+  "sir_ref": "forge:sir:fixture",
+  "transform_ref": null,
+  "semantic_diff_ref": null,
+  "backend_ref": "forge:backend:fixture",
+  "provenance_ref": "cx32:fixture-prov",
+  "evidence_ref": "cx32:fixture-evidence",
+  "synthetic": true
+}

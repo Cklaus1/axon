@@ -1,0 +1,140 @@
+{
+  "name": "document-plan",
+  "revision": 1,
+  "intent_ref": "sha256:14ea10706c45d39b17eeb150687ef28bd813461f644186806dcc139168a65c2e",
+  "evaluation_ref": "sha256:5922133c4c67c7a6e2cc476260e5fd9f1ab8f2e0a4e35d3fd998991eeae0ab79",
+  "registry_ref": "sha256:5142d681bf71faff379a61733dc8c50aa37c17b9a9a90a6d8f28f7e68d8db3a0",
+  "config_ref": "sha256:fc3ca43827c75f856cd68bb6f09df80a2fd2e53a91694b94b0a7e26a7ef4136b",
+  "task_class": "document.transform",
+  "input_types": {
+    "text": "string"
+  },
+  "limits": {
+    "max_cost_microusd": 2000000,
+    "wall_time_ms": 1800000,
+    "max_parallelism": 4
+  },
+  "nodes": [
+    {
+      "id": "normalize",
+      "depends_on": [],
+      "args": {
+        "text": {
+          "input": "text"
+        }
+      },
+      "outputs": {
+        "text": "string"
+      },
+      "limits": {
+        "max_cost_microusd": 500000,
+        "timeout_ms": 300000
+      },
+      "retry": {
+        "max_attempts": 1
+      },
+      "capability": "text.normalize@1",
+      "mechanism": "transform",
+      "semantic_op": "rule"
+    },
+    {
+      "id": "draft",
+      "depends_on": [
+        "normalize"
+      ],
+      "args": {
+        "text": {
+          "node": "normalize",
+          "port": "text"
+        }
+      },
+      "outputs": {
+        "text": "string"
+      },
+      "limits": {
+        "max_cost_microusd": 500000,
+        "timeout_ms": 300000
+      },
+      "retry": {
+        "max_attempts": 1
+      },
+      "capability": "doc.draft@1",
+      "temperature": 0,
+      "mechanism": "model.call",
+      "semantic_op": "generate"
+    },
+    {
+      "id": "check",
+      "depends_on": [
+        "draft"
+      ],
+      "args": {
+        "text": {
+          "node": "draft",
+          "port": "text"
+        }
+      },
+      "outputs": {
+        "passed": "boolean"
+      },
+      "limits": {
+        "max_cost_microusd": 500000,
+        "timeout_ms": 300000
+      },
+      "retry": {
+        "max_attempts": 1
+      },
+      "capability": "eval.nonempty@1",
+      "mechanism": "evaluate",
+      "semantic_op": "check"
+    },
+    {
+      "id": "guard",
+      "depends_on": [
+        "check"
+      ],
+      "args": {
+        "condition": {
+          "node": "check",
+          "port": "passed"
+        }
+      },
+      "outputs": {
+        "passed": "boolean"
+      },
+      "limits": {
+        "max_cost_microusd": 500000,
+        "timeout_ms": 300000
+      },
+      "retry": {
+        "max_attempts": 1
+      },
+      "mechanism": "assert",
+      "semantic_op": "check"
+    },
+    {
+      "id": "finish",
+      "depends_on": [
+        "guard"
+      ],
+      "args": {
+        "value": {
+          "node": "draft",
+          "port": "text"
+        }
+      },
+      "outputs": {
+        "value": "string"
+      },
+      "limits": {
+        "max_cost_microusd": 500000,
+        "timeout_ms": 300000
+      },
+      "retry": {
+        "max_attempts": 1
+      },
+      "mechanism": "return"
+    }
+  ],
+  "plan_version": "asi.semantic-plan/v0.3"
+}

@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:asi:owner-profile:0.3.0",
+  "type": "object",
+  "properties": {
+    "profile_version": {
+      "const": "asi.owner-profile/v0.3"
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,95}$"
+    },
+    "mode": {
+      "enum": [
+        "standalone_reference",
+        "cortex_v0.23"
+      ]
+    },
+    "dependency_locks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "sha256"
+        ],
+        "additionalProperties": false
+      },
+      "uniqueItems": true
+    },
+    "owners": {
+      "type": "object",
+      "properties": {
+        "intent": {
+          "type": "string",
+          "minLength": 1
+        },
+        "execution_semantics": {
+          "type": "string",
+          "minLength": 1
+        },
+        "software_semantics": {
+          "type": "string",
+          "minLength": 1
+        },
+        "authority": {
+          "type": "string",
+          "minLength": 1
+        },
+        "isolation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evaluation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "admission": {
+          "type": "string",
+          "minLength": 1
+        },
+        "promotion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1
+        },
+        "experiments": {
+          "type": "string",
+          "minLength": 1
+        },
+        "resources": {
+          "type": "string",
+          "minLength": 1
+        },
+        "coding_workflow": {
+          "type": "string",
+          "minLength": 1
+        },
+        "self_application": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "intent",
+        "execution_semantics",
+        "authority",
+        "isolation",
+        "evaluation",
+        "admission",
+        "evidence",
+        "experiments",
+        "resources"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "profile_version",
+    "name",
+    "mode",
+    "dependency_locks",
+    "owners"
+  ],
+  "additionalProperties": false
+}

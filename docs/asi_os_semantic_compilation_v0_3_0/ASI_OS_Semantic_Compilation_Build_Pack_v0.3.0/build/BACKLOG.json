@@ -1,0 +1,299 @@
+{
+  "version": "0.3.0",
+  "tasks": [
+    {
+      "id": "B001",
+      "phase": "P0",
+      "title": "Audit existing repository interfaces",
+      "owner_role": "Runtime owner",
+      "dependencies": [],
+      "primary_requirement": "SC-001",
+      "acceptance_test": "T-IR-05",
+      "status": "proposed_not_implemented",
+      "definition_of_done": "Native implementation and executed evidence for the linked requirement/test; previous gates remain green."
+    },
+    {
+      "id": "B002",
+      "phase": "P0",
+      "title": "Bind schemas and strict offline validation",
+      "owner_role": "Compiler owner",
+      "dependencies": [
+        "B001"
+      ],
+      "primary_requirement": "IR-001",
+      "acceptance_test": "T-IR-01",
+      "status": "proposed_not_implemented",
+      "definition_of_done": "Native implementation and executed evidence for the linked requirement/test; previous gates remain green."
+    },
+    {
+      "id": "B003",
+      "phase": "P0",
+      "title": "Implement semantic graph/registry admission",
+      "owner_role": "Compiler owner",
+      "dependencies": [
+        "B002"
+      ],
+      "primary_requirement": "IR-002",
+      "acceptance_test": "T-IR-02",
+      "status": "proposed_not_implemented",
+      "definition_of_done": "Native implementation and executed evidence for the linked requirement/test; previous gates remain green."
+    },
+    {
+      "id": "B004",
+      "phase": "P1",
+      "title": "Connect normalized intent and compiler adapter",
+      "owner_role": "Compiler owner",
+      "dependencies": [
+        "B003"
+      ],
+      "primary_requirement": "SC-004",
+      "acceptance_test": "T-IR-05",
+      "status": "proposed_not_implemented",
+      "definition_of_done": "Native implementation and executed evidence for the linked requirement/test; previous gates remain green."
+    },
+    {
+      "id": "B005",
+      "phase": "P1",
+      "title": "Implement isolated execution and artifact validation",
+      "owner_role": "Runtime owner",
+      "dependencies": [
+        "B003"
+      ],
+      "primary_requirement": "SEC-005",
+      "acceptance_test": "T-SEC-05",
+      "status": "proposed_not_implemented",
+      "definition_of_done": "Native implementation and executed evidence for the linked requirement/test; previous gates remain green."
+    },
+    {
+      "id": "B006",
+      "phase": "P1",
+      "title": "Add metering and run budget reservations",
+      "owner_role": "Runtime owner",
+      "dependencies": [
+        "B005"
+      ],
+      "primary_requirement": "RT-005",
+      "acceptance_test": "T-RT-04",
+      "status": "proposed_not_implemented",
+      "definition_of_done": "Native implementation and executed evidence for the linked requirement/test; previous gates remain green."
+    },
+    {
+      "id": "B007",
+      "phase": "P2",
+      "title": "Protected evaluation contract and evidence aggregation",
+      "owner_role": "Evaluation owner",
+      "dependencies": [
+        "B004",
+        "B005"
+      ],
+      "primary_requirement": "EV-001",
+      "acceptance_test": "T-EV-01",
+      "status": "proposed_not_implemented",
+      "definition_of_done": "Native implementation and executed evidence for the linked requirement/test; previous gates remain green."
+    },
+    {
+      "id": "B008",
+      "phase": "P2",
+      "title": "Optional typed decision adapter and calibration dataset",
+      "owner_role": "Evaluation owner",
+      "dependencies": [
+        "B007"
+      ],
+      "primary_requirement": "EV-004",
+      "acceptance_test": "T-EV-05",
+      "status": "proposed_not_implemented",
+      "definition_of_done": "Native implementation and executed evidence for the linked requirement/test; previous gates remain green."
+    },
+    {
+      "id": "B009",
+      "phase": "P2",
+      "title": "Bounded generative repair and immutable revisions",
+      "owner_role": "Compiler owner",
+      "dependencies": [
+        "B007"
+      ],
+      "primary_requirement": "RP-002",
+      "acceptance_test": "T-RP-02",
+      "status": "proposed_not_implemented",
+      "definition_of_done": "Native implementation and executed evidence for the linked requirement/test; previous gates remain green."
+    },
+    {
+      "id": "B010",
+      "phase": "P3",
+      "title": "Durable journal and crash recovery",
+      "owner_role": "Runtime owner",
+      "dependencies": [
+        "B006",
+        "B009"
+      ],
+      "primary_requirement": "RT-002",
+      "acceptance_test": "T-RT-02",
+      "status": "proposed_not_implemented",
+      "definition_of_done": "Native implementation and executed evidence for the linked requirement/test; previous gates remain green."
+    },
+    {
+      "id": "B011",
+      "phase": "P3",
+      "title": "Approval broker and effect reconciliation",
+      "owner_role": "Security owner",
+      "dependencies": [
+        "B010"
+      ],
+      "primary_requirement": "SEC-002",
+      "acceptance_test": "T-SEC-03",
+      "status": "proposed_not_implemented",
+      "definition_of_done": "Native implementation and executed evidence for the linked requirement/test; previous gates remain green."
+    },
+    {
+      "id": "B012",
+      "phase": "P3",
+      "title": "Replay isolation and scoped caches",
+      "owner_role": "Runtime owner",
+      "dependencies": [
+        "B010"
+      ],
+      "primary_requirement": "ID-002",
+      "acceptance_test": "T-ID-02",
+      "status": "proposed_not_implemented",
+      "definition_of_done": "Native implementation and executed evidence for the linked requirement/test; previous gates remain green."
+    },
+    {
+      "id": "B013",
+      "phase": "P4",
+      "title": "Axon repeated-trial adapter and record-only outcomes",
+      "owner_role": "Optimization owner",
+      "dependencies": [
+        "B007",
+        "B010"
+      ],
+      "primary_requirement": "AX-002",
+      "acceptance_test": "T-AX-01",
+      "status": "proposed_not_implemented",
+      "definition_of_done": "Native implementation and executed evidence for the linked requirement/test; previous gates remain green."
+    },
+    {
+      "id": "B014",
+      "phase": "P4",
+      "title": "Frozen comparison protocol and promotion gate",
+      "owner_role": "Evaluation owner",
+      "dependencies": [
+        "B008",
+        "B013"
+      ],
+      "primary_requirement": "AX-005",
+      "acceptance_test": "T-AX-04",
+      "status": "proposed_not_implemented",
+      "definition_of_done": "Native implementation and executed evidence for the linked requirement/test; previous gates remain green."
+    },
+    {
+      "id": "B015",
+      "phase": "P5",
+      "title": "Admitted reusable procedures and rollback",
+      "owner_role": "Runtime owner",
+      "dependencies": [
+        "B012",
+        "B014"
+      ],
+      "primary_requirement": "ID-005",
+      "acceptance_test": "T-ID-02",
+      "status": "proposed_not_implemented",
+      "definition_of_done": "Native implementation and executed evidence for the linked requirement/test; previous gates remain green."
+    },
+    {
+      "id": "B016",
+      "phase": "P1",
+      "title": "Operator trace, evidence and approval UX",
+      "owner_role": "Product owner",
+      "dependencies": [
+        "B004",
+        "B006"
+      ],
+      "primary_requirement": "OBS-002",
+      "acceptance_test": "T-OBS-01",
+      "status": "proposed_not_implemented",
+      "definition_of_done": "Native implementation and executed evidence for the linked requirement/test; previous gates remain green."
+    },
+    {
+      "id": "B017",
+      "phase": "P0",
+      "title": "Implement Cortex owner-profile conformance adapter",
+      "owner_role": "Architecture owner",
+      "dependencies": [
+        "B001"
+      ],
+      "primary_requirement": "OWN-001",
+      "acceptance_test": "T-ALIGN-01",
+      "status": "proposed_not_implemented",
+      "definition_of_done": "Live repository types/services map to the pinned owner profile with no duplicate IntentIR/AIR/evidence/experiment/resource authority."
+    },
+    {
+      "id": "B018",
+      "phase": "P1",
+      "title": "Prove Semantic Plan to CX-04 AIR round-trip",
+      "owner_role": "Compiler owner",
+      "dependencies": [
+        "B003",
+        "B017"
+      ],
+      "primary_requirement": "OWN-003",
+      "acceptance_test": "T-ALIGN-02",
+      "status": "proposed_not_implemented",
+      "definition_of_done": "A real task lowers semantic_op/mechanism into canonical AIR, preserves source lineage, and rejects semantic laundering."
+    },
+    {
+      "id": "B019",
+      "phase": "P1",
+      "title": "Bridge software nodes to Forge SIR and structured diagnostics",
+      "owner_role": "Compiler owner",
+      "dependencies": [
+        "B018"
+      ],
+      "primary_requirement": "FORGE-001",
+      "acceptance_test": "T-FORGE-01",
+      "status": "proposed_not_implemented",
+      "definition_of_done": "A software task uses pinned Forge SIR/Transform or BuildProgram interfaces without cloning Forge-owned semantics and retains exact SIR/build provenance."
+    },
+    {
+      "id": "B020",
+      "phase": "P2",
+      "title": "Project run evidence into CX-32 and experiments into CX-33",
+      "owner_role": "Evaluation owner",
+      "dependencies": [
+        "B007",
+        "B017"
+      ],
+      "primary_requirement": "XPL-003",
+      "acceptance_test": "T-XPL-02",
+      "status": "proposed_not_implemented",
+      "definition_of_done": "Local observations resolve to canonical UEG evidence identities and causal trials attach to canonical CX-33 experiment IDs with frozen hard gates."
+    },
+    {
+      "id": "B021",
+      "phase": "P3",
+      "title": "Enforce CX-34 epoch/resource projection recheck at dispatch",
+      "owner_role": "Runtime owner",
+      "dependencies": [
+        "B006",
+        "B017"
+      ],
+      "primary_requirement": "XPL-004",
+      "acceptance_test": "T-XPL-03",
+      "status": "proposed_not_implemented",
+      "definition_of_done": "Stale projections cannot reserve or authorize execution; dispatch rechecks current resource and authority state and records the observed epoch."
+    },
+    {
+      "id": "B022",
+      "phase": "P4",
+      "title": "Register compiler and repair variants as CX-29 StrategyArtifacts",
+      "owner_role": "Optimization owner",
+      "dependencies": [
+        "B013",
+        "B020"
+      ],
+      "primary_requirement": "OWN-004",
+      "acceptance_test": "T-XPL-01",
+      "status": "proposed_not_implemented",
+      "definition_of_done": "Every experimentable compiler/evaluator/repair/routing variant has stable version/lineage and cannot mutate evaluator, admission, stopping rule or promotion authority."
+    }
+  ]
+}

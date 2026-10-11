@@ -1,0 +1,199 @@
+{
+  "name": "coding-plan",
+  "revision": 1,
+  "intent_ref": "sha256:8c6364cbd42c27c497150648c78ddcb8a7efbb731b0b80a9d15b0f0a4a2fb976",
+  "evaluation_ref": "sha256:126f469692aab1266b8b4aa539b9d5e722f771e1f350cb22a1b46a8dd1f2bd29",
+  "registry_ref": "sha256:5142d681bf71faff379a61733dc8c50aa37c17b9a9a90a6d8f28f7e68d8db3a0",
+  "config_ref": "sha256:fc3ca43827c75f856cd68bb6f09df80a2fd2e53a91694b94b0a7e26a7ef4136b",
+  "task_class": "repository.test_repair",
+  "input_types": {
+    "repository": "artifact"
+  },
+  "limits": {
+    "max_cost_microusd": 2000000,
+    "wall_time_ms": 1800000,
+    "max_parallelism": 4
+  },
+  "nodes": [
+    {
+      "id": "snapshot",
+      "depends_on": [],
+      "args": {
+        "repository": {
+          "input": "repository"
+        }
+      },
+      "outputs": {
+        "workspace": "artifact"
+      },
+      "limits": {
+        "max_cost_microusd": 500000,
+        "timeout_ms": 300000
+      },
+      "retry": {
+        "max_attempts": 1
+      },
+      "capability": "repo.snapshot@1",
+      "mechanism": "tool.call",
+      "semantic_op": "observe"
+    },
+    {
+      "id": "baseline",
+      "depends_on": [
+        "snapshot"
+      ],
+      "args": {
+        "workspace": {
+          "node": "snapshot",
+          "port": "workspace"
+        }
+      },
+      "outputs": {
+        "passed": "boolean",
+        "report": "object"
+      },
+      "limits": {
+        "max_cost_microusd": 500000,
+        "timeout_ms": 300000
+      },
+      "retry": {
+        "max_attempts": 1
+      },
+      "capability": "tests.run@1",
+      "mechanism": "code.execute",
+      "semantic_op": "check"
+    },
+    {
+      "id": "propose",
+      "depends_on": [
+        "baseline"
+      ],
+      "args": {
+        "workspace": {
+          "node": "snapshot",
+          "port": "workspace"
+        },
+        "failures": {
+          "node": "baseline",
+          "port": "report"
+        }
+      },
+      "outputs": {
+        "patch": "artifact"
+      },
+      "limits": {
+        "max_cost_microusd": 500000,
+        "timeout_ms": 300000
+      },
+      "retry": {
+        "max_attempts": 1
+      },
+      "capability": "code.propose@1",
+      "mechanism": "model.call",
+      "semantic_op": "generate"
+    },
+    {
+      "id": "apply",
+      "depends_on": [
+        "propose"
+      ],
+      "args": {
+        "workspace": {
+          "node": "snapshot",
+          "port": "workspace"
+        },
+        "patch": {
+          "node": "propose",
+          "port": "patch"
+        }
+      },
+      "outputs": {
+        "workspace": "artifact"
+      },
+      "limits": {
+        "max_cost_microusd": 500000,
+        "timeout_ms": 300000
+      },
+      "retry": {
+        "max_attempts": 1
+      },
+      "capability": "patch.apply@1",
+      "mechanism": "tool.call",
+      "semantic_op": "act"
+    },
+    {
+      "id": "regression",
+      "depends_on": [
+        "apply"
+      ],
+      "args": {
+        "workspace": {
+          "node": "apply",
+          "port": "workspace"
+        }
+      },
+      "outputs": {
+        "passed": "boolean",
+        "report": "object"
+      },
+      "limits": {
+        "max_cost_microusd": 500000,
+        "timeout_ms": 300000
+      },
+      "retry": {
+        "max_attempts": 1
+      },
+      "capability": "tests.run@1",
+      "mechanism": "code.execute",
+      "semantic_op": "check"
+    },
+    {
+      "id": "guard",
+      "depends_on": [
+        "regression"
+      ],
+      "args": {
+        "condition": {
+          "node": "regression",
+          "port": "passed"
+        }
+      },
+      "outputs": {
+        "passed": "boolean"
+      },
+      "limits": {
+        "max_cost_microusd": 500000,
+        "timeout_ms": 300000
+      },
+      "retry": {
+        "max_attempts": 1
+      },
+      "mechanism": "assert",
+      "semantic_op": "check"
+    },
+    {
+      "id": "finish",
+      "depends_on": [
+        "guard"
+      ],
+      "args": {
+        "value": {
+          "node": "propose",
+          "port": "patch"
+        }
+      },
+      "outputs": {
+        "value": "artifact"
+      },
+      "limits": {
+        "max_cost_microusd": 500000,
+        "timeout_ms": 300000
+      },
+      "retry": {
+        "max_attempts": 1
+      },
+      "mechanism": "return"
+    }
+  ],
+  "plan_version": "asi.semantic-plan/v0.3"
+}

@@ -1,0 +1,21 @@
+{
+  "id": "intent-research",
+  "task_class": "research.compare",
+  "goal": "Produce an evidence-backed comparison; do not release unsupported claims.",
+  "input_types": {
+    "topic": "string"
+  },
+  "output_type": "string",
+  "risk": "low",
+  "requested_permissions": [
+    "research.public.read"
+  ],
+  "acceptance_contract_name": "research-contract",
+  "intent_version": "asi.intent/v0.3",
+  "limits": {
+    "max_cost_microusd": 2000000,
+    "wall_time_ms": 1800000,
+    "max_parallelism": 4
+  },
+  "assumptions": []
+}

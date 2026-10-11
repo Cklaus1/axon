@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:asi:compilation-record:0.3.0",
+  "type": "object",
+  "properties": {
+    "record_version": {
+      "const": "asi.compilation-record/v0.3"
+    },
+    "owner_profile_ref": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "source_intent_ref": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "canonical_intent_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "candidate_plan_ref": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "strategy_ref": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "evaluation_ref": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "registry_ref": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "config_ref": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "lowering_records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "enum": [
+              "intent_normalization",
+              "intent_to_execution",
+              "execution_to_software_semantics",
+              "software_transform",
+              "backend_lowering",
+              "repair_revision"
+            ]
+          },
+          "from_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "to_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence_ref": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "kind",
+          "from_ref",
+          "to_ref",
+          "evidence_ref"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "forge_binding_ref": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "provenance_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "synthetic": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "record_version",
+    "owner_profile_ref",
+    "source_intent_ref",
+    "canonical_intent_ref",
+    "candidate_plan_ref",
+    "strategy_ref",
+    "evaluation_ref",
+    "registry_ref",
+    "config_ref",
+    "lowering_records",
+    "forge_binding_ref",
+    "provenance_refs",
+    "synthetic"
+  ],
+  "additionalProperties": false
+}

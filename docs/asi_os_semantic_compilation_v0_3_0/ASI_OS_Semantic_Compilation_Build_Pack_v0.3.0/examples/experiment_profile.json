@@ -1,0 +1,18 @@
+{
+  "profile_version": "asi.experiment-profile/v0.3",
+  "canonical_experiment_ref": "cx33:fixture-exp-1",
+  "strategy_ref": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "subject_ref": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "hypothesis": "Compiled plan preserves required quality while reducing whole-task cost.",
+  "falsifier": "Any hard acceptance failure or failure to meet the preregistered economic criterion.",
+  "evaluator_ref": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "metric_refs": [
+    "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+  ],
+  "hard_gate_refs": [
+    "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  ],
+  "stopping_rule_ref": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "corpus_role": "holdout",
+  "synthetic": true
+}
