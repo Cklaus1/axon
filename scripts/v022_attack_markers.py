@@ -3010,7 +3010,6 @@ ATTACK_MARKERS.update({
     'M3490': r'ATTACK: a sealed run entered the VM through run_body\b',
     'M3491': r'ATTACK: a sealed run entered the VM through run_body\b',
     'M3492': r'ATTACK: a sealed run entered the VM through run_test_body\b',
-    'M3493': r'ATTACK: a sealed run entered the VM through run_lambda\b',
+    'M3493': r"ATTACK: sealed code reached the operator \(direct call\): Ok\(Completed\)",
     'M3494': r"ATTACK: sealed code reached the operator \(direct call\): Ok\(Completed\)",
-    'M3495': r"ATTACK: sealed code reached the operator \(direct call\): Ok\(Completed\)",
 })

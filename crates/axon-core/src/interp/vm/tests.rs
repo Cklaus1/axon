@@ -1240,8 +1240,10 @@ fn r51_entry_marks(interp: &Interp<'_>) -> (bool, bool) {
 /// VM's first-entry rule, i.e. entered a VM path through that gate. `t` is
 /// run by `call_fn` (its body through `run_body`) or as the test frame
 /// (`run_test_body`); the lambda program's own frame is the test frame, so
-/// only `run_lambda` reaches its lambda. Control: unsealed on the VM, the
-/// gate's mark is set.
+/// only a closure call reaches its lambda (unsealed through `run_lambda`; a
+/// sealed run's closure body runs on the tree in `call_closure_frame::<true>`
+/// and never reaches `run_lambda`, so that case pins the lambda path, not
+/// `run_lambda`'s consult). Control: unsealed on the VM, the gate's mark is set.
 #[test]
 fn r51_t7_a_sealed_run_enters_no_vm_path_at_any_gate() {
     // (gate, program, `t` is the test frame, the gate marks a lambda)
