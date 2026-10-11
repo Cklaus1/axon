@@ -42,3 +42,6 @@ Perf at one fixed path (`axon-lanes/r51-perf`, §10 base 5864c423): bisect put t
 ## S6 probe (seal flipped in a scratch worktree, not committed) at 11f36710
 
 Every registry entry run with `SEAL_RUNTIME_COMPLETE = true`: 199 entries, 148 ran ok, 46 failed, 11 lib entries not built (3 unit tests `const { assert!(!SEAL_RUNTIME_COMPLETE) }` stop the lib compiling; S6.1 rewrites them). Failures by cause: refusal_coverage_gate 33 (Fork 4 re-anchor, S6.2); sealed_frames 9 + dispatch_rule_switch 1 (S4 PICK / dispatch / name sinks); check_effects `a_pass_needs_evidence_that_the_test_completed` 1 (main's interpreter already fails an Err-ended test, so the refusal reason is the test failure, not missing completion evidence; S6.1 adapts the reason assertion); psv_dispatch observer 1 (its inner run still carries the `#[ignore]`; clears when the entry is removed). Logs /var/tmp/r51-tmp/s6probe-11f3, script /var/tmp/r51-tmp/s6probe.py.
+
+## T3 non-interp lib tests (05c19cd1)
+All 8 present and passing on r51/int: kernel 1, parser 1, resolver 5, seal_split 1 (`cargo test -p axon-core --no-default-features --lib <name>`). Integration files: all 10 present (port map §B). Remaining T3: 74 interp::tests + 30 taint_tests absent by name; S3/S0b/S2 rows in lanes t3a/t3b/t3c, S4 rows (14) in the S4 lanes.
