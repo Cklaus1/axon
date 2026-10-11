@@ -28,8 +28,32 @@
 #   scripts/gate.sh            # standard gate (lib clippy)
 #   scripts/gate.sh --strict   # also run --all-targets clippy
 #   scripts/gate.sh --nextest  # use cargo-nextest as the test runner
+#   scripts/gate.sh --fast [--base=REF]
+#                              # the FAST TIER: NOT the gate (see below)
 #
 # Exit 0 iff all stages pass.
+#
+# PARALLEL STAGES. Stages that read only the source tree (text, git and Python
+# checks: no cargo, no target/ binary, no port, no fixed shared temp path) run
+# concurrently in one group BEFORE the cargo spine (`par` / `par_join` below).
+# Each writes its own log, printed whole and in order at the join, so the gate
+# log reads as it did serially; a failure fails the gate under the stage's own
+# name, and every failing stage of the group is named. Everything that runs
+# cargo or reads a target/ binary stays SERIAL and in its old order: every cargo
+# command shares one target dir (cargo's lock serialises them anyway), several
+# rebuild target/debug/axon in a different feature set, and the harnesses read
+# that one path. managed_run_gate.sh (poll windows, a 2 s deadline job, a count
+# of host-wide axon_run_* cgroups) runs alone, after the group has drained.
+#
+# THE FAST TIER (`--fast`) is the lane-acceptance subset, for the inner loop:
+# cargo fmt, clippy -D warnings on the crates changed since `git merge-base REF
+# HEAD` (REF defaults to main), `cargo test -p axon-core --no-default-features`,
+# the axon-cortex and axon-psv suites, vm_parity.sh, v022_refusal_coverage.py,
+# pci_delta.py --check and g01_anchors.py. It is NOT the gate and NOT evidence:
+# it prints so at its start and end, never prints the gate's PASS line, refuses
+# --strict and --profile, and run_managed.sh records a --fast run with
+# gate_run=no gate_strict=no gate_tier=fast, so release_check.sh can never take
+# it for a gate receipt. The full gate at the final head stays the evidence.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -38,6 +62,8 @@ cd "$ROOT"
 STRICT=0
 USE_NEXTEST=0
 PROFILE=""
+FAST=0
+FAST_BASE=""
 for arg in "$@"; do
   case "$arg" in
     --strict) STRICT=1 ;;
@@ -48,12 +74,25 @@ for arg in "$@"; do
     # change what AXON_HARNESS_STRICT means for repository-wide qualification.
     --profile=v022-stage5) PROFILE=v022-stage5 ;;
     --profile=*) echo "gate: unknown profile ${arg#--profile=} (known: v022-stage5)" >&2; exit 2 ;;
+    --fast) FAST=1 ;;
+    --base=?*) FAST_BASE="${arg#--base=}" ;;
     *) echo "gate: unknown flag $arg" >&2; exit 2 ;;
   esac
 done
 if [ -n "$PROFILE" ] && [ "$STRICT" != 1 ]; then
   echo "gate: --profile=$PROFILE certifies a stage and requires --strict" >&2; exit 2
 fi
+# The fast tier certifies nothing, so it takes no flag that certifies something.
+# Refused before any side effect: `--fast --strict` must never run, let alone
+# leave a log or a receipt that reads as a strict gate.
+if [ "$FAST" = 1 ] && { [ "$STRICT" = 1 ] || [ -n "$PROFILE" ] || [ "$USE_NEXTEST" = 1 ]; }; then
+  echo "gate: --fast is the fast tier, NOT the gate; it cannot be combined with --strict, --profile or --nextest" >&2; exit 2
+fi
+if [ -n "$FAST_BASE" ] && [ "$FAST" != 1 ]; then
+  echo "gate: --base=REF selects the fast tier's changed crates and requires --fast" >&2; exit 2
+fi
+TIER="gate"
+[ "$FAST" = 1 ] && TIER="fast tier (NOT the gate)"
 
 # Every harness below that builds nothing is handed the binary THIS gate built
 # (`built_bin` names the path cargo builds to, whatever CARGO_TARGET_DIR says):
@@ -73,7 +112,16 @@ if command -v mold >/dev/null 2>&1; then
   export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="${CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS:--C link-arg=-fuse-ld=mold}"
 fi
 
-fail() { echo ""; echo "❌ gate FAILED at: $1"; exit 1; }
+# Inside a parallel stage (PAR_FAILFILE set by `par`, below) fail() ends only
+# that stage's subshell and records the message; `par_join` then fails the gate
+# with it. Everywhere else it fails the whole run, under the run's own name.
+fail() {
+  if [ -n "${PAR_FAILFILE:-}" ]; then
+    printf '%s\n' "$1" > "$PAR_FAILFILE"
+    echo ""; echo "❌ stage FAILED: $1"; exit 1
+  fi
+  echo ""; echo "❌ $TIER FAILED at: $1"; exit 1
+}
 
 # Run a harness quietly, but SHOW ITS OUTPUT WHEN IT FAILS.
 #
@@ -128,17 +176,197 @@ _rq=$( ( run_quiet "selftest" bash -c 'echo SHOULD_NOT_APPEAR; exit 0' ) 2>&1 )
 [ -z "$_rq" ] || { echo "$_rq"; fail "run_quiet self-check: a passing stage must stay quiet"; }
 unset _rq
 
+# PARALLEL STAGE GROUPS. `par <name> <cmd...>` starts one stage in the
+# background, its stdout and stderr in a file of its own; `par_join` waits for
+# EVERY stage of the group, then prints each stage's whole output in the order
+# the stages were started, so the log reads as a serial run's would (nothing
+# interleaves). A stage calls fail() exactly as it does when run serially; in a
+# group that ends only the stage's subshell and records its message, and
+# par_join fails the run naming every stage that failed, the first one on the
+# `FAILED at:` line. Only stages that share no state belong in a group: see
+# "PARALLEL STAGES" in the header.
+PAR_DIR=""
+PAR_NAMES=()
+PAR_PIDS=()
+par() {
+  local name="$1"; shift
+  if [ -z "$PAR_DIR" ]; then
+    PAR_DIR="$(mktemp -d "${TMPDIR:-/tmp}/gate-par.XXXXXX")" || fail "parallel group: cannot create its log directory"
+  fi
+  local i=${#PAR_NAMES[@]}
+  PAR_NAMES+=("$name")
+  (
+    PAR_FAILFILE="$PAR_DIR/$i.fail"
+    t0=${EPOCHREALTIME/[.,]/}
+    # The duration (tenths of a second, integer microseconds so no locale can
+    # misread it) is written on EVERY exit path, fail() included.
+    trap 't1=${EPOCHREALTIME/[.,]/}; d=$(( (t1 - t0) / 100000 )); echo "$((d / 10)).$((d % 10))" > "$PAR_DIR/$i.secs"' EXIT
+    "$@"
+  ) </dev/null >"$PAR_DIR/$i.log" 2>&1 &
+  PAR_PIDS+=("$!")
+}
+par_join() {
+  local i rc msg failed=()
+  for i in "${!PAR_PIDS[@]}"; do
+    rc=0; wait "${PAR_PIDS[$i]}" || rc=$?
+    cat "$PAR_DIR/$i.log"
+    echo "   (parallel stage '${PAR_NAMES[$i]}': $(cat "$PAR_DIR/$i.secs" 2>/dev/null || echo '?')s, exit $rc)"
+    if [ "$rc" -ne 0 ]; then
+      msg="$(cat "$PAR_DIR/$i.fail" 2>/dev/null)"
+      failed+=("${msg:-${PAR_NAMES[$i]} (exit $rc)}")
+    fi
+  done
+  rm -rf "$PAR_DIR"; PAR_DIR=""; PAR_NAMES=(); PAR_PIDS=()
+  [ "${#failed[@]}" -eq 0 ] && return 0
+  echo ""
+  echo "── ${#failed[@]} parallel stage(s) FAILED ──"
+  for msg in "${failed[@]}"; do echo "  ✗ $msg"; done
+  if [ "${#failed[@]}" -gt 1 ]; then
+    fail "${failed[0]} (and $((${#failed[@]} - 1)) more parallel stage(s) listed above)"
+  fi
+  fail "${failed[0]}"
+}
+
+# SELF-CHECK, for the same reason as run_quiet's: the failure path is the whole
+# value and almost never runs. A group with a passing stage, a stage that calls
+# fail() and a stage that just exits non-zero must fail, name both failures
+# (fail()'s own message first), and print the outputs in start order.
+_pj=$( ( par "selftest-ok" bash -c 'echo PJ_FIRST'
+         par "selftest-fail" fail "PJ_FAIL_MESSAGE"
+         par "selftest-exit" bash -c 'echo PJ_THIRD; exit 4'
+         par_join; echo PJ_JOIN_RETURNED ) 2>&1 )
+case "$_pj" in
+  *PJ_FIRST*"stage FAILED: PJ_FAIL_MESSAGE"*PJ_THIRD*"FAILED at: PJ_FAIL_MESSAGE (and 1 more"*) _pj_bad=0 ;;
+  *) _pj_bad=1 ;;
+esac
+case "$_pj" in *"selftest-exit (exit 4)"*) ;; *) _pj_bad=1 ;; esac
+case "$_pj" in *PJ_JOIN_RETURNED*) _pj_bad=1 ;; esac
+if [ "$_pj_bad" != 0 ]; then
+  echo "$_pj"; fail "par/par_join self-check: a failing parallel stage must fail the run under its own name"
+fi
+_pj=$( ( par "selftest-a" true; par "selftest-b" true; par_join; echo PJ_JOIN_RETURNED ) 2>&1 )
+case "$_pj" in
+  *FAILED*) _pj_bad=1 ;;
+  *PJ_JOIN_RETURNED*) ;;
+  *) _pj_bad=1 ;;
+esac
+[ "$_pj_bad" = 0 ] || { echo "$_pj"; fail "par/par_join self-check: a passing group must join and continue"; }
+unset _pj _pj_bad
+
 # The harness-skip log (O006b) is APPEND-only across runs, so the coverage notice
 # at the end of this script would otherwise report skips from previous runs as if
 # they had happened now. Truncate it so the notice describes THIS run only.
 SKIPLOG="target/harness-skips.log"
 mkdir -p target && : > "$SKIPLOG"
+skip_notice() {
+  [ -s "$SKIPLOG" ] || return 0
+  echo "── $TIER: skipped harnesses (non-results, NOT passes) ───────────────"
+  n_skips=$(sort -u "$SKIPLOG" | wc -l | tr -d ' ')
+  echo "  $n_skips harness(es) SKIPPED — these gates measured nothing:"
+  sort -u "$SKIPLOG" | sed 's/^/    · /'
+  echo "  Set AXON_HARNESS_STRICT=1 to make any skip fatal."
+}
 
-# Fast doc-focus check first (pure text over VISION.md, no build) — keeps the
+# Crates excused from clippy (read by the coverage check below and by the fast
+# tier). axon-guest-kernel: freestanding no_std. On the host target clippy fails
+# with "unwinding panics are not supported without std" and a duplicate
+# `panic_impl` lang item — artifacts of the wrong target, not lints. It is built
+# and checked by scripts/build-guest-image.sh with -Z build-std and its own
+# target spec.
+CLIPPY_EXCUSED="axon-guest-kernel"
+
+# ── THE FAST TIER (--fast) ──────────────────────────────────────────────────
+# The lane-acceptance subset, for the inner loop. NOT the gate and NOT evidence:
+# it says so first and last, never prints the gate's PASS line, and exits before
+# any full-gate stage. A green fast tier means "worth running the gate", nothing
+# more.
+if [ "$FAST" = 1 ]; then
+  fast_banner() {
+    echo "════════════════════════════════════════════════════════════════════"
+    echo "  FAST TIER — NOT THE GATE, NOT EVIDENCE. $1"
+    echo "  It certifies nothing. The evidence of record is ./scripts/gate.sh"
+    echo "  (and --strict) run at the final head."
+    echo "════════════════════════════════════════════════════════════════════"
+  }
+  fast_banner "Lane-acceptance subset only."
+  echo "── fast: source checks (parallel: fmt, refusal coverage, pci_delta, anchors) ──"
+  par "cargo fmt --all --check (run: cargo fmt --all)" cargo fmt --all -- --check
+  par "v0.22 protected refusal-site coverage" python3 -B scripts/v022_refusal_coverage.py
+  par "pci_delta.py --check" python3 -B scripts/pci_delta.py --check
+  par "G01 mutation anchors (scripts/g01_anchors.py)" python3 -B scripts/g01_anchors.py
+  par_join
+
+  # Clippy on the crates this lane changed: every crates/<name>/ touched between
+  # the merge base with --base (default main) and the working tree, untracked
+  # files included. Crate directory = package name (the coverage check below
+  # relies on the same identity). axon-core is linted as the strict gate lints
+  # its interpreter build (--no-default-features --all-targets).
+  fast_base="${FAST_BASE:-main}"
+  fast_mb="$(git merge-base "$fast_base" HEAD)" || fail "--base=$fast_base has no merge base with HEAD"
+  echo "── fast: clippy -D warnings on the crates changed since $fast_base ($(git rev-parse --short "$fast_mb")) ──"
+  fast_crates=()
+  while IFS= read -r c; do
+    [ -f "crates/$c/Cargo.toml" ] || continue  # a deleted crate has nothing to lint
+    case " $CLIPPY_EXCUSED " in *" $c "*) echo "  $c: excused from clippy (CLIPPY_EXCUSED)"; continue ;; esac
+    fast_crates+=("$c")
+  done < <({ git diff --name-only "$fast_mb" && git ls-files --others --exclude-standard; } \
+             | sed -n 's#^crates/\([^/]*\)/.*#\1#p' | sort -u)
+  if [ "${#fast_crates[@]}" -eq 0 ]; then
+    echo "  no crate changed since the merge base: nothing to lint"
+  else
+    echo "  crates: ${fast_crates[*]}"
+    fast_pk=()
+    for c in "${fast_crates[@]}"; do
+      if [ "$c" = axon-core ]; then
+        cargo clippy --locked --no-default-features -p axon-core --all-targets -- -D warnings \
+          || fail "clippy axon-core (--no-default-features --all-targets)"
+      else
+        fast_pk+=(-p "$c")
+      fi
+    done
+    if [ "${#fast_pk[@]}" -gt 0 ]; then
+      cargo clippy --locked "${fast_pk[@]}" --all-targets -- -D warnings \
+        || fail "clippy (--all-targets) on ${fast_pk[*]}"
+    fi
+  fi
+
+  echo "── fast: tests axon-core (--no-default-features) ──"
+  cargo test --locked -p axon-core --no-default-features || fail "tests axon-core (--no-default-features)"
+  # The cortex CLI suite and the axon-psv runner tests run the interpreter at
+  # the target dir's debug/axon; build it here, as the gate does, rather than
+  # trust whatever binary was left there.
+  echo "── fast: axon-cortex and axon-psv suites ──"
+  cargo build --locked -q -p axon-core --no-default-features --bin axon \
+    || fail "interpreter build (needed by the axon-cortex and axon-psv suites)"
+  cargo test --locked -p axon-cortex || fail "axon-cortex suite"
+  cargo test --locked -p axon-psv || fail "axon-psv suite"
+  echo "── fast: vm_parity.sh (tree vs VM) ──"
+  ./scripts/vm_parity.sh || fail "vm_parity.sh"
+
+  echo ""
+  skip_notice
+  fast_banner "All fast-tier stages passed."
+  echo "fast tier: all stages passed — NOT the gate, NOT evidence"
+  exit 0
+fi
+
+# ── PARALLEL GROUP: source-only checks ──────────────────────────────────────
+# Every stage in this group reads the source tree and nothing else this gate
+# builds: no cargo build or test, no target/ binary, no port, no fixed shared
+# temp path (each was mapped before it was placed here). They used to run one
+# after another, some of them after the cargo stages they have no relation to.
+# Each is a function so its banner, checks and fail() messages stay exactly
+# what they were; `par` starts it, `par_join` prints its output whole and fails
+# the gate under its own message. Placed first so a cheap failure still stops
+# the gate before an hour of cargo.
+
+# Fast doc-focus check (pure text over VISION.md, no build) — keeps the
 # north-star doc short/legible the same way the *_parity.sh harnesses keep the
 # compiler honest. Cheap enough to run on every gate, codegen or not.
-echo "── gate: VISION.md focus ──────────────────────────────────────────"
-./scripts/vision_focus.sh || fail "VISION.md focus"
+stage_vision_focus() {
+  echo "── gate: VISION.md focus ──────────────────────────────────────────"
+  ./scripts/vision_focus.sh || fail "VISION.md focus"
+}
 
 # Artifact admission. Generated build output must never become repository
 # source by accident. It twice did, and nothing noticed either time: cac9cdf
@@ -148,7 +376,9 @@ echo "── gate: VISION.md focus ───────────────
 # into an otherwise coherent commit — and both survived review, because the
 # untracked -> tracked transition is the one state change nothing asserted was
 # intended. Cheap (~1s over the index), so it runs on every gate, not --strict.
-./scripts/artifact_admission_gate.sh >/dev/null || fail "artifact admission (generated output is tracked as source)"
+stage_artifact_admission() {
+  ./scripts/artifact_admission_gate.sh >/dev/null || fail "artifact admission (generated output is tracked as source)"
+}
 
 # The vendored Cortex v0.15 package: integrity in BOTH directions plus the
 # honesty invariant. That package proposes 247 product gates, every one marked
@@ -157,7 +387,9 @@ echo "── gate: VISION.md focus ───────────────
 # of 37 cited gates invoked by nothing. This fails if a gate's result moves off
 # NOT_RUN without a registry row naming a script that gate.sh actually invokes.
 # 0.15s, no cargo, so it runs on every gate rather than only --strict.
-./scripts/cortex_package_gate.sh >/dev/null || fail "cortex v0.15 package (integrity / honesty invariant)"
+stage_cortex_v015() {
+  ./scripts/cortex_package_gate.sh >/dev/null || fail "cortex v0.15 package (integrity / honesty invariant)"
+}
 
 # The vendored Cortex v0.22 package, ALONGSIDE (never instead of) v0.15 above —
 # G00-r22-package-gate-upgrade requires the older package and its gate retained.
@@ -169,58 +401,57 @@ echo "── gate: VISION.md focus ───────────────
 # The PASS line is printed rather than discarded, because it is the only place
 # a skipped offline suite is visible. check_v022_runtime_evidence.py is NOT a
 # stage: it has no success exit code.
-echo "── gate: cortex v0.22 package (pinned integrity → honesty → validator → suite) ──"
 # A strict run is release-grade: let the gate bootstrap its pinned-jsonschema
 # venv (it never installs globally) rather than skip the pack's offline suite.
 [ "$STRICT" = 1 ] && export CORTEX_V022_BOOTSTRAP_VENV="${CORTEX_V022_BOOTSTRAP_VENV:-1}"
-if c22=$(./scripts/cortex_package_gate_v022.sh 2>&1); then
-  case "$(printf '%s\n' "$c22" | tail -1)" in
-    "cortex_package_gate_v022: PASS — "*"offline suite: SKIPPED"*)
-      # A release-grade (--strict) run must EXECUTE the pack's 567 offline
-      # conformance tests. The gate's PASS line still reads PASS when the
-      # pinned interpreter is unavailable, which is right for a developer run
-      # and wrong for a strict one: a strict receipt certifies a release.
-      if [ "$STRICT" = 1 ]; then
-        printf '%s\n' "$c22" | tail -3
-        fail "cortex v0.22 offline conformance suite SKIPPED in a --strict run (set CORTEX_V022_PYTHON or allow the venv bootstrap)"
-      else
-        echo "  OK $(printf '%s\n' "$c22" | tail -1 | sed 's/^cortex_package_gate_v022: //')"
-      fi ;;
-    "cortex_package_gate_v022: PASS — "*) echo "  OK $(printf '%s\n' "$c22" | tail -1 | sed 's/^cortex_package_gate_v022: //')" ;;
-    *) printf '%s\n' "$c22" | tail -8; fail "cortex v0.22 package gate exited 0 without its PASS line" ;;
+stage_cortex_v022() {
+  echo "── gate: cortex v0.22 package (pinned integrity → honesty → validator → suite) ──"
+  if c22=$(./scripts/cortex_package_gate_v022.sh 2>&1); then
+    case "$(printf '%s\n' "$c22" | tail -1)" in
+      "cortex_package_gate_v022: PASS — "*"offline suite: SKIPPED"*)
+        # A release-grade (--strict) run must EXECUTE the pack's 567 offline
+        # conformance tests. The gate's PASS line still reads PASS when the
+        # pinned interpreter is unavailable, which is right for a developer run
+        # and wrong for a strict one: a strict receipt certifies a release.
+        if [ "$STRICT" = 1 ]; then
+          printf '%s\n' "$c22" | tail -3
+          fail "cortex v0.22 offline conformance suite SKIPPED in a --strict run (set CORTEX_V022_PYTHON or allow the venv bootstrap)"
+        else
+          echo "  OK $(printf '%s\n' "$c22" | tail -1 | sed 's/^cortex_package_gate_v022: //')"
+        fi ;;
+      "cortex_package_gate_v022: PASS — "*) echo "  OK $(printf '%s\n' "$c22" | tail -1 | sed 's/^cortex_package_gate_v022: //')" ;;
+      *) printf '%s\n' "$c22" | tail -8; fail "cortex v0.22 package gate exited 0 without its PASS line" ;;
+    esac
+  else
+    printf '%s\n' "$c22" | tail -15; fail "cortex v0.22 package (integrity / honesty / validator)"
+  fi
+  # Negative control, run every time: a copy of the pack carrying a symlinked
+  # directory must be refused at the integrity step, before any package code runs.
+  # os.walk does not descend into a linked directory, so checking files alone once
+  # let unlisted content reach the offline suite (red-team D-01). A guard nobody
+  # re-proves decays, so the refusal is asserted here, not assumed.
+  c22neg="$(mktemp -d)"
+  cp -r docs/axon_cortex_v0_22/axon-cortex-build-v0_22 "$c22neg/pack"
+  mkdir -p "$c22neg/outside" && ln -s "$c22neg/outside" "$c22neg/pack/tests/linked"
+  c22n_rc=0; c22n=$(./scripts/cortex_package_gate_v022.sh --pkg "$c22neg/pack" 2>&1) || c22n_rc=$?
+  rm -rf "$c22neg"
+  case "$c22n_rc:$c22n" in
+    1:*"SYMLINK  tests/linked/ (directory)"*"no package code was executed"*)
+      echo "  OK negative control: a symlinked directory in the pack is refused before package code runs" ;;
+    *) printf '%s\n' "$c22n" | tail -8; fail "v0.22 package gate did not refuse a symlinked directory (rc=$c22n_rc)" ;;
   esac
-else
-  printf '%s\n' "$c22" | tail -15; fail "cortex v0.22 package (integrity / honesty / validator)"
-fi
-# Negative control, run every time: a copy of the pack carrying a symlinked
-# directory must be refused at the integrity step, before any package code runs.
-# os.walk does not descend into a linked directory, so checking files alone once
-# let unlisted content reach the offline suite (red-team D-01). A guard nobody
-# re-proves decays, so the refusal is asserted here, not assumed.
-c22neg="$(mktemp -d)"
-cp -r docs/axon_cortex_v0_22/axon-cortex-build-v0_22 "$c22neg/pack"
-mkdir -p "$c22neg/outside" && ln -s "$c22neg/outside" "$c22neg/pack/tests/linked"
-c22n_rc=0; c22n=$(./scripts/cortex_package_gate_v022.sh --pkg "$c22neg/pack" 2>&1) || c22n_rc=$?
-rm -rf "$c22neg"
-case "$c22n_rc:$c22n" in
-  1:*"SYMLINK  tests/linked/ (directory)"*"no package code was executed"*)
-    echo "  OK negative control: a symlinked directory in the pack is refused before package code runs" ;;
-  *) printf '%s\n' "$c22n" | tail -8; fail "v0.22 package gate did not refuse a symlinked directory (rc=$c22n_rc)" ;;
-esac
+}
 
 # Formatting. This is deliberately BEFORE the build: it is pure text, costs
 # under a second, and a fmt failure needs no compiler to be true. It is also
 # --all, not -p axon-core, because per-crate scoping is exactly how 37 files of
 # drift accumulated unseen in the crates nobody was checking (2980206). Adding a
 # crate to the workspace? --all picks it up with no edit here.
-echo "── gate: cargo fmt --all --check ──────────────────────────────────"
-cargo fmt --all -- --check || fail "cargo fmt --all --check (run: cargo fmt --all)"
+stage_fmt() {
+  echo "── gate: cargo fmt --all --check ──────────────────────────────────"
+  cargo fmt --all -- --check || fail "cargo fmt --all --check (run: cargo fmt --all)"
+}
 
-# Long-running jobs must own their result and their cleanup. This gate exists
-# because they did not: gate runs launched with `nohup ... &` reported the
-# LAUNCHER's exit 0 as the gate's verdict four separate times, and nine leaked
-# `axon test` processes plus dozens of orphaned CPU spinners ran for 15+ hours
-# because nothing owned them. Cheap (~10s) and placed early on purpose.
 # A package nested inside another package's directory is dead code that still
 # ships. `crates/axon-ledger/axon-ledger/` was a PRE-RBAC duplicate of the
 # ledger crate inside itself — the shape a contributor or agent revives later,
@@ -230,12 +461,129 @@ cargo fmt --all -- --check || fail "cargo fmt --all --check (run: cargo fmt --al
 # executes caller-supplied code, so this was remote code execution through any
 # visited site. Workspace-wide because the per-crate version of this fix cited
 # the offending crate as its own correct model.
-echo "── gate: no wildcard CORS ────────────────────────────────────────"
-run_quiet "no wildcard CORS" bash scripts/no_wildcard_cors.sh
+stage_no_wildcard_cors() {
+  echo "── gate: no wildcard CORS ────────────────────────────────────────"
+  run_quiet "no wildcard CORS" bash scripts/no_wildcard_cors.sh
+}
+stage_no_nested_crates() {
+  echo "── gate: no nested package roots ─────────────────────────────────"
+  run_quiet "no nested package roots" bash scripts/no_nested_crates.sh
+}
 
-echo "── gate: no nested package roots ─────────────────────────────────"
-run_quiet "no nested package roots" bash scripts/no_nested_crates.sh
+# Certified texts are immutable; PROTECTED_VERIFIER_READY, Stage7Ready and
+# CX21Ready are DERIVED from evidence (governance/readiness/, generated only);
+# Stage 7 / CX-21 stay PREREGISTERED until their readiness is READY, and their
+# only entry points call the shared preflight FIRST, refusing otherwise.
+# (The trust-root preflight mechanism test builds axon-fabric as root, so it
+# stays in the serial cargo spine, after the PCI surfaces.)
+stage_protected_readiness() {
+  echo "── gate: v0.22 protected readiness (derived; certified artifacts pinned) ──"
+  python3 -B scripts/protected_verifier_ready.py --check || fail "v0.22 protected readiness"
+  python3 -B scripts/test_protected_verifier_ready.py || fail "v0.22 readiness relay (pinned verifier identity)"
+  for ep in scripts/v022_stage7_pilot.sh scripts/v022_cx21_experiment.sh; do
+    grep -q "protected_verifier_ready.py --require" "$ep" \
+      || fail "$ep does not call the protected readiness preflight"
+  done
+}
+# PSV negative matrix: every row A1..A21 cites tests that exist (a renamed or
+# deleted test fails here, rather than leaving a row claiming coverage).
+stage_psv_matrix() {
+  python3 -B scripts/psv_matrix_check.py || fail "v0.22 PSV negative matrix"
+}
+# The non-normative post-C9 backlog carries every finding of the PSV-1 loop triage and every item, and the PSV-1 non-claims point at it.
+stage_postc9_spec() {
+  python3 -B scripts/check_postc9_spec.py || fail "post-C9 hardening spec traceability"
+}
+stage_opkit_ns_drift() {
+  python3 -B scripts/opkit_ns_drift.py || fail "no test script may run the operator kit outside ns_run (amendment 92)"
+}
+stage_opkit_ns_drift_selftest() {
+  python3 -B scripts/opkit_ns_drift.py --selftest || fail "opkit_ns_drift selftest"
+}
+# Every refusal site in the protected helper files (decision A/D) has a
+# mutation row, a checkable exemption, or an entry on the counted, greppable
+# REMAINDER list of guards no test observes alone; REMAINDER is NOT claimed
+# covered (C9 round 3, amendment 48; round 9, amendment 98).
+stage_refusal_coverage() {
+  python3 -B scripts/v022_refusal_coverage.py || fail "v0.22 protected refusal-site coverage"
+}
+# Amendment 107: the OBSERVED entries of that gate are recorded survey results. Outside a freeze a
+# missing or stale re-survey record is a NOTE, not a failure (the freeze manifest REFUSES without a
+# recent record for its head): `scripts/v022_resurvey.py --run` (hours; run it on gpumaster) writes it.
+stage_resurvey() {
+  python3 -B scripts/test_v022_resurvey.py || fail "v0.22 re-survey record refusals (amendments 107 and 110)"
+  python3 -B scripts/test_v022_value_survey.py || fail "v0.22 value survey rules (amendment 110)"
+  python3 -B scripts/v022_resurvey.py --check || echo "NOTE: no usable re-survey record for this head (the FREEZE needs one: scripts/v022_resurvey.py --run)"
+}
+# G29-r22-claim-separation: the repository's own three release claims stay
+# separate and false until each has evidence of its own kind.
+stage_claim_separation() {
+  python3 -B scripts/v022_claim_separation.py || fail "v0.22 release-claim separation"
+}
 
+# The benchmark prose against the data it cites, in BOTH directions. Twice in
+# one session a figure outlived its measurement — the binary's `--help` was
+# still advertising a top-1 accuracy the benchmark README had explicitly
+# withdrawn. Both times it was found by reading, which is not a method.
+#
+# Wired here because a checker nothing invokes is the same defect one layer
+# up: it existed, it worked, and it would have run only when someone
+# remembered it.
+stage_benchmark_docs() {
+  python3 crates/axon-cortex/benchmarks/check_docs.py \
+    || fail "benchmark docs cite figures the data does not produce"
+}
+
+# The analyser produces every headline number the real-model experiment
+# reports, and nothing in the Rust suite touches it. It shipped with a
+# load-bearing defect: proposal ownership inferred from ORDER, which is wrong
+# whenever a candidate is selected but never reaches the generator. Measured
+# with the guard removed, it reported "ranking waste is 100% of inference
+# spend" on a fixture where half the proposals went to the true target.
+stage_analyser_selftest() {
+  python3 crates/axon-cortex/benchmarks/selftest_analyse.py \
+    || fail "analyser attributes proposals to candidates unsoundly"
+}
+
+# The completeness manifest regenerates AXON-COMPLETENESS.md and refuses a row
+# claiming a production proof or a mutation it cannot cite. Wired here because
+# a manifest nobody runs is a table of assertions, which is the state it was
+# written to replace. (It is the only writer of AXON-COMPLETENESS.md; the other
+# stages that read AXON-COMPLETENESS.json never write it.)
+stage_completeness() {
+  python3 scripts/completeness.py \
+    || fail "a completeness claim is not backed by evidence"
+}
+
+par "VISION.md focus" stage_vision_focus
+par "artifact admission" stage_artifact_admission
+par "cortex v0.15 package" stage_cortex_v015
+par "cortex v0.22 package" stage_cortex_v022
+par "cargo fmt --all --check" stage_fmt
+par "no wildcard CORS" stage_no_wildcard_cors
+par "no nested package roots" stage_no_nested_crates
+par "v0.22 protected readiness" stage_protected_readiness
+par "v0.22 PSV negative matrix" stage_psv_matrix
+par "post-C9 hardening spec traceability" stage_postc9_spec
+par "opkit_ns_drift" stage_opkit_ns_drift
+par "opkit_ns_drift selftest" stage_opkit_ns_drift_selftest
+par "v0.22 protected refusal-site coverage" stage_refusal_coverage
+par "v0.22 re-survey and value survey" stage_resurvey
+par "v0.22 release-claim separation" stage_claim_separation
+par "benchmark docs" stage_benchmark_docs
+par "analyser selftest" stage_analyser_selftest
+par "completeness manifest" stage_completeness
+par_join
+
+# Long-running jobs must own their result and their cleanup. This gate exists
+# because they did not: gate runs launched with `nohup ... &` reported the
+# LAUNCHER's exit 0 as the gate's verdict four separate times, and nine leaked
+# `axon test` processes plus dozens of orphaned CPU spinners ran for 15+ hours
+# because nothing owned them. Cheap (~10s) and placed early on purpose.
+# It runs ALONE, after the parallel group has drained: it polls in 0.1 s
+# windows, runs a job under a 2 s deadline, and fails if the host's count of
+# axon_run_* cgroups grew while it ran, so it must not share the window with
+# other stages.
 echo "── gate: managed-run supervision (result ownership + cancellation scope) ──"
 bash scripts/managed_run_gate.sh || fail "managed-run supervision"
 
@@ -295,32 +643,11 @@ echo "── gate: v0.22 Stage-5 executed gates (G03 G08 G10 G11 G13 G28 G32) �
 # (G01 alone is never sufficient): one row per surface, exact test names.
 echo "── gate: v0.22 Protected Check Isolation surfaces ──"
 ./scripts/v022_pci_gates.sh || fail "v0.22 Protected Check Isolation surfaces"
-# Certified texts are immutable; PROTECTED_VERIFIER_READY, Stage7Ready and
-# CX21Ready are DERIVED from evidence (governance/readiness/, generated only);
-# Stage 7 / CX-21 stay PREREGISTERED until their readiness is READY, and their
-# only entry points call the shared preflight FIRST, refusing otherwise.
-echo "── gate: v0.22 protected readiness (derived; certified artifacts pinned) ──"
-python3 -B scripts/protected_verifier_ready.py --check || fail "v0.22 protected readiness"
-python3 -B scripts/test_protected_verifier_ready.py || fail "v0.22 readiness relay (pinned verifier identity)"
+# The trust-root preflight MECHANISM on a dev fixture. As root it builds
+# axon-fabric's binaries, so it stays here in the serial cargo spine rather than
+# in the source-only group with the readiness checks it belongs beside.
+echo "── gate: v0.22 trust-root preflight mechanism (dev mode) ──"
 bash scripts/test_trust_root_preflight.sh || fail "v0.22 trust-root preflight mechanism (dev mode)"
-# PSV negative matrix: every row A1..A21 cites tests that exist (a renamed or
-# deleted test fails here, rather than leaving a row claiming coverage).
-python3 -B scripts/psv_matrix_check.py || fail "v0.22 PSV negative matrix"
-# The non-normative post-C9 backlog carries every finding of the PSV-1 loop triage and every item, and the PSV-1 non-claims point at it.
-python3 -B scripts/check_postc9_spec.py || fail "post-C9 hardening spec traceability"
-python3 -B scripts/opkit_ns_drift.py || fail "no test script may run the operator kit outside ns_run (amendment 92)"
-python3 -B scripts/opkit_ns_drift.py --selftest || fail "opkit_ns_drift selftest"
-# Every refusal site in the protected helper files (decision A/D) has a
-# mutation row, a checkable exemption, or an entry on the counted, greppable
-# REMAINDER list of guards no test observes alone; REMAINDER is NOT claimed
-# covered (C9 round 3, amendment 48; round 9, amendment 98).
-python3 -B scripts/v022_refusal_coverage.py || fail "v0.22 protected refusal-site coverage"
-# Amendment 107: the OBSERVED entries of that gate are recorded survey results. Outside a freeze a
-# missing or stale re-survey record is a NOTE, not a failure (the freeze manifest REFUSES without a
-# recent record for its head): `scripts/v022_resurvey.py --run` (hours; run it on gpumaster) writes it.
-python3 -B scripts/test_v022_resurvey.py || fail "v0.22 re-survey record refusals (amendments 107 and 110)"
-python3 -B scripts/test_v022_value_survey.py || fail "v0.22 value survey rules (amendment 110)"
-python3 -B scripts/v022_resurvey.py --check || echo "NOTE: no usable re-survey record for this head (the FREEZE needs one: scripts/v022_resurvey.py --run)"
 # PSV in a REAL Firecracker guest. SKIP (77: no root/KVM/built image) is a
 # NON-RESULT, reported as such, never as a pass.
 cargo build -q -p axon-psv --example psv_dev || fail "v0.22 PSV dev tool build"
@@ -330,13 +657,6 @@ case $rc in
   77) echo "v0.22 PSV real-guest boot test: SKIP (non-result: not proven on this host)" ;;
   *) fail "v0.22 PSV real-guest boot test" ;;
 esac
-for ep in scripts/v022_stage7_pilot.sh scripts/v022_cx21_experiment.sh; do
-  grep -q "protected_verifier_ready.py --require" "$ep" \
-    || fail "$ep does not call the protected readiness preflight"
-done
-# G29-r22-claim-separation: the repository's own three release claims stay
-# separate and false until each has evidence of its own kind.
-python3 -B scripts/v022_claim_separation.py || fail "v0.22 release-claim separation"
 
 # The same crate again with `ai` on, because that feature gates the only
 # model-backed generator — the one production path where a model contributes to
@@ -349,32 +669,6 @@ cargo clippy --locked -p axon-cortex --all-targets --features ai -- -D warnings 
 cargo test --locked -p axon-cortex --features ai \
   || fail "cortex ai-generator tests"
 
-# The benchmark prose against the data it cites, in BOTH directions. Twice in
-# one session a figure outlived its measurement — the binary's `--help` was
-# still advertising a top-1 accuracy the benchmark README had explicitly
-# withdrawn. Both times it was found by reading, which is not a method.
-#
-# Wired here because a checker nothing invokes is the same defect one layer
-# up: it existed, it worked, and it would have run only when someone
-# remembered it.
-python3 crates/axon-cortex/benchmarks/check_docs.py \
-  || fail "benchmark docs cite figures the data does not produce"
-
-# The analyser produces every headline number the real-model experiment
-# reports, and nothing in the Rust suite touches it. It shipped with a
-# load-bearing defect: proposal ownership inferred from ORDER, which is wrong
-# whenever a candidate is selected but never reaches the generator. Measured
-# with the guard removed, it reported "ranking waste is 100% of inference
-# spend" on a fixture where half the proposals went to the true target.
-python3 crates/axon-cortex/benchmarks/selftest_analyse.py \
-  || fail "analyser attributes proposals to candidates unsoundly"
-
-# The completeness manifest regenerates AXON-COMPLETENESS.md and refuses a row
-# claiming a production proof or a mutation it cannot cite. Wired here because
-# a manifest nobody runs is a table of assertions, which is the state it was
-# written to replace.
-python3 scripts/completeness.py \
-  || fail "a completeness claim is not backed by evidence"
 
 # A gate function that produced no readable verdict must not be scored as a
 # pass. Landed RED and deliberately unwired; wired here now that it is green,
@@ -447,11 +741,8 @@ cargo clippy --locked -p axon-rt -p axon-rt-ai -p axon-ai -p axon-surface -p axo
 # must be either lint-gated above (or as axon-core separately) or named here with
 # a reason. Adding a crate without doing one of those now turns the gate RED.
 echo "── gate: clippy coverage (every crate gated or excused) ──────────"
-# axon-guest-kernel: freestanding no_std. On the host target clippy fails with
-# "unwinding panics are not supported without std" and a duplicate `panic_impl`
-# lang item — artifacts of the wrong target, not lints. It is built and checked
-# by scripts/build-guest-image.sh with -Z build-std and its own target spec.
-CLIPPY_EXCUSED="axon-guest-kernel"
+# CLIPPY_EXCUSED (the crates excused, each with its reason) is defined near the
+# top of this file: the fast tier reads it too.
 # tr: `sort -u` is newline-separated, and the `case` glob below matches on
 # SPACES. Without it nothing ever matches — the check fails closed (every crate
 # "uncovered") rather than open, but it would still have been wrong.
@@ -922,13 +1213,7 @@ echo ""
 # branch only, so a --strict run ended "✅ gate PASSED" while the v0.22 pack's
 # offline suite, loop_interop, b263 and the axon-vm live tests had skipped with
 # no line saying so (red-team D-02). A skip is a non-result: say it, every time.
-if [ -s "$SKIPLOG" ]; then
-  echo "── gate: skipped harnesses (non-results, NOT passes) ───────────────"
-  n_skips=$(sort -u "$SKIPLOG" | wc -l | tr -d ' ')
-  echo "  $n_skips harness(es) SKIPPED — these gates measured nothing:"
-  sort -u "$SKIPLOG" | sed 's/^/    · /'
-  echo "  Set AXON_HARNESS_STRICT=1 to make any skip fatal."
-fi
+skip_notice
 if [ "$STRICT" != 1 ]; then
   echo "── gate: coverage notice ───────────────────────────────────────────"
   echo "  This run did NOT verify interp↔codegen / AOT-wasm parity (invariant I-2)."

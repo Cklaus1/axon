@@ -586,13 +586,26 @@ write_receipt() {
   case "$first_tok" in
     */gate.sh|gate.sh) is_gate=yes ;;
   esac
-  local profile=""
+  local profile="" fast=no tier=none
   for tok in $raw_cmd; do
     case "$tok" in
       --strict) is_strict=yes ;;
       --profile=*) profile="${tok#--profile=}" ;;
+      --fast) fast=yes ;;
     esac
   done
+  # `gate.sh --fast` is the FAST TIER: a lane-acceptance subset that is not the
+  # gate. Its receipt says so (gate_tier=fast) and claims neither a gate run nor
+  # strictness, whatever else its command line carries (gate.sh refuses --fast
+  # with --strict before running anything), so no consumer that asks for
+  # gate_run=yes / gate_strict=yes can ever be handed one.
+  if [ "$is_gate" = yes ]; then
+    if [ "$fast" = yes ]; then
+      tier=fast; is_gate=no; is_strict=no
+    else
+      tier=full
+    fi
+  fi
   # A STAGE profile's results document (written by the gate to $STAGE_RESULTS,
   # which cmd_start points into this run dir) is bound into the receipt: its
   # digest, its verdict, and the exact pair it certified. release_check reads
@@ -619,6 +632,7 @@ PY
     echo "command=$(cat "$dir/cmd" 2>/dev/null)"
     echo "gate_run=$is_gate"
     echo "gate_strict=$is_strict"
+    echo "gate_tier=$tier"
     echo "gate_profile=${profile:-none}"
     [ -n "$stage_fields" ] && echo "$stage_fields"
     echo "head=${head:-unknown}"
