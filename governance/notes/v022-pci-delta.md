@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 9108a66cf2e1d8ee69d88d092d4062630e3c9199
+generated-at: 91babccf82e1b182e0f584b7a129a97ebd1d01e5
 
-`git diff --numstat 31413ca7..9108a66c -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..91babccf -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -50,7 +50,7 @@ generated-at: 9108a66cf2e1d8ee69d88d092d4062630e3c9199
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 5276 | 1587 |
+| `crates/axon-core/src/interp.rs` | 5278 | 1557 |
 | `crates/axon-core/src/interp/builtins.rs` | 672 | 512 |
 | `crates/axon-core/src/interp/conform.rs` | 1800 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1354 | 0 |
@@ -87,9 +87,9 @@ generated-at: 9108a66cf2e1d8ee69d88d092d4062630e3c9199
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 46690 | 5415 |
+| total | 46692 | 5385 |
 
-`git log --reverse 31413ca7..9108a66c -- crates/axon-core/src`:
+`git log --reverse 31413ca7..91babccf -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -323,9 +323,13 @@ generated-at: 9108a66cf2e1d8ee69d88d092d4062630e3c9199
 | 3561022b | R51 T2 wasm32 depth | INTERPRETER (stack layout and wasm32 recursion budget only): finish_call_cold's R4 zone provenance injection moves verbatim into #[inline(never)] record_zone_provenance; eval_with_handler is #[inline(always)] in an optimised build (as before R51 split the evaluator); every nest_cost constant whose frame grew is set to its measured need (wasm_stack_budget.py; e.g. EVAL_ARM release 288 -> 304, CALL_FN_FRAME 224/528 -> 272/576), the sealed ones to their measured need; unsealed behaviour change: none on native; on wasm32 the recursion-limit panic fires a few levels earlier on some nest probes (vm_wasm_depth.sh PASS, VM >= tree everywhere); sealed runs as at 04d3ad7b |
 | 5842278b | R51 S7 mutation rows | TEST-ONLY (interp/crossing_tests.rs, cfg(test)): a_sealed_goal_eval_is_told_the_common_text_for_a_name_it_cannot_see, the killer of v0.22's M3343 (goal_eval's no_such_fn text) restored on its v0.22 text; two candidate fns added to the crossing fixture; the registry re-anchors M3471/M3472 on t_frame_exit's two callers and M2600/M2601 on run_handler_arm's per-path seal routing, moves the goal_eval lookup filter row to M3496 and adds routing rows; no interpreter code changed, no unsealed behaviour change |
 | 30e6638c | R51 S7 decl | INTERPRETER + RESOLVER (S7-UnsealedParity-1,6,7,8,9, S7-Seal-2): frame_edge's loop-control text comes from FrameEdge::loop_control_escape, so a handler arm reads "`break`/`continue` cannot leave an effect-handler arm (a loop around the `with` is not the arm's loop)" (other edges unchanged); the resolver's refinement-name rule takes checker::DEFERRED_PREFIXES as exact names (v0.22's prefix rule predates amendment 117), so `type GoalScore = i64 where …` is accepted and `type Goal = …` refused, and the duplicate-impl E0002 prints checker::axon_type_name; TEST_ENDED_ON_FAILURE names an early None; run_test_fn returns Err on TestEnd::failure_exit, so improve.rs G3 reads axon test's verdict; vm run_test_body runs a test body holding its own Op::Return on the tree (the eager VM read an early return as a completion); depth_exceeded decides seal_call first (v0.22 order). Unsealed behaviour change: the handler-arm and early-None panic/failure texts, refinement names that merely start with Uncertain/Temporal/Goal/Dict now resolve, the duplicate-impl text, axon improve's G3 verdict on an Err/early-None test, and AXON_VM_EAGER=1 test completion after an early return (now as the tree); spec §3 declares the v0.22 rows; sealed runs: a depth-limit call of an operator fn reads the uniform no-such-fn text |
+| f89f4d43 | R51 S7 native stack | INTERPRETER (native thread stack size only; no change in what any run computes, accepts or refuses): STACK_BYTES_PER_FRAME 256 KiB -> 320 KiB and MIN_STACK_BYTES 1 GiB -> 1.25 GiB, so the interpreter thread reserves 1.25x the address space, covering the unsealed native frames R51's per-run-kind evaluator grew (release eval_arm::<false> 1024 B, was eval 912 B; at 3921a309 a recursion nested 260-280 expressions deep at down(5990) aborted where 5864c423 ran it, S7-UnsealedParity-10); unsealed behaviour change: none against 5864c423 (every call depth x paren depth cell that completed or hit the recursion limit there does so again, release and debug, tree and VM; cells that aborted there reach further before aborting); wasm32 unaffected (no thread); cli_run regression test; sealed runs as at 04d3ad7b |
 | 1adbe2b4 | R51 S7 merge | joins r51/int 9e67b796 (30e6638c, R51 S7 decl) onto r51/s7reg (5842278b and its registry/note follow-ups); only this table and the note conflicted, resolved by keeping both sides; no change beyond the commits it joins |
+| 4bb4a0e1 | R51 S7 native stack cap | INTERPRETER (native thread stack size only; no change in what any run computes, accepts or refuses): stack_size_for_depth clamps the reserve at MAX_STACK_BYTES = MAX_DEPTH_CEILING x 256 KiB, the largest reserve 5864c423 made; with f89f4d43's x1.25 alone, AXON_MAX_DEPTH past ~800,000 asked for more than Linux heuristic overcommit maps in one go and the interpreter thread failed to spawn (exit 101) where 5864c423 ran (900,000 and 1,000,000 observed); unsealed behaviour change: none against 5864c423 (every depth reserves at least what it did there; AXON_MAX_DEPTH 800,000/900,000/1,000,000 run hello, release and debug); sealed runs as at 04d3ad7b |
+| 7defe71d | R51 S7 merge | joins r51/int 9e67b796 (r51/s7decl, 30e6638c) onto r51/s7stack (f89f4d43, 4bb4a0e1: native thread stack reserve only); only this table and the note conflicted, resolved by keeping both sides; no change beyond the commits it joins; sealed runs as at 04d3ad7b |
 | f83da0f3 | R51 S7 mutation rows | TEST-ONLY (interp/tests_v022_b.rs, cfg(test)): a_sealed_call_that_binds_nothing_still_meets_the_seal_edge, a sealed candidate's parameter-free call of an operator fn that binds nothing, refused by the seal edge (control: the candidate's own answer completes); the killer of M3493/M3494, whose cells now run with debug assertions off (the debug store assertion stopped their mutants before the attack; without it check_store misses a bindless chain and the mutant completes); no interpreter code changed, no unsealed behaviour change |
-| 232 commits | | |
+| 0a9731f2 | R51 S7 merge | joins r51/int 2eaef86b (7defe71d, f89f4d43, 4bb4a0e1: native thread stack reserve only; r51/speed4 require_idle) onto r51/s7reg (f83da0f3 and the registry's _CXL fix); only this table, the note and tasks/opportunities.md conflicted, resolved by keeping both sides; no change beyond the commits it joins |
+| 236 commits | | |
 <!-- END MECHANICAL -->
 
 
