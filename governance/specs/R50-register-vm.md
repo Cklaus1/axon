@@ -49,7 +49,8 @@ compilebench `sieve`), measured first; revision 39 answers the thirty-fourth rev
 (4 must-fix, 5 nits; §15 "Revision 39"); revision 40 answers the thirty-fifth (4 must-fix, 5 nits;
 §15 "Revision 40"); revision 41 answers the thirty-sixth (2 must-fix, 4 nits; §15 "Revision 41"); revision 42 answers
 the thirty-seventh (3 must-fix, 2 nits; §15 "Revision 42"); revision 43 answers the thirty-eighth
-(3 must-fix, 1 nit; §15 "Revision 43"). S13 is Draft until an adversarial review passes it.
+(3 must-fix, 1 nit; §15 "Revision 43"); revision 44 answers the thirty-ninth (1 must-fix, 1 nit;
+§15 "Revision 44"). S13 is Draft until an adversarial review passes it.
 **Risk class:** Structural (a second execution path for the reference engine)
 **Author / date:** 2026-10-09, from compilebench AX-18 (interpreter cost) after AX-53..AX-55.
 
@@ -1118,20 +1119,30 @@ code under `AXON_ENGINE=tree` and `vm`, and stdout equal to the tree's at `0f3b1
   literal array of the same elements, in both orders, for each kind, with `NaN`, `-0.0` and
   `SizedInt` elements among them. `write_sized_into_ints` also prints `{ks[2] < big}` after
   `ks[2] = w` with `w: i8 = 5` and `big = 200` (the tree prints `false`, an `i8`-width compare; a
-  set that stores a plain `Int` prints `true`), and the same compare after each append of `w` to a
-  packed `Ints` array: `ks = arr_push(ks, w)` (the tree prints `[0, 1, 2, 5] false` for
-  `ks = arr_range(0, 3)`), `ms = ms + t` and `ns = arr_concat(ns, t)` with `let t = [id(w)]`; and
+  set that stores a plain `Int` prints `true`), and `{xs[3] < big}` on the appended element after
+  each append of `w` to a packed `Ints` array of length 3: `ks = arr_push(ks, w)` (the tree prints
+  `[0, 1, 2, 5] false` for `ks = arr_range(0, 3)`), `ms = ms + t` and `ns = arr_concat(ns, t)` with
+  `let t = [id(w)]`; and
   `ps = arr_push(ps, v)` with `v: i8 = 127`, then `ps[3] + one` (the tree panics `integer overflow:
   i8 127 + 1 out of range`; run last). The test asserts each pair of lines agrees under both
   engines and that the whole stdout equals `tests/fixtures/packed/ops.out`, the tree's output at
   `0f3b182b`.
-- `vm_bulk_near_miss_shapes`: loops one step outside the two shapes, each over packed arrays, print
-  the tree's results under both engines, and print no `vm: bulk` line: a count with an `else`
-  (`if a[v] { n = n + c } else { m = m + 1 }`), a count indexed by another local (`if a[w]`), a
-  count with `n = n - c` or `n = m + c`, a fill indexed by another local (`b[k] = 7`), a fill with
-  the increment before the store, a fill with a third statement (`x = x + 1`), and a fill with
-  `j = j - s`. A recogniser that skips any one structural check (the `else`, the index variable,
-  statement order or count, the operator, the accumulated local) gives different output.
+- `vm_bulk_near_miss_shapes`: loops one step outside the two shapes, each over packed arrays and
+  each `PureLoop`/`PureFor`-eligible (the trace shows its `vm: pure` line), print the tree's results
+  under both engines, and print no `vm: bulk` line. Thirteen loops. Counts: with an `else`
+  (`if a[v] { n = n + c } else { m = m + 1 }`); indexed by another local (`if a[w]`); with
+  `n = n - c`; with `n = m + c`; with a second statement in the `then` block
+  (`if a[v] { n = n + c\n m = m + 1 }`); with a statement after the `if` (`m = m + 1`); and with
+  `n = n + v` where an outer `let v = 3` is shadowed by the loop variable (the tree reads the loop
+  `v`; a recogniser that does not exclude `v` from `c` reads 3 through `Env::get_var`'s by-name
+  fallback, interp.rs:1122-1128 at `0f3b182b`). Fills: indexed by another local (`q[k] = 7`, `q` a second packed
+  array); with the increment before the store; with a third statement (`x = x + 1`); with
+  `j = j - s`; with `while j > b`; with a condition on another local (`while k <= b`); and with
+  `j = k + s`. A recogniser that skips any one structural check (the `else`, the index variable,
+  the compared variable, the comparison operator, the step's left operand, statement order or
+  count in the body or the `then` block, the arithmetic operator, the accumulated local, or `v` in
+  `c`'s exclusions) runs a bulk path and prints a `vm: bulk` line, and most also print different
+  output.
 
 Also: `interp_arr_repeat_unallocatable_size_is_a_runtime_error_naming_n` still passes;
 `vm_perf_gate.sh` with sieve's budget CPython's median (§10; S12 fails it at about 24.4 G), every
@@ -2111,3 +2122,12 @@ S12 binary, each as stated.
 | [must-fix] The `SizedInt`-into-`Ints` width probe covered element writes only | `write_sized_into_ints` compares after `arr_push`, `+` and `arr_concat` of an `i8` (tree `[0, 1, 2, 5] false`), and `ps[3] + one` panics `i8 127 + 1 out of range`; `packed_forms_persist` asserts an `i8` push makes `Vals` |
 | [must-fix, wording] §7 and §11 said nothing else changes, but a conversion or temporary view peaks at 24 (or 17) bytes per element against S12's 16 | Stated in §4 S13, §7 and §11 as S13's second memory edge |
 | [nit] §10's sieve paragraph still gave the S10 budget in the present tense | Past tense for S10-S12; from S13 the budget is CPython's median |
+
+Revision 44 (2026-10-11) answers the thirty-ninth review (`reviewer`, verdict "incorrect": 0
+blockers, 1 must-fix, 1 nit). It re-ran the revision-43 outputs on the S12 binary under both
+engines, each as stated, and checked that each near-miss loop is `PureLoop`/`PureFor`-eligible.
+
+| Finding | Resolution |
+|---|---|
+| [must-fix] The near-miss list left the fill's comparison operator, its compared variable, the step's left operand, the count's statement count and `v` in `c`'s exclusions ungated; "`n = n - c` or `n = m + c`" let a test keep one; "seven" was not the count | Thirteen loops: adds `while j > b`, `while k <= b`, `j = k + s`, a second `then` statement, a statement after the `if`, and `n = n + v` under a shadowed outer `v`; both accumulator variants required; the fill's other array renamed `q` |
+| [nit] "The same compare" after an append read as `ks[2] < big`, which cannot fail | `{xs[3] < big}` on the appended element of a length-3 array |
