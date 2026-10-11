@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 90520df28d4bf3bcbc8f1fafff613f82c9868889
+generated-at: f78ed94b0cea70570c4e1b9ead0f9faa8136d20b
 
-`git diff --numstat 31413ca7..90520df2 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..f78ed94b -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -50,7 +50,7 @@ generated-at: 90520df28d4bf3bcbc8f1fafff613f82c9868889
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
 | `crates/axon-core/src/interp.rs` | 4809 | 1467 |
-| `crates/axon-core/src/interp/builtins.rs` | 665 | 515 |
+| `crates/axon-core/src/interp/builtins.rs` | 671 | 515 |
 | `crates/axon-core/src/interp/conform.rs` | 1780 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1413 | 0 |
 | `crates/axon-core/src/interp/crossing_tests.rs` | 418 | 0 |
@@ -82,9 +82,9 @@ generated-at: 90520df28d4bf3bcbc8f1fafff613f82c9868889
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 39417 | 5265 |
+| total | 39423 | 5265 |
 
-`git log --reverse 31413ca7..90520df2 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..f78ed94b -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -269,7 +269,8 @@ generated-at: 90520df28d4bf3bcbc8f1fafff613f82c9868889
 | be195107 | R51 T3b | TEST-ONLY: 28 v0.22 interp::tests rows (S3) ported under their v0.22 names in interp/tests_v022_b.rs, included at the end of interp.rs's mod tests: the pin-owner and name-sink drift tests re-derived for main's sealed call paths, Sym/def/fn_table lookups and vm/ (passing); 25 sealed-run rows ignored R51 S6 and 1 ignored R51 S4, all registered in r51-deferred-tests.json; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 64e3d9af | R51 T3a | TEST-ONLY: vm::tests::r51_interp_sources skips the tests_v022_*.rs files include!d into interp.rs's mod tests (they have no `mod tests {` to cut at, so every sweep read them whole); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | c3a88834 | R51 T3b | merge commit (Merge commit '64e3d9af' into r51/t3b); joins its branch, no change beyond its parents |
-| 181 commits | | |
+| f78ed94b | R51 T3b | INTERPRETER sandbox_run at the seal crossing (veto builtins.rs:4498-4502): a sealed callee's () reaching the operator's sandbox_run is the documented 0, not a type confusion; the arm is guarded by the crossing (seal.active, operator frame, sealed callee), so unsealed runs are unchanged. Plus TEST-ONLY: S6-probe-derived ignore reasons for 14 T3b rows (13 name S4's sealed_outcome dispatch-rule switch; the_sweep_routes_stay_closed re-slotted S4 -> S6) and their registry entries. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 182 commits | | |
 <!-- END MECHANICAL -->
 
 

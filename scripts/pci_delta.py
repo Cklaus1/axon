@@ -218,6 +218,7 @@ THEMES = {
     "be195107": ("R51 T3b", "TEST-ONLY: 28 v0.22 interp::tests rows (S3) ported under their v0.22 names in interp/tests_v022_b.rs, included at the end of interp.rs's mod tests: the pin-owner and name-sink drift tests re-derived for main's sealed call paths, Sym/def/fn_table lookups and vm/ (passing); 25 sealed-run rows ignored R51 S6 and 1 ignored R51 S4, all registered in r51-deferred-tests.json; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"),
     "64e3d9af": ("R51 T3a", "TEST-ONLY: vm::tests::r51_interp_sources skips the tests_v022_*.rs files include!d into interp.rs's mod tests (they have no `mod tests {` to cut at, so every sweep read them whole); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"),
     "c3a88834": ("R51 T3b", "merge commit (Merge commit '64e3d9af' into r51/t3b); joins its branch, no change beyond its parents"),
+    "f78ed94b": ("R51 T3b", "INTERPRETER sandbox_run at the seal crossing (veto builtins.rs:4498-4502): a sealed callee's () reaching the operator's sandbox_run is the documented 0, not a type confusion; the arm is guarded by the crossing (seal.active, operator frame, sealed callee), so unsealed runs are unchanged. Plus TEST-ONLY: S6-probe-derived ignore reasons for 14 T3b rows (13 name S4's sealed_outcome dispatch-rule switch; the_sweep_routes_stay_closed re-slotted S4 -> S6) and their registry entries. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"),
 }
 
 
