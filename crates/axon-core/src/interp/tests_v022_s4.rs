@@ -2,9 +2,11 @@
 // receiver dispatch rule, the unary width rule under the dispatch-rule switch,
 // and the handler-arm and closure pin owner. Ported under their v0.22 names
 // (veto interp.rs:6052, 9292, 10178, 10446-10911); included at the end of
-// `interp::tests`. Every one is a sealed run (`judged_on`), refused until S6
+// `interp::tests`. Each is a sealed run (`judged_on`), refused until S6
 // (`SEALED_RUN_REFUSED`); their unit-level counterparts that run now are in
-// `interp/dispatch_tests.rs`. The v0.22 helpers they share live in
+// `interp/dispatch_tests.rs`. The last one, the width rule (veto 10752), was
+// main's unit test in interp/sink_tests.rs: it runs now and asserts its
+// runner half is refused until S6. The v0.22 helpers they share live in
 // `v022_s4`, glob-imported so that an identically named helper another
 // port defines in `tests` shadows them instead of colliding.
 
@@ -523,5 +525,138 @@ fn a_closure_made_in_a_handler_arm_is_judged_by_the_installing_fn() {
         &suite("let v = work(0)"),
         U8_CAND,
         DISP_MSG,
+    );
+}
+
+/// v0.22 interp.rs:10752 (moved here from interp/sink_tests.rs, T3: the v0.22
+/// module path), with main's unit-level strengthening and the unary form
+/// (10178): operator arithmetic on
+/// a fixed-width integer whose width nothing on the operator side determined
+/// is refused - statically (`seal_width`, `seal_width_unary`: a value read
+/// untyped from a dict) and by the runtime taint (`t_check_width`: a typed
+/// parameter whose value carries the candidate's type taint). A comparison is
+/// not arithmetic; a `let x: u8` pin determines the width; a sealed frame's
+/// own arithmetic is its own. v0.22's own half (the candidate stores
+/// `255 as u8` and the operator's untyped `v << 1 == 254` truncates to a pass)
+/// runs through the sealed runner, so until S6 it asserts that the runner
+/// refuses the run (`SEALED_RUN_REFUSED`).
+#[test]
+fn operator_arithmetic_never_runs_at_a_width_the_candidate_chose() {
+    sink_tests::with_ix("r51-s3-width", true, |ix| {
+        let d = || sink_tests::dict_k(sink_tests::u8v(255));
+        let r = sink_tests::go(ix, "shift", false, vec![d()]);
+        assert!(
+            sink_tests::refused(&r, sink_tests::WIDTH),
+            "ATTACK: `v << 1` at the candidate's width: {r:?}"
+        );
+        let r = sink_tests::go(ix, "neg", false, vec![d()]);
+        assert!(
+            sink_tests::refused(&r, sink_tests::WIDTH),
+            "ATTACK: `-v` at the candidate's width: {r:?}"
+        );
+        assert!(
+            sink_tests::go(ix, "compare", false, vec![d()]).is_ok(),
+            "a comparison"
+        );
+        assert!(
+            sink_tests::go(ix, "shift", false, vec![sink_tests::dict_k(Value::Int(4))]).is_ok(),
+            "an i64"
+        );
+        assert!(
+            sink_tests::go(ix, "shift_pinned", false, vec![d()]).is_ok(),
+            "pinned by `let x: u8`"
+        );
+        assert!(
+            sink_tests::go(ix, "shift", true, vec![d()]).is_ok(),
+            "the sealed frame's own"
+        );
+        assert!(
+            sink_tests::go(ix, "neg", true, vec![d()]).is_ok(),
+            "the sealed frame's own"
+        );
+        sink_tests::taint_rules_on();
+        // The runtime rule: determined statically, the value's TYPE taint
+        // says the candidate chose it.
+        assert!(sink_tests::go_t(ix, "shift_t", false, vec![(sink_tests::u8v(255), 0)]).is_ok());
+        let r = sink_tests::go_t(
+            ix,
+            "shift_t",
+            false,
+            vec![(sink_tests::u8v(255), super::taint::ALL)],
+        );
+        assert!(
+            sink_tests::refused(&r, sink_tests::WIDTH) && sink_tests::refused(&r, "runtime taint"),
+            "ATTACK: a tainted width: {r:?}"
+        );
+        let r = sink_tests::go_t(
+            ix,
+            "neg_t",
+            false,
+            vec![(sink_tests::u8v(4), super::taint::ALL)],
+        );
+        assert!(
+            sink_tests::refused(&r, "runtime taint"),
+            "ATTACK: a tainted unary width: {r:?}"
+        );
+        assert!(
+            sink_tests::go_t(
+                ix,
+                "neg_t",
+                false,
+                vec![(sink_tests::u8v(4), super::taint::VAL)]
+            )
+            .is_ok(),
+            "super::taint::VAL is not TYP"
+        );
+    });
+    sink_tests::with_ix("r51-s3-width-u", false, |ix| {
+        assert!(
+            sink_tests::go(
+                ix,
+                "shift",
+                false,
+                vec![sink_tests::dict_k(sink_tests::u8v(255))]
+            )
+            .is_ok(),
+            "unsealed"
+        );
+    });
+    // v0.22's half, through the sealed runner.
+    let suite = |read: &str| {
+        format!("@[test]\nfn t() {{\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {{\n        Some(v) => {read}\n        None => assert(false)\n    }}\n}}\n")
+    };
+    let cand = |v: &str| format!("fn solve(d: Dict) {{ dict_set(d, \"k\", {v}) }}\n");
+    let out = judged_on(
+        "r6-arith",
+        &suite("assert((v << 1) == 254)"),
+        &cand("255 as u8"),
+    );
+    if !SEAL_RUNTIME_COMPLETE {
+        assert_eq!(
+            out,
+            Err(SEALED_RUN_REFUSED.to_string()),
+            "until S6 the runner refuses"
+        );
+        return;
+    }
+    assert!(
+        out != Ok(TestEnd::Completed)
+            && matches!(&out, Err(m) if m.contains("whose width nothing on the operator side determined")),
+        "ATTACK: a u8 the candidate chose truncated the operator's arithmetic into a pass: {out:?}"
+    );
+    let pinned = suite("{ let y: i64 = v\n            assert((y << 1) == 254) }");
+    assert_eq!(
+        judged_on("r6-arith", &pinned, &cand("127")),
+        Ok(TestEnd::Completed),
+        "control: GOOD, pinned"
+    );
+    assert!(
+        judged_on("r6-arith", &pinned, &cand("5")).is_err(),
+        "control: WRONG fails"
+    );
+    let out = judged_on("r6-arith", &pinned, &cand("255 as u8"));
+    assert!(
+        out != Ok(TestEnd::Completed) && confusion_refused(&out),
+        "ATTACK: a u8 passed the suite's `let y: i64` pin: {out:?}"
     );
 }

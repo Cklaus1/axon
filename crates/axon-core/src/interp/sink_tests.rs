@@ -187,7 +187,7 @@ pub(super) fn with_src<R>(
 }
 
 /// [`with_src`] over [`SUITE`] and [`CAND`].
-fn with_ix<R>(tag: &str, sealed: bool, f: impl FnOnce(&Interp<'_>) -> R) -> R {
+pub(super) fn with_ix<R>(tag: &str, sealed: bool, f: impl FnOnce(&Interp<'_>) -> R) -> R {
     with_src(tag, SUITE, CAND, sealed, f)
 }
 
@@ -275,7 +275,8 @@ pub(super) fn no_fn(name: &str) -> String {
     Interp::sealed_no_fn_msg(name)
 }
 
-const WIDTH: &str = "operator code did arithmetic on a fixed-width integer whose width nothing \
+pub(super) const WIDTH: &str =
+    "operator code did arithmetic on a fixed-width integer whose width nothing \
                      on the operator side determined";
 const NAME: &str = "a function name nothing on the operator side determined";
 
@@ -416,72 +417,6 @@ fn operator_code_hands_a_name_resolving_builtin_only_a_determined_name() {
         assert!(
             go(ix, "spawn_param", false, vec![strv("w")]).is_ok(),
             "unsealed: no rule"
-        );
-    });
-}
-
-/// v0.22 `operator_arithmetic_never_runs_at_a_width_the_candidate_chose`
-/// (veto interp.rs:10752) and its unary form (10178): operator arithmetic on
-/// a fixed-width integer whose width nothing on the operator side determined
-/// is refused - statically (`seal_width`, `seal_width_unary`: a value read
-/// untyped from a dict) and by the runtime taint (`t_check_width`: a typed
-/// parameter whose value carries the candidate's type taint). A comparison is
-/// not arithmetic; a `let x: u8` pin determines the width; a sealed frame's
-/// own arithmetic is its own.
-#[test]
-fn operator_arithmetic_never_runs_at_a_width_the_candidate_chose() {
-    with_ix("r51-s3-width", true, |ix| {
-        let d = || dict_k(u8v(255));
-        let r = go(ix, "shift", false, vec![d()]);
-        assert!(
-            refused(&r, WIDTH),
-            "ATTACK: `v << 1` at the candidate's width: {r:?}"
-        );
-        let r = go(ix, "neg", false, vec![d()]);
-        assert!(
-            refused(&r, WIDTH),
-            "ATTACK: `-v` at the candidate's width: {r:?}"
-        );
-        assert!(go(ix, "compare", false, vec![d()]).is_ok(), "a comparison");
-        assert!(
-            go(ix, "shift", false, vec![dict_k(Value::Int(4))]).is_ok(),
-            "an i64"
-        );
-        assert!(
-            go(ix, "shift_pinned", false, vec![d()]).is_ok(),
-            "pinned by `let x: u8`"
-        );
-        assert!(
-            go(ix, "shift", true, vec![d()]).is_ok(),
-            "the sealed frame's own"
-        );
-        assert!(
-            go(ix, "neg", true, vec![d()]).is_ok(),
-            "the sealed frame's own"
-        );
-        taint_rules_on();
-        // The runtime rule: determined statically, the value's TYPE taint
-        // says the candidate chose it.
-        assert!(go_t(ix, "shift_t", false, vec![(u8v(255), 0)]).is_ok());
-        let r = go_t(ix, "shift_t", false, vec![(u8v(255), ALL)]);
-        assert!(
-            refused(&r, WIDTH) && refused(&r, "runtime taint"),
-            "ATTACK: a tainted width: {r:?}"
-        );
-        let r = go_t(ix, "neg_t", false, vec![(u8v(4), ALL)]);
-        assert!(
-            refused(&r, "runtime taint"),
-            "ATTACK: a tainted unary width: {r:?}"
-        );
-        assert!(
-            go_t(ix, "neg_t", false, vec![(u8v(4), VAL)]).is_ok(),
-            "VAL is not TYP"
-        );
-    });
-    with_ix("r51-s3-width-u", false, |ix| {
-        assert!(
-            go(ix, "shift", false, vec![dict_k(u8v(255))]).is_ok(),
-            "unsealed"
         );
     });
 }
