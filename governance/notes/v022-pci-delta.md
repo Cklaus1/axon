@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 23be800cb7c5bb48fb9ec96224f3fb59d1d19481
+generated-at: 28e02cad37e8a8feda9768dff79d3c6269455583
 
-`git diff --numstat 31413ca7..23be800c -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..28e02cad -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -49,14 +49,14 @@ generated-at: 23be800cb7c5bb48fb9ec96224f3fb59d1d19481
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 4910 | 1499 |
+| `crates/axon-core/src/interp.rs` | 4914 | 1493 |
 | `crates/axon-core/src/interp/builtins.rs` | 666 | 512 |
 | `crates/axon-core/src/interp/conform.rs` | 1780 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1413 | 0 |
 | `crates/axon-core/src/interp/crossing_tests.rs` | 418 | 0 |
 | `crates/axon-core/src/interp/dispatch_tests.rs` | 616 | 0 |
 | `crates/axon-core/src/interp/env.rs` | 1193 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 1931 | 599 |
+| `crates/axon-core/src/interp/eval.rs` | 1941 | 603 |
 | `crates/axon-core/src/interp/goal.rs` | 88 | 42 |
 | `crates/axon-core/src/interp/kernel_tests.rs` | 401 | 0 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
@@ -70,7 +70,7 @@ generated-at: 23be800cb7c5bb48fb9ec96224f3fb59d1d19481
 | `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
 | `crates/axon-core/src/interp/vm/mod.rs` | 3426 | 0 |
 | `crates/axon-core/src/interp/vm/pure.rs` | 964 | 0 |
-| `crates/axon-core/src/interp/vm/tests.rs` | 1575 | 0 |
+| `crates/axon-core/src/interp/vm/tests.rs` | 1614 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
 | `crates/axon-core/src/lib.rs` | 116 | 21 |
 | `crates/axon-core/src/main.rs` | 799 | 243 |
@@ -82,9 +82,9 @@ generated-at: 23be800cb7c5bb48fb9ec96224f3fb59d1d19481
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 38799 | 5299 |
+| total | 38852 | 5297 |
 
-`git log --reverse 31413ca7..23be800c -- crates/axon-core/src`:
+`git log --reverse 31413ca7..28e02cad -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -274,7 +274,8 @@ generated-at: 23be800cb7c5bb48fb9ec96224f3fb59d1d19481
 | ce42eeb2 | R51 S4b | TEST-ONLY: operator_arithmetic_never_runs_at_a_width_the_candidate_chose moved from interp/sink_tests.rs to interp::tests (interp/tests_v022_s4.rs, the v0.22 module path) with v0.22's runner half, which asserts SEALED_RUN_REFUSED until S6; sink_tests helpers with_ix and WIDTH widened to pub(super); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | ddab14e1 | R51 S6 gaps | INTERPRETER revert of 5205763e's goal-name seal edge (the seal_call after the lookup in run_goal_random/categorical/multistart/tournament and the seal-aware unknown_goal_name): r51/s4b 65eda84a ports the same edge and merges first, so goal.rs and unknown_goal_name return to the base exactly; the unsealed path never changed. TEST-ONLY: the duplicate sink_tests goal-search test is dropped (S4b's dispatch_tests cover it). Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 23be800c | R51 S6 gaps merge | joins r51/gaps (5205763e..5a739bf7: NaN assert_eq_f64, M3483 row, no_arm move to interp::taint_tests, M3342 re-anchor) onto S4b (27836b1c); only this table and the note conflicted, resolved by keeping both sides; goal.rs/unknown_goal_name are S4b's (the gaps lane reverted its own copy); no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 186 commits | | |
+| 28e02cad | R51 S0b handler completion | INTERPRETER (both engines, S0b-class correctness fix, veto interp.rs:231, eval.rs:1634/1662/1675/1862): Flow::HandlerDone carries the handler-stack index of the frame whose arm completed without resume (boxed with the value, Box<(Value, usize)>, so Flow's layout and the hot path are unchanged), and eval_with_handler catches it only at that depth (the sealed block-value taint reads acc only then). UNSEALED BEHAVIOUR CHANGES: a completion used to be caught by the nearest with, so an inner with handling another effect (same body or a callee) took an outer arm's value and the outer body ran on (107 instead of 7); it now unwinds to the with that installed the arm, and a with it passes through does not run its return arm. The VM lowers WithHandler to one Tree op, so the fix is shared. TEST-ONLY: vm/tests.rs handler_completion_finishes_its_own_with_on_both_engines; M74 re-anchored. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 187 commits | | |
 <!-- END MECHANICAL -->
 
 
