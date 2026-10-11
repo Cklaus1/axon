@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 0faf4372bb7a4fc91843873fa7cd74ad270d9711
+generated-at: 57e4b8cc7b9fa310e21c63863087a7d838f11e7f
 
-`git diff --numstat 31413ca7..0faf4372 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..57e4b8cc -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -49,19 +49,20 @@ generated-at: 0faf4372bb7a4fc91843873fa7cd74ad270d9711
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 4174 | 1436 |
-| `crates/axon-core/src/interp/builtins.rs` | 584 | 503 |
-| `crates/axon-core/src/interp/conform.rs` | 1816 | 0 |
+| `crates/axon-core/src/interp.rs` | 4529 | 1432 |
+| `crates/axon-core/src/interp/builtins.rs` | 633 | 508 |
+| `crates/axon-core/src/interp/conform.rs` | 1787 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1411 | 0 |
+| `crates/axon-core/src/interp/crossing_tests.rs` | 203 | 0 |
 | `crates/axon-core/src/interp/env.rs` | 1193 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 1573 | 596 |
-| `crates/axon-core/src/interp/goal.rs` | 57 | 35 |
+| `crates/axon-core/src/interp/eval.rs` | 1745 | 599 |
+| `crates/axon-core/src/interp/goal.rs` | 65 | 36 |
 | `crates/axon-core/src/interp/kernel_tests.rs` | 399 | 0 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 48 | 21 |
 | `crates/axon-core/src/interp/sym.rs` | 1188 | 0 |
-| `crates/axon-core/src/interp/taint.rs` | 1128 | 0 |
-| `crates/axon-core/src/interp/taint_tests.rs` | 1058 | 0 |
+| `crates/axon-core/src/interp/taint.rs` | 1139 | 0 |
+| `crates/axon-core/src/interp/taint_tests.rs` | 1057 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 491 | 514 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
 | `crates/axon-core/src/interp/vm/mod.rs` | 3426 | 0 |
@@ -78,9 +79,9 @@ generated-at: 0faf4372bb7a4fc91843873fa7cd74ad270d9711
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 34346 | 5217 |
+| total | 35114 | 5222 |
 
-`git log --reverse 31413ca7..0faf4372 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..57e4b8cc -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -253,7 +254,8 @@ generated-at: 0faf4372bb7a4fc91843873fa7cd74ad270d9711
 | 1215159c | R51 S3b | TEST-ONLY unit tests (interp/conform_tests.rs, cfg(test)) for the channel access hooks t_chan_access/t_chan_choice in the method-call and select arms, plus their drift test. Interpreter behaviour unchanged: not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 769f45f2 | R51 S3b | TEST-ONLY unit tests (interp/conform_tests.rs) that kill the conform.rs mutation survivors (dict snapshot bound, epoch retake, first sealed mutation, fresh snapshot kept, dict-in-dict walk, array element judgement, cast depth bound, enum name); cast_at widened to pub(super) for the depth test, no behaviour change. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 0faf4372 | R51 S3 merge | joins S3a (fd3c3ff0..51a993cf, Kernel split) and S3b (be0636cb..769f45f2, closure representation A, conform.rs); only the interp.rs mod declarations, this table and the note conflicted, resolved by keeping both sides; no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 169 commits | | |
+| 57e4b8cc | R51 S3c | INTERPRETER seal crossing (spec §11 S3, TaintPort §1.2): call_fn_in_general's sealed instantiation goes through call_fn_sealed (seal_call, dict_edge_in on the way in, with_frame under the callee's provenance and pin owner, catchable/abortable sticky, dict_edge_out on the way out); call_fn_frame casts params (bind_params_sealed, fn_cx per activation, t_pins TYP strip, a sealed frame's params take ALL) and the return (seal_ret); call_mut_with's sealed path casts the &mut hand-back (replaced_ok_top); the closure frame casts arguments and result across the seal (closure_args_check/closure_ret_check, param_types pins, dict edges); handler frames carry sealed/operator_frames/pin_owner, arms run through handler_edge_into/back under with_frame and handler_may_answer gates the replay feed; dict_set/dict_remove/dict_inc mark dict_mutated; sandbox_run casts a sealed fn's result to i64; goal_eval and sandbox_run refuse a sealed caller with the uniform no_such_fn text. Every addition is gated on seal.active or the T=true instantiation; unsealed path unchanged. Every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 170 commits | | |
 <!-- END MECHANICAL -->
 
 
