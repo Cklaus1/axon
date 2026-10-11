@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: ecfc7949a8bdfe98dfd284320d7157c049e921a8
+generated-at: f1959dfc32e37d901d9bf5a9e63d052c958eb57a
 
-`git diff --numstat 31413ca7..ecfc7949 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..f1959dfc -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -88,7 +88,7 @@ generated-at: ecfc7949a8bdfe98dfd284320d7157c049e921a8
 | `crates/axon-core/src/types.rs` | 28 | 0 |
 | total | 46491 | 5387 |
 
-`git log --reverse 31413ca7..ecfc7949 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..f1959dfc -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|

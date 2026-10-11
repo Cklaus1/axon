@@ -373,7 +373,7 @@ const PRIMITIVE_NAMES: &[&str] = &[
 /// `Dict` is here because the string-keyed map primitive doesn't have a
 /// first-class generic surface yet — `Dict` annotations type-check as
 /// deferred until that lands.
-const DEFERRED_PREFIXES: &[&str] = &["Uncertain", "Temporal", "Goal", "Dict"];
+pub(crate) const DEFERRED_PREFIXES: &[&str] = &["Uncertain", "Temporal", "Goal", "Dict"];
 
 /// Phase 5: the value a refinement predicate's binder `_` is bound to when
 /// discharging a constant-argument obligation. Only forms this slice can fold
@@ -7276,7 +7276,7 @@ fn method_lookup_key(ty: &Type) -> Option<&'static str> {
     }
 }
 
-fn axon_type_name(ty: &AxonType) -> String {
+pub(crate) fn axon_type_name(ty: &AxonType) -> String {
     match ty {
         AxonType::Named(n) => n.clone(),
         AxonType::Generic { base, args } => {
