@@ -369,7 +369,12 @@ Slices, each a commit (or a short run of commits) that builds and passes its non
   representation A, `global_ref`, `general_calls`, the main-only sink classification, `interp/conform.rs`, plus
   [REVISED: added, reason: TaintPort-7] the per-frame `Kernel` split (96 field refs through `k()`), sealed RNG
   stream and `kernel.rs` sealed token domain, `no_such_fn` uniform text, handler `with_frame` /
-  `handler_may_answer`; T3, T8.
+  `handler_may_answer`; T3, T8. [REVISED: added at S2.3 step 4.] The frame-taint readers that are seal edges
+  land here with them: `taint.catchable` (veto builtins.rs:474-482, read at the call crossing, interp.rs:3620)
+  and the scheduler fiber's sealed-entry sticky; the TYP strip on a parameter or return whose closed type pins
+  the cast (`t_pins`, veto interp.rs:4144, 4372); a sealed frame's own `frame_sealed` at `with_frame`, so a fn
+  frame's parameters take ALL (until then `t_params` gives ALL only to a closure called from a sealed frame);
+  the sealed kernel's provenance store in `t_provenance_write`. S4 adds the PICK mark at frame exit.
 - **S4** PICK bit and receiver dispatch rule; T5, T8.1.
 - **S6** flip `SEAL_RUNTIME_COMPLETE`; remove the deferred-test registry entries; evidence re-anchor and re-run
   (Fork 4, T7); T6; T2 re-measured; strict gate; §14 filled.
