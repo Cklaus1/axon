@@ -632,7 +632,7 @@ fn run_both(f: &str) -> R {
     let body = body_of(&interp, f);
     let sentinel = intern("sentinel");
     let frame = || {
-        let mut env = Env::new();
+        let mut env = interp.new_env();
         env.define(sentinel, Value::Int(-1), 0);
         env.push();
         env
@@ -704,7 +704,7 @@ fn exec_runs_hand_built_ops_with_balanced_scopes() {
     let prog = program();
     let interp = Interp::build(&prog).expect("unsealed build");
     let a = intern("a");
-    let mut env = Env::new();
+    let mut env = interp.new_env();
     env.define(a, Value::Int(1), 0);
     let shadow = Expr::Let {
         name: "a".into(),
@@ -968,10 +968,10 @@ fn fast_call_checks_depth_before_arity() {
     let body = compile(&interp, g);
     assert!(kinds(&body).contains(&"call-fast"), "{:?}", kinds(&body));
     let both = || {
-        let mut env = Env::new();
+        let mut env = interp.new_env();
         env.push();
         let tree = format!("{:?}", interp.eval(g, &mut env));
-        let mut env = Env::new();
+        let mut env = interp.new_env();
         env.push();
         let vm = format!("{:?}", interp.exec(&body, &mut env));
         assert_eq!(vm, tree);
@@ -1009,10 +1009,10 @@ fn loop_control_never_leaves_a_fast_call() {
     ] {
         let body = compile(&interp, body_of(&interp, f));
         assert!(kinds(&body).contains(&op), "{f}: {:?}", kinds(&body));
-        let mut env = Env::new();
+        let mut env = interp.new_env();
         env.push();
         let tree = format!("{:?}", interp.eval(body_of(&interp, f), &mut env));
-        let mut env = Env::new();
+        let mut env = interp.new_env();
         env.push();
         let vm = format!("{:?}", interp.exec(&body, &mut env));
         assert_eq!(vm, tree, "{f}");

@@ -687,7 +687,7 @@ impl<'p> Interp<'p> {
         if !self.refine_preds.is_empty() {
             if let Some(crate::ast::AxonType::Named(rn)) = ty {
                 if let Some(pred) = self.refine_preds.get(rn.as_str()).copied() {
-                    let mut pe = Env::new();
+                    let mut pe = self.new_env();
                     pe.define(SYM_UNDERSCORE, v.clone(), 0);
                     // Also bind the bound name for inline `let x: T where E[x] > k`.
                     pe.define(s, v.clone(), 0);
@@ -1420,7 +1420,7 @@ impl<'p> Interp<'p> {
 
         // An inline `return(v) => e` arm rewrites the body's final value.
         if let Some(ra) = return_arm {
-            let mut ra_env = Env::from_snapshot(captured);
+            let mut ra_env = self.env_from_snapshot(captured);
             ra_env.push();
             self.match_pattern(&ra.binding, &value, &mut ra_env)?;
             value = self.eval(&ra.body, &mut ra_env)?;
@@ -1460,7 +1460,7 @@ impl<'p> Interp<'p> {
             feed: v,
             consumed: false,
         });
-        let mut body_env = Env::from_snapshot(ctx.env_snapshot);
+        let mut body_env = self.env_from_snapshot(ctx.env_snapshot);
         // SAFETY: `ctx` came from the live resume context, whose `with` is
         // still evaluating (`SrcRef`'s invariant).
         let body = unsafe { ctx.body.get() };
@@ -1520,7 +1520,7 @@ impl<'p> Interp<'p> {
         // so it must stay byte-identical: evaluate the arm and propagate the
         // `Flow::Resume(v)` it raises directly (no resume_ctx, no replay).
         if crate::effects::arm_is_bare_tail_resume(arm_body) {
-            let mut arm_env = Env::from_snapshot(captured);
+            let mut arm_env = self.env_from_snapshot(captured);
             arm_env.push();
             let bound = self.match_pattern(binding, &payload, &mut arm_env);
             let outcome = contain_loop_control(
@@ -1544,7 +1544,7 @@ impl<'p> Interp<'p> {
             body: with_body,
             env_snapshot: with_env,
         });
-        let mut arm_env = Env::from_snapshot(captured);
+        let mut arm_env = self.env_from_snapshot(captured);
         arm_env.push();
         let bound = self.match_pattern(binding, &payload, &mut arm_env);
         let outcome = contain_loop_control(
@@ -1831,7 +1831,7 @@ impl<'p> Interp<'p> {
                     if let crate::ast::AxonType::Named(rn) = &tf.ty {
                         if let Some(pred) = self.refine_preds.get(rn.as_str()).copied() {
                             if let Some(fv) = fields.named(&tf.name) {
-                                let mut pe = Env::new();
+                                let mut pe = self.new_env();
                                 pe.define(SYM_UNDERSCORE, fv.clone(), 0);
                                 if let Value::Bool(false) =
                                     contain_frame(self.eval(pred, &mut pe), FrameEdge::Predicate)?
@@ -1856,7 +1856,7 @@ impl<'p> Interp<'p> {
                 // instance and `_.field` projects, so build it first.
                 if let Some(pred) = &td.refinement {
                     let sv = Value::record(sname, fields);
-                    let mut pe = Env::new();
+                    let mut pe = self.new_env();
                     pe.define(SYM_UNDERSCORE, sv.clone(), 0);
                     if let Value::Bool(false) =
                         contain_frame(self.eval(pred, &mut pe), FrameEdge::Predicate)?

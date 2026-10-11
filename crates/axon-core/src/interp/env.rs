@@ -91,13 +91,17 @@ impl std::ops::DerefMut for Env {
 }
 
 impl Env {
-    /// An empty frame without a taint store.
+    /// A store-less frame for the unit tests that evaluate against an Env
+    /// with no `Interp` (the VM's pure-expression tests). Every other Env
+    /// comes from the factory.
+    #[cfg(test)]
     pub(super) fn new() -> Self {
         Self::with_store(false)
     }
 
     /// An empty frame, with a taint store iff `taints` (a sealed run).
-    pub(super) fn with_store(taints: bool) -> Self {
+    /// Private: only the factory below calls it.
+    fn with_store(taints: bool) -> Self {
         Env {
             bindings: Bindings {
                 vars: Vec::new(),
@@ -110,9 +114,9 @@ impl Env {
 
     /// An env whose single base scope is snapshot `snap`, to run a
     /// handler-arm body or a continuation replay in its defining environment.
-    /// The snapshot binds each name at most once. Only the `Interp` factory
-    /// calls this.
-    pub(super) fn from_snapshot(snap: Snapshot) -> Self {
+    /// The snapshot binds each name at most once. Private: only the factory
+    /// below calls it.
+    fn from_snapshot(snap: Snapshot) -> Self {
         let env = Env {
             bindings: Bindings {
                 vars: snap.vars,
@@ -123,6 +127,78 @@ impl Env {
         };
         env.check();
         env
+    }
+}
+
+// ── The Env factory (R51 S2.2) ───────────────────────────────────────────────
+//
+// Every Env of a run is made here, by the `Interp`, which knows whether the run
+// is sealed (`seal.active`, fixed at build): a sealed run's Envs carry a taint
+// store, an unsealed run's never do. `Env`'s constructors are private to this
+// module, so no other code can make an Env that disagrees with its run.
+impl Interp<'_> {
+    /// A fresh Env for this run: a predicate env, the module-level lets.
+    #[inline(always)]
+    pub(super) fn new_env(&self) -> Env {
+        Env::with_store(self.seal.active)
+    }
+
+    /// An Env whose single base scope is `snap`, a snapshot taken in this
+    /// run. A snapshot whose store does not match the run (a store-less one
+    /// in a sealed run) stops it: its taints would otherwise be lost.
+    pub(super) fn env_from_snapshot(&self, snap: Snapshot) -> Env {
+        if snap.taints.is_some() != self.seal.active {
+            no_store("a snapshot whose taint store does not match the run");
+        }
+        Env::from_snapshot(snap)
+    }
+
+    /// AX-54: an empty call frame from the pool of finished calls' frames, so
+    /// a call does not allocate its bindings and scope marks. Boxed, so
+    /// taking and returning one moves a pointer, not the frame. Every pooled
+    /// frame was made by [`Interp::new_env`] for this run and emptied on
+    /// give, so it comes back empty, with a store exactly in a sealed run.
+    #[inline(always)]
+    pub(super) fn take_frame(&self) -> Box<Env> {
+        if let Some(env) = self.frame_spare.take() {
+            debug_assert!(env.is_fresh() && env.has_store() == self.seal.active);
+            return env;
+        }
+        self.take_pooled_frame()
+    }
+
+    #[inline(never)]
+    fn take_pooled_frame(&self) -> Box<Env> {
+        match self.env_pool.borrow_mut().pop() {
+            Some(env) => {
+                debug_assert!(env.is_fresh() && env.has_store() == self.seal.active);
+                env
+            }
+            None => Box::new(self.new_env()),
+        }
+    }
+
+    /// Return a finished call's frame to the spare slot (the slot's previous
+    /// frame to the pool), emptied here, its taints with its bindings
+    /// (dropping the bindings where dropping the frame did); a frame that
+    /// grew unusually large is not kept.
+    #[inline(always)]
+    pub(super) fn give_frame(&self, mut env: Box<Env>) {
+        env.clear();
+        if env.capacity() > 1024 {
+            return;
+        }
+        if let Some(prev) = self.frame_spare.replace(Some(env)) {
+            self.pool_frame(prev);
+        }
+    }
+
+    #[inline(never)]
+    fn pool_frame(&self, env: Box<Env>) {
+        let mut pool = self.env_pool.borrow_mut();
+        if pool.len() < 64 {
+            pool.push(env);
+        }
     }
 }
 
@@ -376,6 +452,17 @@ impl Bindings {
     #[inline(always)]
     pub(super) fn get_var(&self, name: Sym, slot: u32) -> Option<&Value> {
         self.get_var_idx(name, slot).map(|i| &self.vars[i].1)
+    }
+
+    /// The taint of binding `i` (an index a lookup returned). Panics on an
+    /// Env without a store: a missing store never reads as 0.
+    #[cfg_attr(not(test), allow(dead_code))] // S2.3's taint channel reads it.
+    #[inline]
+    pub(super) fn taint(&self, i: usize) -> u8 {
+        match &self.taints {
+            Some(t) => t[i],
+            None => no_store("a taint read from an Env that has no taint store"),
+        }
     }
 
     /// Update the binding [`Bindings::get_var_idx`] finds to `val` carrying
@@ -703,5 +790,106 @@ mod tests {
         env.define(intern("s2_d"), Value::Int(1), 0);
         env.bindings.taints.as_mut().expect("store").push(0);
         env.push_var(intern("s2_e"), Value::Int(2), 0);
+    }
+
+    // ── R51 S2.2: the Env factory ────────────────────────────────────────────
+
+    /// A program whose candidate `fn solve` is loaded from the SEALED
+    /// directory `/<tag>-sealed`, with that directory. The run is built with
+    /// [`Interp::build_with`] (the engine already chosen), which computes the
+    /// seal state without the refuse-all pin `build_in` applies, so the
+    /// factory's sealed branch is observable before S6.
+    fn sealed_prog(tag: &str) -> (Program, std::path::PathBuf) {
+        use crate::span::intern_source;
+        let suite = "fn t() -> i64 { solve() }\n";
+        let cand = "fn solve() -> i64 { 41 }\n";
+        let sdir = format!("/{tag}-sealed");
+        let s = crate::parse_source_in(suite, intern_source(&format!("/{tag}-suite/h.ax"), suite))
+            .expect("suite parses");
+        let c = crate::parse_source_in(cand, intern_source(&format!("{sdir}/f.ax"), cand))
+            .expect("candidate parses");
+        let prog = Program {
+            items: s.items.into_iter().chain(c.items).collect(),
+        };
+        (prog, std::path::PathBuf::from(sdir))
+    }
+
+    /// Every Env a sealed run makes carries a taint store, and every Env an
+    /// unsealed run makes carries none: fresh envs, snapshot envs, and pooled
+    /// frames, which come back from `give_frame` emptied (taints with them)
+    /// and still with the store.
+    #[test]
+    fn the_factory_gives_a_store_exactly_in_a_sealed_run() {
+        let (prog, sdir) = sealed_prog("r51-s22-factory");
+        let sealed = Interp::build_with(&prog, std::slice::from_ref(&sdir), Engine::Tree);
+        let unsealed = Interp::build_with(&prog, &[], Engine::Tree);
+        assert!(sealed.seal.active && !unsealed.seal.active);
+        let x = intern("s22_x");
+        for (ix, store) in [(&sealed, true), (&unsealed, false)] {
+            let mut env = ix.new_env();
+            assert_eq!(env.has_store(), store, "new_env");
+            env.define(x, Value::Int(1), if store { 2 } else { 0 });
+            let back = ix.env_from_snapshot(env.snapshot());
+            assert_eq!(back.has_store(), store, "env_from_snapshot");
+            let mut frame = ix.take_frame();
+            assert_eq!(frame.has_store(), store, "a fresh pooled frame");
+            frame.define(
+                x,
+                Value::Str(Rc::new("held".into())),
+                if store { 1 } else { 0 },
+            );
+            ix.give_frame(frame);
+            let again = ix.take_frame();
+            assert!(again.is_fresh(), "a given frame is emptied");
+            assert_eq!(
+                again.has_store(),
+                store,
+                "a reused frame keeps the run's store"
+            );
+            if store {
+                assert_eq!(
+                    taints(&again),
+                    Vec::<u8>::new(),
+                    "its taints go with its bindings"
+                );
+            }
+        }
+    }
+
+    /// A taint read from an Env without a store panics: a missing store never
+    /// reads as 0.
+    #[test]
+    #[should_panic(expected = "no taint store")]
+    fn a_taint_read_without_a_store_panics() {
+        let (prog, _) = sealed_prog("r51-s22-nostore");
+        let unsealed = Interp::build_with(&prog, &[], Engine::Tree);
+        let mut env = unsealed.new_env();
+        env.define(intern("s22_y"), Value::Int(1), 0);
+        let i = env.get_var_idx(intern("s22_y"), 0).expect("bound");
+        let _ = env.taint(i);
+    }
+
+    /// A sealed run handed a store-less snapshot stops rather than run the
+    /// handler arm with every taint dropped.
+    #[test]
+    #[should_panic(expected = "does not match the run")]
+    fn a_storeless_snapshot_in_a_sealed_run_panics() {
+        let (prog, sdir) = sealed_prog("r51-s22-snap");
+        let sealed = Interp::build_with(&prog, std::slice::from_ref(&sdir), Engine::Tree);
+        let unsealed = Interp::build_with(&prog, &[], Engine::Tree);
+        let snap = unsealed.new_env().snapshot();
+        let _ = sealed.env_from_snapshot(snap);
+    }
+
+    /// The sealed build the factory tests use is NOT a runnable sealed run:
+    /// `Interp::build_in` still refuses it (SEAL_RUNTIME_COMPLETE = false).
+    #[test]
+    fn the_factory_tests_bypass_only_the_pin_not_the_refusal() {
+        let (prog, sdir) = sealed_prog("r51-s22-refuse");
+        const { assert!(!SEAL_RUNTIME_COMPLETE) };
+        assert_eq!(
+            Interp::build_in(&prog, &[sdir]).err().as_deref(),
+            Some(SEALED_RUN_REFUSED)
+        );
     }
 }

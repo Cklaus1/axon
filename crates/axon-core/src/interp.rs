@@ -3883,7 +3883,7 @@ impl<'p> Interp<'p> {
             return Ok(());
         }
         let defs = std::mem::take(&mut self.global_defs);
-        let mut env = Env::new();
+        let mut env = self.new_env();
         for (name, expr) in &defs {
             let v = self.eval(expr, &mut env)?;
             env.define(intern(name), v, 0);
@@ -4114,47 +4114,6 @@ impl<'p> Interp<'p> {
         result
     }
 
-    /// AX-54: an empty call frame from the pool of finished calls' frames, so
-    /// a call does not allocate its bindings and scope marks. Boxed, so
-    /// taking and returning one moves a pointer, not the frame.
-    #[inline(always)]
-    fn take_frame(&self) -> Box<Env> {
-        if let Some(env) = self.frame_spare.take() {
-            return env;
-        }
-        self.take_pooled_frame()
-    }
-
-    #[inline(never)]
-    fn take_pooled_frame(&self) -> Box<Env> {
-        match self.env_pool.borrow_mut().pop() {
-            Some(env) => env,
-            None => Box::new(Env::new()),
-        }
-    }
-
-    /// Return a finished call's frame to the spare slot (the slot's previous
-    /// frame to the pool), emptied here (dropping the bindings where dropping
-    /// the frame did); a frame that grew unusually large is not kept.
-    #[inline(always)]
-    fn give_frame(&self, mut env: Box<Env>) {
-        env.clear();
-        if env.capacity() > 1024 {
-            return;
-        }
-        if let Some(prev) = self.frame_spare.replace(Some(env)) {
-            self.pool_frame(prev);
-        }
-    }
-
-    #[inline(never)]
-    fn pool_frame(&self, env: Box<Env>) {
-        let mut pool = self.env_pool.borrow_mut();
-        if pool.len() < 64 {
-            pool.push(env);
-        }
-    }
-
     /// AX-54: an empty argument vector with room for `n`, reusing one that a
     /// finished call handed back to [`Interp::recycle_args`].
     #[inline]
@@ -4378,7 +4337,7 @@ impl<'p> Interp<'p> {
                 if let crate::ast::AxonType::Named(rname) = &p.ty {
                     if let Some(pred) = self.refine_preds.get(rname.as_str()).copied() {
                         let val = env.get(*s).cloned().unwrap_or(Value::Unit);
-                        let mut pred_env = Env::new();
+                        let mut pred_env = self.new_env();
                         pred_env.define(SYM_UNDERSCORE, val.clone(), 0);
                         // Also bind the parameter name (for inline refinements
                         // `p: T where E[p] > k` that use the param name directly).
@@ -4789,7 +4748,7 @@ impl<'p> Interp<'p> {
                         // `value`, `confidence`, `source_tag` in scope. Any
                         // boolean expression Axon understands is accepted —
                         // `&&`, `||`, comparisons, function calls, you name it.
-                        let mut pred_env = Env::new();
+                        let mut pred_env = self.new_env();
                         if let Some(v) = fields.get(SYM_VALUE) {
                             pred_env.define(SYM_VALUE, v.clone(), 0);
                         }
@@ -4857,7 +4816,7 @@ impl<'p> Interp<'p> {
                     }
                 } else {
                     // Composite predicate: bind `value` to the scalar and evaluate.
-                    let mut pred_env = Env::new();
+                    let mut pred_env = self.new_env();
                     pred_env.define(SYM_VALUE, result.clone(), 0);
                     let outcome = contain_frame(
                         self.eval(&spec.predicate, &mut pred_env),
