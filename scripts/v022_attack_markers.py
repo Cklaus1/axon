@@ -3017,7 +3017,6 @@ ATTACK_MARKERS.update({
     'M3494': r"ATTACK: sealed code reached the operator \(direct call\): Ok\(Completed\)",
     'M3495': r'call \[mutp\] Err\("`@` takes `&mut` parameters',
     'M3496': 'goal_eval name of a &mut fn: the text differs',
-    'M3497': r"ATTACK: a `&mut` write-through carried a candidate-chosen value to the operator \(an appended u8 into an empty output array\): Ok\(Completed\)",
-    'M3498': r"ATTACK: sealed code reached the operator \(module-level initializer\): Ok\(Completed\)",
-    'M3499': r"ATTACK: sealed code reached the operator \(a candidate struct's where, built by the operator\): Ok\(Completed\)",
+    'M3497': r"ATTACK: sealed code reached the operator \(module-level initializer\): Ok\(Completed\)",
+    'M3498': r"ATTACK: sealed code reached the operator \(a candidate struct's where, built by the operator\): Ok\(Completed\)",
 })

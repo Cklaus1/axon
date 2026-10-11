@@ -1931,6 +1931,13 @@ fn a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missi
     // Every position x every placement. The placements run side by side (one thread
     // each); a failure names both.
     let placements = existence_placements();
+    // R51 spec T4 states the size of this oracle: 79 forms x 8 placements x 2 runner
+    // `check` calls = 1264. A form or placement added or dropped changes the spec too.
+    assert_eq!(
+        (forms.len(), placements.len()),
+        (79, 8),
+        "existence oracle size drifted from spec T4"
+    );
     let mut fails: Vec<String> = std::thread::scope(|sc| {
         let hs: Vec<_> = placements
             .iter()

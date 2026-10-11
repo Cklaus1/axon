@@ -11204,14 +11204,16 @@ MUTATIONS += [
      'axon-psv', '--test sealed_frames', 'a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one'),
     # R51 S7 (S7-Evidence-4 follow-up): the remaining seal routing lines that choose a sealed
     # path's out-of-line helper (`if self.seal.active { .. *_sealed(` ); `if false` sends a sealed
-    # run down the unsealed code.
-    ('M3497', "R51 routing: a sealed run's `&mut` call goes through call_mut_sealed", 'crates/axon-core/src/interp/eval.rs',
-     '        if self.seal.active {\n            return self.call_mut_sealed(', '        if false {\n            return self.call_mut_sealed(',
-     'axon-core', '--no-default-features --lib', 'interp::tests::a_mut_write_through_value_is_cast_at_the_seal_edge_back'),
-    ('M3498', "R51 routing: a sealed run's module-level initializers run through init_globals_sealed", 'crates/axon-core/src/interp.rs',
+    # run down the unsealed code. interp.rs's global read (`Some(v) => { if self.seal.active {`) is
+    # M2474's span. call_mut's (`return self.call_mut_sealed(`) has no row: in a debug build its
+    # `if false` mutant trips the Env store assertion (env.rs guard_unsealed, "an unsealed-only
+    # write in a sealed Env") before any attack can be observed (measured: REFUSED_ELSEWHERE with
+    # a_mut_write_through_value_is_cast_at_the_seal_edge_back), so no unit test kills it by its own
+    # attack; the callee's guards are rowed (M2370-M2373, M2745-M2747, M2937).
+    ('M3497', "R51 routing: a sealed run's module-level initializers run through init_globals_sealed", 'crates/axon-core/src/interp.rs',
      '        if self.seal.active {\n            return self.init_globals_sealed(&defs);', '        if false {\n            return self.init_globals_sealed(&defs);',
      'axon-core', '--no-default-features --lib', 'interp::tests::runtime_sealing_holds_without_the_static_check'),
-    ('M3499', "R51 routing: a sealed run's whole-struct refinement runs through struct_refine_sealed", 'crates/axon-core/src/interp/eval.rs',
+    ('M3498', "R51 routing: a sealed run's whole-struct refinement runs through struct_refine_sealed", 'crates/axon-core/src/interp/eval.rs',
      '                    let held = if self.seal.active {\n                        self.struct_refine_sealed(', '                    let held = if false {\n                        self.struct_refine_sealed(',
      'axon-core', '--no-default-features --lib', 'interp::tests::runtime_sealing_holds_without_the_static_check'),
 ]
