@@ -2377,3 +2377,20 @@ Alternative to evaluate before step 4 [INFERENCE, not designed]: run candidate c
 of in every VM fast path. Needs an adversarial review against PSV-1 (control taint, the PICK bit, receiver dispatch)
 first; it may not cover all of them. Note the Firecracker real-guest boot test is SKIP on this host (no guest kernel
 image), so the microVM path is not proven here.
+
+## axon-fabric `build_state` tests fail the gate on any host with mold installed
+
+Found 2026-10-11 (R51 speed lane, gate profiling at 9e67b796): with `/usr/bin/mold` present, `scripts/gate.sh`
+(lines 71-74) exports `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS=-C link-arg=-fuse-ld=mold`. The `build()`
+helper in `crates/axon-fabric/tests/build_state.rs` removes `RUSTFLAGS`, `CARGO_ENCODED_RUSTFLAGS`,
+`CARGO_BUILD_RUSTFLAGS`, the wrappers and `CARGO_TARGET_DIR` from its child `cargo build`, but not the
+target-scoped `CARGO_TARGET_<triple>_RUSTFLAGS`. The child build therefore runs with the mold flag, axon-fabric's
+build script refuses it as a production build under a linker, and two tests fail
+(`a_production_build_under_a_wrapper_rustflags_or_linker_does_not_happen`'s clean-build control,
+`a_development_build_under_a_wrapper_records_it_in_its_identity`'s "recorded verbatim" assertion). The gate stops at
+"v0.22 closed-loop crate tests" in about 2 minutes. Not reached before: mold was absent from this host until
+2026-10-11 and was removed again the same day.
+
+Fix (crates/ change, needs a pci_delta THEMES entry): the helper also removes every `CARGO_TARGET_*_RUSTFLAGS` and
+`CARGO_TARGET_*_LINKER` variable of the parent environment, and a case asserts the control build still builds with
+the target-scoped flag set in the parent. Until then a host with mold cannot pass the gate.
