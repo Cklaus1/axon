@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 00ae0e525950bfd8337d39a5f3a10f722a9f16cf
+generated-at: 662b7329baaf343f7c67de23541686fe9193e909
 
-`git diff --numstat 31413ca7..00ae0e52 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..662b7329 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -65,9 +65,9 @@ generated-at: 00ae0e525950bfd8337d39a5f3a10f722a9f16cf
 | `crates/axon-core/src/interp/sink_tests.rs` | 1099 | 0 |
 | `crates/axon-core/src/interp/sym.rs` | 1187 | 0 |
 | `crates/axon-core/src/interp/taint.rs` | 1654 | 0 |
-| `crates/axon-core/src/interp/taint_tests.rs` | 3978 | 0 |
-| `crates/axon-core/src/interp/tests_v022_a.rs` | 1223 | 0 |
-| `crates/axon-core/src/interp/tests_v022_b.rs` | 2030 | 0 |
+| `crates/axon-core/src/interp/taint_tests.rs` | 3975 | 0 |
+| `crates/axon-core/src/interp/tests_v022_a.rs` | 1215 | 0 |
+| `crates/axon-core/src/interp/tests_v022_b.rs` | 2027 | 0 |
 | `crates/axon-core/src/interp/tests_v022_c.rs` | 153 | 0 |
 | `crates/axon-core/src/interp/tests_v022_s4.rs` | 623 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 506 | 514 |
@@ -86,9 +86,9 @@ generated-at: 00ae0e525950bfd8337d39a5f3a10f722a9f16cf
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 45543 | 5257 |
+| total | 45529 | 5257 |
 
-`git log --reverse 31413ca7..00ae0e52 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..662b7329 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -300,7 +300,8 @@ generated-at: 00ae0e525950bfd8337d39a5f3a10f722a9f16cf
 | 754d7874 | R51 T3 merge | joins r51/t3c (4e6747b1: 31+3 taint_tests / interp::tests rows, the Case harness, taint.rs cfg(test) tables) onto the t3b merge; interp/taint_tests.rs had two pure appends after the same base line (gaps' no_arm move, t3c's harness) and keeps both, gaps' first; the include! lines, this table, the note and the registry resolved by keeping both sides; no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 6007bea4 | R51 T3 merge | TEST-ONLY: integration fixes after the T3 merges: interp/tests_v022_s4.rs drops its six helpers (JUDGE, LAUNDER, CONFUSED, judged, live, confusion_refused) that tests_v022_a.rs's byte-identical copies shadow, dead after the merge under clippy -D; the name-sink drift test (tests_v022_b.rs) re-lists goal_name_is_known's lookup in its seal-aware form from S4b; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 00ae0e52 | R51 S4 merge | joins r51/s4 (S4a: ce3d8646..ecbdf307, PICK mark, edges, frame-exit and builtin pick, t_check_call_picked, T8.1, T5) onto the T3 merges; interp/taint_tests.rs had two pure appends after the same base line and keeps both (T3c's first), no duplicate names; this table, the note and the registry (3-way per entry) resolved by keeping both sides; no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 208 commits | | |
+| 662b7329 | R51 S4 follow-up | TEST-ONLY: the ported rows take v0.22's harness calls now that S4's switches exist: sealed_outcome_rule(.., true) restored in tests_v022_a.rs (three fn-value rows) and tests_v022_b.rs (the global fast-path row), their R51 adaptation comments dropped; taint_tests::run sets DISPATCH_RULE_OFF/TAINT_FORCE_ON per Rules on the run's own thread (veto taint_tests.rs:41-51) instead of refusing TaintOnly/Neither; the 23 S4-slotted tests_v022_a rows re-slot to S6 and 28 reasons drop the stale 'S4 adds the switch' text, registry synced (S4 23 -> 0, S6 248 -> 271); all 57 touched rows pass with the seal flipped locally (not committed); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 209 commits | | |
 <!-- END MECHANICAL -->
 
 
