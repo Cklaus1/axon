@@ -179,7 +179,7 @@ fn add_site(r: &Path, f: &str) {
 /// reported (the count no longer matches) rather than hidden behind the
 /// listing. Control: the listing that matches the measurement holds.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_new_site_in_a_not_yet_scanned_file_is_reported() {
     let r = tree("count");
     not_yet_scanned(&r, SCANNED, 0);
@@ -202,7 +202,7 @@ fn a_new_site_in_a_not_yet_scanned_file_is_reported() {
 /// failure, so no freeze binds evidence over a decision file nobody scanned.
 /// Control: the same tree holds without --freeze (the count is right).
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_freeze_reading_refuses_a_not_yet_scanned_file() {
     let r = tree("freeze");
     not_yet_scanned(&r, SCANNED, 0);
@@ -221,7 +221,7 @@ fn a_freeze_reading_refuses_a_not_yet_scanned_file() {
 /// but in a function whose name the rule does not select (rng_guard's
 /// neighbourhood) is still a site. Control: the unedited copy holds.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_site_in_the_anchored_region_outside_a_seal_fn_is_scanned() {
     // Integration (amendment 99): the control is run on a SECOND copy and AFTER the
     // attack. The anchored region now holds an exemption (psv1g's `is_global`), so a
@@ -251,7 +251,7 @@ fn a_site_in_the_anchored_region_outside_a_seal_fn_is_scanned() {
 /// would let the region start (or end) wherever the first copy is, silently.
 /// Control: the unedited copy holds.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_region_anchor_that_is_not_unique_is_refused() {
     let r = tree("anchor");
     holds(&r, &[], "the unedited copy");
@@ -307,7 +307,7 @@ fn add_crate(r: &Path, name: &str) {
 /// dependency) is in scope the day it appears, whatever its directory.
 /// Control: the same new crate, linked by nothing, is not scanned.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_crate_a_protected_crate_links_is_scanned() {
     let r = tree("closure");
     add_crate(&r, "axon-gate-probe-dep");
@@ -332,7 +332,7 @@ fn a_crate_a_protected_crate_links_is_scanned() {
 /// Amendment 71: a package the guest image builds is protected code. Control:
 /// the crate exists, unbuilt, and is not scanned.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_package_the_guest_image_builds_is_scanned() {
     let r = tree("guestpkg");
     add_crate(&r, "axon-gate-probe-guest");
@@ -362,7 +362,7 @@ const GUEST_MAIN: &str = "fn main() {\n    let args: Vec<String> = env::args().c
 /// Amendment 71: a process exit with a non-zero code and a compile refusal
 /// (`Diagnostic::error`) are refusal sites. Control: the unedited copy holds.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn an_exit_or_a_compile_refusal_is_a_site() {
     let r = tree("forms");
     edit(
@@ -398,7 +398,7 @@ fn an_exit_or_a_compile_refusal_is_a_site() {
 /// Amendment 71: a call of a file-local refusal constructor (here the
 /// guest PID 1's diverging `exec_process`, which exits non-zero) is a site. Control: the unedited copy holds.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_call_of_a_local_refusal_constructor_is_a_site() {
     let r = tree("ctor");
     edit(
@@ -455,7 +455,7 @@ fn must_hold(r: &Path, args: &[&str], attack: &str) {
 /// refuses by `return None` / `.then_some`, invisible to the gate). Control:
 /// the unedited copy holds.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_function_that_decides_by_bool_or_option_is_a_site() {
     let r = tree("pred");
     add_code(
@@ -487,7 +487,7 @@ fn a_function_that_decides_by_bool_or_option_is_a_site() {
 /// whose new text equals its old (an edit that changes nothing) covers
 /// nothing.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_row_covers_only_what_its_edit_changes() {
     let r = tree("changed");
     let o = gate(&r, &["--without=M1726"]);
@@ -527,7 +527,7 @@ fn a_row_covers_only_what_its_edit_changes() {
 /// line. One anchored in its body is a line site's, and must not exempt the
 /// function. Control: the head-line anchor does.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn an_exemption_in_a_predicate_fns_body_does_not_exempt_the_fn() {
     let code = "pub fn gate_probe_body(x: u64) -> Option<u64> {\n    (x > 7).then_some(x)\n}\n";
     let r = tree("exbody");
@@ -570,7 +570,7 @@ fn an_exemption_in_a_predicate_fns_body_does_not_exempt_the_fn() {
 /// its block is exempted by an anchor on the `let` line. Control: the same
 /// probe with its anchor holds.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_let_else_is_the_opener_of_its_refusal() {
     let r = tree("letelse");
     add_code(
@@ -596,7 +596,7 @@ fn a_let_else_is_the_opener_of_its_refusal() {
 /// (the nearest opener used to be found across a function boundary, so an
 /// exemption in the PREVIOUS function exempted this one's refusal).
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_guard_block_does_not_cross_a_function_boundary() {
     let r = tree("fnstop");
     add_code(
@@ -627,7 +627,7 @@ fn a_guard_block_does_not_cross_a_function_boundary() {
 /// Control: the unedited copy holds, and a refusal INSIDE the test module is
 /// still not a site.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn production_code_after_a_test_module_is_scanned() {
     let probe = "pub fn gate_probe_hidden(x: u64) -> Result<(), String> {\n    Err(format!(\"hidden production refusal {x}\"))\n}\n";
     let r = tree("cfg-empty");
@@ -699,7 +699,7 @@ const PROBE_ENUM: &str = "pub enum GateProbeVerdict {\n    Allowed,\n    Denied 
 /// state) and an `*Error` enum (whose refusals travel in `Err(` and are sites
 /// already) are not. Matching a verdict is not deciding one.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_built_negative_verdict_variant_is_a_site() {
     let r = tree("verdict-variant");
     add_code(
@@ -758,7 +758,7 @@ fn a_built_negative_verdict_variant_is_a_site() {
 /// Amendment 76: `Self::Variant` inside the enum's own `impl` is the same
 /// construction (axon-loop and axon-os build their verdicts that way).
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_self_variant_in_the_verdicts_own_impl_is_a_site() {
     let r = tree("verdict-self");
     add_code(
@@ -782,7 +782,7 @@ fn a_self_variant_in_the_verdicts_own_impl_is_a_site() {
 /// may be data flow (`let status = f(); Verdict { status }`), not a built
 /// variant. Exempt on its HEAD line, like a predicate primitive.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_function_that_returns_a_verdict_is_a_site() {
     let r = tree("verdict-fn");
     add_code(
@@ -827,7 +827,7 @@ fn a_function_that_returns_a_verdict_is_a_site() {
 /// analogue of `refused(`). A same-named function in ANOTHER file is another
 /// function.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_call_of_a_verdict_helper_constructor_is_a_site() {
     let r = tree("verdict-helper");
     add_code(
@@ -853,7 +853,7 @@ fn a_call_of_a_verdict_helper_constructor_is_a_site() {
 /// Amendment 76: the same for a helper that builds an `Err(..)` and nothing
 /// else (`fn check_operator_owned(..)`, `fn no_xattr(..)`): a call is a site.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_call_of_an_err_helper_constructor_is_a_site() {
     let r = tree("err-helper");
     add_code(
@@ -876,7 +876,7 @@ fn a_call_of_an_err_helper_constructor_is_a_site() {
 /// returns; amendment 76 had judged it "an absence some other decision made",
 /// which left 71 refusals unseen); see `a_single_line_ok_or_refusal_is_a_site`.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn an_inline_predicate_refused_through_ok_or_is_a_site() {
     let r = tree("inline-pred");
     add_code(
@@ -901,7 +901,7 @@ fn an_inline_predicate_refused_through_ok_or_is_a_site() {
 /// Err(..) }`, the condition over several lines) is a site whose block starts
 /// at the `if`.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_matches_guard_opens_its_refusal() {
     let r = tree("matches-guard");
     add_code(
@@ -927,7 +927,7 @@ fn a_matches_guard_opens_its_refusal() {
 /// item is test code (the psv crate's xattr module read as production);
 /// `#[cfg(any(test, feature = ..))]` and `#[cfg(not(test))]` are production.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_cfg_all_test_item_is_test_code_and_a_cfg_any_test_item_is_not() {
     let r = tree("cfg-all");
     add_code(
@@ -962,7 +962,7 @@ const FLAG_PROBES: &str = "pub fn gate_probe_flags(p: &std::path::Path) {\n    u
 /// (MS_NOSUID ...). Control: `create_new(false)` and a flag named in a comment
 /// are not.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn an_open_flag_form_is_a_site() {
     let r = tree("open-flags");
     add_code(&r, SCANNED, FLAG_PROBES);
@@ -1002,7 +1002,7 @@ fn an_open_flag_form_is_a_site() {
 /// or comparing one (`Some("x") =>`, `== Some("x")`, `matches!(.., Some("x"))`)
 /// reads a decision somebody else made.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_some_reason_value_is_a_site_and_a_pattern_is_not() {
     let r = tree("some-reason");
     add_code(
@@ -1037,7 +1037,7 @@ fn a_some_reason_value_is_a_site_and_a_pattern_is_not() {
 /// or an `ExitCode` is a site of its own (its body the guard block), like a
 /// `bool`/`Option` predicate.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_function_deciding_by_result_bool_i32_or_exitcode_is_a_site() {
     let r = tree("status-fns");
     add_code(
@@ -1078,7 +1078,7 @@ const PRIV_PROBES: &str = "pub fn gate_probe_priv(p: &std::path::Path, cmd: &mut
 /// Control: a mode READ (`.mode()` with no argument), a definition of
 /// `set_mode` and the unedited tree do not name one.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_permission_privilege_or_process_form_is_a_site() {
     let r = tree("priv-forms");
     add_code(&r, SCANNED, PRIV_PROBES);
@@ -1149,7 +1149,7 @@ const BUILD_PROBES: &str = "pub fn gate_probe_build(cmd: &mut std::process::Comm
 /// A `Stdio::piped()` capture is NOT one (its absence breaks the handle the
 /// caller takes) and a MAX_* definition is not a use.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_child_build_and_a_size_cap_are_sites() {
     let r = tree("build-forms");
     add_code(&r, SCANNED, BUILD_PROBES);
@@ -1192,7 +1192,7 @@ fn a_child_build_and_a_size_cap_are_sites() {
 /// too, transitively to a fixed point: the signer loader's `bad(..)` closure
 /// calls `refuse`, so its 13 calls were invisible.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_diverging_closure_that_delegates_to_a_refusal_is_a_constructor() {
     let r = tree("diverging");
     add_code(
@@ -1221,7 +1221,7 @@ fn a_diverging_closure_that_delegates_to_a_refusal_is_a_constructor() {
 /// allocated, M1597 and M2151 misnumbered or withdrawn); the gate now refuses
 /// a citation of a row the registry does not hold. Control: the unedited copy.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn an_exemption_citing_a_row_that_does_not_exist_is_refused() {
     let r = tree("cites-missing-row");
     add_code(
@@ -1253,7 +1253,7 @@ fn an_exemption_citing_a_row_that_does_not_exist_is_refused() {
 /// planted exemption sits inside a site `tasks.rs` already rows (M986).
 /// Control: the unedited copy holds.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn an_exemption_inside_a_site_a_row_covers_is_stale() {
     let r = tree("stale-exempt");
     exempt(
@@ -1288,7 +1288,7 @@ const VALUE_PROBES: &str = "pub fn gv_dirs(p: &std::path::Path) {\n    let gv_cr
 /// compares against), and `env::set_var` / `remove_var`. A struct FIELD
 /// declaration, a fn PARAMETER of that name and a form named in a comment are not.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_value_handed_to_a_privilege_primitive_or_a_directory_creation_is_a_site() {
     let r = tree("value-forms");
     add_code(&r, SCANNED, VALUE_PROBES);
@@ -1338,7 +1338,7 @@ fn a_value_handed_to_a_privilege_primitive_or_a_directory_creation_is_a_site() {
 /// not followed by `?` (the error is kept as a value) and one named in a
 /// comment are not.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_single_line_ok_or_refusal_is_a_site() {
     let r = tree("ok-or");
     add_code(
@@ -1375,7 +1375,7 @@ fn a_single_line_ok_or_refusal_is_a_site() {
 /// Amendment 95: `libc::syscall(..)` (ioprio_set, ...) and a write to
 /// `oom_score_adj` are privilege-form sites.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_raw_syscall_and_an_oom_score_write_are_sites() {
     let r = tree("raw-syscall");
     add_code(
@@ -1400,7 +1400,7 @@ fn a_raw_syscall_and_an_oom_score_write_are_sites() {
 /// (`\bM\d{1,4}\b` could not see M99999, so an exemption citing a five-digit row
 /// that does not exist was never checked).
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn an_exemption_citing_a_five_digit_row_that_does_not_exist_is_refused() {
     let r = tree("cites-5-digit-row");
     add_code(
@@ -1446,7 +1446,7 @@ fn add_row(r: &Path, id: &str, f: &str, old: &str, new: &str) {
 /// which leaves `b || c`, does not; a row per term, or a term exemption stating
 /// a fact, credits it.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_compound_guard_is_judged_per_term() {
     let old = "a > 1 || b > 2 || c > 3";
     // ATTACK: the row removes only the first term.
@@ -1524,7 +1524,7 @@ const CONST_PROBE: &str = "const GC_MAX_AGE: u64 = 300;\nconst GC_MESSAGE: &str 
 /// carry an exemption. A const used only in a message, and one no refusing
 /// function reads, are not.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_constant_a_guard_reads_is_a_site() {
     let r = tree("consts");
     add_code(&r, SCANNED, CONST_PROBE);
@@ -1563,7 +1563,7 @@ fn a_constant_a_guard_reads_is_a_site() {
 /// site whose block held another row). Control: a row that changes the form line
 /// credits it.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_form_is_credited_only_by_a_row_that_changes_its_own_line() {
     let probe = "pub fn gf_probe(a: u64, p: &std::path::Path) -> Result<(), String> {\n    if a > 1 {\n        let _gf_dir = std::fs::create_dir(p);\n        return Err(format!(\"gf probe\"));\n    }\n    Ok(())\n}\n";
     let r = tree("own-line");
@@ -1610,7 +1610,7 @@ fn a_form_is_credited_only_by_a_row_that_changes_its_own_line() {
 /// unobserved). A relative literal, a computed path, a `let` binding and a
 /// field DECLARATION are not.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn an_absolute_path_literal_handed_to_a_config_field_is_a_site() {
     let r = tree("path-field");
     add_code(
@@ -1651,7 +1651,7 @@ fn an_absolute_path_literal_handed_to_a_config_field_is_a_site() {
 /// every run, lists each with `--remainder`, and never words the result as
 /// coverage. A checkable exemption is not one.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_remainder_exemption_is_counted_and_never_claimed_covered() {
     let base = tree("remainder-base");
     let b = text(&gate(&base, &["--remainder"]));
@@ -1760,7 +1760,7 @@ fn py_exempt(r: &Path, func: &str, n: usize, frag: &str, kind: &str, reason: &st
 /// guard credits it; an exemption is keyed by function, ordinal and a fragment
 /// of the site, and one whose fragment disagrees is refused.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_python_refusal_is_a_site_judged_by_its_own_guard() {
     let r = tree("py-sites");
     add_py_probe(&r);
@@ -1879,7 +1879,7 @@ fn a_python_refusal_is_a_site_judged_by_its_own_guard() {
 /// Amendment 98: a Python exemption of kind REMAINDER is COUNTED (category
 /// `py_guard`) and one of kind OBSERVED is counted apart; neither is a row.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_python_guard_exemption_is_counted_by_kind() {
     let r = tree("py-count");
     add_py_probe(&r);
@@ -2000,7 +2000,7 @@ fn add_spawn_probe(r: &Path) {
 /// while `"AXON_PATH_EXCLUSIVE", "1"` -> `"0"` kept the suite green). A computed value
 /// and a `#[cfg(test)]` item are not sites.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_literal_handed_to_a_spawn_builder_is_a_site_of_its_own() {
     let r = tree("value-spawn");
     add_spawn_probe(&r);
@@ -2037,7 +2037,7 @@ fn a_literal_handed_to_a_spawn_builder_is_a_site_of_its_own() {
 /// credits it as REMAINDER (counted by `val_*` category, never claimed covered) and a
 /// stale one (the fragment moved, or a row now changes the value) is refused.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_value_is_credited_only_by_an_edit_of_that_value() {
     let r = tree("value-credit");
     add_spawn_probe(&r);
@@ -2179,7 +2179,7 @@ const PRIV_PROBE: &str = "pub fn vp_priv(h: &VpHost, fd: i32, p: &std::path::Pat
 /// green) and `0o700` -> `0o777` cannot hide behind a row on the primitive's line. A
 /// pattern (`Some(uid) =>`) is not an argument.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn an_owner_argument_a_privilege_argument_and_a_mode_literal_are_sites() {
     let r = tree("value-priv");
     add_code(&r, SCANNED, PRIV_PROBE);
@@ -2221,7 +2221,7 @@ const FIELD_PROBE: &str = "pub fn vc_cfg(x: u64) -> VcConfig {\n    VcConfig {\n
 /// another type, a computed value, a variable, a declaration and an `impl` head are
 /// not.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_literal_field_of_a_config_or_policy_struct_is_a_site() {
     let r = tree("value-field");
     add_code(&r, SCANNED, FIELD_PROBE);
@@ -2255,7 +2255,7 @@ const FLOW_PROBE: &str = "pub fn fw_run(fw_x: &str, fw_p: &FwProg, fw_cfg: &FwCf
 /// the const a sink names is a site at its DEFINITION, and a const nothing hands to a sink is
 /// not.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_value_followed_to_an_exec_wrapper_or_an_open_flag_is_a_site() {
     let r = tree("flow-wrapper");
     add_code(&r, SCANNED, FLOW_PROBE);
@@ -2291,7 +2291,7 @@ fn a_value_followed_to_an_exec_wrapper_or_an_open_flag_is_a_site() {
 /// struct-literal field NAMED `owner` is a site. Round 11 replaced `lx.exec_owner` by `None` at
 /// four consumers with the whole suite green because only `Some(<x>.owner)` was a form.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn an_owner_argument_is_a_site_wherever_it_comes_from() {
     let r = tree("flow-owner");
     add_code(&r, SCANNED, FLOW_PROBE);
@@ -2316,7 +2316,7 @@ fn an_owner_argument_is_a_site_wherever_it_comes_from() {
 /// of exec wrappers and builders, checked in both directions, so a NEW fn that builds a Command
 /// from its parameters cannot become a blind wrapper: it fails the gate until it is listed.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_function_that_builds_a_command_is_listed_as_a_wrapper_or_a_builder() {
     let r = tree("flow-ctor");
     holds(&r, &[], "the unedited tree: every constructor is listed");
@@ -2352,7 +2352,7 @@ fn a_function_that_builds_a_command_is_listed_as_a_wrapper_or_a_builder() {
 /// the verdict spec says the same. A claim that lists only what the gate sees reads as
 /// "every guard".
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn the_gate_prints_what_it_still_cannot_see() {
     let r = tree("still-blind");
     let t = text(&gate(&r, &[]));
@@ -2378,7 +2378,7 @@ fn the_gate_prints_what_it_still_cannot_see() {
 const SIGN_PROBE: &str = "pub fn sg_sign(sg_k: &[u8], sg_d: &[u8]) -> [u8; 32] {\n    let mut sg_msg = b\"sg-context/1\\0\".to_vec();\n    sg_msg.extend_from_slice(sg_d);\n    let _ = verify_document(&sg_sig, SG_DOMAIN, &sg_who, &sg_doc, sg_key);\n    hmac_sha256(sg_k, &sg_msg)\n}\n\nconst SG_DOMAIN: &str = \"sg.domain/1\";\nconst SG_UNUSED: &str = \"sg.never-signed/1\";\n";
 
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn an_input_to_a_signing_or_mac_primitive_is_a_site_of_its_own() {
     let r = tree("sign-sites");
     add_code(&r, SCANNED, SIGN_PROBE);
@@ -2424,7 +2424,7 @@ fn an_input_to_a_signing_or_mac_primitive_is_a_site_of_its_own() {
 const DEFAULT_PROBE: &str = "pub fn df_run(df_mode: Option<Mode>, df_n: Option<u64>, df_c: Option<i64>, df_y: Option<u64>, df_w: &str, df_z: Option<usize>) {\n    let _a = df_mode.unwrap_or(Mode::DfDev);\n    let _b = df_w.parse::<u8>().ok().unwrap_or_default();\n    let _c = df_n.unwrap_or(7701);\n    let _d = df_c.map_or(true, |c| c > 3);\n    let _e = df_y.or(Some(7702));\n    let _f: DfCfg = Default::default();\n    let _g = df_z.unwrap_or(df_w.len());\n}\n\n#[cfg(test)]\nfn df_test_only(df_t: Option<u64>) {\n    let _ = df_t.unwrap_or(7799);\n}\n";
 
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_default_read_as_a_value_in_a_protected_crate_is_a_site() {
     let r = tree("default-sites");
     add_code(&r, SCANNED, DEFAULT_PROBE);
@@ -2479,7 +2479,7 @@ fn a_default_read_as_a_value_in_a_protected_crate_is_a_site() {
 const ABSENT_PROBE: &str = "pub fn ab_run(ab_w: Option<i64>, ab_r: Result<u8, String>, ab_o: Option<u8>, ab_t: Option<Mode>) -> i64 {\n    let _a = ab_w.is_none_or(|ab_x| 5 >= ab_x);\n    let _b = ab_w.is_some_and(|ab_x| ab_x > 2);\n    let _c = ab_r.clone().is_ok_and(|ab_v| ab_v > 1);\n    let _d = ab_r.clone().is_err_and(|ab_e| ab_e.is_empty());\n    let _e = ab_o.map_or_else(|| 3, |ab_v| ab_v);\n    let _f = matches!(ab_o, None | Some(0));\n    let _g = ab_o.or_else(|| Some(9191));\n    let _h = match ab_t { Some(ab_m) => ab_m, None => Mode::AbDev };\n    let _i = match ab_r { Ok(ab_v) => ab_v, Err(_) => 7373 };\n    let Some(_j) = ab_o else { return 4242; };\n    let _k = matches!(ab_o, Some(1));\n    let _l = match ab_t { Some(ab_m) => ab_m, None => ab_default(ab_w) };\n    let _m = match ab_r { Ok(ab_v) => ab_v, Err(_) => ab_w };\n    let _n = if ab_w.is_some() { 1 } else { 2 };\n    let Some(_p) = ab_o else { return Err(ab_w) };\n    0\n}\n\n#[cfg(test)]\nfn ab_test_only(ab_t: Option<u8>) {\n    let _ = ab_t.is_none_or(|ab_x| ab_x > 6161);\n    let _ = match ab_t { Some(ab_v) => ab_v, None => 6262 };\n}\n";
 
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn an_absent_arm_decision_is_a_site_in_a_protected_crate() {
     let r = tree("absent-arm-sites");
     add_code(&r, SCANNED, ABSENT_PROBE);
@@ -2559,7 +2559,7 @@ fn an_absent_arm_decision_is_a_site_in_a_protected_crate() {
 /// The count of arguments the gate could not follow is of DISTINCT arguments: round 12 found 46 where the
 /// true number was 23, because two passes over the same files incremented one counter.
 #[test]
-#[ignore = "R51 S3: v022_refusal_coverage.py scopes interp/conform.rs, which arrives in S3; the gate cannot hold its control on this tree"]
+#[ignore = "R51 S6: interp/conform.rs is ported (S3b), but the gate's control still fails on this tree: its rows' old text is anchored to v0.22's sources (BAD M58 etc., covers nothing) until the Fork 4 evidence re-anchor in S6, so an attack 'refused' here is refused vacuously"]
 fn a_computed_sink_argument_is_counted_once() {
     let count = |t: &str| -> usize {
         t.lines()

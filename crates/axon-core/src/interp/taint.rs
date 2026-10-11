@@ -594,10 +594,16 @@ pub(crate) fn info(name: &str) -> Option<Info> {
     .copied()
 }
 
-fn addr_of(v: &Value) -> Option<usize> {
+/// The identity of a reference-semantic object (R51 Fork 3): a dict, a
+/// channel, or a closure's capture cell — `Rc::as_ptr(&captured)`, the same
+/// for every `ClosureVal` a cast made of one closure (representation A). A
+/// copy-on-write payload has none: no taint is keyed by its address. Drift:
+/// `addr_of_covers_exactly_the_reference_semantic_objects`.
+pub(super) fn addr_of(v: &Value) -> Option<usize> {
     match v {
         Value::Dict(rc) => Some(Rc::as_ptr(rc) as *const u8 as usize),
         Value::Chan(rc) => Some(Rc::as_ptr(rc) as *const u8 as usize),
+        Value::Closure(cv) => Some(Rc::as_ptr(&cv.captured) as *const u8 as usize),
         _ => None,
     }
 }
@@ -847,6 +853,41 @@ impl<'p> Interp<'p> {
             }
         }
         go(self, v, 3)
+    }
+
+    /// Any access to a channel through a method (or a `select` arm). The shared
+    /// queue is one object with one taint: a READ (recv, try_recv, len) takes it
+    /// into the result, and a MUTATING access from a sealed frame (a send, a
+    /// drain: recv, try_recv, select) marks it, because what the queue holds or
+    /// how many values it holds is then something sealed code decided
+    /// (amendment 106). A sealed `len`/`clone` changes nothing and marks nothing,
+    /// as a sealed `dict_len` does not (veto taint.rs:869-885).
+    ///
+    /// An OPERATOR pop is a write too (amendment 117, loop finding 17): see
+    /// [`Interp::t_chan_choice`], which marks the channel with the control taint
+    /// the pop ran under as well as the taint of the expression that chose it.
+    pub(super) fn t_chan_access(&self, chan: &Value, method: &str) {
+        self.t_touch(self.t_obj(chan));
+        if self.frame_sealed.get() && matches!(method, "send" | "recv" | "try_recv") {
+            self.t_mark_obj(chan, ALL);
+        }
+    }
+
+    /// An operator frame's use of a channel is a write when it runs under a
+    /// candidate-controlled `pc`/`sticky` (a pop changes what the queue holds and
+    /// how long it is by the candidate's bit, as an operator `dict_set` under the
+    /// same control does), and the channel it used may itself be the candidate's
+    /// PICK (`if c { a } else { b }.recv()`, `cs[i].recv()`): what that queue
+    /// holds afterwards, and which `select` arm fires, depend on it, so it
+    /// carries the taint of the expression that chose it (`rt`; amendment 117,
+    /// finding 20; veto taint.rs:887-901).
+    pub(super) fn t_chan_choice(&self, chan: &Value, rt: u8) {
+        if !self.frame_sealed.get() {
+            let c = self.t_stored(rt & VAL);
+            if c != 0 {
+                self.t_mark_obj(chan, c);
+            }
+        }
     }
 
     /// The taint of every shared object (dict, channel) reachable from `v`,

@@ -246,6 +246,11 @@ impl Fields {
         self.0.iter().map(|(k, v)| (*k, v))
     }
 
+    /// The fields in place (a cast converts or wraps a field's value).
+    pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = (Sym, &mut Value)> {
+        self.0.iter_mut().map(|(k, v)| (*k, v))
+    }
+
     /// The fields with their names, sorted by name: the order every
     /// renderer (display, literal form, shape, `SendValue`) uses.
     pub(crate) fn by_name(&self) -> Vec<(Rc<str>, &Value)> {
@@ -328,10 +333,69 @@ impl Value {
 /// whole defining environment, and `code` (params + body) is shared by every
 /// closure made from the same lambda, so making, cloning or calling a closure
 /// never copies its body.
+///
+/// R51 spec Fork 3, closure representation A (TaintPort-5, -15, VmPin-5): the
+/// capture cell is its own `Rc`, so a cast to a declared `fn(..) -> ..`
+/// ([`conform::Contract`]) allocates a new `ClosureVal` that SHARES the cell
+/// and carries the contract for that reference only. Identity (the capture
+/// cell's taint and any address-keyed table) is the cell's address,
+/// `Rc::as_ptr(&captured)`, the same for every reference. The cell's
+/// per-binding taints live in [`Captures`] (S2); the seal marks are the typed
+/// [`SealMarks`], never entries of the slot-ordered `captured` bindings (an
+/// entry there would shift `param_base`).
 #[derive(Debug)]
 pub struct ClosureVal {
     pub code: Rc<ClosureCode>,
-    pub captured: RefCell<Captures>,
+    pub captured: Rc<RefCell<Captures>>,
+    /// The `fn(..) -> ..` types this REFERENCE crossed, outermost = latest
+    /// (veto interp.rs:104-112). `None` in an unsealed run.
+    pub contract: Option<Rc<conform::Contract>>,
+    pub seal: SealMarks,
+}
+
+impl ClosureVal {
+    /// A closure with no contract and no seal marks.
+    pub(crate) fn plain(code: Rc<ClosureCode>, captured: Captures) -> ClosureVal {
+        ClosureVal {
+            code,
+            captured: Rc::new(RefCell::new(captured)),
+            contract: None,
+            seal: SealMarks::default(),
+        }
+    }
+}
+
+/// AX-40's lend test on representation A (R51 Fork 3): the capture cell can
+/// be lent to a call (moved out and back) only when nothing the body runs can
+/// reach it. Every `ClosureVal` that shares the cell (a cast's wrapper) is a
+/// way to reach it, so the cell must have exactly one holder, `cv`, and
+/// `cv`'s references must be exactly the `private_refs` the caller counted.
+#[inline(always)]
+pub(crate) fn cell_is_private(cv: &Rc<ClosureVal>, private_refs: usize) -> bool {
+    Rc::strong_count(&cv.captured) == 1 && Rc::strong_count(cv) == private_refs
+}
+
+/// Where a closure came from, in a sealed run (veto's capture-cell keys
+/// `SEALED_CLOSURE_MARK` and `SEALED_FNVAL_MARK`, interp.rs:490-494). Always
+/// the default in an unsealed run. The creator's pin owner (veto
+/// `PIN_FN_MARK`) joins these with `pin_fn` in R51 S4.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SealMarks {
+    /// A SEALED frame created the closure: it runs sealed wherever it is
+    /// later called.
+    pub sealed_origin: bool,
+    /// A fn VALUE (`let g = f`) a sealed frame took of a candidate fn: a call
+    /// of it from sealed code is not a call of an operator closure, and an
+    /// operator closure may not be replaced by it.
+    pub sealed_fnval: bool,
+}
+
+impl SealMarks {
+    /// The candidate's closure (made in a sealed frame, or a sealed frame's
+    /// fn value), as opposed to the operator's.
+    pub(crate) fn is_candidates(self) -> bool {
+        self.sealed_origin || self.sealed_fnval
+    }
 }
 
 /// R13 native FFI: an opaque, affine native `Handle` = `{tag, payload}` where
@@ -1144,6 +1208,23 @@ pub struct Interp<'p> {
     /// accumulator, the control taints, the kernel and world cells, shared
     /// objects and module-level lets. Read and written only in a sealed run.
     taint: taint::Taint,
+    /// R51 S3 (`interp/conform.rs`): the traits the program defines, and
+    /// which `(type, trait)` pairs it implements — what a `dyn Trait` or a
+    /// type parameter's bound is checked against (veto interp.rs:885-886).
+    user_traits: std::collections::HashSet<String>,
+    trait_impls: std::collections::HashSet<(String, String)>,
+    /// Each refinement type's base type (veto interp.rs:888): a cast to a
+    /// refinement is a cast to its base.
+    refine_bases: HashMap<String, &'p crate::ast::AxonType>,
+    /// The element types each channel OBJECT crossed (by address; the weak
+    /// handle keeps the address from being reused while the entry exists).
+    chan_contracts: RefCell<conform::ChanContracts>,
+    /// The dicts the operator handed sealed code (by address): what each held
+    /// (amendment 72 part 2, `interp/conform.rs`).
+    dict_snaps: RefCell<HashMap<usize, conform::DictSnap>>,
+    /// Bumped by every operator-side dict mutation: a snapshot from an older
+    /// epoch is retaken at the next hand-over.
+    dict_epoch: Cell<u64>,
     /// R50: which engine runs fn bodies (`AXON_ENGINE`, or `set_engine` on a
     /// target without an environment). Read once, at build.
     engine: Engine,
@@ -2662,8 +2743,8 @@ impl SendValue {
                 params,
                 body,
                 captured,
-            } => Value::Closure(Rc::new(ClosureVal {
-                code: Rc::new(ClosureCode::unresolved(
+            } => Value::Closure(Rc::new(ClosureVal::plain(
+                Rc::new(ClosureCode::unresolved(
                     params.iter().map(|p| intern(p)).collect(),
                     *body,
                 )),
@@ -2674,13 +2755,13 @@ impl SendValue {
                 // `SendValue` carries no taint, so the cell has none: a sealed
                 // frame that calls it stops (`Captures::plain`; R51 S3's deep
                 // copy edge is where a sealed crossing gets its taints).
-                captured: RefCell::new(Captures::plain(
+                Captures::plain(
                     captured
                         .into_iter()
                         .map(|(k, v)| (intern(&k), v.into_value()))
                         .collect(),
-                )),
-            })),
+                ),
+            ))),
             SendValue::Tuple(xs) => Value::tuple(xs.into_iter().map(Self::into_value).collect()),
             SendValue::Dict(entries) => {
                 let map: std::collections::BTreeMap<String, Value> = entries
@@ -3845,6 +3926,9 @@ impl<'p> Interp<'p> {
         let mut methods = HashMap::new();
         let mut global_defs = Vec::new();
         let mut refine_preds = HashMap::new();
+        let mut user_traits = std::collections::HashSet::new();
+        let mut trait_impls = std::collections::HashSet::new();
+        let mut refine_bases = HashMap::new();
 
         for item in &program.items {
             match item {
@@ -3855,6 +3939,10 @@ impl<'p> Interp<'p> {
                     // Phase 5: index the predicate so `call_fn` can evaluate it as
                     // a runtime precondition when a param's type is this refinement.
                     refine_preds.insert(r.name.clone(), r.predicate.as_ref());
+                    refine_bases.insert(r.name.clone(), &r.base);
+                }
+                Item::TraitDef(t) => {
+                    user_traits.insert(t.name.clone());
                 }
                 Item::TypeDef(t) => {
                     structs.insert(t.name.clone(), t);
@@ -3863,11 +3951,15 @@ impl<'p> Interp<'p> {
                     enums.insert(e.name.clone(), e);
                 }
                 Item::ImplBlock(ImplBlock {
+                    trait_name,
                     for_type,
                     methods: ms,
                     ..
                 }) => {
                     let tn = type_name_of(for_type);
+                    if !trait_name.is_empty() {
+                        trait_impls.insert((tn.clone(), trait_name.clone()));
+                    }
                     for m in ms {
                         methods.insert((tn.clone(), m.name.clone()), m);
                     }
@@ -3944,6 +4036,12 @@ impl<'p> Interp<'p> {
             sealed_frames: Cell::new(0),
             operator_frames: Cell::new(0),
             taint: taint::Taint::default(),
+            user_traits,
+            trait_impls,
+            refine_bases,
+            chan_contracts: RefCell::new(HashMap::new()),
+            dict_snaps: RefCell::new(HashMap::new()),
+            dict_epoch: Cell::new(0),
             engine,
             vm_trace: vm::trace_at_build(),
             vm_eager: vm::eager_at_build(),
@@ -5169,7 +5267,7 @@ impl<'p> Interp<'p> {
         // argument, stored in an array, dict or capture, or currently running):
         // a re-entrant call must see the cell as it stood before this call, and
         // this call's in-place writes would otherwise destroy that state.
-        let lend = Rc::strong_count(cv) == private_refs;
+        let lend = cell_is_private(cv, private_refs);
         // The taint the arguments arrived with, the parameters', and the
         // caller's control taints, restored when the frame ends (veto
         // interp.rs:4753-4760, 4785-4789).
@@ -5509,6 +5607,13 @@ mod taint_tests;
 // The per-frame `Kernel` split's unit tests (R51 S3).
 #[cfg(test)]
 mod kernel_tests;
+// Declared-type conformance at the seal's value boundaries (R51 S3, from
+// v0.22 C9 round 4, amendments 53/72/78): casts, closure and channel
+// contracts, the operator's dict snapshots.
+mod conform;
+// Its unit tests (R51 S3: the casts and dict edges, driven directly).
+#[cfg(test)]
+mod conform_tests;
 // Core tree-walking evaluator (eval/eval_block/eval_call/eval_binop/
 // match_pattern) extracted to interp/eval.rs (R0 slice 5). Its methods live in a
 // second `impl Interp` block there; inherent methods resolve across split impl
