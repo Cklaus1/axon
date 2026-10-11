@@ -504,7 +504,17 @@ pub enum Flow {
     /// path reifies the continuation by re-running the body, so the original
     /// suspended body is abandoned and its block value is `value`. Caught only by
     /// `eval_with_handler`; if it escapes, that is an interpreter bug.
-    HandlerDone(Value),
+    ///
+    /// The `usize` is the handler-stack index of the frame whose arm ran: only
+    /// the `with` block that pushed THAT frame may catch it. It used to be caught
+    /// by the nearest `with` of any kind, so a `with` in candidate code could
+    /// swallow a completion aimed at the operator's handler and keep running.
+    /// Boxed (v0.22 carries `(Value, usize)` inline) so `Flow`'s widest payload
+    /// stays one `Value`: the inline pair is 24 bytes, which moves `Flow`'s tag
+    /// into `Value`'s niche and costs every `R` the evaluator matches (+4.9%
+    /// instructions on collatz, +6.6% on the `loop_generic` repro). A
+    /// completion is rare; the allocation is paid only by it.
+    HandlerDone(Box<(Value, usize)>),
     /// Phase 6 (multi-shot): a handler arm tried to resume more than once (or
     /// resume non-tail) over a body that performs effects beyond the single
     /// intercepted operation — the replay-based continuation cannot soundly
@@ -728,14 +738,14 @@ pub(crate) fn frame_edge(f: Flow, edge: FrameEdge<'_>) -> Flow {
         Flow::Break | Flow::Continue => format!("`break`/`continue` outside a loop in {edge}"),
         Flow::Resume(_) => format!("`resume` escaped {edge}"),
         // Abortive: they end or fail the program, so they may cross.
-        // `HandlerDone` finishes the `with` whose arm raised it, which
-        // `eval_with_handler` catches.
+        // `HandlerDone` is the one cross-frame completion, and it is
+        // addressed: only the `with` that installed its handler catches it.
         Flow::Panic(_)
         | Flow::VerifyFailed(_)
         | Flow::Halted(_)
         | Flow::AiPolicyUnreachable(_)
         | Flow::Exit(_)
-        | Flow::HandlerDone(_)
+        | Flow::HandlerDone(..)
         | Flow::MultiShotUnsound(_)
         | Flow::RefineViolation(_)
         | Flow::GoalBudgetExhausted(_)
@@ -3753,7 +3763,7 @@ fn run_program_inner(
             eprintln!("axon: panic: `resume` called outside an effect-handler arm");
             101
         }
-        Err(Flow::HandlerDone(_)) => {
+        Err(Flow::HandlerDone(..)) => {
             // A multi-shot handler's `HandlerDone` escaped its `with` block — an
             // interpreter bug (it is always caught by `eval_with_handler`). Treat
             // as a panic rather than a silent exit.
@@ -3927,7 +3937,7 @@ impl<'p> Interp<'p> {
                 "a `break`/`continue` escaped a function and unwound the test before it completed"
                     .to_string(),
             ),
-            Err(Flow::HandlerDone(_)) => {
+            Err(Flow::HandlerDone(..)) => {
                 Err("an effect handler completed outside its handled computation".to_string())
             }
         }

@@ -1573,3 +1573,42 @@ fn assert_eq_f64_fails_on_nan_on_both_engines() {
         }
     }
 }
+
+/// A handler arm that completes without `resume` finishes the `with` that
+/// installed it, on both engines (v0.22 `HandlerDone(v, depth)`, M74). The
+/// completion used to be caught by the NEAREST `with`, so an inner `with`
+/// handling a different effect took the outer IO arm's 7 as its own value and
+/// the outer body went on to `7 + 100`: 107 instead of 7, whether the inner
+/// `with` is in a callee (`t_callee`) or the same body (`t_same_body`). A
+/// `with` whose own arm completes still catches it (`t_own`).
+#[test]
+fn handler_completion_finishes_its_own_with_on_both_engines() {
+    let prog = crate::parse_source(
+        "fn c() -> i64 {\n    with handler { on Random(p) => resume(1) } {\n        println(\"x\")\n        5\n    }\n}\n\
+         fn t_callee() -> i64 {\n    let k = 100\n    let v = with handler { on IO(p) => 7 } {\n        let r = c()\n        r + k\n    }\n    v\n}\n\
+         fn t_same_body() -> i64 {\n    let k = 100\n    let v = with handler { on IO(p) => 7 } {\n        let r = with handler { on Random(p) => resume(1) } {\n            println(\"x\")\n            5\n        }\n        r + k\n    }\n    v\n}\n\
+         fn t_own() -> i64 {\n    let k = 100\n    let v = with handler { on Random(p) => 9 } {\n        let r = with handler { on IO(p) => 7 } {\n            println(\"x\")\n            5\n        }\n        r + k\n    }\n    v\n}\n",
+    )
+    .expect("parses");
+    for engine in [Engine::Tree, Engine::Vm] {
+        let mut interp = Interp::build(&prog).expect("unsealed build");
+        interp.engine = engine;
+        interp.vm_trace = false;
+        let run = |name: &str| {
+            let f = interp
+                .fn_table
+                .iter()
+                .find(|e| e.def.name == name)
+                .unwrap_or_else(|| panic!("{name} is in the fn table"));
+            interp.call_fn_entry(f, Vec::<Value>::new())
+        };
+        for (t, want) in [("t_callee", 7), ("t_same_body", 7), ("t_own", 107)] {
+            let got = run(t);
+            assert!(
+                matches!(got, Ok(Value::Int(n)) if n == want),
+                "ATTACK: a handler completion was caught by a `with` that did not install it \
+                 ({engine:?} {t}, want {want}): {got:?}"
+            );
+        }
+    }
+}
