@@ -259,6 +259,7 @@ THEMES = {
     "a55dcfcb": ("R51 S6.2", "TEST-ONLY: the T3 drift sweeps in interp/taint_tests.rs read the shared mod-tests-cut source list (vm::tests::r51_interp_sources), so production code after `mod taint_tests;` is swept and vm/tests.rs, tests_v022_*.rs are skipped; taint_tests and tests_v022_b split builtins.rs through interp::tests::builtin_arms (asserts >= 250 arms); no behaviour change"),
     "9ac6de6c": ("R51 S6.2", "TEST-ONLY: interp/vm/tests.rs case for Uncertain source_tag through CallFastLocalInt (VM == tree); fixture r51_s0b/uncertain_source_tag.ax loop and cli_run expectation; vm_parity.sh axon test --json leg over r51_s0b/test_*.ax; no behaviour change"),
     "7bc0bfd4": ("R51 S6.2", "TEST-ONLY: interp/taint_tests.rs T8.2 positional probes carry a scalar the candidate chose (idx()) so only the binding's taint carries it; the &mut attack reads the clean neighbour; no behaviour change"),
+    "1c3af54a": ("R51 S6.2 merge", "joins r51/s6tests (bff841fe..7bc0bfd4: T8.2/8.3/8.5/8.6 probes and controls, T3 drift sweeps, T9 call-fast Uncertain + vm_parity test leg) onto r51/int 58a8a864 (S6 T7 rows, T6 legs); only this table and the note conflicted, resolved by keeping both sides; no change beyond the commits it joins"),
 }
 
 
