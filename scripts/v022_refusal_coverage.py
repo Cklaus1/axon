@@ -39,6 +39,7 @@ helper constructor, a closure predicate refused through `ok_or`); the verdict
 types are derived from the in-scope enums. See "Amendment 76" below.
 """
 import collections
+import functools
 import importlib.util
 import os
 import re
@@ -3948,6 +3949,27 @@ def load_rows():
     return [r for r in mut.MUTATIONS if r[0] not in stale]
 
 
+# R51 speed: the lexer below is the same scanner, made linear in the number of
+# TOKENS instead of characters (a regex finds the next place a token can
+# start, or a block comment edge, or a string's closing quote), and the
+# per-text derivations (`code_lines`, `blank_non_code`, `_value_text`,
+# `sites`) are memoised PER PROCESS by the TEXT's value: a file is derived once
+# per run however many rules read it, and an edited file is a new key (nothing
+# is keyed by path, nothing is kept on disk). A plain run derived each file ~14
+# times. The memo is bounded so a long-lived importer (the surveys judge many
+# edited variants) does not grow without limit.
+_TEXT_MEMO = 1024
+_RAW_STR = re.compile(r'(?:b?r(#*)")')
+_BLOCK_EDGE = re.compile(r"/\*|\*/")
+_STR_BODY = re.compile(r'[^"\\]*(?:\\.[^"\\]*)*', re.S)
+# Every place `_skip_rust_token` returns an index (and nowhere else): a comment,
+# a raw/byte/plain string, a char literal or lifetime.
+_TOKEN_START = re.compile(r'//|/\*|b?r#*"|b"|["\']')
+# ... and the characters `_cfg_test_extent` counts.
+_EXTENT_STOP = re.compile(r'//|/\*|b?r#*"|b"|["\'()\[\]{};]')
+_NOT_NL = re.compile(r"[^\n]")
+
+
 def _skip_rust_token(t, i):
     """The index after the Rust lexical unit at t[i] when it is a comment, a
     string (incl. raw and byte strings) or a char literal, else None."""
@@ -3957,25 +3979,25 @@ def _skip_rust_token(t, i):
         j = t.find("\n", i)
         return n if j < 0 else j
     if t.startswith("/*", i):
+        # Nested: each `/*` opens and each `*/` closes, scanned left to right.
         depth, j = 1, i + 2
-        while j < n and depth:
-            if t.startswith("/*", j):
-                depth, j = depth + 1, j + 2
-            elif t.startswith("*/", j):
-                depth, j = depth - 1, j + 2
-            else:
-                j += 1
+        while depth:
+            m = _BLOCK_EDGE.search(t, j)
+            if m is None:
+                return n
+            depth += 1 if m.group() == "/*" else -1
+            j = m.end()
         return j
-    m = re.compile(r'(?:b?r(#*)")').match(t, i) if c in "br" else None
+    m = _RAW_STR.match(t, i) if c in "br" else None
     if m:
         end = '"' + m.group(1)
         j = t.find(end, m.end())
         return n if j < 0 else j + len(end)
     if c == '"' or (c == "b" and t.startswith('b"', i)):
-        j = i + (2 if c == "b" else 1)
-        while j < n and t[j] != '"':
-            j += 2 if t[j] == "\\" else 1
-        return min(j + 1, n)
+        # Up to the first `"` not escaped by a `\`; unterminated (or a lone
+        # `\` last): the end of the text.
+        j = _STR_BODY.match(t, i + (2 if c == "b" else 1)).end()
+        return j + 1 if j < n and t[j] == '"' else n
     if c == "'":
         if t.startswith("'\\", i):
             j = t.find("'", i + 3)
@@ -3986,13 +4008,18 @@ def _skip_rust_token(t, i):
     return None
 
 
+@functools.lru_cache(maxsize=_TEXT_MEMO)
 def _cfg_test_extent(t, i):
     """The end offset of the item (or statement) an attribute at t[i] governs:
     its brace extent when it has a body, else its terminating `;`. A real
     matcher: braces inside strings, chars and comments do not count
     (amendment 74)."""
     n, depth, j = len(t), 0, i
-    while j < n:
+    while True:
+        m = _EXTENT_STOP.search(t, j)
+        if m is None:
+            return n
+        j = m.start()
         k = _skip_rust_token(t, j)
         if k is not None:
             j = max(k, j + 1)
@@ -4009,7 +4036,6 @@ def _cfg_test_extent(t, i):
         elif c == ";" and depth <= 0:
             return j + 1
         j += 1
-    return n
 
 
 # `cfg(all(test, ..))` compiles only in a test build too (amendment 76: the psv
@@ -4026,7 +4052,13 @@ def code_lines(text):
     followed by `mod tests`, discarding everything after it to the end of the
     file: production code after the test module (axon-os approval.rs's
     `authorize`) and anything placed below an empty `#[cfg(test)] mod tests`
-    was invisible."""
+    was invisible. A fresh list per call (the memo below holds its own)."""
+    return list(_code_lines(text))
+
+
+@functools.lru_cache(maxsize=_TEXT_MEMO)
+def _code_lines(text):
+    """`code_lines`, memoised by the text (never mutate the list it returns)."""
     out = text
     pieces = []
     pos = 0
@@ -4563,22 +4595,25 @@ VERDICT_NAME = re.compile(r"Verdict|Decision|Outcome|Admission")
 INLINE_PRED = re.compile(r"\.(filter|take_if|is_some_and|is_ok_and|is_none_or)\(")
 
 
+@functools.lru_cache(maxsize=_TEXT_MEMO)
 def blank_non_code(text):
     """`text` with comments and string/char literal CONTENTS blanked (same
     length, newlines kept): what is left is code to match on."""
     out, i, n = [], 0, len(text)
     while i < n:
-        j = _skip_rust_token(text, i)
-        if j is None:
-            out.append(text[i])
-            i += 1
-            continue
-        j = max(j, i + 1)
+        m = _TOKEN_START.search(text, i)
+        if m is None:
+            out.append(text[i:])
+            break
+        if m.start() > i:
+            out.append(text[i:m.start()])
+            i = m.start()
+        j = max(_skip_rust_token(text, i), i + 1)
         seg = text[i:j]
         if seg.startswith("//") or seg.startswith("/*"):
-            out.append(re.sub(r"[^\n]", " ", seg))
+            out.append(_NOT_NL.sub(" ", seg))
         elif seg[0] in "\"'br" and len(seg) > 2:
-            out.append(seg[0] + re.sub(r"[^\n]", " ", seg[1:-1]) + seg[-1])
+            out.append(seg[0] + _NOT_NL.sub(" ", seg[1:-1]) + seg[-1])
         else:
             out.append(seg)
         i = j
@@ -4786,6 +4821,12 @@ def _guard_start(lines, i):
 
 def _fn_spans(cl):
     """(head, last, name, return type) for each fn with a body in blanked lines."""
+    return list(_fn_spans_of(tuple(cl)))
+
+
+@functools.lru_cache(maxsize=_TEXT_MEMO)
+def _fn_spans_of(cl):
+    """`_fn_spans`, memoised by the lines (never mutate the list it returns)."""
     out = []
     for i, l in enumerate(cl):
         m = FN_HEAD.match(l)
@@ -4953,7 +4994,18 @@ def scope_regions(f, lines, text, bad):
 def sites(text, f=None, bad=None):
     """The refusal sites of `f` as (first, last, reported) lines: `first` to
     `last` is the guard block a row or an exemption must reach, `reported` the
-    line the report names."""
+    line the report names. A REGIONS anchor problem goes to `bad`."""
+    out, problems = _sites(text, f)
+    if bad is not None:
+        bad.extend(problems)
+    return list(out)
+
+
+@functools.lru_cache(maxsize=_TEXT_MEMO)
+def _sites(text, f):
+    """`sites`, memoised by (text, file): (its sites, the problems it reports).
+    Never mutate either list."""
+    bad = []
     lines = code_lines(text)
     regions = scope_regions(f, lines, text, bad)
     out = []
@@ -4980,7 +5032,7 @@ def sites(text, f=None, bad=None):
             continue
         out.append((a, b, a, "predicate"))
     out.extend(verdict_sites(lines, regions, f))
-    return out
+    return out, bad
 
 
 def changed_lines(text, old, new):
@@ -5189,16 +5241,6 @@ def uncredited_terms(text, clean, offs, g, by_rows):
     return [(a, b) for a, b in terms if not any(x <= b and y >= a for x, y in spans)]
 
 
-_SITES_MEMO = {}
-
-
-def sites_memo(f, text):
-    k = (f, hash(text))
-    if k not in _SITES_MEMO:
-        _SITES_MEMO[k] = sites(text, f, [])
-    return _SITES_MEMO[k]
-
-
 def const_names_read_by_guards(scope):
     """{(defining file, NAME)} for every const/static of an in-scope file whose
     name appears (outside strings and comments) in the guard block of a refusal
@@ -5215,7 +5257,7 @@ def const_names_read_by_guards(scope):
     for f, t in texts.items():
         clean = blank_non_code(t).split("\n")
         uses = set()
-        S = [x for x in sites_memo(f, t) if x[3] == "line"]
+        S = [x for x in sites(t, f) if x[3] == "line"]
         site_lines = {i for _, i, _, _ in S}
         for fa, fb, _, _ in _fn_spans(clean):
             if not any(fa <= i <= fb for i in site_lines):
@@ -5346,6 +5388,7 @@ _LIT_WORDS = {"true", "false", "None", "Some", "vec", "to_string", "into", "to_o
               "HashMap", "BTreeMap", "HashSet", "BTreeSet", "OsString", "OsStr", "default", "Default"}
 
 
+@functools.lru_cache(maxsize=_TEXT_MEMO)
 def _value_text(text):
     """`blank_non_code(text)` with every #[cfg(test)] item blanked too (same length)."""
     clean = blank_non_code(text)
@@ -5557,6 +5600,9 @@ SIGN_SINKS = [
     (r"\.sign\(", 0),
     (r"\.verify\(", 0),
 ]
+# The two SIGN_SINKS shapes whose every match ends in the literal `<name>(` (R51 speed: the
+# scan of a text without it is skipped; a pattern of any other shape is always scanned).
+_SINK_LITERAL = re.compile(r"(?:\(\?<!\[\\w\]\)\(\?:\\w\+::\)\*|\\\.)(\w+)\\\(")
 SIGN_BUILDERS = {
     ("crates/axon-loop-contracts/src/attestation.rs", "binding"),
     ("crates/axon-loop-contracts/src/attestation.rs", "document_binding"),
@@ -5810,7 +5856,11 @@ def _flow_values(clean, cl, fspans, found, sink_consts_out=None):
         _FLOW_STATS["computed"].add((_CUR_FILE[0], a))
 
     # (1) exec wrappers
+    # (R51 speed: each scan below matches `<name>(` literally at its end, so a text without
+    # that substring has no match, and its `(?:\w+::)*` scan is skipped.)
     for callee, positions in EXEC_WRAPPERS.items():
+        if callee + "(" not in clean:
+            continue
         for m in re.finditer(r"(?<![\w])(?:\w+::)*" + re.escape(callee) + r"\(", clean):
             parts = _split_group(clean, m.end() - 1)
             for idx, label in positions:
@@ -5819,6 +5869,8 @@ def _flow_values(clean, cl, fspans, found, sink_consts_out=None):
     # (2) expected-owner primitives: the parameter is the site, per call
     prims = owner_primitives()
     for name, idxs in prims.items():
+        if name + "(" not in clean:
+            continue
         for m in re.finditer(r"(?<![\w.])(?:\w+::)*" + re.escape(name) + r"\(", clean):
             before = clean[max(0, m.start() - 12):m.start()]
             if re.search(r"\bfn\s*$", before):
@@ -5867,6 +5919,9 @@ def _flow_values(clean, cl, fspans, found, sink_consts_out=None):
                     consts.add((c, bool(q)))
     # (5) amendment 110: the message / domain handed to a signing, verification or MAC primitive
     for pat, idx in SIGN_SINKS:
+        lit = _SINK_LITERAL.fullmatch(pat)
+        if lit and lit.group(1) + "(" not in clean:
+            continue
         for m in re.finditer(pat, clean):
             before = clean[max(0, m.start() - 12):m.start()]
             if re.search(r"\bfn\s*$", before):
@@ -5959,6 +6014,13 @@ def const_def_sites(clean, found, names):
 
 def _old_value_sites(clean):
     """The amendment-103 forms: ({(begin, end): label}, None) over the blanked text."""
+    found, _ = _old_value_sites_of(clean)
+    return dict(found), None
+
+
+@functools.lru_cache(maxsize=_TEXT_MEMO)
+def _old_value_sites_of(clean):
+    """`_old_value_sites`, memoised by the text (never mutate the dict it returns)."""
     found = {}
 
     def add(a, b, label):
