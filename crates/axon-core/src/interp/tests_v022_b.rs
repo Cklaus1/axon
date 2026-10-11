@@ -49,7 +49,7 @@ fn interp_sources() -> Vec<(String, String)> {
 /// argument of type `T`, so no honest body produces a `T`. An honest
 /// generic candidate whose `T` IS determined still crosses.
 #[test]
-#[ignore = "R51 S6: the strict cast's undetermined-position refusal (conform::cast_at, UNDET) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"]
+#[ignore = "R51 S6: the strict cast's undetermined-position refusal (conform::cast_at, UNDET) is ported (S3); needs a live sealed run"]
 fn a_value_at_an_undetermined_type_parameter_never_crosses_the_seal() {
     let suite = "@[test]\nfn t() {\n    let r = solve(3)\n    assert(r.ok())\n}\n\
                  @[test]\nfn t_pick() {\n    assert(pick(9).ok())\n}\n";
@@ -83,7 +83,7 @@ fn a_value_at_an_undetermined_type_parameter_never_crosses_the_seal() {
 /// A trait BOUND: `judge<T: Judge>` over a value whose type implements
 /// only another trait with a same-named, lenient method.
 #[test]
-#[ignore = "R51 S6: the cast's trait-bound arm (conform::cast_tparam) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"]
+#[ignore = "R51 S6: the cast's trait-bound arm (conform::cast_tparam) is ported (S3); needs a live sealed run"]
 fn a_type_parameters_trait_bound_is_cast() {
     let suite = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\n\
                  trait Lax {\n    fn ok(self) -> bool\n}\nimpl Lax for bool {\n    fn ok(self: bool) -> bool { self }\n}\n\
@@ -117,7 +117,7 @@ fn a_type_parameters_trait_bound_is_cast() {
 /// ran the operator's lenient `u8` impl — even under the suite's own
 /// `let r: i64` pin. Every boundary the cast applies at.
 #[test]
-#[ignore = "R51 S6: the cast's integer-width arm (conform::cast_at) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"]
+#[ignore = "R51 S6: the cast's integer-width arm (conform::cast_at) is ported (S3); needs a live sealed run"]
 fn a_value_of_another_integer_width_never_crosses_a_declared_integer() {
     let holder = "type Holder = { v: i64 }\n";
     let cases: [(&str, &str, String, String, String, &str); 7] = [
@@ -238,7 +238,7 @@ fn a_value_of_another_fixed_width_never_crosses_a_declared_fixed_width() {
 /// width (as a `u8` parameter, `let` or field always converted it), so it
 /// dispatches as the `u8` it is declared — never on the `i64` impl.
 #[test]
-#[ignore = "R51 S6: the cast's width conversion at a declared fixed width (conform::cast_at) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"]
+#[ignore = "R51 S6: the cast's width conversion at a declared fixed width (conform::cast_at) is ported (S3); needs a live sealed run"]
 fn an_i64_at_a_declared_fixed_width_takes_the_width() {
     let judge = "trait Judge8 {\n    fn ok8(self) -> bool\n}\nimpl Judge8 for u8 {\n    fn ok8(self: u8) -> bool { self == 9 }\n}\nimpl Judge8 for i64 {\n    fn ok8(self: i64) -> bool { true }\n}\n";
     let suite = format!(
@@ -277,7 +277,7 @@ fn an_i64_at_a_declared_fixed_width_takes_the_width() {
 /// Width-correct and generic code is unaffected: a `u8` keeps its width
 /// through a type parameter, an `i64` literal at a `u8` field converts.
 #[test]
-#[ignore = "R51 S6: control of the cast's width arm (conform::cast_at, S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"]
+#[ignore = "R51 S6: control of the cast's width arm (conform::cast_at, S3); needs a live sealed run"]
 fn width_correct_values_cross_unchanged() {
     let judge = "trait W {\n    fn w(self) -> str\n}\nimpl W for u8 {\n    fn w(self: u8) -> str { \"u8\" }\n}\nimpl W for i64 {\n    fn w(self: i64) -> str { \"i64\" }\n}\n";
     let suite = format!(
@@ -333,7 +333,7 @@ fn a_non_closure_never_crosses_a_declared_fn_type() {
 /// inner value, so it dispatches as the declared type and never on an
 /// operator impl for `Uncertain`.
 #[test]
-#[ignore = "R51 S6: the cast's soft-wrapper unwrap (conform::cast_at) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"]
+#[ignore = "R51 S6: the cast's soft-wrapper unwrap (conform::cast_at) is ported (S3); needs a live sealed run"]
 fn a_soft_wrapper_takes_the_declared_plain_type() {
     let suite = "impl Judge for Uncertain {\n    fn ok(self: Uncertain) -> bool { true }\n}\n\
                  @[test]\nfn t() {\n    assert(solve(3)[0].ok())\n}\n";
@@ -433,7 +433,7 @@ fn every_declared_type_refuses_a_value_of_another_type() {
 /// BINDING, `dyn Trait`, a generic enum's variant fields, a channel's
 /// already-queued values, and a refinement's base type.
 #[test]
-#[ignore = "R51 S6: the cast's binding, dyn, enum-field, queued-channel, width and refinement arms (conform) are ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"]
+#[ignore = "R51 S6: the cast's binding, dyn, enum-field, queued-channel, width and refinement arms (conform) are ported (S3); needs a live sealed run"]
 fn the_remaining_cast_arms_refuse_a_value_of_another_type() {
     // A type parameter bound by the arguments: every later value at it
     // must agree (T = i64 here; the candidate returns a `bool`).
@@ -755,7 +755,7 @@ fn runtime_sealing_holds_without_the_static_check() {
 /// refused at the crossing; a later operator-side value fills it (the
 /// pair binding), and an honest pass-through crosses.
 #[test]
-#[ignore = "R51 S6: the strict cast's undetermined-position refusal (conform::cast_at, UNDET) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"]
+#[ignore = "R51 S6: the strict cast's undetermined-position refusal (conform::cast_at, UNDET) is ported (S3); needs a live sealed run"]
 fn a_value_at_an_undetermined_position_never_crosses_a_seal() {
     let wrap = "type Wrap<T> = { v: T }\n";
     honest8(
@@ -802,7 +802,7 @@ fn a_value_at_an_undetermined_position_never_crosses_a_seal() {
 /// arguments. The operator's unannotated `|x| x.ok()` reached through a
 /// free `fn(T)`, a struct field or a dict.
 #[test]
-#[ignore = "R51 S6: the closure-argument edge (conform::closure_args_check) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"]
+#[ignore = "R51 S6: the closure-argument edge (conform::closure_args_check) is ported (S3); needs a live sealed run"]
 fn an_operator_closure_called_from_sealed_code_takes_only_determined_arguments() {
     let suite = "@[test]\nfn t() {\n    assert(apply(|x| x.ok()))\n}\n";
     live8(
@@ -901,7 +901,7 @@ fn a_type_parameter_inside_any_shape_is_never_filled_by_the_candidate() {
 /// `dict_get(..).ok()` ran the lenient `u8` impl. The operator's dict is
 /// SNAPSHOTTED when it is handed over and verified at every edge back.
 #[test]
-#[ignore = "R51 S6: the dict snapshot edge (dict_edge_in/dict_edge_out) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"]
+#[ignore = "R51 S6: the dict snapshot edge (dict_edge_in/dict_edge_out) is ported (S3); needs a live sealed run"]
 fn sealed_code_cannot_retype_a_dict_entry_the_operator_held() {
     let suite = dict_suite("solve(d)");
     live8(
@@ -987,7 +987,7 @@ fn sealed_code_cannot_retype_a_dict_entry_the_operator_held() {
 /// dicts, arrays, structs, `Option`s — and a key only the replacement has
 /// is free (exactly as part 2's new keys).
 #[test]
-#[ignore = "R51 S6: the dict snapshot edge's held-position judgement (conform, amendment 78) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"]
+#[ignore = "R51 S6: the dict snapshot edge's held-position judgement (conform, amendment 78) is ported (S3); needs a live sealed run"]
 fn a_position_the_operator_held_is_judged_by_what_it_held_when_replaced() {
     // The operator's `d` holds `inner = {x: 3}` at "inner"; it reads
     // d.inner.x untyped afterwards.
@@ -1115,7 +1115,7 @@ fn a_position_the_operator_held_is_judged_by_what_it_held_when_replaced() {
 /// free. An operator that wants the candidate to fill a slot holds a
 /// typed placeholder (`Some(0)`, `[0]`).
 #[test]
-#[ignore = "R51 S6: the dict snapshot edge's strict store at an undetermined held position (conform, amendment 78) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"]
+#[ignore = "R51 S6: the dict snapshot edge's strict store at an undetermined held position (conform, amendment 78) is ported (S3); needs a live sealed run"]
 fn a_placeholder_the_operator_held_is_not_filled_by_the_candidate() {
     let suite = |held: &str, read: &str| {
         format!("@[test]\nfn t() {{\n    let d = dict_new()\n    dict_set(d, \"best\", {held})\n    solve(d)\n    match dict_get(d, \"best\") {{\n        Some(o) => {read}\n        None => assert(false)\n    }}\n}}\n")
@@ -1163,7 +1163,7 @@ fn a_placeholder_the_operator_held_is_not_filled_by_the_candidate() {
 /// declared type alone admits it: `[i64 | u8]` admits a `u8`; a `[Dict]`
 /// admits a fresh dict whose key was retyped).
 #[test]
-#[ignore = "R51 S6: the `&mut` edge-back cast (left holding / did not allow) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"]
+#[ignore = "R51 S6: the `&mut` edge-back cast (left holding / did not allow) is ported (S3); needs a live sealed run"]
 fn a_mut_write_through_value_is_judged_by_what_the_operator_held() {
     let dispatch = "@[test]\nfn t() {\n    let mut a = [1, 2, 3]\n    fill(&mut a)\n    assert(a[0].ok())\n}\n";
     honest8(
@@ -1520,10 +1520,7 @@ fn sandbox_run_results_are_cast_at_the_seal_crossing() {
 fn a_sealed_frame_cannot_read_an_operator_global_through_a_fast_path() {
     let suite = "type Cfg = { k: i64 }\nlet TABLE = [9, 8]\nlet CFG = Cfg { k: 9 }\nlet PAIR = (9, 4)\nlet NN = [[9]]\nlet FN = || 9\n\
                  @[test]\nfn t() { assert_eq(solve(), 9) }\n";
-    // R51: v0.22 ran this with the receiver dispatch rule ON
-    // (`sealed_outcome_rule(.., true)`), which is S4's; the global-read edge
-    // refuses each attack whether the rule is on or off.
-    let run = |cand: &str| sealed_outcome("r9-glob", suite, cand, "t");
+    let run = |cand: &str| sealed_outcome_rule("r9-glob", suite, cand, "t", true);
     // Controls: the candidate's OWN globals read through the same arms; a
     // wrong one fails; the operator's whole-value read stays refused.
     let own = "type Mc = { k: i64 }\nlet MT = [9, 8]\nlet MC = Mc { k: 9 }\nlet MP = (9, 4)\nlet MN = [[9]]\nlet MF = || 9\n";
