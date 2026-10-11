@@ -1887,7 +1887,7 @@ fn every_name_resolving_lookup_is_a_listed_sink() {
         ("interp.rs", "match self.fns.get(\"main\") {", "the literal `main`"),
         ("interp.rs", "self.fns.get(self.current_fn.get()?.name.as_str()).copied()", "current_fn_def: the running fn's own name"),
         ("interp.rs", "match self.fns.get(name).copied() {", "fn_by_name: THE resolver, which applies seal_call"),
-        ("interp.rs", "self.fns.contains_key(name) || self.k().provenance.borrow().contains_key(name)", "goal_name_is_known: reached only from the listed goal_* sinks"),
+        ("interp.rs", "let defined = match self.fns.get(name) {", "goal_name_is_known: reached only from the listed goal_* sinks; a sealed caller sees only its own fns (S4b)"),
         ("interp.rs", "match self.fn_of_def.get(&(f as *const FnDef as usize)) {", "call_fn: a FnDef already resolved, by address, not a name"),
         ("interp.rs", "Some(&i) => self.call_fn_entry(&self.fn_table[i as usize], args),", "call_fn: that FnDef's entry; call_fn_entry applies seal_call"),
         ("interp.rs", "let entry = match self.fn_of_def.get(&(f as *const FnDef as usize)) {", "call_test_fn: the host-named test's FnDef, by address"),

@@ -6,53 +6,14 @@
 // (`SEALED_RUN_REFUSED`); their unit-level counterparts that run now are in
 // `interp/dispatch_tests.rs`. The last one, the width rule (veto 10752), was
 // main's unit test in interp/sink_tests.rs: it runs now and asserts its
-// runner half is refused until S6. The v0.22 helpers they share live in
-// `v022_s4`, glob-imported so that an identically named helper another
-// port defines in `tests` shadows them instead of colliding.
+// runner half is refused until S6. The v0.22 helpers only these rows use
+// live in `v022_s4`; the shared ones (JUDGE, LAUNDER, CONFUSED, judged, live,
+// confusion_refused) are interp/tests_v022_a.rs's, reached via `use super::*`.
 
 use v022_s4::*;
 
 mod v022_s4 {
     use super::*;
-
-    // `ok` on an i64 is the real check (3 * 3 = 9); `ok` on a bool reads the
-    // bool — a second, lenient impl the operator wrote for its own reasons.
-    // A confused `true` selects it, so each attack below reaches a PASS
-    // unless its own guard refuses it (no candidate method is involved, so
-    // the dispatch edge cannot stand in for the cast).
-    pub(super) const JUDGE: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for bool {\n    fn ok(self: bool) -> bool { self }\n}\n";
-    /// Candidate-side laundering: a `true`, typed as whatever the context
-    /// wants.
-    pub(super) const LAUNDER: &str = "fn stash(v: bool) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}\n";
-    pub(super) const CONFUSED: &str =
-        "match dict_get(stash(true), \"k\") { Some(v) => v  None => 0 }";
-
-    pub(super) fn judged(tag: &str, suite: &str, cand: &str) -> Result<TestEnd, String> {
-        sealed_outcome(
-            tag,
-            &format!("{JUDGE}{suite}"),
-            &format!("{LAUNDER}{}", cand.replace("CONFUSED", CONFUSED)),
-            "t",
-        )
-    }
-
-    /// A control pair on one suite: the right candidate completes, the wrong
-    /// one fails — so the attack meets a live check.
-    pub(super) fn live(tag: &str, suite: &str, good: &str, wrong: &str) {
-        assert_eq!(
-            judged(tag, suite, good),
-            Ok(TestEnd::Completed),
-            "control: the right answer"
-        );
-        assert!(
-            judged(tag, suite, wrong).is_err(),
-            "control: the wrong answer fails"
-        );
-    }
-
-    pub(super) fn confusion_refused(out: &Result<TestEnd, String>) -> bool {
-        matches!(out, Err(m) if m.contains("runtime type confusion"))
-    }
 
     /// A suite reading the candidate-written `result` of a dict, either
     /// UNPINNED (`x.ok()` on the read) or PINNED (`let y: i64 = x`).
