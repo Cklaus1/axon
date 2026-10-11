@@ -31597,6 +31597,30 @@ fn uncertain_dyn_and_deterministic_agree_in_both_engines() {
     let _ = std::fs::remove_file(&out_bin);
     assert_eq!(ngot, got, "native must agree with the interpreter");
 }
+
+#[test]
+fn a_bare_uncertain_parameter_keeps_its_wrapper_in_both_engines() {
+    // A parameter declared with the BARE name `Uncertain` is a soft
+    // declaration, as at every cast (`conform::is_soft_decl`): the argument
+    // keeps its wrapper. Main's call path only recognised `Uncertain<T>`, so
+    // `self.value` in `impl Judge for Uncertain` read the unwrapped i64 and
+    // panicked "field access on non-struct (i64)" on both engines (R51 T3: the
+    // gap v0.22's `a_declared_soft_type_casts_its_wrapper_and_its_inner_value`
+    // exposed). A non-soft parameter still receives the inner value (`inner`).
+    let src = "trait Judge {\n    fn ok(self) -> bool\n}\n\
+               impl Judge for Uncertain {\n    fn ok(self: Uncertain) -> bool { self.value == 9 }\n}\n\
+               fn conf(u: Uncertain) -> f64 { u.confidence }\n\
+               fn inner(n: i64) -> i64 { n + 1 }\n\
+               fn main() -> i64 {\n    \
+               let u = uncertain_dyn_i64(9, 0.5)\n    \
+               println(to_str(u.ok()))\n    \
+               println(to_str_f64(conf(u)))\n    \
+               println(to_str(inner(u)))\n    \
+               0\n}\n";
+    let (code, stdout, stderr) = vm_same_both_engines("bare_uncertain_param", src);
+    assert_eq!(code, Some(0), "stderr: {stderr}");
+    assert_eq!(stdout, "true\n0.5\n10\n", "stderr: {stderr}");
+}
 #[test]
 fn json_path_i64_names_which_of_three_failures_occurred() {
     // `json_path_i64` collapsed THREE different failures into one message:

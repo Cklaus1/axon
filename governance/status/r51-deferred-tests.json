@@ -1,14 +1,14 @@
 {
   "spec": "governance/specs/R51-sealed-engine-unification.md",
   "about": "Tests deferred by R51 S0 (merge with the refuse-all pin). Each carries #[ignore = \"R51 <slice>: <reason>\"]; `slice` is the slice that ports what the test exercises. Every sealed run is refused until S6 flips SEAL_RUNTIME_COMPLETE, so a test whose control is an honest sealed run re-enables at S6 at the earliest; S6 empties this list. crates/axon-core/tests/r51_deferred_tests.rs fails if this list and the ignored set differ.",
-  "count": 211,
+  "count": 242,
   "by_slice": {
     "S0b": 14,
     "S5": 0,
     "S2": 0,
     "S3": 0,
-    "S4": 5,
-    "S6": 192
+    "S4": 28,
+    "S6": 200
   },
   "tests": [
     {
@@ -1276,6 +1276,192 @@
       "file": "crates/axon-core/src/interp/tests_v022_s4.rs",
       "slice": "S6",
       "reason": "closure pin owner (make_closure, S4) and the receiver dispatch rule ported (S4); needs a live sealed run"
+    },
+    {
+      "name": "a_confused_scalar_never_crosses_a_declared_return",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S4",
+      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+    },
+    {
+      "name": "a_confused_struct_never_crosses_as_another_struct",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S4",
+      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+    },
+    {
+      "name": "a_confused_element_never_crosses_inside_an_array",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S4",
+      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+    },
+    {
+      "name": "a_confused_payload_never_crosses_inside_an_option",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S4",
+      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+    },
+    {
+      "name": "a_confused_element_never_crosses_inside_a_tuple",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S4",
+      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+    },
+    {
+      "name": "a_confused_field_never_crosses_inside_a_struct",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S4",
+      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+    },
+    {
+      "name": "a_confused_field_is_refused_at_construction",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S4",
+      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+    },
+    {
+      "name": "a_confused_argument_never_enters_a_declared_parameter",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S6",
+      "reason": "the parameter cast at the seal crossing (call_fn_sealed) ported (S3); needs a live sealed run"
+    },
+    {
+      "name": "a_closures_confused_result_never_crosses_its_declared_type",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S4",
+      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+    },
+    {
+      "name": "a_closures_confused_argument_never_crosses_its_declared_type",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S4",
+      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+    },
+    {
+      "name": "a_lambdas_annotated_parameter_is_cast",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S4",
+      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+    },
+    {
+      "name": "a_confused_value_is_never_sent_on_a_declared_channel",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S4",
+      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+    },
+    {
+      "name": "a_let_annotation_is_cast",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S6",
+      "reason": "the let-annotation cast ported (S3); needs a live sealed run"
+    },
+    {
+      "name": "a_declared_soft_type_casts_its_wrapper_and_its_inner_value",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S4",
+      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+    },
+    {
+      "name": "a_confused_enum_never_crosses_as_another_enum",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S4",
+      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+    },
+    {
+      "name": "a_channel_carries_the_element_type_its_creation_states",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S4",
+      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+    },
+    {
+      "name": "a_channel_returned_at_an_undetermined_element_type_is_refused",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S4",
+      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+    },
+    {
+      "name": "a_generic_struct_or_enum_argument_binds_its_type_parameter",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S4",
+      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+    },
+    {
+      "name": "a_fn_with_no_declared_return_type_hands_the_operator_unit",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S4",
+      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+    },
+    {
+      "name": "a_handle_binding_admits_only_that_handle",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S6",
+      "reason": "the type-parameter binding cast at the return edge ported (S3); needs a live sealed run"
+    },
+    {
+      "name": "a_host_await_crossing_is_unavailable_inside_a_sealed_test_run",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S6",
+      "reason": "host_await_val refuses outside a suspendable run on main; needs a live sealed run"
+    },
+    {
+      "name": "a_dict_the_candidate_mutated_is_verified_at_every_edge_back",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S4",
+      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+    },
+    {
+      "name": "a_dict_the_candidate_adds_to_or_builds_still_crosses",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S4",
+      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+    },
+    {
+      "name": "a_mut_write_through_value_is_cast_at_the_seal_edge_back",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S4",
+      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+    },
+    {
+      "name": "a_mut_value_is_cast_when_an_operator_handler_aborts_the_call",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S4",
+      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+    },
+    {
+      "name": "a_candidates_own_fn_value_takes_arguments_and_an_operators_still_does_not",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S6",
+      "reason": "the sealed_fnval mark, closure_args_check and replaced_ok ported (S3); needs a live sealed run"
+    },
+    {
+      "name": "a_candidate_fn_value_the_operator_calls_still_cannot_reach_operator_fns",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S6",
+      "reason": "the call edge (call_fn_sealed) ported (S3); needs a live sealed run"
+    },
+    {
+      "name": "a_closure_that_captured_the_operators_dict_cannot_retype_after_an_operator_write",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S4",
+      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+    },
+    {
+      "name": "a_dict_over_the_snapshot_bound_is_refused_not_skipped",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S6",
+      "reason": "dict_edge_in's DICT_SNAP_MAX refusal ported (S3); needs a live sealed run"
+    },
+    {
+      "name": "a_sealed_send_on_an_operator_channel_needs_a_determined_element_type",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S4",
+      "reason": "needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"
+    },
+    {
+      "name": "a_sealed_frame_cannot_take_an_operator_fn_as_a_value",
+      "file": "crates/axon-core/src/interp/tests_v022_a.rs",
+      "slice": "S6",
+      "reason": "the creation edge for an operator fn named in value position (eval.rs ident_unbound, sealed_fnval) ported (S3); needs a live sealed run"
     }
   ]
 }

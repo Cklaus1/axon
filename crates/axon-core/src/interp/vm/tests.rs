@@ -1223,9 +1223,10 @@ fn r51_source(rel: &str) -> String {
 
 /// Every interpreter source the T1d sweep reads: `interp.rs` and every
 /// `interp/**/*.rs` (recursive, so `interp/vm/` and `interp/sym.rs` are in),
-/// except `vm/tests.rs`; each cut at its first `mod tests {`. Keyed by the
-/// path under `interp/` (`""` for `interp.rs`). Shared with the R51 S5
-/// builtin sweep in `interp::tests`.
+/// except `vm/tests.rs` and the `tests_v022_*.rs` files `include!`d into
+/// `interp.rs`'s `mod tests` (test code, like the cut below); each cut at its
+/// first `mod tests {`. Keyed by the path under `interp/` (`""` for
+/// `interp.rs`). Shared with the R51 S5 builtin sweep in `interp::tests`.
 pub(in crate::interp) fn r51_interp_sources() -> Vec<(String, String)> {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/interp");
     let mut rels = vec![String::new()];
@@ -1241,7 +1242,7 @@ pub(in crate::interp) fn r51_interp_sources() -> Vec<(String, String)> {
                     .unwrap()
                     .to_string_lossy()
                     .replace('\\', "/");
-                if rel != "vm/tests.rs" {
+                if rel != "vm/tests.rs" && !rel.starts_with("tests_v022_") {
                     rels.push(rel);
                 }
             }
