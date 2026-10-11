@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 754d78741b6fbc5ef9d5540c7e352d7ecc2c9c4a
+generated-at: 00ae0e525950bfd8337d39a5f3a10f722a9f16cf
 
-`git diff --numstat 31413ca7..754d7874 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..00ae0e52 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -49,26 +49,27 @@ generated-at: 754d78741b6fbc5ef9d5540c7e352d7ecc2c9c4a
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 4913 | 1499 |
+| `crates/axon-core/src/interp.rs` | 4894 | 1453 |
 | `crates/axon-core/src/interp/builtins.rs` | 672 | 512 |
 | `crates/axon-core/src/interp/conform.rs` | 1780 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1369 | 0 |
 | `crates/axon-core/src/interp/crossing_tests.rs` | 418 | 0 |
 | `crates/axon-core/src/interp/dispatch_tests.rs` | 616 | 0 |
 | `crates/axon-core/src/interp/env.rs` | 1193 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 1931 | 599 |
+| `crates/axon-core/src/interp/eval.rs` | 2016 | 603 |
 | `crates/axon-core/src/interp/goal.rs` | 88 | 42 |
 | `crates/axon-core/src/interp/kernel_tests.rs` | 337 | 0 |
+| `crates/axon-core/src/interp/pick_tests.rs` | 395 | 0 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 48 | 21 |
-| `crates/axon-core/src/interp/sink_tests.rs` | 1094 | 0 |
+| `crates/axon-core/src/interp/sink_tests.rs` | 1099 | 0 |
 | `crates/axon-core/src/interp/sym.rs` | 1187 | 0 |
-| `crates/axon-core/src/interp/taint.rs` | 1409 | 0 |
-| `crates/axon-core/src/interp/taint_tests.rs` | 3824 | 0 |
+| `crates/axon-core/src/interp/taint.rs` | 1654 | 0 |
+| `crates/axon-core/src/interp/taint_tests.rs` | 3978 | 0 |
 | `crates/axon-core/src/interp/tests_v022_a.rs` | 1223 | 0 |
 | `crates/axon-core/src/interp/tests_v022_b.rs` | 2030 | 0 |
 | `crates/axon-core/src/interp/tests_v022_c.rs` | 153 | 0 |
-| `crates/axon-core/src/interp/tests_v022_s4.rs` | 662 | 0 |
+| `crates/axon-core/src/interp/tests_v022_s4.rs` | 623 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 506 | 514 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
 | `crates/axon-core/src/interp/vm/mod.rs` | 3426 | 0 |
@@ -85,9 +86,9 @@ generated-at: 754d78741b6fbc5ef9d5540c7e352d7ecc2c9c4a
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 44717 | 5299 |
+| total | 45543 | 5257 |
 
-`git log --reverse 31413ca7..754d7874 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..00ae0e52 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -270,27 +271,36 @@ generated-at: 754d78741b6fbc5ef9d5540c7e352d7ecc2c9c4a
 | d25cae8c | R51 S3e | TEST-ONLY: rustfmt of interp/sink_tests.rs (line wrapping of the S3e tests); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 65eda84a | R51 S4b | INTERPRETER receiver dispatch rule at run time (veto taint.rs:1414-1476): impl_method_sealed (the tree MethodCall arm under T) takes the receiver's own taint and calls t_check_dispatch after seal_method/seal_dispatch; t_check_dispatch returns at once unless the receiver carries TYP or PICK (new taint bit, veto taint.rs:71), and t_check_dispatch_tainted refuses an untyped or picked receiver when the method selects between operator impls. t_rules (veto taint.rs:725) gates t_check_names/t_check_width/t_check_dispatch: always true outside cfg(test). Per-thread cfg(test) switches DISPATCH_RULE_OFF (read by seal_name_args, seal_dispatch, seal_width, seal_width_unary) and TAINT_FORCE_ON (read by t_rules), default off. goal.rs: run_goal/_warm/_random/_categorical/_multistart/_tournament apply seal_call to the goal fn, and unknown_goal_name gives a sealed caller the no-such-fn text (veto goal.rs, interp.rs:4946). TEST-ONLY interp/dispatch_tests.rs; sink_tests turn TAINT_FORCE_ON on where they judge the runtime taint. The VM and unsealed runs never reach the new code (impl_method_sealed only under T; seal_call returns unless seal.active); every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 5fea0339 | R51 S4b | INTERPRETER make_closure records the creating frame's pin owner in a sealed run (cv.seal.pin_owner = pin_fn, veto PIN_FN_MARK eval.rs:967-972); dispatch_named in a sealed run refuses a non-closure value a local holds (not_callable) instead of falling through to a fn of the same name (veto eval.rs local-call rule, amendment 60); both under seal.active, so an unsealed run is unchanged. TEST-ONLY T8.1 dispatch tests (undetermined positions, width/name, goal names) under Both/TaintOnly/StaticOnly/Neither with controls; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| ce3d8646 | R51 S4a | INTERPRETER the PICK mark (veto taint.rs:961-1185, 1320-1412): t_note marks an operator closure picked by capture cell (Rc::as_ptr, spec Fork 3) from eval_tainted and the local-closure call in dispatch_named; pick edges t_pick_index (index reads), t_pick_branch (if/match), t_stored_v (stores under sealed control), t_builtin_pick (sealed selector or callback; argument taints in taint.call_ats, set only on the sealed eval_call path), the frame-exit pick (t_frame_exit takes the result) and the sealed fn/closure hand-back; refusing sink t_check_call_picked in call_closure_frame. All gated on the sealed instantiation (T) or seal.active; unsealed and VM paths unchanged; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 8db20760 | R51 S4a | merges r51/s4b 5fea0339 (dispatch rule, test switches) for the T5 port; the switch block conflict resolved to S4b's side; no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 03ba80ff | R51 T3a | TEST-ONLY: v0.22's sealed-run test helpers (JUDGE/LAUNDER/CONFUSED, judged, live, confusion_refused, judged8, live8, honest8, dict_suite, dict_refused, put_u8, mut_refused; bodies verbatim) in interp/tests_v022_a.rs, included at the end of interp.rs's mod tests; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | bbf8be12 | R51 S4b | TEST-ONLY: v0.22's S4 dispatch rows ported under their v0.22 names in interp/tests_v022_s4.rs (included at the end of interp.rs mod tests; ignored R51 S6, they need a live sealed run); tests/dispatch_rule_switch_is_test_only.rs un-ignored and extended to TAINT_FORCE_ON; drift tests for the goal-name call edge and the impl_method/dispatch_named sink classification; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 3bd4709b | R51 S4b | TEST-ONLY: #[ignore] reasons of the dispatch-rule deferred tests (interp.rs unit tests, axon-psv sealed_frames) re-slotted to S6 with the registry; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| a9cfb6d7 | R51 S4a | TEST-ONLY: interp/pick_tests.rs, T8.1 PICK laundering attacks with honest controls (cast re-wrap, fn(..)-typed parameter, fn_value forwarder, SendValue round trip) on a build_with sealed unit runner; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | ca494217 | R51 T3a | TEST-ONLY: the 29 S3 rows of v0.22's interp::tests (seal-crossing casts, dict edges, &mut write-through, channel stamp) ported under their v0.22 names in interp/tests_v022_a.rs, bodies verbatim but two sealed_outcome_rule(.., true) calls run through sealed_outcome until S4 adds the rule switch; all 29 ignored and registered in r51-deferred-tests.json (21 S4: need the dispatch-rule-off switch; 8 S6, one a port gap: a bare `Uncertain` parameter unwraps the soft wrapper); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 5205763e | R51 S6 gaps | INTERPRETER (both engines, S0b-class correctness fix) assert_eq_f64 is stated positively, !(a == b || |a-b| <= 1e-9), as veto builtins.rs:3745, so a NaN operand FAILS on the tree and the VM (they share the arm) as it does natively (OEQ); inf == inf still passes, and every non-NaN pair behaves as before. INTERPRETER seal edge (veto goal.rs:274/373/476/554, interp.rs:4959): run_goal_random/categorical/multistart/tournament call seal_call after the name lookup and unknown_goal_name gives a sealed caller the uniform no-such-fn text, so a sealed caller cannot tell an operator fn from a missing name; both are no-ops unless seal.active and the frame is sealed, so an unsealed run is unchanged. TEST-ONLY: vm/tests.rs NaN parity test, sink_tests.rs goal-search seal test and the clock-builtin World/Time check (veto taint_tests.rs:2498-2516), an ATTACK marker on the T1c CLI refusal asserts. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| b3c407d6 | R51 S4a | TEST-ONLY: T5 port taint_tests::an_operator_value_the_candidate_picked_is_never_dispatched_on (veto taint_tests.rs:316-374, 11 Ok / 1 Fails / 19 Refused) and the PICK hook drift test; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 748f0715 | R51 S6 gaps | TEST-ONLY: no_arm_of_a_pure_builtin_reads_or_advances_ambient_state moves verbatim from interp/sink_tests.rs to interp/taint_tests.rs, v0.22's module path, so the M3323/M3329 rows and the am117 gate row name a test that exists; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | ce42eeb2 | R51 S4b | TEST-ONLY: operator_arithmetic_never_runs_at_a_width_the_candidate_chose moved from interp/sink_tests.rs to interp::tests (interp/tests_v022_s4.rs, the v0.22 module path) with v0.22's runner half, which asserts SEALED_RUN_REFUSED until S6; sink_tests helpers with_ix and WIDTH widened to pub(super); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | be195107 | R51 T3b | TEST-ONLY: 28 v0.22 interp::tests rows (S3) ported under their v0.22 names in interp/tests_v022_b.rs, included at the end of interp.rs's mod tests: the pin-owner and name-sink drift tests re-derived for main's sealed call paths, Sym/def/fn_table lookups and vm/ (passing); 25 sealed-run rows ignored R51 S6 and 1 ignored R51 S4, all registered in r51-deferred-tests.json; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 64e3d9af | R51 T3a | TEST-ONLY: vm::tests::r51_interp_sources skips the tests_v022_*.rs files include!d into interp.rs's mod tests (they have no `mod tests {` to cut at, so every sweep read them whole); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 2776b55d | R51 T3a merge | joins r51/t3a-sweep (64e3d9af, made atop 4a29c0a0 so the t3b lane can merge it alone) into r51/t3a; no conflict, no change beyond it; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | c3a88834 | R51 T3b | merge commit (Merge commit '64e3d9af' into r51/t3b); joins its branch, no change beyond its parents |
+| 8906d2f6 | R51 S4a | TEST-ONLY: taint_tests::an_operator_closure_the_candidate_picked_is_never_called (veto taint_tests.rs:178-258) at the v0.22 path; the PICK deferred tests re-slotted to S6; sink_tests' via_capture probe accepts the closure-rule refusal; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | ddab14e1 | R51 S6 gaps | INTERPRETER revert of 5205763e's goal-name seal edge (the seal_call after the lookup in run_goal_random/categorical/multistart/tournament and the seal-aware unknown_goal_name): r51/s4b 65eda84a ports the same edge and merges first, so goal.rs and unknown_goal_name return to the base exactly; the unsealed path never changed. TEST-ONLY: the duplicate sink_tests goal-search test is dropped (S4b's dispatch_tests cover it). Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| ab5062f8 | R51 S4a | merges r51/int 27836b1c (S4b) into r51/s4; only the registry's by_slice counts conflicted, recomputed from the entries (S4 = 0); no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 0f0d5bb0 | R51 T3a | TEST-ONLY: three v0.22 interp::tests rows at their v0.22 path: every_global_read_goes_through_global_ref moved from interp/sink_tests.rs (with field_sites, body unchanged); a_sealed_send_on_an_operator_channel_needs_a_determined_element_type and a_sealed_frame_cannot_take_an_operator_fn_as_a_value ported (verbatim but the second's sealed_outcome_rule(.., true) runs through sealed_outcome until S4; main's same-named conform unit test and axon-psv integration test left alone), ignored and registered (S4, S6); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 4e6747b1 | R51 T3c | TEST-ONLY: ports 31 v0.22 interp::taint_tests / interp::tests rows and 3 misplaced rows under their v0.22 names (spec T3): v0.22's Case harness and case tables appended to interp/taint_tests.rs, v0.22's cfg(test) CONTROL_TABLE/CALLBACK_BUILTINS/SHORT_CIRCUIT_TABLE in interp/taint.rs, two interp::tests rows in interp/tests_v022_c.rs (included at the end of mod tests; JUDGE8/LAUNDER8 made pub(super)), every_channel_method_goes_through_the_one_access_helper moved from conform_tests.rs and every_kernel_builtin_that_draws_the_rng_is_coupled_to_the_world_cell from kernel_tests.rs; 17 case-running tests ignored R51 S6 and no_control_transfer_escapes_a_frame R51 S0b, all registered; no interpreter code changed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | f78ed94b | R51 T3b | INTERPRETER sandbox_run at the seal crossing (veto builtins.rs:4498-4502): a sealed callee's () reaching the operator's sandbox_run is the documented 0, not a type confusion; the arm is guarded by the crossing (seal.active, operator frame, sealed callee), so unsealed runs are unchanged. Plus TEST-ONLY: S6-probe-derived ignore reasons for 14 T3b rows (13 name S4's sealed_outcome dispatch-rule switch; the_sweep_routes_stay_closed re-slotted S4 -> S6) and their registry entries. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 3aef1f44 | R51 T3a | INTERPRETER, UNSEALED BEHAVIOUR CHANGES: sym.rs FnEntry::new param_coerce asks conform::is_soft_decl, so a parameter declared with the bare name `Uncertain`/`Temporal` keeps its soft wrapper as v0.22's call_fn did (main recognised only `Uncertain<T>`, unwrapped the argument, and `impl Judge for Uncertain { fn ok(self: Uncertain) .. self.value }` panicked "field access on non-struct" on both engines); a non-seal fix (spec T9 class) landing on both engines, pinned tree == vm by cli_run a_bare_uncertain_parameter_keeps_its_wrapper_in_both_engines; a_declared_soft_type_casts_its_wrapper_and_its_inner_value re-sliced S6 -> S4 (its gap is closed); every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 23be800c | R51 S6 gaps merge | joins r51/gaps (5205763e..5a739bf7: NaN assert_eq_f64, M3483 row, no_arm move to interp::taint_tests, M3342 re-anchor) onto S4b (27836b1c); only this table and the note conflicted, resolved by keeping both sides; goal.rs/unknown_goal_name are S4b's (the gaps lane reverted its own copy); no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| ecbdf307 | R51 S4a | TEST-ONLY: clippy fix (is_ok over matches!) in interp/pick_tests.rs; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | fdf795a4 | R51 T3 merge | joins r51/t3a (03ba80ff..3aef1f44: v0.22 sealed-run helpers, 29+3 S3 rows, the tests_v022_*.rs sweep skip, the bare-Uncertain param_coerce fix) onto the gaps merge (e15a4fb6); conflicts were the include! lines at the end of interp.rs's mod tests, this table, the note and the registry, all resolved by keeping both sides (registry entries unioned by (file, name), count and by_slice recounted); no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 0f6c5a50 | R51 T3 merge | joins r51/t3b (be195107..91dd0f67: 28 S3 rows, the sandbox_run unit-to-0 crossing arm) onto the t3a merge; conflicts were this table (64e3d9af's identical entry kept once), the note and the registry (3-way merged per entry by tasks/r51-registry-merge.py); no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 754d7874 | R51 T3 merge | joins r51/t3c (4e6747b1: 31+3 taint_tests / interp::tests rows, the Case harness, taint.rs cfg(test) tables) onto the t3b merge; interp/taint_tests.rs had two pure appends after the same base line (gaps' no_arm move, t3c's harness) and keeps both, gaps' first; the include! lines, this table, the note and the registry resolved by keeping both sides; no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 199 commits | | |
+| 6007bea4 | R51 T3 merge | TEST-ONLY: integration fixes after the T3 merges: interp/tests_v022_s4.rs drops its six helpers (JUDGE, LAUNDER, CONFUSED, judged, live, confusion_refused) that tests_v022_a.rs's byte-identical copies shadow, dead after the merge under clippy -D; the name-sink drift test (tests_v022_b.rs) re-lists goal_name_is_known's lookup in its seal-aware form from S4b; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 00ae0e52 | R51 S4 merge | joins r51/s4 (S4a: ce3d8646..ecbdf307, PICK mark, edges, frame-exit and builtin pick, t_check_call_picked, T8.1, T5) onto the T3 merges; interp/taint_tests.rs had two pure appends after the same base line and keeps both (T3c's first), no duplicate names; this table, the note and the registry (3-way per entry) resolved by keeping both sides; no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 208 commits | | |
 <!-- END MECHANICAL -->
 
 
