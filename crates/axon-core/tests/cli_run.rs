@@ -37258,18 +37258,206 @@ fn vm_bulk_count_declines() {
     }
 }
 
+/// R50 S13: loops one step outside the fill and count shapes, each over a
+/// packed array and each a `PureLoop`/`PureFor` (its body's `vm: pure` line
+/// counts it), give the tree's output under both engines and no `vm: bulk`
+/// line. Counts: an `else`; `a[w]` for another local `w`; `n = n - c`;
+/// `n = m + c`; a second statement in the `then` block; a statement after
+/// the `if`; `n = n + v` with an outer `v` shadowed by the loop's; and
+/// `p = p + p`. Fills: `q[k] = 7`; the increment before the store; a third
+/// statement; `j = k + s`; `a[j] = j`; `j = j + j`; and, each in a program
+/// of its own as the tree panics in it, `j = j - s`, `while j > b` and
+/// `while k <= b`. A recogniser that skips one of those checks runs a bulk
+/// path, and most of them print another result.
+#[test]
+fn vm_bulk_near_miss_shapes() {
+    let src = r#"fn main() -> i64 {
+    let a = arr_repeat(true, 12)
+    a[1] = false
+    a[4] = false
+    a[5] = false
+    a[9] = false
+    let c = 2
+    let n1 = 0
+    let m1 = 0
+    for v in 0..12 {
+        if a[v] { n1 = n1 + c } else { m1 = m1 + 1 }
+    }
+    println("else n={n1} m={m1}")
+    let w = 4
+    let n2 = 0
+    for v in 0..12 {
+        if a[w] { n2 = n2 + c }
+    }
+    println("index n={n2}")
+    let n3 = 5
+    for v in 0..12 {
+        if a[v] { n3 = n3 - c }
+    }
+    println("minus n={n3}")
+    let m4 = 100
+    let n4 = 5
+    for v in 0..12 {
+        if a[v] { n4 = m4 + c }
+    }
+    println("other n={n4}")
+    let n5 = 0
+    let m5 = 0
+    for v in 0..12 {
+        if a[v] {
+            n5 = n5 + c
+            m5 = m5 + 1
+        }
+    }
+    println("then2 n={n5} m={m5}")
+    let n6 = 0
+    let m6 = 0
+    for v in 0..12 {
+        if a[v] { n6 = n6 + c }
+        m6 = m6 + 1
+    }
+    println("after n={n6} m={m6}")
+    let v = 3
+    let n7 = 0
+    for v in 0..12 {
+        if a[v] { n7 = n7 + v }
+    }
+    println("shadow n={n7} v={v}")
+    let d = arr_repeat(false, 20)
+    d[1] = true
+    d[2] = true
+    d[4] = true
+    d[8] = true
+    d[16] = true
+    let p = 1
+    for v in 0..20 {
+        if d[v] { p = p + p }
+    }
+    println("double p={p}")
+    let s = 2
+    let b = 8
+    let q = arr_range(0, 10)
+    let k = 4
+    let j1 = 0
+    while j1 < b {
+        q[k] = 7
+        j1 = j1 + s
+    }
+    println("idx {q} j={j1}")
+    let f2 = arr_range(0, 10)
+    let j2 = 0
+    while j2 < b {
+        j2 = j2 + s
+        f2[j2] = 7
+    }
+    println("order {f2} j={j2}")
+    let f3 = arr_repeat(0.5, 10)
+    let j3 = 1
+    let x = 0
+    while j3 <= b {
+        f3[j3] = 2.5
+        j3 = j3 + s
+        x = x + 1
+    }
+    println("third {f3} j={j3} x={x}")
+    let f6 = arr_repeat(0, 10)
+    let j6 = 0
+    let k6 = 7
+    let s6 = 3
+    while j6 <= b {
+        f6[j6] = 7
+        j6 = k6 + s6
+    }
+    println("left {f6} j={j6}")
+    let f8 = arr_repeat(0, 10)
+    let j8 = 1
+    while j8 < 10 {
+        f8[j8] = j8
+        j8 = j8 + s
+    }
+    println("self {f8} j={j8}")
+    let f9 = arr_repeat(false, 20)
+    let j9 = 1
+    while j9 < 20 {
+        f9[j9] = true
+        j9 = j9 + j9
+    }
+    println("twice {f9} j={j9}")
+    0
+}
+"#;
+    let want = "else n=16 m=4\nindex n=0\nminus n=-11\nother n=102\n\
+                then2 n=16 m=8\nafter n=16 m=12\nshadow n=47 v=3\ndouble p=32\n\
+                idx [0, 1, 2, 3, 7, 5, 6, 7, 8, 9] j=8\n\
+                order [0, 1, 7, 3, 7, 5, 7, 7, 7, 9] j=8\n\
+                third [0.5, 2.5, 0.5, 2.5, 0.5, 2.5, 0.5, 2.5, 0.5, 0.5] j=9 x=4\n\
+                left [7, 0, 0, 0, 0, 0, 0, 0, 0, 0] j=10\n\
+                self [0, 1, 0, 3, 0, 5, 0, 7, 0, 9] j=11\n";
+    let twice: Vec<&str> = (0..20)
+        .map(|i| {
+            if [1, 2, 4, 8, 16].contains(&i) {
+                "true"
+            } else {
+                "false"
+            }
+        })
+        .collect();
+    let want = format!("{want}twice [{}] j=32\n", twice.join(", "));
+    let (code, stdout, stderr, counts, bulk) = vm_bulk_case("bulk_near_miss", src, "main");
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), want.as_str()),
+        "{stderr}"
+    );
+    assert_eq!(stderr, "");
+    assert_eq!((counts, bulk), ((0, 14), None));
+    let panics = [
+        (
+            "sub",
+            "let a = arr_repeat(false, 10)\n    let j = 5\n    let s = 2\n    let b = 8\n    \
+             while j < b {\n        a[j] = true\n        j = j - s\n    }",
+            "negative index -1",
+        ),
+        (
+            "gt",
+            "let a = arr_repeat(0, 10)\n    let j = 1\n    let s = 2\n    let b = 0\n    \
+             while j > b {\n        a[j] = 7\n        j = j + s\n    }",
+            "index 11 out of bounds (len 10)",
+        ),
+        (
+            "cond",
+            "let a = arr_repeat(0, 10)\n    let k = 0\n    let j = 0\n    let s = 3\n    let b = 8\n    \
+             while k <= b {\n        a[j] = 7\n        j = j + s\n    }",
+            "index 12 out of bounds (len 10)",
+        ),
+    ];
+    for (tag, lp, panic) in panics {
+        let src =
+            format!("fn main() -> i64 {{\n    {lp}\n    println(\"{{a}} j={{j}}\")\n    0\n}}\n");
+        let tag = format!("bulk_near_miss_{tag}");
+        let (code, stdout, stderr, counts, bulk) = vm_bulk_case(&tag, &src, "main");
+        assert_eq!((code, stdout.as_str()), (Some(101), ""), "[{tag}] {stderr}");
+        assert_eq!(stderr, format!("axon: panic: {panic}\n"), "[{tag}]");
+        assert_eq!((counts, bulk), ((0, 1), None), "[{tag}]");
+    }
+}
+
 /// R50 S13: `tests/fixtures/packed/ops.ax` applies every array-taking
 /// builtin and array operation to packed arrays and to literal arrays of the
 /// same elements. Each `P <label> ..` line equals the `L <label> ..` line
 /// after it, both engines agree, and the whole stdout is `ops.out`, the
-/// tree's output at `0f3b182b` (S12).
+/// tree's output at `0f3b182b` (S12). Its last statement adds 1 to an `i8`
+/// 127 appended to a packed `Ints` array, which panics at `i8` width.
 #[test]
 fn packed_arrays_match_literal_arrays() {
     let src = std::fs::read_to_string(fixture("packed/ops.ax")).expect("read ops.ax");
     let want = std::fs::read_to_string(fixture("packed/ops.out")).expect("read ops.out");
     let (code, stdout, stderr) = vm_same_both_engines("packed_ops", &src);
-    assert_eq!(code, Some(0), "{stderr}");
-    assert_eq!(stderr, "");
+    assert_eq!(code, Some(101), "{stderr}");
+    assert_eq!(
+        stderr,
+        "axon: panic: integer overflow: i8 127 + 1 out of range\n"
+    );
     assert_eq!(stdout, want);
     let lines: Vec<&str> = stdout.lines().collect();
     let mut pairs = 0;

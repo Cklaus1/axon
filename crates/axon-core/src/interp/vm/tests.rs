@@ -1139,6 +1139,12 @@ fn changed_sized() -> [i64] {
     a[1] = w
     a
 }
+fn pushed_sized() -> [i64] {
+    let w: i8 = 5
+    let a = arr_range(0, 3)
+    a = arr_push(a, w)
+    a
+}
 fn builtin_push() -> [[i64]] {
     let a = arr_range(0, 3)
     let b = arr_push(a, 7)
@@ -1294,6 +1300,140 @@ fn count_neg() -> i64 {
     }
     e
 }
+fn near_miss() -> [i64] {
+    let a = arr_repeat(true, 12)
+    a[1] = false
+    a[4] = false
+    a[5] = false
+    a[9] = false
+    let c = 2
+    let n1 = 0
+    let m1 = 0
+    for v in 0..12 {
+        if a[v] { n1 = n1 + c } else { m1 = m1 + 1 }
+    }
+    let w = 4
+    let n2 = 0
+    for v in 0..12 {
+        if a[w] { n2 = n2 + c }
+    }
+    let n3 = 5
+    for v in 0..12 {
+        if a[v] { n3 = n3 - c }
+    }
+    let m4 = 100
+    let n4 = 5
+    for v in 0..12 {
+        if a[v] { n4 = m4 + c }
+    }
+    let n5 = 0
+    let m5 = 0
+    for v in 0..12 {
+        if a[v] {
+            n5 = n5 + c
+            m5 = m5 + 1
+        }
+    }
+    let n6 = 0
+    let m6 = 0
+    for v in 0..12 {
+        if a[v] { n6 = n6 + c }
+        m6 = m6 + 1
+    }
+    let v = 3
+    let n7 = 0
+    for v in 0..12 {
+        if a[v] { n7 = n7 + v }
+    }
+    let d = arr_repeat(false, 20)
+    d[1] = true
+    d[2] = true
+    d[4] = true
+    d[8] = true
+    d[16] = true
+    let p = 1
+    for v in 0..20 {
+        if d[v] { p = p + p }
+    }
+    let s = 2
+    let b = 8
+    let q = arr_range(0, 10)
+    let k = 4
+    let j1 = 0
+    while j1 < b {
+        q[k] = 7
+        j1 = j1 + s
+    }
+    let f2 = arr_range(0, 10)
+    let j2 = 0
+    while j2 < b {
+        j2 = j2 + s
+        f2[j2] = 7
+    }
+    let f3 = arr_repeat(0.5, 10)
+    let j3 = 1
+    let x = 0
+    while j3 <= b {
+        f3[j3] = 2.5
+        j3 = j3 + s
+        x = x + 1
+    }
+    let f6 = arr_repeat(0, 10)
+    let j6 = 0
+    let k6 = 7
+    let s6 = 3
+    while j6 <= b {
+        f6[j6] = 7
+        j6 = k6 + s6
+    }
+    let f8 = arr_repeat(0, 10)
+    let j8 = 1
+    while j8 < 10 {
+        f8[j8] = j8
+        j8 = j8 + s
+    }
+    let f9 = arr_repeat(false, 20)
+    let j9 = 1
+    while j9 < 20 {
+        f9[j9] = true
+        j9 = j9 + j9
+    }
+    [n1, m1, n2, n3, n4, n5, m5, n6, m6, n7, p, j1, j2, j3, x, j6, j8, j9]
+}
+fn near_miss_sub() -> i64 {
+    let a = arr_repeat(false, 10)
+    let j = 5
+    let s = 2
+    let b = 8
+    while j < b {
+        a[j] = true
+        j = j - s
+    }
+    j
+}
+fn near_miss_gt() -> i64 {
+    let a = arr_repeat(0, 10)
+    let j = 1
+    let s = 2
+    let b = 0
+    while j > b {
+        a[j] = 7
+        j = j + s
+    }
+    j
+}
+fn near_miss_cond() -> i64 {
+    let a = arr_repeat(0, 10)
+    let k = 0
+    let j = 0
+    let s = 3
+    let b = 8
+    while k <= b {
+        a[j] = 7
+        j = j + s
+    }
+    j
+}
 "#;
 
 /// The form of array `v` (the `Elems::form` probe).
@@ -1307,8 +1447,9 @@ fn form_of(v: &Value) -> &'static str {
 /// R50 S13 (spec §4 S13 "Test probes"): each packed constructor's form; an
 /// `Ints` array stays `Ints` through a `LoopMem` store, an S8 `swap`, a
 /// `write_place` and the in-place append paths, and becomes `Vals` on a
-/// kind-changing write (a `Float`, an `i8`: a `SizedInt` is never packed);
-/// a builtin's result is `Vals`; and every
+/// kind-changing write (a `Float`, an `i8`: a `SizedInt` is never packed)
+/// and on an in-place push of an `i8`; a builtin's result is `Vals`; no
+/// `vm_bulk_near_miss_shapes` loop moves a bulk counter; and every
 /// `vm_bulk_fill_runs` and `vm_bulk_count_runs` shape, run with `vm_eager`
 /// (as the cli `vm` leg runs), moves the bulk counter of its array's kind.
 /// A build that packs only `Bools`, or converts an array to `Vals` on its
@@ -1357,6 +1498,7 @@ fn packed_forms_persist() {
         ("added", "Ints"),
         ("changed", "Vals"),
         ("changed_sized", "Vals"),
+        ("pushed_sized", "Vals"),
     ] {
         assert_eq!(form_of(&call(name, vec![])), form, "{name}");
     }
@@ -1390,9 +1532,63 @@ fn packed_forms_persist() {
     let (a, b) = pair(&call("builtin_push", vec![]));
     assert_eq!((form_of(&a), form_of(&b)), ("Ints", "Vals"));
 
+    let runs = super::pure::probe::bulk_runs;
+
+    // No near-miss shape (`vm_bulk_near_miss_shapes`) runs a bulk path,
+    // though each is a `PureLoop`/`PureFor` whose recogniser looked at it.
+    let before = runs();
+    let v = call("near_miss", vec![]);
+    let got: Vec<Value> = match &v {
+        Value::Array(items) => items.iter().collect(),
+        other => panic!("not an array: {other:?}"),
+    };
+    let want = [
+        16, 4, 0, -11, 102, 16, 8, 16, 12, 47, 32, 8, 8, 9, 4, 10, 11, 32,
+    ];
+    assert!(
+        got.len() == want.len()
+            && got
+                .iter()
+                .zip(want)
+                .all(|(g, w)| matches!(g, Value::Int(n) if *n == w)),
+        "near_miss: {got:?}"
+    );
+    for (name, panic) in [
+        ("near_miss_sub", "negative index -1"),
+        ("near_miss_gt", "index 11 out of bounds (len 10)"),
+        ("near_miss_cond", "index 12 out of bounds (len 10)"),
+    ] {
+        let r = interp.call_fn_entry(&interp.fn_table[index(name)], vec![]);
+        assert!(
+            matches!(&r, Err(Flow::Panic(m)) if &**m == panic),
+            "{name}: {r:?}"
+        );
+    }
+    let after = runs();
+    assert_eq!(
+        (after.fills, after.counts),
+        (before.fills, before.counts),
+        "near-miss shapes ran a bulk path"
+    );
+    let pure_loops = |name: &str| {
+        body(name)
+            .ops
+            .iter()
+            .filter(|op| matches!(op, Op::PureLoop { .. } | Op::PureFor { .. }))
+            .count()
+    };
+    assert_eq!(
+        [
+            pure_loops("near_miss"),
+            pure_loops("near_miss_sub"),
+            pure_loops("near_miss_gt"),
+            pure_loops("near_miss_cond"),
+        ],
+        [14, 1, 1, 1]
+    );
+
     // Each bulk shape and the counter it moves, as `[Bools, Ints, Floats]`
     // deltas, with the shape's result.
-    let runs = super::pure::probe::bulk_runs;
     let fills: [(&str, [u32; 3], &str); 8] = [
         ("fill_bools", [1, 0, 0], "Bools"),
         ("fill_ints", [0, 1, 0], "Ints"),

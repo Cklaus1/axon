@@ -553,15 +553,18 @@ impl Elems {
         }
     }
 
-    /// [`Elems::set`], returning the old element (the `Value` it stood for).
+    /// [`Elems::set`], forgetting an old `Vals` element that is a scalar
+    /// instead of running its drop glue ([`forget_scalar`]). It returns no
+    /// old element, so the element writes inlined into `call_mut_op` (S5's
+    /// leaf store) keep its wasm32 frame within its budget (cost only).
     #[inline]
-    pub(crate) fn replace(&mut self, i: usize, v: Value) -> Value {
+    pub(crate) fn put(&mut self, i: usize, v: Value) {
         match (&mut self.0, v) {
-            (Rep::Vals(xs), v) => std::mem::replace(&mut xs[i], v),
-            (Rep::Bools(xs), Value::Bool(b)) => Value::Bool(std::mem::replace(&mut xs[i], b)),
-            (Rep::Ints(xs), Value::Int(x)) => Value::Int(std::mem::replace(&mut xs[i], x)),
-            (Rep::Floats(xs), Value::Float(x)) => Value::Float(std::mem::replace(&mut xs[i], x)),
-            (_, v) => std::mem::replace(&mut self.vals_mut_cold()[i], v),
+            (Rep::Vals(xs), v) => forget_scalar(std::mem::replace(&mut xs[i], v)),
+            (Rep::Bools(xs), Value::Bool(b)) => xs[i] = b,
+            (Rep::Ints(xs), Value::Int(x)) => xs[i] = x,
+            (Rep::Floats(xs), Value::Float(x)) => xs[i] = x,
+            (_, v) => self.vals_mut_cold()[i] = v,
         }
     }
 

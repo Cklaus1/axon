@@ -2062,6 +2062,7 @@ pub(super) fn eval_dist_moment(tag: &str, dist: &Value) -> Option<f64> {
 }
 
 /// Compute CDF P(X <= k) for a distribution struct value.
+#[inline(never)]
 fn eval_dist_cdf(dist: &Value, k: f64) -> Option<f64> {
     let Value::Struct(s) = dist else {
         return None;

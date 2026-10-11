@@ -307,6 +307,14 @@ P write_float_into_ints [0, 2.5, 2] true
 L write_float_into_ints [0, 2.5, 2] true
 P write_sized_into_ints [7, 7, 5] true false
 L write_sized_into_ints [7, 7, 5] true false
+P push_sized_onto_ints [0, 1, 2, 5] false
+L push_sized_onto_ints [0, 1, 2, 5] false
+P add_sized_onto_ints [0, 1, 2, 5] false
+L add_sized_onto_ints [0, 1, 2, 5] false
+P concat_sized_onto_ints [0, 1, 2, 5] false
+L concat_sized_onto_ints [0, 1, 2, 5] false
+P push_sized_max [0, 1, 2, 127]
+L push_sized_max [0, 1, 2, 127]
 P write_int_into_floats [3, 0.5]
 L write_int_into_floats [3, 0.5]
 P push_int_onto_bools [true, true, 1] 3

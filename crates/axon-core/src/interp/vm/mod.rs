@@ -1239,7 +1239,7 @@ fn write_index_unique(env: &mut Env, base: &Var<'_>, i: usize, v: Value) -> Opti
     };
     match Rc::get_mut(items) {
         Some(a) if i < a.len() => {
-            forget_scalar(a.replace(i, v));
+            a.put(i, v);
             None
         }
         _ => Some(v),
@@ -3285,14 +3285,14 @@ impl<'p> Interp<'p> {
                 }
                 Move::Copy { .. } => {
                     let v = items.get(x).unwrap_or_else(|| malformed());
-                    forget_scalar(items.replace(i, v));
+                    items.put(i, v);
                 }
                 Move::Write { val, .. } => {
                     let v = match val {
                         Src::Reg(r) => regs[*r as usize].clone(),
                         _ => Value::Int(x as i64),
                     };
-                    forget_scalar(items.replace(i, v));
+                    items.put(i, v);
                 }
             }
         }

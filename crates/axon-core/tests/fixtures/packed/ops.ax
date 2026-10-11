@@ -288,6 +288,32 @@ fn main() -> i64 {
     ks[2] = w
     lks[2] = w
     both("write_sized_into_ints", "{ks} {ks == lks} {ks[2] < big}", "{lks} {lks == ks} {lks[2] < big}")
+    // Each append of `w` to a packed `Ints` array of length 3 keeps the
+    // appended element an `i8` (`xs[3] < big` compares at `i8` width:
+    // `false`; an append storing a plain `Int` prints `true`).
+    let tw = [id(w)]
+    let ka = arr_range(0, 3)
+    let lka = id([0, 1, 2])
+    ka = arr_push(ka, w)
+    lka = arr_push(lka, w)
+    both("push_sized_onto_ints", "{ka} {ka[3] < big}", "{lka} {lka[3] < big}")
+    let ma = arr_range(0, 3)
+    let lma = id([0, 1, 2])
+    ma = ma + tw
+    lma = lma + tw
+    both("add_sized_onto_ints", "{ma} {ma[3] < big}", "{lma} {lma[3] < big}")
+    let na = arr_range(0, 3)
+    let lna = id([0, 1, 2])
+    na = arr_concat(na, tw)
+    lna = arr_concat(lna, tw)
+    both("concat_sized_onto_ints", "{na} {na[3] < big}", "{lna} {lna[3] < big}")
+    // `ps[3] + one` overflows at `i8` width; it runs last, at the end of main.
+    let v: i8 = 127
+    let ps = arr_range(0, 3)
+    let lps = id([0, 1, 2])
+    ps = arr_push(ps, v)
+    lps = arr_push(lps, v)
+    both("push_sized_max", "{ps}", "{lps}")
     let three = 3
     let kf = arr_repeat(0.5, 2)
     let lkf = id([0.5, 0.5])
@@ -420,5 +446,8 @@ fn main() -> i64 {
     let sp5 = arr_repeat(sw, 2)
     let sl5 = [sw, sw]
     both("sized", "{sp5 == sl5} {id(arr_repeat(5, 2)) == id(sl5)} {sp5}", "{sl5 == sp5} {id([5, 5]) == id(sp5)} {sl5}")
+    // Last (`write_sized_into_ints`): the appended `i8` 127 overflows at its
+    // width, `integer overflow: i8 127 + 1 out of range`.
+    println("{ps[3] + one}")
     0
 }
