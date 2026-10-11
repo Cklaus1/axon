@@ -72,6 +72,66 @@ impl Snapshot {
     }
 }
 
+/// What a closure's capture cell holds (AX-40, T40): the free variables'
+/// bindings and, in a sealed run, the taint of each (R51 S2.3, TaintPort-5),
+/// in step by construction: the fields are private to this module, every
+/// constructor takes the taints with the bindings, and the only writers are
+/// the closure call's lend, copy and write-back ([`Bindings::lend_in`],
+/// [`Bindings::copy_in`], [`Bindings::lend_back`], [`Bindings::write_back`]),
+/// which move or copy the taints with the values. Reads see the bindings
+/// (`Deref` to the slice).
+#[derive(Debug, Default)]
+pub struct Captures {
+    vars: Vec<(Sym, Value)>,
+    /// As long as `vars` when the cell was made in a sealed run, else empty
+    /// (and never allocated).
+    taints: Vec<u8>,
+}
+
+impl Captures {
+    /// A cell made outside a sealed run: a capture-free fn value
+    /// (`fn_value`), or a closure rebuilt from a `SendValue` (which carries
+    /// no taint). A sealed frame that lends or copies such a cell with any
+    /// binding in it stops ([`Captures::taints_for`]).
+    pub(super) fn plain(vars: Vec<(Sym, Value)>) -> Self {
+        Captures {
+            vars,
+            taints: Vec::new(),
+        }
+    }
+
+    /// The cell's taints for a frame with a store (`sealed`): exactly one per
+    /// binding, or the run stops rather than read a capture's taint as 0.
+    #[inline(always)]
+    fn taints_for(&self, sealed: bool) -> &[u8] {
+        if sealed {
+            if self.taints.len() != self.vars.len() {
+                no_store("a capture cell without a taint per binding in a sealed frame");
+            }
+        } else {
+            debug_assert!(
+                self.taints.is_empty(),
+                "R51 taint store: a capture cell with taints in an unsealed frame"
+            );
+        }
+        &self.taints
+    }
+
+    /// The taint of capture `i` (a cell made in a sealed run).
+    #[cfg(test)]
+    pub(super) fn taint(&self, i: usize) -> u8 {
+        self.taints_for(true)[i]
+    }
+}
+
+impl std::ops::Deref for Captures {
+    type Target = [(Sym, Value)];
+    #[inline(always)]
+    fn deref(&self) -> &[(Sym, Value)] {
+        &self.vars
+    }
+}
+
 /// A call frame: its [`Bindings`] and the operand stack of a bytecode-engine
 /// activation running on it (R50): `vm::exec` takes the stack for the
 /// activation and hands it back emptied, so a pooled frame brings a grown stack
@@ -580,7 +640,6 @@ impl Bindings {
     /// The taint of binding `i` (an index a lookup returned). Panics on an
     /// Env without a store (a missing store never reads as 0) and on a store
     /// out of step with the bindings, in every build.
-    #[cfg_attr(not(test), allow(dead_code))] // S2.3's taint channel reads it.
     #[inline]
     pub(super) fn taint(&self, i: usize) -> u8 {
         if !self.store {
@@ -740,58 +799,93 @@ impl Bindings {
         Snapshot { vars, taints }
     }
 
+    /// A closure's capture cell (AX-40): the binding of each free variable
+    /// `(name, slot)` bound here, with its taint when this Env carries a store
+    /// (a sealed run), value and taint read through the one index.
+    pub(super) fn capture(&self, frees: impl Iterator<Item = (Sym, u32)>) -> Captures {
+        let mut vars = Vec::new();
+        let mut taints = Vec::new();
+        for (s, slot) in frees {
+            if let Some(i) = self.get_var_idx(s, slot) {
+                vars.push((s, self.vars[i].1.clone()));
+                if self.store {
+                    taints.push(self.taint(i));
+                }
+            }
+        }
+        Captures { vars, taints }
+    }
+
     /// AX-31's lend: the closure's capture cell `cell` becomes this empty
-    /// frame's base scope (the frame's empty vector waits in the cell; they
-    /// swap back in [`Bindings::lend_back`], so both keep their capacity).
-    /// Every captured binding carries taint `t`.
+    /// frame's base scope, each binding with the taint the cell holds for it
+    /// (the frame's empty vectors wait in the cell; they swap back in
+    /// [`Bindings::lend_back`], so both keep their capacity).
     #[inline]
-    pub(super) fn lend_in(&mut self, cell: &mut Vec<(Sym, Value)>, t: u8) {
+    pub(super) fn lend_in(&mut self, cell: &mut Captures) {
         debug_assert!(self.vars.is_empty() && self.marks.is_empty());
-        std::mem::swap(&mut self.vars, cell);
         if self.store {
-            self.taints.clear();
-            self.taints.resize(self.vars.len(), t);
+            cell.taints_for(true);
+            std::mem::swap(&mut self.taints, &mut cell.taints);
+        } else {
+            cell.taints_for(false);
+        }
+        std::mem::swap(&mut self.vars, &mut cell.vars);
+        if self.store {
             self.check_store();
         }
         self.check();
     }
 
     /// The end of a lent call: drop everything above the base scope (`base`
-    /// bindings) and swap the base scope back into the cell, leaving the
-    /// frame's empty vector here.
+    /// bindings) and swap the base scope back into the cell, its taints with
+    /// it (what each captured name holds now carries what the body gave it),
+    /// leaving the frame's empty vectors here.
     #[inline]
-    pub(super) fn lend_back(&mut self, base: usize, cell: &mut Vec<(Sym, Value)>) {
+    pub(super) fn lend_back(&mut self, base: usize, cell: &mut Captures) {
         self.release_to(base);
         self.marks.clear();
-        std::mem::swap(&mut self.vars, cell);
+        std::mem::swap(&mut self.vars, &mut cell.vars);
         debug_assert!(self.vars.is_empty());
-        self.taints.clear();
+        if self.store {
+            std::mem::swap(&mut self.taints, &mut cell.taints);
+            debug_assert!(self.taints.is_empty());
+        }
         self.check();
     }
 
     /// The copy path of a closure call: the capture cell's bindings become
-    /// this empty frame's base scope as copies, each carrying taint `t`, with
-    /// room for `extra` more (the parameters).
+    /// this empty frame's base scope as copies, each with the taint the cell
+    /// holds for it, with room for `extra` more (the parameters).
     #[inline]
-    pub(super) fn copy_in(&mut self, cell: &[(Sym, Value)], extra: usize, t: u8) {
+    pub(super) fn copy_in(&mut self, cell: &Captures, extra: usize) {
         debug_assert!(self.vars.is_empty() && self.marks.is_empty());
-        self.vars.reserve(cell.len() + extra);
-        self.vars.extend_from_slice(cell);
+        self.vars.reserve(cell.vars.len() + extra);
+        self.vars.extend_from_slice(&cell.vars);
         if self.store {
-            self.taints.reserve(cell.len() + extra);
-            self.taints.resize(self.vars.len(), t);
+            self.taints.reserve(cell.vars.len() + extra);
+            self.taints.extend_from_slice(cell.taints_for(true));
             self.check_store();
+        } else {
+            cell.taints_for(false);
         }
         self.check();
     }
 
     /// The copy path's write-back: the base scope's first `base` values,
-    /// positionally into the capture cell (a re-entrant call may have written
-    /// the cell meanwhile; this call's write-back wins).
+    /// positionally into the capture cell, and their taints into the cell's
+    /// (a re-entrant call may have written the cell meanwhile; this call's
+    /// write-back wins).
     #[inline]
-    pub(super) fn write_back(&self, base: usize, cell: &mut [(Sym, Value)]) {
-        for ((_, slot), (_, v)) in cell.iter_mut().zip(&self.vars[..base]) {
+    pub(super) fn write_back(&self, base: usize, cell: &mut Captures) {
+        for ((_, slot), (_, v)) in cell.vars.iter_mut().zip(&self.vars[..base]) {
             *slot = v.clone();
+        }
+        if self.store {
+            self.check_store();
+            cell.taints_for(true);
+            for (slot, t) in cell.taints.iter_mut().zip(&self.taints[..base]) {
+                *slot = *t;
+            }
         }
     }
 }
@@ -915,20 +1009,49 @@ mod tests {
         env.define(a, Value::Int(1), 4);
         env.clear();
         assert_eq!(taints(&env), Vec::<u8>::new(), "scalar clear");
-        let mut cell = vec![(a, Value::Int(1)), (b, Value::Int(2))];
-        env.lend_in(&mut cell, 2);
-        assert_eq!(taints(&env), vec![2, 2]);
+        // A capture cell keeps each binding's taint, through the lend (moved
+        // in and back), the copy (copied in) and the write-back (TaintPort-5).
+        env.define(a, Value::Int(1), 2);
+        env.define(b, Value::Int(2), 5);
+        let mut cell = env.capture([(a, 0), (b, 1)].into_iter());
+        assert_eq!((cell.len(), cell.taint(0), cell.taint(1)), (2, 2, 5));
+        env.clear();
+        env.lend_in(&mut cell);
+        assert_eq!(taints(&env), vec![2, 5], "the lend moves the taints in");
+        assert!(env.assign_var_t::<true>(a, 0, Value::Int(7), 1));
         env.push();
         env.push_var(c, Value::Int(3), 1);
         env.lend_back(2, &mut cell);
-        assert_eq!(cell.len(), 2);
         assert!(env.is_fresh());
         assert_eq!(taints(&env), Vec::<u8>::new());
-        env.copy_in(&cell, 1, 4);
-        assert_eq!(taints(&env), vec![4, 4]);
+        assert_eq!(
+            (cell.taint(0), cell.taint(1)),
+            (1, 5),
+            "and back, as the body left them"
+        );
+        env.copy_in(&cell, 1);
+        assert_eq!(taints(&env), vec![1, 5], "the copy copies them");
+        assert!(env.assign_var_t::<true>(b, 1, Value::Int(8), 3));
+        env.write_back(2, &mut cell);
+        assert_eq!(
+            (cell.taint(0), cell.taint(1)),
+            (1, 3),
+            "the write-back writes them"
+        );
         let snap = env.snapshot();
         let back = Env::from_snapshot(snap);
-        assert_eq!(taints(&back), vec![4, 4], "a snapshot carries its taints");
+        assert_eq!(taints(&back), vec![1, 3], "a snapshot carries its taints");
+    }
+
+    /// A capture cell made without taints (a closure rebuilt from a
+    /// `SendValue`) stops a sealed frame that lends or copies it, rather than
+    /// reading its captures as untainted.
+    #[test]
+    #[should_panic(expected = "a capture cell without a taint per binding")]
+    fn a_capture_cell_without_taints_panics_in_a_sealed_frame() {
+        let mut env = sealed_env();
+        let cell = Captures::plain(vec![(intern("s2_pc"), Value::Int(1))]);
+        env.copy_in(&cell, 0);
     }
 
     /// The name-scan fallback returns an index, so a variable's value and

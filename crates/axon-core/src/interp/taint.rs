@@ -126,6 +126,23 @@ impl Drop for PcGuard<'_> {
     }
 }
 
+/// A call frame's control taints (veto `call_fn_sealed`, interp.rs:3593 and
+/// 3615-3616; `call_closure_owned_by`, 4785 and 4877-4880): what an early exit
+/// inside the frame raises on `pc` and `sticky` is the frame's own business,
+/// so both are restored when the frame ends, whatever the outcome (amendment
+/// 102). Made by [`Interp::t_frame`] in the sealed instantiation only.
+pub(super) struct FrameCtl<'a> {
+    taint: &'a Taint,
+    pc: u8,
+    sticky: u8,
+}
+impl Drop for FrameCtl<'_> {
+    fn drop(&mut self) {
+        self.taint.pc.set(self.pc);
+        self.taint.sticky.set(self.sticky);
+    }
+}
+
 /// How a builtin relates to state it did not receive as an argument.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Class {
@@ -632,6 +649,17 @@ impl<'p> Interp<'p> {
         }
     }
 
+    /// The accumulator in a sealed run, `0` otherwise: for a caller that does
+    /// not know statically which run it is in.
+    #[inline(always)]
+    pub(super) fn t_acc(&self) -> u8 {
+        if self.seal.active {
+            self.taint.acc.get()
+        } else {
+            0
+        }
+    }
+
     /// [`Interp::t_stored`], likewise.
     #[inline(always)]
     pub(super) fn ts<const T: bool>(&self, vt: u8) -> u8 {
@@ -653,6 +681,109 @@ impl<'p> Interp<'p> {
         PcGuard {
             cell: &self.taint.pc,
             prev: self.taint.pc.replace(self.taint.pc.get() | t),
+        }
+    }
+
+    /// A call frame's control taints, saved for the frame's life (see
+    /// [`FrameCtl`]); `None` in the unsealed instantiation.
+    #[inline(always)]
+    pub(super) fn t_frame<const T: bool>(&self) -> Option<FrameCtl<'_>> {
+        T.then(|| FrameCtl {
+            taint: &self.taint,
+            pc: self.taint.pc.get(),
+            sticky: self.taint.sticky.get(),
+        })
+    }
+
+    /// The taint a frame's parameters are bound with (veto interp.rs:4141-4147,
+    /// 4754-4760): what the arguments arrived with (`entry_t`, their union in
+    /// `acc`) and the control the call runs under. A `closure` called from a
+    /// sealed frame takes everything: the closure frame runs
+    /// under its caller's provenance until S3's `with_frame` (a fn frame's
+    /// `frame_sealed` will be the callee's then, as on veto). Veto's TYP strip
+    /// on a parameter whose closed type pins the cast argument (`t_pins`)
+    /// comes with the casts in S3.
+    #[inline(always)]
+    pub(super) fn t_params<const T: bool>(&self, entry_t: u8, closure: bool) -> u8 {
+        if !T {
+            0
+        } else if closure && self.frame_sealed.get() {
+            ALL
+        } else {
+            entry_t | self.taint.pc.get()
+        }
+    }
+
+    /// The taint of the value a frame's body produced, read before anything
+    /// else is evaluated (veto interp.rs:4296-4306, 4852-4864): a `return`
+    /// carries its own (`taint.ret`; the statements it unwound past must not
+    /// become the result), any other outcome is the body's (`taint.last`).
+    #[inline(always)]
+    pub(super) fn t_body<const T: bool>(&self, r: &R) -> u8 {
+        if !T {
+            0
+        } else if matches!(r, Err(Flow::Return(_))) {
+            self.taint.ret.get()
+        } else {
+            self.taint.last.get()
+        }
+    }
+
+    /// A frame's exit (veto interp.rs:4670-4678, 4869, 4925): the call's
+    /// value carries what the arguments arrived with (`entry_t`), what the
+    /// body produced (`body_t`) and an early exit's condition (`sticky`, the
+    /// frame's own, before [`FrameCtl`] restores the caller's). Veto's PICK
+    /// mark on an operator-typed result is S4's.
+    #[inline(always)]
+    pub(super) fn t_frame_exit(&self, entry_t: u8, body_t: u8) {
+        let sticky = self.taint.sticky.get() & VAL;
+        self.taint.acc.set(entry_t | body_t | sticky);
+    }
+
+    /// The provenance a zoned (`@[adaptive]` / `@[experiment]`) call records
+    /// is a write the runtime performs for the CALLER, not a builtin, so it
+    /// reaches no `t_builtin_out` (amendment 117, PSV-1 loop findings 19, 24,
+    /// 43; veto taint.rs:1221-1248). The in-memory best store is kernel state
+    /// (`goal_count`, `goal_history` read it back through [`Class::Kernel`]);
+    /// the JSONL append is a file both kernels share, so it is World state
+    /// like `write_file`. A sealed call writes the file: ALL. An operator call
+    /// stores the taint of what it recorded and the control it ran under, as
+    /// any other operator write does. (Veto's sealed call also wrote a sealed
+    /// kernel's store, not the operator's: the per-frame `Kernel` is S3's.)
+    pub(super) fn t_provenance_write(&self, arg_t: u8, in_memory: bool, file: bool) {
+        if !self.seal.active {
+            return;
+        }
+        let (kernel, world) = (&self.taint.kernel, &self.taint.world);
+        if self.frame_sealed.get() {
+            if file {
+                world.set(world.get() | ALL);
+            }
+            return;
+        }
+        let a = self.t_stored(arg_t);
+        if in_memory {
+            kernel.set(kernel.get() | a);
+        }
+        if file {
+            world.set(world.get() | a);
+        }
+    }
+
+    /// Inside a builtin that runs operator code a number of times the earlier
+    /// results decide (a callback loop, a goal search, a scheduler pass): raise
+    /// the control taint of everything the runs returned so far for the rest of
+    /// the builtin, so the next run and what it stores are control-dependent on
+    /// them (amendment 117; veto taint.rs:1250-1264). The builtin dispatch
+    /// restores the pc on return (`dispatch_named`'s `t_pc` guard). Operator
+    /// frames only: a sealed frame's control is already everything.
+    #[inline(always)]
+    pub(super) fn t_loop_pc(&self) {
+        if self.seal.active && !self.frame_sealed.get() {
+            let t = self.taint.acc.get() & VAL;
+            if t != 0 {
+                self.taint.pc.set(self.taint.pc.get() | t);
+            }
         }
     }
 

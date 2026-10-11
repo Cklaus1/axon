@@ -248,7 +248,8 @@ Unknown, cortex to Err ("no summary"). T1 asserts all three.
   - T1d drift: the set of functions that read `.engine` equals {`run_body`, `run_test_body`, `run_lambda`,
     `fold_leaf`, the trace read}; `vm/tests.rs` is the only writer of `.engine` after build; the callers of `compile` are exactly
     `compile_entry` and `compile_lambda`; every caller of a VM entry point outside `vm/` is in the allow-list
-    {`call_fn_common`, `call_fn_in_general`, `call_closure_owned_by`, builtins `arr_fold`}.
+    {`call_fn_common`, `call_fn_frame`, `call_closure_frame`, builtins `arr_fold`} [REVISED: was `call_fn_in_general`,
+    `call_closure_owned_by`; S2.3 step 4 moved their bodies into the const-generic frames].
   - Sealed-state tests hold one lock that every `Interp::build` in the test binary respects (or the seal state
     is a build parameter), so a concurrent unrelated test never sees `seal.active`.
 - **T2 no regression** [REVISED: was "pass unchanged", reason: S0Merge-6, EG-6, EG-8]: `vm_parity.sh`,
@@ -368,7 +369,12 @@ Slices, each a commit (or a short run of commits) that builds and passes its non
   representation A, `global_ref`, `general_calls`, the main-only sink classification, `interp/conform.rs`, plus
   [REVISED: added, reason: TaintPort-7] the per-frame `Kernel` split (96 field refs through `k()`), sealed RNG
   stream and `kernel.rs` sealed token domain, `no_such_fn` uniform text, handler `with_frame` /
-  `handler_may_answer`; T3, T8.
+  `handler_may_answer`; T3, T8. [REVISED: added at S2.3 step 4.] The frame-taint readers that are seal edges
+  land here with them: `taint.catchable` (veto builtins.rs:474-482, read at the call crossing, interp.rs:3620)
+  and the scheduler fiber's sealed-entry sticky; the TYP strip on a parameter or return whose closed type pins
+  the cast (`t_pins`, veto interp.rs:4144, 4372); a sealed frame's own `frame_sealed` at `with_frame`, so a fn
+  frame's parameters take ALL (until then `t_params` gives ALL only to a closure called from a sealed frame);
+  the sealed kernel's provenance store in `t_provenance_write`. S4 adds the PICK mark at frame exit.
 - **S4** PICK bit and receiver dispatch rule; T5, T8.1.
 - **S6** flip `SEAL_RUNTIME_COMPLETE`; remove the deferred-test registry entries; evidence re-anchor and re-run
   (Fork 4, T7); T6; T2 re-measured; strict gate; §14 filled.

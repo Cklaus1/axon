@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: e12ac5fa482144365921a4102585b4ef9680b395
+generated-at: 191c8f518380bc47998c7b68fd74f023c3bb17fd
 
-`git diff --numstat 31413ca7..e12ac5fa -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..191c8f51 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -49,16 +49,16 @@ generated-at: e12ac5fa482144365921a4102585b4ef9680b395
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 3796 | 1419 |
-| `crates/axon-core/src/interp/builtins.rs` | 587 | 542 |
-| `crates/axon-core/src/interp/env.rs` | 1070 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 1539 | 597 |
-| `crates/axon-core/src/interp/goal.rs` | 55 | 52 |
+| `crates/axon-core/src/interp.rs` | 3981 | 1503 |
+| `crates/axon-core/src/interp/builtins.rs` | 593 | 542 |
+| `crates/axon-core/src/interp/env.rs` | 1193 | 0 |
+| `crates/axon-core/src/interp/eval.rs` | 1538 | 597 |
+| `crates/axon-core/src/interp/goal.rs` | 68 | 53 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 18 | 9 |
-| `crates/axon-core/src/interp/sym.rs` | 1184 | 0 |
-| `crates/axon-core/src/interp/taint.rs` | 956 | 0 |
-| `crates/axon-core/src/interp/taint_tests.rs` | 901 | 0 |
+| `crates/axon-core/src/interp/sym.rs` | 1188 | 0 |
+| `crates/axon-core/src/interp/taint.rs` | 1087 | 0 |
+| `crates/axon-core/src/interp/taint_tests.rs` | 1056 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 491 | 514 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
 | `crates/axon-core/src/interp/vm/mod.rs` | 3426 | 0 |
@@ -75,9 +75,9 @@ generated-at: e12ac5fa482144365921a4102585b4ef9680b395
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 29799 | 5245 |
+| total | 30415 | 5330 |
 
-`git log --reverse 31413ca7..e12ac5fa -- crates/axon-core/src`:
+`git log --reverse 31413ca7..191c8f51 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -242,7 +242,9 @@ generated-at: e12ac5fa482144365921a4102585b4ef9680b395
 | d21ed278 | R51 S2.3 step 3 | TEST-ONLY taint unit tests (interp/taint_tests.rs, cfg(test)): drive the evaluator's sealed instantiation eval_t::<true> on a build_with Interp (the refuse-all pin bypassed, the build_in refusal pinned) and kill every S2 hook in a mutation table; every_builtin_has_a_taint_class, the stringifier/emitter and call_builtin drift tests; match_pattern_rt becomes pub(super) for them. Deferred registry re-slots the 8 S2 entries (the taint sinks are S3, the clock class is ported so S6) and adds one S3 unit test. Interpreter behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | afd9e294 | R51 S0b perf | INTERPRETER cost only: S0b's return boundary (sum_return) tests the value's tag first (ret_needs_check: only Struct..=Err can be asked anything) and reads one FnEntry::ret byte (RetCheck replaces ret_is_scalar + ret_sum); leaf_call checks such a result out of line (leaf_return_checked), declining a confused Result/Option to the full path as before. Same refusals on both engines (soft unwrap, Result/Option confusion); new cli_run test + fixture for the leaf-call refusal; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | e12ac5fa | R51 S2 merge | joins S0b-perf (afd9e294) and S2 (426067dc..d21ed278); interp.rs, vm/mod.rs, sym.rs and eval.rs auto-merged, only this table and the note conflicted; no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 161 commits | | |
+| 6afab02a | R51 S2.3 step 4 | INTERPRETER frame and closure taint on the sealed instantiation only: call_fn_in_general and the closure call become const-generic frames (call_fn_frame / call_closure_frame::<T>); call_fn_common (plain entries only, and FnEntry::new now takes seal.active so no entry of a sealed run is plain) binds with 0. A frame binds its parameters with the arguments' taint plus pc (t_params), saves and restores the caller's pc/sticky (FrameCtl), reads taint.ret or taint.last at exit (t_body) and leaves entry|body|sticky in acc (t_frame_exit); refinement predicates, the postcondition, goal_met (ALL when a goal search ran) and struct-refinement predicates carry the frame's taints. A closure's capture cell becomes a typed Captures (bindings plus one taint per binding, sealed run only) moved by the lend, copied by the copy path and written back (TaintPort-5). t_loop_pc after builtin callbacks, goal evaluations and scheduler fibers; t_provenance_write at the zoned-call provenance writes. Unsealed: same code via ::<false>; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 191c8f51 | R51 S2.3 step 4 | TEST-ONLY drift lists: the T1d VM-entry allow-list (vm/tests.rs) and user_code_runners' PRIMITIVES (interp.rs, cfg(test)) name the const-generic frames call_fn_frame and call_closure_frame that 6afab02a moved the VM entries into; spec T1d text revised to match. Interpreter behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 163 commits | | |
 <!-- END MECHANICAL -->
 
 

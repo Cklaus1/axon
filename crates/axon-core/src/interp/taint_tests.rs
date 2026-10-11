@@ -250,6 +250,80 @@ fn payload(c: str, k: i64) -> Dict {
     }
     d
 }
+fn callee_id(x: i64) -> i64 {
+    x
+}
+fn callee_ret(x: i64) -> i64 {
+    return x
+}
+fn callee_sticky(x: i64) -> i64 {
+    if x > 0 { return 1 }
+    2
+}
+fn call_arg(c: i64, k: i64) -> i64 {
+    callee_id(c)
+}
+fn call_arg_clean(c: i64, k: i64) -> i64 {
+    let a = callee_id(c)
+    callee_id(k)
+}
+fn call_ret(c: i64, k: i64) -> i64 {
+    callee_ret(c)
+}
+fn after_call(c: i64, k: i64) -> i64 {
+    let r = callee_sticky(c)
+    let y = k
+    y = 3
+    y
+}
+fn capture_lend(c: i64, k: i64) -> i64 {
+    let x = c
+    let f = || x
+    f()
+}
+fn capture_copy(c: i64, k: i64) -> i64 {
+    let x = c
+    let f = || x
+    let g = f
+    g()
+}
+fn capture_write_lend(c: i64, k: i64) -> i64 {
+    let x = k
+    let f = |v| { let o = x
+        x = v
+        o }
+    let a = f(c)
+    f(k)
+}
+fn capture_write_copy(c: i64, k: i64) -> i64 {
+    let x = k
+    let f = |v| { let o = x
+        x = v
+        o }
+    let g = f
+    let a = g(c)
+    g(k)
+}
+fn closure_twice(c: i64, k: i64) -> i64 {
+    let f = |v| v
+    let a = f(c)
+    f(k)
+}
+fn store_into(d: Dict, x: i64) -> i64 {
+    dict_set(d, \"k\", x)
+    0
+}
+fn call_store(c: i64, k: i64) -> Dict {
+    let d = dict_new()
+    let r = store_into(d, c)
+    d
+}
+fn capture_ret(c: i64, k: i64) -> i64 {
+    let x = c
+    let f = || { if x > 0 { return 1 }
+        2 }
+    f()
+}
 ";
 
 const CAND: &str = "fn solve() -> i64 { 41 }\n";
@@ -897,5 +971,86 @@ fn a_sealed_frame_computes_only_tainted_values() {
         ix.frame_sealed.set(false);
         assert!(matches!(r, Ok(Value::Int(2))));
         assert_eq!(ix.taint.last.get(), ALL);
+    });
+}
+
+/// T8.3 (S2.3 step 4): a fn frame binds each parameter with its argument's
+/// taint, and the call's value carries what the body's value carried.
+#[test]
+fn an_arguments_taint_reaches_the_parameter() {
+    with_sealed("r51-s2-farg", |ix| {
+        assert_eq!(taint_of(ix, "call_arg", int(1), int(0)), ALL);
+        // What the callee STORES through the parameter carries it too (the
+        // call's value would carry it through the entry taint alone).
+        let (d, _) = probe_in(ix, "call_store", ck(int(1), int(0)));
+        assert_eq!(ix.t_obj(&d) & VAL, VAL, "the parameter's binding");
+        assert_eq!(
+            taint_of(ix, "call_arg_clean", int(1), int(0)),
+            0,
+            "a clean argument binds a clean parameter"
+        );
+    });
+}
+
+/// A `return` out of a frame carries the returned value's taint (`taint.ret`
+/// read at the frame's exit), not the clean accumulator it unwinds past.
+#[test]
+fn a_return_carries_its_values_taint_out_of_the_frame() {
+    with_sealed("r51-s2-fret", |ix| {
+        assert_eq!(taint_of(ix, "call_ret", int(1), int(0)), ALL);
+        // The closure's args are clean: the result is the `return`'s own
+        // taint (the tainted branch's pc, VAL), not the whole tainted `if`
+        // statement it unwound out of.
+        assert_eq!(taint_of(ix, "capture_ret", int(1), int(0)), VAL);
+    });
+}
+
+/// An early exit out of a tainted branch inside the callee raises the
+/// callee's sticky; the caller's pc and sticky are restored at the exit, so
+/// what the caller stores after the call is clean.
+#[test]
+fn the_callers_pc_and_sticky_are_restored_after_the_call() {
+    with_sealed("r51-s2-fctl", |ix| {
+        assert_eq!(taint_of(ix, "after_call", int(1), int(0)), 0);
+        assert_eq!(ix.taint.sticky.get(), 0, "sticky restored");
+        assert_eq!(ix.taint.pc.get(), 0, "pc restored");
+    });
+}
+
+/// TaintPort-5: a closure's capture keeps its binding's taint on the lend
+/// path (the only reference) and the copy path (a second reference).
+#[test]
+fn a_closure_capture_keeps_its_taint_through_lend_and_copy() {
+    with_sealed("r51-s2-cap", |ix| {
+        assert_eq!(taint_of(ix, "capture_lend", int(1), int(0)), ALL, "lend");
+        assert_eq!(taint_of(ix, "capture_copy", int(1), int(0)), ALL, "copy");
+    });
+}
+
+/// A capture written by one call and read by the next: the lend moves the
+/// written taint back into the cell, the copy path's write-back writes it.
+#[test]
+fn a_captures_written_taint_survives_into_the_next_call() {
+    with_sealed("r51-s2-capw", |ix| {
+        assert_eq!(
+            taint_of(ix, "capture_write_lend", int(1), int(0)),
+            ALL,
+            "lend back"
+        );
+        assert_eq!(
+            taint_of(ix, "capture_write_copy", int(1), int(0)),
+            ALL,
+            "write-back"
+        );
+    });
+}
+
+/// A frame taken from the pool after a tainted call starts clean: the second
+/// call, on clean arguments, computes a clean value.
+#[test]
+fn a_reused_pooled_frame_starts_clean() {
+    with_sealed("r51-s2-pool", |ix| {
+        assert_eq!(taint_of(ix, "closure_twice", int(1), int(0)), 0, "closure");
+        assert_eq!(taint_of(ix, "call_arg_clean", int(1), int(0)), 0, "fn");
     });
 }

@@ -220,7 +220,7 @@ fn fn_value(name: &str, arity: usize) -> Value {
                 tier: None,
             },
         )),
-        captured: std::cell::RefCell::new(Vec::new()),
+        captured: std::cell::RefCell::new(Captures::default()),
     }))
 }
 
@@ -818,11 +818,8 @@ impl<'p> Interp<'p> {
         // AX-40: capture only the free variables bound here — not the
         // whole environment. A free name that is not bound here (a
         // global, a fn, a builtin) is reached the same way at call time.
-        let captured: Vec<(Sym, Value)> = info
-            .captures
-            .iter()
-            .filter_map(|&(s, slot)| env.get_var(s, slot).map(|v| (s, v.clone())))
-            .collect();
+        // In a sealed run each capture keeps its binding's taint (R51 S2.3).
+        let captured = env.capture(info.captures.iter().copied());
         // T40: a SHARED, persistent capture cell — see Value::Closure.
         Value::Closure(Rc::new(ClosureVal {
             code: Rc::clone(&info.code),
@@ -2129,7 +2126,9 @@ impl<'p> Interp<'p> {
         // bound to the relevant value. A whole-struct `where` lives on
         // the TypeDef (not a RefineDef), so gate on the TypeDef having
         // a refinement OR the program having named refinements (for
-        // refined fields), not on `refine_preds` alone.
+        // refined fields), not on `refine_preds` alone. In a sealed run each
+        // predicate's `_` carries what the field values were computed with
+        // (their union, in `acc`; veto eval.rs:879, 902).
         if let Some(td) = self.structs.get(name).copied() {
             if td.refinement.is_some() || !self.refine_preds.is_empty() {
                 // (1) per-FIELD refinement: each field whose declared
@@ -2139,7 +2138,7 @@ impl<'p> Interp<'p> {
                         if let Some(pred) = self.refine_preds.get(rn.as_str()).copied() {
                             if let Some(fv) = fields.named(&tf.name) {
                                 let mut pe = self.new_env();
-                                pe.define(SYM_UNDERSCORE, fv.clone(), 0);
+                                pe.define(SYM_UNDERSCORE, fv.clone(), self.t_acc());
                                 if let Value::Bool(false) =
                                     contain_frame(self.eval(pred, &mut pe), FrameEdge::Predicate)?
                                 {
@@ -2164,7 +2163,7 @@ impl<'p> Interp<'p> {
                 if let Some(pred) = &td.refinement {
                     let sv = Value::record(sname, fields);
                     let mut pe = self.new_env();
-                    pe.define(SYM_UNDERSCORE, sv.clone(), 0);
+                    pe.define(SYM_UNDERSCORE, sv.clone(), self.t_acc());
                     if let Value::Bool(false) =
                         contain_frame(self.eval(pred, &mut pe), FrameEdge::Predicate)?
                     {

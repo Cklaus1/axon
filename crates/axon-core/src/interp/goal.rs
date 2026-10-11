@@ -110,7 +110,10 @@ impl<'p> Interp<'p> {
         let Some(cf) = self.fns.get(cname.as_str()).copied() else {
             return Ok(score);
         };
-        match self.call_fn(cf, args.to_vec())? {
+        let verdict = self.call_fn(cf, args.to_vec())?;
+        // Whether a probe is feasible is the candidate's score's too (amendment 117).
+        self.t_loop_pc();
+        match verdict {
             Value::Bool(true) => Ok(score),
             Value::Bool(false) => Ok(INFEASIBLE_SCORE),
             other => panic(format!(
@@ -152,6 +155,9 @@ impl<'p> Interp<'p> {
 
         let eval_at = |xs: &[Value]| -> Result<f64, Flow> {
             let other = self.call_fn(f, xs.to_vec())?;
+            // The score decides whether, and how often, the search goes on: the
+            // next evaluation of the metric is control-dependent on it (amendment 117).
+            self.t_loop_pc();
             match numeric_score(&other) {
                 Some(s) => self.apply_goal_constraint(xs, s),
                 None => panic(format!(
@@ -293,6 +299,7 @@ impl<'p> Interp<'p> {
                 probe.push(Value::Int(v));
             }
             let result = self.call_fn(f, probe)?;
+            self.t_loop_pc();
             // numeric_score unwraps a soft wrapper (Uncertain<i64>/Temporal<i64>)
             // to its inner score, so an AI scorer returning an Uncertain is optimized.
             let score = match numeric_score(&result) {
@@ -378,6 +385,7 @@ impl<'p> Interp<'p> {
         let eval_choice =
             |c: i64, best_score: &mut f64, best_dist: &mut f64| -> Result<bool, Flow> {
                 let result = self.call_fn(f, vec![Value::Int(c)])?;
+                self.t_loop_pc();
                 let score = match numeric_score(&result) {
                     Some(s) => self.apply_goal_constraint(&[Value::Int(c)], s)?,
                     None => {
@@ -545,6 +553,7 @@ impl<'p> Interp<'p> {
         let eval = |probe: &[i64]| -> Result<f64, Flow> {
             let args: Vec<Value> = probe.iter().map(|&x| Value::Int(x)).collect();
             let other = self.call_fn(f, args)?;
+            self.t_loop_pc();
             match numeric_score(&other) {
                 Some(s) => Ok(s),
                 None => panic(format!(
@@ -678,6 +687,7 @@ impl<'p> Interp<'p> {
         let eval_at = |x: i64| -> Result<f64, Flow> {
             let args = vec![Value::Int(x)];
             let other = self.call_fn(f, args.clone())?;
+            self.t_loop_pc();
             match numeric_score(&other) {
                 Some(s) => self.apply_goal_constraint(&args, s),
                 None => panic(format!(
@@ -814,6 +824,7 @@ impl<'p> Interp<'p> {
         let eval_at = |xs: &[i64]| -> Result<f64, Flow> {
             let args: Vec<Value> = xs.iter().map(|&x| Value::Int(x)).collect();
             let other = self.call_fn(f, args.clone())?;
+            self.t_loop_pc();
             match numeric_score(&other) {
                 Some(s) => self.apply_goal_constraint(&args, s),
                 None => panic(format!(
@@ -1000,6 +1011,7 @@ impl<'p> Interp<'p> {
         let eval_at = |xs: &[f64]| -> Result<f64, Flow> {
             let args: Vec<Value> = xs.iter().map(|&x| Value::Float(x)).collect();
             let result = self.call_fn(f, args.clone())?;
+            self.t_loop_pc();
             match numeric_score(&result) {
                 Some(s) => self.apply_goal_constraint(&args, s),
                 None => panic(format!(

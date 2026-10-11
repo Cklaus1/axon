@@ -479,6 +479,12 @@ impl<'p> Interp<'p> {
                 }
                 None => Err(Flow::Panic(format!("fiber fn `{fn_name}` vanished").into())),
             };
+            // Which fibers complete, and so what the pass returns and every
+            // later fiber runs under, is control-dependent on what the earlier
+            // ones returned (amendment 117, loop findings 15 and 45). (Veto's
+            // `catchable` count and the sealed-entry sticky that follow a
+            // fiber's call are S3's: their readers are the call edge.)
+            self.t_loop_pc();
             match outcome {
                 Ok(v) => {
                     let r = numeric_score(&v).map(|s| s as i64).unwrap_or(0);
