@@ -236,7 +236,8 @@ impl Interp<'_> {
     #[inline(always)]
     pub(super) fn take_frame(&self) -> Box<Env> {
         if let Some(env) = self.frame_spare.take() {
-            debug_assert!(env.is_fresh() && env.has_store() == self.seal.active);
+            #[cfg(debug_assertions)]
+            self.check_fresh_frame(&env);
             return env;
         }
         self.take_pooled_frame()
@@ -246,11 +247,21 @@ impl Interp<'_> {
     fn take_pooled_frame(&self) -> Box<Env> {
         match self.env_pool.borrow_mut().pop() {
             Some(env) => {
-                debug_assert!(env.is_fresh() && env.has_store() == self.seal.active);
+                #[cfg(debug_assertions)]
+                self.check_fresh_frame(&env);
                 env
             }
             None => Box::new(self.new_env()),
         }
+    }
+
+    /// The debug check of a pooled frame [`Interp::take_frame`] hands out:
+    /// empty, with a store exactly in a sealed run. Out of line, so it adds
+    /// nothing to the frame of the call path that takes one (AX-56).
+    #[cfg(debug_assertions)]
+    #[inline(never)]
+    fn check_fresh_frame(&self, env: &Env) {
+        assert!(env.is_fresh() && env.has_store() == self.seal.active);
     }
 
     /// Return a finished call's frame to the spare slot (the slot's previous
@@ -302,10 +313,19 @@ impl Bindings {
     /// The two vectors are in step: an unsealed Env's taint vector is empty,
     /// a sealed Env's is as long as its bindings. Debug builds only; release
     /// builds check a sealed Env after every taint write and on every taint
-    /// read ([`Bindings::check_store`]).
+    /// read ([`Bindings::check_store`]). The assertion is out of line, so it
+    /// adds nothing to the frames of the call paths that inline the writers
+    /// (wasm32 stack budget, AX-56).
     #[inline(always)]
     fn check(&self) {
-        debug_assert!(
+        #[cfg(debug_assertions)]
+        self.check_in_step();
+    }
+
+    #[cfg(debug_assertions)]
+    #[inline(never)]
+    fn check_in_step(&self) {
+        assert!(
             if self.store {
                 self.taints.len() == self.vars.len()
             } else {
@@ -341,11 +361,22 @@ impl Bindings {
                 no_store("a sealed write to an Env that has no taint store");
             }
         } else {
-            debug_assert!(
-                !self.store && t == 0,
-                "R51 taint store: an unsealed-only write in a sealed Env"
-            );
+            #[cfg(debug_assertions)]
+            self.guard_unsealed(t);
+            #[cfg(not(debug_assertions))]
+            let _ = t;
         }
+    }
+
+    /// The debug assertion of [`Bindings::guard`]'s `T = false` writer, out
+    /// of line like [`Bindings::check_in_step`].
+    #[cfg(debug_assertions)]
+    #[inline(never)]
+    fn guard_unsealed(&self, t: u8) {
+        assert!(
+            !self.store && t == 0,
+            "R51 taint store: an unsealed-only write in a sealed Env"
+        );
     }
 
     /// Whether this Env carries a taint store (exactly in a sealed run).
@@ -695,15 +726,8 @@ impl Bindings {
         &mut self.vars[i].1
     }
 
-    /// [`Bindings::value_mut`] of the innermost binding of `name`.
-    #[inline]
-    pub(super) fn get_mut(&mut self, name: Sym, t: u8) -> Option<&mut Value> {
-        let i = self.find(name)?;
-        Some(self.value_mut(i, t))
-    }
-
-    /// [`Bindings::get_mut`] for a caller that knows the run (see
-    /// [`Bindings::guard`]).
+    /// [`Bindings::value_mut_t`] of the innermost binding of `name`, for a
+    /// caller that knows the run (see [`Bindings::guard`]).
     #[inline]
     pub(super) fn get_mut_t<const T: bool>(&mut self, name: Sym, t: u8) -> Option<&mut Value> {
         let i = self.find(name)?;

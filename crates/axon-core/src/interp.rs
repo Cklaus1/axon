@@ -1629,7 +1629,7 @@ pub(super) mod nest_cost {
             release
         }
     }
-    pub const EVAL: usize = b(192, 288);
+    pub const EVAL_ARM: usize = b(192, 304);
     pub const EVAL_BLOCK: usize = b(112, 0);
     pub const EVAL_BINOP: usize = b(144, 0);
     pub const EVAL_WITH_HANDLER: usize = b(144, 0);
@@ -1638,15 +1638,15 @@ pub(super) mod nest_cost {
     pub const DISPATCH_CALL: usize = b(176, 0);
     pub const DISPATCH_NAMED: usize = b(144, 192);
     pub const IMPL_METHOD: usize = b(96, 192);
-    pub const CALL_MUT: usize = b(160, 320);
+    pub const CALL_MUT: usize = b(208, 320);
     pub const CALL_FN: usize = b(112, 128);
-    pub const CALL_FN_ENTRY: usize = b(112, 192);
-    pub const CALL_FN_IN: usize = b(160, 176);
-    pub const CALL_FN_IN_GENERAL: usize = b(224, 528);
+    pub const CALL_FN_ENTRY: usize = b(112, 224);
+    pub const CALL_FN_IN: usize = b(160, 208);
+    pub const CALL_FN_FRAME: usize = b(272, 576);
     pub const CALL_LOCAL_CLOSURE: usize = b(112, 128);
     pub const CALL_CLOSURE_ARG: usize = b(112, 272);
-    pub const CALL_CLOSURE_OWNED_BY: usize = b(256, 336);
-    pub const CALL_BUILTIN: usize = b(496, 704);
+    pub const CALL_CLOSURE_FRAME: usize = b(256, 336);
+    pub const CALL_BUILTIN: usize = b(496, 720);
     pub const RUN_BODY_VM: usize = b(160, 208);
     /// The tree's fn body charges what a VM level does above its own
     /// (smaller) frame: the VM's fn body plus its op loop ([`RUN`], which a
@@ -1654,46 +1654,72 @@ pub(super) mod nest_cost {
     /// through), so the VM panics no shallower than the tree there (spec
     /// R50 §4 Recursion).
     pub const RUN_BODY_TREE: usize = RUN_BODY_VM + RUN;
+    /// The `@[test]` frame's body runner charges what `run_body_tree` does.
+    pub const RUN_TEST_BODY: usize = RUN_BODY_VM + RUN;
     /// A compile frame and its unguarded tail (`compile`, `Vec` growth).
     /// Live only while one compile runs, never under the recursion; the
     /// checker fits them like the in-cycle constants.
     pub const COMPILE_BODY: usize = b(1504, 1024);
     pub const COMPILE_LAMBDA: usize = b(1616, 976);
     /// The tree's lambda body charges what a compiled VM lambda level does
-    /// above `call_closure_owned_by`, its op loop ([`RUN`]), so the VM
+    /// above `call_closure_frame`, its op loop ([`RUN`]), so the VM
     /// panics no shallower than the tree there (spec R50 §4 Recursion).
     pub const RUN_LAMBDA_TREE: usize = RUN;
     pub const RUN: usize = b(336, 528);
-    pub const CALL_FAST_ARG: usize = b(208, 272);
-    pub const CALL_FAST_INLINE: usize = b(256, 304);
-    pub const CALL_MUT_OP: usize = b(288, 416);
+    pub const CALL_FAST_ARG: usize = b(208, 288);
+    pub const CALL_FAST_INLINE: usize = b(256, 320);
+    pub const CALL_MUT_OP: usize = b(336, 432);
     pub const ASSIGN_IN_PLACE: usize = b(176, 224);
-    pub const BIND_LET: usize = b(128, 208);
+    pub const BIND_LET: usize = b(160, 224);
     pub const CHAN_METHOD: usize = b(128, 96);
-    pub const DISPATCH_RESUME: usize = b(224, 176);
-    pub const EVAL_NATIVE_CALL: usize = b(240, 320);
-    pub const FINISH_RECORD: usize = b(160, 384);
+    pub const DISPATCH_RESUME: usize = b(224, 208);
+    pub const EVAL_NATIVE_CALL: usize = b(256, 320);
+    pub const FINISH_RECORD: usize = b(160, 432);
     pub const RUN_LOOP_BODY: usize = b(112, 128);
     pub const BUILTIN_SCHEDULER_RUN_ONCE: usize = b(128, 304);
     pub const CALL_CLOSURE: usize = b(112, 128);
-    pub const CALL_FN_GOAL: usize = b(464, 928);
+    pub const CALL_FN_GOAL: usize = b(480, 928);
     pub const FINISH_CALL_COLD: usize = b(224, 496);
     pub const FLATTEN_PLACE: usize = b(128, 160);
-    pub const CALL_FAST: usize = b(208, 288);
+    pub const CALL_FAST: usize = b(224, 288);
     pub const CALL_FAST_LOCAL_INT_SLOW: usize = b(176, 176);
-    pub const CALL_MUT_GENERAL: usize = b(176, 288);
+    pub const CALL_MUT_GENERAL: usize = b(176, 304);
     pub const CALL_UNPROVEN: usize = b(192, 272);
     pub const RECORD_OP: usize = b(160, 160);
     pub const STORE_BIN_SLOW: usize = b(192, 192);
     pub const STORE_LOCAL_STACK_SLOW: usize = b(192, 208);
-    pub const GOAL_EVAL_HOLDOUT: usize = b(112, 400);
-    pub const RUN_GOAL: usize = b(672, 1008);
+    pub const GOAL_EVAL_HOLDOUT: usize = b(128, 400);
+    pub const RUN_GOAL: usize = b(672, 1024);
     pub const RUN_GOAL_CATEGORICAL: usize = b(416, 640);
-    pub const RUN_GOAL_MULTISTART: usize = b(640, 1152);
+    pub const RUN_GOAL_MULTISTART: usize = b(672, 1152);
     pub const RUN_GOAL_RANDOM: usize = b(208, 368);
-    pub const RUN_GOAL_WARM: usize = b(656, 1024);
+    pub const RUN_GOAL_WARM: usize = b(656, 1040);
     pub const COMPILE_EXPR: usize = b(816, 688);
     pub const COMPILE_STMT: usize = b(800, 656);
+    /// `P(dist op k)` (R51 moved it out of `eval_call`'s frame, which no
+    /// longer carries it as an unguarded tail).
+    pub const EVAL_PROB_PRED: usize = b(208, 224);
+    /// The sealed run's instances (R51): the `::<true>` instance of a
+    /// function compiled once per run kind, and the functions only a sealed
+    /// run enters. An unsealed run charges none of them.
+    pub const EVAL_ARM_SEALED: usize = b(336, 656);
+    pub const EVAL_BLOCK_SEALED: usize = b(128, 0);
+    pub const EVAL_BINOP_SEALED: usize = b(336, 0);
+    pub const EVAL_CALL_SEALED: usize = b(400, 0);
+    pub const DISPATCH_CALL_SEALED: usize = b(176, 304);
+    pub const DISPATCH_NAMED_SEALED: usize = b(176, 0);
+    pub const BIND_LET_SEALED: usize = b(160, 256);
+    pub const RUN_LOOP_BODY_SEALED: usize = b(112, 128);
+    pub const CHAN_METHOD_SEALED: usize = b(128, 112);
+    pub const ASSIGN_IN_PLACE_SEALED: usize = b(176, 0);
+    pub const CALL_FN_FRAME_SEALED: usize = b(272, 592);
+    pub const CALL_CLOSURE_FRAME_SEALED: usize = b(352, 416);
+    pub const IMPL_METHOD_SEALED: usize = b(160, 256);
+    pub const EVAL_TAINTED: usize = b(144, 144);
+    pub const CALL_FN_SEALED: usize = b(288, 176);
+    pub const CALL_MUT_SEALED: usize = b(192, 384);
+    pub const RUN_ARM_SEALED: usize = b(480, 144);
+    pub const STRUCT_REFINE_SEALED: usize = b(288, 112);
 }
 
 /// Hard ceiling on the configurable recursion limit. `AXON_MAX_DEPTH` is
@@ -1774,13 +1800,53 @@ impl<const W: usize> Drop for NestGuard<'_, W> {
     }
 }
 
+/// [`NestGuard`] for [`Interp::enter_nest_t`]: gives back `S` in the
+/// `::<true>` (sealed) instance, `F` in the `::<false>` one.
+#[cfg(target_arch = "wasm32")]
+pub(super) struct NestGuardT<'a, const T: bool, const F: usize, const S: usize>(&'a Cell<usize>);
+#[cfg(target_arch = "wasm32")]
+impl<const T: bool, const F: usize, const S: usize> NestGuardT<'_, T, F, S> {
+    const W: usize = if T { S } else { F };
+}
+#[cfg(target_arch = "wasm32")]
+impl<const T: bool, const F: usize, const S: usize> Drop for NestGuardT<'_, T, F, S> {
+    #[inline(always)]
+    fn drop(&mut self) {
+        self.0.set(self.0.get() - Self::W);
+    }
+}
+
 /// AX-56: charges the enclosing interpreter function's native frame
 /// (`nest_cost::$cost`) against the wasm32 stack budget until it returns, or
 /// returns the recursion-limit panic when the budget is spent, running
 /// `$spent` first (to release arguments the function owns). Expands to
 /// nothing off wasm32. Measured 2026-10-09: this `?` form leaves smaller
-/// unoptimised frames than an `Option` guard with `let .. else`.
+/// unoptimised frames than an `Option` guard with `let .. else`. A function
+/// compiled once per run kind (`f<const T: bool>`, R51) names both of its
+/// instances' constants: `nest_guard!(self, if T { F_SEALED } else { F })`.
 macro_rules! nest_guard {
+    ($interp:ident, if $t:ident { $sealed:ident } else { $cost:ident }) => {
+        #[cfg(target_arch = "wasm32")]
+        let _nest = $interp.enter_nest_t::<
+            $t,
+            { $crate::interp::nest_cost::$cost },
+            { $crate::interp::nest_cost::$sealed },
+        >()?;
+    };
+    ($interp:ident, if $t:ident { $sealed:ident } else { $cost:ident }, $spent:block) => {
+        #[cfg(target_arch = "wasm32")]
+        let _nest = match $interp.enter_nest_t::<
+            $t,
+            { $crate::interp::nest_cost::$cost },
+            { $crate::interp::nest_cost::$sealed },
+        >() {
+            Ok(g) => g,
+            Err(flow) => {
+                $spent
+                return Err(flow);
+            }
+        };
+    };
     ($interp:ident, $cost:ident) => {
         #[cfg(target_arch = "wasm32")]
         let _nest = $interp.enter_nest::<{ $crate::interp::nest_cost::$cost }>()?;
@@ -4890,6 +4956,23 @@ impl<'p> Interp<'p> {
         Ok(NestGuard(&self.nest))
     }
 
+    /// [`Interp::enter_nest`] for a function compiled once per run kind
+    /// (`f<const T: bool>`, R51): its `::<true>` instance, which runs exactly
+    /// in a sealed run, charges `S`, its `::<false>` instance `F`, so each
+    /// instance's constant covers that instance's own frame.
+    #[cfg(target_arch = "wasm32")]
+    #[inline(always)]
+    pub(super) fn enter_nest_t<const T: bool, const F: usize, const S: usize>(
+        &self,
+    ) -> Result<NestGuardT<'_, T, F, S>, Flow> {
+        let n = self.nest.get() + NestGuardT::<T, F, S>::W;
+        if n > self.nest_limit {
+            return Err(self.nest_exceeded());
+        }
+        self.nest.set(n);
+        Ok(NestGuardT(&self.nest))
+    }
+
     #[cfg(target_arch = "wasm32")]
     #[cold]
     #[inline(never)]
@@ -4932,7 +5015,7 @@ impl<'p> Interp<'p> {
         args.done(self);
         // `goal_met` follows the parameters (its slot in `Resolution`, the
         // next one: see `bind_params`); it is 0 for a fn without `@[goal]`.
-        env.push_var(SYM_GOAL_MET, Value::Int(0), 0);
+        env.push_var_t::<false>(SYM_GOAL_MET, Value::Int(0), 0);
         let result = match self.run_body(entry, env) {
             Ok(v) | Err(Flow::Return(v)) => v,
             Err(other) => return Err(frame_edge(other, FrameEdge::Fn(&entry.def.name))),
@@ -4979,6 +5062,7 @@ impl<'p> Interp<'p> {
     /// follows is control-dependent on the candidate (amendment 117).
     #[inline(never)]
     fn call_fn_sealed(&self, entry: &FnEntry<'p>, args: Vec<Value>, env: &mut Env) -> R {
+        nest_guard!(self, CALL_FN_SEALED);
         let f = entry.def;
         self.seal_call(f)?;
         let callee = self.fn_is_sealed(f);
@@ -5049,7 +5133,14 @@ impl<'p> Interp<'p> {
         env: &mut Env,
         crossing: bool,
     ) -> R {
-        nest_guard!(self, CALL_FN_IN_GENERAL);
+        nest_guard!(
+            self,
+            if T {
+                CALL_FN_FRAME_SEALED
+            } else {
+                CALL_FN_FRAME
+            }
+        );
         let f = entry.def;
         let params = &entry.params;
         // The taint the arguments arrived with (their union, in `acc`), and
@@ -5157,10 +5248,10 @@ impl<'p> Interp<'p> {
                         // The predicate frame sees the value with the taint
                         // the arguments arrived with (veto interp.rs:4168-4173).
                         let mut pred_env = self.new_env();
-                        pred_env.define(SYM_UNDERSCORE, val.clone(), entry_t);
+                        pred_env.define_t::<T>(SYM_UNDERSCORE, val.clone(), entry_t);
                         // Also bind the parameter name (for inline refinements
                         // `p: T where E[p] > k` that use the param name directly).
-                        pred_env.define(*s, val.clone(), entry_t);
+                        pred_env.define_t::<T>(*s, val.clone(), entry_t);
                         if let Value::Bool(false) = contain_frame(
                             self.eval_t::<T>(pred, &mut pred_env),
                             FrameEdge::Predicate,
@@ -5196,7 +5287,7 @@ impl<'p> Interp<'p> {
         // next one: see `bind_params`). The goal search ran the metric, which
         // a sealed run may have supplied: everything (veto interp.rs:4262-4267).
         let goal_t = if T && goal.is_some() { taint::ALL } else { 0 };
-        env.push_var(SYM_GOAL_MET, Value::Int(goal.unwrap_or(0)), goal_t);
+        env.push_var_t::<T>(SYM_GOAL_MET, Value::Int(goal.unwrap_or(0)), goal_t);
         // PROTOTYPE (RLM session option 2): when dumping bindings, run main's
         // top-level statements WITHOUT the extra block scope (eval_block pops
         // its scope before returning, discarding the locals), then capture the
@@ -5491,7 +5582,6 @@ impl<'p> Interp<'p> {
     ) -> R {
         nest_guard!(self, FINISH_CALL_COLD);
         let f = entry.def;
-        let is_adaptive_zone = entry.adaptive;
         // Phase 5: refinement-type POSTCONDITION — the dual of the entry-time
         // precondition check in `call_fn_in`. A fn declared `-> T where P` must produce a
         // value satisfying `P`. The checker discharges a CONSTANT return (E1209)
@@ -5547,80 +5637,16 @@ impl<'p> Interp<'p> {
         //                        third zone real instead of a synonym.
         // Both still log to the JSONL, so a zoned fn that executes always
         // leaves a provenance record.
-        let experiment_label = &entry.experiment;
-        if is_adaptive_zone || experiment_label.is_some() {
-            if let Some(score) = numeric_score(&result) {
-                // The in-memory best store feeds `goal_run` — adaptive only.
-                // Experiment records are deliberately withheld so the optimizer
-                // never treats a baseline as a candidate to beat.
-                if is_adaptive_zone {
-                    // The best store is kernel state a later call reads back:
-                    // it takes the taint of the record (veto interp.rs:4462;
-                    // the result's own taint where veto reads `taint.last`).
-                    self.t_provenance_write(entry_t | body_t, true, false);
-                    self.k()
-                        .provenance
-                        .borrow_mut()
-                        .entry(f.name.clone())
-                        .or_default()
-                        .push(score);
-                    self.k()
-                        .provenance_inputs
-                        .borrow_mut()
-                        .entry(f.name.clone())
-                        .or_default()
-                        .push(input_args.clone());
-                    self.k()
-                        .provenance_inputs_f64
-                        .borrow_mut()
-                        .entry(f.name.clone())
-                        .or_default()
-                        .push(input_args_f64.clone());
-                }
-                // Durable JSONL log (axon-rt's format) — every zoned execution,
-                // tagged with its zone (and label for experiments) so
-                // `axon trace`/observability can separate the streams.
-                let payload = match &result {
-                    Value::Int(n) => format!("ret_i64={n}"),
-                    _ => format!("ret_f64={score}"),
-                };
-                let (zone, label) = match &experiment_label {
-                    Some(l) => ("experiment", Some(l.as_str())),
-                    None => ("adaptive", None),
-                };
-                // PROVENANCE IS RUNTIME-OWNED TELEMETRY, NOT A PROGRAM EFFECT.
-                //
-                // This append is a durable filesystem write that no capability
-                // mechanism used to see: it is not a builtin call, so it never
-                // reached `pre_effect_gate`, where the ceiling is enforced.
-                // MEASURED — every one of these produced a row on disk, exit 0:
-                // a direct `@[adaptive]` call under
-                // `@[contained(fs: [], net: [], exec: none)]`; the same under
-                // `AXON_ALLOWED_EFFECTS=Pure`; and inside
-                // `sandbox_run(sandbox_create(p, ""), …)`, whose ceiling is
-                // deny-all. `goal_run` amplifies it — `max_evals <= 0` means
-                // unlimited, so a contained fn could drive an unbounded number
-                // of rows whose `score`, `input` and `payload` it chooses. That
-                // is a general durable store reached through the audit
-                // machinery, which is exactly what must not exist.
-                //
-                // The remedy is SUPPRESSION, not refusal. Refusing would abort
-                // every contained optimiser, and the optimiser does not need
-                // this write: the in-memory best store pushed just above is
-                // what `goal_run` reads, and it is untouched here. So a program
-                // denied filesystem effects keeps optimising and simply leaves
-                // no durable trace — it gains no capability it was refused, and
-                // there is no channel to amplify.
-                //
-                // Cross-process resume (`AXON_GOAL_CONTINUE`, which reads the
-                // log) does degrade under a restrictive ceiling. That is the
-                // correct direction: durable state is what was not granted.
-                if self.provenance_write_permitted() {
-                    self.t_provenance_write(entry_t | body_t, false, true);
-                    append_provenance_jsonl(&f.name, &payload, score, input_arg, zone, label);
-                }
-            }
-        }
+        // Out of line: it never evaluates, so its frame is not on the
+        // recursion through this one (wasm32 stack budget, AX-56).
+        self.record_zone_provenance(
+            entry,
+            &result,
+            input_arg,
+            input_args,
+            input_args_f64,
+            (entry_t, body_t),
+        );
 
         // `@[verify(predicate)]`: runtime gate. Two paths:
         //  - For `confidence OP K` / `value OP K` (the codegen-decodable
@@ -5776,6 +5802,96 @@ impl<'p> Interp<'p> {
         Ok(result)
     }
 
+    /// [`Interp::finish_call_cold`]'s R4 zone provenance injection (see
+    /// there): an `@[adaptive]` or `@[experiment]` fn's numeric return.
+    #[inline(never)]
+    fn record_zone_provenance(
+        &self,
+        entry: &FnEntry<'_>,
+        result: &Value,
+        input_arg: Option<i64>,
+        input_args: Vec<i64>,
+        input_args_f64: Vec<f64>,
+        (entry_t, body_t): (u8, u8),
+    ) {
+        let f = entry.def;
+        let is_adaptive_zone = entry.adaptive;
+        let experiment_label = &entry.experiment;
+        if is_adaptive_zone || experiment_label.is_some() {
+            if let Some(score) = numeric_score(result) {
+                // The in-memory best store feeds `goal_run` — adaptive only.
+                // Experiment records are deliberately withheld so the optimizer
+                // never treats a baseline as a candidate to beat.
+                if is_adaptive_zone {
+                    // The best store is kernel state a later call reads back:
+                    // it takes the taint of the record (veto interp.rs:4462;
+                    // the result's own taint where veto reads `taint.last`).
+                    self.t_provenance_write(entry_t | body_t, true, false);
+                    self.k()
+                        .provenance
+                        .borrow_mut()
+                        .entry(f.name.clone())
+                        .or_default()
+                        .push(score);
+                    self.k()
+                        .provenance_inputs
+                        .borrow_mut()
+                        .entry(f.name.clone())
+                        .or_default()
+                        .push(input_args.clone());
+                    self.k()
+                        .provenance_inputs_f64
+                        .borrow_mut()
+                        .entry(f.name.clone())
+                        .or_default()
+                        .push(input_args_f64.clone());
+                }
+                // Durable JSONL log (axon-rt's format) — every zoned execution,
+                // tagged with its zone (and label for experiments) so
+                // `axon trace`/observability can separate the streams.
+                let payload = match result {
+                    Value::Int(n) => format!("ret_i64={n}"),
+                    _ => format!("ret_f64={score}"),
+                };
+                let (zone, label) = match &experiment_label {
+                    Some(l) => ("experiment", Some(l.as_str())),
+                    None => ("adaptive", None),
+                };
+                // PROVENANCE IS RUNTIME-OWNED TELEMETRY, NOT A PROGRAM EFFECT.
+                //
+                // This append is a durable filesystem write that no capability
+                // mechanism used to see: it is not a builtin call, so it never
+                // reached `pre_effect_gate`, where the ceiling is enforced.
+                // MEASURED — every one of these produced a row on disk, exit 0:
+                // a direct `@[adaptive]` call under
+                // `@[contained(fs: [], net: [], exec: none)]`; the same under
+                // `AXON_ALLOWED_EFFECTS=Pure`; and inside
+                // `sandbox_run(sandbox_create(p, ""), …)`, whose ceiling is
+                // deny-all. `goal_run` amplifies it — `max_evals <= 0` means
+                // unlimited, so a contained fn could drive an unbounded number
+                // of rows whose `score`, `input` and `payload` it chooses. That
+                // is a general durable store reached through the audit
+                // machinery, which is exactly what must not exist.
+                //
+                // The remedy is SUPPRESSION, not refusal. Refusing would abort
+                // every contained optimiser, and the optimiser does not need
+                // this write: the in-memory best store pushed just above is
+                // what `goal_run` reads, and it is untouched here. So a program
+                // denied filesystem effects keeps optimising and simply leaves
+                // no durable trace — it gains no capability it was refused, and
+                // there is no channel to amplify.
+                //
+                // Cross-process resume (`AXON_GOAL_CONTINUE`, which reads the
+                // log) does degrade under a restrictive ceiling. That is the
+                // correct direction: durable state is what was not granted.
+                if self.provenance_write_permitted() {
+                    self.t_provenance_write(entry_t | body_t, false, true);
+                    append_provenance_jsonl(&f.name, &payload, score, input_arg, zone, label);
+                }
+            }
+        }
+    }
+
     fn call_closure(&self, c: Value, mut args: Vec<Value>) -> R {
         nest_guard!(self, CALL_CLOSURE);
         let out = self.call_closure_owned_by(&c, &mut args, 1);
@@ -5838,15 +5954,28 @@ impl<'p> Interp<'p> {
         }
     }
 
+    /// Never inlined: a caller that picks the instance at run time
+    /// ([`Interp::call_closure_arg`]) would otherwise hold both instances'
+    /// locals in its one frame on every callback level (wasm32 stack budget,
+    /// AX-56).
+    #[inline(never)]
     fn call_closure_frame<const T: bool>(
         &self,
         c: &Value,
         args: impl ClosureArgs,
         private_refs: usize,
     ) -> R {
-        nest_guard!(self, CALL_CLOSURE_OWNED_BY, {
-            args.bind(|_, v| drop(v));
-        });
+        nest_guard!(
+            self,
+            if T {
+                CALL_CLOSURE_FRAME_SEALED
+            } else {
+                CALL_CLOSURE_FRAME
+            },
+            {
+                args.bind(|_, v| drop(v));
+            }
+        );
         let Value::Closure(cv) = c else {
             args.bind(|_, v| drop(v));
             return not_callable(c);

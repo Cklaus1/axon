@@ -8,6 +8,21 @@
 
 use super::*;
 
+/// `$s.t_branch(ct, exits, || body)` (taint.rs) in the sealed instance of a
+/// function compiled once per run kind (`T`); the unsealed instance runs
+/// `body` in place. An unoptimised build calls every closure, so the closure
+/// would put a frame of its own between two evaluator frames on the unsealed
+/// recursion and widen the evaluator's own (wasm32 stack budget, AX-56).
+macro_rules! sealed_branch {
+    ($t:ident, $s:ident.t_branch($ct:expr, $exits:expr, || $body:expr)) => {
+        if $t {
+            $s.t_branch($ct, $exits, || $body)
+        } else {
+            $body
+        }
+    };
+}
+
 /// R28 ledger class for a native module's declared effect row (AUDIT T45).
 /// Native modules carry an effect row rather than a builtin name, so the
 /// name-keyed `audit_effect_kind` does not apply to them.
@@ -240,8 +255,10 @@ impl<'p> Interp<'p> {
     /// for code that does not know which run it is in; the evaluator's own
     /// recursion is generic over the run (`eval_t::<T>`) and never branches
     /// here. NOT a function pointer: the wasm Asyncify guard (R15) refuses a
-    /// module in which a fn that can suspend is address-taken.
-    #[inline]
+    /// module in which a fn that can suspend is address-taken. Inlined in
+    /// every profile, so no frame of its own sits on the recursion (wasm32
+    /// stack budget, AX-56): the unsealed recursion is `eval_arm::<false>`.
+    #[inline(always)]
     pub(super) fn eval(&self, expr: &Expr, env: &mut Env) -> R {
         if self.seal.active {
             self.eval_tainted(expr, env)
@@ -265,7 +282,7 @@ impl<'p> Interp<'p> {
     /// The 33-arm expression dispatch, instantiated once per run kind: `T` is
     /// the sealed run's (entered only through [`Interp::eval_tainted`]).
     pub(super) fn eval_arm<const T: bool>(&self, expr: &Expr, env: &mut Env) -> R {
-        nest_guard!(self, EVAL);
+        nest_guard!(self, if T { EVAL_ARM_SEALED } else { EVAL_ARM });
         match expr {
             // AX-55: int, float and bool literals are built in place (no call,
             // no table probe). A string or decimal literal's value owns an
@@ -413,11 +430,11 @@ impl<'p> Interp<'p> {
                 // An operator-typed value the branch yields was picked by the
                 // condition (veto eval.rs:400-415).
                 let r = if cond_bool(cv, "if")? {
-                    self.t_branch(ct, exits, || self.eval_t::<T>(then, env))
+                    sealed_branch!(T, self.t_branch(ct, exits, || self.eval_t::<T>(then, env)))
                 } else {
                     match else_ {
-                        Some(e) => self.t_branch(ct, exits, || self.eval_t::<T>(e, env)),
-                        None => self.t_branch(ct, exits, || Ok(Value::Unit)),
+                        Some(e) => sealed_branch!(T, self.t_branch(ct, exits, || self.eval_t::<T>(e, env))),
+                        None => sealed_branch!(T, self.t_branch(ct, exits, || Ok(Value::Unit))),
                     }
                 };
                 if T {
@@ -454,7 +471,7 @@ impl<'p> Interp<'p> {
                     if matched {
                         let mut gt = 0;
                         if let Some(guard) = &arm.guard {
-                            let ok = match self.t_branch(lost, false, || self.eval_t::<T>(guard, env)) {
+                            let ok = match sealed_branch!(T, self.t_branch(lost, false, || self.eval_t::<T>(guard, env))) {
                                 Ok(g) => matches!(g, Value::Bool(true)),
                                 Err(e) => {
                                     env.pop();
@@ -476,7 +493,7 @@ impl<'p> Interp<'p> {
                             && arms.iter().any(|a| {
                                 taint::has_exit(&a.body) || a.guard.as_ref().is_some_and(taint::has_exit)
                             });
-                        let r = self.t_branch(ct, exits, || self.eval_t::<T>(&arm.body, env));
+                        let r = sealed_branch!(T, self.t_branch(ct, exits, || self.eval_t::<T>(&arm.body, env)));
                         env.pop();
                         if T {
                             self.t_pick_branch(ct, &r);
@@ -497,7 +514,7 @@ impl<'p> Interp<'p> {
                 // (amendment 117, loop finding 26).
                 let mut seen = 0u8;
                 loop {
-                    let cv = self.t_branch(seen, false, || self.eval_t::<T>(cond, env))?;
+                    let cv = sealed_branch!(T, self.t_branch(seen, false, || self.eval_t::<T>(cond, env)))?;
                     let ct = self.tl::<T>();
                     if T {
                         seen |= ct & taint::VAL;
@@ -506,7 +523,7 @@ impl<'p> Interp<'p> {
                         break;
                     }
                     let exits = T && ct != 0 && taint::stmts_have_exit(body);
-                    match self.t_branch(ct, exits, || self.run_loop_body::<T>(body, env))? {
+                    match sealed_branch!(T, self.t_branch(ct, exits, || self.run_loop_body::<T>(body, env)))? {
                         LoopStep::Break => break,
                         LoopStep::Continue => {}
                     }
@@ -521,7 +538,7 @@ impl<'p> Interp<'p> {
             } => {
                 let mut seen = 0u8;
                 loop {
-                    let v = self.t_branch(seen, false, || self.eval_t::<T>(expr, env))?;
+                    let v = sealed_branch!(T, self.t_branch(seen, false, || self.eval_t::<T>(expr, env)))?;
                     let vt = self.tl::<T>();
                     if T {
                         seen |= vt & taint::VAL;
@@ -540,7 +557,7 @@ impl<'p> Interp<'p> {
                         break;
                     }
                     let exits = T && vt != 0 && taint::stmts_have_exit(body);
-                    let step = self.t_branch(vt, exits, || self.run_loop_body::<T>(body, env));
+                    let step = sealed_branch!(T, self.t_branch(vt, exits, || self.run_loop_body::<T>(body, env)));
                     env.pop();
                     match step? {
                         LoopStep::Break => break,
@@ -573,7 +590,7 @@ impl<'p> Interp<'p> {
                     }
                     env.push();
                     env.define_var_t::<T>(var, slot, Value::Int(i), self.ts::<T>(bt) & taint::VAL);
-                    let step = self.t_branch(bt, exits, || self.run_loop_body::<T>(body, env));
+                    let step = sealed_branch!(T, self.t_branch(bt, exits, || self.run_loop_body::<T>(body, env)));
                     env.pop();
                     match step? {
                         LoopStep::Break => break,
@@ -868,7 +885,7 @@ impl<'p> Interp<'p> {
                     let ready = q.borrow_mut().pop_front();
                     if ready.is_some() {
                         let exits = T && lost != 0 && arms.iter().any(|a| taint::has_exit(&a.body));
-                        return self.t_branch(lost, exits, || self.eval_t::<T>(&arm.body, env));
+                        return sealed_branch!(T, self.t_branch(lost, exits, || self.eval_t::<T>(&arm.body, env)));
                     }
                 }
                 panic("select: no channel was ready (cooperative interpreter — send before select)")
@@ -930,7 +947,7 @@ impl<'p> Interp<'p> {
         vt: u8,
         env: &mut Env,
     ) -> Result<(), Flow> {
-        nest_guard!(self, BIND_LET);
+        nest_guard!(self, if T { BIND_LET_SEALED } else { BIND_LET });
         // Phase 5: a `let/own/ref p: T where P = …` annotation is a
         // refinement obligation — check the bound value against the
         // predicate (the non-constant case the checker defers; constant is
@@ -1000,7 +1017,7 @@ impl<'p> Interp<'p> {
     }
 
     pub(super) fn eval_block<const T: bool>(&self, stmts: &[Stmt], env: &mut Env) -> R {
-        nest_guard!(self, EVAL_BLOCK);
+        nest_guard!(self, if T { EVAL_BLOCK_SEALED } else { EVAL_BLOCK });
         env.push();
         let mut last = Value::Unit;
         let n = stmts.len();
@@ -1033,7 +1050,14 @@ impl<'p> Interp<'p> {
         body: &[Stmt],
         env: &mut Env,
     ) -> Result<LoopStep, Flow> {
-        nest_guard!(self, RUN_LOOP_BODY);
+        nest_guard!(
+            self,
+            if T {
+                RUN_LOOP_BODY_SEALED
+            } else {
+                RUN_LOOP_BODY
+            }
+        );
         env.push();
         for stmt in body {
             match self.eval_t::<T>(&stmt.expr, env) {
@@ -1069,7 +1093,7 @@ impl<'p> Interp<'p> {
         args: &[Expr],
         env: &mut Env,
     ) -> R {
-        nest_guard!(self, CHAN_METHOD);
+        nest_guard!(self, if T { CHAN_METHOD_SEALED } else { CHAN_METHOD });
         match method {
             "send" => {
                 let mut v = self.eval_t::<T>(&args[0], env)?;
@@ -1139,7 +1163,7 @@ impl<'p> Interp<'p> {
     /// (veto eval.rs:713-724).
     #[inline(never)]
     fn impl_method_sealed(&self, receiver: &Expr, method: &str, argv: Vec<Value>, rt: u8) -> R {
-        nest_guard!(self, IMPL_METHOD);
+        nest_guard!(self, IMPL_METHOD_SEALED);
         let tn = argv[0].type_name();
         if let Some(f) = self.methods.get(&(tn.clone(), method.to_string())) {
             self.seal_method(f, &tn)?;
@@ -1424,13 +1448,13 @@ impl<'p> Interp<'p> {
         tier: Option<&str>,
         env: &mut Env,
     ) -> R {
-        nest_guard!(self, EVAL_CALL);
+        nest_guard!(self, if T { EVAL_CALL_SEALED } else { EVAL_CALL });
         // Phase 13 Slice 2: P(dist op k) probability predicate.
         // The argument is a comparison expression, not a plain value — intercept
         // before normal arg evaluation to avoid evaluating "dist <= k" literally.
         if let Expr::Ident(name) = callee {
             if name == "P" && args.len() == 1 {
-                if let Some(prob) = self.eval_prob_pred(&args[0], env) {
+                if let Some(prob) = self.eval_prob_pred(&args[0], env)? {
                     return Ok(Value::Float(prob));
                 }
                 // If we can't recognize the pattern, fall through to "undefined P"
@@ -1537,7 +1561,14 @@ impl<'p> Interp<'p> {
         tier: Option<&str>,
         env: &mut Env,
     ) -> R {
-        nest_guard!(self, DISPATCH_CALL);
+        nest_guard!(
+            self,
+            if T {
+                DISPATCH_CALL_SEALED
+            } else {
+                DISPATCH_CALL
+            }
+        );
         if let Expr::Ident(name) = callee {
             if name == "resume" {
                 return self.dispatch_resume(argv);
@@ -1604,7 +1635,14 @@ impl<'p> Interp<'p> {
         tier: Option<&str>,
         env: &mut Env,
     ) -> R {
-        nest_guard!(self, DISPATCH_NAMED);
+        nest_guard!(
+            self,
+            if T {
+                DISPATCH_NAMED_SEALED
+            } else {
+                DISPATCH_NAMED
+            }
+        );
         self.set_call_tier(tier);
         // The taints of the arguments, when a sealed `eval_call` left them.
         let ats = if T {
@@ -1723,6 +1761,9 @@ impl<'p> Interp<'p> {
     ) -> R {
         nest_guard!(self, CALL_MUT);
         let entry = &self.fn_table[self.call_mut_entry(callee)? as usize];
+        if self.seal.active {
+            return self.call_mut_sealed(entry, args, tier, env);
+        }
         // Plain arguments first, left to right: they cannot mention a
         // borrowed variable (E0606), so this order is unobservable — and if
         // one unwinds (`?`, panic) nothing has been moved out yet. A pooled
@@ -1758,7 +1799,10 @@ impl<'p> Interp<'p> {
     /// in, call `entry` in a pooled frame, move each `&mut` param's final
     /// value back. Allocation-free (R50 S5): the frame and `argv` come from
     /// their pools, and the borrowed bindings are found again from `args`
-    /// instead of being listed.
+    /// instead of being listed. An unsealed run's only: a sealed run's `&mut`
+    /// call is [`Interp::call_mut_sealed`], and the VM never runs a sealed
+    /// body. No Env of the run carries a taint store, so the accessors are
+    /// the store-less `::<false>` writers.
     #[inline(always)]
     pub(super) fn call_mut_with(
         &self,
@@ -1768,9 +1812,6 @@ impl<'p> Interp<'p> {
         tier: Option<&str>,
         env: &mut Env,
     ) -> R {
-        if self.seal.active {
-            return self.call_mut_sealed(entry, args, argv, tier, env);
-        }
         for (i, a) in args.iter().enumerate() {
             if let Expr::UnaryOp {
                 op: UnaryOp::RefMut,
@@ -1781,7 +1822,7 @@ impl<'p> Interp<'p> {
                     return panic("`&mut` of something other than a local variable".to_string());
                 };
                 let (s, slot) = self.res.var(operand, name);
-                let Some(b) = env.get_var_mut(s, slot, 0) else {
+                let Some(b) = env.get_var_mut_t::<false>(s, slot, 0) else {
                     return panic(format!("`&mut {name}`: `{name}` is not a local variable"));
                 };
                 let v = std::mem::replace(b, Value::Unit);
@@ -1806,7 +1847,7 @@ impl<'p> Interp<'p> {
                 };
                 let out = match (entry.def.params.get(i), entry.params.get(i)) {
                     (Some(p), Some(s)) if matches!(p.ty, crate::ast::AxonType::RefMut(_)) => {
-                        match frame.get_mut(*s, 0) {
+                        match frame.get_mut_t::<false>(*s, 0) {
                             Some(v) => std::mem::replace(v, Value::Unit),
                             None => Value::Unit,
                         }
@@ -1814,16 +1855,16 @@ impl<'p> Interp<'p> {
                     _ => Value::Unit,
                 };
                 let (s, slot) = self.res.var(operand, name);
-                if let Some(b) = env.get_var_mut(s, slot, 0) {
+                if let Some(b) = env.get_var_mut_t::<false>(s, slot, 0) {
                     forget_scalar(std::mem::replace(b, out));
                 }
             }
         }
-        self.give_frame(frame);
+        self.give_frame_t::<false>(frame);
         result
     }
 
-    /// [`Interp::call_mut_with`] in a sealed run (veto `call_fn_mut`,
+    /// [`Interp::call_mut`] in a sealed run (veto `call_fn_mut`,
     /// interp.rs:3495-3577; eval.rs:1575-1593). A borrowed binding's taint
     /// goes into the callee with its value, and what the binding holds when
     /// the call ends is a second return channel, for the value and its taint
@@ -1834,16 +1875,30 @@ impl<'p> Interp<'p> {
     /// 8, PSV-1 blocker): cast strictly to the declared type, and a
     /// replacement judged against what the operator held (amendment 78). A
     /// refused value is never handed back: the binding is left `()` and the
-    /// call's result is the refusal.
+    /// call's result is the refusal. Out of line and entered before the
+    /// plain arguments are evaluated, so the unsealed `&mut` call (the
+    /// tree's [`Interp::call_mut`], the VM's `call_mut_general`) holds none
+    /// of this in its frame (wasm32 stack budget, AX-56).
     #[inline(never)]
     fn call_mut_sealed(
         &self,
         entry: &FnEntry<'p>,
         args: &[Expr],
-        mut argv: impl CallArgs,
         tier: Option<&str>,
         env: &mut Env,
     ) -> R {
+        nest_guard!(self, CALL_MUT_SEALED);
+        // The plain arguments first, as `call_mut` evaluates them.
+        let mut argv = self.take_args(args.len());
+        for a in args {
+            argv.push(match a {
+                Expr::UnaryOp {
+                    op: UnaryOp::RefMut,
+                    ..
+                } => Value::Unit,
+                _ => self.eval(a, env)?,
+            });
+        }
         let f = entry.def;
         let crossing = self.fn_is_sealed(f) && !self.frame_sealed.get();
         let is_ref_mut = |i: usize| {
@@ -1946,6 +2001,11 @@ impl<'p> Interp<'p> {
     /// inline `return(v) => e` arm is present) rewrites the body's value. A
     /// `HandlerExpr::Named` that did not desugar to an inline definition is an
     /// unresolved name → the handler is inert (run the body unwrapped).
+    /// Inlined into the evaluator in an optimised build, as it was before R51
+    /// gave the evaluator two instances (two callers stop LLVM inlining it on
+    /// its own): a frame of its own would sit on every `with` level of the
+    /// recursion (wasm32 stack budget, AX-56).
+    #[cfg_attr(not(debug_assertions), inline(always))]
     fn eval_with_handler(
         &self,
         handler: &crate::ast::HandlerExpr,
@@ -1981,30 +2041,17 @@ impl<'p> Interp<'p> {
         };
         let depth = self.handlers.borrow().len();
         self.handlers.borrow_mut().push(frame);
-        // An arm that is not a bare tail `resume(..)` can ABORT the body at the
-        // operation it answers (or replay it): what runs after that point is
-        // skipped by a decision of whoever performed the operation. While such
-        // a handler is installed, a branch on candidate data is treated as a
-        // possible exit (sticky), taken or not, and sealed code that ran inside
-        // the body makes what follows control-dependent on it (amendment 117,
-        // loop findings 31, 32, 34).
-        let abortable = self.seal.active
-            && arms
-                .iter()
-                .any(|a| !crate::effects::arm_is_bare_tail_resume(&a.body));
-        let entries = self.taint.entries.get();
-        if abortable {
-            let n = &self.taint.abortable;
-            n.set(n.get() + 1);
-        }
+        // An arm that is not a bare tail `resume(..)` can ABORT the body (see
+        // `with_abort_enter`); in a sealed run only, and out of line, so the
+        // unsealed `with` keeps its frame (wasm32 stack budget, AX-56).
+        let abort = if self.seal.active {
+            self.with_abort_enter(arms)
+        } else {
+            None
+        };
         let result = self.eval(body, env);
-        if abortable {
-            let n = &self.taint.abortable;
-            n.set(n.get() - 1);
-            if !self.frame_sealed.get() && self.taint.entries.get() != entries {
-                let st = &self.taint.sticky;
-                st.set(st.get() | taint::VAL);
-            }
+        if let Some(entries) = abort {
+            self.with_abort_exit(entries);
         }
         // The block's value: the body's, or (when one of THIS block's arms
         // finished it) the arm's, whose accumulation unwound into this
@@ -2037,6 +2084,42 @@ impl<'p> Interp<'p> {
             value = self.eval(&ra.body, &mut ra_env)?;
         }
         Ok(value)
+    }
+
+    /// Entering the body of a `with` in a sealed run ([`Interp::eval_with_handler`]).
+    /// An arm that is not a bare tail `resume(..)` can ABORT the body at the
+    /// operation it answers (or replay it): what runs after that point is
+    /// skipped by a decision of whoever performed the operation. While such
+    /// a handler is installed, a branch on candidate data is treated as a
+    /// possible exit (sticky), taken or not, and sealed code that ran inside
+    /// the body makes what follows control-dependent on it (amendment 117,
+    /// loop findings 31, 32, 34). `Some(entries)` (the sealed-frame entry
+    /// count) when the handler can abort, for [`Interp::with_abort_exit`].
+    #[cold]
+    #[inline(never)]
+    fn with_abort_enter(&self, arms: &[crate::ast::HandlerArm]) -> Option<u64> {
+        let abortable = self.seal.active
+            && arms
+                .iter()
+                .any(|a| !crate::effects::arm_is_bare_tail_resume(&a.body));
+        if !abortable {
+            return None;
+        }
+        let n = &self.taint.abortable;
+        n.set(n.get() + 1);
+        Some(self.taint.entries.get())
+    }
+
+    /// Leaving the body of an abortable `with` ([`Interp::with_abort_enter`]).
+    #[cold]
+    #[inline(never)]
+    fn with_abort_exit(&self, entries: u64) {
+        let n = &self.taint.abortable;
+        n.set(n.get() - 1);
+        if !self.frame_sealed.get() && self.taint.entries.get() != entries {
+            let st = &self.taint.sticky;
+            st.set(st.get() | taint::VAL);
+        }
     }
 
     /// Phase 6: run the nearest active handler arm for effect `eff`, with the
@@ -2163,19 +2246,27 @@ impl<'p> Interp<'p> {
             let bound = self.match_pattern_rt(binding, &payload, &mut arm_env, pt);
             // The arm runs under the provenance of the `with` that installed
             // it, and under the pin owner of the fn that installed it
-            // (amendment 100).
-            let outcome = self.handler_edge_into(arm_sealed, &payload).and_then(|()| {
-                let _pin_guard = crate::interp::PinGuard {
-                    cell: &self.pin_fn,
-                    prev: self.pin_fn.replace(pin_owner),
-                };
-                self.with_frame(arm_sealed, || {
-                    contain_loop_control(
-                        bound.and_then(|_| self.eval(arm_body, &mut arm_env)),
-                        FrameEdge::HandlerArm,
-                    )
-                })
-            });
+            // (amendment 100): `run_arm_sealed`, in a sealed run. (A `match`,
+            // not `and_then`: an unoptimised build gives a closure a frame of
+            // its own on the recursion, AX-56.)
+            let outcome = if self.seal.active {
+                self.run_arm_sealed(
+                    arm_sealed,
+                    pin_owner,
+                    &payload,
+                    bound,
+                    arm_body,
+                    &mut arm_env,
+                )
+            } else {
+                contain_loop_control(
+                    match bound {
+                        Ok(_) => self.eval(arm_body, &mut arm_env),
+                        Err(e) => Err(e),
+                    },
+                    FrameEdge::HandlerArm,
+                )
+            };
             self.handlers.borrow_mut().extend(suspended);
             return match outcome {
                 Err(Flow::Resume(v)) => {
@@ -2207,18 +2298,24 @@ impl<'p> Interp<'p> {
         let mut arm_env = self.env_from_snapshot(captured);
         arm_env.push();
         let bound = self.match_pattern_rt(binding, &payload, &mut arm_env, pt);
-        let outcome = self.handler_edge_into(arm_sealed, &payload).and_then(|()| {
-            let _pin_guard = crate::interp::PinGuard {
-                cell: &self.pin_fn,
-                prev: self.pin_fn.replace(pin_owner),
-            };
-            self.with_frame(arm_sealed, || {
-                contain_loop_control(
-                    bound.and_then(|_| self.eval(arm_body, &mut arm_env)),
-                    FrameEdge::HandlerArm,
-                )
-            })
-        });
+        let outcome = if self.seal.active {
+            self.run_arm_sealed(
+                arm_sealed,
+                pin_owner,
+                &payload,
+                bound,
+                arm_body,
+                &mut arm_env,
+            )
+        } else {
+            contain_loop_control(
+                match bound {
+                    Ok(_) => self.eval(arm_body, &mut arm_env),
+                    Err(e) => Err(e),
+                },
+                FrameEdge::HandlerArm,
+            )
+        };
         self.resume_ctx.borrow_mut().pop();
         self.handlers.borrow_mut().extend(suspended);
 
@@ -2237,6 +2334,38 @@ impl<'p> Interp<'p> {
             // E1314 and any other control flow (panic, exit, …) propagate.
             Err(other) => Err(other),
         }
+    }
+
+    /// A handler arm's body in a sealed run ([`Interp::run_handler_arm`]):
+    /// across the handler edge, under the provenance of the `with` that
+    /// installed the arm, and under the pin owner of the fn that installed
+    /// it (amendment 100). Out of line, with its own guard, so an unsealed
+    /// run's arm calls the evaluator directly (wasm32 stack budget, AX-56):
+    /// in that run no frame is sealed and the pin owner is never set.
+    #[cold]
+    #[inline(never)]
+    fn run_arm_sealed(
+        &self,
+        arm_sealed: bool,
+        pin_owner: usize,
+        payload: &Value,
+        bound: Result<bool, Flow>,
+        arm_body: &Expr,
+        arm_env: &mut Env,
+    ) -> R {
+        nest_guard!(self, RUN_ARM_SEALED);
+        self.handler_edge_into(arm_sealed, payload).and_then(|()| {
+            let _pin_guard = crate::interp::PinGuard {
+                cell: &self.pin_fn,
+                prev: self.pin_fn.replace(pin_owner),
+            };
+            self.with_frame(arm_sealed, || {
+                contain_loop_control(
+                    bound.and_then(|_| self.eval(arm_body, arm_env)),
+                    FrameEdge::HandlerArm,
+                )
+            })
+        })
     }
 
     /// `&&`/`||` in a sealed run: the left operand decides whether the right
@@ -2272,7 +2401,7 @@ impl<'p> Interp<'p> {
         right: &Expr,
         env: &mut Env,
     ) -> R {
-        nest_guard!(self, EVAL_BINOP);
+        nest_guard!(self, if T { EVAL_BINOP_SEALED } else { EVAL_BINOP });
         // Short-circuit boolean operators. An `Uncertain<bool>` operand can't
         // short-circuit (we must combine confidences), so it falls through to
         // the value-level path which propagates uncertainty.
@@ -2374,7 +2503,14 @@ impl<'p> Interp<'p> {
         value: &Expr,
         env: &mut Env,
     ) -> Result<bool, Flow> {
-        nest_guard!(self, ASSIGN_IN_PLACE);
+        nest_guard!(
+            self,
+            if T {
+                ASSIGN_IN_PLACE_SEALED
+            } else {
+                ASSIGN_IN_PLACE
+            }
+        );
         let (op, operand, call) = match value {
             Expr::BinOp {
                 op: BinOp::Add,
@@ -2614,15 +2750,8 @@ impl<'p> Interp<'p> {
                     let sv = Value::record(sname, fields);
                     let mut pe = self.new_env();
                     pe.define(SYM_UNDERSCORE, sv.clone(), self.t_acc());
-                    // A DEFINITION-owned predicate runs under its definition's
-                    // provenance: a candidate struct's `where` ran unsealed
-                    // when the OPERATOR built one, and called operator code
-                    // from there (PCI candidate-4 review; veto eval.rs:908).
                     let held = if self.seal.active {
-                        let sealed = self.frame_sealed.get() || self.seal_type(name);
-                        self.with_frame(sealed, || {
-                            contain_frame(self.eval(pred, &mut pe), FrameEdge::Predicate)
-                        })?
+                        self.struct_refine_sealed(name, pred, &mut pe)?
                     } else {
                         contain_frame(self.eval(pred, &mut pe), FrameEdge::Predicate)?
                     };
@@ -2640,6 +2769,23 @@ impl<'p> Interp<'p> {
             }
         }
         Ok(Value::record(sname, fields))
+    }
+
+    /// A struct's whole-struct refinement `pred` in a sealed run
+    /// ([`Interp::finish_record`]). A DEFINITION-owned predicate runs under
+    /// its definition's provenance: a candidate struct's `where` ran unsealed
+    /// when the OPERATOR built one, and called operator code from there (PCI
+    /// candidate-4 review; veto eval.rs:908). Out of line, with its own
+    /// guard, so an unsealed run's construction calls the evaluator directly
+    /// (wasm32 stack budget, AX-56).
+    #[cold]
+    #[inline(never)]
+    fn struct_refine_sealed(&self, name: &str, pred: &Expr, pe: &mut Env) -> R {
+        nest_guard!(self, STRUCT_REFINE_SEALED);
+        let sealed = self.frame_sealed.get() || self.seal_type(name);
+        self.with_frame(sealed, || {
+            contain_frame(self.eval(pred, pe), FrameEdge::Predicate)
+        })
     }
 
     /// Cast each field value of a record literal `name { .. }` to its declared
@@ -2790,7 +2936,19 @@ impl<'p> Interp<'p> {
     /// Evaluate `P(dist op k)` — extracts the distribution and threshold from
     /// the comparison argument and returns the tail probability as `Some(f64)`.
     /// Returns `None` when the pattern isn't recognized (falls through to error).
-    fn eval_prob_pred(&self, arg: &Expr, env: &mut Env) -> Option<f64> {
+    /// Out of line, with its own guard: it evaluates the operands, so it is on
+    /// the recursion through `eval_call`, whose frame it would otherwise
+    /// widen (wasm32 stack budget, AX-56).
+    #[cold]
+    #[inline(never)]
+    fn eval_prob_pred(&self, arg: &Expr, env: &mut Env) -> Result<Option<f64>, Flow> {
+        nest_guard!(self, EVAL_PROB_PRED);
+        Ok(self.prob_pred(arg, env))
+    }
+
+    /// [`Interp::eval_prob_pred`] past its guard.
+    #[inline(always)]
+    fn prob_pred(&self, arg: &Expr, env: &mut Env) -> Option<f64> {
         use crate::ast::BinOp;
         let Expr::BinOp { op, left, right } = arg else {
             return None;
