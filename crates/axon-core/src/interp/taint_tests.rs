@@ -873,16 +873,15 @@ fn every_builtin_has_a_taint_class() {
     }
 }
 
-/// An interpreter source file, its test module cut off.
+/// An interpreter source file of the shared sweep ([`sources`]), keyed as
+/// there (`interp.rs`, `interp/<rel>`): cut at its `mod tests {` only (spec
+/// T3), so the code `interp.rs` holds after `mod taint_tests;` is read.
 fn source(rel: &str) -> String {
-    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("src")
-        .join(rel);
-    let src = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
-    match src.find("\n#[cfg(test)]\nmod ") {
-        Some(i) => src[..i].to_string(),
-        None => src,
-    }
+    sources()
+        .into_iter()
+        .find(|(f, _)| *f == rel)
+        .unwrap_or_else(|| panic!("{rel} is not in the drift sweep's list"))
+        .1
 }
 
 /// Every builtin arm that turns a value into text is either a stringifier (its
@@ -934,39 +933,18 @@ fn every_builtin_that_renders_a_value_to_text_is_a_stringifier_or_an_emitter() {
 /// takes the appended value's taint itself) (veto taint_tests.rs:735).
 #[test]
 fn builtins_are_dispatched_only_where_the_taint_is_routed() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/interp");
-    let mut files = vec!["interp.rs".to_string()];
-    let mut walk = vec![dir.clone()];
-    while let Some(d) = walk.pop() {
-        for e in std::fs::read_dir(&d).expect("interp dir").flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                walk.push(p);
-            } else if p.extension().is_some_and(|x| x == "rs") {
-                let rel = p.strip_prefix(dir.parent().unwrap()).unwrap();
-                files.push(rel.to_string_lossy().into_owned());
-            }
-        }
-    }
-    files.sort();
+    // The shared sweep's files: the unit-test modules (which call the
+    // dispatcher directly; none is a dispatch site of a run), `vm/tests.rs`
+    // and the `tests_v022_*.rs` files are not in it.
     let mut sites = Vec::new();
-    for file in &files {
-        // The unit-test modules call the dispatcher directly; none is a
-        // dispatch site of a run.
-        if file.ends_with("taint_tests.rs")
-            || file.ends_with("kernel_tests.rs")
-            || file.ends_with("sink_tests.rs")
-            || file.ends_with("crossing_tests.rs")
-        {
-            continue;
-        }
-        for l in source(file).lines() {
+    for (file, src) in sources() {
+        for l in src.lines() {
             let t = l.trim();
             if t.starts_with("//") {
                 continue;
             }
             if t.contains("call_builtin(") && !t.contains("fn call_builtin") {
-                sites.push((file.clone(), t.to_string()));
+                sites.push((file.to_string(), t.to_string()));
             }
         }
     }
@@ -3599,32 +3577,22 @@ fn amendment_117_cases() -> Vec<Case> {
 
 // ── Amendment 117: the drift tests the loop's findings call for ───────────────
 
-/// The arms of `call_builtin`, split at their 12-space `"name" … =>` headers:
-/// (names, the arm's text up to the next header).
+/// The arms of `call_builtin`, split at their 12-space `"name" … =>` headers
+/// by the shared splitter (`interp::tests::builtin_arms`, which asserts it
+/// found at least 250, so the sweep never runs over an empty cut): (names,
+/// the arm's text up to the next header), a name holding a space (a guard)
+/// dropped.
 fn builtin_arms() -> Vec<(Vec<String>, String)> {
-    let src = sources()
+    let src = source("interp/builtins.rs");
+    super::tests::builtin_arms(&src)
         .into_iter()
-        .find(|(f, _)| *f == "interp/builtins.rs")
-        .expect("builtins.rs")
-        .1;
-    let mut arms: Vec<(Vec<String>, String)> = Vec::new();
-    for line in src.lines() {
-        let indent = line.len() - line.trim_start().len();
-        let t = line.trim_start();
-        if indent == 12 && t.starts_with('"') && t.contains("=>") {
-            let head = &t[..t.find("=>").unwrap()];
-            let names = head
-                .split('|')
-                .map(|n| n.trim().trim_matches('"').to_string())
-                .filter(|n| !n.contains(' '))
-                .collect();
-            arms.push((names, String::new()));
-        } else if let Some(last) = arms.last_mut() {
-            last.1.push_str(line);
-            last.1.push('\n');
-        }
-    }
-    arms
+        .map(|(names, body)| {
+            (
+                names.into_iter().filter(|n| !n.contains(' ')).collect(),
+                body,
+            )
+        })
+        .collect()
 }
 
 /// Loop finding 12: the durable store is a log file every kernel opens, not
