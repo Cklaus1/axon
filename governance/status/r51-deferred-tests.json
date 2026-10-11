@@ -7,8 +7,8 @@
     "S5": 0,
     "S2": 0,
     "S3": 0,
-    "S4": 17,
-    "S6": 194
+    "S4": 16,
+    "S6": 195
   },
   "tests": [
     {
@@ -1209,19 +1209,19 @@
       "name": "a_value_at_an_undetermined_type_parameter_never_crosses_the_seal",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "the strict cast's undetermined-position refusal (conform::cast_at, UNDET) is ported (S3); needs a live sealed run"
+      "reason": "the strict cast's undetermined-position refusal (conform::cast_at, UNDET) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
     },
     {
       "name": "a_type_parameters_trait_bound_is_cast",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "the cast's trait-bound arm (conform::cast_tparam) is ported (S3); needs a live sealed run"
+      "reason": "the cast's trait-bound arm (conform::cast_tparam) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
     },
     {
       "name": "a_value_of_another_integer_width_never_crosses_a_declared_integer",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "the cast's integer-width arm (conform::cast_at) is ported (S3); needs a live sealed run"
+      "reason": "the cast's integer-width arm (conform::cast_at) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
     },
     {
       "name": "a_value_of_another_fixed_width_never_crosses_a_declared_fixed_width",
@@ -1233,13 +1233,13 @@
       "name": "an_i64_at_a_declared_fixed_width_takes_the_width",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "the cast's width conversion at a declared fixed width (conform::cast_at) is ported (S3); needs a live sealed run"
+      "reason": "the cast's width conversion at a declared fixed width (conform::cast_at) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
     },
     {
       "name": "width_correct_values_cross_unchanged",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "control of the cast's width arm (conform::cast_at, S3); needs a live sealed run"
+      "reason": "control of the cast's width arm (conform::cast_at, S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
     },
     {
       "name": "a_non_closure_never_crosses_a_declared_fn_type",
@@ -1251,7 +1251,7 @@
       "name": "a_soft_wrapper_takes_the_declared_plain_type",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "the cast's soft-wrapper unwrap (conform::cast_at) is ported (S3); needs a live sealed run"
+      "reason": "the cast's soft-wrapper unwrap (conform::cast_at) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
     },
     {
       "name": "every_declared_type_refuses_a_value_of_another_type",
@@ -1263,7 +1263,7 @@
       "name": "the_remaining_cast_arms_refuse_a_value_of_another_type",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "the cast's binding, dyn, enum-field, queued-channel, width and refinement arms (conform) are ported (S3); needs a live sealed run"
+      "reason": "the cast's binding, dyn, enum-field, queued-channel, width and refinement arms (conform) are ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
     },
     {
       "name": "runtime_sealing_holds_without_the_static_check",
@@ -1275,13 +1275,13 @@
       "name": "a_value_at_an_undetermined_position_never_crosses_a_seal",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "the strict cast's undetermined-position refusal (conform::cast_at, UNDET) is ported (S3); needs a live sealed run"
+      "reason": "the strict cast's undetermined-position refusal (conform::cast_at, UNDET) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
     },
     {
       "name": "an_operator_closure_called_from_sealed_code_takes_only_determined_arguments",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "the closure-argument edge (conform::closure_args_check) is ported (S3); needs a live sealed run"
+      "reason": "the closure-argument edge (conform::closure_args_check) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
     },
     {
       "name": "a_type_parameter_inside_any_shape_is_never_filled_by_the_candidate",
@@ -1293,25 +1293,25 @@
       "name": "sealed_code_cannot_retype_a_dict_entry_the_operator_held",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "the dict snapshot edge (dict_edge_in/dict_edge_out) is ported (S3); needs a live sealed run"
+      "reason": "the dict snapshot edge (dict_edge_in/dict_edge_out) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
     },
     {
       "name": "a_position_the_operator_held_is_judged_by_what_it_held_when_replaced",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "the dict snapshot edge's held-position judgement (conform, amendment 78) is ported (S3); needs a live sealed run"
+      "reason": "the dict snapshot edge's held-position judgement (conform, amendment 78) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
     },
     {
       "name": "a_placeholder_the_operator_held_is_not_filled_by_the_candidate",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "the dict snapshot edge's strict store at an undetermined held position (conform, amendment 78) is ported (S3); needs a live sealed run"
+      "reason": "the dict snapshot edge's strict store at an undetermined held position (conform, amendment 78) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
     },
     {
       "name": "a_mut_write_through_value_is_judged_by_what_the_operator_held",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
       "slice": "S6",
-      "reason": "the `&mut` edge-back cast (left holding / did not allow) is ported (S3); needs a live sealed run"
+      "reason": "the `&mut` edge-back cast (left holding / did not allow) is ported (S3); needs a live sealed run (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"
     },
     {
       "name": "an_annotated_operator_array_lent_as_mut_is_still_cast_at_the_edge_back",
@@ -1352,8 +1352,8 @@
     {
       "name": "the_sweep_routes_stay_closed",
       "file": "crates/axon-core/src/interp/tests_v022_b.rs",
-      "slice": "S4",
-      "reason": "most routes are refused by the receiver dispatch rule (seal_dispatch), which is not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "the sweep routes are refused by the receiver dispatch rule (seal_dispatch) and the seal casts, both on this tree; needs a live sealed run"
     },
     {
       "name": "a_sealed_caller_cannot_tell_an_operator_fn_from_a_missing_one",

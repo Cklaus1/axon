@@ -4525,7 +4525,13 @@ impl<'p> Interp<'p> {
                     // return is only its own (`-> u8` is satisfied by `4 as u8`),
                     // so a sealed callee's value that is not an `i64` would reach
                     // the operator at a type nothing on the operator side chose
-                    // (veto builtins.rs:4488-4500).
+                    // (veto builtins.rs:4488-4500). The documented `() -> 0`,
+                    // for a candidate callee too (veto builtins.rs:4498-4502).
+                    Ok(Value::Unit)
+                        if self.seal.active && !self.frame_sealed.get() && self.fn_is_sealed(f) =>
+                    {
+                        ok!(Value::Int(0))
+                    }
                     Ok(v) if self.seal.active && !self.frame_sealed.get() && self.fn_is_sealed(f) => {
                         panic(format!(
                             "sandbox_run: the candidate's `{fn_name}` returned {} where the \
