@@ -1226,7 +1226,7 @@ cost_micro = 1000
 ///
 /// Mutation: drop `with_sealed_dir` in submit → red.
 #[test]
-#[ignore = "R51 S3: no_such_fn uniform text and seal edges not ported; sealed control refused until S6"]
+#[ignore = "R51 S6: seal edges and the uniform no_such_fn text ported (S3); needs a live sealed run"]
 fn a_sealed_candidate_cannot_reach_the_operators_names() {
     const GRANT_PURE: &str = "\
 profile = \"restricted\"

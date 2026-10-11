@@ -5868,6 +5868,10 @@ mod kernel_tests;
 // v0.22 C9 round 4, amendments 53/72/78): casts, closure and channel
 // contracts, the operator's dict snapshots.
 mod conform;
+// The seal sinks inside evaluation (R51 S3): global, name, width, refine,
+// type and method edges on a `build_with` sealed `Interp`.
+#[cfg(test)]
+mod sink_tests;
 // Its unit tests (R51 S3: the casts and dict edges, driven directly).
 #[cfg(test)]
 mod conform_tests;
@@ -8119,7 +8123,7 @@ fn main() { }
     /// name-resolving builtin runs. The name argument is a SINK: operator code
     /// must give it a name-pure expression.
     #[test]
-    #[ignore = "R51 S3: the name rule at builtin call sites (seal_name_args) is not ported; sealed control refused until S6"]
+    #[ignore = "R51 S6: seal edge seal_name_args ported (S3); needs a live sealed run"]
     fn a_function_name_the_candidate_chose_never_selects_an_operator_fn() {
         let sbx = |name_expr: &str, pre: &str| {
             format!(
@@ -8207,7 +8211,7 @@ fn main() { }
     }
 
     #[test]
-    #[ignore = "R51 S3: the name rule at builtin call sites (seal_name_args) is not ported; sealed control refused until S6"]
+    #[ignore = "R51 S6: seal edge seal_name_args ported (S3); needs a live sealed run"]
     fn goal_eval_takes_no_function_name_the_candidate_chose() {
         let suite = "fn easy(x: i64) -> i64 { 100 }\nfn hard(x: i64) -> i64 { 0 }\n@[test]\nfn t() {\n    let s = goal_eval(NAME, 5)\n    assert(s > 50.0)\n}\n";
         assert_eq!(
@@ -8236,7 +8240,7 @@ fn main() { }
     }
 
     #[test]
-    #[ignore = "R51 S3: the name rule at builtin call sites (seal_name_args) is not ported; sealed control refused until S6"]
+    #[ignore = "R51 S6: seal edge seal_name_args ported (S3); needs a live sealed run"]
     fn scheduler_spawn_takes_no_function_name_the_candidate_chose() {
         let suite = "fn grade(x: i64) -> i64 { 9 }\n@[test]\nfn t() {\n    let id = scheduler_spawn(NAME, 0)\n    let n = scheduler_run()\n    assert(scheduler_result(id) == 9)\n}\n";
         assert_eq!(
@@ -8256,7 +8260,7 @@ fn main() { }
     }
 
     #[test]
-    #[ignore = "R51 S3: the name rule at builtin call sites (seal_name_args) is not ported; sealed control refused until S6"]
+    #[ignore = "R51 S6: seal edges seal_name_args and fn_by_name ported (S3); needs a live sealed run"]
     fn a_goal_constraint_and_a_kernel_goal_take_no_function_name_the_candidate_chose() {
         let pre = "@[adaptive]\nfn metric(x: i64) -> i64 { x }\nfn ok_c(x: i64) -> bool { true }\n";
         let constrained = format!("{pre}@[test]\nfn t() {{\n    let r = goal_run_constrained(\"metric\", CNAME, 10.0, 5)\n    assert(r >= 0.0)\n}}\n");

@@ -1,0 +1,870 @@
+//! R51 S3: the seal SINKS inside evaluation (v0.22 interp.rs:3697-3927,
+//! taint.rs:1351-1497), wired into main's tree evaluator: the global-read
+//! edge (`seal_global` behind `global_ref`, the only read of `globals`), the
+//! name rule at a name-resolving builtin (`seal_name_args`, `t_check_names`),
+//! the width rule (`seal_width`, `seal_width_unary`, `t_check_width`), the
+//! refinement edge (`seal_refine`), the method-dispatch edges
+//! (`seal_method`, `seal_dispatch`), the uniform no-such-fn text, the
+//! channel stamps (`chan_created`, `chan_send_check`) and the declared-type
+//! casts at `let x: T` and at record construction.
+//!
+//! Every sealed run is refused at build until S6 (`SEAL_RUNTIME_COMPLETE`), so
+//! these drive an `Interp` made by [`Interp::build_with`] (seal state and pin
+//! analysis computed, refuse-all pin skipped, as `taint_tests` and
+//! `kernel_tests` do). Each probe is a suite fn whose body runs through
+//! `eval_t::<true>` (the sealed instantiation) in an operator frame or, via
+//! [`Interp::with_frame`], in a sealed one, with `pin_fn` set to it as the
+//! call path sets it. The drift tests at the end pin the one global lookup
+//! and the classification of main's in-place sinks (spec §4 Fork 3).
+
+use super::taint::{ALL, VAL};
+use super::*;
+
+const SUITE: &str = "\
+let TABLE = [1, 2, 3]
+let CFG = Cfg { k: 7 }
+let G = |x: i64| x + 1
+type Cfg = { k: i64 }
+type Nat = i64 where _ >= 0
+trait Judge {
+    fn ok(self) -> bool
+}
+impl Judge for i64 {
+    fn ok(self: i64) -> bool { self == 9 }
+}
+impl Judge for bool {
+    fn ok(self: bool) -> bool { self }
+}
+fn w(n: i64) -> i64 { n }
+fn read_index() -> i64 { TABLE[0] }
+fn read_whole() -> [i64] { TABLE }
+fn read_field() -> i64 { CFG.k }
+fn call_const() -> i64 { G(1) }
+fn read_mine() -> i64 { MINE }
+fn take_w() -> i64 {
+    let f = w
+    f(1)
+}
+fn spawn_lit() -> i64 { scheduler_spawn(\"w\", 1) }
+fn spawn_param(name: str) -> i64 { scheduler_spawn(name, 1) }
+fn spawn_branch(c: i64) -> i64 {
+    let n = if c > 0 { \"w\" } else { \"w\" }
+    scheduler_spawn(n, 1)
+}
+fn spawn_missing() -> i64 { scheduler_spawn(\"nope\", 1) }
+fn shift(d: Dict) -> i64 {
+    match dict_get(d, \"k\") {
+        Some(v) => v << 1
+        None => 0
+    }
+}
+fn shift_pinned(d: Dict) -> i64 {
+    match dict_get(d, \"k\") {
+        Some(v) => {
+            let x: u8 = v
+            x << 1
+        }
+        None => 0
+    }
+}
+fn compare(d: Dict) -> bool {
+    match dict_get(d, \"k\") {
+        Some(v) => v == 4
+        None => false
+    }
+}
+fn neg(d: Dict) -> i64 {
+    match dict_get(d, \"k\") {
+        Some(v) => -v
+        None => 0
+    }
+}
+fn shift_t(c: u8) -> u8 { c << 1 }
+fn neg_t(c: u8) -> u8 { -c }
+fn theirs(c: i64) -> i64 {
+    let x: Pos = c
+    x
+}
+fn mine(c: i64) -> i64 {
+    let x: Nat = c
+    x
+}
+fn judge(d: Dict) -> bool {
+    match dict_get(d, \"k\") {
+        Some(v) => v.ok()
+        None => false
+    }
+}
+fn judge_pinned(d: Dict) -> bool {
+    match dict_get(d, \"k\") {
+        Some(v) => {
+            let y: i64 = v
+            y.ok()
+        }
+        None => false
+    }
+}
+fn judge_fake(x: Fake) -> bool { x.ok() }
+fn no_method(x: i64) -> bool { x.nothing() }
+fn typed_let(c: bool) -> i64 {
+    let x: i64 = c
+    0
+}
+fn build_cfg(c: bool) -> Cfg { Cfg { k: c } }
+fn mk_chan() -> Chan<i64> { chan<i64>() }
+fn send_on(q: Chan<i64>, x: bool) -> i64 {
+    q.send(x)
+    1
+}
+";
+
+/// The sealed candidate: its own global, refinement, type and method.
+const CAND: &str = "\
+let MINE = 5
+type Pos = i64 where _ > 0
+type Fake = { v: i64 }
+trait Mine {
+    fn ok(self) -> bool
+}
+impl Mine for Fake {
+    fn ok(self: Fake) -> bool { true }
+}
+fn fake() -> Fake { Fake { v: 1 } }
+fn solve() -> i64 { 41 }
+";
+
+/// Whether `r` is the value `want` (`Value` has no `PartialEq`).
+fn yields(r: &Result<Value, Flow>, want: &Value) -> bool {
+    r.as_ref()
+        .is_ok_and(|v| super::value::values_equal(v, want))
+}
+
+/// The suite and a sealed candidate, as one program, and the sealed directory.
+fn prog(tag: &str) -> (Program, std::path::PathBuf) {
+    use crate::span::intern_source;
+    let sdir = format!("/{tag}-sealed");
+    let s = crate::parse_source_in(SUITE, intern_source(&format!("/{tag}-suite/h.ax"), SUITE))
+        .expect("suite parses");
+    let c = crate::parse_source_in(CAND, intern_source(&format!("{sdir}/f.ax"), CAND))
+        .expect("candidate parses");
+    let prog = Program {
+        items: s.items.into_iter().chain(c.items).collect(),
+    };
+    (prog, std::path::PathBuf::from(sdir))
+}
+
+/// An `Interp` over the program; `sealed` gives it a live seal (a unit-test
+/// `Interp`, not a runnable sealed run - those stay refused until S6).
+fn with_ix<R>(tag: &str, sealed: bool, f: impl FnOnce(&Interp<'_>) -> R) -> R {
+    let (prog, sdir) = prog(tag);
+    let dirs = if sealed { vec![sdir] } else { Vec::new() };
+    let mut ix = Interp::build_with(&prog, &dirs, Engine::Tree);
+    // Module-level `let`s, as a run evaluates them before `main`: without
+    // them every global read would miss, and a refusal would prove nothing.
+    ix.init_globals().expect("globals initialise");
+    assert_eq!(ix.seal.active, sealed);
+    f(&ix)
+}
+
+/// Run fn `name`'s body with `args` (value, taint) bound to its parameters,
+/// in a sealed frame when `sealed_frame`, with `pin_fn` set to it. The
+/// sealed instantiation runs exactly when the run is sealed.
+fn go_t(
+    ix: &Interp<'_>,
+    name: &str,
+    sealed_frame: bool,
+    args: Vec<(Value, u8)>,
+) -> Result<Value, Flow> {
+    let f = *ix.fns.get(name).expect("a fn of the program");
+    assert_eq!(f.params.len(), args.len(), "{name}: arity");
+    let mut env = ix.new_env();
+    let taints: Vec<u8> = args.iter().map(|(_, t)| *t).collect();
+    env.bind_fresh(
+        f.params
+            .iter()
+            .zip(args)
+            .map(|(p, (v, _))| (intern(&p.name), v)),
+        |i| taints[i],
+    );
+    let prev = ix.pin_fn.replace(f as *const FnDef as usize);
+    let r = ix.with_frame(sealed_frame, || {
+        if ix.seal.active {
+            ix.eval_t::<true>(&f.body, &mut env)
+        } else {
+            ix.eval_t::<false>(&f.body, &mut env)
+        }
+    });
+    ix.pin_fn.set(prev);
+    match r {
+        Ok(v) | Err(Flow::Return(v)) => Ok(v),
+        Err(e) => Err(e),
+    }
+}
+
+/// [`go_t`] with every argument clean.
+fn go(ix: &Interp<'_>, name: &str, sealed_frame: bool, args: Vec<Value>) -> Result<Value, Flow> {
+    go_t(
+        ix,
+        name,
+        sealed_frame,
+        args.into_iter().map(|v| (v, 0)).collect(),
+    )
+}
+
+fn refused<T: std::fmt::Debug>(r: &Result<T, Flow>, needle: &str) -> bool {
+    matches!(r, Err(Flow::Panic(m)) if m.contains(needle))
+}
+
+fn strv(s: &str) -> Value {
+    Value::Str(Rc::new(s.to_string()))
+}
+
+fn u8v(n: i64) -> Value {
+    Value::SizedInt {
+        val: n,
+        ty: IntWidth::U8,
+    }
+}
+
+/// A dict `{ "k": v }`.
+fn dict_k(v: Value) -> Value {
+    let mut m = std::collections::BTreeMap::new();
+    m.insert("k".to_string(), v);
+    Value::Dict(Rc::new(RefCell::new(m)))
+}
+
+/// The text sealed code is told for a name it cannot use.
+fn no_fn(name: &str) -> String {
+    Interp::sealed_no_fn_msg(name)
+}
+
+const WIDTH: &str = "operator code did arithmetic on a fixed-width integer whose width nothing \
+                     on the operator side determined";
+const NAME: &str = "a function name nothing on the operator side determined";
+
+/// v0.22 C9 round 9 (`a_sealed_frame_cannot_read_an_operator_global_through_a_fast_path`,
+/// veto interp.rs:10080): a sealed frame reads no operator global by any
+/// path - the `Ident` arm (`ident_unbound`), the index and field fast paths
+/// (`index_in_place`, `field_in_place`) and a closure-constant call
+/// (`dispatch_named`) - and is told the common no-such-name text. Its own
+/// global it reads; the operator frame reads everything.
+#[test]
+fn a_sealed_frame_cannot_read_an_operator_global_by_any_path() {
+    with_ix("r51-s3-glob", true, |ix| {
+        for (probe, global, want) in [
+            ("read_index", "TABLE", Value::Int(1)),
+            ("read_field", "CFG", Value::Int(7)),
+            ("call_const", "G", Value::Int(2)),
+        ] {
+            let r = go(ix, probe, true, vec![]);
+            assert!(
+                refused(&r, &no_fn(global)),
+                "ATTACK: {probe}: a sealed frame read the operator global `{global}`: {r:?}"
+            );
+            let c = go(ix, probe, false, vec![]);
+            assert!(yields(&c, &want), "control: {probe}: {c:?}");
+        }
+        let r = go(ix, "read_whole", true, vec![]);
+        assert!(refused(&r, &no_fn("TABLE")), "ATTACK: the Ident arm: {r:?}");
+        assert!(go(ix, "read_whole", false, vec![]).is_ok());
+        assert!(
+            yields(&go(ix, "read_mine", true, vec![]), &Value::Int(5)),
+            "a sealed frame reads its own global"
+        );
+        // The lookup itself, for every global of the program.
+        let r = ix.with_frame(true, || ix.global_ref(intern("TABLE")).map(|v| v.cloned()));
+        assert!(refused(&r, &no_fn("TABLE")), "global_ref: {r:?}");
+        assert!(ix.global_ref(intern("TABLE")).is_ok_and(|v| v.is_some()));
+        assert!(ix.global_ref(intern("NOPE")).is_ok_and(|v| v.is_none()));
+    });
+    // Unsealed: the same "sealed" frame reads everything (no edge runs).
+    with_ix("r51-s3-glob-u", false, |ix| {
+        assert!(yields(&go(ix, "read_index", true, vec![]), &Value::Int(1)));
+    });
+}
+
+/// v0.22 `a_sealed_frame_cannot_take_an_operator_fn_as_a_value` (veto
+/// interp.rs:10348) and `a_sealed_caller_cannot_tell_an_operator_fn_from_a_missing_one`
+/// (11143): a fn named in value position is a reference to it, so the call
+/// edge applies there; and a sealed caller is told the same words for an
+/// operator name and a missing one, by `ident_unbound`, a name-resolving
+/// builtin and a method miss.
+#[test]
+fn a_sealed_caller_cannot_use_or_tell_apart_an_operator_name() {
+    with_ix("r51-s3-name", true, |ix| {
+        let r = go(ix, "take_w", true, vec![]);
+        assert!(
+            refused(&r, &no_fn("w")),
+            "ATTACK: a sealed frame took `w` as a value: {r:?}"
+        );
+        assert!(yields(&go(ix, "take_w", false, vec![]), &Value::Int(1)));
+        let op = go(ix, "spawn_lit", true, vec![]);
+        let missing = go(ix, "spawn_missing", true, vec![]);
+        assert!(refused(&op, &no_fn("w")), "an operator fn: {op:?}");
+        assert!(
+            refused(&missing, &no_fn("nope")),
+            "a missing fn: {missing:?}"
+        );
+        // The operator is told what it always was.
+        let r = go(ix, "spawn_missing", false, vec![]);
+        assert!(
+            refused(&r, "[E1602] scheduler_spawn: no function `nope`"),
+            "{r:?}"
+        );
+        // A method miss reads like a refused operator method.
+        let r = go(ix, "no_method", true, vec![Value::Int(1)]);
+        assert!(
+            refused(&r, &no_fn("nothing")),
+            "a sealed method miss: {r:?}"
+        );
+        let r = go(ix, "no_method", false, vec![Value::Int(1)]);
+        assert!(refused(&r, "no method `nothing` on type `i64`"), "{r:?}");
+        // The goal-constraint and kernel-goal lookups.
+        for (b, args) in [
+            (
+                "kernel_goal_create",
+                vec![Value::Int(0), strv("w"), Value::Float(1.0)],
+            ),
+            (
+                "goal_run_constrained",
+                vec![strv("solve"), strv("w"), Value::Float(0.0), Value::Int(1)],
+            ),
+        ] {
+            let r = ix.with_frame(true, || ix.call_builtin(b, &args));
+            assert!(refused(&r, &no_fn("w")), "ATTACK: {b} resolved `w`: {r:?}");
+        }
+    });
+}
+
+/// v0.22 `scheduler_spawn_takes_no_function_name_the_candidate_chose` and
+/// `the_taint_name_rule_refuses_what_the_static_name_analysis_lets_through`
+/// (amendment 100): operator code hands a name-resolving builtin only a name
+/// the operator determined. The static rule (`seal_name_args`, pin.rs
+/// `Ctx::npure`) refuses a parameter; the runtime rule (`t_check_names`)
+/// refuses a name the static rule calls pure (a branch between two operator
+/// literals) when the branch was chosen by the candidate's value.
+#[test]
+fn operator_code_hands_a_name_resolving_builtin_only_a_determined_name() {
+    with_ix("r51-s3-nrule", true, |ix| {
+        assert!(
+            go(ix, "spawn_lit", false, vec![]).is_ok(),
+            "an operator literal"
+        );
+        let r = go(ix, "spawn_param", false, vec![strv("w")]);
+        assert!(
+            refused(&r, NAME) && refused(&r, "scheduler_spawn"),
+            "ATTACK: a parameter named the fn: {r:?}"
+        );
+        assert!(
+            !refused(&r, "runtime taint"),
+            "the static rule refused it: {r:?}"
+        );
+        // Pure statically; the runtime taint of the branch decides.
+        assert!(go_t(ix, "spawn_branch", false, vec![(Value::Int(1), 0)]).is_ok());
+        let r = go_t(ix, "spawn_branch", false, vec![(Value::Int(1), ALL)]);
+        assert!(
+            refused(&r, NAME) && refused(&r, "runtime taint"),
+            "ATTACK: the candidate's value chose the name: {r:?}"
+        );
+        // The sealed frame's own calls are judged by the call edge instead.
+        assert!(ix
+            .with_frame(true, || ix.t_check_names("scheduler_spawn", &[VAL]))
+            .is_ok());
+        assert!(ix.t_check_names("scheduler_spawn", &[0]).is_ok());
+        assert!(ix.t_check_names("len", &[VAL]).is_ok(), "not a name sink");
+        assert!(refused(&ix.t_check_names("scheduler_spawn", &[VAL]), NAME));
+    });
+    with_ix("r51-s3-nrule-u", false, |ix| {
+        assert!(
+            go(ix, "spawn_param", false, vec![strv("w")]).is_ok(),
+            "unsealed: no rule"
+        );
+    });
+}
+
+/// v0.22 `operator_arithmetic_never_runs_at_a_width_the_candidate_chose`
+/// (veto interp.rs:10752) and its unary form (10178): operator arithmetic on
+/// a fixed-width integer whose width nothing on the operator side determined
+/// is refused - statically (`seal_width`, `seal_width_unary`: a value read
+/// untyped from a dict) and by the runtime taint (`t_check_width`: a typed
+/// parameter whose value carries the candidate's type taint). A comparison is
+/// not arithmetic; a `let x: u8` pin determines the width; a sealed frame's
+/// own arithmetic is its own.
+#[test]
+fn operator_arithmetic_never_runs_at_a_width_the_candidate_chose() {
+    with_ix("r51-s3-width", true, |ix| {
+        let d = || dict_k(u8v(255));
+        let r = go(ix, "shift", false, vec![d()]);
+        assert!(
+            refused(&r, WIDTH),
+            "ATTACK: `v << 1` at the candidate's width: {r:?}"
+        );
+        let r = go(ix, "neg", false, vec![d()]);
+        assert!(
+            refused(&r, WIDTH),
+            "ATTACK: `-v` at the candidate's width: {r:?}"
+        );
+        assert!(go(ix, "compare", false, vec![d()]).is_ok(), "a comparison");
+        assert!(
+            go(ix, "shift", false, vec![dict_k(Value::Int(4))]).is_ok(),
+            "an i64"
+        );
+        assert!(
+            go(ix, "shift_pinned", false, vec![d()]).is_ok(),
+            "pinned by `let x: u8`"
+        );
+        assert!(
+            go(ix, "shift", true, vec![d()]).is_ok(),
+            "the sealed frame's own"
+        );
+        assert!(
+            go(ix, "neg", true, vec![d()]).is_ok(),
+            "the sealed frame's own"
+        );
+        // The runtime rule: determined statically, the value's TYPE taint
+        // says the candidate chose it.
+        assert!(go_t(ix, "shift_t", false, vec![(u8v(255), 0)]).is_ok());
+        let r = go_t(ix, "shift_t", false, vec![(u8v(255), ALL)]);
+        assert!(
+            refused(&r, WIDTH) && refused(&r, "runtime taint"),
+            "ATTACK: a tainted width: {r:?}"
+        );
+        let r = go_t(ix, "neg_t", false, vec![(u8v(4), ALL)]);
+        assert!(
+            refused(&r, "runtime taint"),
+            "ATTACK: a tainted unary width: {r:?}"
+        );
+        assert!(
+            go_t(ix, "neg_t", false, vec![(u8v(4), VAL)]).is_ok(),
+            "VAL is not TYP"
+        );
+    });
+    with_ix("r51-s3-width-u", false, |ix| {
+        assert!(
+            go(ix, "shift", false, vec![dict_k(u8v(255))]).is_ok(),
+            "unsealed"
+        );
+    });
+}
+
+/// v0.22 PCI candidate-3 review (veto interp.rs:3904, 4165, 4415, eval.rs:
+/// 227, 868): a refinement attaches BY NAME, so the candidate's refinement
+/// never runs in operator code; the operator's own does.
+#[test]
+fn a_candidates_refinement_never_runs_in_operator_code() {
+    with_ix("r51-s3-refine", true, |ix| {
+        let r = go(ix, "theirs", false, vec![Value::Int(3)]);
+        assert!(
+            refused(
+                &r,
+                "the refinement `Pos` is the candidate's and cannot run in the operator's code"
+            ),
+            "ATTACK: the candidate's `where` ran in operator code: {r:?}"
+        );
+        assert!(
+            go(ix, "theirs", true, vec![Value::Int(3)]).is_ok(),
+            "its own frame"
+        );
+        assert!(
+            go(ix, "mine", false, vec![Value::Int(3)]).is_ok(),
+            "the operator's own"
+        );
+        assert!(ix.seal_type("Fake") && !ix.seal_type("Cfg"), "seal_type");
+    });
+}
+
+/// v0.22 `a_candidates_method_never_runs_under_the_operators_method_name`
+/// (veto interp.rs:6052) and `operator_code_never_dispatches_on_a_value_read_untyped_from_a_dict`
+/// (9292): a method name the operator defines never selects the candidate's
+/// method (`seal_method`), and operator code never selects between its own
+/// impls by a receiver type nothing on its side determined (`seal_dispatch`).
+#[test]
+fn operator_method_dispatch_is_never_the_candidates_choice() {
+    with_ix("r51-s3-method", true, |ix| {
+        let fake = ix
+            .with_frame(true, || go(ix, "fake", true, vec![]))
+            .expect("a Fake");
+        let r = go(ix, "judge_fake", false, vec![fake.clone()]);
+        assert!(
+            refused(&r, "a method the operator defines")
+                && refused(&r, "the candidate would choose the code"),
+            "ATTACK: the candidate's `ok` ran under the operator's name: {r:?}"
+        );
+        assert!(
+            go(ix, "judge_fake", true, vec![fake]).is_ok(),
+            "its own frame"
+        );
+        let r = go(ix, "judge", false, vec![dict_k(Value::Bool(true))]);
+        assert!(
+            refused(&r, "whose type nothing on the operator side determined"),
+            "ATTACK: dispatched on a dict value's runtime type: {r:?}"
+        );
+        assert!(
+            yields(
+                &go(ix, "judge_pinned", false, vec![dict_k(Value::Int(9))]),
+                &Value::Bool(true)
+            ),
+            "pinned by `let y: i64`"
+        );
+    });
+    with_ix("r51-s3-method-u", false, |ix| {
+        assert!(go(ix, "judge", false, vec![dict_k(Value::Bool(true))]).is_ok());
+    });
+}
+
+/// v0.22 amendment 53 (veto eval.rs:241-255, 842-850) and 72 (eval.rs:621,
+/// 664): in a sealed run a `let x: T` annotation and a record field are
+/// declared types the value is cast to, a `chan<T>()` is stamped with its
+/// element type, and a value sent on it is cast to that type.
+#[test]
+fn declared_types_inside_a_frame_refuse_a_value_of_another_type() {
+    with_ix("r51-s3-cast", true, |ix| {
+        let r = go(ix, "typed_let", false, vec![Value::Bool(true)]);
+        assert!(
+            refused(&r, "`x` is declared `i64` but was bound to"),
+            "ATTACK: a bool bound to `let x: i64`: {r:?}"
+        );
+        let r = go(ix, "build_cfg", false, vec![Value::Bool(true)]);
+        assert!(
+            refused(&r, "field `k` of `Cfg` was given true"),
+            "ATTACK: a bool in an i64 field: {r:?}"
+        );
+        let q = go(ix, "mk_chan", false, vec![]).expect("a channel");
+        let r = go(ix, "send_on", true, vec![q.clone(), Value::Bool(true)]);
+        assert!(
+            refused(&r, "a channel declared `Chan<i64>` was sent true"),
+            "ATTACK: a sealed frame sent a bool on a `Chan<i64>`: {r:?}"
+        );
+        let Value::Chan(c) = &q else { unreachable!() };
+        assert!(c.borrow().is_empty(), "nothing was sent");
+    });
+    with_ix("r51-s3-cast-u", false, |ix| {
+        assert!(
+            go(ix, "typed_let", false, vec![Value::Bool(true)]).is_ok(),
+            "unsealed"
+        );
+        let q = go(ix, "mk_chan", false, vec![]).expect("a channel");
+        assert!(go(ix, "send_on", true, vec![q, Value::Bool(true)]).is_ok());
+    });
+}
+
+// ── Drift ───────────────────────────────────────────────────────────────────
+
+/// `(file under interp/, fn, code)` for every non-comment line of the
+/// interpreter (`interp.rs` and `interp/**`, `interp/vm/` included; test
+/// modules excluded) that contains `needle` as a whole word after a `.`.
+fn field_sites(needle: &str) -> Vec<(String, String, String)> {
+    let sources = vm::tests::r51_interp_sources();
+    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    let mut out = Vec::new();
+    for (file, src) in &sources {
+        if file.ends_with("_tests.rs") {
+            continue;
+        }
+        let mut func = String::new();
+        for line in src.lines() {
+            let code = line.find("//").map_or(line, |i| &line[..i]);
+            let b = code.as_bytes();
+            let mut from = 0;
+            while let Some(i) = code[from..].find("fn ") {
+                let at = from + i;
+                from = at + 3;
+                if at > 0 && ident(b[at - 1]) {
+                    continue;
+                }
+                let name: String = code[at + 3..]
+                    .bytes()
+                    .take_while(|&c| ident(c))
+                    .map(char::from)
+                    .collect();
+                if !name.is_empty() {
+                    func = name;
+                }
+            }
+            let pat = format!(".{needle}");
+            let mut from = 0;
+            while let Some(i) = code[from..].find(&pat) {
+                let end = from + i + pat.len();
+                from = end;
+                if end < b.len() && ident(b[end]) && ident(*pat.as_bytes().last().unwrap()) {
+                    continue;
+                }
+                out.push((file.clone(), func.clone(), code.trim().to_string()));
+            }
+        }
+    }
+    assert!(
+        sources.iter().any(|(f, _)| f == "vm/mod.rs"),
+        "the sweep reads interp/vm/"
+    );
+    out
+}
+
+/// v0.22 C9 round 9 (veto interp.rs:9632, widened per TaintPort-9 to main's
+/// identifiers and `interp/vm/`): the global-read edge lives in ONE lookup.
+/// Every line of the interpreter that touches a `globals` map is listed with
+/// the reason it is not a read by running code; everything else reads through
+/// [`Interp::global_ref`] (or asks existence only, [`Interp::is_global`]).
+#[test]
+fn every_global_read_goes_through_global_ref() {
+    const ALLOWED: &[(&str, &str, &str, &str)] = &[
+        ("", "of", "seal.globals.insert(intern(name));", "the seal's own set of sealed global names, built once"),
+        ("", "merged_bindings", ".globals", "the end-of-run binding dump, not running code"),
+        ("", "seal_global", "if self.seal.active && self.frame_sealed.get() && !self.seal.globals.contains(&s) {", "the edge itself (the sealed names)"),
+        ("", "is_global", "self.globals.contains_key(&s)", "existence only, no value: the index arm's and the VM's in-place test, followed by `global_ref`"),
+        ("", "global_ref", "match self.globals.get(&s) {", "THE lookup, which applies `seal_global`"),
+        ("", "init_globals", "self.globals = env.snapshot().into_parts().0.into_iter().collect();", "the write at build"),
+        ("pin.rs", "det", "self.globals.contains(n)", "the static pin analysis' set of global NAMES"),
+        ("pin.rs", "build", "ctx.globals = lets.iter().map(|(n, _)| n.to_string()).collect();", "the static pin analysis' set of global NAMES"),
+        ("pin.rs", "build", ".filter(|(n, e)| ctx.globals.contains(*n) && ctx.det(e, &none, &none))", "the static pin analysis' set of global NAMES"),
+        ("pin.rs", "build", "if next == ctx.globals {", "the static pin analysis' set of global NAMES"),
+        ("pin.rs", "build", "ctx.globals = next;", "the static pin analysis' set of global NAMES"),
+    ];
+    let mut found: Vec<(String, String, String)> = field_sites("globals");
+    let mut allowed: Vec<(String, String, String)> = ALLOWED
+        .iter()
+        .map(|(f, n, l, _)| (f.to_string(), n.to_string(), l.to_string()))
+        .collect();
+    found.sort();
+    allowed.sort();
+    assert_eq!(
+        found, allowed,
+        "DRIFT: a mention of the `globals` map bypasses `global_ref` (and so `seal_global`); \
+         route it through `Interp::global_ref`, or list it with its reason"
+    );
+    // The lookup has its readers: the `Ident` arm's rest, both in-place fast
+    // paths and the closure-constant call (no vacuous pass).
+    let mut readers: Vec<String> = field_sites("global_ref(")
+        .into_iter()
+        .map(|(_, f, _)| f)
+        .collect();
+    readers.sort();
+    readers.dedup();
+    for want in [
+        "dispatch_named",
+        "field_in_place",
+        "ident_unbound",
+        "index_in_place",
+    ] {
+        assert!(
+            readers.iter().any(|r| r == want),
+            "DRIFT: `{want}` no longer reads globals through `global_ref`: {readers:?}"
+        );
+    }
+}
+
+/// The body of the first `fn name` in the interpreter sources (test modules
+/// excluded): its lines up to the closing brace at the `fn`'s indent.
+fn fn_body(name: &str) -> String {
+    for (file, src) in vm::tests::r51_interp_sources() {
+        if file.ends_with("_tests.rs") {
+            continue;
+        }
+        let lines: Vec<&str> = src.lines().collect();
+        for (i, l) in lines.iter().enumerate() {
+            let t = l.trim_start();
+            let t = t
+                .strip_prefix("pub(super) ")
+                .or_else(|| t.strip_prefix("pub(crate) "))
+                .unwrap_or(t);
+            let Some(rest) = t.strip_prefix("fn ") else {
+                continue;
+            };
+            if !rest.starts_with(name) || !rest[name.len()..].starts_with(['(', '<']) {
+                continue;
+            }
+            let indent = l.len() - l.trim_start().len();
+            let close = format!("{}}}", " ".repeat(indent));
+            let end = lines[i + 1..]
+                .iter()
+                .position(|x| *x == close)
+                .map_or(lines.len(), |p| i + 1 + p);
+            return lines[i..=end.min(lines.len() - 1)]
+                .iter()
+                .map(|x| x.find("//").map_or(*x, |c| &x[..c]))
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
+    }
+    panic!("DRIFT: no `fn {name}` in the interpreter sources")
+}
+
+/// Spec §4 Fork 3 (TaintPort-8, VmPin-4b/c/e): every main-only in-place or
+/// split-path function that has no v0.22 counterpart is classified as a taint
+/// touch point and/or a seal edge, and the classification is pinned by the
+/// code that implements it (`checked_in` contains each `needle`). A sink
+/// whose edge lives on the call path (the crossing lane) is classified with
+/// the fn and text where that edge is applied.
+#[test]
+fn every_main_only_sink_is_classified() {
+    // (sink, classification, fn whose body implements it, needles)
+    const SINKS: &[(&str, &str, &str, &[&str])] = &[
+        ("operand", "neither: never reached under seal (eval_binop's sealed arm evaluates both operands through eval_t and returns first)", "eval_binop", &["if T {", "self.seal_width(", "return binop_operands(op, Operand::of(l), Operand::of(r))"]),
+        ("binop_operands", "seal edge (width) and taint touch point (t_check_width) applied to its operands before it", "eval_binop", &["self.seal_width(", "self.t_check_width(&l, lt", "self.t_check_width(&r, rt"]),
+        ("index_in_place", "seal edge: global read", "index_in_place", &["self.global_ref(s)?"]),
+        ("field_in_place", "seal edge: global read", "field_in_place", &["self.global_ref(s)?"]),
+        ("assign_in_place", "taint touch point (the appended operand's taint joins the binding); no width edge: the binding is a str or an array", "assign_in_place", &["get_var_mut_t::<T>(s, slot, yt)", "Some(Value::Str(_) | Value::Array(_))"]),
+        ("assign_in_place_shaped", "neither: a syntactic shape test, reads no value", "assign_in_place_shaped", &["match value {"]),
+        ("write_place", "taint touch point: the AssignTo arm writes the binding's taint before it", "eval_arm", &["env.get_var_mut_t::<T>(base, base_slot, wt);", "write_place(base, base_slot, &steps, v, env)?"]),
+        ("call_mut_with", "seal edge on the call path (the `&mut` hand-back cast, crossing lane); the callee frame is call_fn_in's", "call_mut_with", &["self.call_fn_in(entry, argv, &mut frame)"]),
+        ("chan_method", "seal edge (chan_send_check, dict_edge_in) and taint touch point (t_mark_obj)", "chan_method", &["self.chan_send_check(q, &mut v)?", "self.dict_edge_in(&v)?", "self.t_mark_obj("]),
+        ("dispatch_call", "seal edge before it: the name rule at eval_call's sealed arm", "eval_name_sink_call", &["self.seal_name_args(name, args)?", "self.t_check_names(name, &ats)?"]),
+        ("dispatch_named", "seal edge (global read, no-such-fn text) and taint touch point (builtin in/out)", "dispatch_named", &["self.global_ref(s)?", "self.no_such_fn(", "t_builtin_in(", "t_builtin_out("]),
+        ("impl_method", "seal edge via its sealed twin (the tree MethodCall arm under T; VM Op::MethodCall never runs sealed)", "impl_method_sealed", &["self.seal_method(f, &tn)?", "self.seal_dispatch(receiver, f, &argv[0], &tn)?", "self.no_such_fn("]),
+        ("call_closure_arg", "taint touch point (the builtin's loop pc); the closure argument cast is a crossing edge", "call_closure_arg", &["t_loop_pc"]),
+        ("cond_bool", "neither: value to bool; the branch's control taint is taken by its callers (t_branch)", "eval_arm", &["self.t_branch("]),
+        ("logic_rhs", "neither: combines evaluated values; taint at short_circuit_tainted", "short_circuit_tainted", &["logic_rhs("]),
+        ("short_circuits", "neither: a value test; taint at short_circuit_tainted", "short_circuit_tainted", &["short_circuits("]),
+        ("finish_record", "seal edge (field casts, refinement edge, definition-owned provenance)", "finish_record", &["self.cast_fields(name, &mut fields)?", "self.seal_refine(rn)?", "self.seal_type(name)", "self.with_frame(sealed"]),
+        ("bind_let", "seal edge (declared-type cast, refinement edge) and taint touch point (TYP strip by pin)", "bind_let", &["self.cast(&mut v, t,", "self.t_pins(t)", "self.seal_refine(rn)?", "define_var_t::<T>(s, slot, v, vt)"]),
+        ("bind_params", "taint touch point: every parameter binds with the frame's taint", "bind_params", &["|_| t,"]),
+        ("call_fn_common", "neither: only a plain entry takes it, and no entry of a sealed run is plain", "call_fn_in", &["if !entry.plain"]),
+        ("call_fn_in_general", "taint touch point: the frame's sealed instantiation in a sealed run", "call_fn_in_general", &["self.call_fn_frame::<true>(entry, args, env)"]),
+        ("scalar_return", "neither: a value-shape check; the declared-return cast is the crossing edge", "scalar_return", &["match (entry.ret, &result) {"]),
+    ];
+    const FORK3: &[&str] = &[
+        "operand",
+        "binop_operands",
+        "index_in_place",
+        "field_in_place",
+        "assign_in_place",
+        "assign_in_place_shaped",
+        "write_place",
+        "call_mut_with",
+        "chan_method",
+        "dispatch_call",
+        "dispatch_named",
+        "impl_method",
+        "call_closure_arg",
+        "cond_bool",
+        "logic_rhs",
+        "short_circuits",
+        "finish_record",
+        "bind_let",
+        "bind_params",
+        "call_fn_common",
+        "call_fn_in_general",
+        "scalar_return",
+    ];
+    let listed: Vec<&str> = SINKS.iter().map(|s| s.0).collect();
+    assert_eq!(
+        listed, FORK3,
+        "DRIFT: the spec's main-only sink list changed"
+    );
+    let mut bad = Vec::new();
+    for (sink, class, at, needles) in SINKS {
+        // The sink exists (a renamed one must be re-classified).
+        fn_body(sink);
+        assert!(!class.is_empty());
+        let body = fn_body(at);
+        for n in *needles {
+            if !body.contains(n) {
+                bad.push(format!("{sink} ({class}): `{at}` no longer contains `{n}`"));
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "DRIFT: a sink's classification no longer holds:\n{}",
+        bad.join("\n")
+    );
+    // `scalar_return` and `call_fn_common` stay off every sealed path.
+    let sym = vm::tests::r51_interp_sources()
+        .into_iter()
+        .find(|(f, _)| f == "sym.rs")
+        .expect("interp/sym.rs")
+        .1;
+    assert!(
+        sym.contains("entry.plain = !(sealed"),
+        "DRIFT: a sealed run's entries are not plain"
+    );
+}
+
+/// S2 leftover, v0.22 taint_tests.rs:2427 (loop findings 0, 1, 11, 13:
+/// `temporal_new` read the process clock from an arm classed Pure). Every arm
+/// of a builtin classed Pure is scanned: it may reach no ambient state (the
+/// clock, the host seam, the RNG, either kernel), and no interpreter state
+/// except the two it is allowed: `call_closure_arg` (main's `call_cb`, which
+/// carries the callbacks' taint) and `dict_mutated` (the dict edge's dirty
+/// flag).
+#[test]
+fn no_arm_of_a_pure_builtin_reads_or_advances_ambient_state() {
+    use super::taint::{info, Class};
+    const FORBIDDEN: &[&str] = &[
+        "program_now_ms",
+        "crate::clock",
+        "with_host",
+        "rng_next",
+        "rng_reseed",
+        "self.k()",
+        "self.kernels",
+        "std::env",
+        "std::fs",
+        "std::process",
+        "std::time",
+    ];
+    // `fold_leaf` (main only): `arr_fold`'s register fast path runs the same
+    // callback `call_closure_arg` would, on a compiled body - none exists in a
+    // sealed run (VmPin-3), so there it always declines.
+    const ALLOWED_SELF: &[&str] = &[
+        "self.call_closure_arg",
+        "self.dict_mutated",
+        "self.fold_leaf",
+    ];
+    let sources = vm::tests::r51_interp_sources();
+    let src = &sources
+        .iter()
+        .find(|(f, _)| f == "builtins.rs")
+        .expect("interp/builtins.rs")
+        .1;
+    let mut scanned = 0;
+    let mut bad: Vec<String> = Vec::new();
+    for (names, body) in super::tests::builtin_arms(src) {
+        if !names
+            .iter()
+            .any(|n| info(n).is_some_and(|i| i.class == Class::Pure))
+        {
+            continue;
+        }
+        scanned += 1;
+        if names
+            .iter()
+            .any(|n| info(n).is_some_and(|i| i.class != Class::Pure))
+        {
+            bad.push(format!(
+                "{names:?}: one arm serves a Pure and a non-Pure builtin"
+            ));
+        }
+        for line in body.lines() {
+            let t = line.trim_start();
+            if t.starts_with("//") {
+                continue;
+            }
+            for f in FORBIDDEN {
+                if t.contains(f) {
+                    bad.push(format!("{names:?}: `{f}` in `{t}`"));
+                }
+            }
+            let mut rest = t;
+            while let Some(i) = rest.find("self.") {
+                let tail = &rest[i..];
+                let word: String = tail
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
+                    .collect();
+                if !ALLOWED_SELF.iter().any(|a| word.starts_with(a)) {
+                    bad.push(format!(
+                        "{names:?}: `{word}` reads interpreter state in a Pure arm"
+                    ));
+                }
+                rest = &tail[4..];
+            }
+        }
+    }
+    assert!(scanned >= 20, "DRIFT: only {scanned} Pure arms found");
+    assert!(
+        bad.is_empty(),
+        "ATTACK: DRIFT: a Pure-classed builtin touches ambient state (classify it World):\n{}",
+        bad.join("\n")
+    );
+}

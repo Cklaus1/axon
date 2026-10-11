@@ -796,7 +796,10 @@ fn builtins_are_dispatched_only_where_the_taint_is_routed() {
     for file in &files {
         // The unit-test modules call the dispatcher directly; neither is a
         // dispatch site of a run.
-        if file.ends_with("taint_tests.rs") || file.ends_with("kernel_tests.rs") {
+        if file.ends_with("taint_tests.rs")
+            || file.ends_with("kernel_tests.rs")
+            || file.ends_with("sink_tests.rs")
+        {
             continue;
         }
         for l in source(file).lines() {
