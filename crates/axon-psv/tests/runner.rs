@@ -672,6 +672,81 @@ fn a_genuine_keyed_pass_from_a_run_that_exits_non_zero_is_not_a_pass() {
     );
 }
 
+/// R51 T6: `axon` behind a wrapper that adds `AXON_VM_TRACE=1
+/// AXON_VM_EAGER=1` (and `env`, e.g. `AXON_ENGINE=vm`) AFTER the runner's
+/// `env_clear`, so every body a VM run compiles prints a `vm: ` stderr line.
+/// `unseal` also drops the runner's `--seal <dir>` pair: the control that the
+/// probe is live on this same path.
+fn r51_trace_wrapper(fx: &Fx, name: &str, env: &str, unseal: bool) -> PathBuf {
+    let real = fx.cfg.axon.clone();
+    let wrapper = real.with_file_name(name);
+    let strip = if unseal {
+        "skip=0\nfor a do\n  shift\n  if [ \"$skip\" = 1 ]; then skip=0; continue; fi\n  \
+         if [ \"$a\" = --seal ]; then skip=1; continue; fi\n  set -- \"$@\" \"$a\"\ndone\n"
+    } else {
+        ""
+    };
+    write_executable(
+        &wrapper,
+        format!(
+            "#!/bin/sh\n{strip}AXON_VM_TRACE=1 AXON_VM_EAGER=1 {env} exec '{}' \"$@\"\n",
+            real.display()
+        ),
+        0o755,
+    );
+    wrapper
+}
+
+fn r51_vm_lines(fx: &Fx) -> (String, bool) {
+    let err = std::fs::read_to_string(fx.cfg.out.join("test-stderr")).unwrap_or_default();
+    let vm = err.lines().any(|l| l.starts_with("vm: "));
+    (err, vm)
+}
+
+/// R51 T6 (psv leg): the guest runner's sealed `axon test` (its child starts
+/// from `env_clear`) executes on the tree engine: a keyed pass with no `vm: `
+/// trace line though the trace and eager compilation are on. Control: the
+/// same wrapper on the same runner path with `--seal` dropped passes AND
+/// prints `vm: ` lines, so their absence under the seal is not vacuous.
+/// Attack: the wrapper adds `AXON_ENGINE=vm`; the sealed run is refused
+/// (exit 2, the pin's message), never Passed.
+#[test]
+fn r51_t6_a_sealed_run_through_the_guest_runner_runs_on_the_tree() {
+    let mut fx = fixture("t_ok", false);
+    fx.cfg.axon = r51_trace_wrapper(&fx, "axon-trace-unsealed", "", true);
+    let v = run(&fx.cfg);
+    let (err, vm) = r51_vm_lines(&fx);
+    assert_eq!(v.status, GuestStatus::Passed, "control: {v:?} {err}");
+    assert!(vm, "control: an unsealed run printed no `vm: ` line: {err}");
+
+    let mut fx = fixture("t_ok", false);
+    fx.cfg.axon = r51_trace_wrapper(&fx, "axon-trace", "", false);
+    let v = run(&fx.cfg);
+    let (err, vm) = r51_vm_lines(&fx);
+    assert!(!vm, "ATTACK: a sealed guest run compiled on the VM: {err}");
+    assert_eq!(v.status, GuestStatus::Passed, "{v:?} {err}");
+    assert_eq!(
+        v.report.as_ref().map(|r| r.passed.clone()),
+        Some(vec!["t_ok".to_string()])
+    );
+
+    let mut fx = fixture("t_ok", false);
+    fx.cfg.axon = r51_trace_wrapper(&fx, "axon-trace-vm", "AXON_ENGINE=vm", false);
+    let v = run(&fx.cfg);
+    let (err, vm) = r51_vm_lines(&fx);
+    assert_ne!(
+        v.status,
+        GuestStatus::Passed,
+        "ATTACK: a sealed guest run under AXON_ENGINE=vm passed: {err}"
+    );
+    assert_eq!(v.exit_code, Some(2), "{v:?} {err}");
+    assert!(
+        err.contains("AXON_ENGINE=vm cannot carry the seal"),
+        "refused for another reason: {err}"
+    );
+    assert!(!vm, "ATTACK: a sealed guest run compiled on the VM: {err}");
+}
+
 /// PSV-2 (C9 dev review), the reviewer's reproduction through the REAL
 /// runner: a named POSIX ACL entry `user:65534:---` on a suite fixture leaves
 /// its mode 0644 and the tree digest unchanged, but denies the dropped test
