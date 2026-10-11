@@ -11163,7 +11163,7 @@ MUTATIONS += [
     # R51 T7 (found re-anchoring M3343): call_fn_entry's `&mut` refusal comes ahead of the call edge
     # (as v0.22's call_fn did), so a direct call of an operator `&mut` fn told sealed code the fn
     # exists; dispatch_named applies the call edge first.
-    ('M3495', "EXISTENCE ORACLE (am106): a sealed direct call of an operator `&mut` fn meets the call edge before call_fn_entry's `&mut` refusal", 'crates/axon-core/src/interp/eval.rs',
+    ('M3495', "R51 EXISTENCE ORACLE: a sealed direct call of an operator `&mut` fn meets the call edge before call_fn_entry's `&mut` refusal", 'crates/axon-core/src/interp/eval.rs',
      '            if e.has_ref_mut {\n                self.seal_call(e.def)?;\n', '            if false && e.has_ref_mut {\n                self.seal_call(e.def)?;\n',
      'axon-core', '--lib', 'interp::taint_tests::a_sealed_caller_cannot_tell_an_operator_name_from_a_missing_one_on_any_path'),
 ]

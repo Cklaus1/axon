@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 1c3af54aa0c361f081270562d7fe6898e7bb1613
+generated-at: 11172ce5e4a01def0d3c41f8b4d395e1f2cff215
 
-`git diff --numstat 31413ca7..1c3af54a -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..11172ce5 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -54,10 +54,10 @@ generated-at: 1c3af54aa0c361f081270562d7fe6898e7bb1613
 | `crates/axon-core/src/interp/conform.rs` | 1800 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1354 | 0 |
 | `crates/axon-core/src/interp/crossing_tests.rs` | 417 | 0 |
-| `crates/axon-core/src/interp/dispatch_tests.rs` | 615 | 0 |
+| `crates/axon-core/src/interp/dispatch_tests.rs` | 639 | 0 |
 | `crates/axon-core/src/interp/env.rs` | 1181 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 2026 | 607 |
-| `crates/axon-core/src/interp/goal.rs` | 88 | 42 |
+| `crates/axon-core/src/interp/eval.rs` | 2033 | 607 |
+| `crates/axon-core/src/interp/goal.rs` | 87 | 42 |
 | `crates/axon-core/src/interp/kernel_tests.rs` | 336 | 0 |
 | `crates/axon-core/src/interp/pick_tests.rs` | 394 | 0 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
@@ -65,9 +65,9 @@ generated-at: 1c3af54aa0c361f081270562d7fe6898e7bb1613
 | `crates/axon-core/src/interp/sink_tests.rs` | 1099 | 0 |
 | `crates/axon-core/src/interp/sym.rs` | 1196 | 0 |
 | `crates/axon-core/src/interp/taint.rs` | 1653 | 0 |
-| `crates/axon-core/src/interp/taint_tests.rs` | 4170 | 0 |
+| `crates/axon-core/src/interp/taint_tests.rs` | 4172 | 0 |
 | `crates/axon-core/src/interp/tests_v022_a.rs` | 1184 | 0 |
-| `crates/axon-core/src/interp/tests_v022_b.rs` | 1987 | 0 |
+| `crates/axon-core/src/interp/tests_v022_b.rs` | 2015 | 0 |
 | `crates/axon-core/src/interp/tests_v022_c.rs` | 152 | 0 |
 | `crates/axon-core/src/interp/tests_v022_s4.rs` | 600 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 506 | 514 |
@@ -86,9 +86,9 @@ generated-at: 1c3af54aa0c361f081270562d7fe6898e7bb1613
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 45898 | 5256 |
+| total | 45958 | 5256 |
 
-`git log --reverse 31413ca7..1c3af54a -- crates/axon-core/src`:
+`git log --reverse 31413ca7..11172ce5 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -315,7 +315,8 @@ generated-at: 1c3af54aa0c361f081270562d7fe6898e7bb1613
 | 9ac6de6c | R51 S6.2 | TEST-ONLY: interp/vm/tests.rs case for Uncertain source_tag through CallFastLocalInt (VM == tree); fixture r51_s0b/uncertain_source_tag.ax loop and cli_run expectation; vm_parity.sh axon test --json leg over r51_s0b/test_*.ax; no behaviour change |
 | 7bc0bfd4 | R51 S6.2 | TEST-ONLY: interp/taint_tests.rs T8.2 positional probes carry a scalar the candidate chose (idx()) so only the binding's taint carries it; the &mut attack reads the clean neighbour; no behaviour change |
 | 1c3af54a | R51 S6.2 merge | joins r51/s6tests (bff841fe..7bc0bfd4: T8.2/8.3/8.5/8.6 probes and controls, T3 drift sweeps, T9 call-fast Uncertain + vm_parity test leg) onto r51/int 58a8a864 (S6 T7 rows, T6 legs); only this table and the note conflicted, resolved by keeping both sides; no change beyond the commits it joins |
-| 223 commits | | |
+| 11172ce5 | R51 S6 T7 | INTERPRETER (tree engine, sealed runs only; the VM never runs sealed code): eval.rs dispatch_named applies seal_call before call_fn_entry for an entry with a `&mut` param, so a sealed direct call of an operator `&mut` fn is told the no-such-fn text a missing name gets instead of call_fn_entry's `&mut` refusal naming it (an existence oracle v0.22's call_fn shared; row M3495); goal.rs run_goal/run_goal_warm drop S4b's seal_call, which goal_name_is_known (a sealed caller knows only its own fns and its own kernel's provenance) already dominated with identical text, so the sealed result is unchanged (v0.22's shape). No unsealed behaviour change: seal_call is a no-op when the seal is inactive. TEST-ONLY: tests_v022_b's psv1h oracle test gains a direct-call leg and an honest control (M2622/M2623); dispatch_tests' goal-name test records an @[adaptive] operator goal in the operator's kernel and its drift test classifies goal.rs lookups as call-edged, behind goal_name_is_known or listed (M2925/M2946); taint_tests' am106 oracle gains a `&mut` operator fn pair (20 forms x 7); axon-psv sealed_frames gains a goal_eval form naming a `&mut` operator fn (M3343 re-anchored onto goal_eval's frame filter); lookup-listing reasons updated |
+| 224 commits | | |
 <!-- END MECHANICAL -->
 
 
@@ -473,7 +474,7 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am121 a live nonce's record survives another request's prune | axon-fabric/observer_service | PASS 1/1 |
 | am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 438 rows at this head, recomputed from the script): M59, M61-M62, M65, M67-M70, M72-M79, M82-M83, M85-M88, M90-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3251, M3253-M3259, M3267-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3458, M3460-M3479, M3483-M3494
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 439 rows at this head, recomputed from the script): M59, M61-M62, M65, M67-M70, M72-M79, M82-M83, M85-M88, M90-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3251, M3253-M3259, M3267-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3458, M3460-M3479, M3483-M3495
 
 | delta | rows (named in the amendment's own text) |
 |---|---|
