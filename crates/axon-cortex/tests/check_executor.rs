@@ -627,6 +627,117 @@ fn the_local_check_child_gets_its_workspace_and_only_the_environment_it_is_given
     );
 }
 
+// ── R51 T6: a sealed check through `with_clean_env` runs on the tree engine
+
+/// The real interpreter behind a wrapper that adds `AXON_VM_TRACE=1
+/// AXON_VM_EAGER=1` (and `env`, e.g. `AXON_ENGINE=vm`) AFTER the executor's
+/// `env_clear`, so every body a VM run compiles prints a `vm: ` stderr line.
+/// A [`CheckReport`] keeps no stderr, so the wrapper sends it to `err`.
+fn r51_traced_exec(dir: &Path, name: &str, env: &str, err: &Path) -> LocalInterpreterExecutor {
+    let exe = dir.join(name);
+    common::write_executable(
+        &exe,
+        format!(
+            "#!/bin/sh\nAXON_VM_TRACE=1 AXON_VM_EAGER=1 {env} exec '{}' \"$@\" 2>'{}'\n",
+            axon_bin().display(),
+            err.display()
+        ),
+        0o755,
+    );
+    LocalInterpreterExecutor::pin_on_first_use(exe)
+        .with_clean_env()
+        .with_completion_key(vec![7; 32])
+        .with_env(
+            "AXON_PATH",
+            format!(
+                "{}:{}",
+                dir.join("suite").display(),
+                dir.join("cand").display()
+            ),
+        )
+        .with_env("AXON_PATH_EXCLUSIVE", "1")
+}
+
+/// R51 T6 (cortex leg): a check run as Fabric's host backend runs it (clean
+/// environment, module path, completion key, the candidate SEALED) executes
+/// on the tree engine: `t_ok` passes and no `vm: ` trace line is printed
+/// though the trace and eager compilation are on. Control: the same wrapper
+/// and executor without the seal passes AND prints `vm: ` lines, so their
+/// absence under the seal is not vacuous. Attack: the wrapper adds
+/// `AXON_ENGINE=vm`; the sealed run is refused, never Passed.
+#[test]
+fn r51_t6_a_sealed_check_through_the_clean_env_executor_runs_on_the_tree() {
+    let dir = tmpdir("r51t6");
+    let (suite, cand) = (dir.join("suite"), dir.join("cand"));
+    std::fs::create_dir_all(&suite).unwrap();
+    std::fs::create_dir_all(&cand).unwrap();
+    std::fs::write(
+        cand.join("f.ax"),
+        "pub fn double(x: i64) -> i64 {\n    let s = 0\n    let i = 0\n    while i < 2 {\n        s = s + x\n        i = i + 1\n    }\n    s\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        suite.join("accept.ax"),
+        "mod f\nuse f.{double}\n\n@[test]\nfn t_ok() { assert_eq(double(21), 42) }\n",
+    )
+    .unwrap();
+    let req = CheckRequest {
+        workspace: &suite,
+        rel_path: "accept.ax",
+        filter: Some("t_ok"),
+    };
+    let vm_lines = |err: &Path| {
+        let text = std::fs::read_to_string(err).unwrap_or_default();
+        let vm = text.lines().any(|l| l.starts_with("vm: "));
+        (text, vm)
+    };
+
+    let err = dir.join("unsealed.err");
+    let r = r51_traced_exec(&dir, "axon-trace-unsealed.sh", "", &err)
+        .run_checks(&req)
+        .expect("control: an unsealed check yields a report");
+    let (text, vm) = vm_lines(&err);
+    assert_eq!(
+        r.verdict("t_ok"),
+        CheckVerdict::Passed,
+        "control: {r:?} {text}"
+    );
+    assert!(
+        vm,
+        "control: an unsealed check printed no `vm: ` line: {text}"
+    );
+
+    let err = dir.join("sealed.err");
+    let r = r51_traced_exec(&dir, "axon-trace.sh", "", &err)
+        .with_sealed_dir(&cand)
+        .run_checks(&req)
+        .expect("a sealed check yields a report");
+    let (text, vm) = vm_lines(&err);
+    assert_eq!(r.verdict("t_ok"), CheckVerdict::Passed, "{r:?} {text}");
+    assert_eq!(r.exit_code, Some(0), "{r:?} {text}");
+    assert!(!vm, "ATTACK: a sealed check compiled on the VM: {text}");
+
+    let err = dir.join("vm.err");
+    let r = r51_traced_exec(&dir, "axon-trace-vm.sh", "AXON_ENGINE=vm", &err)
+        .with_sealed_dir(&cand)
+        .run_checks(&req);
+    let (text, vm) = vm_lines(&err);
+    if let Ok(r) = &r {
+        assert_ne!(
+            r.verdict("t_ok"),
+            CheckVerdict::Passed,
+            "ATTACK: a sealed check under AXON_ENGINE=vm passed: {text}"
+        );
+        assert_eq!(r.exit_code, Some(2), "{r:?} {text}");
+    }
+    assert!(
+        text.contains("AXON_ENGINE=vm cannot carry the seal"),
+        "refused for another reason: {r:?} {text}"
+    );
+    assert!(!vm, "ATTACK: a sealed check compiled on the VM: {text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 fn peak_rss_kb() -> u64 {
     std::fs::read_to_string("/proc/self/status")
         .unwrap()
