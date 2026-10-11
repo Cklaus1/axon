@@ -9965,14 +9965,19 @@ MUTATIONS += [
 # WITHDRAWN by amendment 102 (the runtime taint): M2603, M2604, M2605 and M2607, the RUNNER legs of M2600, M2601, M2602 and M2606 (the SAME edits). At the runner the
 # taint refuses the same attacks the static guard does, so a removed static guard SURVIVES there (measured: the four runner tests pass with each edit applied);
 # the static guards stay rowed at the unit level (M2600-M2602, M2606), where the layers are judged separately.
+# R51 S7 (S7-Evidence-4): main runs both arm paths' pin guard in ONE helper, run_arm_sealed, so
+# v0.22's two PinGuard sites are one; M2602 and M2624 mutate it (M2602's old text is a substring of
+# M2624's: one span, two attacks). M2600 and M2601 are re-anchored on the per-path seal routing in
+# run_handler_arm (the bare tail-resume path and the general path each choose run_arm_sealed only in a
+# sealed run): `if false` sends that path's sealed arm down the unsealed evaluator, unpinned.
 MUTATIONS += [
     ('M2600',
      'PIN OWNER (psv1h): a bare tail-resume handler arm runs under the owner of the fn that installed the handler', 'crates/axon-core/src/interp/eval.rs',
-     '            let _pin_guard = crate::interp::PinGuard {\n                cell: &self.pin_fn,\n                prev: self.pin_fn.replace(pin_owner),', '            let _pin_guard = crate::interp::PinGuard {\n                cell: &self.pin_fn,\n                prev: self.pin_fn.replace(self.pin_fn.get()),',
+     '            let outcome = if self.seal.active {\n                self.run_arm_sealed(', '            let outcome = if false {\n                self.run_arm_sealed(',
      'axon-core', '--lib', 'interp::tests::a_handler_arm_dispatch_runs_under_the_installers_pin_owner'),
     ('M2601',
      'PIN OWNER (psv1h): a general (replay) handler arm runs under the owner of the fn that installed the handler', 'crates/axon-core/src/interp/eval.rs',
-     '        self.handler_edge_into(arm_sealed, payload).and_then(|()| {\n            let _pin_guard = crate::interp::PinGuard {\n                cell: &self.pin_fn,\n                prev: self.pin_fn.replace(pin_owner),', '        self.handler_edge_into(arm_sealed, payload).and_then(|()| {\n            let _pin_guard = crate::interp::PinGuard {\n                cell: &self.pin_fn,\n                prev: self.pin_fn.replace(self.pin_fn.get()),',
+     '        let outcome = if self.seal.active {\n            self.run_arm_sealed(', '        let outcome = if false {\n            self.run_arm_sealed(',
      'axon-core', '--lib', 'interp::tests::a_handler_arm_replay_runs_under_the_installers_pin_owner'),
     ('M2602',
      "PIN OWNER (psv1h): a bare tail-resume arm's ARITHMETIC is judged under the installing fn's owner", 'crates/axon-core/src/interp/eval.rs',
@@ -10325,6 +10330,10 @@ MUTATIONS += [
     ('M2752', 'TAINT (am102): a `break` is an early exit', 'crates/axon-core/src/interp/taint.rs', '            Expr::Return(_) | Expr::Break | Expr::Continue | Expr::Question(_)', '            Expr::Return(_) | Expr::Continue | Expr::Question(_)', 'axon-core', '--lib', 'interp::taint_tests::taint_survives_every_carrier_a_value_can_travel_by'),
     ('M2753', 'TAINT (am102): a `continue` is an early exit', 'crates/axon-core/src/interp/taint.rs', '            Expr::Return(_) | Expr::Break | Expr::Continue | Expr::Question(_)', '            Expr::Return(_) | Expr::Break | Expr::Question(_)', 'axon-core', '--lib', 'interp::taint_tests::every_hook_of_the_taint_has_an_attack_of_its_own'),
     ('M2754', 'TAINT (am102): a `return` is an early exit', 'crates/axon-core/src/interp/taint.rs', '            Expr::Return(_) | Expr::Break | Expr::Continue | Expr::Question(_)', '            Expr::Break | Expr::Continue | Expr::Question(_)', 'axon-core', '--lib', 'interp::taint_tests::taint_survives_every_carrier_a_value_can_travel_by'),
+    # R51 S7 (S7-Evidence-3): v0.22's two exit sites (fn: `body_t |= sticky & VAL`, closure:
+    # `ret_t |= sticky & VAL`) are one helper on main, t_frame_exit (taint.rs), whose callers are the
+    # fn frame (call_fn_frame, interp.rs) and the closure frame (call_closure_frame). M2755 and M2756
+    # therefore mutate the same line; each is killed by its own test and marker (fn / closure attack).
     ('M2755', 'TAINT (am102): a fn result carries the condition of an early exit', 'crates/axon-core/src/interp/taint.rs', '        self.taint.acc.set(entry_t | body_t | sticky | pick);', '        self.taint.acc.set(entry_t | body_t | pick);', 'axon-core', '--lib', 'interp::taint_tests::taint_survives_every_carrier_a_value_can_travel_by'),
     ('M2756', 'TAINT (am102): a closure result carries the condition of an early exit', 'crates/axon-core/src/interp/taint.rs', '        self.taint.acc.set(entry_t | body_t | sticky | pick);', '        self.taint.acc.set(entry_t | body_t | pick);', 'axon-core', '--lib', 'interp::taint_tests::every_hook_of_the_taint_has_an_attack_of_its_own'),
     ('M2757', 'TAINT (am102): a `return` value carries its taint', 'crates/axon-core/src/interp/eval.rs', '                    self.taint.ret.set(self.ts::<T>(self.ta::<T>()));', '                    self.taint.ret.set(0);', 'axon-core', '--lib', 'interp::taint_tests::every_hook_of_the_taint_has_an_attack_of_its_own'),
@@ -11003,14 +11012,14 @@ MUTATIONS += [
     ('M3342', 'ORACLE (am117): goal_run_categorical lets a sealed caller tell an operator fn from a missing name', 'crates/axon-core/src/interp/goal.rs',
      '        let f = match self.fns.get(name) {\n            Some(f) => *f,\n            None if self.k().provenance.borrow().contains_key(name) => {\n                return Ok(self.best_observed(name, target, max_evals));\n            }\n            None => return Err(self.unknown_goal_name(name)),\n        };\n        // A name the operator defines reads exactly as one nothing defines to a\n        // sealed caller (amendment 117, loop finding 38; veto goal.rs:371, R51 S4).\n        self.seal_call(f)?;\n', '        let f = match self.fns.get(name) {\n            Some(f) => *f,\n            None if self.k().provenance.borrow().contains_key(name) => {\n                return Ok(self.best_observed(name, target, max_evals));\n            }\n            None => return Err(self.unknown_goal_name(name)),\n        };\n',
      'axon-psv', '--test sealed_frames', 'a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one'),
-    # R51: v0.22's guard (the common text from no_such_fn, where an operator name instead reached
-    # call_fn's call edge) no longer decides: main's lookup sees only the sealed caller's own fns, so
-    # an operator name and a missing one take the same no_such_fn branch and the plain-text mutant
-    # tells them apart nowhere. The deciding guard is that lookup: without it an operator fn with a
-    # `&mut` param meets call_fn's `&mut` refusal before the call edge.
-    ('M3343', "ORACLE (am117): goal_eval's lookup sees only a sealed caller's own fns (an operator fn never reaches call_fn's `&mut` refusal)", 'crates/axon-core/src/interp/goal.rs',
-     '            .get(name)\n            .filter(|f| !(self.seal.active && self.frame_sealed.get()) || self.fn_is_sealed(f));\n        let Some(f) = visible else {', '            .get(name);\n        let Some(f) = visible else {',
-     'axon-psv', '--test sealed_frames', 'a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one'),
+    # R51: v0.22's M3343 guard (the common text from no_such_fn) is kept on its v0.22 text: a sealed
+    # caller's goal_eval of a name it cannot see (an operator fn's or a missing one) is told the one
+    # no-such-name text every other path gives (crossing_tests). On main the lookup itself sees only
+    # the sealed caller's own fns (M3496, S7-Evidence-5: the id M3343 had been reused for it), so an
+    # operator name and a missing one take that branch alike.
+    ('M3343', 'ORACLE (am117): goal_eval gives a sealed caller a different text for a missing name', 'crates/axon-core/src/interp/goal.rs',
+     'return self.no_such_fn(\n                name,\n                format!("goal_eval: `{name}` is not a defined function"),\n            );', 'return panic(format!(\n                "goal_eval: `{name}` is not a defined function"\n            ));',
+     'axon-core', '--no-default-features --lib', 'interp::crossing_tests::a_sealed_goal_eval_is_told_the_common_text_for_a_name_it_cannot_see'),
     ('M3344', 'DRIFT (am117): one arr_* arm calls its closure around the control taint', 'crates/axon-core/src/interp/builtins.rs',
      '                    let mapped = self.call_closure_arg(f, [x.clone()])?;', '                    let mapped = self.call_closure(f.clone(), vec![x.clone()])?;',
      'axon-core', '--lib', 'interp::taint_tests::every_builtin_that_takes_a_closure_has_a_callback_row_and_calls_through_call_cb'),
@@ -11094,11 +11103,14 @@ MUTATIONS += [
     ('M3470', "PICK (am121): a place write under sealed code's control of an operator value is no pick", 'crates/axon-core/src/interp/eval.rs',
      '                    let wt = self.t_stored_v(self.ta::<T>(), &v);', '                    let wt = self.ts::<T>(self.ta::<T>());',
      'axon-core', '--lib', 'interp::taint_tests::an_operator_value_the_candidate_picked_is_never_dispatched_on'),
-    ('M3471', "PICK (am121): an operator fn's result after an exit sealed code's data decided is no pick", 'crates/axon-core/src/interp/taint.rs',
-     '        let pick = if sticky != 0 && self.t_holds_op(v) {', '        let pick = if false && sticky != 0 && self.t_holds_op(v) {',
+    # R51 S7 (S7-Evidence-1): v0.22's fn-site and closure-site picks are one helper on main
+    # (t_frame_exit, taint.rs); each row disables only its own caller's pick by handing
+    # t_frame_exit a value that holds no operator value.
+    ('M3471', "PICK (am121): an operator fn's result after an exit sealed code's data decided is no pick", 'crates/axon-core/src/interp.rs',
+     '            self.t_frame_exit(entry_t, body_t, &result);', '            self.t_frame_exit(entry_t, body_t, &Value::Unit);',
      'axon-core', '--lib', 'interp::taint_tests::an_operator_value_the_candidate_picked_is_never_dispatched_on'),
-    ('M3472', "PICK (am121): an operator closure's result after an exit sealed code's data decided is no pick", 'crates/axon-core/src/interp/taint.rs',
-     '        let pick = if sticky != 0 && self.t_holds_op(v) {', '        let pick = if false && sticky != 0 && self.t_holds_op(v) {',
+    ('M3472', "PICK (am121): an operator closure's result after an exit sealed code's data decided is no pick", 'crates/axon-core/src/interp.rs',
+     '            self.t_frame_exit(entry_t, body_t, &v);', '            self.t_frame_exit(entry_t, body_t, &Value::Unit);',
      'axon-core', '--lib', 'interp::taint_tests::an_operator_value_the_candidate_picked_is_never_dispatched_on'),
     ('M3473', 'PICK (am121): an operator value a sealed fn hands back is no pick', 'crates/axon-core/src/interp.rs',
      '        if crossing {\n            if let Ok(v) = &r {\n                if self.t_holds_op(v) {\n                    self.t_touch(taint::PICK);\n                }\n            }\n        }\n        r\n    }', '        r\n    }',
@@ -11186,6 +11198,22 @@ MUTATIONS += [
     ('M3495', "R51 EXISTENCE ORACLE: a sealed direct call of an operator `&mut` fn meets the call edge before call_fn_entry's `&mut` refusal", 'crates/axon-core/src/interp/eval.rs',
      '            if e.has_ref_mut {\n                self.seal_call(e.def)?;\n', '            if false && e.has_ref_mut {\n                self.seal_call(e.def)?;\n',
      'axon-core', '--lib', 'interp::taint_tests::a_sealed_caller_cannot_tell_an_operator_name_from_a_missing_one_on_any_path'),
+    # R51 S7 (S7-Evidence-5): the goal_eval lookup filter, rowed as M3343 until S7.
+    ('M3496', "R51 ORACLE: goal_eval's lookup sees only a sealed caller's own fns (an operator fn never reaches call_fn's `&mut` refusal)", 'crates/axon-core/src/interp/goal.rs',
+     '            .get(name)\n            .filter(|f| !(self.seal.active && self.frame_sealed.get()) || self.fn_is_sealed(f));\n        let Some(f) = visible else {', '            .get(name);\n        let Some(f) = visible else {',
+     'axon-psv', '--test sealed_frames', 'a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one'),
+    # R51 S7 (S7-Evidence-4 follow-up): the remaining seal routing lines that choose a sealed
+    # path's out-of-line helper (`if self.seal.active { .. *_sealed(` ); `if false` sends a sealed
+    # run down the unsealed code.
+    ('M3497', "R51 routing: a sealed run's `&mut` call goes through call_mut_sealed", 'crates/axon-core/src/interp/eval.rs',
+     '        if self.seal.active {\n            return self.call_mut_sealed(', '        if false {\n            return self.call_mut_sealed(',
+     'axon-core', '--no-default-features --lib', 'interp::tests::a_mut_write_through_value_is_cast_at_the_seal_edge_back'),
+    ('M3498', "R51 routing: a sealed run's module-level initializers run through init_globals_sealed", 'crates/axon-core/src/interp.rs',
+     '        if self.seal.active {\n            return self.init_globals_sealed(&defs);', '        if false {\n            return self.init_globals_sealed(&defs);',
+     'axon-core', '--no-default-features --lib', 'interp::tests::runtime_sealing_holds_without_the_static_check'),
+    ('M3499', "R51 routing: a sealed run's whole-struct refinement runs through struct_refine_sealed", 'crates/axon-core/src/interp/eval.rs',
+     '                    let held = if self.seal.active {\n                        self.struct_refine_sealed(', '                    let held = if false {\n                        self.struct_refine_sealed(',
+     'axon-core', '--no-default-features --lib', 'interp::tests::runtime_sealing_holds_without_the_static_check'),
 ]
 
 

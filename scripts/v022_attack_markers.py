@@ -2958,7 +2958,7 @@ ATTACK_MARKERS.update({
     'M3340': 'struct refinement predicate: ACCEPT/REFUSE differs',
     'M3341': 'predicate: struct literal: ACCEPT/REFUSE differs',
     'M3342': 'goal_run_categorical name: ACCEPT/REFUSE differs',
-    'M3343': 'goal_eval name of a &mut fn: the text differs',
+    'M3343': r'ATTACK: a sealed goal_eval of `(w|nope)` was told its own text',
     'M3344': r'ATTACK: DRIFT: interp/builtins\.rs line \d+ calls a closure with `call_closure\(`',
     'M3345': r'ATTACK: DRIFT: goal\.rs line \d+ \(in `[^`]*`\) runs operator code and does not raise the control taint after it',
     'M3346': 'ATTACK: sealed code selected operator code \\(a match guard run because',
@@ -3016,4 +3016,8 @@ ATTACK_MARKERS.update({
     'M3493': r"ATTACK: sealed code reached the operator \(direct call\): Ok\(Completed\)",
     'M3494': r"ATTACK: sealed code reached the operator \(direct call\): Ok\(Completed\)",
     'M3495': r'call \[mutp\] Err\("`@` takes `&mut` parameters',
+    'M3496': 'goal_eval name of a &mut fn: the text differs',
+    'M3497': r"ATTACK: a `&mut` write-through carried a candidate-chosen value to the operator \(an appended u8 into an empty output array\): Ok\(Completed\)",
+    'M3498': r"ATTACK: sealed code reached the operator \(module-level initializer\): Ok\(Completed\)",
+    'M3499': r"ATTACK: sealed code reached the operator \(a candidate struct's where, built by the operator\): Ok\(Completed\)",
 })
