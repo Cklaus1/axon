@@ -979,6 +979,96 @@ pub fn sealed_run_refusal(sealed: bool) -> Result<(), String> {
         .map_err(|refused| refused.to_string())
 }
 
+/// R51 S5, from v0.22 (Protected Check Isolation, RUNTIME sealing; C9
+/// amendment 53): which definitions of the program a sealed (candidate)
+/// module defines, by the ONE provenance rule (`resolver::span_in_sealed` of
+/// the definition's span). Built once in [`Interp::build_with`] for a sealed
+/// run; an unsealed run builds the empty default, which allocates nothing.
+///
+/// Frames carry provenance: a function by its definition's file, a closure by
+/// the frame that CREATED it, a handler arm by the frame that installed the
+/// `with` ([`Interp::with_frame`]).
+///
+/// Main's data model: a fn is keyed by its `FnDef` address (the key
+/// `fn_of_def` uses); a global by its `Sym`, since main's `globals` table is
+/// keyed by `Sym`, not by name text.
+///
+/// Readers by slice (R51 §11): `active` here (the VM compile refusal); the
+/// sets, [`Interp::fn_is_sealed`] and the frame counters are read by the S2
+/// taint and the S3 seal edges and S4 dispatch rule, so until those land only
+/// the unit tests read them.
+#[derive(Default)]
+pub(crate) struct Seal {
+    pub(crate) active: bool,
+    #[cfg_attr(not(test), allow(dead_code))]
+    fns: std::collections::HashSet<usize>,
+    #[cfg_attr(not(test), allow(dead_code))]
+    globals: std::collections::HashSet<Sym>,
+    #[cfg_attr(not(test), allow(dead_code))]
+    refines: std::collections::HashSet<String>,
+    /// Struct types defined in a sealed module: their whole-struct `where`
+    /// runs under THEIR provenance, whoever constructs one.
+    #[cfg_attr(not(test), allow(dead_code))]
+    types: std::collections::HashSet<String>,
+    /// Method names the OPERATOR's code defines (in its impls and traits).
+    /// In operator code such a name means the operator's method: a call that
+    /// would dispatch it to a sealed method (the receiver's runtime type is
+    /// one the candidate chose) is refused (C9 round 4, PSV-1, amendment 53).
+    #[cfg_attr(not(test), allow(dead_code))]
+    operator_methods: std::collections::HashSet<String>,
+}
+
+impl Seal {
+    /// The seal of `program` when `sealed` says which spans lie in the
+    /// sealed set. An impl method is sealed when the method or its block is.
+    fn of(program: &Program, sealed: &dyn Fn(crate::span::Span) -> bool) -> Seal {
+        let mut seal = Seal {
+            active: true,
+            ..Seal::default()
+        };
+        for item in &program.items {
+            match item {
+                Item::FnDef(f) if sealed(f.span) => {
+                    seal.fns.insert(f as *const FnDef as usize);
+                }
+                Item::ImplBlock(b) => {
+                    for m in &b.methods {
+                        if sealed(m.span) || sealed(b.span) {
+                            seal.fns.insert(m as *const FnDef as usize);
+                        }
+                    }
+                }
+                Item::LetDef { name, span, .. } if sealed(*span) => {
+                    seal.globals.insert(intern(name));
+                }
+                Item::RefineDef(r) if sealed(r.span) => {
+                    seal.refines.insert(r.name.clone());
+                }
+                Item::TypeDef(t) if sealed(t.span) => {
+                    seal.types.insert(t.name.clone());
+                }
+                _ => {}
+            }
+            match item {
+                Item::ImplBlock(b) if !sealed(b.span) => {
+                    for m in &b.methods {
+                        if !sealed(m.span) {
+                            seal.operator_methods.insert(m.name.clone());
+                        }
+                    }
+                }
+                Item::TraitDef(t) if !sealed(t.span) => {
+                    for m in &t.methods {
+                        seal.operator_methods.insert(m.name.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        seal
+    }
+}
+
 pub struct Interp<'p> {
     fns: HashMap<String, &'p FnDef>,
     #[allow(dead_code)]
@@ -1039,11 +1129,27 @@ pub struct Interp<'p> {
     /// or `AXON_MAX_DEPTH` (clamped) when set. Resolved once at build time so
     /// every `call_fn` sees a consistent value.
     max_depth: usize,
-    /// R51: this run executes sealed code (`--seal` set a non-empty sealed
-    /// set). Computed once in [`Interp::build`] from the same input as the
-    /// refuse-all pin; `vm::compile::compile` refuses to build a body while it
-    /// is set. S5 replaces it with the `Seal` state.
-    pub(crate) sealed: bool,
+    /// R51 S5 (Protected Check Isolation, RUNTIME sealing): which
+    /// definitions come from a sealed (candidate) module. `seal.active` is
+    /// the one "this run executes sealed code" bit: computed once in
+    /// [`Interp::build`] from the same input as the refuse-all pin, and
+    /// `vm::compile::compile` refuses to build a body while it is set.
+    pub(crate) seal: Seal,
+    /// The static pin analysis (`interp/pin.rs`) of a sealed run; empty, and
+    /// never computed, for an unsealed one.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pins: pin::Pins,
+    /// Frame provenance: whether the frame now running is a sealed
+    /// (candidate) frame. Changed only by [`Interp::with_frame`].
+    frame_sealed: Cell<bool>,
+    /// How many frames of each provenance are active (entered through
+    /// [`Interp::with_frame`] and not yet left). `with_frame` is the ONLY
+    /// place provenance changes, so these are exact. A sealed handler frame
+    /// answers an operation only when no OPERATOR frame was entered after it
+    /// was installed, and operator code never draws from the operator RNG
+    /// while a sealed frame is below it (both S3).
+    sealed_frames: Cell<usize>,
+    operator_frames: Cell<usize>,
     /// R50: which engine runs fn bodies (`AXON_ENGINE`, or `set_engine` on a
     /// target without an environment). Read once, at build.
     engine: Engine,
@@ -3602,11 +3708,17 @@ impl TestEnd {
 }
 
 pub fn run_test_fn_outcome(program: &Program, name: &str) -> Result<TestEnd, String> {
-    on_deep_stack(|| run_test_fn_inner(program, name))
+    let sealed_dirs = crate::resolver::sealed_module_dirs();
+    on_deep_stack(|| run_test_fn_inner(program, name, &sealed_dirs))
 }
 
-fn run_test_fn_inner(program: &Program, name: &str) -> Result<TestEnd, String> {
-    let mut interp = Interp::build(program)?;
+/// `sealed_dirs`: the run's sealed set ([`Interp::build_in`]).
+fn run_test_fn_inner(
+    program: &Program,
+    name: &str,
+    sealed_dirs: &[std::path::PathBuf],
+) -> Result<TestEnd, String> {
+    let mut interp = Interp::build_in(program, sealed_dirs)?;
     if let Err(f) = interp.init_globals() {
         return Err(flow_to_msg(f));
     }
@@ -3725,18 +3837,40 @@ impl<'p> Interp<'p> {
     /// 1, §7). Every run entry passes through here, so no sealed run executes
     /// unprotected or on the VM, whoever spawned it.
     pub fn build(program: &'p Program) -> Result<Self, String> {
-        // R51: one expression, from the input the seal state is computed
-        // from; `engine_for` decides a sealed run before it looks at the
-        // override or `AXON_ENGINE`.
-        let sealed = !crate::resolver::sealed_module_dirs().is_empty();
-        let engine = vm::engine_at_build(sealed).map_err(|refused| refused.to_string())?;
-        Ok(Self::build_with(program, sealed, engine))
+        Self::build_in(program, &crate::resolver::sealed_module_dirs())
     }
 
-    /// [`Interp::build`] with the seal state and the engine already decided
-    /// (`engine` is [`vm::engine_for`]'s choice for `sealed`).
-    fn build_with(program: &'p Program, sealed: bool, engine: Engine) -> Self {
+    /// [`Interp::build`] for the sealed set `sealed_dirs` (the process's
+    /// `resolver::sealed_module_dirs()` there): the one input both the
+    /// refusal and the seal state are computed from. `engine_for` decides a
+    /// sealed run before it looks at the override or `AXON_ENGINE`. Taking
+    /// the set as a value lets a test build a sealed run without publishing
+    /// it to every concurrent build in the process.
+    fn build_in(program: &'p Program, sealed_dirs: &[std::path::PathBuf]) -> Result<Self, String> {
+        let engine =
+            vm::engine_at_build(!sealed_dirs.is_empty()).map_err(|refused| refused.to_string())?;
+        Ok(Self::build_with(program, sealed_dirs, engine))
+    }
+
+    /// [`Interp::build`] with the sealed set (`sealed_dirs`, empty for an
+    /// unsealed run) and the engine already decided (`engine` is
+    /// [`vm::engine_for`]'s choice for that run). A sealed run computes its
+    /// [`Seal`] and its pins here, once; an unsealed run computes neither.
+    fn build_with(
+        program: &'p Program,
+        sealed_dirs: &[std::path::PathBuf],
+        engine: Engine,
+    ) -> Self {
         pin_ai_net_allowlist(program);
+        let (seal, pins) = if sealed_dirs.is_empty() {
+            (Seal::default(), pin::Pins::default())
+        } else {
+            let sealed = |sp: crate::span::Span| crate::resolver::span_in_sealed(sp, sealed_dirs);
+            (
+                Seal::of(program, &sealed),
+                pin::Pins::build(program, &sealed),
+            )
+        };
         let mut fns = HashMap::new();
         let mut structs = HashMap::new();
         let mut enums = HashMap::new();
@@ -3833,7 +3967,11 @@ impl<'p> Interp<'p> {
             #[cfg(target_arch = "wasm32")]
             nest_limit: resolve_max_depth().saturating_mul(NEST_PER_DEPTH),
             max_depth: resolve_max_depth(),
-            sealed,
+            seal,
+            pins,
+            frame_sealed: Cell::new(false),
+            sealed_frames: Cell::new(0),
+            operator_frames: Cell::new(0),
             engine,
             vm_trace: vm::trace_at_build(),
             vm_eager: vm::eager_at_build(),
@@ -3890,6 +4028,31 @@ impl<'p> Interp<'p> {
     pub fn with_discharged(mut self, discharged: crate::verify::Discharged) -> Self {
         self.discharged = discharged;
         self
+    }
+
+    /// Whether `f` was defined in a sealed (candidate) module of this run.
+    /// Read by the S2 taint and the S3 call crossing (R51 §11).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn fn_is_sealed(&self, f: &FnDef) -> bool {
+        self.seal.active && self.seal.fns.contains(&(f as *const FnDef as usize))
+    }
+
+    /// Run `g` with the frame's provenance set to `sealed`, restoring it
+    /// after: the ONE place provenance changes, so the per-provenance frame
+    /// counts stay exact. The S3 seal edges enter frames through it.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn with_frame<T>(&self, sealed: bool, g: impl FnOnce() -> T) -> T {
+        let prev = self.frame_sealed.replace(sealed);
+        let count = if sealed {
+            &self.sealed_frames
+        } else {
+            &self.operator_frames
+        };
+        count.set(count.get() + 1);
+        let out = g();
+        count.set(count.get() - 1);
+        self.frame_sealed.set(prev);
+        out
     }
 
     /// Evaluate module-level constants in source order, so each may reference
@@ -5272,6 +5435,11 @@ mod goal;
 // (AX-18), in interp/sym.rs.
 mod sym;
 use sym::*;
+// The static pin analysis of a sealed run (R51 S5, from v0.22 C9 round 6,
+// amendment 83): which operator sites a type, or a name, nothing on the
+// operator side determined reaches. Built in `Interp::build_with` for a
+// sealed run only.
+mod pin;
 // Core tree-walking evaluator (eval/eval_block/eval_call/eval_binop/
 // match_pattern) extracted to interp/eval.rs (R0 slice 5). Its methods live in a
 // second `impl Interp` block there; inherent methods resolve across split impl
@@ -7041,6 +7209,1043 @@ fn main() { }
             matches!(&out, Err(m) if m.contains("runtime type confusion")),
             "an Option fn returned an Ok across its boundary: {out:?}"
         );
+    }
+
+    // ── R51 S5: the seal state, frame provenance and v0.22's pin analysis ────
+
+    /// A program whose `cand` part is loaded from the SEALED directory
+    /// `/<tag>-sealed` and whose `suite` part is the operator's; returns it
+    /// with that directory.
+    fn sealed_program(tag: &str, suite: &str, cand: &str) -> (Program, std::path::PathBuf) {
+        use crate::span::intern_source;
+        let sdir = format!("/{tag}-sealed");
+        let s = crate::parse_source_in(suite, intern_source(&format!("/{tag}-suite/h.ax"), suite))
+            .expect("suite parses");
+        let c = crate::parse_source_in(cand, intern_source(&format!("{sdir}/f.ax"), cand))
+            .expect("candidate parses");
+        let prog = Program {
+            items: s.items.into_iter().chain(c.items).collect(),
+        };
+        (prog, std::path::PathBuf::from(sdir))
+    }
+
+    /// v0.22's sealed-run harness: run `test` of `suite` with `cand` loaded
+    /// from a SEALED directory. v0.22 published that directory process-wide
+    /// (`set_sealed_module_dirs` under a test lock); on main any build that
+    /// sees a non-empty set is refused, so a published set would refuse every
+    /// concurrent test's build. The set is handed to this run's build only
+    /// ([`Interp::build_in`]). v0.22's `sealed_outcome_rule` also switched the
+    /// receiver dispatch rule (`DISPATCH_RULE_OFF`, R51 S4) and the
+    /// taint-only sweep (`TAINT_FORCE_ON`, S2) around the run; those switches
+    /// arrive with the rules they switch. Until S6 every sealed run is refused
+    /// at build ([`SEALED_RUN_REFUSED`]).
+    fn sealed_outcome(tag: &str, suite: &str, cand: &str, test: &str) -> Result<TestEnd, String> {
+        let (prog, sdir) = sealed_program(tag, suite, cand);
+        on_deep_stack(|| run_test_fn_inner(&prog, test, &[sdir]))
+    }
+
+    /// v0.22 (C9 round 4c): the operator's `Judge`, whose `u8` impl is the
+    /// lenient one, and the candidate's laundering helpers.
+    const JUDGE8: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
+    const LAUNDER8: &str = "fn narrow(n: i64) -> u8 { n as u8 }\nfn stash(v: u8) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}\n";
+
+    fn u8_or(some: &str, none: &str) -> String {
+        format!("match dict_get(stash(narrow(4)), \"k\") {{ Some(v) => {some}  None => {none} }}")
+    }
+
+    /// `match <laundered u8> { Some(v) => { a[0] = v } None => {} }` as the
+    /// body of a candidate `fill(a: &mut [i64])`.
+    fn mut_fill(decl: &str, act: &str) -> String {
+        format!(
+            "fn fill(a: {decl}) {{\n    {}\n}}\n",
+            u8_or(&format!("{{ {act} }}"), "{}")
+        )
+    }
+
+    /// v0.22's dispatch-rule harness (C9 round 6, amendment 83): `t` of
+    /// `suite` under the operator's `Judge`, against `cand` with the
+    /// laundering helpers, with the rule ON.
+    fn judged_on(tag: &str, suite: &str, cand: &str) -> Result<TestEnd, String> {
+        sealed_outcome(
+            tag,
+            &format!("{JUDGE8}{suite}"),
+            &format!("{LAUNDER8}{cand}"),
+            "t",
+        )
+    }
+
+    fn dispatch_refused(why: &str, suite: &str, cand: &str) {
+        let out = judged_on("r6-disp", suite, cand);
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("whose type nothing on the operator side determined")),
+            "ATTACK: operator code dispatched on a value of the candidate's chosen type ({why}): {out:?}"
+        );
+    }
+
+    /// C9 round 7 (amendment 88): the analysis trusts only what the OPERATOR chose.
+    fn r7_refused(why: &str, suite: &str, cand: &str) {
+        let out = judged_on("r7", suite, cand);
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("whose type nothing on the operator side determined")
+                    || m.contains("whose width nothing on the operator side determined")
+                    || m.contains("runtime type confusion")),
+            "ATTACK: the operator's analysis trusted a type the candidate chose ({why}): {out:?}"
+        );
+    }
+
+    /// The operator's sandbox suite: `body` runs in a sandbox scope.
+    fn sandbox_suite(body: &str) -> String {
+        format!("@[test]\nfn t() {{\n    let p = principal_root(\"r\", true, true, true, 100)\n    let sb = sandbox_create(p, \"IO\")\n{body}\n}}\n")
+    }
+
+    fn name_refused(what: &str, suite: &str, cand: &str) {
+        let out = judged_on("r10-name", suite, cand);
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("a function name nothing on the operator side determined")),
+            "ATTACK: the candidate's string chose the operator fn ({what}): {out:?}"
+        );
+    }
+
+    /// R51 S5: until S6 the harness's every sealed run is refused at build,
+    /// with the R51 text, while the same program unsealed runs: the sealed
+    /// tests below are deferred, not vacuous.
+    #[test]
+    fn the_sealed_harness_is_refused_until_the_runtime_seal_is_complete() {
+        assert!(!SEAL_RUNTIME_COMPLETE);
+        let suite = "@[test]\nfn t() {\n    assert(solve() == 41)\n}\n";
+        let cand = "fn solve() -> i64 { 41 }\n";
+        assert_eq!(
+            sealed_outcome("r51-s5-refuse", suite, cand, "t"),
+            Err(SEALED_RUN_REFUSED.to_string())
+        );
+        let (prog, _) = sealed_program("r51-s5-refuse", suite, cand);
+        assert_eq!(
+            on_deep_stack(|| run_test_fn_inner(&prog, "t", &[])),
+            Ok(TestEnd::Completed),
+            "control: the same program unsealed"
+        );
+    }
+
+    /// R51 S5: a sealed build records which definitions the sealed module
+    /// defines (by `FnDef` address, global `Sym`, refinement and type name),
+    /// which method names the OPERATOR defines, and computes the pins; an
+    /// unsealed build computes none of it. Built through `build_with`, the
+    /// seal state's input, since `Interp::build` refuses every sealed run.
+    #[test]
+    fn a_sealed_build_records_the_candidates_definitions_and_an_unsealed_one_none() {
+        let suite = "type OT = { q: i64 }\ntrait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nlet OG = 5\nfn op() -> i64 { OG }\n@[test]\nfn t() {\n    let v: i64 = 9\n    assert(v.ok())\n}\n";
+        let cand = "type CT = { k: i64 }\ntype CPos = i64 where _ > 0\nlet CG = 4\nfn solve() -> i64 { CG }\nimpl Judge for CT {\n    fn ok(self: CT) -> bool { true }\n}\n";
+        let (prog, sdir) = sealed_program("r51-s5-seal", suite, cand);
+        let addr = |name: &str| {
+            prog.items
+                .iter()
+                .find_map(|it| match it {
+                    Item::FnDef(f) if f.name == name => Some(f as *const FnDef as usize),
+                    _ => None,
+                })
+                .expect("fn")
+        };
+        let impl_ok = |sealed_impl: bool| {
+            prog.items
+                .iter()
+                .find_map(|it| match it {
+                    Item::ImplBlock(b)
+                        if crate::resolver::span_in_sealed(b.span, std::slice::from_ref(&sdir))
+                            == sealed_impl =>
+                    {
+                        Some(&b.methods[0] as *const FnDef as usize)
+                    }
+                    _ => None,
+                })
+                .expect("impl")
+        };
+        let sealed = Interp::build_with(&prog, std::slice::from_ref(&sdir), Engine::Tree);
+        let s = &sealed.seal;
+        assert!(s.active);
+        let mut fns: Vec<usize> = s.fns.iter().copied().collect();
+        fns.sort_unstable();
+        let mut want = vec![addr("solve"), impl_ok(true)];
+        want.sort_unstable();
+        assert_eq!(
+            fns, want,
+            "the sealed fns are the candidate's fn and impl method"
+        );
+        assert_eq!(
+            s.globals.iter().copied().collect::<Vec<_>>(),
+            vec![intern("CG")]
+        );
+        assert_eq!(
+            s.refines.iter().cloned().collect::<Vec<_>>(),
+            vec!["CPos".to_string()]
+        );
+        assert_eq!(
+            s.types.iter().cloned().collect::<Vec<_>>(),
+            vec!["CT".to_string()]
+        );
+        assert_eq!(
+            s.operator_methods.iter().cloned().collect::<Vec<_>>(),
+            vec!["ok".to_string()],
+            "the operator's trait and impl define `ok`; the candidate's impl adds nothing"
+        );
+        let op = sealed.fns["op"];
+        let sol = sealed.fns["solve"];
+        assert!(sealed.fn_is_sealed(sol) && !sealed.fn_is_sealed(op));
+        assert!(
+            sealed.pins.is_operator_type("OT") && !sealed.pins.is_operator_type("CT"),
+            "the operator's struct is an operator type, the candidate's never is"
+        );
+        let t = sealed.fns["t"];
+        let site = |f: &FnDef| {
+            let mut out = None;
+            crate::ast::walk_expr(&f.body, &mut |e: &Expr| {
+                if let Expr::MethodCall {
+                    receiver, method, ..
+                } = e
+                {
+                    out = Some((receiver.as_ref().clone(), method.clone()));
+                }
+            });
+            out.expect("a method call")
+        };
+        let (r, m) = site(t);
+        let owner = t as *const FnDef as usize;
+        assert!(
+            sealed.pins.determined(owner, &r, &m),
+            "the operator's pinned `v.ok()` is determined in a sealed build"
+        );
+        let unsealed = Interp::build_with(&prog, &[], Engine::Tree);
+        let u = &unsealed.seal;
+        assert!(!u.active);
+        assert!(
+            u.fns.is_empty()
+                && u.globals.is_empty()
+                && u.refines.is_empty()
+                && u.types.is_empty()
+                && u.operator_methods.is_empty()
+        );
+        assert!(!unsealed.fn_is_sealed(unsealed.fns["solve"]));
+        assert!(
+            !unsealed.pins.determined(owner, &r, &m),
+            "an unsealed build computes no pins"
+        );
+    }
+
+    /// R51 S5: `with_frame` sets the frame's provenance for its body only,
+    /// counts the frames of each provenance while they run, and restores
+    /// both on the way out, nested either way.
+    #[test]
+    fn with_frame_sets_provenance_for_its_body_and_restores_it() {
+        let prog = crate::parse_source("fn main() {}\n").expect("parses");
+        let ix = Interp::build_with(&prog, &[], Engine::Tree);
+        let state = |ix: &Interp| {
+            (
+                ix.frame_sealed.get(),
+                ix.sealed_frames.get(),
+                ix.operator_frames.get(),
+            )
+        };
+        assert_eq!(state(&ix), (false, 0, 0));
+        let seen = ix.with_frame(true, || {
+            let outer = state(&ix);
+            let inner = ix.with_frame(false, || {
+                let op = state(&ix);
+                let back = ix.with_frame(true, || state(&ix));
+                (op, back, state(&ix))
+            });
+            (outer, inner, state(&ix))
+        });
+        assert_eq!(
+            seen,
+            (
+                (true, 1, 0),
+                ((false, 1, 1), (true, 2, 1), (false, 1, 1)),
+                (true, 1, 0)
+            )
+        );
+        assert_eq!(state(&ix), (false, 0, 0));
+        assert_eq!(ix.with_frame(true, || 7), 7, "the body's value is returned");
+    }
+
+    /// The analysis itself, with the cast out of the picture: a variable passed
+    /// as `&mut x` is NOT determined; the same program without the call is.
+    #[test]
+    fn a_mut_operand_is_never_determined_by_the_pin_analysis() {
+        let verdict = |src: &str| {
+            let prog = crate::parse_source(src).expect("parses");
+            let pins = pin::Pins::build(&prog, &|_| false);
+            let mut out = None;
+            for item in &prog.items {
+                if let Item::FnDef(f) = item {
+                    if f.name != "t" {
+                        continue;
+                    }
+                    crate::ast::walk_expr(&f.body, &mut |e: &Expr| {
+                        if let Expr::MethodCall {
+                            receiver, method, ..
+                        } = e
+                        {
+                            if method == "ok" {
+                                out = Some(pins.determined(
+                                    f as *const FnDef as usize,
+                                    receiver,
+                                    method,
+                                ));
+                            }
+                        }
+                    });
+                }
+            }
+            out.expect("a call site")
+        };
+        let base = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nfn fill(a: &mut [i64]) { a[0] = 9 }\n";
+        let with = |call: &str| {
+            format!("{base}fn t() {{\n    let mut a = [1, 2, 3]\n    {call}\n    let r = a[0].ok()\n}}\n")
+        };
+        assert!(
+            verdict(&with("let z = 0")),
+            "control: a literal array is determined"
+        );
+        assert!(
+            !verdict(&with("fill(&mut a)")),
+            "ATTACK: a variable lent as `&mut` was still determined"
+        );
+        // A union annotation does not pin the one runtime type.
+        let un = format!("{base}fn t() {{\n    let a: i64 | u8 = 9\n    let r = a.ok()\n}}\n");
+        assert!(
+            !verdict(&un),
+            "ATTACK: a union annotation pinned the receiver"
+        );
+    }
+
+    /// The dispatch rule sees a `&mut` operand as OPEN: what the callee left in
+    /// it was not chosen by the operator. The honest suite re-pins.
+    #[test]
+    #[ignore = "R51 S4: the receiver dispatch rule (seal_dispatch) is not ported; sealed control refused until S6"]
+    fn a_mut_operand_is_open_in_the_dispatch_analysis() {
+        let unpinned = "@[test]\nfn t() {\n    let mut a = [1, 2, 3]\n    fill(&mut a)\n    assert(a[0].ok())\n}\n";
+        let repinned = "@[test]\nfn t() {\n    let mut a = [1, 2, 3]\n    fill(&mut a)\n    let b: [i64] = a\n    assert(b[0].ok())\n}\n";
+        let good = "fn fill(a: &mut [i64]) { a[0] = 9 }\n";
+        let wrong = "fn fill(a: &mut [i64]) { a[0] = 4 }\n";
+        // The cost, stated: even an honest write is refused until re-pinned.
+        dispatch_refused("an un-re-pinned read after `&mut`", unpinned, good);
+        assert_eq!(
+            judged_on("r8-mutopen", repinned, good),
+            Ok(TestEnd::Completed),
+            "control: GOOD, re-pinned"
+        );
+        assert!(
+            judged_on("r8-mutopen", repinned, wrong).is_err(),
+            "control: WRONG fails"
+        );
+        let out = judged_on("r8-mutopen", repinned, &mut_fill("&mut [i64]", "a[0] = v"));
+        assert!(
+            out != Ok(TestEnd::Completed),
+            "ATTACK: re-pinned suite accepted the u8: {out:?}"
+        );
+        // The arithmetic arm, unpinned.
+        let width = "@[test]\nfn t() {\n    let mut a = [1, 2, 3]\n    fill(&mut a)\n    assert((a[0] << 1) == 254)\n}\n";
+        let out = judged_on(
+            "r8-mutopen",
+            width,
+            &mut_fill("&mut [i64]", "a[0] = v").replace("narrow(4)", "narrow(255)"),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed),
+            "ATTACK: width arm accepted a `&mut` value: {out:?}"
+        );
+    }
+
+    /// The structural half of A: pin verdicts are keyed (owner, site text), so
+    /// two fns holding IDENTICAL text must never share one. The analysis keeps
+    /// them apart by owner; the interpreter must hand the right owner to every
+    /// frame that runs operator code (`every_frame_that_runs_stored_operator_code_sets_its_owner`).
+    #[test]
+    fn identical_site_text_in_two_fns_gets_two_verdicts() {
+        use crate::ast::walk_expr;
+        let src = "trait J { fn ok(self) -> bool }\nimpl J for i64 { fn ok(self: i64) -> bool { self == 9 } }\nimpl J for u8 { fn ok(self: u8) -> bool { true } }\nfn a() -> bool { let v: i64 = 9\n v.ok() }\nfn b() -> bool { let v = dict_get(dict_new(), \"k\")\n v.ok() }\n";
+        let prog = crate::parse_source(src).expect("parses");
+        let pins = pin::Pins::build(&prog, &|_| false);
+        let mut verdicts = Vec::new();
+        for it in &prog.items {
+            if let Item::FnDef(f) = it {
+                let mut site = None;
+                walk_expr(&f.body, &mut |e: &Expr| {
+                    if let Expr::MethodCall {
+                        receiver, method, ..
+                    } = e
+                    {
+                        site = Some((receiver.as_ref().clone(), method.clone()));
+                    }
+                });
+                let (r, m) = site.expect("a method call");
+                verdicts.push((
+                    f.name.clone(),
+                    pins.determined(f as *const FnDef as usize, &r, &m),
+                ));
+            }
+        }
+        assert_eq!(
+            verdicts,
+            vec![("a".to_string(), true), ("b".to_string(), false)]
+        );
+    }
+
+    /// Amendment 96, honest-program cost (fail-closed over-refusal, stated): the
+    /// VALUE of a `with handler` expression is undetermined to the dispatch rule
+    /// (a handler arm may answer with any value), so an operator dispatch on it
+    /// is refused until it is pinned. Dispatch on determined values INSIDE a
+    /// handler body or arm is unaffected.
+    #[test]
+    #[ignore = "R51 S4: the receiver dispatch rule (seal_dispatch) is not ported; sealed control refused until S6"]
+    fn the_value_of_a_with_handler_expression_is_undetermined_until_pinned() {
+        let h = "with handler { on IO(p) => resume(Ok(\"x\")) } {\n        9\n    }";
+        let run = |suite: String| judged_on("r9-wh", &suite, "fn mk() -> i64 { 9 }\n");
+        let pinned = format!("@[test]\nfn t() {{\n    let v: i64 = {h}\n    assert(v.ok())\n}}\n");
+        assert_eq!(
+            run(pinned),
+            Ok(TestEnd::Completed),
+            "pinned: the cost is only the annotation"
+        );
+        let bare = format!("@[test]\nfn t() {{\n    let v = {h}\n    assert(v.ok())\n}}\n");
+        let out = run(bare);
+        assert!(
+            matches!(&out, Err(m) if m.contains("nothing on the operator side determined")),
+            "the value of a handler expression is undetermined: {out:?}"
+        );
+        let inside = "@[test]\nfn t() {\n    with handler { on IO(p) => resume(Ok(\"x\")) } {\n        let x: i64 = 9\n        assert(x.ok())\n    }\n}\n".to_string();
+        assert_eq!(
+            run(inside),
+            Ok(TestEnd::Completed),
+            "dispatch inside a handler body on a pinned value"
+        );
+    }
+
+    /// B2: a LOCAL binding named like an operator fn is not that fn.
+    #[test]
+    #[ignore = "R51 S4: the receiver dispatch rule (seal_dispatch) is not ported; sealed control refused until S6"]
+    fn a_local_binding_named_like_an_operator_fn_is_not_judged_by_it() {
+        let suite = "fn f() -> i64 { 5 }\n@[test]\nfn t() {\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"f\") {\n        Some(f) => assert(f().ok())\n        None => assert(false)\n    }\n}\n";
+        r7_refused(
+            "a closure stored under a new key, called through a local named f",
+            suite,
+            "fn solve(d: Dict) { dict_set(d, \"f\", || 4 as u8) }\n",
+        );
+    }
+
+    /// The second blocker, at the call: a call through a name bound in the
+    /// local environment goes through that value, and a non-closure is not
+    /// callable. It used to fall through to a builtin or fn of the same NAME,
+    /// so a confused value in the operator's local `square` ran the
+    /// operator's own reference `fn square`. This route crosses no declared
+    /// fn type (a `Dict`'s values are untyped), so the cast cannot stand in.
+    #[test]
+    #[ignore = "R51 S6: main's slot-resolved call through a local; sealed control refused until S6 (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"]
+    fn a_call_through_a_local_never_resolves_the_name_elsewhere() {
+        let suite = "fn square(n: i64) -> i64 { n * n }\n\
+                     @[test]\nfn t() {\n    match dict_get(table(), \"sq\") {\n        Some(square) => assert(square(3) == 9 && square(5) == 25)\n        None => assert(false)\n    }\n}\n\
+                     @[test]\nfn t_shadow() {\n    let square = |n: i64| n + 100\n    assert(square(1) == 101)\n}\n\
+                     @[test]\nfn t_plain() {\n    let sq = 4\n    assert(square(sq) == 16)\n}\n";
+        let table = |v: &str| {
+            format!("fn table() -> Dict {{\n    let d = dict_new()\n    dict_set(d, \"sq\", {v})\n    d\n}}\n")
+        };
+        let run = |v: &str, test: &str| sealed_outcome("f4call", suite, &table(v), test);
+        assert_eq!(
+            run("|n: i64| n * n", "t"),
+            Ok(TestEnd::Completed),
+            "control: the right closure"
+        );
+        assert!(
+            run("|n: i64| n + 1", "t").is_err(),
+            "control: the wrong closure fails"
+        );
+        assert_eq!(
+            run("0", "t_shadow"),
+            Ok(TestEnd::Completed),
+            "control: a local closure shadowing a fn is what the name calls"
+        );
+        assert_eq!(
+            run("0", "t_plain"),
+            Ok(TestEnd::Completed),
+            "control: with no local of that name, the fn is called"
+        );
+        let out = run("0", "t");
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("is not callable")),
+            "ATTACK: a call through a local ran the operator's fn of the same name: {out:?}"
+        );
+    }
+
+    /// BLOCKER B. A `str` the candidate returned selects which OPERATOR fn a
+    /// name-resolving builtin runs. The name argument is a SINK: operator code
+    /// must give it a name-pure expression.
+    #[test]
+    #[ignore = "R51 S3: the name rule at builtin call sites (seal_name_args) is not ported; sealed control refused until S6"]
+    fn a_function_name_the_candidate_chose_never_selects_an_operator_fn() {
+        let sbx = |name_expr: &str, pre: &str| {
+            format!(
+            "fn reference(x: i64) -> i64 {{ x * 2 }}\n{pre}{}",
+            sandbox_suite(&format!("    let got = sandbox_run(sb, {name_expr}, 21)\n    assert(got == reference(21))"))
+        )
+        };
+        let with_local =
+            |bind: &str| sbx("nm", "").replace("    let got", &format!("    {bind}\n    let got"));
+        let run = |suite: &str, cand: &str| judged_on("r10-name", suite, cand);
+        let attack = "fn entry() -> str { \"reference\" }\nfn double(x: i64) -> i64 { 0 }\n";
+        let honest = "fn entry() -> str { \"double\" }\nfn double(x: i64) -> i64 { x * 2 }\n";
+        // Controls: a literal, an operator-built name, an operator constant and a
+        // local bound to one all run the candidate's fn, and a wrong one fails keyed.
+        for (what, suite) in [
+            ("literal", sbx("\"double\"", "")),
+            ("operator fn result", sbx("which()", "fn which() -> str { \"dou\" + \"ble\" }\n")),
+            ("operator global", sbx("NAME", "let NAME = \"double\"\n")),
+            ("local of a literal", with_local("let nm = \"double\"")),
+            ("a branch between two literals", with_local("let nm = if reference(1) == 2 { \"double\" } else { \"reference\" }")),
+            ("a loop over a literal range", with_local("let names = [\"nope\", \"double\"]\n    let nm = \"x\"\n    for k in 1..2 { nm = names[k] }")),
+            ("an interpolation of literals", with_local("let part = \"ble\"\n    let nm = \"dou{part}\"")),
+        ] {
+            assert_eq!(run(&suite, honest), Ok(TestEnd::Completed), "control: honest via {what}");
+            assert!(
+                run(&suite, "fn entry() -> str { \"double\" }\nfn double(x: i64) -> i64 { 0 }\n").is_err(),
+                "control: wrong fails via {what}"
+            );
+        }
+        name_refused(
+            "sandbox_run, a candidate fn's result",
+            &sbx("entry()", ""),
+            attack,
+        );
+        name_refused(
+            "a local bound to it",
+            &with_local("let nm = entry()"),
+            attack,
+        );
+        name_refused(
+            "a local annotated str",
+            &with_local("let nm: str = entry()"),
+            attack,
+        );
+        name_refused(
+            "a parameter of an operator fn",
+            &sbx("pick(entry())", "fn pick(s: str) -> str { s }\n"),
+            attack,
+        );
+        name_refused(
+            "an operator fn that returns the candidate's",
+            &sbx("pick()", "fn pick() -> str { entry() }\n"),
+            attack,
+        );
+        name_refused(
+            "an operator fn that returns it by a return statement",
+            &sbx("pick()", "fn pick() -> str {\n    if reference(1) == 2 { return entry() }\n    \"double\"\n}\n"),
+            attack,
+        );
+        name_refused(
+            "built from the candidate's",
+            &sbx("\"re\" + entry()", ""),
+            "fn entry() -> str { \"ference\" }\n",
+        );
+        name_refused(
+            "built from a candidate int through to_str",
+            &sbx("\"dou\" + to_str(idx())", ""),
+            "fn idx() -> i64 { 1 }\nfn double(x: i64) -> i64 { 0 }\n",
+        );
+        name_refused(
+            "a dict read",
+            &with_local("let d = dict_new()\n    dict_set(d, \"k\", entry())\n    let nm = match dict_get(d, \"k\") { Some(s) => s  None => \"\" }"),
+            attack,
+        );
+        name_refused(
+            "an index chosen by the candidate",
+            &sbx("[\"double\", \"reference\"][idx()]", ""),
+            "fn idx() -> i64 { 1 }\nfn double(x: i64) -> i64 { 0 }\n",
+        );
+        name_refused(
+            "a loop variable",
+            &sbx("names[i]", "").replace("    let got", "    let names = [\"double\", \"reference\"]\n    let i = 0\n    for k in 0..idx() { i = k }\n    let got"),
+            "fn idx() -> i64 { 1 }\nfn double(x: i64) -> i64 { 0 }\n",
+        );
+    }
+
+    #[test]
+    #[ignore = "R51 S3: the name rule at builtin call sites (seal_name_args) is not ported; sealed control refused until S6"]
+    fn goal_eval_takes_no_function_name_the_candidate_chose() {
+        let suite = "fn easy(x: i64) -> i64 { 100 }\nfn hard(x: i64) -> i64 { 0 }\n@[test]\nfn t() {\n    let s = goal_eval(NAME, 5)\n    assert(s > 50.0)\n}\n";
+        assert_eq!(
+            judged_on(
+                "r10-name",
+                &suite.replace("NAME", "\"easy\""),
+                "fn solve() -> i64 { 1 }\n"
+            ),
+            Ok(TestEnd::Completed),
+            "control: a literal"
+        );
+        assert!(
+            judged_on(
+                "r10-name",
+                &suite.replace("NAME", "\"hard\""),
+                "fn solve() -> i64 { 1 }\n"
+            )
+            .is_err(),
+            "control: the hard fn fails"
+        );
+        name_refused(
+            "goal_eval",
+            &suite.replace("NAME", "name()"),
+            "fn name() -> str { \"easy\" }\n",
+        );
+    }
+
+    #[test]
+    #[ignore = "R51 S3: the name rule at builtin call sites (seal_name_args) is not ported; sealed control refused until S6"]
+    fn scheduler_spawn_takes_no_function_name_the_candidate_chose() {
+        let suite = "fn grade(x: i64) -> i64 { 9 }\n@[test]\nfn t() {\n    let id = scheduler_spawn(NAME, 0)\n    let n = scheduler_run()\n    assert(scheduler_result(id) == 9)\n}\n";
+        assert_eq!(
+            judged_on(
+                "r10-name",
+                &suite.replace("NAME", "\"grade\""),
+                "fn solve() -> i64 { 1 }\n"
+            ),
+            Ok(TestEnd::Completed),
+            "control: a literal names the operator's own fn"
+        );
+        name_refused(
+            "scheduler_spawn",
+            &suite.replace("NAME", "name()"),
+            "fn name() -> str { \"grade\" }\n",
+        );
+    }
+
+    #[test]
+    #[ignore = "R51 S3: the name rule at builtin call sites (seal_name_args) is not ported; sealed control refused until S6"]
+    fn a_goal_constraint_and_a_kernel_goal_take_no_function_name_the_candidate_chose() {
+        let pre = "@[adaptive]\nfn metric(x: i64) -> i64 { x }\nfn ok_c(x: i64) -> bool { true }\n";
+        let constrained = format!("{pre}@[test]\nfn t() {{\n    let r = goal_run_constrained(\"metric\", CNAME, 10.0, 5)\n    assert(r >= 0.0)\n}}\n");
+        assert_eq!(
+            judged_on(
+                "r10-name",
+                &constrained.replace("CNAME", "\"ok_c\""),
+                "fn solve() -> i64 { 1 }\n"
+            ),
+            Ok(TestEnd::Completed),
+            "control: a literal constraint"
+        );
+        name_refused(
+            "goal_run_constrained's constraint",
+            &constrained.replace("CNAME", "cname()"),
+            "fn cname() -> str { \"ok_c\" }\n",
+        );
+        let kernel = format!("{pre}@[test]\nfn t() {{\n    let p = principal_root(\"r\", true, true, true, 100)\n    let g = kernel_goal_create(p, KNAME, 10.0)\n    let r = kernel_goal_run(g, 3)\n    assert(r >= 0.0)\n}}\n");
+        assert_eq!(
+            judged_on(
+                "r10-name",
+                &kernel.replace("KNAME", "\"metric\""),
+                "fn solve() -> i64 { 1 }\n"
+            ),
+            Ok(TestEnd::Completed),
+            "control: a literal goal"
+        );
+        name_refused(
+            "kernel_goal_create",
+            &kernel.replace("KNAME", "kname()"),
+            "fn kname() -> str { \"metric\" }\n",
+        );
+    }
+
+    /// A candidate's module-level `let` is the candidate's value; the verdict
+    /// of one fn's site never decides another's (the key carries the owner).
+    #[test]
+    #[ignore = "R51 S4: the receiver dispatch rule (seal_dispatch) is not ported; sealed control refused until S6"]
+    fn a_candidates_global_and_a_sibling_fns_site_determine_nothing() {
+        r7_refused(
+            "a candidate global `let X = 4 as u8`",
+            "@[test]\nfn t() {\n    assert(X.ok())\n}\n",
+            "let X = 4 as u8\n",
+        );
+        let suite = "fn check(p: i64) -> bool { p.ok() }\n@[test]\nfn t() {\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {\n        Some(v) => {\n            let f = |p| p.ok()\n            assert(f(v))\n        }\n        None => assert(false)\n    }\n}\n";
+        r7_refused(
+            "the same receiver text as a sibling fn's pinned one",
+            suite,
+            "fn solve(d: Dict) { dict_set(d, \"k\", 4 as u8) }\n",
+        );
+    }
+
+    /// Adjacent (a)/(b): a verdict belongs to its own fn, and a candidate's
+    /// methods never steer an operator site.
+    #[test]
+    #[ignore = "R51 S4: the receiver dispatch rule and pin owner (pin_fn) are not ported; sealed control refused until S6"]
+    fn a_verdict_belongs_to_its_own_fn_and_the_candidate_steers_none() {
+        // An unrelated, never-called fn with `|p| p.ok()` does not refuse an
+        // honest fully annotated `check(p: i64)`.
+        let suite = "fn check(p: i64) -> bool { p.ok() }\nfn unrelated() { let f = |p| p.ok()\n    f(1) }\n@[test]\nfn t() {\n    let r: i64 = solve(3)\n    assert(check(r))\n}\n";
+        let out = judged_on("r7", suite, "fn solve(n: i64) -> i64 { n * n }\n");
+        assert_eq!(out, Ok(TestEnd::Completed), "control: {out:?}");
+        // A candidate method named like an operator method with an open return
+        // does not flip the operator's determined `let r = b.pick()`.
+        let suite = "type B = { v: i64 }\ntrait Pick {\n    fn pick(self) -> i64\n}\nimpl Pick for B {\n    fn pick(self: B) -> i64 { self.v }\n}\n@[test]\nfn t() {\n    let b = B { v: 9 }\n    let r = b.pick()\n    assert(r.ok())\n}\n";
+        let out = judged_on(
+            "r7",
+            suite,
+            "type CB = { w: i64 }\nfn pick<T>(self: CB) -> T { self.w }\n",
+        );
+        assert_eq!(
+            out,
+            Ok(TestEnd::Completed),
+            "control: a candidate method steers nothing: {out:?}"
+        );
+    }
+
+    /// B3: a trait name, `dyn`, `Option<Trait>`, `[Trait]` and a fn type
+    /// returning one do not constrain the runtime type.
+    #[test]
+    #[ignore = "R51 S4: the receiver dispatch rule (seal_dispatch) is not ported; sealed control refused until S6"]
+    fn a_trait_annotation_does_not_pin_the_runtime_type() {
+        let cand = "fn solve(d: Dict) { dict_set(d, \"k\", 4 as u8) }\n";
+        let read = |ann: &str, use_: &str| {
+            format!("@[test]\nfn t() {{\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {{\n        Some(v) => {{\n            let y: {ann} = v\n            {use_}\n        }}\n        None => assert(false)\n    }}\n}}\n")
+        };
+        r7_refused("a trait name", &read("Judge", "assert(y.ok())"), cand);
+        r7_refused("dyn Judge", &read("dyn Judge", "assert(y.ok())"), cand);
+        let idj = "fn idj(x: Judge) -> Judge { x }\n@[test]\nfn t() {\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {\n        Some(v) => {\n            let y = idj(v)\n            assert(y.ok())\n        }\n        None => assert(false)\n    }\n}\n";
+        r7_refused("a trait-typed fn and return", idj, cand);
+        r7_refused(
+            "Option<Judge>",
+            &read(
+                "Option<Judge>",
+                "match y { Some(z) => assert(z.ok())  None => assert(false) }",
+            ),
+            "fn solve(d: Dict) { dict_set(d, \"k\", Some(4 as u8)) }\n",
+        );
+    }
+
+    /// The identifiers called (`name(` / `.name(`) on one line.
+    fn called_idents(line: &str) -> Vec<String> {
+        let b: Vec<char> = line.chars().collect();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < b.len() {
+            if b[i].is_alphabetic() || b[i] == '_' {
+                let st = i;
+                while i < b.len() && (b[i].is_alphanumeric() || b[i] == '_') {
+                    i += 1;
+                }
+                // A call on some OTHER receiver (`ch.send(..)`, `x.get(..)`) is not
+                // a call of an interpreter fn of that name.
+                let pre: String = b[..st].iter().collect();
+                let other_receiver =
+                    pre.ends_with('.') && !pre.ends_with("self.") && !pre.ends_with("interp.");
+                if i < b.len() && b[i] == '(' && !other_receiver {
+                    out.push(b[st..i].iter().collect());
+                }
+            } else {
+                i += 1;
+            }
+        }
+        out
+    }
+
+    /// `(file, fn name, body)` of every fn item in the interpreter sources
+    /// (R51: every `interp/**/*.rs` but `vm/tests.rs`, cut at `mod tests {`).
+    fn fn_items() -> Vec<(String, String, String)> {
+        let mut out = Vec::new();
+        for (file, src) in vm::tests::r51_interp_sources() {
+            let lines: Vec<&str> = src.lines().collect();
+            let mut i = 0;
+            while i < lines.len() {
+                let l = lines[i];
+                let t = l.trim_start();
+                let indent = l.len() - t.len();
+                let t2 = t
+                    .strip_prefix("pub(super) ")
+                    .or_else(|| t.strip_prefix("pub(crate) "))
+                    .or_else(|| t.strip_prefix("pub(in crate::interp) "))
+                    .or_else(|| t.strip_prefix("pub "))
+                    .unwrap_or(t);
+                if let Some(rest) = t2.strip_prefix("fn ") {
+                    let name: String = rest
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                        .collect();
+                    let mut body = String::new();
+                    let mut j = i + 1;
+                    // The signature may span lines; the body ends at the line
+                    // that closes at the fn's own indent.
+                    while j < lines.len() {
+                        let lj = lines[j];
+                        if lj.len() - lj.trim_start().len() == indent
+                            && lj.trim_start().starts_with('}')
+                        {
+                            break;
+                        }
+                        body.push_str(lj);
+                        body.push('\n');
+                        j += 1;
+                    }
+                    out.push((file.clone(), name, body));
+                }
+                i += 1;
+            }
+        }
+        out
+    }
+
+    /// Every interpreter fn that runs a `Value::Closure` or an `FnDef`, found
+    /// by closure over the call graph from the primitives that do. The
+    /// evaluator (`eval.rs`), the bytecode engine (`vm/`, R50: the
+    /// evaluator's twin) and the builtin dispatcher are the graph's ROOTS, not
+    /// its nodes: everything reaches them.
+    fn user_code_runners() -> std::collections::HashSet<String> {
+        // R51: main's call path (AX-54 split `call_fn_frame`; `call_mut_with`
+        // is v0.22's `call_fn_mut`; AX-40 added `call_closure_arg`) and the
+        // VM entries a builtin arm calls directly (`fold_leaf`, T1d).
+        const PRIMITIVES: &[&str] = &[
+            "call_fn",
+            "call_fn_entry",
+            "call_fn_in",
+            "call_fn_common",
+            "call_fn_in_general",
+            "call_test_fn",
+            "call_mut_with",
+            "call_closure",
+            "call_closure_arg",
+            "call_local_closure",
+            "call_closure_owned_by",
+            "run_body",
+            "run_test_body",
+            "run_lambda",
+            "fold_leaf",
+        ];
+        const ROOTS: &[&str] = &[
+            "eval",
+            "eval_call",
+            "eval_block",
+            "eval_binop",
+            "call_builtin",
+            "run_handler_arm",
+            "replay_continuation",
+            // Host entry points that START a run: no builtin arm reaches them
+            // (and `axon_host_await` is also the name of an extern declaration).
+            "run_program_inner",
+            "run_main",
+            "run_test_fn_inner",
+            "axon_host_await",
+            "run_named_fn_as_bool_with_score",
+            "run_suspendable_values_inner",
+            "run_property_test_inner",
+        ];
+        let items = fn_items();
+        let mut runners: std::collections::HashSet<String> =
+            PRIMITIVES.iter().map(|s| s.to_string()).collect();
+        loop {
+            let before = runners.len();
+            for (file, name, body) in &items {
+                if file == "eval.rs" || file.starts_with("vm/") || ROOTS.contains(&name.as_str()) {
+                    continue;
+                }
+                if body.lines().any(|l| {
+                    !l.trim_start().starts_with("//")
+                        && called_idents(l)
+                            .iter()
+                            .any(|c| runners.contains(c) && c != name)
+                }) {
+                    runners.insert(name.clone());
+                }
+            }
+            if runners.len() == before {
+                break;
+            }
+        }
+        runners
+    }
+
+    /// What the sweep established about a builtin that runs user code.
+    #[derive(Clone, Copy, PartialEq, Debug)]
+    enum Disp {
+        /// The result's type names a type variable (`[U]`, `T`): the pin
+        /// analysis treats it as undetermined.
+        Open,
+        /// A `Dict`: its values are an untyped position (amendment 83).
+        Dict,
+        /// A scalar the builtin builds itself (a count, a score, `()`).
+        Scalar,
+        /// The candidate fn's value is cast to the (closed, scalar) declared
+        /// type at the seal crossing in the arm itself (R51 S3 ports the cast:
+        /// `a_crossing_builtin_casts_a_sealed_fns_result_in_its_arm`).
+        Crossing,
+    }
+
+    /// `call_builtin`'s arms in `interp/builtins.rs`, split at their 12-space
+    /// `"name" … =>` headers: (the arm's names, its body).
+    fn builtin_arms(src: &str) -> Vec<(Vec<String>, String)> {
+        let mut arms: Vec<(Vec<String>, String)> = Vec::new();
+        for line in src.lines() {
+            let indent = line.len() - line.trim_start().len();
+            let t = line.trim_start();
+            if indent == 12 && t.starts_with('"') && t.contains("=>") {
+                let head = &t[..t.find("=>").unwrap()];
+                let names = head
+                    .split('|')
+                    .map(|n| n.trim().trim_matches('"').to_string())
+                    .collect();
+                arms.push((names, String::new()));
+            } else if let Some(last) = arms.last_mut() {
+                last.1.push_str(line);
+                last.1.push('\n');
+            }
+        }
+        // R51: the sweep matched the real dispatcher, not an empty cut (295
+        // arms at S5).
+        assert!(arms.len() >= 250, "only {} builtin arms found", arms.len());
+        arms
+    }
+
+    /// v0.22 (C9 round 9, amendment 96): a `Disp::Crossing` builtin casts the
+    /// sealed fn's result to its declared type in the arm itself. The
+    /// classification half of v0.22's drift test runs now
+    /// (`every_builtin_that_runs_user_code_is_classified`); this half needs
+    /// the cast S3 ports.
+    #[test]
+    #[ignore = "R51 S3: the sandbox_run result cast at the seal crossing not ported"]
+    fn a_crossing_builtin_casts_a_sealed_fns_result_in_its_arm() {
+        let sources = vm::tests::r51_interp_sources();
+        let src = &sources
+            .iter()
+            .find(|(f, _)| f == "builtins.rs")
+            .expect("interp/builtins.rs")
+            .1;
+        let arms = builtin_arms(src);
+        for name in ["sandbox_run"] {
+            let (_, body) = arms
+                .iter()
+                .find(|(ns, _)| ns.iter().any(|n| n == name))
+                .unwrap_or_else(|| panic!("no `{name}` arm"));
+            assert!(
+                body.contains("self.fn_is_sealed(f)"),
+                "DRIFT: `{name}` is classified Crossing but its arm casts no sealed fn's result"
+            );
+        }
+    }
+
+    /// C9 round 9 drift: every builtin that RUNS user code (a callback, a fn
+    /// named by string, a goal metric, a scheduler fiber) is classified by how
+    /// its result reaches operator code. A new one fails this test until it is
+    /// classified, and its declared return must be consistent with the class.
+    #[test]
+    fn every_builtin_that_runs_user_code_is_classified() {
+        use Disp::*;
+        const SCALAR_RETS: &[&str] = &["i64", "f64", "bool", "str", "()", "Result<i64, str>"];
+        const TABLE: &[(&str, Disp)] = &[
+            ("arr_all", Scalar),
+            ("arr_any", Scalar),
+            ("arr_count_if", Scalar),
+            ("arr_drop_while", Open),
+            ("arr_filter", Open),
+            ("arr_find", Open),
+            ("arr_fold", Open),
+            ("arr_group_by", Dict),
+            ("arr_map", Open),
+            ("arr_max_by", Open),
+            ("arr_min_by", Open),
+            ("arr_partition", Open),
+            ("arr_sort_by", Open),
+            ("arr_sum_by", Scalar),
+            ("arr_sum_by_f64", Scalar),
+            ("arr_take_while", Open),
+            ("arr_zip_with", Open),
+            ("dict_each", Scalar),
+            ("dict_filter", Dict),
+            ("dict_map_values", Dict),
+            ("goal_continue", Scalar),
+            ("goal_eval", Scalar),
+            ("goal_run", Scalar),
+            ("goal_run_categorical", Scalar),
+            ("goal_run_constrained", Scalar),
+            ("goal_run_multistart", Scalar),
+            ("goal_run_random", Scalar),
+            ("http_sse", Scalar),
+            ("http_sse_post", Scalar),
+            ("kernel_goal_run", Scalar),
+            ("sandbox_run", Crossing),
+            ("scheduler_run", Scalar),
+            ("supervisor_run", Scalar),
+        ];
+        let sources = vm::tests::r51_interp_sources();
+        let src = &sources
+            .iter()
+            .find(|(f, _)| f == "builtins.rs")
+            .expect("interp/builtins.rs")
+            .1;
+        let arms = builtin_arms(src);
+        // C9 round 10: not four literal call patterns. A builtin runs user code
+        // if its arm calls ANY fn that (transitively, through the interpreter's
+        // own fns) reaches a runner of a `Value::Closure` or an `FnDef`.
+        let runners = user_code_runners();
+        let runs_user_code = |body: &str| {
+            body.lines().any(|l| {
+                let l = l.trim_start();
+                !l.starts_with("//") && called_idents(l).iter().any(|c| runners.contains(c))
+            })
+        };
+        let declared: std::collections::HashMap<&str, &str> = crate::builtins::BUILTINS
+            .iter()
+            .map(|b| (b.name, b.ret))
+            .collect();
+        let mut found: Vec<String> = Vec::new();
+        for (names, body) in &arms {
+            if !runs_user_code(body) {
+                continue;
+            }
+            for n in names {
+                if declared.contains_key(n.as_str()) {
+                    found.push(n.clone());
+                }
+            }
+        }
+        found.sort();
+        found.dedup();
+        let mut want: Vec<String> = TABLE.iter().map(|(n, _)| n.to_string()).collect();
+        want.sort();
+        assert_eq!(
+            found, want,
+            "DRIFT: a builtin arm that runs user code is unclassified (or a classified one no longer does); decide how its result reaches operator code and list it"
+        );
+        for (name, disp) in TABLE {
+            let ret = declared[name];
+            let ok = match disp {
+                Open => pin::builtin_ret_open(ret),
+                Dict => ret == "Dict",
+                Scalar => SCALAR_RETS.contains(&ret),
+                Crossing => SCALAR_RETS.contains(&ret),
+            };
+            assert!(
+                ok,
+                "DRIFT: `{name}` is classified {disp:?} but declares `-> {ret}`"
+            );
+        }
+        // The goal metric and the property runner score or discard the result.
+        let goal = &sources
+            .iter()
+            .find(|(f, _)| f == "goal.rs")
+            .expect("interp/goal.rs")
+            .1;
+        let lines: Vec<&str> = goal.lines().collect();
+        let mut calls = 0;
+        for (i, l) in lines.iter().enumerate() {
+            if l.trim_start().starts_with("//") || !l.contains("self.call_fn(") {
+                continue;
+            }
+            calls += 1;
+            let window = lines[i..(i + 40).min(lines.len())].join("\n");
+            assert!(
+                window.contains("numeric_score(") || window.contains("Value::Bool("),
+                "DRIFT: goal.rs line {} runs user code and does not reduce the result to a score or a bool",
+                i + 1
+            );
+        }
+        assert!(calls >= 5, "only {calls} goal.rs call_fn sites found");
     }
 }
 

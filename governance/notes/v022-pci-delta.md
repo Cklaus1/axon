@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: f7ccb9e64090be2cf4139535c68d31de455320f5
+generated-at: d60ea2378af6a7070ceee6d3d0eb1d0b67bed632
 
-`git diff --numstat 31413ca7..f7ccb9e6 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..d60ea237 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -49,17 +49,18 @@ generated-at: f7ccb9e64090be2cf4139535c68d31de455320f5
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 2741 | 1390 |
+| `crates/axon-core/src/interp.rs` | 3980 | 1424 |
 | `crates/axon-core/src/interp/builtins.rs` | 587 | 542 |
 | `crates/axon-core/src/interp/eval.rs` | 1164 | 547 |
 | `crates/axon-core/src/interp/goal.rs` | 55 | 52 |
+| `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 18 | 9 |
 | `crates/axon-core/src/interp/sym.rs` | 1180 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 491 | 514 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
 | `crates/axon-core/src/interp/vm/mod.rs` | 3386 | 0 |
 | `crates/axon-core/src/interp/vm/pure.rs` | 959 | 0 |
-| `crates/axon-core/src/interp/vm/tests.rs` | 1525 | 0 |
+| `crates/axon-core/src/interp/vm/tests.rs` | 1536 | 0 |
 | `crates/axon-core/src/kernel.rs` | 89 | 23 |
 | `crates/axon-core/src/lib.rs` | 116 | 21 |
 | `crates/axon-core/src/main.rs` | 799 | 243 |
@@ -71,9 +72,9 @@ generated-at: f7ccb9e64090be2cf4139535c68d31de455320f5
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 24419 | 5166 |
+| total | 26632 | 5200 |
 
-`git log --reverse 31413ca7..f7ccb9e6 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..d60ea237 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -228,7 +229,8 @@ generated-at: f7ccb9e64090be2cf4139535c68d31de455320f5
 | 56389c53 | R51 S0b | INTERPRETER: ports veto's non-seal fixes onto main's interpreter on both engines (loop control contained at every frame edge, TestEnd/run_test_fn_outcome completion, Result/Option return-boundary check, least-trusted Uncertain source_tag; veto 4e7851bc, bcf9c0a7, 2175cc1b, 89256bd3, 91c2f676, ea9ba38d, 6de01247): not PCI-reviewed on this tree; every sealed run is still refused (R51 SEAL_RUNTIME_COMPLETE = false) |
 | ea565f8e | R51 S1 merge | joins R51 S0b (56389c53) and S1 (a45dc364); the only overlaps are appended tests (vm/tests.rs, cli_run.rs) and this table; interp.rs, vm/mod.rs and main.rs auto-merged: no change beyond the two commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | f7ccb9e6 | R51 S1 | test only (vm/tests.rs T1d): S0b's run_test_body is listed as an engine gate and exec_raw as a VM entry; no production change; every sealed run is still refused |
-| 151 commits | | |
+| d60ea237 | R51 S5 | INTERPRETER static layer: ports v0.22's interp/pin.rs verbatim and adds the Seal state (sealed fns/globals/refines/types, operator method names), pins and frame provenance (with_frame, fn_is_sealed) to Interp; Interp::build reads the sealed set once and hands it to build_in, so tests pass it without publishing it; Seal and Pins are computed only for a non-empty sealed set (an unsealed build does no new work). No seal edge consumes them yet (S2/S3/S4); not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 152 commits | | |
 <!-- END MECHANICAL -->
 
 

@@ -153,7 +153,7 @@ fn s1_compiles_fib_without_tree_ops() {
 fn r51_compile_refuses_a_sealed_run() {
     let prog = program();
     let mut interp = Interp::build(&prog).expect("unsealed build");
-    interp.sealed = true;
+    interp.seal.active = true;
     let _ = compile::compile(&interp, body_of(&interp, "fib"));
 }
 
@@ -1146,8 +1146,15 @@ fn r51_t1b_run(
     sealed: bool,
     engine: Engine,
 ) -> (i64, Vec<String>, usize) {
-    let mut interp = Interp::build_with(prog, sealed, engine);
-    assert_eq!((interp.sealed, interp.engine), (sealed, engine));
+    // A sealed run is a non-empty sealed set; this one seals no file of the
+    // program, so only the bit (and the engine pin) differ from the control.
+    let dirs = if sealed {
+        vec![std::path::PathBuf::from("/r51-t1b-sealed")]
+    } else {
+        Vec::new()
+    };
+    let mut interp = Interp::build_with(prog, &dirs, engine);
+    assert_eq!((interp.seal.active, interp.engine), (sealed, engine));
     interp.vm_eager = true;
     interp.vm_trace = false;
     interp.init_globals().expect("no globals");
@@ -1217,8 +1224,9 @@ fn r51_source(rel: &str) -> String {
 /// Every interpreter source the T1d sweep reads: `interp.rs` and every
 /// `interp/**/*.rs` (recursive, so `interp/vm/` and `interp/sym.rs` are in),
 /// except `vm/tests.rs`; each cut at its first `mod tests {`. Keyed by the
-/// path under `interp/` (`""` for `interp.rs`).
-fn r51_interp_sources() -> Vec<(String, String)> {
+/// path under `interp/` (`""` for `interp.rs`). Shared with the R51 S5
+/// builtin sweep in `interp::tests`.
+pub(in crate::interp) fn r51_interp_sources() -> Vec<(String, String)> {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/interp");
     let mut rels = vec![String::new()];
     let mut stack = vec![dir.clone()];
@@ -1430,7 +1438,10 @@ fn r51_t1d_compile_has_two_callers() {
     let src = r51_source("vm/compile.rs");
     let start = src.find("fn compile<").expect("fn compile");
     let body = &src[start..start + src[start..].find("\n}\n").expect("fn end")];
-    assert!(body.contains("!ix.sealed"), "compile refuses a sealed run");
+    assert!(
+        body.contains("!ix.seal.active"),
+        "compile refuses a sealed run"
+    );
     assert_eq!(
         src.matches("Body {").count(),
         1,
