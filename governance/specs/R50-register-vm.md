@@ -44,7 +44,8 @@ must-fix, 2 nits; §15 "Revision 31"); revision 32 answers the twenty-eighth (2 
 thirty-first (2 must-fix, 1 nit; §15 "Revision 35"); revision 36 answers the thirty-second (2
 must-fix, 1 nit; §15 "Revision 36"). The thirty-third, verdict "correct" (0 blockers, 0 must-fix,
 2 nits), judged revision 36 ready; revision 37 fixes its nits (§15 "Revision 37"), so S10-S12 are
-Reviewed.
+Reviewed. Revision 38 (§15 "Revision 38") adds S13 (packed scalar arrays and bulk loops, for
+compilebench `sieve`), measured first; it is Draft until an adversarial review passes it.
 **Risk class:** Structural (a second execution path for the reference engine)
 **Author / date:** 2026-10-09, from compilebench AX-18 (interpreter cost) after AX-53..AX-55.
 
@@ -99,7 +100,7 @@ No language change. Three environment variables:
 | Var | Values | Effect |
 |---|---|---|
 | `AXON_ENGINE` | `tree` (default until S6), `vm` (default from S6) | Which engine runs fn and lambda bodies under every interpreter entry (`axon run`, `axon-run`, `axon test`, `axon goal`). On `wasm32-unknown-unknown`, which has no environment, the `axon_set_engine` export selects it instead (§4 Activation). Any other value: exit 2 with `AXON_ENGINE must be "vm" or "tree" (got "<v>")`. |
-| `AXON_VM_TRACE` | `1` | Seven kinds of stderr line. Per fn or lambda body, the first time it is compiled (its first run, or from S9 its second; §4 S9): `vm: <name> <n> ops, <k> tree nodes`, or `vm: tree <name>: <reason>` when the whole body stays on the tree-walker. Per `Tree` op compiled into a body: `vm: tree-op <name> <Variant>[(<shape>)]`, where `<shape>` is one of `Call(struct-lit)`, `Call(P)`, `Call(computed)`, `Index(E\|Var)` and, through S4, `Call(&mut)` (§8). From S5, per call that a flag keeps off the fast path: `vm: slow <fn>: <flag>` (§4 S5). From S7, per body that holds S7 ops, right after its body line: `vm: pure <name> <p> exprs, <q> loops` (`<p>` `Pure` ops, `<q>` `PureLoop` ops); and per lambda code the first time `arr_fold` runs it in registers: `vm: fold-leaf <name>` (§4 S7). From S9, per body whose first entry runs on the tree-walker, at that entry: `vm: defer <name>` (§4 S9). From S11, per fn built on the pure-`i64` tier, once: `vm: purefn <name> <n> ins` (§4 S11). `<name>` is the fn's name (`Type::method` for an impl method) or, for a lambda body, `<owner>::lambda#<i>`. `<owner>` is the enclosing fn; `<fn>::verify` for a lambda inside fn `<fn>`'s `@[verify]` predicate (resolved after the body, sym.rs:871-875); or `<module>` for a lambda the resolver reaches through a module item (a module `let`, a `refine` predicate or a type's refinement; sym.rs:691-697). `<i>` is the lambda's 0-based position among its owner's lambdas in source (pre-)order, nested ones included; for `<module>` the count runs over those items in source order. A code with `compiled: None` (`LambdaInfo::of`, `fn_value`, `SendValue`) has no name and no first-run state (`LambdaInfo::of` builds a fresh code per evaluation, eval.rs:644-650): it prints the literal line `vm: tree <anon>: unresolved lambda` once per code instance, and `vm_parity.sh` excludes those lines from its body count. Off by default. It never changes stdout or the exit code. |
+| `AXON_VM_TRACE` | `1` | Eight kinds of stderr line. Per fn or lambda body, the first time it is compiled (its first run, or from S9 its second; §4 S9): `vm: <name> <n> ops, <k> tree nodes`, or `vm: tree <name>: <reason>` when the whole body stays on the tree-walker. Per `Tree` op compiled into a body: `vm: tree-op <name> <Variant>[(<shape>)]`, where `<shape>` is one of `Call(struct-lit)`, `Call(P)`, `Call(computed)`, `Index(E\|Var)` and, through S4, `Call(&mut)` (§8). From S5, per call that a flag keeps off the fast path: `vm: slow <fn>: <flag>` (§4 S5). From S7, per body that holds S7 ops, right after its body line: `vm: pure <name> <p> exprs, <q> loops` (`<p>` `Pure` ops, `<q>` `PureLoop` ops); and per lambda code the first time `arr_fold` runs it in registers: `vm: fold-leaf <name>` (§4 S7). From S9, per body whose first entry runs on the tree-walker, at that entry: `vm: defer <name>` (§4 S9). From S11, per fn built on the pure-`i64` tier, once: `vm: purefn <name> <n> ins` (§4 S11). From S13, per body whose `PureLoop` ops include bulk shapes, right after its `vm: pure` line: `vm: bulk <name> <f> fills, <k> counts` (§4 S13). `<name>` is the fn's name (`Type::method` for an impl method) or, for a lambda body, `<owner>::lambda#<i>`. `<owner>` is the enclosing fn; `<fn>::verify` for a lambda inside fn `<fn>`'s `@[verify]` predicate (resolved after the body, sym.rs:871-875); or `<module>` for a lambda the resolver reaches through a module item (a module `let`, a `refine` predicate or a type's refinement; sym.rs:691-697). `<i>` is the lambda's 0-based position among its owner's lambdas in source (pre-)order, nested ones included; for `<module>` the count runs over those items in source order. A code with `compiled: None` (`LambdaInfo::of`, `fn_value`, `SendValue`) has no name and no first-run state (`LambdaInfo::of` builds a fresh code per evaluation, eval.rs:644-650): it prints the literal line `vm: tree <anon>: unresolved lambda` once per code instance, and `vm_parity.sh` excludes those lines from its body count. Off by default. It never changes stdout or the exit code. |
 | `AXON_VM_EAGER` | `1` | From S9: under `AXON_ENGINE=vm`, compile every body on its first entry instead of deferring a body that is not hot on entry to its second (§4 S9). Read once, when the `Interp` is built; `wasm32-unknown-unknown` has no environment and never sets it. Same stdout, stderr and exit code either way, except on wasm32 near the stack budget (§4 Recursion): compiled and tree frames differ in size, so the depth at which the budget panic comes can move by many levels (a 130-fn chain with 40 parentheses per call: deferred 28, eager 126, debug). The `vm_` cli tests and `vm_parity.sh` use it so a body run once is still compiled code under test. |
 
 ```text
@@ -956,6 +957,103 @@ the source check and the budget script but traps `elif100000` with 134; `vm_perf
 fib-recursive's median at the S11 commit `2627dad7` next to the S10 medians, so every program's
 `instructions:u` stays within 0.5 % of the code S12 is built on; the whole suite under the S9 modes.
 
+#### S13 - packed scalar arrays and bulk loops (required; added in revision 38)
+
+After S12 (`0f3b182b`) compilebench `sieve` is the one program where `axon run` loses to CPython:
+20.9× its wall time and 22.4× its instructions (run `20261010T233156Z`). Split by phase on the
+pinned release binary (`perf stat -e instructions:u -r 1`, CPU 6, variants of `main` with a phase
+removed): building `arr_repeat(true, 50000001)` costs 2,112,531,103 (42 per element, each a
+16-byte `Value` cloned into place); the marking loop 18.13 G over its 119,266,371 element writes
+(152 per write, counted by an instrumented copy); the counting loop 5.91 G over 50,000,001
+elements (118 per element). The array is 800 MB: the build alone takes 0.30 s of wall time, 0.18 s
+of it system time for page faults, and the whole run has 825 MB resident. CPython 3.14.4 retires
+1,085,960,442 for the same algorithm because `bytearray` stores a byte per flag, the slice
+assignment `flags[i*i::i] = bytes(..)` runs in C, and `flags.count(1)` is a library scan. No
+per-iteration interpreter reaches that: a standalone Rust program (same toolchain, release) doing
+sieve's work over a `Vec<bool>` with an index check on every write retires 836,304,189. With the
+bounds check hoisted out of the marking loop and a chunked count it retires 294,242,203 (allocation
+1.85 M, marking about 2.25 per write, count about 24 M). S13 gives `axon run` those two pieces:
+
+- **Packed arrays.** `Elems` (interp.rs:352-353), today a newtype over `Vec<Value>` that derefs to
+  it, gets a private representation: `Vals` (a `Vec<Value>`, today's form, with the wasm32 `Slot`
+  and bounded drop of §4 S12 unchanged) or one of three packed forms, `Bools` (`Vec<bool>`), `Ints`
+  (`Vec<i64>`) and `Floats` (`Vec<f64>`), whose elements stand for the plain `Value::Bool`,
+  `Value::Int` and `Value::Float` with those bits (a `SizedInt` is never packed). Exactly two
+  constructors build packed arrays: `arr_repeat(v, n)` when `v` is a plain `Bool`, `Int` or `Float`,
+  and `arr_range`. Every other array, every tuple (`Value::Tuple` shares `Elems`) and every builtin
+  result is `Vals`, as today. The `Deref`/`DerefMut` to `Vec<Value>` are removed and every caller
+  goes through `Elems` methods: length, element read (the `Value` it stands for), in-order
+  iteration, element write and push (stays packed when the value is a plain scalar of the packed
+  kind), and a conversion to `Vals` for every other write and for any operation that needs the
+  `Vec<Value>`. The conversion is in place, once and permanent (O(n)). A read-only site may also view
+  a packed array as a temporary `Vec<Value>` (O(n) per call), but not on the paths the gated
+  programs run: element reads and writes (tree and VM: `index_in_place`, `index_value`,
+  `write_place`, `index_int`, `index_fast`, `write_index_unique`, S8's moves, S10's `LoopMem`), `len`,
+  and `arr_fold` with `fold_leaf`, which read and write packed elements in place; the `REF` check
+  (§10) enforces that. Which arrays are packed is unobservable: equality, ordering, display, `Debug`,
+  `to_str`, JSON, provenance, `SendValue` and every builtin see the element `Value`s, so a packed
+  array and a `Vals` array with the same elements behave the same, and a copy-on-write copy
+  (`Rc::make_mut`) keeps the form. One edge moves: `arr_repeat` and `arr_range` reserve the packed
+  element size (1 byte for `Bool`, 8 for `Int` and `Float`, not 16), so a count the allocator refused
+  before may now succeed, and the parenthesised allocator reason in `<builtin>: cannot allocate an
+  array of <n> elements (<reason>)` can differ; the message's form and exit code (101) are unchanged.
+  In S10's `LoopMem` a packed array's kind is its packed kind; a write of another kind declines, as
+  S10's old-element rule would (vm/pure.rs:812), and the generic path converts the array.
+- **Bulk loops.** Two loop shapes, recognised when the body's `PureLoop` or `PureFor` op is compiled
+  (§4 S10), get a bulk path that the op tries on each entry before its register code:
+  - *Fill*: `while j < b { a[j] = c; j = j + s }` (or `j <= b`), exactly those two statements in that
+    order, where `j` and `a` are locals (`a` an element-write target under S10's rules), and `b`,
+    `c` and `s` are each a literal or a local other than `j` and `a` that the body does not assign
+    (sieve's `while j <= limit { flags[j] = false; j = j + i }`).
+  - *Count*: `for v in lo..hi { if a[v] { n = n + c } }` (or `lo..=hi`), no `else`, where `a` and
+    `n` are locals other than `v`, and `c` is an `Int` literal or a local other than `v`, `a` and `n`
+    (sieve's `for k in 0..limit + 1 { if flags[k] { count = count + 1 } }`).
+
+  Fill runs when `j`, `b` and `s` hold `Int`s `j0`, `b0`, `s0` and either the condition is false at
+  `j0` (no iteration: nothing changes) or all of these hold: `s0 > 0`; `j0 >= 0`; `a` holds a packed
+  array whose kind is `c`'s, a plain scalar; with `n` the iteration count the tree would run
+  (`(b0 - j0) / s0 + 1` for `<=`, `(b0 - 1 - j0) / s0 + 1` for `<`, in 128-bit arithmetic), the last
+  index `j0 + (n - 1) * s0` is below the array's length and `j0 + n * s0` (the tree's last `j = j + s`)
+  fits in an `i64`. It then copies the array if another binding shares it (as `write_place` does),
+  writes `c` at every index in one strided pass, sets `j` to `j0 + n * s0`, and the loop is done.
+  Count runs when `a` holds a packed `Bools` array, `n` and `c` hold `Int`s `n0` and `c0`, and either
+  the range is empty (nothing changes) or every index from `lo` to the last one is in bounds and
+  `n0 + c0 * t`, with `t` the number of `true` elements there, fits in an `i64`; it then sets `n` to
+  that sum, and the loop is done. The partial sums are monotone in the number of `true`s counted, so
+  when the final one fits no iteration of the tree overflows. In every other case the bulk path
+  declines having read nothing but those locals and changed nothing, and the register code and then
+  the generic loop run the loop exactly as at S12, so the panics (an index out of bounds or
+  negative, an overflow of `j + s` or of `n + c`), a step of 0 or less, a `Vals` array and a value of
+  another kind all keep the tree's behaviour. `b`, `c` and `s` are invariant because the body does
+  not assign them and holds no call. The fill's strided pass writes through a raw pointer: the
+  checks above (last index in bounds, exact `n`) are its safety invariant, stated at the `unsafe`
+  block. The count scans the `Bools` slice in fixed-size chunks.
+- **Trace.** Per body that holds bulk loops, right after its `vm: pure` line: `vm: bulk <name> <f>
+  fills, <k> counts`.
+
+Gate: red test `vm_bulk_sieve_loops` (sieve's `main`, bound 1000: `vm: pure main 1 exprs, 2 loops`
+then `vm: bulk main 1 fills, 1 counts`; S12 prints no `vm: bulk` line); behaviour tests
+`vm_bulk_fill_bounds_and_declines` (a fill whose last index is the array's last element runs in bulk;
+one past it, a negative start, a zero step and a `j + s` overflow in the last iteration each give the
+tree's panic or loop; `j` after the loop for `<`, `<=` and zero iterations; a fill of an array
+another binding shares leaves that binding's elements), `vm_bulk_fill_other_kind_declines` (an `Int`
+written into a packed `Bools` array and a `Bool` into a `Vals` array give the tree's output) and
+`vm_bulk_count_declines` (an `n + c` overflow, an out-of-bounds `hi`, a `Vals` `bool` array, a
+negative `c`); `packed_arrays_match_literal_arrays`: `tests/fixtures/packed/ops.ax` applies every
+`arr_*` builtin, element reads and writes (a kind-changing write included), `len`, `==`, `to_str` and
+`arr_push` to packed arrays of each kind and to literal arrays of the same elements, printing each
+result for both; the test asserts each pair of lines agrees under both engines and that the whole
+stdout equals `tests/fixtures/packed/ops.out`, the tree's output at `0f3b182b`;
+`interp_arr_repeat_unallocatable_size_is_a_runtime_error_naming_n` still passes;
+`vm_perf_gate.sh` with sieve's budget CPython's median (§10; S12 fails it at about 24.4 G) and every
+other program within 0.5 % of its `REF`; every `--repros` row; `AXON_REF_BIN=<axon at 0f3b182b>
+scripts/vm_parity.sh` (S13 adds `AXON_REF_BIN` to the script: each file's first tree run is also
+diffed against that binary's tree run, with the same normalisation, so the representation change
+is checked against the code before it, not only engine against engine); `vm_wasm_depth.sh
+--require-default-stack` with `wasm_stack_budget.py` (packed forms have no drop recursion);
+`wasm_nesting_parity.sh`; `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` and the whole suite under the
+S9 modes.
+
 #### Behaviour table
 
 Each row is a parity case. "Same" means identical stdout, stderr, exit code, provenance JSONL and audit
@@ -1142,7 +1240,9 @@ against the same frames, and the tree-walker is the reference for both.
     "re-declares" wording), `native_guard_assign_in_place` (prints `zza`
     and `3`), `native_guard_pure_e1207` (exit 0, prints `1`), `native_guard_tier_e0910` (`axon build`
     succeeds) and `native_guard_write_unaliases` (the binary prints `9 9 1`), each natively before
-    S12's guard walk.
+    S12's guard walk;
+  - S13 `vm_bulk_sieve_loops` (no `vm: bulk` line before S13) and the `sieve` row of
+    `vm_perf_gate.sh` at CPython's median.
 
 Every `tests/fixtures/` path in this spec is under `crates/axon-core/`.
 
@@ -1162,7 +1262,7 @@ Every `tests/fixtures/` path in this spec is under `crates/axon-core/`.
 - [ ] `cargo test -p axon-core --no-default-features` and `--features codegen` green under
   `AXON_ENGINE=vm`, `AXON_ENGINE=tree` and `AXON_ENGINE=vm AXON_VM_EAGER=1`.
 - [ ] `scripts/vm_perf_gate.sh` exits 0 on the compilebench host (not a skip; see §10): all six
-  programs, fib-recursive at most 1,141,214,164 (S11), sieve at most 26,764,304,040 (S10).
+  programs, fib-recursive at most 1,141,214,164 (S11), sieve at most 1,085,960,442 (S13).
 - [ ] `scripts/reference_gate.sh` in sync (three env vars registered).
 
 ### 10. Performance budget
@@ -1181,7 +1281,7 @@ exits **2** with "not measured"; that is a failure, not a skip.
 | mandelbrot | 15,023,124,683 | 49,352,860,742 |
 | arr-sum | 23,624,147,901 | 58,866,778,109 |
 | qsort | 18,967,575,334 | 103,109,443,137 |
-| sieve | 1,085,960,442 (budget 26,764,304,040, half the S9 VM's median; S10 below) | — |
+| sieve | 1,085,960,442 (S13; S10's budget was 26,764,304,040, half the S9 VM's median) | — |
 
 fib-recursive's budget is 1,141,214,164 from S11 (below), a third of the CPython median in the
 table. A median passes when it is at or below the budget; there is no rounding.
@@ -1325,6 +1425,7 @@ the reference code, gaps cost speed, never correctness.
 | R50.S10 array elements in pure loops (§4 S10); `PureFor`; `sieve.ax` and its `--programs` row; never-taken `if` in the repro bases made impure | R50.S9 | `cli_run vm_index_` (incl. `vm_index_sieve_loops`) + `vm_perf_gate.sh` (all six) + `--repros` (every row) + `vm_parity.sh` + `vm_wasm_depth.sh --require-default-stack` + whole suite under the S9 modes | code `944fe056`, which fails `vm_wasm_depth.sh` (`wasm_stack_budget.py`: `pure_stmts`/`pure_if` recursion not in `ALLOW`, `COMPILE_STMT` 16 bytes short in release); fixed with S11 |
 | R50.S11 pure-`i64` function tier (§4 S11); `vm: purefn` trace line; fib-recursive budget a third of CPython's | R50.S10 | `cli_run vm_purefn_` (incl. `vm_purefn_fib_in_registers`) + `purefn_build_validates` + `vm_perf_gate.sh` (all six; `REF` check: others at most 0.5 % above S10) + `--repros` (every row) + `vm_parity.sh` + `vm_wasm_depth.sh --require-default-stack` (`plain` on the tier, `plain_generic` off it) + whole suite under the S9 modes | code `2627dad7`; review fixes `faf25a22`, `e5f754ab` |
 | R50.S12 wasm32 traps (§4 S12): bounded drop of every `Value` container, front-end nesting limit 224 (interpolation slots included), no payload copy for `host_await_val`; `DictMap`/`Elems`/`VBox`/`Queue`/`Held`; nest probes; four `wasm_stack_budget.py` checks | R50.S10 | `cli_run wasm_drops_deep_values_ax59`, `wasm_deep_source_gives_e0000_ax60`, `native_nesting_limit_unchanged_ax60`, `native_guard_borrow_e0606`, `native_guard_w0002`, `native_guard_assign_in_place`, `native_guard_pure_e1207`, `native_guard_tier_e0910`, `native_guard_write_unaliases`, `wasm_host_await_val_no_copy_ax61` + `wasm_nesting_parity.sh` (debug and release; out-of-root refusals `tdef_*`, `attr_*`, `handler_*`, `*_chain`, `*_pred`) + `vm_wasm_depth.sh --require-default-stack` (debug and release; no probe exits 134) + `wasm_stack_budget.py` + `vm_perf_gate.sh` (every `REF` within 0.5 %, fib-recursive's from `2627dad7`) + whole suite under the S9 modes | code `a9c89e5e`, merged `e0f29182`; review fixes `91b13427`, `c33f521b`, `e5f754ab`, `fcd18f2b`, `2fdf7cc1`, `a875d2b8`, `8e4bd760`, `6ae2c76f`, `2d0940c2`, `da151a79` |
+| R50.S13 packed scalar arrays and bulk loops (§4 S13): `Elems` representation (`Vals`/`Bools`/`Ints`/`Floats`, no `Deref` to `Vec<Value>`), packed `arr_repeat`/`arr_range`, bulk fill and count on `PureLoop` entry, `vm: bulk` trace line, `AXON_REF_BIN` in `vm_parity.sh`, `tests/fixtures/packed/` | R50.S12 | `cli_run vm_bulk_` (incl. `vm_bulk_sieve_loops`) + `packed_arrays_match_literal_arrays` + `interp_arr_repeat_unallocatable_size_is_a_runtime_error_naming_n` + `vm_perf_gate.sh` (all six; sieve at CPython's median, others within 0.5 % of `REF`) + `--repros` (every row) + `AXON_REF_BIN=<0f3b182b> vm_parity.sh` + `vm_wasm_depth.sh --require-default-stack` + `wasm_nesting_parity.sh` + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` + whole suite under the S9 modes | todo |
 
 ### 14. Evidence ledger
 
@@ -1808,3 +1909,23 @@ divergence in S10-S12. It also found a pre-R50 wasm32 heap abort on a 30,000-ter
 |---|---|
 | [nit] "one case per recursive parser entry" overclaims: the `match` subject charge has no probe; a bypass passes every gate but cannot trap, because `parse_primary`'s charge still bounds the recursion | §4 S12 names only the probed entries and states the unprobed `match`-subject charge and why a bypass cannot trap |
 | [nit] §10 said "five programs" and listed fib-recursive's CPython median as its budget | §10 says six, adds the sieve row and its budget, and states fib-recursive's S11 budget |
+
+Revision 38 (2026-10-10) adds S13 from measurement, not from a review. After S12 (`0f3b182b`)
+compilebench run `20261010T233156Z` timed `axon run`, CPython and TS on the same host: `axon run`
+beats CPython's wall time on 8 of 9 programs and loses on `sieve` (20.9×). The phase split and the
+native floor below are `perf stat -e instructions:u` on CPU 6 (release builds; the Rust program uses
+the repo's toolchain, `opt-level 3`, thin LTO, 1 codegen unit).
+
+| Measurement | Instructions | Note |
+|---|---|---|
+| sieve, `vm_perf_gate.sh`'s build at `0e741dee` (the code of `0f3b182b`), median of 3 | 24,368,535,259 | passes S10's budget; 22.4× CPython's median |
+| build `arr_repeat(true, 50000001)` alone | 2,112,531,103 | 42 per element; 0.30 s wall, 0.18 s system (page faults on 800 MB) |
+| marking loop (build + mark − build) | 18.13 G | 119,266,371 writes, 152 per write |
+| counting loop (build + count − build) | 5.91 G | 50,000,001 elements, 118 per element |
+| CPython 3.14.4 median, run `20261008T142344Z` | 1,085,960,442 | `bytearray`, C slice assignment, `count` |
+| Rust `Vec<bool>`, index check per write, scalar count | 836,304,189 | per-iteration floor with bounds checks |
+| Rust `Vec<bool>`, hoisted check, strided pointer fill, chunked count | 294,242,203 | allocation 1.85 M |
+
+Even the per-iteration native floor leaves too little margin for an interpreter loop under CPython's
+median, so S13 removes the per-element work instead (packed storage, a bulk fill and a bulk count).
+The user chose this over keeping sieve as a stated loss.
