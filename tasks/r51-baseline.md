@@ -23,3 +23,6 @@ Known failures: none.
 
 Perf (`vm_perf_gate.sh`, instructions:u, spec §10 budget ≤ 1.01 × 5864c423): S5 fib-recursive 2,320,094,380 (+0.92%, inside).
 S2.2 at 43bcb879 (unmerged): fib-recursive 2,351,812,724 (+2.30%) and repros call/fastcall 248.1 (+1.6%) are OVER budget; the fix is assigned to S2.3.
+| 4bbc1563 | S2 (S2.1-S2.3 steps 1-3) + S0b-perf | PASSED except the same 4 deferred stages, 24 min, `TMPDIR=/var/tmp/r51-tmp` | 1896 passed, 0 failed, 80 ignored |
+
+Perf at one fixed path (`axon-lanes/r51-perf`, §10 base 5864c423): bisect put the `call`/`fastcall` +3.3% (244.1 -> 252.1) on S0b 56389c53 (leaf_call's `sum_return(..).ok()?` copied every leaf result through the stack); S0b-perf afd9e294 brings both to 232.1. S2.3 head d7fc0031 added no unsealed cost (fib-recursive +0.77%, every median <= 1.01x).
