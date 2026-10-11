@@ -14,8 +14,10 @@
 //! `kernel_tests` do). Each probe is a suite fn whose body runs through
 //! `eval_t::<true>` (the sealed instantiation) in an operator frame or, via
 //! [`Interp::with_frame`], in a sealed one, with `pin_fn` set to it as the
-//! call path sets it. The drift tests at the end pin the one global lookup
-//! and the classification of main's in-place sinks (spec §4 Fork 3).
+//! call path sets it. The drift tests at the end pin the classification of
+//! main's in-place sinks (spec §4 Fork 3); the one global lookup is pinned by
+//! `interp::tests::every_global_read_goes_through_global_ref`, at its v0.22
+//! path (`interp/tests_v022_a.rs`).
 
 use super::taint::{ALL, VAL};
 use super::*;
@@ -1012,111 +1014,6 @@ impl Other for Expect { fn check(self: Expect, got: i64) -> bool { true } }
 }
 
 // ── Drift ───────────────────────────────────────────────────────────────────
-
-/// `(file under interp/, fn, code)` for every non-comment line of the
-/// interpreter (`interp.rs` and `interp/**`, `interp/vm/` included; test
-/// modules excluded) that contains `needle` as a whole word after a `.`.
-fn field_sites(needle: &str) -> Vec<(String, String, String)> {
-    let sources = vm::tests::r51_interp_sources();
-    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
-    let mut out = Vec::new();
-    for (file, src) in &sources {
-        if file.ends_with("_tests.rs") {
-            continue;
-        }
-        let mut func = String::new();
-        for line in src.lines() {
-            let code = line.find("//").map_or(line, |i| &line[..i]);
-            let b = code.as_bytes();
-            let mut from = 0;
-            while let Some(i) = code[from..].find("fn ") {
-                let at = from + i;
-                from = at + 3;
-                if at > 0 && ident(b[at - 1]) {
-                    continue;
-                }
-                let name: String = code[at + 3..]
-                    .bytes()
-                    .take_while(|&c| ident(c))
-                    .map(char::from)
-                    .collect();
-                if !name.is_empty() {
-                    func = name;
-                }
-            }
-            let pat = format!(".{needle}");
-            let mut from = 0;
-            while let Some(i) = code[from..].find(&pat) {
-                let end = from + i + pat.len();
-                from = end;
-                if end < b.len() && ident(b[end]) && ident(*pat.as_bytes().last().unwrap()) {
-                    continue;
-                }
-                out.push((file.clone(), func.clone(), code.trim().to_string()));
-            }
-        }
-    }
-    assert!(
-        sources.iter().any(|(f, _)| f == "vm/mod.rs"),
-        "the sweep reads interp/vm/"
-    );
-    out
-}
-
-/// v0.22 C9 round 9 (veto interp.rs:9632, widened per TaintPort-9 to main's
-/// identifiers and `interp/vm/`): the global-read edge lives in ONE lookup.
-/// Every line of the interpreter that touches a `globals` map is listed with
-/// the reason it is not a read by running code; everything else reads through
-/// [`Interp::global_ref`] (or asks existence only, [`Interp::is_global`]).
-#[test]
-fn every_global_read_goes_through_global_ref() {
-    const ALLOWED: &[(&str, &str, &str, &str)] = &[
-        ("", "of", "seal.globals.insert(intern(name));", "the seal's own set of sealed global names, built once"),
-        ("", "merged_bindings", ".globals", "the end-of-run binding dump, not running code"),
-        ("", "seal_global", "if self.seal.active && self.frame_sealed.get() && !self.seal.globals.contains(&s) {", "the edge itself (the sealed names)"),
-        ("", "is_global", "self.globals.contains_key(&s)", "existence only, no value: the index arm's and the VM's in-place test, followed by `global_ref`"),
-        ("", "init_globals_sealed", "let sealed = self.seal.globals.contains(&s);", "the seal's set of sealed global names: the initialiser's provenance"),
-        ("", "init_globals_sealed", "self.globals.insert(s, v);", "the write at build, one initialiser at a time (a later one reads it through `global_ref`)"),
-        ("", "global_ref", "match self.globals.get(&s) {", "THE lookup, which applies `seal_global`"),
-        ("", "init_globals", "self.globals = env.snapshot().into_parts().0.into_iter().collect();", "the write at build"),
-        ("pin.rs", "det", "self.globals.contains(n)", "the static pin analysis' set of global NAMES"),
-        ("pin.rs", "build", "ctx.globals = lets.iter().map(|(n, _)| n.to_string()).collect();", "the static pin analysis' set of global NAMES"),
-        ("pin.rs", "build", ".filter(|(n, e)| ctx.globals.contains(*n) && ctx.det(e, &none, &none))", "the static pin analysis' set of global NAMES"),
-        ("pin.rs", "build", "if next == ctx.globals {", "the static pin analysis' set of global NAMES"),
-        ("pin.rs", "build", "ctx.globals = next;", "the static pin analysis' set of global NAMES"),
-    ];
-    let mut found: Vec<(String, String, String)> = field_sites("globals");
-    let mut allowed: Vec<(String, String, String)> = ALLOWED
-        .iter()
-        .map(|(f, n, l, _)| (f.to_string(), n.to_string(), l.to_string()))
-        .collect();
-    found.sort();
-    allowed.sort();
-    assert_eq!(
-        found, allowed,
-        "DRIFT: a mention of the `globals` map bypasses `global_ref` (and so `seal_global`); \
-         route it through `Interp::global_ref`, or list it with its reason"
-    );
-    // The lookup has its readers: the `Ident` arm's rest, both in-place fast
-    // paths and the closure-constant call (no vacuous pass).
-    let mut readers: Vec<String> = field_sites("global_ref(")
-        .into_iter()
-        .map(|(_, f, _)| f)
-        .collect();
-    readers.sort();
-    readers.dedup();
-    for want in [
-        "dispatch_named",
-        "field_in_place",
-        "ident_unbound",
-        "index_in_place",
-    ] {
-        assert!(
-            readers.iter().any(|r| r == want),
-            "DRIFT: `{want}` no longer reads globals through `global_ref`: {readers:?}"
-        );
-    }
-}
 
 /// The body of the first `fn name` in the interpreter sources (test modules
 /// excluded): its lines up to the closing brace at the `fn`'s indent.

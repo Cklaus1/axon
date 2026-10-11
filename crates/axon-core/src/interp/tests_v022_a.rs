@@ -1009,3 +1009,215 @@ fn a_dict_over_the_snapshot_bound_is_refused_not_skipped() {
         "ATTACK: a dict past the snapshot bound crossed unrecorded: {out:?}"
     );
 }
+
+/// B1, the channel the operator created WITHOUT a closed element type
+/// (`Chan::new`, or `chan<T>()` in its own generic code): a sealed send
+/// on it needs an element type something on the operator side
+/// determined. A free `T` of the candidate's never counts.
+#[test]
+#[ignore = "R51 S4: needs sealed_outcome to switch the receiver dispatch rule off (v0.22 DISPATCH_RULE_OFF), else the rule refuses the honest control's untyped `.ok()`; sealed control refused until S6"]
+fn a_sealed_send_on_an_operator_channel_needs_a_determined_element_type() {
+    let suite = "@[test]\nfn t() {\n    assert(run(9))\n}\nfn run<T: Judge>(x: T) -> bool {\n    let c = chan<T>()\n    c.send(x)\n    fill(c)\n    c.recv().ok()\n}\n";
+    // Control: an honest generic relay — `U` is bound from the value the
+    // operator queued, so the send meets a determined type.
+    honest8(
+        "r4c-opchan",
+        suite,
+        "fn fill<U>(c: Chan<U>) {\n    let v = c.recv()\n    c.send(v)\n}\n",
+    );
+    // Control: the candidate's OWN unstamped channel is its business.
+    honest8(
+        "r4c-opchan",
+        "@[test]\nfn t() {\n    assert(mine())\n}\n",
+        "fn mine() -> bool {\n    let c = Chan::new(2)\n    c.send(9)\n    c.recv() == 9\n}\n",
+    );
+    // The attack: nothing queued, so nothing binds the candidate's `U`.
+    let empty = "@[test]\nfn t() {\n    assert(run(9))\n}\nfn run<T: Judge>(x: T) -> bool {\n    let c = chan<T>()\n    fill(c)\n    c.recv().ok()\n}\n";
+    let cand = format!(
+        "fn fill<U>(c: Chan<U>) {{\n    {}\n}}\n",
+        u8_or("c.send(v)", "{}")
+    );
+    let out = judged8("r4c-opchan", empty, &cand);
+    assert!(
+        out != Ok(TestEnd::Completed)
+            && matches!(&out, Err(m) if m.contains("nothing on the operator side determined")),
+        "ATTACK: a u8 was sent on the operator's unstamped chan<T>() at the candidate's free U: {out:?}"
+    );
+    let suite_new =
+        "@[test]\nfn t() {\n    let c = Chan::new(4)\n    fill(c)\n    assert(c.recv().ok())\n}\n";
+    let out = judged8(
+        "r4c-opchan",
+        suite_new,
+        &format!(
+            "fn fill<U>(c: Chan<U>) {{\n    {}\n}}\n",
+            u8_or("c.send(v)", "{}")
+        ),
+    );
+    assert!(
+        out != Ok(TestEnd::Completed)
+            && matches!(&out, Err(m) if m.contains("nothing on the operator side determined")),
+        "ATTACK: a u8 was sent on the operator's Chan::new(4) at the candidate's free U: {out:?}"
+    );
+}
+
+/// C9 round 8 (sentinel blocker): a top-level fn named in VALUE position is
+/// a first-class closure. Made by a SEALED frame from an OPERATOR fn it was
+/// a forwarding body that ran in an operator frame, where the call edge no
+/// longer applied (`let g = secret; g()` ran the operator's `secret`; a
+/// global `SECRET` leaked through `let g = peek`). The edge now applies at
+/// creation.
+#[test]
+#[ignore = "R51 S6: the creation edge for an operator fn named in value position (eval.rs ident_unbound, sealed_fnval) ported (S3); needs a live sealed run"]
+fn a_sealed_frame_cannot_take_an_operator_fn_as_a_value() {
+    let suite = "fn secret() -> i64 { 9 }\nlet SECRET = 41\nfn peek() -> i64 { SECRET }\n\
+                 fn id_of(g: fn() -> i64) -> i64 { g() }\n\
+                 @[test]\nfn t() { assert_eq(solve(), 9) }\n\
+                 @[test]\nfn t_leak() { assert_eq(solve(), 41) }\n\
+                 @[test]\nfn t_pass() { assert_eq(take(secret), 9) }\n\
+                 @[test]\nfn t_back() { let g = give()\n    assert_eq(g(), 9) }\n\
+                 @[test]\nfn t_arg() { assert_eq(solve(), 9) }\n";
+    // R51 adaptation: v0.22 ran this with `sealed_outcome_rule(.., true)`
+    // (the receiver dispatch rule on); that switch arrives with S4, whose merge
+    // restores the call.
+    let run = |cand: &str, t: &str| sealed_outcome("r8-fnval", suite, cand, t);
+    // Controls: the candidate names ITS OWN fn as a value and calls it; the
+    // operator names ITS OWN fn as a value and hands it to the candidate;
+    // a candidate fn value returned to the operator runs.
+    let own = "fn mine() -> i64 { 9 }\nfn solve() -> i64 {\n    let g = mine\n    g()\n}\n\
+               fn take(f: fn() -> i64) -> i64 { f() }\nfn give() -> fn() -> i64 { mine }\n";
+    for t in ["t", "t_pass", "t_back"] {
+        assert_eq!(run(own, t), Ok(TestEnd::Completed), "control: {t}");
+    }
+    let wrong = own.replace("fn mine() -> i64 { 9 }", "fn mine() -> i64 { 4 }");
+    assert!(run(&wrong, "t").is_err(), "control: wrong fails");
+    // The attacks.
+    let rest = "fn take(f: fn() -> i64) -> i64 { f() }\nfn give() -> fn() -> i64 { secret }\n";
+    for (t, what, solve) in [
+        ("t", "ran the operator's `secret` through a fn value", "fn solve() -> i64 {\n    let g = secret\n    g()\n}\n"),
+        ("t_leak", "read the operator's global through a fn value", "fn solve() -> i64 {\n    let g = peek\n    g()\n}\n"),
+        ("t", "stored the operator's fn in an array", "fn solve() -> i64 {\n    let gs = [secret]\n    gs[0]()\n}\n"),
+        ("t", "stored the operator's fn in a dict", "fn solve() -> i64 {\n    let d = dict_new()\n    dict_set(d, \"f\", secret)\n    match dict_get(d, \"f\") { Some(f) => f()  None => 0 }\n}\n"),
+        ("t", "handed the operator's fn to its own helper", "fn run(f: fn() -> i64) -> i64 { f() }\nfn solve() -> i64 { run(secret) }\n"),
+    ] {
+        let out = run(&format!("{rest}{solve}"), t);
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("cannot use")),
+            "ATTACK: a sealed frame took an operator fn as a value ({what}): {out:?}"
+        );
+    }
+    // Returned to the operator, which calls it: the creation is refused.
+    let out = run("fn solve() -> i64 { 0 }\nfn take(f: fn() -> i64) -> i64 { f() }\nfn give() -> fn() -> i64 { secret }\n", "t_back");
+    assert!(
+        out != Ok(TestEnd::Completed) && matches!(&out, Err(m) if m.contains("cannot use")),
+        "ATTACK: the candidate returned the operator's fn as a value: {out:?}"
+    );
+}
+
+// ── Moved to their v0.22 path (T3): main's ports of v0.22 rows that lived in
+// another module. ──────────────────────────────────────────────────────────
+
+/// `(file under interp/, fn, code)` for every non-comment line of the
+/// interpreter (`interp.rs` and `interp/**`, `interp/vm/` included; test
+/// modules excluded) that contains `needle` as a whole word after a `.`.
+fn field_sites(needle: &str) -> Vec<(String, String, String)> {
+    let sources = vm::tests::r51_interp_sources();
+    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    let mut out = Vec::new();
+    for (file, src) in &sources {
+        if file.ends_with("_tests.rs") {
+            continue;
+        }
+        let mut func = String::new();
+        for line in src.lines() {
+            let code = line.find("//").map_or(line, |i| &line[..i]);
+            let b = code.as_bytes();
+            let mut from = 0;
+            while let Some(i) = code[from..].find("fn ") {
+                let at = from + i;
+                from = at + 3;
+                if at > 0 && ident(b[at - 1]) {
+                    continue;
+                }
+                let name: String = code[at + 3..]
+                    .bytes()
+                    .take_while(|&c| ident(c))
+                    .map(char::from)
+                    .collect();
+                if !name.is_empty() {
+                    func = name;
+                }
+            }
+            let pat = format!(".{needle}");
+            let mut from = 0;
+            while let Some(i) = code[from..].find(&pat) {
+                let end = from + i + pat.len();
+                from = end;
+                if end < b.len() && ident(b[end]) && ident(*pat.as_bytes().last().unwrap()) {
+                    continue;
+                }
+                out.push((file.clone(), func.clone(), code.trim().to_string()));
+            }
+        }
+    }
+    assert!(
+        sources.iter().any(|(f, _)| f == "vm/mod.rs"),
+        "the sweep reads interp/vm/"
+    );
+    out
+}
+
+/// v0.22 C9 round 9 (veto interp.rs:9632, widened per TaintPort-9 to main's
+/// identifiers and `interp/vm/`): the global-read edge lives in ONE lookup.
+/// Every line of the interpreter that touches a `globals` map is listed with
+/// the reason it is not a read by running code; everything else reads through
+/// [`Interp::global_ref`] (or asks existence only, [`Interp::is_global`]).
+#[test]
+fn every_global_read_goes_through_global_ref() {
+    const ALLOWED: &[(&str, &str, &str, &str)] = &[
+        ("", "of", "seal.globals.insert(intern(name));", "the seal's own set of sealed global names, built once"),
+        ("", "merged_bindings", ".globals", "the end-of-run binding dump, not running code"),
+        ("", "seal_global", "if self.seal.active && self.frame_sealed.get() && !self.seal.globals.contains(&s) {", "the edge itself (the sealed names)"),
+        ("", "is_global", "self.globals.contains_key(&s)", "existence only, no value: the index arm's and the VM's in-place test, followed by `global_ref`"),
+        ("", "init_globals_sealed", "let sealed = self.seal.globals.contains(&s);", "the seal's set of sealed global names: the initialiser's provenance"),
+        ("", "init_globals_sealed", "self.globals.insert(s, v);", "the write at build, one initialiser at a time (a later one reads it through `global_ref`)"),
+        ("", "global_ref", "match self.globals.get(&s) {", "THE lookup, which applies `seal_global`"),
+        ("", "init_globals", "self.globals = env.snapshot().into_parts().0.into_iter().collect();", "the write at build"),
+        ("pin.rs", "det", "self.globals.contains(n)", "the static pin analysis' set of global NAMES"),
+        ("pin.rs", "build", "ctx.globals = lets.iter().map(|(n, _)| n.to_string()).collect();", "the static pin analysis' set of global NAMES"),
+        ("pin.rs", "build", ".filter(|(n, e)| ctx.globals.contains(*n) && ctx.det(e, &none, &none))", "the static pin analysis' set of global NAMES"),
+        ("pin.rs", "build", "if next == ctx.globals {", "the static pin analysis' set of global NAMES"),
+        ("pin.rs", "build", "ctx.globals = next;", "the static pin analysis' set of global NAMES"),
+    ];
+    let mut found: Vec<(String, String, String)> = field_sites("globals");
+    let mut allowed: Vec<(String, String, String)> = ALLOWED
+        .iter()
+        .map(|(f, n, l, _)| (f.to_string(), n.to_string(), l.to_string()))
+        .collect();
+    found.sort();
+    allowed.sort();
+    assert_eq!(
+        found, allowed,
+        "DRIFT: a mention of the `globals` map bypasses `global_ref` (and so `seal_global`); \
+         route it through `Interp::global_ref`, or list it with its reason"
+    );
+    // The lookup has its readers: the `Ident` arm's rest, both in-place fast
+    // paths and the closure-constant call (no vacuous pass).
+    let mut readers: Vec<String> = field_sites("global_ref(")
+        .into_iter()
+        .map(|(_, f, _)| f)
+        .collect();
+    readers.sort();
+    readers.dedup();
+    for want in [
+        "dispatch_named",
+        "field_in_place",
+        "ident_unbound",
+        "index_in_place",
+    ] {
+        assert!(
+            readers.iter().any(|r| r == want),
+            "DRIFT: `{want}` no longer reads globals through `global_ref`: {readers:?}"
+        );
+    }
+}
