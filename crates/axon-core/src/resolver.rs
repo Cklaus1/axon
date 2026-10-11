@@ -1160,7 +1160,11 @@ impl<'a> Resolver<'a> {
                     if !impls.insert(key) {
                         dup(
                             self,
-                            format!("`impl {} for {:?}`", b.trait_name, b.for_type),
+                            format!(
+                                "`impl {} for {}`",
+                                b.trait_name,
+                                crate::checker::axon_type_name(&b.for_type)
+                            ),
                             b.span,
                         );
                     } else {
@@ -1212,15 +1216,7 @@ impl<'a> Resolver<'a> {
         // of that type in the merged program — candidate code injected into the
         // entry of the operator's own helpers (PCI candidate-1 review, executed:
         // a signed-off pass). Checked after the pass so order does not matter.
-        const BUILTIN_GENERICS: &[&str] = &[
-            "Option",
-            "Result",
-            "Chan",
-            "Dict",
-            "Uncertain",
-            "Temporal",
-            "Goal",
-        ];
+        const BUILTIN_GENERICS: &[&str] = &["Option", "Result", "Chan"];
         // Every GENERIC PARAMETER in the merged program is a type-level name
         // too: a candidate `type T = … where P` became a precondition of the
         // operator's own `fn same<T>` (PCI candidate-2 review, executed: a
@@ -1250,12 +1246,11 @@ impl<'a> Resolver<'a> {
                 let taken = crate::types::Type::from_name(n).is_some()
                     || BUILTIN_GENERICS.contains(&n)
                     || generic_names.contains(n)
-                    // The checker accepts any name STARTING with a deferred
-                    // prefix (`DictTable`, `GoalX`) as a type — so a type
-                    // position can resolve to it (PCI candidate-3 review).
-                    || ["Uncertain", "Temporal", "Goal", "Dict"]
-                        .iter()
-                        .any(|p| n.starts_with(p))
+                    // The names the checker accepts as a type with no
+                    // definition (`Dict`, `Goal`, ...): EXACT names, as the
+                    // checker matches them since amendment 117. A refinement
+                    // `GoalScore` reuses nothing (S7-UnsealedParity-6).
+                    || crate::checker::DEFERRED_PREFIXES.contains(&n)
                     || matches!(
                         self.table.lookup(n),
                         Some(Symbol::Type { .. }) | Some(Symbol::Enum { .. })
@@ -3330,7 +3325,7 @@ mod tests {
                 "type E = { want: i64 }\ntrait J { fn check(self: E, got: i64) }\n\
                  impl J for E { fn check(self: E, got: i64) { assert_eq(got, self.want) } }\n\
                  impl J for E { fn check(self: E, got: i64) { } }\nfn main() -> i64 { 0 }\n",
-                "impl J for",
+                "`impl J for E` is defined more than once",
             ),
             (
                 "same method from a second trait",
@@ -3357,9 +3352,9 @@ mod tests {
                 "type name `T`",
             ),
             (
-                "refinement named after a deferred-prefix type",
-                "type DictTable = Dict where _ != _\nfn main() -> i64 { 0 }\n",
-                "type name `DictTable`",
+                "refinement named after a deferred type",
+                "type Goal = i64 where _ > 0\nfn main() -> i64 { 0 }\n",
+                "type name `Goal`",
             ),
             (
                 "refinement named after a struct",
@@ -3380,6 +3375,35 @@ mod tests {
             let dispatch = why == "impl" && e[0].contains("method `check` on `E`");
             assert!(e[0].contains(name) || dispatch, "{why}: {e:?}");
         }
+    }
+
+    /// S7-UnsealedParity-6/7: the refinement-name rule takes the deferred
+    /// names EXACTLY, as the checker does (amendment 117), so a refinement
+    /// that only starts with one reuses nothing; and the duplicate-impl text
+    /// names the type as Axon writes it, not as Rust's `Debug` prints it.
+    #[test]
+    fn a_refinement_may_start_with_a_deferred_name_and_impl_text_is_axon() {
+        for src in [
+            "type GoalScore = i64 where _ >= 0\nfn main() -> i64 { 0 }\n",
+            "type DictTable = Dict where _ != _\nfn main() -> i64 { 0 }\n",
+            "type UncertainCount = i64 where _ >= 0\nfn main() -> i64 { 0 }\n",
+        ] {
+            let prog = crate::parse_source(src).expect("parses");
+            let result = resolve_program(&prog, "test.ax");
+            let e = errors_with_code(&result, E0002);
+            assert!(e.is_empty(), "{src}: {e:?}");
+        }
+        let src = "trait Show2 { fn show2(self) -> str }\n\
+                   impl Show2 for Option<i64> { fn show2(self: Option<i64>) -> str { \"a\" } }\n\
+                   impl Show2 for Option<i64> { fn show2(self: Option<i64>) -> str { \"b\" } }\n\
+                   fn main() -> i64 { 0 }\n";
+        let prog = crate::parse_source(src).expect("parses");
+        let e = errors_with_code(&resolve_program(&prog, "test.ax"), E0002);
+        assert_eq!(e.len(), 1, "{e:?}");
+        assert!(
+            e[0].contains("`impl Show2 for Option<i64>` is defined more than once"),
+            "{e:?}"
+        );
     }
 
     /// Merge an operator file and a candidate file the way `mod` does, each

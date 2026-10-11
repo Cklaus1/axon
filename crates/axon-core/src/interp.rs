@@ -705,6 +705,21 @@ impl std::fmt::Display for FrameEdge<'_> {
     }
 }
 
+impl FrameEdge<'_> {
+    /// The panic text for a `break`/`continue` reaching this edge. A handler
+    /// arm may sit lexically inside a loop, so "outside a loop" would be false
+    /// there: the arm is its own frame and the loop is not its loop
+    /// (S7-UnsealedParity-1).
+    fn loop_control_escape(&self) -> String {
+        match self {
+            FrameEdge::HandlerArm => "`break`/`continue` cannot leave an effect-handler arm \
+                                      (a loop around the `with` is not the arm's loop)"
+                .to_string(),
+            _ => format!("`break`/`continue` outside a loop in {self}"),
+        }
+    }
+}
+
 /// A FRAME EDGE is an allowlist, not a list of known escapes (Protected Check
 /// Isolation 7/8/10/13). A call — named fn or closure — and a predicate
 /// evaluation may end only with a value or with an ABORTIVE flow that
@@ -735,7 +750,7 @@ pub(crate) fn frame_edge(f: Flow, edge: FrameEdge<'_>) -> Flow {
     let msg = match f {
         // Transfers: meaningful only inside the frame that raised them.
         Flow::Return(_) => format!("`return` escaped {edge}"),
-        Flow::Break | Flow::Continue => format!("`break`/`continue` outside a loop in {edge}"),
+        Flow::Break | Flow::Continue => edge.loop_control_escape(),
         Flow::Resume(_) => format!("`resume` escaped {edge}"),
         // Abortive: they end or fail the program, so they may cross.
         // `HandlerDone` is the one cross-frame completion, and it is
@@ -3902,10 +3917,14 @@ fn run_program_inner(
 
 /// Run a single zero-argument function (e.g. an `@[test]`) by name.
 ///
-/// Returns `Ok(())` if it completed without panicking, or `Err(message)` on a
-/// runtime panic / non-zero `exit`. Used by `axon test` to run tests in-process.
+/// Returns `Ok(())` exactly when `axon test` passes it as a plain test: it
+/// did not panic or exit non-zero, and it did not end on a failure value
+/// ([`TestEnd::failure_exit`], R51 §3). Otherwise `Err(message)`.
 pub fn run_test_fn(program: &Program, name: &str) -> Result<(), String> {
-    run_test_fn_outcome(program, name).map(|_| ())
+    match run_test_fn_outcome(program, name)?.failure_exit() {
+        Some(why) => Err(why.to_string()),
+        None => Ok(()),
+    }
 }
 
 /// How a test that did not fail ENDED — the affirmative evidence Protected
@@ -3926,15 +3945,17 @@ pub enum TestEnd {
 }
 
 /// [`TestEnd::EndedEarly`]'s reason for a test that ended on a failure value:
-/// it returned `Err`, or a `return`/`?` ended its body with `Err` or `None`.
-const TEST_ENDED_ON_FAILURE: &str =
-    "the test returned `Err` (or a `?` ended it on `Err`/`None`): it did not complete";
+/// it returned `Err` (at its tail, through `return` or through `?`), or a
+/// `return`/`?` ended its body early with `None`. An early `return None` and
+/// a `?` on `None` leave the same trace, so both fail (S7-UnsealedParity-8).
+const TEST_ENDED_ON_FAILURE: &str = "the test ended on `Err`, or early on `None` (a `return None` \
+                                     or a `?` on `None`): it did not complete";
 
 impl TestEnd {
-    /// The reason, when the test ended early on a failure value — an `Err`
-    /// return, or a `?` exit — rather than through `exit(0)` or a plain
-    /// `return`. `axon test` fails such a test (R51 §3: a test passes only
-    /// if its body completed).
+    /// The reason, when the test ended on a failure value — an `Err`, or an
+    /// early `None` (`return None` or a `?`) — rather than through `exit(0)`
+    /// or a plain `return`. `axon test` fails such a test (R51 §3: a test
+    /// passes only if its body completed).
     pub fn failure_exit(&self) -> Option<&str> {
         match self {
             TestEnd::EndedEarly(m) if m == TEST_ENDED_ON_FAILURE => Some(m),
@@ -5006,9 +5027,19 @@ impl<'p> Interp<'p> {
         )
     }
 
+    /// The depth-limit refusal of a call of `f`. The call edge is decided
+    /// first, as v0.22's `call_fn_sealed` ran `seal_call` before the depth
+    /// check (veto interp.rs:3581): a sealed caller at the limit reads an
+    /// operator fn exactly as one nothing defines, never by its name
+    /// (S7-Seal-2). Below the limit `call_fn_sealed` makes the same check, so
+    /// the order is v0.22's on every path while the call path itself stays
+    /// as it was; `seal_call` is `Ok` whenever the seal is not active.
     #[cold]
     #[inline(never)]
     fn depth_exceeded(&self, f: &FnDef) -> Flow {
+        if let Err(refused) = self.seal_call(f) {
+            return refused;
+        }
         Flow::Panic(
             format!(
                 "recursion limit exceeded ({}) in `{}` — infinite or excessively deep recursion? \
@@ -8198,6 +8229,40 @@ fn main() { }
         );
     }
 
+    /// S7-UnsealedParity-8/9: an early `return None` fails like a `?` on
+    /// `None` (they leave the same trace), and the reason says so rather than
+    /// naming only `Err`; a tail `None` completes. `run_test_fn` gives the
+    /// verdict `axon test` gives: `Err` exactly for a failure exit, so
+    /// `axon improve`'s test-flip check reads the same verdict.
+    #[test]
+    fn an_early_none_fails_with_its_own_reason_and_run_test_fn_agrees() {
+        let prog = crate::parse_source(
+            "fn bail(n: i64) -> i64 {\n    if n > 0 { exit(0) }\n    n\n}\n\
+             @[test]\nfn t_return_none() -> Option<i64> {\n    let k = 0\n    if k == 0 { return None }\n    Some(1)\n}\n\
+             @[test]\nfn t_tail_none() -> Option<i64> { None }\n\
+             @[test]\nfn t_err() -> Result<i64, str> { Err(\"no\") }\n\
+             @[test]\nfn t_exit() { assert_eq(bail(1), 99) }\n\
+             @[test]\nfn t_done() { assert_eq(1, 1) }\n",
+        )
+        .expect("parses");
+        let end = outcome(&prog, "t_return_none").expect("ended");
+        let why = end
+            .failure_exit()
+            .expect("an early `return None` is a failure exit");
+        assert!(why.contains("`return None`"), "{why}");
+        assert_eq!(outcome(&prog, "t_tail_none"), Ok(TestEnd::Completed));
+        for t in ["t_return_none", "t_err"] {
+            assert_eq!(
+                run_test_fn(&prog, t),
+                Err(TEST_ENDED_ON_FAILURE.to_string()),
+                "{t}"
+            );
+        }
+        for t in ["t_tail_none", "t_exit", "t_done"] {
+            assert_eq!(run_test_fn(&prog, t), Ok(()), "{t}");
+        }
+    }
+
     /// C9 round 3, PSV-3: a test is COMPLETED only when its body evaluated to
     /// its end. A `?` on a type-confused `None` returned `None` from the
     /// test, which is not an `Err`, so the returned VALUE read as a
@@ -8316,6 +8381,39 @@ fn main() { }
             TAINT_FORCE_ON.with(|c| c.set(taint_only));
             run_test_fn_inner(&prog, test, &[sdir])
         })
+    }
+
+    /// S7-Seal-2: at every depth limit, a sealed caller's call of an operator
+    /// fn is refused by the call edge in the uniform words, never as
+    /// "recursion limit exceeded … in `expected`" (v0.22 ran `seal_call`
+    /// before the depth check, veto interp.rs:3581). Built without the static
+    /// check, which would refuse the name first. Limits below the call refuse
+    /// on the candidate's own recursion (`double`).
+    #[test]
+    fn a_sealed_caller_at_the_depth_limit_never_reads_an_operator_fn_by_name() {
+        let suite = "fn expected(n: i64) -> i64 { n * 2 }\n\
+                     @[test]\nfn t() { assert_eq(double(20), 40) }\n";
+        let cand = "fn double(n: i64) -> i64 { if n > 0 { double(n - 1) } else { expected(n) } }\n";
+        let (prog, sdir) = sealed_program("s7depth", suite, cand);
+        let (mut by_depth, mut by_seal) = (0, 0);
+        for limit in 1..40 {
+            let out = on_deep_stack(|| {
+                let mut interp = Interp::build_in(&prog, std::slice::from_ref(&sdir))?;
+                interp.max_depth = limit;
+                interp.init_globals().map_err(flow_to_msg)?;
+                let f = interp.fns.get("t").copied().expect("the suite defines `t`");
+                interp.test_outcome(f)
+            });
+            let m = out.expect_err("the candidate never reaches its answer");
+            assert!(!m.contains("in `expected`"), "limit {limit}: {m}");
+            if m.contains("recursion limit exceeded") {
+                by_depth += 1;
+            } else {
+                assert_eq!(m, Interp::sealed_no_fn_msg("expected"), "limit {limit}");
+                by_seal += 1;
+            }
+        }
+        assert!(by_depth > 0 && by_seal > 0, "{by_depth} / {by_seal}");
     }
 
     /// v0.22 (C9 round 4c): the operator's `Judge`, whose `u8` impl is the
