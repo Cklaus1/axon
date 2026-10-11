@@ -236,7 +236,7 @@ fn compiled_is_some_only_for_fn_table_entries() {
         assert!(cell.get().is_none(), "nothing compiled before a run");
     }
     // The owned entry `call_fn` builds for a def missing from `fn_of_def`.
-    let owned = FnEntry::new(interp.fn_table[fib_index(&interp)].def, &interp.fns);
+    let owned = FnEntry::new(interp.fn_table[fib_index(&interp)].def, &interp.fns, false);
     assert!(owned.compiled.is_none());
 }
 
@@ -263,7 +263,7 @@ fn vm_engine_runs_an_owned_entry_on_the_tree() {
     let mut interp = Interp::build(&prog).expect("unsealed build");
     interp.engine = Engine::Vm;
     interp.vm_trace = false;
-    let owned = FnEntry::new(interp.fn_table[fib_index(&interp)].def, &interp.fns);
+    let owned = FnEntry::new(interp.fn_table[fib_index(&interp)].def, &interp.fns, false);
     let got = interp
         .call_fn_entry(&owned, vec![Value::Int(10)])
         .expect("fib(10) runs");

@@ -331,7 +331,7 @@ impl Value {
 #[derive(Debug)]
 pub struct ClosureVal {
     pub code: Rc<ClosureCode>,
-    pub captured: RefCell<Vec<(Sym, Value)>>,
+    pub captured: RefCell<Captures>,
 }
 
 /// R13 native FFI: an opaque, affine native `Handle` = `{tag, payload}` where
@@ -2554,13 +2554,16 @@ impl SendValue {
                 // A closure that crossed the host boundary gets a FRESH capture
                 // cell: the SendValue path is a deep clone by construction (a
                 // shared cell is exactly what it cannot carry), so the two sides
-                // are independent counters, not aliases (T40 + R15 Slice 2).
-                captured: RefCell::new(
+                // are independent counters, not aliases (T40 + R15 Slice 2). A
+                // `SendValue` carries no taint, so the cell has none: a sealed
+                // frame that calls it stops (`Captures::plain`; R51 S3's deep
+                // copy edge is where a sealed crossing gets its taints).
+                captured: RefCell::new(Captures::plain(
                     captured
                         .into_iter()
                         .map(|(k, v)| (intern(&k), v.into_value()))
                         .collect(),
-                ),
+                )),
             })),
             SendValue::Tuple(xs) => Value::tuple(xs.into_iter().map(Self::into_value).collect()),
             SendValue::Dict(entries) => {
@@ -3786,7 +3789,7 @@ impl<'p> Interp<'p> {
                 fn_table.push(FnEntry {
                     compiled: Some(std::cell::OnceCell::new()),
                     hot: res.hot_fn(f),
-                    ..FnEntry::new(f, &fns)
+                    ..FnEntry::new(f, &fns, seal.active)
                 });
             }
         }
@@ -4112,7 +4115,7 @@ impl<'p> Interp<'p> {
         nest_guard!(self, CALL_FN);
         match self.fn_of_def.get(&(f as *const FnDef as usize)) {
             Some(&i) => self.call_fn_entry(&self.fn_table[i as usize], args),
-            None => self.call_fn_entry(&FnEntry::new(f, &self.fns), args),
+            None => self.call_fn_entry(&FnEntry::new(f, &self.fns, self.seal.active), args),
         }
     }
 
@@ -4144,7 +4147,7 @@ impl<'p> Interp<'p> {
         let entry = match self.fn_of_def.get(&(f as *const FnDef as usize)) {
             Some(&i) => &self.fn_table[i as usize],
             None => {
-                owned = FnEntry::new(f, &self.fns);
+                owned = FnEntry::new(f, &self.fns, self.seal.active);
                 &owned
             }
         };
@@ -4266,13 +4269,15 @@ impl<'p> Interp<'p> {
 
     /// [`Interp::call_fn_in`]'s common path, after the guards: the arity
     /// check, the parameters, `goal_met`, the body and the scalar return.
+    /// Only a [`FnEntry::plain`] entry takes it, and no entry of a sealed run
+    /// is plain, so its frame has no taint store and binds with `0`.
     #[inline(always)]
     fn call_fn_common(&self, entry: &FnEntry<'p>, mut args: impl CallArgs, env: &mut Env) -> R {
         let f = entry.def;
         if f.params.len() != args.count() {
             return arity_mismatch(f, args.count());
         }
-        self.bind_params(entry, args.values(), env);
+        self.bind_params(entry, args.values(), env, 0);
         args.done(self);
         // `goal_met` follows the parameters (its slot in `Resolution`, the
         // next one: see `bind_params`); it is 0 for a fn without `@[goal]`.
@@ -4286,13 +4291,39 @@ impl<'p> Interp<'p> {
 
     /// [`Interp::call_fn_in`] for a fn with an attribute-driven step around
     /// its body (`@[agent]`, `@[ai]` metering, `@[corrigible]`, a zone,
-    /// `@[goal]`, `@[verify]`, `main`'s binding capture) or in a program that
-    /// declares refinements, after the depth and `current_fn` guards.
+    /// `@[goal]`, `@[verify]`, `main`'s binding capture), in a program that
+    /// declares refinements, or in a sealed run (no entry is
+    /// [`FnEntry::plain`] there), after the depth and `current_fn` guards.
+    ///
+    /// The frame is compiled twice (R51 S2.3, veto's `call_fn_frame::<T>`):
+    /// `::<true>` with the taint hooks, run exactly in a sealed run, and
+    /// `::<false>`, which is the code an unsealed run always ran.
+    #[inline(always)]
+    fn call_fn_in_general(&self, entry: &FnEntry<'p>, args: Vec<Value>, env: &mut Env) -> R {
+        if self.seal.active {
+            self.call_fn_frame::<true>(entry, args, env)
+        } else {
+            self.call_fn_frame::<false>(entry, args, env)
+        }
+    }
+
     #[inline(never)]
-    fn call_fn_in_general(&self, entry: &FnEntry<'p>, mut args: Vec<Value>, env: &mut Env) -> R {
+    fn call_fn_frame<const T: bool>(
+        &self,
+        entry: &FnEntry<'p>,
+        mut args: Vec<Value>,
+        env: &mut Env,
+    ) -> R {
         nest_guard!(self, CALL_FN_IN_GENERAL);
         let f = entry.def;
         let params = &entry.params;
+        // The taint the arguments arrived with (their union, in `acc`), and
+        // the caller's control taints, which an early exit out of a tainted
+        // branch in this frame may raise and the caller never sees: restored
+        // when the frame ends, whatever the outcome (veto interp.rs:4033,
+        // 3593, 3612-3613; amendment 102).
+        let entry_t = self.ta::<T>();
+        let _ctl = self.t_frame::<T>();
         // R4/I-13: if THIS fn is an `@[agent]`, it becomes the enclosing agent for
         // everything it transitively calls; otherwise the caller's enclosing agent
         // is inherited unchanged. Restored on return so sibling calls aren't
@@ -4361,7 +4392,7 @@ impl<'p> Interp<'p> {
             Some(Value::Int(n)) => Some(*n),
             _ => None,
         };
-        self.bind_params(entry, &mut args, env);
+        self.bind_params(entry, &mut args, env, self.t_params::<T>(entry_t, false));
         args.clear();
         self.recycle_args(args);
         // Phase 5: refinement-type PRECONDITIONS. A parameter `p: T where P`
@@ -4380,14 +4411,17 @@ impl<'p> Interp<'p> {
                 if let crate::ast::AxonType::Named(rname) = &p.ty {
                     if let Some(pred) = self.refine_preds.get(rname.as_str()).copied() {
                         let val = env.get(*s).cloned().unwrap_or(Value::Unit);
+                        // The predicate frame sees the value with the taint
+                        // the arguments arrived with (veto interp.rs:4168-4173).
                         let mut pred_env = self.new_env();
-                        pred_env.define(SYM_UNDERSCORE, val.clone(), 0);
+                        pred_env.define(SYM_UNDERSCORE, val.clone(), entry_t);
                         // Also bind the parameter name (for inline refinements
                         // `p: T where E[p] > k` that use the param name directly).
-                        pred_env.define(*s, val.clone(), 0);
-                        if let Value::Bool(false) =
-                            contain_frame(self.eval(pred, &mut pred_env), FrameEdge::Predicate)?
-                        {
+                        pred_env.define(*s, val.clone(), entry_t);
+                        if let Value::Bool(false) = contain_frame(
+                            self.eval_t::<T>(pred, &mut pred_env),
+                            FrameEdge::Predicate,
+                        )? {
                             return Err(Flow::RefineViolation(
                                 format!(
                                     "parameter `{}` of `{}` (= {}) violates the refinement `{}` — \
@@ -4410,14 +4444,16 @@ impl<'p> Interp<'p> {
         // — i.e. on the WORST (minimum) score — so a fn cannot pass by
         // overfitting one point. With no held-out set, fall back to the best
         // observed training score.
-        let goal_met = if entry.has_goal {
+        let goal = if entry.has_goal {
             self.call_fn_goal(f)?
         } else {
-            0
+            None
         };
         // `goal_met` follows the parameters (its slot in `Resolution`, the
-        // next one: see `bind_params`).
-        env.push_var(SYM_GOAL_MET, Value::Int(goal_met), 0);
+        // next one: see `bind_params`). The goal search ran the metric, which
+        // a sealed run may have supplied: everything (veto interp.rs:4262-4267).
+        let goal_t = if T && goal.is_some() { taint::ALL } else { 0 };
+        env.push_var(SYM_GOAL_MET, Value::Int(goal.unwrap_or(0)), goal_t);
         // PROTOTYPE (RLM session option 2): when dumping bindings, run main's
         // top-level statements WITHOUT the extra block scope (eval_block pops
         // its scope before returning, discarding the locals), then capture the
@@ -4454,6 +4490,9 @@ impl<'p> Interp<'p> {
         } else {
             self.run_body(entry, env)
         };
+        // The taint of the value the body produced, before anything else is
+        // evaluated.
+        let body_t = self.t_body::<T>(&body_result);
         if capture && !matches!(body_result, Err(ref e) if !matches!(e, Flow::Return(_))) {
             // `goal_met` is injected by call_fn, not a user binding.
             let snap = env
@@ -4477,17 +4516,22 @@ impl<'p> Interp<'p> {
         };
         let result = sum_return(entry, result)?;
 
-        if entry.has_epilogue || !self.refine_preds.is_empty() {
-            return self.finish_call_cold(
+        let result = if entry.has_epilogue || !self.refine_preds.is_empty() {
+            self.finish_call_cold(
                 entry,
                 result,
                 env,
                 input_arg,
                 input_args,
                 input_args_f64,
-            );
+                (entry_t, body_t),
+            )?
+        } else {
+            result
+        };
+        if T {
+            self.t_frame_exit(entry_t, body_t);
         }
-
         Ok(result)
     }
 
@@ -4498,9 +4542,11 @@ impl<'p> Interp<'p> {
     /// Parameter `i` lives in frame slot `i` (AX-53): the frame starts empty
     /// (`call_fn_in`'s callers take it from `take_frame`), so each parameter
     /// is the next binding and is pushed, which is what `Env::define_var`
-    /// does for a slot equal to the frame's length (cost only).
+    /// does for a slot equal to the frame's length (cost only). Every
+    /// parameter carries taint `t` (the frame's [`Interp::t_params`]; `0`
+    /// outside a sealed run).
     #[inline(always)]
-    fn bind_params(&self, entry: &FnEntry<'p>, args: &mut [Value], env: &mut Env) {
+    fn bind_params(&self, entry: &FnEntry<'p>, args: &mut [Value], env: &mut Env, t: u8) {
         env.bind_fresh(
             entry
                 .params
@@ -4508,89 +4554,86 @@ impl<'p> Interp<'p> {
                 .zip(args.iter_mut())
                 .enumerate()
                 .map(|(i, (&p, a))| (p, param_value(entry, i, std::mem::replace(a, Value::Unit)))),
-            |_| 0,
+            |_| t,
         );
     }
 
     /// R5 `@[goal(...)]` sugar for [`Interp::call_fn_in`]: whether the goal is
-    /// met. Out of line so the common call's frame does not carry it (AX-54).
+    /// met, or `None` when `f` has no goal spec and no search ran. Out of line
+    /// so the common call's frame does not carry it (AX-54).
     #[inline(never)]
-    fn call_fn_goal(&self, f: &FnDef) -> Result<i64, Flow> {
+    fn call_fn_goal(&self, f: &FnDef) -> Result<Option<i64>, Flow> {
         nest_guard!(self, CALL_FN_GOAL);
-        let mut goal_met: i64 = 0;
-        let goal_spec = self.goal_spec_of(f);
-        if let Some(spec) = goal_spec {
-            // Dispatch on the selected strategy (PRD L889-899). All run the
-            // metric and accumulate provenance the same way; they differ only in
-            // HOW they explore. The held-out gate below is strategy-agnostic.
-            let me = spec.max_evals;
-            match spec.strategy {
-                GoalStrategy::HillClimb => {
-                    let _ = self.run_goal(&spec.metric, spec.target, me)?;
-                }
-                GoalStrategy::Random => {
-                    let _ = self.run_goal_random(
-                        &spec.metric,
-                        spec.target,
-                        me.max(1),
-                        spec.lo,
-                        spec.hi,
-                    )?;
-                }
-                GoalStrategy::Multistart => {
-                    let (starts, per) = split_budget(me);
-                    let _ = self.run_goal_multistart(
-                        &spec.metric,
-                        spec.target,
-                        starts,
-                        per,
-                        spec.lo,
-                        spec.hi,
-                    )?;
-                }
-                GoalStrategy::Tournament => {
-                    let _ = self.run_goal_tournament(
-                        &spec.metric,
-                        spec.target,
-                        me.max(1),
-                        spec.lo,
-                        spec.hi,
-                        false,
-                    )?;
-                }
-                GoalStrategy::Bayesian => {
-                    // Exploit-biased tournament (single elite + heavy refine).
-                    let _ = self.run_goal_tournament(
-                        &spec.metric,
-                        spec.target,
-                        me.max(1),
-                        spec.lo,
-                        spec.hi,
-                        true,
-                    )?;
+        let Some(spec) = self.goal_spec_of(f) else {
+            return Ok(None);
+        };
+        // Dispatch on the selected strategy (PRD L889-899). All run the
+        // metric and accumulate provenance the same way; they differ only in
+        // HOW they explore. The held-out gate below is strategy-agnostic.
+        let me = spec.max_evals;
+        match spec.strategy {
+            GoalStrategy::HillClimb => {
+                let _ = self.run_goal(&spec.metric, spec.target, me)?;
+            }
+            GoalStrategy::Random => {
+                let _ =
+                    self.run_goal_random(&spec.metric, spec.target, me.max(1), spec.lo, spec.hi)?;
+            }
+            GoalStrategy::Multistart => {
+                let (starts, per) = split_budget(me);
+                let _ = self.run_goal_multistart(
+                    &spec.metric,
+                    spec.target,
+                    starts,
+                    per,
+                    spec.lo,
+                    spec.hi,
+                )?;
+            }
+            GoalStrategy::Tournament => {
+                let _ = self.run_goal_tournament(
+                    &spec.metric,
+                    spec.target,
+                    me.max(1),
+                    spec.lo,
+                    spec.hi,
+                    false,
+                )?;
+            }
+            GoalStrategy::Bayesian => {
+                // Exploit-biased tournament (single elite + heavy refine).
+                let _ = self.run_goal_tournament(
+                    &spec.metric,
+                    spec.target,
+                    me.max(1),
+                    spec.lo,
+                    spec.hi,
+                    true,
+                )?;
+            }
+        }
+        let s = if spec.holdout_set.is_empty() {
+            self.best_observed(&spec.metric, spec.target, 0)
+        } else {
+            let mut worst = f64::INFINITY;
+            for h in &spec.holdout_set {
+                let score = self.goal_eval_holdout(&spec.metric, *h)?;
+                if score < worst {
+                    worst = score;
                 }
             }
-            let s = if spec.holdout_set.is_empty() {
-                self.best_observed(&spec.metric, spec.target, 0)
-            } else {
-                let mut worst = f64::INFINITY;
-                for h in &spec.holdout_set {
-                    let score = self.goal_eval_holdout(&spec.metric, *h)?;
-                    if score < worst {
-                        worst = score;
-                    }
-                }
-                worst
-            };
-            goal_met = if s >= spec.target { 1i64 } else { 0i64 };
-        }
-        Ok(goal_met)
+            worst
+        };
+        Ok(Some(if s >= spec.target { 1i64 } else { 0i64 }))
     }
 
     /// The steps after the body that only a refined, zoned (`@[adaptive]` /
     /// `@[experiment]`) or `@[verify]` fn takes, for [`Interp::call_fn_in`].
     /// Out of line so the common call's frame does not carry them (AX-54).
+    /// The last argument is the frame's `(entry_t, body_t)`: what the arguments
+    /// arrived with and what the body's value carries (both `0` outside a sealed run).
     #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
     fn finish_call_cold(
         &self,
         entry: &FnEntry<'_>,
@@ -4599,6 +4642,7 @@ impl<'p> Interp<'p> {
         input_arg: Option<i64>,
         input_args: Vec<i64>,
         input_args_f64: Vec<f64>,
+        (entry_t, body_t): (u8, u8),
     ) -> R {
         nest_guard!(self, FINISH_CALL_COLD);
         let f = entry.def;
@@ -4625,7 +4669,7 @@ impl<'p> Interp<'p> {
                     // `-> (i64 where _ <= parent_rem)`) can reference parameters.
                     // `env` already holds the param bindings from the body; add
                     // `_` and evaluate against it instead of a bare env.
-                    env.define(SYM_UNDERSCORE, result.clone(), 0);
+                    env.define(SYM_UNDERSCORE, result.clone(), body_t);
                     if let Value::Bool(false) =
                         contain_frame(self.eval(pred, env), FrameEdge::Predicate)?
                     {
@@ -4664,6 +4708,10 @@ impl<'p> Interp<'p> {
                 // Experiment records are deliberately withheld so the optimizer
                 // never treats a baseline as a candidate to beat.
                 if is_adaptive_zone {
+                    // The best store is kernel state a later call reads back:
+                    // it takes the taint of the record (veto interp.rs:4462;
+                    // the result's own taint where veto reads `taint.last`).
+                    self.t_provenance_write(entry_t | body_t, true, false);
                     self.provenance
                         .borrow_mut()
                         .entry(f.name.clone())
@@ -4719,6 +4767,7 @@ impl<'p> Interp<'p> {
                 // log) does degrade under a restrictive ceiling. That is the
                 // correct direction: durable state is what was not granted.
                 if self.provenance_write_permitted() {
+                    self.t_provenance_write(entry_t | body_t, false, true);
                     append_provenance_jsonl(&f.name, &payload, score, input_arg, zone, label);
                 }
             }
@@ -4793,13 +4842,13 @@ impl<'p> Interp<'p> {
                         // `&&`, `||`, comparisons, function calls, you name it.
                         let mut pred_env = self.new_env();
                         if let Some(v) = fields.get(SYM_VALUE) {
-                            pred_env.define(SYM_VALUE, v.clone(), 0);
+                            pred_env.define(SYM_VALUE, v.clone(), body_t);
                         }
                         if let Some(c) = fields.get(SYM_CONFIDENCE) {
-                            pred_env.define(SYM_CONFIDENCE, c.clone(), 0);
+                            pred_env.define(SYM_CONFIDENCE, c.clone(), body_t);
                         }
                         if let Some(s) = fields.get(SYM_SOURCE_TAG) {
-                            pred_env.define(SYM_SOURCE_TAG, s.clone(), 0);
+                            pred_env.define(SYM_SOURCE_TAG, s.clone(), body_t);
                         }
                         let outcome = contain_frame(
                             self.eval(&spec.predicate, &mut pred_env),
@@ -4860,7 +4909,7 @@ impl<'p> Interp<'p> {
                 } else {
                     // Composite predicate: bind `value` to the scalar and evaluate.
                     let mut pred_env = self.new_env();
-                    pred_env.define(SYM_VALUE, result.clone(), 0);
+                    pred_env.define(SYM_VALUE, result.clone(), body_t);
                     let outcome = contain_frame(
                         self.eval(&spec.predicate, &mut pred_env),
                         FrameEdge::Predicate,
@@ -4900,13 +4949,20 @@ impl<'p> Interp<'p> {
     /// body runs can reach, so a closure that only that slot holds (a lambda
     /// written at the call) lends its capture cell on every call (AX-40).
     /// Builtins must call through the borrowed argument, not a clone of it,
-    /// or the clone defeats the lend.
+    /// or the clone defeats the lend. In a sealed run the callback's result
+    /// raises the builtin's control taint (`t_loop_pc`, veto's `call_cb`).
     #[inline]
     pub(super) fn call_closure_arg(&self, c: &Value, args: impl ClosureArgs) -> R {
         nest_guard!(self, CALL_CLOSURE_ARG, {
             args.bind(|_, v| drop(v));
         });
-        self.call_closure_owned_by(c, args, 1)
+        if self.seal.active {
+            let r = self.call_closure_frame::<true>(c, args, 1)?;
+            self.t_loop_pc();
+            Ok(r)
+        } else {
+            self.call_closure_frame::<false>(c, args, 1)
+        }
     }
 
     /// Run closure `c`. `private_refs` counts the references to its capture
@@ -4920,7 +4976,25 @@ impl<'p> Interp<'p> {
     /// their capacity), so a call on the lent path allocates nothing (R50
     /// S4, cost only). The body runs on the engine the `Interp` was built
     /// with ([`Interp::run_lambda`]).
+    ///
+    /// The frame is compiled twice (R51 S2.3, veto's `call_closure_owned_by::<T>`):
+    /// `::<true>` with the taint hooks, run exactly in a sealed run, and
+    /// `::<false>`, which is the code an unsealed run always ran.
+    #[inline(always)]
     fn call_closure_owned_by(&self, c: &Value, args: impl ClosureArgs, private_refs: usize) -> R {
+        if self.seal.active {
+            self.call_closure_frame::<true>(c, args, private_refs)
+        } else {
+            self.call_closure_frame::<false>(c, args, private_refs)
+        }
+    }
+
+    fn call_closure_frame<const T: bool>(
+        &self,
+        c: &Value,
+        args: impl ClosureArgs,
+        private_refs: usize,
+    ) -> R {
         nest_guard!(self, CALL_CLOSURE_OWNED_BY, {
             args.bind(|_, v| drop(v));
         });
@@ -4949,14 +5023,20 @@ impl<'p> Interp<'p> {
         // a re-entrant call must see the cell as it stood before this call, and
         // this call's in-place writes would otherwise destroy that state.
         let lend = Rc::strong_count(cv) == private_refs;
+        // The taint the arguments arrived with, the parameters', and the
+        // caller's control taints, restored when the frame ends (veto
+        // interp.rs:4753-4760, 4785-4789).
+        let entry_t = self.ta::<T>();
+        let in_t = self.t_params::<T>(entry_t, true);
+        let _ctl = self.t_frame::<T>();
         let mut env = self.take_frame();
         if lend {
-            // The cell's vector becomes the frame's bindings and the frame's
-            // empty one waits in the cell; they swap back below, so both keep
-            // their capacity.
-            env.lend_in(&mut captured.borrow_mut(), 0);
+            // The cell's vectors become the frame's bindings (and their
+            // taints) and the frame's empty ones wait in the cell; they swap
+            // back below, so both keep their capacity.
+            env.lend_in(&mut captured.borrow_mut());
         } else {
-            env.copy_in(&captured.borrow(), n, 0);
+            env.copy_in(&captured.borrow(), n);
         }
         // The base scope (the cell's bindings) ends at `base`; a fresh scope
         // holds the parameters. Slotted parameters are the next bindings, so
@@ -4966,23 +5046,37 @@ impl<'p> Interp<'p> {
         let frame = &mut *env;
         if code.param_base.map(|b| b as usize) == Some(base) {
             frame.reserve(n);
-            args.bind(|i, v| frame.push_var(code.params[i], v, 0));
+            args.bind(|i, v| frame.push_var(code.params[i], v, in_t));
         } else {
             args.bind(|i, v| {
                 let slot = code.param_base.map_or(NAMED, |b| b + i as u32);
-                frame.define_var(code.params[i], slot, v, 0);
+                frame.define_var(code.params[i], slot, v, in_t);
             });
         }
         // A closure's own `return` ends the closure (`run_lambda`); every
-        // other transfer is refused at its edge, as for a named fn.
-        let out = contain_frame(self.run_lambda(code, &mut env), FrameEdge::Closure);
+        // other transfer is refused at its edge, as for a named fn. A sealed
+        // run is pinned to the tree (spec Fork 1), so its body runs through
+        // the sealed evaluator here, which tells a `return`'s taint from the
+        // body's (`run_lambda` folds the `return` into its value).
+        let (out, body_t) = if T {
+            let r = self.eval_t::<true>(&code.body, &mut env);
+            let body_t = self.t_body::<true>(&r);
+            match r {
+                Err(Flow::Return(v)) => (Ok(v), body_t),
+                r => (r, body_t),
+            }
+        } else {
+            (self.run_lambda(code, &mut env), 0)
+        };
+        let out = contain_frame(out, FrameEdge::Closure);
         // The base scope holds exactly the cell's bindings, in the cell's
         // order: a `let` introduced inside the body lives in a pushed scope and
         // must not leak into the capture, and a parameter shadowing a captured
         // name must not overwrite it either, which is why the params live in
-        // their own pushed scope above.
+        // their own pushed scope above. Each captured name's taint goes back
+        // with its value.
         if lend {
-            // The cell holds the frame's empty vector; swap the bindings back.
+            // The cell holds the frame's empty vectors; swap the bindings back.
             env.lend_back(base, &mut captured.borrow_mut());
         } else {
             // A re-entrant call may have written the cell meanwhile; this
@@ -4990,6 +5084,9 @@ impl<'p> Interp<'p> {
             env.write_back(base, &mut captured.borrow_mut());
         }
         self.give_frame(env);
+        if T && out.is_ok() {
+            self.t_frame_exit(entry_t, body_t);
+        }
         out
     }
 

@@ -396,7 +396,9 @@ pub(super) struct FnEntry<'p> {
     pub(super) is_main: bool,
     /// No attribute-driven step around the body: not `@[agent]`, `@[ai]`
     /// metered, `@[corrigible]`, zoned, `@[goal]`, `@[verify]` or `main`
-    /// (`Interp::call_fn_in` takes its common path).
+    /// (`Interp::call_fn_in` takes its common path). Never in a sealed run:
+    /// every call there takes the general path, whose sealed instantiation
+    /// carries the frame's taint (R51 S2.3), so the common path has none.
     pub(super) plain: bool,
     /// Has a zone (`adaptive`/`experiment`) or `@[verify]` step after the
     /// body (`Interp::finish_call_cold`).
@@ -430,8 +432,9 @@ pub(super) enum RetCheck {
 
 impl<'p> FnEntry<'p> {
     /// `fns` is the interpreter's by-name fn map, which the `current_fn`
-    /// readers (`Interp::current_ai_budget` & co.) consult.
-    pub(super) fn new(def: &'p FnDef, fns: &HashMap<String, &FnDef>) -> Self {
+    /// readers (`Interp::current_ai_budget` & co.) consult; `sealed` is the
+    /// run's `seal.active` (no entry of a sealed run is [`FnEntry::plain`]).
+    pub(super) fn new(def: &'p FnDef, fns: &HashMap<String, &FnDef>, sealed: bool) -> Self {
         use crate::ast::AxonType;
         let has_attr = |name: &str| def.attrs.iter().any(|a| a.name == name);
         let mut entry = FnEntry {
@@ -483,7 +486,8 @@ impl<'p> FnEntry<'p> {
             entered: std::cell::Cell::new(false),
             hot: false,
         };
-        entry.plain = !(entry.is_agent
+        entry.plain = !(sealed
+            || entry.is_agent
             || entry.ai_metered
             || entry.corrigible
             || entry.adaptive
