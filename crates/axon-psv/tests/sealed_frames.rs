@@ -544,7 +544,7 @@ fn accept() {
 "#;
 
 #[test]
-#[ignore = "R51 S2: width and name taint not ported; sealed control refused until S6"]
+#[ignore = "R51 S3: the width and name sinks (seal_width, t_check_width, t_check_names) are seal edges; the S2 channel feeds them; sealed control refused until S6"]
 fn the_candidate_never_selects_the_operators_code_by_width_or_by_name() {
     let table = |v: &str| {
         format!("pub fn table() -> Dict {{\n    let d = dict_new()\n    dict_set(d, \"sq\", {v})\n    d\n}}\n")
@@ -1229,7 +1229,7 @@ fn sandbox_run_hands_the_operator_an_i64_or_nothing() {
 /// C9 round 9 sweep (amendment 96): `-x` / `~x` wrap at the candidate's chosen
 /// width exactly as `x + y` does and were not covered by the arithmetic arm.
 #[test]
-#[ignore = "R51 S2: width taint not ported; sealed control refused until S6"]
+#[ignore = "R51 S3: the width sink (seal_width, t_check_width) is a seal edge; the S2 channel feeds it; sealed control refused until S6"]
 fn operator_negation_never_runs_at_a_width_the_candidate_chose() {
     let neg = "mod sol\nuse sol.{work}\n@[test]\nfn accept() {\n    let xs = arr_map([1], work)\n    assert((-xs[0]) == -4)\n}\n";
     passed(
@@ -1595,7 +1595,7 @@ fn an_operator_closure_the_candidate_picked_is_never_called() {
 /// is spelled into it: a branch value, an assignment under the branch, a return
 /// out of it, a literal computed after it, a match, a table indexed by it.
 #[test]
-#[ignore = "R51 S2: the taint name rule not ported; sealed control refused until S6"]
+#[ignore = "R51 S3: the taint name sink (t_check_names) is a seal edge; the S2 channel feeds it; sealed control refused until S6"]
 fn a_name_built_out_of_the_candidates_bit_never_selects_an_operator_fn() {
     let dbl = "pub fn idx() -> i64 { 1 }\npub fn double(x: i64) -> i64 { 0 }\n";
     let suite = |pre: &str, body: &str| {
@@ -1625,7 +1625,7 @@ fn a_name_built_out_of_the_candidates_bit_never_selects_an_operator_fn() {
 /// candidate wrote, a closure's captured state, a sealed `&mut`, the scheduler,
 /// a goal. A READ by the candidate of an operator dict taints nothing.
 #[test]
-#[ignore = "R51 S2: the taint channel not ported; sealed control refused until S6"]
+#[ignore = "R51 S3: the refusing sinks (t_check_names, t_check_call_picked) and the dict/closure edges are seal edges; the S2 channel is ported; sealed control refused until S6"]
 fn taint_survives_every_carrier_a_value_can_travel_by() {
     let dbl = "pub fn double(x: i64) -> i64 { 0 }\n";
     let suite = |uses: &str, pre: &str, body: &str| {
@@ -1723,7 +1723,7 @@ fn a_channel_the_candidate_touched_never_selects_operator_code() {
 /// FIRST, so a runner row would score REFUSED_ELSEWHERE by construction (their
 /// attacks and rows are the interpreter unit tests', with the static layer off).
 #[test]
-#[ignore = "R51 S2: the taint name rule not ported; sealed runs refused until S6, not by the taint rule"]
+#[ignore = "R51 S3: the taint name sink (t_check_names) is a seal edge; the S2 channel feeds it; sealed runs refused until S6, not by the taint rule"]
 fn the_taint_name_rule_refuses_what_the_static_name_analysis_lets_through() {
     let dbl = "pub fn idx() -> i64 { 1 }\npub fn double(x: i64) -> i64 { 0 }\n";
     let suite = |pre: &str, body: &str| {
@@ -2180,7 +2180,7 @@ fn an_operator_value_the_candidate_picked_is_refused_through_the_runner() {
 /// the lenient check or fails under the strict one depending on what the
 /// candidate wrote.
 #[test]
-#[ignore = "R51 S2: deep comparison taint not ported; sealed runs refused until S6, not by the taint rule"]
+#[ignore = "R51 S3: deep comparison taint is ported (S2); the refusing sinks (t_check_names, t_check_call_picked) are seal edges; sealed runs refused until S6, not by the taint rule"]
 fn comparing_a_dict_the_candidate_filled_never_selects_operator_code() {
     let cand = "pub fn cand() -> i64 { 4 }\npub fn fill(d: Dict) { dict_set(d, \"k\", 1) }\n";
     let suite = |pre: &str, body: &str| {
@@ -2292,7 +2292,7 @@ fn a_sealed_method_call_is_refused_in_the_same_words_for_an_operator_method_and_
 // pass; its control (the SAME code under a condition the operator wrote) passes.
 
 #[test]
-#[ignore = "R51 S2: control (pc) taint not ported; sealed runs refused until S6, not by the taint rule"]
+#[ignore = "R51 S3: control (pc) taint is ported (S2); the refusing sinks (t_check_names, t_check_call_picked) are seal edges; sealed runs refused until S6, not by the taint rule"]
 fn operator_side_control_flow_on_candidate_data_never_selects_operator_code() {
     let cand = "pub fn cand() -> i64 { 4 }\npub fn candr() -> Result<i64, str> { Ok(4) }\npub fn fill(d: Dict) { dict_set(d, \"k\", 1) }\npub fn drain(c: Chan<i64>) { let x = c.recv() }\npub fn crd() -> i64 {\n  if cand() == 5 {\n    match read_file(\"/nonexistent/c9r14\") { Ok(s) => 1  Err(e) => 2 }\n  } else { 0 }\n}\n";
     let pre = "fn strict(x: i64) -> bool { x == 9 }\nfn lenient(x: i64) -> bool { true }\nlet TBL = [lenient, strict]\nfn mark(op: Dict) -> bool {\n  dict_set(op, \"x\", 1)\n  true\n}\nfn bump(op: Dict, x: i64) -> i64 {\n  dict_set(op, to_str(x), 1)\n  x\n}\nfn okr() -> Result<i64, str> { Ok(4) }\nfn tq(op: Dict) -> Result<i64, str> {\n  let v = candr()?\n  let u = mark(op)\n  Ok(v)\n}\nfn tq_ok(op: Dict) -> Result<i64, str> {\n  let v = okr()?\n  let u = mark(op)\n  Ok(v)\n}\n";
@@ -2478,7 +2478,7 @@ fn a_module_the_operator_declares_for_the_candidate_resolves_the_candidates_own_
 /// builtin's Time row is pinned in the interpreter unit test
 /// `no_arm_of_a_pure_builtin_reads_or_advances_ambient_state`.)
 #[test]
-#[ignore = "R51 S2: the World/Time taint class of the clock builtins not ported; sealed control refused until S6"]
+#[ignore = "R51 S6: the World/Time class of the clock builtins is ported (S2); sealed control refused until S6"]
 fn a_candidate_cannot_read_or_drive_the_clock_through_the_temporal_builtins() {
     let suite = "mod sol\nuse sol.{solve}\n@[test]\nfn accept() {\n  assert_eq(solve(), 42)\n}\n";
     let honest = "pub fn solve() -> i64 { 42 }\n";

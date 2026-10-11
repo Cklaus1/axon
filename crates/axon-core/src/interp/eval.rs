@@ -227,7 +227,36 @@ fn fn_value(name: &str, arity: usize) -> Value {
 impl<'p> Interp<'p> {
     // ── Core evaluator ───────────────────────────────────────────────────────
 
+    /// Evaluate `expr`: the plain evaluator, or in a SEALED run the one wrapped
+    /// by the taint accumulator (`interp/taint.rs`, R51 S2). This is the entry
+    /// for code that does not know which run it is in; the evaluator's own
+    /// recursion is generic over the run (`eval_t::<T>`) and never branches
+    /// here. NOT a function pointer: the wasm Asyncify guard (R15) refuses a
+    /// module in which a fn that can suspend is address-taken.
+    #[inline]
     pub(super) fn eval(&self, expr: &Expr, env: &mut Env) -> R {
+        if self.seal.active {
+            self.eval_tainted(expr, env)
+        } else {
+            self.eval_arm::<false>(expr, env)
+        }
+    }
+
+    /// [`Interp::eval`] resolved at compile time: the evaluator's own
+    /// recursion knows whether it is the sealed run's (`T`) and calls the
+    /// right one directly, so the unsealed instantiation carries no taint code.
+    #[inline(always)]
+    pub(super) fn eval_t<const T: bool>(&self, expr: &Expr, env: &mut Env) -> R {
+        if T {
+            self.eval_tainted(expr, env)
+        } else {
+            self.eval_arm::<false>(expr, env)
+        }
+    }
+
+    /// The 33-arm expression dispatch, instantiated once per run kind: `T` is
+    /// the sealed run's (entered only through [`Interp::eval_tainted`]).
+    pub(super) fn eval_arm<const T: bool>(&self, expr: &Expr, env: &mut Env) -> R {
         nest_guard!(self, EVAL);
         match expr {
             // AX-55: int, float and bool literals are built in place (no call,
@@ -251,7 +280,7 @@ impl<'p> Interp<'p> {
                 }
             }
 
-            Expr::Block(stmts) => self.eval_block(stmts, env),
+            Expr::Block(stmts) => self.eval_block::<T>(stmts, env),
 
             // Phase 6: `with handler { on E(p) => arm } { body }` installs an
             // effect-handler frame for the duration of `body`. A builtin in
@@ -268,19 +297,25 @@ impl<'p> Interp<'p> {
             Expr::Let { name, value, ty }
             | Expr::Own { name, value, ty }
             | Expr::RefBind { name, value, ty } => {
-                let v = self.eval(value, env)?;
+                let v = self.eval_t::<T>(value, env)?;
+                // A fresh binding carries the VALUE's taint (the evaluator
+                // already added the taint of any early exit before it).
+                // Control taints what is WRITTEN to a binding that outlives
+                // the branch (an assignment).
+                let vt = self.tl::<T>();
                 let (s, slot) = self.res.var(expr, name);
-                self.bind_let(name, s, slot, ty.as_ref(), v, env)?;
+                self.bind_let::<T>(name, s, slot, ty.as_ref(), v, vt, env)?;
                 Ok(Value::Unit)
             }
 
             Expr::Assign { name, value } => {
                 let (s, slot) = self.res.var(expr, name);
-                if self.assign_in_place(s, slot, name, value, env)? {
+                if self.assign_in_place::<T>(s, slot, name, value, env)? {
                     return Ok(Value::Unit);
                 }
-                let v = self.eval(value, env)?;
-                if env.assign_var(s, slot, v) {
+                let v = self.eval_t::<T>(value, env)?;
+                let vt = self.ts::<T>(self.tl::<T>());
+                if env.assign_var_t::<T>(s, slot, v, vt) {
                     Ok(Value::Unit)
                 } else {
                     panic(format!("assignment to undefined variable `{name}`"))
@@ -294,16 +329,47 @@ impl<'p> Interp<'p> {
             // expressions; phase 2 (`write_place`) walks the binding mutably and
             // sets the leaf.
             Expr::AssignTo { place, value } => {
-                let v = self.eval(value, env)?;
+                let v = self.eval_t::<T>(value, env)?;
                 let ((base, base_slot), steps) = self.flatten_place(place, env)?;
+                // The write puts the value (and the indices it was written at)
+                // into the container the binding holds: the binding now
+                // carries it. Read through the lookup `write_place` uses.
+                if T {
+                    let wt = self.ts::<T>(self.ta::<T>());
+                    env.get_var_mut_t::<T>(base, base_slot, wt);
+                }
                 write_place(base, base_slot, &steps, v, env)?;
                 Ok(Value::Unit)
             }
 
-            Expr::BinOp { op, left, right } => self.eval_binop(op, left, right, env),
+            Expr::BinOp { op, left, right } => {
+                if !T {
+                    return self.eval_binop::<T>(op, left, right, env);
+                }
+                let v = self.eval_binop::<T>(op, left, right, env)?;
+                // A comparison or a logical operator yields a `bool` whoever
+                // its operands were: the OPERATOR's operator chose that type.
+                if matches!(
+                    op,
+                    BinOp::Eq
+                        | BinOp::NotEq
+                        | BinOp::Lt
+                        | BinOp::Gt
+                        | BinOp::LtEq
+                        | BinOp::GtEq
+                        | BinOp::And
+                        | BinOp::Or
+                ) {
+                    self.t_untype();
+                }
+                Ok(v)
+            }
 
             Expr::UnaryOp { op, operand } => {
-                let v = self.eval(operand, env)?;
+                let v = self.eval_t::<T>(operand, env)?;
+                if T && matches!(op, UnaryOp::Not) {
+                    self.t_untype();
+                }
                 eval_unary(op, v)
             }
 
@@ -311,45 +377,79 @@ impl<'p> Interp<'p> {
                 // An `Uncertain<bool>` condition (e.g. `if a > 5` where `a` is
                 // Uncertain — the comparison stays Uncertain) branches on its
                 // inner bool; confidence is irrelevant to control flow.
-                if cond_bool(self.eval(cond, env)?, "if")? {
-                    self.eval(then, env)
+                let cv = self.eval_t::<T>(cond, env)?;
+                // Which branch runs says which of the operator's own
+                // alternatives was taken: what the branch STORES carries the
+                // condition's taint, and so does whatever runs after it if the
+                // branch can leave early (`t_branch`).
+                let ct = self.tl::<T>();
+                if T && ct != 0 {
+                    self.t_control_val_only();
+                }
+                let exits = T
+                    && ct != 0
+                    && (taint::has_exit(then) || else_.as_ref().is_some_and(|e| taint::has_exit(e)));
+                if cond_bool(cv, "if")? {
+                    self.t_branch(ct, exits, || self.eval_t::<T>(then, env))
                 } else {
                     match else_ {
-                        Some(e) => self.eval(e, env),
-                        None => Ok(Value::Unit),
+                        Some(e) => self.t_branch(ct, exits, || self.eval_t::<T>(e, env)),
+                        None => self.t_branch(ct, exits, || Ok(Value::Unit)),
                     }
                 }
             }
 
             Expr::Match { subject, arms } => {
-                let v = self.eval(subject, env)?;
+                let v = self.eval_t::<T>(subject, env)?;
+                let st = self.tl::<T>();
+                if T && st != 0 {
+                    self.t_control_val_only();
+                }
+                // The taint of every guard that REFUSED an earlier arm: which
+                // arm runs after a failed guard is that guard's value too, and
+                // so is whether a later guard is evaluated at all. It starts at
+                // the SUBJECT's taint: a guard is evaluated only because the
+                // pattern matched the subject (amendment 117, loop finding 2).
+                let mut lost = st;
                 for arm in arms {
                     env.push();
                     // R50 S0 (AX-57): an `Err` out of the pattern or the guard
                     // pops the arm's scope before propagating, so the
                     // enclosing scope's single pop removes its own mark.
-                    let matched = match self.match_pattern(&arm.pattern, &v, env) {
-                        Ok(m) => m,
-                        Err(e) => {
-                            env.pop();
-                            return Err(e);
-                        }
-                    };
+                    let matched =
+                        match self.match_pattern::<T>(&arm.pattern, &v, env, self.ts::<T>(st)) {
+                            Ok(m) => m,
+                            Err(e) => {
+                                env.pop();
+                                return Err(e);
+                            }
+                        };
                     if matched {
+                        let mut gt = 0;
                         if let Some(guard) = &arm.guard {
-                            let ok = match self.eval(guard, env) {
+                            let ok = match self.t_branch(lost, false, || self.eval_t::<T>(guard, env)) {
                                 Ok(g) => matches!(g, Value::Bool(true)),
                                 Err(e) => {
                                     env.pop();
                                     return Err(e);
                                 }
                             };
+                            gt = self.tl::<T>();
                             if !ok {
+                                if T {
+                                    lost |= gt;
+                                }
                                 env.pop();
                                 continue;
                             }
                         }
-                        let r = self.eval(&arm.body, env);
+                        let ct = st | gt | lost;
+                        let exits = T
+                            && ct != 0
+                            && arms.iter().any(|a| {
+                                taint::has_exit(&a.body) || a.guard.as_ref().is_some_and(taint::has_exit)
+                            });
+                        let r = self.t_branch(ct, exits, || self.eval_t::<T>(&arm.body, env));
                         env.pop();
                         return r;
                     }
@@ -361,8 +461,22 @@ impl<'p> Interp<'p> {
             Expr::While { cond, body } => {
                 // An `Uncertain<bool>` condition branches on its inner bool
                 // (confidence is irrelevant to control flow) — same as `if`.
-                while cond_bool(self.eval(cond, env)?, "while")? {
-                    match self.run_loop_body(body, env)? {
+                // Every evaluation of the condition after the first runs only
+                // because an earlier (possibly tainted) one was true, so a
+                // store in the condition is control-dependent on them
+                // (amendment 117, loop finding 26).
+                let mut seen = 0u8;
+                loop {
+                    let cv = self.t_branch(seen, false, || self.eval_t::<T>(cond, env))?;
+                    let ct = self.tl::<T>();
+                    if T {
+                        seen |= ct & taint::VAL;
+                    }
+                    if !cond_bool(cv, "while")? {
+                        break;
+                    }
+                    let exits = T && ct != 0 && taint::stmts_have_exit(body);
+                    match self.t_branch(ct, exits, || self.run_loop_body::<T>(body, env))? {
                         LoopStep::Break => break,
                         LoopStep::Continue => {}
                     }
@@ -375,11 +489,16 @@ impl<'p> Interp<'p> {
                 expr,
                 body,
             } => {
+                let mut seen = 0u8;
                 loop {
-                    let v = self.eval(expr, env)?;
+                    let v = self.t_branch(seen, false, || self.eval_t::<T>(expr, env))?;
+                    let vt = self.tl::<T>();
+                    if T {
+                        seen |= vt & taint::VAL;
+                    }
                     env.push();
                     // R50 S0: pop the iteration's scope on a pattern error too.
-                    let matched = match self.match_pattern(pattern, &v, env) {
+                    let matched = match self.match_pattern::<T>(pattern, &v, env, self.ts::<T>(vt)) {
                         Ok(m) => m,
                         Err(e) => {
                             env.pop();
@@ -390,7 +509,8 @@ impl<'p> Interp<'p> {
                         env.pop();
                         break;
                     }
-                    let step = self.run_loop_body(body, env);
+                    let exits = T && vt != 0 && taint::stmts_have_exit(body);
+                    let step = self.t_branch(vt, exits, || self.run_loop_body::<T>(body, env));
                     env.pop();
                     match step? {
                         LoopStep::Break => break,
@@ -407,8 +527,13 @@ impl<'p> Interp<'p> {
                 inclusive,
                 body,
             } => {
-                let s = strict_int(self.eval(start, env)?)?;
-                let e = strict_int(self.eval(end, env)?)?;
+                let s = strict_int(self.eval_t::<T>(start, env)?)?;
+                let e = strict_int(self.eval_t::<T>(end, env)?)?;
+                // The loop variable counts out a range; if sealed code sized
+                // the range it chose the variable, and the body runs as often
+                // as it said.
+                let bt = self.ta::<T>();
+                let exits = T && bt != 0 && taint::stmts_have_exit(body);
                 let mut i = s;
                 let (var, slot) = self.res.var(expr, var);
                 loop {
@@ -417,8 +542,8 @@ impl<'p> Interp<'p> {
                         break;
                     }
                     env.push();
-                    env.define_var(var, slot, Value::Int(i));
-                    let step = self.run_loop_body(body, env);
+                    env.define_var_t::<T>(var, slot, Value::Int(i), self.ts::<T>(bt) & taint::VAL);
+                    let step = self.t_branch(bt, exits, || self.run_loop_body::<T>(body, env));
                     env.pop();
                     match step? {
                         LoopStep::Break => break,
@@ -431,15 +556,33 @@ impl<'p> Interp<'p> {
 
             Expr::Return(opt) => {
                 let v = match opt {
-                    Some(e) => self.eval(e, env)?,
+                    Some(e) => self.eval_t::<T>(e, env)?,
                     None => Value::Unit,
                 };
+                // The value leaves under the control it was returned from.
+                if T {
+                    self.taint.ret.set(self.ts::<T>(self.ta::<T>()));
+                }
                 Err(Flow::Return(v))
             }
             Expr::Break => Err(Flow::Break),
             Expr::Continue => Err(Flow::Continue),
 
-            Expr::Question(inner) => question(self.eval(inner, env)?),
+            Expr::Question(inner) => {
+                let r = self.eval_t::<T>(inner, env)?;
+                if T {
+                    let t = self.tl::<T>();
+                    self.taint.ret.set(self.ts::<T>(t));
+                    // `?` is an early exit chosen by the operand's value: what
+                    // runs after it is control-dependent on it, taken or not.
+                    let ct = t & taint::VAL;
+                    if ct != 0 {
+                        let st = &self.taint.sticky;
+                        st.set(st.get() | ct);
+                    }
+                }
+                question(r)
+            }
 
             Expr::Call { callee, args, tier } => {
                 // `chan<T>()` lowers to a call whose callee is `chan::<T>`.
@@ -465,10 +608,16 @@ impl<'p> Interp<'p> {
                     // R13 native FFI: a native `M::fn(...)` call dispatches to the
                     // in-process mock shim (one impl, two engines — I-2).
                     if crate::native::is_native_call(name) {
-                        return self.eval_native_call(name, args, env);
+                        let r = self.eval_native_call(name, args, env);
+                        // A native handle names state in a registry every
+                        // frame shares: the call is `World` (amendment 108).
+                        if T {
+                            self.t_native_call();
+                        }
+                        return r;
                     }
                 }
-                self.eval_call(callee, args, tier.as_deref(), env)
+                self.eval_call::<T>(callee, args, tier.as_deref(), env)
             }
 
             Expr::MethodCall {
@@ -476,14 +625,14 @@ impl<'p> Interp<'p> {
                 method,
                 args,
             } => {
-                let recv = self.eval(receiver, env)?;
+                let recv = self.eval_t::<T>(receiver, env)?;
                 if let Value::Chan(q) = &recv {
-                    return self.chan_method(q, method, args, env);
+                    return self.chan_method::<T>(q, method, args, env);
                 }
                 let mut argv = Vec::with_capacity(args.len() + 1);
                 argv.push(recv);
                 for a in args {
-                    argv.push(self.eval(a, env)?);
+                    argv.push(self.eval_t::<T>(a, env)?);
                 }
                 self.impl_method(method, argv)
             }
@@ -497,14 +646,14 @@ impl<'p> Interp<'p> {
                     let (s, slot) = self.res.var(receiver, name);
                     return self.field_in_place(s, slot, name, f, field, env);
                 }
-                let v = self.eval(receiver, env)?;
+                let v = self.eval_t::<T>(receiver, env)?;
                 field_of(&v, f, field)
             }
 
             Expr::Tuple(elems) => {
                 let mut vs = Vec::with_capacity(elems.len());
                 for e in elems {
-                    vs.push(self.eval(e, env)?);
+                    vs.push(self.eval_t::<T>(e, env)?);
                 }
                 Ok(Value::tuple(vs))
             }
@@ -514,7 +663,7 @@ impl<'p> Interp<'p> {
                 // Intercept before normal array indexing to avoid "undefined E".
                 if let Expr::Ident(tag) = receiver.as_ref() {
                     if matches!(tag.as_str(), "E" | "Var") {
-                        let dist_val = self.eval(index, env)?;
+                        let dist_val = self.eval_t::<T>(index, env)?;
                         if let Some(moment) = eval_dist_moment(tag, &dist_val) {
                             return Ok(Value::Float(moment));
                         }
@@ -526,19 +675,19 @@ impl<'p> Interp<'p> {
                 if let Expr::Ident(name) = receiver.as_ref() {
                     let (s, slot) = self.res.var(receiver, name);
                     if env.get_var(s, slot).is_some() || self.globals.contains_key(&s) {
-                        let idx = strict_int(self.eval(index, env)?)?;
+                        let idx = strict_int(self.eval_t::<T>(index, env)?)?;
                         return self.index_in_place(s, slot, name, idx, env);
                     }
                 }
-                let arr = self.eval(receiver, env)?;
-                let idx = strict_int(self.eval(index, env)?)?;
+                let arr = self.eval_t::<T>(receiver, env)?;
+                let idx = strict_int(self.eval_t::<T>(index, env)?)?;
                 index_value(arr, idx)
             }
 
             Expr::Array(elems) => {
                 let mut out = Vec::with_capacity(elems.len());
                 for e in elems {
-                    out.push(self.eval(e, env)?);
+                    out.push(self.eval_t::<T>(e, env)?);
                 }
                 Ok(Value::Array(Rc::new(out)))
             }
@@ -562,7 +711,7 @@ impl<'p> Interp<'p> {
                 // the value.
                 let mut vals = self.take_args(fields.len());
                 for (_, fexpr) in fields {
-                    vals.push(self.eval(fexpr, env)?);
+                    vals.push(self.eval_t::<T>(fexpr, env)?);
                 }
                 let v = self.finish_record(lit, name, &mut vals);
                 vals.clear();
@@ -570,9 +719,9 @@ impl<'p> Interp<'p> {
                 v
             }
 
-            Expr::Ok(e) => Ok(Value::Ok(Box::new(self.eval(e, env)?))),
-            Expr::Err(e) => Ok(Value::Err(Box::new(self.eval(e, env)?))),
-            Expr::Some(e) => Ok(Value::Some(Box::new(self.eval(e, env)?))),
+            Expr::Ok(e) => Ok(Value::Ok(Box::new(self.eval_t::<T>(e, env)?))),
+            Expr::Err(e) => Ok(Value::Err(Box::new(self.eval_t::<T>(e, env)?))),
+            Expr::Some(e) => Ok(Value::Some(Box::new(self.eval_t::<T>(e, env)?))),
             Expr::None => Ok(Value::None),
 
             Expr::FmtStr { parts } => {
@@ -582,17 +731,25 @@ impl<'p> Interp<'p> {
                     match part {
                         FmtPart::Lit(t) => s.push_str(t),
                         FmtPart::Expr(e) => {
-                            let v = self.eval(e, env)?;
+                            let v = self.eval_t::<T>(e, env)?;
+                            if T {
+                                // The text of a value shows the state in it.
+                                self.t_touch(self.t_obj_deep(&v));
+                            }
                             s.push_str(&display(&v));
                         }
                     }
+                }
+                // The result is a `str` whoever the parts were.
+                if T {
+                    self.t_untype();
                 }
                 Ok(Value::Str(Rc::new(s)))
             }
 
             Expr::Lambda { .. } => Ok(self.make_closure(expr, env)),
 
-            Expr::Comptime(inner) => self.eval(inner, env),
+            Expr::Comptime(inner) => self.eval_t::<T>(inner, env),
 
             // R17 Slice 1: inline asm is hardware-only — refuses in the interpreter.
             Expr::InlineAsm { .. } => Err(crate::interp::Flow::Panic(
@@ -602,7 +759,7 @@ impl<'p> Interp<'p> {
             // Cooperative concurrency: run the spawned body eagerly (single-
             // threaded), so its sends are queued before the main flow continues.
             Expr::Spawn(body) => {
-                self.eval(body, env)?;
+                self.eval_t::<T>(body, env)?;
                 Ok(Value::Unit)
             }
             // Cooperative select: fire the first arm whose channel has a ready
@@ -610,6 +767,11 @@ impl<'p> Interp<'p> {
             // arm body. Arms are `c.recv() => body`. With eager `spawn`, channels
             // are pre-filled, so this is deterministic (first ready arm wins).
             Expr::Select(arms) => {
+                // Which arm fires is the readiness of every queue looked at up
+                // to it: the arm's body runs under the control taint of all of
+                // them, and so does what runs after it if any arm can leave
+                // the fn (a skipped arm is a branch not taken).
+                let mut lost = 0u8;
                 for arm in arms {
                     let Expr::MethodCall {
                         receiver, method, ..
@@ -620,12 +782,16 @@ impl<'p> Interp<'p> {
                     if method != "recv" {
                         return panic("select arms must be channel `recv()` operations");
                     }
-                    let Value::Chan(q) = self.eval(receiver, env)? else {
+                    let Value::Chan(q) = self.eval_t::<T>(receiver, env)? else {
                         return panic("select arm `recv` on a non-channel");
                     };
+                    if T {
+                        lost |= self.t_obj(&Value::Chan(q.clone())) & taint::VAL;
+                    }
                     let ready = q.borrow_mut().pop_front();
                     if ready.is_some() {
-                        return self.eval(&arm.body, env);
+                        let exits = T && lost != 0 && arms.iter().any(|a| taint::has_exit(&a.body));
+                        return self.t_branch(lost, exits, || self.eval_t::<T>(&arm.body, env));
                     }
                 }
                 panic("select: no channel was ready (cooperative interpreter — send before select)")
@@ -667,14 +833,17 @@ impl<'p> Interp<'p> {
     /// Bind the evaluated value `v` of a `let`/`own`/`ref` (all three behave
     /// identically) to `name` (`s` at frame slot `slot`) with the optional
     /// annotation `ty`: the refinement check, the sized-int coercion, then the
-    /// define. Shared by the `eval` arm and the bytecode engine (R50).
-    pub(super) fn bind_let(
+    /// define, carrying the value's taint `vt`. Shared by the `eval` arm and
+    /// the bytecode engine (R50), which is never sealed (`T = false`).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn bind_let<const T: bool>(
         &self,
         name: &str,
         s: Sym,
         slot: u32,
         ty: Option<&crate::ast::AxonType>,
         v: Value,
+        vt: u8,
         env: &mut Env,
     ) -> Result<(), Flow> {
         nest_guard!(self, BIND_LET);
@@ -687,12 +856,14 @@ impl<'p> Interp<'p> {
         if !self.refine_preds.is_empty() {
             if let Some(crate::ast::AxonType::Named(rn)) = ty {
                 if let Some(pred) = self.refine_preds.get(rn.as_str()).copied() {
-                    let mut pe = Env::new();
-                    pe.define(SYM_UNDERSCORE, v.clone());
+                    // The predicate's env is fresh: it keeps the bound value's
+                    // taint (T8.3).
+                    let mut pe = self.new_env();
+                    pe.define_t::<T>(SYM_UNDERSCORE, v.clone(), vt);
                     // Also bind the bound name for inline `let x: T where E[x] > k`.
-                    pe.define(s, v.clone());
+                    pe.define_t::<T>(s, v.clone(), vt);
                     if let Value::Bool(false) =
-                        contain_frame(self.eval(pred, &mut pe), FrameEdge::Predicate)?
+                        contain_frame(self.eval_t::<T>(pred, &mut pe), FrameEdge::Predicate)?
                     {
                         return Err(Flow::RefineViolation(
                             format!(
@@ -718,17 +889,27 @@ impl<'p> Interp<'p> {
         } else {
             v
         };
-        env.define_var(s, slot, v);
+        env.define_var_t::<T>(s, slot, v, vt);
         Ok(())
     }
 
-    pub(super) fn eval_block(&self, stmts: &[Stmt], env: &mut Env) -> R {
+    pub(super) fn eval_block<const T: bool>(&self, stmts: &[Stmt], env: &mut Env) -> R {
         nest_guard!(self, EVAL_BLOCK);
         env.push();
         let mut last = Value::Unit;
-        for stmt in stmts {
-            match self.eval(&stmt.expr, env) {
-                Ok(v) => last = v,
+        let n = stmts.len();
+        for (i, stmt) in stmts.iter().enumerate() {
+            // What a statement touched does not become the block's value: its
+            // effects travel through the bindings and containers it wrote.
+            // Only the tail expression is the block's value (amendment 102).
+            let before = self.ta::<T>();
+            match self.eval_t::<T>(&stmt.expr, env) {
+                Ok(v) => {
+                    last = v;
+                    if T && i + 1 < n {
+                        self.taint.acc.set(before);
+                    }
+                }
                 Err(e) => {
                     env.pop();
                     return Err(e);
@@ -741,11 +922,15 @@ impl<'p> Interp<'p> {
 
     /// Run a loop body (a `Vec<Stmt>`) in a fresh scope, translating `break`
     /// and `continue` into a [`LoopStep`] for the caller's loop construct.
-    pub(super) fn run_loop_body(&self, body: &[Stmt], env: &mut Env) -> Result<LoopStep, Flow> {
+    pub(super) fn run_loop_body<const T: bool>(
+        &self,
+        body: &[Stmt],
+        env: &mut Env,
+    ) -> Result<LoopStep, Flow> {
         nest_guard!(self, RUN_LOOP_BODY);
         env.push();
         for stmt in body {
-            match self.eval(&stmt.expr, env) {
+            match self.eval_t::<T>(&stmt.expr, env) {
                 Ok(_) => {}
                 Err(Flow::Break) => {
                     env.pop();
@@ -771,7 +956,7 @@ impl<'p> Interp<'p> {
     /// evaluates only `args[0]`, every other method none of them.
     /// Cooperative and single-threaded: `send` pushes to the shared queue,
     /// `recv` pops from it, `clone` shares the handle.
-    pub(super) fn chan_method(
+    pub(super) fn chan_method<const T: bool>(
         &self,
         q: &Rc<RefCell<VecDeque<Value>>>,
         method: &str,
@@ -781,7 +966,12 @@ impl<'p> Interp<'p> {
         nest_guard!(self, CHAN_METHOD);
         match method {
             "send" => {
-                let v = self.eval(&args[0], env)?;
+                let v = self.eval_t::<T>(&args[0], env)?;
+                if T && !self.frame_sealed.get() {
+                    // The queue now holds what was sent, and whoever reads it
+                    // back inherits that (amendment 102).
+                    self.t_mark_obj(&Value::Chan(q.clone()), self.ts::<T>(self.tl::<T>()));
+                }
                 q.borrow_mut().push_back(v);
                 Ok(Value::Unit)
             }
@@ -1089,7 +1279,7 @@ impl<'p> Interp<'p> {
         }
     }
 
-    pub(super) fn eval_call(
+    pub(super) fn eval_call<const T: bool>(
         &self,
         callee: &Expr,
         args: &[Expr],
@@ -1127,17 +1317,18 @@ impl<'p> Interp<'p> {
         // Evaluate arguments left-to-right, into a reused buffer (AX-54).
         let mut argv = self.take_args(args.len());
         for a in args {
-            argv.push(self.eval(a, env)?);
+            argv.push(self.eval_t::<T>(a, env)?);
         }
-        self.dispatch_call(callee, argv, tier, env)
+        self.dispatch_call::<T>(callee, argv, tier, env)
     }
 
     /// Dispatch a call whose arguments `argv` are already evaluated: `resume`,
     /// the per-call `tier:`, then a local closure, a builtin, a user fn, a
     /// module-level closure, the unknown-function panic; a callee that is not
     /// an identifier is evaluated (after the arguments) and called as a
-    /// closure. Shared by `eval_call` and the bytecode engine (R50).
-    pub(super) fn dispatch_call(
+    /// closure. Only `eval_call` calls it (the bytecode engine joins at
+    /// [`Interp::dispatch_named`]).
+    pub(super) fn dispatch_call<const T: bool>(
         &self,
         callee: &Expr,
         argv: Vec<Value>,
@@ -1150,12 +1341,12 @@ impl<'p> Interp<'p> {
                 return self.dispatch_resume(argv);
             }
             let (s, slot) = self.res.var(callee, name);
-            return self.dispatch_named(name, s, slot, argv, tier, env);
+            return self.dispatch_named::<T>(name, s, slot, argv, tier, env);
         }
         self.set_call_tier(tier);
         // Callee is an expression that should evaluate to a closure
         // (e.g. `make_adder(1)(2)` or an array element).
-        let c = self.eval(callee, env)?;
+        let c = self.eval_t::<T>(callee, env)?;
         self.call_closure(c, argv)
     }
 
@@ -1202,7 +1393,7 @@ impl<'p> Interp<'p> {
     /// `resume`, already resolved to `(s, slot)` (the bytecode engine resolves
     /// it at compile time, R50): the per-call `tier:`, then a local closure, a
     /// builtin, a user fn, a module-level closure, the unknown-function panic.
-    pub(super) fn dispatch_named(
+    pub(super) fn dispatch_named<const T: bool>(
         &self,
         name: &str,
         s: Sym,
@@ -1224,10 +1415,29 @@ impl<'p> Interp<'p> {
         let resolved = match known {
             Some(r) if r != CALLEE_UNKNOWN => r,
             _ => {
+                // A sealed run: what the builtin reads (its arguments, deep,
+                // and the kernel or world state its class says it reads) goes
+                // into the result, and the builtin runs under the control
+                // taint of its arguments: a callback it runs once per element
+                // of a tainted array runs a number of times the candidate
+                // chose, and what that callback stores carries it.
+                if T {
+                    self.t_builtin_in(name, argv.values());
+                }
+                let pc = if T {
+                    Some(self.t_pc(self.taint.acc.get() & taint::VAL))
+                } else {
+                    None
+                };
                 if let Some(v) = self.call_builtin(name, argv.values())? {
+                    if T {
+                        self.t_builtin_out(name, argv.values(), &v);
+                    }
+                    drop(pc);
                     argv.done(self);
                     return Ok(v);
                 }
+                drop(pc);
                 let r = match self.fn_of_sym.get(&s) {
                     Some(&i) => CALLEE_FN + i,
                     None => CALLEE_NOT_FN,
@@ -1327,7 +1537,7 @@ impl<'p> Interp<'p> {
                     return panic("`&mut` of something other than a local variable".to_string());
                 };
                 let (s, slot) = self.res.var(operand, name);
-                let Some(b) = env.get_var_mut(s, slot) else {
+                let Some(b) = env.get_var_mut(s, slot, 0) else {
                     return panic(format!("`&mut {name}`: `{name}` is not a local variable"));
                 };
                 let v = std::mem::replace(b, Value::Unit);
@@ -1352,7 +1562,7 @@ impl<'p> Interp<'p> {
                 };
                 let out = match (entry.def.params.get(i), entry.params.get(i)) {
                     (Some(p), Some(s)) if matches!(p.ty, crate::ast::AxonType::RefMut(_)) => {
-                        match frame.get_mut(*s) {
+                        match frame.get_mut(*s, 0) {
                             Some(v) => std::mem::replace(v, Value::Unit),
                             None => Value::Unit,
                         }
@@ -1360,7 +1570,7 @@ impl<'p> Interp<'p> {
                     _ => Value::Unit,
                 };
                 let (s, slot) = self.res.var(operand, name);
-                if let Some(b) = env.get_var_mut(s, slot) {
+                if let Some(b) = env.get_var_mut(s, slot, 0) {
                     forget_scalar(std::mem::replace(b, out));
                 }
             }
@@ -1405,7 +1615,38 @@ impl<'p> Interp<'p> {
             env_snapshot: env.snapshot(),
         };
         self.handlers.borrow_mut().push(frame);
+        // An arm that is not a bare tail `resume(..)` can ABORT the body at the
+        // operation it answers (or replay it): what runs after that point is
+        // skipped by a decision of whoever performed the operation. While such
+        // a handler is installed, a branch on candidate data is treated as a
+        // possible exit (sticky), taken or not, and sealed code that ran inside
+        // the body makes what follows control-dependent on it (amendment 117,
+        // loop findings 31, 32, 34).
+        let abortable = self.seal.active
+            && arms
+                .iter()
+                .any(|a| !crate::effects::arm_is_bare_tail_resume(&a.body));
+        let entries = self.taint.entries.get();
+        if abortable {
+            let n = &self.taint.abortable;
+            n.set(n.get() + 1);
+        }
         let result = self.eval(body, env);
+        if abortable {
+            let n = &self.taint.abortable;
+            n.set(n.get() - 1);
+            if !self.frame_sealed.get() && self.taint.entries.get() != entries {
+                let st = &self.taint.sticky;
+                st.set(st.get() | taint::VAL);
+            }
+        }
+        // The block's value: the body's, or (when an arm finished the block)
+        // the arm's, whose accumulation unwound into this expression's.
+        let vt = match (self.seal.active, &result) {
+            (false, _) => 0,
+            (true, Err(Flow::HandlerDone(_))) => self.taint.acc.get(),
+            (true, _) => self.t_last(),
+        };
         self.handlers.borrow_mut().pop();
         // Phase 6 multi-shot: a non-tail / multi-resume arm reifies the
         // continuation by replay and finishes the WHOLE block with
@@ -1420,9 +1661,9 @@ impl<'p> Interp<'p> {
 
         // An inline `return(v) => e` arm rewrites the body's final value.
         if let Some(ra) = return_arm {
-            let mut ra_env = Env::from_snapshot(captured);
+            let mut ra_env = self.env_from_snapshot(captured);
             ra_env.push();
-            self.match_pattern(&ra.binding, &value, &mut ra_env)?;
+            self.match_pattern_rt(&ra.binding, &value, &mut ra_env, vt)?;
             value = self.eval(&ra.body, &mut ra_env)?;
         }
         Ok(value)
@@ -1460,7 +1701,7 @@ impl<'p> Interp<'p> {
             feed: v,
             consumed: false,
         });
-        let mut body_env = Env::from_snapshot(ctx.env_snapshot);
+        let mut body_env = self.env_from_snapshot(ctx.env_snapshot);
         // SAFETY: `ctx` came from the live resume context, whose `with` is
         // still evaluating (`SrcRef`'s invariant).
         let body = unsafe { ctx.body.get() };
@@ -1512,6 +1753,12 @@ impl<'p> Interp<'p> {
         // arm itself does IO). The removed frames are restored after the arm
         // runs, whether it resumes, aborts, or errors.
         let suspended: Vec<HandlerFrame> = self.handlers.borrow_mut().split_off(idx);
+        // The operation's arguments are the arm's payload, with their taint.
+        let pt = if self.seal.active {
+            self.t_stored(self.taint.acc.get())
+        } else {
+            0
+        };
 
         // BARE TAIL-RESUME FAST PATH (single-shot): when the arm body is exactly
         // `resume(<expr>)`, the operation yields that value and the suspended body
@@ -1520,9 +1767,9 @@ impl<'p> Interp<'p> {
         // so it must stay byte-identical: evaluate the arm and propagate the
         // `Flow::Resume(v)` it raises directly (no resume_ctx, no replay).
         if crate::effects::arm_is_bare_tail_resume(arm_body) {
-            let mut arm_env = Env::from_snapshot(captured);
+            let mut arm_env = self.env_from_snapshot(captured);
             arm_env.push();
-            let bound = self.match_pattern(binding, &payload, &mut arm_env);
+            let bound = self.match_pattern_rt(binding, &payload, &mut arm_env, pt);
             let outcome = contain_loop_control(
                 bound.and_then(|_| self.eval(arm_body, &mut arm_env)),
                 FrameEdge::HandlerArm,
@@ -1530,7 +1777,13 @@ impl<'p> Interp<'p> {
             self.handlers.borrow_mut().extend(suspended);
             return match outcome {
                 Err(Flow::Resume(v)) => Ok(Some(v)),
-                Ok(v) => Err(Flow::Return(v)),
+                Ok(v) => {
+                    // The arm's value leaves the fn that performed the operation.
+                    if self.seal.active {
+                        self.taint.ret.set(self.t_last());
+                    }
+                    Err(Flow::Return(v))
+                }
                 Err(other) => Err(other),
             };
         }
@@ -1544,9 +1797,9 @@ impl<'p> Interp<'p> {
             body: with_body,
             env_snapshot: with_env,
         });
-        let mut arm_env = Env::from_snapshot(captured);
+        let mut arm_env = self.env_from_snapshot(captured);
         arm_env.push();
-        let bound = self.match_pattern(binding, &payload, &mut arm_env);
+        let bound = self.match_pattern_rt(binding, &payload, &mut arm_env, pt);
         let outcome = contain_loop_control(
             bound.and_then(|_| self.eval(arm_body, &mut arm_env)),
             FrameEdge::HandlerArm,
@@ -1570,22 +1823,73 @@ impl<'p> Interp<'p> {
         }
     }
 
-    pub(super) fn eval_binop(&self, op: &BinOp, left: &Expr, right: &Expr, env: &mut Env) -> R {
+    /// `&&`/`||` in a sealed run: the left operand decides whether the right
+    /// one runs, a branch like `if`. What the right operand STORES carries the
+    /// left's taint, and a right operand that can leave the fn or loop keeps
+    /// everything after it control-dependent too, taken or not (amendment 114).
+    /// Kept out of `eval_binop` so the ordinary run's `&&` is the code it
+    /// always was.
+    #[cold]
+    #[inline(never)]
+    fn short_circuit_tainted(&self, op: &BinOp, lv: Value, right: &Expr, env: &mut Env) -> R {
+        let ct = self.tl::<true>();
+        if ct != 0 {
+            self.t_control_val_only();
+        }
+        let exits = ct != 0 && taint::has_exit(right);
+        if short_circuits(op, &lv) {
+            // A branch not taken: when it could exit, whether it ran is still
+            // the left's bit.
+            if exits {
+                self.t_branch(ct, exits, || Ok(()))?;
+            }
+            return Ok(lv);
+        }
+        let rv = self.t_branch(ct, exits, || self.eval_t::<true>(right, env))?;
+        logic_rhs(op, lv, rv)
+    }
+
+    pub(super) fn eval_binop<const T: bool>(
+        &self,
+        op: &BinOp,
+        left: &Expr,
+        right: &Expr,
+        env: &mut Env,
+    ) -> R {
         nest_guard!(self, EVAL_BINOP);
         // Short-circuit boolean operators. An `Uncertain<bool>` operand can't
         // short-circuit (we must combine confidences), so it falls through to
         // the value-level path which propagates uncertainty.
         if matches!(op, BinOp::And | BinOp::Or) {
-            let lv = self.eval(left, env)?;
+            let lv = self.eval_t::<T>(left, env)?;
+            if T {
+                return self.short_circuit_tainted(op, lv, right, env);
+            }
             if short_circuits(op, &lv) {
                 return Ok(lv);
             }
-            let rv = self.eval(right, env)?;
+            let rv = self.eval_t::<T>(right, env)?;
             return logic_rhs(op, lv, rv);
         }
-
-        let l = self.operand(left, env)?;
-        let r = self.operand(right, env)?;
+        if T {
+            // No in-place operand read: each operand goes through the
+            // evaluator so its taint is accumulated.
+            let l = self.eval_t::<T>(left, env)?;
+            let r = self.eval_t::<T>(right, env)?;
+            // A comparison READS the content of every shared object (dict,
+            // channel) inside either operand, however deep (`d == e`,
+            // `[d] == [e]`, a struct or tuple holding one): the answer is a
+            // function of what sealed code wrote there (amendment 108).
+            if matches!(
+                op,
+                BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq
+            ) {
+                self.t_touch(self.t_obj_deep(&l) | self.t_obj_deep(&r));
+            }
+            return binop_operands(op, Operand::of(l), Operand::of(r));
+        }
+        let l = self.operand::<T>(left, env)?;
+        let r = self.operand::<T>(right, env)?;
         binop_operands(op, l, r)
     }
 
@@ -1594,7 +1898,7 @@ impl<'p> Interp<'p> {
     /// literal without building, cloning or dropping a `Value`. Anything else
     /// is evaluated as usual. Reading a local is what `eval` does for it.
     #[inline(always)]
-    fn operand(&self, e: &Expr, env: &mut Env) -> Result<Operand, Flow> {
+    fn operand<const T: bool>(&self, e: &Expr, env: &mut Env) -> Result<Operand, Flow> {
         match e {
             Expr::Ident(name) => {
                 let (s, slot) = self.res.var(e, name);
@@ -1606,7 +1910,7 @@ impl<'p> Interp<'p> {
             Expr::Literal(Literal::Float(f)) => return Ok(Operand::Float(*f)),
             _ => {}
         }
-        self.eval(e, env).map(Operand::of)
+        self.eval_t::<T>(e, env).map(Operand::of)
     }
 
     /// AX-31: `x = arr_push(x, v)`, `x = arr_concat(x, ys)` and `x = x + y` on a
@@ -1628,7 +1932,7 @@ impl<'p> Interp<'p> {
     /// `call_builtin` skips no gate, audit row or handler. Returns `Ok(false)`,
     /// having evaluated nothing, for any other statement shape or when `x` is
     /// not a str/array local.
-    pub(super) fn assign_in_place(
+    pub(super) fn assign_in_place<const T: bool>(
         &self,
         s: Sym,
         slot: u32,
@@ -1685,11 +1989,14 @@ impl<'p> Interp<'p> {
                 return Ok(false);
             }
         }
-        let y = self.eval(operand, env)?;
+        let y = self.eval_t::<T>(operand, env)?;
+        // The append puts `y` into the container `x` holds: the binding now
+        // carries `y`'s taint and the control it was written under.
+        let yt = self.ts::<T>(self.tl::<T>());
         if let Some((_, tier, _)) = call {
             *self.current_call_tier.borrow_mut() = tier.clone();
         }
-        let Some(slot) = env.get_var_mut(s, slot) else {
+        let Some(slot) = env.get_var_mut_t::<T>(s, slot, yt) else {
             unreachable!("the operand does not mention `{name}`, so it is still bound")
         };
         match (op, slot, y) {
@@ -1831,8 +2138,8 @@ impl<'p> Interp<'p> {
                     if let crate::ast::AxonType::Named(rn) = &tf.ty {
                         if let Some(pred) = self.refine_preds.get(rn.as_str()).copied() {
                             if let Some(fv) = fields.named(&tf.name) {
-                                let mut pe = Env::new();
-                                pe.define(SYM_UNDERSCORE, fv.clone());
+                                let mut pe = self.new_env();
+                                pe.define(SYM_UNDERSCORE, fv.clone(), 0);
                                 if let Value::Bool(false) =
                                     contain_frame(self.eval(pred, &mut pe), FrameEdge::Predicate)?
                                 {
@@ -1856,8 +2163,8 @@ impl<'p> Interp<'p> {
                 // instance and `_.field` projects, so build it first.
                 if let Some(pred) = &td.refinement {
                     let sv = Value::record(sname, fields);
-                    let mut pe = Env::new();
-                    pe.define(SYM_UNDERSCORE, sv.clone());
+                    let mut pe = self.new_env();
+                    pe.define(SYM_UNDERSCORE, sv.clone(), 0);
                     if let Value::Bool(false) =
                         contain_frame(self.eval(pred, &mut pe), FrameEdge::Predicate)?
                     {
@@ -1901,32 +2208,34 @@ impl<'p> Interp<'p> {
     // ── Pattern matching ─────────────────────────────────────────────────────
 
     /// Try to match `val` against `pat`, binding identifiers into the current
-    /// scope of `env`. Returns whether it matched.
-    pub(super) fn match_pattern(
+    /// scope of `env`, each carrying the subject's taint `t` (a destructured
+    /// part is the subject's). Returns whether it matched.
+    pub(super) fn match_pattern<const T: bool>(
         &self,
         pat: &Pattern,
         val: &Value,
         env: &mut Env,
+        t: u8,
     ) -> Result<bool, Flow> {
         match pat {
             Pattern::Wildcard => Ok(true),
             Pattern::Ident(name) => {
                 let (s, slot) = self.res.pat_var(pat, name);
-                env.define_var(s, slot, val.clone());
+                env.define_var_t::<T>(s, slot, val.clone(), t);
                 Ok(true)
             }
             Pattern::Literal(lit) => Ok(values_equal(&lit_to_val(lit), val)),
             Pattern::Some(inner) => match val {
-                Value::Some(v) => self.match_pattern(inner, v, env),
+                Value::Some(v) => self.match_pattern::<T>(inner, v, env, t),
                 _ => Ok(false),
             },
             Pattern::None => Ok(matches!(val, Value::None)),
             Pattern::Ok(inner) => match val {
-                Value::Ok(v) => self.match_pattern(inner, v, env),
+                Value::Ok(v) => self.match_pattern::<T>(inner, v, env, t),
                 _ => Ok(false),
             },
             Pattern::Err(inner) => match val {
-                Value::Err(v) => self.match_pattern(inner, v, env),
+                Value::Err(v) => self.match_pattern::<T>(inner, v, env, t),
                 _ => Ok(false),
             },
             Pattern::Struct { name, fields } => {
@@ -1949,7 +2258,7 @@ impl<'p> Interp<'p> {
                         return Ok(false);
                     };
                     let fval = fval.clone();
-                    if !self.match_pattern(fpat, &fval, env)? {
+                    if !self.match_pattern::<T>(fpat, &fval, env, t)? {
                         return Ok(false);
                     }
                 }
@@ -1964,12 +2273,28 @@ impl<'p> Interp<'p> {
                 }
                 for (p, v) in pats.iter().zip(items.iter()) {
                     let v = v.clone();
-                    if !self.match_pattern(p, &v, env)? {
+                    if !self.match_pattern::<T>(p, &v, env, t)? {
                         return Ok(false);
                     }
                 }
                 Ok(true)
             }
+        }
+    }
+
+    /// [`Interp::match_pattern`] for a caller that does not know which run it
+    /// is in (the effect-handler arms): the run picks the instantiation.
+    pub(super) fn match_pattern_rt(
+        &self,
+        pat: &Pattern,
+        val: &Value,
+        env: &mut Env,
+        t: u8,
+    ) -> Result<bool, Flow> {
+        if self.seal.active {
+            self.match_pattern::<true>(pat, val, env, t)
+        } else {
+            self.match_pattern::<false>(pat, val, env, 0)
         }
     }
 
