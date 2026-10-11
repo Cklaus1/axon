@@ -1,0 +1,30 @@
+{
+  "schema": "axon.research-experiment-plan/1",
+  "package_version": "0.21",
+  "status": "DRAFT",
+  "deployment_enabled": false,
+  "product_result": "NOT_RUN",
+  "fixture_only": true,
+  "required_before_execution": [
+    "source_revision",
+    "provider_code_revision",
+    "model_weight_revision_or_declared_api_window",
+    "encoder_tokenizer_pooling_head_identity",
+    "task_and_repository_partitions",
+    "calibration_partition",
+    "final_test_partition",
+    "candidate_and_context_policy",
+    "independent_evaluator",
+    "principal_and_data_scope",
+    "shared_total_budget",
+    "price_revision",
+    "environment",
+    "trial_identifiers",
+    "statistical_stopping_and_multiplicity_policy",
+    "noninferiority_margin",
+    "rollback_scope"
+  ],
+  "live_evidence": [],
+  "source_references": "integration/RESEARCH_SOURCES.json",
+  "note": "Template, not a trained model or an authorized experiment."
+}

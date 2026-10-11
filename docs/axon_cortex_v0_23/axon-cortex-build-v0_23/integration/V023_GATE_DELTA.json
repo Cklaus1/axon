@@ -1,0 +1,255 @@
+{
+  "schema": "cortex-gate-delta/1",
+  "package_version": "0.23",
+  "parent_version": "0.22",
+  "gates": [
+    {
+      "id": "G00-r23-forge-owner-map",
+      "spec": "CX-00",
+      "description": "Every Forge concern maps to one canonical existing authority or an explicitly Forge-owned program-semantic contract; no duplicate global experiment, evidence, capability, admission or resource authority is introduced.",
+      "amendment_path": "amendments/CX-00-v023-forge-ownership.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G00-r23-parent-preservation",
+      "spec": "CX-00",
+      "description": "The exact v0.22 parent archive and Forge v0.3 dependency are hash-pinned; the integration delta cannot silently rewrite either input.",
+      "amendment_path": "amendments/CX-00-v023-forge-ownership.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G03-r23-meta-no-mint",
+      "spec": "CX-03",
+      "description": "A Forge meta/build/transform request cannot create or widen a capability grant; unknown, stale, revoked or over-budget authority refuses before side effects.",
+      "amendment_path": "amendments/CX-03-v023-forge-meta-authority.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G03-r23-forge-recheck",
+      "spec": "CX-03",
+      "description": "Cached SIR, compiler results or resource projections do not bypass current capability recheck at dispatch or commit.",
+      "amendment_path": "amendments/CX-03-v023-forge-meta-authority.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G13-r23-meta-isolation",
+      "spec": "CX-13",
+      "description": "Meta/build/compiler-plugin execution is capability-scoped and isolated; undeclared filesystem/network/process/secret effects are denied and recorded.",
+      "amendment_path": "amendments/CX-13-v023-forge-isolation.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G13-r23-forge-receipt",
+      "spec": "CX-13",
+      "description": "Every protected Forge execution used as evidence binds to an external execution receipt/environment identity rather than a self-asserted Forge success flag.",
+      "amendment_path": "amendments/CX-13-v023-forge-isolation.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G15-r23-sir-boundary",
+      "spec": "CX-15",
+      "description": "Source/frontend lowering into Forge SIR has deterministic identity, explicit contracts/effects/resources and traceability; SIR is not confused with IntentIR/AIR.",
+      "amendment_path": "amendments/CX-15-v023-forge-compiler.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G15-r23-transform-abi",
+      "spec": "CX-15",
+      "description": "Compiler/program transformations use the Forge Transform/TransformResult ABI with declared preconditions, preserved invariants, semantic diff and verification requirements.",
+      "amendment_path": "amendments/CX-15-v023-forge-compiler.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G15-r23-build-backend",
+      "spec": "CX-15",
+      "description": "BuildProgram/backend adapters declare inputs, toolchain/target identity and outputs; backend success cannot bypass semantic verification or external authority.",
+      "amendment_path": "amendments/CX-15-v023-forge-compiler.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G16-r23-structured-repair",
+      "spec": "CX-16",
+      "description": "When a supported backend provides structured diagnostics, the MiCode repair loop consumes stable diagnostic/SIR references rather than relying only on raw terminal text.",
+      "amendment_path": "amendments/CX-16-v023-micode-forge.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G16-r23-forge-loop",
+      "spec": "CX-16",
+      "description": "A MiCode Forge episode preserves task/context/authority/evaluator/strategy identities through source -> SIR -> candidate -> compile/test -> Axon evidence submission.",
+      "amendment_path": "amendments/CX-16-v023-micode-forge.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G17-r23-bootstrap-source",
+      "spec": "CX-17",
+      "description": "A bootstrap pack records compiler/language revision and authoritative local source roots; stale or mismatched packs are not silently reused as current language truth.",
+      "amendment_path": "amendments/CX-17-v023-forge-bootstrap.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G18-r23-forge-promotion",
+      "spec": "CX-18",
+      "description": "Forge transforms/migrations/pipelines become native promotion candidates only with independent evidence and existing CX-11/CX-18 admission; no Forge-local winner flag activates code.",
+      "amendment_path": "amendments/CX-18-v023-forge-promotion.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G18-r23-compiler-promotion",
+      "spec": "CX-18",
+      "description": "A promoted compiler transform retains source Forge artifact lineage, rollback target and semantic/conformance requirements.",
+      "amendment_path": "amendments/CX-18-v023-forge-promotion.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G19-r23-intent-sir-separation",
+      "spec": "CX-19",
+      "description": "IntentIR/AIR and Forge SIR retain distinct schemas, identities and ownership; any lowering/constraint bridge is explicit and evidence-bearing.",
+      "amendment_path": "amendments/CX-19-v023-intent-sir.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G21-r23-forge-benchmark",
+      "spec": "CX-21",
+      "description": "Forge-assisted strategies are compared on completed-task correctness plus whole-task latency/cost/iterations and relevant compile/runtime metrics; faster invalid candidates cannot win.",
+      "amendment_path": "amendments/CX-21-v023-forge-evaluation.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G21-r23-frozen-evaluator",
+      "spec": "CX-21",
+      "description": "The candidate strategy cannot mutate the evaluator, hidden tests, hard requirements or admission rule used to judge that same candidate.",
+      "amendment_path": "amendments/CX-21-v023-forge-evaluation.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G24-r23-truth-order",
+      "spec": "CX-24",
+      "description": "When local current compiler/source/conformance evidence conflicts with model prior or stale documentation, the resolver surfaces the conflict and ranks the current local evidence higher for that toolchain revision.",
+      "amendment_path": "amendments/CX-24-v023-forge-truth.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G24-r23-executable-retrieval",
+      "spec": "CX-24",
+      "description": "Retrieved coding examples identify source/revision and, when claimed executable, carry compiler/conformance evidence or remain explicitly unverified.",
+      "amendment_path": "amendments/CX-24-v023-forge-truth.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G29-r23-strategy-artifact",
+      "spec": "CX-29",
+      "description": "Every experimentable Forge/Cortex generation, repair, routing, compiler/build/evaluation/search strategy has stable versioned identity and lineage rather than being an untracked prompt/config mutation.",
+      "amendment_path": "amendments/CX-29-v023-forge-strategy.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G29-r23-frozen-self-eval",
+      "spec": "CX-29",
+      "description": "Self-application experiments keep the evaluator/admission rule outside candidate control and preserve a previous-good strategy for rollback.",
+      "amendment_path": "amendments/CX-29-v023-forge-strategy.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G30-r23-semantic-transform",
+      "spec": "CX-30",
+      "description": "A repository optimization based on Forge Transform records applicability, semantic diff, exact output artifact and verification requirements before comparison.",
+      "amendment_path": "amendments/CX-30-v023-forge-repository.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G30-r23-migration",
+      "spec": "CX-30",
+      "description": "Large repetitive refactors use a Migration dry-run with scope, rewrite, idempotency expectation and rollback/validation metadata before application.",
+      "amendment_path": "amendments/CX-30-v023-forge-repository.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G30-r23-build-program",
+      "spec": "CX-30",
+      "description": "Programmable build logic produces an inspectable deterministic BuildGraph and does not hide undeclared tool/effect dependencies.",
+      "amendment_path": "amendments/CX-30-v023-forge-repository.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G32-r23-evidence-projection",
+      "spec": "CX-32",
+      "description": "Every Forge observation admitted to learning attaches to a canonical UEG evidence identity; Forge-local records cannot substitute for required evidence lineage.",
+      "amendment_path": "amendments/CX-32-v023-forge-evidence.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G32-r23-provenance-projection",
+      "spec": "CX-32",
+      "description": "Forge provenance records stable artifact/input/tool/environment references and remains a projection of CX-32 rather than a parallel lineage database.",
+      "amendment_path": "amendments/CX-32-v023-forge-evidence.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G33-r23-experiment-profile",
+      "spec": "CX-33",
+      "description": "A ForgeExperimentProfile references a canonical CX-33 experiment and contains only Forge-domain subject/mutation/compiler/backend/resource references.",
+      "amendment_path": "amendments/CX-33-v023-forge-experiments.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G33-r23-pareto-hard-gates",
+      "spec": "CX-33",
+      "description": "Forge experiments preserve hard correctness/security constraints before multi-objective Pareto comparison; no single performance score can rescue an invalid candidate.",
+      "amendment_path": "amendments/CX-33-v023-forge-experiments.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G34-r23-resource-projection",
+      "spec": "CX-34",
+      "description": "Every Forge resource node/edge used for placement identifies authoritative CX-34/Fabric source and observation epoch; stale projections are revalidated before protected execution.",
+      "amendment_path": "amendments/CX-34-v023-forge-resources.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G34-r23-no-second-registry",
+      "spec": "CX-34",
+      "description": "Forge cannot register, reserve or authorize physical resources independently of the existing capability/Fabric owners.",
+      "amendment_path": "amendments/CX-34-v023-forge-resources.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    },
+    {
+      "id": "G11-r23-forge-admission",
+      "spec": "CX-11",
+      "description": "A Forge candidate with failed semantic/security/acceptance invariants is refused by admission regardless of runtime, cost or judge preference improvements.",
+      "amendment_path": "amendments/CX-11-v023-forge-admission.md",
+      "implementation_status": "Not implemented in this package",
+      "product_result": "NOT_RUN"
+    }
+  ]
+}

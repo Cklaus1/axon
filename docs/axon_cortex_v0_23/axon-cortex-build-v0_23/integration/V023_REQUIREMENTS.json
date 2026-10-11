@@ -1,0 +1,230 @@
+{
+  "schema": "axon.forge-requirements/1",
+  "package_version": "0.23",
+  "requirements": [
+    {
+      "id": "F23-01",
+      "task": "B287",
+      "owners": [
+        "CX-00"
+      ],
+      "gates": [
+        "G00-r23-forge-owner-map",
+        "G00-r23-parent-preservation"
+      ],
+      "runtime_status": "NOT_RUN",
+      "requirement": "Pin parent/Forge hashes, owner map and no-duplicate-authority contract."
+    },
+    {
+      "id": "F23-02",
+      "task": "B288",
+      "owners": [
+        "CX-29",
+        "CX-33",
+        "CX-34"
+      ],
+      "gates": [
+        "G29-r23-strategy-artifact"
+      ],
+      "runtime_status": "NOT_RUN",
+      "requirement": "Implement/version the generic strategy identity used by Forge/Cortex experiments."
+    },
+    {
+      "id": "F23-03",
+      "task": "B289",
+      "owners": [
+        "CX-15",
+        "CX-19"
+      ],
+      "gates": [
+        "G15-r23-sir-boundary",
+        "G19-r23-intent-sir-separation"
+      ],
+      "runtime_status": "NOT_RUN",
+      "requirement": "Implement SIR/frontend traceability and explicit IntentIR/SIR boundary."
+    },
+    {
+      "id": "F23-04",
+      "task": "B290",
+      "owners": [
+        "CX-03",
+        "CX-13"
+      ],
+      "gates": [
+        "G03-r23-meta-no-mint",
+        "G03-r23-forge-recheck",
+        "G13-r23-meta-isolation",
+        "G13-r23-forge-receipt"
+      ],
+      "runtime_status": "NOT_RUN",
+      "requirement": "Route meta/build/compiler-plugin capability requests through CX-03 and effects through CX-13."
+    },
+    {
+      "id": "F23-05",
+      "task": "B291",
+      "owners": [
+        "CX-16",
+        "CX-21"
+      ],
+      "gates": [
+        "G16-r23-structured-repair",
+        "G21-r23-forge-benchmark"
+      ],
+      "runtime_status": "NOT_RUN",
+      "requirement": "Expose structured diagnostics/SIR references and measure compile-diagnose-repair iterations."
+    },
+    {
+      "id": "F23-06",
+      "task": "B292",
+      "owners": [
+        "CX-17",
+        "CX-24"
+      ],
+      "gates": [
+        "G17-r23-bootstrap-source",
+        "G24-r23-truth-order",
+        "G24-r23-executable-retrieval"
+      ],
+      "runtime_status": "NOT_RUN",
+      "requirement": "Bind versioned bootstrap packs and current compiler/source/conformance truth resolution."
+    },
+    {
+      "id": "F23-07",
+      "task": "B293",
+      "owners": [
+        "CX-15",
+        "CX-30"
+      ],
+      "gates": [
+        "G15-r23-transform-abi",
+        "G30-r23-semantic-transform"
+      ],
+      "runtime_status": "NOT_RUN",
+      "requirement": "Register/apply transforms through exact Forge ABI and emit semantic diffs/verification requirements."
+    },
+    {
+      "id": "F23-08",
+      "task": "B294",
+      "owners": [
+        "CX-18",
+        "CX-30"
+      ],
+      "gates": [
+        "G30-r23-migration"
+      ],
+      "runtime_status": "NOT_RUN",
+      "requirement": "Add dry-run/idempotent migration artifacts for broad semantic refactors."
+    },
+    {
+      "id": "F23-09",
+      "task": "B295",
+      "owners": [
+        "CX-15",
+        "CX-30"
+      ],
+      "gates": [
+        "G15-r23-build-backend",
+        "G30-r23-build-program"
+      ],
+      "runtime_status": "NOT_RUN",
+      "requirement": "Produce deterministic BuildGraph data and bind backend/toolchain identity."
+    },
+    {
+      "id": "F23-10",
+      "task": "B296",
+      "owners": [
+        "CX-34"
+      ],
+      "gates": [
+        "G34-r23-resource-projection",
+        "G34-r23-no-second-registry"
+      ],
+      "runtime_status": "NOT_RUN",
+      "requirement": "Expose epoch-bound non-authoritative resource projection without a second registry."
+    },
+    {
+      "id": "F23-11",
+      "task": "B297",
+      "owners": [
+        "CX-32"
+      ],
+      "gates": [
+        "G32-r23-evidence-projection",
+        "G32-r23-provenance-projection"
+      ],
+      "runtime_status": "NOT_RUN",
+      "requirement": "Attach Forge evidence/provenance payloads to canonical UEG identities."
+    },
+    {
+      "id": "F23-12",
+      "task": "B298",
+      "owners": [
+        "CX-33"
+      ],
+      "gates": [
+        "G33-r23-experiment-profile",
+        "G33-r23-pareto-hard-gates"
+      ],
+      "runtime_status": "NOT_RUN",
+      "requirement": "Use canonical experiment identity/lineage/hypothesis and multi-objective hard-gated comparison."
+    },
+    {
+      "id": "F23-13",
+      "task": "B299",
+      "owners": [
+        "CX-11",
+        "CX-18"
+      ],
+      "gates": [
+        "G11-r23-forge-admission",
+        "G18-r23-forge-promotion",
+        "G18-r23-compiler-promotion"
+      ],
+      "runtime_status": "NOT_RUN",
+      "requirement": "Require independent admission and preserve Forge lineage/rollback on compiler/runtime promotion."
+    },
+    {
+      "id": "F23-14",
+      "task": "B300",
+      "owners": [
+        "CX-16"
+      ],
+      "gates": [
+        "G16-r23-forge-loop"
+      ],
+      "runtime_status": "NOT_RUN",
+      "requirement": "Run source/SIR/compile/repair/test/evidence path with exact identities and no authority bypass."
+    },
+    {
+      "id": "F23-15",
+      "task": "B301",
+      "owners": [
+        "CX-00",
+        "CX-21",
+        "CX-29"
+      ],
+      "gates": [
+        "G21-r23-frozen-evaluator",
+        "G29-r23-frozen-self-eval"
+      ],
+      "runtime_status": "NOT_RUN",
+      "requirement": "Run offline package, schema, owner-map, crosswalk, dependency and negative conformance checks."
+    },
+    {
+      "id": "F23-16",
+      "task": "B302",
+      "owners": [
+        "CX-21",
+        "CX-30",
+        "CX-33"
+      ],
+      "gates": [
+        "G21-r23-forge-benchmark",
+        "G30-r23-semantic-transform",
+        "G33-r23-experiment-profile"
+      ],
+      "runtime_status": "NOT_RUN",
+      "requirement": "On a fixed task/evaluator/toolchain, compare incumbent versus one Forge semantic candidate and retain truthful PASS/FAIL/INCONCLUSIVE evidence; no improvement claim is forced."
+    }
+  ]
+}

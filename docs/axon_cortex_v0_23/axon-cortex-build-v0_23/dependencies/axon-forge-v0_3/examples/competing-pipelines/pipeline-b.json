@@ -1,0 +1,34 @@
+{
+  "id": "pipeline-b",
+  "version": "1",
+  "steps": [
+    {
+      "transform_id": "inline",
+      "version": "1",
+      "parameters": {
+        "threshold": 40
+      },
+      "enabled": true
+    },
+    {
+      "transform_id": "constant_fold",
+      "version": "1",
+      "parameters": {},
+      "enabled": true
+    },
+    {
+      "transform_id": "dead_code_eliminate",
+      "version": "1",
+      "parameters": {},
+      "enabled": true
+    }
+  ],
+  "preserves": [
+    "observable_semantics"
+  ],
+  "objectives": [
+    "runtime",
+    "compile_time"
+  ],
+  "provenance": {}
+}

@@ -1,0 +1,366 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "axon.closed-loop.pilot/1"
+    },
+    "experiment_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tenant_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "task_family": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "task_family"
+      ]
+    },
+    "mutable_surface": {
+      "const": "eligible_tool_skill_shortlist"
+    },
+    "runtime_ready": {
+      "type": "boolean"
+    },
+    "deployment_enabled": {
+      "type": "boolean"
+    },
+    "operator_approved": {
+      "type": "boolean"
+    },
+    "live_evidence": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(cl22|acf1|sha256):[0-9a-f]{64}$"
+      },
+      "minItems": 0,
+      "maxItems": 256,
+      "uniqueItems": true
+    },
+    "task_manifest_ref": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^(cl22|acf1|sha256):[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "repository_split_ref": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^(cl22|acf1|sha256):[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "discovery_manifest_ref": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^(cl22|acf1|sha256):[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "confirmation_manifest_ref": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^(cl22|acf1|sha256):[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reporting_manifest_ref": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^(cl22|acf1|sha256):[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "controls_ref": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^(cl22|acf1|sha256):[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "incumbent_policy_ref": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^(cl22|acf1|sha256):[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "candidate_policy_ref": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^(cl22|acf1|sha256):[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "analysis_method_ref": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^(cl22|acf1|sha256):[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "data_use_ref": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^(cl22|acf1|sha256):[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "rollback_policy_ref": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^(cl22|acf1|sha256):[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "approval_ref": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^(cl22|acf1|sha256):[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "independent_units": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "repetitions": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "candidate_budget": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "independent_unit": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "quality_margin": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "economic_threshold": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "uncertainty_rule": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "missing_data_rule": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "multiplicity_rule": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "order_rule": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "cache_rule": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "budget_rule": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "schema",
+    "experiment_id",
+    "scope",
+    "mutable_surface",
+    "runtime_ready",
+    "deployment_enabled",
+    "operator_approved",
+    "live_evidence",
+    "task_manifest_ref",
+    "repository_split_ref",
+    "discovery_manifest_ref",
+    "confirmation_manifest_ref",
+    "reporting_manifest_ref",
+    "controls_ref",
+    "incumbent_policy_ref",
+    "candidate_policy_ref",
+    "analysis_method_ref",
+    "data_use_ref",
+    "rollback_policy_ref",
+    "approval_ref",
+    "independent_units",
+    "repetitions",
+    "candidate_budget",
+    "independent_unit",
+    "quality_margin",
+    "economic_threshold",
+    "uncertainty_rule",
+    "missing_data_rule",
+    "multiplicity_rule",
+    "order_rule",
+    "cache_rule",
+    "budget_rule"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:axon:closed-loop:pilot:1",
+  "title": "Prespecified pilot template; unresolved values prohibit live execution"
+}

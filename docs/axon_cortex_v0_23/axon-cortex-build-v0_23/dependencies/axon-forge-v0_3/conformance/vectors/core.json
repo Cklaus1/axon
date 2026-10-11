@@ -1,0 +1,62 @@
+[
+  {
+    "id": "C001",
+    "requirement": "Equivalent deterministic semantic/build inputs produce the same Forge artifact identity."
+  },
+  {
+    "id": "C002",
+    "requirement": "Invariant-violating transforms are rejected and cannot become valid promotion candidates."
+  },
+  {
+    "id": "C003",
+    "requirement": "Meta programs cannot mint capabilities; undeclared requests are denied by the external authority seam."
+  },
+  {
+    "id": "C004",
+    "requirement": "Compile errors normalize to structured diagnostics with stable compiler/version identity."
+  },
+  {
+    "id": "C005",
+    "requirement": "Current compiler/conformance/source evidence outranks conflicting model prior and conflict is recorded."
+  },
+  {
+    "id": "C006",
+    "requirement": "Semantic migration emits dry-run semantic diff before application and declares idempotency expectation."
+  },
+  {
+    "id": "C007",
+    "requirement": "ForgeExperimentProfile requires a canonical Axon experiment reference rather than owning a second lifecycle."
+  },
+  {
+    "id": "C008",
+    "requirement": "ForgeEvidencePayload requires a canonical Axon/CX-32 evidence reference."
+  },
+  {
+    "id": "C009",
+    "requirement": "ResourceProjection identifies authoritative source and is explicitly non-authoritative for dispatch."
+  },
+  {
+    "id": "C010",
+    "requirement": "A new Forge transform can be registered without compiler-specific changes to Axon Core."
+  },
+  {
+    "id": "C011",
+    "requirement": "ForgeStrategyProfile references a canonical StrategyArtifact identity."
+  },
+  {
+    "id": "C012",
+    "requirement": "IntentIR and Forge SIR remain distinct representations with an explicit lowering/constraint seam."
+  },
+  {
+    "id": "C013",
+    "requirement": "Subject code cannot mutate the frozen evaluator/admission authority used to judge itself."
+  },
+  {
+    "id": "C014",
+    "requirement": "BuildProgram requests external capabilities and emits a deterministic BuildGraph."
+  },
+  {
+    "id": "C015",
+    "requirement": "Forge v0.2 generic authority schemas are not normative in v0.3."
+  }
+]

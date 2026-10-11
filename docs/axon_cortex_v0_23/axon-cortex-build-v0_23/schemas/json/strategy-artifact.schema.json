@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://axon/cortex/v0.23/strategy-artifact.schema.json",
+  "title": "StrategyArtifact",
+  "type": "object",
+  "required": [
+    "id",
+    "version",
+    "kind",
+    "configuration",
+    "provenance_ref"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "kind": {
+      "enum": [
+        "generation",
+        "repair",
+        "routing",
+        "retrieval",
+        "working_set",
+        "compiler_pipeline",
+        "build",
+        "evaluation",
+        "search",
+        "resource_placement",
+        "meta_execution"
+      ]
+    },
+    "configuration": {
+      "type": "object"
+    },
+    "parent_strategy_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "applicability": {
+      "type": "object"
+    },
+    "required_capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "provenance_ref": {
+      "type": "string"
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "fallback_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "admitted": {
+      "type": "boolean",
+      "description": "Informational projection only; canonical admission remains CX-11/CX-18."
+    }
+  },
+  "additionalProperties": false
+}

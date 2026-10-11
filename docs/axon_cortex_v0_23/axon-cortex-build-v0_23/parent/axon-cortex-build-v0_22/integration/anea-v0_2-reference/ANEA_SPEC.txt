@@ -1,0 +1,396 @@
+# AXON Neural Execution Architecture — ANEA v0.2
+## Cortex/Reflex/CX-36/MiCode integration profile
+
+**Version:** 0.2.0 — proposed, source-aligned revision  
+**Date:** 2026-09-21  
+**Status:** Reviewed against the supplied CX-36, Cortex v0.15 and MiCode v0.8 build documents; **not repository-verified, adopted or implemented**.  
+**Supersedes:** ANEA v0.1 design proposal within this pack, subject to approved project governance.  
+**Companions:** `REVIEW_FINDINGS.md`, `integration/CONTRACT_MAPPING.md`, `integration/TASK_IMPACT.json`, `BUILD_LOOPS.md`, `AGENT_HANDOFF.md`, `ACCEPTANCE_CATALOG.json`, `OPEN_DECISIONS.md`, `SOURCE_MANIFEST.json`.
+
+> **One typed cognitive operation can have multiple admitted implementations. A Neural Program is one capability class: a typed, immutable, evidence-backed learned executable artifact—not the umbrella name for every cognitive operation.**
+
+## Source basis and authority
+
+The basis is the three newly supplied documents/packages plus ANEA v0.1. No current model/vendor research or live repository behavior is inferred. Source snapshots are preserved verbatim under `reference/`; `SOURCES.md` identifies their paths and scope. The modular Cortex/MiCode source files are preferred over their aggregate master views. All supplied architectures remain Proposed/Draft/Intended.
+
+CX-36 refines naming, `.nps`/`.np`, artifact identity and backend/runtime contract; CX-23 remains its learned-function implementation owner. CX-05/06 own Reflex; CX-34 owns shared registry/scheduling; CX-32 owns evidence. This resolves ANEA’s earlier redefinition **as a proposed amendment**, not as retroactive approval of a changed IntentIR. Other upstream ambiguity is explicit in `OPEN_DECISIONS.md`.
+
+`MUST`, `MUST NOT`, `SHOULD`, and `MAY` express requirements for adoption of this profile. Identifiers retained from v0.1 have revised wording where shown by `migration/REQUIREMENT_MIGRATION.json`; old test counts do not grandfather compliance. New identifiers close source/compiler/MiCode/governance gaps.
+
+## Architecture after alignment
+
+```text
+Approved IntentIR / existing Axon host or library program
+                         |
+         AIR typed cognitive operation + effects/dependencies
+                         |
+          CX-34 Shared Capability Registry + Cognitive Scheduler
+             hard filtering -> approved strategy/implementation
+                         |
+    +--------------------+---------------------+
+    |                    |                     |
+Frontier API          Open model           Axon-native / learned
+Generate/Think        Reflex scorer         SpecializedReflex head
+or Reflex adapter    token/sequence         OR CX-36 .np function
+    |                    |                     |
+    +--------------------+---------------------+
+                         |
+       Owner-specific validated result + exact execution receipt
+                         |
+         AIR continuation / MiCode consumer (result is DATA)
+                         |
+    existing permission/effect execution + independent verification
+                         |
+          CX-32 evidence / MX-30 -> CX-22 specialization proposal
+                         |
+       .nps + eligible episodes -> candidate .np -> CX-11 admission
+```
+
+The columns describe implementation families, not capability classes. A Neural Program may execute through embedded, local-sidecar or remote service backends. “Open model,” “native head,” “Reflex,” and “Neural Program” are not mutually interchangeable labels. Physical mechanisms may share infrastructure while semantic ownership remains distinct.
+
+## First deliverables and explicit claim profiles
+
+**Host integration / Reflex adapter profile:** use existing Cortex M1/M2 paths with at least one real authorized incumbent backend; do not wait for a trained custom model. Freeze owner contracts and record effective input/actual execution immediately.
+
+**Three-family Reflex interoperability profile:** on the same finite-choice contract, demonstrate hosted, open-scoring and real learned-head arms when available. Missing arms prevent only the three-family claim, not the hosted core. Include dynamic candidates when claiming that capability.
+
+**CX-36 Neural Program profile:** `BuildLog → DiagnosticSummary`, eligible examples, real learned artifact, typed source-grounding checks, dependency/offline readiness, registry/admission/fallback and evidence-backed promote-or-reject. This is distinct from a three-label classifier.
+
+**Research profiles:** dedicated token vocabularies, diffusion canvases, latent/state translation, world models and compiler/native promotion have independent admission and evidence requirements. None is implied by a successful API call, package validator or simple head.
+
+
+---
+
+# ANEA-001 — Scope, terminology, and existing owners
+
+ANEA is an **integration and physical-execution profile**, not a replacement architecture. It connects existing AIR operations, Reflex backends, CX-36 Neural Program artifacts, CX-34 dispatch and CX-32 evidence. It adds neither a second cognitive scheduler nor a second registry, compiler, context store, admission service, or autonomous builder.
+
+The common abstraction above the three implementation families is a **typed cognitive operation / capability contract**, not “Neural Program.” CX-36 reserves Neural Program for a typed learned executable artifact. A frontier Generate/Think capability may implement a behavioral contract that is later specialized into a Neural Program; the original frontier call does not thereby become a `.np` artifact.
+
+| Concept | Contract owner | ANEA responsibility |
+|---|---|---|
+| Approved intent and AIR execution | CX-19, CX-04, CX-15; MX-17 | Bind intent, types, effects and host lowering; do not introduce language syntax. |
+| Bounded choice/probability/ordinal judgment | CX-05, CX-06 and Reflex conformance/runtime guides | Map physical APIs, token/sequence scores and heads without semantic loss. |
+| Learned-function source, artifact, compiler, runtime | CX-36 canonical contract; CX-23 implementation owner; CX-22 specialization owner | Supply `.nps`/`.np` reference profiles and execution/evidence integration. |
+| Capability inventory, hard filtering and dispatch | CX-34; MiCode client MX-32 | Extend existing registry/scheduler records and adapters. |
+| State and working set | CX-02, CX-05, CX-10, CX-13, CX-28; MX-26 | Materialize authorized input, bind physical cache state and preserve receipts. |
+| Admission, evidence, experiments | CX-11, CX-20/21, CX-29, CX-32/33; MX-27/30/31 | Emit and consume existing evidence; never self-admit. |
+| Effects, permissions and completion | CX-03, CX-01; existing MiCode PermissionGate and AcceptanceContract | Leave enforcement and completion with those owners. |
+
+No field named `planner`, `neural`, `confidence`, `active`, or `admitted` is itself authority.
+
+**Owners/source basis:** CX-36, CX-04, CX-05, CX-15, CX-23, CX-34, MX-05, MX-17, MX-32.
+
+**ANEA-001-R01 — Integrate, do not duplicate.** The builder MUST map each changed contract to the supplied CX/MX owner and then to a live repository definition AND consuming call site, with revision, engine and gate evidence. The supplied build packages are proposals, not proof that those owners are implemented. Existing repository governance and approved intent take precedence over this proposed supplement. Unresolved ownership or enforcement MUST block the affected implementation, not be replaced by a new ANEA subsystem.
+
+**ANEA-001-R02 — Separate the interoperability and learned-artifact proofs.** The same typed Reflex decision MAY be compared through hosted constrained generation, open token/sequence scoring and a learned decision head. This is the three-family interoperability profile, not the definition of a Neural Program and not a prerequisite to Cortex M1/M2. A claim that all three families were demonstrated MUST have live evidence for all three. The separate CX-36 learned-function pilot MUST use a real admitted-for-experiment artifact; a fixed-label classifier smoke test alone cannot satisfy it.
+
+**ANEA-001-R03 — Respect reserved formats and non-goals.** `.nps` MUST mean Neural Program Source and `.np` MUST mean compiled immutable Neural Program Artifact. Neither is generic Axon source, an AIR graph file nor raw weights. This revision MUST NOT introduce `.npkg`, `.axnp`, a universal token ISA, new AIR classes, a mandatory public registry, a new foundation model, a Linux fork or a compositor. ProgramAsWeights MAY appear only for its external backend/importer/reference; no vendor is the architectural default.
+
+**ANEA-001-R04 — Separate inference from authority.** Learned results MUST remain data. Grants, PermissionGate Ask/Deny, capability/effect ceilings, protected verification and action commit MUST remain with the existing deterministic owners. Deterministic checks and authoritative source projection MUST be preferred when they already compute the required result; model judgment cannot replace them merely to exercise inference.
+
+**ANEA-001-R05 — Separate document, fixture, live and release claims.** Evidence MUST distinguish source review, package consistency, fixture conformance, actual inference, integrated call-site execution, task qualification and measured improvement. Only PASS on the required subject/revision satisfies a product gate; FAIL, SKIPPED, UNAVAILABLE and INCONCLUSIVE do not. Planned product gates remain NOT_RUN in this pack. Automatic activation is disabled by default.
+
+
+---
+
+# ANEA-002 — Backend contracts and transport mapping
+
+There are two distinct backend surfaces. Reflex owns bounded-decision execution, including `BackendFeatureManifest`, `EffectiveInputReceipt`, `encode_state`, `decide_batch` and `release_state`. CX-23/CX-36 own `NeuralProgramBackend { compile, load, execute, unload, inspect, health }`. Shared infrastructure may implement both, but neither is required to inherit the other’s methods.
+
+“Inference ABI” means a versioned protocol/in-process contract, not a stable Rust binary ABI. Discovery chooses the existing authenticated host/IPC seam; it does not assume plug-in loading or arbitrary FFI. A head-only service may keep representations private and expose neither generation nor KV tensors.
+
+The retained `schemas/core.schema.json` is explicitly a **Choice-only transport fixture profile**, wire version `0.1`, not the whole Reflex ABI and not the CX-36 manifest. ANEA document version `0.2.0` does not silently change this wire version. New reference profiles live separately. `integration/CONTRACT_MAPPING.md` specifies lossless mapping and unresolved repository enum allocation.
+
+**Owners/source basis:** CX-05, CX-23, CX-36, CX-PROTOCOLS, REFLEX-CONFORMANCE.
+
+**ANEA-002-R01 — Versioned owner-specific exchange.** Every exchange MUST preserve the owner’s schema/version, request and operation identities, causal/run linkage, effective implementation and relevant artifact identities. Adapters MUST declare a versioned mapping to the canonical contracts and reject unknown mandatory variants or lossy conversions. A version bump cannot convert an existing Choice envelope into BinaryProbability, OrdinalDistribution or a Neural Program receipt.
+
+**ANEA-002-R02 — Independent features, not capability tiers.** Capabilities MUST be negotiated independently per effective deployment and mode: question families, modalities, score forms/completeness, candidate/input limits, isolation, state reuse, cancellation, usage and immutable revision availability. Unavailable fields stay unknown. A head-only deployment is valid; advertised support requires scoped evidence and disclosed emulation.
+
+**ANEA-002-R03 — Admission and lifecycle are owner-controlled.** CX-34 registry state and CX-11 admission MUST determine eligibility for the requested mode. Candidate, shadow, canary and active are not interchangeable. An authorized experiment may load a candidate without making it active; normal dispatch cannot select an unadmitted candidate. Admission is rechecked for immutable artifact, project, tenant, policy, deployment and current revocation state.
+
+**ANEA-002-R04 — Strict bounded boundary validation.** All untrusted messages MUST reject ambiguous duplicate keys, unknown closed-enum values, non-finite numbers, excess size/depth and schema/type mismatches. Validation MUST preserve missing/null/Unknown distinctions and then check request/effective-input/artifact bindings. Parsing a schema does not authenticate the producer.
+
+**ANEA-002-R05 — Terminality and unknown remote work.** The adapter MUST accept at most one terminal outcome per attempt and keep late results out of committed state. Root cancellation propagates to children, with local cancellation, confirmed remote stop and unknown remote execution distinguished. Durable compile jobs MUST reconcile job identity after transport timeout; they cannot be blindly resubmitted as though never accepted.
+
+**ANEA-002-R06 — Preserve errors and abstention families.** Refusal, error, abstention, cancellation, deadline and unknown execution MUST remain distinct. Reflex absence states (NoneSuitable, NeedMoreObservation, UnauthorizedCandidate, InferenceUnavailable) and scheduler NONE/UNKNOWN/OBSERVE_MORE/ESCALATE/BLOCKED MUST map explicitly without inventing an answer. Diagnostic names require repository allocation; this pack does not allocate Axon exit codes.
+
+**ANEA-002-R07 — Record every attempt and transformation.** Every inference, optional reasoning step, retry, repair, fallback, projection, normalization and candidate remapping MUST be observable and charged to its root budget. Physical attempts and downstream tool actions MUST have separate identities. A hidden repair model cannot improve reported validity by removing failed attempts from denominators.
+
+
+---
+
+# ANEA-003 — AIR integration and physical lowering
+
+Use AIR’s existing graph/library approach and the actual repository’s authoritative types. `Decide` maps to Reflex; `Generate` and `Reason` remain open-ended synthesis; registered `Check`/MiCode verification produces evidence; `Act` crosses the executor. SELECT/PROJECT/COPY/COMPOSE remain existing structured operation kinds, not new AIR vocabulary tokens.
+
+CX-04’s node kinds, MX-05’s cognitive accounting classes, and CX-34’s capability strategy classes are different axes. The source packages do not supply a complete versioned mapping for `NEURAL_PROGRAM` across them. This revision therefore requires a reviewed bridge mapping before live export; it does not silently add a `NEURAL_PROGRAM` class to MX-05 or call learned execution a deterministic Rule. A host/library invocation may carry explicit capability-class metadata while retaining a compatible existing node kind only if the effect/type mapping is reviewed. Unsupported mappings refuse.
+
+**Owners/source basis:** CX-04, CX-15, CX-26, CX-36, MX-05.
+
+**ANEA-003-R01 — Typed and effect-aware AIR.** Each invocation MUST bind canonical input/output types, capability and semantic-contract identity, dependencies, context visibility, model/resource/effect limits and source lineage. AIR validation MUST reject cycles, missing inputs, unauthorized effects and unbounded loops. Inference retains its declared AI/network/cost effects even when the output is typed.
+
+**ANEA-003-R02 — Library-first, existing compiler only.** The first implementation MUST use existing interpreter/host/library seams. New syntax/native lowering requires CX-15 evidence: authoritative type-map audit, two concrete workflows justifying syntax, desugaring, diagnostics, formatting/docs and parity or explicit refusal. This profile MUST NOT introduce a second type inference engine or VM.
+
+**ANEA-003-R03 — Physical plan records without a second scheduler.** CX-34 selection and AIR lowering MUST record capability class, admitted artifact/revision, actual mechanism (schema generation, validated text, candidate-token scoring, sequence scoring, learned head or learned function), required features, effective-input and validator references, budget and fallback edges. These are separate fields; a native mechanism does not by itself identify a Neural Program artifact.
+
+**ANEA-003-R04 — Preserve dependency and visibility semantics.** Use AIR dependency kinds Independent, ConditionallyRelevant and AnswerDependent. A dependent question MUST wait for actual committed input unless bounded hypothesis branches are explicitly declared. Independent questions cannot inherit sibling answers. Speculative branch results cannot be consumed outside their branch.
+
+**ANEA-003-R05 — Keep opcodes, model tokens and object IDs distinct.** Compact encodings MUST preserve source-to-AIR-to-host-to-physical-execution mapping. Runtime operation IDs, tokenizer IDs, object references and artifact identities MUST remain separate namespaces. One-token aliases are backend encodings, not new Axon semantic instructions.
+
+**ANEA-003-R06 — Reject unsupported semantics.** Unsupported operations, type refinements, score requirements, modality/state formats or vocabulary mappings MUST refuse explicitly. A backend cannot emulate simulation with narrative prose, binary probability with a Boolean, learned execution with base generation or verification with model opinion without a separately declared capability/contract and admission.
+
+
+---
+
+# ANEA-004 — Reflex result families and uncertainty
+
+Retain three distinct core result families: Choice (selected member/abstention and optional complete distribution), BinaryProbability (explicit positive event and probability when provided), and OrdinalDistribution (ordered rubric distribution and optional declared expectation). Fixed label classifiers are a useful smoke test but cannot establish dynamic-candidate conformance.
+
+Raw probability origin and empirical calibration are separate layers. CX-05/PROTOCOLS and CX-24 use overlapping but non-identical names. Preserve the producer vocabulary/version and raw tag; register aliases explicitly rather than rewriting historic evidence. `candidate_token_conditional`, `sequence_conditional` and `head_softmax` in the retained fixture are physical score computations, not substitutes for the canonical provenance record.
+
+For complete one-token candidate likelihoods under exact prompt x, `p_i = exp(log P(t_i|x) − logsumexp_j log P(t_j|x))`. This is conditional preference among the supplied label tokens, not calibrated probability of factual correctness. A complete distribution is primary evidence when available; a selected candidate, entropy, margin or expected utility is a declared derived view.
+
+**Owners/source basis:** CX-05, CX-06, CX-24, CX-PROTOCOLS, REFLEX-CONFORMANCE, REFLEX-RUNTIME.
+
+**ANEA-004-R01 — Candidate integrity and construction identity.** Each request MUST bind unique opaque candidate IDs, typed values/descriptions, construction/authorization/ordering policy, exact ordered manifest and order digest. Dynamic candidate construction and recall are separately evaluated. Control candidates may appear only when registered by the family policy; the model cannot invent them.
+
+**ANEA-004-R02 — Probability origin and result-family fidelity.** Adapters MUST preserve Choice, BinaryProbability and OrdinalDistribution separately and retain raw origin, physical computation and calibration layer. Generated estimates, provider-reported distributions, token likelihoods and head distributions MUST not be relabeled as one another. No generic confidence field replaces correctness, applicability, OOD and output distributions.
+
+**ANEA-004-R03 — Complete and valid distributions.** A complete candidate distribution MUST cover the supplied candidates exactly once, contain finite [0,1] values and normalize within the registered tolerance. A truncated top-k list MUST fail a complete-score requirement. Any normalization/repair is versioned and traced; unavailable evidence is explicit rather than invented.
+
+**ANEA-004-R04 — Scoped calibration.** Calibrated estimates MUST reference a current artifact/evidence domain, raw origin, transformation, input/definition/candidate-order/model/encoder regime and protected evaluation. Changes invalidate evidence unless explicitly covered. Absence is Uncalibrated; out-of-domain is Inapplicable. A source tag alone is not proof of calibration or correctness.
+
+**ANEA-004-R05 — Abstention, absence and thresholds.** Threshold consumers MUST declare the estimate used, its domain and missingness behavior. Reflex absence outcomes and scheduler control outcomes MUST remain distinct, with authorized fallback/observation paths. A high conditional probability cannot hide that no suitable candidate was supplied.
+
+**ANEA-004-R06 — Explicit selection policy.** The portable Choice subset MAY permit implementation-defined selection while reporting actual mode. Required argmax MUST use complete actual candidate scores and a specified tie rule; schema-only provider choice cannot satisfy it. Sampling requires a declared transformation and reproducibility limits. More general Reflex consumers may use a distribution without a selected label.
+
+**ANEA-004-R07 — Tokenizer-bound one-token lowering.** One-token scoring MUST validate each distinct legal label at the exact assistant boundary, including chat template, prefix stability, whitespace, special/reserved tokens and termination. Prompt-visible aliases and their cost/bias belong to the implementation identity. The optimization does not compress arbitrary objects or open text into one token.
+
+**ANEA-004-R08 — Complete multi-token semantics.** Multi-token candidates MUST use a declared complete sequence/termination convention, evaluated aliases, constrained generation or refusal. First-token comparisons are not complete candidate scoring. Length normalization and grammar/trie selection are different computations and cannot claim exact sequence probabilities without evidence.
+
+**ANEA-004-R09 — Typed output is not verified truth.** Schema validation MUST be followed by task refinements and independent source/numeric checks where available. Missing information remains Unknown. Diagnostic values, source spans, numeric units/ranges and evidence strength MUST not be inferred from valid JSON alone. Learned validation results cannot certify completion.
+
+
+---
+
+# ANEA-005 — Working sets and backend state
+
+Use existing WorkingSetReceipt and EffectiveInputReceipt. An ANEA-local “ContextSnapshot” is only an adapter view over authorized immutable source objects/receipts, not a new store. Public state uses the existing StateHandle abstraction; physical backend state remains opaque. Handles identify optimization state, not executable authority, and are reacquired across boundaries that cannot persist live handles.
+
+**Owners/source basis:** CX-02, CX-05, CX-10, CX-13, CX-28, REFLEX-RUNTIME, MX-26.
+
+**ANEA-005-R01 — Authorized exact materialization.** Each call MUST link the selected working set and exact effective model input, including omissions, compression, redaction, instructions and committed values. PIN obligations cannot be semantically dropped. References do not supply unseen facts: materialization or explicitly validated features are required.
+
+**ANEA-005-R02 — Bind state compatibility.** StateHandle reuse MUST bind state/working-set identity, backend instance/epoch, model/base/tokenizer/adapter/renderer/preprocessing identity, relevant quantization/attention/position/cache settings, principal/tenant, expiry and current authorization. Changing any semantics-affecting binding invalidates reuse unless a tested compatibility profile covers it.
+
+**ANEA-005-R03 — Opaque accounted lifecycle.** Leases, ownership, lifetime, revocation and bounded CPU/device memory MUST be enforced by existing runtime owners, with idempotent release. A logical release is not proof that a provider erased physical bytes. Durable records contain stable references, never raw pointers or unsupported cross-cell heap handles.
+
+**ANEA-005-R04 — Distinguish actual reuse from emulation.** Receipts MUST distinguish actual reusable backend state, implicit provider prefix reuse, replay/materialization and no reuse, with unknown observations preserved. One request, batching or matching prefixes are not proof of one neural pass, no transmission, no billing or no decode work.
+
+**ANEA-005-R05 — No implicit state interchange.** Cross-model or cross-architecture KV/latent transfer MUST be unsupported unless a separately admitted translation profile exists. Same-model cross-engine interchange also requires explicit compatibility evidence. Portable semantic context is the default fallback, subject to current permissions and remaining budget.
+
+**ANEA-005-R06 — Staleness, isolation and recomputation.** Async context decisions MUST be discarded when their intent/state/catalog bindings change. Independent branch state MUST be isolated. Dropping context as recomputable requires CX-28 RecomputeContract; mutable/effectful data cannot be silently regenerated. Missing artifacts, stale state or permission changes must fail safely without losing protected pins.
+
+
+---
+
+# ANEA-006 — CX-34 scheduling, fallback, and budget enforcement
+
+There is no ANEA-owned execution planner. CX-34 owns capability enumeration, hard filtering and utility selection; AIR owns legal scheduling; CX-13/current runtime owns resource enforcement; CX-11 owns admission. MiCode consumes these through MX-32 and rechecks local PermissionGate/project policy. Registry entries carry immutable capability and artifact identity, contract, types, applicability, evidence/transfer scope, failures, cost/hardware/cache profile, authority ceiling and versioned fallback graph.
+
+**Owners/source basis:** CX-03, CX-06, CX-11, CX-13, CX-34, CX-36, MX-32.
+
+**ANEA-006-R01 — Hard constraints before utility and again at dispatch.** Authorized-compatible candidates MUST be enumerated only after type, authority, data-egress, evidence, applicability, project, hardware and admission checks. The chosen entry MUST be revalidated at dispatch for revocation/staleness. Cost, confidence, information value or cache warmth cannot override those constraints.
+
+**ANEA-006-R02 — Explainable scoped scheduling.** Scheduler receipts MUST record policy revision, candidate snapshot, hard exclusions, known/unknown estimates, consequence/reversibility, hardware/cache/load, utility components, chosen capability and realized outcome. A deterministic reference policy uses stable ties; any learned/stochastic policy records its admitted identity and randomness and is not claimed bit-reproducible without evidence.
+
+**ANEA-006-R03 — Shared root budgets.** All branches, generation, reasoning, scoring, repairs, fallbacks, shadow work and compile jobs MUST reserve/account against configured root and experiment budgets. Deadlines govern result acceptance; remote compute/billing cancellation limits stay explicit. Unknown cost is not zero, and a hard bound is refused if it cannot be enforced conservatively.
+
+**ANEA-006-R04 — Versioned semantic fallback.** A fallback MUST be a new governed capability invocation under an explicit bounded acyclic graph, preserving or narrowing constraints. CX-36 targets are NONE, SpecializedReflex, GeneralReflex, Generate, Think or Human. Missing/invalid specialization MUST NOT run its unadapted base while reporting NeuralProgram success. Any more permissive target vocabulary requires an owner amendment. Refusal is not a signal to evade policy through another provider.
+
+**ANEA-006-R05 — Truthful operator and UI state.** MiCode/CLI views MUST distinguish requested capability/model, selected plan, each attempt, actual accepted producer/artifact, fallback, uncertainty and unknown usage. Authentication recovery links/instructions use configured provider ownership, never invented URLs. A request failure cannot leave the next turn bound to a stale hidden model while showing another.
+
+**ANEA-006-R06 — Keep inference, shadowing and effects separate.** Shadow/challenger outputs MUST not modify active tools, context, routing, completion, worker steering or persistent application state. Inference itself may consume resources/disclose input and needs authorization. Effect commit/recovery remains with CX-03/MiCode; idempotency strings alone do not establish exactly-once remote actions.
+
+
+---
+
+# ANEA-007 — Batches, composition, frames, and canvases
+
+A “frame” is an optional adapter view over existing AIR typed nodes and CX-26 composition; it is not a new execution class or automatic joint-model prompt. Backend multi-question results are keyed by QuestionId. The request records which fields are required on the active branch and what happens to failed unused speculation. A single all-fields-required policy may be selected, but cannot replace the broader existing branch-aware contract.
+
+**Owners/source basis:** CX-04, CX-05, CX-15, CX-26, REFLEX-CONFORMANCE.
+
+**ANEA-007-R01 — Parallel visibility and identity.** Question batching MUST preserve QuestionId, declared dependency/visibility, candidate manifests, prompt-role boundaries and compatible security/resource context. Duplicate/unknown result IDs fail; array position is not identity. Independent/conditional branches may co-schedule only as permitted by AIR.
+
+**ANEA-007-R02 — Branch-aware joins and failure policy.** A join MUST require all active-branch results and cross-field invariants. Missing active fields block construction; failure in an unused speculative branch is tolerated only by an explicit versioned policy. Optional/default fields are typed and cannot hide abstention or fabricate success. Partial diagnostic results remain separate from committed results.
+
+**ANEA-007-R03 — No unproved fusion or joint probability.** Combining isolated questions into a conversational prompt, changing visibility or composing marginal probabilities MUST NOT be called a transparent compiler optimization. Such changes require registered policy variants, fresh conformance/calibration/whole-task tests and joint-risk treatment. Replaying recorded replies is not evidence of fresh-model equivalence.
+
+**ANEA-007-R04 — Optional native canvas profile.** Diffusion/infill canvases MAY be investigated after the core contracts. A profile MUST define pinned framing, slot types, lengths, dependencies, conditioning, cancellation and output validation. The screenshot/conversation is a research lead, not an adopted backend or timing guarantee. Unsupported canvases refuse or lower through an explicitly declared equivalent supported path.
+
+
+---
+
+# ANEA-008 — CX-36 source, artifacts and package integration
+
+CX-36 owns artifact naming/identity/ABI and updates CX-23’s implementation contract rather than duplicating it. The `.np` artifact class is architecture-neutral: adapter, standalone model, graph, embeddings or future learned representation may implement it. A prompt-only recipe or a raw weight file is not automatically a learned executable artifact. CX-23’s prompt/prefix/constrained-compilation modes require an explicit eligibility decision under CX-36; absent evidence of a learned executable they remain Generate/Reflex implementation assets, not `.np` by renaming.
+
+The reference `.nps` syntax and ZIP-based `.np` fixture container in this pack are **proposed encodings**, not formats already frozen by CX-36 or shipped by Axon. The semantic fields are source-derived; exact serialization/container choices require repository approval. Cryptographic integrity, provenance and authorization are separate checks.
+
+**Owners/source basis:** CX-36, CX-23, CX-22, CX-11.
+
+**ANEA-008-R01 — Complete Neural Program manifest.** Every .np MUST contain or cryptographically bind all CX-36 §4 fields: artifact/content/format identity; name/semantic contract; input/output schemas; compiler revision; backend/version; required base/tokenizer/learned-asset identities; runtime manifest/compatibility; applicability; authority ceiling; optional explicit reliability receipt; evaluation receipts; transfer scope; fallback; source/training lineage/corpus roles; creation time. Renderer/template/preprocessing identities from CX-23 MUST also be bound when applicable. A Choice implementation/head manifest is not a substitute.
+
+**ANEA-008-R02 — Immutable identity and dependency closure.** Artifact identity MUST be content-addressed (`np://sha256/<digest>` in the source contract). Aliases resolve to exact immutable identities before use and may not mutate existing artifacts. All behavior-affecting dependencies and target variants MUST be bound. Transport archive checksum, logical artifact identity and authenticated admission are distinct. Lock existing package infrastructure rather than adding a competing lockfile authority.
+
+**ANEA-008-R03 — Fail-closed safe loading.** The loader MUST bound and validate archive/container, manifest, all referenced assets, input/output schemas, compatibility, base/adapter identity, provenance and applicable admission. Reject traversal, symlinks, duplicate entries, corruption, unsupported formats and executable installation hooks. Loading never runs package code; auxiliary executable capabilities require separate ordinary admission.
+
+**ANEA-008-R04 — Versioning and migration.** Format/schema/semantic-contract versions MUST be separate. Migration MUST preserve meaning and identity lineage; a semantics-changing conversion creates a new candidate. Existing B77–B83 contracts are extended, not declared obsolete. CX-36 naming takes precedence for generic PAW terminology; historical external references remain accurate.
+
+**ANEA-008-R05 — Portable artifact class, scoped execution.** Each target variant MUST bind its assets, runtime/hardware compatibility and evidence for the same semantic contract. Shared logical capability identity does not make distinct artifacts identical. Scope/authority/transfer evidence cannot widen merely because bytes are portable. A receiving project MUST re-admit under its own contract.
+
+
+---
+
+# ANEA-009 — Evidence, experimentation, and specialization
+
+Use one CX-32 Universal Evidence Graph, MX-30 producer and existing episode stores. The required Neural Program lineage is Intent/ImprovementIntent → source/examples → compiler run → candidate artifact → evaluation → admission → invocation → output → downstream outcome → verification → promotion/rollback. Link negative evidence and invalidations, not only successes.
+
+CX-22 proposes representations; CX-20/21 provide protected evaluations; CX-33/MX-31 govern causal comparisons; CX-11 admits; CX-34 activates only eligible capabilities. CX-29/MX-27 instrumentation starts at the first integrated call, not after a native model or optimizer release. The protected kernel means authority/verifier/evidence/admission invariants here; no Linux-kernel change is required.
+
+**Owners/source basis:** CX-10, CX-11, CX-20, CX-21, CX-22, CX-29, CX-30, CX-31, CX-32, CX-33, CX-36, MX-13, MX-27, MX-30, MX-31.
+
+**ANEA-009-R01 — Eligible data and traceable evaluation.** Training/dev/calibration/locked-test/transfer/curriculum roles, family grouping, deduplication, data rights, redaction and label provenance MUST be recorded per lineage. Raw logs are not automatically training records; teacher/synthetic labels are not observed ground truth. Protected labels are inaccessible to learners. Evidence from one repository is not transfer evidence.
+
+**ANEA-009-R02 — Measure complete quality and economics.** Reports MUST retain validity, factual/diagnostic correctness, coverage/abstention, OOD/transfer, hallucination rate, fallback, downstream utility, latency distributions, cold/hot load, memory, input/reasoning/output/speculative work, compile/training/maintenance and deployment costs. Fixed numeric targets require preregistration, not invented universal numbers.
+
+**ANEA-009-R03 — Protected statistical and causal claims.** Before protected outcomes are inspected, freeze population, partitions, metrics, quality/resource constraints, controls, stopping/submission budgets and evaluation ownership. Matched comparisons change only declared treatments where feasible; confounding is explicit. Observational/counterfactual/quasi-experimental/realized evidence MUST retain strength. Inconclusive is a valid result, not forced promotion.
+
+**ANEA-009-R04 — Separate deterministic optimization from learned substitution.** Compiler parity applies to deterministic supported semantics with recorded model boundaries, effects, failures and budgets. Changing model, question, candidate construction, context policy, decomposition or learned artifact is a candidate policy/representation change requiring fresh evaluation/admission. No learner may change its own verifier, authority, protected corpus roles, approval threshold or rollback definition.
+
+**ANEA-009-R05 — Independent promotion and rollback.** Candidates MUST move through scoped offline/shadow/canary/admission states under existing lifecycle owners. Every state transition and deployment activation requires the appropriate external authority, subject hash and policy. Shadow is no-effect; canary is bounded/reversible; rejection, suspension, quarantine, narrowing and retirement preserve negative lineage. Self-publishing active is forbidden.
+
+**ANEA-009-R06 — Evidence closure with privacy.** CognitiveOperationRecord, EffectiveInputReceipt, WorkingSetReceipt, NeuralProgramInvocationReceipt and scheduler records MUST link through CX-32/MX-30 typed edges, claim strengths and protected verification. Retain contradictions and propagate source/data-use invalidations to dependent claims. Authorized graph visibility does not grant export/training/execute permission. Routine telemetry must not spill secrets or private reasoning.
+
+**ANEA-009-R07 — Replay modes and identity.** Receipt replay of recorded replies, fresh inference, resettable environment rerun and counterfactual simulation MUST be different modes. Capture exact artifact/backend/base/runtime/input/effective input/sampling/hardware/output/validation or a specific non-replayability reason. Retrying/replaying learned execution must not replay effects without fresh authorization.
+
+**ANEA-009-R08 — Two pilots with truthful claims.** The interoperability pilot MUST test a bounded Reflex contract, including dynamic-candidate controls for any claimed dynamic support. The CX-36 pilot SHOULD be BuildLog → DiagnosticSummary, with actual learned artifact, eligible examples, source validation, offline/load failures, matched incumbent and simpler baseline, transfer/fallback and admission-or-rejection evidence. A fixed classifier only proves its declared scope.
+
+
+---
+
+# ANEA-010 — Native heads and optional token/latent profiles
+
+Native mechanism and capability class are orthogonal. A fixed or dynamic candidate head commonly implements SpecializedReflex. A learned transformation packaged and admitted under CX-36 is a Neural Program. A shared service may host either, with exact artifact/base bindings. Do not force a generic classification head to solve diagnostic extraction or claim a template wrapper is a trained model.
+
+**Owners/source basis:** CX-14, CX-20, CX-22, CX-23, CX-36.
+
+**ANEA-010-R01 — Head compatibility contract.** A head profile MUST bind base checkpoint, tokenizer/input processor, feature extraction layer/pooling/position, dimensions/shapes/dtypes/layout, quantization/adapter configuration, canonical encoder/template, label order or dynamic candidate-conditioning recipe, output semantics, learned parameters and evaluation. Fixed K output cannot claim arbitrary dynamic candidate support. Mismatches refuse.
+
+**ANEA-010-R02 — Genuine native evidence, optional profile.** A native claim MUST execute real learned parameters/features on unseen qualified inputs with versioned evidence. Lookup tables keyed by test ID, fixture logits and text generation behind a head method are not native learned execution. The three-family native profile is optional for early Cortex releases; unavailable hardware is reported, not fabricated. An actual learned-function artifact remains required for any claimed CX-36 pilot success.
+
+**ANEA-010-R03 — Private representations allowed.** A backend MAY expose a head/function without exposing hidden states or KV. Direct tensor/latent access requires a separate authorized transport/ownership/lifetime/device/privacy profile. Public raw hidden-state access is not required for .np portability or head execution.
+
+**ANEA-010-R04 — Token-native research requires admission.** Dedicated token vocabulary, embeddings and output parameters MAY be trained as an optional profile. Pin tokenizer/model/template/encoding/mapping/learning evidence; verify exact boundary behavior and reserved-token safety. A tokenizer edit alone does not demonstrate learned semantics. Token compression claims count instructions, mappings, reasoning and total work.
+
+**ANEA-010-R05 — Scoped object references, not magic knowledge.** Compact references MUST resolve under existing object/capability owners, immutable identity, principal/tenant and expiry. The runtime can invoke a referenced artifact without showing its implementation to a model; a model reasoning about document contents still needs authorized evidence/features. IDs never mint objects, data access or authority.
+
+**ANEA-010-R06 — Explicit research profiles.** Canvas, model-understood bytecode, latent calls, cross-model state translation and world-model rollouts MUST remain separately versioned research profiles. Each needs input/action/state semantics, units/horizon where relevant, limits, validity and uncertainty rules, conformance and empirical evidence. Unsupported profiles refuse; simulated results are not observed facts.
+
+
+---
+
+# Security — unchanged protected ownership
+
+These requirements refine existing enforcement; they do not create an ANEA permission system. Archive integrity, descriptor validity and model accuracy are not capability grants.
+
+**Owners/source basis:** CX-03, CX-13, CX-23, CX-36, MX-14, MX-27.
+
+**ANEA-SEC-R01 — Untrusted input remains data.** Only trusted adapter code constructs privileged instructions. Source files, logs, labels, replayed conversations, model replies and package descriptions MUST NOT change policy, credentials, effect grants, routing/admission rules or protected evaluation. Fake system/tool delimiters stay data.
+
+**ANEA-SEC-R02 — Actual locality and egress.** Local-only MUST apply to inference, tokenization, telemetry, redirects, model fetch, fallbacks, caches and compile service use, under real enforcement. Offline readiness requires all validated assets and tested network-disabled execution. Localhost names or existing program files alone are insufficient.
+
+**ANEA-SEC-R03 — Bound all work and hostile inputs.** Existing budgets MUST bound request/response/archive/parser sizes, context/candidates, reasoning/generation, jobs, retries, concurrency, queue depth, device/host memory, traces and artifacts. Checks occur before work and on failure/cancellation paths. No archive install hooks or unbounded training jobs may run through an inference API.
+
+**ANEA-SEC-R04 — Authenticated resolution and current policy.** Caller-supplied hashes, tenant labels and copied handles are not authentication. Existing issuer/registry checks MUST bind current principal/session/epoch/project and narrow authority at dispatch and effect commit. Recovered jobs cannot resume under revoked permissions.
+
+
+---
+
+# CX-36 completion requirements — source, compiler, runtime and self-hosting
+
+The following requirements close gaps not covered by the retained 66 identifiers. They supplement CX-36 and its existing implementation owners. B152–B164 are **suggested in the separately supplied CX-36 document** and absent from the supplied Cortex v0.15 task manifest; this pack stages mappings, not evidence of allocated or completed repository work.
+
+**Owners/source basis:** CX-36, CX-23, CX-22, CX-11.
+
+**ANEA-NP-R01 — Source semantic completeness.** A .nps parser MUST represent name/contract/input/output, MUST/SHOULD/non-goals, positive/negative examples, invariants, allowed ambiguity, evaluation references, privacy/locality, deployment, fallback and authority ceiling. The exact syntax is versioned independently; no example grammar in this pack is automatically a language extension. Generated sources remain proposals until reviewed.
+
+**ANEA-NP-R02 — Two compilation paths with the same artifact boundary.** Support spec-driven .nps compilation and experience-driven compilation from eligible verified episodes plus contract/partitions. Both MUST produce candidate immutable artifacts via data validation, family split, backend selection, training/compile, reliability fit, locked evaluation, packaging and admission. No compile call activates a capability.
+
+**ANEA-NP-R03 — Compiler data and job lineage.** Compile manifests MUST bind source revision, source episode IDs, family/group splits, label producer, synthetic/observed status, corpus roles, backend/compiler config, job identity and resulting artifact. Protected evaluation refs are access-controlled references, not embedded learner-readable labels. Remote compile requires separate egress and job reconciliation.
+
+**ANEA-NP-R04 — NeuralProgramBackend ownership and deployment modes.** The CX-23 implementation of compile/load/execute/unload/inspect/health MUST implement the CX-36 contract for each advertised Embedded, LocalSidecar or RemoteService mode. Deployment is explicit in receipts; not all modes need ship at once. ProgramAsWeightsBackend/PawArtifactImporter is optional and vendor-specific fields stay in the adapter.
+
+**ANEA-NP-R05 — Applicability distinct from loading and correctness.** Every promoted artifact MUST bind an applicability domain, authority ceiling, transfer scope and governed fallback. Loading success is not applicability. Validate domain/schema/size/family guards before protected use; out-of-scope inputs abstain or follow fallback even if scores are high. Keep output_distribution, correctness_estimate, applicability_estimate, ood_estimate and calibration_domain distinct, explicitly absent when unavailable.
+
+**ANEA-NP-R06 — Shared-base and offline dependency closure.** The runtime SHOULD share compatible resident bases across artifacts with pinned identities, isolated adapters, bounded memory, hot-swap/eviction accounting and no implicit adapter composition. Offline readiness MUST be the validated closure of artifact, base, tokenizer, template, runtime and auxiliary assets. Test at least two programs for any shared-base claim.
+
+**ANEA-NP-R07 — Invocation receipt closure.** Each NeuralProgramInvocationReceipt MUST bind immutable artifact and capability, input/effective-input/output digests, schema validation, applicability, backend/base/runtime/deployment/hardware, sampling/replay limits, cost/latency, uncertainty, fallback and downstream evidence. A failure receipt cannot identify a substituted artifact as successful; aliases alone are insufficient.
+
+**ANEA-NP-R08 — Source evolution preserves approved meaning.** Generated or optimized .nps wording, examples, schema, applicability and backend proposals MUST preserve approved semantic contract or raise a new ImprovementIntent and approval revision. Inference mechanisms may change; required facts, non-goals, authority and evidence cannot be weakened to make training pass.
+
+**ANEA-NP-R09 — Registry and lifecycle views are not new authority.** The Neural Program Registry named by CX-36 MUST be a class-specific view/integration of CX-34 with CX-11-controlled admission, not an independent publication path. Retain candidate/shadow/canary/active/deprecated/quarantined/retired status and explicit mappings to existing lifecycle events. Active routing excludes quarantined/deprecated-for-use entries as current policy requires.
+
+**ANEA-NP-R10 — Low-risk self-host pilot and allowed rejection.** The first proposed CX-36 pilot is BuildLog → DiagnosticSummary in MiCode, preserving source filenames/locations/codes/causal errors without invented facts, fixes or tools. Run eligible offline replay, authorized no-effect shadow, protected evaluation and admission-or-rejection with evidence. G36-SELF-HOST may close with an evidence-backed rejection; no false promotion is required. A document fixture alone cannot close it.
+
+
+---
+
+# MiCode and build-governance integration requirements
+
+ANEA’s implementation stages are dependency views over existing tasks. They do not redefine Cortex M0–M9 or MiCode milestones. `/build-loop` remains the preferred executor after its live contract is discovered. This pack is an unapproved engineering proposal; converting it to an approved IntentIR/BuildSpecRef requires the project’s configured review, not a schema marker.
+
+**Owners/source basis:** MX-17, MX-05, MX-12, MX-13, MX-27, MX-29, MX-30, MX-31, MX-32, CX-19, CX-29, CX-32, CX-33.
+
+**ANEA-MX-R01 — Bind implementation to approved intent and existing build loop.** Every implementation run MUST bind approved IntentIR, BuildSpec semantic/document digests, task-DAG revision, /build-loop identity and allowed paths/budgets. The source of truth is approved IntentIR, not an independently edited build spec. A semantic/authority/acceptance change emits IntentConflict or PlanChangeProposal and requires the configured approval/new revision.
+
+**ANEA-MX-R02 — Lossless bridge vocabulary.** MX-12/MX-05 exports MUST preserve canonical cognitive vocabulary version, structured operation kind, capability class, deployment/lowering and exact artifact identities as separate axes. Missing mappings refuse; VERIFY and NEURAL_PROGRAM cannot be silently added as new canonical classes. Neural artifact import is not local authority.
+
+**ANEA-MX-R03 — Instrument self-application before optimizing.** From the first integrated call, emit CognitiveOperationRecord with exact component/revision/effective input/context/candidates/authority/resource/downstream outcome and privacy/corpus metadata. Initially observe, replay and shadow only. Existing PermissionGate, verifier, protected data roles, provenance and rollback stay outside ordinary self-optimization.
+
+**ANEA-MX-R04 — Preserve evidence and causal bridge.** MX-30/MX-31 exports MUST preserve CX-32 edge types, claim strength, negative evidence, exact effective input and CX-33 treatment/control/stopping/reversibility lineage. A measured speedup on different prompts/hardware is not automatically an identified causal backend effect.
+
+**ANEA-MX-R05 — Project-local readmission and transfer namespaces.** Imported/shared artifacts MUST re-enter each target ProjectImprovementContract with local acceptance/privacy/authority/rollback. MX-19 T0–T5 coding benchmark tiers and MX-29 P0–P5 repository transfer tiers MUST retain their namespace and definition; numbers alone do not map them. Negative transfer narrows scope or quarantines, not deletes evidence.
+
+**ANEA-MX-R06 — Consumer integration and independent completion.** A shipped profile MUST have a real Axon/MiCode consumer and user-visible fallback/error/recovery path on the integrated revision. A definition-only anchor does not prove use. PermissionGate and protected AcceptanceContract remain authoritative; model output, completion critic, schema tests and ANEA pack validation cannot set VerifiedComplete.
+
+
+---
+
+# Review and import controls
+
+The supplied Cortex v0.15 contains CX-00 through CX-34, B00 through B151 and 247 proposed gates. The separately uploaded CX-36 is Proposed, not present in that archive. CX-35 is not supplied and MUST NOT be invented or renumbered. MiCode v0.8 contains MX-00 through MX-32 and T00 through T151. Those counts describe the inspected files, not live implementation.
+
+**Owners/source basis:** CX-00, CX-15, CX-36, CX-TASKS, CX-BUILD, MX-BUILD.
+
+**ANEA-GOV-R01 — Explicit precedence and unresolved-source ledger.** The reviewer MUST distinguish source-derived requirements, ANEA proposals and live unknowns. CX-36 is canonical for Neural Program terminology/artifact/ABI within this proposed alignment; earlier owners remain for behavior outside that scope. Conflicts about AIR mappings, lifecycle/probability enums, format encoding or task sequencing are recorded with both source anchors and conservative blocked behavior. No source is silently rewritten.
+
+**ANEA-GOV-R02 — No duplicate task or circular owner dependency.** Existing B/T work packages MUST be extended with bounded ANEA slices; suggested CX-36 B152–B164 require namespace/allocation review. Cross-references are not automatically prerequisite edges. Do not create CX-23 → CX-36 → CX-23 or B77 → B156 → B77 cycles. Follow existing dependencies until approved task splitting changes them.
+
+**ANEA-GOV-R03 — Semantic evidence anchors and synchronized artifacts.** Requirement, gate, task, protocol, handoff and generated full document MUST update together. Source evidence uses file digest plus section/semantic anchor; live implementation uses symbol plus consuming-call-site/gate evidence, not line-only assertions. A shift test and wrong-body test must challenge any code anchor mechanism adopted by the actual repository.
+
+**ANEA-GOV-R04 — Document gates cannot pass product gates.** Pack validators MUST report only the exact offline checks performed. Product gate targets and acceptance scenarios remain NOT_RUN until executed against the integrated repository with authenticated subject-bound evidence. Coverage checks verify references, not behavior; learned quality/admission/OS enforcement cannot be established by JSON fixtures.
+
+
+---
+
+# Adoption and completion
+
+The delivered pack is a source-aligned proposal. Before implementation, the owner must resolve blocking decisions and bind its semantics to approved IntentIR through existing governance. A `.nps` or `.np` reference fixture is not an executable production capability, a signature, learned weights, or admission evidence.
+
+The full integration claim requires the I0–I7 acceptance profile on one integrated repository revision, with external prerequisites resolved. The hosted/Reflex subset may be released earlier under its narrower claim. I8 is optional research and does not block these profiles. G36-SELF-HOST can be satisfied by a genuinely executed candidate lifecycle ending in an evidence-backed rejection; broader Neural Program runtime/quality claims still require their specific gates.
+
+Tests and evidence must establish the actual property, not merely the existence of a field or command. Product completion remains with the protected verifier. Proposed packaging syntax, diagnostic allocation, bridge vocabularies and live call-site locations remain subject to repository review.

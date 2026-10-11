@@ -1,0 +1,47 @@
+{
+  "schema_version": "0.2",
+  "program_id": "example.minimal",
+  "modules": [
+    {
+      "id": "m1",
+      "kind": "module",
+      "name": "main",
+      "type_ref": null,
+      "effects": [],
+      "capabilities": [],
+      "resources": [],
+      "children": [
+        {
+          "id": "f1",
+          "kind": "function",
+          "name": "add",
+          "type_ref": "fn(i64,i64)->i64",
+          "effects": [],
+          "capabilities": [],
+          "resources": [],
+          "children": [],
+          "attributes": {
+            "contract": "pure"
+          },
+          "provenance": {
+            "artifact_hash": "example-source-hash"
+          }
+        }
+      ],
+      "attributes": {},
+      "provenance": {
+        "artifact_hash": "example-source-hash"
+      }
+    }
+  ],
+  "contracts": [
+    {
+      "id": "c1",
+      "kind": "observable_behavior",
+      "rule": "add(a,b)==a+b"
+    }
+  ],
+  "provenance": {
+    "artifact_hash": "example-source-hash"
+  }
+}

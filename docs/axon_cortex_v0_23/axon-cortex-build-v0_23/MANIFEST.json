@@ -1,0 +1,18 @@
+{
+  "name": "axon-cortex-build-files",
+  "version": "0.23",
+  "release_kind": "preservation_first_integration_overlay",
+  "parent": {
+    "version": "0.22",
+    "path": "parent/Axon_Cortex_Build_Files_v0_22.zip",
+    "sha256": "b9f6000e0677022c58e67fe38b9efa514f4d9a520cf95fffb8ee9f68afbb6bb9"
+  },
+  "forge": {
+    "version": "0.3.0",
+    "path": "dependencies/Axon_Forge_Build_Files_v0_3.zip",
+    "sha256": "e126f400a40829303b0007c2a0a6de4da219de7f7df7bf8c06e21f7c4718baa7"
+  },
+  "runtime_qualified": false,
+  "product_gates_executed": 0,
+  "rule": "v0.22 remains immutable parent; v0.23 adds Forge integration amendments and composed task/gate deltas without absorbing Forge ownership."
+}

@@ -1,0 +1,45 @@
+# Proposed upstream amendments — not applied to live repositories
+
+Source snapshots under `reference/` are unchanged. This file describes the edits to make **after owner/intent review**. It does not present an unapproved Cortex v0.16 or MiCode v0.9 release.
+
+## Cortex
+
+**CX-23 and its build guide:** reference CX-36 as the canonical naming/artifact/ABI refinement. Preserve CX-23 runtime/compiler implementation ownership; add `.nps`, complete `.np` fields, both compile paths, durable job handling, exact dependency/readiness and invocation receipts. Resolve prompt-only eligibility under D05 rather than deleting the older passage silently.
+
+**CX-05/06, Reflex conformance/runtime:** retain bounded Choice/binary/ordinal semantics and canonical encoding. Add ANEA physical-execution refinements (exact token boundary, full sequence/complete scores, truthful emulation and head bindings) as conformance profiles. A fixed-label head is not dynamic option support. Preserve raw probability origin and explicitly map aliases to CX-24.
+
+**CX-04/15 and protocols:** map learned-function host calls without inventing parser syntax or changing effects. Document AIR-node/accounting-class/capability-kind separation. Use authoritative type map, reference interpreter, recorded-reply parity and explicit native refusal. Treat fusion/model substitution as empirical policy changes when appropriate.
+
+**CX-22:** specialization may emit `.nps` and candidate `.np` through CX-36/23. The search still compares rules/templates, specialized Reflex, NeuralProgram, tools and general cognition. A learned candidate can be rejected; no task must become weights.
+
+**CX-28/29:** effective-input/working-set and CognitiveOperationRecord references start at the first integrated call. Reuse StateHandle and protected pins. Instrument now, activate only through protected lifecycle.
+
+**CX-32/33/34:** connect Neural Program compilation/invocation/evaluation to the shared evidence graph; bind causal experiment controls; represent `.np` entries as a class-specific shared registry view. Hard filtering and dispatch revalidation precede utility. Do not build an ANEA evidence store/scheduler as a competing owner.
+
+**Build tasks:** apply `TASK_IMPACT.json`. B77–B83 remain the implementation work; B152–B164 are CX-36's suggested extensions and require allocation. Rename B78's generic “PAW-style” wording only after distinguishing an optional ProgramAsWeights external arm from the general local Neural Program reference arm. Do not turn the optional adapter B157 into a core dependency.
+
+**Build sequencing:** preserve current dependencies; explicitly adjudicate the B148 early-reference narrative versus its late manifest dependencies. A contract-only split is a proposal, not a silently deleted prerequisite. Adding CX-36 references to existing specs does not imply reciprocal prerequisite edges.
+
+**Index/manifests/master:** after approval, import CX-36 into the specification index/source manifest, register task extensions and all 14 G36 gates, update acceptance/tasks/status/decisions/protocols and regenerate the master. The supplied Cortex validator recognizes lowercase `Gdd-...` definitions and expects Draft front matter; CX-36 uses uppercase G36 names and Proposed metadata. Update validator/metadata mapping deliberately and preserve a canonical alias record; do not silently drop uppercase gates or pretend the untouched upstream validator already validates CX-36.
+
+## MiCode
+
+**MX-05/MX-12:** add reviewed lossless operation/capability/physical-mechanism mappings and learned-artifact/compile/invocation bridge fields. Keep existing AIR vocabulary version explicit; VERIFY stays protected evidence/admission, not a newly invented cognitive instruction.
+
+**MX-17 / T56–T63:** bind the ANEA implementation to approved IntentIR, rendered BuildSpecRef and existing `/build-loop`. Add a seeded conflict that requires approval/new revision rather than weakening a MUST.
+
+**T94–T99 / MX-24 / MX-27:** extend specialization/candidate handling for CX-36 source/artifact/compiler lineage, candidate versus active identity and real BuildLog pilot. Retain no-effect shadow, protected evaluation and independent promotion/rollback. Do not create a new builder or online self-publishing trainer.
+
+**MX-26 / T108–T117:** preserve protected pins, exact effective context and canonical operation records. Reuse existing state/observation owners; avoid a separate ANEA memory store.
+
+**MX-30/31 / T140–T147:** add compiled-source/examples/job/artifact/invocation nodes and typed lineage/negative evidence. Preserve matched interventions, corpus roles, confounders and counterfactual strength.
+
+**MX-32 / T148–T151:** consume shared registry entries and runtime receipts, recheck local project/PermissionGate policy, and display requested/selected/attempted/actual implementations. Test auth recovery, missing specialization, local-only failure, explicit fallback and next-turn model state.
+
+**Index/manifests/master:** update existing spec/build/protocol/status documents and regenerate derived views after approval. No new MX spec ID is needed merely because ANEA has a new document version; allocate only if the owners decide an additional contract is necessary.
+
+## Validation and import cautions
+
+The supplied Cortex validator and MiCode validator pass their own unchanged source packages, but validate different scopes. Neither proves code or model behavior. A combined import must check source/task/gate IDs, dependency cycles, status claims, schema/fixture drift, master regeneration, local links and hashes, plus actual product gates in the repositories.
+
+All staged changes remain proposals. `PRODUCT_STATUS.json` and planned acceptance/gate records are deliberately NOT_RUN; they must not be copied as passing evidence into an approved registry.

@@ -1,0 +1,21 @@
+{
+  "schema": "acf-backend-profile/1",
+  "profile_id": "axon-local-interpreter-inspection",
+  "backend_version": "source-snapshot-4cceb89",
+  "configuration_digest": "acf1:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "engine": "axon_interpreter",
+  "enclosure": "process_scoped",
+  "guest_kind": "none",
+  "os": "linux",
+  "architecture": "x86_64",
+  "placement": "local",
+  "support_status": "verified",
+  "reason": "Source-inspected only; runtime conformance was not executed.",
+  "evidence_refs": [],
+  "functionality": [
+    "interpreter_run"
+  ],
+  "enforcement": [
+    "scoped_axon_effects"
+  ]
+}

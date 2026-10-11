@@ -1,0 +1,32 @@
+{
+  "name": "axon-forge-build-files",
+  "version": "0.3.0",
+  "status": "implementation-grade-spec",
+  "parent_system": "Axon",
+  "primary_consumer": "MiCode",
+  "cognitive_consumer": "Cortex",
+  "owned_authorities": [
+    "semantic_ir",
+    "transform_contract",
+    "meta_execution_contract",
+    "semantic_diff",
+    "semantic_migration",
+    "build_program",
+    "compiler_backend_contract",
+    "structured_diagnostic_profile",
+    "truth_resolution",
+    "bootstrap_pack",
+    "forge_conformance"
+  ],
+  "delegated_authorities": {
+    "experiment_identity_lineage_comparison": "Axon/CX-33",
+    "evidence_graph_provenance": "Axon/CX-32",
+    "admission_promotion_rollback": "Axon/CX-11/CX-18",
+    "capability_grants": "Axon/CX-03",
+    "sandbox_runtime": "Axon/CX-13",
+    "physical_resource_inventory": "Axon Compute Fabric / CX-34",
+    "higher_order_reasoning": "Cortex/CX-29",
+    "coding_workflow": "MiCode/CX-16"
+  },
+  "normative_rule": "Forge owns program semantics and compiler programmability; it projects into, but never duplicates, Axon evidence/experiment/authority/resource owners."
+}

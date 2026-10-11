@@ -1,0 +1,353 @@
+{
+  "schema": "cortex-task-delta/1",
+  "package_version": "0.23",
+  "parent_version": "0.22",
+  "tasks": [
+    {
+      "id": "B287",
+      "title": "Freeze Forge v0.3 input and ownership boundary",
+      "depends_on": [
+        "B255",
+        "B284"
+      ],
+      "specs": [
+        "CX-00"
+      ],
+      "output": "Pin parent/Forge hashes, owner map and no-duplicate-authority contract.",
+      "stage": "M2",
+      "lane": "contracts",
+      "optional": false,
+      "gate_targets": [
+        "G00-r23-forge-owner-map",
+        "G00-r23-parent-preservation"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "B288",
+      "title": "Add canonical StrategyArtifact integration",
+      "depends_on": [
+        "B287"
+      ],
+      "specs": [
+        "CX-29",
+        "CX-33",
+        "CX-34"
+      ],
+      "output": "Implement/version the generic strategy identity used by Forge/Cortex experiments.",
+      "stage": "M2",
+      "lane": "contracts",
+      "optional": false,
+      "gate_targets": [
+        "G29-r23-strategy-artifact"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "B289",
+      "title": "Bind Forge SIR to compiler and IntentIR seams",
+      "depends_on": [
+        "B287"
+      ],
+      "specs": [
+        "CX-15",
+        "CX-19"
+      ],
+      "output": "Implement SIR/frontend traceability and explicit IntentIR/SIR boundary.",
+      "stage": "M2",
+      "lane": "compiler",
+      "optional": false,
+      "gate_targets": [
+        "G15-r23-sir-boundary",
+        "G19-r23-intent-sir-separation"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "B290",
+      "title": "Bind Forge meta execution to existing authority/isolation",
+      "depends_on": [
+        "B289"
+      ],
+      "specs": [
+        "CX-03",
+        "CX-13"
+      ],
+      "output": "Route meta/build/compiler-plugin capability requests through CX-03 and effects through CX-13.",
+      "stage": "M2",
+      "lane": "runtime",
+      "optional": false,
+      "gate_targets": [
+        "G03-r23-meta-no-mint",
+        "G03-r23-forge-recheck",
+        "G13-r23-meta-isolation",
+        "G13-r23-forge-receipt"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "B291",
+      "title": "Normalize compiler diagnostics and MiCode repair loop",
+      "depends_on": [
+        "B289",
+        "B290"
+      ],
+      "specs": [
+        "CX-16",
+        "CX-21"
+      ],
+      "output": "Expose structured diagnostics/SIR references and measure compile-diagnose-repair iterations.",
+      "stage": "M2",
+      "lane": "micode",
+      "optional": false,
+      "gate_targets": [
+        "G16-r23-structured-repair",
+        "G21-r23-forge-benchmark"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "B292",
+      "title": "Implement Forge coding truth/bootstrap profile",
+      "depends_on": [
+        "B289"
+      ],
+      "specs": [
+        "CX-17",
+        "CX-24"
+      ],
+      "output": "Bind versioned bootstrap packs and current compiler/source/conformance truth resolution.",
+      "stage": "M2",
+      "lane": "retrieval",
+      "optional": false,
+      "gate_targets": [
+        "G17-r23-bootstrap-source",
+        "G24-r23-truth-order",
+        "G24-r23-executable-retrieval"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "B293",
+      "title": "Implement Transform ABI and semantic diff",
+      "depends_on": [
+        "B289"
+      ],
+      "specs": [
+        "CX-15",
+        "CX-30"
+      ],
+      "output": "Register/apply transforms through exact Forge ABI and emit semantic diffs/verification requirements.",
+      "stage": "M2",
+      "lane": "compiler",
+      "optional": false,
+      "gate_targets": [
+        "G15-r23-transform-abi",
+        "G30-r23-semantic-transform"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "B294",
+      "title": "Implement semantic migration contract",
+      "depends_on": [
+        "B293"
+      ],
+      "specs": [
+        "CX-18",
+        "CX-30"
+      ],
+      "output": "Add dry-run/idempotent migration artifacts for broad semantic refactors.",
+      "stage": "M2",
+      "lane": "compiler",
+      "optional": false,
+      "gate_targets": [
+        "G30-r23-migration"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "B295",
+      "title": "Implement BuildProgram and backend adapters",
+      "depends_on": [
+        "B290",
+        "B293"
+      ],
+      "specs": [
+        "CX-15",
+        "CX-30"
+      ],
+      "output": "Produce deterministic BuildGraph data and bind backend/toolchain identity.",
+      "stage": "M2",
+      "lane": "compiler",
+      "optional": false,
+      "gate_targets": [
+        "G15-r23-build-backend",
+        "G30-r23-build-program"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "B296",
+      "title": "Project Compute Fabric resources into Forge",
+      "depends_on": [
+        "B287",
+        "B295"
+      ],
+      "specs": [
+        "CX-34"
+      ],
+      "output": "Expose epoch-bound non-authoritative resource projection without a second registry.",
+      "stage": "M2",
+      "lane": "integration",
+      "optional": false,
+      "gate_targets": [
+        "G34-r23-resource-projection",
+        "G34-r23-no-second-registry"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "B297",
+      "title": "Project Forge observations into UEG",
+      "depends_on": [
+        "B287"
+      ],
+      "specs": [
+        "CX-32"
+      ],
+      "output": "Attach Forge evidence/provenance payloads to canonical UEG identities.",
+      "stage": "M2",
+      "lane": "evidence",
+      "optional": false,
+      "gate_targets": [
+        "G32-r23-evidence-projection",
+        "G32-r23-provenance-projection"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "B298",
+      "title": "Bind Forge profiles to CX-33 causal experiments",
+      "depends_on": [
+        "B288",
+        "B297"
+      ],
+      "specs": [
+        "CX-33"
+      ],
+      "output": "Use canonical experiment identity/lineage/hypothesis and multi-objective hard-gated comparison.",
+      "stage": "M2",
+      "lane": "experimentation",
+      "optional": false,
+      "gate_targets": [
+        "G33-r23-experiment-profile",
+        "G33-r23-pareto-hard-gates"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "B299",
+      "title": "Bind Forge candidates to admission/native promotion",
+      "depends_on": [
+        "B293",
+        "B294",
+        "B298"
+      ],
+      "specs": [
+        "CX-11",
+        "CX-18"
+      ],
+      "output": "Require independent admission and preserve Forge lineage/rollback on compiler/runtime promotion.",
+      "stage": "M2",
+      "lane": "admission",
+      "optional": false,
+      "gate_targets": [
+        "G11-r23-forge-admission",
+        "G18-r23-forge-promotion",
+        "G18-r23-compiler-promotion"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "B300",
+      "title": "Wire end-to-end MiCode Forge episode",
+      "depends_on": [
+        "B291",
+        "B292",
+        "B293",
+        "B295",
+        "B297"
+      ],
+      "specs": [
+        "CX-16"
+      ],
+      "output": "Run source/SIR/compile/repair/test/evidence path with exact identities and no authority bypass.",
+      "stage": "M2",
+      "lane": "micode",
+      "optional": false,
+      "gate_targets": [
+        "G16-r23-forge-loop"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "B301",
+      "title": "Validate the v0.23 Forge integration package",
+      "depends_on": [
+        "B287",
+        "B288",
+        "B289",
+        "B290",
+        "B291",
+        "B292",
+        "B293",
+        "B294",
+        "B295",
+        "B296",
+        "B297",
+        "B298",
+        "B299",
+        "B300"
+      ],
+      "specs": [
+        "CX-00",
+        "CX-21",
+        "CX-29"
+      ],
+      "output": "Run offline package, schema, owner-map, crosswalk, dependency and negative conformance checks.",
+      "stage": "M2",
+      "lane": "integration",
+      "optional": false,
+      "gate_targets": [
+        "G21-r23-frozen-evaluator",
+        "G29-r23-frozen-self-eval"
+      ],
+      "status": "Not started"
+    },
+    {
+      "id": "B302",
+      "title": "Qualify one bounded Forge semantic optimization pilot",
+      "depends_on": [
+        "B271",
+        "B276",
+        "B301"
+      ],
+      "specs": [
+        "CX-21",
+        "CX-30",
+        "CX-33"
+      ],
+      "output": "On a fixed task/evaluator/toolchain, compare incumbent versus one Forge semantic candidate and retain truthful PASS/FAIL/INCONCLUSIVE evidence; no improvement claim is forced.",
+      "stage": "M3",
+      "lane": "pilot",
+      "optional": false,
+      "gate_targets": [
+        "G21-r23-forge-benchmark",
+        "G30-r23-semantic-transform",
+        "G33-r23-experiment-profile"
+      ],
+      "status": "Not started"
+    }
+  ]
+}

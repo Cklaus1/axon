@@ -1,0 +1,36 @@
+{
+  "update_date": "2026-09-22",
+  "basis": "user-approved integration review; original archives unchanged",
+  "inputs": [
+    {
+      "filename": "Axon_Cortex_Build_Files_v0_19(2).zip",
+      "bytes": 972488,
+      "sha256": "458e0458ffcad83b20d49687faa6d7298a24337e2d4a93678c9096657573131c",
+      "included_original": false
+    },
+    {
+      "filename": "MiCode_Axon_Support_Build_Plan_v0_13(2).zip",
+      "bytes": 810860,
+      "sha256": "9eb6b90a63a38d16b1ad8966c36865a7f9bf6a45fa1d60ea10745fda32e70b51",
+      "included_original": false
+    },
+    {
+      "filename": "AXON_MICODE_JIMOTHY_WEBMCP_REVIEW.md",
+      "bytes": 37652,
+      "sha256": "74c12e6192293b73613856dda5191fc54a078ad5025ad1e96c441ae2c12e4949",
+      "included_original": false
+    },
+    {
+      "filename": "AXON_MICODE_JIMOTHY_WEBMCP_REVIEW_EVIDENCE.json",
+      "bytes": 1955,
+      "sha256": "c661b292b61fde22b9fc699049585b88a96e743da247a96400386f9033cc47dc",
+      "included_original": false
+    },
+    {
+      "filename": "Pasted markdown(6).md",
+      "bytes": 15857,
+      "sha256": "cf7df4590ab29d3bcc3fe51e3216ddb0695656f116307ee2a60983e71850a047",
+      "included_original": false
+    }
+  ]
+}

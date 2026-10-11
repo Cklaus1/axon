@@ -1,0 +1,15 @@
+{
+  "axon_experiment_ref": "axon:experiment:exp-example-001",
+  "subject": {
+    "artifact_ref": "artifact:candidate-hash",
+    "sir_ref": "sir:example"
+  },
+  "mutation": {
+    "class": "transform",
+    "transform_ref": "transform:example.constant-fold@1",
+    "semantic_diff_ref": "diff:001"
+  },
+  "compiler_ref": "compiler:reference@1",
+  "backend_ref": "backend:reference@1",
+  "forge_strategy_profile_ref": "forge-strategy:baseline"
+}

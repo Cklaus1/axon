@@ -1,0 +1,16 @@
+{
+  "binding_id": "fixture:forge-v023",
+  "forge_version": "0.3.0",
+  "axon_experiment_ref": "fixture:experiment",
+  "ueg_ref": "fixture:evidence",
+  "strategy_ref": "fixture:strategy",
+  "capability_request_ref": "fixture:capreq",
+  "execution_receipt_ref": null,
+  "resource_authority_ref": "fixture:fabric-observation",
+  "forge_profile_ref": "fixture:forge-profile",
+  "forge_artifact_refs": [
+    "fixture:sir",
+    "fixture:transform"
+  ],
+  "fixture_only": true
+}

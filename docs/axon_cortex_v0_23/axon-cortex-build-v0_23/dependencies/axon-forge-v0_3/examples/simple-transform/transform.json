@@ -1,0 +1,41 @@
+{
+  "id": "example.constant-fold",
+  "version": "1",
+  "description": "Fold statically known arithmetic.",
+  "hypothesis": "Reduce runtime operations without observable behavior changes.",
+  "mutation_class": "transform",
+  "accepts": [
+    "arithmetic_expression"
+  ],
+  "produces": [
+    "constant"
+  ],
+  "preconditions": [
+    "operands.constant == true"
+  ],
+  "postconditions": [
+    "result.constant == true"
+  ],
+  "invariants_preserved": [
+    "observable_semantics"
+  ],
+  "permitted_changes": [
+    "instruction_count"
+  ],
+  "parameters_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "verification_plan": {
+    "static": [
+      "typecheck"
+    ],
+    "dynamic": [
+      "equivalence_sample"
+    ]
+  },
+  "expected_cost": {
+    "compile_ms": "low"
+  }
+}

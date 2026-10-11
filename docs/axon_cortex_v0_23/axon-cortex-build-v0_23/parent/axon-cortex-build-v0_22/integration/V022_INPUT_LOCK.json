@@ -1,0 +1,51 @@
+{
+  "schema": "axon.closed-loop-input-lock/1",
+  "document_version": "0.22",
+  "date": "2026-09-24",
+  "inputs": [
+    {
+      "id": "AXON_SOURCE",
+      "filename": "axon-ai-context-20260924.zip",
+      "sha256": "68c2a7d5a49acdd2e91229210adbacf62bcb1f18e2647b013594d744e1711fac",
+      "files": 1213,
+      "raw_source_included": false
+    },
+    {
+      "id": "MICODE_SOURCE",
+      "filename": "micode-src-8ffc2504(1).zip",
+      "sha256": "3c0af45a4f9a7f7228797d8eb825ed8f566501a3502d5f196423aea26c45e3d6",
+      "files": 859,
+      "raw_source_included": false
+    },
+    {
+      "id": "CORTEX_V021",
+      "filename": "Axon_Cortex_Build_Files_v0_21.zip",
+      "sha256": "54faa62c6befbbbdceec2f38fa9139d3ec59182d8c97c45d7dd3cde5d62f4684",
+      "files": 240,
+      "raw_source_included": false
+    },
+    {
+      "id": "FABRIC_V01",
+      "filename": "Axon_Compute_Fabric_Spec_Pack_v0_1(1).zip",
+      "sha256": "cb898888fac8a59a6ec729a88c14c15b34f5ed660463f6c68b40a69805a509fa",
+      "files": 40,
+      "raw_source_included": false
+    }
+  ],
+  "source_git_revisions": {
+    "axon": {
+      "reported": "4cceb89",
+      "git_verified": false
+    },
+    "micode": {
+      "archive_label": "8ffc2504",
+      "git_verified": false
+    }
+  },
+  "micode_source_supplied": true,
+  "source_files_modified": false,
+  "runtime_tests_executed": false,
+  "current_peer_document": "integration/MICODE_V022_CONSUMER_DELTA.md",
+  "historical_peer_target": "0.15 was proposed only; do not relabel embedded v0.3 as delivered v0.15",
+  "fabric_profile": "M0-M2; original v0.1.0 requirements retained; no supported runtime profile claimed"
+}

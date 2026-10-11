@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://axon/cortex/v0.23/forge-cortex-binding.schema.json",
+  "title": "ForgeCortexBinding",
+  "type": "object",
+  "required": [
+    "binding_id",
+    "forge_version",
+    "axon_experiment_ref",
+    "ueg_ref",
+    "strategy_ref",
+    "capability_request_ref",
+    "resource_authority_ref"
+  ],
+  "properties": {
+    "binding_id": {
+      "type": "string"
+    },
+    "forge_version": {
+      "const": "0.3.0"
+    },
+    "axon_experiment_ref": {
+      "type": "string"
+    },
+    "ueg_ref": {
+      "type": "string"
+    },
+    "strategy_ref": {
+      "type": "string"
+    },
+    "capability_request_ref": {
+      "type": "string"
+    },
+    "execution_receipt_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "resource_authority_ref": {
+      "type": "string"
+    },
+    "forge_profile_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "forge_artifact_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}

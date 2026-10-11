@@ -1,0 +1,31 @@
+{
+  "schema": "axon.upgrade-plan/1",
+  "package_version": "0.21",
+  "mode": "READ_ONLY",
+  "source_mutated": false,
+  "source_scripts_executed": false,
+  "reviewed_files": 1213,
+  "matched_files": 1213,
+  "changed_paths": [],
+  "missing_paths": [],
+  "unsafe_paths": [],
+  "untracked_files": "NOT_ENUMERATED; review git status separately, do not delete them",
+  "package_gate_findings": [
+    "V015_VENDOR_PATH",
+    "LEGACY_CHECKSUM_SCHEMA",
+    "LEGACY_REPORT_CLI",
+    "ZERO_COUNT_REJECTION",
+    "VALIDATION_REPORT_HASH_ASSUMPTION"
+  ],
+  "source_equivalent_on_reviewed_inventory": true,
+  "proposed_documentation_destination": "docs/axon_cortex_v0_21/axon-cortex-build-v0_21",
+  "do_not_overwrite": [
+    "crates",
+    "governance",
+    "docs/axon_cortex_v0_15",
+    "Cargo.toml",
+    "Cargo.lock"
+  ],
+  "next_action": "Review drift, preserve live evidence and implement B223/B224 before runtime changes",
+  "product_gates_executed": 0
+}

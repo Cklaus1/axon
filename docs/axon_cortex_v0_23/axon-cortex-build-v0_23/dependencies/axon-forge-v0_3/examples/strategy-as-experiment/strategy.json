@@ -1,0 +1,19 @@
+{
+  "id": "repair.structured-cheap-first",
+  "version": "1",
+  "kind": "repair",
+  "configuration": {
+    "diagnostics": "structured",
+    "root_cause_grouping": true,
+    "semantic_context": true,
+    "routing": [
+      "cheap_model",
+      "frontier_on_failure"
+    ],
+    "max_cheap_attempts": 2
+  },
+  "parent_strategy_ids": [
+    "repair.raw-frontier"
+  ],
+  "provenance": {}
+}

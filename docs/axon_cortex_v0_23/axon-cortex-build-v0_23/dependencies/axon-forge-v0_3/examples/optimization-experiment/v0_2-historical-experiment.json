@@ -1,0 +1,34 @@
+{
+  "id": "exp-example-001",
+  "parent_ids": [
+    "baseline-001"
+  ],
+  "hypothesis": "Constant folding reduces runtime without changing semantics.",
+  "falsifier": "Any correctness mismatch or no reduction in executed arithmetic operations.",
+  "mutation": {
+    "class": "transform",
+    "description": "Apply example.constant-fold"
+  },
+  "subject": {
+    "artifact_hash": "candidate-hash"
+  },
+  "environment": {
+    "backend": "reference"
+  },
+  "generation": {
+    "strategy_id": "strategy.baseline"
+  },
+  "evaluation": {
+    "evaluator_id": "eval.reference",
+    "version": "1"
+  },
+  "metrics": {
+    "correctness": 1.0,
+    "runtime_ops": 3
+  },
+  "evidence": [],
+  "conclusion": {
+    "status": "candidate"
+  },
+  "confidence": 0.8
+}

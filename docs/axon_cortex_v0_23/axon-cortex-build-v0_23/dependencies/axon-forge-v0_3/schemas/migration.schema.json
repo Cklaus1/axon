@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://axon-forge/spec/v0.3/migration.schema.json",
+  "title": "SemanticMigration",
+  "type": "object",
+  "required": [
+    "id",
+    "version",
+    "scope",
+    "match",
+    "rewrite",
+    "validation",
+    "dry_run_required"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    },
+    "scope": {
+      "type": "object"
+    },
+    "match": {
+      "type": "object"
+    },
+    "rewrite": {
+      "type": "object"
+    },
+    "validation": {
+      "type": "object"
+    },
+    "rollback": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "idempotent": {
+      "type": "boolean"
+    },
+    "dry_run_required": {
+      "const": true
+    },
+    "semantic_equivalence_class": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

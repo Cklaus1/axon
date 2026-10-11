@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://axon-forge/spec/v0.2/experiment.schema.json",
+  "title": "ForgeExperiment",
+  "type": "object",
+  "required": [
+    "id",
+    "parent_ids",
+    "hypothesis",
+    "mutation",
+    "subject",
+    "environment",
+    "evaluation",
+    "metrics",
+    "conclusion"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "parent_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "hypothesis": {
+      "type": "string"
+    },
+    "falsifier": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "mutation": {
+      "type": "object",
+      "required": [
+        "class",
+        "description"
+      ],
+      "properties": {
+        "class": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "subject": {
+      "type": "object"
+    },
+    "environment": {
+      "type": "object"
+    },
+    "generation": {
+      "type": "object"
+    },
+    "evaluation": {
+      "type": "object"
+    },
+    "metrics": {
+      "type": "object"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "conclusion": {
+      "type": "object"
+    },
+    "confidence": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1
+    }
+  },
+  "additionalProperties": true
+}

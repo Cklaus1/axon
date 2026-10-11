@@ -1,0 +1,34 @@
+{
+  "program": {
+    "id": "generate-table",
+    "entry": "main"
+  },
+  "phase": "semantic",
+  "deterministic": true,
+  "seed": 7,
+  "capabilities": {
+    "filesystem_read": [
+      "./schemas/**"
+    ],
+    "filesystem_write": [
+      "./generated/**"
+    ],
+    "network": [],
+    "process_spawn": [],
+    "env_read": [],
+    "secret_read": [],
+    "compiler_mutation": [
+      "generated_declarations"
+    ],
+    "build_graph_mutation": [],
+    "test_execution": []
+  },
+  "limits": {
+    "wall_ms": 5000,
+    "cpu_ms": 4000,
+    "memory_mb": 256,
+    "output_bytes": 1048576,
+    "processes": 0,
+    "tool_calls": 100
+  }
+}

@@ -1,0 +1,120 @@
+{
+  "schema": "axon.forge-crosswalk/1",
+  "package_version": "0.23",
+  "forge_version": "0.3.0",
+  "rows": [
+    {
+      "forge_requirement": "SemanticIR",
+      "forge_path": "schemas/semantic-ir.schema.json",
+      "owners": [
+        "CX-15",
+        "CX-19",
+        "CX-30"
+      ],
+      "disposition": "CONSUME"
+    },
+    {
+      "forge_requirement": "Transform/TransformResult",
+      "forge_path": "interfaces/transform-api.md",
+      "owners": [
+        "CX-15",
+        "CX-18",
+        "CX-30"
+      ],
+      "disposition": "CONSUME"
+    },
+    {
+      "forge_requirement": "MetaExecution",
+      "forge_path": "schemas/meta-execution.schema.json",
+      "owners": [
+        "CX-03",
+        "CX-13",
+        "CX-15"
+      ],
+      "disposition": "REQUEST_EXTERNAL_AUTHORITY"
+    },
+    {
+      "forge_requirement": "StructuredDiagnostics",
+      "forge_path": "schemas/diagnostic.schema.json",
+      "owners": [
+        "CX-16",
+        "CX-21",
+        "CX-30"
+      ],
+      "disposition": "CONSUME"
+    },
+    {
+      "forge_requirement": "TruthResolution/BootstrapPack",
+      "forge_path": "schemas/bootstrap-pack.schema.json",
+      "owners": [
+        "CX-17",
+        "CX-24",
+        "CX-16"
+      ],
+      "disposition": "PROFILE_EXISTING_RETRIEVAL"
+    },
+    {
+      "forge_requirement": "SemanticMigration",
+      "forge_path": "schemas/migration.schema.json",
+      "owners": [
+        "CX-18",
+        "CX-30"
+      ],
+      "disposition": "CONSUME"
+    },
+    {
+      "forge_requirement": "BuildProgram",
+      "forge_path": "schemas/build-program.schema.json",
+      "owners": [
+        "CX-15",
+        "CX-30",
+        "CX-13"
+      ],
+      "disposition": "CONSUME"
+    },
+    {
+      "forge_requirement": "ResourceProjection",
+      "forge_path": "schemas/resource-projection.schema.json",
+      "owners": [
+        "CX-34",
+        "CX-13"
+      ],
+      "disposition": "PROJECT_FROM_FABRIC"
+    },
+    {
+      "forge_requirement": "ForgeEvidencePayload",
+      "forge_path": "schemas/forge-evidence-payload.schema.json",
+      "owners": [
+        "CX-32"
+      ],
+      "disposition": "ATTACH_TO_UEG"
+    },
+    {
+      "forge_requirement": "ForgeExperimentProfile",
+      "forge_path": "schemas/forge-experiment-profile.schema.json",
+      "owners": [
+        "CX-33"
+      ],
+      "disposition": "ATTACH_TO_CANONICAL_EXPERIMENT"
+    },
+    {
+      "forge_requirement": "ForgeStrategyProfile",
+      "forge_path": "schemas/forge-strategy-profile.schema.json",
+      "owners": [
+        "CX-29",
+        "CX-33",
+        "CX-34"
+      ],
+      "disposition": "REFERENCE_STRATEGY_ARTIFACT"
+    },
+    {
+      "forge_requirement": "EvaluationProfile",
+      "forge_path": "schemas/evaluation-profile.schema.json",
+      "owners": [
+        "CX-21",
+        "CX-33"
+      ],
+      "disposition": "FROZEN_EXTERNAL_EVALUATOR"
+    }
+  ]
+}

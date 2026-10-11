@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://axon-forge/spec/v0.3/capability-request.schema.json",
+  "title": "CapabilityRequest",
+  "type": "object",
+  "required": [
+    "request_id",
+    "principal_ref",
+    "operations",
+    "limits"
+  ],
+  "properties": {
+    "request_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "principal_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "operations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "kind",
+          "scope"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "scope": {},
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "limits": {
+      "type": "object"
+    },
+    "authority_owner": {
+      "const": "CX-03"
+    },
+    "is_grant": {
+      "const": false
+    }
+  },
+  "additionalProperties": false
+}

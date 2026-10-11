@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://axon-forge/spec/v0.3/forge-evidence-payload.schema.json",
+  "title": "ForgeEvidencePayload",
+  "type": "object",
+  "required": [
+    "axon_evidence_ref",
+    "kind",
+    "subject_ref",
+    "observations"
+  ],
+  "properties": {
+    "axon_evidence_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "kind": {
+      "enum": [
+        "compile",
+        "test",
+        "benchmark",
+        "static_verification",
+        "security",
+        "compiler_probe",
+        "retrieval_verification",
+        "migration",
+        "build",
+        "meta_execution"
+      ]
+    },
+    "subject_ref": {
+      "type": "string"
+    },
+    "observations": {
+      "type": "object"
+    },
+    "diagnostic_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "environment_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "provenance_projection_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://axon-forge/spec/v0.3/meta-execution.schema.json",
+  "title": "MetaExecutionRequest",
+  "type": "object",
+  "required": [
+    "program",
+    "phase",
+    "capabilities",
+    "limits",
+    "deterministic",
+    "capability_request_ref"
+  ],
+  "properties": {
+    "program": {
+      "type": "object"
+    },
+    "phase": {
+      "enum": [
+        "parse",
+        "semantic",
+        "pre_transform",
+        "transform",
+        "pre_lowering",
+        "build",
+        "test",
+        "custom"
+      ]
+    },
+    "deterministic": {
+      "type": "boolean"
+    },
+    "seed": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "capabilities": {
+      "type": "object",
+      "properties": {
+        "filesystem_read": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "filesystem_write": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "network": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "process_spawn": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "env_read": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "secret_read": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "compiler_mutation": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "build_graph_mutation": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "test_execution": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "limits": {
+      "type": "object",
+      "required": [
+        "wall_ms",
+        "memory_mb"
+      ],
+      "properties": {
+        "wall_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "cpu_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "memory_mb": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "output_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "processes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "tool_calls": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "capability_request_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "authority_grant_ref": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Observed external CX-03 grant reference. Forge cannot mint it."
+    },
+    "execution_receipt_ref": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "External CX-13/Fabric receipt reference."
+    },
+    "mints_authority": {
+      "const": false
+    }
+  },
+  "additionalProperties": false
+}

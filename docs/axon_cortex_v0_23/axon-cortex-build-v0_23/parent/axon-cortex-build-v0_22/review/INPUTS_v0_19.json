@@ -1,0 +1,37 @@
+{
+  "schema": "axon-review-inputs/1",
+  "review_date": "2026-09-21",
+  "baseline_package": "Axon Cortex v0.18",
+  "baseline_zip": {
+    "path": "Axon_Cortex_Build_Files_v0_18(1).zip",
+    "sha256": "e0c59f179836dba47227a87aac74a92c54017ce6158ca8a0627a086762dd8819"
+  },
+  "research": [
+    {
+      "title": "What Is RLCD? The Secret Behind Jev",
+      "author": "Di Zhang",
+      "date": "2026-09-21",
+      "url": "https://di-zhang-llm.github.io/blog/what-is-rlcd-the-secret-behind-jev/",
+      "disposition": "secondary analysis; mechanisms treated as hypotheses unless independently official"
+    },
+    {
+      "title": "Introducing System One Models and Jev",
+      "publisher": "TypeSafe",
+      "url": "https://typesafe.ai/blog/introducing-system-one-models-and-jev",
+      "disposition": "official public product/model description"
+    },
+    {
+      "title": "TypeSafe primitives and calibration documentation",
+      "publisher": "TypeSafe",
+      "url": "https://docs.typesafe.ai/primitives",
+      "disposition": "official public semantics"
+    },
+    {
+      "title": "jev-ultrafast",
+      "publisher": "browser-use",
+      "url": "https://github.com/browser-use/jev-ultrafast",
+      "disposition": "public implementation lead; independent DONE verification pattern"
+    }
+  ],
+  "live_product_evidence": "NOT_RUN"
+}

@@ -1,0 +1,18 @@
+{
+  "schema": "axon.cortex-parent-lock/1",
+  "parent_version": "0.22",
+  "path": "parent/Axon_Cortex_Build_Files_v0_22.zip",
+  "sha256": "b9f6000e0677022c58e67fe38b9efa514f4d9a520cf95fffb8ee9f68afbb6bb9",
+  "task_count": 287,
+  "gate_count": 504,
+  "task_prefix_sha256": "1fb8fd5719fcd5419a2c17f4a259b83fdf75e697177bf9835a93d47f21380d99",
+  "gate_prefix_sha256": "3cd492bb92a26aea830cb3cf74ea3eed9e2fe527896c1f529aa611cdf5817047",
+  "parent_validation": {
+    "result": "PASS",
+    "specs": 37,
+    "tasks": 287,
+    "gates": 504,
+    "offline_tests": 567,
+    "evidence": "validated before v0.23 overlay construction"
+  }
+}
