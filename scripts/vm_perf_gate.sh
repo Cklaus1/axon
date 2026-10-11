@@ -129,6 +129,10 @@ command -v taskset >/dev/null 2>&1 || not_measured "taskset is not installed"
 # build and the pinned CPU; refuse unless told otherwise (scripts/lib/require_idle.py).
 python3 "$ROOT/scripts/lib/require_idle.py" --label vm_perf_gate
 IDLE_RC=$?
+if [ "$IDLE_RC" -ne 0 ] && [ "$IDLE_RC" -ne 75 ]; then
+  echo "vm_perf_gate: refused: the idle guard itself failed (require_idle exit $IDLE_RC); --allow-busy covers a busy machine (exit 75) only" >&2
+  exit "$IDLE_RC"
+fi
 if [ "$IDLE_RC" -ne 0 ]; then
   if [ "$ALLOW_BUSY" -eq 1 ]; then
     echo "vm_perf_gate: WARNING: --allow-busy: measured on a BUSY machine (require_idle exit $IDLE_RC); not an idle-machine run"

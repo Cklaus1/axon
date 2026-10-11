@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const HARNESS: [&str; 7] = [
+const HARNESS: [&str; 8] = [
     "scripts/v022_g01_mutations.py",
     "scripts/v022_attack_markers.py",
     "scripts/v022_paired_disable.py",
@@ -27,6 +27,7 @@ const HARNESS: [&str; 7] = [
     "scripts/v022_pd_consumers.py",
     "scripts/cargo_test_shards.py",
     "scripts/v022_mutation_status.py",
+    "scripts/lib/require_idle.py",
 ];
 
 fn scratch(tag: &str) -> PathBuf {
@@ -95,6 +96,11 @@ fn harness_cmd(r: &Path, script: &str, args: &[&str]) -> Command {
     c.args(args)
         .current_dir(r)
         .env("PYTHONDONTWRITEBYTECODE", "1");
+    // These runs share the host with the rest of `cargo test`, which is never
+    // idle; the idle guard is not what they test.
+    if script == HARNESS[2] {
+        c.arg("--allow-busy");
+    }
     c
 }
 

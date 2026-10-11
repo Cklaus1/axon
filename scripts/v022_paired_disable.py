@@ -655,6 +655,9 @@ def require_idle():
     sys.stderr.write(r.stderr)
     if r.returncode == 0:
         return
+    if r.returncode != 75:
+        sys.exit(f"refused: the idle guard itself failed (require_idle exit {r.returncode}); "
+                 "--allow-busy covers a busy machine (exit 75) only")
     if "--allow-busy" not in sys.argv[1:]:
         sys.exit(f"refused: machine is busy (require_idle exit {r.returncode}); rerun when idle, "
                  "or pass --allow-busy (recorded in every record's environment)")
