@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 2776b55d50e08777413c04453fe9670c5099933e
+generated-at: 3aef1f44b76c00f3bab3e04252a5c7cb8f692fce
 
-`git diff --numstat 31413ca7..2776b55d -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..3aef1f44 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -60,11 +60,11 @@ generated-at: 2776b55d50e08777413c04453fe9670c5099933e
 | `crates/axon-core/src/interp/kernel_tests.rs` | 401 | 0 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 48 | 21 |
-| `crates/axon-core/src/interp/sink_tests.rs` | 1335 | 0 |
-| `crates/axon-core/src/interp/sym.rs` | 1188 | 0 |
+| `crates/axon-core/src/interp/sink_tests.rs` | 1232 | 0 |
+| `crates/axon-core/src/interp/sym.rs` | 1187 | 0 |
 | `crates/axon-core/src/interp/taint.rs` | 1190 | 0 |
 | `crates/axon-core/src/interp/taint_tests.rs` | 1128 | 0 |
-| `crates/axon-core/src/interp/tests_v022_a.rs` | 1011 | 0 |
+| `crates/axon-core/src/interp/tests_v022_a.rs` | 1223 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 506 | 514 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
 | `crates/axon-core/src/interp/vm/mod.rs` | 3426 | 0 |
@@ -81,9 +81,9 @@ generated-at: 2776b55d50e08777413c04453fe9670c5099933e
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 38289 | 5265 |
+| total | 38397 | 5265 |
 
-`git log --reverse 31413ca7..2776b55d -- crates/axon-core/src`:
+`git log --reverse 31413ca7..3aef1f44 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -268,7 +268,9 @@ generated-at: 2776b55d50e08777413c04453fe9670c5099933e
 | ca494217 | R51 T3a | TEST-ONLY: the 29 S3 rows of v0.22's interp::tests (seal-crossing casts, dict edges, &mut write-through, channel stamp) ported under their v0.22 names in interp/tests_v022_a.rs, bodies verbatim but two sealed_outcome_rule(.., true) calls run through sealed_outcome until S4 adds the rule switch; all 29 ignored and registered in r51-deferred-tests.json (21 S4: need the dispatch-rule-off switch; 8 S6, one a port gap: a bare `Uncertain` parameter unwraps the soft wrapper); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 64e3d9af | R51 T3a | TEST-ONLY: vm::tests::r51_interp_sources skips the tests_v022_*.rs files include!d into interp.rs's mod tests (they have no `mod tests {` to cut at, so every sweep read them whole); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 2776b55d | R51 T3a merge | joins r51/t3a-sweep (64e3d9af, made atop 4a29c0a0 so the t3b lane can merge it alone) into r51/t3a; no conflict, no change beyond it; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 181 commits | | |
+| 0f0d5bb0 | R51 T3a | TEST-ONLY: three v0.22 interp::tests rows at their v0.22 path: every_global_read_goes_through_global_ref moved from interp/sink_tests.rs (with field_sites, body unchanged); a_sealed_send_on_an_operator_channel_needs_a_determined_element_type and a_sealed_frame_cannot_take_an_operator_fn_as_a_value ported (verbatim but the second's sealed_outcome_rule(.., true) runs through sealed_outcome until S4; main's same-named conform unit test and axon-psv integration test left alone), ignored and registered (S4, S6); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 3aef1f44 | R51 T3a | INTERPRETER, UNSEALED BEHAVIOUR CHANGES: sym.rs FnEntry::new param_coerce asks conform::is_soft_decl, so a parameter declared with the bare name `Uncertain`/`Temporal` keeps its soft wrapper as v0.22's call_fn did (main recognised only `Uncertain<T>`, unwrapped the argument, and `impl Judge for Uncertain { fn ok(self: Uncertain) .. self.value }` panicked "field access on non-struct" on both engines); a non-seal fix (spec T9 class) landing on both engines, pinned tree == vm by cli_run a_bare_uncertain_parameter_keeps_its_wrapper_in_both_engines; a_declared_soft_type_casts_its_wrapper_and_its_inner_value re-sliced S6 -> S4 (its gap is closed); every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 183 commits | | |
 <!-- END MECHANICAL -->
 
 
