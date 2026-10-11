@@ -526,8 +526,13 @@ fn op_missing() -> f64 { goal_run(\"zznosuch\", 100.0, 3) }
         "goal_run_random(\"N\", 100.0, 5, 0, 10)",
         "goal_run_multistart(\"N\", 100.0, 2, 3, 0, 10)",
     ];
-    let mut cand = String::new();
+    // The honest control: the candidate's own goal fn, run by the candidate.
+    let mut cand = String::from("pub fn mygoal(n: i64) -> i64 { n }\n");
     for (i, c) in calls.iter().enumerate() {
+        cand.push_str(&format!(
+            "pub fn c{i}_own() -> f64 {{ {} }}\n",
+            c.replace('N', "mygoal")
+        ));
         for (k, n) in [("op", "nonadapt"), ("miss", "zznosuch")] {
             cand.push_str(&format!(
                 "pub fn c{i}_{k}() -> f64 {{ {} }}\n",
@@ -545,7 +550,13 @@ fn op_missing() -> f64 { goal_run(\"zznosuch\", 100.0, 3) }
                     fails.push(format!("control: the operator's own goal_run: {o:?}"));
                 }
             }
-            for i in 0..calls.len() {
+            for (i, call) in calls.iter().enumerate() {
+                let o = go(ix, &format!("c{i}_own"), true, vec![]);
+                if o.is_err() {
+                    fails.push(format!(
+                        "control ({tag}) {call}: the candidate's own goal: {o:?}"
+                    ));
+                }
                 let text = |k: &str, name: &str| match go(ix, &format!("c{i}_{k}"), true, vec![]) {
                     Err(Flow::Panic(m)) => m.replace(name, "NAME"),
                     o => format!("not refused: {o:?}"),
@@ -554,8 +565,7 @@ fn op_missing() -> f64 { goal_run(\"zznosuch\", 100.0, 3) }
                 let want = sink_tests::no_fn("NAME");
                 if op != want || miss != want {
                     fails.push(format!(
-                        "ATTACK ({tag}) {}: operator {op:?} vs missing {miss:?}",
-                        calls[i]
+                        "ATTACK ({tag}) {call}: operator {op:?} vs missing {miss:?}"
                     ));
                 }
             }
@@ -568,4 +578,39 @@ fn op_missing() -> f64 { goal_run(\"zznosuch\", 100.0, 3) }
         }
     });
     assert!(fails.is_empty(), "{}", fails.join("\n"));
+}
+
+/// Drift (R51 S4): every goal search that resolves its goal by name in
+/// interp/goal.rs applies the call edge (`seal_call`) to the fn it found, so a
+/// sealed caller naming an operator goal gets the no-such-fn text. The two
+/// lookups that do not are listed: the held-out eval filters its lookup by the
+/// frame (same text), and a constraint fn is named by the operator's own
+/// `@[adaptive]` attribute, never by a caller.
+#[test]
+fn every_goal_name_lookup_applies_the_call_edge() {
+    let src = include_str!("goal.rs");
+    let lines: Vec<&str> = src.lines().collect();
+    let (mut edged, mut listed) = (0, 0);
+    for (i, l) in lines.iter().enumerate() {
+        if !l.contains("self.fns.get(") && !(l.trim() == ".fns" && lines[i + 1].contains(".get(")) {
+            continue;
+        }
+        let window = lines[i..(i + 16).min(lines.len())].join("\n");
+        if window.contains("self.seal_call(f)?") {
+            edged += 1;
+        } else if window.contains("self.fn_is_sealed(f)") || l.contains("cname.as_str()") {
+            listed += 1;
+        } else {
+            panic!(
+                "ATTACK: DRIFT: goal.rs:{} resolves a goal by name without the call edge: {}",
+                i + 1,
+                l.trim()
+            );
+        }
+    }
+    assert_eq!(
+        (edged, listed),
+        (6, 2),
+        "DRIFT: goal.rs's goal-name lookups changed; classify the new one"
+    );
 }
