@@ -1224,6 +1224,31 @@ fn fill_none() -> [i64] {
     }
     fi
 }
+fn fill_step3() -> [i64] {
+    let s = 3
+    let a = arr_repeat(0, 10)
+    let j = 5
+    let b = 5
+    while j < b {
+        a[j] = 7
+        j = j + s
+    }
+    let f = arr_repeat(0, 10)
+    let k = 7
+    let c = 6
+    while k <= c {
+        f[k] = 7
+        k = k + s
+    }
+    let g = arr_repeat(0, 10)
+    let x = 4
+    let y = 4
+    while x <= y {
+        g[x] = 7
+        x = x + s
+    }
+    g
+}
 fn fill_shared() -> [[i64]] {
     let sh = arr_repeat(7, 6)
     let keep = sh
@@ -1299,6 +1324,14 @@ fn count_neg() -> i64 {
         if b[k] { e = e + neg }
     }
     e
+}
+fn count_single() -> i64 {
+    let h = arr_repeat(true, 8)
+    let m = 0
+    for v in 5..=5 {
+        if h[v] { m = m + 1 }
+    }
+    m
 }
 fn count_empty() -> i64 {
     let t = arr_repeat(true, 4)
@@ -1627,7 +1660,7 @@ fn packed_forms_persist() {
 
     // Each bulk shape and the counter it moves, as `[Bools, Ints, Floats]`
     // deltas, with the shape's result.
-    let fills: [(&str, [u32; 3], &str); 8] = [
+    let fills: [(&str, [u32; 3], &str); 9] = [
         ("fill_bools", [1, 0, 0], "Bools"),
         ("fill_ints", [0, 1, 0], "Ints"),
         ("fill_floats", [0, 0, 1], "Floats"),
@@ -1635,6 +1668,7 @@ fn packed_forms_persist() {
         ("fill_lt", [0, 1, 0], "Ints"),
         ("fill_mod", [0, 1, 0], "Ints"),
         ("fill_none", [0, 2, 0], "Ints"),
+        ("fill_step3", [0, 3, 0], "Ints"),
         ("fill_shared", [0, 1, 0], "Ints"),
     ];
     for (name, moved, form) in fills {
@@ -1657,6 +1691,7 @@ fn packed_forms_persist() {
         ("count_neg", vec![], 1, -587),
         // Both empty ranges take the bulk path, which changes nothing.
         ("count_empty", vec![], 2, 707),
+        ("count_single", vec![], 1, 1),
     ];
     for (len, n) in [
         (1, 1),

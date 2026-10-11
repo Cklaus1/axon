@@ -36821,8 +36821,12 @@ fn vm_bulk_expect(
 /// index, a fill ending at the last element, a `<` fill whose `b0 - j0` is a
 /// multiple of `s0`, a fill whose `j0` is not a multiple of `s0` (a count
 /// from `b0/s0 - j0/s0 + 1` writes `fm[7]` too), `j` after `<`, `<=` and
-/// zero-iteration loops, and a shared array whose other binding keeps its
-/// elements.
+/// zero-iteration loops, zero iterations at `s0 = 3` (`<` from
+/// `j0 = b0 = 5`, `<=` from `j0 = 7` to `b0 = 6`: a path taking emptiness
+/// from the truncating count `n <= 0` gets `n = 1` and writes), a
+/// one-iteration `<=` fill from `j0 = b0 = 4` (an emptiness test of
+/// `j0 >= b0` for both operators skips it), and a shared array whose other
+/// binding keeps its elements.
 #[test]
 fn vm_bulk_fill_runs() {
     let src = r#"fn main() -> i64 {
@@ -36893,6 +36897,29 @@ fn vm_bulk_fill_runs() {
         w = w + 1
     }
     println("shared {sh} {keep} w={w}")
+    let s3 = 3
+    let z1 = arr_repeat(0, 10)
+    let j3 = 5
+    let b3 = 5
+    while j3 < b3 {
+        z1[j3] = 7
+        j3 = j3 + s3
+    }
+    let z2 = arr_repeat(0, 10)
+    let k3 = 7
+    let c3 = 6
+    while k3 <= c3 {
+        z2[k3] = 7
+        k3 = k3 + s3
+    }
+    let g = arr_repeat(0, 10)
+    let x3 = 4
+    let y3 = 4
+    while x3 <= y3 {
+        g[x3] = 7
+        x3 = x3 + s3
+    }
+    println("step3 {z1} j={j3} {z2} k={k3} one {g} x={x3}")
     0
 }
 "#;
@@ -36903,8 +36930,10 @@ fn vm_bulk_fill_runs() {
                 lt [0, 0, 2, 3, 0, 5, 6, 0] x=10\n\
                 mod [0, 7, 0, 0, 7, 0, 0, 0, 0, 0] jm=7\n\
                 none [0, -5, 2, -5, 4, -5, 6, 7, 8, 9] e1=5 e2=7\n\
-                shared [0, 0, 0, 0, 0, 0] [7, 7, 7, 7, 7, 7] w=6\n";
-    vm_bulk_expect("bulk_fill_runs", src, "main", (9, 0), 0, want, "");
+                shared [0, 0, 0, 0, 0, 0] [7, 7, 7, 7, 7, 7] w=6\n\
+                step3 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] j=5 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] k=7 \
+                one [0, 0, 0, 0, 7, 0, 0, 0, 0, 0] x=7\n";
+    vm_bulk_expect("bulk_fill_runs", src, "main", (12, 0), 0, want, "");
 }
 
 /// R50 S13: fills the bulk path declines, each giving the tree's panic: one
@@ -37096,7 +37125,8 @@ fn vm_bulk_fill_other_kind_declines() {
 /// counts starting from `n0 != 0` (`m`, `e`), a negative `c`, and two empty
 /// ranges from `n0 = 7`, `0..z` with `z = 0` and a reversed `9..2` (the
 /// count leaves `n` alone; a path without the emptiness branch slices out of
-/// range).
+/// range), and a one-element `5..=5` (an emptiness test of `hi <= lo` for
+/// both range kinds counts nothing).
 #[test]
 fn vm_bulk_count_runs() {
     let src = r#"fn tail(len: i64) -> i64 {
@@ -37167,12 +37197,18 @@ fn main() -> i64 {
         if t[k] { r = r + one }
     }
     println("empty n={y} n={r}")
+    let h = arr_repeat(true, 8)
+    let q = 0
+    for k in 5..=5 {
+        if h[k] { q = q + one }
+    }
+    println("single m={q}")
     0
 }
 "#;
     let want = "sub n=10 m=120\ntails 1 3 3 4 22 22 22 44 334\nmid c=198 d=197 x=16 neg e=-587\n\
-                empty n=7 n=7\n";
-    vm_bulk_expect("bulk_count_runs", src, "main", (1, 8), 0, want, "");
+                empty n=7 n=7\nsingle m=1\n";
+    vm_bulk_expect("bulk_count_runs", src, "main", (1, 9), 0, want, "");
     let traced = vm_run("bulk_count_runs", src, "vm", true);
     let err = String::from_utf8_lossy(&traced.stderr);
     assert_eq!(vm_bulk_counts(&err, "tail"), Some((1, 1)), "{err}");
@@ -37198,13 +37234,15 @@ type CountDecline = (
 /// with `n=2147484000`), an
 /// out-of-bounds `hi`, a `hi` of `i64::MAX` in `lo..=hi` (the tree panics one
 /// past the end; a path computing `hi + 1` in `i64` wraps and prints `n=0`),
+/// a downward overflow (`n0 = -(2^63 - 1)`, `c = -1` over two `true`s: a
+/// fit check of the upper bound only wraps and exits 0),
 /// a negative `lo` (a path casting `lo` with `as usize`
 /// reads far out of bounds or counts the wrong slice), and a `Vals` array.
 #[test]
 fn vm_bulk_count_declines() {
     let one = "let c = 1";
     let zero = "let n = 0";
-    let cases: [CountDecline; 8] = [
+    let cases: [CountDecline; 9] = [
         (
             "overflow",
             "arr_repeat(true, 4)",
@@ -37267,6 +37305,16 @@ fn vm_bulk_count_declines() {
             101,
             "",
             "index 20 out of bounds (len 20)",
+        ),
+        (
+            "downward",
+            "arr_repeat(true, 2)",
+            "let c = 0 - 1",
+            "let n = 0 - 9223372036854775807",
+            "0..2",
+            101,
+            "",
+            "integer overflow: -9223372036854775808 + -1 exceeds i64",
         ),
         (
             "negative_lo",
