@@ -376,11 +376,15 @@ MUTATIONS = [
      '        Flow::Break | Flow::Continue => edge.loop_control_escape(),',
      '        Flow::Break => return Flow::Break,\n        Flow::Continue => return Flow::Continue,',
      'axon-core', '--no-default-features --lib', 'interp::tests::loop_control_does_not_escape_through_a_predicate'),
-    ('M60', 'resolver: a trait impl is unique in the merged program',
+    # R51 S6: REINSTATED ACTIVE (was EQUIVALENT_DID vs M69, C9 round 1b). M69's
+    # dispatch check still refuses the duplicate's method clash, but in its own
+    # words: only this rule names the duplicate `impl T for X` (S7-UnsealedParity),
+    # and its retired-guard full-suite cell failed on that test at 2b0e7438.
+    ('M60', 'resolver: a duplicate trait impl is refused as a duplicate impl (E0002 `impl T for X`)',
      'crates/axon-core/src/resolver.rs',
      '                    if !impls.insert(key) {',
      '                    if false && !impls.insert(key) {',
-     'axon-core', '--no-default-features --lib', 'interp::tests::a_second_impl_never_replaces_the_first_impls_method'),
+     'axon-core', '--no-default-features --lib', 'resolver::tests::a_refinement_may_start_with_a_deferred_name_and_impl_text_is_axon'),
     ('M61', 'resolver: a module-level let is unique in the merged program',
      'crates/axon-core/src/resolver.rs',
      '                        if !matches!(prev, Symbol::Builtin { .. }) {\n                            dup(self, format!("the constant `{name}`"), *span);',
@@ -516,11 +520,16 @@ MUTATIONS = [
      '        if self.seal.active && !self.frame_sealed.get() && self.seal.refines.contains(rname) {',
      '        if false && self.seal.active && !self.frame_sealed.get() && self.seal.refines.contains(rname) {',
      'axon-core', '--no-default-features --lib', 'interp::tests::runtime_sealing_holds_without_the_static_check'),
-    ('M89', 'interpreter: a name a sealed frame queues is seal-checked when resolved',
+    # R51 S6: REINSTATED ACTIVE (was EQUIVALENT_DID vs M86+M96, C9 round 1b). The
+    # fiber M89's raw lookup lets a sealed frame queue is still never run (M86,
+    # M96), but queueing it is an existence oracle: `scheduler_spawn` of an
+    # operator fn completes where a missing name is refused. Its retired-guard
+    # full-suite cell failed on the oracle tests at 2b0e7438.
+    ('M89', 'R51 ORACLE: a name a sealed frame queues is seal-checked when resolved (scheduler_spawn of an operator fn answers like a missing one)',
      'crates/axon-core/src/interp/builtins.rs',
      '                if self.fn_by_name(&fn_name)?.is_none() {',
      '                if !self.fns.contains_key(&fn_name) {',
-     'axon-core', '--no-default-features --lib', 'interp::tests::a_sealed_fiber_never_runs_an_operator_function'),
+     'axon-core', '--no-default-features --lib', 'interp::taint_tests::a_sealed_caller_cannot_tell_an_operator_name_from_a_missing_one_on_any_path'),
     ('M90', 'interpreter: a closure runs under the provenance of the frame that created it',
      'crates/axon-core/src/interp.rs',
      '                self.with_frame(cv.seal.sealed_origin, || {',
@@ -2513,15 +2522,9 @@ EQUIV_RECORD = {
     "M401": {"property": "on a protected host a caller grant registry never authorizes status or cancel",
              "subsumed_by": ["M273"], "killer": "joint:M273+M401",
              "all_paths": "within the same arm, M273's by-name refusal of --grant-registry runs first and tests the flag's presence (has), which any value the override could read implies"},
-    # ── C9 round 1b (core workstream). Interpreter/resolver rows whose kill was
-    # another check's refusal; the attack is each row's own test, which
-    # accepts any refusal and panics "ATTACK: ..." when the attack gets through.
-    "M60": {"property": "a second impl never replaces the first impl's method",
-            "subsumed_by": ["M69"], "killer": "joint:M60+M69",
-            "all_paths": "the ONLY harm of a duplicate impl is the interpreter's method table (keyed (type_name_of(for_type), method), last insert wins) replacing a method; with M60's check off every impl takes the else branch, whose dispatch check keys on the SAME type_name_of and method name and refuses any second definition of that key (E0002), whatever the traits. A duplicate impl sharing no method key replaces nothing (a missing required method is E0502; impl_table is a set)"},
-    "M89": {"property": "a sealed frame never gets an operator function run through a fiber",
-            "subsumed_by": ["M86", "M96"], "killer": "joint:M89+M86+M96",
-            "all_paths": "every fiber runs in builtin_scheduler_run_once (scheduler_run, supervisor_run) through call_fn. A fiber lives in the kernel of the frame that queued it (k() = kernels[frame_sealed], M96), so a sealed frame's fiber is run only from a sealed frame, where call_fn's call edge (M86) refuses an operator function. Executed: M89+M86 reopens the sealed-frame route, M89+M96 reopens the operator-frame route"},
+    # ── C9 round 1b (core workstream) retired M60 (vs M69) and M89 (vs M86+M96)
+    # here. R51 S6 REINSTATES both ACTIVE: each one's retired-guard full-suite
+    # cell fails on a test only it satisfies (see their MUTATIONS rows).
 }
 # ── C9 round 1b (psv workstream) ──
 # ── C9 round 1b, integration: M04 was retired here against the first-match
