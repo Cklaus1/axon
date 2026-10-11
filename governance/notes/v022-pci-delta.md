@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 1276b9e9b3000688b9a2f8a5ddd232e67463ae03
+generated-at: bad7e92400a7f520629e89abbd634e0b300f1dd1
 
-`git diff --numstat 31413ca7..1276b9e9 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..bad7e924 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -49,14 +49,14 @@ generated-at: 1276b9e9b3000688b9a2f8a5ddd232e67463ae03
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 4910 | 1448 |
+| `crates/axon-core/src/interp.rs` | 5172 | 1581 |
 | `crates/axon-core/src/interp/builtins.rs` | 672 | 512 |
 | `crates/axon-core/src/interp/conform.rs` | 1800 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1354 | 0 |
 | `crates/axon-core/src/interp/crossing_tests.rs` | 417 | 0 |
 | `crates/axon-core/src/interp/dispatch_tests.rs` | 639 | 0 |
-| `crates/axon-core/src/interp/env.rs` | 1181 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 2036 | 607 |
+| `crates/axon-core/src/interp/env.rs` | 1205 | 0 |
+| `crates/axon-core/src/interp/eval.rs` | 2192 | 605 |
 | `crates/axon-core/src/interp/goal.rs` | 87 | 42 |
 | `crates/axon-core/src/interp/kernel_tests.rs` | 336 | 0 |
 | `crates/axon-core/src/interp/pick_tests.rs` | 394 | 0 |
@@ -64,7 +64,7 @@ generated-at: 1276b9e9b3000688b9a2f8a5ddd232e67463ae03
 | `crates/axon-core/src/interp/proptest.rs` | 48 | 21 |
 | `crates/axon-core/src/interp/sink_tests.rs` | 1099 | 0 |
 | `crates/axon-core/src/interp/sym.rs` | 1196 | 0 |
-| `crates/axon-core/src/interp/taint.rs` | 1653 | 0 |
+| `crates/axon-core/src/interp/taint.rs` | 1654 | 0 |
 | `crates/axon-core/src/interp/taint_tests.rs` | 4172 | 0 |
 | `crates/axon-core/src/interp/tests_v022_a.rs` | 1184 | 0 |
 | `crates/axon-core/src/interp/tests_v022_b.rs` | 2057 | 0 |
@@ -86,9 +86,9 @@ generated-at: 1276b9e9b3000688b9a2f8a5ddd232e67463ae03
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 46027 | 5256 |
+| total | 46470 | 5387 |
 
-`git log --reverse 31413ca7..1276b9e9 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..bad7e924 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -318,7 +318,9 @@ generated-at: 1276b9e9b3000688b9a2f8a5ddd232e67463ae03
 | 3e057532 | R51 S6 T7 | INTERPRETER (sealed runs only, v0.22 C9 round 4b amendment 60; M921): coerce_to_sized::<SEALED> leaves a SizedInt of another width unchanged at a sealed let (T), parameter (bind_params_sealed) and record field (seal.active), so the declared-type cast refuses it as a runtime type confusion instead of the value being re-tagged to the declared width before the cast sees it; unsealed runs and the VM (VM_SEALED = false) re-tag as before, no unsealed behaviour change. Attack test a_sealed_let_param_or_field_never_retags_another_fixed_width (interp/tests_v022_b.rs) with honest controls; mutation rows M3230/M3231/M3256 new text and M1996 marker (scripts only) |
 | 11172ce5 | R51 S6 T7 | INTERPRETER (tree engine, sealed runs only; the VM never runs sealed code): eval.rs dispatch_named applies seal_call before call_fn_entry for an entry with a `&mut` param, so a sealed direct call of an operator `&mut` fn is told the no-such-fn text a missing name gets instead of call_fn_entry's `&mut` refusal naming it (an existence oracle v0.22's call_fn shared; row M3495); goal.rs run_goal/run_goal_warm drop S4b's seal_call, which goal_name_is_known (a sealed caller knows only its own fns and its own kernel's provenance) already dominated with identical text, so the sealed result is unchanged (v0.22's shape). No unsealed behaviour change: seal_call is a no-op when the seal is inactive. TEST-ONLY: tests_v022_b's psv1h oracle test gains a direct-call leg and an honest control (M2622/M2623); dispatch_tests' goal-name test records an @[adaptive] operator goal in the operator's kernel and its drift test classifies goal.rs lookups as call-edged, behind goal_name_is_known or listed (M2925/M2946); taint_tests' am106 oracle gains a `&mut` operator fn pair (20 forms x 7); axon-psv sealed_frames gains a goal_eval form naming a `&mut` operator fn (M3343 re-anchored onto goal_eval's frame filter); lookup-listing reasons updated |
 | 1276b9e9 | R51 S6 T7 merge | joins r51/t7oracle (11172ce5, 6ae5d56c: oracle rows M2622/M2623/M2925/M2946/M3343, new row M3495 sealed `&mut` direct-call oracle) onto r51/int 15cbfa4a (t7shape: sealed width re-tag, M3230/M3231/M3256 text, M1996 marker); only this table and the note conflicted, resolved by keeping both sides; no change beyond the commits it joins |
-| 226 commits | | |
+| ffe2b413 | R51 T2 wasm32 depth | INTERPRETER (stack layout and wasm32 recursion budget only; no change in what any run computes, accepts or refuses): the const-generic frames charge per-instance nest_cost constants (nest_guard!(self, if T { X_SEALED } else { X }); EVAL/CALL_FN_IN_GENERAL/CALL_CLOSURE_OWNED_BY renamed EVAL_ARM/CALL_FN_FRAME/CALL_CLOSURE_FRAME after the fns that charge them, RUN_TEST_BODY its own; the sealed-only call_fn_sealed/call_mut_sealed/eval_tainted guarded); sealed-only code moves out of the unsealed frames into #[cold] #[inline(never)] helpers: sealed_branch! runs a branch body in place in the ::<false> instance and through t_branch in the ::<true> one, call_mut hands a sealed run to call_mut_sealed before its arguments (which evaluates them in the same order), call_mut_with is unsealed-only with the ::<false> Env accessors, struct_refine_sealed out of finish_record, run_arm_sealed out of run_handler_arm (match instead of and_then), with_abort_enter/with_abort_exit out of eval_with_handler, eval_prob_pred guarded with prob_pred inline, Bindings' debug checks out of line, the unused Env::get_mut dropped (vm test uses get_mut_t::<false>); drift-test needles (sink_tests, tests_v022_b) and a taint_tests doc follow the moved code; unsealed behaviour change: none on native; sealed runs as at 04d3ad7b |
+| 3561022b | R51 T2 wasm32 depth | INTERPRETER (stack layout and wasm32 recursion budget only): finish_call_cold's R4 zone provenance injection moves verbatim into #[inline(never)] record_zone_provenance; eval_with_handler is #[inline(always)] in an optimised build (as before R51 split the evaluator); every nest_cost constant whose frame grew is set to its measured need (wasm_stack_budget.py; e.g. EVAL_ARM release 288 -> 304, CALL_FN_FRAME 224/528 -> 272/576), the sealed ones to their measured need; unsealed behaviour change: none on native; on wasm32 the recursion-limit panic fires a few levels earlier on some nest probes (vm_wasm_depth.sh PASS, VM >= tree everywhere); sealed runs as at 04d3ad7b |
+| 228 commits | | |
 <!-- END MECHANICAL -->
 
 
