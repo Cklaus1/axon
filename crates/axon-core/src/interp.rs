@@ -1742,17 +1742,35 @@ pub(super) mod nest_cost {
 /// overflows *before* the guard fires (which would reintroduce the very
 /// process-abort the guard exists to prevent). Paired with the stack-size
 /// scaling in [`stack_size_for_depth`]: at this ceiling the thread stack is
-/// ~8 GiB, leaving ample headroom over the ~256 KB/frame worst case.
+/// [`MAX_STACK_BYTES`] of reserved address space.
 const MAX_DEPTH_CEILING: usize = 1_000_000;
 
-/// Native stack budget per interpreter call frame, used to size the thread
-/// stack so the [`resolve_max_depth`] guard always trips before a real
-/// overflow. Generous (2×) over the observed ~128 KB debug frame.
-const STACK_BYTES_PER_FRAME: usize = 256 * 1024;
+/// Native stack budget per interpreter call level, used to size the thread
+/// stack so the [`resolve_max_depth`] guard trips before a real overflow. Only
+/// call depth is counted, so a level whose call sits inside deeply nested
+/// expressions can still use more than this (each nesting level is one more
+/// evaluator frame). R51 (S7-UnsealedParity-10): 256 KiB → 320 KiB, with
+/// [`MIN_STACK_BYTES`] 1 GiB → 1.25 GiB, because splitting the evaluator per
+/// run kind grew the unsealed native frames (release `eval_arm::<false>`
+/// 1024 B, was `eval` 912 B; stack per level +3.5–12.3% release, +6.1–10.5%
+/// debug on the tree engine, up to +19.3% debug on the VM, measured
+/// 2026-10-11): ×1.25 keeps every level the base tree reached reachable. The
+/// reserve is address space; only the pages a run touches are resident.
+const STACK_BYTES_PER_FRAME: usize = 320 * 1024;
 
-/// Minimum interpreter thread stack — the historical 1 GiB floor, so shallow
-/// runs keep their previous generous headroom regardless of the depth setting.
-const MIN_STACK_BYTES: usize = 1024 * 1024 * 1024;
+/// Minimum interpreter thread stack, so shallow runs keep generous headroom
+/// regardless of the depth setting (the historical 1 GiB floor, scaled with
+/// [`STACK_BYTES_PER_FRAME`] so the crossover stays at 4096 levels).
+const MIN_STACK_BYTES: usize = 1280 * 1024 * 1024;
+
+/// Largest interpreter thread stack: the reserve 5864c423 gave
+/// [`MAX_DEPTH_CEILING`] (1,000,000 × 256 KiB, ~244 GiB). Past ~800,000
+/// levels the ×1.25 per-level reserve would exceed it, and Linux's heuristic
+/// overcommit refuses a single mapping larger than RAM + swap, so the thread
+/// would fail to spawn where 5864c423 ran (S7-UnsealedParity-10). Capped,
+/// every depth reserves at least what 5864c423 did and never more than its
+/// largest reserve. Saturating: wasm32's 32-bit `usize` (no thread there).
+const MAX_STACK_BYTES: usize = MAX_DEPTH_CEILING.saturating_mul(256 * 1024);
 
 /// Resolve the effective recursion limit: `AXON_MAX_DEPTH` if set to a positive
 /// integer (clamped to [`MAX_DEPTH_CEILING`]), else [`RECURSION_LIMIT`]. A
@@ -1783,7 +1801,7 @@ fn max_depth_from_env(raw: Option<&str>) -> usize {
 fn stack_size_for_depth(depth: usize) -> usize {
     depth
         .saturating_mul(STACK_BYTES_PER_FRAME)
-        .max(MIN_STACK_BYTES)
+        .clamp(MIN_STACK_BYTES, MAX_STACK_BYTES)
 }
 
 /// Restores the call depth and the caller's `current_fn` when a `call_fn`
@@ -7548,7 +7566,7 @@ fn main() { }
 
     #[test]
     fn stack_grows_with_depth_but_never_below_floor() {
-        // Shallow limits keep the historical 1 GiB floor. The crossover is
+        // Shallow limits keep the MIN_STACK_BYTES floor. The crossover is
         // MIN_STACK_BYTES / STACK_BYTES_PER_FRAME frames; below it, floored.
         let crossover = MIN_STACK_BYTES / STACK_BYTES_PER_FRAME; // 4096
         assert_eq!(stack_size_for_depth(1), MIN_STACK_BYTES);
@@ -7562,8 +7580,22 @@ fn main() { }
         // The default limit (6000 > 4096) already scales above the floor.
         assert!(stack_size_for_depth(RECURSION_LIMIT) > MIN_STACK_BYTES);
         // The ceiling can't overflow the multiply (saturating) — it produces a
-        // finite budget at or above the floor.
+        // finite budget at or above the floor, capped at 5864c423's largest
+        // reserve, which never shrinks below 5864c423's reserve at any depth.
         assert!(stack_size_for_depth(MAX_DEPTH_CEILING) >= MIN_STACK_BYTES);
+        assert_eq!(stack_size_for_depth(MAX_DEPTH_CEILING), MAX_STACK_BYTES);
+        for d in [
+            1,
+            4096,
+            RECURSION_LIMIT,
+            100_000,
+            800_000,
+            900_000,
+            MAX_DEPTH_CEILING,
+        ] {
+            let base = (d * 256 * 1024).max(1024 * 1024 * 1024);
+            assert!(stack_size_for_depth(d) >= base, "depth {d}");
+        }
     }
 
     // BUG_HUNT #20: dict_to_str must return Result<str,str>, not panic the

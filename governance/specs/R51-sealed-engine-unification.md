@@ -268,7 +268,8 @@ Unknown, cortex to Err ("no summary"). T1 asserts all three.
 - **T2 no regression** [REVISED: was "pass unchanged", reason: S0Merge-6, EG-6, EG-8]: `vm_parity.sh`,
   `vm_wasm_depth.sh`, `vm_perf_gate.sh` (+ `--repros`) pass after conversion to the merged binary rule, with
   identical corpus, tolerances and verdicts; `nest_cost` constants may be re-measured, each change stated
-  old/new bytes, required depth ratios unchanged. `cargo test -p axon-core --no-default-features --test
+  old/new bytes (the table is in §10 "Stack" [REVISED: added, reason: S7-Evidence-2]), required depth ratios
+  unchanged. `cargo test -p axon-core --no-default-features --test
   cli_run` passes with `CARGO_TARGET_DIR` unset (in-tree `target/`; six wasm harnesses hardcode it).
 - **T3 v0.22 interpreter suites** [REVISED: was "v0.22's `taint_tests.rs` ported", reason: EG-5]: every
   v0.22-only axon-core test (144 lib tests: interp::tests 96, interp::taint_tests 39, resolver 5, seal_split,
@@ -343,6 +344,69 @@ reason: EG-7.] Unsealed: each of `vm_perf_gate.sh`'s five medians and each `--re
 fastcall 244.1, mutcall 274.2, foldmod 95.0, swap 258.3. Sealed: tree-engine speed (today's v0.22 cost); no
 target; suite-verdict wall time recorded at S6 (Q1).
 
+**Stack** [REVISED: added, reason: S7-Evidence-2, S7-UnsealedParity-10.] R51 grew the unsealed instantiation's
+frames (the per-run-kind evaluator, `f<const T: bool>`), so Q5's "frame sizes stay unchanged" did not hold. The
+decision taken:
+
+- *wasm32* (T2, ffe2b413 + 3561022b): every `nest_cost` constant equals the frame need `wasm_stack_budget.py`
+  measures; no constant is below its frame; `NEST_PER_DEPTH` (3584), the wasm guard (128), the
+  `vm_wasm_depth.sh` corpus and its thresholds (1.2× the guard, VM ≥ tree) are unchanged. Unsealed constants
+  grew by at most 48 bytes each. Old → new, `debug/release` bytes (`git diff 5864c423 3921a309 --
+  crates/axon-core/src/interp.rs`):
+
+  | Constant | 5864c423 | R51 |
+  |---|---|---|
+  | `EVAL_ARM` (was `EVAL`) | 192/288 | 192/304 |
+  | `CALL_FN_FRAME` (was `CALL_FN_IN_GENERAL`) | 224/528 | 272/576 |
+  | `CALL_CLOSURE_FRAME` (was `CALL_CLOSURE_OWNED_BY`) | 256/336 | 256/336 |
+  | `RUN_TEST_BODY` (new; R51's `@[test]` body runner, which charged `RUN_BODY_TREE` before T2) | — | `RUN_BODY_VM + RUN` |
+  | `EVAL_PROB_PRED` (new; moved out of `eval_call`'s frame) | — | 208/224 |
+  | `BIND_LET` | 128/208 | 160/224 |
+  | `CALL_BUILTIN` | 496/704 | 496/720 |
+  | `CALL_FAST` | 208/288 | 224/288 |
+  | `CALL_FAST_ARG` | 208/272 | 208/288 |
+  | `CALL_FAST_INLINE` | 256/304 | 256/320 |
+  | `CALL_FN_ENTRY` | 112/192 | 112/224 |
+  | `CALL_FN_GOAL` | 464/928 | 480/928 |
+  | `CALL_FN_IN` | 160/176 | 160/208 |
+  | `CALL_MUT` | 160/320 | 208/320 |
+  | `CALL_MUT_GENERAL` | 176/288 | 176/304 |
+  | `CALL_MUT_OP` | 288/416 | 336/432 |
+  | `DISPATCH_RESUME` | 224/176 | 224/208 |
+  | `EVAL_NATIVE_CALL` | 240/320 | 256/320 |
+  | `FINISH_RECORD` | 160/384 | 160/432 |
+  | `GOAL_EVAL_HOLDOUT` | 112/400 | 128/400 |
+  | `RUN_GOAL` | 672/1008 | 672/1024 |
+  | `RUN_GOAL_MULTISTART` | 640/1152 | 672/1152 |
+  | `RUN_GOAL_WARM` | 656/1024 | 656/1040 |
+
+  Every other constant is unchanged. Sealed-only (new, charged only by a sealed run's instances; `0` where that
+  profile inlines the function): `EVAL_ARM_SEALED` 336/656, `EVAL_BLOCK_SEALED` 128/0, `EVAL_BINOP_SEALED`
+  336/0, `EVAL_CALL_SEALED` 400/0, `DISPATCH_CALL_SEALED` 176/304, `DISPATCH_NAMED_SEALED` 176/0,
+  `BIND_LET_SEALED` 160/256, `RUN_LOOP_BODY_SEALED` 112/128, `CHAN_METHOD_SEALED` 128/112,
+  `ASSIGN_IN_PLACE_SEALED` 176/0, `CALL_FN_FRAME_SEALED` 272/592, `CALL_CLOSURE_FRAME_SEALED` 352/416,
+  `IMPL_METHOD_SEALED` 160/256, `EVAL_TAINTED` 144/144, `CALL_FN_SEALED` 288/176, `CALL_MUT_SEALED` 192/384,
+  `RUN_ARM_SEALED` 480/144, `STRUCT_REFINE_SEALED` 288/112.
+
+  Reach (`vm_wasm_depth.sh`, deepest completed depth under wasmtime's default stack, tree/VM, 5864c423 → R51):
+  debug closure 157/371 → 158/367 (required ≥ 154), plain 238/982 → 242/953, mut 485/833 → 471/774, with
+  184/216 → 187/217; release closure 163/258 → 163/260, plain 253/648 → 245/635, mut 373/550 → 369/541, with
+  197/209 → 190/205. Nest probes: release tree reach drops 1–7 levels on most
+  (refined 126 → 119, with_chain 107 → 102, mut_with3 117/126 → 112/122); debug reach unchanged except 1-level
+  drops on break_fast, lambda_chain, lambda_self and mut_with3. Every probe past its reach still ends in the
+  recursion-limit panic (exit 101), never a trap; VM ≥ tree on every probe. Receipt: tasks/r51-baseline.md.
+- *native*: the guard counts calls and the interpreter thread reserves `max_depth × STACK_BYTES_PER_FRAME`
+  (floor `MIN_STACK_BYTES`). R51's release `eval_arm::<false>` frame is 1024 B (5864c423's `eval`: 912 B);
+  stack per call level grew 3.5–12.3% (release) and 6.1–10.5% (debug) on the tree engine, up to 19.3% on the
+  debug VM, and a recursion nested 260–280 expressions deep at `down(5990)` aborted with a stack overflow where
+  5864c423 completed it (S7-UnsealedParity-10). f89f4d43 scales the reserve ×1.25 (`STACK_BYTES_PER_FRAME`
+  256 → 320 KiB, `MIN_STACK_BYTES` 1 → 1.25 GiB; at the default limit 6000 the thread reserves 1.83 GiB, was
+  1.46 GiB), capped (4bb4a0e1) at 5864c423's largest reserve, 1,000,000 × 256 KiB, so `AXON_MAX_DEPTH` near the
+  ceiling still spawns its thread (uncapped, ×1.25 asked for more than heuristic overcommit maps past ~800,000).
+  It is address space: resident memory is unchanged (max RSS of the same program equal within noise).
+  Every call depth × nesting depth cell that completed or hit the recursion limit on 5864c423 does so again,
+  release and debug, tree and VM. Nesting deep enough still overflows, on 5864c423 too (tasks/opportunities.md).
+
 ### 11. Rollout & rollback
 
 [REVISED: order and contents, reason: S0Merge-1, -2, -3, -4, -6, -7, -9, -11, TaintPort-6, -7, VmPin-2.]
@@ -412,8 +476,10 @@ Merging `r51/unify` into `main` and retiring `v022/veto` are operator decisions 
   S9 structurally.
 - **Q4** Where does the pin live? *Engineering, resolved:* `Interp::build` (Fork 1).
 - **Q5** How does the wasm32 frame budget absorb the seal? *Engineering, resolved (EG-6):* the seal compiles on
-  every target; the unsealed instantiation's frame sizes stay unchanged; any `nest_cost` change is stated
-  old/new; depth ratios unchanged.
+  every target; [REVISED: was "the unsealed instantiation's frame sizes stay unchanged", which R51 did not meet,
+  reason: S7-Evidence-2] the unsealed instantiation's frames grew (wasm32: at most 48 bytes per `nest_cost`
+  constant; native: release evaluator frame 912 → 1024 B), each `nest_cost` change is stated old/new and the
+  native thread stack reserve is scaled to match, in §10 "Stack"; depth ratios unchanged.
 - **Q6** Closure contract representation? *Engineering, resolved:* option A (Fork 3).
 - **Q7** Port veto's non-seal interpreter fixes, which change unsealed behaviour? *Engineering, resolved* ⚠
   close call: yes (S0b). They are bug fixes v0.22 already ratified, and leaving them out would make the unified

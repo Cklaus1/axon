@@ -28,10 +28,11 @@ This script checks exactly that on the build under test:
   (`sub $N,%rsp` + return address + frame pointer);
 - the checked components are the strongly connected component holding
   the evaluator, `Interp::eval_arm` (`Interp::eval`, which picks its
-  instance, is inlined into every caller), and every other recursive
-  component reachable from it that holds a guarded function (the bytecode
-  compiler's `Compiler::expr` and `stmt`, which recurse once per level of
-  source nesting);
+  instance, is inlined into every caller; both instances, `::<false>` and
+  the sealed run's `::<true>`, are roots), and every other
+  recursive component reachable from them that holds a guarded function
+  (the bytecode compiler's `Compiler::expr` and `stmt`, which recurse once
+  per level of source nesting);
 - a guarded function reachable from `eval` but in no checked component
   (`Interp::compile_body`, `compile_lambda`: a frame live while one
   compile runs) is checked the same way, its unguarded tail stopping at
@@ -48,7 +49,9 @@ It fails when a `nest_cost` constant is not charged by exactly one guard
 site in the function it is named after, when indirect calls widen a checked
 component, when the unguarded part of one has a cycle (a recursion no guard
 sees), when a constant is smaller than the guarded function's frame plus the
-deepest unguarded chain it can call, or when a recursion reachable from
+deepest unguarded chain it can call, when a constant that is non-zero in
+the profile has no instance reachable from `eval_arm` (`0` declares a
+function the profile inlines), or when a recursion reachable from
 `eval` is neither checked nor in ALLOW. Exit 0 ok, 1 failure, 2 bad input.
 """
 import os
@@ -308,10 +311,19 @@ def main() -> int:
                     if x == u:
                         break
 
+    # The evaluator's two instances: `eval_arm::<false>` (every unsealed
+    # run) and `eval_arm::<true>` (a sealed run, entered through
+    # `eval_tainted`). Both are roots, so the sealed instances are checked
+    # whether or not the unsealed one happens to reach them.
     evals = [f for f in sym if name_of(f) == "eval_arm"]
     if not evals:
         print("wasm_stack_budget: no `Interp::eval_arm` in the disassembly", file=sys.stderr)
         return 2
+    evals_sealed = [f for f in sym if name_of(f) == "eval_arm_sealed"]
+    if not evals_sealed:
+        print("wasm_stack_budget: no `Interp::eval_arm::<true>` in the disassembly", file=sys.stderr)
+        return 2
+    starts = evals[:1] + evals_sealed[:1]
     members = defaultdict(set)
     for f, r in comp.items():
         members[r].add(f)
@@ -325,13 +337,14 @@ def main() -> int:
                     todo.append(g)
         return seen
 
-    # The checked components: the one through `eval`, and every other
-    # recursive component reachable from it that holds a guarded function
+    # The checked components: the one through `eval`, the one through the
+    # sealed `eval_arm::<true>` when it is another, and every other
+    # recursive component reachable from them that holds a guarded function
     # (the bytecode compiler's `Compiler::expr`/`stmt`, which recurse over
     # source nesting without coming back to `eval`).
     root = comp[evals[0]]
     roots = [root] + sorted(
-        {comp[f] for f in reach(evals[:1], calls) if name_of(f) in costs and comp[f] != root}
+        {comp[f] for f in reach(starts, calls) if name_of(f) in costs and comp[f] != root}
     )
     roots = [r for r in roots if len(members[r]) > 1 or r in calls.get(r, ())]
 
@@ -437,7 +450,7 @@ def main() -> int:
             flat[f] = (frame.get(f, 16) + best, arg)
         return flat[f]
 
-    for f in sorted(reach(evals[:1], calls) - in_root):
+    for f in sorted(reach(starts, calls) - in_root):
         n = name_of(f)
         if n not in costs or comp.get(f) in cyclic:
             continue
@@ -457,7 +470,15 @@ def main() -> int:
             worst[n] = (frame[f], chain)
     for n, c in sorted(costs.items()):
         if n not in need:
-            print(f"wasm_stack_budget: {profile:<7} {n:<24} no instance (inlined in this profile)")
+            # `0` is how a constant says its function is inlined in this
+            # profile. A non-zero one with no instance names a function that
+            # is not on any checked path (or is gone), so nothing checked it.
+            if c:
+                bad += 1
+                print(f"wasm_stack_budget: {profile:<7} {n:<24} FAIL  {c} bytes but no instance "
+                      f"reachable from eval_arm (set 0 if this profile inlines it)")
+            else:
+                print(f"wasm_stack_budget: {profile:<7} {n:<24} no instance (inlined in this profile)")
             continue
         ok = need[n] <= c
         bad += not ok
@@ -470,7 +491,7 @@ def main() -> int:
     # be one ALLOW names, with the reason its depth is not the program's
     # call depth.
     kinds = defaultdict(int)
-    for r in sorted({comp[f] for f in reach(evals[:1], calls)} - set(roots)):
+    for r in sorted({comp[f] for f in reach(starts, calls)} - set(roots)):
         ms = members[r]
         if len(ms) == 1 and r not in calls.get(r, ()):
             continue
