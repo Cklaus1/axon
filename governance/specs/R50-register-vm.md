@@ -50,7 +50,8 @@ compilebench `sieve`), measured first; revision 39 answers the thirty-fourth rev
 §15 "Revision 40"); revision 41 answers the thirty-sixth (2 must-fix, 4 nits; §15 "Revision 41"); revision 42 answers
 the thirty-seventh (3 must-fix, 2 nits; §15 "Revision 42"); revision 43 answers the thirty-eighth
 (3 must-fix, 1 nit; §15 "Revision 43"); revision 44 answers the thirty-ninth (1 must-fix, 1 nit;
-§15 "Revision 44"). S13 is Draft until an adversarial review passes it.
+§15 "Revision 44"); revision 45 answers the fortieth (2 must-fix, 1 nit; §15 "Revision 45"). S13 is
+Draft until an adversarial review passes it.
 **Risk class:** Structural (a second execution path for the reference engine)
 **Author / date:** 2026-10-09, from compilebench AX-18 (interpreter cost) after AX-53..AX-55.
 
@@ -1129,20 +1130,27 @@ code under `AXON_ENGINE=tree` and `vm`, and stdout equal to the tree's at `0f3b1
   `0f3b182b`.
 - `vm_bulk_near_miss_shapes`: loops one step outside the two shapes, each over packed arrays and
   each `PureLoop`/`PureFor`-eligible (the trace shows its `vm: pure` line), print the tree's results
-  under both engines, and print no `vm: bulk` line. Thirteen loops. Counts: with an `else`
-  (`if a[v] { n = n + c } else { m = m + 1 }`); indexed by another local (`if a[w]`); with
-  `n = n - c`; with `n = m + c`; with a second statement in the `then` block
-  (`if a[v] { n = n + c\n m = m + 1 }`); with a statement after the `if` (`m = m + 1`); and with
+  under both engines, and print no `vm: bulk` line. Seventeen loops, eight counts and nine fills.
+  Counts: with an `else` (`if a[v] { n = n + c } else { m = m + 1 }`); indexed by another local
+  (`if a[w]`); with `n = n - c`; with `n = m + c`; with a second statement in the `then` block
+  (`if a[v] { n = n + c\n m = m + 1 }`); with a statement after the `if` (`m = m + 1`); with
   `n = n + v` where an outer `let v = 3` is shadowed by the loop variable (the tree reads the loop
   `v`; a recogniser that does not exclude `v` from `c` reads 3 through `Env::get_var`'s by-name
-  fallback, interp.rs:1122-1128 at `0f3b182b`). Fills: indexed by another local (`q[k] = 7`, `q` a second packed
-  array); with the increment before the store; with a third statement (`x = x + 1`); with
-  `j = j - s`; with `while j > b`; with a condition on another local (`while k <= b`); and with
-  `j = k + s`. A recogniser that skips any one structural check (the `else`, the index variable,
-  the compared variable, the comparison operator, the step's left operand, statement order or
-  count in the body or the `then` block, the arithmetic operator, the accumulated local, or `v` in
-  `c`'s exclusions) runs a bulk path and prints a `vm: bulk` line, and most also print different
-  output.
+  fallback, interp.rs:1122-1128 at `0f3b182b`); and with `n = n + n` (`p = 1` over trues at 1, 2,
+  4, 8 and 16 of 20: the tree prints `p=32`). Fills: indexed by another local (`q[k] = 7`, `q` a
+  second packed array); with the increment before the store; with a third statement
+  (`x = x + 1`); with `j = j - s`; with `while j > b` (`j = 1`, `s = 2`, `b = 0`: the tree
+  panics `index 11 out of bounds (len 10)`) and with a condition on another local (`while k <= b`,
+  `k = 0`, `j = 0`, `s = 3`, `b = 8`: the tree panics `index 12 out of bounds (len 10)`); with `j = k + s`
+  (`a = arr_repeat(0, 10)`, `j = 0`, `k = 7`, `s = 3`, `b = 8`, `<=`: the tree prints
+  `[7, 0, 0, 0, 0, 0, 0, 0, 0, 0] j=10`); with `a[j] = j` (`j = 1`, `s = 2`, `< 10`: the tree prints
+  `[0, 1, 0, 3, 0, 5, 0, 7, 0, 9]` and `j=11`); and with `j = j + j` (`f = arr_repeat(false, 20)`,
+  `j = 1`, `< 20`, store `true`: the tree sets indices 1, 2, 4, 8, 16 and `j=32`). A recogniser that
+  skips any one structural check (the `else`, the index variable, the compared variable, the
+  comparison operator, the step's left operand, statement order or count in the body or the `then`
+  block, the arithmetic operator, the accumulated local, `j` in the exclusions of `b`, `c` and `s`,
+  or `v` and `n` in `c`'s) runs a bulk path and prints a `vm: bulk` line, and most also print
+  different output.
 
 Also: `interp_arr_repeat_unallocatable_size_is_a_runtime_error_naming_n` still passes;
 `vm_perf_gate.sh` with sieve's budget CPython's median (§10; S12 fails it at about 24.4 G), every
@@ -2129,5 +2137,16 @@ engines, each as stated, and checked that each near-miss loop is `PureLoop`/`Pur
 
 | Finding | Resolution |
 |---|---|
-| [must-fix] The near-miss list left the fill's comparison operator, its compared variable, the step's left operand, the count's statement count and `v` in `c`'s exclusions ungated; "`n = n - c` or `n = m + c`" let a test keep one; "seven" was not the count | Thirteen loops: adds `while j > b`, `while k <= b`, `j = k + s`, a second `then` statement, a statement after the `if`, and `n = n + v` under a shadowed outer `v`; both accumulator variants required; the fill's other array renamed `q` |
+| [must-fix] The near-miss list left the fill's comparison operator, its compared variable, the step's left operand, the count's statement count and `v` in `c`'s exclusions ungated; "`n = n - c` or `n = m + c`" let a test keep one; "seven" was not the count | Fourteen loops ("thirteen" here and in §4 S13 was a miscount; revision 45): adds `while j > b`, `while k <= b`, `j = k + s`, a second `then` statement, a statement after the `if`, and `n = n + v` under a shadowed outer `v`; both accumulator variants required; the fill's other array renamed `q` |
 | [nit] "The same compare" after an append read as `ks[2] < big`, which cannot fail | `{xs[3] < big}` on the appended element of a length-3 array |
+
+Revision 45 (2026-10-11) answers the fortieth review (`reviewer`, verdict "incorrect": 0
+blockers, 2 must-fix, 1 nit). It ran all fourteen revision-44 loops on the S12 binary: each is
+`PureLoop`/`PureFor`-eligible and the engines agree. The new loops' tree outputs were re-run on the
+S12 binary under both engines (`vm: pure main 0 exprs, 4 loops`).
+
+| Finding | Resolution |
+|---|---|
+| [must-fix] `j` in the fill's `b`/`c`/`s` exclusions and `n` in the count's `c` exclusions were ungated; `a[j] = j` (an iota fill) with a loose leaf list fills one value | Three loops added: `a[j] = j` (tree `[0, 1, 0, 3, 0, 5, 0, 7, 0, 9]`, `j=11`), `j = j + j` (indices 1, 2, 4, 8, 16, `j=32`), `n = n + n` (`p=32`); both exclusions named in the list of checks |
+| [must-fix, wording] "Thirteen loops" was fourteen | Seventeen loops, eight counts and nine fills, counted in §4 S13; the Revision 44 row corrected |
+| [nit] `j = k + s` had no values and can loop forever on the tree | `j = 0`, `k = 7`, `s = 3`, `b = 8`, `<=`: tree `[7, 0, ...]`, `j=10`; `while j > b` and `while k <= b` given values whose tree runs panic out of bounds (index 11 and 12) |
