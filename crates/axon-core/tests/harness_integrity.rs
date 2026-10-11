@@ -95,7 +95,16 @@ fn harness_cmd(r: &Path, script: &str, args: &[&str]) -> Command {
     let mut c = script_spawn::script("python3", r.join(script), Bins::BuildsItsOwn);
     c.args(args)
         .current_dir(r)
-        .env("PYTHONDONTWRITEBYTECODE", "1");
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        // Cargo hands every `rustc-env` of axon-core's build script to this
+        // test's process too, so it carries `AXON_GIT_SHA` = the identity of
+        // the tree THIS test was built from. A miniature built with it set
+        // embeds it verbatim (build.rs honours a packager's override) instead
+        // of asking the miniature's git: built inside a paired-disable or
+        // mutation cell, whose edit left this tree `-dirty`, the miniature's
+        // clean interpreter named itself `<sha>-dirty` and its run refused
+        // (M3260's cell at 2b0e7438). The miniature's identity is its own.
+        .env_remove("AXON_GIT_SHA");
     // These runs share the host with the rest of `cargo test`, which is never
     // idle; the idle guard is not what they test.
     if script == HARNESS[2] {
