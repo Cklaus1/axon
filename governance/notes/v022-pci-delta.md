@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 748f071576ba44ecc05d928979a4b5a183277cd8
+generated-at: ddab14e1c362a956235f5299375f94b04ce58bd1
 
-`git diff --numstat 31413ca7..748f0715 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..ddab14e1 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -49,18 +49,18 @@ generated-at: 748f071576ba44ecc05d928979a4b5a183277cd8
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 4812 | 1467 |
+| `crates/axon-core/src/interp.rs` | 4807 | 1467 |
 | `crates/axon-core/src/interp/builtins.rs` | 666 | 512 |
 | `crates/axon-core/src/interp/conform.rs` | 1780 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1413 | 0 |
 | `crates/axon-core/src/interp/crossing_tests.rs` | 418 | 0 |
 | `crates/axon-core/src/interp/env.rs` | 1193 | 0 |
 | `crates/axon-core/src/interp/eval.rs` | 1915 | 600 |
-| `crates/axon-core/src/interp/goal.rs` | 83 | 42 |
+| `crates/axon-core/src/interp/goal.rs` | 65 | 36 |
 | `crates/axon-core/src/interp/kernel_tests.rs` | 401 | 0 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 48 | 21 |
-| `crates/axon-core/src/interp/sink_tests.rs` | 1302 | 0 |
+| `crates/axon-core/src/interp/sink_tests.rs` | 1246 | 0 |
 | `crates/axon-core/src/interp/sym.rs` | 1188 | 0 |
 | `crates/axon-core/src/interp/taint.rs` | 1190 | 0 |
 | `crates/axon-core/src/interp/taint_tests.rs` | 1236 | 0 |
@@ -80,9 +80,9 @@ generated-at: 748f071576ba44ecc05d928979a4b5a183277cd8
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 37414 | 5268 |
+| total | 37335 | 5262 |
 
-`git log --reverse 31413ca7..748f0715 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..ddab14e1 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -265,7 +265,8 @@ generated-at: 748f071576ba44ecc05d928979a4b5a183277cd8
 | d25cae8c | R51 S3e | TEST-ONLY: rustfmt of interp/sink_tests.rs (line wrapping of the S3e tests); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 5205763e | R51 S6 gaps | INTERPRETER (both engines, S0b-class correctness fix) assert_eq_f64 is stated positively, !(a == b || |a-b| <= 1e-9), as veto builtins.rs:3745, so a NaN operand FAILS on the tree and the VM (they share the arm) as it does natively (OEQ); inf == inf still passes, and every non-NaN pair behaves as before. INTERPRETER seal edge (veto goal.rs:274/373/476/554, interp.rs:4959): run_goal_random/categorical/multistart/tournament call seal_call after the name lookup and unknown_goal_name gives a sealed caller the uniform no-such-fn text, so a sealed caller cannot tell an operator fn from a missing name; both are no-ops unless seal.active and the frame is sealed, so an unsealed run is unchanged. TEST-ONLY: vm/tests.rs NaN parity test, sink_tests.rs goal-search seal test and the clock-builtin World/Time check (veto taint_tests.rs:2498-2516), an ATTACK marker on the T1c CLI refusal asserts. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 748f0715 | R51 S6 gaps | TEST-ONLY: no_arm_of_a_pure_builtin_reads_or_advances_ambient_state moves verbatim from interp/sink_tests.rs to interp/taint_tests.rs, v0.22's module path, so the M3323/M3329 rows and the am117 gate row name a test that exists; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 179 commits | | |
+| ddab14e1 | R51 S6 gaps | INTERPRETER revert of 5205763e's goal-name seal edge (the seal_call after the lookup in run_goal_random/categorical/multistart/tournament and the seal-aware unknown_goal_name): r51/s4b 65eda84a ports the same edge and merges first, so goal.rs and unknown_goal_name return to the base exactly; the unsealed path never changed. TEST-ONLY: the duplicate sink_tests goal-search test is dropped (S4b's dispatch_tests cover it). Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 180 commits | | |
 <!-- END MECHANICAL -->
 
 
