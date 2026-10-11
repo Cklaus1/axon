@@ -12,3 +12,10 @@ S6 under `--strict`. The `REDTEAM FAILED: blocking deploy` line in the log is th
 `manifest::tests` case, not a failure.
 
 Known failures: none.
+
+## Slice gates
+
+| Head | Slice | `./scripts/gate.sh` | Suite (`cargo test -p axon-core --no-default-features --no-fail-fast`) |
+|---|---|---|---|
+| 12ef0c9b | S0 | FAILED at tests: `harness_integrity::a_mutation_run_restores_the_interpreter_after_every_row`, tree dirtied mid-run by an untracked task file (not a code failure) | - |
+| d099fba1 | S0 + S1 + S0b | PASSED except 4 deferred stages (Stage-5 gate tests, Protected Check Isolation, PSV negative matrix, refusal-site coverage), 27 min | 1855 passed, 0 failed, 67 ignored |
