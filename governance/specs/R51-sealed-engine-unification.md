@@ -2,7 +2,9 @@
 
 **Spec ID:** `R51-sealed-engine-unification`
 **Status:** Reviewed (2026-10-10, Step 1 adversarial review: VmPin, TaintPort, S0Merge, EvidenceGates; reports
-under `governance/reviews/2026-10-10-r51-*.md`). Open questions resolved (§12). Building on `r51/unify`.
+under `governance/reviews/2026-10-10-r51-*.md`). Open questions resolved (§12). Building on `r51/unify`. S6.1
+(2026-10-11): `SEAL_RUNTIME_COMPLETE = true`; sealed runs execute on the tree engine with the seal, the deferred-test
+registry is empty.
 **Risk class:** Structural and security-critical (re-homes the PSV-1 runtime seal onto a rewritten data model; adds a refusal on the default engine).
 **Author / date:** 2026-10-10, after merging `origin/main` (5864c423) into the v0.22 head (`c9r16/integrate15`, c9ed2ddd) was found to be a re-implementation, not a merge.
 

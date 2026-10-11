@@ -8,9 +8,8 @@
 //! channel stamps (`chan_created`, `chan_send_check`) and the declared-type
 //! casts at `let x: T` and at record construction.
 //!
-//! Every sealed run is refused at build until S6 (`SEAL_RUNTIME_COMPLETE`), so
-//! these drive an `Interp` made by [`Interp::build_with`] (seal state and pin
-//! analysis computed, refuse-all pin skipped, as `taint_tests` and
+//! These drive an `Interp` made by [`Interp::build_with`] (seal state and pin
+//! analysis computed, engine pin skipped, as `taint_tests` and
 //! `kernel_tests` do). Each probe is a suite fn whose body runs through
 //! `eval_t::<true>` (the sealed instantiation) in an operator frame or, via
 //! [`Interp::with_frame`], in a sealed one, with `pin_fn` set to it as the
@@ -157,7 +156,7 @@ fn prog_of(tag: &str, suite: &str, cand: &str) -> (Program, std::path::PathBuf) 
 
 /// An `Interp` over `suite` and the sealed `cand`, built but with its
 /// module-level `let`s not yet initialised; `sealed` gives it a live seal (a
-/// unit-test `Interp`, not a runnable sealed run - those stay refused until S6).
+/// unit-test `Interp`, built without a run entry).
 fn with_prog<R>(
     tag: &str,
     suite: &str,

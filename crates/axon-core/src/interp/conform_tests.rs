@@ -103,7 +103,7 @@ fn prog(tag: &str) -> (Program, std::path::PathBuf) {
 }
 
 /// An `Interp` over the suite; `sealed` gives it a live seal (a unit-test
-/// `Interp`, not a runnable sealed run - those stay refused until S6).
+/// `Interp`, built without a run entry).
 fn with_ix<R>(tag: &str, sealed: bool, f: impl FnOnce(&Interp<'_>) -> R) -> R {
     let (prog, sdir) = prog(tag);
     let dirs = if sealed { vec![sdir] } else { Vec::new() };

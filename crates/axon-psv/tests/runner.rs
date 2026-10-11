@@ -273,7 +273,6 @@ fn ran(fx: &Fx) -> bool {
 }
 
 #[test]
-#[ignore = "R51 S0b: needs a genuine keyed pass (TestEnd completion evidence); sealed run also refused until S6"]
 fn the_named_test_passes_with_a_token_the_host_verifies() {
     let fx = fixture("t_ok", false);
     let (v, sha) = run_and_emit(&fx.cfg).unwrap();
@@ -298,7 +297,6 @@ fn the_named_test_passes_with_a_token_the_host_verifies() {
 /// correct candidate that prints a failure line over its own genuine pass
 /// yields no verdict, never a Failed (review wf_1bc28496-38e, PSV-4).
 #[test]
-#[ignore = "R51 S6: its control is a keyed sealed verdict, refused until SEAL_RUNTIME_COMPLETE"]
 fn a_failure_line_printed_by_the_candidate_is_not_a_verdict() {
     let fx = fixture_with("accept.ax", "t_ok", false, SPLICING_CANDIDATE);
     let v = run(&fx.cfg);
@@ -315,7 +313,6 @@ fn a_failure_line_printed_by_the_candidate_is_not_a_verdict() {
 }
 
 #[test]
-#[ignore = "R51 S6: expects Failed from a sealed run; every sealed run is refused (Unknown) until SEAL_RUNTIME_COMPLETE"]
 fn a_failing_or_absent_test_is_never_a_pass() {
     let fx = fixture("t_fail", false);
     assert_eq!(run(&fx.cfg).status, GuestStatus::Failed);
@@ -384,7 +381,6 @@ fn nothing_executes_unless_every_input_is_the_named_one() {
 /// A11: a proof from one attempt (or trial) does not verify for another —
 /// the host derives the key from ITS manifest.
 #[test]
-#[ignore = "R51 S0b: needs a genuine keyed pass (TestEnd completion evidence); sealed run also refused until S6"]
 fn a_completion_proof_does_not_replay_across_attempts_or_trials() {
     let fx = fixture("t_ok", false);
     let v = run(&fx.cfg);
@@ -408,7 +404,6 @@ fn a_completion_proof_does_not_replay_across_attempts_or_trials() {
 /// emits contains S or K. As root, the child runs as nobody and cannot read
 /// the secret file.
 #[test]
-#[ignore = "R51 S6: reads the sealed run's output, refused until SEAL_RUNTIME_COMPLETE"]
 fn neither_the_secret_nor_the_key_reaches_candidate_code_or_the_output() {
     let root = unsafe { libc::geteuid() } == 0;
     let fx = fixture("t_custody", root);
@@ -469,7 +464,6 @@ fn a_forged_or_duplicated_result_line_is_not_a_pass() {
 /// FAILS (`t_pair_breaks` for `t_pair`) never runs beside it, so it can neither
 /// sink an honest candidate nor stand in for the named test.
 #[test]
-#[ignore = "R51 S6: its control is an honest keyed pass, refused until SEAL_RUNTIME_COMPLETE"]
 fn a_suite_sibling_does_not_run_beside_the_registered_test() {
     let fx = fixture("t_pair", false);
     let v = run(&fx.cfg);
@@ -514,7 +508,6 @@ fn a_candidate_cannot_supply_the_registered_test() {
 /// resolved first (its E0901, or the planted `want` failing `t_helper`); any
 /// other failure is the control below.
 #[test]
-#[ignore = "R51 S6: its control is an honest keyed pass, refused until SEAL_RUNTIME_COMPLETE"]
 fn a_candidate_cannot_shadow_the_suites_own_modules() {
     let fx = fixture("t_helper", false);
     let v = run(&fx.cfg);
@@ -654,7 +647,6 @@ fn the_process_holding_k_is_given_no_exec() {
 /// M293). It replaces M176, whose guard was refactored into that arm and whose
 /// named test no longer existed (C9 re-audit).
 #[test]
-#[ignore = "R51 S0b: needs a genuine keyed pass (TestEnd completion evidence); sealed run also refused until S6"]
 fn a_genuine_keyed_pass_from_a_run_that_exits_non_zero_is_not_a_pass() {
     let mut fx = fixture("t_ok", false);
     let real = fx.cfg.axon.clone();
@@ -687,7 +679,6 @@ fn a_genuine_keyed_pass_from_a_run_that_exits_non_zero_is_not_a_pass() {
 /// The runner must refuse the input before anything executes. Control: the
 /// same job without the ACL is a keyed pass.
 #[test]
-#[ignore = "R51 S6: its control is an honest keyed pass, refused until SEAL_RUNTIME_COMPLETE"]
 fn an_input_carrying_an_acl_is_refused_not_run() {
     let root = unsafe { libc::geteuid() } == 0;
     let fx = fixture("t_fixture", root);
@@ -761,7 +752,6 @@ fn an_input_carrying_an_acl_is_refused_not_run() {
 /// runner itself refuses job files that carry any extended attribute. An ACL on
 /// the job drive could GRANT the unprivileged test uid the 0400 secret.
 #[test]
-#[ignore = "R51 S6: its control is an honest keyed pass, refused until SEAL_RUNTIME_COMPLETE"]
 fn a_job_file_carrying_an_acl_is_refused_not_run() {
     let root = unsafe { libc::geteuid() } == 0;
     let c = |s: &str| std::ffi::CString::new(s).unwrap();
@@ -827,7 +817,6 @@ fn a_job_file_carrying_an_acl_is_refused_not_run() {
 /// policy it WAS given, so Fabric and the loop can see which one it was.
 /// Control: the manifest's own policy runs, and the verdict names it.
 #[test]
-#[ignore = "R51 S6: its control is an honest keyed pass, refused until SEAL_RUNTIME_COMPLETE"]
 fn the_guest_runs_only_the_policy_the_manifest_names() {
     let p2 = r#"{"schema":"axon-vm-mmds/1","allowed_effects":["AI","Exec","IO","Net","Time"]}"#;
     let mut fx = fixture("t_ok", false);
@@ -921,7 +910,6 @@ fn the_runner_reads_the_one_cmdline_policy_word() {
 /// are otherwise genuine, so only the entry check refuses it: nothing runs.
 /// Control: the suite's own entry runs.
 #[test]
-#[ignore = "R51 S6: its control is an honest keyed pass, refused until SEAL_RUNTIME_COMPLETE"]
 fn a_suite_entry_outside_the_suite_tree_never_runs() {
     let fx = fixture_at("../candidate/f.ax", "t_cand_probe", false);
     let v = run(&fx.cfg);
@@ -948,7 +936,6 @@ fn a_suite_entry_outside_the_suite_tree_never_runs() {
 /// the file rule alone; with that term removed the runner went on to run the
 /// interpreter on a file that is not there. Control: the suite's own entry runs.
 #[test]
-#[ignore = "R51 S6: its control is an honest keyed pass, refused until SEAL_RUNTIME_COMPLETE"]
 fn a_suite_entry_that_is_not_a_file_in_the_suite_never_runs() {
     let fx = fixture_at("missing.ax", "t_ok", false);
     assert!(
@@ -991,7 +978,6 @@ const FLOODING_CANDIDATE: &str = "fn double(x: i64) -> i64 {\n    let i = 0\n   
 /// refused, never verdicted, even when its keyed pass line is intact (the
 /// flood is on stderr). Control: the same candidate without the flood passes.
 #[test]
-#[ignore = "R51 S6: expects a Failed verdict from a sealed run; refused (Unknown) until SEAL_RUNTIME_COMPLETE"]
 fn a_run_that_exceeded_its_output_limit_yields_no_verdict() {
     let fx = fixture_with("accept.ax", "t_ok", false, FLOODING_CANDIDATE);
     let v = run(&fx.cfg);

@@ -1,10 +1,9 @@
 //! R51 S2: the taint channel's hooks, unit by unit (spec §8 T8.2-T8.5, the
 //! subset that needs no live sealed run).
 //!
-//! Every sealed run is refused at build until S6 (`SEAL_RUNTIME_COMPLETE`), so
-//! these drive the evaluator's sealed instantiation (`eval_t::<true>`) directly
+//! These drive the evaluator's sealed instantiation (`eval_t::<true>`) directly
 //! on an `Interp` made by [`Interp::build_with`], which computes the seal state
-//! without the refuse-all pin (as the Env factory tests in `interp/env.rs` do).
+//! without the engine pin (as the Env factory tests in `interp/env.rs` do).
 //! Each probe is an OPERATOR fn of the suite run in an operator frame, its
 //! parameters bound with the taint the test gives them; the test reads the
 //! taint of the probe's value (`taint.last`), of a returned shared object
@@ -403,8 +402,7 @@ fn probe_in(ix: &Interp<'_>, name: &str, args: Vec<(Value, u8)>) -> (Value, u8) 
     }
 }
 
-/// A sealed run's `Interp`, not a runnable one (see
-/// `the_unit_tests_bypass_only_the_pin_not_the_refusal`).
+/// A sealed run's `Interp`, built without a run entry ([`Interp::build_with`]).
 fn with_sealed<R>(tag: &str, f: impl FnOnce(&Interp<'_>) -> R) -> R {
     let (prog, sdir) = prog(tag);
     let ix = Interp::build_with(&prog, std::slice::from_ref(&sdir), Engine::Tree);
@@ -682,18 +680,6 @@ fn an_ordinary_run_takes_no_taint() {
         assert_eq!(c.get(), 0, "{what}");
     }
     assert_eq!(TYP & VAL, 0);
-}
-
-/// The sealed builds these tests use are not runnable sealed runs:
-/// `Interp::build_in` still refuses them (SEAL_RUNTIME_COMPLETE = false).
-#[test]
-fn the_unit_tests_bypass_only_the_pin_not_the_refusal() {
-    let (prog, sdir) = prog("r51-s2-refuse");
-    const { assert!(!SEAL_RUNTIME_COMPLETE) };
-    assert_eq!(
-        Interp::build_in(&prog, &[sdir]).err().as_deref(),
-        Some(SEALED_RUN_REFUSED)
-    );
 }
 
 /// Every builtin is in exactly one taint class, and every name a class table
@@ -1238,9 +1224,7 @@ fn no_arm_of_a_pure_builtin_reads_or_advances_ambient_state() {
 // ── R51 T3: v0.22 taint_tests rows ported under their v0.22 names ──────────────
 //
 // v0.22's end-to-end harness: an operator suite and a sealed candidate, run as
-// one program, each verdict classified. Every test that runs a case is
-// deferred to S6 (`SEAL_RUNTIME_COMPLETE`: until then every sealed run is
-// refused at build); the drift tests among them run now.
+// one program, each verdict classified.
 
 use super::tests::{JUDGE8, LAUNDER8};
 
@@ -1460,7 +1444,6 @@ fn name_cases() -> Vec<Case> {
 }
 
 #[test]
-#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn a_name_sealed_code_had_a_hand_in_never_selects_an_operator_fn() {
     let cases = name_cases();
     check(&cases, Rules::TaintOnly);
@@ -1517,7 +1500,6 @@ fn dispatch_cases() -> Vec<Case> {
 }
 
 #[test]
-#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn a_type_or_width_sealed_code_chose_is_never_dispatched_on() {
     let cases = dispatch_cases();
     check(&cases, Rules::TaintOnly);
@@ -1583,7 +1565,6 @@ fn hunted_cases() -> Vec<Case> {
 }
 
 #[test]
-#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn bypass_shapes_hunted_after_the_first_cut() {
     let cases = hunted_cases();
     check(&cases, Rules::TaintOnly);
@@ -1665,7 +1646,6 @@ fn hook_cases() -> Vec<Case> {
 }
 
 #[test]
-#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn every_hook_of_the_taint_has_an_attack_of_its_own() {
     let cases = hook_cases();
     check(&cases, Rules::TaintOnly);
@@ -1673,7 +1653,6 @@ fn every_hook_of_the_taint_has_an_attack_of_its_own() {
 }
 
 #[test]
-#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn the_remaining_routes_a_selection_can_take() {
     let cases = more_cases();
     check(&cases, Rules::TaintOnly);
@@ -1978,7 +1957,6 @@ fn channel_cases() -> Vec<Case> {
 }
 
 #[test]
-#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn a_channel_the_candidate_touched_never_selects_an_operator_closure_or_name() {
     let cases = channel_cases();
     check(&cases, Rules::TaintOnly);
@@ -2098,7 +2076,6 @@ fn dict_state_cases() -> Vec<Case> {
 }
 
 #[test]
-#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn a_dict_reader_is_tainted_after_a_sealed_write_and_clean_after_the_operators() {
     let cases = dict_state_cases();
     check(&cases, Rules::TaintOnly);
@@ -2296,7 +2273,6 @@ fn kernel_state_cases() -> Vec<Case> {
 }
 
 #[test]
-#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn a_kernel_getter_is_tainted_after_a_write_the_candidate_steered() {
     let cases = kernel_state_cases();
     check(&cases, Rules::TaintOnly);
@@ -2369,7 +2345,6 @@ fn array_state_cases() -> Vec<Case> {
 }
 
 #[test]
-#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn a_shared_array_is_tainted_after_a_sealed_write() {
     let cases = array_state_cases();
     check(&cases, Rules::TaintOnly);
@@ -2434,7 +2409,6 @@ fn hunt_r11_cases() -> Vec<Case> {
 }
 
 #[test]
-#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn areas_the_psv3_reviewer_did_not_hunt() {
     let cases = hunt_r11_cases();
     check(&cases, Rules::TaintOnly);
@@ -2495,7 +2469,6 @@ const ORACLE_PAIRS: &[(&str, &str)] = &[
 /// across every form and kind of definition, the text for an operator name is
 /// the text for a missing one, modulo the name itself. 20 forms x 6 pairs.
 #[test]
-#[ignore = "R51 S6: sealed-caller refusal text ported (S3); needs a live sealed run"]
 fn a_sealed_caller_cannot_tell_an_operator_name_from_a_missing_one_on_any_path() {
     let su = "let TABLE = [41, 42]\n@[adaptive]\nfn ad(n: i64) -> i64 { n }\nfn secret() -> i64 { 41 }\nfn nonadapt(n: i64) -> i64 { n }\ntype C = { k: i64 }\nlet CFG = C { k: 41 }\nlet F = |x: i64| x + 1\nlet P = principal_root(\"r\", true, true, true, 100)\n";
     let body = "    assert_eq(solve(), 41)";
@@ -2556,7 +2529,6 @@ const METHOD_FORMS: &[(&str, &str, &str)] = &[
 /// defines it: for every receiver kind, the text for an operator method is the
 /// text for a missing one, modulo the name.
 #[test]
-#[ignore = "R51 S6: sealed-caller refusal text ported (S3); needs a live sealed run"]
 fn a_sealed_caller_cannot_tell_an_operator_method_from_a_missing_one() {
     let su = "trait Sc {\n    fn score(self) -> i64\n}\nimpl Sc for i64 {\n    fn score(self: i64) -> i64 { 41 }\n}\nimpl Sc for str {\n    fn score(self: str) -> i64 { 41 }\n}\nimpl Sc for [i64] {\n    fn score(self: [i64]) -> i64 { 41 }\n}\nimpl Sc for Dict {\n    fn score(self: Dict) -> i64 { 41 }\n}\nimpl Sc for CS {\n    fn score(self: CS) -> i64 { 41 }\n}\nimpl Sc for CE {\n    fn score(self: CE) -> i64 { 41 }\n}\n";
     let body = "    assert_eq(solve(), 41)";
@@ -2656,7 +2628,6 @@ fn compare_cases() -> Vec<Case> {
 }
 
 #[test]
-#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn comparing_or_searching_a_dict_the_candidate_wrote_is_a_read_of_it() {
     let cases = compare_cases();
     check(&cases, Rules::TaintOnly);
@@ -2669,7 +2640,6 @@ fn comparing_or_searching_a_dict_the_candidate_wrote_is_a_read_of_it() {
 /// operator fn by it is refused). Driven off the builtin table, so a new one is
 /// covered without being listed.
 #[test]
-#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn every_builtin_that_can_read_a_container_of_a_tainted_dict_taints_its_result() {
     let pre = CMP_REF.to_string();
     let mut cases = Vec::new();
@@ -2771,7 +2741,6 @@ fn every_comparison_and_every_builtin_argument_is_walked_deep() {
 /// A native call (`gfx::present` on a surface) writes a registry every frame
 /// shares: what a sealed call did is something the candidate decided.
 #[test]
-#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn a_native_registry_a_sealed_frame_wrote_taints_what_the_operator_reads_back() {
     use Expect::*;
     let ops = "    let ops = [lax, reference]\n".to_string();
@@ -3092,7 +3061,6 @@ fn control_flow_cases() -> Vec<Case> {
 }
 
 #[test]
-#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn operator_side_control_flow_on_candidate_data_carries_its_taint_into_what_it_runs() {
     let cases = control_flow_cases();
     check(&cases, Rules::TaintOnly);
@@ -3704,7 +3672,6 @@ fn carrier_cases() -> Vec<Case> {
 /// R51: v0.22's interp unit test (main's same-named `axon-psv` test in
 /// `sealed_frames.rs` is a different, runner-level test, left as is).
 #[test]
-#[ignore = "R51 S6: taint rules (S2/S3) and the DISPATCH_RULE_OFF/TAINT_FORCE_ON switches its TaintOnly and Neither sweeps toggle (S4) ported; needs a live sealed run"]
 fn taint_survives_every_carrier_a_value_can_travel_by() {
     let cases = carrier_cases();
     check(&cases, Rules::TaintOnly);
@@ -3828,7 +3795,7 @@ const PICK_CAND: &str = "fn key() -> str { \"b\" }\nfn val() -> i64 { 3 }\nfn pi
 /// C9 round 15 (amendment 121), v0.22 taint_tests.rs:320-366 verbatim: an
 /// operator-typed value (a struct or enum only the operator defines) that sealed
 /// code SELECTED is never dispatched on; one built from sealed code's DATA is.
-/// Run on the unit-level sealed runner (`pick_tests::run_unit`) until S6.
+/// Run on the unit-level sealed runner (`pick_tests::run_unit`).
 fn pick_cases() -> Vec<super::pick_tests::PickCase> {
     use super::pick_tests::{PickCase, Verdict::*};
     let case = |name: &'static str, pre: &str, body: &str, cand: &str, expect| PickCase {
@@ -3963,8 +3930,8 @@ fn closure_cases() -> Vec<super::pick_tests::PickCase> {
 }
 
 /// v0.22's `an_operator_closure_the_candidate_picked_is_never_called`
-/// (taint_tests.rs:233-258) on the unit-level runner (`pick_tests::run_unit`)
-/// until S6: the closure sink.
+/// (taint_tests.rs:233-258) on the unit-level runner (`pick_tests::run_unit`):
+/// the closure sink.
 #[test]
 fn an_operator_closure_the_candidate_picked_is_never_called() {
     use super::pick_tests::{attacks_are_live_unit, check_unit};

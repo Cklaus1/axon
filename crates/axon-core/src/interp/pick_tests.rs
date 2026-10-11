@@ -1,9 +1,8 @@
 //! R51 S4: the PICK mark and the refusing closure sink (spec §4 Fork 3
 //! "PICK", §8 T8.1), unit by unit.
 //!
-//! Every sealed run is refused at build until S6 (`SEAL_RUNTIME_COMPLETE`), so
 //! [`run_unit`] stands in for v0.22's `run`: it builds the program with a live
-//! seal ([`Interp::build_with`], no refuse-all pin), initialises the
+//! seal ([`Interp::build_with`], no engine pin), initialises the
 //! module-level lets and runs the operator's `@[test] fn t` in an operator
 //! frame of the sealed instantiation, with the test switches set on THIS
 //! thread. Each attack has an honest control and is shown live with the taint

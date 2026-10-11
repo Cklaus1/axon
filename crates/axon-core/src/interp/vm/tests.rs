@@ -1027,7 +1027,7 @@ fn loop_control_never_leaves_a_fast_call() {
 /// requested or `AXON_ENGINE` is invalid, and otherwise runs on the tree,
 /// `AXON_ENGINE` unset included; it never gets the VM. An unsealed run's
 /// selection is R50 §3's, whatever `complete` says. `complete` is the
-/// const `false` on this build, so `complete = true` is reached only here.
+/// const `true` on this build, so `complete = false` is reached only here.
 #[test]
 fn r51_t1a_engine_for_truth_table() {
     use std::ffi::OsStr;

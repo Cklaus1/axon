@@ -193,7 +193,6 @@ fn class(s: &axon_fabric::Submission) -> String {
 }
 
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn an_operator_suite_passes_through_the_guest_path_as_guest_unobserved() {
     let w = World::new();
     // The DIRECT route: the privileged helper launches nothing without an
@@ -274,7 +273,6 @@ fn no_file_named(dir: &Path, name: &str) -> bool {
 /// no verdict, never a (protected) Failed — the reviewer's reproduction
 /// (review wf_1bc28496-38e, PSV-4).
 #[test]
-#[ignore = "R51 S0b: needs a genuine keyed pass (TestEnd completion evidence); sealed run also refused until S6"]
 fn a_candidate_cannot_write_a_failure_over_a_genuine_pass() {
     let w = World::with_candidate(
         "fn double(n: i64) -> i64 {\n    let o = chr(123)\n    let c = chr(125)\n    \
@@ -301,7 +299,6 @@ fn a_candidate_cannot_write_a_failure_over_a_genuine_pass() {
 
 /// A failure reported with a CLEAN exit is not a failure verdict (§5).
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_failure_with_a_clean_exit_is_not_a_verdict() {
     let w = World::new();
     let s = w.submit_with(w.lx("exit0", ""), "op-psv-exit0", "t_psv_fail");
@@ -315,7 +312,6 @@ fn a_failure_with_a_clean_exit_is_not_a_verdict() {
 }
 
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_failing_test_is_failed_whatever_the_guest_claims() {
     let w = World::new();
     let s = w.submit_with(w.lx("", ""), "op-psv-fail", "t_psv_fail");
@@ -385,7 +381,6 @@ fn every_forgery_of_the_returned_evidence_is_unknown_for_its_own_reason() {
 /// A11: a GENUINE pass from a previous attempt, re-labelled for this launch,
 /// does not verify under this launch's key.
 #[test]
-#[ignore = "R51 S0b: needs a genuine keyed pass (TestEnd completion evidence); sealed run also refused until S6"]
 fn a_previous_attempts_genuine_pass_does_not_replay() {
     let w = World::new();
     let first = w.lx("", "");
@@ -485,7 +480,6 @@ fn an_unpinned_guest_builds_no_launch() {
 /// A local check is DEVELOPMENT evidence: stamped as such, and signed only
 /// as such.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_local_check_is_development_evidence() {
     let w = World::new();
     let mut r = request(&w.env, "op-local", "t_psv_ok");
@@ -587,7 +581,6 @@ fn a_guest_refusal_stands_even_over_a_genuine_passing_run() {
 /// Passed needs exit 0: a genuine pass (VALID token) whose run is reported
 /// as exiting non-zero is Unknown.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_valid_token_with_a_failing_run_is_not_a_pass() {
     let w = World::new();
     let s = w.submit_with(w.lx("exit", ""), "op-psv-exit", "t_psv_ok");
@@ -600,7 +593,6 @@ fn a_valid_token_with_a_failing_run_is_not_a_pass() {
 /// fn t_ok`; naming it as the acceptance test yields NO verdict (the guest
 /// never collects a candidate's test), never a Passed.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_candidate_cannot_supply_the_acceptance_test_through_fabric() {
     let w = World::new();
     let s = w.submit_with(w.lx("", ""), "op-psv-candtest", "t_ok");
@@ -624,7 +616,6 @@ fn a_candidate_cannot_supply_the_acceptance_test_through_fabric() {
 /// the caller's environment, so there `sealed_exec::command`'s envp (M228) and
 /// Fabric's own `psv.scrub()` (M229) are the only guards.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn the_verify_step_inherits_nothing_from_the_caller() {
     std::env::set_var("PSV_VERIFY_ENV_PROBE", "leak");
     let w = World::new();
@@ -677,7 +668,6 @@ fn a_valid_verdict_from_an_unbound_launch_counts_for_nothing() {
 /// Control: the manifest's own policy, observed, through the helper: a
 /// protected pass.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_guest_under_a_policy_the_manifest_does_not_name_yields_no_verdict() {
     let w = World::new();
     for (route, lx) in [
@@ -775,7 +765,6 @@ fn launched(w: &World, op: &str) -> bool {
 /// old epoch, so the launch is refused and nothing runs. Control: the same
 /// observer, with no epoch change, gives a protected Passed.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn an_epoch_that_moves_while_the_observer_runs_refuses_the_launch() {
     let w = World::new();
     let key = observer_key(w.env.dir.path(), "obs", &[&w.observer_roots()]);
@@ -836,7 +825,6 @@ fn an_epoch_that_moves_while_the_observer_runs_refuses_the_launch() {
 }
 
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_verified_observation_makes_the_guest_verdict_protected() {
     let w = World::new();
     let key = observer_key(w.env.dir.path(), "obs", &[&w.observer_roots()]);
@@ -1122,7 +1110,6 @@ fn every_defective_observation_launches_nothing_on_the_direct_route() {
 /// presented again, authorizes nothing: it observed another manifest (and its
 /// nonce is spent).
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn an_earlier_observation_does_not_authorize_another_launch() {
     let w = World::new();
     let key = observer_key(w.env.dir.path(), "obs", &[&w.observer_roots()]);
@@ -1217,7 +1204,6 @@ fn a_suite_changed_under_the_guest_is_refused_there() {
 /// A3 through the Fabric: a test the registered suite does not define yields
 /// no verdict (never a pass), whatever the request names.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_test_the_suite_does_not_define_has_no_verdict() {
     let w = World::new();
     let s = w.submit_with(w.lx("", ""), "op-psv-absent", "t_psv_absent");
@@ -1232,7 +1218,6 @@ fn a_test_the_suite_does_not_define_has_no_verdict() {
 /// inputs are re-materialized from the verified store into a private dir —
 /// so the verdict is still Failed.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_run_dir_swapped_under_the_callers_state_changes_nothing() {
     fn swap(cfg: &axon_fabric::SubmitConfig) {
         let runs = cfg.state_dir.join("runs");
@@ -1300,7 +1285,6 @@ impl World {
 /// the same protected host WITH an observer launches, and its verdict is
 /// protected, so the refusal is the observer rule and nothing else.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_protected_host_with_no_observer_launches_nothing() {
     // The DIRECT route first (C9 round 3, rows): a library consumer composing
     // a protected host with a launcher Fabric runs itself. No privileged
@@ -1392,7 +1376,6 @@ fn a_protected_host_with_no_observer_launches_nothing() {
 /// would be attested. Control: the same host with an observer still runs an
 /// operator-suite check, observed and protected.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_protected_host_launches_no_execution_with_or_without_an_observer() {
     for with_observer in [false, true] {
         let w = World::new();
@@ -1503,7 +1486,6 @@ fn the_protected_profile_is_never_selected_for_an_execution() {
 /// honest unknown into a refused verification. Control: the observed genuine
 /// pass is protected and carries its bundle.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn an_observed_verdict_that_is_not_protected_carries_no_bundle() {
     for tamper in ["forge", "other-manifest", "vmm-died"] {
         let w = World::new();
@@ -1589,7 +1571,6 @@ fn an_inadmissible_observed_launch_is_never_protected_and_carries_no_bundle() {
 /// nothing launches. Control: the same observer with a key in no other role
 /// launches, observed and protected.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn an_observer_key_that_holds_another_role_is_refused_at_every_observation() {
     for role in [
         "host-signer",
@@ -1647,7 +1628,6 @@ fn an_observer_key_that_holds_another_role_is_refused_at_every_observation() {
 /// passes; only the keyed check sees that more than one line names the test.
 /// No verdict, never a pass.
 #[test]
-#[ignore = "R51 S0b: needs a genuine keyed pass (TestEnd completion evidence); sealed run also refused until S6"]
 fn a_second_pass_line_over_a_genuine_pass_is_not_a_pass() {
     let w = World::with_candidate(
         "fn double(n: i64) -> i64 {\n    let o = chr(123)\n    let c = chr(125)\n    \
@@ -1676,7 +1656,6 @@ fn a_second_pass_line_over_a_genuine_pass_is_not_a_pass() {
 /// itself — is never protected and carries no bundle, whatever else holds.
 /// Control: the identical launch through the helper is protected.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_dev_route_launch_is_never_attested_protected() {
     let w = World::new();
     let key = observer_key(w.env.dir.path(), "obs", &[&w.observer_roots()]);
@@ -1761,7 +1740,6 @@ fn a_helper_that_ran_another_launcher_than_the_pinned_one_yields_no_verdict() {
 /// so nothing observed THIS argument). A helper owned by neither root nor the
 /// configured owner launches nothing. Control: the same copy, its own uid configured.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_privileged_helper_owned_by_a_stranger_launches_nothing() {
     if unsafe { libc::geteuid() } != 0 {
         eprintln!("skipped: needs root (a file owned by another uid)");
@@ -1813,7 +1791,6 @@ fn a_privileged_helper_owned_by_a_stranger_launches_nothing() {
 /// Each program here is another uid's (4243) while the configured owner is root's; the
 /// control is the same program owned by root.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_pinned_program_another_uid_owns_is_refused_at_every_consumer_of_the_owner() {
     if unsafe { libc::geteuid() } != 0 {
         eprintln!("skipped: needs root (a file owned by another uid)");
@@ -1970,7 +1947,6 @@ fn fabric_hands_the_privileged_helper_exactly_its_flag_and_its_path() {
 /// the shorter PATH. The values are checked, not only the names: the helper's own argv
 /// (the root side) is the sibling test in `privileged_launcher.rs`.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn fabric_runs_its_direct_launcher_and_its_observer_with_exactly_their_flags_and_path() {
     let w = World::new();
     let d = w.env.dir.path().to_path_buf();
@@ -2136,7 +2112,6 @@ fn fabric_runs_its_direct_launcher_and_its_observer_with_exactly_their_flags_and
 /// which never issued them. Control: the custodian service's nonce launches
 /// and is protected.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_nonce_fabric_issued_itself_never_authorizes_a_root_launch() {
     let w = World::new();
     let key = observer_key(w.env.dir.path(), "obs", &[&w.observer_roots()]);
@@ -2170,7 +2145,6 @@ fn a_nonce_fabric_issued_itself_never_authorizes_a_root_launch() {
 /// refusal: the run exited, the verdict is bound and joined, so every other
 /// check passes it. Control: the defined test passes.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_check_that_produced_no_verdict_is_never_receipted_as_one() {
     let w = World::new();
     let s = w.submit_with(w.lx("", ""), "op-psv-notrun", "t_psv_absent");
@@ -2313,7 +2287,6 @@ fn pass_through_helper_is_protected(w: &World, op: &str) {
 }
 
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_helper_report_of_another_schema_yields_no_verdict() {
     let w = World::new();
     pass_through_helper_is_protected(&w, "op-rep-schema-ok");
@@ -2337,7 +2310,6 @@ fn a_helper_report_of_another_schema_yields_no_verdict() {
 }
 
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_helper_error_after_the_launch_yields_no_verdict() {
     let w = World::new();
     pass_through_helper_is_protected(&w, "op-rep-err-ok");
@@ -2363,7 +2335,6 @@ fn a_helper_error_after_the_launch_yields_no_verdict() {
 }
 
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_helper_exit_other_than_launched_yields_no_verdict() {
     let w = World::new();
     pass_through_helper_is_protected(&w, "op-rep-exit-ok");
@@ -2391,7 +2362,6 @@ fn a_helper_exit_other_than_launched_yields_no_verdict() {
 /// `--verify-result` run (a new mode and ctime), so the REAL helper reports
 /// `unchanged: false`. The bytes that ran are no longer the bytes pinned.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_launcher_that_changed_during_the_launch_yields_no_verdict() {
     let w = World::new();
     let d = w.env.dir.path();
@@ -2443,7 +2413,6 @@ fn a_launcher_that_changed_during_the_launch_yields_no_verdict() {
 /// report (passed through untouched) cannot speak for bytes that are no
 /// longer the ones verified.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_helper_that_changed_during_the_launch_yields_no_verdict() {
     let w = World::new();
     pass_through_helper_is_protected(&w, "op-helper-changed-ok");
@@ -2467,7 +2436,6 @@ fn a_helper_that_changed_during_the_launch_yields_no_verdict() {
 /// that id would have) is refused, so no receipt names an executable the
 /// guest did not run. Control: the same request naming the guest interpreter.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_protected_request_naming_another_executable_is_refused() {
     let w = World::new();
     let mut cfg = w.env.cfg(0);
@@ -2498,7 +2466,6 @@ fn a_protected_request_naming_another_executable_is_refused() {
 
 /// ...and its executable_digest must be the qualified guest interpreter's.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_protected_request_with_another_executable_digest_is_refused() {
     let w = World::new();
     let mut cfg = w.env.cfg(0);
@@ -2536,7 +2503,6 @@ fn a_protected_request_with_another_executable_digest_is_refused() {
 /// same name) is refused, and nothing is launched. Control: the registered
 /// suite is protected.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_suite_edited_after_registration_never_judges() {
     let w = World::new();
     let s = w.submit_with(w.lx("", ""), "op-suite-edit-ok", "t_psv_ok");
@@ -2597,7 +2563,6 @@ fn a_protected_check_with_an_extra_argument_is_refused() {
 /// inputs) with only the summary line removed and the output digest
 /// consistent. Control: the same launch with its summary is a pass.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn an_output_with_no_summary_is_no_verdict() {
     let w = World::new();
     let s = w.submit_with(w.lx("", ""), "op-psv-sum-ctl", "t_psv_ok");
@@ -2625,7 +2590,6 @@ fn an_output_with_no_summary_is_no_verdict() {
 /// the Fabric's own streams. The builder calls build no `Err`; each was
 /// removable alone with every suite green.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn the_observer_program_runs_with_null_stdio() {
     if !inner_with_piped_stdio("the_observer_program_runs_with_null_stdio") {
         return;

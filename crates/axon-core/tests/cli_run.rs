@@ -37371,17 +37371,17 @@ fn r51_seal_test(
     )
 }
 
-/// R51 T1c: `axon test --seal` never runs sealed code on the VM. While the
-/// runtime seal is incomplete every sealed run is refused, `AXON_ENGINE`
-/// unset (`env -i`, the production shape), `tree`, `vm` or invalid; once it
-/// is complete (S6) the unset and `tree` runs pass on the tree and `vm` and
-/// an invalid value are refused. A refusal is exit 2, its message on stderr
+/// R51 T1c: `axon test --seal` never runs sealed code on the VM. With
+/// `AXON_ENGINE` unset (`env -i`, the production shape) or `tree` a sealed
+/// run passes on the tree; `vm` and an invalid value are refused (S0 to S5,
+/// with the runtime seal incomplete, every one of them was refused). A
+/// refusal is exit 2, its message on stderr
 /// and no summary line on stdout. No sealed run prints a `vm:` trace line.
 /// Control: the same suite unsealed, on the default VM, passes and does
 /// print them, so their absence is not vacuous.
 #[test]
 fn r51_t1c_a_sealed_axon_test_never_runs_on_the_vm() {
-    use axon_core::interp::{SEALED_RUN_REFUSED, SEALED_RUN_VM_REFUSED, SEAL_RUNTIME_COMPLETE};
+    use axon_core::interp::SEALED_RUN_VM_REFUSED;
     let d = r51_seal_fixture("pin");
     let (code, so, se) = r51_seal_test(&d, false, None);
     assert_eq!(code, Some(0), "control: {so}{se}");
@@ -37397,7 +37397,6 @@ fn r51_t1c_a_sealed_axon_test_never_runs_on_the_vm() {
             "{at}: a sealed run compiled: {se}"
         );
         let refusal = match engine {
-            _ if !SEAL_RUNTIME_COMPLETE => Some(SEALED_RUN_REFUSED),
             None | Some("tree") => None,
             Some("vm") => Some(SEALED_RUN_VM_REFUSED),
             Some(_) => Some(invalid),

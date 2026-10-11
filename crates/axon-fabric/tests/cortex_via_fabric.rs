@@ -97,7 +97,6 @@ fn journal_ops(journal: &Path) -> Vec<Value> {
 }
 
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn cortex_repair_adjudicates_through_the_fabric() {
     let s = setup();
     let (code, v, text) = cortex(

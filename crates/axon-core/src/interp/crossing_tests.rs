@@ -1,9 +1,8 @@
 //! R51 S3: the seal CROSSING - calls between operator and sealed code
 //! (`call_fn_sealed`, `seal_call`, the `&mut` hand-back, closure calls across
-//! the seal, the dict and handler edges). Every sealed run is refused at build
-//! until S6 (`SEAL_RUNTIME_COMPLETE`), so these drive an `Interp` made by
+//! the seal, the dict and handler edges). These drive an `Interp` made by
 //! [`Interp::build_with`] directly, as `kernel_tests` does: the edges are
-//! proven now, the live sealed run at S6.
+//! proven unit by unit, the live sealed run by the ported v0.22 rows.
 
 use super::*;
 

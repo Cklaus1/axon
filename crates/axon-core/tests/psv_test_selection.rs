@@ -105,7 +105,6 @@ fn a_sealed_candidates_own_test_is_never_collected() {
 }
 
 #[test]
-#[ignore = "R51 S6: its control is a sealed run, refused until SEAL_RUNTIME_COMPLETE"]
 fn exact_selects_only_the_named_test() {
     let d = fresh("exact");
     fixture(&d);
@@ -363,7 +362,6 @@ fn an_unreadable_suite_module_never_falls_through_to_the_candidate() {
 /// and only imports it. Control: the entry's OWN import of a candidate module
 /// still works (the honest candidate passes).
 #[test]
-#[ignore = "R51 S6: its control is an honest sealed run, refused until SEAL_RUNTIME_COMPLETE"]
 fn a_sealed_modules_use_never_reaches_an_unimported_suite_module() {
     use std::io::Write;
     let run = |cand_f: &str| -> (String, String) {
@@ -442,7 +440,6 @@ fn a_sealed_modules_use_never_reaches_an_unimported_suite_module() {
 /// and the sealed-`use` check is the one thing that stops it defining the
 /// rubric.
 #[test]
-#[ignore = "R51 S6: its control is an honest sealed run, refused until SEAL_RUNTIME_COMPLETE"]
 fn a_sealed_module_never_supplies_an_operator_modules_name() {
     use std::io::Write;
     // `in_lib`: the operator's rubric lives in the operator's library under
@@ -547,7 +544,6 @@ fn a_sealed_module_never_supplies_an_operator_modules_name() {
 /// every `AXON_PATH` entry, so the candidate directory came first and the
 /// candidate defined the rubric (keyed pass, executed on the unmutated tree).
 #[test]
-#[ignore = "R51 S6: its control is an honest sealed run, refused until SEAL_RUNTIME_COMPLETE"]
 fn an_operator_import_never_resolves_to_a_sealed_modules_copy() {
     use std::io::Write;
     let run = |cand: &[(&str, &str)]| -> (String, String) {
@@ -623,7 +619,6 @@ fn an_operator_import_never_resolves_to_a_sealed_modules_copy() {
 /// reseeds only its OWN kernel's stream, so it guesses wrong. Control: an honest candidate that
 /// echoes the value it is given passes.
 #[test]
-#[ignore = "R51 S6: seal edge the call crossing (seal_call -> with_frame) ported (S3); needs a live sealed run"]
 fn a_sealed_candidate_cannot_reseed_the_rng() {
     use std::io::Write;
     // The first `random_i64(0, 1000000)` after `srand(7)` (computed from the
@@ -767,7 +762,6 @@ fn run_sealed_with(
 /// `builtins::BUILTINS` at test time, and a new `Random` builtin fails this
 /// test until the churn exercises it from a sealed frame.
 #[test]
-#[ignore = "R51 S6: seal edge the call crossing (seal_call -> with_frame) ported (S3); needs a live sealed run"]
 fn sealed_rng_activity_never_moves_the_operators_stream() {
     use axon_core::builtins::{builtin_effect_row, BUILTINS};
     // How to call each RNG-reaching builtin from the candidate.
@@ -861,7 +855,6 @@ fn t_moves() {
 /// operator seed; the sealed kernel's is passed through a one-way derivation,
 /// so the candidate's first draw is NOT the operator's first draw.
 #[test]
-#[ignore = "R51 S6: seal edge the call crossing (seal_call -> with_frame) ported (S3); needs a live sealed run"]
 fn a_sealed_candidates_own_stream_reveals_nothing_of_the_operators() {
     let suite = "mod f
 use f.{peek}
@@ -887,7 +880,6 @@ fn t_ok() {
 /// and the arm resumes the operator's fixture read with bytes the candidate
 /// chose — each gave a keyed "ok" for the wrong answer 7.
 #[test]
-#[ignore = "R51 S6: seal edge handler with_frame / handler_may_answer ported (S3); needs a live sealed run"]
 fn a_sealed_handler_never_answers_or_aborts_the_operators_listener() {
     let abort_suite = "mod f
 use f.{visit}
@@ -957,7 +949,6 @@ fn hidden_completion() {
 /// five). The attack below is right ONLY at 125 and calls the closure five
 /// times. Refused (amendment 46).
 #[test]
-#[ignore = "R51 S6: seal edge the call crossing (seal_call -> with_frame) ported (S3); needs a live sealed run"]
 fn a_candidate_cannot_steer_the_operators_challenge_through_its_closure() {
     let suite = "mod f
 use f.{warm, solve}
@@ -992,7 +983,6 @@ fn t_accept() {
 /// operator's test before its assert, and a genuine completion token was
 /// minted. It must never print "ok".
 #[test]
-#[ignore = "R51 S0b: completion token for an honest sealed pass needs TestEnd; its sealed control is also refused until S6"]
 fn a_test_that_ends_early_at_question_mark_is_never_ok() {
     let suite = "mod f
 use f.{solve}
@@ -1079,7 +1069,6 @@ fn run_sealed_exit(tag: &str, cand: &str, test: &str) -> (String, Option<i32>) {
 /// never read) earns no pass and no completion token for the operator's
 /// test. Control: the well-typed candidate passes.
 #[test]
-#[ignore = "R51 S6: its control is an honest sealed run, refused until SEAL_RUNTIME_COMPLETE"]
 fn a_candidate_that_does_not_type_check_is_never_tested() {
     let ill = "fn double(x: i64) -> i64 {\n    let _s: str = 5\n    x * 2\n}\n";
     let (out, code) = run_sealed_exit("ill-typed", ill, "t_ok");
@@ -1098,7 +1087,6 @@ fn a_candidate_that_does_not_type_check_is_never_tested() {
 /// run exited"), so a failing run that exited 0 would be NO verdict: the
 /// failure suppressed. Control: a passing run exits 0.
 #[test]
-#[ignore = "R51 S6: needs a sealed run to execute (fail exit 3, pass exit 0), refused until SEAL_RUNTIME_COMPLETE"]
 fn a_run_whose_test_failed_exits_nonzero() {
     let honest = "fn double(x: i64) -> i64 { x * 2 }\n";
     let (out, code) = run_sealed_exit("fail-exit", honest, "t_bad");

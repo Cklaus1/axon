@@ -32,7 +32,6 @@ fn digests_agree_between_cortex_and_the_fabric() {
 }
 
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_registered_check_runs_and_emits_a_supervisor_observed_receipt() {
     let env = Env::new();
     let s = submit(&request(&env, "op-pass", "t_ok").to_string(), &env.cfg(0)).unwrap();

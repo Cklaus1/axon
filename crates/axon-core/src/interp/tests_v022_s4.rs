@@ -2,11 +2,10 @@
 // receiver dispatch rule, the unary width rule under the dispatch-rule switch,
 // and the handler-arm and closure pin owner. Ported under their v0.22 names
 // (veto interp.rs:6052, 9292, 10178, 10446-10911); included at the end of
-// `interp::tests`. Each is a sealed run (`judged_on`), refused until S6
-// (`SEALED_RUN_REFUSED`); their unit-level counterparts that run now are in
-// `interp/dispatch_tests.rs`. The last one, the width rule (veto 10752), was
-// main's unit test in interp/sink_tests.rs: it runs now and asserts its
-// runner half is refused until S6. The v0.22 helpers only these rows use
+// `interp::tests`. Each is a sealed run (`judged_on`); their unit-level
+// counterparts are in `interp/dispatch_tests.rs`. The last one, the width
+// rule (veto 10752), was main's unit test in interp/sink_tests.rs: it runs
+// its unit half and v0.22's runner half. The v0.22 helpers only these rows use
 // live in `v022_s4`; the shared ones (JUDGE, LAUNDER, CONFUSED, judged, live,
 // confusion_refused) are interp/tests_v022_a.rs's, reached via `use super::*`.
 
@@ -73,7 +72,6 @@ mod v022_s4 {
 /// no impl to choose between dispatches on anything, and outside a sealed
 /// run nothing changes.
 #[test]
-#[ignore = "R51 S6: the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
 fn a_determined_receiver_dispatches_and_so_does_an_unambiguous_method() {
     let pinned = [
         "let r: i64 = solve(3)\n    assert(r.ok())",
@@ -119,7 +117,6 @@ fn a_determined_receiver_dispatches_and_so_does_an_unambiguous_method() {
 /// B1: a type the CANDIDATE declared pins nothing — its fn's declared
 /// return, a type it defines, a candidate method's name.
 #[test]
-#[ignore = "R51 S6: the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
 fn a_type_the_candidate_declared_does_not_determine_the_receiver() {
     let t = |body: &str| format!("@[test]\nfn t() {{\n    {body}\n}}\n");
     r7_refused(
@@ -161,7 +158,6 @@ fn a_type_the_candidate_declared_does_not_determine_the_receiver() {
 /// struct field, a tuple element, a generic enum, a channel receive, a
 /// closure result, a `match` on the untyped value before the dispatch.
 #[test]
-#[ignore = "R51 S6: the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
 fn operator_code_never_dispatches_on_a_value_from_any_untyped_position() {
     let wrap = "type Wrap<T> = { v: T }\ntype Opt<T> = Has { v: T } | Nada\n";
     let stash_in = |what: &str| format!("fn solve(d: Dict) {{ dict_set(d, \"k\", {what}) }}\n");
@@ -219,7 +215,6 @@ fn operator_code_never_dispatches_on_a_value_from_any_untyped_position() {
 /// dict the operator then reads. Unpinned: refused at the dispatch. Pinned
 /// by `let y: i64`: GOOD passes, WRONG fails, the u8 is refused by the cast.
 #[test]
-#[ignore = "R51 S6: the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
 fn operator_code_never_dispatches_on_a_value_read_untyped_from_a_dict() {
     for (why, setup, fill) in [
         (
@@ -257,7 +252,6 @@ fn operator_code_never_dispatches_on_a_value_read_untyped_from_a_dict() {
 /// operator impl (the language has no operator overloading and no trait
 /// default methods), so the candidate's type choice picks no operator code.
 #[test]
-#[ignore = "R51 S6: the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
 fn interpolation_and_comparison_of_an_untyped_read_select_no_operator_impl() {
     let suite = "@[test]\nfn t() {\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {\n        Some(v) => {\n            assert(\"{v}\" == \"9\")\n            assert(to_str(v) == \"9\")\n            assert(v == 9)\n        }\n        None => assert(false)\n    }\n}\n";
     let out = judged_on(
@@ -277,7 +271,6 @@ fn interpolation_and_comparison_of_an_untyped_read_select_no_operator_impl() {
 /// Adjacent (e): an operator method named `recv` does not make a channel
 /// read look determined.
 #[test]
-#[ignore = "R51 S6: the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
 fn an_operator_method_named_like_a_channel_method_does_not_determine_a_recv() {
     // The candidate's own unstamped channel, read through the operator's dict.
     let dsuite = "trait R {\n    fn recv(self) -> i64\n}\nimpl R for bool {\n    fn recv(self: bool) -> i64 { 1 }\n}\nimpl R for i64 {\n    fn recv(self: i64) -> i64 { 2 }\n}\n".to_string()
@@ -299,7 +292,6 @@ fn an_operator_method_named_like_a_channel_method_does_not_determine_a_recv() {
 /// not `-x` / `~x`, which wrap at a width the candidate chose just the same:
 /// `(-xs[0]) == 252` completed for a candidate returning `4 as u8`.
 #[test]
-#[ignore = "R51 S6: seal edge seal_width_unary ported (S3) under the dispatch-rule switch (S4); needs a live sealed run"]
 fn operator_unary_arithmetic_never_runs_at_a_width_the_candidate_chose() {
     let run = |suite: &str, cand: &str| judged_on("r9-unary", suite, cand);
     let t =
@@ -337,7 +329,6 @@ fn operator_unary_arithmetic_never_runs_at_a_width_the_candidate_chose() {
 /// Adjacent (d): operator-only polymorphic helpers pass (the receiver is
 /// an operator struct), a candidate-influenced one is refused.
 #[test]
-#[ignore = "R51 S6: the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
 fn operator_only_polymorphism_dispatches_and_a_candidate_influenced_one_does_not() {
     let shapes = "trait Shape {\n    fn area(self) -> i64\n}\ntype Sq = { s: i64 }\ntype Rect = { w: i64, h: i64 }\nimpl Shape for Sq {\n    fn area(self: Sq) -> i64 { self.s * self.s }\n}\nimpl Shape for Rect {\n    fn area(self: Rect) -> i64 { self.w * self.h }\n}\nimpl Shape for u8 {\n    fn area(self: u8) -> i64 { 0 }\n}\n";
     for helper in [
@@ -366,7 +357,6 @@ fn operator_only_polymorphism_dispatches_and_a_candidate_influenced_one_does_not
 /// `-> Fake`, and `Fake` has its own `ok`. The operator's `r.ok()` would
 /// run it. The candidate's own method names (its API) stay callable.
 #[test]
-#[ignore = "R51 S6: seal edge seal_method ported (S3) under the dispatch-rule switch (S4); needs a live sealed run"]
 fn a_candidates_method_never_runs_under_the_operators_method_name() {
     let suite = "@[test]\nfn t() {\n    let r = solve(3)\n    assert(r.ok())\n}\n\
                  @[test]\nfn t_api() {\n    assert_eq(sq(3).twice(), 18)\n}\n";
@@ -402,7 +392,6 @@ fn a_candidates_method_never_runs_under_the_operators_method_name() {
 }
 
 #[test]
-#[ignore = "R51 S6: handler arm pin owner (S3) and the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
 fn a_handler_arm_dispatch_runs_under_the_installers_pin_owner() {
     let (pinned, colliding, plain, _, _) = arm_suites();
     let run = |suite: &str, cand: &str| judged_on("r10-arm", suite, cand);
@@ -431,7 +420,6 @@ fn a_handler_arm_dispatch_runs_under_the_installers_pin_owner() {
 }
 
 #[test]
-#[ignore = "R51 S6: handler arm pin owner (S3) and the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
 fn a_handler_arm_replay_runs_under_the_installers_pin_owner() {
     let (_, _, _, general, _) = arm_suites();
     arm_attack(
@@ -443,7 +431,6 @@ fn a_handler_arm_replay_runs_under_the_installers_pin_owner() {
 }
 
 #[test]
-#[ignore = "R51 S6: handler arm pin owner (S3) and the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
 fn a_handler_arm_arithmetic_runs_under_the_installers_pin_owner() {
     let (_, _, _, _, width) = arm_suites();
     // Control: the suite discriminates. An i64 255 does not wrap, so the arm
@@ -464,7 +451,6 @@ fn a_handler_arm_arithmetic_runs_under_the_installers_pin_owner() {
 /// A closure made INSIDE an arm remembers the owner the arm ran under
 /// (`PIN_FN_MARK`), and so is judged by the installing fn too.
 #[test]
-#[ignore = "R51 S6: closure pin owner (make_closure, S4) and the receiver dispatch rule ported (S4); needs a live sealed run"]
 fn a_closure_made_in_a_handler_arm_is_judged_by_the_installing_fn() {
     let colliding = "fn helper() -> i64 {\n    let v: i64 = 9\n    println(\"p\")\n    if v.ok() { 1 } else { 0 }\n}\n";
     let suite = |bind: &str| {
@@ -499,8 +485,7 @@ fn a_closure_made_in_a_handler_arm_is_judged_by_the_installing_fn() {
 /// not arithmetic; a `let x: u8` pin determines the width; a sealed frame's
 /// own arithmetic is its own. v0.22's own half (the candidate stores
 /// `255 as u8` and the operator's untyped `v << 1 == 254` truncates to a pass)
-/// runs through the sealed runner, so until S6 it asserts that the runner
-/// refuses the run (`SEALED_RUN_REFUSED`).
+/// runs through the sealed runner.
 #[test]
 fn operator_arithmetic_never_runs_at_a_width_the_candidate_chose() {
     sink_tests::with_ix("r51-s3-width", true, |ix| {
@@ -592,14 +577,6 @@ fn operator_arithmetic_never_runs_at_a_width_the_candidate_chose() {
         &suite("assert((v << 1) == 254)"),
         &cand("255 as u8"),
     );
-    if !SEAL_RUNTIME_COMPLETE {
-        assert_eq!(
-            out,
-            Err(SEALED_RUN_REFUSED.to_string()),
-            "until S6 the runner refuses"
-        );
-        return;
-    }
     assert!(
         out != Ok(TestEnd::Completed)
             && matches!(&out, Err(m) if m.contains("whose width nothing on the operator side determined")),

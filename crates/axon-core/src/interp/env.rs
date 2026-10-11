@@ -1095,8 +1095,8 @@ mod tests {
     /// A program whose candidate `fn solve` is loaded from the SEALED
     /// directory `/<tag>-sealed`, with that directory. The run is built with
     /// [`Interp::build_with`] (the engine already chosen), which computes the
-    /// seal state without the refuse-all pin `build_in` applies, so the
-    /// factory's sealed branch is observable before S6.
+    /// seal state without the engine pin `build_in` applies, so the
+    /// factory's sealed branch is observable without a run.
     fn sealed_prog(tag: &str) -> (Program, std::path::PathBuf) {
         use crate::span::intern_source;
         let suite = "fn t() -> i64 { solve() }\n";
@@ -1177,17 +1177,5 @@ mod tests {
         let unsealed = Interp::build_with(&prog, &[], Engine::Tree);
         let snap = unsealed.new_env().snapshot();
         let _ = sealed.env_from_snapshot(snap);
-    }
-
-    /// The sealed build the factory tests use is NOT a runnable sealed run:
-    /// `Interp::build_in` still refuses it (SEAL_RUNTIME_COMPLETE = false).
-    #[test]
-    fn the_factory_tests_bypass_only_the_pin_not_the_refusal() {
-        let (prog, sdir) = sealed_prog("r51-s22-refuse");
-        const { assert!(!SEAL_RUNTIME_COMPLETE) };
-        assert_eq!(
-            Interp::build_in(&prog, &[sdir]).err().as_deref(),
-            Some(SEALED_RUN_REFUSED)
-        );
     }
 }

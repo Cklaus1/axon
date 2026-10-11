@@ -128,7 +128,6 @@ fn the_all_zero_policy_digest_placeholder_is_refused_with_zero_effects() {
 /// Before D-016 the ceiling was an unrelated operator flag (the tests set
 /// `IO` whatever the grant), so a net-only grant still let the check print.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn the_executed_effect_ceiling_is_derived_from_the_admitted_grant() {
     let env = Env::new();
     std::fs::write(env.ws.join("f.ax"), PRINTS).unwrap();
@@ -244,7 +243,6 @@ fn token(program_src: &str, g: &axon_os::Grant) -> String {
 /// required+absent ⇒ denied; required+valid ⇒ runs; not required+INVALID ⇒
 /// denied. Before D-016 admission hard-coded `require_approval: false`.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn the_grants_require_approval_policy_is_enforced() {
     let env = Env::new();
     let gated = format!("require_approval = true\n{GRANT_FS}");
@@ -360,7 +358,6 @@ fn token_as(program_src: &str, g: &axon_os::Grant, decision: &str, edited: bool)
 /// other than `approved`, or metadata edited after its own digest admits
 /// nothing. Control: the token over exactly this program and grant runs.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn an_approval_token_admits_only_what_it_approved() {
     let gated = format!("require_approval = true\n{GRANT_FS}");
     // (attack, token builder over the program source and the resolved grant)

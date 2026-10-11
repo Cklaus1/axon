@@ -850,10 +850,11 @@ struct SandboxScope {
 // ── Interpreter ──────────────────────────────────────────────────────────────
 
 /// R51 §4 Fork 1, §7: whether this build carries the complete runtime seal
-/// (taint, seal edges, PICK, pins). While `false`, every sealed run is refused
-/// whatever the engine; it flips to `true` only in the slice where the seal
-/// tests are green (S6).
-pub const SEAL_RUNTIME_COMPLETE: bool = false;
+/// (taint, seal edges, PICK, pins). It was `false` from S0 to S5, when every
+/// sealed run was refused whatever the engine; S6.1 flipped it to `true` in
+/// the commit where the seal tests (T3-T8) are green. Setting it back to
+/// `false` is the rollback: every sealed run is refused again.
+pub const SEAL_RUNTIME_COMPLETE: bool = true;
 
 /// R51 §3: the refusal every sealed run entry gives while
 /// [`SEAL_RUNTIME_COMPLETE`] is `false`. The CLI prints it on stderr and exits 2.
@@ -8100,11 +8101,10 @@ fn main() { }
 
     /// v0.22's sealed-run harness: run `test` of `suite` with `cand` loaded
     /// from a SEALED directory. v0.22 published that directory process-wide
-    /// (`set_sealed_module_dirs` under a test lock); on main any build that
-    /// sees a non-empty set is refused, so a published set would refuse every
-    /// concurrent test's build. The set is handed to this run's build only
-    /// ([`Interp::build_in`]). Until S6 every sealed run is refused at build
-    /// ([`SEALED_RUN_REFUSED`]). The other layers' tests run with the
+    /// (`set_sealed_module_dirs` under a test lock); on main every build that
+    /// sees a non-empty set is a sealed run, so a published set would seal
+    /// every concurrent test's build. The set is handed to this run's build only
+    /// ([`Interp::build_in`]). The other layers' tests run with the
     /// receiver dispatch rule off ([`sealed_outcome_rule`]).
     fn sealed_outcome(tag: &str, suite: &str, cand: &str, test: &str) -> Result<TestEnd, String> {
         sealed_outcome_rule(tag, suite, cand, test, false)
@@ -8198,23 +8198,20 @@ fn main() { }
         );
     }
 
-    /// R51 S5: until S6 the harness's every sealed run is refused at build,
-    /// with the R51 text, while the same program unsealed runs: the sealed
-    /// tests below are deferred, not vacuous.
+    /// R51 S6.1: the harness's sealed run executes (S5 to S6 it was refused
+    /// at build): an honest candidate completes and a wrong one fails, so the
+    /// sealed tests below are not vacuous.
     #[test]
-    fn the_sealed_harness_is_refused_until_the_runtime_seal_is_complete() {
-        const { assert!(!SEAL_RUNTIME_COMPLETE) };
+    fn the_sealed_harness_runs_the_suite_against_the_candidate() {
         let suite = "@[test]\nfn t() {\n    assert(solve() == 41)\n}\n";
-        let cand = "fn solve() -> i64 { 41 }\n";
         assert_eq!(
-            sealed_outcome("r51-s5-refuse", suite, cand, "t"),
-            Err(SEALED_RUN_REFUSED.to_string())
-        );
-        let (prog, _) = sealed_program("r51-s5-refuse", suite, cand);
-        assert_eq!(
-            on_deep_stack(|| run_test_fn_inner(&prog, "t", &[])),
+            sealed_outcome("r51-s6-honest", suite, "fn solve() -> i64 { 41 }\n", "t"),
             Ok(TestEnd::Completed),
-            "control: the same program unsealed"
+            "honest candidate"
+        );
+        assert!(
+            sealed_outcome("r51-s6-wrong", suite, "fn solve() -> i64 { 40 }\n", "t").is_err(),
+            "wrong candidate"
         );
     }
 
@@ -8222,7 +8219,7 @@ fn main() { }
     /// defines (by `FnDef` address, global `Sym`, refinement and type name),
     /// which method names the OPERATOR defines, and computes the pins; an
     /// unsealed build computes none of it. Built through `build_with`, the
-    /// seal state's input, since `Interp::build` refuses every sealed run.
+    /// seal state's input, so the engine choice is not part of the test.
     #[test]
     fn a_sealed_build_records_the_candidates_definitions_and_an_unsealed_one_none() {
         let suite = "type OT = { q: i64 }\ntrait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nlet OG = 5\nfn op() -> i64 { OG }\n@[test]\nfn t() {\n    let v: i64 = 9\n    assert(v.ok())\n}\n";
@@ -8412,7 +8409,6 @@ fn main() { }
     /// The dispatch rule sees a `&mut` operand as OPEN: what the callee left in
     /// it was not chosen by the operator. The honest suite re-pins.
     #[test]
-    #[ignore = "R51 S6: the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
     fn a_mut_operand_is_open_in_the_dispatch_analysis() {
         let unpinned = "@[test]\nfn t() {\n    let mut a = [1, 2, 3]\n    fill(&mut a)\n    assert(a[0].ok())\n}\n";
         let repinned = "@[test]\nfn t() {\n    let mut a = [1, 2, 3]\n    fill(&mut a)\n    let b: [i64] = a\n    assert(b[0].ok())\n}\n";
@@ -8488,7 +8484,6 @@ fn main() { }
     /// is refused until it is pinned. Dispatch on determined values INSIDE a
     /// handler body or arm is unaffected.
     #[test]
-    #[ignore = "R51 S6: the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
     fn the_value_of_a_with_handler_expression_is_undetermined_until_pinned() {
         let h = "with handler { on IO(p) => resume(Ok(\"x\")) } {\n        9\n    }";
         let run = |suite: String| judged_on("r9-wh", &suite, "fn mk() -> i64 { 9 }\n");
@@ -8514,7 +8509,6 @@ fn main() { }
 
     /// B2: a LOCAL binding named like an operator fn is not that fn.
     #[test]
-    #[ignore = "R51 S6: the receiver dispatch rule and the sealed-local call (dispatch_named never falls through to a fn by name) ported (S4); needs a live sealed run"]
     fn a_local_binding_named_like_an_operator_fn_is_not_judged_by_it() {
         let suite = "fn f() -> i64 { 5 }\n@[test]\nfn t() {\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"f\") {\n        Some(f) => assert(f().ok())\n        None => assert(false)\n    }\n}\n";
         r7_refused(
@@ -8531,7 +8525,6 @@ fn main() { }
     /// operator's own reference `fn square`. This route crosses no declared
     /// fn type (a `Dict`'s values are untyped), so the cast cannot stand in.
     #[test]
-    #[ignore = "R51 S6: main's slot-resolved call through a local; sealed control refused until S6 (S4 adds the dispatch-rule switch, off here, to sealed_outcome)"]
     fn a_call_through_a_local_never_resolves_the_name_elsewhere() {
         let suite = "fn square(n: i64) -> i64 { n * n }\n\
                      @[test]\nfn t() {\n    match dict_get(table(), \"sq\") {\n        Some(square) => assert(square(3) == 9 && square(5) == 25)\n        None => assert(false)\n    }\n}\n\
@@ -8572,7 +8565,6 @@ fn main() { }
     /// name-resolving builtin runs. The name argument is a SINK: operator code
     /// must give it a name-pure expression.
     #[test]
-    #[ignore = "R51 S6: seal edge seal_name_args ported (S3); needs a live sealed run"]
     fn a_function_name_the_candidate_chose_never_selects_an_operator_fn() {
         let sbx = |name_expr: &str, pre: &str| {
             format!(
@@ -8660,7 +8652,6 @@ fn main() { }
     }
 
     #[test]
-    #[ignore = "R51 S6: seal edge seal_name_args ported (S3); needs a live sealed run"]
     fn goal_eval_takes_no_function_name_the_candidate_chose() {
         let suite = "fn easy(x: i64) -> i64 { 100 }\nfn hard(x: i64) -> i64 { 0 }\n@[test]\nfn t() {\n    let s = goal_eval(NAME, 5)\n    assert(s > 50.0)\n}\n";
         assert_eq!(
@@ -8689,7 +8680,6 @@ fn main() { }
     }
 
     #[test]
-    #[ignore = "R51 S6: seal edge seal_name_args ported (S3); needs a live sealed run"]
     fn scheduler_spawn_takes_no_function_name_the_candidate_chose() {
         let suite = "fn grade(x: i64) -> i64 { 9 }\n@[test]\nfn t() {\n    let id = scheduler_spawn(NAME, 0)\n    let n = scheduler_run()\n    assert(scheduler_result(id) == 9)\n}\n";
         assert_eq!(
@@ -8709,7 +8699,6 @@ fn main() { }
     }
 
     #[test]
-    #[ignore = "R51 S6: seal edges seal_name_args and fn_by_name ported (S3); needs a live sealed run"]
     fn a_goal_constraint_and_a_kernel_goal_take_no_function_name_the_candidate_chose() {
         let pre = "@[adaptive]\nfn metric(x: i64) -> i64 { x }\nfn ok_c(x: i64) -> bool { true }\n";
         let constrained = format!("{pre}@[test]\nfn t() {{\n    let r = goal_run_constrained(\"metric\", CNAME, 10.0, 5)\n    assert(r >= 0.0)\n}}\n");
@@ -8747,7 +8736,6 @@ fn main() { }
     /// A candidate's module-level `let` is the candidate's value; the verdict
     /// of one fn's site never decides another's (the key carries the owner).
     #[test]
-    #[ignore = "R51 S6: the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
     fn a_candidates_global_and_a_sibling_fns_site_determine_nothing() {
         r7_refused(
             "a candidate global `let X = 4 as u8`",
@@ -8765,7 +8753,6 @@ fn main() { }
     /// Adjacent (a)/(b): a verdict belongs to its own fn, and a candidate's
     /// methods never steer an operator site.
     #[test]
-    #[ignore = "R51 S6: the receiver dispatch rule and the closure pin owner (make_closure) ported (S4); needs a live sealed run"]
     fn a_verdict_belongs_to_its_own_fn_and_the_candidate_steers_none() {
         // An unrelated, never-called fn with `|p| p.ok()` does not refuse an
         // honest fully annotated `check(p: i64)`.
@@ -8790,7 +8777,6 @@ fn main() { }
     /// B3: a trait name, `dyn`, `Option<Trait>`, `[Trait]` and a fn type
     /// returning one do not constrain the runtime type.
     #[test]
-    #[ignore = "R51 S6: the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
     fn a_trait_annotation_does_not_pin_the_runtime_type() {
         let cand = "fn solve(d: Dict) { dict_set(d, \"k\", 4 as u8) }\n";
         let read = |ann: &str, use_: &str| {

@@ -197,7 +197,6 @@ fn an_experiment_needs_a_durable_base_two_arms_and_independent_approval() {
 }
 
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn each_branch_carves_within_its_declared_regime_and_is_isolated() {
     let w = world();
     let cfg = w.env.cfg(0);
@@ -267,7 +266,6 @@ fn publish(w: &World, p: &Publication) -> Result<axon_fabric::branches::Head, Br
 }
 
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn publication_requires_base_epoch_writer_exact_verified_output_and_approval() {
     let w = world();
     let cfg = w.env.cfg(0);
@@ -412,7 +410,6 @@ fn publication_requires_base_epoch_writer_exact_verified_output_and_approval() {
 }
 
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn two_concurrent_publications_from_one_head_have_exactly_one_winner() {
     let w = world();
     let cfg = w.env.cfg(0);
@@ -471,7 +468,6 @@ fn two_concurrent_publications_from_one_head_have_exactly_one_winner() {
 /// check by itself.) Control: the identical publication on the same branch
 /// before it is cancelled is a head, on the other branch after.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_cancelled_branch_refuses_a_publication_that_would_otherwise_succeed() {
     let w = world();
     let cfg = w.env.cfg(0);
@@ -546,7 +542,6 @@ fn in_flight(j: &Journal, w: &World, a: &str, id: &str, launched: bool) {
 }
 
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn cancelling_a_losing_branch_keeps_its_record_and_leaves_the_winner_alone() {
     let w = world();
     let cfg = w.env.cfg(0);
@@ -680,7 +675,6 @@ impl AddPub for ResourceVector {
 /// it is refused before anything is journalled or launched (B271). Control:
 /// the other arm still runs.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_cancelled_branch_never_runs_again() {
     let w = world();
     let cfg = w.env.cfg(0);

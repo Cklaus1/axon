@@ -94,7 +94,6 @@ fn assert_untouched(env: &Env, what: &str) {
 // ── hidden checks ───────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_hidden_check_judges_the_candidate_from_outside_its_context() {
     let s = with_suite(&hidden_suite_src(), "hidden");
     let cfg = s.env.cfg(0);
@@ -251,7 +250,6 @@ fn hidden_completion() {
 ";
 
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_run_that_moves_its_candidate_or_its_grader_is_no_verdict() {
     for (src, what) in [
         (WRITES_INTO_CANDIDATE, "candidate"),
@@ -554,7 +552,6 @@ fn suite_with_helper(cand: &[(&str, &str)]) -> (Suite, Value) {
 /// `double` is broken and its `helper.ax` moves the expected value to match;
 /// the suite's own helper must win and the check must FAIL.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_candidate_cannot_shadow_a_module_of_the_suite() {
     // Positive control: an honest candidate passes against the suite helper.
     let (s, r) = suite_with_helper(&[]);
@@ -598,7 +595,6 @@ fn a_candidate_cannot_shadow_a_module_of_the_suite() {
 /// never imports. With the suite first it is never reached, so its presence
 /// alone changing the verdict is the candidate's file being resolved.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn an_honest_candidate_holding_a_suite_module_name_is_judged_by_the_suite() {
     let (s, r) = suite_with_helper(&[]);
     let sub = submit(&r.to_string(), &s.env.cfg(0)).unwrap();
@@ -632,7 +628,6 @@ fn an_honest_candidate_holding_a_suite_module_name_is_judged_by_the_suite() {
 ///   test cannot stand in for it; a failing extra test can only demote a pass
 ///   to Unknown through the nonzero exit, which harms nobody but the candidate.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_candidate_test_named_like_the_suites_cannot_pass_for_it() {
     let broken = "fn double(n: i64) -> i64 { n * 0 }\n";
     let (s, r) = suite_with_helper(&[(
@@ -682,7 +677,6 @@ fn a_candidate_test_named_like_the_suites_cannot_pass_for_it() {
 /// review wf_d725935a-7ed a sealed candidate's @[test] is never collected, so
 /// it can no longer serve as the vehicle this test used before.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_named_pass_in_a_run_that_exits_nonzero_is_not_a_pass() {
     let s = with_suite(
         "mod f\nuse f.{double}\n\n@[test]\nfn hidden_completion() { assert_eq(double(21), 42) }\n\n\
@@ -714,7 +708,6 @@ fn a_named_pass_in_a_run_that_exits_nonzero_is_not_a_pass() {
 ///
 /// Mutation: drop the ':' refusal in `submit` → red.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_state_dir_that_would_split_the_module_path_is_refused() {
     let s = with_suite(&hidden_suite_src(), "hidden");
     let mut cfg = s.env.cfg(0);
@@ -760,7 +753,6 @@ fn a_state_dir_that_would_split_the_module_path_is_refused() {
 ///
 /// Mutation: drop AXON_PATH_EXCLUSIVE from the check executor → red.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_check_loads_no_module_from_outside_the_suite_and_the_candidate() {
     // `use f::h` loads `f/h.ax` with no `mod` keyword, so the admission scan
     // sees nothing to refuse — resolution alone decides where it comes from.
@@ -807,7 +799,6 @@ fn a_check_loads_no_module_from_outside_the_suite_and_the_candidate() {
 ///
 /// Mutation: treat an escaped break/continue as clean again → red.
 #[test]
-#[ignore = "R51 S0b: needs contain_loop_control (an escaped break); sealed run also refused until S6"]
 fn an_escaped_break_does_not_pass_the_operators_test() {
     let (s, r) = suite_with_helper(&[(
         "f.ax",
@@ -901,7 +892,6 @@ fn a_candidate_holding_a_symlink_is_refused() {
 ///
 /// Mutation: let break/continue cross `call_fn` again → red.
 #[test]
-#[ignore = "R51 S0b: needs contain_loop_control (an escaped break); sealed run also refused until S6"]
 fn an_escaped_break_cannot_end_the_operators_test_loop() {
     let suite = "mod f\nuse f.{double}\n\n@[test]\nfn hidden_completion() {\n    for i in 1..4 {\n        assert_eq(double(i), i * 2)\n    }\n    let mut j = 1\n    while j < 4 {\n        assert_eq(double(j), j * 2)\n        j = j + 1\n    }\n}\n";
     for (why, body, pass) in [
@@ -944,7 +934,6 @@ fn an_escaped_break_cannot_end_the_operators_test_loop() {
 ///
 /// Mutation: drop the impl (or let) uniqueness check in the resolver → red.
 #[test]
-#[ignore = "R51 S6: seal edges for operator impls and constants ported (S3); needs a live sealed run"]
 fn a_candidate_cannot_redefine_a_suite_helpers_impl_or_constant() {
     let suite_with = |accept: &str, rubric: &str| {
         let s = with_suite(accept, "hidden");
@@ -1014,7 +1003,6 @@ fn a_candidate_cannot_redefine_a_suite_helpers_impl_or_constant() {
 ///
 /// Mutation: drop the completion requirement in `local_receipt` → red.
 #[test]
-#[ignore = "R51 S0b: needs TestEnd completion evidence; sealed run also refused until S6"]
 fn a_pass_needs_evidence_that_the_test_completed() {
     let exit_suite =
         "mod f\nuse f.{double}\n\n@[test]\nfn hidden_completion() { assert_eq(double(21), 42) }\n";
@@ -1095,7 +1083,6 @@ fn a_pass_needs_evidence_that_the_test_completed() {
 /// operator's, a write to it is refused, and nothing lands beside the
 /// launcher. Mutation: drop `current_dir` in the runner → red.
 #[test]
-#[ignore = "R51 S6: seal edge handler with_frame / handler_may_answer ported (S3); needs a live sealed run"]
 fn a_suites_runtime_fixture_is_the_pinned_one() {
     const FIXTURE: &str = "pci_expected_fixture.txt";
     let accept = format!(
@@ -1162,7 +1149,6 @@ fn a_suites_runtime_fixture_is_the_pinned_one() {
 ///
 /// Mutation: let `Flow::Return` through `contain_frame` → red.
 #[test]
-#[ignore = "R51 S0b: needs contain_frame (a predicate ending the test); sealed run also refused until S6"]
 fn a_candidate_predicate_cannot_end_the_operators_test() {
     const GRANT_PURE: &str = "\
 profile = \"restricted\"
@@ -1226,7 +1212,6 @@ cost_micro = 1000
 ///
 /// Mutation: drop `with_sealed_dir` in submit → red.
 #[test]
-#[ignore = "R51 S6: seal edge no_such_fn uniform text and the call crossing ported (S3); needs a live sealed run"]
 fn a_sealed_candidate_cannot_reach_the_operators_names() {
     const GRANT_PURE: &str = "\
 profile = \"restricted\"
@@ -1319,7 +1304,6 @@ cost_micro = 1000
 /// Mutation: drop Fabric's `AXON_PATH_EXCLUSIVE` → the planted module judges
 /// the candidate → Passed → red.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_suite_module_never_resolves_from_the_trial_cache() {
     // The suite ships `lib.ax` (declared by `mod lib`, so the admission scan
     // accepts it), and `use lib::extra` loads `lib/extra.ax` with no `mod`
@@ -1428,7 +1412,6 @@ fn a_suite_module_never_resolves_from_the_trial_cache() {
 ///
 /// Mutation: route every frame to the operator's kernel → red.
 #[test]
-#[ignore = "R51 S6: seal edges and global_ref ported (S3); needs a live sealed run"]
 fn a_sealed_candidate_cannot_reach_operator_state_by_handle_or_definition() {
     const GRANT_PURE: &str = "\
 profile = \"restricted\"
@@ -1506,7 +1489,6 @@ cost_micro = 1000
 /// file, as a crash would leave them. The retry runs, and none of the
 /// leftovers is reused (each still holds its stale file and nothing else).
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_leftover_run_dir_of_a_crashed_process_with_the_same_pid_does_not_refuse_the_retry() {
     let s = with_suite(&hidden_suite_src(), "hidden");
     let cfg = s.env.cfg(0);
@@ -1607,7 +1589,6 @@ fn make_the_suite_unreadable_after_the_run(cfg: &axon_fabric::SubmitConfig) {
 }
 
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_suite_that_changed_during_the_run_yields_no_verdict() {
     let s = with_suite(&hidden_suite_src(), "hidden");
     let control = submit(
@@ -1641,7 +1622,6 @@ fn a_suite_that_changed_during_the_run_yields_no_verdict() {
 }
 
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_suite_that_cannot_be_read_after_the_run_yields_no_verdict() {
     let s = with_suite(&hidden_suite_src(), "hidden");
     let mut cfg = s.env.cfg(0);

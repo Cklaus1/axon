@@ -58,8 +58,7 @@
 //! sealed run), module-level lets are keyed by `Sym`, and the evaluator is
 //! monomorphised (`eval_t::<T>`), so the unsealed instantiation carries no taint
 //! code. What reads a taint to REFUSE (the name rule, the PICK mark, the dispatch
-//! and width rules) and the seal edges that make a frame sealed are S3/S4; until
-//! S6 every sealed run is refused at build (`SEAL_RUNTIME_COMPLETE`).
+//! and width rules) and the seal edges that make a frame sealed are S3/S4.
 
 use super::*;
 use std::collections::HashMap;

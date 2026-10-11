@@ -195,7 +195,6 @@ const RESUME: &str = "pub fn visit(cb: fn(i64) -> ()) {\n    with handler { on I
 /// Controls: each suite passes the right answer and fails 7 with a keyed
 /// verdict, so the attacks below meet a live check.
 #[test]
-#[ignore = "R51 S6: seal edge handler with_frame / handler_may_answer ported (S3); needs a live sealed run"]
 fn the_listener_checks_discriminate() {
     for (suite, files) in [(SUITE_PRINT, &[][..]), (SUITE_FIXTURE, FIXTURE)] {
         let s = check(suite, files, GOOD, "accept");
@@ -216,7 +215,6 @@ fn the_listener_checks_discriminate() {
 }
 
 #[test]
-#[ignore = "R51 S6: seal edge handler_may_answer ported (S3); needs a live sealed run"]
 fn a_sealed_handler_cannot_abort_the_operators_listener() {
     let s = check(SUITE_PRINT, &[], ABORT, "accept");
     assert!(
@@ -230,7 +228,6 @@ fn a_sealed_handler_cannot_abort_the_operators_listener() {
 }
 
 #[test]
-#[ignore = "R51 S6: seal edge handler_may_answer ported (S3); needs a live sealed run"]
 fn a_sealed_handler_cannot_answer_the_operators_fixture_read() {
     let s = check(SUITE_FIXTURE, FIXTURE, RESUME, "accept");
     assert!(
@@ -249,7 +246,6 @@ fn a_sealed_handler_cannot_answer_the_operators_fixture_read() {
 /// refused, so the check fails closed; before, the tick advanced the
 /// operator's stream by however many times the candidate called it.
 #[test]
-#[ignore = "R51 S6: seal edge the call crossing (seal_call -> with_frame) ported (S3); needs a live sealed run"]
 fn operator_code_the_candidate_runs_cannot_draw_the_operators_stream() {
     let suite = r#"mod sol
 use sol.{warm}
@@ -297,7 +293,6 @@ fn t_solve() -> Result<i64, str> {
 "#;
 
 #[test]
-#[ignore = "R51 S0b: its control needs a completion token (TestEnd); sealed control also refused until S6"]
 fn a_test_ended_early_by_a_confused_question_mark_gets_no_token() {
     let confusing = "pub fn solve(x: i64) -> Result<i64, str> {\n    let d = dict_new()\n    let n: Option<i64> = None\n    dict_set(d, \"k\", n)\n    match dict_get(d, \"k\") {\n        Some(v) => v\n        None => Err(\"unreachable\")\n    }\n}\n";
     let s = check(SUITE_Q, &[], confusing, "t_solve");
@@ -415,7 +410,6 @@ fn refused_unkeyed(s: &Seen) -> bool {
 }
 
 #[test]
-#[ignore = "R51 S6: the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
 fn the_candidate_never_chooses_the_operators_judging_method() {
     // Controls: the suites discriminate.
     for (suite, good, wrong) in [
@@ -544,7 +538,6 @@ fn accept() {
 "#;
 
 #[test]
-#[ignore = "R51 S6: seal edges seal_width, t_check_width, t_check_names (S3) and the receiver dispatch rule t_check_dispatch ported (S4); needs a live sealed run"]
 fn the_candidate_never_selects_the_operators_code_by_width_or_by_name() {
     let table = |v: &str| {
         format!("pub fn table() -> Dict {{\n    let d = dict_new()\n    dict_set(d, \"sq\", {v})\n    d\n}}\n")
@@ -625,7 +618,6 @@ fn the_candidate_never_selects_the_operators_code_by_width_or_by_name() {
 /// stays a keyed pass and WRONG a keyed failure on every suite; every attack
 /// is refused without a keyed pass.
 #[test]
-#[ignore = "R51 S6: the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
 fn an_undetermined_type_position_never_selects_the_operators_impl() {
     const J: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
     const L: &str = "fn narrow(n: i64) -> u8 { n as u8 }\nfn stash(v: u8) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}\n";
@@ -710,7 +702,6 @@ fn an_undetermined_type_position_never_selects_the_operators_impl() {
 /// impl. The operator's dict is snapshotted when handed over; a key it held
 /// may not come back with a value of another type. Through the real runner.
 #[test]
-#[ignore = "R51 S6: seal edge dict snapshots at the crossing (dict_edge_in/dict_edge_out) ported (S3); needs a live sealed run"]
 fn a_dict_entry_the_operator_held_is_never_retyped_by_the_candidate() {
     const J: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
     const L: &str = "fn narrow(n: i64) -> u8 { n as u8 }\nfn stash(v: u8) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}\n";
@@ -751,7 +742,6 @@ fn a_dict_entry_the_operator_held_is_never_retyped_by_the_candidate() {
 /// (the round-5 BLOCKER, case c1), and fills a `None` the operator held
 /// (case c4). GOOD stays a keyed pass and WRONG a keyed failure.
 #[test]
-#[ignore = "R51 S6: seal edge held-value judgement (replaced_ok) ported (S3); needs a live sealed run"]
 fn a_replaced_or_filled_position_is_judged_by_what_the_operator_held() {
     const J: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
     let suite = |body: &str| {
@@ -832,7 +822,6 @@ fn a_replaced_or_filled_position_is_judged_by_what_the_operator_held() {
 /// keeps GOOD a keyed pass and WRONG a keyed failure; the pinned `u8` is
 /// refused by the cast.
 #[test]
-#[ignore = "R51 S6: the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
 fn operator_code_never_dispatches_on_an_untyped_read_and_a_pinned_suite_passes() {
     const J: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
     let suite = |body: &str| {
@@ -918,7 +907,6 @@ fn operator_code_never_dispatches_on_an_untyped_read_and_a_pinned_suite_passes()
 /// annotation pins nothing. The operator's own `let r: i64 = solve(3)` is the
 /// pin: GOOD a keyed pass, WRONG a keyed failure, the candidate's u8 refused.
 #[test]
-#[ignore = "R51 S6: the receiver dispatch rule seal_dispatch/t_check_dispatch ported (S4); needs a live sealed run"]
 fn operator_code_never_dispatches_on_a_type_the_candidate_declared() {
     const J: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
     let suite = |body: &str| {
@@ -1027,7 +1015,6 @@ fn passed(s: &Seen, what: &str) {
 /// (dispatch arm and width arm), whether the operator's array is annotated or
 /// not, and the operator's un-re-pinned read after the call is refused.
 #[test]
-#[ignore = "R51 S6: seal edge the &mut hand-back cast ported (S3); needs a live sealed run"]
 fn a_mut_write_through_value_is_cast_at_the_seal_edge_back_and_the_operand_is_open() {
     let fill = |v: &str| {
         format!("pub fn fill(a: &mut [i64]) {{\n    let d = dict_new()\n    dict_set(d, \"k\", {v})\n    match dict_get(d, \"k\") {{\n        Some(x) => {{ a[0] = x }}\n        None => {{ }}\n    }}\n}}\n")
@@ -1116,7 +1103,6 @@ fn a_mut_write_through_value_is_cast_at_the_seal_edge_back_and_the_operand_is_op
 /// runtime edge, whichever fires first through the runner), while the
 /// candidate's own fn values and the operator's own pass.
 #[test]
-#[ignore = "R51 S6: seal edge seal_call on a fn named in value position (ident_unbound) ported (S3); needs a live sealed run"]
 fn a_sealed_frame_cannot_take_an_operator_fn_as_a_value() {
     let suite = format!("mod sol\nuse sol.{{solve}}\n{J8}fn secret() -> i64 {{ 9 }}\n@[test]\nfn accept() {{\n    assert(solve() == 9)\n}}\n");
     let own = "pub fn mine() -> i64 { 9 }\npub fn solve() -> i64 {\n    let g = mine\n    g()\n}\n";
@@ -1147,7 +1133,6 @@ fn a_sealed_frame_cannot_take_an_operator_fn_as_a_value() {
 /// Rc/copy-on-write arrays: a candidate's write to its by-value array parameter
 /// never changes the suite's copy, nor the state a lent closure captured.
 #[test]
-#[ignore = "R51 S6: seal edge the crossing casts on the Rc'd model ported (S3); needs a live sealed run"]
 fn a_candidates_write_to_its_array_parameter_never_reaches_the_operators_copy() {
     let suite = "mod sol\nuse sol.{solve}\n@[test]\nfn accept() {\n    let fix = [1, 2, 3]\n    let f = || fix[0]\n    solve(fix)\n    assert_eq(fix[0], 1)\n    assert_eq(f(), 1)\n}\n";
     passed(
@@ -1175,7 +1160,6 @@ fn a_candidates_write_to_its_array_parameter_never_reaches_the_operators_copy() 
 /// read as determined: `r.ok()` dispatched the lenient `u8` impl and
 /// `(r << 1) == 254` wrapped at `u8`. The result is cast at the seal crossing.
 #[test]
-#[ignore = "R51 S6: seal edge the sandbox_run result cast ported (S3); needs a live sealed run"]
 fn sandbox_run_hands_the_operator_an_i64_or_nothing() {
     let call = "    let p = principal_root(\"r\", true, true, true, 100)\n    let sb = sandbox_create(p, \"IO\")\n    let r = sandbox_run(sb, \"work\", 0)\n";
     let disp = format!(
@@ -1229,7 +1213,6 @@ fn sandbox_run_hands_the_operator_an_i64_or_nothing() {
 /// C9 round 9 sweep (amendment 96): `-x` / `~x` wrap at the candidate's chosen
 /// width exactly as `x + y` does and were not covered by the arithmetic arm.
 #[test]
-#[ignore = "R51 S6: seal edges seal_width_unary and t_check_width ported (S3); needs a live sealed run"]
 fn operator_negation_never_runs_at_a_width_the_candidate_chose() {
     let neg = "mod sol\nuse sol.{work}\n@[test]\nfn accept() {\n    let xs = arr_map([1], work)\n    assert((-xs[0]) == -4)\n}\n";
     passed(
@@ -1264,7 +1247,6 @@ fn operator_negation_never_runs_at_a_width_the_candidate_chose() {
 /// a field or a tuple access is refused (statically here, E0004; the runtime
 /// edge is the interpreter unit test's, with the static check bypassed).
 #[test]
-#[ignore = "R51 S6: global_ref and fn-value marks ported (S3); needs a live sealed run"]
 fn a_candidate_calls_its_own_fn_value_and_never_reads_an_operator_global() {
     let suite = "mod sol\nuse sol.{solve}\ntype Cfg = { k: i64 }\nlet TABLE = [9, 8]\nlet CFG = Cfg { k: 9 }\nlet PAIR = (9, 4)\n@[test]\nfn accept() {\n    assert_eq(solve(3), 4)\n}\n";
     passed(
@@ -1314,7 +1296,6 @@ fn arm_attack(what: &str, suite: &str, cand: &str) {
 /// handler. A performer holding an identical, determined site text lent its
 /// verdict to the arm's undetermined one.
 #[test]
-#[ignore = "R51 S6: seal edge handler with_frame and pin owner ported (S3); needs a live sealed run"]
 fn a_handler_arm_dispatch_is_judged_by_the_fn_that_installed_it() {
     let pre = format!("mod sol\nuse sol.{{work}}\n{J8}fn v_one() -> i64 {{ 1 }}\n");
     let dispatch = |helper: &str, bind: &str| {
@@ -1410,7 +1391,6 @@ fn name_attack(what: &str, suite: &str, cand: &str) {
 /// BLOCKER B: a `str` the candidate returned selected which OPERATOR fn a
 /// name-resolving builtin ran.
 #[test]
-#[ignore = "R51 S6: seal edge seal_name_args (pin.rs Ctx::npure) ported (S3); needs a live sealed run"]
 fn sandbox_run_runs_no_function_name_the_candidate_chose() {
     let sandbox = format!("mod sol\nuse sol.{{entry}}\nfn reference(x: i64) -> i64 {{ x * 2 }}\n@[test]\nfn accept() {{\n{SB10}    let got = sandbox_run(sb, entry(), 21)\n    assert(got == reference(21))\n}}\n");
     // Honest: the suite names the candidate's fn with a literal, or builds the
@@ -1545,7 +1525,6 @@ const OPS11: &str = "  let ops = [|x| 0, |x| x * 2]\n";
 /// selected by a key or index the candidate chose. Every spelling of the choice is
 /// refused; the operator naming its own row is not.
 #[test]
-#[ignore = "R51 S6: the PICK mark and the refusing sink t_check_call_picked ported (S4); needs a live sealed run"]
 fn an_operator_closure_the_candidate_picked_is_never_called() {
     let suite = |uses: &str, body: &str| {
         format!("mod sol\nuse sol.{{{uses}}}\n{REF11}@[test]\nfn accept() {{\n{body}\n}}\n")
@@ -1595,7 +1574,6 @@ fn an_operator_closure_the_candidate_picked_is_never_called() {
 /// is spelled into it: a branch value, an assignment under the branch, a return
 /// out of it, a literal computed after it, a match, a table indexed by it.
 #[test]
-#[ignore = "R51 S6: seal edge t_check_names ported (S3); needs a live sealed run"]
 fn a_name_built_out_of_the_candidates_bit_never_selects_an_operator_fn() {
     let dbl = "pub fn idx() -> i64 { 1 }\npub fn double(x: i64) -> i64 { 0 }\n";
     let suite = |pre: &str, body: &str| {
@@ -1625,7 +1603,6 @@ fn a_name_built_out_of_the_candidates_bit_never_selects_an_operator_fn() {
 /// candidate wrote, a closure's captured state, a sealed `&mut`, the scheduler,
 /// a goal. A READ by the candidate of an operator dict taints nothing.
 #[test]
-#[ignore = "R51 S6: the name rule (t_check_names) and the dict, channel, &mut, closure, scheduler and sandbox_run carriers ported (S3); needs a live sealed run"]
 fn taint_survives_every_carrier_a_value_can_travel_by() {
     let dbl = "pub fn double(x: i64) -> i64 { 0 }\n";
     let suite = |uses: &str, pre: &str, body: &str| {
@@ -1669,7 +1646,6 @@ fn taint_survives_every_carrier_a_value_can_travel_by() {
 /// operator's closure or the NAME of the fn it runs. The honest operator's own
 /// channel, used the same ways, passes.
 #[test]
-#[ignore = "R51 S6: the refusing sink t_check_call_picked and the PICK mark ported (S4); needs a live sealed run"]
 fn a_channel_the_candidate_touched_never_selects_operator_code() {
     let suite = |uses: &str, body: &str| {
         format!("mod sol\nuse sol.{{{uses}}}\n{REF11}@[test]\nfn accept() {{\n{body}\n}}\n")
@@ -1723,7 +1699,6 @@ fn a_channel_the_candidate_touched_never_selects_operator_code() {
 /// FIRST, so a runner row would score REFUSED_ELSEWHERE by construction (their
 /// attacks and rows are the interpreter unit tests', with the static layer off).
 #[test]
-#[ignore = "R51 S6: seal edge t_check_names ported (S3); needs a live sealed run"]
 fn the_taint_name_rule_refuses_what_the_static_name_analysis_lets_through() {
     let dbl = "pub fn idx() -> i64 { 1 }\npub fn double(x: i64) -> i64 { 0 }\n";
     let suite = |pre: &str, body: &str| {
@@ -1924,7 +1899,6 @@ fn existence_placements() -> Vec<(&'static str, &'static str, &'static str, &'st
 /// annotation... and for a name nothing defines is the same text, and the same
 /// ACCEPT/REFUSE.
 #[test]
-#[ignore = "R51 S6: seal edge no_such_fn uniform text (S3) and the goal-name call edge seal_call ported (S4); needs a live sealed run"]
 fn a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one() {
     let su = "mod sol\nmod opmod\nuse sol.{solve}\ntrait Sc {\n    fn score(self) -> i64\n}\nimpl Sc for i64 {\n    fn score(self: i64) -> i64 { 41 }\n}\ntype OT = { k: i64 }\ntype OE = P | Q\ntype DictTable = { k: i64 }\nlet OG = 5\nlet TABLE = [41, 42]\nfn ofn(x: i64) -> i64 { x }\nfn secret() -> i64 { 41 }\nfn nonadapt(n: i64) -> i64 { n }\n@[test]\nfn accept() {\n  assert_eq(solve(), 41)\n}\n";
     // (position, body naming the operator's, body naming the same shape of a
@@ -2128,7 +2102,6 @@ fn every_position_the_sealed_walk_visits_has_a_twin_row() {
 /// candidate's data (`Sq { s: val() }.area()`, a factory fn, a registry the operator
 /// filled and reads by its own key) pass keyed.
 #[test]
-#[ignore = "R51 S6: the PICK mark (pick edges, frame-exit pick) ported (S4); needs a live sealed run"]
 fn an_operator_value_the_candidate_picked_is_refused_through_the_runner() {
     let su = |body: &str| {
         format!("mod sol\nuse sol.{{key, val, pickb}}\ntype A = {{ v: i64 }}\ntype B = {{ v: i64 }}\ntype Sq = {{ s: i64 }}\ntype Ci = {{ r: i64 }}\ntrait Rub {{\n    fn rub(self) -> bool\n}}\nimpl Rub for A {{\n    fn rub(self: A) -> bool {{ self.v == 9 }}\n}}\nimpl Rub for B {{\n    fn rub(self: B) -> bool {{ true }}\n}}\ntrait Area {{\n    fn area(self) -> i64\n}}\nimpl Area for Sq {{\n    fn area(self: Sq) -> i64 {{ self.s * self.s }}\n}}\nimpl Area for Ci {{\n    fn area(self: Ci) -> i64 {{ self.r * 3 }}\n}}\nfn mka() -> A {{ A {{ v: 1 }} }}\nfn mkb() -> B {{ B {{ v: 1 }} }}\nfn mk_sq(n: i64) -> Sq {{ Sq {{ s: n }} }}\n@[test]\nfn accept() {{\n{body}\n}}\n")
@@ -2180,7 +2153,6 @@ fn an_operator_value_the_candidate_picked_is_refused_through_the_runner() {
 /// the lenient check or fails under the strict one depending on what the
 /// candidate wrote.
 #[test]
-#[ignore = "R51 S6: the refusing sink t_check_call_picked and the PICK mark ported (S4); needs a live sealed run"]
 fn comparing_a_dict_the_candidate_filled_never_selects_operator_code() {
     let cand = "pub fn cand() -> i64 { 4 }\npub fn fill(d: Dict) { dict_set(d, \"k\", 1) }\n";
     let suite = |pre: &str, body: &str| {
@@ -2292,7 +2264,6 @@ fn a_sealed_method_call_is_refused_in_the_same_words_for_an_operator_method_and_
 // pass; its control (the SAME code under a condition the operator wrote) passes.
 
 #[test]
-#[ignore = "R51 S6: the refusing sink t_check_call_picked and the branch PICK ported (S4); needs a live sealed run"]
 fn operator_side_control_flow_on_candidate_data_never_selects_operator_code() {
     let cand = "pub fn cand() -> i64 { 4 }\npub fn candr() -> Result<i64, str> { Ok(4) }\npub fn fill(d: Dict) { dict_set(d, \"k\", 1) }\npub fn drain(c: Chan<i64>) { let x = c.recv() }\npub fn crd() -> i64 {\n  if cand() == 5 {\n    match read_file(\"/nonexistent/c9r14\") { Ok(s) => 1  Err(e) => 2 }\n  } else { 0 }\n}\n";
     let pre = "fn strict(x: i64) -> bool { x == 9 }\nfn lenient(x: i64) -> bool { true }\nlet TBL = [lenient, strict]\nfn mark(op: Dict) -> bool {\n  dict_set(op, \"x\", 1)\n  true\n}\nfn bump(op: Dict, x: i64) -> i64 {\n  dict_set(op, to_str(x), 1)\n  x\n}\nfn okr() -> Result<i64, str> { Ok(4) }\nfn tq(op: Dict) -> Result<i64, str> {\n  let v = candr()?\n  let u = mark(op)\n  Ok(v)\n}\nfn tq_ok(op: Dict) -> Result<i64, str> {\n  let v = okr()?\n  let u = mark(op)\n  Ok(v)\n}\n";
@@ -2441,7 +2412,6 @@ fn operator_side_control_flow_on_candidate_data_never_selects_operator_code() {
 /// does not ship is still a module nothing declares. Found by the fabric suite
 /// (`a_check_loads_no_module_from_outside_the_suite_and_the_candidate`) after the first form.
 #[test]
-#[ignore = "R51 S6: its control is an honest sealed run, refused until SEAL_RUNTIME_COMPLETE"]
 fn a_module_the_operator_declares_for_the_candidate_resolves_the_candidates_own_helper() {
     let suite = "mod f\nmod opmod\nmod sol\nuse sol.{unused}\nuse f.{double}\n@[test]\nfn accept() {\n  assert_eq(double(21), 42)\n}\n";
     let files: &[(&str, &str)] = &[
@@ -2478,7 +2448,6 @@ fn a_module_the_operator_declares_for_the_candidate_resolves_the_candidates_own_
 /// builtin's Time row is pinned in the interpreter unit test
 /// `no_arm_of_a_pure_builtin_reads_or_advances_ambient_state`.)
 #[test]
-#[ignore = "R51 S6: the World/Time class of the clock builtins is ported (S2); sealed control refused until S6"]
 fn a_candidate_cannot_read_or_drive_the_clock_through_the_temporal_builtins() {
     let suite = "mod sol\nuse sol.{solve}\n@[test]\nfn accept() {\n  assert_eq(solve(), 42)\n}\n";
     let honest = "pub fn solve() -> i64 { 42 }\n";

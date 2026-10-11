@@ -3,9 +3,8 @@
 //! scheduler, stores, sandboxes, the provenance store, the corrigibility latch
 //! and the RNG stream — is its own kernel's, disjoint from the operator's.
 //!
-//! Every sealed run is refused at build until S6 (`SEAL_RUNTIME_COMPLETE`), and
-//! no seal edge enters a sealed frame yet, so these drive an `Interp` made by
-//! [`Interp::build_with`] (seal state computed, refuse-all pin skipped, as
+//! These drive an `Interp` made by
+//! [`Interp::build_with`] (seal state computed, engine pin skipped, as
 //! `taint_tests` does) and enter frames through [`Interp::with_frame`], the one
 //! place provenance changes.
 

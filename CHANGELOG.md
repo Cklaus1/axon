@@ -1,5 +1,9 @@
 # Axon Changelog
 
+## Sealed runs execute on the tree engine with the runtime seal (R51 S6.1)
+
+A sealed run (`axon test --seal`, the axon-psv runner child, axon-cortex's sealed check child, an in-crate run with a sealed module set) now executes, on the tree-walker, with v0.22's PSV-1 runtime seal ported onto the bytecode-era interpreter: the taint channel, the seal edges and casts, the per-frame kernel, the PICK mark and the receiver dispatch rule (`governance/specs/R51-sealed-engine-unification.md`). Since R51 S0 every sealed run on this line was refused with "sealed runs are refused on this build: the runtime seal is not complete" (exit 2; axon-psv verdict Unknown). `AXON_ENGINE` unset or `tree` runs a sealed run on the tree; `AXON_ENGINE=vm` (or `set_engine(Engine::Vm)`) is refused with "a sealed run executes on the tree engine only (AXON_ENGINE=vm cannot carry the seal); unset AXON_ENGINE", exit 2, before any result line. Unsealed runs are unchanged (VM by default).
+
 ## `axon test` fails a test that ended on `Err` or at `?`; loop control never leaves a function (R51 S0b)
 
 Ports v0.22's non-seal interpreter fixes onto both engines (tree and bytecode VM, including the fast call paths). Behaviour changes:

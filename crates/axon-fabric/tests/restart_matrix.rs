@@ -102,7 +102,6 @@ fn held(env: &Env) -> u64 {
 /// replays it without running anything. Before this change the re-submit said
 /// "in flight (another submit owns it)" forever, with the budget held.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_pre_launch_crash_is_resumed_once_and_never_repeated() {
     for boundary in [Boundary::AfterIntent, Boundary::AfterReserve] {
         let env = Env::new();

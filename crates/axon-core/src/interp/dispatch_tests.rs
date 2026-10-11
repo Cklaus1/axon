@@ -5,8 +5,7 @@
 //! and the sealed caller's uniform refusal at the goal-name sinks (v0.22
 //! goal.rs:272-554, interp.rs:4946-4967).
 //!
-//! Every sealed run is refused at build until S6 (`SEAL_RUNTIME_COMPLETE`), so
-//! these drive an `Interp` made by [`Interp::build_with`] through the
+//! These drive an `Interp` made by [`Interp::build_with`] through the
 //! `sink_tests` helpers: a suite fn's body runs through `eval_t::<true>` in an
 //! operator frame (or a sealed one), its parameters bound with the taint the
 //! test gives them.

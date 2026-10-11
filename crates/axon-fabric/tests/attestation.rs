@@ -126,7 +126,6 @@ fn chmod(p: &Path, mode: u32) {
 
 /// The whole producer contract, on one provisioned key.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn fabric_signs_as_the_operators_signer_and_only_when_the_workload_cannot_reach_the_key() {
     let env = Env::new();
     // Its own directory: grant files are written beside their registry.
@@ -341,7 +340,6 @@ fn a_suite_run_without_a_verdict_still_names_its_suite() {
 /// journal holding a fabricated verdict got the verifier's signature on it.
 /// Now no replay is signed: not a genuine one, and not a forged one.
 #[test]
-#[ignore = "R51 S0b: needs a genuine keyed pass (TestEnd completion evidence); sealed run also refused until S6"]
 fn a_replay_is_never_signed_not_even_a_genuine_one() {
     let env = Env::new();
     std::fs::create_dir_all(env.dir.path().join("grants-pure")).unwrap();
@@ -403,7 +401,6 @@ fn a_replay_is_never_signed_not_even_a_genuine_one() {
 /// which drops a Result — must still pass, because the check runs from an
 /// empty environment. Mutation: drop `.with_clean_env()` → no summary, red.
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn the_launchers_environment_does_not_steer_a_signed_verdict() {
     let env = Env::new();
     std::fs::create_dir_all(env.dir.path().join("grants-pure")).unwrap();

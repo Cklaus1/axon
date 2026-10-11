@@ -635,7 +635,6 @@ fn publish_ws(env: &Env) -> Acf1Ref {
 }
 
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_published_workspace_version_is_accepted_and_journalled() {
     let env = Env::new();
     let r = publish_ws(&env);
@@ -691,7 +690,6 @@ fn swap_workspace_file(cfg: &axon_fabric::SubmitConfig) {
 }
 
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn a_one_file_version_judges_the_bytes_it_hashed_not_the_live_file() {
     let env = Env::new();
     let bytes = std::fs::read(env.ws.join("f.ax")).unwrap();
@@ -715,7 +713,6 @@ fn a_one_file_version_judges_the_bytes_it_hashed_not_the_live_file() {
 }
 
 #[test]
-#[ignore = "R51 S6: drives a sealed axon test --seal check, refused until SEAL_RUNTIME_COMPLETE (verdict Unknown, no summary)"]
 fn the_historical_single_file_ref_still_resolves() {
     let env = Env::new();
     let s = submit(&request(&env, "op-legacy", "t_ok").to_string(), &env.cfg(0)).unwrap();
@@ -842,7 +839,6 @@ fn walk_find(p: &Path, suffix: &str) -> Option<PathBuf> {
 /// the store corrupt. Before the fix: receipt `not_run`, "candidate
 /// unreadable after the run".
 #[test]
-#[ignore = "R51 S0b: passes only with completion evidence (TestEnd / run_test_fn_outcome); sealed run also refused until S6"]
 fn a_check_over_a_version_from_a_real_repository_passes() {
     let env = Env::new();
     std::fs::create_dir_all(env.ws.join(".git")).unwrap();
