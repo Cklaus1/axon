@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: e628fa7e9016e34f300a1970e63fadbe295a7fe2
+generated-at: 9108a66cf2e1d8ee69d88d092d4062630e3c9199
 
-`git diff --numstat 31413ca7..e628fa7e -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..9108a66c -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -68,7 +68,7 @@ generated-at: e628fa7e9016e34f300a1970e63fadbe295a7fe2
 | `crates/axon-core/src/interp/taint.rs` | 1654 | 0 |
 | `crates/axon-core/src/interp/taint_tests.rs` | 4172 | 0 |
 | `crates/axon-core/src/interp/tests_v022_a.rs` | 1184 | 0 |
-| `crates/axon-core/src/interp/tests_v022_b.rs` | 2057 | 0 |
+| `crates/axon-core/src/interp/tests_v022_b.rs` | 2079 | 0 |
 | `crates/axon-core/src/interp/tests_v022_c.rs` | 152 | 0 |
 | `crates/axon-core/src/interp/tests_v022_s4.rs` | 600 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 506 | 514 |
@@ -87,9 +87,9 @@ generated-at: e628fa7e9016e34f300a1970e63fadbe295a7fe2
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 46668 | 5415 |
+| total | 46690 | 5415 |
 
-`git log --reverse 31413ca7..e628fa7e -- crates/axon-core/src`:
+`git log --reverse 31413ca7..9108a66c -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -324,7 +324,8 @@ generated-at: e628fa7e9016e34f300a1970e63fadbe295a7fe2
 | 5842278b | R51 S7 mutation rows | TEST-ONLY (interp/crossing_tests.rs, cfg(test)): a_sealed_goal_eval_is_told_the_common_text_for_a_name_it_cannot_see, the killer of v0.22's M3343 (goal_eval's no_such_fn text) restored on its v0.22 text; two candidate fns added to the crossing fixture; the registry re-anchors M3471/M3472 on t_frame_exit's two callers and M2600/M2601 on run_handler_arm's per-path seal routing, moves the goal_eval lookup filter row to M3496 and adds routing rows; no interpreter code changed, no unsealed behaviour change |
 | 30e6638c | R51 S7 decl | INTERPRETER + RESOLVER (S7-UnsealedParity-1,6,7,8,9, S7-Seal-2): frame_edge's loop-control text comes from FrameEdge::loop_control_escape, so a handler arm reads "`break`/`continue` cannot leave an effect-handler arm (a loop around the `with` is not the arm's loop)" (other edges unchanged); the resolver's refinement-name rule takes checker::DEFERRED_PREFIXES as exact names (v0.22's prefix rule predates amendment 117), so `type GoalScore = i64 where …` is accepted and `type Goal = …` refused, and the duplicate-impl E0002 prints checker::axon_type_name; TEST_ENDED_ON_FAILURE names an early None; run_test_fn returns Err on TestEnd::failure_exit, so improve.rs G3 reads axon test's verdict; vm run_test_body runs a test body holding its own Op::Return on the tree (the eager VM read an early return as a completion); depth_exceeded decides seal_call first (v0.22 order). Unsealed behaviour change: the handler-arm and early-None panic/failure texts, refinement names that merely start with Uncertain/Temporal/Goal/Dict now resolve, the duplicate-impl text, axon improve's G3 verdict on an Err/early-None test, and AXON_VM_EAGER=1 test completion after an early return (now as the tree); spec §3 declares the v0.22 rows; sealed runs: a depth-limit call of an operator fn reads the uniform no-such-fn text |
 | 1adbe2b4 | R51 S7 merge | joins r51/int 9e67b796 (30e6638c, R51 S7 decl) onto r51/s7reg (5842278b and its registry/note follow-ups); only this table and the note conflicted, resolved by keeping both sides; no change beyond the commits it joins |
-| 231 commits | | |
+| f83da0f3 | R51 S7 mutation rows | TEST-ONLY (interp/tests_v022_b.rs, cfg(test)): a_sealed_call_that_binds_nothing_still_meets_the_seal_edge, a sealed candidate's parameter-free call of an operator fn that binds nothing, refused by the seal edge (control: the candidate's own answer completes); the killer of M3493/M3494, whose cells now run with debug assertions off (the debug store assertion stopped their mutants before the attack; without it check_store misses a bindless chain and the mutant completes); no interpreter code changed, no unsealed behaviour change |
+| 232 commits | | |
 <!-- END MECHANICAL -->
 
 
