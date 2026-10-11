@@ -1297,10 +1297,17 @@ impl<'p> Interp<'p> {
     /// The provenance must remain unmodified so that `goal_run` is unbiased.
     pub(super) fn goal_eval_holdout(&self, name: &str, input: i64) -> Result<f64, Flow> {
         nest_guard!(self, GOAL_EVAL_HOLDOUT);
-        let Some(f) = self.fns.get(name) else {
-            return Err(Flow::Panic(
-                format!("goal_eval: `{name}` is not a defined function").into(),
-            ));
+        // A sealed caller sees only its own fns, and is refused in the same
+        // words for an operator name and a missing one (veto goal.rs:1320).
+        let visible = self
+            .fns
+            .get(name)
+            .filter(|f| !(self.seal.active && self.frame_sealed.get()) || self.fn_is_sealed(f));
+        let Some(f) = visible else {
+            return self.no_such_fn(
+                name,
+                format!("goal_eval: `{name}` is not a defined function"),
+            );
         };
         // Snapshot the three provenance stores for this fn.
         let snap_scores = self.k().provenance.borrow().get(name).cloned();

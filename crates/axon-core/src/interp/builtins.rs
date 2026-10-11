@@ -746,12 +746,21 @@ impl<'p> Interp<'p> {
             let mut replay = self.resume_replay.borrow_mut();
             if let Some(r) = replay.as_mut() {
                 let row = crate::builtins::builtin_effect_row(name);
-                if row.iter().any(|e| r.effect == **e) {
+                // A sealed arm's feed never answers the operator's operation
+                // (PSV-1, C9 round 3): the replay cannot re-fire it either, so
+                // it is the unsound case below, not a fed hit.
+                let may = self.handler_may_answer(r.sealed, r.operator_frames);
+                if may && row.iter().any(|e| r.effect == **e) {
                     // The handled effect's op. The first hit consumes the feed
                     // (the resume value); a second hit can't be soundly re-fired.
                     if !r.consumed {
                         r.consumed = true;
-                        return Ok(Some(r.feed.clone()));
+                        let (feed, ft) = (r.feed.clone(), r.feed_t);
+                        drop(replay);
+                        if ft != 0 {
+                            self.t_touch(ft);
+                        }
+                        return Ok(Some(feed));
                     }
                     return Err(crate::interp::Flow::MultiShotUnsound(
                         format!(
@@ -760,6 +769,16 @@ impl<'p> Interp<'p> {
                      when the handled body performs exactly one effect and is otherwise \
                      pure (a side effect cannot be re-executed on replay) [E1314]",
                             r.effect
+                        )
+                        .into(),
+                    ));
+                } else if !may && !row.is_empty() {
+                    return Err(crate::interp::Flow::MultiShotUnsound(
+                        format!(
+                            "effect `{}` (via `{name}`) is performed by the operator's code during \
+                             the replay of a sealed handler's continuation; sealed code cannot \
+                             answer it and a replay cannot re-fire it [E1314]",
+                            row[0]
                         )
                         .into(),
                     ));
@@ -4408,8 +4427,11 @@ impl<'p> Interp<'p> {
                     }
                 }
                 // Validate the function exists.
-                let Some(f) = self.fns.get(&fn_name).copied() else {
-                    return panic(format!("sandbox_run: no function `{fn_name}`"));
+                let visible = self.fns.get(&fn_name).copied().filter(|f| {
+                    !(self.seal.active && self.frame_sealed.get()) || self.fn_is_sealed(f)
+                });
+                let Some(f) = visible else {
+                    return self.no_such_fn(&fn_name, format!("sandbox_run: no function `{fn_name}`"));
                 };
                 // Entering a sandbox may only ever *narrow* the active ceiling.
                 // Without this, a job contained by sandbox A escapes by running
@@ -4475,6 +4497,19 @@ impl<'p> Interp<'p> {
                 match result {
                     Ok(Value::Int(n)) => ok!(Value::Int(n)),
                     Ok(Value::Tuple(ref v)) if v.is_empty() => ok!(Value::Int(0)),
+                    // The builtin DECLARES `-> i64`. A candidate fn's declared
+                    // return is only its own (`-> u8` is satisfied by `4 as u8`),
+                    // so a sealed callee's value that is not an `i64` would reach
+                    // the operator at a type nothing on the operator side chose
+                    // (veto builtins.rs:4488-4500).
+                    Ok(v) if self.seal.active && !self.frame_sealed.get() && self.fn_is_sealed(f) => {
+                        panic(format!(
+                            "sandbox_run: the candidate's `{fn_name}` returned {} where the \
+                             operator's `sandbox_run` is declared `-> i64` - a runtime type \
+                             confusion at the seal crossing",
+                            v.type_name()
+                        ))
+                    }
                     Ok(v) => ok!(v),
                     Err(e) => Err(e),
                 }
@@ -5231,6 +5266,9 @@ impl<'p> Interp<'p> {
                     }
                 };
                 let k = as_str(&args[1])?.to_string();
+                if self.seal.active {
+                    self.dict_mutated(&d);
+                }
                 d.borrow_mut().insert(k, args[2].clone());
                 ok!(Value::Unit);
             }
@@ -5262,6 +5300,9 @@ impl<'p> Interp<'p> {
                     }
                 };
                 let k = as_str(&args[1])?.to_string();
+                if self.seal.active {
+                    self.dict_mutated(&d);
+                }
                 ok!(match d.borrow_mut().remove(&k) {
                     Some(v) => Value::Some(Box::new(v)),
                     None => Value::None,
@@ -5413,6 +5454,9 @@ impl<'p> Interp<'p> {
                     }
                 };
                 let k = as_str(&args[1])?.to_string();
+                if self.seal.active {
+                    self.dict_mutated(&d);
+                }
                 let mut m = d.borrow_mut();
                 let cur = m.get(&k).cloned().unwrap_or(Value::Int(0));
                 let n = match cur {

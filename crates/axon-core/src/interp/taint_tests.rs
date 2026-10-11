@@ -925,7 +925,6 @@ fn an_abortable_handler_body_makes_what_follows_sticky() {
 /// are entered only through `Interp::with_frame`, which has no caller before
 /// the seal edges.
 #[test]
-#[ignore = "R51 S3: a sealed frame is entered only through the seal edge (seal_call -> with_frame); no caller before S3"]
 fn a_sealed_frame_entered_in_an_abortable_handler_body_makes_what_follows_sticky() {
     with_sealed("r51-s2-entered", |ix| {
         assert_eq!(taint_of(ix, "enters_sealed", int(1), int(0)), VAL);

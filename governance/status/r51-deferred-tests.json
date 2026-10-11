@@ -1,14 +1,14 @@
 {
   "spec": "governance/specs/R51-sealed-engine-unification.md",
   "about": "Tests deferred by R51 S0 (merge with the refuse-all pin). Each carries #[ignore = \"R51 <slice>: <reason>\"]; `slice` is the slice that ports what the test exercises. Every sealed run is refused until S6 flips SEAL_RUNTIME_COMPLETE, so a test whose control is an honest sealed run re-enables at S6 at the earliest; S6 empties this list. crates/axon-core/tests/r51_deferred_tests.rs fails if this list and the ignored set differ.",
-  "count": 201,
+  "count": 199,
   "by_slice": {
     "S0b": 14,
     "S5": 0,
     "S2": 0,
-    "S3": 39,
+    "S3": 17,
     "S4": 13,
-    "S6": 135
+    "S6": 155
   },
   "tests": [
     {
@@ -158,32 +158,32 @@
     {
       "name": "a_candidate_cannot_steer_the_operators_challenge_through_its_closure",
       "file": "crates/axon-core/tests/psv_test_selection.rs",
-      "slice": "S3",
-      "reason": "sealed frame entry at the seal crossing (seal_call -> with_frame) not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edge the call crossing (seal_call -> with_frame) ported (S3); needs a live sealed run"
     },
     {
       "name": "a_sealed_candidate_cannot_reseed_the_rng",
       "file": "crates/axon-core/tests/psv_test_selection.rs",
-      "slice": "S3",
-      "reason": "sealed frame entry at the seal crossing (seal_call -> with_frame) not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edge the call crossing (seal_call -> with_frame) ported (S3); needs a live sealed run"
     },
     {
       "name": "a_sealed_candidates_own_stream_reveals_nothing_of_the_operators",
       "file": "crates/axon-core/tests/psv_test_selection.rs",
-      "slice": "S3",
-      "reason": "sealed frame entry at the seal crossing (seal_call -> with_frame) not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edge the call crossing (seal_call -> with_frame) ported (S3); needs a live sealed run"
     },
     {
       "name": "a_sealed_handler_never_answers_or_aborts_the_operators_listener",
       "file": "crates/axon-core/tests/psv_test_selection.rs",
-      "slice": "S3",
-      "reason": "handler with_frame / handler_may_answer not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edge handler with_frame / handler_may_answer ported (S3); needs a live sealed run"
     },
     {
       "name": "sealed_rng_activity_never_moves_the_operators_stream",
       "file": "crates/axon-core/tests/psv_test_selection.rs",
-      "slice": "S3",
-      "reason": "sealed frame entry at the seal crossing (seal_call -> with_frame) not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edge the call crossing (seal_call -> with_frame) ported (S3); needs a live sealed run"
     },
     {
       "name": "a_built_negative_verdict_variant_is_a_site",
@@ -518,26 +518,26 @@
     {
       "name": "a_sealed_candidate_cannot_reach_the_operators_names",
       "file": "crates/axon-fabric/tests/check_effects.rs",
-      "slice": "S3",
-      "reason": "no_such_fn uniform text and seal edges not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edge no_such_fn uniform text and the call crossing ported (S3); needs a live sealed run"
     },
     {
       "name": "a_suites_runtime_fixture_is_the_pinned_one",
       "file": "crates/axon-fabric/tests/check_effects.rs",
-      "slice": "S3",
-      "reason": "handler with_frame / sealed fixture reads not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edge handler with_frame / handler_may_answer ported (S3); needs a live sealed run"
     },
     {
       "name": "a_candidate_steering_the_rng_through_goal_search_does_not_pass_a_randomized_check",
       "file": "crates/axon-psv/tests/rng_isolation.rs",
-      "slice": "S3",
-      "reason": "sealed frame entry at the seal crossing (seal_call -> with_frame) not ported; sealed runs refused until S6 (verdict Unknown, not Failed)"
+      "slice": "S6",
+      "reason": "seal edge the call crossing (seal_call -> with_frame) ported (S3); needs a live sealed run"
     },
     {
       "name": "a_correct_candidate_passes_the_same_randomized_check",
       "file": "crates/axon-psv/tests/rng_isolation.rs",
-      "slice": "S3",
-      "reason": "sealed frame entry at the seal crossing (seal_call -> with_frame) not ported; the honest sealed pass is refused until S6"
+      "slice": "S6",
+      "reason": "seal edge the call crossing (seal_call -> with_frame) ported (S3); needs a live sealed run"
     },
     {
       "name": "a_candidate_calls_its_own_fn_value_and_never_reads_an_operator_global",
@@ -548,8 +548,8 @@
     {
       "name": "a_candidates_write_to_its_array_parameter_never_reaches_the_operators_copy",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S3",
-      "reason": "seal-edge casts on the Rc'd model not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edge the crossing casts on the Rc'd model ported (S3); needs a live sealed run"
     },
     {
       "name": "a_channel_the_candidate_touched_never_selects_operator_code",
@@ -560,32 +560,32 @@
     {
       "name": "a_dict_entry_the_operator_held_is_never_retyped_by_the_candidate",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S3",
-      "reason": "dict snapshots at the seal crossing not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edge dict snapshots at the crossing (dict_edge_in/dict_edge_out) ported (S3); needs a live sealed run"
     },
     {
       "name": "a_handler_arm_dispatch_is_judged_by_the_fn_that_installed_it",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S3",
-      "reason": "handler with_frame not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edge handler with_frame and pin owner ported (S3); needs a live sealed run"
     },
     {
       "name": "a_mut_write_through_value_is_cast_at_the_seal_edge_back_and_the_operand_is_open",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S3",
-      "reason": "the &mut seal-edge-back cast not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edge the &mut hand-back cast ported (S3); needs a live sealed run"
     },
     {
       "name": "a_replaced_or_filled_position_is_judged_by_what_the_operator_held",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S3",
-      "reason": "held-value judgement (interp/conform.rs) not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edge held-value judgement (replaced_ok) ported (S3); needs a live sealed run"
     },
     {
       "name": "a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S3",
-      "reason": "no_such_fn uniform text not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edge no_such_fn uniform text ported (S3); needs a live sealed run"
     },
     {
       "name": "a_sealed_frame_cannot_take_an_operator_fn_as_a_value",
@@ -596,32 +596,32 @@
     {
       "name": "a_sealed_handler_cannot_abort_the_operators_listener",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S3",
-      "reason": "handler_may_answer not ported; sealed runs refused until S6 (no keyed failure)"
+      "slice": "S6",
+      "reason": "seal edge handler_may_answer ported (S3); needs a live sealed run"
     },
     {
       "name": "a_sealed_handler_cannot_answer_the_operators_fixture_read",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S3",
-      "reason": "handler_may_answer not ported; sealed runs refused until S6 (no keyed failure)"
+      "slice": "S6",
+      "reason": "seal edge handler_may_answer ported (S3); needs a live sealed run"
     },
     {
       "name": "operator_code_the_candidate_runs_cannot_draw_the_operators_stream",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S3",
-      "reason": "sealed frame entry at the seal crossing (seal_call -> with_frame) not ported; sealed runs refused until S6 (verdict Unknown)"
+      "slice": "S6",
+      "reason": "seal edge the call crossing (seal_call -> with_frame) ported (S3); needs a live sealed run"
     },
     {
       "name": "sandbox_run_hands_the_operator_an_i64_or_nothing",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S3",
-      "reason": "the sandbox_run result cast at the seal crossing not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edge the sandbox_run result cast ported (S3); needs a live sealed run"
     },
     {
       "name": "the_listener_checks_discriminate",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
-      "slice": "S3",
-      "reason": "handler with_frame / handler_may_answer not ported; sealed control refused until S6"
+      "slice": "S6",
+      "reason": "seal edge handler with_frame / handler_may_answer ported (S3); needs a live sealed run"
     },
     {
       "name": "the_dispatch_rule_off_switch_is_compiled_only_into_unit_tests",
@@ -1204,18 +1204,6 @@
       "file": "crates/axon-core/src/interp.rs",
       "slice": "S4",
       "reason": "the receiver dispatch rule (seal_dispatch) is not ported; sealed control refused until S6"
-    },
-    {
-      "name": "a_crossing_builtin_casts_a_sealed_fns_result_in_its_arm",
-      "file": "crates/axon-core/src/interp.rs",
-      "slice": "S3",
-      "reason": "the sandbox_run result cast at the seal crossing not ported"
-    },
-    {
-      "name": "a_sealed_frame_entered_in_an_abortable_handler_body_makes_what_follows_sticky",
-      "file": "crates/axon-core/src/interp/taint_tests.rs",
-      "slice": "S3",
-      "reason": "a sealed frame is entered only through the seal edge (seal_call -> with_frame); no caller before S3"
     }
   ]
 }

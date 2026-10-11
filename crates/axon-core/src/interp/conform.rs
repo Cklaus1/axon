@@ -89,8 +89,6 @@ pub(crate) struct Cx {
 impl Cx {
     /// The environment of `f`'s signature (its own and its impl's type
     /// parameters, their bounds, and `Self`).
-    // S3c: `fn_cx` (the signature environment of `seal_call`/`seal_method`).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn of_fn(f: &FnDef, imp: Option<&ImplBlock>) -> Cx {
         let mut tparams = f.generic_params.clone();
         let mut bounds = f.generic_bounds.clone();
@@ -133,8 +131,6 @@ impl Cx {
     }
 
     /// This environment with FRESH type-parameter bindings (one activation).
-    // S3c: `seal_call`/`seal_method` (one activation per call).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn fresh(&self) -> Cx {
         Cx {
             binds: self
@@ -439,9 +435,6 @@ impl<'p> Interp<'p> {
     /// Cast `v` to the declared type `ty` read in `cx`: `Ok` when the value
     /// conforms (closures are wrapped and channels stamped in place), `Err`
     /// with the reason when it is shown to be another type.
-    // S3c: the seal edges (`seal_call`, `seal_global`, `seal_method`,
-    // `seal_ret`, `let x: T` under seal, the `&mut` hand-back).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn cast(&self, v: &mut Value, ty: &T, cx: &Cx) -> Result<(), String> {
         self.cast_at(v, ty, cx, 0)
     }
@@ -1190,8 +1183,6 @@ impl<'p> Interp<'p> {
     /// OPERATOR closure — a seal crossing, so each argument is cast strictly
     /// and must meet a position some contract determined (amendment 72; the
     /// return direction's parametricity rule, applied to arguments).
-    // S3c: the closure call (`call_closure_frame`, veto interp.rs:4783).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn closure_args_check(
         &self,
         contract: &Option<Rc<Contract>>,
@@ -1259,8 +1250,6 @@ impl<'p> Interp<'p> {
 
     /// Cast a closure's result to every `fn` type it crossed, innermost
     /// (earliest) first. `strict` at a seal crossing into operator code.
-    // S3c: the closure call's result (veto interp.rs:4890).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn closure_ret_check(
         &self,
         contract: &Option<Rc<Contract>>,
@@ -1318,8 +1307,6 @@ impl<'p> Interp<'p> {
     /// The declared type of parameter `i` at every layer of the contract chain
     /// (outermost first). A closed one pins the argument's runtime type: the
     /// arguments were cast to it (amendment 102, the runtime taint's pin).
-    // S3c: `t_pins` at the closure call's parameters (veto interp.rs:4372).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn param_types(contract: &Option<Rc<Contract>>, i: usize) -> Vec<T> {
         let mut out = Vec::new();
         let mut c = contract.as_ref();
@@ -1454,9 +1441,6 @@ impl<'p> Interp<'p> {
     /// closure's arguments, an operator closure's result, a channel send):
     /// every dict in it is snapshotted. A snapshot taken since the last
     /// operator-side mutation, and not dirtied, is kept (O(1) per dict).
-    // S3c: `seal_call` arguments, the closure call (veto interp.rs:4775),
-    // `handler_edge_into`/`handler_edge_back`.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn dict_edge_in(&self, v: &Value) -> Result<(), Flow> {
         if !self.seal.active {
             return Ok(());
@@ -1569,9 +1553,6 @@ impl<'p> Interp<'p> {
     /// code: if the operator handed it over, it is dirty until verified. By
     /// operator code: every snapshot is out of date (the next hand-over
     /// re-takes it).
-    // S3c: the dict-writing builtins (veto builtins.rs `dict_set`,
-    // `dict_remove`, `dict_inc`).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn dict_mutated(&self, m: &DictRc) {
         if !self.seal.active {
             return;
@@ -1602,8 +1583,6 @@ impl<'p> Interp<'p> {
     /// returns, sealed code calls an operator closure or an effect-handler
     /// arm): every dict sealed code mutated is checked against what the
     /// operator held — a key it held keeps a value of that type.
-    // S3c: `seal_call`/closure-call return, `handler_edge_into`.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn dict_edge_out(&self) -> Result<(), Flow> {
         if !self.seal.active {
             return Ok(());
@@ -1648,9 +1627,6 @@ impl<'p> Interp<'p> {
     /// `&mut` callee left it. NOT strict: a position the held value did not show
     /// (an empty array's element) is the declared parameter type's to judge, so
     /// an honest callee can fill an empty output array.
-    // S3c: the `&mut` hand-back of `call_mut_with` under seal (veto
-    // interp.rs:3495 `call_fn_mut`).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn replaced_ok_top(&self, old: &Value, new: &Value) -> Result<(), String> {
         let mut seen = HashSet::new();
         self.replaced_ok(old, new, &mut seen, 0, false)
@@ -1767,9 +1743,6 @@ impl<'p> Interp<'p> {
     /// An effect-handler arm of provenance `arm_sealed` is about to run for an
     /// operation the running frame performed with `payload`: the edge between
     /// the two provenances.
-    // S3c: the handler arm dispatch (veto eval.rs `perform`, with
-    // `with_frame`).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn handler_edge_into(&self, arm_sealed: bool, payload: &Value) -> Result<(), Flow> {
         match (self.frame_sealed.get(), arm_sealed) {
             (true, false) => self.dict_edge_out(),
@@ -1779,8 +1752,6 @@ impl<'p> Interp<'p> {
     }
 
     /// The arm resumed the operation with `v`: back across the same edge.
-    // S3c: the handler arm's `resume` (veto eval.rs, with `with_frame`).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn handler_edge_back(&self, arm_sealed: bool, v: &Value) -> Result<(), Flow> {
         match (self.frame_sealed.get(), arm_sealed) {
             (true, false) => self.dict_edge_in(v),
