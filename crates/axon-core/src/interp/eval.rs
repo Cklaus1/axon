@@ -650,11 +650,13 @@ impl<'p> Interp<'p> {
                 args,
             } => {
                 let recv = self.eval_t::<T>(receiver, env)?;
+                // The receiver's own taint, before its arguments overwrite
+                // `taint.last` (a constant 0 unsealed; veto eval.rs:649).
+                let rt = self.tl::<T>();
                 if let Value::Chan(q) = &recv {
                     if T {
                         // One access helper before any channel method runs
                         // (amendments 106, 117; veto eval.rs:650-658).
-                        let rt = self.tl::<T>();
                         self.t_chan_access(&recv, method);
                         self.t_chan_choice(&recv, rt);
                     }
@@ -666,7 +668,7 @@ impl<'p> Interp<'p> {
                     argv.push(self.eval_t::<T>(a, env)?);
                 }
                 if T {
-                    return self.impl_method_sealed(receiver, method, argv);
+                    return self.impl_method_sealed(receiver, method, argv, rt);
                 }
                 self.impl_method(method, argv)
             }
@@ -1095,16 +1097,18 @@ impl<'p> Interp<'p> {
 
     /// [`Interp::impl_method`] in a sealed run (the tree's `MethodCall` arm
     /// under `T`; the VM's `Op::MethodCall` never runs sealed, R51 Fork 1):
-    /// the method-dispatch edges (`seal_method`, `seal_dispatch`) before the
-    /// call, and the sealed caller's common miss text (veto eval.rs:713-724).
-    /// The runtime-taint dispatch check (`t_check_dispatch`) is R51 S4.
+    /// the method-dispatch edges (`seal_method`, `seal_dispatch`) and the
+    /// runtime dispatch rule (`t_check_dispatch` on the receiver's taint `rt`,
+    /// R51 S4) before the call, and the sealed caller's common miss text
+    /// (veto eval.rs:713-724).
     #[inline(never)]
-    fn impl_method_sealed(&self, receiver: &Expr, method: &str, argv: Vec<Value>) -> R {
+    fn impl_method_sealed(&self, receiver: &Expr, method: &str, argv: Vec<Value>, rt: u8) -> R {
         nest_guard!(self, IMPL_METHOD);
         let tn = argv[0].type_name();
         if let Some(f) = self.methods.get(&(tn.clone(), method.to_string())) {
             self.seal_method(f, &tn)?;
             self.seal_dispatch(receiver, f, &argv[0], &tn)?;
+            self.t_check_dispatch(f, &argv[0], rt, &tn)?;
             self.call_fn(f, argv)
         } else {
             // A sealed caller is told what it is told for an operator method

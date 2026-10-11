@@ -903,6 +903,20 @@ pub(crate) struct Seal {
     operator_methods: std::collections::HashSet<String>,
 }
 
+// Test-only: the static dispatch rule (the pin analysis behind
+// `seal_name_args`, `seal_dispatch`, `seal_width`, `seal_width_unary`) is
+// switched off while a test of another seal layer runs, so that layer is
+// judged by its own attack (v0.22 interp.rs:475). Per thread, not v0.22's
+// process-global: main has no lock serialising sealed unit tests (R51 S4).
+#[cfg(test)]
+thread_local! { pub(crate) static DISPATCH_RULE_OFF: Cell<bool> = const { Cell::new(false) } }
+// Test-only: the runtime taint rules apply (`Interp::t_rules`, v0.22
+// interp.rs:480). Off by default in a unit test, so each older test judges
+// one STATIC layer by its own attack and the taint cannot refuse the same
+// attack first and hide a removed guard; the taint's own tests turn it on.
+#[cfg(test)]
+thread_local! { pub(crate) static TAINT_FORCE_ON: Cell<bool> = const { Cell::new(false) } }
+
 impl Seal {
     /// The seal of `program` when `sealed` says which spans lie in the
     /// sealed set. An impl method is sealed when the method or its block is.
@@ -4277,6 +4291,10 @@ impl<'p> Interp<'p> {
         let Some(idxs) = pin::name_sink(builtin) else {
             return Ok(());
         };
+        #[cfg(test)]
+        if DISPATCH_RULE_OFF.with(Cell::get) {
+            return Ok(());
+        }
         for &i in idxs {
             if let Some(a) = args.get(i) {
                 if !self.pins.name_determined(self.pin_fn.get(), a) {
@@ -4322,7 +4340,7 @@ impl<'p> Interp<'p> {
     /// channel, an unannotated lambda parameter or an unbound generic position
     /// is the candidate's choice. Applies only where there is an impl to choose
     /// between (two or more operator impl types define the method). The
-    /// receiver-dispatch rule's test toggle (`DISPATCH_RULE_OFF`) is R51 S4.
+    /// runtime form is [`Interp::t_check_dispatch`] (R51 S4).
     pub(crate) fn seal_dispatch(
         &self,
         receiver: &Expr,
@@ -4331,6 +4349,14 @@ impl<'p> Interp<'p> {
         tn: &str,
     ) -> Result<(), Flow> {
         if !self.seal.active || self.frame_sealed.get() || self.fn_is_sealed(f) {
+            return Ok(());
+        }
+        // Tests of the OTHER seal layers observe their attacks through a dispatch
+        // on an untyped read - exactly what this rule refuses first. They run
+        // with the rule off (as a paired-disable cell does) so each layer is
+        // judged by its own attack; the rule's own tests run with it on.
+        #[cfg(test)]
+        if DISPATCH_RULE_OFF.with(Cell::get) {
             return Ok(());
         }
         if !self.pins.selects_between_impls(&f.name) {
@@ -4381,6 +4407,10 @@ impl<'p> Interp<'p> {
         ) {
             return Ok(());
         }
+        #[cfg(test)]
+        if DISPATCH_RULE_OFF.with(Cell::get) {
+            return Ok(());
+        }
         if !self
             .pins
             .determined_arith(self.pin_fn.get(), op, left, right)
@@ -4411,6 +4441,10 @@ impl<'p> Interp<'p> {
             return Ok(());
         }
         if !width_sized(v) || !matches!(op, UnaryOp::Neg | UnaryOp::BitNot) {
+            return Ok(());
+        }
+        #[cfg(test)]
+        if DISPATCH_RULE_OFF.with(Cell::get) {
             return Ok(());
         }
         if !self.pins.determined_unary(self.pin_fn.get(), op, operand) {
@@ -5951,10 +5985,22 @@ impl<'p> Interp<'p> {
         if name.is_empty() {
             return false;
         }
-        self.fns.contains_key(name) || self.k().provenance.borrow().contains_key(name)
+        // A sealed caller names its OWN goals (an operator fn is not visible to it,
+        // and answers like a name nothing defines: the one existence message;
+        // veto interp.rs:4950, R51 S4).
+        let defined = match self.fns.get(name) {
+            Some(f) => !(self.seal.active && self.frame_sealed.get()) || self.fn_is_sealed(f),
+            None => false,
+        };
+        defined || self.k().provenance.borrow().contains_key(name)
     }
 
-    fn unknown_goal_name(name: &str) -> Flow {
+    /// The unknown-goal text; a sealed caller is told the common no-such-name
+    /// text instead (veto interp.rs:4959, R51 S4).
+    fn unknown_goal_name(&self, name: &str) -> Flow {
+        if self.seal.active && self.frame_sealed.get() {
+            return Flow::Panic(Self::sealed_no_fn_msg(name).into());
+        }
         Flow::Panic(
             format!(
                 "goal function `{name}` is not defined and has no recorded provenance — \
@@ -6214,6 +6260,10 @@ mod conform;
 // type and method edges on a `build_with` sealed `Interp`.
 #[cfg(test)]
 mod sink_tests;
+// The receiver dispatch rule's unit tests (R51 S4: `t_check_dispatch`, the
+// dispatch-rule and taint-rule test switches, the goal-name refusal).
+#[cfg(test)]
+mod dispatch_tests;
 // Its unit tests (R51 S3: the casts and dict edges, driven directly).
 #[cfg(test)]
 mod conform_tests;
@@ -8016,14 +8066,33 @@ fn main() { }
     /// (`set_sealed_module_dirs` under a test lock); on main any build that
     /// sees a non-empty set is refused, so a published set would refuse every
     /// concurrent test's build. The set is handed to this run's build only
-    /// ([`Interp::build_in`]). v0.22's `sealed_outcome_rule` also switched the
-    /// receiver dispatch rule (`DISPATCH_RULE_OFF`, R51 S4) and the
-    /// taint-only sweep (`TAINT_FORCE_ON`, S2) around the run; those switches
-    /// arrive with the rules they switch. Until S6 every sealed run is refused
-    /// at build ([`SEALED_RUN_REFUSED`]).
+    /// ([`Interp::build_in`]). Until S6 every sealed run is refused at build
+    /// ([`SEALED_RUN_REFUSED`]). The other layers' tests run with the
+    /// receiver dispatch rule off ([`sealed_outcome_rule`]).
     fn sealed_outcome(tag: &str, suite: &str, cand: &str, test: &str) -> Result<TestEnd, String> {
+        sealed_outcome_rule(tag, suite, cand, test, false)
+    }
+
+    /// `rule`: whether the dispatch rule (amendment 83) is on (v0.22
+    /// interp.rs:5765). The switches are per thread and set on the run's own
+    /// thread ([`on_deep_stack`] spawns it), which starts with both off.
+    fn sealed_outcome_rule(
+        tag: &str,
+        suite: &str,
+        cand: &str,
+        test: &str,
+        rule: bool,
+    ) -> Result<TestEnd, String> {
         let (prog, sdir) = sealed_program(tag, suite, cand);
-        on_deep_stack(|| run_test_fn_inner(&prog, test, &[sdir]))
+        // `PSV1T_TAINT_ONLY=1` (a sweep of the whole suite, amendment 102)
+        // runs every rule-on test with the STATIC pin analysis off and only the
+        // runtime taint rules on: a verdict that changes is a hole in one of the two.
+        let taint_only = rule && std::env::var_os("PSV1T_TAINT_ONLY").is_some();
+        on_deep_stack(|| {
+            DISPATCH_RULE_OFF.with(|c| c.set(!rule || taint_only));
+            TAINT_FORCE_ON.with(|c| c.set(taint_only));
+            run_test_fn_inner(&prog, test, &[sdir])
+        })
     }
 
     /// v0.22 (C9 round 4c): the operator's `Judge`, whose `u8` impl is the
@@ -8048,11 +8117,12 @@ fn main() { }
     /// `suite` under the operator's `Judge`, against `cand` with the
     /// laundering helpers, with the rule ON.
     fn judged_on(tag: &str, suite: &str, cand: &str) -> Result<TestEnd, String> {
-        sealed_outcome(
+        sealed_outcome_rule(
             tag,
             &format!("{JUDGE8}{suite}"),
             &format!("{LAUNDER8}{cand}"),
             "t",
+            true,
         )
     }
 
