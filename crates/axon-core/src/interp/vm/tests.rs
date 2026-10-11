@@ -1069,3 +1069,359 @@ fn main() -> i64 {
     built.sort();
     assert_eq!(built, ["bits", "fib", "is_even", "is_odd", "k"]);
 }
+
+/// R50 S13 `packed_forms_persist`: the program each check of the test runs,
+/// one fn per check, each returning what it checks.
+const FORMS: &str = r#"fn ints() -> [i64] {
+    arr_range(0, 3)
+}
+fn floats() -> [f64] {
+    arr_repeat(1.5, 3)
+}
+fn bools() -> [bool] {
+    arr_repeat(true, 3)
+}
+fn sized() -> [i32] {
+    let x: i32 = 5
+    arr_repeat(x, 3)
+}
+fn literal() -> [i64] {
+    [1, 2, 3]
+}
+fn loop_mem() -> [i64] {
+    let n = 8
+    let a = arr_repeat(0, n)
+    let x = 1
+    for i in 0..n {
+        x = (x * 48271) % 2147483647
+        a[i] = x
+    }
+    a
+}
+fn swap(a: &mut [i64], i: i64, j: i64) {
+    let t = a[i]
+    a[i] = a[j]
+    a[j] = t
+}
+fn swapped() -> [i64] {
+    let a = arr_range(0, 8)
+    for k in 0..4 {
+        swap(&mut a, k, 7 - k)
+    }
+    a
+}
+fn placed() -> [i64] {
+    let a = arr_range(0, 4)
+    let k = 1
+    a[k + 1] = 9
+    a
+}
+fn pushed() -> [i64] {
+    let a = arr_range(0, 3)
+    a = arr_push(a, 7)
+    a
+}
+fn added() -> [i64] {
+    let a = arr_range(0, 3)
+    a = a + [7]
+    a
+}
+fn changed() -> [i64] {
+    let id = |x| x
+    let a = arr_range(0, 3)
+    let h = id(1.5)
+    a[1] = h
+    a
+}
+fn builtin_push() -> [[i64]] {
+    let a = arr_range(0, 3)
+    let b = arr_push(a, 7)
+    [a, b]
+}
+fn fill_bools() -> [bool] {
+    let fb = arr_repeat(true, 10)
+    let j = 2
+    let lim = 6
+    while j <= lim {
+        fb[j] = false
+        j = j + 3
+    }
+    fb
+}
+fn fill_ints() -> [i64] {
+    let fi = arr_range(0, 10)
+    let m5 = 0 - 5
+    let k = 1
+    while k < 7 {
+        fi[k] = m5
+        k = k + 2
+    }
+    fi
+}
+fn fill_floats() -> [f64] {
+    let ff = arr_repeat(1.5, 9)
+    let f = 0
+    let four = 4
+    while f <= 4 {
+        ff[f] = 0.25
+        f = f + four
+    }
+    ff
+}
+fn fill_last() -> [bool] {
+    let fz = arr_repeat(false, 10)
+    let z = 1
+    while z <= 9 {
+        fz[z] = true
+        z = z + 4
+    }
+    fz
+}
+fn fill_lt() -> [i64] {
+    let fl = arr_range(0, 8)
+    let x = 1
+    let top = 8
+    while x < top {
+        fl[x] = 0
+        x = x + 3
+    }
+    fl
+}
+fn fill_none() -> [i64] {
+    let fi = arr_range(0, 10)
+    let e1 = 5
+    while e1 < 5 {
+        fi[e1] = 99
+        e1 = e1 + 1
+    }
+    let e2 = 7
+    while e2 <= 6 {
+        fi[e2] = 99
+        e2 = e2 + 1
+    }
+    fi
+}
+fn fill_shared() -> [[i64]] {
+    let sh = arr_repeat(7, 6)
+    let keep = sh
+    let w = 0
+    while w < 6 {
+        sh[w] = 0
+        w = w + 1
+    }
+    [sh, keep]
+}
+fn count_sub() -> i64 {
+    let a = arr_repeat(true, 20)
+    a[2] = false
+    a[3] = false
+    a[9] = false
+    a[15] = false
+    a[16] = false
+    let n = 0
+    for k in 3..15 {
+        if a[k] { n = n + 1 }
+    }
+    let m = 100
+    for k in 3..=15 {
+        if a[k] { m = m + 2 }
+    }
+    n * 1000 + m
+}
+fn count_tail(len: i64) -> i64 {
+    let a = arr_repeat(false, len)
+    let i = 1
+    while i < len {
+        a[i] = true
+        i = i + 3
+    }
+    a[len - 1] = true
+    let n = 0
+    for k in 0..len {
+        if a[k] { n = n + 1 }
+    }
+    n
+}
+fn count_mid() -> i64 {
+    let b = arr_repeat(false, 1001)
+    let i = 13
+    while i < 1001 {
+        b[i] = true
+        i = i + 5
+    }
+    let c = 0
+    for k in 13..1001 {
+        if b[k] { c = c + 1 }
+    }
+    let d = 0
+    for k in 14..=998 {
+        if b[k] { d = d + 1 }
+    }
+    let x = 0
+    for k in 60..140 {
+        if b[k] { x = x + 1 }
+    }
+    c * 1000000 + d * 1000 + x
+}
+fn count_neg() -> i64 {
+    let b = arr_repeat(false, 1001)
+    let i = 13
+    while i < 1001 {
+        b[i] = true
+        i = i + 5
+    }
+    let neg = 0 - 3
+    let e = 7
+    for k in 0..1001 {
+        if b[k] { e = e + neg }
+    }
+    e
+}
+"#;
+
+/// The form of array `v` (the `Elems::form` probe).
+fn form_of(v: &Value) -> &'static str {
+    match v {
+        Value::Array(items) => items.form(),
+        other => panic!("not an array: {other:?}"),
+    }
+}
+
+/// R50 S13 (spec §4 S13 "Test probes"): each packed constructor's form; an
+/// `Ints` array stays `Ints` through a `LoopMem` store, an S8 `swap`, a
+/// `write_place` and the in-place append paths, and becomes `Vals` on a
+/// kind-changing write; a builtin's result is `Vals`; and every
+/// `vm_bulk_fill_runs` and `vm_bulk_count_runs` shape, run with `vm_eager`
+/// (as the cli `vm` leg runs), moves the bulk counter of its array's kind.
+/// A build that packs only `Bools`, or converts an array to `Vals` on its
+/// first write, fails here though its output is the same.
+#[test]
+fn packed_forms_persist() {
+    let prog = crate::parse_source(FORMS).expect("parses");
+    let mut interp = Interp::build(&prog);
+    interp.engine = Engine::Vm;
+    interp.vm_trace = false;
+    interp.vm_eager = true;
+    let index = |name: &str| {
+        interp
+            .fn_table
+            .iter()
+            .position(|e| e.def.name == name)
+            .unwrap_or_else(|| panic!("{name} is in the fn table"))
+    };
+    let call = |name: &str, args: Vec<Value>| {
+        interp
+            .call_fn_entry(&interp.fn_table[index(name)], args)
+            .unwrap_or_else(|e| panic!("{name}: {e:?}"))
+    };
+    let body = |name: &str| {
+        interp.fn_table[index(name)]
+            .compiled
+            .as_ref()
+            .and_then(|c| c.get())
+            .unwrap_or_else(|| panic!("{name} is compiled"))
+    };
+    let pair = |v: &Value| match v {
+        Value::Array(items) if items.len() == 2 => (items.get(0).unwrap(), items.get(1).unwrap()),
+        other => panic!("not a pair: {other:?}"),
+    };
+
+    for (name, form) in [
+        ("ints", "Ints"),
+        ("floats", "Floats"),
+        ("bools", "Bools"),
+        ("sized", "Vals"),
+        ("literal", "Vals"),
+        ("loop_mem", "Ints"),
+        ("swapped", "Ints"),
+        ("placed", "Ints"),
+        ("pushed", "Ints"),
+        ("added", "Ints"),
+        ("changed", "Vals"),
+    ] {
+        assert_eq!(form_of(&call(name, vec![])), form, "{name}");
+    }
+    // The paths those checks name are the ones that ran: the store is a
+    // `PureFor`'s, the swap went through the resolved S8 moves (the first
+    // call resolves them, the other three run them), the write is a
+    // `WritePlace`.
+    assert!(
+        body("loop_mem")
+            .ops
+            .iter()
+            .any(|op| matches!(op, Op::PureFor { .. })),
+        "loop_mem: {:?}",
+        kinds(body("loop_mem"))
+    );
+    assert!(
+        body("swapped").ops.iter().any(
+            |op| matches!(op, Op::CallMut { moves, .. } if matches!(moves.get(), Some(Some(_))))
+        ),
+        "swapped: {:?}",
+        kinds(body("swapped"))
+    );
+    assert!(
+        body("placed")
+            .ops
+            .iter()
+            .any(|op| matches!(op, Op::WritePlace { .. })),
+        "placed: {:?}",
+        kinds(body("placed"))
+    );
+    let (a, b) = pair(&call("builtin_push", vec![]));
+    assert_eq!((form_of(&a), form_of(&b)), ("Ints", "Vals"));
+
+    // Each bulk shape and the counter it moves, as `[Bools, Ints, Floats]`
+    // deltas, with the shape's result.
+    let runs = super::pure::probe::bulk_runs;
+    let fills: [(&str, [u32; 3], &str); 7] = [
+        ("fill_bools", [1, 0, 0], "Bools"),
+        ("fill_ints", [0, 1, 0], "Ints"),
+        ("fill_floats", [0, 0, 1], "Floats"),
+        ("fill_last", [1, 0, 0], "Bools"),
+        ("fill_lt", [0, 1, 0], "Ints"),
+        ("fill_none", [0, 2, 0], "Ints"),
+        ("fill_shared", [0, 1, 0], "Ints"),
+    ];
+    for (name, moved, form) in fills {
+        let before = runs();
+        let v = call(name, vec![]);
+        let after = runs();
+        let delta: [u32; 3] = std::array::from_fn(|k| after.fills[k] - before.fills[k]);
+        assert_eq!(delta, moved, "{name}: fills");
+        assert_eq!(after.counts, before.counts, "{name}: counts");
+        if name == "fill_shared" {
+            let (sh, keep) = pair(&v);
+            assert_eq!((form_of(&sh), form_of(&keep)), (form, form), "{name}");
+        } else {
+            assert_eq!(form_of(&v), form, "{name}");
+        }
+    }
+    let mut counts: Vec<(&str, Vec<Value>, u32, i64)> = vec![
+        ("count_sub", vec![], 2, 10_120),
+        ("count_mid", vec![], 3, 198_197_016),
+        ("count_neg", vec![], 1, -587),
+    ];
+    for (len, n) in [
+        (1, 1),
+        (7, 3),
+        (8, 3),
+        (9, 4),
+        (63, 22),
+        (64, 22),
+        (65, 22),
+        (129, 44),
+        (1001, 334),
+    ] {
+        counts.push(("count_tail", vec![Value::Int(len)], 1, n));
+    }
+    for (name, args, moved, want) in counts {
+        let at = format!("{name}{args:?}");
+        let before = runs();
+        let v = call(name, args);
+        let after = runs();
+        assert!(matches!(v, Value::Int(n) if n == want), "{at}: {v:?}");
+        let delta: [u32; 3] = std::array::from_fn(|k| after.counts[k] - before.counts[k]);
+        assert_eq!(delta, [moved, 0, 0], "{at}: counts");
+    }
+}

@@ -917,6 +917,10 @@ fn fill(
     let b0 = b.int(env)?;
     let s0 = s.int(env)?;
     if !(if le { j0 <= b0 } else { j0 < b0 }) {
+        #[cfg(test)]
+        if let Some(Value::Array(items)) = env.get_var(a.s, a.slot) {
+            probe::note(true, items);
+        }
         return Some(());
     }
     if s0 <= 0 || j0 < 0 {
@@ -949,6 +953,10 @@ fn fill(
         (ElemsMut::Ints(xs), Scalar::Int(x)) => fill_strided(xs, j0, s0, last, x),
         (ElemsMut::Floats(xs), Scalar::Float(x)) => fill_strided(xs, j0, s0, last, x),
         _ => unreachable!("vm: checked above"),
+    }
+    #[cfg(test)]
+    if let Some(Value::Array(items)) = env.get_var(a.s, a.slot) {
+        probe::note(true, items);
     }
     set_local_int(env, j, end);
     Some(())
@@ -1000,6 +1008,8 @@ fn count(
         hi as i128 - 1
     };
     if last < lo as i128 {
+        #[cfg(test)]
+        probe::note(false, items);
         return Some(());
     }
     if lo < 0 || last >= xs.len() as i128 {
@@ -1007,16 +1017,22 @@ fn count(
     }
     let t = count_true(&xs[lo as usize..=last as usize]);
     let sum = i64::try_from(n0 as i128 + c0 as i128 * t as i128).ok()?;
+    #[cfg(test)]
+    probe::note(false, items);
     set_local_int(env, n, sum);
     Some(())
 }
 
-/// The number of `true`s in `xs`, in chunks small enough for a byte sum.
+/// The number of `true`s in `xs`: chunks of 64 elements, each summed in a
+/// byte, then the tail element by element (spec §4 S13).
 #[inline(always)]
 fn count_true(xs: &[bool]) -> u64 {
-    xs.chunks(255)
+    let (chunks, tail) = xs.as_chunks::<64>();
+    let t: u64 = chunks
+        .iter()
         .map(|ch| ch.iter().fold(0u8, |t, &b| t + b as u8) as u64)
-        .sum()
+        .sum();
+    t + tail.iter().map(|&b| b as u64).sum::<u64>()
 }
 
 /// A local of the env a [`PureLoop`] holds in register `i` (its index).
@@ -1765,5 +1781,50 @@ impl FoldRun<'_> {
             n += 1;
         }
         (n, self.a)
+    }
+}
+
+/// R50 S13 test probes (spec §4 S13 "Test probes"): per-thread counters of
+/// the bulk fills and counts that ran, by the packed kind of their array.
+/// Test builds only; nothing else reads them.
+#[cfg(test)]
+pub(in crate::interp) mod probe {
+    use super::Elems;
+    use std::cell::Cell;
+
+    /// Bulk runs on this thread, each indexed `[Bools, Ints, Floats]`.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub(in crate::interp) struct BulkRuns {
+        pub(in crate::interp) fills: [u32; 3],
+        pub(in crate::interp) counts: [u32; 3],
+    }
+
+    thread_local! {
+        static RUNS: Cell<BulkRuns> = const {
+            Cell::new(BulkRuns { fills: [0; 3], counts: [0; 3] })
+        };
+    }
+
+    /// The counters so far on this thread.
+    pub(in crate::interp) fn bulk_runs() -> BulkRuns {
+        RUNS.get()
+    }
+
+    /// Record a bulk fill (`fill`) or count that ran over `items`, by its
+    /// packed kind (nothing for a `Vals` array).
+    pub(super) fn note(fill: bool, items: &Elems) {
+        let k = match items.form() {
+            "Bools" => 0,
+            "Ints" => 1,
+            "Floats" => 2,
+            _ => return,
+        };
+        let mut r = RUNS.get();
+        if fill {
+            r.fills[k] += 1;
+        } else {
+            r.counts[k] += 1;
+        }
+        RUNS.set(r);
     }
 }

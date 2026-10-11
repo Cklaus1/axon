@@ -36897,43 +36897,61 @@ fn vm_bulk_fill_runs() {
 
 /// R50 S13: fills the bulk path declines, each giving the tree's panic: one
 /// past the last index, a negative start, a zero step from `j0 = len(a)`
-/// with `b0 > j0` (a bulk path dividing by `s0` first would crash), and a
-/// `j + s` overflow in the last iteration.
+/// with `b0 > j0` (a bulk path dividing by `s0` first would crash), a
+/// negative step with `b0 - j0 < |s0|` (the tree writes `a[2]`, then panics
+/// on `a[-1]`; a path checking only `s0 != 0` computes one iteration, sets
+/// `j = -1` and exits 0), a `j + s` overflow in the last iteration, and an
+/// `i8` `j`, `s` and `b` (the tree checks `j + s` at `i8` width; a path
+/// reading them as `i64` exits 0).
 #[test]
 fn vm_bulk_fill_bounds_and_declines() {
-    let cases: [(&str, &str, &str, &str, &str); 4] = [
+    let cases: [(&str, &str, &str, &str, &str); 6] = [
         (
             "past",
             "let a = arr_repeat(0, 10)\n    let j = 1\n    let b = 10",
-            "3",
+            "let s = 3",
             "7",
             "index 10 out of bounds (len 10)",
         ),
         (
             "negative",
             "let a = arr_repeat(0, 10)\n    let j = 0 - 2\n    let b = 4",
-            "2",
+            "let s = 2",
             "7",
             "negative index -2",
         ),
         (
             "zero_step",
             "let a = arr_repeat(false, 10)\n    let j = len(a)\n    let b = 20",
-            "0",
+            "let s = 0",
             "true",
             "index 10 out of bounds (len 10)",
         ),
         (
+            "negative_step",
+            "let a = arr_repeat(1, 5)\n    let j = 2\n    let b = 4",
+            "let s = 0 - 3",
+            "7",
+            "negative index -1",
+        ),
+        (
             "overflow",
             "let a = arr_repeat(1.0, 10)\n    let j = 5\n    let b = 9",
-            "9223372036854775806",
+            "let s = 9223372036854775806",
             "0.0",
             "integer overflow: 5 + 9223372036854775806 exceeds i64",
+        ),
+        (
+            "sized",
+            "let a = arr_repeat(false, 200)\n    let j: i8 = 120\n    let b: i8 = 126",
+            "let s: i8 = 5",
+            "true",
+            "integer overflow: i8 125 + 5 out of range",
         ),
     ];
     for (tag, init, step, value, panic) in cases {
         let src = format!(
-            "fn main() -> i64 {{\n    {init}\n    let s = {step}\n    while j <= b {{\n        a[j] = {value}\n        j = j + s\n    }}\n    println(\"{{a}} j={{j}}\")\n    0\n}}\n"
+            "fn main() -> i64 {{\n    {init}\n    {step}\n    while j <= b {{\n        a[j] = {value}\n        j = j + s\n    }}\n    println(\"{{a}} j={{j}}\")\n    0\n}}\n"
         );
         vm_bulk_expect(
             &format!("bulk_fill_{tag}"),
@@ -36948,8 +36966,10 @@ fn vm_bulk_fill_bounds_and_declines() {
 }
 
 /// R50 S13: a fill whose value is not the packed array's kind (an `Int` into
-/// `Bools`, through an untyped lambda the checker cannot see past) and a fill
-/// of a `Vals` array decline, and the loops give the tree's output.
+/// `Bools` and into `Floats`, a `Float` into `Ints`, each through an untyped
+/// lambda the checker cannot see past) and a fill of a `Vals` array decline,
+/// and the loops give the tree's output (the `Floats` one prints `1`, where a
+/// casting fill would print `1.0`).
 #[test]
 fn vm_bulk_fill_other_kind_declines() {
     let src = r#"fn main() -> i64 {
@@ -36970,16 +36990,34 @@ fn vm_bulk_fill_other_kind_declines() {
         k = k + 1
     }
     println("{v} k={k}")
+    let g = id(arr_repeat(0.5, 6))
+    let p = 0
+    while p < 6 {
+        g[p] = one
+        p = p + 2
+    }
+    println("{g} p={p}")
+    let half = 2.5
+    let h = id(arr_range(0, 5))
+    let q = 1
+    while q <= 4 {
+        h[q] = half
+        q = q + 3
+    }
+    println("{h} q={q}")
     0
 }
 "#;
-    let want = "[1, true, 1, true, 1, true] j=6\n[true, false, false, false] k=4\n";
-    vm_bulk_expect("bulk_fill_other_kind", src, "main", (2, 0), 0, want, "");
+    let want = "[1, true, 1, true, 1, true] j=6\n[true, false, false, false] k=4\n\
+                [1, 0.5, 1, 0.5, 1, 0.5] p=6\n[0, 2.5, 2, 3, 2.5] q=7\n";
+    vm_bulk_expect("bulk_fill_other_kind", src, "main", (4, 0), 0, want, "");
 }
 
 /// R50 S13: bulk counts that run: sub-ranges (`lo > 0`, `hi < len - 1`) for
-/// `..` and `..=`, lengths 1 to 1,001 with a `true` in the last partial
-/// chunk, a range starting mid-chunk, and a negative `c`.
+/// `..` and `..=`, lengths 1 to 1,001 around the 64-element chunk (63, 64,
+/// 65, 129) with a `true` in the last partial chunk, ranges starting
+/// mid-chunk and crossing chunk boundaries (`60..140` crosses 64 and 128),
+/// counts starting from `n0 != 0` (`m`, `e`), and a negative `c`.
 #[test]
 fn vm_bulk_count_runs() {
     let src = r#"fn tail(len: i64) -> i64 {
@@ -37013,7 +37051,7 @@ fn main() -> i64 {
         if a[k] { m = m + 2 }
     }
     println("sub n={n} m={m}")
-    println("tails {tail(1)} {tail(7)} {tail(8)} {tail(9)} {tail(63)} {tail(65)} {tail(1001)}")
+    println("tails {tail(1)} {tail(7)} {tail(8)} {tail(9)} {tail(63)} {tail(64)} {tail(65)} {tail(129)} {tail(1001)}")
     let b = arr_repeat(false, 1001)
     let i = 13
     while i < 1001 {
@@ -37033,27 +37071,50 @@ fn main() -> i64 {
     for k in 0..1001 {
         if b[k] { e = e + neg }
     }
-    println("mid c={c} d={d} neg e={e}")
+    let x = 0
+    for k in 60..140 {
+        if b[k] { x = x + 1 }
+    }
+    println("mid c={c} d={d} x={x} neg e={e}")
     0
 }
 "#;
-    let want = "sub n=10 m=120\ntails 1 3 3 4 22 22 334\nmid c=198 d=197 neg e=-587\n";
-    vm_bulk_expect("bulk_count_runs", src, "main", (1, 5), 0, want, "");
+    let want = "sub n=10 m=120\ntails 1 3 3 4 22 22 22 44 334\nmid c=198 d=197 x=16 neg e=-587\n";
+    vm_bulk_expect("bulk_count_runs", src, "main", (1, 6), 0, want, "");
     let traced = vm_run("bulk_count_runs", src, "vm", true);
     let err = String::from_utf8_lossy(&traced.stderr);
     assert_eq!(vm_bulk_counts(&err, "tail"), Some((1, 1)), "{err}");
 }
 
-/// R50 S13: counts the bulk path declines: an `n + c` overflow, `c = 2^62`
-/// over four `true`s (the sum wraps to 0 in `i64`, so the check is 128-bit),
-/// an out-of-bounds `hi`, and a `Vals` array.
+/// One [`vm_bulk_count_declines`] case: tag, array, `c`'s and `n`'s `let`s,
+/// range, exit code, stdout and panic.
+type CountDecline = (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    i32,
+    &'static str,
+    &'static str,
+);
+
+/// R50 S13: counts the bulk path declines: an `n + c` overflow, from
+/// `n0 = 0` a `c = 2^62` over four `true`s (the sum wraps to `n0` in `i64`,
+/// so the check is 128-bit), an `i32` `n` and an `i32` `c` (the tree checks
+/// the overflow at `i32` width; a path reading them as `i64` exits 0), an
+/// out-of-bounds `hi`, a negative `lo` (a path casting `lo` with `as usize`
+/// reads far out of bounds or counts the wrong slice), and a `Vals` array.
 #[test]
 fn vm_bulk_count_declines() {
-    let cases: [(&str, &str, &str, &str, i32, &str, &str); 4] = [
+    let one = "let c = 1";
+    let zero = "let n = 0";
+    let cases: [CountDecline; 7] = [
         (
             "overflow",
             "arr_repeat(true, 4)",
-            "9223372036854775805",
+            one,
+            "let n = 9223372036854775805",
             "0..4",
             101,
             "",
@@ -37062,39 +37123,69 @@ fn vm_bulk_count_declines() {
         (
             "wrap",
             "arr_repeat(true, 4)",
-            "0",
+            "let c = 4611686018427387904",
+            zero,
             "0..4",
             101,
             "",
             "integer overflow: 4611686018427387904 + 4611686018427387904 exceeds i64",
         ),
         (
+            "i32_n",
+            "arr_repeat(true, 1000)",
+            one,
+            "let n: i32 = 2147483000",
+            "0..1000",
+            101,
+            "",
+            "integer overflow: i32 2147483647 + 1 out of range",
+        ),
+        (
+            "i32_c",
+            "arr_repeat(true, 4)",
+            // Through an untyped lambda: the checker rejects `i64 + i32`,
+            // the tree evaluates it at the `i32` width.
+            "let id = |x| x\n    let c32: i32 = 2000000000\n    let c = id(c32)",
+            zero,
+            "0..4",
+            101,
+            "",
+            "integer overflow: i32 2000000000 + 2000000000 out of range",
+        ),
+        (
             "out_of_bounds",
             "arr_repeat(true, 4)",
-            "0",
+            one,
+            zero,
             "1..5",
             101,
             "",
             "index 4 out of bounds (len 4)",
         ),
         (
+            "negative_lo",
+            "arr_repeat(true, 4)",
+            one,
+            zero,
+            "(0 - 2)..4",
+            101,
+            "",
+            "index -2 out of bounds (len 4)",
+        ),
+        (
             "vals",
             "[true, false, true, true]",
-            "0",
+            one,
+            zero,
             "0..4",
             0,
             "n=3\n",
             "",
         ),
     ];
-    for (tag, arr, n0, range, code, stdout, panic) in cases {
-        let c = if tag == "wrap" {
-            "4611686018427387904"
-        } else {
-            "1"
-        };
+    for (tag, arr, c, n, range, code, stdout, panic) in cases {
         let src = format!(
-            "fn main() -> i64 {{\n    let f = {arr}\n    let c = {c}\n    let n = {n0}\n    for k in {range} {{\n        if f[k] {{ n = n + c }}\n    }}\n    println(\"n={{n}}\")\n    0\n}}\n"
+            "fn main() -> i64 {{\n    let f = {arr}\n    {c}\n    {n}\n    for k in {range} {{\n        if f[k] {{ n = n + c }}\n    }}\n    println(\"n={{n}}\")\n    0\n}}\n"
         );
         vm_bulk_expect(
             &format!("bulk_count_{tag}"),

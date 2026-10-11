@@ -1199,7 +1199,12 @@ fn index_int(env: &Env, arr: &Var<'_>, idx: &Var<'_>) -> Option<i64> {
 /// literal or a local holding an int that is in bounds: the element, as
 /// `index_in_place` reads it. `None` in every other case (nothing was read
 /// out); the slow path then runs the arm's whole protocol.
-#[inline(always)]
+///
+/// Out of line since S13 (cost only): inlined with its packed arms, it left
+/// the op loop short of a callee-saved register, so `run` kept `st` on the
+/// stack and reloaded it in every op that touches the operand stack
+/// (collatz, which reads no array, +1 %).
+#[inline(never)]
 fn index_fast(env: &Env, arr: &Var<'_>, idx: &Opnd<'_>) -> Option<Value> {
     let Value::Array(items) = env.get_var(arr.s, arr.slot)? else {
         return None;

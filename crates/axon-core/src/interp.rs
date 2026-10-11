@@ -536,7 +536,7 @@ impl Elems {
             (Rep::Bools(xs), Value::Bool(b)) => xs[i] = b,
             (Rep::Ints(xs), Value::Int(x)) => xs[i] = x,
             (Rep::Floats(xs), Value::Float(x)) => xs[i] = x,
-            (_, v) => self.vals_mut()[i] = v,
+            (_, v) => self.vals_mut_cold()[i] = v,
         }
     }
 
@@ -549,7 +549,7 @@ impl Elems {
             (Rep::Bools(xs), Value::Bool(b)) => xs.push(b),
             (Rep::Ints(xs), Value::Int(x)) => xs.push(x),
             (Rep::Floats(xs), Value::Float(x)) => xs.push(x),
-            (_, v) => self.vals_mut().push(v),
+            (_, v) => self.vals_mut_cold().push(v),
         }
     }
 
@@ -561,7 +561,7 @@ impl Elems {
             (Rep::Bools(xs), Value::Bool(b)) => Value::Bool(std::mem::replace(&mut xs[i], b)),
             (Rep::Ints(xs), Value::Int(x)) => Value::Int(std::mem::replace(&mut xs[i], x)),
             (Rep::Floats(xs), Value::Float(x)) => Value::Float(std::mem::replace(&mut xs[i], x)),
-            (_, v) => std::mem::replace(&mut self.vals_mut()[i], v),
+            (_, v) => std::mem::replace(&mut self.vals_mut_cold()[i], v),
         }
     }
 
@@ -601,6 +601,15 @@ impl Elems {
         }
     }
 
+    /// [`Elems::vals_mut`] for a write or push of another kind into a packed
+    /// array: out of line, so the element write paths inlined into the VM's
+    /// dispatch loop stay small (cost only).
+    #[cold]
+    #[inline(never)]
+    fn vals_mut_cold(&mut self) -> &mut Vec<Value> {
+        self.vals_mut()
+    }
+
     /// The elements, moved out as a `Vec<Value>`.
     #[cfg(not(target_arch = "wasm32"))]
     #[inline]
@@ -619,6 +628,18 @@ impl Elems {
     #[inline]
     pub(crate) fn into_vec(mut self) -> Vec<Value> {
         std::mem::take(self.vals_mut())
+    }
+
+    /// Test probe (spec §4 S13): the name of the array's form, `Vals`,
+    /// `Bools`, `Ints` or `Floats`. Test builds only.
+    #[cfg(test)]
+    pub(crate) fn form(&self) -> &'static str {
+        match &self.0 {
+            Rep::Vals(_) => "Vals",
+            Rep::Bools(_) => "Bools",
+            Rep::Ints(_) => "Ints",
+            Rep::Floats(_) => "Floats",
+        }
     }
 }
 

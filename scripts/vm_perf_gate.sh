@@ -43,7 +43,9 @@
 #       `loop.ax` is a `PureLoop`, so the call rows subtract loop_generic.ax
 #       (loop.ax plus a never-taken `if`, which call1.ax, mutcall.ax and
 #       swapcall.ax carry too, so it cancels). A row runs under
-#       AXON_ENGINE=vm unless its seventh field names another engine (S13):
+#       AXON_ENGINE=vm unless its seventh field names another engine (S13);
+#       its program and base medians are cached as <prog>@<engine>, so a row
+#       never reuses another engine's, and its output line names the engine:
 #         row       slice  prog      base          units  budget engine
 #         loop      S1     loop      -             1M     300   per iteration
 #         call      S1     call1     loop_generic  1M     800   one-arg call via dispatch_call -> call_fn_in
@@ -54,7 +56,7 @@
 #         foldmod   S7     foldmod   fold_base     10M    200   per element, arr-sum's body `acc + x % m`
 #         swap      S8     swapcall  loop_generic  1M     730   per `swap(&mut a, 0, 1)` call, body included
 #         packed    S13    packed    packed_base   1M     1500  per `len(a) + a[i] + g.xs[i]` over a packed array
-#         packed    S13    packed    packed_base   1M     1800  tree: the same under the tree-walker
+#         packed-tree S13  packed    packed_base   1M     1800  tree: the same under the tree-walker
 #       A row passes when (prog - base) <= budget * units, compared exactly.
 #
 #   scripts/vm_perf_gate.sh --compile
@@ -106,8 +108,8 @@ REPROS=(
   "mutcall   S5    mutcall  loop_generic  1000000   600"
   "foldmod   S7    foldmod  fold_base     10000000  200"
   "swap      S8    swapcall loop_generic  1000000   730"
-  "packed    S13   packed   packed_base   1000000   1500"
-  "packed    S13   packed   packed_base   1000000   1800  tree"
+  "packed      S13   packed   packed_base   1000000   1500"
+  "packed-tree S13   packed   packed_base   1000000   1800  tree"
 )
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -263,7 +265,7 @@ else
         if [ "$t" = "$name" ] || [ "$t" = "$slice" ]; then want[$name]=1; hit=1; fi
       done
       if [ "$hit" = 0 ]; then
-        echo "vm_perf_gate: --repros: '$t' is neither a row (loop call part fold fastcall mutcall foldmod swap packed) nor a slice with rows (S1 S2 S4 S5 S7 S8 S13)" >&2
+        echo "vm_perf_gate: --repros: '$t' is neither a row (loop call part fold fastcall mutcall foldmod swap packed packed-tree) nor a slice with rows (S1 S2 S4 S5 S7 S8 S13)" >&2
         exit 2
       fi
     done
@@ -272,19 +274,16 @@ else
     read -r name slice prog base units budget engine <<<"$r"
     [ -n "${want[$name]+x}" ] || continue
     engine="${engine:-vm}"
-    # The shipping configuration keys by program alone; another engine's
-    # medians are kept apart.
-    sfx=""
-    [ "$engine" = vm ] || sfx=".$engine"
-    measure_as "$prog$sfx" "$prog" 3 "$engine" ""
-    delta="${MEDIAN[$prog$sfx]}"
+    # Keyed by engine: the tree row never reuses the VM's medians.
+    measure_as "$prog@$engine" "$prog" 3 "$engine" ""
+    delta="${MEDIAN[$prog@$engine]}"
     if [ "$base" != - ]; then
-      measure_as "$base$sfx" "$base" 3 "$engine" ""
-      delta=$((delta - MEDIAN[$base$sfx]))
+      measure_as "$base@$engine" "$base" 3 "$engine" ""
+      delta=$((delta - ${MEDIAN[$base@$engine]}))
     fi
     cost="$(awk -v d="$delta" -v u="$units" 'BEGIN { printf "%.1f", d / u }')"
     if [ "$delta" -le $((budget * units)) ]; then v="PASS"; else v="OVER"; fails=$((fails + 1)); fi
-    printf 'vm_perf_gate: repro %-8s (%s) %-8s - %-9s / %-8s = %9s per unit  budget %4s  %-4s %s\n' \
+    printf 'vm_perf_gate: repro %-11s (%s) %-8s - %-12s / %-8s = %9s per unit  budget %4s  engine %-4s %s\n' \
       "$name" "$slice" "$prog" "$base" "$units" "$cost" "$budget" "$engine" "$v"
   done
 fi
