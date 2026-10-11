@@ -47,8 +47,8 @@ must-fix, 1 nit; §15 "Revision 36"). The thirty-third, verdict "correct" (0 blo
 Reviewed. Revision 38 (§15 "Revision 38") adds S13 (packed scalar arrays and bulk loops, for
 compilebench `sieve`), measured first; revision 39 answers the thirty-fourth review, its first
 (4 must-fix, 5 nits; §15 "Revision 39"); revision 40 answers the thirty-fifth (4 must-fix, 5 nits;
-§15 "Revision 40"); revision 41 answers the thirty-sixth (2 must-fix, 4 nits; §15 "Revision 41").
-S13 is Draft until an adversarial review passes it.
+§15 "Revision 40"); revision 41 answers the thirty-sixth (2 must-fix, 4 nits; §15 "Revision 41"); revision 42 answers
+the thirty-seventh (3 must-fix, 2 nits; §15 "Revision 42"). S13 is Draft until an adversarial review passes it.
 **Risk class:** Structural (a second execution path for the reference engine)
 **Author / date:** 2026-10-09, from compilebench AX-18 (interpreter cost) after AX-53..AX-55.
 
@@ -1056,34 +1056,47 @@ printing the loop's results (every element, `j`, `n`) and asserting the same std
 code under `AXON_ENGINE=tree` and `vm`, and stdout equal to the tree's at `0f3b182b`:
 - `vm_bulk_fill_runs`: a fill of each packed kind (`Bools`, `Ints`, `Floats`) with `b` below the last
   index; a fill whose last index is the array's last element; a `<` fill whose `b0 - j0` is a
-  multiple of `s0`; `j` after the loop for `<`, `<=` and zero iterations; a fill of an array another
-  binding shares leaves that binding's elements.
+  multiple of `s0`; a fill whose `j0` is not a multiple of `s0` (`a = arr_repeat(0, 10)`, `j = 1`,
+  `s = 3`, `b = 6`, `<=`, `c = 7`: `[0, 7, 0, 0, 7, 0, 0, 0, 0, 0]`, `j = 7`; a count from
+  `b0/s0 - j0/s0 + 1` writes `a[7]` too); `j` after the loop for `<`, `<=` and zero iterations; a
+  fill of an array another binding shares leaves that binding's elements.
 - `vm_bulk_fill_bounds_and_declines`: a fill one past the last index, a negative start, a zero step
   with `j0 = len(a)` and `b0 > j0` (the tree panics `index <len> out of bounds` on the first write; a
   bulk path that divides by `s0` before checking `s0 > 0` crashes instead), a negative step with
   `b0 - j0 < |s0|` (`a = arr_repeat(1, 5)`, `j = 2`, `b = 4`, `s = 0 - 3`, `<=`: the tree writes
   `a[2]` and then panics `negative index -1`; a path that checks only `s0 != 0` computes one
-  iteration, sets `j = -1` and exits 0), a `j + s` overflow in the last iteration, and an `i8` `j`,
-  `s` and `b` (`a = arr_repeat(false, 200)`, `j: i8 = 120`, `s: i8 = 5`, `b: i8 = 126`, `<=`: the
-  tree panics `integer overflow: i8 125 + 5 out of range`; a path reading them as `i64` exits 0)
-  each give the tree's panic.
+  iteration, sets `j = -1` and exits 0), a `j + s` overflow in the last iteration, and `SizedInt`
+  operands, each gated alone with the others plain (a narrow local is passed through
+  `let id = |x| x` so the checker accepts the mixed arithmetic): all three `i8`
+  (`a = arr_repeat(false, 200)`, `j: i8 = 120`, `s: i8 = 5`, `b: i8 = 126`, `<=`: the tree panics
+  `integer overflow: i8 125 + 5 out of range`); `s = id(w)` alone with `w: i8 = 5`, `j = 100`,
+  `b = 150` (the tree prints `j = 105`: after one step `j` is `i8` and `105 <= 150` is false at that
+  width; a path reading `s` as `i64` prints `155`); `b = id(w)` alone with `w: i8 = 126`, `j = 120`,
+  `s = 5` (the tree panics `index 200 out of bounds (len 200)`; a loose `b` exits 0 with `j = 130`).
+  Each gives the tree's output.
 - `vm_bulk_fill_other_kind_declines`: an `Int` written into a packed `Bools` array, a `Bool` into a
-  `Vals` array, an `Int` into a packed `Floats` array (the tree prints `1`, a casting fill `1.0`) and
-  a `Float` into a packed `Ints` array give the tree's output.
+  `Vals` array, an `Int` into a packed `Floats` array (the tree prints `1`, a casting fill `1.0`), a
+  `Float` into a packed `Ints` array, and an `i32` `c` (`w: i32 = 2147483647`) into
+  `arr_repeat(0, 10)` with `j = 0`, `s = 3`, `<`, `b = 10`, then `println("{a[0] + one}")` with
+  `one = 1` (the tree prints the array and then panics `integer overflow: i32 2147483647 + 1 out of
+  range`; a fill that stores a plain `Int` prints `2147483648`) give the tree's output.
 - `vm_bulk_count_runs`: `lo..hi` and `lo..=hi` with `lo > 0` and `hi < len - 1`; lengths 1, 7, 8, 9,
   63, 64, 65, 129 and 1001 with `true` elements in the last partial chunk; a range starting
   mid-chunk and crossing a chunk boundary; a count starting from `n0 != 0`; a negative `c` (`n` falls
   by `|c|` per `true`).
 - `vm_bulk_count_declines`: an `n + c` overflow, from `n0 = 0` a `c = 2^62` over four `true`s (wraps
   to `n0` in `i64`), an `i32` `n` (`n: i32 = 2147483000` over 1,000 `true`s: the tree panics
-  `integer overflow: i32 2147483647 + 1 out of range`), an `i32` `c`, an out-of-bounds `hi`, a
+  `integer overflow: i32 2147483647 + 1 out of range`), an `i32` `c` alone (`let id = |x| x`,
+  `w: i32 = 1`, `c = id(w)`, `n = 2147483000` over 1,000 `true`s: the tree panics with the same
+  message; a path reading `c` as `i64` exits 0 printing `2147484000`), an out-of-bounds `hi`, a
   negative `lo` (the tree panics `index -2 out of bounds`), and a `Vals` `bool` array.
 - `packed_forms_persist` (unit test, interp/vm/tests.rs, through the test probes): `arr_range(0, 3)`
   is `Ints`, `arr_repeat(1.5, 3)` `Floats`, `arr_repeat(true, 3)` `Bools`, a `SizedInt` `arr_repeat`
   and a literal array `Vals`; an `Ints` array stays `Ints` after a `LoopMem` store (a `PureFor`
   writing `a[i] = x`, qsort's first loop), an S8 `swap`, a `write_place`, `a = arr_push(a, 7)` and
   `a = a + [7]` (the in-place append paths, `AppendOp::Push`/`Add` and the VM's `appendable`), and
-  becomes `Vals` after a kind-changing write; `let b = arr_push(a, 7)` gives a `Vals` `b` (builtin
+  becomes `Vals` after a kind-changing write (a `Float`, and an `i8` `SizedInt`: a `SizedInt` is never
+  packed); `let b = arr_push(a, 7)` gives a `Vals` `b` (builtin
   results are `Vals`) while `a` stays `Ints`; and each `vm_bulk_fill_runs` and `vm_bulk_count_runs`
   shape, run in-process under `AXON_ENGINE=vm` with `vm_eager` set (as the cli `vm` leg sets
   `AXON_VM_EAGER=1`; deferred, a short literal-bound `for` stays on the tree), moves the bulk counter
@@ -1097,8 +1110,11 @@ code under `AXON_ENGINE=tree` and `vm`, and stdout equal to the tree's at `0f3b1
   `appendable`) with same-kind and other-kind operands; a packed array in a struct field, through a
   `&mut [T]` parameter and sent over a channel; `to_str`; and `==` between a packed array and a
   literal array of the same elements, in both orders, for each kind, with `NaN`, `-0.0` and
-  `SizedInt` elements among them. The test asserts each pair of lines agrees under both engines and that the whole stdout
-  equals `tests/fixtures/packed/ops.out`, the tree's output at `0f3b182b`.
+  `SizedInt` elements among them. `write_sized_into_ints` also prints `{ks[2] < big}` after
+  `ks[2] = w` with `w: i8 = 5` and `big = 200` (the tree prints `false`, an `i8`-width compare; a
+  set that stores a plain `Int` prints `true`). The test asserts each pair of lines agrees under both
+  engines and that the whole stdout equals `tests/fixtures/packed/ops.out`, the tree's output at
+  `0f3b182b`.
 
 Also: `interp_arr_repeat_unallocatable_size_is_a_runtime_error_naming_n` still passes;
 `vm_perf_gate.sh` with sieve's budget CPython's median (§10; S12 fails it at about 24.4 G), every
@@ -2044,9 +2060,21 @@ tree panics and the re-measured figures.
 
 | Finding | Resolution |
 |---|---|
-| [must-fix] The bulk conditions said "`Int`s", and no gate used a `SizedInt` `j`, `s`, `b`, `n` or `c`; a path reading them with `as_int` (interp.rs:5627-5633) misses the tree's narrow-width overflow | Both conditions say plain `Value::Int` and that a `SizedInt` declines; an `i8` fill and an `i32` `n` and `c` count added with the tree's panics |
-| [must-fix] "a same-kind push (the builtin ...)" cannot be tested: `arr_push` returns a fresh `Vals` array (builtins.rs:1766-1779) | `packed_forms_persist` asserts on `a = arr_push(a, 7)` and `a = a + [7]` (the in-place append paths) and that `let b = arr_push(a, 7)` leaves `a` `Ints` |
+| [must-fix] The bulk conditions said "`Int`s", and no gate used a `SizedInt` `j`, `s`, `b`, `n` or `c`; a path reading them with `as_int` (interp.rs:5336-5346 at `0f3b182b`) misses the tree's narrow-width overflow | Both conditions say plain `Value::Int` and that a `SizedInt` declines; an `i8` fill and an `i32` `n` and `c` count added with the tree's panics |
+| [must-fix] "a same-kind push (the builtin ...)" cannot be tested: `arr_push` returns a fresh `Vals` array (builtins.rs:1768-1781 at `0f3b182b`) | `packed_forms_persist` asserts on `a = arr_push(a, 7)` and `a = a + [7]` (the in-place append paths) and that `let b = arr_push(a, 7)` leaves `a` `Ints` |
 | [nit] In-process bulk runs default to deferred, so a short literal-bound `for` stays on the tree | They set `vm_eager`, as the cli `vm` leg does |
 | [nit] `g.xs[i]` cited vm/mod.rs:2127 (the `IndexIdent` fallback) | `Op::IndexValue`, vm/mod.rs:2131-2135 at `0f3b182b` |
 | [nit] `vm_bulk_fill_other_kind_declines` missed a numeric cast | `Int` into `Floats` and `Float` into `Ints` added |
 | [nit] The `2^62` case wraps to `n0`, not 0 | Stated from `n0 = 0`, wrapping to `n0` |
+
+Revision 42 (2026-10-11) answers the thirty-seventh review (`reviewer`, verdict "incorrect": 0
+blockers, 3 must-fix, 2 nits). It re-ran revision 41's tree panics, the casting fills, the `2^62`
+count, the packed repro (1,230 vm / 1,469 tree) and sieve (24,368,536,393), all as stated.
+
+| Finding | Resolution |
+|---|---|
+| [must-fix] The fill gated all three operands as `i8` at once, so a path strict on `j` but loose on `b` or `s` passes | `s` alone (tree `j = 105`, loose `155`) and `b` alone (tree `index 200 out of bounds (len 200)`, loose exit 0), each laundered through `let id = \|x\| x` |
+| [must-fix] "an `i32` `c`" count named no program: the natural form is E0102, and small sums are blind | `c = id(w)` with `w: i32 = 1` from `n = 2147483000` over 1,000 `true`s: tree panics `i32 2147483647 + 1 out of range`, a loose `c` prints `2147484000` |
+| [must-fix] Nothing tells a `SizedInt` written into `Ints` apart from a plain `Int` (display and `values_equal` agree) | ops.ax `write_sized_into_ints` prints `{ks[2] < big}` (tree `false`); `packed_forms_persist` names an `i8` write as kind-changing; an `i32` `c` fill followed by `a[0] + one` (tree panics) |
+| [nit] Two Revision 41 citations used `2ba136b5` lines | interp.rs:5336-5346 and builtins.rs:1768-1781 at `0f3b182b` |
+| [nit] No fill had `j0 mod s0 != 0` | `j = 1`, `s = 3`, `b = 6`, `<=`: `[0, 7, 0, 0, 7, 0, 0, 0, 0, 0]`, `j = 7` |
