@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: d25cae8c1ab68e8659ed6d66e1cf235a9bf83982
+generated-at: 3bd4709b39c6f71cd8f7017596012c1b2dda308d
 
-`git diff --numstat 31413ca7..d25cae8c -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..3bd4709b -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -49,21 +49,23 @@ generated-at: d25cae8c1ab68e8659ed6d66e1cf235a9bf83982
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 4807 | 1467 |
+| `crates/axon-core/src/interp.rs` | 4910 | 1499 |
 | `crates/axon-core/src/interp/builtins.rs` | 665 | 515 |
 | `crates/axon-core/src/interp/conform.rs` | 1780 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1413 | 0 |
 | `crates/axon-core/src/interp/crossing_tests.rs` | 418 | 0 |
+| `crates/axon-core/src/interp/dispatch_tests.rs` | 616 | 0 |
 | `crates/axon-core/src/interp/env.rs` | 1193 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 1915 | 600 |
-| `crates/axon-core/src/interp/goal.rs` | 65 | 36 |
+| `crates/axon-core/src/interp/eval.rs` | 1931 | 599 |
+| `crates/axon-core/src/interp/goal.rs` | 88 | 42 |
 | `crates/axon-core/src/interp/kernel_tests.rs` | 401 | 0 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 48 | 21 |
-| `crates/axon-core/src/interp/sink_tests.rs` | 1335 | 0 |
+| `crates/axon-core/src/interp/sink_tests.rs` | 1351 | 0 |
 | `crates/axon-core/src/interp/sym.rs` | 1188 | 0 |
-| `crates/axon-core/src/interp/taint.rs` | 1190 | 0 |
+| `crates/axon-core/src/interp/taint.rs` | 1283 | 0 |
 | `crates/axon-core/src/interp/taint_tests.rs` | 1128 | 0 |
+| `crates/axon-core/src/interp/tests_v022_s4.rs` | 527 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 506 | 514 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
 | `crates/axon-core/src/interp/vm/mod.rs` | 3426 | 0 |
@@ -80,9 +82,9 @@ generated-at: d25cae8c1ab68e8659ed6d66e1cf235a9bf83982
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 37276 | 5265 |
+| total | 38670 | 5302 |
 
-`git log --reverse 31413ca7..d25cae8c -- crates/axon-core/src`:
+`git log --reverse 31413ca7..3bd4709b -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -263,7 +265,11 @@ generated-at: d25cae8c1ab68e8659ed6d66e1cf235a9bf83982
 | 72009129 | R51 S3 merge | INTERPRETER dict_set/dict_remove/dict_inc call dict_mutated without an outer seal.active guard, as veto does (builtins.rs:5286/5318/5470); dict_mutated returns at once when the seal is inactive, so an unsealed run does the same work less one branch. TEST-ONLY: the main-only sink classification names call_fn_sealed for call_fn_in_general (S3c moved the sealed instantiation behind the crossing). Both were drift tests from S3d that S3c's code tripped at the merge. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 2bf3e4a4 | R51 S3e | INTERPRETER init_globals in a sealed run (veto interp.rs:3292-3303): init_globals_sealed runs each module-level initialiser under its own definition's provenance (with_frame) in a fresh env, so a candidate's `let` meets the call and global-read edges (an earlier global is read through global_ref) and its kernel effects land in the candidate's kernel; the let's taint is recorded by t_set_global. The unsealed path is unchanged (one shared env, no taint bookkeeping, now without the dead seal.active branch). Plus TEST-ONLY sink tests (every taint carrier into the name rule, the name half of channel taint, own fn values, definition provenance, a candidate impl answering an operator method) and the last 5 S3 deferred-registry entries re-slotted (4 to S6, 1 to S4 for PICK). Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | d25cae8c | R51 S3e | TEST-ONLY: rustfmt of interp/sink_tests.rs (line wrapping of the S3e tests); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 177 commits | | |
+| 65eda84a | R51 S4b | INTERPRETER receiver dispatch rule at run time (veto taint.rs:1414-1476): impl_method_sealed (the tree MethodCall arm under T) takes the receiver's own taint and calls t_check_dispatch after seal_method/seal_dispatch; t_check_dispatch returns at once unless the receiver carries TYP or PICK (new taint bit, veto taint.rs:71), and t_check_dispatch_tainted refuses an untyped or picked receiver when the method selects between operator impls. t_rules (veto taint.rs:725) gates t_check_names/t_check_width/t_check_dispatch: always true outside cfg(test). Per-thread cfg(test) switches DISPATCH_RULE_OFF (read by seal_name_args, seal_dispatch, seal_width, seal_width_unary) and TAINT_FORCE_ON (read by t_rules), default off. goal.rs: run_goal/_warm/_random/_categorical/_multistart/_tournament apply seal_call to the goal fn, and unknown_goal_name gives a sealed caller the no-such-fn text (veto goal.rs, interp.rs:4946). TEST-ONLY interp/dispatch_tests.rs; sink_tests turn TAINT_FORCE_ON on where they judge the runtime taint. The VM and unsealed runs never reach the new code (impl_method_sealed only under T; seal_call returns unless seal.active); every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 5fea0339 | R51 S4b | INTERPRETER make_closure records the creating frame's pin owner in a sealed run (cv.seal.pin_owner = pin_fn, veto PIN_FN_MARK eval.rs:967-972); dispatch_named in a sealed run refuses a non-closure value a local holds (not_callable) instead of falling through to a fn of the same name (veto eval.rs local-call rule, amendment 60); both under seal.active, so an unsealed run is unchanged. TEST-ONLY T8.1 dispatch tests (undetermined positions, width/name, goal names) under Both/TaintOnly/StaticOnly/Neither with controls; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| bbf8be12 | R51 S4b | TEST-ONLY: v0.22's S4 dispatch rows ported under their v0.22 names in interp/tests_v022_s4.rs (included at the end of interp.rs mod tests; ignored R51 S6, they need a live sealed run); tests/dispatch_rule_switch_is_test_only.rs un-ignored and extended to TAINT_FORCE_ON; drift tests for the goal-name call edge and the impl_method/dispatch_named sink classification; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 3bd4709b | R51 S4b | TEST-ONLY: #[ignore] reasons of the dispatch-rule deferred tests (interp.rs unit tests, axon-psv sealed_frames) re-slotted to S6 with the registry; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 181 commits | | |
 <!-- END MECHANICAL -->
 
 
