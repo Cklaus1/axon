@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 8a0a268c0ae79009c7f09029dfd8d21557b15f12
+generated-at: 99f7927fdda629a7ae78066efd6fcf7f827f5dac
 
-`git diff --numstat 31413ca7..8a0a268c -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..99f7927f -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -49,7 +49,7 @@ generated-at: 8a0a268c0ae79009c7f09029dfd8d21557b15f12
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 3796 | 1468 |
+| `crates/axon-core/src/interp.rs` | 3815 | 1465 |
 | `crates/axon-core/src/interp/builtins.rs` | 587 | 542 |
 | `crates/axon-core/src/interp/env.rs` | 1080 | 0 |
 | `crates/axon-core/src/interp/eval.rs` | 1167 | 550 |
@@ -57,6 +57,7 @@ generated-at: 8a0a268c0ae79009c7f09029dfd8d21557b15f12
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 18 | 9 |
 | `crates/axon-core/src/interp/sym.rs` | 1180 | 0 |
+| `crates/axon-core/src/interp/taint.rs` | 970 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 491 | 514 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
 | `crates/axon-core/src/interp/vm/mod.rs` | 3398 | 0 |
@@ -73,9 +74,9 @@ generated-at: 8a0a268c0ae79009c7f09029dfd8d21557b15f12
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 27548 | 5247 |
+| total | 28537 | 5244 |
 
-`git log --reverse 31413ca7..8a0a268c -- crates/axon-core/src`:
+`git log --reverse 31413ca7..99f7927f -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -234,7 +235,8 @@ generated-at: 8a0a268c0ae79009c7f09029dfd8d21557b15f12
 | 426067dc | R51 S2.1 | INTERPRETER Env: binding storage moves into a private Bindings type (interp/env.rs) with a parallel taint vector present only in a sealed run; every binding writer takes the taint, the raw env.vars writes (bind_params, goal_met, closure lend/copy/write-back, VM param pushes, &mut move-in/out) become Bindings methods, get_var_idx is the one index-returning lookup, and the vectors are checked in step after every method (release panic when the store is present). Unsealed runs carry no store and every tree site passes taint 0; behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 6be3a637 | R51 S2.2 | INTERPRETER Env factory: Env's constructors become private to interp/env.rs and every Env of a run is made by the Interp (new_env, env_from_snapshot, the frame pool moved into env.rs), which gives it a taint store exactly when seal.active; a given frame is emptied (taints with bindings), a snapshot whose store does not match the run panics, and a taint read from a store-less Env panics (never reads 0). Unsealed runs: same envs, no store, behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 8a0a268c | R51 S2 perf | INTERPRETER cost-only: the Bindings taint store becomes a Vec plus a store flag, and the bytecode engine (never sealed) writes and removes bindings through const-generic _t::<false> forms, so the unsealed call path has no branch on the store (R50 §10 call-path budget restored); the release-mode in-step check runs on sealed writes and taint reads only (debug builds check every mutation); two pre-existing clippy lints in interp tests fixed. Behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 155 commits | | |
+| 99f7927f | R51 S2.3 step 1 | INTERPRETER taint state: ports v0.22 interp/taint.rs (taint bits, Taint accumulator/pc/sticky cells, builtin class tables with now_ns classed WORLD like now_ms, builtin/provenance/native/loop hooks) onto main's Sym/slot Bindings, adds the Interp.taint field and records a module-level let's taint at init_globals in a sealed run. Nothing reads the taint yet (eval_t hook sites are the next step); behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 156 commits | | |
 <!-- END MECHANICAL -->
 
 
