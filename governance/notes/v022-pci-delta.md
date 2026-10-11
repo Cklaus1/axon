@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 426067dc6cdddd4877d85b4d3352dd1200f5fb86
+generated-at: 6be3a63711156be839577dea7871089dcee981d3
 
-`git diff --numstat 31413ca7..426067dc -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..6be3a637 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -49,10 +49,10 @@ generated-at: 426067dc6cdddd4877d85b4d3352dd1200f5fb86
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 3821 | 1451 |
+| `crates/axon-core/src/interp.rs` | 3797 | 1468 |
 | `crates/axon-core/src/interp/builtins.rs` | 587 | 542 |
-| `crates/axon-core/src/interp/env.rs` | 707 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 1164 | 547 |
+| `crates/axon-core/src/interp/env.rs` | 895 | 0 |
+| `crates/axon-core/src/interp/eval.rs` | 1167 | 550 |
 | `crates/axon-core/src/interp/goal.rs` | 55 | 52 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 18 | 9 |
@@ -73,9 +73,9 @@ generated-at: 426067dc6cdddd4877d85b4d3352dd1200f5fb86
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 27175 | 5227 |
+| total | 27342 | 5247 |
 
-`git log --reverse 31413ca7..426067dc -- crates/axon-core/src`:
+`git log --reverse 31413ca7..6be3a637 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -232,7 +232,8 @@ generated-at: 426067dc6cdddd4877d85b4d3352dd1200f5fb86
 | f7ccb9e6 | R51 S1 | test only (vm/tests.rs T1d): S0b's run_test_body is listed as an engine gate and exec_raw as a VM entry; no production change; every sealed run is still refused |
 | d60ea237 | R51 S5 | INTERPRETER static layer: ports v0.22's interp/pin.rs verbatim and adds the Seal state (sealed fns/globals/refines/types, operator method names), pins and frame provenance (with_frame, fn_is_sealed) to Interp; Interp::build reads the sealed set once and hands it to build_in, so tests pass it without publishing it; Seal and Pins are computed only for a non-empty sealed set (an unsealed build does no new work). No seal edge consumes them yet (S2/S3/S4); not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 426067dc | R51 S2.1 | INTERPRETER Env: binding storage moves into a private Bindings type (interp/env.rs) with a parallel taint vector present only in a sealed run; every binding writer takes the taint, the raw env.vars writes (bind_params, goal_met, closure lend/copy/write-back, VM param pushes, &mut move-in/out) become Bindings methods, get_var_idx is the one index-returning lookup, and the vectors are checked in step after every method (release panic when the store is present). Unsealed runs carry no store and every tree site passes taint 0; behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 153 commits | | |
+| 6be3a637 | R51 S2.2 | INTERPRETER Env factory: Env's constructors become private to interp/env.rs and every Env of a run is made by the Interp (new_env, env_from_snapshot, the frame pool moved into env.rs), which gives it a taint store exactly when seal.active; a given frame is emptied (taints with bindings), a snapshot whose store does not match the run panics, and a taint read from a store-less Env panics (never reads 0). Unsealed runs: same envs, no store, behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 154 commits | | |
 <!-- END MECHANICAL -->
 
 
