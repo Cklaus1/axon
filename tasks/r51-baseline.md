@@ -53,3 +53,18 @@ All 8 present and passing on r51/int: kernel 1, parser 1, resolver 5, seal_split
 | S6 T7 perf (r51/s6rows b72be0bd src vs r51/int 371d3c07, same worktree path, release, instructions:u medians of 3) | seal_pin_vm / seal_frames are #[inline(always)] wrappers of the expression they replace | vm_perf_gate.sh programs and --repros PASS on both; head/base 1.0000 on all 15 measured programs (max 1.0002 part_base) |
 | 371d3c07 | S6.1 + gate lookup fix (dd1ea380) | `./scripts/gate.sh` (unset CARGO_TARGET_DIR): **gate PASSED**, rc=0, real 52m07s. First run at 11ec9b1c failed at "v0.22 Protected Check Isolation surfaces" (walk_bound test at the wrong module path; include!d test files not followed) |
 | c9266cd0 | S6.2 lanes merged (s6legs T6 legs, s6rows T7 rows M3484-M3494, s6tests audit gaps) | fmt, clippy -D warnings clean; `cargo test -p axon-core --no-default-features --no-fail-fast` 2183 passed, 0 failed, 1 ignored (harness_integrity re-run on the committed tree: 43/43; its one failure was the untracked q1 fixture dirtying the tree); axon-psv 84/0; axon-cortex 78/0; vm_parity PASS (333 files + 3 axon-test files) |
+| 986ec715 | T7 first full run (3 lists, 438 rows) | 428 KILLED; not killed: M2622, M2623, M2925, M2946 (survived), M3230, M3231 (new text did not compile), M1996, M3256, M3343, M921 (refused elsewhere). Records: tasks/r51-s6/t7-bad.json |
+| e946f06d | T7 fixes merged: r51/t7shape (3e057532: sealed let/param/field no longer re-tags another fixed width, a real gap, M921; row text M3230/M3231/M3256; marker M1996) and r51/t7oracle (11172ce5: sealed `&mut` direct-call existence oracle closed, new row M3495; M2622/M2623 test reaches the guard; M2925/M2946 dominated S4b seal_call removed; M3343 re-anchored onto goal_eval's frame filter) | fmt, clippy -D warnings clean; `cargo test -p axon-core --no-default-features --no-fail-fast` 2185 passed, 0 failed, 1 ignored; axon-psv 84/0; axon-cortex 78/0; axon-fabric 885/0; vm_parity PASS |
+| 59295b73 | **T7 evidence** (governance/status/r51-t7-list{0,1,2}.json, run at e946f06d, clean tree, `--scope=all --only`) | **439/439 KILLED by their own attack**, 0 REFUSED_ELSEWHERE, 0 survivors, 0 stale (lists 176/117/146, wall 2357/2435/2017 s in parallel). Every non-retired row's `old` text occurs exactly once (2294 rows: 2275 active + 19 library primitives). Refusal-coverage gate plain and `--freeze` exit 0 |
+
+## Q1: sealed suite-verdict wall time (S6.3, spec §10/§12 Q1)
+
+Fixture `tasks/r51-s6/q1` (c9266cd0): a 4-test acceptance suite (fib, sieve, sort, word count) over a candidate module; `run.sh <axon> 5` reports medians of 5 runs. Release binary built from r51/int, host AMD Ryzen 9 9950X3D (32 threads), kernel 7.0.0-34.
+
+| Mode | Median wall (s) |
+|---|---|
+| `axon test accept.ax --json --seal ../cand` (sealed, tree engine) | 1.386 |
+| unsealed, default engine (VM) | 0.179 |
+| unsealed, `AXON_ENGINE=tree` | 0.466 |
+
+Per test (ms, sealed / unsealed VM / unsealed tree): fib 176/22/59, sieve 770/53/259, sort 352/67/103, words 69/29/36. Sealed costs about 3x the unsealed tree and about 7.7x the unsealed VM. No target (spec §10). VM speed for sealed runs is not R51 scope; the follow-up is logged in tasks/opportunities.md.

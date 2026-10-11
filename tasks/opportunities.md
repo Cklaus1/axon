@@ -2354,3 +2354,26 @@ Next step if this matters: profile V8 while running the instrumented module
 growth is compiled-code size, deopt churn, or unwind/rewind bookkeeping. JSPI,
 which suspends without instrumenting anything, remains the structural answer
 and is a toolchain decision not made here.
+
+## R51 S6.3: sealed suite verdicts run about 3x the unsealed tree engine and about 7.7x the VM (spec §12 Q1)
+
+Measured (tasks/r51-baseline.md "Q1", fixture tasks/r51-s6/q1): a 4-test acceptance suite takes a median of 1.386 s
+sealed (tree engine, the only engine a sealed run may use), 0.466 s unsealed on the tree and 0.179 s unsealed on the
+VM. R51 §10 sets no sealed target, so this is not an R51 defect. Proposed order, cheapest first; each step only if
+the one before misses a stated budget:
+
+1. Set a sealed suite-verdict budget (for example p95 at or under N s on realistic PSV suites) and time real suites
+   against it. Today there is one 4-test fixture and no budget.
+2. Profile the sealed tree path (taint vector, seal edges, frame checks). Target about 1.5x the unsealed tree. One
+   engine changes; the mutation rows and attack tests already cover it.
+3. Finish VM coverage (R50 S9): `vm_parity.sh` still reports bodies with tree ops (264 at 371d3c07). A sealed run
+   must never move between engines mid-run, so a sealed VM needs a VM that runs everything on its own.
+4. Only then, a spec for the seal in the VM that **moves** it rather than copying it: one sealed engine, so every
+   seal edge, mutation row and attack test does not need a twin. The tree stays the reference semantics
+   (AGENTS.md) and `vm_parity.sh` keeps the two equal.
+
+Alternative to evaluate before step 4 [INFERENCE, not designed]: run candidate code in its own process or microVM
+(axon-vm Firecracker) and treat everything it returns as candidate data, so the seal holds at one boundary instead
+of in every VM fast path. Needs an adversarial review against PSV-1 (control taint, the PICK bit, receiver dispatch)
+first; it may not cover all of them. Note the Firecracker real-guest boot test is SKIP on this host (no guest kernel
+image), so the microVM path is not proven here.
