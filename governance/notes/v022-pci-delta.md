@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 819fe5495340712c8f418915f2b46aaa48a1066c
+generated-at: d21ed2785d1ffb9305a3b70ffe912ae0ca428211
 
-`git diff --numstat 31413ca7..819fe549 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..d21ed278 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -49,7 +49,7 @@ generated-at: 819fe5495340712c8f418915f2b46aaa48a1066c
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 3815 | 1465 |
+| `crates/axon-core/src/interp.rs` | 3817 | 1464 |
 | `crates/axon-core/src/interp/builtins.rs` | 587 | 542 |
 | `crates/axon-core/src/interp/env.rs` | 1070 | 0 |
 | `crates/axon-core/src/interp/eval.rs` | 1539 | 597 |
@@ -58,6 +58,7 @@ generated-at: 819fe5495340712c8f418915f2b46aaa48a1066c
 | `crates/axon-core/src/interp/proptest.rs` | 18 | 9 |
 | `crates/axon-core/src/interp/sym.rs` | 1180 | 0 |
 | `crates/axon-core/src/interp/taint.rs` | 956 | 0 |
+| `crates/axon-core/src/interp/taint_tests.rs` | 901 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 491 | 514 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
 | `crates/axon-core/src/interp/vm/mod.rs` | 3414 | 0 |
@@ -74,9 +75,9 @@ generated-at: 819fe5495340712c8f418915f2b46aaa48a1066c
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 28901 | 5291 |
+| total | 29804 | 5290 |
 
-`git log --reverse 31413ca7..819fe549 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..d21ed278 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -238,7 +239,8 @@ generated-at: 819fe5495340712c8f418915f2b46aaa48a1066c
 | 99f7927f | R51 S2.3 step 1 | INTERPRETER taint state: ports v0.22 interp/taint.rs (taint bits, Taint accumulator/pc/sticky cells, builtin class tables with now_ns classed WORLD like now_ms, builtin/provenance/native/loop hooks) onto main's Sym/slot Bindings, adds the Interp.taint field and records a module-level let's taint at init_globals in a sealed run. Nothing reads the taint yet (eval_t hook sites are the next step); behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 2ccc64c3 | R51 S2.3 step 2a | INTERPRETER evaluator dispatch: eval() branches once on seal.active to eval_tainted (the v0.22 accumulator wrapper, reading a binding's taint through the same slot lookup as its value) or eval_arm::<false>; eval_arm, eval_block, run_loop_body, eval_binop, eval_call and operand are const-generic over the run, recursing through eval_t::<T>, so the unsealed instantiation is main's evaluator. No taint hook yet; behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 819fe549 | R51 S2.3 step 2b | INTERPRETER taint hooks on the sealed instantiation only (eval_t::<true>): a block restores the accumulator between statements; let, refinement-predicate and pattern bindings carry the value's taint; assignments (plain, in place, place writes) store it with the pc/sticky control taint; comparisons read operands deep and untype, with no in-place operand read; &&/|| through short_circuit_tainted; if/match/while/while-let/for/select branch under t_branch; return and ? set the return taint (? also sticky); fmt-strings, channel send, handler arms (abortable count, payload and return-arm taint), native calls (World) and builtin dispatch (t_builtin_in, pc guard, t_builtin_out). dispatch_named, dispatch_call, match_pattern, bind_let, chan_method and assign_in_place become const-generic, the bytecode engine passing VM_SEALED=false. Unsealed runs: the T=false instantiation is main's code; behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 158 commits | | |
+| d21ed278 | R51 S2.3 step 3 | TEST-ONLY taint unit tests (interp/taint_tests.rs, cfg(test)): drive the evaluator's sealed instantiation eval_t::<true> on a build_with Interp (the refuse-all pin bypassed, the build_in refusal pinned) and kill every S2 hook in a mutation table; every_builtin_has_a_taint_class, the stringifier/emitter and call_builtin drift tests; match_pattern_rt becomes pub(super) for them. Deferred registry re-slots the 8 S2 entries (the taint sinks are S3, the clock class is ported so S6) and adds one S3 unit test. Interpreter behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 159 commits | | |
 <!-- END MECHANICAL -->
 
 
