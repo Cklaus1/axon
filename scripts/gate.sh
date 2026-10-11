@@ -45,7 +45,7 @@
 # that one path. managed_run_gate.sh (poll windows, a 2 s deadline job, a count
 # of host-wide axon_run_* cgroups) runs alone, after the group has drained.
 # One stage runs in the BACKGROUND of the serial spine: the trust-root preflight
-# (root only; mostly waiting), on private copies of the binaries it probes,
+# (root only; about one core busy), on private copies of the binaries it probes,
 # from after the PCI surfaces to a join before the manifest stage. If the gate
 # fails while it runs, fail() stops its whole process tree (`par_abort`).
 #
@@ -681,10 +681,11 @@ echo "── gate: v0.22 Stage-5 executed gates (G03 G08 G10 G11 G13 G28 G32) �
 # (G01 alone is never sufficient): one row per surface, exact test names.
 echo "── gate: v0.22 Protected Check Isolation surfaces ──"
 ./scripts/v022_pci_gates.sh || fail "v0.22 Protected Check Isolation surfaces"
-# The trust-root preflight MECHANISM on a dev fixture. As root it is the longest
-# single stage of the gate (~25 min measured at 9e67b796 on a loaded host: ~50
-# fixtures, each probed as six service UIDs) and almost all of it is waiting, so
-# it runs in the BACKGROUND, beside the serial spine from here to the manifest
+# The trust-root preflight MECHANISM on a dev fixture. As root it is the second
+# longest single stage of the gate (~25 min measured at 9e67b796 on a loaded
+# host: ~50 fixtures, each probed as six service UIDs) and it keeps about ONE
+# core busy (measured alone: 772 s CPU in 815 s wall), so it runs in the
+# BACKGROUND, beside the serial spine from here to the manifest
 # stage, and joins (`par_join`, its output printed whole) before the manifest
 # stage runs axon-fabric's suite again. The only state it shares with the spine
 # is the two binaries it probes: it builds them itself with exactly this
