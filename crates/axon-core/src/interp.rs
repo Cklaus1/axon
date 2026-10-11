@@ -741,6 +741,7 @@ fn forget_scalar(v: Value) {
 /// F5 (Phase 9): one live sandbox entry — a named principal + the concrete set
 /// of effects it allows at runtime. Created by `sandbox_create`; enforced by
 /// `call_builtin` whenever `active_sandbox` points at this entry.
+#[derive(Clone)]
 struct SandboxEntry {
     /// The principal handle this sandbox is scoped to (for audit attribution).
     principal: i64,
@@ -890,6 +891,186 @@ impl Seal {
     }
 }
 
+/// Per-provenance kernel state (R51 S3, PCI runtime sealing; veto
+/// interp.rs:708-842). Every table that holds objects addressed by HANDLE —
+/// fibers, supervisors, principals, stores, LLM gateways, kernel goals,
+/// sandboxes — plus the attribution and constraint state they drive. A sealed
+/// (candidate) frame gets its OWN instance, so an operator handle does not
+/// exist from a sealed frame, whatever id is guessed, and a candidate's fibers
+/// never run in the operator's scheduler (PCI candidate-4 review: forged fiber
+/// ids read the operator's reference result, reset its failed fibers, and a
+/// predicted principal token spent its budget). Reached only through
+/// [`Interp::k`]; an unsealed run only ever reaches `kernels[0]`.
+struct Kernel {
+    /// In-memory provenance store: `@[adaptive]` fn name → recorded return
+    /// scores, in call order. Read by `goal_run` (mirrors `axon-rt`'s store).
+    provenance: RefCell<HashMap<String, Vec<f64>>>,
+    /// Per-call i64-prefix input tuple, in lock-step with `provenance`. The
+    /// vec collects every leading i64 arg the fn took (length = how many
+    /// of the fn's first args were i64). Empty when none were. Read by
+    /// `goal_best_input` (returns the first dim) and `goal_best_inputs`
+    /// (returns the full tuple), and used by the multi-arg coordinate-
+    /// descent hill-climb to seed the next sweep.
+    provenance_inputs: RefCell<HashMap<String, Vec<Vec<i64>>>>,
+    /// Per-call f64-prefix input tuple, mirror of `provenance_inputs` for
+    /// `@[adaptive] fn(f64, …) -> f64`. Read by `goal_best_input_f64` /
+    /// `goal_best_inputs_f64`. Lets the optimizer cover continuous-domain
+    /// problems (linear-regression weights, control parameters, etc.)
+    /// without forcing the user to discretize via integer indices.
+    provenance_inputs_f64: RefCell<HashMap<String, Vec<Vec<f64>>>>,
+    /// R9 corrigibility latch. `corrigible_halt()` sets this to `true`; once
+    /// set it never clears (there is intentionally no resume builtin). While
+    /// set, every call to an `@[corrigible]` fn is refused — its body never
+    /// runs — so the system cannot resist or reverse its own shutdown. A
+    /// one-way latch is the whole safety property: a kill-switch you can turn
+    /// back off is not a kill-switch.
+    corrigible_halted: Cell<bool>,
+    /// F3 (Phase 9): the name of the principal currently in scope for audit
+    /// attribution. Set via `principal_activate(handle)` to associate a kernel
+    /// principal with the execution context, so capability audit records carry the
+    /// principal name rather than the opaque "root" default. Defaults to "root".
+    current_principal: RefCell<String>,
+    /// Active `subject_to` constraint fn name during `goal_run_constrained`
+    /// (pillar-3 constrained search). When set, the optimizer scores an
+    /// INFEASIBLE candidate as maximally distant so it is rejected; the real
+    /// score is still recorded in provenance. `None` outside a constrained goal
+    /// (so plain `goal_run` is byte-identical). See `apply_goal_constraint`.
+    goal_constraint: RefCell<Option<String>>,
+    /// Phase 7 (R12 Slice 1): the live principal-authority registry. The
+    /// `principal_*` builtins mint/spend/authorize against it, so attenuation is
+    /// enforced by the KERNEL (the registry), not just as userland values. A
+    /// handle is a plain `i64` index. Empty until a program mints a root. The
+    /// sealed kernel's registry draws its handle tokens from its own stream
+    /// (`PrincipalRegistry::new_sealed`).
+    principals: RefCell<crate::kernel::PrincipalRegistry>,
+    /// Phase 7 (R12 Slice 2): the cooperative fiber scheduler. `scheduler_spawn`
+    /// queues a (named fn, arg) fiber; `scheduler_run` runs the ready fibers in a
+    /// seed-deterministic round-robin, catching a panicking fiber (recorded as
+    /// failed, not a process abort). The interpreter owns the run loop (it has
+    /// `call_fn`); the queue + ordering live in `kernel::Scheduler`.
+    scheduler: RefCell<crate::kernel::Scheduler>,
+    /// Phase 7 (R12 Slice 3): live supervisors, indexed by handle. Each oversees
+    /// an ordered set of scheduler fibers and, when one fails, restarts the set
+    /// its OTP strategy dictates — latching a halt (exit 4) on a crash loop.
+    supervisors: RefCell<Vec<crate::kernel::Supervisor>>,
+    /// Phase 7 (R12 Slice 4): durable stores, indexed by handle. Each is an
+    /// in-memory `kernel::Store` (rebuilt by replaying its NDJSON log on open)
+    /// plus the log path it appends applied ops to, so its value survives a fresh
+    /// process and a retried op_id dedups cross-process under linearizable.
+    stores: RefCell<Vec<(crate::kernel::Store, std::path::PathBuf)>>,
+    /// Phase 7 (R12 Slice 5): principal-scoped LLM gateways, indexed by handle.
+    /// Each mediates AI calls with per-token cost metering debited from its
+    /// principal's budget (Slice 1), degrading to a fallback + latch on overrun.
+    llm_gateways: RefCell<Vec<crate::kernel::LlmGateway>>,
+    /// Phase 7 (R12b): principal-scoped `KernelGoal`s, indexed by handle. Each
+    /// runs the existing optimizer (`run_goal`) scoped to a Slice-1 principal's
+    /// budget, refusing to exceed it (E1604, exit 7). See R12b-kernel-goal.md.
+    goals: RefCell<Vec<crate::kernel::KernelGoal>>,
+    /// F5 (Phase 9): registered sandboxes, indexed by handle (0-based). Created
+    /// by `sandbox_create`; the handle is the index into this vec.
+    sandboxes: RefCell<Vec<SandboxEntry>>,
+    /// F5 (Phase 9): the handle of the currently active sandbox (-1 = none).
+    /// `sandbox_run` sets this before calling the user fn and restores it after.
+    /// `call_builtin` reads it to gate effectful builtins.
+    active_sandbox: Cell<i64>,
+    /// The SEALED kernel's xorshift64 RNG state (`0` = not yet seeded). EVERY
+    /// draw — `random_*`, the distribution samplers, `srand`, the `goal_*`
+    /// searches and `@[forall]` input generation — goes through
+    /// [`Interp::rng_next`] / [`Interp::rng_reseed`], i.e. through the kernel
+    /// of the frame that is running, so a sealed candidate can neither
+    /// advance, reseed nor observe the operator's stream, whichever builtin it
+    /// uses (PSV-1). The OPERATOR kernel keeps main's process-global stream
+    /// ([`next_rand_u64`]), so an unsealed run draws exactly the sequence it
+    /// drew before R51, across every `Interp` of the process (one per `@[test]`
+    /// fn); this cell stays `0` in the operator kernel. (Veto gave the operator
+    /// kernel a per-`Interp` cell, which restarts the stream at each test.)
+    rng: Cell<u64>,
+    /// Whether this is the sealed (candidate) kernel. Its stream is its own
+    /// cell, seeded by a one-way derivation, so drawing from it reveals
+    /// nothing about the operator's seed — see [`sealed_rng_seed`].
+    rng_sealed: bool,
+}
+
+impl Kernel {
+    /// The kernel of one provenance: the operator's (`sealed == false`) or
+    /// the sealed candidate's, both under the SAME ambient effect ceiling
+    /// (`ambient`), so a sealed frame may narrow it but never widen it. The
+    /// sandbox registry and the active-handle field are derived from it.
+    fn new(sealed: bool, ambient: Vec<SandboxEntry>) -> Kernel {
+        Kernel {
+            provenance: RefCell::new(HashMap::new()),
+            provenance_inputs: RefCell::new(HashMap::new()),
+            provenance_inputs_f64: RefCell::new(HashMap::new()),
+            corrigible_halted: Cell::new(false),
+            current_principal: RefCell::new(
+                std::env::var("AXON_PRINCIPAL")
+                    .ok()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "root".to_string()),
+            ),
+            goal_constraint: RefCell::new(None),
+            principals: RefCell::new(if sealed {
+                crate::kernel::PrincipalRegistry::new_sealed()
+            } else {
+                crate::kernel::PrincipalRegistry::new()
+            }),
+            // Scheduler order is a function of spawn order + AXON_SEED (R12 §5
+            // determinism): derive the round-robin start offset from the seed.
+            scheduler: RefCell::new(crate::kernel::Scheduler::new(rng_seed() as usize)),
+            supervisors: RefCell::new(Vec::new()),
+            stores: RefCell::new(Vec::new()),
+            llm_gateways: RefCell::new(Vec::new()),
+            goals: RefCell::new(Vec::new()),
+            active_sandbox: Cell::new(if ambient.is_empty() { -1 } else { 0 }),
+            sandboxes: RefCell::new(ambient),
+            rng: Cell::new(0),
+            rng_sealed: sealed,
+        }
+    }
+
+    /// The next draw from THIS kernel's stream: the operator kernel's is the
+    /// process-global one; the sealed kernel's is its own, seeded on first use.
+    fn rng_next(&self) -> u64 {
+        if !self.rng_sealed {
+            return next_rand_u64();
+        }
+        let mut x = self.rng.get();
+        if x == 0 {
+            x = sealed_rng_seed(rng_seed());
+        }
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.rng.set(x);
+        x
+    }
+
+    /// `srand(n)`: reseed THIS kernel's stream only. `n == 0` maps to a
+    /// non-zero sentinel so it does not read as "not yet seeded".
+    fn rng_set(&self, n: i64) {
+        if self.rng_sealed {
+            self.rng.set((n as u64) | 1);
+        } else {
+            set_rand_seed(n);
+        }
+    }
+}
+
+/// The sealed kernel's initial RNG state: SHA-256 over a domain tag and the
+/// operator seed. Deterministic under `AXON_SEED` (replay still reproduces a
+/// candidate's draws), but one-way, so a candidate that reads its own stream
+/// (xorshift64's output IS its state) learns nothing about the operator's.
+fn sealed_rng_seed(operator_seed: u64) -> u64 {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"axon-sealed-rng/1\0");
+    h.update(operator_seed.to_le_bytes());
+    let d = h.finalize();
+    let mut b = [0u8; 8];
+    b.copy_from_slice(&d[..8]);
+    u64::from_le_bytes(b) | 1
+}
+
 pub struct Interp<'p> {
     fns: HashMap<String, &'p FnDef>,
     #[allow(dead_code)]
@@ -913,22 +1094,10 @@ pub struct Interp<'p> {
     fn_table: Vec<FnEntry<'p>>,
     fn_of_sym: FxHashMap<Sym, u32>,
     fn_of_def: FxHashMap<usize, u32>,
-    /// In-memory provenance store: `@[adaptive]` fn name → recorded return
-    /// scores, in call order. Read by `goal_run` (mirrors `axon-rt`'s store).
-    provenance: RefCell<HashMap<String, Vec<f64>>>,
-    /// Per-call i64-prefix input tuple, in lock-step with `provenance`. The
-    /// vec collects every leading i64 arg the fn took (length = how many
-    /// of the fn's first args were i64). Empty when none were. Read by
-    /// `goal_best_input` (returns the first dim) and `goal_best_inputs`
-    /// (returns the full tuple), and used by the multi-arg coordinate-
-    /// descent hill-climb to seed the next sweep.
-    provenance_inputs: RefCell<HashMap<String, Vec<Vec<i64>>>>,
-    /// Per-call f64-prefix input tuple, mirror of `provenance_inputs` for
-    /// `@[adaptive] fn(f64, …) -> f64`. Read by `goal_best_input_f64` /
-    /// `goal_best_inputs_f64`. Lets the optimizer cover continuous-domain
-    /// problems (linear-regression weights, control parameters, etc.)
-    /// without forcing the user to discretize via integer indices.
-    provenance_inputs_f64: RefCell<HashMap<String, Vec<Vec<f64>>>>,
+    /// R51 S3: the KERNEL tables, one per provenance: `kernels[0]` for the
+    /// operator, `kernels[1]` for sealed (candidate) frames — selected by
+    /// [`Interp::k`] from `frame_sealed`.
+    kernels: [Kernel; 2],
     /// Current call-stack depth, bounded by `max_depth` so runaway recursion
     /// fails with a catchable panic rather than overflowing the (large but
     /// finite) interpreter thread stack and aborting the process.
@@ -984,13 +1153,6 @@ pub struct Interp<'p> {
     /// R50 S9: `AXON_VM_EAGER=1`, read once at build: compile every body on
     /// its first entry. Only consulted under [`Engine::Vm`].
     vm_eager: bool,
-    /// R9 corrigibility latch. `corrigible_halt()` sets this to `true`; once
-    /// set it never clears (there is intentionally no resume builtin). While
-    /// set, every call to an `@[corrigible]` fn is refused — its body never
-    /// runs — so the system cannot resist or reverse its own shutdown. A
-    /// one-way latch is the whole safety property: a kill-switch you can turn
-    /// back off is not a kill-switch.
-    corrigible_halted: Cell<bool>,
     /// The Axon function currently executing, whose name attributes builtin
     /// side effects (e.g. R3's `ai_call` provenance records) to their caller.
     /// Set on entry to `call_fn`, restored on exit. `None` at top level. A
@@ -1010,17 +1172,6 @@ pub struct Interp<'p> {
     /// audit trail (`axon trace --ai` cost-attribution per goal). `None` outside
     /// any goal optimization.
     current_goal: RefCell<Option<String>>,
-    /// F3 (Phase 9): the name of the principal currently in scope for audit
-    /// attribution. Set via `principal_activate(handle)` to associate a kernel
-    /// principal with the execution context, so capability audit records carry the
-    /// principal name rather than the opaque "root" default. Defaults to "root".
-    current_principal: RefCell<String>,
-    /// Active `subject_to` constraint fn name during `goal_run_constrained`
-    /// (pillar-3 constrained search). When set, the optimizer scores an
-    /// INFEASIBLE candidate as maximally distant so it is rejected; the real
-    /// score is still recorded in provenance. `None` outside a constrained goal
-    /// (so plain `goal_run` is byte-identical). See `apply_goal_constraint`.
-    goal_constraint: RefCell<Option<String>>,
     /// Per-call AI tier from a `tier:` named arg (R3b), set by `eval_call` for
     /// the duration of a single builtin dispatch. `ai_complete`'s tier
     /// resolution reads this first (step 1: per-call > policy > default).
@@ -1105,41 +1256,6 @@ pub struct Interp<'p> {
     /// operation. `resume(v)` replays `body` (the handled `with`-block body) with
     /// `v` fed at the intercepted op and returns the continuation's value.
     resume_ctx: RefCell<Vec<ResumeCtx>>,
-    /// Phase 7 (R12 Slice 1): the live principal-authority registry. The
-    /// `principal_*` builtins mint/spend/authorize against it, so attenuation is
-    /// enforced by the KERNEL (the registry), not just as userland values. A
-    /// handle is a plain `i64` index. Empty until a program mints a root.
-    principals: RefCell<crate::kernel::PrincipalRegistry>,
-    /// Phase 7 (R12 Slice 2): the cooperative fiber scheduler. `scheduler_spawn`
-    /// queues a (named fn, arg) fiber; `scheduler_run` runs the ready fibers in a
-    /// seed-deterministic round-robin, catching a panicking fiber (recorded as
-    /// failed, not a process abort). The interpreter owns the run loop (it has
-    /// `call_fn`); the queue + ordering live in `kernel::Scheduler`.
-    scheduler: RefCell<crate::kernel::Scheduler>,
-    /// Phase 7 (R12 Slice 3): live supervisors, indexed by handle. Each oversees
-    /// an ordered set of scheduler fibers and, when one fails, restarts the set
-    /// its OTP strategy dictates — latching a halt (exit 4) on a crash loop.
-    supervisors: RefCell<Vec<crate::kernel::Supervisor>>,
-    /// Phase 7 (R12 Slice 4): durable stores, indexed by handle. Each is an
-    /// in-memory `kernel::Store` (rebuilt by replaying its NDJSON log on open)
-    /// plus the log path it appends applied ops to, so its value survives a fresh
-    /// process and a retried op_id dedups cross-process under linearizable.
-    stores: RefCell<Vec<(crate::kernel::Store, std::path::PathBuf)>>,
-    /// Phase 7 (R12 Slice 5): principal-scoped LLM gateways, indexed by handle.
-    /// Each mediates AI calls with per-token cost metering debited from its
-    /// principal's budget (Slice 1), degrading to a fallback + latch on overrun.
-    llm_gateways: RefCell<Vec<crate::kernel::LlmGateway>>,
-    /// Phase 7 (R12b): principal-scoped `KernelGoal`s, indexed by handle. Each
-    /// runs the existing optimizer (`run_goal`) scoped to a Slice-1 principal's
-    /// budget, refusing to exceed it (E1604, exit 7). See R12b-kernel-goal.md.
-    goals: RefCell<Vec<crate::kernel::KernelGoal>>,
-    /// F5 (Phase 9): registered sandboxes, indexed by handle (0-based). Created
-    /// by `sandbox_create`; the handle is the index into this vec.
-    sandboxes: RefCell<Vec<SandboxEntry>>,
-    /// F5 (Phase 9): the handle of the currently active sandbox (-1 = none).
-    /// `sandbox_run` sets this before calling the user fn and restores it after.
-    /// `call_builtin` reads it to gate effectful builtins.
-    active_sandbox: Cell<i64>,
     /// Phase 5: named refinement → its predicate Expr (binder `_`). Collected
     /// from `RefineDef` items (inline `where` on a param desugars to a synthetic
     /// named refinement during parsing). Drives the runtime precondition check in
@@ -3794,9 +3910,6 @@ impl<'p> Interp<'p> {
             }
         }
 
-        // Read the ambient effect ceiling once; both the sandbox registry
-        // and the active-handle field below are derived from it.
-        let ambient = ambient_sandbox();
         Interp {
             res,
             fn_table,
@@ -3808,9 +3921,15 @@ impl<'p> Interp<'p> {
             methods,
             global_defs,
             globals: FxHashMap::default(),
-            provenance: RefCell::new(HashMap::new()),
-            provenance_inputs: RefCell::new(HashMap::new()),
-            provenance_inputs_f64: RefCell::new(HashMap::new()),
+            kernels: {
+                // Read the ambient effect ceiling once (its parse warns on
+                // stderr); both kernels start under the SAME ceiling.
+                let ambient = ambient_sandbox();
+                [
+                    Kernel::new(false, ambient.clone()),
+                    Kernel::new(true, ambient),
+                ]
+            },
             call_depth: Cell::new(0),
             test_frame_depth: Cell::new(0),
             test_body_finished: Cell::new(false),
@@ -3828,16 +3947,8 @@ impl<'p> Interp<'p> {
             engine,
             vm_trace: vm::trace_at_build(),
             vm_eager: vm::eager_at_build(),
-            corrigible_halted: Cell::new(false),
             enclosing_agent: RefCell::new(None),
             current_goal: RefCell::new(None),
-            current_principal: RefCell::new(
-                std::env::var("AXON_PRINCIPAL")
-                    .ok()
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| "root".to_string()),
-            ),
-            goal_constraint: RefCell::new(None),
             current_fn: Cell::new(None),
             current_call_tier: RefCell::new(None),
             callees: RefCell::new(Vec::new()),
@@ -3852,16 +3963,6 @@ impl<'p> Interp<'p> {
             handlers: RefCell::new(Vec::new()),
             resume_replay: RefCell::new(None),
             resume_ctx: RefCell::new(Vec::new()),
-            principals: RefCell::new(crate::kernel::PrincipalRegistry::new()),
-            // Scheduler order is a function of spawn order + AXON_SEED (R12 §5
-            // determinism): derive the round-robin start offset from the seed.
-            scheduler: RefCell::new(crate::kernel::Scheduler::new(rng_seed() as usize)),
-            supervisors: RefCell::new(Vec::new()),
-            stores: RefCell::new(Vec::new()),
-            llm_gateways: RefCell::new(Vec::new()),
-            goals: RefCell::new(Vec::new()),
-            active_sandbox: Cell::new(if ambient.is_empty() { -1 } else { 0 }),
-            sandboxes: RefCell::new(ambient),
             refine_preds,
             main_locals: RefCell::new(HashMap::new()),
             discharged: crate::verify::Discharged::default(),
@@ -3909,6 +4010,49 @@ impl<'p> Interp<'p> {
         count.set(count.get() - 1);
         self.frame_sealed.set(prev);
         out
+    }
+
+    /// The kernel of the frame now running: the operator's, or the sealed
+    /// candidate's own. Handle-addressed state is only ever reached through
+    /// it. `frame_sealed` is never set in an unsealed run, so that run only
+    /// ever reaches `kernels[0]`.
+    #[inline(always)]
+    fn k(&self) -> &Kernel {
+        &self.kernels[usize::from(self.frame_sealed.get())]
+    }
+
+    /// The ONLY way to draw a random number: from the running frame's kernel.
+    /// A sealed frame draws from the candidate's own stream and so can never
+    /// advance or observe the operator's (PSV-1).
+    ///
+    /// OPERATOR code running ABOVE a sealed frame (a closure the suite handed
+    /// the candidate, an operator handler arm answering a candidate operation)
+    /// is REFUSED: the candidate decides how many times such code runs, so
+    /// every draw it made would advance the operator's stream by a count the
+    /// candidate chose, and steer the operator's next challenge (C9 round 3,
+    /// PSV-1, amendment 46).
+    pub(crate) fn rng_next(&self) -> Result<u64, Flow> {
+        self.rng_guard()?;
+        Ok(self.k().rng_next())
+    }
+
+    /// The ONLY way to reseed (`srand`): the running frame's kernel only,
+    /// under the same refusal as [`Interp::rng_next`].
+    pub(crate) fn rng_reseed(&self, n: i64) -> Result<(), Flow> {
+        self.rng_guard()?;
+        self.k().rng_set(n);
+        Ok(())
+    }
+
+    fn rng_guard(&self) -> Result<(), Flow> {
+        if !self.frame_sealed.get() && self.sealed_frames.get() > 0 {
+            return panic(
+                "the operator's random stream cannot be used by operator code that sealed code \
+                 (the candidate under test) is running — the candidate would choose how far it \
+                 advances; draw before handing the code to the candidate",
+            );
+        }
+        Ok(())
     }
 
     /// Evaluate module-level constants in source order, so each may reference
@@ -4020,7 +4164,7 @@ impl<'p> Interp<'p> {
     /// F3 (Phase 9): the name of the principal currently in scope for audit
     /// attribution. Defaults to "root"; overridden by `principal_activate`.
     fn current_principal_name(&self) -> String {
-        self.current_principal.borrow().clone()
+        self.k().current_principal.borrow().clone()
     }
 
     /// Whether the currently-executing fn carries an `@[ai(policy)]` attribute.
@@ -4086,11 +4230,11 @@ impl<'p> Interp<'p> {
     /// and another for the telemetry writer. `IO` is the row the effect
     /// catalog gives filesystem and console builtins.
     fn provenance_write_permitted(&self) -> bool {
-        let handle = self.active_sandbox.get();
+        let handle = self.k().active_sandbox.get();
         if handle < 0 {
             return true; // no ceiling in force
         }
-        let sbs = self.sandboxes.borrow();
+        let sbs = self.k().sandboxes.borrow();
         match sbs.get(handle as usize) {
             Some(sb) => {
                 crate::interp::builtins::first_effect_outside_ceiling(sb, &["IO"]).is_none()
@@ -4354,7 +4498,7 @@ impl<'p> Interp<'p> {
         // never happen, and the latch never clears — the function cannot resist
         // or reverse its own shutdown. Keyed on the annotation, enforced by the
         // engine, so a user cannot write a corrigible fn that ignores the halt.
-        if entry.corrigible && self.corrigible_halted.get() {
+        if entry.corrigible && self.k().corrigible_halted.get() {
             return Err(Flow::Halted(
                 format!(
                     "`{}` refused: corrigibility kill-switch is latched \
@@ -4712,17 +4856,20 @@ impl<'p> Interp<'p> {
                     // it takes the taint of the record (veto interp.rs:4462;
                     // the result's own taint where veto reads `taint.last`).
                     self.t_provenance_write(entry_t | body_t, true, false);
-                    self.provenance
+                    self.k()
+                        .provenance
                         .borrow_mut()
                         .entry(f.name.clone())
                         .or_default()
                         .push(score);
-                    self.provenance_inputs
+                    self.k()
+                        .provenance_inputs
                         .borrow_mut()
                         .entry(f.name.clone())
                         .or_default()
                         .push(input_args.clone());
-                    self.provenance_inputs_f64
+                    self.k()
+                        .provenance_inputs_f64
                         .borrow_mut()
                         .entry(f.name.clone())
                         .or_default()
@@ -5110,7 +5257,7 @@ impl<'p> Interp<'p> {
         if name.is_empty() {
             return false;
         }
-        self.fns.contains_key(name) || self.provenance.borrow().contains_key(name)
+        self.fns.contains_key(name) || self.k().provenance.borrow().contains_key(name)
     }
 
     fn unknown_goal_name(name: &str) -> Flow {
@@ -5359,6 +5506,9 @@ mod taint;
 // Its unit tests (R51 S2: the hooks of `eval_t::<true>`, driven directly).
 #[cfg(test)]
 mod taint_tests;
+// The per-frame `Kernel` split's unit tests (R51 S3).
+#[cfg(test)]
+mod kernel_tests;
 // Core tree-walking evaluator (eval/eval_block/eval_call/eval_binop/
 // match_pattern) extracted to interp/eval.rs (R0 slice 5). Its methods live in a
 // second `impl Interp` block there; inherent methods resolve across split impl
@@ -5413,9 +5563,12 @@ pub use provenance::{
 /// clock on first use). Single-threaded interpreter, so no CAS needed.
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
-/// Global xorshift64 RNG state. `0` means "uninitialized" — the first draw
-/// seeds it (see [`rng_seed`]). Explicitly settable via [`set_rand_seed`]
-/// (the `srand` builtin) for reproducible runs.
+/// Global xorshift64 RNG state: the OPERATOR kernel's stream (the sealed
+/// kernel has its own, `Kernel::rng`). `0` means "uninitialized" — the first
+/// draw seeds it (see [`rng_seed`]). Explicitly settable via [`set_rand_seed`]
+/// (the `srand` builtin) for reproducible runs. Read and written only by
+/// `Kernel::rng_next` / `Kernel::rng_set`, so every draw goes through
+/// [`Interp::rng_next`].
 static RNG_STATE: AtomicU64 = AtomicU64::new(0);
 
 /// Parse the ambient run-level token cap from `AXON_BUDGET_TOKENS`.
@@ -5518,13 +5671,15 @@ fn rng_seed() -> u64 {
     (now_ms() as u64) | 1
 }
 
-/// Explicitly set the RNG seed (the `srand(n)` builtin). `n == 0` is mapped
-/// to a non-zero sentinel so it doesn't read as "uninitialized".
+/// Explicitly set the operator RNG seed (`srand(n)` in an operator frame).
+/// `n == 0` is mapped to a non-zero sentinel so it doesn't read as
+/// "uninitialized".
 fn set_rand_seed(n: i64) {
     let s = (n as u64) | 1;
     RNG_STATE.store(s, AtomicOrdering::Relaxed);
 }
 
+/// The operator kernel's next draw (see [`RNG_STATE`]).
 fn next_rand_u64() -> u64 {
     let mut x = RNG_STATE.load(AtomicOrdering::Relaxed);
     if x == 0 {
@@ -8002,7 +8157,7 @@ fn main() { }
 
     /// `call_builtin`'s arms in `interp/builtins.rs`, split at their 12-space
     /// `"name" … =>` headers: (the arm's names, its body).
-    fn builtin_arms(src: &str) -> Vec<(Vec<String>, String)> {
+    pub(super) fn builtin_arms(src: &str) -> Vec<(Vec<String>, String)> {
         let mut arms: Vec<(Vec<String>, String)> = Vec::new();
         for line in src.lines() {
             let indent = line.len() - line.trim_start().len();

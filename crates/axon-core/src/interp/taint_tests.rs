@@ -794,7 +794,9 @@ fn builtins_are_dispatched_only_where_the_taint_is_routed() {
     files.sort();
     let mut sites = Vec::new();
     for file in &files {
-        if file.ends_with("taint_tests.rs") {
+        // The unit-test modules call the dispatcher directly; neither is a
+        // dispatch site of a run.
+        if file.ends_with("taint_tests.rs") || file.ends_with("kernel_tests.rs") {
             continue;
         }
         for l in source(file).lines() {

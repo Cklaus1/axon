@@ -159,19 +159,19 @@
       "name": "a_candidate_cannot_steer_the_operators_challenge_through_its_closure",
       "file": "crates/axon-core/tests/psv_test_selection.rs",
       "slice": "S3",
-      "reason": "sealed RNG stream and its refusal text not ported; sealed control refused until S6"
+      "reason": "sealed frame entry at the seal crossing (seal_call -> with_frame) not ported; sealed control refused until S6"
     },
     {
       "name": "a_sealed_candidate_cannot_reseed_the_rng",
       "file": "crates/axon-core/tests/psv_test_selection.rs",
       "slice": "S3",
-      "reason": "sealed RNG stream not ported; sealed control refused until S6"
+      "reason": "sealed frame entry at the seal crossing (seal_call -> with_frame) not ported; sealed control refused until S6"
     },
     {
       "name": "a_sealed_candidates_own_stream_reveals_nothing_of_the_operators",
       "file": "crates/axon-core/tests/psv_test_selection.rs",
       "slice": "S3",
-      "reason": "sealed RNG stream not ported; sealed control refused until S6"
+      "reason": "sealed frame entry at the seal crossing (seal_call -> with_frame) not ported; sealed control refused until S6"
     },
     {
       "name": "a_sealed_handler_never_answers_or_aborts_the_operators_listener",
@@ -183,7 +183,7 @@
       "name": "sealed_rng_activity_never_moves_the_operators_stream",
       "file": "crates/axon-core/tests/psv_test_selection.rs",
       "slice": "S3",
-      "reason": "sealed RNG stream not ported; sealed control refused until S6"
+      "reason": "sealed frame entry at the seal crossing (seal_call -> with_frame) not ported; sealed control refused until S6"
     },
     {
       "name": "a_built_negative_verdict_variant_is_a_site",
@@ -513,7 +513,7 @@
       "name": "a_sealed_candidate_cannot_reach_operator_state_by_handle_or_definition",
       "file": "crates/axon-fabric/tests/check_effects.rs",
       "slice": "S3",
-      "reason": "seal edges, global_ref and the per-frame Kernel split not ported; sealed control refused until S6"
+      "reason": "seal edges and global_ref not ported; sealed control refused until S6"
     },
     {
       "name": "a_sealed_candidate_cannot_reach_the_operators_names",
@@ -531,13 +531,13 @@
       "name": "a_candidate_steering_the_rng_through_goal_search_does_not_pass_a_randomized_check",
       "file": "crates/axon-psv/tests/rng_isolation.rs",
       "slice": "S3",
-      "reason": "sealed RNG stream not ported; sealed runs refused until S6 (verdict Unknown, not Failed)"
+      "reason": "sealed frame entry at the seal crossing (seal_call -> with_frame) not ported; sealed runs refused until S6 (verdict Unknown, not Failed)"
     },
     {
       "name": "a_correct_candidate_passes_the_same_randomized_check",
       "file": "crates/axon-psv/tests/rng_isolation.rs",
       "slice": "S3",
-      "reason": "sealed RNG stream not ported; the honest sealed pass is refused until S6"
+      "reason": "sealed frame entry at the seal crossing (seal_call -> with_frame) not ported; the honest sealed pass is refused until S6"
     },
     {
       "name": "a_candidate_calls_its_own_fn_value_and_never_reads_an_operator_global",
@@ -609,7 +609,7 @@
       "name": "operator_code_the_candidate_runs_cannot_draw_the_operators_stream",
       "file": "crates/axon-psv/tests/sealed_frames.rs",
       "slice": "S3",
-      "reason": "sealed RNG stream not ported; sealed runs refused until S6 (verdict Unknown)"
+      "reason": "sealed frame entry at the seal crossing (seal_call -> with_frame) not ported; sealed runs refused until S6 (verdict Unknown)"
     },
     {
       "name": "sandbox_run_hands_the_operator_an_i64_or_nothing",
