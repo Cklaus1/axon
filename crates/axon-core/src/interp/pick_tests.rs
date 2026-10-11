@@ -106,7 +106,7 @@ fn attack(why: &str, suite: &str, cand: &str) {
     );
     let off = run_unit(suite, cand, true, false);
     assert!(
-        matches!(off, Ok(_)),
+        off.is_ok(),
         "the attack <{why}> is not live without the taint rules: {off:?}"
     );
 }
@@ -387,7 +387,7 @@ pub(super) fn attacks_are_live_unit(cases: &[PickCase]) {
             continue;
         }
         assert!(
-            matches!(out, Ok(_)),
+            out.is_ok(),
             "the attack `{}` is not live without the rule (a refusal elsewhere would hide a hole): {out:?}",
             c.name
         );
