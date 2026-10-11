@@ -1,0 +1,25 @@
+Native stack bytes per recursion level (max RSS delta / depth delta, AXON_MAX_DEPTH=1000000), by shape; script perlevel.py. base = 5864c423, head0 = 3921a309, head2 = 4bb4a0e1 (reserve x1.25, capped).
+
+[tree] bytes/level, D 1000->21000
+shape         base-rel   head0-rel   head2-rel    base-dbg   head0-dbg   head2-dbg
+plain            5469       6030       6066      51492      55721      55687
+paren100        96601     108436     108439    1096266    1162920    1162885
+block20         23905      26789      26754     240266     256533     256611
+let              3602       4005       4022      31655      34634      34628
+mutual           4521       5017       5038      41076      44651      44644
+closure         10252      11393      11352      89667      99146      99156
+question         4517       5011       5020      40808      44274      44237
+mutref           4793       4933       4941      40765      44106      44111
+match            4537       5032       5020      42097      45724      45689
+
+[vm] bytes/level, D 1000->21000
+shape         base-rel   head0-rel   head2-rel    base-dbg   head0-dbg   head2-dbg
+plain            1832       1857       1833      26303      31010      31015
+paren100         1797       1838       1838      26300      31024      31003
+block20          1836       1819       1842      26320      30985      31009
+let              1870       1887       1876      26350      31071      31067
+mutual           1816       1846       1818      26300      31036      31009
+closure          6000       6125       6121      80655      95595      95721
+question         1868       1902       1910      26383      31035      31081
+mutref           2041       2036       2060      28431      33950      33971
+match            1815       1850       1831      26304      31022      31032
