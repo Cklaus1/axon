@@ -1848,51 +1848,75 @@ fn lambda_arity_mismatch(want: usize, got: usize) -> R {
     panic(format!("lambda: expected {want} args, got {got}"))
 }
 
-/// Soft typing at the RETURN boundary: a fn declared `-> T` (a plain
-/// scalar) whose body produces an `Uncertain<T>`/`Temporal<T>` unwraps to
-/// the inner value — the same rule as a plain-T parameter. Without this,
-/// `fn f() -> i64 { uncertain }` leaked the struct and `f() + 1` silently
-/// produced 0. A fn declared `-> Uncertain<T>`/`-> Temporal<T>` keeps it.
-/// Only unwrap when the declared return is a plain SCALAR (i64/i32/
-/// f64/bool); a str/struct/tuple/soft-wrapper return is left untouched.
+/// Whether the return boundary ([`sum_return`]) can ask anything of `v`:
+/// only a struct (a soft wrapper) or a `Result`/`Option` constructor can be
+/// asked anything. `Struct`..=`Err` is one contiguous tag range (`Enum`,
+/// inside it, returns as is), so this is one compare, and it reads only the
+/// value, never the entry (cost only, R51 S0b).
 #[inline(always)]
-fn scalar_return(entry: &FnEntry<'_>, result: Value) -> Value {
-    // Only a struct can be a soft wrapper (cost only, R50 S5).
-    if entry.ret_is_scalar && matches!(result, Value::Struct(_)) {
-        if let Some(inner) = value::soft_inner(&result) {
-            return inner;
-        }
-    }
-    result
+fn ret_needs_check(v: &Value) -> bool {
+    matches!(
+        v,
+        Value::Struct(_)
+            | Value::Enum(_)
+            | Value::Some(_)
+            | Value::None
+            | Value::Ok(_)
+            | Value::Err(_)
+    )
 }
 
-/// [`scalar_return`] behind the `Result`/`Option` check every return boundary
-/// makes. A value whose constructor contradicts the declared `Result`/
-/// `Option` return type is a runtime type confusion (an untyped `dict_get`
-/// yields a free type variable, so a stored `None` type-checks as a
-/// `Result`): refused here, the one boundary every return crosses on both
-/// engines, instead of letting a caller's `?` read it as the other type
-/// (v0.22 C9 round 3, PSV-3).
+/// The return boundary, one fn on every return path of both engines: what
+/// `entry`'s declared return type ([`FnEntry::ret`]) asks of `result`
+/// ([`scalar_return`]), tested on the value's tag first
+/// ([`ret_needs_check`]).
 #[inline(always)]
 fn sum_return(entry: &FnEntry<'_>, result: Value) -> R {
-    if let Some(sum) = entry.ret_sum {
-        let confused = match sum {
-            RetSum::Result => matches!(result, Value::Some(_) | Value::None),
-            RetSum::Option => matches!(result, Value::Ok(_) | Value::Err(_)),
-        };
-        if confused {
-            return Err(sum_confusion(entry, sum, &result));
-        }
+    if ret_needs_check(&result) {
+        return scalar_return(entry, result);
     }
-    Ok(scalar_return(entry, result))
+    Ok(result)
+}
+
+/// [`sum_return`] for a struct or a `Result`/`Option` constructor.
+///
+/// Soft typing: a fn declared `-> T` (a plain scalar) whose body produces
+/// an `Uncertain<T>`/`Temporal<T>` unwraps to the inner value — the same
+/// rule as a plain-T parameter. Without this, `fn f() -> i64 { uncertain }`
+/// leaked the struct and `f() + 1` silently produced 0. A fn declared
+/// `-> Uncertain<T>`/`-> Temporal<T>` keeps it; a str/struct/tuple/soft-
+/// wrapper return is left untouched.
+///
+/// A value whose constructor contradicts the declared `Result`/`Option`
+/// return type is a runtime type confusion (an untyped `dict_get` yields a
+/// free type variable, so a stored `None` type-checks as a `Result`):
+/// refused here, the one boundary every return crosses on both engines,
+/// instead of letting a caller's `?` read it as the other type (v0.22 C9
+/// round 3, PSV-3).
+#[inline(always)]
+fn scalar_return(entry: &FnEntry<'_>, result: Value) -> R {
+    match (entry.ret, &result) {
+        (RetCheck::Scalar, Value::Struct(_)) => {
+            if let Some(inner) = value::soft_inner(&result) {
+                return Ok(inner);
+            }
+        }
+        (RetCheck::Result, Value::Some(_) | Value::None)
+        | (RetCheck::Option, Value::Ok(_) | Value::Err(_)) => {
+            return Err(sum_confusion(entry, &result));
+        }
+        _ => {}
+    }
+    Ok(result)
 }
 
 #[cold]
 #[inline(never)]
-fn sum_confusion(entry: &FnEntry<'_>, sum: RetSum, result: &Value) -> Flow {
-    let declared = match sum {
-        RetSum::Result => "Result",
-        RetSum::Option => "Option",
+fn sum_confusion(entry: &FnEntry<'_>, result: &Value) -> Flow {
+    let declared = if entry.ret == RetCheck::Result {
+        "Result"
+    } else {
+        "Option"
     };
     Flow::Panic(
         format!(

@@ -1,0 +1,33 @@
+// R51 S0b: a leaf fn (its body one Load of a parameter) declared `-> Result`
+// never hands its caller a `None` (an untyped `dict_get` makes a stored `None`
+// type-check as the Result). The VM's leaf call declines it to the full path,
+// which refuses it as the tree does.
+fn pass(r: Result<i64, str>) -> Result<i64, str> {
+    r
+}
+
+fn drive() {
+    let d = dict_new()
+    let n: Option<i64> = None
+    for i in 0..5 {
+        if i < 3 {
+            let o: Result<i64, str> = Ok(i * 2)
+            dict_set(d, "k", o)
+        } else {
+            dict_set(d, "k", n)
+        }
+        let c = match dict_get(d, "k") {
+            Some(v) => v
+            None => Err("unreachable")
+        }
+        match pass(c) {
+            Ok(v) => println(to_str(v))
+            Err(e) => println(e)
+        }
+    }
+    println("unreachable: the confusion crossed the boundary")
+}
+
+fn main() {
+    drive()
+}
