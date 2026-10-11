@@ -1,0 +1,12 @@
+// R51 S7 (S7-UnsealedParity-1): an effect-handler arm's `break` stays in the
+// arm, even when the `with` sits inside a loop: an error at the arm's edge.
+fn main() {
+    let i = 0
+    while i < 3 {
+        with handler { on IO(p) => { break } } {
+            println("handled")
+        }
+        i = i + 1
+    }
+    println("unreachable: the loop ended silently")
+}

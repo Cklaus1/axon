@@ -1328,6 +1328,28 @@ mod tests {
         ]
     }
 
+    /// S7-UnsealedParity-9: G3 reads the verdict `axon test` gives. A pass
+    /// that makes a passing test return `Err` (or end early on `None`) is a
+    /// flip, and a `should_fail` test that ends on `Err` passes as expected
+    /// before and after, as in `axon test` (R51 §3).
+    #[test]
+    fn g3_counts_a_failure_exit_as_a_failing_test() {
+        let before = prog("@[test]\nfn t() -> Result<i64, str> { Ok(1) }\n");
+        for after in [
+            "@[test]\nfn t() -> Result<i64, str> { Err(\"no\") }\n",
+            "@[test]\nfn t() -> Option<i64> {\n    let k = 0\n    if k == 0 { return None }\n    Some(1)\n}\n",
+        ] {
+            assert_eq!(
+                first_test_outcome_flip(&before, &prog(after)),
+                Some(("t".to_string(), "passing → failing".to_string())),
+                "{after}"
+            );
+        }
+        let sf = prog("@[test(should_fail)]\nfn t() -> Result<i64, str> { Err(\"no\") }\n");
+        assert!(test_passes_as_expected(&sf, "t", true));
+        assert_eq!(first_test_outcome_flip(&sf, &sf), None);
+    }
+
     /// The headline red test (R10 §8): an identity pass verifies; a pass that
     /// changes observable output is rejected with E1401.
     #[test]
