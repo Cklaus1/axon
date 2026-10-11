@@ -4495,23 +4495,38 @@ impl<'p> Interp<'p> {
             return Ok(());
         }
         let defs = std::mem::take(&mut self.global_defs);
+        if self.seal.active {
+            return self.init_globals_sealed(&defs);
+        }
         let mut env = self.new_env();
         for (name, expr) in &defs {
             let v = self.eval(expr, &mut env)?;
-            let s = intern(name);
-            // The let carries the taint its initialiser was computed with,
-            // as a binding (a later initialiser reads it as a local) and as
-            // a module-level let (`Interp::t_global`).
-            let t = if self.seal.active {
-                let t = self.taint.last.get();
-                self.t_set_global(s, t);
-                t
-            } else {
-                0
-            };
-            env.define(s, v, t);
+            env.define(intern(name), v, 0);
         }
         self.globals = env.snapshot().into_parts().0.into_iter().collect();
+        Ok(())
+    }
+
+    /// [`Interp::init_globals`] in a sealed run (R51 S3, veto interp.rs:
+    /// 3292-3303). Each initialiser runs under its own definition's
+    /// provenance (a candidate's `let` is a sealed frame: the call edge, its
+    /// own kernel, and its value tainted ALL), in a FRESH environment: an
+    /// earlier global is reached through `global_ref`, so the global-read
+    /// edge sees every read (a shared env let a later initialiser read an
+    /// earlier global as a LOCAL, past the edge; PCI candidate-4 review). The
+    /// let carries the taint its initialiser was computed with
+    /// (`Interp::t_global`).
+    #[cold]
+    #[inline(never)]
+    fn init_globals_sealed(&mut self, defs: &[(String, &'p Expr)]) -> Result<(), Flow> {
+        for (name, expr) in defs {
+            let s = intern(name);
+            let sealed = self.seal.globals.contains(&s);
+            let mut env = self.new_env();
+            let v = self.with_frame(sealed, || self.eval(expr, &mut env))?;
+            self.t_set_global(s, self.taint.last.get());
+            self.globals.insert(s, v);
+        }
         Ok(())
     }
 

@@ -944,7 +944,7 @@ fn an_escaped_break_cannot_end_the_operators_test_loop() {
 ///
 /// Mutation: drop the impl (or let) uniqueness check in the resolver → red.
 #[test]
-#[ignore = "R51 S3: seal edges for operator impls and constants not ported; sealed control refused until S6"]
+#[ignore = "R51 S6: seal edges for operator impls and constants ported (S3); needs a live sealed run"]
 fn a_candidate_cannot_redefine_a_suite_helpers_impl_or_constant() {
     let suite_with = |accept: &str, rubric: &str| {
         let s = with_suite(accept, "hidden");
@@ -1428,7 +1428,7 @@ fn a_suite_module_never_resolves_from_the_trial_cache() {
 ///
 /// Mutation: route every frame to the operator's kernel → red.
 #[test]
-#[ignore = "R51 S3: seal edges and global_ref not ported; sealed control refused until S6"]
+#[ignore = "R51 S6: seal edges and global_ref ported (S3); needs a live sealed run"]
 fn a_sealed_candidate_cannot_reach_operator_state_by_handle_or_definition() {
     const GRANT_PURE: &str = "\
 profile = \"restricted\"

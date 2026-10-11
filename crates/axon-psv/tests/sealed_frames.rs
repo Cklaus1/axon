@@ -1264,7 +1264,7 @@ fn operator_negation_never_runs_at_a_width_the_candidate_chose() {
 /// a field or a tuple access is refused (statically here, E0004; the runtime
 /// edge is the interpreter unit test's, with the static check bypassed).
 #[test]
-#[ignore = "R51 S3: global_ref and fn-value marks not ported; sealed control refused until S6"]
+#[ignore = "R51 S6: global_ref and fn-value marks ported (S3); needs a live sealed run"]
 fn a_candidate_calls_its_own_fn_value_and_never_reads_an_operator_global() {
     let suite = "mod sol\nuse sol.{solve}\ntype Cfg = { k: i64 }\nlet TABLE = [9, 8]\nlet CFG = Cfg { k: 9 }\nlet PAIR = (9, 4)\n@[test]\nfn accept() {\n    assert_eq(solve(3), 4)\n}\n";
     passed(
@@ -1625,7 +1625,7 @@ fn a_name_built_out_of_the_candidates_bit_never_selects_an_operator_fn() {
 /// candidate wrote, a closure's captured state, a sealed `&mut`, the scheduler,
 /// a goal. A READ by the candidate of an operator dict taints nothing.
 #[test]
-#[ignore = "R51 S3: the refusing sinks (t_check_names, t_check_call_picked) and the dict/closure edges are seal edges; the S2 channel is ported; sealed control refused until S6"]
+#[ignore = "R51 S6: the name rule (t_check_names) and the dict, channel, &mut, closure, scheduler and sandbox_run carriers ported (S3); needs a live sealed run"]
 fn taint_survives_every_carrier_a_value_can_travel_by() {
     let dbl = "pub fn double(x: i64) -> i64 { 0 }\n";
     let suite = |uses: &str, pre: &str, body: &str| {
@@ -1669,7 +1669,7 @@ fn taint_survives_every_carrier_a_value_can_travel_by() {
 /// operator's closure or the NAME of the fn it runs. The honest operator's own
 /// channel, used the same ways, passes.
 #[test]
-#[ignore = "R51 S3: channel contracts and channel taint not ported; sealed control refused until S6"]
+#[ignore = "R51 S4: seal edge channel contracts and channel taint ported (S3); the refusing sink t_check_call_picked needs PICK (S4) and a live sealed run (S6)"]
 fn a_channel_the_candidate_touched_never_selects_operator_code() {
     let suite = |uses: &str, body: &str| {
         format!("mod sol\nuse sol.{{{uses}}}\n{REF11}@[test]\nfn accept() {{\n{body}\n}}\n")
