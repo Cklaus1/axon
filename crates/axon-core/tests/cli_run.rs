@@ -13549,7 +13549,7 @@ fn dict_from_pairs_holds_non_int_values_in_the_interpreter() {
             let ok = dict_len(df) == 2 && dict_len(ds) == 2 && f > 2.4 && str_eq(s, \"x\")\n  \
             if ok { 1 } else { 0 }\n\
         }\n";
-    let f = std::env::temp_dir().join(format!("axon_dfp_{}.ax", std::process::id()));
+    let f = std::env::temp_dir().join(format!("axon_dfp_nonint_{}.ax", std::process::id()));
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
