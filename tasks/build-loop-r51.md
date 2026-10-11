@@ -14,6 +14,7 @@ v0.22 reference checkout (read-only): `/home/cklaus/projects/axon-lanes/v022-ref
 | `<FULL_SUITE_BUDGET>` | one `gate.sh` run (baseline measured in Step 0, `tasks/r51-baseline.md`) |
 | `<RUN_BUDGET>` | unbounded (compound stop + poison ceiling) |
 | `<REVIEW_MODEL>` | invoking model, adversarial self-review + 3 reviewer subagents at S7 |
+| `<LANE_MODEL>` | Default: the invoking model. A lane whose change is fully specified and mechanical (registry re-anchor with the rows named, evidence copy, script guard with the behaviour given, doc rows) MAY run on a faster model (`anthropic/claude-sonnet-5-5`). Any lane that diagnoses a cause, touches `crates/axon-core/src/interp*`, or decides a seal/refusal question stays on the invoking model. The integrator re-runs the acceptance commands of a faster-model lane before merging: the IdleGuard lane (2 min) returned correct code with no evidence |
 | `<MAX_SPEC_DRAFT_SUBAGENTS>` | 5 |
 
 Baseline (Step 0, main 5864c423 + spec commit): `cargo test -p axon-core --no-default-features --no-fail-fast`
