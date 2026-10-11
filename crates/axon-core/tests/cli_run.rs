@@ -1341,6 +1341,72 @@ fn principal_handle_cannot_be_forged_by_arithmetic_p7_sec_03() {
     );
 }
 
+/// R51 S3: the per-frame `Kernel` split routes every draw through the running
+/// frame's kernel. An unsealed run only ever reaches the operator kernel, whose
+/// stream is main's process-global xorshift64, so the sequences below are the
+/// ones the r51/int binary at 688a18d2 printed (measured on both engines): a
+/// seeded `srand`, `srand(0)`, an `AXON_SEED` run, and the stream CONTINUING
+/// across the `@[test]` fns of one `axon test` process (one `Interp` each;
+/// v0.22's per-`Interp` operator cell would restart it at every test).
+#[test]
+fn the_unsealed_rng_sequence_is_unchanged_by_the_kernel_split() {
+    let dir = std::env::temp_dir().join(format!("axon_r51_rng_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |name: &str, src: &str, cmd: &str, seed: Option<&str>, engine: &str| {
+        let f = dir.join(name);
+        std::fs::write(&f, src).unwrap();
+        let mut c = axon();
+        c.args([cmd, f.to_str().unwrap()])
+            .env_remove("AXON_SEED")
+            .env("AXON_ENGINE", engine);
+        if let Some(s) = seed {
+            c.env("AXON_SEED", s);
+        }
+        let out = c.output().unwrap();
+        assert_eq!(out.status.code(), Some(0), "{name} ({engine}): {out:?}");
+        String::from_utf8_lossy(&out.stdout).to_string()
+    };
+    let srand = "fn main() -> i64 {\n\
+        srand(7)\n\
+        let a = random_i64(0, 1000)\n\
+        let b = random_i64(0, 1000)\n\
+        let c = random_i64(0, 1000)\n\
+        let d = random_i64(0, 1000)\n\
+        let e = random_i64(0, 1000)\n\
+        let f = random_i64(0, 1000)\n\
+        println(\"{to_str(a)},{to_str(b)},{to_str(c)},{to_str(d)},{to_str(e)},{to_str(f)}\")\n\
+        println(\"{to_str(random_f64())}\")\n\
+        srand(0)\n\
+        println(\"{to_str(random_i64(-50, 50))}\")\n\
+        0\n}\n";
+    let seeded = "fn main() -> i64 {\n\
+        let a = random_i64(0, 1000000)\n\
+        let b = random_i64(0, 1000000)\n\
+        let c = random_i64(0, 1000000)\n\
+        println(\"{to_str(a)},{to_str(b)},{to_str(c)}\")\n\
+        0\n}\n";
+    let tests = "@[test]\nfn t1() {\n    println(\"t1 {to_str(random_i64(0, 1000000))}\")\n}\n\
+        @[test]\nfn t2() {\n    println(\"t2 {to_str(random_i64(0, 1000000))}\")\n}\n";
+    for engine in ["vm", "tree"] {
+        assert_eq!(
+            run("srand.ax", srand, "run", None, engine),
+            "327,652,743,107,850,125\n0.283988\n11\n",
+            "{engine}: srand(7) / srand(0)"
+        );
+        assert_eq!(
+            run("seeded.ax", seeded, "run", Some("11"), engine),
+            "967371,542990,483699\n",
+            "{engine}: AXON_SEED=11"
+        );
+        let so = run("tests.ax", tests, "test", Some("11"), engine);
+        assert!(
+            so.contains("t1 967371\nt2 542990\n"),
+            "{engine}: the stream continues across the tests' Interps: {so}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn phase7_kernel_scheduler() {
     // Phase 7 (R12 Slice 2): the cooperative fiber scheduler fans out N fibers,

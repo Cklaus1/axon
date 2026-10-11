@@ -249,7 +249,7 @@ fn a_sealed_handler_cannot_answer_the_operators_fixture_read() {
 /// refused, so the check fails closed; before, the tick advanced the
 /// operator's stream by however many times the candidate called it.
 #[test]
-#[ignore = "R51 S3: sealed RNG stream not ported; sealed runs refused until S6 (verdict Unknown)"]
+#[ignore = "R51 S3: sealed frame entry at the seal crossing (seal_call -> with_frame) not ported; sealed runs refused until S6 (verdict Unknown)"]
 fn operator_code_the_candidate_runs_cannot_draw_the_operators_stream() {
     let suite = r#"mod sol
 use sol.{warm}

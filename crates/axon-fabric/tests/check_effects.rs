@@ -1428,7 +1428,7 @@ fn a_suite_module_never_resolves_from_the_trial_cache() {
 ///
 /// Mutation: route every frame to the operator's kernel → red.
 #[test]
-#[ignore = "R51 S3: seal edges, global_ref and the per-frame Kernel split not ported; sealed control refused until S6"]
+#[ignore = "R51 S3: seal edges and global_ref not ported; sealed control refused until S6"]
 fn a_sealed_candidate_cannot_reach_operator_state_by_handle_or_definition() {
     const GRANT_PURE: &str = "\
 profile = \"restricted\"

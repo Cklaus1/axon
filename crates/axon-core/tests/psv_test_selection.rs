@@ -623,7 +623,7 @@ fn an_operator_import_never_resolves_to_a_sealed_modules_copy() {
 /// reseeds only its OWN kernel's stream, so it guesses wrong. Control: an honest candidate that
 /// echoes the value it is given passes.
 #[test]
-#[ignore = "R51 S3: sealed RNG stream not ported; sealed control refused until S6"]
+#[ignore = "R51 S3: sealed frame entry at the seal crossing (seal_call -> with_frame) not ported; sealed control refused until S6"]
 fn a_sealed_candidate_cannot_reseed_the_rng() {
     use std::io::Write;
     // The first `random_i64(0, 1000000)` after `srand(7)` (computed from the
@@ -767,7 +767,7 @@ fn run_sealed_with(
 /// `builtins::BUILTINS` at test time, and a new `Random` builtin fails this
 /// test until the churn exercises it from a sealed frame.
 #[test]
-#[ignore = "R51 S3: sealed RNG stream not ported; sealed control refused until S6"]
+#[ignore = "R51 S3: sealed frame entry at the seal crossing (seal_call -> with_frame) not ported; sealed control refused until S6"]
 fn sealed_rng_activity_never_moves_the_operators_stream() {
     use axon_core::builtins::{builtin_effect_row, BUILTINS};
     // How to call each RNG-reaching builtin from the candidate.
@@ -861,7 +861,7 @@ fn t_moves() {
 /// operator seed; the sealed kernel's is passed through a one-way derivation,
 /// so the candidate's first draw is NOT the operator's first draw.
 #[test]
-#[ignore = "R51 S3: sealed RNG stream not ported; sealed control refused until S6"]
+#[ignore = "R51 S3: sealed frame entry at the seal crossing (seal_call -> with_frame) not ported; sealed control refused until S6"]
 fn a_sealed_candidates_own_stream_reveals_nothing_of_the_operators() {
     let suite = "mod f
 use f.{peek}
@@ -957,7 +957,7 @@ fn hidden_completion() {
 /// five). The attack below is right ONLY at 125 and calls the closure five
 /// times. Refused (amendment 46).
 #[test]
-#[ignore = "R51 S3: sealed RNG stream and its refusal text not ported; sealed control refused until S6"]
+#[ignore = "R51 S3: sealed frame entry at the seal crossing (seal_call -> with_frame) not ported; sealed control refused until S6"]
 fn a_candidate_cannot_steer_the_operators_challenge_through_its_closure() {
     let suite = "mod f
 use f.{warm, solve}

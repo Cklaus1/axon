@@ -204,7 +204,7 @@ fn check(candidate: &str) -> (GuestVerdict, Option<bool>) {
 /// The attack the review executed. A candidate that steers must not pass:
 /// its steering now moves only its own kernel's stream.
 #[test]
-#[ignore = "R51 S3: sealed RNG stream not ported; sealed runs refused until S6 (verdict Unknown, not Failed)"]
+#[ignore = "R51 S3: sealed frame entry at the seal crossing (seal_call -> with_frame) not ported; sealed runs refused until S6 (verdict Unknown, not Failed)"]
 fn a_candidate_steering_the_rng_through_goal_search_does_not_pass_a_randomized_check() {
     let (v, host) = check(STEERING_WRONG_CANDIDATE);
     assert_eq!(
@@ -222,7 +222,7 @@ fn a_candidate_steering_the_rng_through_goal_search_does_not_pass_a_randomized_c
 /// Control: the same randomized check still PASSES a correct candidate, so the
 /// failure above is the check discriminating, not the check being broken.
 #[test]
-#[ignore = "R51 S3: sealed RNG stream not ported; the honest sealed pass is refused until S6"]
+#[ignore = "R51 S3: sealed frame entry at the seal crossing (seal_call -> with_frame) not ported; the honest sealed pass is refused until S6"]
 fn a_correct_candidate_passes_the_same_randomized_check() {
     let (v, host) = check(CORRECT_CANDIDATE);
     assert_eq!(v.status, GuestStatus::Passed, "control: {v:?}");
