@@ -57,14 +57,15 @@ fn s(x: &str) -> Value {
 }
 
 /// The kernel the running frame reaches.
-fn reached<'a>(ix: &'a Interp<'_>) -> usize {
+fn reached(ix: &Interp<'_>) -> usize {
     let k = ix.k() as *const Kernel;
     (0..2)
         .find(|&i| std::ptr::eq(k, &ix.kernels[i]))
         .expect("k() is one of the two kernels")
 }
 
-/// `k()` selects by the running frame's provenance, through nesting.
+/// `k()` selects by the running frame's provenance, through nesting; the
+/// sealed kernel's stream and token registry are the sealed ones.
 #[test]
 fn the_running_frame_selects_its_kernel() {
     with_sealed("r51-s3a-k", |ix| {
@@ -75,6 +76,12 @@ fn the_running_frame_selects_its_kernel() {
         });
         assert_eq!(seen, (1, 0), "sealed frame, then operator code above it");
         assert_eq!(reached(ix), 0, "restored after the frame");
+        assert!(!ix.kernels[0].rng_sealed && ix.kernels[1].rng_sealed);
+        assert!(!ix.kernels[0].principals.borrow().is_sealed());
+        assert!(
+            ix.kernels[1].principals.borrow().is_sealed(),
+            "the sealed kernel's registry draws from TOKEN_DOMAIN_SEALED"
+        );
     });
 }
 

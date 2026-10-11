@@ -211,6 +211,13 @@ impl PrincipalRegistry {
         }
     }
 
+    /// Whether this registry draws from the sealed token domain (tests that
+    /// the interpreter's sealed kernel is built with [`Self::new_sealed`]).
+    #[cfg(test)]
+    pub(crate) fn is_sealed(&self) -> bool {
+        self.sealed
+    }
+
     /// Resolve a handle token to its index. `None` for any value that was not
     /// issued by `root`/`mint` — which is what makes a forged handle inert.
     fn index_of(&self, token: i64) -> Option<usize> {
