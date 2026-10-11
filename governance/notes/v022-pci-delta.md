@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: dd1ea380950867e7c0802c54e224e7143facb5ff
+generated-at: 4f86822b5fb34e2eb7698ffec72ea9b9ee90e684
 
-`git diff --numstat 31413ca7..dd1ea380 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..4f86822b -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -49,7 +49,7 @@ generated-at: dd1ea380950867e7c0802c54e224e7143facb5ff
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 4885 | 1448 |
+| `crates/axon-core/src/interp.rs` | 4895 | 1448 |
 | `crates/axon-core/src/interp/builtins.rs` | 672 | 512 |
 | `crates/axon-core/src/interp/conform.rs` | 1800 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1354 | 0 |
@@ -62,8 +62,8 @@ generated-at: dd1ea380950867e7c0802c54e224e7143facb5ff
 | `crates/axon-core/src/interp/pick_tests.rs` | 394 | 0 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 48 | 21 |
-| `crates/axon-core/src/interp/sink_tests.rs` | 1098 | 0 |
-| `crates/axon-core/src/interp/sym.rs` | 1187 | 0 |
+| `crates/axon-core/src/interp/sink_tests.rs` | 1099 | 0 |
+| `crates/axon-core/src/interp/sym.rs` | 1196 | 0 |
 | `crates/axon-core/src/interp/taint.rs` | 1653 | 0 |
 | `crates/axon-core/src/interp/taint_tests.rs` | 3942 | 0 |
 | `crates/axon-core/src/interp/tests_v022_a.rs` | 1184 | 0 |
@@ -71,10 +71,10 @@ generated-at: dd1ea380950867e7c0802c54e224e7143facb5ff
 | `crates/axon-core/src/interp/tests_v022_c.rs` | 152 | 0 |
 | `crates/axon-core/src/interp/tests_v022_s4.rs` | 600 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 506 | 514 |
-| `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
-| `crates/axon-core/src/interp/vm/mod.rs` | 3426 | 0 |
+| `crates/axon-core/src/interp/vm/compile.rs` | 1698 | 0 |
+| `crates/axon-core/src/interp/vm/mod.rs` | 3460 | 0 |
 | `crates/axon-core/src/interp/vm/pure.rs` | 964 | 0 |
-| `crates/axon-core/src/interp/vm/tests.rs` | 1615 | 0 |
+| `crates/axon-core/src/interp/vm/tests.rs` | 1768 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
 | `crates/axon-core/src/lib.rs` | 116 | 21 |
 | `crates/axon-core/src/main.rs` | 799 | 243 |
@@ -86,9 +86,9 @@ generated-at: dd1ea380950867e7c0802c54e224e7143facb5ff
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 45442 | 5256 |
+| total | 45656 | 5256 |
 
-`git log --reverse 31413ca7..dd1ea380 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..4f86822b -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -307,7 +307,10 @@ generated-at: dd1ea380950867e7c0802c54e224e7143facb5ff
 | 5f748b86 | R51 S4 follow-up merge | joins r51/int d2353962 (hdone merge 4180f333, 9eb70ac1) onto the S4 follow-up (662b7329, e7cf7f59); this table resolved by keeping both sides, the note regenerated, the registry merged per entry (285 entries, S0b 14, S4 0, S6 271); no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 04d3ad7b | R51 S6.1 | INTERPRETER the seal flip: SEAL_RUNTIME_COMPLETE = true, so a sealed run builds (Interp::build_in through engine_for) on the tree engine with the S2-S5 runtime seal instead of being refused; AXON_ENGINE=vm or set_engine(Vm) on a sealed run stays refused (exit 2), and engine_for keeps its complete input, so setting the const back to false is the rollback. The rest of its crates/axon-core/src diff is TEST-ONLY or docs: the 285 R51 ignores removed (registry empty), the three refuse-all guard tests retired or turned into a positive sealed-harness test, the width row's pre-S6 branch dropped, the AXON_ENGINE env_registry row loses its incomplete-seal sentence, stale 'refused until S6' module docs. No unsealed behaviour change: engine_for's unsealed rows read neither changed input |
 | dd1ea380 | R51 S6.1 | TEST-ONLY: interp::conform::walk_bound_tests::a_value_nested_past_the_bound_is_refused_not_left_unvisited moves back from interp/conform_tests.rs to its v0.22 module (end of interp/conform.rs, v0.22 body verbatim), the path the PCI am78 row and M1847 name; scripts v022_pci_gates.sh and psv_matrix_check.py read a file's include!d files too, so main's interp::tests rows in interp/tests_v022_*.rs resolve; no behaviour change; sealed runs as at 04d3ad7b |
-| 215 commits | | |
+| e213debd | R51 S6 T7 | INTERPRETER, NO BEHAVIOUR CHANGE: the sealed guards move into functions the refusal-coverage gate's SEAL_FN selects: engine_for's sealed branch into seal_engine_pin (vm/mod.rs), compile's seal assert into seal_compile_refusal (vm/compile.rs), the `.engine == Vm` test of run_body/run_test_body/run_lambda/vm_trace_tree and fold_leaf's into Interp::seal_pin_vm (#[inline(always)], vm/mod.rs), FnEntry::new's plain/sealed into FnEntry::seal_general (sym.rs), call_fn_in_general's seal.active into Interp::seal_frames (#[inline(always)], interp.rs); each helper returns the expression it replaces, so the unsealed path computes the same bool; TEST-ONLY: T1a asserts the pin's ATTACK, T1d re-derived for the helpers, new T7 killers r51_t7_a_sealed_run_enters_no_vm_path_at_any_gate and r51_t7_a_sealed_run_given_the_vm_builds_no_vm_body, sink_tests plain drift reads seal_general; sealed runs as at 04d3ad7b |
+| 60cede72 | R51 S6 T7 | TEST-ONLY: doc comment of vm::tests::r51_t7_a_sealed_run_enters_no_vm_path_at_any_gate states that its lambda case pins the closure path, not run_lambda's consult (a sealed closure body runs in call_closure_frame::<true> and never reaches run_lambda); the run_lambda row dropped from the registry; no behaviour change; sealed runs as at 04d3ad7b |
+| 558885e5 | R51 S6 T7 merge | joins r51/int 371d3c07 (dd1ea380 and its THEMES/note commits) onto r51/s6rows; no conflict, no change beyond the commits it joins; sealed runs as at 04d3ad7b |
+| 218 commits | | |
 <!-- END MECHANICAL -->
 
 
