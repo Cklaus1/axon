@@ -475,15 +475,31 @@ impl<'p> Interp<'p> {
                     } else {
                         vec![Value::Int(arg)]
                     };
-                    self.call_fn(f, fiber_args)
+                    // A fiber that ran sealed code (its root among it: a root
+                    // that fails at the call edge, on its declared parameter
+                    // type, has entered a sealed frame too) and then FAILED
+                    // skipped whatever the operator's part of it would have
+                    // stored after that point, and a supervisor re-runs it:
+                    // both are exits chosen by the candidate. Inside the
+                    // fiber, `catchable` makes the call edge raise the sticky
+                    // taint after every crossing (amendment 117, loop
+                    // findings 15 and 45; veto builtins.rs:468-482).
+                    let entries = self.taint.entries.get();
+                    let c = &self.taint.catchable;
+                    c.set(c.get() + 1);
+                    let out = self.call_fn(f, fiber_args);
+                    c.set(c.get() - 1);
+                    if out.is_err() && self.taint.entries.get() != entries {
+                        let st = &self.taint.sticky;
+                        st.set(st.get() | taint::VAL);
+                    }
+                    out
                 }
                 None => Err(Flow::Panic(format!("fiber fn `{fn_name}` vanished").into())),
             };
             // Which fibers complete, and so what the pass returns and every
             // later fiber runs under, is control-dependent on what the earlier
-            // ones returned (amendment 117, loop findings 15 and 45). (Veto's
-            // `catchable` count and the sealed-entry sticky that follow a
-            // fiber's call are S3's: their readers are the call edge.)
+            // ones returned (amendment 117, loop findings 15 and 45).
             self.t_loop_pc();
             match outcome {
                 Ok(v) => {

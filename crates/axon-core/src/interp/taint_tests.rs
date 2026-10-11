@@ -324,6 +324,36 @@ fn capture_ret(c: i64, k: i64) -> i64 {
         2 }
     f()
 }
+fn store_open<T>(d: Dict, x: T) -> i64 {
+    dict_set(d, \"k\", x)
+    0
+}
+fn call_store_open(c: i64, k: i64) -> Dict {
+    let d = dict_new()
+    let r = store_open(d, c)
+    d
+}
+fn closure_store(c: i64, k: i64) -> Dict {
+    let d = dict_new()
+    let f = |v: i64| dict_set(d, \"k\", v)
+    let r = f(c)
+    d
+}
+fn closure_store_open(c: i64, k: i64) -> Dict {
+    let d = dict_new()
+    let f = |v| dict_set(d, \"k\", v)
+    let r = f(c)
+    d
+}
+fn via_sealed() -> i64 {
+    solve()
+}
+fn ret_pin(c: i64, k: i64) -> i64 {
+    via_sealed()
+}
+fn sealed_direct(c: i64, k: i64) -> i64 {
+    solve()
+}
 ";
 
 const CAND: &str = "fn solve() -> i64 { 41 }\n";
@@ -794,9 +824,12 @@ fn builtins_are_dispatched_only_where_the_taint_is_routed() {
     files.sort();
     let mut sites = Vec::new();
     for file in &files {
-        // The unit-test modules call the dispatcher directly; neither is a
+        // The unit-test modules call the dispatcher directly; none is a
         // dispatch site of a run.
-        if file.ends_with("taint_tests.rs") || file.ends_with("kernel_tests.rs") {
+        if file.ends_with("taint_tests.rs")
+            || file.ends_with("kernel_tests.rs")
+            || file.ends_with("crossing_tests.rs")
+        {
             continue;
         }
         for l in source(file).lines() {
@@ -1053,5 +1086,42 @@ fn a_reused_pooled_frame_starts_clean() {
     with_sealed("r51-s2-pool", |ix| {
         assert_eq!(taint_of(ix, "closure_twice", int(1), int(0)), 0, "closure");
         assert_eq!(taint_of(ix, "call_arg_clean", int(1), int(0)), 0, "fn");
+    });
+}
+
+/// The TYPE pin at an operator fn's parameter (`bind_params_sealed`,
+/// amendment 102): a parameter of a closed type was cast to it, so what the
+/// callee stores through it carries the candidate's value but not its type.
+/// A type-parameter parameter pins nothing.
+#[test]
+fn a_closed_parameter_type_drops_the_type_taint() {
+    with_sealed("r51-s3-pinp", |ix| {
+        let (d, _) = probe_in(ix, "call_store", ck(int(1), int(0)));
+        assert_eq!(ix.t_obj(&d) & (VAL | TYP), VAL, "`x: i64` pins");
+        let (d, _) = probe_in(ix, "call_store_open", ck(int(1), int(0)));
+        assert_eq!(ix.t_obj(&d) & TYP, TYP, "`x: T` does not");
+    });
+}
+
+/// The same pin at a closure's parameter (`call_closure_frame`'s `pt`): an
+/// annotated `|v: i64|` drops the TYPE taint, a bare `|v|` keeps it.
+#[test]
+fn a_closed_closure_parameter_type_drops_the_type_taint() {
+    with_sealed("r51-s3-pinc", |ix| {
+        let (d, _) = probe_in(ix, "closure_store", ck(int(1), int(0)));
+        assert_eq!(ix.t_obj(&d) & (VAL | TYP), VAL, "`|v: i64|` pins");
+        let (d, _) = probe_in(ix, "closure_store_open", ck(int(1), int(0)));
+        assert_eq!(ix.t_obj(&d) & TYP, TYP, "`|v|` does not");
+    });
+}
+
+/// The pin at an OPERATOR fn's closed return type (`seal_ret`): the
+/// candidate's result returned through `-> i64` keeps VAL only; read
+/// directly it carries the TYPE taint too.
+#[test]
+fn a_closed_return_type_drops_the_type_taint() {
+    with_sealed("r51-s3-pinr", |ix| {
+        assert_eq!(taint_of(ix, "sealed_direct", int(0), int(0)) & TYP, TYP);
+        assert_eq!(taint_of(ix, "ret_pin", int(0), int(0)) & (VAL | TYP), VAL);
     });
 }
