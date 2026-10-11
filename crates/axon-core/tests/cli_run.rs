@@ -4213,6 +4213,46 @@ fn moderate_recursion_works() {
 }
 
 #[test]
+fn recursion_nested_in_expressions_keeps_the_base_stack_headroom() {
+    // R51 S7-UnsealedParity-10: splitting the evaluator per run kind grew the
+    // unsealed tree engine's native frames (release `eval_arm::<false>` 1024 B,
+    // was `eval` 912 B), and a call level nested k parentheses deep below the
+    // default limit (down(5990)) went from running to a stack-overflow abort
+    // (exit 134) on 5864c423-era programs. The thread stack reserve is scaled
+    // to cover the growth. k sits under 5864c423's own reach in each profile
+    // (release 280, debug 20 complete at 5990 levels there) and above the
+    // pre-fix reach (release 250, debug 18). Touches ~1.6 GB of stack.
+    let k = if cfg!(debug_assertions) { 20 } else { 270 };
+    let f = std::env::temp_dir().join(format!("axon_nestrec_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        format!(
+            "fn down(n: i64) -> i64 {{\n    if n == 0 {{ 0 }} else {{ {}down(n - 1){} + 1 }}\n}}\n\
+             fn main() {{ println(to_str(down(5990))) }}\n",
+            "(".repeat(k),
+            " + 0)".repeat(k)
+        ),
+    )
+    .unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_ENGINE", "tree")
+        .env_remove("AXON_MAX_DEPTH")
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout).trim()
+        ),
+        (Some(0), "5990"),
+        "a 5990-deep recursion nested {k} expressions deep must run, not abort: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
 fn all_examples_typecheck_clean() {
     // Stronger than the lib's parse-only guard: every example must pass the FULL
     // CLI check pipeline (resolve/infer/check/borrow/capability/verify), with

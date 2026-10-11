@@ -1727,17 +1727,26 @@ pub(super) mod nest_cost {
 /// overflows *before* the guard fires (which would reintroduce the very
 /// process-abort the guard exists to prevent). Paired with the stack-size
 /// scaling in [`stack_size_for_depth`]: at this ceiling the thread stack is
-/// ~8 GiB, leaving ample headroom over the ~256 KB/frame worst case.
+/// 1,000,000 × [`STACK_BYTES_PER_FRAME`] of reserved address space.
 const MAX_DEPTH_CEILING: usize = 1_000_000;
 
-/// Native stack budget per interpreter call frame, used to size the thread
-/// stack so the [`resolve_max_depth`] guard always trips before a real
-/// overflow. Generous (2×) over the observed ~128 KB debug frame.
-const STACK_BYTES_PER_FRAME: usize = 256 * 1024;
+/// Native stack budget per interpreter call level, used to size the thread
+/// stack so the [`resolve_max_depth`] guard trips before a real overflow. Only
+/// call depth is counted, so a level whose call sits inside deeply nested
+/// expressions can still use more than this (each nesting level is one more
+/// evaluator frame). R51 (S7-UnsealedParity-10): 256 KiB → 320 KiB, with
+/// [`MIN_STACK_BYTES`] 1 GiB → 1.25 GiB, because splitting the evaluator per
+/// run kind grew the unsealed native frames (release `eval_arm::<false>`
+/// 1024 B, was `eval` 912 B; stack per level +3.5–12.3% release, +6.1–10.5%
+/// debug on the tree engine, up to +19.3% debug on the VM, measured
+/// 2026-10-11): ×1.25 keeps every level the base tree reached reachable. The
+/// reserve is address space; only the pages a run touches are resident.
+const STACK_BYTES_PER_FRAME: usize = 320 * 1024;
 
-/// Minimum interpreter thread stack — the historical 1 GiB floor, so shallow
-/// runs keep their previous generous headroom regardless of the depth setting.
-const MIN_STACK_BYTES: usize = 1024 * 1024 * 1024;
+/// Minimum interpreter thread stack, so shallow runs keep generous headroom
+/// regardless of the depth setting (the historical 1 GiB floor, scaled with
+/// [`STACK_BYTES_PER_FRAME`] so the crossover stays at 4096 levels).
+const MIN_STACK_BYTES: usize = 1280 * 1024 * 1024;
 
 /// Resolve the effective recursion limit: `AXON_MAX_DEPTH` if set to a positive
 /// integer (clamped to [`MAX_DEPTH_CEILING`]), else [`RECURSION_LIMIT`]. A
@@ -7517,7 +7526,7 @@ fn main() { }
 
     #[test]
     fn stack_grows_with_depth_but_never_below_floor() {
-        // Shallow limits keep the historical 1 GiB floor. The crossover is
+        // Shallow limits keep the MIN_STACK_BYTES floor. The crossover is
         // MIN_STACK_BYTES / STACK_BYTES_PER_FRAME frames; below it, floored.
         let crossover = MIN_STACK_BYTES / STACK_BYTES_PER_FRAME; // 4096
         assert_eq!(stack_size_for_depth(1), MIN_STACK_BYTES);
