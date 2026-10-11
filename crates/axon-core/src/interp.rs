@@ -9103,6 +9103,7 @@ fn main() { }
     }
     include!("interp/tests_v022_s4.rs");
     include!("interp/tests_v022_a.rs");
+    include!("interp/tests_v022_b.rs");
 }
 
 #[cfg(test)]
