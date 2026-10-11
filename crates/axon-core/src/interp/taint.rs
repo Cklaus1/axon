@@ -522,6 +522,132 @@ pub(crate) const STRINGIFIERS: &[&str] = &["to_str", "dict_to_str"];
 #[cfg(test)]
 pub(crate) const EMITTERS: &[&str] = &["print", "println", "eprint", "eprintln"];
 
+/// Every `Expr` variant, and the two short-circuiting `BinOp`s, by how its
+/// evaluation depends on a value: whether it is CONDITIONAL (some of it runs only
+/// for one value), REPEATED (it runs a number of times a value chose) or an EXIT
+/// (it leaves the fn or loop), and WHERE the control taint of that value is raised
+/// (C9 round 13, amendment 114). Sixth round in which PSV-1 found a member of one
+/// class ("operator-side control flow that depends on candidate data carries no
+/// control taint"), the last of them the right operand of `&&`/`||`; the class is
+/// now a TABLE rather than a list of fixes.
+///
+/// Columns: the AST name, the kind, where the taint is raised (or, for a
+/// straight-line form, why none is needed), and a tag. A tag other than `-` names
+/// an ATTACK and a CONTROL case in `taint_tests::control_flow_cases`
+/// (`ctl[tag] attack...` / `ctl[tag] control...`). `taint_tests` fails if an
+/// `Expr` variant in `ast.rs` has no row, if a row names a variant `ast.rs` does
+/// not have, or if a conditional/repeated/exit row has no attack and control, so a
+/// NEW construct cannot ship unhandled.
+#[cfg(test)]
+pub(crate) const CONTROL_TABLE: &[(&str, &str, &str, &str)] = &[
+    ("If", "conditional", "eval If: t_branch(cond taint) around the taken branch; sticky when a branch can exit", "if"),
+    ("Match", "conditional", "eval Match: t_branch(subject | every REFUSED guard) around each guard, t_branch(subject | taken guard | every REFUSED guard) around the arm; sticky when an arm can exit", "match"),
+    ("While", "repeated", "eval While: t_branch(cond taint) around each body, and t_branch(the conditions so far) around every evaluation of the condition after the first; sticky when the body can exit", "while"),
+    ("WhileLet", "repeated", "eval WhileLet: t_branch(scrutinee taint) around each body, and t_branch(the scrutinees so far) around every evaluation of the scrutinee after the first", "whilelet"),
+    ("For", "repeated", "eval For: t_branch(range bound taint) around each body; the loop variable carries it", "for"),
+    ("Break", "exit", "the enclosing t_branch's `exits` (taint::has_exit) raises sticky", "break"),
+    ("Continue", "exit", "the enclosing t_branch's `exits` (taint::has_exit) raises sticky", "continue"),
+    ("Return", "exit", "the enclosing t_branch's `exits`; the returned value is stored under taint.ret", "return"),
+    ("Question", "exit", "eval Question: sticky |= operand taint (a `?` is an exit chosen by its operand), and has_exit counts it for the branch it sits in", "question"),
+    ("Select", "conditional", "eval Select: t_branch(taint of every channel looked at up to the arm that fired) around the arm body", "select"),
+    ("WithHandler", "conditional", "an arm runs where the body PERFORMS the effect, under the pc of that point (an `if` around it raised pc); a resume value keeps its taint (ResumeReplay::feed_t); while an abort-capable handler is installed a branch on tainted data is a possible exit and sealed code that ran in the body raises sticky (Taint::abortable, eval_with_handler/call_fn_sealed)", "handler"),
+    ("Call", "conditional", "a callback a builtin runs (every row of CALLBACK_BUILTINS): Interp::call_cb raises the control taint of the results so far for the rest of the builtin, so the 2nd call on runs under it as a loop body runs after its condition; a goal search, a scheduler pass and a kernel goal do the same through Interp::t_loop_pc after each evaluation of operator code; a fiber that ran sealed code and failed, or whose root is sealed, raises sticky; a user fn call is a frame (call_fn_sealed); `assert`/`assert_eq` end the test when they fail, which IS the verdict", "callback"),
+    ("MethodCall", "straight", "a channel method is a read/mark of the channel's one taint (t_chan_access), an operator pop marks it with the control taint, and the channel the expression chose carries that expression's taint (t_chan_choice); a dispatched impl is the TYPE rule", "-"),
+    ("Spawn", "straight", "the body runs eagerly and once, at the spawn site, under the pc there", "spawn"),
+    ("Lambda", "conditional", "a closure body is code run where it is CALLED, under the pc of the call (call_closure_owned_by)", "lambda"),
+    ("Block", "straight", "statements run in order; a statement's value is dropped (eval_block)", "-"),
+    ("Let", "straight", "binds the value with its taint (t_stored)", "-"),
+    ("Own", "straight", "binds the value with its taint (t_stored)", "-"),
+    ("RefBind", "straight", "binds the value with its taint (t_stored)", "-"),
+    ("UnaryOp", "straight", "evaluates its one operand", "-"),
+    ("Comptime", "straight", "a transparent no-op under the interpreter", "-"),
+    ("InlineAsm", "straight", "E0910 in the interpreter: never runs", "-"),
+    ("FieldAccess", "straight", "a read of its holder, which carries the holder's taint", "-"),
+    ("Index", "straight", "a read of its holder, which carries the holder's and the index's taint", "-"),
+    ("Tuple", "straight", "evaluates every element", "-"),
+    ("Ident", "straight", "a read of a binding, which carries its taint", "-"),
+    ("Literal", "straight", "a constant", "-"),
+    ("FmtStr", "straight", "evaluates every interpolated part", "-"),
+    ("Ok", "straight", "wraps its one operand", "-"),
+    ("Err", "straight", "wraps its one operand", "-"),
+    ("Some", "straight", "wraps its one operand", "-"),
+    ("None", "straight", "a constant", "-"),
+    ("Array", "straight", "evaluates every element", "-"),
+    ("StructLit", "straight", "evaluates every field", "-"),
+    ("Assign", "straight", "stores under the pc and sticky (t_stored)", "-"),
+    ("AssignTo", "straight", "stores under the pc and sticky (t_stored)", "-"),
+    ("BinOp", "straight", "evaluates both operands; the short-circuiting `And`/`Or` are the two rows below", "-"),
+];
+
+/// Every builtin that takes a closure and runs it a number of times, or on
+/// which entries, the earlier results can decide (amendment 117). `taint_tests`
+/// fails if a builtin with a `fn(..)` parameter has no row, if a row names a
+/// builtin without one, and if an arm calls a closure other than through
+/// `Interp::call_cb`, which raises the control taint of the results so far for the
+/// rest of the builtin. Columns: the builtin, how the number of calls is decided,
+/// and the CONTROL_TABLE attack/control tag (`callback`) that exercises the
+/// stop-deciding ones with a store that does NOT use the callback's parameter.
+#[cfg(test)]
+pub(crate) const CALLBACK_BUILTINS: &[(&str, &str, &str)] = &[
+    (
+        "arr_map",
+        "once per element: the array's length (the argument's taint)",
+        "-",
+    ),
+    ("arr_filter", "once per element", "-"),
+    ("arr_fold", "once per element", "-"),
+    (
+        "arr_sort_by",
+        "the comparator's own answers decide how many comparisons the merge makes",
+        "callback",
+    ),
+    (
+        "arr_find",
+        "stops at the first hit: the earlier results decide",
+        "callback",
+    ),
+    (
+        "arr_any",
+        "stops at the first hit: the earlier results decide",
+        "callback",
+    ),
+    (
+        "arr_all",
+        "stops at the first miss: the earlier results decide",
+        "callback",
+    ),
+    ("arr_count_if", "once per element", "-"),
+    ("arr_sum_by", "once per element", "-"),
+    ("arr_sum_by_f64", "once per element", "-"),
+    ("arr_zip_with", "once per pair", "-"),
+    ("arr_group_by", "once per element", "-"),
+    ("arr_max_by", "once per element", "-"),
+    ("arr_min_by", "once per element", "-"),
+    (
+        "arr_take_while",
+        "stops at the first miss: the earlier results decide",
+        "callback",
+    ),
+    (
+        "arr_drop_while",
+        "stops dropping at the first miss: the earlier results decide",
+        "callback",
+    ),
+    ("arr_partition", "once per element", "-"),
+    ("dict_map_values", "once per entry", "-"),
+    ("dict_filter", "once per entry", "-"),
+    ("dict_each", "once per entry", "-"),
+    ("http_sse", "once per event the host returned", "-"),
+    ("http_sse_post", "once per event the host returned", "-"),
+];
+
+/// The two `BinOp`s whose right operand runs only for one value of the left.
+#[cfg(test)]
+pub(crate) const SHORT_CIRCUIT_TABLE: &[(&str, &str, &str)] = &[
+    ("And", "eval_binop: t_branch(left taint) around the right operand; sticky when the right operand can exit", "and"),
+    ("Or", "eval_binop: t_branch(left taint) around the right operand; sticky when the right operand can exit", "or"),
+];
+
 /// Builtins whose FIRST argument is only counted, keyed into or appended to: they
 /// never look at what the entries hold, so a big dict or array they touch in a
 /// loop is not walked end to end on every call (a million `dict_set`s would
