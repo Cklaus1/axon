@@ -155,12 +155,21 @@ def main() -> int:
                 continue
             path = os.path.join(dirpath, fname)
             enclosing = None
-            for lineno, line in enumerate(open(path, encoding="utf-8"), 1):
+            lines = open(path, encoding="utf-8").read().split("\n")
+            for lineno, line in enumerate(lines, 1):
                 m = fn_re.match(line)
                 if m:
                     enclosing = m.group(1)
                 if line.lstrip().startswith("//"):
                     continue
+                # rustfmt wraps a long `nest_guard!(self, if T { .. } else
+                # { .. })` over several lines: read the site up to its `)`.
+                k = line.find("nest_guard!(")
+                if k >= 0:
+                    end = lineno
+                    while line[k:].count("(") > line[k:].count(")") and end < len(lines):
+                        line += " " + lines[end].strip()
+                        end += 1
                 for m in site_re.finditer(line):
                     where = f"{os.path.relpath(path, root_dir)}:{lineno}"
                     if m.group(1):

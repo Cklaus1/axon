@@ -2001,6 +2001,11 @@ impl<'p> Interp<'p> {
     /// inline `return(v) => e` arm is present) rewrites the body's value. A
     /// `HandlerExpr::Named` that did not desugar to an inline definition is an
     /// unresolved name → the handler is inert (run the body unwrapped).
+    /// Inlined into the evaluator in an optimised build, as it was before R51
+    /// gave the evaluator two instances (two callers stop LLVM inlining it on
+    /// its own): a frame of its own would sit on every `with` level of the
+    /// recursion (wasm32 stack budget, AX-56).
+    #[cfg_attr(not(debug_assertions), inline(always))]
     fn eval_with_handler(
         &self,
         handler: &crate::ast::HandlerExpr,
