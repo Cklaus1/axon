@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: d25cae8c1ab68e8659ed6d66e1cf235a9bf83982
+generated-at: 03ba80ff6c80298400f3a86dfe707bad636a1284
 
-`git diff --numstat 31413ca7..d25cae8c -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..03ba80ff -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -49,7 +49,7 @@ generated-at: d25cae8c1ab68e8659ed6d66e1cf235a9bf83982
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 4807 | 1467 |
+| `crates/axon-core/src/interp.rs` | 4808 | 1467 |
 | `crates/axon-core/src/interp/builtins.rs` | 665 | 515 |
 | `crates/axon-core/src/interp/conform.rs` | 1780 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1413 | 0 |
@@ -64,6 +64,7 @@ generated-at: d25cae8c1ab68e8659ed6d66e1cf235a9bf83982
 | `crates/axon-core/src/interp/sym.rs` | 1188 | 0 |
 | `crates/axon-core/src/interp/taint.rs` | 1190 | 0 |
 | `crates/axon-core/src/interp/taint_tests.rs` | 1128 | 0 |
+| `crates/axon-core/src/interp/tests_v022_a.rs` | 108 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 506 | 514 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
 | `crates/axon-core/src/interp/vm/mod.rs` | 3426 | 0 |
@@ -80,9 +81,9 @@ generated-at: d25cae8c1ab68e8659ed6d66e1cf235a9bf83982
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 37276 | 5265 |
+| total | 37385 | 5265 |
 
-`git log --reverse 31413ca7..d25cae8c -- crates/axon-core/src`:
+`git log --reverse 31413ca7..03ba80ff -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -263,7 +264,8 @@ generated-at: d25cae8c1ab68e8659ed6d66e1cf235a9bf83982
 | 72009129 | R51 S3 merge | INTERPRETER dict_set/dict_remove/dict_inc call dict_mutated without an outer seal.active guard, as veto does (builtins.rs:5286/5318/5470); dict_mutated returns at once when the seal is inactive, so an unsealed run does the same work less one branch. TEST-ONLY: the main-only sink classification names call_fn_sealed for call_fn_in_general (S3c moved the sealed instantiation behind the crossing). Both were drift tests from S3d that S3c's code tripped at the merge. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 2bf3e4a4 | R51 S3e | INTERPRETER init_globals in a sealed run (veto interp.rs:3292-3303): init_globals_sealed runs each module-level initialiser under its own definition's provenance (with_frame) in a fresh env, so a candidate's `let` meets the call and global-read edges (an earlier global is read through global_ref) and its kernel effects land in the candidate's kernel; the let's taint is recorded by t_set_global. The unsealed path is unchanged (one shared env, no taint bookkeeping, now without the dead seal.active branch). Plus TEST-ONLY sink tests (every taint carrier into the name rule, the name half of channel taint, own fn values, definition provenance, a candidate impl answering an operator method) and the last 5 S3 deferred-registry entries re-slotted (4 to S6, 1 to S4 for PICK). Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | d25cae8c | R51 S3e | TEST-ONLY: rustfmt of interp/sink_tests.rs (line wrapping of the S3e tests); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 177 commits | | |
+| 03ba80ff | R51 T3a | TEST-ONLY: v0.22's sealed-run test helpers (JUDGE/LAUNDER/CONFUSED, judged, live, confusion_refused, judged8, live8, honest8, dict_suite, dict_refused, put_u8, mut_refused; bodies verbatim) in interp/tests_v022_a.rs, included at the end of interp.rs's mod tests; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 178 commits | | |
 <!-- END MECHANICAL -->
 
 
