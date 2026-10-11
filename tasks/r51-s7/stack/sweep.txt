@@ -1,0 +1,147 @@
+Call depth (D) x paren depth (k) sweep, default limit 6000. Cell: ok = exit 0 printing D; limit = exit 101
+'recursion limit exceeded'; ABORT = exit 134 'has overflowed its stack'. base = 5864c423, head0 = 3921a309
+(r51/int before S7), head = 4dd118d1 (f89f4d43 reserve x1.25 + 4bb4a0e1 cap, merged with r51/int 9e67b796).
+Program: fn down(n) { if n == 0 { 0 } else { (((down(n - 1) + 0) + 0) ...) + 1 } } with k parens; main prints
+down(D). Script: sweep.py. Host gpumaster, 2026-10-11. head0 columns from the same script run before the fix.
+
+[release] base AXON_ENGINE=tree
+D\k        0    100    200    250    260    270    280    285    290    300    350    400    600   1000
+500       ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+1000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+2000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT
+3000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT  ABORT
+4000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT  ABORT
+5000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT  ABORT  ABORT  ABORT
+5990      ok     ok     ok     ok     ok     ok     ok  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT
+6500   limit  limit  limit  limit  limit  limit  limit  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT
+
+[release] head0 AXON_ENGINE=tree
+D\k        0    100    200    250    260    270    280    285    290    300    350    400    600   1000
+500       ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+1000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+2000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT
+3000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT  ABORT
+4000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT  ABORT  ABORT
+5000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT  ABORT  ABORT  ABORT
+5990      ok     ok     ok     ok  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT
+6500   limit  limit  limit  limit  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT
+
+[release] head AXON_ENGINE=tree
+D\k        0    100    200    250    260    270    280    285    290    300    350    400    600   1000
+500       ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+1000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+2000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT
+3000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT
+4000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT  ABORT
+5000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT  ABORT  ABORT
+5990      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT  ABORT  ABORT  ABORT
+6500   limit  limit  limit  limit  limit  limit  limit  limit  limit  limit  ABORT  ABORT  ABORT  ABORT
+
+[release] base AXON_ENGINE=vm
+D\k        0    100    200    250    260    270    280    285    290    300    350    400    600   1000
+500       ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+1000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+2000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+3000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+4000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+5000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+5990      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+6500   limit  limit  limit  limit  limit  limit  limit  limit  limit  limit  limit  limit  limit  limit
+
+[release] head0 AXON_ENGINE=vm
+D\k        0    100    200    250    260    270    280    285    290    300    350    400    600   1000
+500       ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+1000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+2000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+3000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+4000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+5000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+5990      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+6500   limit  limit  limit  limit  limit  limit  limit  limit  limit  limit  limit  limit  limit  limit
+
+[release] head AXON_ENGINE=vm
+D\k        0    100    200    250    260    270    280    285    290    300    350    400    600   1000
+500       ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+1000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+2000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+3000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+4000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+5000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+5990      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+6500   limit  limit  limit  limit  limit  limit  limit  limit  limit  limit  limit  limit  limit  limit
+
+[release] head0: cells {'ok': 176, 'ABORT': 30, 'limit': 18}; cells where base had ok/limit and head0 differs: 7 [('tree', 4000, 400), ('tree', 5990, 260), ('tree', 5990, 270), ('tree', 5990, 280), ('tree', 6500, 260), ('tree', 6500, 270)]
+
+[release] head: cells {'ok': 185, 'ABORT': 15, 'limit': 24}; cells where base had ok/limit and head differs: 0 []
+[release] base: cells {'ok': 180, 'ABORT': 23, 'limit': 21}
+
+[debug] base AXON_ENGINE=tree
+D\k        0      5     10     15     18     20     22     24     26     30     40     60    100    200
+500       ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+1000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT
+2000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT  ABORT
+3000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT  ABORT  ABORT
+4000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT  ABORT  ABORT  ABORT
+5000      ok     ok     ok     ok     ok     ok     ok     ok  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT
+5990      ok     ok     ok     ok     ok     ok  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT
+6500   limit  limit  limit  limit  limit  limit  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT
+
+[debug] head0 AXON_ENGINE=tree
+D\k        0      5     10     15     18     20     22     24     26     30     40     60    100    200
+500       ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+1000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT
+2000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT  ABORT
+3000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT  ABORT  ABORT
+4000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT  ABORT  ABORT  ABORT
+5000      ok     ok     ok     ok     ok     ok     ok  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT
+5990      ok     ok     ok     ok     ok  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT
+6500   limit  limit  limit  limit  limit  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT
+
+[debug] head AXON_ENGINE=tree
+D\k        0      5     10     15     18     20     22     24     26     30     40     60    100    200
+500       ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+1000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT
+2000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT  ABORT
+3000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT  ABORT  ABORT
+4000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT  ABORT  ABORT  ABORT
+5000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok  ABORT  ABORT  ABORT  ABORT
+5990      ok     ok     ok     ok     ok     ok     ok     ok  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT
+6500   limit  limit  limit  limit  limit  limit  limit  limit  ABORT  ABORT  ABORT  ABORT  ABORT  ABORT
+
+[debug] base AXON_ENGINE=vm
+D\k        0      5     10     15     18     20     22     24     26     30     40     60    100    200
+500       ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+1000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+2000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+3000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+4000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+5000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+5990      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+6500   limit  limit  limit  limit  limit  limit  limit  limit  limit  limit  limit  limit  limit  limit
+
+[debug] head0 AXON_ENGINE=vm
+D\k        0      5     10     15     18     20     22     24     26     30     40     60    100    200
+500       ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+1000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+2000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+3000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+4000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+5000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+5990      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+6500   limit  limit  limit  limit  limit  limit  limit  limit  limit  limit  limit  limit  limit  limit
+
+[debug] head AXON_ENGINE=vm
+D\k        0      5     10     15     18     20     22     24     26     30     40     60    100    200
+500       ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+1000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+2000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+3000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+4000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+5000      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+5990      ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok     ok
+6500   limit  limit  limit  limit  limit  limit  limit  limit  limit  limit  limit  limit  limit  limit
+
+[debug] head0: cells {'ok': 170, 'ABORT': 35, 'limit': 19}; cells where base had ok/limit and head0 differs: 3 [('tree', 5000, 24), ('tree', 5990, 20), ('tree', 6500, 20)]
+
+[debug] head: cells {'ok': 176, 'ABORT': 26, 'limit': 22}; cells where base had ok/limit and head differs: 0 []
+[debug] base: cells {'ok': 172, 'ABORT': 32, 'limit': 20}
