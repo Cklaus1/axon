@@ -971,6 +971,10 @@ pub struct Interp<'p> {
     /// while a sealed frame is below it (both S3).
     sealed_frames: Cell<usize>,
     operator_frames: Cell<usize>,
+    /// R51 S2: the evaluator's taint state (`interp/taint.rs`): the
+    /// accumulator, the control taints, the kernel and world cells, shared
+    /// objects and module-level lets. Read and written only in a sealed run.
+    taint: taint::Taint,
     /// R50: which engine runs fn bodies (`AXON_ENGINE`, or `set_engine` on a
     /// target without an environment). Read once, at build.
     engine: Engine,
@@ -3793,6 +3797,7 @@ impl<'p> Interp<'p> {
             frame_sealed: Cell::new(false),
             sealed_frames: Cell::new(0),
             operator_frames: Cell::new(0),
+            taint: taint::Taint::default(),
             engine,
             vm_trace: vm::trace_at_build(),
             vm_eager: vm::eager_at_build(),
@@ -3870,6 +3875,9 @@ impl<'p> Interp<'p> {
             &self.operator_frames
         };
         count.set(count.get() + 1);
+        if sealed {
+            self.taint.entries.set(self.taint.entries.get() + 1);
+        }
         let out = g();
         count.set(count.get() - 1);
         self.frame_sealed.set(prev);
@@ -3886,7 +3894,18 @@ impl<'p> Interp<'p> {
         let mut env = self.new_env();
         for (name, expr) in &defs {
             let v = self.eval(expr, &mut env)?;
-            env.define(intern(name), v, 0);
+            let s = intern(name);
+            // The let carries the taint its initialiser was computed with,
+            // as a binding (a later initialiser reads it as a local) and as
+            // a module-level let (`Interp::t_global`).
+            let t = if self.seal.active {
+                let t = self.taint.last.get();
+                self.t_set_global(s, t);
+                t
+            } else {
+                0
+            };
+            env.define(s, v, t);
         }
         self.globals = env.snapshot().into_parts().0.into_iter().collect();
         Ok(())
@@ -5213,6 +5232,9 @@ use sym::*;
 // operator side determined reaches. Built in `Interp::build_with` for a
 // sealed run only.
 mod pin;
+// The runtime taint of a sealed run (R51 S2, from v0.22 C9 round 11,
+// amendment 102): the accumulator, the control taints, the builtin classes.
+mod taint;
 // Core tree-walking evaluator (eval/eval_block/eval_call/eval_binop/
 // match_pattern) extracted to interp/eval.rs (R0 slice 5). Its methods live in a
 // second `impl Interp` block there; inherent methods resolve across split impl
