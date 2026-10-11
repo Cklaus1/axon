@@ -225,6 +225,7 @@ THEMES = {
     "b3c407d6": ("R51 S4a", "TEST-ONLY: T5 port taint_tests::an_operator_value_the_candidate_picked_is_never_dispatched_on (veto taint_tests.rs:316-374, 11 Ok / 1 Fails / 19 Refused) and the PICK hook drift test; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"),
     "8906d2f6": ("R51 S4a", "TEST-ONLY: taint_tests::an_operator_closure_the_candidate_picked_is_never_called (veto taint_tests.rs:178-258) at the v0.22 path; the PICK deferred tests re-slotted to S6; sink_tests' via_capture probe accepts the closure-rule refusal; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"),
     "ab5062f8": ("R51 S4a", "merges r51/int 27836b1c (S4b) into r51/s4; only the registry's by_slice counts conflicted, recomputed from the entries (S4 = 0); no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"),
+    "ecbdf307": ("R51 S4a", "TEST-ONLY: clippy fix (is_ok over matches!) in interp/pick_tests.rs; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"),
 }
 
 

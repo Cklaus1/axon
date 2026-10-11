@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: ab5062f8e0f7abc4ba4a6b6cb9a19dfe4c72719e
+generated-at: ecbdf30723f14217c04a019ee5b5a04271342213
 
-`git diff --numstat 31413ca7..ab5062f8 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..ecbdf307 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -85,7 +85,7 @@ generated-at: ab5062f8e0f7abc4ba4a6b6cb9a19dfe4c72719e
 | `crates/axon-core/src/types.rs` | 28 | 0 |
 | total | 39605 | 5260 |
 
-`git log --reverse 31413ca7..ab5062f8 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..ecbdf307 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -277,7 +277,8 @@ generated-at: ab5062f8e0f7abc4ba4a6b6cb9a19dfe4c72719e
 | ce42eeb2 | R51 S4b | TEST-ONLY: operator_arithmetic_never_runs_at_a_width_the_candidate_chose moved from interp/sink_tests.rs to interp::tests (interp/tests_v022_s4.rs, the v0.22 module path) with v0.22's runner half, which asserts SEALED_RUN_REFUSED until S6; sink_tests helpers with_ix and WIDTH widened to pub(super); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 8906d2f6 | R51 S4a | TEST-ONLY: taint_tests::an_operator_closure_the_candidate_picked_is_never_called (veto taint_tests.rs:178-258) at the v0.22 path; the PICK deferred tests re-slotted to S6; sink_tests' via_capture probe accepts the closure-rule refusal; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | ab5062f8 | R51 S4a | merges r51/int 27836b1c (S4b) into r51/s4; only the registry's by_slice counts conflicted, recomputed from the entries (S4 = 0); no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 188 commits | | |
+| ecbdf307 | R51 S4a | TEST-ONLY: clippy fix (is_ok over matches!) in interp/pick_tests.rs; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 189 commits | | |
 <!-- END MECHANICAL -->
 
 
