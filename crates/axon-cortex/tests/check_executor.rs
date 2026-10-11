@@ -710,12 +710,12 @@ fn r51_t6_a_sealed_check_through_the_clean_env_executor_runs_on_the_tree() {
     let err = dir.join("sealed.err");
     let r = r51_traced_exec(&dir, "axon-trace.sh", "", &err)
         .with_sealed_dir(&cand)
-        .run_checks(&req)
-        .expect("a sealed check yields a report");
+        .run_checks(&req);
     let (text, vm) = vm_lines(&err);
+    assert!(!vm, "ATTACK: a sealed check compiled on the VM: {text}");
+    let r = r.expect("a sealed check yields a report");
     assert_eq!(r.verdict("t_ok"), CheckVerdict::Passed, "{r:?} {text}");
     assert_eq!(r.exit_code, Some(0), "{r:?} {text}");
-    assert!(!vm, "ATTACK: a sealed check compiled on the VM: {text}");
 
     let err = dir.join("vm.err");
     let r = r51_traced_exec(&dir, "axon-trace-vm.sh", "AXON_ENGINE=vm", &err)

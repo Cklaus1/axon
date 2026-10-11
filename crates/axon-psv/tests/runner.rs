@@ -723,12 +723,12 @@ fn r51_t6_a_sealed_run_through_the_guest_runner_runs_on_the_tree() {
     fx.cfg.axon = r51_trace_wrapper(&fx, "axon-trace", "", false);
     let v = run(&fx.cfg);
     let (err, vm) = r51_vm_lines(&fx);
+    assert!(!vm, "ATTACK: a sealed guest run compiled on the VM: {err}");
     assert_eq!(v.status, GuestStatus::Passed, "{v:?} {err}");
     assert_eq!(
         v.report.as_ref().map(|r| r.passed.clone()),
         Some(vec!["t_ok".to_string()])
     );
-    assert!(!vm, "ATTACK: a sealed guest run compiled on the VM: {err}");
 
     let mut fx = fixture("t_ok", false);
     fx.cfg.axon = r51_trace_wrapper(&fx, "axon-trace-vm", "AXON_ENGINE=vm", false);
