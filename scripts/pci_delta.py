@@ -216,6 +216,8 @@ THEMES = {
     "d25cae8c": ("R51 S3e", "TEST-ONLY: rustfmt of interp/sink_tests.rs (line wrapping of the S3e tests); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"),
     "03ba80ff": ("R51 T3a", "TEST-ONLY: v0.22's sealed-run test helpers (JUDGE/LAUNDER/CONFUSED, judged, live, confusion_refused, judged8, live8, honest8, dict_suite, dict_refused, put_u8, mut_refused; bodies verbatim) in interp/tests_v022_a.rs, included at the end of interp.rs's mod tests; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"),
     "ca494217": ("R51 T3a", "TEST-ONLY: the 29 S3 rows of v0.22's interp::tests (seal-crossing casts, dict edges, &mut write-through, channel stamp) ported under their v0.22 names in interp/tests_v022_a.rs, bodies verbatim but two sealed_outcome_rule(.., true) calls run through sealed_outcome until S4 adds the rule switch; all 29 ignored and registered in r51-deferred-tests.json (21 S4: need the dispatch-rule-off switch; 8 S6, one a port gap: a bare `Uncertain` parameter unwraps the soft wrapper); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"),
+    "64e3d9af": ("R51 T3a", "TEST-ONLY: vm::tests::r51_interp_sources skips the tests_v022_*.rs files include!d into interp.rs's mod tests (they have no `mod tests {` to cut at, so every sweep read them whole); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"),
+    "2776b55d": ("R51 T3a merge", "joins r51/t3a-sweep (64e3d9af, made atop 4a29c0a0 so the t3b lane can merge it alone) into r51/t3a; no conflict, no change beyond it; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"),
 }
 
 

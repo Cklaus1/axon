@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: ca494217be667d2085995a7f87d7ba39718f2565
+generated-at: 2776b55d50e08777413c04453fe9670c5099933e
 
-`git diff --numstat 31413ca7..ca494217 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..2776b55d -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -69,7 +69,7 @@ generated-at: ca494217be667d2085995a7f87d7ba39718f2565
 | `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
 | `crates/axon-core/src/interp/vm/mod.rs` | 3426 | 0 |
 | `crates/axon-core/src/interp/vm/pure.rs` | 964 | 0 |
-| `crates/axon-core/src/interp/vm/tests.rs` | 1536 | 0 |
+| `crates/axon-core/src/interp/vm/tests.rs` | 1537 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
 | `crates/axon-core/src/lib.rs` | 116 | 21 |
 | `crates/axon-core/src/main.rs` | 799 | 243 |
@@ -81,9 +81,9 @@ generated-at: ca494217be667d2085995a7f87d7ba39718f2565
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 38288 | 5265 |
+| total | 38289 | 5265 |
 
-`git log --reverse 31413ca7..ca494217 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..2776b55d -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -266,7 +266,9 @@ generated-at: ca494217be667d2085995a7f87d7ba39718f2565
 | d25cae8c | R51 S3e | TEST-ONLY: rustfmt of interp/sink_tests.rs (line wrapping of the S3e tests); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 03ba80ff | R51 T3a | TEST-ONLY: v0.22's sealed-run test helpers (JUDGE/LAUNDER/CONFUSED, judged, live, confusion_refused, judged8, live8, honest8, dict_suite, dict_refused, put_u8, mut_refused; bodies verbatim) in interp/tests_v022_a.rs, included at the end of interp.rs's mod tests; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | ca494217 | R51 T3a | TEST-ONLY: the 29 S3 rows of v0.22's interp::tests (seal-crossing casts, dict edges, &mut write-through, channel stamp) ported under their v0.22 names in interp/tests_v022_a.rs, bodies verbatim but two sealed_outcome_rule(.., true) calls run through sealed_outcome until S4 adds the rule switch; all 29 ignored and registered in r51-deferred-tests.json (21 S4: need the dispatch-rule-off switch; 8 S6, one a port gap: a bare `Uncertain` parameter unwraps the soft wrapper); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 179 commits | | |
+| 64e3d9af | R51 T3a | TEST-ONLY: vm::tests::r51_interp_sources skips the tests_v022_*.rs files include!d into interp.rs's mod tests (they have no `mod tests {` to cut at, so every sweep read them whole); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 2776b55d | R51 T3a merge | joins r51/t3a-sweep (64e3d9af, made atop 4a29c0a0 so the t3b lane can merge it alone) into r51/t3a; no conflict, no change beyond it; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 181 commits | | |
 <!-- END MECHANICAL -->
 
 
