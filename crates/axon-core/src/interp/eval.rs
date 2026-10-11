@@ -227,7 +227,36 @@ fn fn_value(name: &str, arity: usize) -> Value {
 impl<'p> Interp<'p> {
     // ── Core evaluator ───────────────────────────────────────────────────────
 
+    /// Evaluate `expr`: the plain evaluator, or in a SEALED run the one wrapped
+    /// by the taint accumulator (`interp/taint.rs`, R51 S2). This is the entry
+    /// for code that does not know which run it is in; the evaluator's own
+    /// recursion is generic over the run (`eval_t::<T>`) and never branches
+    /// here. NOT a function pointer: the wasm Asyncify guard (R15) refuses a
+    /// module in which a fn that can suspend is address-taken.
+    #[inline]
     pub(super) fn eval(&self, expr: &Expr, env: &mut Env) -> R {
+        if self.seal.active {
+            self.eval_tainted(expr, env)
+        } else {
+            self.eval_arm::<false>(expr, env)
+        }
+    }
+
+    /// [`Interp::eval`] resolved at compile time: the evaluator's own
+    /// recursion knows whether it is the sealed run's (`T`) and calls the
+    /// right one directly, so the unsealed instantiation carries no taint code.
+    #[inline(always)]
+    pub(super) fn eval_t<const T: bool>(&self, expr: &Expr, env: &mut Env) -> R {
+        if T {
+            self.eval_tainted(expr, env)
+        } else {
+            self.eval_arm::<false>(expr, env)
+        }
+    }
+
+    /// The 33-arm expression dispatch, instantiated once per run kind: `T` is
+    /// the sealed run's (entered only through [`Interp::eval_tainted`]).
+    pub(super) fn eval_arm<const T: bool>(&self, expr: &Expr, env: &mut Env) -> R {
         nest_guard!(self, EVAL);
         match expr {
             // AX-55: int, float and bool literals are built in place (no call,
@@ -251,7 +280,7 @@ impl<'p> Interp<'p> {
                 }
             }
 
-            Expr::Block(stmts) => self.eval_block(stmts, env),
+            Expr::Block(stmts) => self.eval_block::<T>(stmts, env),
 
             // Phase 6: `with handler { on E(p) => arm } { body }` installs an
             // effect-handler frame for the duration of `body`. A builtin in
@@ -268,7 +297,7 @@ impl<'p> Interp<'p> {
             Expr::Let { name, value, ty }
             | Expr::Own { name, value, ty }
             | Expr::RefBind { name, value, ty } => {
-                let v = self.eval(value, env)?;
+                let v = self.eval_t::<T>(value, env)?;
                 let (s, slot) = self.res.var(expr, name);
                 self.bind_let(name, s, slot, ty.as_ref(), v, env)?;
                 Ok(Value::Unit)
@@ -279,7 +308,7 @@ impl<'p> Interp<'p> {
                 if self.assign_in_place(s, slot, name, value, env)? {
                     return Ok(Value::Unit);
                 }
-                let v = self.eval(value, env)?;
+                let v = self.eval_t::<T>(value, env)?;
                 if env.assign_var(s, slot, v, 0) {
                     Ok(Value::Unit)
                 } else {
@@ -294,16 +323,16 @@ impl<'p> Interp<'p> {
             // expressions; phase 2 (`write_place`) walks the binding mutably and
             // sets the leaf.
             Expr::AssignTo { place, value } => {
-                let v = self.eval(value, env)?;
+                let v = self.eval_t::<T>(value, env)?;
                 let ((base, base_slot), steps) = self.flatten_place(place, env)?;
                 write_place(base, base_slot, &steps, v, env)?;
                 Ok(Value::Unit)
             }
 
-            Expr::BinOp { op, left, right } => self.eval_binop(op, left, right, env),
+            Expr::BinOp { op, left, right } => self.eval_binop::<T>(op, left, right, env),
 
             Expr::UnaryOp { op, operand } => {
-                let v = self.eval(operand, env)?;
+                let v = self.eval_t::<T>(operand, env)?;
                 eval_unary(op, v)
             }
 
@@ -311,18 +340,18 @@ impl<'p> Interp<'p> {
                 // An `Uncertain<bool>` condition (e.g. `if a > 5` where `a` is
                 // Uncertain — the comparison stays Uncertain) branches on its
                 // inner bool; confidence is irrelevant to control flow.
-                if cond_bool(self.eval(cond, env)?, "if")? {
-                    self.eval(then, env)
+                if cond_bool(self.eval_t::<T>(cond, env)?, "if")? {
+                    self.eval_t::<T>(then, env)
                 } else {
                     match else_ {
-                        Some(e) => self.eval(e, env),
+                        Some(e) => self.eval_t::<T>(e, env),
                         None => Ok(Value::Unit),
                     }
                 }
             }
 
             Expr::Match { subject, arms } => {
-                let v = self.eval(subject, env)?;
+                let v = self.eval_t::<T>(subject, env)?;
                 for arm in arms {
                     env.push();
                     // R50 S0 (AX-57): an `Err` out of the pattern or the guard
@@ -337,7 +366,7 @@ impl<'p> Interp<'p> {
                     };
                     if matched {
                         if let Some(guard) = &arm.guard {
-                            let ok = match self.eval(guard, env) {
+                            let ok = match self.eval_t::<T>(guard, env) {
                                 Ok(g) => matches!(g, Value::Bool(true)),
                                 Err(e) => {
                                     env.pop();
@@ -349,7 +378,7 @@ impl<'p> Interp<'p> {
                                 continue;
                             }
                         }
-                        let r = self.eval(&arm.body, env);
+                        let r = self.eval_t::<T>(&arm.body, env);
                         env.pop();
                         return r;
                     }
@@ -361,8 +390,8 @@ impl<'p> Interp<'p> {
             Expr::While { cond, body } => {
                 // An `Uncertain<bool>` condition branches on its inner bool
                 // (confidence is irrelevant to control flow) — same as `if`.
-                while cond_bool(self.eval(cond, env)?, "while")? {
-                    match self.run_loop_body(body, env)? {
+                while cond_bool(self.eval_t::<T>(cond, env)?, "while")? {
+                    match self.run_loop_body::<T>(body, env)? {
                         LoopStep::Break => break,
                         LoopStep::Continue => {}
                     }
@@ -376,7 +405,7 @@ impl<'p> Interp<'p> {
                 body,
             } => {
                 loop {
-                    let v = self.eval(expr, env)?;
+                    let v = self.eval_t::<T>(expr, env)?;
                     env.push();
                     // R50 S0: pop the iteration's scope on a pattern error too.
                     let matched = match self.match_pattern(pattern, &v, env) {
@@ -390,7 +419,7 @@ impl<'p> Interp<'p> {
                         env.pop();
                         break;
                     }
-                    let step = self.run_loop_body(body, env);
+                    let step = self.run_loop_body::<T>(body, env);
                     env.pop();
                     match step? {
                         LoopStep::Break => break,
@@ -407,8 +436,8 @@ impl<'p> Interp<'p> {
                 inclusive,
                 body,
             } => {
-                let s = strict_int(self.eval(start, env)?)?;
-                let e = strict_int(self.eval(end, env)?)?;
+                let s = strict_int(self.eval_t::<T>(start, env)?)?;
+                let e = strict_int(self.eval_t::<T>(end, env)?)?;
                 let mut i = s;
                 let (var, slot) = self.res.var(expr, var);
                 loop {
@@ -418,7 +447,7 @@ impl<'p> Interp<'p> {
                     }
                     env.push();
                     env.define_var(var, slot, Value::Int(i), 0);
-                    let step = self.run_loop_body(body, env);
+                    let step = self.run_loop_body::<T>(body, env);
                     env.pop();
                     match step? {
                         LoopStep::Break => break,
@@ -431,7 +460,7 @@ impl<'p> Interp<'p> {
 
             Expr::Return(opt) => {
                 let v = match opt {
-                    Some(e) => self.eval(e, env)?,
+                    Some(e) => self.eval_t::<T>(e, env)?,
                     None => Value::Unit,
                 };
                 Err(Flow::Return(v))
@@ -439,7 +468,7 @@ impl<'p> Interp<'p> {
             Expr::Break => Err(Flow::Break),
             Expr::Continue => Err(Flow::Continue),
 
-            Expr::Question(inner) => question(self.eval(inner, env)?),
+            Expr::Question(inner) => question(self.eval_t::<T>(inner, env)?),
 
             Expr::Call { callee, args, tier } => {
                 // `chan<T>()` lowers to a call whose callee is `chan::<T>`.
@@ -468,7 +497,7 @@ impl<'p> Interp<'p> {
                         return self.eval_native_call(name, args, env);
                     }
                 }
-                self.eval_call(callee, args, tier.as_deref(), env)
+                self.eval_call::<T>(callee, args, tier.as_deref(), env)
             }
 
             Expr::MethodCall {
@@ -476,14 +505,14 @@ impl<'p> Interp<'p> {
                 method,
                 args,
             } => {
-                let recv = self.eval(receiver, env)?;
+                let recv = self.eval_t::<T>(receiver, env)?;
                 if let Value::Chan(q) = &recv {
                     return self.chan_method(q, method, args, env);
                 }
                 let mut argv = Vec::with_capacity(args.len() + 1);
                 argv.push(recv);
                 for a in args {
-                    argv.push(self.eval(a, env)?);
+                    argv.push(self.eval_t::<T>(a, env)?);
                 }
                 self.impl_method(method, argv)
             }
@@ -497,14 +526,14 @@ impl<'p> Interp<'p> {
                     let (s, slot) = self.res.var(receiver, name);
                     return self.field_in_place(s, slot, name, f, field, env);
                 }
-                let v = self.eval(receiver, env)?;
+                let v = self.eval_t::<T>(receiver, env)?;
                 field_of(&v, f, field)
             }
 
             Expr::Tuple(elems) => {
                 let mut vs = Vec::with_capacity(elems.len());
                 for e in elems {
-                    vs.push(self.eval(e, env)?);
+                    vs.push(self.eval_t::<T>(e, env)?);
                 }
                 Ok(Value::tuple(vs))
             }
@@ -514,7 +543,7 @@ impl<'p> Interp<'p> {
                 // Intercept before normal array indexing to avoid "undefined E".
                 if let Expr::Ident(tag) = receiver.as_ref() {
                     if matches!(tag.as_str(), "E" | "Var") {
-                        let dist_val = self.eval(index, env)?;
+                        let dist_val = self.eval_t::<T>(index, env)?;
                         if let Some(moment) = eval_dist_moment(tag, &dist_val) {
                             return Ok(Value::Float(moment));
                         }
@@ -526,19 +555,19 @@ impl<'p> Interp<'p> {
                 if let Expr::Ident(name) = receiver.as_ref() {
                     let (s, slot) = self.res.var(receiver, name);
                     if env.get_var(s, slot).is_some() || self.globals.contains_key(&s) {
-                        let idx = strict_int(self.eval(index, env)?)?;
+                        let idx = strict_int(self.eval_t::<T>(index, env)?)?;
                         return self.index_in_place(s, slot, name, idx, env);
                     }
                 }
-                let arr = self.eval(receiver, env)?;
-                let idx = strict_int(self.eval(index, env)?)?;
+                let arr = self.eval_t::<T>(receiver, env)?;
+                let idx = strict_int(self.eval_t::<T>(index, env)?)?;
                 index_value(arr, idx)
             }
 
             Expr::Array(elems) => {
                 let mut out = Vec::with_capacity(elems.len());
                 for e in elems {
-                    out.push(self.eval(e, env)?);
+                    out.push(self.eval_t::<T>(e, env)?);
                 }
                 Ok(Value::Array(Rc::new(out)))
             }
@@ -562,7 +591,7 @@ impl<'p> Interp<'p> {
                 // the value.
                 let mut vals = self.take_args(fields.len());
                 for (_, fexpr) in fields {
-                    vals.push(self.eval(fexpr, env)?);
+                    vals.push(self.eval_t::<T>(fexpr, env)?);
                 }
                 let v = self.finish_record(lit, name, &mut vals);
                 vals.clear();
@@ -570,9 +599,9 @@ impl<'p> Interp<'p> {
                 v
             }
 
-            Expr::Ok(e) => Ok(Value::Ok(Box::new(self.eval(e, env)?))),
-            Expr::Err(e) => Ok(Value::Err(Box::new(self.eval(e, env)?))),
-            Expr::Some(e) => Ok(Value::Some(Box::new(self.eval(e, env)?))),
+            Expr::Ok(e) => Ok(Value::Ok(Box::new(self.eval_t::<T>(e, env)?))),
+            Expr::Err(e) => Ok(Value::Err(Box::new(self.eval_t::<T>(e, env)?))),
+            Expr::Some(e) => Ok(Value::Some(Box::new(self.eval_t::<T>(e, env)?))),
             Expr::None => Ok(Value::None),
 
             Expr::FmtStr { parts } => {
@@ -582,7 +611,7 @@ impl<'p> Interp<'p> {
                     match part {
                         FmtPart::Lit(t) => s.push_str(t),
                         FmtPart::Expr(e) => {
-                            let v = self.eval(e, env)?;
+                            let v = self.eval_t::<T>(e, env)?;
                             s.push_str(&display(&v));
                         }
                     }
@@ -592,7 +621,7 @@ impl<'p> Interp<'p> {
 
             Expr::Lambda { .. } => Ok(self.make_closure(expr, env)),
 
-            Expr::Comptime(inner) => self.eval(inner, env),
+            Expr::Comptime(inner) => self.eval_t::<T>(inner, env),
 
             // R17 Slice 1: inline asm is hardware-only — refuses in the interpreter.
             Expr::InlineAsm { .. } => Err(crate::interp::Flow::Panic(
@@ -602,7 +631,7 @@ impl<'p> Interp<'p> {
             // Cooperative concurrency: run the spawned body eagerly (single-
             // threaded), so its sends are queued before the main flow continues.
             Expr::Spawn(body) => {
-                self.eval(body, env)?;
+                self.eval_t::<T>(body, env)?;
                 Ok(Value::Unit)
             }
             // Cooperative select: fire the first arm whose channel has a ready
@@ -620,12 +649,12 @@ impl<'p> Interp<'p> {
                     if method != "recv" {
                         return panic("select arms must be channel `recv()` operations");
                     }
-                    let Value::Chan(q) = self.eval(receiver, env)? else {
+                    let Value::Chan(q) = self.eval_t::<T>(receiver, env)? else {
                         return panic("select arm `recv` on a non-channel");
                     };
                     let ready = q.borrow_mut().pop_front();
                     if ready.is_some() {
-                        return self.eval(&arm.body, env);
+                        return self.eval_t::<T>(&arm.body, env);
                     }
                 }
                 panic("select: no channel was ready (cooperative interpreter — send before select)")
@@ -722,12 +751,12 @@ impl<'p> Interp<'p> {
         Ok(())
     }
 
-    pub(super) fn eval_block(&self, stmts: &[Stmt], env: &mut Env) -> R {
+    pub(super) fn eval_block<const T: bool>(&self, stmts: &[Stmt], env: &mut Env) -> R {
         nest_guard!(self, EVAL_BLOCK);
         env.push();
         let mut last = Value::Unit;
         for stmt in stmts {
-            match self.eval(&stmt.expr, env) {
+            match self.eval_t::<T>(&stmt.expr, env) {
                 Ok(v) => last = v,
                 Err(e) => {
                     env.pop();
@@ -741,11 +770,15 @@ impl<'p> Interp<'p> {
 
     /// Run a loop body (a `Vec<Stmt>`) in a fresh scope, translating `break`
     /// and `continue` into a [`LoopStep`] for the caller's loop construct.
-    pub(super) fn run_loop_body(&self, body: &[Stmt], env: &mut Env) -> Result<LoopStep, Flow> {
+    pub(super) fn run_loop_body<const T: bool>(
+        &self,
+        body: &[Stmt],
+        env: &mut Env,
+    ) -> Result<LoopStep, Flow> {
         nest_guard!(self, RUN_LOOP_BODY);
         env.push();
         for stmt in body {
-            match self.eval(&stmt.expr, env) {
+            match self.eval_t::<T>(&stmt.expr, env) {
                 Ok(_) => {}
                 Err(Flow::Break) => {
                     env.pop();
@@ -1089,7 +1122,7 @@ impl<'p> Interp<'p> {
         }
     }
 
-    pub(super) fn eval_call(
+    pub(super) fn eval_call<const T: bool>(
         &self,
         callee: &Expr,
         args: &[Expr],
@@ -1127,7 +1160,7 @@ impl<'p> Interp<'p> {
         // Evaluate arguments left-to-right, into a reused buffer (AX-54).
         let mut argv = self.take_args(args.len());
         for a in args {
-            argv.push(self.eval(a, env)?);
+            argv.push(self.eval_t::<T>(a, env)?);
         }
         self.dispatch_call(callee, argv, tier, env)
     }
@@ -1570,22 +1603,28 @@ impl<'p> Interp<'p> {
         }
     }
 
-    pub(super) fn eval_binop(&self, op: &BinOp, left: &Expr, right: &Expr, env: &mut Env) -> R {
+    pub(super) fn eval_binop<const T: bool>(
+        &self,
+        op: &BinOp,
+        left: &Expr,
+        right: &Expr,
+        env: &mut Env,
+    ) -> R {
         nest_guard!(self, EVAL_BINOP);
         // Short-circuit boolean operators. An `Uncertain<bool>` operand can't
         // short-circuit (we must combine confidences), so it falls through to
         // the value-level path which propagates uncertainty.
         if matches!(op, BinOp::And | BinOp::Or) {
-            let lv = self.eval(left, env)?;
+            let lv = self.eval_t::<T>(left, env)?;
             if short_circuits(op, &lv) {
                 return Ok(lv);
             }
-            let rv = self.eval(right, env)?;
+            let rv = self.eval_t::<T>(right, env)?;
             return logic_rhs(op, lv, rv);
         }
 
-        let l = self.operand(left, env)?;
-        let r = self.operand(right, env)?;
+        let l = self.operand::<T>(left, env)?;
+        let r = self.operand::<T>(right, env)?;
         binop_operands(op, l, r)
     }
 
@@ -1594,7 +1633,7 @@ impl<'p> Interp<'p> {
     /// literal without building, cloning or dropping a `Value`. Anything else
     /// is evaluated as usual. Reading a local is what `eval` does for it.
     #[inline(always)]
-    fn operand(&self, e: &Expr, env: &mut Env) -> Result<Operand, Flow> {
+    fn operand<const T: bool>(&self, e: &Expr, env: &mut Env) -> Result<Operand, Flow> {
         match e {
             Expr::Ident(name) => {
                 let (s, slot) = self.res.var(e, name);
@@ -1606,7 +1645,7 @@ impl<'p> Interp<'p> {
             Expr::Literal(Literal::Float(f)) => return Ok(Operand::Float(*f)),
             _ => {}
         }
-        self.eval(e, env).map(Operand::of)
+        self.eval_t::<T>(e, env).map(Operand::of)
     }
 
     /// AX-31: `x = arr_push(x, v)`, `x = arr_concat(x, ys)` and `x = x + y` on a

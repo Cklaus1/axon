@@ -812,6 +812,45 @@ impl<'p> Interp<'p> {
         }
     }
 
+    /// The evaluator's wrapper in a sealed run. Everything a SEALED frame
+    /// computes is the candidate's; in an OPERATOR frame the accumulator is
+    /// saved, cleared, and merged back with what this expression touched.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn eval_tainted(&self, expr: &Expr, env: &mut Env) -> R {
+        let tn = &self.taint;
+        if self.frame_sealed.get() {
+            let r = self.eval_arm::<true>(expr, env);
+            tn.acc.set(ALL);
+            tn.last.set(ALL);
+            return r;
+        }
+        let saved = tn.acc.replace(0);
+        let r = self.eval_arm::<true>(expr, env);
+        // A read of a binding (or module-level let) takes its taint: the name
+        // itself, an element or a field of it. Done here, around the arms, so
+        // the fast paths that read the holder in place (`index_in_place`,
+        // `field_in_place`) are covered by the one rule. Value and taint are
+        // read through the same slot lookup (TaintPort-11).
+        match expr {
+            Expr::Ident(n) => {
+                let (s, slot) = self.res.var(expr, n);
+                self.t_touch(self.t_holder(s, slot, env));
+            }
+            Expr::FieldAccess { receiver, .. } | Expr::Index { receiver, .. } => {
+                if let Expr::Ident(n) = receiver.as_ref() {
+                    let (s, slot) = self.res.var(receiver, n);
+                    self.t_touch(self.t_holder(s, slot, env));
+                }
+            }
+            _ => {}
+        }
+        let mine = tn.acc.get();
+        tn.last.set(mine);
+        tn.acc.set(saved | mine);
+        r
+    }
+
     /// Before a builtin runs: the taint of the state it reads goes into the
     /// result. Called with the arguments evaluated and their taint in `acc`.
     pub(super) fn t_builtin_in(&self, name: &str, args: &[Value]) {
