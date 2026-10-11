@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 3bd4709b39c6f71cd8f7017596012c1b2dda308d
+generated-at: ce42eeb2709fdaee13060e80d34ce4a422037902
 
-`git diff --numstat 31413ca7..3bd4709b -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..ce42eeb2 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -61,11 +61,11 @@ generated-at: 3bd4709b39c6f71cd8f7017596012c1b2dda308d
 | `crates/axon-core/src/interp/kernel_tests.rs` | 401 | 0 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 48 | 21 |
-| `crates/axon-core/src/interp/sink_tests.rs` | 1351 | 0 |
+| `crates/axon-core/src/interp/sink_tests.rs` | 1286 | 0 |
 | `crates/axon-core/src/interp/sym.rs` | 1188 | 0 |
 | `crates/axon-core/src/interp/taint.rs` | 1283 | 0 |
 | `crates/axon-core/src/interp/taint_tests.rs` | 1128 | 0 |
-| `crates/axon-core/src/interp/tests_v022_s4.rs` | 527 | 0 |
+| `crates/axon-core/src/interp/tests_v022_s4.rs` | 662 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 506 | 514 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
 | `crates/axon-core/src/interp/vm/mod.rs` | 3426 | 0 |
@@ -82,9 +82,9 @@ generated-at: 3bd4709b39c6f71cd8f7017596012c1b2dda308d
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 38670 | 5302 |
+| total | 38740 | 5302 |
 
-`git log --reverse 31413ca7..3bd4709b -- crates/axon-core/src`:
+`git log --reverse 31413ca7..ce42eeb2 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -269,7 +269,8 @@ generated-at: 3bd4709b39c6f71cd8f7017596012c1b2dda308d
 | 5fea0339 | R51 S4b | INTERPRETER make_closure records the creating frame's pin owner in a sealed run (cv.seal.pin_owner = pin_fn, veto PIN_FN_MARK eval.rs:967-972); dispatch_named in a sealed run refuses a non-closure value a local holds (not_callable) instead of falling through to a fn of the same name (veto eval.rs local-call rule, amendment 60); both under seal.active, so an unsealed run is unchanged. TEST-ONLY T8.1 dispatch tests (undetermined positions, width/name, goal names) under Both/TaintOnly/StaticOnly/Neither with controls; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | bbf8be12 | R51 S4b | TEST-ONLY: v0.22's S4 dispatch rows ported under their v0.22 names in interp/tests_v022_s4.rs (included at the end of interp.rs mod tests; ignored R51 S6, they need a live sealed run); tests/dispatch_rule_switch_is_test_only.rs un-ignored and extended to TAINT_FORCE_ON; drift tests for the goal-name call edge and the impl_method/dispatch_named sink classification; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 3bd4709b | R51 S4b | TEST-ONLY: #[ignore] reasons of the dispatch-rule deferred tests (interp.rs unit tests, axon-psv sealed_frames) re-slotted to S6 with the registry; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 181 commits | | |
+| ce42eeb2 | R51 S4b | TEST-ONLY: operator_arithmetic_never_runs_at_a_width_the_candidate_chose moved from interp/sink_tests.rs to interp::tests (interp/tests_v022_s4.rs, the v0.22 module path) with v0.22's runner half, which asserts SEALED_RUN_REFUSED until S6; sink_tests helpers with_ix and WIDTH widened to pub(super); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 182 commits | | |
 <!-- END MECHANICAL -->
 
 
