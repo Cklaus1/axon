@@ -9032,6 +9032,7 @@ fn main() { }
         assert!(calls >= 5, "only {calls} goal.rs call_fn sites found");
     }
     include!("interp/tests_v022_a.rs");
+    include!("interp/tests_v022_b.rs");
 }
 
 #[cfg(test)]
