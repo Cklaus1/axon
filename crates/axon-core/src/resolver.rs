@@ -3402,7 +3402,8 @@ mod tests {
         assert_eq!(e.len(), 1, "{e:?}");
         assert!(
             e[0].contains("`impl Show2 for Option<i64>` is defined more than once"),
-            "{e:?}"
+            "ATTACK: a duplicate `impl Show2 for Option<i64>` was not refused as a duplicate impl \
+             (the trait-impl rule did not decide; another check's words reached the user): {e:?}"
         );
     }
 

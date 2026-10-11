@@ -75,3 +75,9 @@ M59 M65 M67 M72 M73 M74 M76 M77 M86 M87 M88 M90 M91 M92 M95 M96 M97 M489 M560 M5
   `interp::crossing_tests::a_sealed_goal_eval_is_told_the_common_text_for_a_name_it_cannot_see`; the
   lookup-filter row it had been re-pointed to is now M3496 (S7-Evidence-5).
 - New rows M3497 (init_globals routing) and M3498 (struct refinement routing); t7 list 1.
+- M60 / M89: REINSTATED ACTIVE at S6 (retired EQUIVALENT_DID since C9 round 1b). Their retired-guard
+  full-suite cells failed at 2b0e7438 on tests only they satisfy: M60 on
+  `resolver::tests::a_refinement_may_start_with_a_deferred_name_and_impl_text_is_axon` (M69 still refuses
+  the duplicate, in its own words), M89 on
+  `interp::taint_tests::a_sealed_caller_cannot_tell_an_operator_name_from_a_missing_one_on_any_path`
+  (a sealed `scheduler_spawn` of an operator fn completes: an existence oracle). t7 list 3.

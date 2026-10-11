@@ -226,124 +226,6 @@
       }
     },
     {
-      "mutation": "M60",
-      "status": "EQUIVALENT_DID",
-      "kind": "pair",
-      "property": "a second impl never replaces the first impl's method",
-      "original_guard": {
-        "file": "crates/axon-core/src/resolver.rs"
-      },
-      "subsumed_by": [
-        "M69"
-      ],
-      "live_killing_mutant": "joint:M60+M69",
-      "all_paths": "the ONLY harm of a duplicate impl is the interpreter's method table (keyed (type_name_of(for_type), method), last insert wins) replacing a method; with M60's check off every impl takes the else branch, whose dispatch check keys on the SAME type_name_of and method name and refuses any second definition of that key (E0002), whatever the traits. A duplicate impl sharing no method key replaces nothing (a missing required method is E0502; impl_table is a set)",
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "retired_guard_disabled": "ATTACK_REFUSED",
-        "guard_set_disabled": "ATTACK_SUCCEEDS",
-        "guard_set": [
-          "M60",
-          "M69"
-        ],
-        "retired_guard_full_suite": "SUITE_OK",
-        "full_suite_packages": [
-          "axon-core",
-          "axon-cortex",
-          "axon-fabric",
-          "axon-intent",
-          "axon-os",
-          "axon-psv",
-          "axon-wasm",
-          "axon-web"
-        ],
-        "consumer_suites": {
-          "axon-cortex": "SUITE_OK",
-          "axon-fabric": "SUITE_OK",
-          "axon-intent": "SUITE_OK",
-          "axon-os": "SUITE_OK",
-          "axon-psv": "SUITE_OK",
-          "axon-wasm": "SUITE_OK",
-          "axon-web": "SUITE_OK"
-        },
-        "retired_guard_full_suite_skipped": {},
-        "sibling_set_disabled": "ATTACK_REFUSED"
-      },
-      "holds": true,
-      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
-      "edits_sha256": "1a64936b3fd11b94a59b90037e68cbca264e65cc1b54a67f5bdf83326068c807",
-      "environment": {
-        "euid": 0,
-        "etc_axon_present": true,
-        "unset": [
-          "AXON",
-          "AXON_BIN",
-          "CORTEX_BIN"
-        ],
-        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-0/debug/axon"
-      }
-    },
-    {
-      "mutation": "M89",
-      "status": "EQUIVALENT_DID",
-      "kind": "set",
-      "property": "a sealed frame never gets an operator function run through a fiber",
-      "original_guard": {
-        "file": "crates/axon-core/src/interp/builtins.rs"
-      },
-      "subsumed_by": [
-        "M86",
-        "M96"
-      ],
-      "live_killing_mutant": "joint:M89+M86+M96",
-      "all_paths": "every fiber runs in builtin_scheduler_run_once (scheduler_run, supervisor_run) through call_fn. A fiber lives in the kernel of the frame that queued it (k() = kernels[frame_sealed], M96), so a sealed frame's fiber is run only from a sealed frame, where call_fn's call edge (M86) refuses an operator function. Executed: M89+M86 reopens the sealed-frame route, M89+M96 reopens the operator-frame route",
-      "matrix": {
-        "baseline": "ATTACK_REFUSED",
-        "retired_guard_disabled": "ATTACK_REFUSED",
-        "guard_set_disabled": "ATTACK_SUCCEEDS",
-        "guard_set": [
-          "M89",
-          "M86",
-          "M96"
-        ],
-        "retired_guard_full_suite": "SUITE_OK",
-        "full_suite_packages": [
-          "axon-core",
-          "axon-cortex",
-          "axon-fabric",
-          "axon-intent",
-          "axon-os",
-          "axon-psv",
-          "axon-wasm",
-          "axon-web"
-        ],
-        "consumer_suites": {
-          "axon-cortex": "SUITE_OK",
-          "axon-fabric": "SUITE_OK",
-          "axon-intent": "SUITE_OK",
-          "axon-os": "SUITE_OK",
-          "axon-psv": "SUITE_OK",
-          "axon-wasm": "SUITE_OK",
-          "axon-web": "SUITE_OK"
-        },
-        "retired_guard_full_suite_skipped": {},
-        "sibling_set_disabled": "ATTACK_REFUSED"
-      },
-      "holds": true,
-      "commit": "aad46c05107c5aa35775ebde2b51dff73b346568",
-      "edits_sha256": "9865166b0fab35650fa5ab36d7afc663eaf60ab337e5a1436ef78e1389115e16",
-      "environment": {
-        "euid": 0,
-        "etc_axon_present": true,
-        "unset": [
-          "AXON",
-          "AXON_BIN",
-          "CORTEX_BIN"
-        ],
-        "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-1/debug/axon"
-      }
-    },
-    {
       "mutation": "M139",
       "status": "EQUIVALENT_DID",
       "kind": "pair",
@@ -2692,7 +2574,322 @@
         ],
         "consumer_axon_bin": "AXON_BIN=/var/tmp/c9r4f-pd-target-2/debug/axon"
       }
+    },
+    {
+      "mutation": "M3260",
+      "status": "EQUIVALENT_DID",
+      "kind": "pair",
+      "property": "a candidate's `use` of a module the operator declares reads like one of a missing module",
+      "original_guard": {
+        "file": "crates/axon-core/src/main.rs"
+      },
+      "subsumed_by": [
+        "M3456"
+      ],
+      "live_killing_mutant": "joint:M3260+M3456",
+      "all_paths": "the only diagnostics a candidate `use` can give the merged check are the resolver's module/name lookups (E0003 and the item lookups of `resolve_use`), and a UseDecl carries no span: every one of them reaches `split_for_view` with line 0 in the entry file, which the merged half hands to the backstop (shown only when the sealed-only half found no error). Both guards are in the one function that splits a `--seal` check, run_check_pipeline_inner, so there is no route to the merged half's output that skips both.",
+      "matrix": {
+        "baseline": "ATTACK_REFUSED",
+        "retired_guard_disabled": "ATTACK_REFUSED",
+        "guard_set_disabled": "ATTACK_SUCCEEDS",
+        "guard_set": [
+          "M3260",
+          "M3456"
+        ],
+        "retired_guard_full_suite": "SUITE_OK",
+        "full_suite_packages": [
+          "axon-psv",
+          "axon-core",
+          "axon-attest",
+          "axon-audit",
+          "axon-cortex",
+          "axon-fabric",
+          "axon-guest-init",
+          "axon-intent",
+          "axon-ledger",
+          "axon-loop",
+          "axon-loop-contracts",
+          "axon-os",
+          "axon-reflex",
+          "axon-signal",
+          "axon-vm",
+          "axon-wasm",
+          "axon-web",
+          "cortex-policy-adapter"
+        ],
+        "consumer_suites": {
+          "axon-attest": {
+            "state": "SUITE_OK",
+            "scope": "suite",
+            "cargo": "-p axon-attest  -- --test-threads=1"
+          },
+          "axon-audit": {
+            "state": "SUITE_OK",
+            "scope": "suite",
+            "cargo": "-p axon-audit  -- --test-threads=1"
+          },
+          "axon-cortex": {
+            "state": "SUITE_OK",
+            "scope": [
+              "check_executor",
+              "cli",
+              "conformance",
+              "skills"
+            ],
+            "cargo": "-p axon-cortex --test check_executor --test cli --test conformance --test skills -- --test-threads=1"
+          },
+          "axon-fabric": {
+            "state": "SUITE_OK",
+            "scope": "suite",
+            "cargo": "-p axon-fabric  -- --test-threads=1"
+          },
+          "axon-guest-init": {
+            "state": "SUITE_OK",
+            "scope": "suite",
+            "cargo": "-p axon-guest-init  -- --test-threads=1"
+          },
+          "axon-intent": {
+            "state": "SUITE_OK",
+            "scope": "suite",
+            "cargo": "-p axon-intent  -- --test-threads=1"
+          },
+          "axon-ledger": {
+            "state": "SUITE_OK",
+            "scope": "suite",
+            "cargo": "-p axon-ledger  -- --test-threads=1"
+          },
+          "axon-loop": {
+            "state": "SUITE_OK",
+            "scope": "suite",
+            "cargo": "-p axon-loop  -- --test-threads=1"
+          },
+          "axon-loop-contracts": {
+            "state": "SUITE_OK",
+            "scope": "suite",
+            "cargo": "-p axon-loop-contracts  -- --test-threads=1"
+          },
+          "axon-os": {
+            "state": "SUITE_OK",
+            "scope": "suite",
+            "cargo": "-p axon-os  -- --test-threads=1"
+          },
+          "axon-reflex": {
+            "state": "SUITE_OK",
+            "scope": "suite",
+            "cargo": "-p axon-reflex  -- --test-threads=1"
+          },
+          "axon-signal": {
+            "state": "SUITE_OK",
+            "scope": "suite",
+            "cargo": "-p axon-signal  -- --test-threads=1"
+          },
+          "axon-vm": {
+            "state": "SUITE_OK",
+            "scope": "suite",
+            "cargo": "-p axon-vm  -- --test-threads=1"
+          },
+          "axon-wasm": {
+            "state": "SUITE_OK",
+            "scope": "suite",
+            "cargo": "-p axon-wasm  -- --test-threads=1"
+          },
+          "axon-web": {
+            "state": "SUITE_OK",
+            "scope": "suite",
+            "cargo": "-p axon-web  -- --test-threads=1"
+          },
+          "cortex-policy-adapter": {
+            "state": "SUITE_OK",
+            "scope": "suite",
+            "cargo": "-p cortex-policy-adapter  -- --test-threads=1"
+          }
+        },
+        "clean_baselines": {
+          "axon-psv -p axon-core": "computed",
+          "axon-attest": "computed",
+          "axon-audit": "computed",
+          "axon-cortex": "computed",
+          "axon-fabric": "computed",
+          "axon-guest-init": "computed",
+          "axon-intent": "computed",
+          "axon-ledger": "computed",
+          "axon-loop": "computed",
+          "axon-loop-contracts": "computed",
+          "axon-os": "computed",
+          "axon-reflex": "computed",
+          "axon-signal": "computed",
+          "axon-vm": "computed",
+          "axon-wasm": "computed",
+          "axon-web": "computed",
+          "cortex-policy-adapter": "computed"
+        },
+        "retired_guard_full_suite_skipped": {},
+        "sibling_set_disabled": "ATTACK_REFUSED"
+      },
+      "holds": true,
+      "commit": "0f6a92d4ccc9e7dd4b9c661280d0cec699fe13ac",
+      "edits_sha256": "b0fa2c03f674878beaf440b477429b23e14e0eaae01e4535fcd1af1f451f22f0",
+      "environment": {
+        "euid": 0,
+        "etc_axon_present": true,
+        "unset": [
+          "AXON",
+          "AXON_BIN",
+          "CORTEX_BIN"
+        ],
+        "consumer_axon_bin": "AXON_BIN=/home/cklaus/projects/axon-lanes/.r51-build/target-pdfix/debug/axon",
+        "host": {
+          "hostname": "gpumaster",
+          "kernel": "Linux 7.0.0-34-generic",
+          "nproc": 32,
+          "mem_total": "257022384 kB",
+          "toolchain": {
+            "rustc": "rustc 1.99.0-nightly (375b1431b 2026-07-10)\nbinary: rustc\ncommit-hash: 375b1431b7d89d1c2e2bc168c011848ae12b7d14\ncommit-date: 2026-07-10\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0-nightly\nLLVM version: 22.1.8",
+            "cargo": "cargo 1.99.0-nightly (59800466c 2026-07-07)",
+            "llvm_system": "17.0.6"
+          }
+        }
+      },
+      "consumer_selection": {
+        "rule": "build-graph/1",
+        "mutated_file": "crates/axon-core/src/main.rs",
+        "mutated_crate": "axon-core",
+        "always": [
+          "axon-core",
+          "axon-psv"
+        ],
+        "run": {
+          "axon-attest": {
+            "scope": "suite",
+            "reason": "E: execs axon-os -- E: execs axon-core -- L: links axon-core"
+          },
+          "axon-audit": {
+            "scope": "suite",
+            "reason": "E: execs axon-os -- E: execs axon-core -- L: links axon-core"
+          },
+          "axon-cortex": {
+            "scope": [
+              "check_executor",
+              "cli",
+              "conformance",
+              "skills"
+            ],
+            "reason": {
+              "check_executor": "D: crates/axon-core/tests/script_spawn/mod.rs lists the manifest closure of axon-core, which holds axon-core",
+              "cli": "D: crates/axon-core/tests/script_spawn/mod.rs lists the manifest closure of axon-core, which holds axon-core",
+              "conformance": "D: crates/axon-cortex/benchmarks/check_docs.py enumerates the workspace root or crates/ (it can read every file of the tree)",
+              "skills": "D: crates/axon-cortex/tests/skills.rs enumerates the workspace root or crates/ (it can read every file of the tree)"
+            }
+          },
+          "axon-fabric": {
+            "scope": "suite",
+            "reason": "B: axon-fabric -- its build script watches a computed path (the whole tree, conservatively)"
+          },
+          "axon-guest-init": {
+            "scope": "suite",
+            "reason": "E: execs axon-core -- L: links axon-core"
+          },
+          "axon-intent": {
+            "scope": "suite",
+            "reason": "E: execs axon-core -- L: links axon-core"
+          },
+          "axon-ledger": {
+            "scope": "suite",
+            "reason": "E: execs axon-core -- L: links axon-core"
+          },
+          "axon-loop": {
+            "scope": "suite",
+            "reason": "E: execs axon-core -- L: links axon-core"
+          },
+          "axon-loop-contracts": {
+            "scope": "suite",
+            "reason": "E: execs axon-core -- L: links axon-core"
+          },
+          "axon-os": {
+            "scope": "suite",
+            "reason": "E: execs axon-core -- L: links axon-core"
+          },
+          "axon-reflex": {
+            "scope": "suite",
+            "reason": "E: execs axon-core -- L: links axon-core"
+          },
+          "axon-signal": {
+            "scope": "suite",
+            "reason": "D: names `crates/axon-core/src/auth.rs`, a path in axon-core"
+          },
+          "axon-vm": {
+            "scope": "suite",
+            "reason": "E: execs axon-core -- L: links axon-core"
+          },
+          "axon-wasm": {
+            "scope": "suite",
+            "reason": "L: links axon-core"
+          },
+          "axon-web": {
+            "scope": "suite",
+            "reason": "E: execs axon-core -- L: links axon-core"
+          },
+          "cortex-policy-adapter": {
+            "scope": "suite",
+            "reason": "E: execs axon-core -- L: links axon-core"
+          }
+        },
+        "skipped": {
+          "axon-ai": "no unit of axon-ai can observe crates/axon-core/src/main.rs: axon-core is not in its link closure ['axon-ai'], no binary it execs is built from or reads it, no path it names is in axon-core, it enumerates no base directory, and no build script it builds re-runs on it",
+          "axon-certcheck": "no unit of axon-certcheck can observe crates/axon-core/src/main.rs: axon-core is not in its link closure ['axon-certcheck'], no binary it execs is built from or reads it, no path it names is in axon-core, it enumerates no base directory, and no build script it builds re-runs on it",
+          "axon-domain": "no unit of axon-domain can observe crates/axon-core/src/main.rs: axon-core is not in its link closure ['axon-domain'], no binary it execs is built from or reads it, no path it names is in axon-core, it enumerates no base directory, and no build script it builds re-runs on it",
+          "axon-gfx": "no unit of axon-gfx can observe crates/axon-core/src/main.rs: axon-core is not in its link closure ['axon-gfx', 'axon-gfx-mock'], no binary it execs is built from or reads it, no path it names is in axon-core, it enumerates no base directory, and no build script it builds re-runs on it",
+          "axon-gfx-mock": "no unit of axon-gfx-mock can observe crates/axon-core/src/main.rs: axon-core is not in its link closure ['axon-gfx-mock'], no binary it execs is built from or reads it, no path it names is in axon-core, it enumerates no base directory, and no build script it builds re-runs on it",
+          "axon-guest-kernel": "no unit of axon-guest-kernel can observe crates/axon-core/src/main.rs: axon-core is not in its link closure ['axon-guest-kernel'], no binary it execs is built from or reads it, no path it names is in axon-core, it enumerates no base directory, and no build script it builds re-runs on it",
+          "axon-rt": "no unit of axon-rt can observe crates/axon-core/src/main.rs: axon-core is not in its link closure ['axon-gfx-mock', 'axon-rt'], no binary it execs is built from or reads it, no path it names is in axon-core, it enumerates no base directory, and no build script it builds re-runs on it",
+          "axon-rt-ai": "no unit of axon-rt-ai can observe crates/axon-core/src/main.rs: axon-core is not in its link closure ['axon-ai', 'axon-gfx-mock', 'axon-rt', 'axon-rt-ai'], no binary it execs is built from or reads it, no path it names is in axon-core, it enumerates no base directory, and no build script it builds re-runs on it",
+          "axon-surface": "no unit of axon-surface can observe crates/axon-core/src/main.rs: axon-core is not in its link closure ['axon-surface'], no binary it execs is built from or reads it, no path it names is in axon-core, it enumerates no base directory, and no build script it builds re-runs on it",
+          "axon-workspace-recipe": "no unit of axon-workspace-recipe can observe crates/axon-core/src/main.rs: axon-core is not in its link closure ['axon-workspace-recipe'], no binary it execs is built from or reads it, no path it names is in axon-core, it enumerates no base directory, and no build script it builds re-runs on it"
+        }
+      },
+      "timing_seconds": {
+        "selection": 2.3,
+        "cell_baseline": 46.3,
+        "baseline_own": 409.5,
+        "baseline_axon-attest": 0.5,
+        "baseline_axon-audit": 1.1,
+        "baseline_axon-cortex": 18.3,
+        "baseline_axon-fabric": 105.2,
+        "baseline_axon-guest-init": 4.3,
+        "baseline_axon-intent": 2.9,
+        "baseline_axon-ledger": 3.5,
+        "baseline_axon-loop": 122.9,
+        "baseline_axon-loop-contracts": 2.1,
+        "baseline_axon-os": 11.8,
+        "baseline_axon-reflex": 0.6,
+        "baseline_axon-signal": 2.3,
+        "baseline_axon-vm": 4.4,
+        "baseline_axon-wasm": 10.3,
+        "baseline_axon-web": 43.5,
+        "baseline_cortex-policy-adapter": 0.6,
+        "full_suite_own": 398.2,
+        "full_suite_axon-attest": 0.3,
+        "full_suite_axon-audit": 0.3,
+        "full_suite_axon-cortex": 18.8,
+        "full_suite_axon-fabric": 92.0,
+        "full_suite_axon-guest-init": 4.4,
+        "full_suite_axon-intent": 2.2,
+        "full_suite_axon-ledger": 0.9,
+        "full_suite_axon-loop": 126.9,
+        "full_suite_axon-loop-contracts": 0.5,
+        "full_suite_axon-os": 10.8,
+        "full_suite_axon-reflex": 0.3,
+        "full_suite_axon-signal": 0.5,
+        "full_suite_axon-vm": 2.5,
+        "full_suite_axon-wasm": 3.6,
+        "full_suite_axon-web": 44.3,
+        "full_suite_cortex-policy-adapter": 0.3,
+        "cell_retired_off_and_full_suites": 754.0,
+        "cell_set_off": 43.0,
+        "cell_sibling_off": 41.9,
+        "record": 1631.5
+      }
     }
   ],
-  "note": "Joined 4-shard run at aad46c05 (58/59 hold; M418's joint cell and full-suite cell failed on stale tests). M418 and 9 readiness records re-executed at c9647b35 (c9r4/pdfix, test-only) and hold. Records are evidence about the commit each names; a full exact-head run is part of the freeze proof. R51: M58 reclassified STALE_REFACTORED -> M59 (v0.22 call_fn arm gone; e41d6225 re-anchor was mistaken); its record is the single --only=M58 record re-executed at c7dffde5 (holds: old text absent, M59 REPLACEMENT_KILLED), substituted for the old EQUIVALENT_DID record; no other record touched."
+  "note": "Joined 4-shard run at aad46c05 (58/59 hold; M418's joint cell and full-suite cell failed on stale tests). M418 and 9 readiness records re-executed at c9647b35 (c9r4/pdfix, test-only) and hold. Records are evidence about the commit each names; a full exact-head run is part of the freeze proof. R51: M58 reclassified STALE_REFACTORED -> M59 (v0.22 call_fn arm gone; e41d6225 re-anchor was mistaken); its record is the single --only=M58 record re-executed at c7dffde5 (holds: old text absent, M59 REPLACEMENT_KILLED), substituted for the old EQUIVALENT_DID record; no other record touched. R51 S6: M60 and M89 REINSTATED ACTIVE (their retired-guard full-suite cells failed at 2b0e7438 on tests only they satisfy: M60 the duplicate-impl text, M89 the scheduler_spawn existence oracle); their EQUIVALENT_DID records are removed. M3260 (retired EQUIVALENT_DID vs M3456 in amendment 121) added: its --only=M3260 record executed at 0f6a92d4 (clean tree) holds, retired_guard_full_suite SUITE_OK with no skip. Its 2b0e7438 cell read SUITE_BROKEN because harness_integrity's miniature embedded the AXON_GIT_SHA (`-dirty`) cargo leaks into the test process; 0aea5074 removes that variable from the miniature's runs."
 }

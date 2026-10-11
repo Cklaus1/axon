@@ -966,8 +966,10 @@ GUARD_SETS = {
     # C9 round 2 (decision C): git untracked views vs the filesystem walk.
     "M347": {"siblings": ["M501"], "kind": "pair"},
     "M414": {"siblings": ["M501"], "kind": "pair"},
-    "M60": {"siblings": ["M69"], "kind": "pair"},
-    "M89": {"siblings": ["M86", "M96"], "kind": "set"},
+    # M60 (vs M69) and M89 (vs M86+M96) were retired here in C9 round 1b and
+    # are REINSTATED ACTIVE at R51 S6: each one's full-suite cell fails on a
+    # test that only it satisfies (M60: the duplicate-impl text; M89: the
+    # existence oracle at scheduler_spawn), scripts/v022_g01_mutations.py.
     # C9 round 2 (harness): read_regular's regular-file check vs the
     # non-blocking open (M481) and the one-read rule (M335); service_leaf's
     # symlink check vs is_dir (M486) and the mode check (M327).

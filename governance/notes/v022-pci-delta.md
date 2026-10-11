@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: bb9b746e83ff0ff71492e641e893d9a92cbdb207
+generated-at: 4bf993b870f42fa3dec7ca3b94449732d84f461e
 
-`git diff --numstat 31413ca7..bb9b746e -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..4bf993b8 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -84,13 +84,13 @@ generated-at: bb9b746e83ff0ff71492e641e893d9a92cbdb207
 | `crates/axon-core/src/mut_borrow.rs` | 800 | 0 |
 | `crates/axon-core/src/parser.rs` | 84 | 3 |
 | `crates/axon-core/src/replay.rs` | 40 | 17 |
-| `crates/axon-core/src/resolver.rs` | 578 | 86 |
+| `crates/axon-core/src/resolver.rs` | 579 | 86 |
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 46692 | 5385 |
+| total | 46693 | 5385 |
 
-`git log --reverse 31413ca7..bb9b746e -- crates/axon-core/src`:
+`git log --reverse 31413ca7..4bf993b8 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -330,7 +330,8 @@ generated-at: bb9b746e83ff0ff71492e641e893d9a92cbdb207
 | 7defe71d | R51 S7 merge | joins r51/int 9e67b796 (r51/s7decl, 30e6638c) onto r51/s7stack (f89f4d43, 4bb4a0e1: native thread stack reserve only); only this table and the note conflicted, resolved by keeping both sides; no change beyond the commits it joins; sealed runs as at 04d3ad7b |
 | f83da0f3 | R51 S7 mutation rows | TEST-ONLY (interp/tests_v022_b.rs, cfg(test)): a_sealed_call_that_binds_nothing_still_meets_the_seal_edge, a sealed candidate's parameter-free call of an operator fn that binds nothing, refused by the seal edge (control: the candidate's own answer completes); the killer of M3493/M3494, whose cells now run with debug assertions off (the debug store assertion stopped their mutants before the attack; without it check_store misses a bindless chain and the mutant completes); no interpreter code changed, no unsealed behaviour change |
 | 0a9731f2 | R51 S7 merge | joins r51/int 2eaef86b (7defe71d, f89f4d43, 4bb4a0e1: native thread stack reserve only; r51/speed4 require_idle) onto r51/s7reg (f83da0f3 and the registry's _CXL fix); only this table, the note and tasks/opportunities.md conflicted, resolved by keeping both sides; no change beyond the commits it joins |
-| 236 commits | | |
+| 4bf993b8 | R51 S6 paired-disable reinstatements | TEST-ONLY (resolver.rs, cfg(test)): a_refinement_may_start_with_a_deferred_name_and_impl_text_is_axon's duplicate-impl assertion states its attack (ATTACK: a duplicate impl was not refused as one), the condition unchanged; the registry reinstates M60 (killed by that test) and M89 (killed by the scheduler_spawn pair of a_sealed_caller_cannot_tell_an_operator_name_from_a_missing_one_on_any_path) ACTIVE, their retired-guard full-suite cells having failed; no interpreter or resolver code changed, no unsealed behaviour change |
+| 237 commits | | |
 <!-- END MECHANICAL -->
 
 
@@ -489,7 +490,7 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am121 a live nonce's record survives another request's prune | axon-fabric/observer_service | PASS 1/1 |
 | am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 442 rows at this head, recomputed from the script): M59, M61-M62, M65, M67-M70, M72-M79, M82-M83, M85-M88, M90-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3251, M3253-M3259, M3267-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3458, M3460-M3479, M3483-M3498
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 444 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3251, M3253-M3259, M3267-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3458, M3460-M3479, M3483-M3498
 
 | delta | rows (named in the amendment's own text) |
 |---|---|

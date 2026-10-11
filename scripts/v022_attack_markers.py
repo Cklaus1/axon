@@ -91,9 +91,10 @@ ATTACK_MARKERS = {
     'M55': 'the check workload copied the signing key',
     'M57': 'unwrap_err\\(\\)` on an `Ok` value: Submission',
     'M59': 'these escapes passed the test',
-    # WEAK@a3db33bd: e.len()==1 but the message is M69's 'method ... defined more than once': the duplicate impl was still refused by the dispatch check
-    # core r1b: EQUIVALENT_DID vs M69; its own attack (the joint cell) is the no-op second impl running.
-    'M60': r"ATTACK: a second `impl J for E` replaced the operator's `check`: Ok\(Completed\)",
+    # R51 S6: REINSTATED ACTIVE (was EQUIVALENT_DID vs M69). With M60 off the duplicate is still
+    # refused, by M69's dispatch check in its words; the attack is that the duplicate impl is not
+    # named as one (resolver::tests::a_refinement_may_start_with_a_deferred_name_and_impl_text_is_axon).
+    'M60': r"ATTACK: a duplicate `impl Show2 for Option<i64>` was not refused as a duplicate impl",
     'M61': 'failed: let: \\[\\]',
     'M62': 'failed: refinement: \\[\\]',
     'M63': 'failed: exit\\(0\\): .*left: true\\s+right: false',
@@ -124,9 +125,10 @@ ATTACK_MARKERS = {
     'M86': r"ATTACK: sealed code reached the operator \(direct call\): Ok\(Completed\)",
     'M87': r"ATTACK: sealed code reached the operator \(global read\): Ok\(Completed\)",
     'M88': r"ATTACK: sealed code reached the operator \(refinement attaching to an operator annotation\): Ok\(Completed\)",
-    # WEAK@a3db33bd: out is Err('assertion failed: 0 != 42'): the by-name call did not deliver the operator's answer (another mechanism, likely the per-provenance kernel M96 or a run-time seal, stopped it); the candidate's own assert failed
-    # core r1b: EQUIVALENT_DID vs {M86, M96}; the joint cell's attack is an operator fn run through a fiber.
-    'M89': r"ATTACK: (a sealed frame ran the operator's `expected` as a fiber and returned its answer|the operator's scheduler ran an operator function a sealed frame queued): Ok\(Completed\)",
+    # R51 S6: REINSTATED ACTIVE (was EQUIVALENT_DID vs {M86, M96}, whose joint cell's attack is an
+    # operator fn run through a fiber). M89's own attack is the existence oracle: a sealed
+    # scheduler_spawn of an operator fn completes where a missing name is refused.
+    'M89': r"sched_spawn \[secret\] Ok\(Completed\)",
     'M90': r"ATTACK: sealed code reached the operator \(a candidate closure called by the operator\): Ok\(Completed\)",
     'M91': r"ATTACK: sealed code reached the operator \(a candidate closure called by the operator\): Ok\(Completed\)",
     'M92': r"ATTACK: sealed code reached the operator \(a candidate handler arm\): Ok\(Completed\)",
