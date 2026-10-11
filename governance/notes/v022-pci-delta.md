@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 191c8f518380bc47998c7b68fd74f023c3bb17fd
+generated-at: 4159d5db1a785b273d31dbb4bd75db3d3c9a7691
 
-`git diff --numstat 31413ca7..191c8f51 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..4159d5db -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -49,13 +49,14 @@ generated-at: 191c8f518380bc47998c7b68fd74f023c3bb17fd
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 3981 | 1503 |
-| `crates/axon-core/src/interp/builtins.rs` | 593 | 542 |
+| `crates/axon-core/src/interp.rs` | 4075 | 1442 |
+| `crates/axon-core/src/interp/builtins.rs` | 584 | 503 |
 | `crates/axon-core/src/interp/env.rs` | 1193 | 0 |
 | `crates/axon-core/src/interp/eval.rs` | 1538 | 597 |
-| `crates/axon-core/src/interp/goal.rs` | 68 | 53 |
+| `crates/axon-core/src/interp/goal.rs` | 57 | 35 |
+| `crates/axon-core/src/interp/kernel_tests.rs` | 392 | 0 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
-| `crates/axon-core/src/interp/proptest.rs` | 18 | 9 |
+| `crates/axon-core/src/interp/proptest.rs` | 48 | 21 |
 | `crates/axon-core/src/interp/sym.rs` | 1188 | 0 |
 | `crates/axon-core/src/interp/taint.rs` | 1087 | 0 |
 | `crates/axon-core/src/interp/taint_tests.rs` | 1056 | 0 |
@@ -75,9 +76,9 @@ generated-at: 191c8f518380bc47998c7b68fd74f023c3bb17fd
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 30415 | 5330 |
+| total | 30911 | 5224 |
 
-`git log --reverse 31413ca7..191c8f51 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..4159d5db -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -244,7 +245,8 @@ generated-at: 191c8f518380bc47998c7b68fd74f023c3bb17fd
 | e12ac5fa | R51 S2 merge | joins S0b-perf (afd9e294) and S2 (426067dc..d21ed278); interp.rs, vm/mod.rs, sym.rs and eval.rs auto-merged, only this table and the note conflicted; no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 6afab02a | R51 S2.3 step 4 | INTERPRETER frame and closure taint on the sealed instantiation only: call_fn_in_general and the closure call become const-generic frames (call_fn_frame / call_closure_frame::<T>); call_fn_common (plain entries only, and FnEntry::new now takes seal.active so no entry of a sealed run is plain) binds with 0. A frame binds its parameters with the arguments' taint plus pc (t_params), saves and restores the caller's pc/sticky (FrameCtl), reads taint.ret or taint.last at exit (t_body) and leaves entry|body|sticky in acc (t_frame_exit); refinement predicates, the postcondition, goal_met (ALL when a goal search ran) and struct-refinement predicates carry the frame's taints. A closure's capture cell becomes a typed Captures (bindings plus one taint per binding, sealed run only) moved by the lend, copied by the copy path and written back (TaintPort-5). t_loop_pc after builtin callbacks, goal evaluations and scheduler fibers; t_provenance_write at the zoned-call provenance writes. Unsealed: same code via ::<false>; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 191c8f51 | R51 S2.3 step 4 | TEST-ONLY drift lists: the T1d VM-entry allow-list (vm/tests.rs) and user_code_runners' PRIMITIVES (interp.rs, cfg(test)) name the const-generic frames call_fn_frame and call_closure_frame that 6afab02a moved the VM entries into; spec T1d text revised to match. Interpreter behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 163 commits | | |
+| fd3c3ff0 | R51 S3a | INTERPRETER per-frame Kernel: the handle-addressed kernel tables (provenance stores, corrigibility latch, current principal, goal constraint, principals, scheduler, supervisors, stores, LLM gateways, kernel goals, sandboxes, active sandbox) move into a Kernel struct, kernels: [Kernel; 2] selected by k() from frame_sealed, so a sealed frame reaches only its own (the sealed registry draws tokens from TOKEN_DOMAIN_SEALED). Every RNG draw and reseed goes through Interp::rng_next/rng_reseed, refused for operator code above a sealed frame; the sealed kernel has its own stream seeded by a SHA-256 derivation, the operator kernel keeps main's process-global stream (unsealed sequence pinned bit-identical). sandbox_run copies the entered ceiling into the sealed kernel for the call. frame_sealed is never set in an unsealed run, so it reaches kernels[0] only; no seal edge enters a sealed frame yet; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 164 commits | | |
 <!-- END MECHANICAL -->
 
 
