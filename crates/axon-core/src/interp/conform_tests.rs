@@ -1336,50 +1336,6 @@ fn a_select_takes_and_marks_its_channel_like_a_recv() {
     });
 }
 
-/// Every channel method runs through the one access helper before it
-/// dispatches, in the method-call arm and in `select`; and the channel
-/// methods are a closed set (veto taint_tests.rs:928-975).
-#[test]
-fn every_channel_method_goes_through_the_one_access_helper() {
-    let src = include_str!("eval.rs");
-    let start = src
-        .find("if let Value::Chan(q) = &recv {")
-        .expect("the channel method arm");
-    let arm = &src[start..start + src[start..].find("let mut argv").expect("end of arm")];
-    let helper = arm
-        .find("self.t_chan_access(&recv, method)")
-        .expect("DRIFT: the channel method arm no longer calls t_chan_access");
-    let choice = arm
-        .find("self.t_chan_choice(&recv, rt)")
-        .expect("DRIFT: the channel method arm no longer calls t_chan_choice");
-    let dispatch = arm.find("self.chan_method::<T>(").expect("dispatch");
-    assert!(
-        helper < dispatch && choice < dispatch,
-        "DRIFT: the channel access hooks must run BEFORE the method dispatch"
-    );
-    let body = &src[src
-        .find("fn chan_method<const T: bool>(")
-        .expect("chan_method")..];
-    let body = &body[..body.find("\n    }\n").expect("end of chan_method")];
-    let mut arms: Vec<&str> = body
-        .lines()
-        .filter_map(|l| l.strip_prefix("            \"")?.split('"').next())
-        .collect();
-    arms.sort();
-    assert_eq!(
-        arms,
-        ["clone", "len", "recv", "send", "try_recv"],
-        "DRIFT: a channel method was added or removed; check t_chan_access classes it"
-    );
-    let sel = src.find("Expr::Select(arms) =>").expect("select arm");
-    let sel = &src[sel..sel + src[sel..].find("panic(\"select: no channel").expect("end")];
-    assert!(
-        sel.contains("self.t_chan_access(&ch, \"recv\")")
-            && sel.contains("self.t_chan_choice(&ch, rt)"),
-        "DRIFT: select pops a channel without t_chan_access / t_chan_choice"
-    );
-}
-
 /// The walk for a handed value's dicts REFUSES a value nested deeper than
 /// the cast's own bound; it never returns with the rest unvisited. (A real
 /// value that deep overflows the thread stack first, so the bound's logic is

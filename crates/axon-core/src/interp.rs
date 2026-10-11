@@ -8028,8 +8028,8 @@ fn main() { }
 
     /// v0.22 (C9 round 4c): the operator's `Judge`, whose `u8` impl is the
     /// lenient one, and the candidate's laundering helpers.
-    const JUDGE8: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
-    const LAUNDER8: &str = "fn narrow(n: i64) -> u8 { n as u8 }\nfn stash(v: u8) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}\n";
+    pub(super) const JUDGE8: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
+    pub(super) const LAUNDER8: &str = "fn narrow(n: i64) -> u8 { n as u8 }\nfn stash(v: u8) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}\n";
 
     fn u8_or(some: &str, none: &str) -> String {
         format!("match dict_get(stash(narrow(4)), \"k\") {{ Some(v) => {some}  None => {none} }}")
@@ -9031,6 +9031,8 @@ fn main() { }
         }
         assert!(calls >= 5, "only {calls} goal.rs call_fn sites found");
     }
+
+    include!("interp/tests_v022_c.rs");
 }
 
 #[cfg(test)]
