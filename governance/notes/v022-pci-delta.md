@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: d25cae8c1ab68e8659ed6d66e1cf235a9bf83982
+generated-at: 4e6747b133d5ce7e7457bb941c1c30efdfb2733e
 
-`git diff --numstat 31413ca7..d25cae8c -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..4e6747b1 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -49,21 +49,22 @@ generated-at: d25cae8c1ab68e8659ed6d66e1cf235a9bf83982
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 4807 | 1467 |
+| `crates/axon-core/src/interp.rs` | 4809 | 1467 |
 | `crates/axon-core/src/interp/builtins.rs` | 665 | 515 |
 | `crates/axon-core/src/interp/conform.rs` | 1780 | 0 |
-| `crates/axon-core/src/interp/conform_tests.rs` | 1413 | 0 |
+| `crates/axon-core/src/interp/conform_tests.rs` | 1369 | 0 |
 | `crates/axon-core/src/interp/crossing_tests.rs` | 418 | 0 |
 | `crates/axon-core/src/interp/env.rs` | 1193 | 0 |
 | `crates/axon-core/src/interp/eval.rs` | 1915 | 600 |
 | `crates/axon-core/src/interp/goal.rs` | 65 | 36 |
-| `crates/axon-core/src/interp/kernel_tests.rs` | 401 | 0 |
+| `crates/axon-core/src/interp/kernel_tests.rs` | 337 | 0 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 48 | 21 |
 | `crates/axon-core/src/interp/sink_tests.rs` | 1335 | 0 |
 | `crates/axon-core/src/interp/sym.rs` | 1188 | 0 |
-| `crates/axon-core/src/interp/taint.rs` | 1190 | 0 |
-| `crates/axon-core/src/interp/taint_tests.rs` | 1128 | 0 |
+| `crates/axon-core/src/interp/taint.rs` | 1316 | 0 |
+| `crates/axon-core/src/interp/taint_tests.rs` | 3716 | 0 |
+| `crates/axon-core/src/interp/tests_v022_c.rs` | 153 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 506 | 514 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1691 | 0 |
 | `crates/axon-core/src/interp/vm/mod.rs` | 3426 | 0 |
@@ -80,9 +81,9 @@ generated-at: d25cae8c1ab68e8659ed6d66e1cf235a9bf83982
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 37276 | 5265 |
+| total | 40037 | 5265 |
 
-`git log --reverse 31413ca7..d25cae8c -- crates/axon-core/src`:
+`git log --reverse 31413ca7..4e6747b1 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -263,7 +264,8 @@ generated-at: d25cae8c1ab68e8659ed6d66e1cf235a9bf83982
 | 72009129 | R51 S3 merge | INTERPRETER dict_set/dict_remove/dict_inc call dict_mutated without an outer seal.active guard, as veto does (builtins.rs:5286/5318/5470); dict_mutated returns at once when the seal is inactive, so an unsealed run does the same work less one branch. TEST-ONLY: the main-only sink classification names call_fn_sealed for call_fn_in_general (S3c moved the sealed instantiation behind the crossing). Both were drift tests from S3d that S3c's code tripped at the merge. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 2bf3e4a4 | R51 S3e | INTERPRETER init_globals in a sealed run (veto interp.rs:3292-3303): init_globals_sealed runs each module-level initialiser under its own definition's provenance (with_frame) in a fresh env, so a candidate's `let` meets the call and global-read edges (an earlier global is read through global_ref) and its kernel effects land in the candidate's kernel; the let's taint is recorded by t_set_global. The unsealed path is unchanged (one shared env, no taint bookkeeping, now without the dead seal.active branch). Plus TEST-ONLY sink tests (every taint carrier into the name rule, the name half of channel taint, own fn values, definition provenance, a candidate impl answering an operator method) and the last 5 S3 deferred-registry entries re-slotted (4 to S6, 1 to S4 for PICK). Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | d25cae8c | R51 S3e | TEST-ONLY: rustfmt of interp/sink_tests.rs (line wrapping of the S3e tests); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
-| 177 commits | | |
+| 4e6747b1 | R51 T3c | TEST-ONLY: ports 31 v0.22 interp::taint_tests / interp::tests rows and 3 misplaced rows under their v0.22 names (spec T3): v0.22's Case harness and case tables appended to interp/taint_tests.rs, v0.22's cfg(test) CONTROL_TABLE/CALLBACK_BUILTINS/SHORT_CIRCUIT_TABLE in interp/taint.rs, two interp::tests rows in interp/tests_v022_c.rs (included at the end of mod tests; JUDGE8/LAUNDER8 made pub(super)), every_channel_method_goes_through_the_one_access_helper moved from conform_tests.rs and every_kernel_builtin_that_draws_the_rng_is_coupled_to_the_world_cell from kernel_tests.rs; 17 case-running tests ignored R51 S6 and no_control_transfer_escapes_a_frame R51 S0b, all registered; no interpreter code changed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 178 commits | | |
 <!-- END MECHANICAL -->
 
 
