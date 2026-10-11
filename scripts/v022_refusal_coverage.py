@@ -316,9 +316,14 @@ SCOPE_FN_REGIONS = language_regions()
 # whose names need not match SEAL_FN. A file's scanned lines are the UNION of
 # its SCOPE_FN_REGIONS functions and its REGIONS span, so neither selection can
 # drop a site the other names; an anchor that is missing or not unique is BAD.
+# R51 S6: main's interp.rs keeps v0.22's helper set (fn_is_sealed .. seal_type,
+# with handler_may_answer, the frame provenance and the rng edge) in one block,
+# reordered: it now ends at seal_type, before init_globals, so the span is
+# fn_is_sealed's doc line to init_globals' doc line (with_frame, v0.22's end
+# anchor, now sits inside it and has no site).
 REGIONS = {"crates/axon-core/src/interp.rs": (
-    "    /// Whether `f` was defined in a sealed (candidate) module.",
-    "    /// Run `g` with the frame's provenance set to `sealed`, restoring it after.")}
+    "    /// Whether `f` was defined in a sealed (candidate) module of this run.",
+    "    /// Evaluate module-level constants in source order, so each may reference")}
 # (file -> reason). A file here is in scope by the rule and judged not to be a
 # decision path; the reason names what makes that checkable.
 OUT_OF_SCOPE = {
@@ -2228,11 +2233,45 @@ EXEMPT += [
      "PREDICATE OF A NAMED ROW: its one caller is eval.rs's struct-construction provenance "
      "(`self.frame_sealed.get() || self.seal_type(name)`), which M97 (ACTIVE) mutates to drop this call, "
      "the same removal"),
-    (CINT, "    pub(crate) fn is_global(&self, name: &str) -> bool {",
-     "PREDICATE OF NAMED ROWS: it decides only whether eval.rs's index fast path is taken (existence, no "
-     "value). Its one caller is that fast path, whose value read is `global_ref` (M2472 mutates it to a raw "
-     "read); when it answers false the generic path evaluates the receiver through the identifier arm, "
-     "which reads through `global_ref` too (M2470). Neither answer reaches a value without the edge"),
+    (CINT, "    pub(crate) fn is_global(&self, s: Sym) -> bool {",
+     "PREDICATE OF NAMED ROWS: it decides only whether an index fast path is taken (existence, no "
+     "value). Its callers are eval.rs's tree fast path, whose value read is `index_in_place`'s "
+     "`global_ref` (M2472 mutates it to a raw read), and the VM's `bound_in_place`, which a sealed run "
+     "never reaches (R51 Fork 1: a sealed run is pinned to the tree engine, vm/mod.rs engine_for). When "
+     "it answers false the generic path evaluates the receiver through the identifier arm, which reads "
+     "through `global_ref` too (M2470). Neither answer reaches a value without the edge"),
+    # R51 S6: sites main's split exposes. v0.22's seal_ret refusal (`if confused`) and its `&mut`
+    # handling lived in call_fn_sealed / call_fn_mut / eval_call_mut; main moved them into
+    # seal_ret and call_mut_sealed, whose names the SEAL_FN rule selects.
+    (CINT, '        if let Some(why) = mismatch {\n            return panic(format!(\n                "`{}` is declared to return `{}` but produced {}',
+     "ROWED ELSEWHERE (checkable): `mismatch` is Some only from its `Some(rt) => self.cast(..).err()` "
+     "arm (the `None if crossing` and `None` arms yield None), and M1155 replaces that arm with "
+     "`None::<String>`: the guard can then never fire, which is this refusal's removal. v0.22 had one "
+     "guard (`if confused`, M566) for sealed and unsealed runs; main splits the unsealed Result/Option "
+     "check into scalar_return, where M566 now sits because its killer runs unsealed"),
+    ("crates/axon-core/src/interp/eval.rs",
+     '                    return panic("`&mut` of something other than a local variable".to_string());\n'
+     '                };\n                let (s, slot) = self.res.var(operand, name);\n                let Some(idx)',
+     _NTA + " (checkable): an `&mut` argument whose operand is not a variable has no binding to lend "
+     "or write back, and the call does not run; the same refusal as call_mut_with's (the unsealed "
+     "path), the language rule v0.22 had in eval_call_mut (eval.rs:1567), outside its gate's rule"),
+    ("crates/axon-core/src/interp/eval.rs", '                let Some(idx) = env.get_var_idx(s, slot) else {',
+     _NTA + " (checkable): the `&mut` operand names no local binding of the caller (a global or an "
+     "unbound name): nothing to lend or write back, and the call does not run; as call_mut_with's "
+     "and v0.22's eval_call_mut (eval.rs:1570)"),
+    ("crates/axon-core/src/interp/eval.rs",
+     '                        Err(why) => Some(format!(\n                            "`&mut` argument `{}` of `{}` is declared `{}` but was left holding',
+     "REMAINDER (no row yet, R51 S6): the `&mut` edge-back cast at a seal crossing (amendment 72): a "
+     "value the candidate left in the operator's `&mut` binding that is not the declared type is "
+     "refused and the binding left `()`. v0.22 ran the same check in call_fn_mut (interp.rs:3548), "
+     "which its gate's rule did not select, so no v0.22 row exists to carry. Its attacks are the "
+     "ported tests_v022_b.rs `&mut` edge-back tests (`left holding`), #[ignore] until S6 runs them "
+     "sealed; no row of its own"),
+    ("crates/axon-core/src/interp/eval.rs",
+     '                        if !matches!(result, Err(Flow::Panic(_))) {\n                            result = panic(msg);',
+     "SELECTS NOTHING (checkable): it only picks WHICH refusal the call returns once `why` refused "
+     "the `&mut` value: an earlier panic is kept, otherwise the refusal `msg`; either way `result` is "
+     "a Panic and the binding is written `()` (the line above), so no input passes on either branch"),
     (CF, "            let Some(vd) = ed.variants.iter().find(|x| *x.name == *variant) else {",
      "NOTHING TO ADMIT: the declared enum has no such variant, so there are no declared field types to "
      "cast the payload's fields at (the casts below read `vd`)"),
@@ -4007,15 +4046,28 @@ def code_lines(text):
 
 def cfg_test_only_files(dirs):
     """Source files only a test build compiles: declared `#[cfg(test)] mod X;`
-    in a sibling file (the module file is test code, not a protected path)."""
+    in a sibling file (the module file is test code, not a protected path),
+    or `include!`d inside a `#[cfg(test)]` item (R51 S6: main's interp.rs
+    pulls the ported v0.22 tests into its `#[cfg(test)] mod tests` with
+    `include!("interp/tests_v022_a.rs")`). A module declared in `X.rs` that
+    is not lib.rs/main.rs/mod.rs lives in `X/` (Rust's non-mod-rs rule: main's
+    `interp.rs` declares `mod taint_tests;`, the file interp/taint_tests.rs);
+    `include!` paths are relative to the including file's directory."""
     out = set()
-    pat = re.compile(r"#\[cfg\(test\)\]\s*(?:pub(?:\([a-z]+\))?\s+)?mod\s+(\w+)\s*;")
+    pat = re.compile(r"#\[cfg\((?:test|all\(test,[^\]\n]*\))\)\]\s*(?:pub(?:\([a-z]+\))?\s+)?mod\s+(\w+)\s*;")
+    inc = re.compile(r'\binclude!\(\s*"([^"]+)"\s*\)')
     for d in dirs:
         for f in _rs_under(d):
-            base = os.path.dirname(f)
-            for name in pat.findall(open(os.path.join(ROOT, f)).read()):
+            here = os.path.dirname(f)
+            stem = os.path.basename(f)
+            base = here if stem in ("lib.rs", "main.rs", "mod.rs") else f.removesuffix(".rs")
+            text = open(os.path.join(ROOT, f)).read()
+            for name in pat.findall(text):
                 out.add(os.path.normpath(os.path.join(base, f"{name}.rs")))
                 out.add(os.path.normpath(os.path.join(base, name, "mod.rs")))
+            for m in CFG_TEST.finditer(text):
+                for p in inc.findall(text[m.end():_cfg_test_extent(text, m.end())]):
+                    out.add(os.path.normpath(os.path.join(here, p)))
     return out
 
 
@@ -4957,11 +5009,15 @@ def changed_lines(text, old, new):
 
 def in_scope_files():
     """The rule's file set (amendment 61), sorted: every .rs under SCOPE_DIRS,
-    SCOPE_FILES, and the SCOPE_FN_REGIONS files."""
+    SCOPE_FILES, and the SCOPE_FN_REGIONS files. A file only a test build
+    compiles is not in it, in a language crate too (R51 S6: main's split-out
+    interp/*_tests.rs and the include!d tests_v022_*.rs are the test code
+    v0.22 kept inside interp.rs's blanked `#[cfg(test)] mod tests`)."""
     found = set(SCOPE_FILES) | set(SCOPE_FN_REGIONS) | set(REGIONS)
     for d in SCOPE_DIRS:
         found.update(_rs_under(d))
-    return sorted(found - linked_only_as_library() - cfg_test_only_files(SCOPE_DIRS))
+    lang = tuple(f"{d}/src" for d in language_crates().values())
+    return sorted(found - linked_only_as_library() - cfg_test_only_files(SCOPE_DIRS + lang))
 
 
 # Amendment 95 (C9 round 8, eqgate4): a COMPOUND guard is judged PER TERM and a
