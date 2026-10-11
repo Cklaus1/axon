@@ -439,7 +439,7 @@ MUTATIONS = [
      'crates/axon-core/src/interp/builtins.rs',
      '                if !(a == b || (a - b).abs() <= 1e-9) {',
      '                if (a - b).abs() > 1e-9 {',
-     'axon-core', '--no-default-features --lib', 'interp::tests::no_control_transfer_escapes_a_frame'),
+     'axon-core', '--no-default-features --lib', 'interp::vm::tests::assert_eq_f64_fails_on_nan_on_both_engines'),
     ('M77', 'interpreter: an exit(0) property case is not a pass',
      'crates/axon-core/src/interp/proptest.rs',
      '        Err(Flow::Exit(0)) => {\n            Err("`exit(0)` ended the property case before it completed".to_string())\n        }',
@@ -10978,8 +10978,10 @@ MUTATIONS += [
     ('M3341', 'ORACLE (am117): a sealed refinement/where/verify predicate is not walked as an expression', 'crates/axon-core/src/checker.rs',
      '        self.check_expr(pred, path, &mut scope);\n        self.current_span = prev;', '        let _ = (pred, path, &mut scope);\n        self.current_span = prev;',
      'axon-psv', '--test sealed_frames', 'a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one'),
+    # verify-after-S4b-merge: anchored on r51/s4b 65eda84a's goal.rs (its seal_call comment); the
+    # old text occurs once there and nowhere on this branch until S4b merges. Killer is deferred (S6).
     ('M3342', 'ORACLE (am117): goal_run_categorical lets a sealed caller tell an operator fn from a missing name', 'crates/axon-core/src/interp/goal.rs',
-     '        let f = match self.fns.get(name) {\n            Some(f) => *f,\n            None if self.k().provenance.borrow().contains_key(name) => {\n                return Ok(self.best_observed(name, target, max_evals));\n            }\n            None => return Err(self.unknown_goal_name(name)),\n        };\n        // A name the operator defines reads exactly as one nothing defines to a\n        // sealed caller (amendment 117, loop finding 38).\n        self.seal_call(f)?;\n', '        let f = match self.fns.get(name) {\n            Some(f) => *f,\n            None if self.k().provenance.borrow().contains_key(name) => {\n                return Ok(self.best_observed(name, target, max_evals));\n            }\n            None => return Err(self.unknown_goal_name(name)),\n        };\n',
+     '        let f = match self.fns.get(name) {\n            Some(f) => *f,\n            None if self.k().provenance.borrow().contains_key(name) => {\n                return Ok(self.best_observed(name, target, max_evals));\n            }\n            None => return Err(self.unknown_goal_name(name)),\n        };\n        // A name the operator defines reads exactly as one nothing defines to a\n        // sealed caller (amendment 117, loop finding 38; veto goal.rs:371, R51 S4).\n        self.seal_call(f)?;\n', '        let f = match self.fns.get(name) {\n            Some(f) => *f,\n            None if self.k().provenance.borrow().contains_key(name) => {\n                return Ok(self.best_observed(name, target, max_evals));\n            }\n            None => return Err(self.unknown_goal_name(name)),\n        };\n',
      'axon-psv', '--test sealed_frames', 'a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one'),
     ('M3343', 'ORACLE (am117): goal_eval gives a sealed caller a different text for a missing name', 'crates/axon-core/src/interp/goal.rs',
      'return self.no_such_fn(\n                name,\n                format!("goal_eval: `{name}` is not a defined function"),\n            );', 'return Err(Flow::Panic(format!(\n                "goal_eval: `{name}` is not a defined function"\n            )));',
@@ -11103,6 +11105,12 @@ MUTATIONS += [
     ('M3482', "EQUIVALENCE (am121): the observer's prune keeps the expired and drops the live", 'crates/axon-fabric/src/observer_service.rs',
      '            if expires.is_none_or(|t| t < now) {\n', '            if expires.is_none_or(|t| t > now) {\n',
      'axon-fabric', '--test observer_service', 'a_record_of_a_live_nonce_survives_another_requests_prune_and_refuses_its_replay'),
+    # R51 §6 (S6 gaps): `axon test` refuses a sealed run this build cannot protect (or one asking
+    # for the VM) before any result line. `Interp::build` refuses it too (the guarantee); this is
+    # the clean exit, pinned by T1c: exit 2, the refusal alone on stderr, no summary on stdout.
+    ('M3483', "R51 PIN: `axon test` refuses a sealed run it cannot protect before any result line", 'crates/axon-core/src/main.rs',
+     '        eprintln!("error: {refused}");\n        process::exit(2);\n', '        let _ = &refused;\n',
+     'axon-core', '--no-default-features --test cli_run', 'r51_t1c_a_sealed_axon_test_never_runs_on_the_vm'),
 ]
 
 

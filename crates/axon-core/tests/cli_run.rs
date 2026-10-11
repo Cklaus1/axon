@@ -37380,8 +37380,10 @@ fn r51_t1c_a_sealed_axon_test_never_runs_on_the_vm() {
         };
         match refusal {
             Some(msg) => {
-                assert_eq!(code, Some(2), "{at}: {so}{se}");
-                assert_eq!(se, format!("error: {msg}\n"), "{at}");
+                let not_refused =
+                    format!("ATTACK: {at}: a sealed run was not refused before any result line");
+                assert_eq!(code, Some(2), "{not_refused}: {so}{se}");
+                assert_eq!(se, format!("error: {msg}\n"), "{not_refused}");
                 assert!(
                     !so.contains("summary") && !so.contains("t_ok"),
                     "{at}: stdout: {so}"
