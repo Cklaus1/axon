@@ -500,4 +500,21 @@ R50 (landed) → S0 (merge + refuse-all pin) → S1 (T1) → S0b → S5 → S2 �
 
 ### 14. Evidence ledger
 
-Empty (no slice landed).
+Every receipt below is committed; per-head detail (commands, counts, wall times, infra failures) is in
+`tasks/r51-baseline.md`. Base for every comparison: `origin/main` 5864c423 (`cargo test -p axon-core
+--no-default-features --no-fail-fast` 1772 passed, 0 failed; `./scripts/gate.sh` PASSED).
+
+| Slice / item | Head | Receipt | Result |
+|---|---|---|---|
+| S0 + S1 + S0b | d099fba1 | `gate.sh`; axon-core suite | gate PASSED except the 4 stages deferred to S6; 1855 passed, 0 failed |
+| S5 | d1a2ed34 | `gate.sh`; suite; `vm_perf_gate.sh` | PASSED (same 4 deferred); 1861/0; fib-recursive +0.92% (inside §10) |
+| S2 + S0b-perf | 4bbc1563 / d7fc0031 | `gate.sh`; suite; `vm_perf_gate.sh --repros` | PASSED (same 4 deferred); 1896/0; call/fastcall 232.1 (base 244.1), every median ≤ 1.01× |
+| S3 | af91688e | `gate.sh`; suite; psv `sealed_frames`, fabric `check_effects` | PASSED (same 4 deferred); 1979/0 |
+| S4 + T3 | 59a72f8d | suite; vm_parity; `pci_delta --check` | 2020/0; 0 differ; PASS |
+| S6.1 (seal flip) | 371d3c07 | `gate.sh` (all stages, none deferred) | **gate PASSED**, rc 0, 52 min |
+| S6.2 (T6 legs, T7 rows M3484-M3494, audit gaps) | c9266cd0 | suite; axon-psv; axon-cortex; vm_parity | 2183/0; 84/0; 78/0; 0 differ |
+| T7 mutation evidence | e946f06d | `governance/status/r51-t7-list{0,1,2}.json` (`--scope=all --only`, clean tree) | **439/439 KILLED by their own attack**, 0 REFUSED_ELSEWHERE, 0 survivors, 0 stale; every non-retired row's old text occurs once (2294 rows) |
+| T2 depth | f3a92b26 | `tasks/r51-s7/stack/vm_wasm_depth.log` | `vm_wasm_depth.sh` PASS rc 0; every nest probe VM ≥ tree |
+| §10 perf | f3a92b26 | `tasks/r51-s7/stack/vm_perf_gate.log` | programs and `--repros S1,S2` PASS |
+| S6.3 / Q1 sealed suite-verdict wall time | c9266cd0 fixture `tasks/r51-s6/q1` | `run.sh <axon> 5`, medians | sealed (tree) 1.386 s; unsealed VM 0.179 s; unsealed tree 0.466 s. About 3× the unsealed tree, 7.7× the VM. No target (§10); VM speed for sealed runs logged in `tasks/opportunities.md` |
+| S7 confirmation review | 3921a309 | `governance/reviews/2026-10-11-r51-S7-{SealSoundness,UnsealedParity,EvidenceAudit}.md` | SealSoundness 0 blockers / 0 major; UnsealedParity 0 / 4 major; EvidenceAudit 0 / 2 major. Every MAJOR fixed or declared in §3: r51/s7decl 9e67b796, r51/s7stack 36396ef2, r51/s7reg 7e9693cb |
