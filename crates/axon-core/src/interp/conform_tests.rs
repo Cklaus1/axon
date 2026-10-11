@@ -64,6 +64,26 @@ fn untyped() -> fn(i64) -> i64 {
     let k = 2
     |x| x + k
 }
+fn ch_len(c: i64, q: Chan<i64>) -> i64 {
+    let n = 0
+    if c == 1 { n = q.len() }
+    n
+}
+fn ch_recv(c: i64, q: Chan<i64>) -> i64 {
+    q.recv()
+}
+fn ch_count(c: i64, q: Chan<i64>) -> i64 {
+    q.len()
+}
+fn ch_select(c: i64, q: Chan<i64>) -> i64 {
+    let x = 0
+    if c == 1 { select { q.recv() => x = 1 } }
+    x
+}
+fn ch_pick(c: i64, q: Chan<i64>, r: Chan<i64>) -> i64 {
+    let p = if c == 1 { q } else { r }
+    p.len()
+}
 ";
 
 const CAND: &str = "fn solve() -> i64 { 41 }\n";
@@ -1017,6 +1037,209 @@ fn a_handler_arm_is_an_edge_between_its_provenance_and_the_performers() {
         // Same provenance: no edge.
         assert!(ix.handler_edge_back(false, &Value::Unit).is_ok());
     });
+}
+
+// -- channel access (amendments 106, 117; veto eval.rs:650-658, 1019-1034) ---------
+
+/// Run the suite fn `name` on `args` (value, taint) in the sealed
+/// instantiation, in a sealed frame or an operator one; its value and taint.
+fn probe(ix: &Interp<'_>, name: &str, sealed: bool, args: Vec<(Value, u8)>) -> (Value, u8) {
+    let f = *ix.fns.get(name).expect("a probe of the suite");
+    let t = &ix.taint;
+    for c in [&t.acc, &t.last, &t.pc, &t.sticky, &t.ret] {
+        c.set(0);
+    }
+    let mut env = ix.new_env();
+    let taints: Vec<u8> = args.iter().map(|(_, t)| *t).collect();
+    env.bind_fresh(
+        f.params
+            .iter()
+            .zip(args)
+            .map(|(p, (v, _))| (intern(&p.name), v)),
+        |i| taints[i],
+    );
+    match ix.with_frame(sealed, || ix.eval_t::<true>(&f.body, &mut env)) {
+        Ok(v) => (v, ix.taint.last.get()),
+        Err(Flow::Return(v)) => (v, ix.taint.ret.get()),
+        Err(e) => panic!("{name}: {e:?}"),
+    }
+}
+
+/// A channel holding one value.
+fn full_chan() -> Rc<RefCell<std::collections::VecDeque<Value>>> {
+    let q = chan();
+    q.borrow_mut().push_back(Value::Int(7));
+    q
+}
+
+/// An OPERATOR method call on a channel under the candidate's control, or on
+/// a channel the candidate's value chose, is a write the candidate decided:
+/// the channel is marked (`t_chan_choice`), so whatever reads it later is
+/// tainted. The same call under the operator's own control marks nothing.
+#[test]
+fn an_operator_channel_access_the_candidate_controls_marks_the_channel() {
+    with_ix("r51-s3-chan-choice", true, |ix| {
+        for (c, want) in [(taint::ALL, taint::VAL), (0, 0)] {
+            let q = full_chan();
+            probe(
+                ix,
+                "ch_len",
+                false,
+                vec![(Value::Int(1), c), (Value::Chan(q.clone()), 0)],
+            );
+            assert_eq!(
+                ix.t_obj(&Value::Chan(q)) & taint::VAL,
+                want,
+                "ATTACK: `len` under a branch on a value of taint {c}"
+            );
+            let (q, r) = (chan(), chan());
+            probe(
+                ix,
+                "ch_pick",
+                false,
+                vec![
+                    (Value::Int(1), c),
+                    (Value::Chan(q.clone()), 0),
+                    (Value::Chan(r), 0),
+                ],
+            );
+            assert_eq!(
+                ix.t_obj(&Value::Chan(q)) & taint::VAL,
+                want,
+                "ATTACK: `len` of a channel a value of taint {c} chose"
+            );
+        }
+    });
+}
+
+/// A SEALED drain (`recv`) changes what the operator's queue holds: the
+/// channel is marked ALL (`t_chan_access`). A sealed `len` changes nothing and
+/// marks nothing; an operator read of a marked channel carries its taint.
+#[test]
+fn a_sealed_drain_marks_the_channel_and_a_read_carries_the_mark() {
+    with_ix("r51-s3-chan-access", true, |ix| {
+        let q = full_chan();
+        probe(
+            ix,
+            "ch_recv",
+            true,
+            vec![(Value::Int(0), 0), (Value::Chan(q.clone()), 0)],
+        );
+        assert_eq!(
+            ix.t_obj(&Value::Chan(q.clone())),
+            taint::ALL,
+            "ATTACK: a sealed drain left the operator's channel clean"
+        );
+        let quiet = full_chan();
+        probe(
+            ix,
+            "ch_count",
+            true,
+            vec![(Value::Int(0), 0), (Value::Chan(quiet.clone()), 0)],
+        );
+        assert_eq!(
+            ix.t_obj(&Value::Chan(quiet.clone())),
+            0,
+            "a sealed len marks nothing"
+        );
+        let (_, t) = probe(
+            ix,
+            "ch_count",
+            false,
+            vec![(Value::Int(0), 0), (Value::Chan(q), 0)],
+        );
+        assert_eq!(
+            t & taint::ALL,
+            taint::ALL,
+            "ATTACK: len of a drained channel read clean"
+        );
+        let (_, t) = probe(
+            ix,
+            "ch_count",
+            false,
+            vec![(Value::Int(0), 0), (Value::Chan(quiet), 0)],
+        );
+        assert_eq!(t, 0, "len of an untouched channel");
+    });
+}
+
+/// `select` pops a queue itself, so it takes and marks the channel the same
+/// way a method call does: a sealed select drains (ALL), an operator select
+/// under the candidate's control marks it.
+#[test]
+fn a_select_takes_and_marks_its_channel_like_a_recv() {
+    with_ix("r51-s3-chan-select", true, |ix| {
+        let q = full_chan();
+        probe(
+            ix,
+            "ch_select",
+            true,
+            vec![(Value::Int(1), 0), (Value::Chan(q.clone()), 0)],
+        );
+        assert_eq!(
+            ix.t_obj(&Value::Chan(q)),
+            taint::ALL,
+            "ATTACK: a sealed select drained a clean channel"
+        );
+        for (c, want) in [(taint::ALL, taint::VAL), (0, 0)] {
+            let q = full_chan();
+            probe(
+                ix,
+                "ch_select",
+                false,
+                vec![(Value::Int(1), c), (Value::Chan(q.clone()), 0)],
+            );
+            assert_eq!(
+                ix.t_obj(&Value::Chan(q)) & taint::VAL,
+                want,
+                "ATTACK: an operator select under a branch on a value of taint {c}"
+            );
+        }
+    });
+}
+
+/// Every channel method runs through the one access helper before it
+/// dispatches, in the method-call arm and in `select`; and the channel
+/// methods are a closed set (veto taint_tests.rs:928-975).
+#[test]
+fn every_channel_method_goes_through_the_one_access_helper() {
+    let src = include_str!("eval.rs");
+    let start = src
+        .find("if let Value::Chan(q) = &recv {")
+        .expect("the channel method arm");
+    let arm = &src[start..start + src[start..].find("let mut argv").expect("end of arm")];
+    let helper = arm
+        .find("self.t_chan_access(&recv, method)")
+        .expect("DRIFT: the channel method arm no longer calls t_chan_access");
+    let choice = arm
+        .find("self.t_chan_choice(&recv, rt)")
+        .expect("DRIFT: the channel method arm no longer calls t_chan_choice");
+    let dispatch = arm.find("self.chan_method::<T>(").expect("dispatch");
+    assert!(
+        helper < dispatch && choice < dispatch,
+        "DRIFT: the channel access hooks must run BEFORE the method dispatch"
+    );
+    let body = &src[src
+        .find("fn chan_method<const T: bool>(")
+        .expect("chan_method")..];
+    let body = &body[..body.find("\n    }\n").expect("end of chan_method")];
+    let mut arms: Vec<&str> = body
+        .lines()
+        .filter_map(|l| l.strip_prefix("            \"")?.split('"').next())
+        .collect();
+    arms.sort();
+    assert_eq!(
+        arms,
+        ["clone", "len", "recv", "send", "try_recv"],
+        "DRIFT: a channel method was added or removed; check t_chan_access classes it"
+    );
+    let sel = src.find("Expr::Select(arms) =>").expect("select arm");
+    let sel = &src[sel..sel + src[sel..].find("panic(\"select: no channel").expect("end")];
+    assert!(
+        sel.contains("self.t_chan_access(&ch, \"recv\")")
+            && sel.contains("self.t_chan_choice(&ch, rt)"),
+        "DRIFT: select pops a channel without t_chan_access / t_chan_choice"
+    );
 }
 
 /// The walk for a handed value's dicts REFUSES a value nested deeper than
