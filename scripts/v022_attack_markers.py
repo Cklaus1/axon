@@ -2003,7 +2003,9 @@ ATTACK_MARKERS.update({
     'M1993': _D,
     'M1994': r"ATTACK: operator code dispatched on a value of the candidate's chosen type \(an unannotated lambda parameter\): Ok\(Completed\)",
     'M1995': _D,
-    'M1996': r"ATTACK: a u8 the candidate chose truncated the operator's arithmetic into a pass: Ok\(Completed\)",
+    # R51 T7: main's test runs the same attack at unit level first (the operator's untyped
+    # `v << 1` on the candidate's u8 255 computed 254 at U8); v0.22's sealed-runner half follows.
+    'M1996': r"ATTACK: (`v << 1` at the candidate's width: Ok\(SizedInt \{ val: 254, ty: U8 \}\)|a u8 the candidate chose truncated the operator's arithmetic into a pass: Ok\(Completed\))",
     'M1997': r"ATTACK: a captured-dict closure retyped an entry against a stale snapshot: Ok\(Completed\)",
 })
 

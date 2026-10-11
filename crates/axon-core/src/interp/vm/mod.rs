@@ -2778,14 +2778,14 @@ impl<'p> Interp<'p> {
                         let a = pop(st);
                         env.push_var_t::<VM_SEALED>(
                             entry.params[0],
-                            param_value(entry, 0, a),
+                            param_value::<VM_SEALED>(entry, 0, a),
                             VM_TAINT,
                         );
                     } else {
                         for (i, a) in st.drain(at..).enumerate() {
                             env.push_var_t::<VM_SEALED>(
                                 entry.params[i],
-                                param_value(entry, i, a),
+                                param_value::<VM_SEALED>(entry, i, a),
                                 VM_TAINT,
                             );
                         }
@@ -2815,7 +2815,11 @@ impl<'p> Interp<'p> {
         let mut frame = self.take_frame();
         let out = match self.enter_fn(entry.def) {
             Ok(_guard) => {
-                frame.push_var_t::<VM_SEALED>(entry.params[0], param_value(entry, 0, a), VM_TAINT);
+                frame.push_var_t::<VM_SEALED>(
+                    entry.params[0],
+                    param_value::<VM_SEALED>(entry, 0, a),
+                    VM_TAINT,
+                );
                 self.fast_body(entry, &mut frame, st)
             }
             Err(flow) => Err(flow),
@@ -2928,7 +2932,7 @@ impl<'p> Interp<'p> {
                 Opnd::Const(v) => v.clone(),
                 Opnd::Stack => malformed(),
             };
-            frame.push_var_t::<VM_SEALED>(p, param_value(entry, i, v), VM_TAINT);
+            frame.push_var_t::<VM_SEALED>(p, param_value::<VM_SEALED>(entry, i, v), VM_TAINT);
         }
         self.set_call_tier(None);
         let out = match self.enter_fn(entry.def) {
@@ -2973,7 +2977,7 @@ impl<'p> Interp<'p> {
                 Opnd::Const(v) => v.clone(),
                 Opnd::Stack => malformed(),
             };
-            Some(param_value(entry, k, a))
+            Some(param_value::<VM_SEALED>(entry, k, a))
         };
         // Every argument must be bound, read or not.
         for a in args {
@@ -3139,7 +3143,11 @@ impl<'p> Interp<'p> {
                     }
                 },
             };
-            frame.push_var_t::<VM_SEALED>(entry.params[i], param_value(entry, i, v), VM_TAINT);
+            frame.push_var_t::<VM_SEALED>(
+                entry.params[i],
+                param_value::<VM_SEALED>(entry, i, v),
+                VM_TAINT,
+            );
         }
         // Every stack argument moved out, leaving a `Unit`: nothing to drop.
         while st.len() > at {
@@ -3153,7 +3161,8 @@ impl<'p> Interp<'p> {
                 let name = r.var.name;
                 return panic(format!("`&mut {name}`: `{name}` is not a local variable"));
             };
-            let v = param_value(entry, r.arg as usize, std::mem::replace(b, Value::Unit));
+            let v =
+                param_value::<VM_SEALED>(entry, r.arg as usize, std::mem::replace(b, Value::Unit));
             forget_scalar(frame.replace_t::<VM_SEALED>(r.arg as usize, v, VM_TAINT));
         }
         self.set_call_tier(tier.as_deref());

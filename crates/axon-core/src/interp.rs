@@ -2055,26 +2055,32 @@ fn sum_confusion(entry: &FnEntry<'_>, result: &Value) -> Flow {
 /// dropped at this T-typed boundary. R19 Slice B: coerce Int→SizedInt when
 /// the declared param type is a non-i64 integer width, so arithmetic inside
 /// the callee's body uses width-correct ops (completeness, I-9).
+/// In a sealed run (`SEALED`) a `SizedInt` of another width is left for the
+/// declared-type cast that follows ([`coerce_to_sized`]).
 #[inline(always)]
-fn param_value(entry: &FnEntry<'_>, i: usize, a: Value) -> Value {
+fn param_value<const SEALED: bool>(entry: &FnEntry<'_>, i: usize, a: Value) -> Value {
     match entry.param_coerce[i] {
         // Only a struct can be a soft wrapper: anything else binds as is
         // when there is no width to coerce to (cost only, R50 S5).
         (_, None) if !matches!(a, Value::Struct(_)) => a,
-        (unwrap_soft, width) => param_value_coerced(unwrap_soft, width, a),
+        (unwrap_soft, width) => param_value_coerced::<SEALED>(unwrap_soft, width, a),
     }
 }
 
 /// [`param_value`]'s soft unwrap and sized-int coercion.
 #[inline(never)]
-fn param_value_coerced(unwrap_soft: bool, width: Option<IntWidth>, a: Value) -> Value {
+fn param_value_coerced<const SEALED: bool>(
+    unwrap_soft: bool,
+    width: Option<IntWidth>,
+    a: Value,
+) -> Value {
     let a = if unwrap_soft {
         value::soft_inner(&a).unwrap_or(a)
     } else {
         a
     };
     match width {
-        Some(width) => coerce_to_sized(a, width),
+        Some(width) => coerce_to_sized::<SEALED>(a, width),
         None => a,
     }
 }
@@ -5294,7 +5300,12 @@ impl<'p> Interp<'p> {
                 .iter()
                 .zip(args.iter_mut())
                 .enumerate()
-                .map(|(i, (&p, a))| (p, param_value(entry, i, std::mem::replace(a, Value::Unit)))),
+                .map(|(i, (&p, a))| {
+                    (
+                        p,
+                        param_value::<false>(entry, i, std::mem::replace(a, Value::Unit)),
+                    )
+                }),
             |_| t,
         );
     }
@@ -5316,7 +5327,7 @@ impl<'p> Interp<'p> {
     ) -> Result<(), Flow> {
         let f = entry.def;
         for (i, (p, a)) in f.params.iter().zip(args.iter_mut()).enumerate() {
-            *a = param_value(entry, i, std::mem::replace(a, Value::Unit));
+            *a = param_value::<true>(entry, i, std::mem::replace(a, Value::Unit));
             if let Err(why) = self.cast(a, &p.ty, cx) {
                 return panic(format!(
                     "argument `{}` of `{}` is declared `{}` but is {} — a runtime type confusion \
@@ -6786,13 +6797,17 @@ fn axon_type_to_width(ty: &crate::ast::AxonType) -> Option<IntWidth> {
 /// Coerce a runtime value to a `SizedInt` when the target type is a non-i64
 /// integer. `Int(n)` → `SizedInt{n, ty}`. Any other value is returned as-is
 /// (the type-checker has already validated the types match; this is a
-/// representation upgrade only). `SizedInt` with a different width is
-/// re-tagged to the new width (preserves the stored bit-pattern; the checker
-/// ensures same-width ops only).
-fn coerce_to_sized(v: Value, width: IntWidth) -> Value {
+/// representation upgrade only). Outside a sealed run a `SizedInt` with a
+/// different width is re-tagged to the new width (preserves the stored
+/// bit-pattern; the checker ensures same-width ops only). In a sealed run
+/// (`SEALED`) it is left as it is, and the declared-type cast that follows
+/// refuses it: re-tagging it would turn one width into another without
+/// converting its value, before the cast could see it (v0.22 C9 round 4b,
+/// amendment 60; R51 T7, M921).
+fn coerce_to_sized<const SEALED: bool>(v: Value, width: IntWidth) -> Value {
     match v {
         Value::Int(n) => Value::SizedInt { val: n, ty: width },
-        Value::SizedInt { val, .. } => Value::SizedInt { val, ty: width },
+        Value::SizedInt { val, .. } if !SEALED => Value::SizedInt { val, ty: width },
         other => other,
     }
 }
