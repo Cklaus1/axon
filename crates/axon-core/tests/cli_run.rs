@@ -37141,11 +37141,13 @@ macro_rules! s0b_src {
 /// `continue` never ends or skips the caller's loop; the call is an error at
 /// the frame edge it reaches. One program per edge: a named fn through
 /// `CallFastLocalInt` (`stop(i + 1)`) and an inline-argument `CallFast`
-/// (`skip(i)`), a closure, and a refinement predicate. Identical on the tree,
-/// the eager VM and the default VM (`vm_same_both_engines`).
+/// (`skip(i)`), a closure, a refinement predicate, and an effect-handler arm
+/// whose `with` sits inside the loop (§3 handler-arm row, veto 2175cc1b; its
+/// text does not say "outside a loop", S7-UnsealedParity-1). Identical on the
+/// tree, the eager VM and the default VM (`vm_same_both_engines`).
 #[test]
 fn r51_s0b_loop_control_never_leaves_its_frame_on_either_engine() {
-    let cases: [(&str, &str, &str, &str); 4] = [
+    let cases: [(&str, &str, &str, &str); 5] = [
         (
             "s0b_fast_local_int",
             s0b_src!("escape_fast_local_int"),
@@ -37169,6 +37171,13 @@ fn r51_s0b_loop_control_never_leaves_its_frame_on_either_engine() {
             s0b_src!("escape_predicate"),
             "40\n41\n42\n",
             "outside a loop in a predicate",
+        ),
+        (
+            "s0b_handler_arm",
+            s0b_src!("escape_handler_arm"),
+            "",
+            "`break`/`continue` cannot leave an effect-handler arm (a loop around the `with` is \
+             not the arm's loop)",
         ),
     ];
     for (tag, src, stdout_want, msg) in cases {

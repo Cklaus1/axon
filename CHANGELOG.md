@@ -1,5 +1,13 @@
 # Axon Changelog
 
+## R51 S7: accurate early-end and handler-arm texts; refinement names match the checker
+
+- **`axon test`:** a test that ends early on `None` (`return None`, or a `?` on `None`) still fails, now with "the test ended on `Err`, or early on `None` (a `return None` or a `?` on `None`): it did not complete"; it used to say only "the test returned `Err` (or a `?` ended it on `Err`/`None`)". Under `AXON_VM_EAGER=1` the bytecode engine read a test body's own early `return` as a completion; such a body now runs on the tree, as on the default engine.
+- **`axon improve`:** the G3 test-flip check reads `axon test`'s verdict, so a pass that makes a passing test end on `Err` (or early on `None`) is reported as a flip.
+- **Effect-handler arms:** a `break`/`continue` in an arm whose `with` sits inside a loop panics with "`break`/`continue` cannot leave an effect-handler arm (a loop around the `with` is not the arm's loop)" instead of "… outside a loop in an effect-handler arm".
+- **Resolver:** a named refinement may take a name that only starts with a deferred type name (`type GoalScore = i64 where _ >= 0`); `Uncertain`, `Temporal`, `Goal` and `Dict` themselves stay refused (E0002), matching the checker's exact names. A duplicate impl's E0002 names the type as written (`impl Show for P`, `impl Show for Option<i64>`), not as Rust debug output (`Named("P")`).
+- **Sealed runs:** a sealed caller that reaches the recursion limit at a call of an operator function is refused by the call edge in the uniform "no such function" words, never with a depth message naming that function.
+
 ## Sealed runs execute on the tree engine with the runtime seal (R51 S6.1)
 
 A sealed run (`axon test --seal`, the axon-psv runner child, axon-cortex's sealed check child, an in-crate run with a sealed module set) now executes, on the tree-walker, with v0.22's PSV-1 runtime seal ported onto the bytecode-era interpreter: the taint channel, the seal edges and casts, the per-frame kernel, the PICK mark and the receiver dispatch rule (`governance/specs/R51-sealed-engine-unification.md`). Since R51 S0 every sealed run on this line was refused with "sealed runs are refused on this build: the runtime seal is not complete" (exit 2; axon-psv verdict Unknown). `AXON_ENGINE` unset or `tree` runs a sealed run on the tree; `AXON_ENGINE=vm` (or `set_engine(Engine::Vm)`) is refused with "a sealed run executes on the tree engine only (AXON_ENGINE=vm cannot carry the seal); unset AXON_ENGINE", exit 2, before any result line. Unsealed runs are unchanged (VM by default).

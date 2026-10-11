@@ -15,9 +15,9 @@ later commit touches `crates/axon-core/src` (the note is then stale: `python3 sc
 --emit HEAD`, paste between the markers).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: bad7e92400a7f520629e89abbd634e0b300f1dd1
+generated-at: 30e6638cbdf4bd95807d597f3c72c8fd02199755
 
-`git diff --numstat 31413ca7..bad7e924 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..30e6638c -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -25,7 +25,7 @@ generated-at: bad7e92400a7f520629e89abbd634e0b300f1dd1
 | `crates/axon-core/src/builtins.rs` | 44 | 10 |
 | `crates/axon-core/src/cache.rs` | 284 | 40 |
 | `crates/axon-core/src/capabilities.rs` | 18 | 1 |
-| `crates/axon-core/src/checker.rs` | 608 | 106 |
+| `crates/axon-core/src/checker.rs` | 610 | 108 |
 | `crates/axon-core/src/clock.rs` | 58 | 3 |
 | `crates/axon-core/src/codegen/asi.rs` | 14 | 18 |
 | `crates/axon-core/src/codegen/build_wrappers.rs` | 25 | 1 |
@@ -48,8 +48,9 @@ generated-at: bad7e92400a7f520629e89abbd634e0b300f1dd1
 | `crates/axon-core/src/error.rs` | 22 | 13 |
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
+| `crates/axon-core/src/improve.rs` | 22 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 5172 | 1581 |
+| `crates/axon-core/src/interp.rs` | 5276 | 1587 |
 | `crates/axon-core/src/interp/builtins.rs` | 672 | 512 |
 | `crates/axon-core/src/interp/conform.rs` | 1800 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1354 | 0 |
@@ -72,7 +73,7 @@ generated-at: bad7e92400a7f520629e89abbd634e0b300f1dd1
 | `crates/axon-core/src/interp/tests_v022_s4.rs` | 600 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 506 | 514 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1698 | 0 |
-| `crates/axon-core/src/interp/vm/mod.rs` | 3469 | 0 |
+| `crates/axon-core/src/interp/vm/mod.rs` | 3474 | 0 |
 | `crates/axon-core/src/interp/vm/pure.rs` | 964 | 0 |
 | `crates/axon-core/src/interp/vm/tests.rs` | 1796 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
@@ -82,13 +83,13 @@ generated-at: bad7e92400a7f520629e89abbd634e0b300f1dd1
 | `crates/axon-core/src/mut_borrow.rs` | 800 | 0 |
 | `crates/axon-core/src/parser.rs` | 84 | 3 |
 | `crates/axon-core/src/replay.rs` | 40 | 17 |
-| `crates/axon-core/src/resolver.rs` | 534 | 66 |
+| `crates/axon-core/src/resolver.rs` | 578 | 86 |
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 46470 | 5387 |
+| total | 46647 | 5415 |
 
-`git log --reverse 31413ca7..bad7e924 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..30e6638c -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -320,7 +321,8 @@ generated-at: bad7e92400a7f520629e89abbd634e0b300f1dd1
 | 1276b9e9 | R51 S6 T7 merge | joins r51/t7oracle (11172ce5, 6ae5d56c: oracle rows M2622/M2623/M2925/M2946/M3343, new row M3495 sealed `&mut` direct-call oracle) onto r51/int 15cbfa4a (t7shape: sealed width re-tag, M3230/M3231/M3256 text, M1996 marker); only this table and the note conflicted, resolved by keeping both sides; no change beyond the commits it joins |
 | ffe2b413 | R51 T2 wasm32 depth | INTERPRETER (stack layout and wasm32 recursion budget only; no change in what any run computes, accepts or refuses): the const-generic frames charge per-instance nest_cost constants (nest_guard!(self, if T { X_SEALED } else { X }); EVAL/CALL_FN_IN_GENERAL/CALL_CLOSURE_OWNED_BY renamed EVAL_ARM/CALL_FN_FRAME/CALL_CLOSURE_FRAME after the fns that charge them, RUN_TEST_BODY its own; the sealed-only call_fn_sealed/call_mut_sealed/eval_tainted guarded); sealed-only code moves out of the unsealed frames into #[cold] #[inline(never)] helpers: sealed_branch! runs a branch body in place in the ::<false> instance and through t_branch in the ::<true> one, call_mut hands a sealed run to call_mut_sealed before its arguments (which evaluates them in the same order), call_mut_with is unsealed-only with the ::<false> Env accessors, struct_refine_sealed out of finish_record, run_arm_sealed out of run_handler_arm (match instead of and_then), with_abort_enter/with_abort_exit out of eval_with_handler, eval_prob_pred guarded with prob_pred inline, Bindings' debug checks out of line, the unused Env::get_mut dropped (vm test uses get_mut_t::<false>); drift-test needles (sink_tests, tests_v022_b) and a taint_tests doc follow the moved code; unsealed behaviour change: none on native; sealed runs as at 04d3ad7b |
 | 3561022b | R51 T2 wasm32 depth | INTERPRETER (stack layout and wasm32 recursion budget only): finish_call_cold's R4 zone provenance injection moves verbatim into #[inline(never)] record_zone_provenance; eval_with_handler is #[inline(always)] in an optimised build (as before R51 split the evaluator); every nest_cost constant whose frame grew is set to its measured need (wasm_stack_budget.py; e.g. EVAL_ARM release 288 -> 304, CALL_FN_FRAME 224/528 -> 272/576), the sealed ones to their measured need; unsealed behaviour change: none on native; on wasm32 the recursion-limit panic fires a few levels earlier on some nest probes (vm_wasm_depth.sh PASS, VM >= tree everywhere); sealed runs as at 04d3ad7b |
-| 228 commits | | |
+| 30e6638c | R51 S7 decl | INTERPRETER + RESOLVER (S7-UnsealedParity-1,6,7,8,9, S7-Seal-2): frame_edge's loop-control text comes from FrameEdge::loop_control_escape, so a handler arm reads "`break`/`continue` cannot leave an effect-handler arm (a loop around the `with` is not the arm's loop)" (other edges unchanged); the resolver's refinement-name rule takes checker::DEFERRED_PREFIXES as exact names (v0.22's prefix rule predates amendment 117), so `type GoalScore = i64 where …` is accepted and `type Goal = …` refused, and the duplicate-impl E0002 prints checker::axon_type_name; TEST_ENDED_ON_FAILURE names an early None; run_test_fn returns Err on TestEnd::failure_exit, so improve.rs G3 reads axon test's verdict; vm run_test_body runs a test body holding its own Op::Return on the tree (the eager VM read an early return as a completion); depth_exceeded decides seal_call first (v0.22 order). Unsealed behaviour change: the handler-arm and early-None panic/failure texts, refinement names that merely start with Uncertain/Temporal/Goal/Dict now resolve, the duplicate-impl text, axon improve's G3 verdict on an Err/early-None test, and AXON_VM_EAGER=1 test completion after an early return (now as the tree); spec §3 declares the v0.22 rows; sealed runs: a depth-limit call of an operator fn reads the uniform no-such-fn text |
+| 229 commits | | |
 <!-- END MECHANICAL -->
 
 

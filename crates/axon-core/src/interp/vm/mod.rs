@@ -1398,8 +1398,11 @@ impl<'p> Interp<'p> {
     /// the same engine and first-entry choice, but a `return` or `?` out of
     /// the body stays `Err(Flow::Return(v))` on both engines (the VM's
     /// [`Interp::exec`] ends it as `Ok(v)`), so the test runner can tell a
-    /// body that ran to its end from one that ended early (`TestEnd`). Once
-    /// per test, so off the call path.
+    /// body that ran to its end from one that ended early (`TestEnd`). A
+    /// compiled body with its own `return` ([`Op::Return`], which ends the op
+    /// loop as `Ok(v)` even under [`Interp::exec_raw`]) runs on the tree: the
+    /// eager VM read an early `return None` as a completion
+    /// (S7-UnsealedParity-8). Once per test, so off the call path.
     #[cold]
     #[inline(never)]
     pub(super) fn run_test_body(&self, entry: &FnEntry<'_>, env: &mut Env) -> R {
@@ -1410,7 +1413,9 @@ impl<'p> Interp<'p> {
                 None if !self.first_entry_on_tree(entry) => self.compile_body(entry)?,
                 None => None,
             };
-            if let Some(body) = body.filter(|body| !body.lone_tree()) {
+            if let Some(body) = body.filter(|body| {
+                !body.lone_tree() && !body.ops.iter().any(|op| matches!(op, Op::Return))
+            }) {
                 return self.exec_raw(body, env);
             }
         }

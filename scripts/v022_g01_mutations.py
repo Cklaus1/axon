@@ -358,7 +358,7 @@ MUTATIONS = [
     ('M58', 'interpreter: loop control does not cross a function boundary', 'crates/axon-core/src/interp.rs', '            Err(Flow::Break) | Err(Flow::Continue) => {\n                return panic(format!("`break`/`continue` outside a loop in `{}`", f.name))\n            }\n', '', 'axon-core', '--no-default-features --lib', 'interp::tests::an_escaped_break_or_continue_from_a_function_body_does_not_pass_a_test'),
     ('M59', 'interpreter: loop control is contained at every frame edge (fn, closure, predicate)',
      'crates/axon-core/src/interp.rs',
-     '        Flow::Break | Flow::Continue => format!("`break`/`continue` outside a loop in {edge}"),',
+     '        Flow::Break | Flow::Continue => edge.loop_control_escape(),',
      '        Flow::Break => return Flow::Break,\n        Flow::Continue => return Flow::Continue,',
      'axon-core', '--no-default-features --lib', 'interp::tests::loop_control_does_not_escape_through_a_predicate'),
     ('M60', 'resolver: a trait impl is unique in the merged program',
@@ -526,10 +526,10 @@ MUTATIONS = [
      '                out.extend(a.guard.as_ref());\n',
      '',
      'axon-core', '--no-default-features --lib', 'resolver::tests::a_sealed_module_cannot_reach_the_operators_names'),
-    ('M94', 'resolver: a refinement cannot take a deferred-prefix type name',
+    ('M94', 'resolver: a refinement cannot take a deferred type name (exact names, as the checker)',
      'crates/axon-core/src/resolver.rs',
-     '                    || ["Uncertain", "Temporal", "Goal", "Dict"]',
-     '                    || [""; 0]',
+     '                    || crate::checker::DEFERRED_PREFIXES.contains(&n)',
+     '                    || false',
      'axon-core', '--no-default-features --lib', 'resolver::tests::duplicate_let_refinement_or_impl_produces_e0002'),
     ('M95', 'interpreter: a global initializer runs under its own provenance',
      'crates/axon-core/src/interp.rs',
@@ -2826,7 +2826,7 @@ STALE_REFACTORED = {
     # Err(Flow::Continue) => return panic(...)`); main's interpreter has no
     # such arm (old string absent). Loop control at every frame edge (fn body,
     # closure, predicate, handler arm) is classified by ONE arm, `Flow::Break |
-    # Flow::Continue => format!(...outside a loop in {edge})` in frame_edge
+    # Flow::Continue => edge.loop_control_escape()` in frame_edge
     # (interp.rs), which call_fn (FrameEdge::Fn), contain_frame and
     # contain_loop_control all route through; M59 (ACTIVE) mutates it, and with
     # M59's edit applied M58's own fn-boundary attack succeeds on its marker.

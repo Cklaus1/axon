@@ -131,7 +131,7 @@ ATTACK_MARKERS = {
     'M91': r"ATTACK: sealed code reached the operator \(a candidate closure called by the operator\): Ok\(Completed\)",
     'M92': r"ATTACK: sealed code reached the operator \(a candidate handler arm\): Ok\(Completed\)",
     'M93': r"ATTACK: a sealed module reached the operator's `TABLE` \(match guard\): \[\]",
-    'M94': 'failed: refinement named after a deferred-prefix type: \\[\\]',
+    'M94': 'failed: refinement named after a deferred type: \\[\\]',
     'M95': r"ATTACK: sealed code reached the operator \(module-level initializer\): Ok\(Completed\)",
     'M96': r"ATTACK: a sealed frame reached the operator's kernel state \(reads the operator's fiber result by id\): Ok\(Completed\)",
     'M97': r"ATTACK: sealed code reached the operator \(a candidate struct's where, built by the operator\): Ok\(Completed\)",
