@@ -52,7 +52,8 @@ the thirty-seventh (3 must-fix, 2 nits; §15 "Revision 42"); revision 43 answers
 (3 must-fix, 1 nit; §15 "Revision 43"); revision 44 answers the thirty-ninth (1 must-fix, 1 nit;
 §15 "Revision 44"); revision 45 answers the fortieth (2 must-fix, 1 nit; §15 "Revision 45"); revision 46 answers the
 forty-first (3 must-fix, 1 nit; §15 "Revision 46"); revision 47 answers the forty-second (2 must-fix,
-1 nit; §15 "Revision 47"); revision 48 answers the forty-third (1 must-fix, 2 nits; §15 "Revision 48").
+1 nit; §15 "Revision 47"); revision 48 answers the forty-third (1 must-fix, 2 nits; §15 "Revision 48");
+revision 49 answers the forty-fourth (2 must-fix, 2 nits; §15 "Revision 49").
 S13 is Draft until an adversarial review passes it.
 **Risk class:** Structural (a second execution path for the reference engine)
 **Author / date:** 2026-10-09, from compilebench AX-18 (interpreter cost) after AX-53..AX-55.
@@ -1119,7 +1120,12 @@ code under `AXON_ENGINE=tree` and `vm`, and stdout equal to the tree's at `0f3b1
   wraps and prints `n=0`), a negative `lo` (the tree panics `index -2 out of bounds`), a downward
   overflow (`f = arr_repeat(true, 2)`, `c = 0 - 1`, `n = 0 - 9223372036854775807`, `0..2`: the tree
   panics `integer overflow: -9223372036854775808 + -1 exceeds i64`; a check of the upper bound only
-  wraps and exits 0), and a `Vals` `bool` array.
+  wraps and exits 0), a `Float` count (`n = 0.0`, `c = d` with `d = 0.1`, `one = 1.0`, ten `true`s,
+  printing `{n} {n == one} {n < one}`: the tree adds one step at a time and prints `1 false true`; a
+  path computing `n0 + c0 * t` in `f64` prints `1 true false`), an all-`bool` `Vals` array, and a
+  mixed `Vals` array (`let id = |x| x`, `f = id([true, false, true, true])`, `f[1] = one` with
+  `one = 1`, `0..4`: the tree panics `if condition must be bool, got i64`; a count that accepts
+  `Vals` and skips elements that are not `true` exits 0 with `n=3`).
 - `packed_forms_persist` (unit test, interp/vm/tests.rs, through the test probes): `arr_range(0, 3)`
   is `Ints`, `arr_repeat(1.5, 3)` `Floats`, `arr_repeat(true, 3)` `Bools`, a `SizedInt` `arr_repeat`
   and a literal array `Vals`; an `Ints` array stays `Ints` after a `LoopMem` store (a `PureFor`
@@ -1153,7 +1159,7 @@ code under `AXON_ENGINE=tree` and `vm`, and stdout equal to the tree's at `0f3b1
   `0f3b182b`.
 - `vm_bulk_near_miss_shapes`: loops one step outside the two shapes, each over packed arrays and
   each `PureLoop`/`PureFor`-eligible (the trace shows its `vm: pure` line), print the tree's results
-  under both engines, and print no `vm: bulk` line. Twenty loops, nine counts and eleven fills.
+  under both engines, and print no `vm: bulk` line. Twenty-one loops, nine counts and twelve fills.
   Counts: with an `else` (`if a[v] { n = n + c } else { m = m + 1 }`); indexed by another local
   (`if a[w]`); with `n = n - c`; with `n = m + c`; with a second statement in the `then` block
   (`if a[v] { n = n + c\n m = m + 1 }`); with a statement after the `if` (`m = m + 1`); with
@@ -1174,17 +1180,26 @@ code under `AXON_ENGINE=tree` and `vm`, and stdout equal to the tree's at `0f3b1
   another local (`k = j + s`, `j = 10`, `k = 0`, `s = 3`, `b = 5`, `<`: zero iterations, the tree
   prints the array unchanged, `j=10 k=0`; a version whose first write is in bounds never ends on
   the tree, and one whose first write is out of bounds panics there while a loose bulk path declines
-  too);
+  too); with `let j = j + s` in place of the assignment (`f = arr_repeat(0, 10)`, `j = 10`, `s = 3`,
+  `b = 5`, `<`: zero iterations, the tree prints the array unchanged and `j=10`; a recogniser that
+  ignores `let` versus assignment in the step runs a bulk path);
   with `a[j] = j` (`j = 1`, `s = 2`, `< 10`: the tree prints `[0, 1, 0, 3, 0, 5, 0, 7, 0, 9]` and
   `j=11`); and with `j = j + j` (`f = arr_repeat(false, 20)`, `j = 1`, `< 20`, store `true`: the tree
   sets indices 1, 2, 4, 8, 16 and `j=32`). A recogniser that skips any one structural check (the
   `else`, the index variable, the compared variable, the comparison operator, the step's assigned
-  variable and left operand, statement order or count in the body or the `then` block, the
-  arithmetic operator, the accumulated local, `j` in the exclusions of `b`, `c` and `s`, `v` in
-  `n`'s, or `v` and `n` in `c`'s) runs a bulk path and prints a `vm: bulk` line, and most also print
-  different output.
+  variable, its left operand and `let` versus assignment, statement order or count in the body or
+  the `then` block, the arithmetic operator, the accumulated local, `j` in the exclusions of `b`,
+  `c` and `s`, `v` in `n`'s, or `v` and `n` in `c`'s) runs a bulk path and prints a `vm: bulk`
+  line, and most also print different output.
 
-Also: `interp_arr_repeat_unallocatable_size_is_a_runtime_error_naming_n` still passes;
+Also: `interp_arr_repeat_unallocatable_size_is_a_runtime_error_naming_n` still passes, and
+`packed_constructors_refuse_unallocatable_sizes` runs `arr_repeat(true, 9223372036854775807)`,
+`arr_repeat(1.5, 9223372036854775807)` and `arr_range(0, 9223372036854775807)` under both engines:
+each exits 101 with empty stdout and stderr containing `<builtin>: cannot allocate an array of
+9223372036854775807 elements` (`arr_repeat` or `arr_range`; the parenthesised reason may differ, as
+above). `Bools` is the one form where that count is a valid layout, so it reaches the allocator; a
+constructor using an infallible `vec![b; n]` would abort with 134 instead ([INFERENCE] from std's
+`handle_alloc_error`; not run);
 `vm_perf_gate.sh` with sieve's budget CPython's median (§10; S12 fails it at about 24.4 G), every
 other program within 0.5 % of its `REF`, and every `--repros` row, `packed` and
 `packed-tree` included; `AXON_REF_BIN=<axon at 0f3b182b, built cargo build --release -p axon-core
@@ -1589,7 +1604,7 @@ the reference code, gaps cost speed, never correctness.
 | R50.S10 array elements in pure loops (§4 S10); `PureFor`; `sieve.ax` and its `--programs` row; never-taken `if` in the repro bases made impure | R50.S9 | `cli_run vm_index_` (incl. `vm_index_sieve_loops`) + `vm_perf_gate.sh` (all six) + `--repros` (every row) + `vm_parity.sh` + `vm_wasm_depth.sh --require-default-stack` + whole suite under the S9 modes | code `944fe056`, which fails `vm_wasm_depth.sh` (`wasm_stack_budget.py`: `pure_stmts`/`pure_if` recursion not in `ALLOW`, `COMPILE_STMT` 16 bytes short in release); fixed with S11 |
 | R50.S11 pure-`i64` function tier (§4 S11); `vm: purefn` trace line; fib-recursive budget a third of CPython's | R50.S10 | `cli_run vm_purefn_` (incl. `vm_purefn_fib_in_registers`) + `purefn_build_validates` + `vm_perf_gate.sh` (all six; `REF` check: others at most 0.5 % above S10) + `--repros` (every row) + `vm_parity.sh` + `vm_wasm_depth.sh --require-default-stack` (`plain` on the tier, `plain_generic` off it) + whole suite under the S9 modes | code `2627dad7`; review fixes `faf25a22`, `e5f754ab` |
 | R50.S12 wasm32 traps (§4 S12): bounded drop of every `Value` container, front-end nesting limit 224 (interpolation slots included), no payload copy for `host_await_val`; `DictMap`/`Elems`/`VBox`/`Queue`/`Held`; nest probes; four `wasm_stack_budget.py` checks | R50.S10 | `cli_run wasm_drops_deep_values_ax59`, `wasm_deep_source_gives_e0000_ax60`, `native_nesting_limit_unchanged_ax60`, `native_guard_borrow_e0606`, `native_guard_w0002`, `native_guard_assign_in_place`, `native_guard_pure_e1207`, `native_guard_tier_e0910`, `native_guard_write_unaliases`, `wasm_host_await_val_no_copy_ax61` + `wasm_nesting_parity.sh` (debug and release; out-of-root refusals `tdef_*`, `attr_*`, `handler_*`, `*_chain`, `*_pred`) + `vm_wasm_depth.sh --require-default-stack` (debug and release; no probe exits 134) + `wasm_stack_budget.py` + `vm_perf_gate.sh` (every `REF` within 0.5 %, fib-recursive's from `2627dad7`) + whole suite under the S9 modes | code `a9c89e5e`, merged `e0f29182`; review fixes `91b13427`, `c33f521b`, `e5f754ab`, `fcd18f2b`, `2fdf7cc1`, `a875d2b8`, `8e4bd760`, `6ae2c76f`, `2d0940c2`, `da151a79` |
-| R50.S13 packed scalar arrays and bulk loops (§4 S13): `Elems` representation (`Vals`/`Bools`/`Ints`/`Floats`, no `Deref` to `Vec<Value>`), packed `arr_repeat`/`arr_range`, bulk fill and count on `PureLoop` entry, `vm: bulk` trace line, `AXON_REF_BIN` in `vm_parity.sh`, `REPROS` engine field and `packed.ax`/`packed_base.ax`, `tests/fixtures/packed/` | R50.S12 | `cli_run vm_bulk_` (`vm_bulk_sieve_loops`, `vm_bulk_fill_runs`, `vm_bulk_fill_bounds_and_declines`, `vm_bulk_fill_other_kind_declines`, `vm_bulk_count_runs`, `vm_bulk_count_declines`, `vm_bulk_near_miss_shapes`) + `packed_arrays_match_literal_arrays` + `packed_forms_persist` + `interp_arr_repeat_unallocatable_size_is_a_runtime_error_naming_n` + `vm_perf_gate.sh` (all six; sieve at CPython's median, others within 0.5 % of `REF`) + `--repros` (every row, `packed` and `packed-tree` included) + `AXON_REF_BIN=<0f3b182b, --no-default-features release> vm_parity.sh` + `vm_wasm_depth.sh --require-default-stack` + `wasm_nesting_parity.sh` + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` + whole suite under the S9 modes | todo |
+| R50.S13 packed scalar arrays and bulk loops (§4 S13): `Elems` representation (`Vals`/`Bools`/`Ints`/`Floats`, no `Deref` to `Vec<Value>`), packed `arr_repeat`/`arr_range`, bulk fill and count on `PureLoop` entry, `vm: bulk` trace line, `AXON_REF_BIN` in `vm_parity.sh`, `REPROS` engine field and `packed.ax`/`packed_base.ax`, `tests/fixtures/packed/` | R50.S12 | `cli_run vm_bulk_` (`vm_bulk_sieve_loops`, `vm_bulk_fill_runs`, `vm_bulk_fill_bounds_and_declines`, `vm_bulk_fill_other_kind_declines`, `vm_bulk_count_runs`, `vm_bulk_count_declines`, `vm_bulk_near_miss_shapes`) + `packed_arrays_match_literal_arrays` + `packed_forms_persist` + `interp_arr_repeat_unallocatable_size_is_a_runtime_error_naming_n` + `packed_constructors_refuse_unallocatable_sizes` + `vm_perf_gate.sh` (all six; sieve at CPython's median, others within 0.5 % of `REF`) + `--repros` (every row, `packed` and `packed-tree` included) + `AXON_REF_BIN=<0f3b182b, --no-default-features release> vm_parity.sh` + `vm_wasm_depth.sh --require-default-stack` + `wasm_nesting_parity.sh` + `AXON_HARNESS_STRICT=1 scripts/parity_all.sh` + whole suite under the S9 modes | todo |
 
 ### 14. Evidence ledger
 
@@ -2215,3 +2230,14 @@ outputs as stated.
 | [must-fix] The zero-iteration fill used `s0 = 1`, where the truncating count formula gives `n = 0`; with a larger step it gives `n = 1`, so a path taking emptiness from `n <= 0` passed | `vm_bulk_fill_runs` pins zero iterations at `s0 = 3`: `<` with `j0 = b0 = 5` (tree `j=5`, unchanged) and `<=` with `j0 = 7`, `b0 = 6` (tree `j=7`, unchanged); plus a one-iteration `<=` fill with `j0 = b0 = 4` (tree writes `a[4]`, `j=7`) |
 | [nit] No one-element inclusive count range | `5..=5` over `arr_repeat(true, 8)`: tree `m=1` |
 | [nit] The count's overflow check was gated upward only | `vm_bulk_count_declines` adds `n = -(2^63 - 1)`, `c = -1` over two `true`s: tree panics `integer overflow: -9223372036854775808 + -1 exceeds i64` |
+
+Revision 49 (2026-10-11) answers the forty-fourth review (`reviewer`, verdict "incorrect": 0
+blockers, 2 must-fix, 2 nits). It confirmed the three revision-48 cases. Every new case was re-run
+on the S12 binary under both engines, outputs as stated.
+
+| Finding | Resolution |
+|---|---|
+| [must-fix] No gate had a `Float` count, so a count computing `n0 + c0 * t` in `f64` passed | `vm_bulk_count_declines` adds `n = 0.0`, `c = d` (`d = 0.1`) over ten `true`s: tree `1 false true` against `1 true false` |
+| [must-fix] The 101 allocation refusal was gated for `Ints` only, where `i64::MAX` elements overflow capacity before the allocator is asked | `packed_constructors_refuse_unallocatable_sizes`: `arr_repeat(true, …)`, `arr_repeat(1.5, …)`, `arr_range(0, …)` at `i64::MAX` exit 101, empty stdout, message prefix (S12 prints it on both engines); named in the DAG row |
+| [nit] The all-`bool` `Vals` count case cannot fail | Kept, plus a mixed `Vals` array laundered through `id` with `f[1] = one`: tree panics `if condition must be bool, got i64` |
+| [nit] `let j = j + s` in the fill's step was ungated | Zero-iteration near-miss loop (`j = 10`, `b = 5`): tree prints the array unchanged, `j=10`; twenty-one loops, nine counts and twelve fills; "`let` versus assignment" added to the checks |
