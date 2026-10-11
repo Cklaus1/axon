@@ -51,7 +51,8 @@ compilebench `sieve`), measured first; revision 39 answers the thirty-fourth rev
 the thirty-seventh (3 must-fix, 2 nits; §15 "Revision 42"); revision 43 answers the thirty-eighth
 (3 must-fix, 1 nit; §15 "Revision 43"); revision 44 answers the thirty-ninth (1 must-fix, 1 nit;
 §15 "Revision 44"); revision 45 answers the fortieth (2 must-fix, 1 nit; §15 "Revision 45"); revision 46 answers the
-forty-first (3 must-fix, 1 nit; §15 "Revision 46"). S13 is Draft until an adversarial review passes it.
+forty-first (3 must-fix, 1 nit; §15 "Revision 46"); revision 47 answers the forty-second (2 must-fix,
+1 nit; §15 "Revision 47"). S13 is Draft until an adversarial review passes it.
 **Risk class:** Structural (a second execution path for the reference engine)
 **Author / date:** 2026-10-09, from compilebench AX-18 (interpreter cost) after AX-53..AX-55.
 
@@ -1083,8 +1084,10 @@ code under `AXON_ENGINE=tree` and `vm`, and stdout equal to the tree's at `0f3b1
   `integer overflow: i8 125 + 5 out of range`); `s = id(w)` alone with `w: i8 = 5`, `j = 100`,
   `b = 150` (the tree prints `j = 105`: after one step `j` is `i8` and `105 <= 150` is false at that
   width; a path reading `s` as `i64` prints `155`); `b = id(w)` alone with `w: i8 = 126`, `j = 120`,
-  `s = 5` (the tree panics `index 200 out of bounds (len 200)`; a loose `b` exits 0 with `j = 130`).
-  Each gives the tree's output.
+  `s = 5` (the tree panics `index 200 out of bounds (len 200)`; a loose `b` exits 0 with `j = 130`);
+  `j = id(w)` alone with `w: i8 = 120`, `b = 126`, `s = 5` (the tree panics `integer overflow: i8
+  125 + 5 out of range`; a path reading `j` as `i64` writes `a[120]` and `a[125]` and exits 0 with
+  `j = 130`). Each gives the tree's output.
 - `vm_bulk_fill_other_kind_declines`: an `Int` written into a packed `Bools` array, a `Bool` into a
   `Vals` array, an `Int` into a packed `Floats` array (the tree prints `1`, a casting fill `1.0`), a
   `Float` into a packed `Ints` array, and an `i32` `c` (`w: i32 = 2147483647`) into
@@ -1094,7 +1097,9 @@ code under `AXON_ENGINE=tree` and `vm`, and stdout equal to the tree's at `0f3b1
 - `vm_bulk_count_runs`: `lo..hi` and `lo..=hi` with `lo > 0` and `hi < len - 1`; lengths 1, 7, 8, 9,
   63, 64, 65, 129 and 1001 with `true` elements in the last partial chunk; a range starting
   mid-chunk and crossing a chunk boundary; a count starting from `n0 != 0`; a negative `c` (`n` falls
-  by `|c|` per `true`).
+  by `|c|` per `true`); and two empty ranges over `arr_repeat(true, 4)` from `n0 = 7`, `0..z` with
+  `z = 0` and a reversed `9..2` (the tree prints `n=7` for each; a path that skips the emptiness
+  check computes `last < lo` and slices out of range).
 - `vm_bulk_count_declines`: an `n + c` overflow, from `n0 = 0` a `c = 2^62` over four `true`s (wraps
   to `n0` in `i64`), an `i32` `n` (`n: i32 = 2147483000` over 1,000 `true`s: the tree panics
   `integer overflow: i32 2147483647 + 1 out of range`), an `i32` `c` alone (`let id = |x| x`,
@@ -1156,7 +1161,9 @@ code under `AXON_ENGINE=tree` and `vm`, and stdout equal to the tree's at `0f3b1
   and exits 0 with `j=3`); with `j = k + s` (`a = arr_repeat(0, 10)`, `j = 0`, `k = 7`, `s = 3`,
   `b = 8`, `<=`: the tree prints `[7, 0, 0, 0, 0, 0, 0, 0, 0, 0] j=10`); with the step assigning
   another local (`k = j + s`, `j = 10`, `k = 0`, `s = 3`, `b = 5`, `<`: zero iterations, the tree
-  prints the array unchanged, `j=10 k=0`; any nonzero-iteration version never ends on the tree);
+  prints the array unchanged, `j=10 k=0`; a version whose first write is in bounds never ends on
+  the tree, and one whose first write is out of bounds panics there while a loose bulk path declines
+  too);
   with `a[j] = j` (`j = 1`, `s = 2`, `< 10`: the tree prints `[0, 1, 0, 3, 0, 5, 0, 7, 0, 9]` and
   `j=11`); and with `j = j + j` (`f = arr_repeat(false, 20)`, `j = 1`, `< 20`, store `true`: the tree
   sets indices 1, 2, 4, 8, 16 and `j=32`). A recogniser that skips any one structural check (the
@@ -2176,3 +2183,13 @@ stated on the S12 binary. Each new case below was re-run on the S12 binary under
 | [must-fix] The count's "`n` other than `v`" had no loop | `for v in 0..20 { if a[v] { v = v + 1 } }` under an outer `let v = 3`: tree prints `v=3` |
 | [must-fix] An inclusive bound at `i64::MAX` was ungated for both shapes; an `i64` `hi + 1`/`b0 + 1` wraps to an empty range | The count's range end stated in 128-bit arithmetic; `vm_bulk_count_declines` adds `0..=i64::MAX` (tree panics `index 20 out of bounds (len 20)`), `vm_bulk_fill_bounds_and_declines` adds `b = i64::MAX` (tree panics `index 10 out of bounds (len 10)`) |
 | [nit] The step's assigned variable was ungated | Zero-iteration `k = j + s` fill (`j = 10`, `b = 5`): tree prints the array unchanged, `j=10 k=0`; twenty loops, nine counts and eleven fills |
+
+Revision 47 (2026-10-11) answers the forty-second review (`reviewer`, verdict "incorrect": 0
+blockers, 2 must-fix, 1 nit). It confirmed the revision-46 cases and the count of twenty near-miss
+loops on the S12 binary. Both new cases were re-run on the S12 binary under both engines as stated.
+
+| Finding | Resolution |
+|---|---|
+| [must-fix] No fill had `j` the only `SizedInt` operand; a path strict on `b`/`s` but reading `j` as `i64` passed | `vm_bulk_fill_bounds_and_declines` adds `j = id(w)` alone (`w: i8 = 120`, `b = 126`, `s = 5`): tree panics `integer overflow: i8 125 + 5 out of range` |
+| [must-fix] No count ran over an empty range; a path without the emptiness branch slices out of range | `vm_bulk_count_runs` adds `0..z` (`z = 0`) and `9..2` over `arr_repeat(true, 4)` from `n0 = 7`: tree prints `n=7` twice |
+| [nit] "Any nonzero-iteration version never ends" was false for an out-of-bounds first write | Reason restated: in-bounds first write never ends, out-of-bounds first write panics and a loose path declines too |
