@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S3d",
+  "text": "TEST-ONLY: interp/sink_tests.rs drives every S3d edge on a build_with sealed Interp, pins global_ref and the main-only sink classification by source sweep, ports the Pure-builtin ambient-state sweep (veto taint_tests.rs:2427); taint_tests' call_builtin site sweep skips the new test module; 14 deferred-registry entries re-slotted (edge ported, needs a live sealed run); no behaviour change"
+}

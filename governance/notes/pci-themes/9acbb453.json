@@ -1,0 +1,4 @@
+{
+  "theme": "merge of origin/main (PR #8)",
+  "text": "merge fixes: `input_arg` read from the args (the verify panic's input suffix), the per-frame stack budget raised to 512 KiB because the merged debug frame is ~265 KB: no change in what is refused"
+}

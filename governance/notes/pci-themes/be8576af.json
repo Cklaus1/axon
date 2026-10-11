@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (AX findings)",
+  "text": "INTERPRETER: arrays become shared Rc values, cheaper user calls (interp.rs, eval.rs, value.rs): not PCI-reviewed; the seal's cast and dict-snapshot code was adapted to the Rc layout in the merge"
+}

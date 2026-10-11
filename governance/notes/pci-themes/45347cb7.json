@@ -1,0 +1,4 @@
+{
+  "theme": "amendment 121",
+  "text": "the backstop's first branch no longer appends the sealed-only diagnostics (empty there); three older rows re-anchored; the refusal-coverage exemption of the observer prune dropped (that file is not under crates/axon-core/src; the commit touches main.rs only by removing one line): no change in what is refused"
+}

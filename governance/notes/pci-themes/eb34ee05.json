@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R51 S0)",
+  "text": "INTERPRETER: test(interp): pin record print order, equality, variant matching and narrow-field coercion (AX-47): not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it"
+}

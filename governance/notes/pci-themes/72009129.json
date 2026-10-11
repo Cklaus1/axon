@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S3 merge",
+  "text": "INTERPRETER dict_set/dict_remove/dict_inc call dict_mutated without an outer seal.active guard, as veto does (builtins.rs:5286/5318/5470); dict_mutated returns at once when the seal is inactive, so an unsealed run does the same work less one branch. TEST-ONLY: the main-only sink classification names call_fn_sealed for call_fn_in_general (S3c moved the sealed instantiation behind the crossing). Both were drift tests from S3d that S3c's code tripped at the merge. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

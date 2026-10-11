@@ -1,0 +1,4 @@
+{
+  "theme": "R51 T3 merge",
+  "text": "joins r51/t3b (be195107..91dd0f67: 28 S3 rows, the sandbox_run unit-to-0 crossing arm) onto the t3a merge; conflicts were this table (64e3d9af's identical entry kept once), the note and the registry (3-way merged per entry by tasks/r51-registry-merge.py); no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

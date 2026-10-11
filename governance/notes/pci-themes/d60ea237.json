@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S5",
+  "text": "INTERPRETER static layer: ports v0.22's interp/pin.rs verbatim and adds the Seal state (sealed fns/globals/refines/types, operator method names), pins and frame provenance (with_frame, fn_is_sealed) to Interp; Interp::build reads the sealed set once and hands it to build_in, so tests pass it without publishing it; Seal and Pins are computed only for a non-empty sealed set (an unsealed build does no new work). No seal edge consumes them yet (S2/S3/S4); not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

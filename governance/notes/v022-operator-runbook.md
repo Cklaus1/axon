@@ -581,8 +581,9 @@ change a later result (amendment 71). This is an availability and disk-space mat
   deploy host must be `chown`ed to an account that exists there.
 - Any commit that changes a file outside `governance/status/` after the mutation run makes the run
   stale (docs included) and forces a full rerun. Sequence: make the last doc change first, then run.
-- A later commit under `crates/axon-core/src` fails the PCI drift test until it has a `THEMES` line
-  in `scripts/pci_delta.py` and the note is regenerated (`python3 scripts/pci_delta.py --emit HEAD`).
+- A later commit under `crates/axon-core/src` fails the PCI drift test until it has a file
+  `governance/notes/pci-themes/<hash8>.json` (a merge only when it is not a pure join) and the note is
+  regenerated (`python3 tasks/r51-pci-regen.py`).
 
 ## Follow-ups this deployment surfaced
 

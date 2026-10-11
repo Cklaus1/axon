@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S4a",
+  "text": "INTERPRETER the PICK mark (veto taint.rs:961-1185, 1320-1412): t_note marks an operator closure picked by capture cell (Rc::as_ptr, spec Fork 3) from eval_tainted and the local-closure call in dispatch_named; pick edges t_pick_index (index reads), t_pick_branch (if/match), t_stored_v (stores under sealed control), t_builtin_pick (sealed selector or callback; argument taints in taint.call_ats, set only on the sealed eval_call path), the frame-exit pick (t_frame_exit takes the result) and the sealed fn/closure hand-back; refusing sink t_check_call_picked in call_closure_frame. All gated on the sealed instantiation (T) or seal.active; unsealed and VM paths unchanged; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

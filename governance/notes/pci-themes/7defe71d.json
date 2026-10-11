@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S7 merge",
+  "text": "joins r51/int 9e67b796 (r51/s7decl, 30e6638c) onto r51/s7stack (f89f4d43, 4bb4a0e1: native thread stack reserve only); only this table and the note conflicted, resolved by keeping both sides; no change beyond the commits it joins; sealed runs as at 04d3ad7b"
+}

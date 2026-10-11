@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R51 S0)",
+  "text": "outside the interpreter (builtins.rs, effects.rs): perf(effects): walk each body once and propagate effects over a worklist; O(1) builtin lookup (AX-36): the interpreter is untouched"
+}

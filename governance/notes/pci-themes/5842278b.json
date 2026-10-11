@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S7 mutation rows",
+  "text": "TEST-ONLY (interp/crossing_tests.rs, cfg(test)): a_sealed_goal_eval_is_told_the_common_text_for_a_name_it_cannot_see, the killer of v0.22's M3343 (goal_eval's no_such_fn text) restored on its v0.22 text; two candidate fns added to the crossing fixture; the registry re-anchors M3471/M3472 on t_frame_exit's two callers and M2600/M2601 on run_handler_arm's per-path seal routing, moves the goal_eval lookup filter row to M3496 and adds routing rows; no interpreter code changed, no unsealed behaviour change"
+}

@@ -1,0 +1,4 @@
+{
+  "theme": "R51 T3 merge",
+  "text": "joins r51/t3c (4e6747b1: 31+3 taint_tests / interp::tests rows, the Case harness, taint.rs cfg(test) tables) onto the t3b merge; interp/taint_tests.rs had two pure appends after the same base line (gaps' no_arm move, t3c's harness) and keeps both, gaps' first; the include! lines, this table, the note and the registry resolved by keeping both sides; no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

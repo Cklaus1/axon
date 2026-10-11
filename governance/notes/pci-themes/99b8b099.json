@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R51 S0)",
+  "text": "INTERPRETER: R50 S0: engine selector, run_body, FnEntry.compiled, trace, extracted dispatch_call/bind_let/call_mut, AX-57 scope-leak fix: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it"
+}

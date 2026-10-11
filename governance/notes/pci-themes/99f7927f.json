@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S2.3 step 1",
+  "text": "INTERPRETER taint state: ports v0.22 interp/taint.rs (taint bits, Taint accumulator/pc/sticky cells, builtin class tables with now_ns classed WORLD like now_ms, builtin/provenance/native/loop hooks) onto main's Sym/slot Bindings, adds the Interp.taint field and records a module-level let's taint at init_globals in a sealed run. Nothing reads the taint yet (eval_t hook sites are the next step); behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

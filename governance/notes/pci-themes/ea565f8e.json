@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S1 merge",
+  "text": "joins R51 S0b (56389c53) and S1 (a45dc364); the only overlaps are appended tests (vm/tests.rs, cli_run.rs) and this table; interp.rs, vm/mod.rs and main.rs auto-merged: no change beyond the two commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

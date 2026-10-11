@@ -1,0 +1,4 @@
+{
+  "theme": "R51 T3b",
+  "text": "INTERPRETER sandbox_run at the seal crossing (veto builtins.rs:4498-4502): a sealed callee's () reaching the operator's sandbox_run is the documented 0, not a type confusion; the arm is guarded by the crossing (seal.active, operator frame, sealed callee), so unsealed runs are unchanged. Plus TEST-ONLY: S6-probe-derived ignore reasons for 14 T3b rows (13 name S4's sealed_outcome dispatch-rule switch; the_sweep_routes_stay_closed re-slotted S4 -> S6) and their registry entries. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

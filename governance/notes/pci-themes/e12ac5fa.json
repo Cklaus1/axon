@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S2 merge",
+  "text": "joins S0b-perf (afd9e294) and S2 (426067dc..d21ed278); interp.rs, vm/mod.rs, sym.rs and eval.rs auto-merged, only this table and the note conflicted; no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (AX findings)",
+  "text": "LANGUAGE + INTERPRETER: named functions are first-class values (resolver, checker, effects, eval.rs): not PCI-reviewed"
+}

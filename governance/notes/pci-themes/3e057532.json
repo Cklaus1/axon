@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S6 T7",
+  "text": "INTERPRETER (sealed runs only, v0.22 C9 round 4b amendment 60; M921): coerce_to_sized::<SEALED> leaves a SizedInt of another width unchanged at a sealed let (T), parameter (bind_params_sealed) and record field (seal.active), so the declared-type cast refuses it as a runtime type confusion instead of the value being re-tagged to the declared width before the cast sees it; unsealed runs and the VM (VM_SEALED = false) re-tag as before, no unsealed behaviour change. Attack test a_sealed_let_param_or_field_never_retags_another_fixed_width (interp/tests_v022_b.rs) with honest controls; mutation rows M3230/M3231/M3256 new text and M1996 marker (scripts only)"
+}

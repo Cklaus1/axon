@@ -1,0 +1,4 @@
+{
+  "theme": "rows, style, harness",
+  "text": "rustfmt and a row re-anchor: no intended change in semantics"
+}

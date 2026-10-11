@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R51 S0)",
+  "text": "INTERPRETER: R50 S1: inline the extracted eval helpers' fast paths (tree loop.ax back under S0): not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it"
+}

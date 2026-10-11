@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R51 S0)",
+  "text": "outside the interpreter (codegen/asi.rs, codegen/expr.rs, codegen/match_pat.rs, codegen/mod.rs): fix(codegen): each refusal printed and counted once; no E0701 cascade after a refusal (AX-45): the interpreter is untouched"
+}

@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S2.3 step 2a",
+  "text": "INTERPRETER evaluator dispatch: eval() branches once on seal.active to eval_tainted (the v0.22 accumulator wrapper, reading a binding's taint through the same slot lookup as its value) or eval_arm::<false>; eval_arm, eval_block, run_loop_body, eval_binop, eval_call and operand are const-generic over the run, recursing through eval_t::<T>, so the unsealed instantiation is main's evaluator. No taint hook yet; behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

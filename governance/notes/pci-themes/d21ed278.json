@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S2.3 step 3",
+  "text": "TEST-ONLY taint unit tests (interp/taint_tests.rs, cfg(test)): drive the evaluator's sealed instantiation eval_t::<true> on a build_with Interp (the refuse-all pin bypassed, the build_in refusal pinned) and kill every S2 hook in a mutation table; every_builtin_has_a_taint_class, the stringifier/emitter and call_builtin drift tests; match_pattern_rt becomes pub(super) for them. Deferred registry re-slots the 8 S2 entries (the taint sinks are S3, the clock class is ported so S6) and adds one S3 unit test. Interpreter behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

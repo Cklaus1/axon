@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S2.3 step 4",
+  "text": "TEST-ONLY drift lists: the T1d VM-entry allow-list (vm/tests.rs) and user_code_runners' PRIMITIVES (interp.rs, cfg(test)) name the const-generic frames call_fn_frame and call_closure_frame that 6afab02a moved the VM entries into; spec T1d text revised to match. Interpreter behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

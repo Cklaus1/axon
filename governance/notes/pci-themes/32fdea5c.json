@@ -1,0 +1,4 @@
+{
+  "theme": "sealed modules, module path",
+  "text": "the sealed-module rule holds whoever imports: narrowing"
+}

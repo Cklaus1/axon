@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S3 merge",
+  "text": "joins S3c (57e4b8cc..582ced51, the seal crossing) onto S3d (0cc34976..d9881963, seal sinks); conflicts resolved by keeping both sides (handler_may_answer from S3c, both drift-scan skips, both THEMES blocks) and S3c's more specific ignore reasons, with the registry's by_slice recounted from its entries; no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

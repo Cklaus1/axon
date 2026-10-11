@@ -1,0 +1,4 @@
+{
+  "theme": "key and completion",
+  "text": "sealed handlers act only on sealed operations; completion is the body's end: narrowing"
+}

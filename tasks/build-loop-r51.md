@@ -94,6 +94,21 @@ own source that alters what the test observes: replaying e946f06d's T7 lists aga
 KILLED -> REFUSED_ELSEWHERE through a debug assert in `interp/env.rs`, which neither row anchors; `file` selected
 both (369/439 rows, only because their test lives in the changed `interp.rs`), `fn` selected neither (115/439).
 
+**PCI classification and lane merges.** Each `crates/axon-core/src` commit is classified by its own file,
+`governance/notes/pci-themes/<hash8>.json` = `{"theme": ..., "text": ...}` (`scripts/pci_delta.py` loads the
+directory; `--drop HASH8` forgets one). Two lanes that classify different commits merge without a conflict there.
+A merge commit needs no file when it is a pure join: `git merge-tree --write-tree <p1> <p2>` is clean (exit 0,
+replayed with the note driver below and nothing else) and its `crates/axon-core/src` tree equals that merge's;
+the block then reads `<branch> merge | pure join: ...`. A merge that conflicted anywhere, or that changes the
+interpreter beyond the join (an evil merge), stays UNCLASSIFIED until a file is written for it.
+One-time setup per clone (the git config is the COMMON one, shared by every worktree of the repo):
+`python3 tasks/r51-pci-regen.py --setup`, which sets `merge.pci-note.driver` to
+`python3 -B scripts/pci_delta.py --merge-note %O %A %B` (`.gitattributes`: the note is `merge=pci-note`): a merge
+keeps ours' mechanical block and merges the rest of the note three-way. Procedure for every lane merge: `git merge`
+→ resolve real conflicts → commit → `python3 tasks/r51-pci-regen.py` (also re-installs the driver) → write a
+themes file only for a commit it reports UNCLASSIFIED → `python3 -B scripts/pci_delta.py --check` PASS → commit
+the note (the block pins the head, so the regen after a merge stays).
+
 ## Gates
 
 - **Critical path:** S0.1 and S1. S0.1's extra proof: on the merge commit, every sealed entry (CLI `--seal`,

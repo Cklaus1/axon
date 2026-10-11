@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R51 S0)",
+  "text": "outside the interpreter (codegen/link.rs, codegen/output.rs, main.rs): perf(codegen): run globaldce at O0 and prune AI wrappers for --emit-obj (AX-37): the interpreter is untouched"
+}
