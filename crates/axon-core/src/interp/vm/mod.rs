@@ -34,11 +34,14 @@ pub(super) mod tests;
 pub(super) use compile::compile;
 use pure::{PureExpr, PureLoop, PureOp};
 
-/// The taint every binding write of the VM carries. The VM never runs a sealed
-/// body (R51 §4 Fork 1: a sealed run is pinned to the tree engine), so a frame
-/// it runs on has no taint store and the write stores nothing; `exec_on`
-/// asserts the store is absent.
+/// The taint every binding write of the VM carries, and the `T` of the
+/// `Bindings` `_t::<T>` writers it calls. The VM never runs a sealed body
+/// (R51 §4 Fork 1: a sealed run is pinned to the tree engine, and the compile
+/// is refused under `seal.active`), so a frame it runs on has no taint store:
+/// its writers compile to the store-less code alone, with no branch on the
+/// store (R50's call-path budget), and `exec_on` asserts the store is absent.
 const VM_TAINT: u8 = 0;
+const VM_SEALED: bool = false;
 
 /// Which engine runs fn bodies. Chosen once per `Interp` (spec §4 Activation).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -991,7 +994,7 @@ fn pop(st: &mut Vec<Value>) -> Value {
 /// int is a no-op, so this skips only the drop glue.
 #[inline(always)]
 fn store(env: &mut Env, var: &Var<'_>, v: Value) -> Result<(), Flow> {
-    match env.get_var_mut(var.s, var.slot, VM_TAINT) {
+    match env.get_var_mut_t::<VM_SEALED>(var.s, var.slot, VM_TAINT) {
         Some(b) => {
             match (b, v) {
                 (Value::Int(d), Value::Int(n)) => *d = n,
@@ -1028,7 +1031,7 @@ fn pop_scope(env: &mut Env, scopes: &mut u32) {
     let Some(n) = scopes.checked_sub(1) else {
         malformed()
     };
-    env.pop();
+    env.pop_t::<VM_SEALED>();
     *scopes = n;
 }
 
@@ -1046,7 +1049,7 @@ fn for_bounds(st: &[Value]) -> (i64, i64) {
 #[inline(always)]
 fn for_enter(env: &mut Env, scopes: &mut u32, var: &Var<'_>, i: i64, scoped: bool) {
     env.push();
-    env.define_var(var.s, var.slot, Value::Int(i), VM_TAINT);
+    env.define_var_t::<VM_SEALED>(var.s, var.slot, Value::Int(i), VM_TAINT);
     *scopes += 1;
     if scoped {
         env.push();
@@ -1060,7 +1063,7 @@ fn for_enter(env: &mut Env, scopes: &mut u32, var: &Var<'_>, i: i64, scoped: boo
 /// at the slot `define_var` would bind it to. `false` (nothing done) else.
 #[inline(always)]
 fn for_rebind(env: &mut Env, var: &Var<'_>, i: i64) -> bool {
-    env.rebind_loop_int(var.s, var.slot, i, VM_TAINT)
+    env.rebind_loop_int_t::<VM_SEALED>(var.s, var.slot, i, VM_TAINT)
 }
 
 /// `l op r` without building an [`Operand`]: when both operands are ints and
@@ -1171,7 +1174,7 @@ pub(super) fn float_fast(op: &BinOp, a: f64, b: f64) -> Option<Scalar> {
 /// int or a float over a float is written in place.
 #[inline(always)]
 fn store_scalar(env: &mut Env, var: &Var<'_>, s: Scalar) -> Result<(), Flow> {
-    match env.get_var_mut(var.s, var.slot, VM_TAINT) {
+    match env.get_var_mut_t::<VM_SEALED>(var.s, var.slot, VM_TAINT) {
         Some(b) => {
             match (b, s) {
                 (Value::Int(d), Scalar::Int(n)) => *d = n,
@@ -1257,7 +1260,8 @@ fn index_fast(env: &Env, arr: &Var<'_>, idx: &Opnd<'_>) -> Option<Value> {
 /// case, nothing written.
 #[inline(always)]
 fn write_index_unique(env: &mut Env, base: &Var<'_>, i: usize, v: Value) -> Option<Value> {
-    let Some(Value::Array(items)) = env.get_var_mut(base.s, base.slot, VM_TAINT) else {
+    let Some(Value::Array(items)) = env.get_var_mut_t::<VM_SEALED>(base.s, base.slot, VM_TAINT)
+    else {
         return Some(v);
     };
     match Rc::get_mut(items).and_then(|a| a.get_mut(i)) {
@@ -1567,7 +1571,7 @@ impl<'p> Interp<'p> {
             out = self.run(body, env, &mut st, &mut scopes, &mut pc);
         }
         for _ in 0..scopes {
-            env.pop();
+            env.pop_t::<VM_SEALED>();
         }
         if st.capacity() <= 4096 {
             if !st.is_empty() {
@@ -1614,7 +1618,7 @@ impl<'p> Interp<'p> {
             out = self.run(body, env, st, &mut scopes, &mut pc);
         }
         for _ in 0..scopes {
-            env.pop();
+            env.pop_t::<VM_SEALED>();
         }
         if st.len() > base {
             st.truncate(base);
@@ -1656,7 +1660,7 @@ impl<'p> Interp<'p> {
             (l.cont_scopes, l.cont)
         };
         while *scopes > keep {
-            env.pop();
+            env.pop_t::<VM_SEALED>();
             *scopes -= 1;
         }
         st.truncate(base + l.height as usize);
@@ -1960,7 +1964,7 @@ impl<'p> Interp<'p> {
                         Some(v) => v,
                         None => tri!(self.index_local_slow(arr, idx, env)),
                     };
-                    env.define_var(var.s, var.slot, v, VM_TAINT);
+                    env.define_var_t::<VM_SEALED>(var.s, var.slot, v, VM_TAINT);
                 }
                 Op::WriteIndexIndex {
                     base,
@@ -2051,7 +2055,7 @@ impl<'p> Interp<'p> {
                 }
                 Op::Define(var) => {
                     let v = pop(st);
-                    env.define_var(var.s, var.slot, v, VM_TAINT);
+                    env.define_var_t::<VM_SEALED>(var.s, var.slot, v, VM_TAINT);
                 }
                 Op::Drop => drop(pop(st)),
                 Op::ForTest {
@@ -2722,10 +2726,18 @@ impl<'p> Interp<'p> {
                     debug_assert!(env.is_fresh());
                     if argc == 1 {
                         let a = pop(st);
-                        env.push_var(entry.params[0], param_value(entry, 0, a), VM_TAINT);
+                        env.push_var_t::<VM_SEALED>(
+                            entry.params[0],
+                            param_value(entry, 0, a),
+                            VM_TAINT,
+                        );
                     } else {
                         for (i, a) in st.drain(at..).enumerate() {
-                            env.push_var(entry.params[i], param_value(entry, i, a), VM_TAINT);
+                            env.push_var_t::<VM_SEALED>(
+                                entry.params[i],
+                                param_value(entry, i, a),
+                                VM_TAINT,
+                            );
                         }
                     }
                     self.fast_body(entry, env, st)
@@ -2736,7 +2748,7 @@ impl<'p> Interp<'p> {
                 Err(flow)
             }
         };
-        self.give_frame(frame);
+        self.give_frame_t::<VM_SEALED>(frame);
         out
     }
 
@@ -2753,12 +2765,12 @@ impl<'p> Interp<'p> {
         let mut frame = self.take_frame();
         let out = match self.enter_fn(entry.def) {
             Ok(_guard) => {
-                frame.push_var(entry.params[0], param_value(entry, 0, a), VM_TAINT);
+                frame.push_var_t::<VM_SEALED>(entry.params[0], param_value(entry, 0, a), VM_TAINT);
                 self.fast_body(entry, &mut frame, st)
             }
             Err(flow) => Err(flow),
         };
-        self.give_frame(frame);
+        self.give_frame_t::<VM_SEALED>(frame);
         out
     }
 
@@ -2856,7 +2868,7 @@ impl<'p> Interp<'p> {
                     None => match self.ident_unbound(var.name, var.s) {
                         Ok(v) => v,
                         Err(flow) => {
-                            self.give_frame(frame);
+                            self.give_frame_t::<VM_SEALED>(frame);
                             return Err(flow);
                         }
                     },
@@ -2866,14 +2878,14 @@ impl<'p> Interp<'p> {
                 Opnd::Const(v) => v.clone(),
                 Opnd::Stack => malformed(),
             };
-            frame.push_var(p, param_value(entry, i, v), VM_TAINT);
+            frame.push_var_t::<VM_SEALED>(p, param_value(entry, i, v), VM_TAINT);
         }
         self.set_call_tier(None);
         let out = match self.enter_fn(entry.def) {
             Ok(_guard) => self.fast_body(entry, &mut frame, st),
             Err(flow) => Err(flow),
         };
-        self.give_frame(frame);
+        self.give_frame_t::<VM_SEALED>(frame);
         out
     }
 
@@ -2966,13 +2978,13 @@ impl<'p> Interp<'p> {
                     Some(out) => out,
                     None => {
                         // `goal_met` follows the parameters, as in `call_fn_common`.
-                        env.push_var(SYM_GOAL_MET, Value::Int(0), VM_TAINT);
+                        env.push_var_t::<VM_SEALED>(SYM_GOAL_MET, Value::Int(0), VM_TAINT);
                         self.exec_on(body, env, st)
                     }
                 },
             },
             _ => {
-                env.push_var(SYM_GOAL_MET, Value::Int(0), VM_TAINT);
+                env.push_var_t::<VM_SEALED>(SYM_GOAL_MET, Value::Int(0), VM_TAINT);
                 self.run_body(entry, env)
             }
         };
@@ -3033,7 +3045,7 @@ impl<'p> Interp<'p> {
             return self.call_mut_general(entry, arg_nodes, args, tier.as_deref(), env, st, at);
         }
         let mut frame = self.take_frame();
-        frame.reserve(argc + 1);
+        frame.reserve_t::<VM_SEALED>(argc + 1);
         let mut next_plain = at;
         for (i, o) in args.iter().enumerate() {
             let v = match o {
@@ -3052,7 +3064,7 @@ impl<'p> Interp<'p> {
                     None => match self.ident_unbound(var.name, var.s) {
                         Ok(v) => v,
                         Err(flow) => {
-                            self.give_frame(frame);
+                            self.give_frame_t::<VM_SEALED>(frame);
                             return Err(flow);
                         }
                     },
@@ -3060,12 +3072,12 @@ impl<'p> Interp<'p> {
                 o => match self.opnd_value(o, env) {
                     Ok(v) => v,
                     Err(flow) => {
-                        self.give_frame(frame);
+                        self.give_frame_t::<VM_SEALED>(frame);
                         return Err(flow);
                     }
                 },
             };
-            frame.push_var(entry.params[i], param_value(entry, i, v), VM_TAINT);
+            frame.push_var_t::<VM_SEALED>(entry.params[i], param_value(entry, i, v), VM_TAINT);
         }
         // Every stack argument moved out, leaving a `Unit`: nothing to drop.
         while st.len() > at {
@@ -3074,19 +3086,19 @@ impl<'p> Interp<'p> {
         // Each `&mut` position holds a `Unit` placeholder until its
         // borrowed binding moves in.
         for r in refs {
-            let Some(b) = env.get_var_mut(r.var.s, r.var.slot, VM_TAINT) else {
-                self.give_frame(frame);
+            let Some(b) = env.get_var_mut_t::<VM_SEALED>(r.var.s, r.var.slot, VM_TAINT) else {
+                self.give_frame_t::<VM_SEALED>(frame);
                 let name = r.var.name;
                 return panic(format!("`&mut {name}`: `{name}` is not a local variable"));
             };
             let v = param_value(entry, r.arg as usize, std::mem::replace(b, Value::Unit));
-            forget_scalar(frame.replace(r.arg as usize, v, VM_TAINT));
+            forget_scalar(frame.replace_t::<VM_SEALED>(r.arg as usize, v, VM_TAINT));
         }
         self.set_call_tier(tier.as_deref());
         let result = match self.enter_fn(entry.def) {
             Ok(_guard) => self.fast_body(entry, &mut frame, st),
             Err(flow) => {
-                self.give_frame(frame);
+                self.give_frame_t::<VM_SEALED>(frame);
                 return Err(flow);
             }
         };
@@ -3097,18 +3109,22 @@ impl<'p> Interp<'p> {
         let exact = frame.len() <= argc + 1;
         for r in refs {
             let out = match r.back {
-                true if exact => frame.replace(r.arg as usize, Value::Unit, VM_TAINT),
-                true => match frame.get_mut(entry.params[r.arg as usize], VM_TAINT) {
-                    Some(v) => std::mem::replace(v, Value::Unit),
-                    None => Value::Unit,
-                },
+                true if exact => {
+                    frame.replace_t::<VM_SEALED>(r.arg as usize, Value::Unit, VM_TAINT)
+                }
+                true => {
+                    match frame.get_mut_t::<VM_SEALED>(entry.params[r.arg as usize], VM_TAINT) {
+                        Some(v) => std::mem::replace(v, Value::Unit),
+                        None => Value::Unit,
+                    }
+                }
                 false => Value::Unit,
             };
-            if let Some(b) = env.get_var_mut(r.var.s, r.var.slot, VM_TAINT) {
+            if let Some(b) = env.get_var_mut_t::<VM_SEALED>(r.var.s, r.var.slot, VM_TAINT) {
                 forget_scalar(std::mem::replace(b, out));
             }
         }
-        self.give_frame(frame);
+        self.give_frame_t::<VM_SEALED>(frame);
         result
     }
 
@@ -3246,7 +3262,8 @@ impl<'p> Interp<'p> {
                 None => return false,
             }
         }
-        let Some(Value::Array(items)) = env.get_var_mut(m.arr.0, m.arr.1, VM_TAINT) else {
+        let Some(Value::Array(items)) = env.get_var_mut_t::<VM_SEALED>(m.arr.0, m.arr.1, VM_TAINT)
+        else {
             return false;
         };
         let Some(items) = Rc::get_mut(items) else {

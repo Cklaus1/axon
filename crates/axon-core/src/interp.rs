@@ -7087,7 +7087,7 @@ fn main() { }
     /// tests below are deferred, not vacuous.
     #[test]
     fn the_sealed_harness_is_refused_until_the_runtime_seal_is_complete() {
-        assert!(!SEAL_RUNTIME_COMPLETE);
+        const { assert!(!SEAL_RUNTIME_COMPLETE) };
         let suite = "@[test]\nfn t() {\n    assert(solve() == 41)\n}\n";
         let cand = "fn solve() -> i64 { 41 }\n";
         assert_eq!(
@@ -7890,16 +7890,15 @@ fn main() { }
             .expect("interp/builtins.rs")
             .1;
         let arms = builtin_arms(src);
-        for name in ["sandbox_run"] {
-            let (_, body) = arms
-                .iter()
-                .find(|(ns, _)| ns.iter().any(|n| n == name))
-                .unwrap_or_else(|| panic!("no `{name}` arm"));
-            assert!(
-                body.contains("self.fn_is_sealed(f)"),
-                "DRIFT: `{name}` is classified Crossing but its arm casts no sealed fn's result"
-            );
-        }
+        let name = "sandbox_run";
+        let (_, body) = arms
+            .iter()
+            .find(|(ns, _)| ns.iter().any(|n| n == name))
+            .unwrap_or_else(|| panic!("no `{name}` arm"));
+        assert!(
+            body.contains("self.fn_is_sealed(f)"),
+            "DRIFT: `{name}` is classified Crossing but its arm casts no sealed fn's result"
+        );
     }
 
     /// C9 round 9 drift: every builtin that RUNS user code (a callback, a fn

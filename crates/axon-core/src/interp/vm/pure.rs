@@ -69,12 +69,17 @@ impl PureOp<'_> {
             // As `store` writes: an int over an int and a float over a
             // float in place. An unbound local declines, so the twin
             // panics as the tree does.
-            Sink::Store(var) => match (env.get_var_mut(var.s, var.slot, VM_TAINT)?, s) {
+            Sink::Store(var) => match (
+                env.get_var_mut_t::<VM_SEALED>(var.s, var.slot, VM_TAINT)?,
+                s,
+            ) {
                 (Value::Int(d), Scalar::Int(n)) => *d = n,
                 (Value::Float(d), Scalar::Float(f)) => *d = f,
                 (b, s) => *b = s.value(),
             },
-            Sink::Define(var) => env.define_var(var.s, var.slot, s.value(), VM_TAINT),
+            Sink::Define(var) => {
+                env.define_var_t::<VM_SEALED>(var.s, var.slot, s.value(), VM_TAINT)
+            }
             Sink::Branch { target, push } => match s {
                 Scalar::Bool(false) => return Some(*target),
                 Scalar::Bool(true) => {
@@ -655,7 +660,7 @@ impl<'p> PureLoop<'p> {
                 continue;
             }
             let x = r[i & 31];
-            match env.get_var_mut(v.s, v.slot, VM_TAINT) {
+            match env.get_var_mut_t::<VM_SEALED>(v.s, v.slot, VM_TAINT) {
                 Some(Value::Int(d)) => *d = x as i64,
                 Some(Value::Float(d)) => *d = f64::from_bits(x),
                 Some(Value::Bool(d)) => *d = x != 0,

@@ -8,9 +8,13 @@
 //! compile), and every method that writes a binding takes the taint it stores
 //! (`t`): there is no taint-free binding writer, so no site can drop a taint by
 //! omission (v0.22's rule). Methods that only remove bindings (scope pop, clear,
-//! release) truncate both vectors together. After every method the two vectors
-//! are checked to be in step; in a sealed run (the store present) a mismatch
-//! panics in release builds too, fail-closed.
+//! release) truncate both vectors together. The two vectors are checked to be
+//! in step after every method in debug builds; in a sealed run (the store
+//! present) after every taint write and on every taint read in release builds
+//! too, and a mismatch panics, fail-closed. Each writer has a `_t::<T>` form
+//! for a caller that knows statically whether the run is sealed (the bytecode
+//! engine, the evaluator's two instantiations): its unsealed form carries no
+//! store code at all, so an unsealed run pays no branch on the store.
 //!
 //! Whether an Env carries a taint store is a property of the run, not of the
 //! Env: an Env is made only by the `Interp` factory (`Interp::new_env`,
@@ -41,8 +45,13 @@ use super::*;
 /// ([`Bindings::get_var_idx`], [`Bindings::find`]), never through two lookups.
 pub(super) struct Bindings {
     vars: Vec<(Sym, Value)>,
-    /// `Some` exactly in a sealed run; then `len() == vars.len()`.
-    taints: Option<Vec<u8>>,
+    /// The taint of each binding: as long as `vars` in a sealed run (`store`),
+    /// empty and never allocated otherwise. A plain vector rather than an
+    /// `Option` so the methods that only remove bindings truncate it without
+    /// a branch on the store (R50's call-path budget, spec §10).
+    taints: Vec<u8>,
+    /// Whether this Env carries a taint store: exactly in a sealed run.
+    store: bool,
     marks: Vec<usize>,
 }
 
@@ -105,7 +114,8 @@ impl Env {
         Env {
             bindings: Bindings {
                 vars: Vec::new(),
-                taints: taints.then(Vec::new),
+                taints: Vec::new(),
+                store: taints,
                 marks: Vec::new(),
             },
             stack: Vec::new(),
@@ -117,14 +127,19 @@ impl Env {
     /// The snapshot binds each name at most once. Private: only the factory
     /// below calls it.
     fn from_snapshot(snap: Snapshot) -> Self {
+        let store = snap.taints.is_some();
         let env = Env {
             bindings: Bindings {
                 vars: snap.vars,
-                taints: snap.taints,
+                taints: snap.taints.unwrap_or_default(),
+                store,
                 marks: Vec::new(),
             },
             stack: Vec::new(),
         };
+        if store {
+            env.check_store();
+        }
         env.check();
         env
     }
@@ -185,6 +200,19 @@ impl Interp<'_> {
     #[inline(always)]
     pub(super) fn give_frame(&self, mut env: Box<Env>) {
         env.clear();
+        self.keep_frame(env);
+    }
+
+    /// [`Interp::give_frame`] for a caller that knows the run (see
+    /// [`Bindings::guard`]): the bytecode engine's calls.
+    #[inline(always)]
+    pub(super) fn give_frame_t<const T: bool>(&self, mut env: Box<Env>) {
+        env.clear_t::<T>();
+        self.keep_frame(env);
+    }
+
+    #[inline(always)]
+    fn keep_frame(&self, env: Box<Env>) {
         if env.capacity() > 1024 {
             return;
         }
@@ -211,27 +239,59 @@ fn no_store(what: &str) -> ! {
 }
 
 impl Bindings {
-    /// The two vectors are in step: always in debug builds; in a sealed run
-    /// (the store present) in release builds too, and a mismatch panics.
+    /// The two vectors are in step: an unsealed Env's taint vector is empty,
+    /// a sealed Env's is as long as its bindings. Debug builds only; release
+    /// builds check a sealed Env after every taint write and on every taint
+    /// read ([`Bindings::check_store`]).
     #[inline(always)]
     fn check(&self) {
         debug_assert!(
-            self.taints
-                .as_ref()
-                .is_none_or(|t| t.len() == self.vars.len()),
+            if self.store {
+                self.taints.len() == self.vars.len()
+            } else {
+                self.taints.is_empty()
+            },
             "R51 taint store: the taint vector is out of step with the bindings"
         );
-        if let Some(t) = &self.taints {
-            if t.len() != self.vars.len() {
-                no_store("the taint vector is out of step with the bindings");
+    }
+
+    /// The release-build check of a sealed Env (the store present): a
+    /// mismatch stops the run, fail-closed. Called only where the store was
+    /// just written or is about to be read, so an unsealed run never pays it.
+    #[inline(always)]
+    fn check_store(&self) {
+        if self.taints.len() != self.vars.len() {
+            no_store("the taint vector is out of step with the bindings");
+        }
+    }
+
+    /// The store guard of a `_t::<T>` writer. `T = true` is the sealed
+    /// instantiation (the sealed evaluator): the Env must carry a store, in
+    /// every build. `T = false` is a caller that can only run unsealed (the
+    /// bytecode engine, which refuses to compile in a sealed run, and the
+    /// unsealed evaluator, entered only when `seal.active` is false): its
+    /// writer compiles to the store-less code alone, with no branch, and the
+    /// guard is a debug assertion. A `T = false` write into a sealed Env
+    /// would leave the taint vector short, which the next sealed write or
+    /// taint read stops on.
+    #[inline(always)]
+    fn guard<const T: bool>(&self, t: u8) {
+        if T {
+            if !self.store {
+                no_store("a sealed write to an Env that has no taint store");
             }
+        } else {
+            debug_assert!(
+                !self.store && t == 0,
+                "R51 taint store: an unsealed-only write in a sealed Env"
+            );
         }
     }
 
     /// Whether this Env carries a taint store (exactly in a sealed run).
     #[inline(always)]
     pub(super) fn has_store(&self) -> bool {
-        self.taints.is_some()
+        self.store
     }
 
     /// How many bindings (pads included) the frame holds.
@@ -272,8 +332,9 @@ impl Bindings {
     ) {
         debug_assert!(self.is_fresh());
         self.vars.extend(params);
-        if let Some(ts) = &mut self.taints {
-            ts.extend((0..self.vars.len()).map(taint));
+        if self.store {
+            self.taints.extend((0..self.vars.len()).map(taint));
+            self.check_store();
         }
         self.check();
     }
@@ -282,8 +343,19 @@ impl Bindings {
     #[inline(always)]
     pub(super) fn reserve(&mut self, n: usize) {
         self.vars.reserve(n);
-        if let Some(t) = &mut self.taints {
-            t.reserve(n);
+        if self.store {
+            self.taints.reserve(n);
+        }
+    }
+
+    /// [`Bindings::reserve`] for a caller that knows the run (see
+    /// [`Bindings::guard`]).
+    #[inline(always)]
+    pub(super) fn reserve_t<const T: bool>(&mut self, n: usize) {
+        self.guard::<T>(0);
+        self.vars.reserve(n);
+        if T {
+            self.taints.reserve(n);
         }
     }
 
@@ -294,12 +366,22 @@ impl Bindings {
     }
 
     /// Close the innermost scope, dropping its bindings and their taints.
+    /// (Truncating the always-empty taint vector of an unsealed Env is a
+    /// compare, no branch on the store.)
     #[inline(always)]
     pub(super) fn pop(&mut self) {
+        self.pop_t::<true>();
+    }
+
+    /// [`Bindings::pop`] for a caller that knows the run (see
+    /// [`Bindings::guard`]): the unsealed form leaves the (empty) taint
+    /// vector alone. (A remover's `true` form is correct in any run.)
+    #[inline(always)]
+    pub(super) fn pop_t<const T: bool>(&mut self) {
         let start = self.marks.pop().unwrap_or(0);
         self.vars.truncate(start);
-        if let Some(t) = &mut self.taints {
-            t.truncate(start);
+        if T {
+            self.taints.truncate(start);
         }
         self.check();
     }
@@ -311,14 +393,22 @@ impl Bindings {
     /// length, inline; any other out of line.
     #[inline(always)]
     pub(super) fn clear(&mut self) {
+        self.clear_t::<true>();
+    }
+
+    /// [`Bindings::clear`] for a caller that knows the run (see
+    /// [`Bindings::guard`]): the unsealed form leaves the (empty) taint
+    /// vector alone.
+    #[inline(always)]
+    pub(super) fn clear_t<const T: bool>(&mut self) {
         if self.vars.iter().all(|(_, v)| is_scalar(v)) && self.marks.is_empty() {
             // SAFETY: a length of 0 is within capacity and leaves no
             // element initialised past it to be read; the elements it
             // forgets are scalars, which own nothing, so forgetting one
             // is what dropping it does.
             unsafe { self.vars.set_len(0) };
-            if let Some(t) = &mut self.taints {
-                t.clear();
+            if T {
+                self.taints.clear();
             }
         } else {
             self.clear_slow();
@@ -331,9 +421,7 @@ impl Bindings {
         while let Some((_, v)) = self.vars.pop() {
             forget_scalar(v);
         }
-        if let Some(t) = &mut self.taints {
-            t.clear();
-        }
+        self.taints.clear();
         self.marks.clear();
     }
 
@@ -345,19 +433,28 @@ impl Bindings {
             let Some((_, v)) = self.vars.pop() else { break };
             forget_scalar(v);
         }
-        if let Some(t) = &mut self.taints {
-            t.truncate(len);
-        }
+        self.taints.truncate(len);
         self.check();
     }
 
     /// Bind `name` to `val` carrying taint `t` in the current scope,
     /// replacing a same-named binding of this scope.
     pub(super) fn define(&mut self, name: Sym, val: Value, t: u8) {
+        if self.store {
+            self.define_t::<true>(name, val, t)
+        } else {
+            self.define_t::<false>(name, val, t)
+        }
+    }
+
+    /// [`Bindings::define`] for a caller that knows the run (see
+    /// [`Bindings::guard`]).
+    #[inline]
+    pub(super) fn define_t<const T: bool>(&mut self, name: Sym, val: Value, t: u8) {
         let start = self.marks.last().copied().unwrap_or(0);
         match self.vars[start..].iter().position(|(k, _)| *k == name) {
-            Some(off) => self.set(start + off, val, t),
-            None => self.push_var(name, val, t),
+            Some(off) => self.set_t::<T>(start + off, val, t),
+            None => self.push_var_t::<T>(name, val, t),
         }
     }
 
@@ -367,19 +464,34 @@ impl Bindings {
     /// that slot (a fresh frame or a fresh scope).
     #[inline(always)]
     pub(super) fn push_var(&mut self, name: Sym, val: Value, t: u8) {
+        if self.store {
+            self.push_var_t::<true>(name, val, t)
+        } else {
+            self.push_var_t::<false>(name, val, t)
+        }
+    }
+
+    /// [`Bindings::push_var`] for a caller that knows the run (see
+    /// [`Bindings::guard`]).
+    #[inline(always)]
+    pub(super) fn push_var_t<const T: bool>(&mut self, name: Sym, val: Value, t: u8) {
+        self.guard::<T>(t);
         self.vars.push((name, val));
-        if let Some(ts) = &mut self.taints {
-            ts.push(t);
+        if T {
+            self.taints.push(t);
+            self.check_store();
         }
         self.check();
     }
 
     /// Overwrite binding `i` (value and taint).
     #[inline(always)]
-    fn set(&mut self, i: usize, val: Value, t: u8) {
+    fn set_t<const T: bool>(&mut self, i: usize, val: Value, t: u8) {
+        self.guard::<T>(t);
         self.vars[i].1 = val;
-        if let Some(ts) = &mut self.taints {
-            ts[i] = t;
+        if T {
+            self.taints[i] = t;
+            self.check_store();
         }
         self.check();
     }
@@ -394,30 +506,41 @@ impl Bindings {
     /// bindings (taint 0; no read names them).
     #[inline]
     pub(super) fn define_var(&mut self, name: Sym, slot: u32, val: Value, t: u8) {
+        if self.store {
+            self.define_var_t::<true>(name, slot, val, t)
+        } else {
+            self.define_var_t::<false>(name, slot, val, t)
+        }
+    }
+
+    /// [`Bindings::define_var`] for a caller that knows the run (see
+    /// [`Bindings::guard`]).
+    #[inline]
+    pub(super) fn define_var_t<const T: bool>(&mut self, name: Sym, slot: u32, val: Value, t: u8) {
         let i = slot as usize;
         // The common case: the slot is the next binding (a parameter, a
         // `let` in a fresh scope). `i == len` implies `i >= start` and
         // `slot != NAMED`, so this is the `None` arm below with nothing to
         // fill (cost only, AX-53).
         if i == self.vars.len() {
-            return self.push_var(name, val, t);
+            return self.push_var_t::<T>(name, val, t);
         }
         let start = self.marks.last().copied().unwrap_or(0);
         if slot == NAMED || i < start {
-            return self.define(name, val, t);
+            return self.define_t::<T>(name, val, t);
         }
         match self.vars.get_mut(i) {
             Some(b) if b.0 == name || b.0 == SYM_NONE => {
                 b.0 = name;
-                self.set(i, val, t);
+                self.set_t::<T>(i, val, t);
             }
-            Some(_) => self.define(name, val, t),
+            Some(_) => self.define_t::<T>(name, val, t),
             None => {
                 self.vars.resize_with(i, || (SYM_NONE, Value::Unit));
-                if let Some(ts) = &mut self.taints {
-                    ts.resize(i, 0);
+                if T {
+                    self.taints.resize(i, 0);
                 }
-                self.push_var(name, val, t);
+                self.push_var_t::<T>(name, val, t);
             }
         }
     }
@@ -455,14 +578,16 @@ impl Bindings {
     }
 
     /// The taint of binding `i` (an index a lookup returned). Panics on an
-    /// Env without a store: a missing store never reads as 0.
+    /// Env without a store (a missing store never reads as 0) and on a store
+    /// out of step with the bindings, in every build.
     #[cfg_attr(not(test), allow(dead_code))] // S2.3's taint channel reads it.
     #[inline]
     pub(super) fn taint(&self, i: usize) -> u8 {
-        match &self.taints {
-            Some(t) => t[i],
-            None => no_store("a taint read from an Env that has no taint store"),
+        if !self.store {
+            no_store("a taint read from an Env that has no taint store");
         }
+        self.check_store();
+        self.taints[i]
     }
 
     /// Update the binding [`Bindings::get_var_idx`] finds to `val` carrying
@@ -470,9 +595,26 @@ impl Bindings {
     /// returns false if none exists.
     #[inline]
     pub(super) fn assign_var(&mut self, name: Sym, slot: u32, val: Value, t: u8) -> bool {
+        if self.store {
+            self.assign_var_t::<true>(name, slot, val, t)
+        } else {
+            self.assign_var_t::<false>(name, slot, val, t)
+        }
+    }
+
+    /// [`Bindings::assign_var`] for a caller that knows the run (see
+    /// [`Bindings::guard`]).
+    #[inline]
+    pub(super) fn assign_var_t<const T: bool>(
+        &mut self,
+        name: Sym,
+        slot: u32,
+        val: Value,
+        t: u8,
+    ) -> bool {
         match self.get_var_idx(name, slot) {
             Some(i) => {
-                self.set(i, val, t);
+                self.set_t::<T>(i, val, t);
                 true
             }
             None => false,
@@ -484,11 +626,21 @@ impl Bindings {
     /// too (OR'd into its taint).
     #[inline(always)]
     pub(super) fn value_mut(&mut self, i: usize, t: u8) -> &mut Value {
-        // OR-ing 0 changes nothing; a constant 0 (the VM's) folds this away.
-        if t != 0 {
-            if let Some(ts) = &mut self.taints {
-                ts[i] |= t;
-            }
+        if self.store {
+            self.value_mut_t::<true>(i, t)
+        } else {
+            self.value_mut_t::<false>(i, t)
+        }
+    }
+
+    /// [`Bindings::value_mut`] for a caller that knows the run (see
+    /// [`Bindings::guard`]).
+    #[inline(always)]
+    pub(super) fn value_mut_t<const T: bool>(&mut self, i: usize, t: u8) -> &mut Value {
+        self.guard::<T>(t);
+        if T {
+            self.taints[i] |= t;
+            self.check_store();
         }
         self.check();
         &mut self.vars[i].1
@@ -501,6 +653,14 @@ impl Bindings {
         Some(self.value_mut(i, t))
     }
 
+    /// [`Bindings::get_mut`] for a caller that knows the run (see
+    /// [`Bindings::guard`]).
+    #[inline]
+    pub(super) fn get_mut_t<const T: bool>(&mut self, name: Sym, t: u8) -> Option<&mut Value> {
+        let i = self.find(name)?;
+        Some(self.value_mut_t::<T>(i, t))
+    }
+
     /// [`Bindings::value_mut`] of the binding [`Bindings::get_var_idx`] finds.
     #[inline(always)]
     pub(super) fn get_var_mut(&mut self, name: Sym, slot: u32, t: u8) -> Option<&mut Value> {
@@ -508,13 +668,30 @@ impl Bindings {
         Some(self.value_mut(i, t))
     }
 
-    /// Replace binding `i`'s value with `val` carrying taint `t`, returning
-    /// the old value (a `&mut` argument moved out and back).
+    /// [`Bindings::get_var_mut`] for a caller that knows the run (see
+    /// [`Bindings::guard`]).
     #[inline(always)]
-    pub(super) fn replace(&mut self, i: usize, val: Value, t: u8) -> Value {
+    pub(super) fn get_var_mut_t<const T: bool>(
+        &mut self,
+        name: Sym,
+        slot: u32,
+        t: u8,
+    ) -> Option<&mut Value> {
+        let i = self.get_var_idx(name, slot)?;
+        Some(self.value_mut_t::<T>(i, t))
+    }
+
+    /// Replace binding `i`'s value with `val` carrying taint `t`, returning
+    /// the old value (a `&mut` argument moved out and back). The `&mut` call
+    /// path that uses it is the bytecode engine's, so this is the `T` form
+    /// alone (see [`Bindings::guard`]).
+    #[inline(always)]
+    pub(super) fn replace_t<const T: bool>(&mut self, i: usize, val: Value, t: u8) -> Value {
+        self.guard::<T>(t);
         let old = std::mem::replace(&mut self.vars[i].1, val);
-        if let Some(ts) = &mut self.taints {
-            ts[i] = t;
+        if T {
+            self.taints[i] = t;
+            self.check_store();
         }
         self.check();
         old
@@ -522,20 +699,30 @@ impl Bindings {
 
     /// The bytecode engine's `for` re-bind (R50): when the innermost scope
     /// holds exactly the loop variable `name` at `slot` as an `Int`, set it
-    /// to `i` carrying taint `t` in place and return true.
+    /// to `i` carrying taint `t` in place and return true. The engine runs
+    /// unsealed only, so this is the `T` form alone (see
+    /// [`Bindings::guard`]).
     #[inline(always)]
-    pub(super) fn rebind_loop_int(&mut self, name: Sym, slot: u32, i: i64, t: u8) -> bool {
+    pub(super) fn rebind_loop_int_t<const T: bool>(
+        &mut self,
+        name: Sym,
+        slot: u32,
+        i: i64,
+        t: u8,
+    ) -> bool {
         let Some(&m) = self.marks.last() else {
             return false;
         };
         if self.vars.len() != m + 1 || slot as usize != m {
             return false;
         }
+        self.guard::<T>(t);
         match self.vars.last_mut() {
             Some((s, Value::Int(n))) if *s == name => {
                 *n = i;
-                if let Some(ts) = &mut self.taints {
-                    ts[m] = t;
+                if T {
+                    self.taints[m] = t;
+                    self.check_store();
                 }
                 self.check();
                 true
@@ -548,15 +735,15 @@ impl Bindings {
     /// taints in a sealed run.
     pub(super) fn snapshot(&self) -> Snapshot {
         let mut vars = Vec::with_capacity(self.vars.len());
-        let mut taints = self
-            .taints
-            .as_ref()
-            .map(|_| Vec::with_capacity(self.vars.len()));
+        let mut taints = self.store.then(|| {
+            self.check_store();
+            Vec::with_capacity(self.vars.len())
+        });
         for (i, (k, v)) in self.vars.iter().enumerate() {
             if *k != SYM_NONE && !self.vars[i + 1..].iter().any(|(inner, _)| inner == k) {
                 vars.push((*k, v.clone()));
-                if let (Some(out), Some(ts)) = (&mut taints, &self.taints) {
-                    out.push(ts[i]);
+                if let Some(out) = &mut taints {
+                    out.push(self.taints[i]);
                 }
             }
         }
@@ -571,9 +758,10 @@ impl Bindings {
     pub(super) fn lend_in(&mut self, cell: &mut Vec<(Sym, Value)>, t: u8) {
         debug_assert!(self.vars.is_empty() && self.marks.is_empty());
         std::mem::swap(&mut self.vars, cell);
-        if let Some(ts) = &mut self.taints {
-            ts.clear();
-            ts.resize(self.vars.len(), t);
+        if self.store {
+            self.taints.clear();
+            self.taints.resize(self.vars.len(), t);
+            self.check_store();
         }
         self.check();
     }
@@ -587,9 +775,7 @@ impl Bindings {
         self.marks.clear();
         std::mem::swap(&mut self.vars, cell);
         debug_assert!(self.vars.is_empty());
-        if let Some(ts) = &mut self.taints {
-            ts.clear();
-        }
+        self.taints.clear();
         self.check();
     }
 
@@ -601,9 +787,10 @@ impl Bindings {
         debug_assert!(self.vars.is_empty() && self.marks.is_empty());
         self.vars.reserve(cell.len() + extra);
         self.vars.extend_from_slice(cell);
-        if let Some(ts) = &mut self.taints {
-            ts.reserve(cell.len() + extra);
-            ts.resize(self.vars.len(), t);
+        if self.store {
+            self.taints.reserve(cell.len() + extra);
+            self.taints.resize(self.vars.len(), t);
+            self.check_store();
         }
         self.check();
     }
@@ -628,10 +815,8 @@ mod tests {
     }
 
     fn taints(env: &Env) -> Vec<u8> {
-        env.bindings
-            .taints
-            .clone()
-            .expect("a sealed env has a store")
+        assert!(env.bindings.store, "a sealed env has a store");
+        env.bindings.taints.clone()
     }
 
     /// R51 S2.1 drift: binding storage is private to this file. Rust privacy
@@ -788,7 +973,7 @@ mod tests {
     fn an_out_of_step_store_panics_in_every_build() {
         let mut env = sealed_env();
         env.define(intern("s2_d"), Value::Int(1), 0);
-        env.bindings.taints.as_mut().expect("store").push(0);
+        env.bindings.taints.push(0);
         env.push_var(intern("s2_e"), Value::Int(2), 0);
     }
 
