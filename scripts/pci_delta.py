@@ -61,14 +61,16 @@ def load_themes():
 
 THEMES = load_themes()
 
-# A merge with no themes file is a PURE JOIN, and classified as one, iff git merges its two parents
-# cleanly (`git merge-tree --write-tree`, exit 0) and the merge commit's crates/axon-core/src is that
-# merge's crates/axon-core/src: it then changes the interpreter only by the commits it joins, each of
-# which is listed and classified on its own. A merge that conflicted, or that changes anything git's
-# merge does not (an evil merge), stays UNCLASSIFIED until a themes file is written for it. The merge
-# is replayed hermetically: attributes from a fixed tree that names only the note's driver (below),
-# the driver given on the command line, no user attributes file.
-PURE_JOIN = "pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents (clean); no change beyond the commits it joins"
+# A merge with no themes file is a PURE JOIN, and classified as one, iff git's merge of its two parents
+# (`git merge-tree --write-tree`) leaves no conflicted path under crates/axon-core/src and the merge
+# commit's crates/axon-core/src is that merge's crates/axon-core/src: it then changes the interpreter only
+# by the commits it joins, each of which is listed and classified on its own. A conflict outside that tree
+# (a registry, a status file) does not count: whatever the merge did there is not an interpreter change. A
+# merge that conflicted under crates/axon-core/src (however it was resolved, even to one side's text), or
+# that changes anything there git's merge does not (an evil merge), stays UNCLASSIFIED until a themes file
+# is written for it. The merge is replayed hermetically: attributes from a fixed tree that names only the
+# note's driver (below), the driver given on the command line, no user attributes file.
+PURE_JOIN = "pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins"
 NOTE_ATTRIBUTE = "governance/notes/v022-pci-delta.md merge=pci-note"
 # The note's merge driver (`--merge-note`, .gitattributes `merge=pci-note`): the mechanical block is taken
 # from ours and the rest of the note is merged three-way; the block is regenerated after the merge
@@ -96,11 +98,16 @@ def pure_join(h, subj):
         return None
     driver = f"{shlex.quote(sys.executable)} -B {shlex.quote(os.path.abspath(__file__))} --merge-note %O %A %B"
     r = subprocess.run(["git", "-c", f"merge.pci-note.driver={driver}", "-c", f"core.attributesFile={os.devnull}",
-                        f"--attr-source={attr_tree()}", "merge-tree", "--write-tree", "--no-messages", *parents],
-                       cwd=ROOT, capture_output=True, text=True)
-    if r.returncode != 0:
+                        f"--attr-source={attr_tree()}", "merge-tree", "--write-tree", "-z", "--name-only",
+                        "--no-messages", *parents], cwd=ROOT, capture_output=True)
+    if r.returncode not in (0, 1):
+        sys.exit(f"pci_delta: git merge-tree {parents[0][:8]} {parents[1][:8]} (for {h[:8]}) exited {r.returncode}: "
+                 + r.stderr.decode(errors="replace").strip())
+    # `-z --name-only`: the merged tree, then each conflicted path, NUL-terminated.
+    tree, *conflicted = r.stdout.decode(errors="surrogateescape").split("\0")
+    if any(p.startswith(PATHSPEC + "/") for p in conflicted):
         return None
-    joined, merged = git("rev-parse", f"{r.stdout.split()[0]}:{PATHSPEC}", f"{h}:{PATHSPEC}").split()
+    joined, merged = git("rev-parse", f"{tree}:{PATHSPEC}", f"{h}:{PATHSPEC}").split()
     if joined != merged:
         return None
     b = re.match(r"Merge (?:remote-tracking )?branch '([^']+)'", subj)

@@ -97,10 +97,12 @@ both (369/439 rows, only because their test lives in the changed `interp.rs`), `
 **PCI classification and lane merges.** Each `crates/axon-core/src` commit is classified by its own file,
 `governance/notes/pci-themes/<hash8>.json` = `{"theme": ..., "text": ...}` (`scripts/pci_delta.py` loads the
 directory; `--drop HASH8` forgets one). Two lanes that classify different commits merge without a conflict there.
-A merge commit needs no file when it is a pure join: `git merge-tree --write-tree <p1> <p2>` is clean (exit 0,
-replayed with the note driver below and nothing else) and its `crates/axon-core/src` tree equals that merge's;
-the block then reads `<branch> merge | pure join: ...`. A merge that conflicted anywhere, or that changes the
-interpreter beyond the join (an evil merge), stays UNCLASSIFIED until a file is written for it.
+A merge commit needs no file when it is a pure join: `git merge-tree --write-tree <p1> <p2>` (replayed with the
+note driver below and nothing else; an exit other than 0/1 is fatal) lists no conflicted path under
+`crates/axon-core/src`, and the merge's `crates/axon-core/src` tree equals that merge's; the block then reads
+`<branch> merge | pure join: ...`. Conflicts elsewhere (registries, status files) do not count. A merge that
+conflicted under `crates/axon-core/src` (however resolved, even to one side), or that changes the interpreter
+beyond the join (an evil merge), stays UNCLASSIFIED until a file is written for it.
 One-time setup per clone (the git config is the COMMON one, shared by every worktree of the repo):
 `python3 tasks/r51-pci-regen.py --setup`, which sets `merge.pci-note.driver` to
 `python3 -B scripts/pci_delta.py --merge-note %O %A %B` (`.gitattributes`: the note is `merge=pci-note`): a merge
