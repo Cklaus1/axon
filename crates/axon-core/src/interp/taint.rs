@@ -1387,8 +1387,8 @@ impl<'p> Interp<'p> {
 
     /// The NAME rule at run time: operator code gives a name-resolving builtin
     /// only a name sealed code had no hand in. `ats[i]` is the taint of
-    /// argument `i`. R51 S3, from v0.22 taint.rs:1351; main has no test toggle
-    /// (`TAINT_FORCE_ON`): in a sealed run the rule always applies.
+    /// argument `i`. R51 S3, from v0.22 taint.rs:1351; the unit-test switch
+    /// (`t_rules`) is S4.
     #[inline(always)]
     pub(crate) fn t_check_names(&self, builtin: &str, ats: &[u8]) -> Result<(), Flow> {
         if !self.seal.active {
@@ -1399,7 +1399,7 @@ impl<'p> Interp<'p> {
 
     #[inline(never)]
     fn t_check_names_sealed(&self, builtin: &str, ats: &[u8]) -> Result<(), Flow> {
-        if self.frame_sealed.get() {
+        if self.frame_sealed.get() || !self.t_rules() {
             return Ok(());
         }
         let Some(idxs) = super::pin::name_sink(builtin) else {
@@ -1420,11 +1420,81 @@ impl<'p> Interp<'p> {
         Ok(())
     }
 
+    /// The DISPATCH rule at run time: the impl a method call selects is chosen
+    /// by the receiver's runtime TYPE; a receiver whose type is sealed code's
+    /// has not been pinned by the operator. R51 S4, from v0.22 taint.rs:1414;
+    /// the static form is [`Interp::seal_dispatch`].
+    #[inline(always)]
+    pub(crate) fn t_check_dispatch(
+        &self,
+        f: &FnDef,
+        recv: &Value,
+        recv_taint: u8,
+        tn: &str,
+    ) -> Result<(), Flow> {
+        if recv_taint & (TYP | PICK) == 0 {
+            return Ok(());
+        }
+        self.t_check_dispatch_tainted(f, recv, recv_taint, tn)
+    }
+
+    #[inline(never)]
+    fn t_check_dispatch_tainted(
+        &self,
+        f: &FnDef,
+        recv: &Value,
+        recv_taint: u8,
+        tn: &str,
+    ) -> Result<(), Flow> {
+        if !self.seal.active
+            || self.frame_sealed.get()
+            || self.fn_is_sealed(f)
+            || !self.t_rules()
+            || recv_taint & (TYP | PICK) == 0
+            || !self.pins.selects_between_impls(&f.name)
+        {
+            return Ok(());
+        }
+        let operator_value = match recv {
+            Value::Struct(s) => self.pins.is_operator_type(&sym_name(s.name)),
+            Value::Enum(e) => self.pins.is_operator_type(&sym_name(e.enum_name)),
+            _ => false,
+        };
+        if operator_value {
+            // A value only the operator defines has a type the operator chose,
+            // unless sealed code PICKED the value (out of a table by a key, by a
+            // branch, by being handed back): then which impl answers is its choice.
+            if recv_taint & PICK == 0 {
+                return Ok(());
+            }
+            return panic(format!(
+                "operator code dispatched `{}` on a value of an operator type that the candidate \
+                 picked (out of a table by a key or index it chose, by a branch on a value it \
+                 chose, or by handing it back) — the candidate would choose which impl answers \
+                 (here `{tn}`); name the value with a literal or build it from data instead of \
+                 selecting it by the candidate's answer",
+                f.name
+            ));
+        }
+        panic(format!(
+            "operator code dispatched `{}` on a value whose type nothing on the operator side \
+             determined (here `{tn}`): its type reached this call from sealed code and no pin \
+             the operator wrote cleared it (runtime taint) — the candidate would choose the \
+             impl; pin it with `let x: T = ...`",
+            f.name
+        ))
+    }
+
     /// The WIDTH rule at run time: operator code does not do arithmetic on a
     /// fixed-width integer whose width is sealed code's. R51 S3, from v0.22
-    /// taint.rs:1480.
+    /// taint.rs:1480; the unit-test switch (`t_rules`) is S4.
     pub(crate) fn t_check_width(&self, v: &Value, vt: u8, what: &str) -> Result<(), Flow> {
-        if !self.seal.active || self.frame_sealed.get() || vt & TYP == 0 || !width_sized(v) {
+        if !self.seal.active
+            || self.frame_sealed.get()
+            || !self.t_rules()
+            || vt & TYP == 0
+            || !width_sized(v)
+        {
             return Ok(());
         }
         panic(format!(
