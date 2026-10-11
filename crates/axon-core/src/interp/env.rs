@@ -1,0 +1,707 @@
+//! The lexical environment (`Env`) and its binding storage (`Bindings`),
+//! R51 S2.1 (spec §4 Fork 2).
+//!
+//! A sealed run keeps a per-binding TAINT next to every binding's value
+//! (`interp/taint.rs`): a parallel `Vec<u8>` indexed by the same slot, present
+//! only in a sealed run. The storage is private to [`Bindings`] in this module,
+//! so no code outside it can touch the vectors (a raw `env.vars` does not
+//! compile), and every method that writes a binding takes the taint it stores
+//! (`t`): there is no taint-free binding writer, so no site can drop a taint by
+//! omission (v0.22's rule). Methods that only remove bindings (scope pop, clear,
+//! release) truncate both vectors together. After every method the two vectors
+//! are checked to be in step; in a sealed run (the store present) a mismatch
+//! panics in release builds too, fail-closed.
+//!
+//! Whether an Env carries a taint store is a property of the run, not of the
+//! Env: an Env is made only by the `Interp` factory (`Interp::new_env`,
+//! `Interp::env_from_snapshot`, the frame pool), which gives every Env of a
+//! sealed run a store and no Env of an unsealed run one. Reading a taint from
+//! an Env without a store panics: a missing store never reads as 0.
+
+use super::*;
+
+/// The bindings of one call frame: every visible binding in one vector
+/// (outermost first), `marks` holding the start index of each pushed scope (the
+/// base scope starts at 0 and has no mark), and in a sealed run the taint of
+/// each binding at the same index.
+///
+/// Flat rather than one `HashMap` per scope because a call frame holds a
+/// handful of names, and pushing a scope allocates nothing. Semantics are the
+/// per-scope-map ones exactly: `define` replaces a same-named binding in the
+/// CURRENT scope (so a loop re-binding a name does not grow the stack) and
+/// shadows outer ones; lookups see the innermost binding first.
+///
+/// A binding's index in `vars` is the frame SLOT [`Resolution`] gave it
+/// (AX-53), so a resolved variable access is `vars[slot]`: one index and one
+/// sym compare, independent of how many locals are in scope. Every binding
+/// keeps its sym, which serves code resolved by name ([`NAMED`]: a reverse
+/// scan, the innermost binding first), [`Bindings::snapshot`], and the fallback
+/// when a slot does not hold the expected binding. A binding's value and its
+/// taint are read through the one index the lookup returns
+/// ([`Bindings::get_var_idx`], [`Bindings::find`]), never through two lookups.
+pub(super) struct Bindings {
+    vars: Vec<(Sym, Value)>,
+    /// `Some` exactly in a sealed run; then `len() == vars.len()`.
+    taints: Option<Vec<u8>>,
+    marks: Vec<usize>,
+}
+
+/// A copy of the visible bindings, each name once (inner shadows outer), with
+/// their taints in a sealed run: what a handler arm, a continuation replay and
+/// the module-level lets are built from.
+#[derive(Clone)]
+pub(super) struct Snapshot {
+    vars: Vec<(Sym, Value)>,
+    taints: Option<Vec<u8>>,
+}
+
+impl Snapshot {
+    /// The bindings with their taints: `None` for the taints outside a sealed
+    /// run.
+    pub(super) fn into_parts(self) -> (Vec<(Sym, Value)>, Option<Vec<u8>>) {
+        (self.vars, self.taints)
+    }
+}
+
+/// A call frame: its [`Bindings`] and the operand stack of a bytecode-engine
+/// activation running on it (R50): `vm::exec` takes the stack for the
+/// activation and hands it back emptied, so a pooled frame brings a grown stack
+/// with it. The tree-walker never touches the stack.
+///
+/// Each call frame (a fn call, a closure call) has its own `Env`; it derefs to
+/// its bindings, so `env.define(..)` is a [`Bindings`] method.
+pub(super) struct Env {
+    bindings: Bindings,
+    pub(super) stack: Vec<Value>,
+}
+
+impl std::ops::Deref for Env {
+    type Target = Bindings;
+    #[inline(always)]
+    fn deref(&self) -> &Bindings {
+        &self.bindings
+    }
+}
+
+impl std::ops::DerefMut for Env {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Bindings {
+        &mut self.bindings
+    }
+}
+
+impl Env {
+    /// An empty frame without a taint store.
+    pub(super) fn new() -> Self {
+        Self::with_store(false)
+    }
+
+    /// An empty frame, with a taint store iff `taints` (a sealed run).
+    pub(super) fn with_store(taints: bool) -> Self {
+        Env {
+            bindings: Bindings {
+                vars: Vec::new(),
+                taints: taints.then(Vec::new),
+                marks: Vec::new(),
+            },
+            stack: Vec::new(),
+        }
+    }
+
+    /// An env whose single base scope is snapshot `snap`, to run a
+    /// handler-arm body or a continuation replay in its defining environment.
+    /// The snapshot binds each name at most once. Only the `Interp` factory
+    /// calls this.
+    pub(super) fn from_snapshot(snap: Snapshot) -> Self {
+        let env = Env {
+            bindings: Bindings {
+                vars: snap.vars,
+                taints: snap.taints,
+                marks: Vec::new(),
+            },
+            stack: Vec::new(),
+        };
+        env.check();
+        env
+    }
+}
+
+/// A taint read or a desync on an Env whose store is absent or out of step:
+/// the sealed run stops here rather than read a taint it does not have.
+#[cold]
+#[inline(never)]
+fn no_store(what: &str) -> ! {
+    panic!("R51 taint store: {what}")
+}
+
+impl Bindings {
+    /// The two vectors are in step: always in debug builds; in a sealed run
+    /// (the store present) in release builds too, and a mismatch panics.
+    #[inline(always)]
+    fn check(&self) {
+        debug_assert!(
+            self.taints
+                .as_ref()
+                .is_none_or(|t| t.len() == self.vars.len()),
+            "R51 taint store: the taint vector is out of step with the bindings"
+        );
+        if let Some(t) = &self.taints {
+            if t.len() != self.vars.len() {
+                no_store("the taint vector is out of step with the bindings");
+            }
+        }
+    }
+
+    /// Whether this Env carries a taint store (exactly in a sealed run).
+    #[inline(always)]
+    pub(super) fn has_store(&self) -> bool {
+        self.taints.is_some()
+    }
+
+    /// How many bindings (pads included) the frame holds.
+    #[inline(always)]
+    pub(super) fn len(&self) -> usize {
+        self.vars.len()
+    }
+
+    /// The number of pushed scopes.
+    #[cfg(test)]
+    pub(super) fn depth(&self) -> usize {
+        self.marks.len()
+    }
+
+    /// The binding vector's capacity (the frame pool keeps no frame that grew
+    /// unusually large).
+    #[inline(always)]
+    pub(super) fn capacity(&self) -> usize {
+        self.vars.capacity()
+    }
+
+    /// Whether the frame is fresh: no binding and no scope.
+    #[inline(always)]
+    pub(super) fn is_fresh(&self) -> bool {
+        self.vars.is_empty() && self.marks.is_empty()
+    }
+
+    /// Bind a fresh frame's parameters: each `(name, value)` of `params` is
+    /// the next binding (parameter `i` in slot `i`, AX-53), carrying taint
+    /// `taint(i)`. One `extend` over a trusted-length iterator reserves once
+    /// instead of a capacity check per push (cost only, R50 S5); `taint` is
+    /// called only when the frame has a store.
+    #[inline(always)]
+    pub(super) fn bind_fresh(
+        &mut self,
+        params: impl Iterator<Item = (Sym, Value)>,
+        taint: impl FnMut(usize) -> u8,
+    ) {
+        debug_assert!(self.is_fresh());
+        self.vars.extend(params);
+        if let Some(ts) = &mut self.taints {
+            ts.extend((0..self.vars.len()).map(taint));
+        }
+        self.check();
+    }
+
+    /// Room for `n` more bindings.
+    #[inline(always)]
+    pub(super) fn reserve(&mut self, n: usize) {
+        self.vars.reserve(n);
+        if let Some(t) = &mut self.taints {
+            t.reserve(n);
+        }
+    }
+
+    /// Open a scope.
+    #[inline(always)]
+    pub(super) fn push(&mut self) {
+        self.marks.push(self.vars.len());
+    }
+
+    /// Close the innermost scope, dropping its bindings and their taints.
+    #[inline(always)]
+    pub(super) fn pop(&mut self) {
+        let start = self.marks.pop().unwrap_or(0);
+        self.vars.truncate(start);
+        if let Some(t) = &mut self.taints {
+            t.truncate(start);
+        }
+        self.check();
+    }
+
+    /// Empty the frame for reuse (the taint store stays, emptied). A scalar
+    /// binding has nothing to drop, so it is forgotten instead of going
+    /// through `Value`'s drop glue; every other binding is dropped (cost
+    /// only). A frame of scalars alone (the common call's) is emptied by its
+    /// length, inline; any other out of line.
+    #[inline(always)]
+    pub(super) fn clear(&mut self) {
+        if self.vars.iter().all(|(_, v)| is_scalar(v)) && self.marks.is_empty() {
+            // SAFETY: a length of 0 is within capacity and leaves no
+            // element initialised past it to be read; the elements it
+            // forgets are scalars, which own nothing, so forgetting one
+            // is what dropping it does.
+            unsafe { self.vars.set_len(0) };
+            if let Some(t) = &mut self.taints {
+                t.clear();
+            }
+        } else {
+            self.clear_slow();
+        }
+        self.check();
+    }
+
+    #[inline(never)]
+    fn clear_slow(&mut self) {
+        while let Some((_, v)) = self.vars.pop() {
+            forget_scalar(v);
+        }
+        if let Some(t) = &mut self.taints {
+            t.clear();
+        }
+        self.marks.clear();
+    }
+
+    /// Drop the bindings from index `len` on, as `vars.truncate(len)` does,
+    /// forgetting scalars as [`Bindings::clear`] does (R50 S4, cost only).
+    #[inline]
+    pub(super) fn release_to(&mut self, len: usize) {
+        while self.vars.len() > len {
+            let Some((_, v)) = self.vars.pop() else { break };
+            forget_scalar(v);
+        }
+        if let Some(t) = &mut self.taints {
+            t.truncate(len);
+        }
+        self.check();
+    }
+
+    /// Bind `name` to `val` carrying taint `t` in the current scope,
+    /// replacing a same-named binding of this scope.
+    pub(super) fn define(&mut self, name: Sym, val: Value, t: u8) {
+        let start = self.marks.last().copied().unwrap_or(0);
+        match self.vars[start..].iter().position(|(k, _)| *k == name) {
+            Some(off) => self.set(start + off, val, t),
+            None => self.push_var(name, val, t),
+        }
+    }
+
+    /// Bind `name` to `val` carrying taint `t` as the NEXT binding (slot
+    /// `len()`): a parameter, `goal_met`, a slotted closure parameter. The
+    /// caller knows no same-named binding of the current scope is at or above
+    /// that slot (a fresh frame or a fresh scope).
+    #[inline(always)]
+    pub(super) fn push_var(&mut self, name: Sym, val: Value, t: u8) {
+        self.vars.push((name, val));
+        if let Some(ts) = &mut self.taints {
+            ts.push(t);
+        }
+        self.check();
+    }
+
+    /// Overwrite binding `i` (value and taint).
+    #[inline(always)]
+    fn set(&mut self, i: usize, val: Value, t: u8) {
+        self.vars[i].1 = val;
+        if let Some(ts) = &mut self.taints {
+            ts[i] = t;
+        }
+        self.check();
+    }
+
+    /// Bind `name` at frame slot `slot` (see [`Resolution::var`]), or by name
+    /// for [`NAMED`], carrying taint `t`. A slot is in the current scope
+    /// (`Resolution` allocates a scope's slots above every live one when the
+    /// scope is entered), so writing it replaces a same-named binding of this
+    /// scope as `define` does. A slot holding another binding (an env not laid
+    /// out the way the table assumed) falls back to `define`; the reads'
+    /// fallback finds it. A gap below the slot is padded with unnamed
+    /// bindings (taint 0; no read names them).
+    #[inline]
+    pub(super) fn define_var(&mut self, name: Sym, slot: u32, val: Value, t: u8) {
+        let i = slot as usize;
+        // The common case: the slot is the next binding (a parameter, a
+        // `let` in a fresh scope). `i == len` implies `i >= start` and
+        // `slot != NAMED`, so this is the `None` arm below with nothing to
+        // fill (cost only, AX-53).
+        if i == self.vars.len() {
+            return self.push_var(name, val, t);
+        }
+        let start = self.marks.last().copied().unwrap_or(0);
+        if slot == NAMED || i < start {
+            return self.define(name, val, t);
+        }
+        match self.vars.get_mut(i) {
+            Some(b) if b.0 == name || b.0 == SYM_NONE => {
+                b.0 = name;
+                self.set(i, val, t);
+            }
+            Some(_) => self.define(name, val, t),
+            None => {
+                self.vars.resize_with(i, || (SYM_NONE, Value::Unit));
+                if let Some(ts) = &mut self.taints {
+                    ts.resize(i, 0);
+                }
+                self.push_var(name, val, t);
+            }
+        }
+    }
+
+    /// The index of the innermost binding of `name` (the name scan).
+    #[inline]
+    pub(super) fn find(&self, name: Sym) -> Option<usize> {
+        self.vars.iter().rposition(|(k, _)| *k == name)
+    }
+
+    /// The innermost binding of `name`'s value.
+    #[inline]
+    pub(super) fn get(&self, name: Sym) -> Option<&Value> {
+        self.find(name).map(|i| &self.vars[i].1)
+    }
+
+    /// The index of the binding variable `name` resolved to `slot` (see
+    /// [`Resolution::var`]) reads: the slot, if it holds `name`; none for
+    /// [`NOT_LOCAL`]; else the innermost binding of `name`. The one lookup
+    /// both the value and the taint of a variable are read through.
+    #[inline(always)]
+    pub(super) fn get_var_idx(&self, name: Sym, slot: u32) -> Option<usize> {
+        let i = slot as usize;
+        match self.vars.get(i) {
+            Some((k, _)) if *k == name => Some(i),
+            _ if slot == NOT_LOCAL => None,
+            _ => self.find(name),
+        }
+    }
+
+    /// The value of the binding [`Bindings::get_var_idx`] finds.
+    #[inline(always)]
+    pub(super) fn get_var(&self, name: Sym, slot: u32) -> Option<&Value> {
+        self.get_var_idx(name, slot).map(|i| &self.vars[i].1)
+    }
+
+    /// Update the binding [`Bindings::get_var_idx`] finds to `val` carrying
+    /// taint `t` (the binding takes the taint of the value now in it);
+    /// returns false if none exists.
+    #[inline]
+    pub(super) fn assign_var(&mut self, name: Sym, slot: u32, val: Value, t: u8) -> bool {
+        match self.get_var_idx(name, slot) {
+            Some(i) => {
+                self.set(i, val, t);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Mutable access to binding `i` for a write INTO the value it holds (a
+    /// place assignment, an in-place update): the binding then carries `t`
+    /// too (OR'd into its taint).
+    #[inline(always)]
+    pub(super) fn value_mut(&mut self, i: usize, t: u8) -> &mut Value {
+        // OR-ing 0 changes nothing; a constant 0 (the VM's) folds this away.
+        if t != 0 {
+            if let Some(ts) = &mut self.taints {
+                ts[i] |= t;
+            }
+        }
+        self.check();
+        &mut self.vars[i].1
+    }
+
+    /// [`Bindings::value_mut`] of the innermost binding of `name`.
+    #[inline]
+    pub(super) fn get_mut(&mut self, name: Sym, t: u8) -> Option<&mut Value> {
+        let i = self.find(name)?;
+        Some(self.value_mut(i, t))
+    }
+
+    /// [`Bindings::value_mut`] of the binding [`Bindings::get_var_idx`] finds.
+    #[inline(always)]
+    pub(super) fn get_var_mut(&mut self, name: Sym, slot: u32, t: u8) -> Option<&mut Value> {
+        let i = self.get_var_idx(name, slot)?;
+        Some(self.value_mut(i, t))
+    }
+
+    /// Replace binding `i`'s value with `val` carrying taint `t`, returning
+    /// the old value (a `&mut` argument moved out and back).
+    #[inline(always)]
+    pub(super) fn replace(&mut self, i: usize, val: Value, t: u8) -> Value {
+        let old = std::mem::replace(&mut self.vars[i].1, val);
+        if let Some(ts) = &mut self.taints {
+            ts[i] = t;
+        }
+        self.check();
+        old
+    }
+
+    /// The bytecode engine's `for` re-bind (R50): when the innermost scope
+    /// holds exactly the loop variable `name` at `slot` as an `Int`, set it
+    /// to `i` carrying taint `t` in place and return true.
+    #[inline(always)]
+    pub(super) fn rebind_loop_int(&mut self, name: Sym, slot: u32, i: i64, t: u8) -> bool {
+        let Some(&m) = self.marks.last() else {
+            return false;
+        };
+        if self.vars.len() != m + 1 || slot as usize != m {
+            return false;
+        }
+        match self.vars.last_mut() {
+            Some((s, Value::Int(n))) if *s == name => {
+                *n = i;
+                if let Some(ts) = &mut self.taints {
+                    ts[m] = t;
+                }
+                self.check();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// All visible bindings, each name once (inner shadows outer), with their
+    /// taints in a sealed run.
+    pub(super) fn snapshot(&self) -> Snapshot {
+        let mut vars = Vec::with_capacity(self.vars.len());
+        let mut taints = self
+            .taints
+            .as_ref()
+            .map(|_| Vec::with_capacity(self.vars.len()));
+        for (i, (k, v)) in self.vars.iter().enumerate() {
+            if *k != SYM_NONE && !self.vars[i + 1..].iter().any(|(inner, _)| inner == k) {
+                vars.push((*k, v.clone()));
+                if let (Some(out), Some(ts)) = (&mut taints, &self.taints) {
+                    out.push(ts[i]);
+                }
+            }
+        }
+        Snapshot { vars, taints }
+    }
+
+    /// AX-31's lend: the closure's capture cell `cell` becomes this empty
+    /// frame's base scope (the frame's empty vector waits in the cell; they
+    /// swap back in [`Bindings::lend_back`], so both keep their capacity).
+    /// Every captured binding carries taint `t`.
+    #[inline]
+    pub(super) fn lend_in(&mut self, cell: &mut Vec<(Sym, Value)>, t: u8) {
+        debug_assert!(self.vars.is_empty() && self.marks.is_empty());
+        std::mem::swap(&mut self.vars, cell);
+        if let Some(ts) = &mut self.taints {
+            ts.clear();
+            ts.resize(self.vars.len(), t);
+        }
+        self.check();
+    }
+
+    /// The end of a lent call: drop everything above the base scope (`base`
+    /// bindings) and swap the base scope back into the cell, leaving the
+    /// frame's empty vector here.
+    #[inline]
+    pub(super) fn lend_back(&mut self, base: usize, cell: &mut Vec<(Sym, Value)>) {
+        self.release_to(base);
+        self.marks.clear();
+        std::mem::swap(&mut self.vars, cell);
+        debug_assert!(self.vars.is_empty());
+        if let Some(ts) = &mut self.taints {
+            ts.clear();
+        }
+        self.check();
+    }
+
+    /// The copy path of a closure call: the capture cell's bindings become
+    /// this empty frame's base scope as copies, each carrying taint `t`, with
+    /// room for `extra` more (the parameters).
+    #[inline]
+    pub(super) fn copy_in(&mut self, cell: &[(Sym, Value)], extra: usize, t: u8) {
+        debug_assert!(self.vars.is_empty() && self.marks.is_empty());
+        self.vars.reserve(cell.len() + extra);
+        self.vars.extend_from_slice(cell);
+        if let Some(ts) = &mut self.taints {
+            ts.reserve(cell.len() + extra);
+            ts.resize(self.vars.len(), t);
+        }
+        self.check();
+    }
+
+    /// The copy path's write-back: the base scope's first `base` values,
+    /// positionally into the capture cell (a re-entrant call may have written
+    /// the cell meanwhile; this call's write-back wins).
+    #[inline]
+    pub(super) fn write_back(&self, base: usize, cell: &mut [(Sym, Value)]) {
+        for ((_, slot), (_, v)) in cell.iter_mut().zip(&self.vars[..base]) {
+            *slot = v.clone();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sealed_env() -> Env {
+        Env::with_store(true)
+    }
+
+    fn taints(env: &Env) -> Vec<u8> {
+        env.bindings
+            .taints
+            .clone()
+            .expect("a sealed env has a store")
+    }
+
+    /// R51 S2.1 drift: binding storage is private to this file. Rust privacy
+    /// is the enforcement (a raw `env.vars`, `env.marks` or taint access
+    /// outside `interp/env.rs` does not compile, because the fields of
+    /// `Bindings` and `Env::bindings` are private to this module). This test
+    /// guards the privacy itself: it fails if a field is made visible, or if
+    /// a `Bindings`/`Snapshot` value is built (or its storage named) anywhere
+    /// else under `src/interp`.
+    #[test]
+    fn binding_storage_is_private_to_the_env_module() {
+        let src = include_str!("env.rs");
+        let body = |head: &str| -> &str {
+            let at = src
+                .find(head)
+                .unwrap_or_else(|| panic!("`{head}` not found"));
+            let rest = &src[at..];
+            &rest[..rest.find("\n}\n").expect("struct end")]
+        };
+        for head in [
+            "pub(super) struct Bindings {",
+            "pub(super) struct Env {",
+            "pub(super) struct Snapshot {",
+        ] {
+            for line in body(head).lines().skip(1) {
+                let l = line.trim_start();
+                if l.starts_with("///") || l.is_empty() {
+                    continue;
+                }
+                let storage = ["vars:", "taints:", "marks:", "bindings:"].iter().any(|f| {
+                    l.trim_start_matches("pub(super) ")
+                        .trim_start_matches("pub ")
+                        .starts_with(f)
+                });
+                assert!(
+                    !(storage && l.starts_with("pub")),
+                    "`{head}` exposes its storage: `{l}` (R51 S2.1: binding storage stays private to interp/env.rs)"
+                );
+            }
+        }
+        let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src/interp"));
+        let mut offenders = Vec::new();
+        let mut stack = vec![root.to_path_buf(), root.with_extension("rs")];
+        while let Some(p) = stack.pop() {
+            if p.is_dir() {
+                for e in std::fs::read_dir(&p).expect("read_dir") {
+                    stack.push(e.expect("entry").path());
+                }
+                continue;
+            }
+            if p.extension().is_none_or(|x| x != "rs") || p.ends_with("interp/env.rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&p).expect("read");
+            for (n, line) in text.lines().enumerate() {
+                if ["Bindings {", "Snapshot {", ".taints", ".bindings."]
+                    .iter()
+                    .any(|pat| line.contains(pat))
+                {
+                    offenders.push(format!("{}:{}: {}", p.display(), n + 1, line.trim()));
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "binding storage named outside interp/env.rs:\n{}",
+            offenders.join("\n")
+        );
+    }
+
+    /// Every method keeps the taint vector in step with the bindings: scope
+    /// push/pop, `define` replace, `define_var` padding and fallback,
+    /// `release_to`, `clear` (both paths), the closure lend and copy paths.
+    #[test]
+    fn every_bindings_method_keeps_the_taints_in_step() {
+        let (a, b, c) = (intern("s2_a"), intern("s2_b"), intern("s2_c"));
+        let mut env = sealed_env();
+        env.define(a, Value::Int(1), 1);
+        env.push();
+        env.define(b, Value::Int(2), 2);
+        env.define(b, Value::Int(3), 4);
+        assert_eq!(
+            taints(&env),
+            vec![1, 4],
+            "define replaces the taint with the value"
+        );
+        env.define_var(c, 5, Value::Int(9), 2);
+        assert_eq!(taints(&env), vec![1, 4, 0, 0, 0, 2], "padding is untainted");
+        assert!(env.assign_var(c, 5, Value::Int(10), 1));
+        assert_eq!(
+            taints(&env),
+            vec![1, 4, 0, 0, 0, 1],
+            "assignment sets the taint"
+        );
+        *env.get_var_mut(a, 0, 2).expect("bound") = Value::Int(5);
+        assert_eq!(taints(&env)[0], 3, "a write into a value ORs the taint in");
+        env.pop();
+        assert_eq!(taints(&env), vec![3]);
+        env.push();
+        env.define(b, Value::Str(Rc::new("x".into())), 4);
+        env.release_to(1);
+        assert_eq!(taints(&env), vec![3]);
+        env.define(b, Value::Str(Rc::new("y".into())), 4);
+        env.clear();
+        assert_eq!(taints(&env), Vec::<u8>::new(), "clear_slow");
+        env.define(a, Value::Int(1), 4);
+        env.clear();
+        assert_eq!(taints(&env), Vec::<u8>::new(), "scalar clear");
+        let mut cell = vec![(a, Value::Int(1)), (b, Value::Int(2))];
+        env.lend_in(&mut cell, 2);
+        assert_eq!(taints(&env), vec![2, 2]);
+        env.push();
+        env.push_var(c, Value::Int(3), 1);
+        env.lend_back(2, &mut cell);
+        assert_eq!(cell.len(), 2);
+        assert!(env.is_fresh());
+        assert_eq!(taints(&env), Vec::<u8>::new());
+        env.copy_in(&cell, 1, 4);
+        assert_eq!(taints(&env), vec![4, 4]);
+        let snap = env.snapshot();
+        let back = Env::from_snapshot(snap);
+        assert_eq!(taints(&back), vec![4, 4], "a snapshot carries its taints");
+    }
+
+    /// The name-scan fallback returns an index, so a variable's value and
+    /// its taint are read through the one lookup.
+    #[test]
+    fn the_slot_fallback_reads_value_and_taint_at_one_index() {
+        let (a, b) = (intern("s2_fa"), intern("s2_fb"));
+        let mut env = sealed_env();
+        env.define(a, Value::Int(1), 1);
+        env.define(b, Value::Int(2), 2);
+        // Slot 0 holds `a`, not `b`: the fallback scan finds `b` at 1.
+        let i = env.get_var_idx(b, 0).expect("found by name");
+        assert_eq!(i, 1);
+        assert!(matches!(env.get_var(b, 0), Some(Value::Int(2))));
+        assert_eq!(taints(&env)[i], 2);
+        assert_eq!(
+            env.get_var_idx(b, 1),
+            Some(1),
+            "the slot itself when it holds the name"
+        );
+        assert_eq!(
+            env.get_var_idx(b, NOT_LOCAL),
+            None,
+            "a non-local is never a binding"
+        );
+    }
+
+    /// In a sealed run (the store present) an out-of-step store stops the run
+    /// in release builds too: fail-closed.
+    #[test]
+    #[should_panic(expected = "out of step")]
+    fn an_out_of_step_store_panics_in_every_build() {
+        let mut env = sealed_env();
+        env.define(intern("s2_d"), Value::Int(1), 0);
+        env.bindings.taints.as_mut().expect("store").push(0);
+        env.push_var(intern("s2_e"), Value::Int(2), 0);
+    }
+}

@@ -704,190 +704,11 @@ fn ai_policy_err<T>(msg: impl Into<String>) -> Result<T, Flow> {
 
 // ── Lexical environment ──────────────────────────────────────────────────────
 
-/// A stack of lexical scopes, stored flat: every visible binding in one
-/// vector (outermost first), with `marks` holding the start index of each
-/// pushed scope (the base scope starts at 0 and has no mark).
-///
-/// Flat rather than one `HashMap` per scope because a call frame holds a
-/// handful of names, and pushing a scope allocates nothing. Semantics are
-/// the per-scope-map ones exactly — `define` replaces a same-named binding in
-/// the CURRENT scope (so a loop re-binding a name does not grow the stack) and
-/// shadows outer ones; lookups see the innermost binding first.
-///
-/// Each call frame (a fn call, a closure call) has its own `Env`, and a
-/// binding's index in `vars` is the frame SLOT [`Resolution`] gave it (AX-53),
-/// so a resolved variable access is `vars[slot]` — one index and one sym
-/// compare, independent of how many locals are in scope. Every binding keeps
-/// its sym, which serves code resolved by name ([`NAMED`]: a reverse scan,
-/// the innermost binding first), [`Env::snapshot`], and the fallback when a
-/// slot does not hold the expected binding.
-///
-/// `stack` is the operand stack of a bytecode-engine activation running on
-/// this frame (R50): `vm::exec` takes it for the activation and hands it back
-/// emptied, so a pooled frame brings a grown stack with it. The tree-walker
-/// never touches it.
-struct Env {
-    vars: Vec<(Sym, Value)>,
-    marks: Vec<usize>,
-    stack: Vec<Value>,
-}
-
-impl Env {
-    fn new() -> Self {
-        Env {
-            vars: Vec::new(),
-            marks: Vec::new(),
-            stack: Vec::new(),
-        }
-    }
-    fn push(&mut self) {
-        self.marks.push(self.vars.len());
-    }
-    fn pop(&mut self) {
-        let start = self.marks.pop().unwrap_or(0);
-        self.vars.truncate(start);
-    }
-    /// Empty the frame for reuse. A scalar binding has nothing to drop, so it
-    /// is forgotten instead of going through `Value`'s drop glue; every other
-    /// binding is dropped (cost only). A frame of scalars alone (the common
-    /// call's) is emptied by its length, inline; any other out of line.
-    #[inline(always)]
-    fn clear(&mut self) {
-        if self.vars.iter().all(|(_, v)| is_scalar(v)) && self.marks.is_empty() {
-            // SAFETY: a length of 0 is within capacity and leaves no
-            // element initialised past it to be read; the elements it
-            // forgets are scalars, which own nothing, so forgetting one
-            // is what dropping it does.
-            unsafe { self.vars.set_len(0) };
-        } else {
-            self.clear_slow();
-        }
-    }
-    #[inline(never)]
-    fn clear_slow(&mut self) {
-        while let Some((_, v)) = self.vars.pop() {
-            forget_scalar(v);
-        }
-        self.marks.clear();
-    }
-    /// Drop the bindings from index `len` on, as `vars.truncate(len)` does,
-    /// forgetting scalars as [`Env::clear`] does (R50 S4, cost only).
-    #[inline]
-    fn release_to(&mut self, len: usize) {
-        while self.vars.len() > len {
-            let Some((_, v)) = self.vars.pop() else { break };
-            forget_scalar(v);
-        }
-    }
-    fn define(&mut self, name: Sym, val: Value) {
-        let start = self.marks.last().copied().unwrap_or(0);
-        match self.vars[start..].iter_mut().find(|(k, _)| *k == name) {
-            Some(slot) => slot.1 = val,
-            None => self.vars.push((name, val)),
-        }
-    }
-    /// Bind `name` at frame slot `slot` (see [`Resolution::var`]), or by name
-    /// for [`NAMED`]. A slot is in the current scope (`Resolution` allocates
-    /// a scope's slots above every live one when the scope is entered), so
-    /// writing it replaces a same-named binding of this scope as `define`
-    /// does. A slot holding another binding (an env not laid out the way the
-    /// table assumed) falls back to `define`; the reads' fallback finds it.
-    #[inline]
-    fn define_var(&mut self, name: Sym, slot: u32, val: Value) {
-        let i = slot as usize;
-        // The common case: the slot is the next binding (a parameter, a
-        // `let` in a fresh scope). `i == len` implies `i >= start` and
-        // `slot != NAMED`, so this is the `None` arm below with nothing to
-        // fill (cost only, AX-53).
-        if i == self.vars.len() {
-            self.vars.push((name, val));
-            return;
-        }
-        let start = self.marks.last().copied().unwrap_or(0);
-        if slot == NAMED || i < start {
-            return self.define(name, val);
-        }
-        match self.vars.get_mut(i) {
-            Some(b) if b.0 == name || b.0 == SYM_NONE => *b = (name, val),
-            Some(_) => self.define(name, val),
-            None => {
-                self.vars.resize_with(i, || (SYM_NONE, Value::Unit));
-                self.vars.push((name, val));
-            }
-        }
-    }
-    fn get(&self, name: Sym) -> Option<&Value> {
-        self.vars
-            .iter()
-            .rev()
-            .find(|(k, _)| *k == name)
-            .map(|(_, v)| v)
-    }
-    /// The binding variable `name` resolved to `slot` (see
-    /// [`Resolution::var`]) reads: the slot's, if it holds `name`; none for
-    /// [`NOT_LOCAL`]; else the innermost binding of `name`.
-    #[inline]
-    fn get_var(&self, name: Sym, slot: u32) -> Option<&Value> {
-        match self.vars.get(slot as usize) {
-            Some((k, v)) if *k == name => Some(v),
-            _ if slot == NOT_LOCAL => None,
-            _ => self.get(name),
-        }
-    }
-    /// Update the binding [`Env::get_var`] reads; returns false if none exists.
-    #[inline]
-    fn assign_var(&mut self, name: Sym, slot: u32, val: Value) -> bool {
-        match self.get_var_mut(name, slot) {
-            Some(b) => {
-                *b = val;
-                true
-            }
-            None => false,
-        }
-    }
-    /// Mutable reference to the nearest existing binding (for place assignment).
-    fn get_mut(&mut self, name: Sym) -> Option<&mut Value> {
-        self.vars
-            .iter_mut()
-            .rev()
-            .find(|(k, _)| *k == name)
-            .map(|(_, v)| v)
-    }
-    /// Mutable reference to the binding [`Env::get_var`] reads.
-    #[inline]
-    fn get_var_mut(&mut self, name: Sym, slot: u32) -> Option<&mut Value> {
-        let i = slot as usize;
-        if i < self.vars.len() && self.vars[i].0 == name {
-            return Some(&mut self.vars[i].1);
-        }
-        if slot == NOT_LOCAL {
-            return None;
-        }
-        self.get_mut(name)
-    }
-    /// All visible bindings, each name once (inner shadows outer). Used to
-    /// snapshot the environment a handler arm or continuation replay runs in.
-    fn snapshot(&self) -> Vec<(Sym, Value)> {
-        let mut out = Vec::with_capacity(self.vars.len());
-        for (i, (k, v)) in self.vars.iter().enumerate() {
-            if *k != SYM_NONE && !self.vars[i + 1..].iter().any(|(inner, _)| inner == k) {
-                out.push((*k, v.clone()));
-            }
-        }
-        out
-    }
-    /// Build an env whose single base scope is a captured snapshot — used to
-    /// run a closure/handler-arm body in its defining environment. The
-    /// snapshot must bind each name at most once (as [`Env::snapshot`] and a
-    /// closure's capture cell do).
-    fn from_snapshot(captured: Vec<(Sym, Value)>) -> Self {
-        Env {
-            vars: captured,
-            marks: Vec::new(),
-            stack: Vec::new(),
-        }
-    }
-}
+// `Env` and its binding storage `Bindings` (R51 S2.1, spec §4 Fork 2): the
+// storage is private to interp/env.rs, so a binding (and in a sealed run its
+// taint) is written only through a method that takes the taint.
+mod env;
+use env::*;
 
 /// Whether `v` is a scalar: a value that owns nothing, so it has no drop
 /// glue to run.
@@ -1370,14 +1191,14 @@ struct HandlerFrame {
     /// REPLAY the continuation (re-run the body, feeding the resume value at the
     /// intercepted op). Unused by the bare-tail-resume fast path.
     body: SrcRef<crate::ast::Expr>,
-    env_snapshot: Vec<(Sym, Value)>,
+    env_snapshot: Snapshot,
 }
 
 /// A runtime handler arm: the arm as written, and a snapshot of the
 /// environment where the handler was written (so the arm closes over it).
 struct HandlerArmRt {
     arm: SrcRef<crate::ast::HandlerArm>,
-    captured: Vec<(Sym, Value)>,
+    captured: Snapshot,
 }
 
 impl HandlerArmRt {
@@ -1459,7 +1280,7 @@ struct ResumeCtx {
     /// The `with`-block body to replay on each resume.
     body: SrcRef<crate::ast::Expr>,
     /// The environment snapshot the body originally evaluated in.
-    env_snapshot: Vec<(Sym, Value)>,
+    env_snapshot: Snapshot,
 }
 
 /// Default max interpreter call depth before a graceful "recursion limit"
@@ -4065,9 +3886,9 @@ impl<'p> Interp<'p> {
         let mut env = Env::new();
         for (name, expr) in &defs {
             let v = self.eval(expr, &mut env)?;
-            env.define(intern(name), v);
+            env.define(intern(name), v, 0);
         }
-        self.globals = env.snapshot().into_iter().collect();
+        self.globals = env.snapshot().into_parts().0.into_iter().collect();
         Ok(())
     }
 
@@ -4318,7 +4139,7 @@ impl<'p> Interp<'p> {
     #[inline(always)]
     fn give_frame(&self, mut env: Box<Env>) {
         env.clear();
-        if env.vars.capacity() > 1024 {
+        if env.capacity() > 1024 {
             return;
         }
         if let Some(prev) = self.frame_spare.replace(Some(env)) {
@@ -4453,7 +4274,7 @@ impl<'p> Interp<'p> {
         args.done(self);
         // `goal_met` follows the parameters (its slot in `Resolution`, the
         // next one: see `bind_params`); it is 0 for a fn without `@[goal]`.
-        env.vars.push((SYM_GOAL_MET, Value::Int(0)));
+        env.push_var(SYM_GOAL_MET, Value::Int(0), 0);
         let result = match self.run_body(entry, env) {
             Ok(v) | Err(Flow::Return(v)) => v,
             Err(other) => return Err(frame_edge(other, FrameEdge::Fn(&entry.def.name))),
@@ -4558,10 +4379,10 @@ impl<'p> Interp<'p> {
                     if let Some(pred) = self.refine_preds.get(rname.as_str()).copied() {
                         let val = env.get(*s).cloned().unwrap_or(Value::Unit);
                         let mut pred_env = Env::new();
-                        pred_env.define(SYM_UNDERSCORE, val.clone());
+                        pred_env.define(SYM_UNDERSCORE, val.clone(), 0);
                         // Also bind the parameter name (for inline refinements
                         // `p: T where E[p] > k` that use the param name directly).
-                        pred_env.define(*s, val.clone());
+                        pred_env.define(*s, val.clone(), 0);
                         if let Value::Bool(false) =
                             contain_frame(self.eval(pred, &mut pred_env), FrameEdge::Predicate)?
                         {
@@ -4594,7 +4415,7 @@ impl<'p> Interp<'p> {
         };
         // `goal_met` follows the parameters (its slot in `Resolution`, the
         // next one: see `bind_params`).
-        env.vars.push((SYM_GOAL_MET, Value::Int(goal_met)));
+        env.push_var(SYM_GOAL_MET, Value::Int(goal_met), 0);
         // PROTOTYPE (RLM session option 2): when dumping bindings, run main's
         // top-level statements WITHOUT the extra block scope (eval_block pops
         // its scope before returning, discarding the locals), then capture the
@@ -4635,6 +4456,8 @@ impl<'p> Interp<'p> {
             // `goal_met` is injected by call_fn, not a user binding.
             let snap = env
                 .snapshot()
+                .into_parts()
+                .0
                 .into_iter()
                 .filter(|(k, _)| *k != SYM_GOAL_MET)
                 .map(|(k, v)| (sym_name(k).to_string(), v))
@@ -4676,16 +4499,14 @@ impl<'p> Interp<'p> {
     /// does for a slot equal to the frame's length (cost only).
     #[inline(always)]
     fn bind_params(&self, entry: &FnEntry<'p>, args: &mut [Value], env: &mut Env) {
-        debug_assert!(env.vars.is_empty() && env.marks.is_empty());
-        // One `extend` over a trusted-length iterator reserves once instead
-        // of a capacity check per push (cost only, R50 S5).
-        env.vars.extend(
+        env.bind_fresh(
             entry
                 .params
                 .iter()
                 .zip(args.iter_mut())
                 .enumerate()
                 .map(|(i, (&p, a))| (p, param_value(entry, i, std::mem::replace(a, Value::Unit)))),
+            |_| 0,
         );
     }
 
@@ -4802,7 +4623,7 @@ impl<'p> Interp<'p> {
                     // `-> (i64 where _ <= parent_rem)`) can reference parameters.
                     // `env` already holds the param bindings from the body; add
                     // `_` and evaluate against it instead of a bare env.
-                    env.define(SYM_UNDERSCORE, result.clone());
+                    env.define(SYM_UNDERSCORE, result.clone(), 0);
                     if let Value::Bool(false) =
                         contain_frame(self.eval(pred, env), FrameEdge::Predicate)?
                     {
@@ -4970,13 +4791,13 @@ impl<'p> Interp<'p> {
                         // `&&`, `||`, comparisons, function calls, you name it.
                         let mut pred_env = Env::new();
                         if let Some(v) = fields.get(SYM_VALUE) {
-                            pred_env.define(SYM_VALUE, v.clone());
+                            pred_env.define(SYM_VALUE, v.clone(), 0);
                         }
                         if let Some(c) = fields.get(SYM_CONFIDENCE) {
-                            pred_env.define(SYM_CONFIDENCE, c.clone());
+                            pred_env.define(SYM_CONFIDENCE, c.clone(), 0);
                         }
                         if let Some(s) = fields.get(SYM_SOURCE_TAG) {
-                            pred_env.define(SYM_SOURCE_TAG, s.clone());
+                            pred_env.define(SYM_SOURCE_TAG, s.clone(), 0);
                         }
                         let outcome = contain_frame(
                             self.eval(&spec.predicate, &mut pred_env),
@@ -5037,7 +4858,7 @@ impl<'p> Interp<'p> {
                 } else {
                     // Composite predicate: bind `value` to the scalar and evaluate.
                     let mut pred_env = Env::new();
-                    pred_env.define(SYM_VALUE, result.clone());
+                    pred_env.define(SYM_VALUE, result.clone(), 0);
                     let outcome = contain_frame(
                         self.eval(&spec.predicate, &mut pred_env),
                         FrameEdge::Predicate,
@@ -5131,26 +4952,23 @@ impl<'p> Interp<'p> {
             // The cell's vector becomes the frame's bindings and the frame's
             // empty one waits in the cell; they swap back below, so both keep
             // their capacity.
-            std::mem::swap(&mut env.vars, &mut *captured.borrow_mut());
+            env.lend_in(&mut captured.borrow_mut(), 0);
         } else {
-            let cell = captured.borrow();
-            env.vars.reserve(cell.len() + n);
-            env.vars.extend_from_slice(&cell);
+            env.copy_in(&captured.borrow(), n, 0);
         }
         // The base scope (the cell's bindings) ends at `base`; a fresh scope
         // holds the parameters. Slotted parameters are the next bindings, so
         // they are pushed in place, as `define_var` would (cost only).
-        let base = env.vars.len();
+        let base = env.len();
         env.push();
+        let frame = &mut *env;
         if code.param_base.map(|b| b as usize) == Some(base) {
-            let vars = &mut env.vars;
-            vars.reserve(n);
-            args.bind(|i, v| vars.push((code.params[i], v)));
+            frame.reserve(n);
+            args.bind(|i, v| frame.push_var(code.params[i], v, 0));
         } else {
-            let frame = &mut *env;
             args.bind(|i, v| {
                 let slot = code.param_base.map_or(NAMED, |b| b + i as u32);
-                frame.define_var(code.params[i], slot, v);
+                frame.define_var(code.params[i], slot, v, 0);
             });
         }
         // A closure's own `return` ends the closure (`run_lambda`); every
@@ -5163,15 +4981,11 @@ impl<'p> Interp<'p> {
         // their own pushed scope above.
         if lend {
             // The cell holds the frame's empty vector; swap the bindings back.
-            env.release_to(base);
-            std::mem::swap(&mut env.vars, &mut *captured.borrow_mut());
+            env.lend_back(base, &mut captured.borrow_mut());
         } else {
             // A re-entrant call may have written the cell meanwhile; this
             // call's write-back wins, as it always has.
-            let mut cell = captured.borrow_mut();
-            for ((_, slot), (_, v)) in cell.iter_mut().zip(&env.vars[..base]) {
-                *slot = v.clone();
-            }
+            env.write_back(base, &mut captured.borrow_mut());
         }
         self.give_frame(env);
         out
@@ -5305,7 +5119,7 @@ fn write_place(
     v: Value,
     env: &mut Env,
 ) -> Result<(), Flow> {
-    let mut slot = env.get_var_mut(base, base_slot).ok_or_else(|| {
+    let mut slot = env.get_var_mut(base, base_slot, 0).ok_or_else(|| {
         Flow::Panic(format!("assignment to undefined variable `{}`", sym_name(base)).into())
     })?;
     let (last, prefix) = steps

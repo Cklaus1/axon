@@ -280,7 +280,7 @@ impl<'p> Interp<'p> {
                     return Ok(Value::Unit);
                 }
                 let v = self.eval(value, env)?;
-                if env.assign_var(s, slot, v) {
+                if env.assign_var(s, slot, v, 0) {
                     Ok(Value::Unit)
                 } else {
                     panic(format!("assignment to undefined variable `{name}`"))
@@ -417,7 +417,7 @@ impl<'p> Interp<'p> {
                         break;
                     }
                     env.push();
-                    env.define_var(var, slot, Value::Int(i));
+                    env.define_var(var, slot, Value::Int(i), 0);
                     let step = self.run_loop_body(body, env);
                     env.pop();
                     match step? {
@@ -688,9 +688,9 @@ impl<'p> Interp<'p> {
             if let Some(crate::ast::AxonType::Named(rn)) = ty {
                 if let Some(pred) = self.refine_preds.get(rn.as_str()).copied() {
                     let mut pe = Env::new();
-                    pe.define(SYM_UNDERSCORE, v.clone());
+                    pe.define(SYM_UNDERSCORE, v.clone(), 0);
                     // Also bind the bound name for inline `let x: T where E[x] > k`.
-                    pe.define(s, v.clone());
+                    pe.define(s, v.clone(), 0);
                     if let Value::Bool(false) =
                         contain_frame(self.eval(pred, &mut pe), FrameEdge::Predicate)?
                     {
@@ -718,7 +718,7 @@ impl<'p> Interp<'p> {
         } else {
             v
         };
-        env.define_var(s, slot, v);
+        env.define_var(s, slot, v, 0);
         Ok(())
     }
 
@@ -1327,7 +1327,7 @@ impl<'p> Interp<'p> {
                     return panic("`&mut` of something other than a local variable".to_string());
                 };
                 let (s, slot) = self.res.var(operand, name);
-                let Some(b) = env.get_var_mut(s, slot) else {
+                let Some(b) = env.get_var_mut(s, slot, 0) else {
                     return panic(format!("`&mut {name}`: `{name}` is not a local variable"));
                 };
                 let v = std::mem::replace(b, Value::Unit);
@@ -1352,7 +1352,7 @@ impl<'p> Interp<'p> {
                 };
                 let out = match (entry.def.params.get(i), entry.params.get(i)) {
                     (Some(p), Some(s)) if matches!(p.ty, crate::ast::AxonType::RefMut(_)) => {
-                        match frame.get_mut(*s) {
+                        match frame.get_mut(*s, 0) {
                             Some(v) => std::mem::replace(v, Value::Unit),
                             None => Value::Unit,
                         }
@@ -1360,7 +1360,7 @@ impl<'p> Interp<'p> {
                     _ => Value::Unit,
                 };
                 let (s, slot) = self.res.var(operand, name);
-                if let Some(b) = env.get_var_mut(s, slot) {
+                if let Some(b) = env.get_var_mut(s, slot, 0) {
                     forget_scalar(std::mem::replace(b, out));
                 }
             }
@@ -1689,7 +1689,7 @@ impl<'p> Interp<'p> {
         if let Some((_, tier, _)) = call {
             *self.current_call_tier.borrow_mut() = tier.clone();
         }
-        let Some(slot) = env.get_var_mut(s, slot) else {
+        let Some(slot) = env.get_var_mut(s, slot, 0) else {
             unreachable!("the operand does not mention `{name}`, so it is still bound")
         };
         match (op, slot, y) {
@@ -1832,7 +1832,7 @@ impl<'p> Interp<'p> {
                         if let Some(pred) = self.refine_preds.get(rn.as_str()).copied() {
                             if let Some(fv) = fields.named(&tf.name) {
                                 let mut pe = Env::new();
-                                pe.define(SYM_UNDERSCORE, fv.clone());
+                                pe.define(SYM_UNDERSCORE, fv.clone(), 0);
                                 if let Value::Bool(false) =
                                     contain_frame(self.eval(pred, &mut pe), FrameEdge::Predicate)?
                                 {
@@ -1857,7 +1857,7 @@ impl<'p> Interp<'p> {
                 if let Some(pred) = &td.refinement {
                     let sv = Value::record(sname, fields);
                     let mut pe = Env::new();
-                    pe.define(SYM_UNDERSCORE, sv.clone());
+                    pe.define(SYM_UNDERSCORE, sv.clone(), 0);
                     if let Value::Bool(false) =
                         contain_frame(self.eval(pred, &mut pe), FrameEdge::Predicate)?
                     {
@@ -1912,7 +1912,7 @@ impl<'p> Interp<'p> {
             Pattern::Wildcard => Ok(true),
             Pattern::Ident(name) => {
                 let (s, slot) = self.res.pat_var(pat, name);
-                env.define_var(s, slot, val.clone());
+                env.define_var(s, slot, val.clone(), 0);
                 Ok(true)
             }
             Pattern::Literal(lit) => Ok(values_equal(&lit_to_val(lit), val)),

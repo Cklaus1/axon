@@ -633,13 +633,13 @@ fn run_both(f: &str) -> R {
     let sentinel = intern("sentinel");
     let frame = || {
         let mut env = Env::new();
-        env.define(sentinel, Value::Int(-1));
+        env.define(sentinel, Value::Int(-1), 0);
         env.push();
         env
     };
     let check = |env: &Env, engine: &str| {
-        assert_eq!(env.marks.len(), 1, "{f} ({engine}): scopes left pushed");
-        assert_eq!(env.vars.len(), 1, "{f} ({engine}): bindings left behind");
+        assert_eq!(env.depth(), 1, "{f} ({engine}): scopes left pushed");
+        assert_eq!(env.len(), 1, "{f} ({engine}): bindings left behind");
     };
     let mut env = frame();
     let tree = match interp.eval(body, &mut env) {
@@ -705,7 +705,7 @@ fn exec_runs_hand_built_ops_with_balanced_scopes() {
     let interp = Interp::build(&prog).expect("unsealed build");
     let a = intern("a");
     let mut env = Env::new();
-    env.define(a, Value::Int(1));
+    env.define(a, Value::Int(1), 0);
     let shadow = Expr::Let {
         name: "a".into(),
         ty: None,
@@ -728,7 +728,7 @@ fn exec_runs_hand_built_ops_with_balanced_scopes() {
     };
     let r = interp.exec(&body, &mut env);
     assert!(matches!(r, Ok(Value::Int(7))), "{r:?}");
-    assert_eq!(env.marks.len(), 0);
+    assert_eq!(env.depth(), 0);
     assert!(matches!(env.get(a), Some(Value::Int(1))));
     let empty = Body {
         ops: Box::new([]),
@@ -914,17 +914,17 @@ fn pure_rechecks_leaf_kinds() {
     );
     let e = PureExpr::new(tree);
     let mut env = Env::new();
-    env.define(a, Value::Int(5));
+    env.define(a, Value::Int(5), 0);
     assert!(matches!(e.eval(&env), Some(Scalar::Int(15))), "first run");
     assert!(
         matches!(e.eval(&env), Some(Scalar::Int(15))),
         "register code"
     );
-    *env.get_mut(a).expect("bound") = Value::Float(1.5);
+    *env.get_mut(a, 0).expect("bound") = Value::Float(1.5);
     assert!(e.eval(&env).is_none(), "float against int code");
-    *env.get_mut(a).expect("bound") = Value::Int(i64::MAX);
+    *env.get_mut(a, 0).expect("bound") = Value::Int(i64::MAX);
     assert!(e.eval(&env).is_none(), "overflow");
-    *env.get_mut(a).expect("bound") = Value::Str(Rc::new("x".to_string()));
+    *env.get_mut(a, 0).expect("bound") = Value::Str(Rc::new("x".to_string()));
     assert!(e.eval(&env).is_none(), "str");
     assert!(e.eval(&Env::new()).is_none(), "unbound");
 }
