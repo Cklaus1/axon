@@ -348,6 +348,22 @@ did Mercury Decide (p=0.02). Every test in that file starts from a fresh
 budget, so that body passed the hidden check too. The audit catches blatant
 special-casing, not subtle state-dependent shortcuts.
 
+`DECISION_MODEL=1 bash examples/cortex/run.sh` runs the ranker and the audit
+on `pricing.ax` after the deterministic cases (which pin
+`CORTEX_RANKER=spectrum` and `CORTEX_AUDIT=off`, so a key in the environment
+sends nothing). It needs `OPENROUTER_API_KEY` and a `--features ai` cortex (the
+script builds one when `CORTEX_BIN` is not given), repairs with the known-good
+literal once with `openrouter:anthropic/claude-haiku-5.5` and once with
+`decision:inception/mercury-decide` for both flags, and asserts exit 0, that
+the ranker ordered the walk, and that the audit answered `clean` or
+`suspect`. A missing key or a build without `ai` is a mismatch, not a silent
+fallback. One run (2026-10-12): both rankers put `discount` first and the walk
+took 1 attempt; Haiku 5.5 1584 ms / $0.000156 for the ranking and clean
+(p=0.03) in 1629 ms / $0.000183 for the audit; Mercury 388 ms / $0.000016 and
+clean (p=0.00) in 546 ms / $0.000020. The spectrum also puts `discount` first
+on this file, so the run shows the wiring works end to end, not that the ranker
+improves anything; that evidence is LocRank's.
+
 ### Granting write access: `--write-prefix`
 
 There is no default grant. The prefix is compared with the workspace-relative

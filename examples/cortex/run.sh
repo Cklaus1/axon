@@ -14,6 +14,16 @@
 #                                               # real model through the `cmd:`
 #                                               # seam (needs the `claude` CLI,
 #                                               # logged in; costs money)
+#   DECISION_MODEL=1 bash examples/cortex/run.sh
+#                                               # plus the model ranker and the
+#                                               # post-fix audit, once on Haiku 5.5
+#                                               # and once on Mercury Decide
+#                                               # (needs OPENROUTER_API_KEY and a
+#                                               # cortex built with `--features ai`;
+#                                               # under $0.01 a run)
+#
+# The deterministic cases pin CORTEX_RANKER=spectrum and CORTEX_AUDIT=off, so a
+# key in the environment never sends pricing.ax anywhere unless asked.
 set -u
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$REPO" || exit 2
@@ -28,9 +38,14 @@ fi
 if [ -n "${CORTEX_BIN:-}" ]; then
   named_bin CORTEX_BIN cortex-example
 else
-  cargo build -q -p axon-cortex --bin cortex || exit 2
+  if [ "${DECISION_MODEL:-0}" = "1" ]; then
+    cargo build -q -p axon-cortex --features ai --bin cortex || exit 2
+  else
+    cargo build -q -p axon-cortex --bin cortex || exit 2
+  fi
   use_built CORTEX_BIN cortex
 fi
+export CORTEX_RANKER=spectrum CORTEX_AUDIT=off
 
 SRC="$REPO/examples/cortex/pricing.ax"
 CHECK=hidden_discount_boundary
@@ -162,6 +177,52 @@ for line in open(sys.argv[1]):
              r["output_tokens"], r["extraction_status"], r["body"]))
 print("   total cost_usd=%.4f" % total)
 ' "$CORTEX_MODEL_LOG"
+fi
+
+# 8. Optional: the decision models around the walk. The generator is the
+#    known-good literal, so the exit code is fixed (0) whatever order the
+#    ranker picks; what is asserted is that the ranker ORDERED the walk and the
+#    audit ANSWERED (no fallback to spectrum order, no `unavailable`). The
+#    order, the audit verdict, latency and cost are reported, not asserted.
+if [ "${DECISION_MODEL:-0}" = "1" ]; then
+  if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+    echo
+    echo "== DECISION_MODEL: OPENROUTER_API_KEY is not set: MISMATCH"
+    fails=$((fails + 1))
+  else
+    for spec in openrouter:anthropic/claude-haiku-5.5 decision:inception/mercury-decide; do
+      fresh
+      echo
+      echo "== DECISION_MODEL: --ranker $spec --audit $spec"
+      "$CORTEX_BIN" repair --workspace "$W" "${common[@]}" \
+        --write-prefix pricing.ax --generator "literal:$FIX" \
+        --ranker "$spec" --audit "$spec" --json >"$W/outcome.json"
+      got=$?
+      if [ "$got" = 0 ]; then
+        echo "-- expected exit 0, got 0: ok"
+      else
+        echo "-- expected exit 0, got $got: MISMATCH"
+        fails=$((fails + 1))
+      fi
+      if python3 - "$W/outcome.json" "$spec" <<'EOF'
+import json, sys
+lines = [l for l in open(sys.argv[1]) if l.strip()]
+o = json.loads(lines[-1]) if lines else {}
+spec = sys.argv[2]
+r, a, e = o.get("ranker") or {}, o.get("audit") or {}, o.get("escalation") or {}
+print("-- ranker: used=%s order=%s latency_ms=%s cost_usd=%s reason=%s"
+      % (r.get("used"), r.get("order"), r.get("latency_ms"), r.get("cost_usd"), r.get("reason")))
+print("-- attempted: %s" % o.get("attempted"))
+print("-- audit: verdict=%s p=%s latency_ms=%s cost_usd=%s reason=%s"
+      % (a.get("verdict"), a.get("p"), a.get("latency_ms"), a.get("cost_usd"), a.get("reason")))
+print("-- escalation: %s" % e.get("advice"))
+ok = r.get("used") == spec and a.get("verdict") in ("clean", "suspect")
+print("-- the ranker ordered the walk and the audit answered: %s" % ("ok" if ok else "MISMATCH"))
+sys.exit(0 if ok else 1)
+EOF
+      then :; else fails=$((fails + 1)); fi
+    done
+  fi
 fi
 
 echo

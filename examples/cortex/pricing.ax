@@ -6,11 +6,12 @@
 //
 // Tests:
 //   visible_*         the evidence localization works from. One of them fails.
-//   hidden_discount_boundary
-//                     the adjudicator passed as `--check`. Cortex never puts
+//   hidden_*          the adjudicator passed as `--check`. Cortex never puts
 //                     it in the generator's prompt and never counts it as
 //                     localization evidence. It FAILS on this file, which is
-//                     what lets it witness a repair.
+//                     what lets it witness a repair. Its name appears only in
+//                     its own definition: a model ranker or audit is refused
+//                     the file if the hidden check is named anywhere else.
 //
 // `axon test examples/cortex/pricing.ax` therefore reports 2 failures. That is
 // the point of the file; do not "fix" it here.
