@@ -59,10 +59,12 @@ pub fn copy_executable(src: impl AsRef<Path>, dst: impl AsRef<Path>, mode: u32) 
 /// `OPENROUTER_API_KEY` — a network call, a spend, and a candidate order that
 /// is no longer the one these rows assert. The ranker has its own hermetic
 /// tests (`tests/rank.rs`); the rows that check its CLI wiring set the
-/// variables back explicitly.
+/// variables back explicitly. `CORTEX_LABEL_LOG` is cleared for the same
+/// reason: a log named by the developer's shell must not collect test runs.
 pub fn cortex() -> std::process::Command {
     let mut c = std::process::Command::new(env!("CARGO_BIN_EXE_cortex"));
     c.env_remove("OPENROUTER_API_KEY")
+        .env_remove("CORTEX_LABEL_LOG")
         .env("CORTEX_RANKER", "spectrum")
         .env("CORTEX_AUDIT", "off");
     c

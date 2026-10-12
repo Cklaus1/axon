@@ -30,6 +30,7 @@ pub mod ai;
 pub mod audit;
 pub mod episode;
 pub mod generate;
+pub mod label;
 pub mod locate;
 pub mod openrouter;
 pub mod rank;

@@ -134,6 +134,16 @@ cortex locate --file PATH --check NAME [--workspace DIR] [--axon PATH] [--json]
                          `axon-test-local`). Verified on load; a mismatch or a
                          missing entry exits 22 with nothing run. When given,
                          the registered binary replaces --axon.
+  --label-log PATH       append ONE `cortex-label/1` JSON line per run that
+                         reached the walk: the file's sha256 as found, the
+                         check, the spectrum ranking with scores, the ranker's
+                         order, every attempt, the outcome and exit code, and
+                         `truth` = the repaired symbol (null unless
+                         verified_done). Default: env CORTEX_LABEL_LOG, else
+                         off. Written after the verdict: a write failure is
+                         one stderr line and never changes the exit code.
+  --label-source         also record the file's text as found in that line.
+                         Off by default: source can be sensitive.
   --json                 machine-readable outcome on stdout
 ";
 
@@ -330,6 +340,8 @@ fn main() {
     let mut candidates: usize = 3;
     let mut ranker_flag: Option<String> = None;
     let mut audit_flag: Option<String> = None;
+    let mut label_log_flag: Option<String> = None;
+    let mut label_source = false;
 
     while let Some(a) = args.next() {
         let mut val = |flag: &str| -> String {
@@ -345,6 +357,8 @@ fn main() {
             "--generator" => generator_spec = val("--generator"),
             "--ranker" => ranker_flag = Some(val("--ranker")),
             "--audit" => audit_flag = Some(val("--audit")),
+            "--label-log" => label_log_flag = Some(val("--label-log")),
+            "--label-source" => label_source = true,
             "--axon" => axon_bin = std::path::PathBuf::from(val("--axon")),
             "--check-registry" => {
                 check_registry = Some(std::path::PathBuf::from(val("--check-registry")))
@@ -434,6 +448,16 @@ fn main() {
         std::env::var(axon_cortex::audit::AUDIT_ENV).ok().as_deref(),
     )
     .unwrap_or_else(|e| usage(&e));
+    let label_log = axon_cortex::label::select(
+        label_log_flag.as_deref(),
+        std::env::var(axon_cortex::label::LABEL_ENV).ok().as_deref(),
+    )
+    .unwrap_or_else(|e| usage(&e));
+    if label_source && label_log.is_none() {
+        usage("--label-source needs a label log: pass --label-log PATH or set CORTEX_LABEL_LOG");
+    }
+    // What localization found, kept only for the label row.
+    let mut localization: Option<axon_cortex::label::Localization> = None;
 
     let fabric = fabric_executor(&fabric_args, check_registry.as_deref());
     let mut runner = registered_runner(
@@ -552,9 +576,9 @@ fn main() {
         // failure keeps the spectrum order and says so on one line.
         let located = ranked.len();
         let eligible: Vec<String> = ranked
-            .into_iter()
+            .iter()
             .take(candidates)
-            .map(|(n, _)| n)
+            .map(|(n, _)| n.clone())
             .collect();
         let report = axon_cortex::rank::Ranker::from_env(ranker_spec.clone()).rank(
             &axon_cortex::rank::RankInput {
@@ -585,6 +609,15 @@ fn main() {
         escalation = Some(advice);
         let order = report.order.clone();
         ranker_report = Some(report);
+        if label_log.is_some() {
+            localization = Some(axon_cortex::label::Localization {
+                failing,
+                passing,
+                ranked,
+                candidates,
+                eligible,
+            });
+        }
         order
     };
 
@@ -766,6 +799,48 @@ fn main() {
         }
         report
     });
+
+    // THE LABEL ROW, after the verdict, the exit code, the file and the audit
+    // are settled. It reads them and changes none of them: a failed append is
+    // one stderr line and the run exits exactly as it would have.
+    if let Some(path) = &label_log {
+        let costs = targets
+            .iter()
+            .zip(&progress)
+            .filter(|(t, _)| attempted.contains(t))
+            .map(|(t, p)| axon_cortex::label::CandidateCost {
+                symbol: t.clone(),
+                proposals: p.proposals(),
+                steps: p.steps(),
+            })
+            .collect();
+        let row = axon_cortex::label::LabelRow {
+            ts: axon_cortex::label::utc_timestamp(std::time::SystemTime::now()),
+            cortex_sha256: axon_cortex::label::build_sha256(),
+            file: &file,
+            source: &original,
+            include_source: label_source,
+            check: &check,
+            symbol: (!symbol.is_empty()).then_some(symbol.as_str()),
+            generator: &generator_spec,
+            budget,
+            localization: localization.as_ref(),
+            ranker: ranker_report.as_ref().map(|r| r.to_json()),
+            attempted: &attempted,
+            outcome: kind,
+            exit_code: code,
+            steps,
+            truth: repaired.as_deref(),
+            costs,
+            audit: audit.as_ref().map(|a| a.to_json()),
+        };
+        if let Err(e) = axon_cortex::label::append(path, &row.to_json()) {
+            eprintln!(
+                "label log {}: cannot append ({e}); the verdict and exit code are unaffected",
+                path.display()
+            );
+        }
+    }
 
     if json {
         println!(
