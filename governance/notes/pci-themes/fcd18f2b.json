@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R50 S10-S13)",
+  "text": "parser only (parser.rs): a chain cut inside an interpolation slot is settled by the outer root on wasm32; no evaluator change"
+}

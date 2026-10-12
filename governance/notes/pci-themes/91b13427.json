@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R50 S10-S13)",
+  "text": "INTERPRETER (representation): every Value container moves behind a newtype (array/tuple elements Elems, Some/Ok/Err payload VBox, chan Queue, dict DictMap, record Fields, closure code/captures Held) so wasm32 drops it through bounded_drop (AX-59); reads and writes go through the newtypes with the same values, and taint, which rides on bindings and expressions, is unchanged (every_type_that_holds_a_value_keeps_its_taint lists each newtype)"
+}

@@ -1,0 +1,4 @@
+{
+  "theme": "R51 merge-main",
+  "text": "tests only (taint_tests.rs, tests_v022_b.rs, vm/tests.rs): the holder and name-lookup drift lists cover main's newtypes and purefn.rs; new sealed attack cases over packed arrays and a sealed-run test that no pure tier or bulk loop runs"
+}

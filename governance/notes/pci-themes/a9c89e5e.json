@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R50 S10-S13)",
+  "text": "INTERPRETER: wasm32 bounded drop of deep values (AX-59, drop glue only), the front end's expression nesting limit on wasm32 (AX-60, parser.rs/ast.rs: a too-deep program is refused at parse, no run), and host_await_val/host_await_val_opt check the payload without a deep copy (AX-61, SendValue::request: same refusals, no copy on wasm32); taint is untouched"
+}

@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R50 S10-S13)",
+  "text": "VM only: the R50 S11 pure-i64 function tier (interp/vm/purefn.rs), entered only from VM call ops (CallFastLocalInt, CallFast, call_fast_inline); FnEntry gains its table index; the tree-walker is untouched and a sealed run builds no pure code (r51_t1b_a_sealed_run_enters_no_pure_tier_or_bulk_loop)"
+}

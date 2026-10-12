@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R50 S10-S13)",
+  "text": "INTERPRETER (cost only): Elems::put replaces Elems::replace for element stores (no old element returned, a scalar's drop glue skipped) to keep wasm32 frames within budget; the stored values are the same"
+}

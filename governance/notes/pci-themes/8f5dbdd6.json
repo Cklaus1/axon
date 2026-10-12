@@ -1,0 +1,4 @@
+{
+  "theme": "R51 merge-main",
+  "text": "joins r51/int 75f385b5 onto main 8de8e43e (R50 S10-S13, AX-59/AX-60); conflicts under src resolved keeping both sides: main's newtypes (VBox, Elems, DictMap, Queue, Held<ClosureCode>, Captures bindings in a Held) carry r51's seal fields (ClosureVal contract/seal, FnEntry seal flag, sealed fn values), r51's VM taint arguments (get_var_mut_t::<VM_SEALED>, give_frame_t) are applied to main's new VM paths, fold_leaf keeps r51's seal_pin_vm gate, conform/taint walks iterate Elems::vals; nest_cost constants provisionally the larger of the two sides (re-derived in a follow-up); the tree evaluator's seal edges are unchanged"
+}

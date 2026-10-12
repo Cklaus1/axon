@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R50 S10-S13)",
+  "text": "parser only (parser.rs): a too-deep type-def base type is refused on wasm32 instead of reported as a syntax error; no evaluator change"
+}

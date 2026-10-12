@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R50 S10-S13)",
+  "text": "INTERPRETER (representation): arr_repeat of a plain Bool/Int/Float and arr_range build packed arrays (Elems Bools/Ints/Floats) on both engines; element reads and writes see the same Values and a kind-changing write converts to Vals; the VM gains bulk fill/count loops (VM only); taint rides on the array's holder, so the form cannot drop it (a_packed_array_carries_its_holders_taint)"
+}

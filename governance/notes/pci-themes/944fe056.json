@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R50 S10-S13)",
+  "text": "VM only (interp/vm/compile.rs, pure.rs, mod.rs): pure register loops take array elements, if-chains and integer-range `for`; the tree-walker is untouched, and a sealed run never compiles a VM body (R51 compile refusal)"
+}

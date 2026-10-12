@@ -16,13 +16,13 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 4bf993b870f42fa3dec7ca3b94449732d84f461e
+generated-at: ffa39ba5e74f874cffbe3b961e7d20b26d09c590
 
-`git diff --numstat 31413ca7..4bf993b8 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..ffa39ba5 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
-| `crates/axon-core/src/ast.rs` | 201 | 88 |
+| `crates/axon-core/src/ast.rs` | 334 | 81 |
 | `crates/axon-core/src/builtins.rs` | 44 | 10 |
 | `crates/axon-core/src/cache.rs` | 284 | 40 |
 | `crates/axon-core/src/capabilities.rs` | 18 | 1 |
@@ -51,46 +51,47 @@ generated-at: 4bf993b870f42fa3dec7ca3b94449732d84f461e
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 5278 | 1557 |
-| `crates/axon-core/src/interp/builtins.rs` | 672 | 512 |
-| `crates/axon-core/src/interp/conform.rs` | 1800 | 0 |
-| `crates/axon-core/src/interp/conform_tests.rs` | 1354 | 0 |
+| `crates/axon-core/src/interp.rs` | 7817 | 3306 |
+| `crates/axon-core/src/interp/builtins.rs` | 746 | 594 |
+| `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
+| `crates/axon-core/src/interp/conform_tests.rs` | 1364 | 0 |
 | `crates/axon-core/src/interp/crossing_tests.rs` | 438 | 0 |
 | `crates/axon-core/src/interp/dispatch_tests.rs` | 639 | 0 |
-| `crates/axon-core/src/interp/env.rs` | 1205 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 2192 | 605 |
+| `crates/axon-core/src/interp/env.rs` | 1221 | 0 |
+| `crates/axon-core/src/interp/eval.rs` | 2194 | 606 |
 | `crates/axon-core/src/interp/goal.rs` | 87 | 42 |
 | `crates/axon-core/src/interp/kernel_tests.rs` | 336 | 0 |
 | `crates/axon-core/src/interp/pick_tests.rs` | 394 | 0 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 48 | 21 |
 | `crates/axon-core/src/interp/sink_tests.rs` | 1099 | 0 |
-| `crates/axon-core/src/interp/sym.rs` | 1196 | 0 |
-| `crates/axon-core/src/interp/taint.rs` | 1654 | 0 |
-| `crates/axon-core/src/interp/taint_tests.rs` | 4172 | 0 |
+| `crates/axon-core/src/interp/sym.rs` | 1200 | 0 |
+| `crates/axon-core/src/interp/taint.rs` | 1659 | 0 |
+| `crates/axon-core/src/interp/taint_tests.rs` | 4355 | 0 |
 | `crates/axon-core/src/interp/tests_v022_a.rs` | 1184 | 0 |
-| `crates/axon-core/src/interp/tests_v022_b.rs` | 2079 | 0 |
+| `crates/axon-core/src/interp/tests_v022_b.rs` | 2082 | 0 |
 | `crates/axon-core/src/interp/tests_v022_c.rs` | 152 | 0 |
 | `crates/axon-core/src/interp/tests_v022_s4.rs` | 600 | 0 |
-| `crates/axon-core/src/interp/value.rs` | 506 | 514 |
-| `crates/axon-core/src/interp/vm/compile.rs` | 1698 | 0 |
-| `crates/axon-core/src/interp/vm/mod.rs` | 3474 | 0 |
-| `crates/axon-core/src/interp/vm/pure.rs` | 964 | 0 |
-| `crates/axon-core/src/interp/vm/tests.rs` | 1796 | 0 |
+| `crates/axon-core/src/interp/value.rs` | 516 | 516 |
+| `crates/axon-core/src/interp/vm/compile.rs` | 1782 | 0 |
+| `crates/axon-core/src/interp/vm/mod.rs` | 3587 | 0 |
+| `crates/axon-core/src/interp/vm/pure.rs` | 1835 | 0 |
+| `crates/axon-core/src/interp/vm/purefn.rs` | 860 | 0 |
+| `crates/axon-core/src/interp/vm/tests.rs` | 2688 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
 | `crates/axon-core/src/lib.rs` | 116 | 21 |
 | `crates/axon-core/src/main.rs` | 799 | 243 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
 | `crates/axon-core/src/mut_borrow.rs` | 800 | 0 |
-| `crates/axon-core/src/parser.rs` | 84 | 3 |
+| `crates/axon-core/src/parser.rs` | 457 | 31 |
 | `crates/axon-core/src/replay.rs` | 40 | 17 |
 | `crates/axon-core/src/resolver.rs` | 579 | 86 |
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 46693 | 5385 |
+| total | 52858 | 7240 |
 
-`git log --reverse 31413ca7..4bf993b8 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..ffa39ba5 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -240,6 +241,16 @@ generated-at: 4bf993b870f42fa3dec7ca3b94449732d84f461e
 | 45347cb7 | amendment 121 | the backstop's first branch no longer appends the sealed-only diagnostics (empty there); three older rows re-anchored; the refusal-coverage exemption of the observer prune dropped (that file is not under crates/axon-core/src; the commit touches main.rs only by removing one line): no change in what is refused |
 | 416a6683 | amendment 121 | the parser unit test that is M3450's own attack (`an_item_that_ends_the_file_has_a_real_span_in_its_own_file`); no production change in this commit (parser.rs gains a test only) |
 | 64d4f997 | merged from main (R51 S0) | INTERPRETER: R50 rev 26 / AX-56: wasm32 recursion panics instead of trapping (guard 128, native-stack byte budget checked by scripts/wasm_stack_budget...: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it |
+| 944fe056 | merged from main (R50 S10-S13) | VM only (interp/vm/compile.rs, pure.rs, mod.rs): pure register loops take array elements, if-chains and integer-range `for`; the tree-walker is untouched, and a sealed run never compiles a VM body (R51 compile refusal) |
+| 848dc1fa | merged from main (R50 S10-S13) | wasm32 stack budget only (interp.rs nest_cost COMPILE_STMT release 672): a constant the guard charges, no semantics |
+| a9c89e5e | merged from main (R50 S10-S13) | INTERPRETER: wasm32 bounded drop of deep values (AX-59, drop glue only), the front end's expression nesting limit on wasm32 (AX-60, parser.rs/ast.rs: a too-deep program is refused at parse, no run), and host_await_val/host_await_val_opt check the payload without a deep copy (AX-61, SendValue::request: same refusals, no copy on wasm32); taint is untouched |
+| 2627dad7 | merged from main (R50 S10-S13) | VM only: the R50 S11 pure-i64 function tier (interp/vm/purefn.rs), entered only from VM call ops (CallFastLocalInt, CallFast, call_fast_inline); FnEntry gains its table index; the tree-walker is untouched and a sealed run builds no pure code (r51_t1b_a_sealed_run_enters_no_pure_tier_or_bulk_loop) |
+| e0f29182 | merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| 91b13427 | merged from main (R50 S10-S13) | INTERPRETER (representation): every Value container moves behind a newtype (array/tuple elements Elems, Some/Ok/Err payload VBox, chan Queue, dict DictMap, record Fields, closure code/captures Held) so wasm32 drops it through bounded_drop (AX-59); reads and writes go through the newtypes with the same values, and taint, which rides on bindings and expressions, is unchanged (every_type_that_holds_a_value_keeps_its_taint lists each newtype) |
+| e5f754ab | merged from main (R50 S10-S13) | front end and VM only: match guards and let refinement predicates are height-checked on wasm32 (ast.rs), over-tall operator chains are cut while parsing (parser.rs), purefn.rs drops an unused field; no evaluator change |
+| fcd18f2b | merged from main (R50 S10-S13) | parser only (parser.rs): a chain cut inside an interpolation slot is settled by the outer root on wasm32; no evaluator change |
+| a875d2b8 | merged from main (R50 S10-S13) | parser only (parser.rs): a too-deep type-def base type is refused on wasm32 instead of reported as a syntax error; no evaluator change |
+| 8e4bd760 | merged from main (R50 S10-S13) | parser only (parser.rs): nested attribute arguments charge the wasm32 nesting limit (AX-60); no evaluator change |
 | 13ee4b51 | R51 S0 merge | joins main 5864c423 with v022/veto c9ed2ddd taking MAIN's interpreter (interp.rs, interp/{eval,builtins,goal,proptest,value}.rs); veto's taint.rs/taint_tests.rs/pin.rs/conform.rs are NOT on this tree, so the seal they enforce is absent. Refuse-all pin in the same commit: Interp::build refuses any sealed run (SEAL_RUNTIME_COMPLETE = false), `axon test --seal` exits 2 before any result line, vm::compile refuses a sealed interp. Every PCI row that needs a seal edge is deferred (governance/status/r51-deferred-tests.json) until R51 S6 |
 | a45dc364 | R51 S1 | engine pin: Interp::build selects the engine through the pure vm::engine_for(sealed, SEAL_RUNTIME_COMPLETE, override, AXON_ENGINE), which decides a sealed run first: refused while the seal is incomplete (unchanged on this tree, SEAL_RUNTIME_COMPLETE = false), refused when the VM is requested (AXON_ENGINE=vm or set_engine(Vm)) or AXON_ENGINE is invalid, else the tree; `axon test --seal` refuses the same before any result line. Unsealed selection unchanged. T1a-d (truth table, no compiled body under seal, CLI, drift sweeps over interp/ incl. vm/): no change in what is refused on this tree (every sealed run still is) |
 | 56389c53 | R51 S0b | INTERPRETER: ports veto's non-seal fixes onto main's interpreter on both engines (loop control contained at every frame edge, TestEnd/run_test_fn_outcome completion, Result/Option return-boundary check, least-trusted Uncertain source_tag; veto 4e7851bc, bcf9c0a7, 2175cc1b, 89256bd3, 91c2f676, ea9ba38d, 6de01247): not PCI-reviewed on this tree; every sealed run is still refused (R51 SEAL_RUNTIME_COMPLETE = false) |
@@ -260,17 +271,26 @@ generated-at: 4bf993b870f42fa3dec7ca3b94449732d84f461e
 | fd3c3ff0 | R51 S3a | INTERPRETER per-frame Kernel: the handle-addressed kernel tables (provenance stores, corrigibility latch, current principal, goal constraint, principals, scheduler, supervisors, stores, LLM gateways, kernel goals, sandboxes, active sandbox) move into a Kernel struct, kernels: [Kernel; 2] selected by k() from frame_sealed, so a sealed frame reaches only its own (the sealed registry draws tokens from TOKEN_DOMAIN_SEALED). Every RNG draw and reseed goes through Interp::rng_next/rng_reseed, refused for operator code above a sealed frame; the sealed kernel has its own stream seeded by a SHA-256 derivation, the operator kernel keeps main's process-global stream (unsealed sequence pinned bit-identical). sandbox_run copies the entered ceiling into the sealed kernel for the call. frame_sealed is never set in an unsealed run, so it reaches kernels[0] only; no seal edge enters a sealed frame yet; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 51a993cf | R51 S3a | TEST-ONLY: PrincipalRegistry::is_sealed (cfg(test)) so a kernel unit test pins that the sealed kernel's registry is built with new_sealed; the call_builtin drift scan skips interp/kernel_tests.rs (a unit-test module calling the dispatcher directly, as taint_tests.rs does). Interpreter behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | be0636cb | R51 S3b | INTERPRETER closure representation A (spec Fork 3, TaintPort-5/-15): ClosureVal holds its capture cell as Rc<RefCell<Captures>> plus a per-reference contract and typed SealMarks (sealed_origin, sealed_fnval), never capture entries; make_closure/fn_value set them only in a sealed run, the lend test counts the cell's holders, Value stays 16 bytes. Ports v0.22 interp/conform.rs (casts, Cx, closure and channel contracts, dict snapshots and edges, replaced_ok, handler edges) onto main's Sym/Rc value model with Interp fields chan_contracts/dict_snaps/dict_epoch/user_traits/trait_impls/refine_bases, parse_type_text, Fields::iter_mut, t_chan_access/t_chan_choice in the select and method-call arms (sealed instantiation only), addr_of covering a closure's capture cell. The seal edges are not called from production yet (S3c); unit tests in interp/conform_tests.rs. Unsealed behaviour unchanged; not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 2ba136b5 | merged from main (R50 S10-S13) | INTERPRETER (representation): arr_repeat of a plain Bool/Int/Float and arr_range build packed arrays (Elems Bools/Ints/Floats) on both engines; element reads and writes see the same Values and a kind-changing write converts to Vals; the VM gains bulk fill/count loops (VM only); taint rides on the array's holder, so the form cannot drop it (a_packed_array_carries_its_holders_taint) |
 | 1215159c | R51 S3b | TEST-ONLY unit tests (interp/conform_tests.rs, cfg(test)) for the channel access hooks t_chan_access/t_chan_choice in the method-call and select arms, plus their drift test. Interpreter behaviour unchanged: not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 769f45f2 | R51 S3b | TEST-ONLY unit tests (interp/conform_tests.rs) that kill the conform.rs mutation survivors (dict snapshot bound, epoch retake, first sealed mutation, fresh snapshot kept, dict-in-dict walk, array element judgement, cast depth bound, enum name); cast_at widened to pub(super) for the depth test, no behaviour change. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 0faf4372 | R51 S3 merge | joins S3a (fd3c3ff0..51a993cf, Kernel split) and S3b (be0636cb..769f45f2, closure representation A, conform.rs); only the interp.rs mod declarations, this table and the note conflicted, resolved by keeping both sides; no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 3d728842 | merged from main (R50 S10-S13) | INTERPRETER (cost only): packed arrays' kind-changing writes go out of line (vals_mut_cold), the Elems::form test probe, a VM op out of line for register pressure; no semantic change |
 | 0cc34976 | R51 S3d | INTERPRETER seal sinks inside evaluation, every check gated on seal.active or the sealed instantiation (T): globals read only through global_ref (seal_global; is_global for the in-place existence tests, eval.rs and vm/mod.rs), the name rule at the eval call site and the name-resolving builtins (seal_name_args via pin.rs Ctx::npure, t_check_names), fn_by_name/no_such_fn with the uniform sealed text (scheduler_spawn, kernel_goal_create, goal_run_constrained, ident_unbound, unknown call), seal_width/seal_width_unary/t_check_width in eval_binop and the unary arm, seal_refine at the param/return/let/record refinement sites, seal_type and cast_field in finish_record, the let-annotation cast with the t_pins TYP strip, seal_method/seal_dispatch in the tree MethodCall arm (impl_method_sealed), chan_created and chan_send_check/dict_edge_in on the chan builtin and send; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| df510260 | merged from main (R50 S10-S13) | tests only (interp/vm/tests.rs): S13 revision-42 cases |
 | 56095a12 | R51 S3d | TEST-ONLY: interp/sink_tests.rs drives every S3d edge on a build_with sealed Interp, pins global_ref and the main-only sink classification by source sweep, ports the Pure-builtin ambient-state sweep (veto taint_tests.rs:2427); taint_tests' call_builtin site sweep skips the new test module; 14 deferred-registry entries re-slotted (edge ported, needs a live sealed run); no behaviour change |
 | 57e4b8cc | R51 S3c | INTERPRETER seal crossing (spec §11 S3, TaintPort §1.2): call_fn_in_general's sealed instantiation goes through call_fn_sealed (seal_call, dict_edge_in on the way in, with_frame under the callee's provenance and pin owner, catchable/abortable sticky, dict_edge_out on the way out); call_fn_frame casts params (bind_params_sealed, fn_cx per activation, t_pins TYP strip, a sealed frame's params take ALL) and the return (seal_ret); call_mut_with's sealed path casts the &mut hand-back (replaced_ok_top); the closure frame casts arguments and result across the seal (closure_args_check/closure_ret_check, param_types pins, dict edges); handler frames carry sealed/operator_frames/pin_owner, arms run through handler_edge_into/back under with_frame and handler_may_answer gates the replay feed; dict_set/dict_remove/dict_inc mark dict_mutated; sandbox_run casts a sealed fn's result to i64; goal_eval and sandbox_run refuse a sealed caller with the uniform no_such_fn text. Every addition is gated on seal.active or the T=true instantiation; unsealed path unchanged. Every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 0031d47e | merged from main (R50 S10-S13) | INTERPRETER (cost only): Elems::put replaces Elems::replace for element stores (no old element returned, a scalar's drop glue skipped) to keep wasm32 frames within budget; the stored values are the same |
 | c8d21f1f | R51 S3c | INTERPRETER scheduler pass (veto builtins.rs:468-482, amendment 117 loop findings 15/45): builtin_scheduler_run_once raises taint.catchable around each fiber's call, so call_fn_sealed's crossing sticky fires inside a fiber, and sets the sealed-entry sticky (VAL) after a fiber that entered a sealed frame (taint.entries moved) and failed; in an unsealed run entries never moves, so its behaviour is unchanged. Plus TEST-ONLY unit tests (interp/crossing_tests.rs, interp/taint_tests.rs) for handler_edge_into/back, the fiber pass, and the t_pins TYPE strips at a fn parameter, a closure parameter and an operator return. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 9178ebac | merged from main (R50 S10-S13) | tests only (interp/vm/tests.rs): S13 revision-46 cases |
 | 9453352e | R51 S3 merge | joins S3c (57e4b8cc..582ced51, the seal crossing) onto S3d (0cc34976..d9881963, seal sinks); conflicts resolved by keeping both sides (handler_may_answer from S3c, both drift-scan skips, both THEMES blocks) and S3c's more specific ignore reasons, with the registry's by_slice recounted from its entries; no change beyond the commits it joins; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 1e773a71 | merged from main (R50 S10-S13) | tests only (interp/vm/tests.rs): S13 revision-47 cases |
 | 72009129 | R51 S3 merge | INTERPRETER dict_set/dict_remove/dict_inc call dict_mutated without an outer seal.active guard, as veto does (builtins.rs:5286/5318/5470); dict_mutated returns at once when the seal is inactive, so an unsealed run does the same work less one branch. TEST-ONLY: the main-only sink classification names call_fn_sealed for call_fn_in_general (S3c moved the sealed instantiation behind the crossing). Both were drift tests from S3d that S3c's code tripped at the merge. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| 24ccc0a9 | merged from main (R50 S10-S13) | tests only (interp/vm/tests.rs): S13 revision-48 cases |
 | 2bf3e4a4 | R51 S3e | INTERPRETER init_globals in a sealed run (veto interp.rs:3292-3303): init_globals_sealed runs each module-level initialiser under its own definition's provenance (with_frame) in a fresh env, so a candidate's `let` meets the call and global-read edges (an earlier global is read through global_ref) and its kernel effects land in the candidate's kernel; the let's taint is recorded by t_set_global. The unsealed path is unchanged (one shared env, no taint bookkeeping, now without the dead seal.active branch). Plus TEST-ONLY sink tests (every taint carrier into the name rule, the name half of channel taint, own fn values, definition provenance, a candidate impl answering an operator method) and the last 5 S3 deferred-registry entries re-slotted (4 to S6, 1 to S4 for PICK). Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | d25cae8c | R51 S3e | TEST-ONLY: rustfmt of interp/sink_tests.rs (line wrapping of the S3e tests); no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
+| c0074c64 | merged from main (R50 S10-S13) | tests only (interp/vm/tests.rs): S13 revision-49 cases |
+| c671217d | merged from main (R50 S10-S13) | tests only (interp/vm/tests.rs): S13 revision-50 cases |
 | 65eda84a | R51 S4b | INTERPRETER receiver dispatch rule at run time (veto taint.rs:1414-1476): impl_method_sealed (the tree MethodCall arm under T) takes the receiver's own taint and calls t_check_dispatch after seal_method/seal_dispatch; t_check_dispatch returns at once unless the receiver carries TYP or PICK (new taint bit, veto taint.rs:71), and t_check_dispatch_tainted refuses an untyped or picked receiver when the method selects between operator impls. t_rules (veto taint.rs:725) gates t_check_names/t_check_width/t_check_dispatch: always true outside cfg(test). Per-thread cfg(test) switches DISPATCH_RULE_OFF (read by seal_name_args, seal_dispatch, seal_width, seal_width_unary) and TAINT_FORCE_ON (read by t_rules), default off. goal.rs: run_goal/_warm/_random/_categorical/_multistart/_tournament apply seal_call to the goal fn, and unknown_goal_name gives a sealed caller the no-such-fn text (veto goal.rs, interp.rs:4946). TEST-ONLY interp/dispatch_tests.rs; sink_tests turn TAINT_FORCE_ON on where they judge the runtime taint. The VM and unsealed runs never reach the new code (impl_method_sealed only under T; seal_call returns unless seal.active); every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | 5fea0339 | R51 S4b | INTERPRETER make_closure records the creating frame's pin owner in a sealed run (cv.seal.pin_owner = pin_fn, veto PIN_FN_MARK eval.rs:967-972); dispatch_named in a sealed run refuses a non-closure value a local holds (not_callable) instead of falling through to a fn of the same name (veto eval.rs local-call rule, amendment 60); both under seal.active, so an unsealed run is unchanged. TEST-ONLY T8.1 dispatch tests (undetermined positions, width/name, goal names) under Both/TaintOnly/StaticOnly/Neither with controls; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
 | ce3d8646 | R51 S4a | INTERPRETER the PICK mark (veto taint.rs:961-1185, 1320-1412): t_note marks an operator closure picked by capture cell (Rc::as_ptr, spec Fork 3) from eval_tainted and the local-closure call in dispatch_named; pick edges t_pick_index (index reads), t_pick_branch (if/match), t_stored_v (stores under sealed control), t_builtin_pick (sealed selector or callback; argument taints in taint.call_ats, set only on the sealed eval_call path), the frame-exit pick (t_frame_exit takes the result) and the sealed fn/closure hand-back; refusing sink t_check_call_picked in call_closure_frame. All gated on the sealed instantiation (T) or seal.active; unsealed and VM paths unchanged; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false) |
@@ -331,7 +351,9 @@ generated-at: 4bf993b870f42fa3dec7ca3b94449732d84f461e
 | f83da0f3 | R51 S7 mutation rows | TEST-ONLY (interp/tests_v022_b.rs, cfg(test)): a_sealed_call_that_binds_nothing_still_meets_the_seal_edge, a sealed candidate's parameter-free call of an operator fn that binds nothing, refused by the seal edge (control: the candidate's own answer completes); the killer of M3493/M3494, whose cells now run with debug assertions off (the debug store assertion stopped their mutants before the attack; without it check_store misses a bindless chain and the mutant completes); no interpreter code changed, no unsealed behaviour change |
 | 0a9731f2 | R51 S7 merge | joins r51/int 2eaef86b (7defe71d, f89f4d43, 4bb4a0e1: native thread stack reserve only; r51/speed4 require_idle) onto r51/s7reg (f83da0f3 and the registry's _CXL fix); only this table, the note and tasks/opportunities.md conflicted, resolved by keeping both sides; no change beyond the commits it joins |
 | 4bf993b8 | R51 S6 paired-disable reinstatements | TEST-ONLY (resolver.rs, cfg(test)): a_refinement_may_start_with_a_deferred_name_and_impl_text_is_axon's duplicate-impl assertion states its attack (ATTACK: a duplicate impl was not refused as one), the condition unchanged; the registry reinstates M60 (killed by that test) and M89 (killed by the scheduler_spawn pair of a_sealed_caller_cannot_tell_an_operator_name_from_a_missing_one_on_any_path) ACTIVE, their retired-guard full-suite cells having failed; no interpreter or resolver code changed, no unsealed behaviour change |
-| 237 commits | | |
+| 8f5dbdd6 | R51 merge-main | joins r51/int 75f385b5 onto main 8de8e43e (R50 S10-S13, AX-59/AX-60); conflicts under src resolved keeping both sides: main's newtypes (VBox, Elems, DictMap, Queue, Held<ClosureCode>, Captures bindings in a Held) carry r51's seal fields (ClosureVal contract/seal, FnEntry seal flag, sealed fn values), r51's VM taint arguments (get_var_mut_t::<VM_SEALED>, give_frame_t) are applied to main's new VM paths, fold_leaf keeps r51's seal_pin_vm gate, conform/taint walks iterate Elems::vals; nest_cost constants provisionally the larger of the two sides (re-derived in a follow-up); the tree evaluator's seal edges are unchanged |
+| ffa39ba5 | R51 merge-main | tests only (taint_tests.rs, tests_v022_b.rs, vm/tests.rs): the holder and name-lookup drift lists cover main's newtypes and purefn.rs; new sealed attack cases over packed arrays and a sealed-run test that no pure tier or bulk loop runs |
+| 258 commits | | |
 <!-- END MECHANICAL -->
 
 

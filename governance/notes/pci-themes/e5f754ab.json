@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R50 S10-S13)",
+  "text": "front end and VM only: match guards and let refinement predicates are height-checked on wasm32 (ast.rs), over-tall operator chains are cut while parsing (parser.rs), purefn.rs drops an unused field; no evaluator change"
+}

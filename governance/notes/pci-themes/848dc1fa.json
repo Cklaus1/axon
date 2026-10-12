@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R50 S10-S13)",
+  "text": "wasm32 stack budget only (interp.rs nest_cost COMPILE_STMT release 672): a constant the guard charges, no semantics"
+}

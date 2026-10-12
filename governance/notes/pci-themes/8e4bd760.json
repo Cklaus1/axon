@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R50 S10-S13)",
+  "text": "parser only (parser.rs): nested attribute arguments charge the wasm32 nesting limit (AX-60); no evaluator change"
+}
