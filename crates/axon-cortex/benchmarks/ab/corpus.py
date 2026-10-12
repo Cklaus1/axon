@@ -2,11 +2,12 @@
 """Build the A/B task corpus: failing Axon programs with a hidden check.
 
 Usage:
-    python3 corpus.py OUT.json FILE.ax [FILE.ax ...]
+    [CLASSES=a,b] [PER_CLASS=12] [PER_FILE_CLASS=4] python3 corpus.py PART.json FILE.ax ...
+    python3 corpus.py --merge corpus.json PART.json [PART.json ...]
 
-Reuses the injected-defect machinery of ../common.py (the same five mutators
-the localization and real-model runs used). A task is KEPT only if, in a
-fresh temp directory:
+Reuses the injected-defect machinery of ../common.py (the five mutators the
+localization and real-model runs used) plus a sixth, `comparison`, defined
+here. A task is KEPT only if, in a fresh temp directory:
 
   * the pristine file type-checks and every test in it passes;
   * the mutant still type-checks;
