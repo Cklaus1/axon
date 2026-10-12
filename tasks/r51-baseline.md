@@ -82,3 +82,6 @@ Per test (ms, sealed / unsealed VM / unsealed tree): fib 176/22/59, sieve 770/53
 | c7e6d98c | `./scripts/gate.sh --strict` | FAILED at "R39 Slice 1 gate": R51 spec claimed `Reviewed` with `evidence: none`. Fixed by `truth:` commit 41626fa9 | 2021 s |
 | 41626fa9 | `./scripts/gate.sh --strict` (`CARGO_TARGET_DIR` unset) | **gate PASSED**, rc 0; 6552 passed, 0 failed; 45 harnesses SKIPPED (host prerequisites; `tasks/r51-s6/final/gate-strict-41626fa9.summary`) | 2216 s |
 | 41626fa9 | `tasks/r51-smoke/run.sh <release axon> post`; Q1 `run.sh <axon> 5` | 6/6 PASS; sealed 1.379 s, unsealed VM 0.180 s, unsealed tree 0.453 s | - |
+| aae0690e | T7 four lists, `--scope=all --only`, clean tree, one head (after the post-S7 review fixes) | **444/444 KILLED**, 0 REFUSED_ELSEWHERE, 0 survivors, 0 stale | 2048 s (parallel) |
+| 0d011f8d | `./scripts/gate.sh --strict` (`CARGO_TARGET_DIR` unset) | **gate PASSED**, rc 0; 6554 passed, 0 failed; 45 harnesses SKIPPED (host prerequisites; `tasks/r51-s6/final/gate-strict-0d011f8d.summary`) | 1818 s |
+| 0d011f8d | smoke `post`; Q1 `run.sh <axon> 5` | 6/6 PASS; sealed 1.349 s, unsealed VM 0.178 s, unsealed tree 0.445 s | - |
