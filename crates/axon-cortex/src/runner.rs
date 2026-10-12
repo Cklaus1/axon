@@ -246,6 +246,53 @@ pub enum EpisodeOutcome {
     NeedsInput { steps: usize, what: String },
 }
 
+/// What one candidate's episode has learned so far, kept so a walk can stop
+/// the episode after a number of proposals and resume it later exactly where
+/// it stopped.
+///
+/// `cortex repair` walks its candidates breadth-first: every candidate gets ONE
+/// proposal before any candidate gets a second. Restarting an episode for the
+/// second pass would throw away what it learned — the rejected bodies, the
+/// refused claim, the visited states — so the generator would be asked its
+/// first question again with an empty history, and the step budget would be
+/// spent twice. Carrying this instead makes a paused-then-resumed episode take
+/// the same steps, see the same history and stop for the same reasons as one
+/// that ran straight through. Only the ORDER across candidates changes.
+///
+/// Resuming assumes the target file holds the bytes the episode was paused
+/// on. The walk guarantees it: every attempt starts from the file as the run
+/// found it, and an episode undoes each rejected patch before it pauses.
+#[derive(Debug, Default)]
+pub struct CandidateProgress {
+    /// Pause before asking the generator for proposal number `limit + 1`.
+    /// `None` runs to the step budget, as an unpaused episode does.
+    pub proposal_limit: Option<usize>,
+    seen: Vec<(String, String, usize)>,
+    ctx: crate::select::SelectionContext,
+    rejected: Vec<crate::generate::RejectedAttempt>,
+    last_applied: Option<String>,
+    baseline_passing: Option<Vec<String>>,
+    steps: usize,
+    proposals: usize,
+    paused: bool,
+}
+
+impl CandidateProgress {
+    /// Steps of the budget this candidate has used, across every resumption.
+    pub fn steps(&self) -> usize {
+        self.steps
+    }
+    /// Times the generator has been asked for this candidate.
+    pub fn proposals(&self) -> usize {
+        self.proposals
+    }
+    /// The last run stopped at `proposal_limit`, not for a reason of its own:
+    /// its `BudgetExhausted` means "paused", and resuming may still finish it.
+    pub fn paused(&self) -> bool {
+        self.paused
+    }
+}
+
 pub struct Runner {
     /// The interpreter `observe` runs `axon check` with. NOT the check
     /// executor: registered checks go through `check_executor`, which spawns
@@ -638,12 +685,43 @@ impl Runner {
         budget: usize,
         generator: Option<&dyn crate::generate::PatchGenerator>,
     ) -> EpisodeOutcome {
+        self.run_episode_resumable(
+            target,
+            grant,
+            principal,
+            hidden_check,
+            budget,
+            generator,
+            &mut CandidateProgress::default(),
+        )
+    }
+
+    /// [`run_episode`](Self::run_episode), continuing from `progress` and
+    /// stopping early at `progress.proposal_limit`.
+    ///
+    /// `budget` is the candidate's TOTAL step budget, not a fresh allowance:
+    /// a resumed episode continues counting from `progress.steps()`. A pause is
+    /// reported as `BudgetExhausted` with `progress.paused()` set, and happens
+    /// only at the point an unpaused episode would ask the generator for its
+    /// next body — so nothing the episode has done is left half-adjudicated.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_episode_resumable(
+        &mut self,
+        target: &crate::action::SymbolRef,
+        grant: Option<&EditGrant>,
+        principal: &str,
+        hidden_check: &str,
+        budget: usize,
+        generator: Option<&dyn crate::generate::PatchGenerator>,
+        progress: &mut CandidateProgress,
+    ) -> EpisodeOutcome {
         // Every (workspace state, action) pair already tried. A SET, not just
         // the previous step: the loop alternates patch → claim → patch, so a
         // last-step comparison cannot see a two-step cycle and the episode
         // would spin until the budget ran out — reporting "out of budget" for
         // what is really "going in circles".
-        let mut seen: Vec<(String, String, usize)> = Vec::new();
+        progress.paused = false;
+        let seen = &mut progress.seen;
         // The episode NAMES this run. Every Runner was built with the same
         // constant, so the id could not tell two repairs apart — which is what
         // an id is for. Derived from the target and the adjudicator, so it is
@@ -654,7 +732,7 @@ impl Runner {
             "cortex-repair:{}:{}:{}",
             target.path, target.symbol, hidden_check
         );
-        let mut ctx = crate::select::SelectionContext::default();
+        let ctx = &mut progress.ctx;
         // Attempts that did not stick, and the body most recently applied.
         // Carried across steps so the generator is not asked the same question
         // with no record of what its last answer was.
@@ -686,20 +764,31 @@ impl Runner {
         // "this episode BROKE X" attribution below. It is recorded rather than
         // swallowed: a run that could not establish its baseline must not
         // later imply it found no regressions.
-        let baseline_passing: Vec<String> = match self.check_outcomes(&target.path, "") {
-            Ok((_, passing)) => passing,
-            Err(e) => {
-                self.episode.push(EpisodeEvent::CheckRun {
-                    name: format!("baseline UNAVAILABLE: {e}"),
-                    exit_code: -1,
-                    passed: false,
-                });
-                Vec::new()
+        //
+        // A resumed episode keeps the baseline it took when it first started:
+        // the file is back at those bytes, and re-recording an unavailable
+        // baseline would log one failure twice.
+        let baseline_passing: Vec<String> = match &progress.baseline_passing {
+            Some(b) => b.clone(),
+            None => {
+                let b = match self.check_outcomes(&target.path, "") {
+                    Ok((_, passing)) => passing,
+                    Err(e) => {
+                        self.episode.push(EpisodeEvent::CheckRun {
+                            name: format!("baseline UNAVAILABLE: {e}"),
+                            exit_code: -1,
+                            passed: false,
+                        });
+                        Vec::new()
+                    }
+                };
+                progress.baseline_passing = Some(b.clone());
+                b
             }
         };
         let mut effective: Option<EditGrant> = grant.cloned();
-        let mut rejected: Vec<crate::generate::RejectedAttempt> = Vec::new();
-        let mut last_applied: Option<String> = None;
+        let rejected = &mut progress.rejected;
+        let last_applied = &mut progress.last_applied;
         // The file as this candidate found it. Every proposal is a replacement
         // for THIS, not for whatever the previous proposal left behind.
         let candidate_base: Option<String> =
@@ -710,7 +799,8 @@ impl Runner {
         // laundering a stale grant into a current one. The suite caught it —
         // a row that must refuse returned VerifiedDone.
         let base_pin: Option<String> = effective.as_ref().map(|g| g.snapshot_id.clone());
-        for step in 1..=budget {
+        for step in progress.steps + 1..=budget {
+            progress.steps = step;
             let snap = match self.snapshot(&[target.path.as_str()]) {
                 Ok(s) => s,
                 Err(e) => {
@@ -721,7 +811,7 @@ impl Runner {
                 }
             };
             let obs = self.observe(&snap, &target.path);
-            let action = match crate::select::select_action_with(&obs, target, &ctx) {
+            let action = match crate::select::select_action_with(&obs, target, ctx) {
                 crate::select::Selection::Act(a) => a,
                 crate::select::Selection::Blocked(reason) => {
                     return EpisodeOutcome::Blocked {
@@ -730,6 +820,22 @@ impl Runner {
                     }
                 }
             };
+
+            // THE PAUSE, at the one point an episode spends a proposal. The
+            // previous proposal has been adjudicated and, if rejected, undone,
+            // so the file is back at the candidate's base and nothing is left
+            // half-decided. The step is handed back: it has not been taken.
+            if let CortexAction::PatchSymbolBody { proposed_body, .. } = &action {
+                if proposed_body.is_empty()
+                    && progress
+                        .proposal_limit
+                        .is_some_and(|cap| progress.proposals >= cap)
+                {
+                    progress.steps = step - 1;
+                    progress.paused = true;
+                    return EpisodeOutcome::BudgetExhausted { steps: step - 1 };
+                }
+            }
 
             // Stuck detection BEFORE acting: identical state plus identical
             // choice means the previous step achieved nothing and this one will
@@ -826,6 +932,7 @@ impl Runner {
                         current_body,
                         rejected: rejected.clone(),
                     };
+                    progress.proposals += 1;
                     let proposal = match gen.propose(&obs, target, &constraints) {
                         Ok(p) => p,
                         Err(why) => {
@@ -853,7 +960,7 @@ impl Runner {
                     self.episode.push(EpisodeEvent::Proposed {
                         generator_id: proposal.generator_id.clone(),
                     });
-                    last_applied = Some(proposal.body.clone());
+                    *last_applied = Some(proposal.body.clone());
                     CortexAction::PatchSymbolBody {
                         symbol: symbol.clone(),
                         proposed_body: proposal.body,
@@ -953,7 +1060,7 @@ impl Runner {
                 if ctx.last_check == VisibleCheck::Failed {
                     if let Some(body) = last_applied.take() {
                         push_rejected(
-                            &mut rejected,
+                            rejected,
                             body,
                             crate::generate::RejectionReason::CheckRefused,
                         );
@@ -1042,7 +1149,7 @@ impl Runner {
                     }
                     if let Some(body) = last_applied.take() {
                         push_rejected(
-                            &mut rejected,
+                            rejected,
                             body,
                             crate::generate::RejectionReason::DidNotCompile,
                         );
@@ -1233,7 +1340,7 @@ impl Runner {
                 // not what the grader wanted.
                 if let Some(body) = last_applied.take() {
                     push_rejected(
-                        &mut rejected,
+                        rejected,
                         body,
                         crate::generate::RejectionReason::CheckRefused,
                     );

@@ -113,6 +113,22 @@ def named(cand, priors, cost=0.1):
 CASE_IDENTITY = trial(["A", "B", "true_C"], "true_C", 3,
                       [named("A", 0), named("A", 1), named("true_C", 0)])
 
+# THE BREADTH WALK. Pass 1 asks every candidate once; nothing verifies; pass 2
+# resumes each in rank order with its own history, and the truth is repaired
+# on its second proposal. A and B's pass-2 proposals come AFTER the truth's
+# first one and were still search cost: "before the first truth proposal"
+# would book $0.20 of the $0.40 spent finding it.
+#
+#   attempted = [A, B, true_C, A, B, true_C]
+CASE_BREADTH_IDENTITY = trial(["A", "B", "true_C", "A", "B", "true_C"], "true_C", 3,
+                              [named("A", 0), named("B", 0), named("true_C", 0),
+                               named("A", 1), named("B", 1), named("true_C", 1)])
+# The same walk WITHOUT candidate names. A resumed candidate's proposals carry
+# its history (priors > 0) and open no new segment, so position cannot recover
+# ownership: this must report UNMEASURED, not a split.
+CASE_BREADTH_POSITIONAL = trial(["A", "B", "true_C", "A", "B", "true_C"], "true_C", 3,
+                                [call(0), call(0), call(0), call(1), call(1), call(1)])
+
 
 def run(trials):
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
@@ -173,8 +189,19 @@ if "$0.20 finding vs $0.10 fixing" not in out:
     fails.append("identity: the split does not match ground truth "
                  "($0.20 finding vs $0.10 fixing) — ownership was misread")
 
+out = run([CASE_BREADTH_IDENTITY])
+if "$0.40 finding vs $0.20 fixing" not in out:
+    fails.append("breadth-identity: the split does not match ground truth "
+                 "($0.40 finding vs $0.20 fixing) — pass-2 search cost was "
+                 "dropped or booked to the true target")
+out = run([CASE_BREADTH_POSITIONAL])
+if "UNATTRIBUTABLE" not in out:
+    fails.append("breadth-positional: a resumed walk without candidate names "
+                 "was attributed by position")
+
 if fails:
     for f in fails:
         print("FAIL " + f, file=sys.stderr)
     sys.exit(1)
-print("analyse_real_model self-test: 4 cases pass (2 adversarial + 1 control + 1 identity)")
+print("analyse_real_model self-test: 6 cases pass (2 adversarial + 1 control + 1 identity "
+      "+ 2 breadth-walk)")

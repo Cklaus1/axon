@@ -653,6 +653,216 @@ fn cli_walks_the_ranking_and_isolates_each_attempt() {
     );
 }
 
+/// A three-candidate workspace for the walk-order rows, and a `cmd:`
+/// generator that logs every request as `FUNCTION:PRIORS` — the function it
+/// was asked to repair and how many rejected attempts its prompt carried.
+///
+/// `alpha`, `beta` and `gamma` are all reached by the one failing visible
+/// check and by no passing one, so they tie and the ranking breaks the tie
+/// alphabetically: `gamma`, the broken one, is rank 3. The generator answers
+/// `n * 2` (the repair) only for the `FUNCTION:PRIORS` named by `truth`, and
+/// otherwise a wrong body that is DIFFERENT for every prior count — so a wrong
+/// candidate never trips the cycle detector and always spends its budget,
+/// which is the expensive case the walk order exists for.
+fn walk_fixture(name: &str, truth: &str) -> (PathBuf, PathBuf) {
+    let ws = std::env::temp_dir().join(format!("cortex_cli_{name}_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&ws);
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::write(
+        ws.join("three.ax"),
+        "fn alpha(n: i64) -> i64 { n * 2 }\n\
+         fn beta(n: i64) -> i64 { n * 2 }\n\
+         fn gamma(n: i64) -> i64 { n }\n\
+         @[test]\n\
+         fn t() { assert_eq(alpha(1) + beta(1) + gamma(1), 6) }\n\
+         @[test]\n\
+         fn hidden() { assert_eq(gamma(1), 2) assert_eq(alpha(1), 2) assert_eq(beta(1), 2) }\n\
+         fn main() { println(to_str(alpha(1))) }\n",
+    )
+    .unwrap();
+    let gen = ws.join("gen.sh");
+    common::write_executable(
+        &gen,
+        format!(
+            "#!/bin/sh\n\
+             p=$(cat)\n\
+             f=$(printf '%s\\n' \"$p\" | sed -n 's/^Function: //p')\n\
+             n=$(printf '%s\\n' \"$p\" | grep -c 'was REJECTED')\n\
+             echo \"$f:$n\" >> \"$(dirname \"$0\")/calls.log\"\n\
+             case \"$f:$n\" in\n\
+             {truth}) printf '\\n    n * 2\\n' ;;\n\
+             *) printf '\\n    n + %s\\n' $((n + 10)) ;;\n\
+             esac\n"
+        ),
+        0o755,
+    );
+    (ws, gen)
+}
+
+/// `cortex repair --json` over `three.ax`: (exit, verdict, stderr, calls).
+fn walk_run(
+    ws: &Path,
+    gen: &Path,
+    extra: &[&str],
+) -> (i32, serde_json::Value, String, Vec<String>) {
+    let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["repair", "--workspace"])
+        .arg(ws)
+        .args(["--file", "three.ax", "--check", "hidden", "--axon"])
+        .arg(axon_bin())
+        .arg("--generator")
+        .arg(format!("cmd:{}", gen.display()))
+        .arg("--json")
+        .args(extra)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    let v: serde_json::Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("no verdict ({e}): {stdout}{stderr}"));
+    let calls = std::fs::read_to_string(ws.join("calls.log"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    (out.status.code().unwrap_or(-1), v, stderr, calls)
+}
+
+fn names(v: &serde_json::Value) -> Vec<String> {
+    v.as_array()
+        .expect("an array")
+        .iter()
+        .map(|s| s.as_str().unwrap().to_string())
+        .collect()
+}
+
+/// C16b — the walk is BREADTH-first: the true function at rank 3 is repaired
+/// by the THIRD proposal of the run.
+///
+/// Depth-first, the two wrong candidates ahead of it each ran their whole
+/// budget first (four proposals apiece at the default `--budget 8`), so the
+/// same first-proposal success cost nine proposals. Measured with a real model
+/// that ordering is where nearly all of a slow run's time went.
+#[test]
+fn cli_walk_gives_every_candidate_one_proposal_before_any_gets_two() {
+    let (ws, gen) = walk_fixture("walk_rank3", "gamma:0");
+    let (code, v, err, calls) = walk_run(&ws, &gen, &["--write-prefix", "three.ax"]);
+    assert_eq!(code, 0, "{err}{v}");
+    assert!(
+        err.contains("trying alpha (") && err.contains("then gamma ("),
+        "the fixture must rank gamma third, or this row tests nothing: {err}"
+    );
+    assert_eq!(
+        calls,
+        ["alpha:0", "beta:0", "gamma:0"],
+        "one proposal per candidate, in rank order, and the truth's first \
+         proposal is the run's third: {err}"
+    );
+    assert_eq!(names(&v["attempted"]), ["alpha", "beta", "gamma"]);
+    assert_eq!(v["symbol"], "gamma");
+    assert_eq!(v["outcome"], "verified_done");
+}
+
+/// C16c — pass 2 resumes each candidate in rank order with the REST of its
+/// own budget and its own history, so no candidate gets more than the
+/// depth-first walk gave it, and the report shows the real attempt order.
+#[test]
+fn cli_walk_resumes_each_candidate_with_its_remaining_budget_and_history() {
+    // The truth only lands on gamma's SECOND proposal, so pass 1 fails
+    // everywhere and pass 2 must run.
+    let (ws, gen) = walk_fixture("walk_retry", "gamma:1");
+    let (code, v, err, calls) = walk_run(&ws, &gen, &["--write-prefix", "three.ax"]);
+    assert_eq!(code, 0, "{err}{v}");
+    // `:1` on a resumed candidate's first pass-2 request is the history
+    // crossing the pause: a restarted episode would ask `alpha:0` again —
+    // the question it already got wrong, with no record that it did.
+    assert_eq!(
+        calls,
+        [
+            "alpha:0", "beta:0", "gamma:0", // pass 1: one proposal each
+            "alpha:1", "alpha:2", "alpha:3", // pass 2: the rest of alpha's budget
+            "beta:1", "beta:2", "beta:3",  //         then beta's
+            "gamma:1", //                            then gamma, repaired
+        ],
+        "{err}"
+    );
+    assert_eq!(
+        names(&v["attempted"]),
+        ["alpha", "beta", "gamma", "alpha", "beta", "gamma"],
+        "`attempted` is the attempt log, a resumed candidate appearing twice"
+    );
+    assert_eq!(v["symbol"], "gamma");
+    assert!(
+        err.contains("`gamma` did not repair it; resuming `alpha` with 5 of its 8 step(s) left"),
+        "the hand-off into pass 2 must say what is being resumed and with what: {err}"
+    );
+
+    // NO CANDIDATE GETS MORE than depth-first gave it. With the truth never
+    // proposed, every candidate spends its whole budget: four proposals each,
+    // exactly what a depth-first episode of 8 steps makes.
+    let (ws2, gen2) = walk_fixture("walk_none", "none");
+    let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["repair", "--workspace"])
+        .arg(&ws2)
+        .args(["--file", "three.ax", "--check", "hidden", "--axon"])
+        .arg(axon_bin())
+        .args(["--write-prefix", "three.ax", "--generator"])
+        .arg(format!("cmd:{}", gen2.display()))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(20), "{stdout}");
+    let calls2 = std::fs::read_to_string(ws2.join("calls.log")).unwrap();
+    for f in ["alpha", "beta", "gamma"] {
+        let n = calls2
+            .lines()
+            .filter(|l| l.starts_with(&format!("{f}:")))
+            .count();
+        assert_eq!(
+            n, 4,
+            "{f} must get exactly the depth-first budget: {calls2}"
+        );
+    }
+    // Candidates, not attempts, are what "tried N" counts.
+    assert!(
+        stdout.contains("tried 3 candidate(s) (alpha, beta, gamma) in 6 attempt(s)"),
+        "{stdout}"
+    );
+}
+
+/// C16d — an authority refusal still stops the WHOLE walk, and an explicit
+/// `--symbol` is still one target run straight through. Neither can differ
+/// between the two walk orders by construction; these rows pin that the
+/// breadth-first walk did not make them differ.
+#[test]
+fn cli_walk_refusal_stops_it_and_a_named_symbol_is_never_paused() {
+    // A refusal is about the grant, not the candidate: every other candidate
+    // would be refused identically, so none is tried and no model is asked.
+    let (ws, gen) = walk_fixture("walk_refused", "gamma:0");
+    let (code, v, err, calls) = walk_run(&ws, &gen, &["--write-prefix", "elsewhere.ax"]);
+    assert_eq!(code, 23, "{err}{v}");
+    assert_eq!(names(&v["attempted"]), ["alpha"], "{err}");
+    assert!(
+        calls.is_empty(),
+        "a refused walk asks no generator: {calls:?}"
+    );
+    assert!(!err.contains("did not repair it"), "{err}");
+
+    // `--symbol` is one target: never capped at one proposal, never resumed,
+    // never listed twice. The truth lands on its third proposal, in ONE
+    // episode.
+    let (ws2, gen2) = walk_fixture("walk_symbol", "gamma:2");
+    let (code2, v2, err2, calls2) = walk_run(
+        &ws2,
+        &gen2,
+        &["--write-prefix", "three.ax", "--symbol", "gamma"],
+    );
+    assert_eq!(code2, 0, "{err2}{v2}");
+    assert_eq!(calls2, ["gamma:0", "gamma:1", "gamma:2"], "{err2}");
+    assert_eq!(names(&v2["attempted"]), ["gamma"]);
+    assert!(!err2.contains("resuming"), "{err2}");
+}
+
 /// C17 — `cortex locate` answers "what is broken?" without repairing anything.
 #[test]
 fn cli_locate_reports_the_ranking_with_its_scores() {

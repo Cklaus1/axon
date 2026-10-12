@@ -101,8 +101,11 @@ print( "        combined controller + generator path; no attribution needed")
 def segments(t):
     """Proposals grouped by the candidate they were made for.
 
-    The rejected-attempts list is per-episode, so a `priors` count returning
-    to 0 marks a new candidate. Segment i corresponds to `attempted[i]`.
+    The rejected-attempts list is per-candidate, so a `priors` count returning
+    to 0 marks a new candidate. Segment i corresponds to `attempted[i]` only
+    when no candidate was RESUMED: a pass-2 resumption carries its history, so
+    its proposals start at priors > 0 and merge into whatever segment came
+    before. `split_on_target` refuses position in that case (see below).
     """
     segs, cur = [], []
     for c in t["per_proposal"]:
@@ -156,11 +159,16 @@ def split_on_target(t):
     named = [c for c in t["per_proposal"] if c.get("candidate")]
     if named and len(named) == len(t["per_proposal"]):
         on = [c for c in named if c["candidate"] == t["symbol"]]
-        # "Before" means before the true target was REACHED, not merely every
-        # other candidate: proposals made after it are not search cost.
-        first = next((k for k, c in enumerate(named)
-                      if c["candidate"] == t["symbol"]), len(named))
-        before = [c for c in named[:first]]
+        # "Before" means before the true target's LAST proposal, counting only
+        # other candidates. The walk is breadth-first, so the truth can be
+        # asked once in pass 1 and again in pass 2, with wrong candidates'
+        # pass-2 proposals in between; those were spent still searching.
+        # Proposals after the truth's last one were made after it gave up and
+        # are not search cost. On a depth-first record (the truth's proposals
+        # contiguous) this is the same set as "before the first".
+        last = max((k for k, c in enumerate(named)
+                    if c["candidate"] == t["symbol"]), default=len(named))
+        before = [c for c in named[:last] if c["candidate"] != t["symbol"]]
         return before, on
 
     # 2. Position — admitted ONLY on a positive proof of completeness, not on
@@ -169,13 +177,15 @@ def split_on_target(t):
     #        number of candidate episodes == number of proposal segments
     #
     #    That is a real proof only because one episode yields exactly one
-    #    segment. VERIFIED, not assumed: `rejected` is declared once per
-    #    episode (runner.rs:642) and only ever pushed to, never cleared, so
-    #    `priors == 0` occurs exactly once per candidate. If that ever changed
-    #    — if the rejected list were reset mid-episode — a candidate would
-    #    split into two segments, the counts could match WHILE a candidate was
-    #    silent, and this check would pass on a corrupted join. The identity
-    #    path above is what stops that premise from mattering.
+    #    segment. VERIFIED, not assumed: `rejected` lives in the candidate's
+    #    `CandidateProgress` and is only ever pushed to, never cleared, so
+    #    `priors == 0` occurs exactly once per candidate. A candidate resumed
+    #    in pass 2 appears in `attempted` a second time but opens NO new
+    #    segment, so the counts differ and this fails closed rather than
+    #    misattributing. If the rejected list were ever reset mid-candidate, a
+    #    candidate would split into two segments, the counts could match WHILE
+    #    a candidate was silent, and this check would pass on a corrupted
+    #    join. The identity path above is what stops that premise mattering.
     segs = segments(t)
     if len(segs) != len(t["attempted"]):
         t["_unattributable"] = True

@@ -517,54 +517,95 @@ fn main() {
     let original = std::fs::read_to_string(workspace.join(&file))
         .unwrap_or_else(|e| usage(&format!("cannot read {}/{file}: {e}", workspace.display())));
 
+    // BREADTH-FIRST: every candidate gets ONE proposal before any gets a
+    // second.
+    //
+    // The walk used to be depth-first — each candidate ran its whole budget
+    // before the next was tried. Measured with a real model, the slow runs
+    // were the ones whose truth ranked below the top: every wrong candidate
+    // ahead of it spent several long proposals before giving up, and then the
+    // true candidate succeeded on its FIRST. Breadth lets a first-proposal
+    // success at rank k cost k proposals instead of k-1 whole episodes plus
+    // one. (The figures are in the CHANGELOG entry, not here; see the note on
+    // the candidate list above.)
+    //
+    // Pass 2 resumes, in rank order, every candidate pass 1 PAUSED, each with
+    // the rest of its own step budget and the history its episode already
+    // has (`CandidateProgress`). So no candidate is ever given more proposals
+    // or steps than the depth-first walk gave it, and a candidate pass 1
+    // stopped for a reason of its own — going in circles, no such symbol, no
+    // generator — is not tried again. One target (an explicit --symbol, or a
+    // ranking with one name) is never paused, so it runs exactly as before.
     let mut outcome = EpisodeOutcome::NeedsInput {
         steps: 0,
         what: "no candidate was attempted".to_string(),
     };
+    let mut progress: Vec<axon_cortex::runner::CandidateProgress> =
+        targets.iter().map(|_| Default::default()).collect();
+    // Every attempt, in the order it ran. A candidate resumed in pass 2
+    // appears twice.
     let mut attempted: Vec<String> = Vec::new();
-    for (i, target) in targets.iter().enumerate() {
-        if i > 0 {
-            if let Err(e) = std::fs::write(workspace.join(&file), &original) {
-                eprintln!("cannot restore {file} between attempts: {e}");
-                std::process::exit(22);
+    let mut prev: Option<usize> = None;
+    'walk: for pass in 1..=2 {
+        for (i, target) in targets.iter().enumerate() {
+            if pass == 2 && !progress[i].paused() {
+                continue;
             }
-            eprintln!("`{}` did not repair it; trying `{target}`", targets[i - 1]);
-        }
-        let snap = match runner.snapshot(&[file.as_str()]) {
-            Ok(s) => s,
-            Err(e) => usage(&format!("cannot read {}/{file}: {e}", workspace.display())),
-        };
-        // A fresh grant per attempt, pinned to the state that attempt starts
-        // from. Reusing one across attempts would hand the second attempt
-        // authority issued over a workspace the first one changed.
-        let grant = EditGrant {
-            grant_id: format!("cortex-repair-{i}"),
-            principal: principal.clone(),
-            snapshot_id: snap.snapshot_id.clone(),
-            write_prefixes: write_prefixes.clone(),
-        };
-        attempted.push(target.clone());
-        outcome = runner.run_episode(
-            &SymbolRef {
-                path: file.clone(),
-                symbol: target.clone(),
-            },
-            Some(&grant),
-            &principal,
-            &check,
-            budget,
-            generator.as_deref(),
-        );
-        match &outcome {
-            // The only success. Everything else is a reason to try the next
-            // candidate, and running out of candidates reports the LAST reason
-            // rather than inventing a summary of all of them.
-            EpisodeOutcome::VerifiedDone { .. } => break,
-            // Authority and environment failures are not about this candidate.
-            // Another one would fail identically and burn the budget proving
-            // it.
-            EpisodeOutcome::Refused { .. } | EpisodeOutcome::Blocked { .. } => break,
-            _ => {}
+            progress[i].proposal_limit = (pass == 1 && targets.len() > 1).then_some(1);
+            if let Some(p) = prev {
+                if let Err(e) = std::fs::write(workspace.join(&file), &original) {
+                    eprintln!("cannot restore {file} between attempts: {e}");
+                    std::process::exit(22);
+                }
+                if pass == 1 {
+                    eprintln!("`{}` did not repair it; trying `{target}`", targets[p]);
+                } else {
+                    eprintln!(
+                        "`{}` did not repair it; resuming `{target}` with {} of its {budget} \
+                         step(s) left",
+                        targets[p],
+                        budget - progress[i].steps()
+                    );
+                }
+            }
+            let snap = match runner.snapshot(&[file.as_str()]) {
+                Ok(s) => s,
+                Err(e) => usage(&format!("cannot read {}/{file}: {e}", workspace.display())),
+            };
+            // A fresh grant per attempt, pinned to the state that attempt
+            // starts from. Reusing one across attempts would hand the second
+            // attempt authority issued over a workspace the first one changed.
+            let grant = EditGrant {
+                grant_id: format!("cortex-repair-{}", attempted.len()),
+                principal: principal.clone(),
+                snapshot_id: snap.snapshot_id.clone(),
+                write_prefixes: write_prefixes.clone(),
+            };
+            attempted.push(target.clone());
+            prev = Some(i);
+            outcome = runner.run_episode_resumable(
+                &SymbolRef {
+                    path: file.clone(),
+                    symbol: target.clone(),
+                },
+                Some(&grant),
+                &principal,
+                &check,
+                budget,
+                generator.as_deref(),
+                &mut progress[i],
+            );
+            match &outcome {
+                // The only success. Everything else is a reason to try the
+                // next attempt, and running out of attempts reports the LAST
+                // reason rather than inventing a summary of all of them.
+                EpisodeOutcome::VerifiedDone { .. } => break 'walk,
+                // Authority and environment failures are not about this
+                // candidate. Another one would fail identically and burn the
+                // budget proving it.
+                EpisodeOutcome::Refused { .. } | EpisodeOutcome::Blocked { .. } => break 'walk,
+                _ => {}
+            }
         }
     }
 
@@ -621,9 +662,11 @@ fn main() {
                 "outcome": kind,
                 "detail": detail,
                 "steps": steps,
-                // WHICH candidate worked, and which were tried before it. With
-                // a walked ranking that is no longer implied by the command
-                // line.
+                // WHICH candidate worked, and every attempt before it, in the
+                // order they ran. With a walked ranking that is no longer
+                // implied by the command line. Under the breadth-first walk a
+                // candidate resumed in pass 2 appears a second time, so this
+                // is an attempt log, not a set of candidates.
                 "symbol": repaired,
                 "attempted": attempted,
                 "exit_code": code,
@@ -676,12 +719,28 @@ fn main() {
         // same overstatement pointing the other way. Exit 27 is excluded too —
         // there a candidate DID satisfy the check, and its own detail says
         // what remained.
+        //
+        // CANDIDATES, not attempts: the breadth-first walk resumes a candidate
+        // in its second pass, so `attempted` can name one twice. The attempt
+        // count is added only when it differs, so a run that never resumed
+        // reads exactly as it always did.
         if matches!(code, 20 | 21) && !attempted.is_empty() {
+            let mut distinct: Vec<&str> = Vec::new();
+            for a in &attempted {
+                if !distinct.contains(&a.as_str()) {
+                    distinct.push(a);
+                }
+            }
+            let attempts = if attempted.len() > distinct.len() {
+                format!(" in {} attempt(s)", attempted.len())
+            } else {
+                String::new()
+            };
             println!(
-                "  tried {} candidate(s) ({}); none satisfied `{check}`, so no \
+                "  tried {} candidate(s) ({}){attempts}; none satisfied `{check}`, so no \
                  single-symbol repair among them was enough",
-                attempted.len(),
-                attempted.join(", ")
+                distinct.len(),
+                distinct.join(", ")
             );
         }
         if !detail.is_empty() {
