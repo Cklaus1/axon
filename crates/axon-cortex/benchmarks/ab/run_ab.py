@@ -464,6 +464,10 @@ def run_arm_b(task, generator, ws, cfg):
            "none": "none"}[generator]
     log = os.path.join(ws, "model.jsonl")
     env = dict(os.environ, CORTEX_MODEL_LOG=log, CORTEX_MODEL=cfg.model or PRIMARY_MODEL)
+    if cfg.ranker is not None:
+        # PREREG-ranker.md: the ranker is the variable; the audit is off so wall
+        # time compares with the spectrum-order baseline.
+        env.update(CORTEX_RANKER=cfg.ranker, CORTEX_AUDIT="off")
     began = time.time()
     out, rc = _run([CORTEX, "repair", "--workspace", ws, "--file", rel, "--check", task["hidden"],
                     "--axon", AXON, "--write-prefix", rel, "--candidates", CANDIDATES,
@@ -513,6 +517,13 @@ def run_arm_b(task, generator, ws, cfg):
                                                  "duration_api_ms", "extraction_status")}
                          for c in calls],
         "wall_s": round(wall, 1),
+        # Cortex's own model calls (`--json` fields); absent from rows written
+        # before PREREG-ranker.md. `ranker_cost_usd` is NOT in `cost_usd`
+        # (generation only); spent() adds both.
+        "ranker": verdict.get("ranker"),
+        "audit": verdict.get("audit"),
+        "escalation": verdict.get("escalation"),
+        "ranker_cost_usd": (verdict.get("ranker") or {}).get("cost_usd"),
     }
     return given, open(p).read(), row
 
@@ -533,7 +544,8 @@ def spent(root=RESULTS):
         for line in open(f):
             if line.strip():
                 r = json.loads(line)
-                total += r.get("cost_usd") or r.get("cost_bound_usd") or 0.0
+                total += (r.get("cost_usd") or r.get("cost_bound_usd") or 0.0) \
+                    + (r.get("ranker_cost_usd") or 0.0)
     return total
 
 
@@ -563,6 +575,9 @@ def main():
     ap.add_argument("--reserve-usd", type=float, default=None,
                     help="what one task in flight may still spend; required for "
                          "micode (it has no per-task dollar ceiling)")
+    ap.add_argument("--ranker", default=None,
+                    help="arm B: CORTEX_RANKER spec (sets CORTEX_AUDIT=off); "
+                         "default: inherit the environment")
     a = ap.parse_args()
     if a.parallel > 3:
         raise SystemExit("at most 3 parallel tasks (shared machine)")
@@ -608,6 +623,7 @@ def main():
         "axon_sha256_16": hashlib.sha256(open(AXON, "rb").read()).hexdigest()[:16],
         "cortex_sha256_16": hashlib.sha256(open(CORTEX, "rb").read()).hexdigest()[:16],
         "claude_version": version(CLAUDE) if paid and a.transport == "claude" else None,
+        "ranker": a.ranker,
         "micode_version": version(MICODE) if paid and a.transport == "micode" else None,
         "cost_basis": (PRICE_SOURCE if paid and a.transport == "micode"
                        else "reported by the claude CLI" if paid else None),
