@@ -1,0 +1,4 @@
+{
+  "theme": "R51 merge-main",
+  "text": "cost only: Bindings::get_var back to the get_var_idx form (its own-branch fast path, inlined into the tree's callers, grew six wasm32 frames); get_var_mut_t keeps the one-bounds-check slot hit (vm_perf_gate collatz -0.584 % vs REF). wasm32 only (#[cfg(target_arch = \"wasm32\")] mod nest_cost): CALL_MUT release 320 -> 336, STORE_LOCAL_STACK_SLOW release 208 -> 224, CALL_FAST_INLINE debug 256 -> 240, CALL_MUT_OP debug 336 -> 320, each the frame wasm_stack_budget.py measures on the merged build; no seal or taint change"
+}
