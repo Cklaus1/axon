@@ -119,6 +119,10 @@ refusals and the report's determinism on fixtures.
 | 8 | `heldout-2026-10-12-plain-haiku-5.5-micode` | 2026-10-12 | heldout | plain | claude-haiku-5-5 / micode | none / off / - | 47/47 (100.0%, 92.4%-100.0%) | 0 | n/a | $0.001317* | 6.8s | n/a |
 | 9 | `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` | 2026-10-12 | heldout | cortex | claude-haiku-5-5 / micode | spectrum / off / breadth | 41/47 (87.2%, 74.8%-94.0%) | 0 | 4.93 | $0.001486* | 16.1s | 25/47 |
 | 10 | `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 2026-10-12 | heldout | cortex | claude-haiku-5-5 / micode | openrouter:anthropic/claude-haiku-5.5 / off / breadth | 41/47 (87.2%, 74.8%-94.0%) | 0 | 4.39 | $0.00181* | 15.6s | 45/47 |
+| 11 | `once-2026-10-12-plain-haiku-5.5-micode` | 2026-10-12 | once | plain | claude-haiku-5-5 / micode | none / off / - | 30/30 (100.0%, 88.6%-100.0%) | 0 | n/a | $0.001146* | 6.3s | n/a |
+| 12 | `once-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext` | 2026-10-12 | once | cortex | claude-haiku-5-5 / micode | spectrum / off / breadth | 30/30 (100.0%, 88.6%-100.0%) | 0 | 1.13 | $0.000521* | 2.5s | 22/30 |
+| 13 | `once-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5-gencontext` | 2026-10-12 | once | cortex | claude-haiku-5-5 / micode | openrouter:anthropic/claude-haiku-5.5 / off / breadth | 30/30 (100.0%, 88.6%-100.0%) | 0 | 1.00 | $0.000735* | 3.0s | 30/30 |
+| 14 | `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext` | 2026-10-12 | heldout | cortex | claude-haiku-5-5 / micode | spectrum / off / breadth | 47/47 (100.0%, 92.4%-100.0%) | 0 | 1.98 | $0.00132* | 6.4s | 25/47 |
 
 Per run: configuration hashes, corpus and notes.
 
@@ -132,6 +136,10 @@ Per run: configuration hashes, corpus and notes.
 - **8. `heldout-2026-10-12-plain-haiku-5.5-micode`**: rows `crates/axon-cortex/benchmarks/heldout/results/full/a.jsonl`; corpus `crates/axon-cortex/benchmarks/heldout/heldout.json` (sha256 2b977f7d5cbede6f, n=47); total cost $0.062*. PREREG-heldout arm A (plain micode agent)
 - **9. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum`**: rows `crates/axon-cortex/benchmarks/heldout/results/full/b-spectrum.jsonl`; corpus `crates/axon-cortex/benchmarks/heldout/heldout.json` (sha256 2b977f7d5cbede6f, n=47); cortex commit 862f1a343f3a; cortex sha256 895ec45d2b440804; candidates 6; budget 8; total cost $0.061*. PREREG-heldout arm B-spectrum
 - **10. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5`**: rows `crates/axon-cortex/benchmarks/heldout/results/full/b-ranker.jsonl`; corpus `crates/axon-cortex/benchmarks/heldout/heldout.json` (sha256 2b977f7d5cbede6f, n=47); cortex commit 862f1a343f3a; cortex sha256 895ec45d2b440804; candidates 6; budget 8; total cost $0.074*. PREREG-heldout arm B-ranker; verdict PASS (proposals/verified 4.39 < 4.93, verified 41 = 41, 0 FS)
+- **11. `once-2026-10-12-plain-haiku-5.5-micode`**: rows `crates/axon-cortex/benchmarks/heldout/results/gencontext/once/a.jsonl`; corpus `crates/axon-cortex/benchmarks/heldout/once.json` (sha256 3c66ddd64c0af066, n=30); total cost $0.034*. PREREG-gencontext.md arm A (plain micode agent); first use of once.json with a model
+- **12. `once-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext`**: rows `crates/axon-cortex/benchmarks/heldout/results/gencontext/once/b-spectrum.jsonl`; corpus `crates/axon-cortex/benchmarks/heldout/once.json` (sha256 3c66ddd64c0af066, n=30); cortex commit e9bc5d0a7dd2; cortex sha256 b7cc897251b2484a; candidates 6; budget 8; total cost $0.016*. PREREG-gencontext.md arm B: generator sees the ranker's view (file minus hidden check) + visible feedback
+- **13. `once-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5-gencontext`**: rows `crates/axon-cortex/benchmarks/heldout/results/gencontext/once/b-ranker.jsonl`; corpus `crates/axon-cortex/benchmarks/heldout/once.json` (sha256 3c66ddd64c0af066, n=30); cortex commit e9bc5d0a7dd2; cortex sha256 b7cc897251b2484a; candidates 6; budget 8; total cost $0.022*. PREREG-gencontext.md arm B' (B + Haiku 5.5 ranker)
+- **14. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext`**: rows `crates/axon-cortex/benchmarks/heldout/results/gencontext/heldout-exploratory/b-spectrum.jsonl`; corpus `crates/axon-cortex/benchmarks/heldout/heldout.json` (sha256 2b977f7d5cbede6f, n=47); cortex commit e9bc5d0a7dd2; cortex sha256 b7cc897251b2484a; candidates 6; budget 8; total cost $0.062*. EXPLORATORY (set inspected): PREREG-gencontext.md B on heldout, compare old 41/47
 
 ## Which differences are significant
 
@@ -156,14 +164,14 @@ Per set, the latest cortex run (B) against the earliest cortex run on the same c
 |---|---|---|---|---|---|---|---|---|---|
 | dev | 7. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 2. `dev-2026-10-12-cortex-haiku-4.5-claude-depth-spectrum` (earliest cortex) | 0 → 0 | 54/60 → 56/60 (p = 0.688) | 7.37 → 2.14 | $0.547 → $0.001187* | 258.1s → 8.7s | 25/60 → 59/60 | proposals / fix: B (latest), untested |
 | dev | 7. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 4. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` (baseline) | 0 → 0 | 56/60 → 56/60 (p = 1) | 3.55 → 2.14 | $0.001091* → $0.001187* | 11.3s → 8.7s | 26/60 → 59/60 | proposals / fix: B (latest), untested |
-| heldout | 10. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 9. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` (earliest cortex; baseline) | 0 → 0 | 41/47 → 41/47 (p = 1) | 4.93 → 4.39 | $0.001486* → $0.00181* | 16.1s → 15.6s | 25/47 → 45/47 | proposals / fix: B (latest), untested |
-| heldout | 10. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 8. `heldout-2026-10-12-plain-haiku-5.5-micode` (baseline) | 0 → 0 | 47/47 → 41/47 (p = 0.0312) | n/a → 4.39 | $0.001317* → $0.00181* | 6.8s → 15.6s | n/a → 45/47 | verified: A |
+| heldout | 14. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext` | 9. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` (earliest cortex) | 0 → 0 | 41/47 → 47/47 (p = 0.0312) | 4.93 → 1.98 | $0.001486* → $0.00132* | 16.1s → 6.4s | 25/47 → 25/47 | verified: B (latest) |
+| once | 13. `once-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5-gencontext` | 12. `once-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext` (earliest cortex) | 0 → 0 | 30/30 → 30/30 (p = 1) | 1.13 → 1.00 | $0.000521* → $0.000735* | 2.5s → 3.0s | 22/30 → 30/30 | proposals / fix: B (latest), untested |
 
 ## Held-out and once-set use
 
-Held-out corpus `crates/axon-cortex/benchmarks/heldout/heldout.json` (sha256 2b977f7d5cbede6f): used 3 times: `heldout-2026-10-12-plain-haiku-5.5-micode`, `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum`, `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5`.
+Held-out corpus `crates/axon-cortex/benchmarks/heldout/heldout.json` (sha256 2b977f7d5cbede6f): used 4 times: `heldout-2026-10-12-plain-haiku-5.5-micode`, `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum`, `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5`, `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext`.
 
-Once-set: 0 candidates scored.
+Once-set: 3 candidates scored: `once-2026-10-12-plain-haiku-5.5-micode`, `once-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext`, `once-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5-gencontext`.
 
 ## Localization only (LocRank, not runs)
 
