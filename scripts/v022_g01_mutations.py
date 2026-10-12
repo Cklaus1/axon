@@ -15,10 +15,18 @@ reported as such — never as killed — so a refactor cannot silently turn this
 into a pass. Every file is restored and re-hashed after each mutation.
 
     python3 scripts/v022_g01_mutations.py [--scope=S] [--shard=K/N] [--only=M1,M2]
-        [--changed-since=A.json[,B.json...] [--granularity=file|fn]] OUT.json
+        [--changed-since=A.json[,B.json...] [--granularity=file|fn] [--force]] OUT.json
 
 --only runs a SAMPLE of the scope's rows; its output is marked and cannot be
 merged as a shard.
+
+--shard=K/N runs shard K of the plan scripts/v022_mut_select.py prints with
+--shards=N (each shard prints it too): rows whose test runs as root, in a
+private namespace or as a guest's supervisor (the SERIAL CLASS) are all in
+shard 0 and nothing else is; the rest are dealt round-robin to the other
+shards. Shard 0 runs alone: a shard holding serial rows takes the host's
+serial lock exclusively, every other shard takes it shared, so shards started
+together wait for each other instead of contending.
 
 --changed-since runs only the rows the given earlier run records do not show
 KILLED at this tree (scripts/v022_mut_select.py): rows no record ran or not
@@ -32,7 +40,9 @@ records and reasons), so --merge and --check-status refuse it and no T7 list
 cites it. Selection misses any change outside the anchor and the test's own
 source that alters what the test observes (a callee, another module on the
 path, a helper, a fixture, a dependency); the full run at the final head is the
-evidence of record (tasks/build-loop-r51.md).
+evidence of record (tasks/build-loop-r51.md). A selection of more than 30%
+(BROAD_SELECTION) of the scope's active rows duplicates that full run: it is
+printed with its counts and the run stops before any cell unless --force.
 
 Refuses to run on a tree with ANY uncommitted change (C9 round 4: a check of
 crates/ alone let a locally edited scripts/ or profiles/ guard -- 24 rows guard
@@ -8515,9 +8525,19 @@ def sha(path):
 MEM = os.environ.get("V022_MUT_MEM", "16G")
 
 
-def in_shard(i, shard):
-    """Row `i` (its position among the scope's rows) belongs to shard (k, n)."""
-    return shard is None or i % shard[1] == shard[0]
+def hold_serial_lock(path, exclusive):
+    """Hold `path`'s flock until this process exits: exclusive for a shard
+    that runs serial-class rows, shared for any other shard (scripts/
+    v022_mut_select.py, SHARD PLAN). Waits, and says so, while it is taken."""
+    import fcntl
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o666)  # not inherited: cells do not hold it
+    mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+    try:
+        fcntl.flock(fd, mode | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print(f"waiting for {path}: " + ("another --shard run is running" if exclusive
+                                         else "the serial-class shard is running"), flush=True)
+        fcntl.flock(fd, mode)
 
 
 def row_good(baseline, result, unrestored=None):
@@ -8755,7 +8775,9 @@ def main():
             sys.exit("usage: v022_g01_mutations.py --merge OUT.json SHARD.json SHARD.json…")
         merge(sys.argv[2], sys.argv[3:])
     args = [a for a in sys.argv[1:]
-            if not a.startswith(("--scope=", "--shard=", "--only=", "--changed-since=", "--granularity="))]
+            if not a.startswith(("--scope=", "--shard=", "--only=", "--changed-since=", "--granularity="))
+            and a != "--force"]
+    force = "--force" in sys.argv[1:]
     only_arg = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--only=")), None)
     only = None if only_arg is None else set(only_arg.split(","))
     scope = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--scope=")), "g01")
@@ -8770,17 +8792,21 @@ def main():
         shard = (k, n)
     changed_arg = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--changed-since=")), None)
     granularity = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--granularity=")), None)
-    if changed_arg is not None:
+    if shard is not None or changed_arg is not None:
         import v022_mut_select as select_rows
+    if changed_arg is not None:
         if granularity is None:
             granularity = "file"
         if granularity not in select_rows.GRANULARITIES:
             sys.exit(f"--granularity={granularity}: want one of {'|'.join(select_rows.GRANULARITIES)}")
     elif granularity is not None:
         sys.exit("--granularity selects rows only with --changed-since")
+    if force and changed_arg is None:
+        sys.exit("--force overrides only --changed-since's broad-selection stop")
     if len(args) != 1 or scope not in ("g01", "pci", "binding", "psv", "all"):
         sys.exit("usage: v022_g01_mutations.py [--scope=g01|pci|binding|psv|all] [--shard=K/N] "
-                 "[--only=M1,M2,...] [--changed-since=A.json[,B.json...] [--granularity=file|fn]] OUT.json")
+                 "[--only=M1,M2,...] [--changed-since=A.json[,B.json...] [--granularity=file|fn] [--force]] "
+                 "OUT.json")
     if only is not None:
         known = {m[0] for m in MUTATIONS}
         unknown = sorted(m for m in only if m not in known or not in_scope(m, scope))
@@ -8811,9 +8837,28 @@ def main():
         picked, records = select_rows.select(universe, ATTACK_MARKERS, row_digest, row_good,
                                              changed_arg.split(","), commit, granularity)
         select_rows.report(picked, len(universe), granularity)
+        broad = select_rows.broad_warning(len(picked), sum(1 for m in MUTATIONS if in_scope(m[0], scope)), scope)
+        if broad and not force:
+            sys.exit(f"{broad}\nrefused: no cell ran (--force runs this selection anyway)")
+        if broad:
+            print(f"{broad}\n--force: running it anyway", flush=True)
         selection = {"records": [{"path": p, "commit": c} for p, c in records], "granularity": granularity,
                      "selected": picked, "evidence": select_rows.NOT_EVIDENCE}
         only = set(picked)
+    mine = None
+    if shard is not None:
+        # The serial class (v022_mut_select.py, SHARD PLAN) is shard 0 alone;
+        # this run holds SERIAL_LOCK exclusively when it runs serial rows,
+        # shared otherwise, so on this host they never overlap another shard.
+        run_rows = [m for m in MUTATIONS if in_scope(m[0], scope) and (only is None or m[0] in only)]
+        serial = select_rows.serial_class(run_rows, select_rows.Git().tree(commit))
+        plan = select_rows.shard_plan([m[0] for m in run_rows], shard[1], serial)
+        select_rows.plan_report(plan, serial)
+        mine = set(plan[shard[0]])
+        alone = any(m in serial for m in mine)
+        print(f"this run: shard {shard[0]}/{shard[1]}, {len(mine)} rows"
+              + (", the serial class: alone" if alone else ""), flush=True)
+        hold_serial_lock(select_rows.SERIAL_LOCK, alone)
     # The Fabric integration tests exec the `axon` interpreter from the target
     # dir: build it from THIS tree first, so no baseline or kill rests on a
     # stale binary, and record which one it was.
@@ -8825,14 +8870,12 @@ def main():
     }
     results, ok = [], True
     baselines = {}
-    position = -1
     for (mid, guard, rel, old, new, pkg, target, test) in MUTATIONS:
         if not in_scope(mid, scope):
             continue
-        position += 1
         if only is not None and mid not in only:
             continue
-        if not in_shard(position, shard):
+        if mine is not None and mid not in mine:
             continue
         key = (pkg, target, test)
         if key not in baselines:
