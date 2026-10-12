@@ -1,0 +1,7 @@
+{
+ "source": "/home/cklaus/projects/axon-lanes/poc-ab/crates/axon-cortex/benchmarks/ab/results/full/b.jsonl",
+ "rows": 60,
+ "source_sha16": "e716ee4c74a969d4",
+ "taken_utc": "2026-10-12T17:48:21Z",
+ "model": "claude-haiku-4-5-20251001"
+}
