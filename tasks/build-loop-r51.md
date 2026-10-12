@@ -94,11 +94,15 @@ own source that alters what the test observes: replaying e946f06d's T7 lists aga
 KILLED -> REFUSED_ELSEWHERE through a debug assert in `interp/env.rs`, which neither row anchors; `file` selected
 both (369/439 rows, only because their test lives in the changed `interp.rs`), `fn` selected neither (115/439).
 
-**Broad selection stops.** A selection of more than 30% (`BROAD_SELECTION`, `scripts/v022_mut_select.py`) of the
-scope's active rows, counted without `--only`, is the full run under another name: R51's merge into main selected
-2263/2299 (`--granularity=file`, the merge touched `interp.rs`), a 7260 s lane run that the final-head T7 repeats.
-The preview prints `BROAD SELECTION: n/N ...`; `v022_g01_mutations.py --changed-since` prints the same and exits 1
-before any cell unless `--force`. Run the full run at the head instead.
+**Selection stops.** `v022_g01_mutations.py --changed-since` runs no cell, exits 1 and prints why, unless
+`--force`; the preview prints the same lines (`scripts/v022_mut_select.py`, STOPS). BROAD SELECTION: more than 30%
+(`BROAD_SELECTION`) of the rows the records cover (scope and `--only`) are selected for a reason other than
+`absent`; that duplicates the full run of those rows at the final head, the evidence of record, so run that
+instead. UNRECORDED: any `absent` row, i.e. one no record covers; it is never counted in the ratio; narrow
+`--scope`/`--only` to the recorded rows, or run the unrecorded rows as their own baseline run. R51's merge into
+main (`--granularity=file`, `--scope=all`, the four T7 lists as records; the merge touched `interp.rs`) selected
+2263/2299: 408 of the 444 recorded rows (BROAD, 92%) and 1855 rows no T7 list holds (UNRECORDED), a 7260 s lane
+run. A T7 list against its own record at `file` is BROAD too (list 0: 173/176); at `fn` it runs (45/176).
 **Serial class.** `--shard=K/N` puts every row whose test runs as root, in a private namespace or as a guest's
 supervisor -- package `axon-fabric`/`axon-guest-init`/`axon-os`, a test fn that reads `geteuid(`, or a test fn
 that cannot be located -- in shard 0 and nothing else there; the rest go round-robin to shards 1..N-1.
