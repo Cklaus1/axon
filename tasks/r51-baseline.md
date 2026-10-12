@@ -70,3 +70,15 @@ Fixture `tasks/r51-s6/q1` (c9266cd0): a 4-test acceptance suite (fib, sieve, sor
 | unsealed, `AXON_ENGINE=tree` | 0.466 |
 
 Per test (ms, sealed / unsealed VM / unsealed tree): fib 176/22/59, sieve 770/53/259, sort 352/67/103, words 69/29/36. Sealed costs about 3x the unsealed tree and about 7.7x the unsealed VM. No target (spec §10). VM speed for sealed runs is not R51 scope; the follow-up is logged in tasks/opportunities.md.
+
+## Final head (S6 close)
+
+| Head | Command | Result | Wall |
+|---|---|---|---|
+| 0c28bd03 | T7 three lists, `--scope=all --only`, clean tree | 442/442 KILLED, 0 REFUSED_ELSEWHERE, 0 survivors, 0 stale | 2177 s (parallel) |
+| 0f6a92d4 | T7 list 3 (M60, M89 reinstated) | 2/2 KILLED | - |
+| 4983b634 | `v022_mut_select.py --changed-since=<4 lists> --granularity=fn` then `--only=M3268,M3269` | 2 rows selected (resolver.rs anchor outside a fn); 2/2 KILLED | 122 s |
+| 2b0e7438 | paired-disable `--only=M58,M60,M89,M3260` (idle machine after the CPU 0 busy loops were killed) | M58 holds; M60/M89 SUITE_BROKEN on tests only they satisfy (reinstated active); M3260 SUITE_BROKEN from a leaked `AXON_GIT_SHA` (fixed in harness_integrity, then holds at 0f6a92d4) | 8038 s |
+| c7e6d98c | `./scripts/gate.sh --strict` | FAILED at "R39 Slice 1 gate": R51 spec claimed `Reviewed` with `evidence: none`. Fixed by `truth:` commit 41626fa9 | 2021 s |
+| 41626fa9 | `./scripts/gate.sh --strict` (`CARGO_TARGET_DIR` unset) | **gate PASSED**, rc 0; 6552 passed, 0 failed; 45 harnesses SKIPPED (host prerequisites; `tasks/r51-s6/final/gate-strict-41626fa9.summary`) | 2216 s |
+| 41626fa9 | `tasks/r51-smoke/run.sh <release axon> post`; Q1 `run.sh <axon> 5` | 6/6 PASS; sealed 1.379 s, unsealed VM 0.180 s, unsealed tree 0.453 s | - |
