@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """Run one arm of the Cortex A/B over a corpus built by corpus.py.
 
-    python3 run_ab.py CORPUS.json --arm A --agent claude  --out results/a.jsonl
+    python3 run_ab.py CORPUS.json --arm A --agent real  --out results/a.jsonl
     python3 run_ab.py CORPUS.json --arm B --generator real --out results/b.jsonl
+    python3 run_ab.py CORPUS.json --arm A --agent real --transport micode \\
+        --model claude-haiku-5-5 --spend-root results-micode --cap-usd 60 --out ...
 
-Arm A is a plain coding agent: `claude -p` with file and shell tools in a temp
-copy of the task that does NOT contain the hidden check. Arm B is
-`cortex repair --candidates 6` driving the same model through
-../drivers/claude_cli.sh. Both are graded by `grade()` below, identically.
+Arm A is a plain coding agent with file and shell tools in a temp copy of the
+task that does NOT contain the hidden check: `claude -p` (`--transport claude`,
+the primary, PREREG.md) or `micode exec` (`--transport micode`,
+PREREG-micode.md). Arm B is `cortex repair --candidates 6` driving the same
+model through ../drivers/claude_cli.sh or ../drivers/micode.sh. Both are graded
+by `grade()` below, identically.
 
 Zero-cost agents for dry runs (they exercise the harness and the grader, not a
 model): A `oracle` (splices the original body, claims FIXED), A `cheat`
@@ -17,8 +21,9 @@ nothing, claims NOT FIXED); B `oracle` (`literal:` original body), B `none`
 
 One JSON row per task is appended to --out; tasks already present are skipped,
 so an interrupted run resumes. Real-model spend is summed over every row in
-every *.jsonl under the --out directory before each task starts; the run stops
-launching tasks once that total reaches --cap-usd (PREREG: $150).
+every *.jsonl under --spend-root before each task starts; the run stops
+launching tasks once that total reaches --cap-usd (PREREG: $150 over
+results/; PREREG-micode: $60 over results-micode/).
 """
 import argparse
 import concurrent.futures as cf
@@ -29,6 +34,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -42,10 +48,44 @@ from common import AXON, ROOT, fn_span  # noqa: E402
 from corpus import load as load_corpus, test_blocks, test_results  # noqa: E402
 
 CORTEX = os.environ.get("CORTEX_BIN", f"{ROOT}/target/debug/cortex")
-DRIVER = os.path.join(os.path.dirname(HERE), "drivers", "claude_cli.sh")
+DRIVERS = {t: os.path.join(os.path.dirname(HERE), "drivers", f)
+           for t, f in (("claude", "claude_cli.sh"), ("micode", "micode.sh"))}
 CLAUDE = os.environ.get("CLAUDE_BIN", "/root/.local/bin/claude")
-MODEL = "claude-haiku-4-5-20251001"
+# Resolved on PATH, as drivers/micode.sh resolves it, so both arms run one binary.
+MICODE = "micode"
+# The primary's model (PREREG.md); the default for --transport claude only.
+PRIMARY_MODEL = "claude-haiku-4-5-20251001"
 CANDIDATES = "6"
+
+# LIST PRICES, USD per million tokens (input, output), for transports that
+# report tokens but no dollars (micode on an OAuth grant). Source: OpenRouter
+# model pages, as recorded for this run on 2026-10-12. Cache pricing is the
+# Anthropic convention, an ASSUMPTION not read from a bill: a cache read costs
+# 0.1x input, a cache write 1.25x input. Every cost computed from these is
+# labelled `cost_estimated` in its row.
+PRICES_PER_MTOK = {
+    "claude-haiku-5-5": (0.10, 0.50),
+    "claude-opus-5-5": (4.00, 20.00),
+    "claude-haiku-4-5-20251001": (1.00, 5.00),
+}
+CACHE_READ_X, CACHE_WRITE_X = 0.1, 1.25
+PRICE_SOURCE = ("OpenRouter list prices recorded 2026-10-12; cache read 0.1x and "
+                "cache write 1.25x input (assumed Anthropic convention)")
+
+
+def estimate_usd(model, inp, out, cache_read, cache_create):
+    if model not in PRICES_PER_MTOK:
+        raise SystemExit(f"no list price recorded for {model}; add it to PRICES_PER_MTOK")
+    pin, pout = PRICES_PER_MTOK[model]
+    return ((inp or 0) * pin + (out or 0) * pout + (cache_read or 0) * pin * CACHE_READ_X
+            + (cache_create or 0) * pin * CACHE_WRITE_X) / 1e6
+
+
+# A model call failed for a provider rate limit. micode reports it as a
+# `retry` or `session_error` event; the shape is matched loosely on purpose
+# (a missed rate limit means retrying forever, a false one stops the run early
+# and is visible in the row).
+RATE_LIMIT = re.compile(r"rate.?limit|RateLimited|429|usage.?limit|overloaded", re.I)
 
 PROMPT_A = (
     "This directory contains an Axon program, `{file}`. Axon is a statically "
@@ -192,7 +232,7 @@ def grade(task, given, final):
 OUTSIDE = re.compile(r"(/home/|/root/|/var/|/tmp/|/etc/|\.\./|examples/|axon-lanes|projects/axon)")
 
 
-def run_arm_a(task, agent, ws):
+def run_arm_a(task, agent, ws, cfg):
     """The agent sees only `ws/work`; the axon symlink lives in `ws/.bin`."""
     work = os.path.join(ws, "work")
     os.makedirs(work)
@@ -233,78 +273,181 @@ def run_arm_a(task, agent, ws):
             inject += "\n    exit(0)\n"
         open(p, "w").write(given[:span[0]] + inject + given[span[0]:])
         row.update(claim=True, final_text="FIXED")
-    elif agent == "claude":
+    elif agent == "real":
         bindir = os.path.join(ws, ".bin")
         os.makedirs(bindir)
         os.symlink(AXON, os.path.join(bindir, "axon"))
         env = dict(os.environ, PATH=bindir + ":" + os.environ.get("PATH", ""))
         prompt = PROMPT_A.format(file=task["file"], visible=task["visible"])
-        cmd = [CLAUDE, "-p", prompt, "--model", MODEL,
-               "--output-format", "stream-json", "--verbose",
-               "--tools", "Bash,Read,Edit,Write,Glob,Grep",
-               "--allowedTools", "Bash(axon test:*)", "Bash(axon check:*)",
-               "Bash(axon run:*)",
-               "--permission-mode", "acceptEdits",
-               "--strict-mcp-config", "--no-session-persistence",
-               "--max-turns", "40", "--max-budget-usd", str(A_TASK_CEILING)]
-        try:
-            proc = subprocess.run(cmd, cwd=work, capture_output=True,
-                                  text=True, timeout=900, env=env)
-            out, rc = proc.stdout, proc.returncode
-        except subprocess.TimeoutExpired as e:
-            out, rc = (e.stdout or b"").decode() if isinstance(e.stdout, bytes) else (e.stdout or ""), -1
-        events = []
-        for line in out.splitlines():
-            try:
-                events.append(json.loads(line))
-            except ValueError:
-                pass
-        res = next((e for e in reversed(events) if e.get("type") == "result"), {})
-        tools, suspect = [], []
-        for e in events:
-            if e.get("type") != "assistant":
-                continue
-            for c in (e.get("message") or {}).get("content") or []:
-                if c.get("type") == "tool_use":
-                    inp = json.dumps(c.get("input"))
-                    tools.append({"name": c.get("name"), "input": inp[:400]})
-                    stripped = inp.replace(ws, "<WS>")
-                    if OUTSIDE.search(stripped):
-                        suspect.append({"name": c.get("name"), "input": inp[:400]})
-        denials = res.get("permission_denials") or []
-        text = (res.get("result") or "").strip()
-        last = text.splitlines()[-1].strip().strip("`*").strip() if text else ""
-        u = res.get("usage") or {}
-        row.update(
-            exit=rc, is_error=res.get("is_error"), subtype=res.get("subtype"),
-            final_text=text[-1500:], claim=(rc == 0 and not res.get("is_error") and last == "FIXED"),
-            claim_line=last, cost_usd=res.get("total_cost_usd") or 0.0,
-            models=sorted((res.get("modelUsage") or {}).keys()),
-            input_tokens=u.get("input_tokens"), output_tokens=u.get("output_tokens"),
-            cache_read=u.get("cache_read_input_tokens"),
-            cache_create=u.get("cache_creation_input_tokens"),
-            num_turns=res.get("num_turns"), api_ms=res.get("duration_api_ms"),
-            tool_uses=tools, outside_access_suspect=suspect,
-            permission_denials=[json.dumps(d)[:300] for d in denials],
-            result_event_seen=bool(res),
-            # No result event (timeout, crash): the spend happened but was not
-            # reported. The budget counts the per-task ceiling instead.
-            cost_bound_usd=None if res else A_TASK_CEILING,
-        )
+        if cfg.transport == "claude":
+            row.update(_claude_agent(prompt, work, ws, env, cfg.model))
+        else:
+            row.update(_micode_agent(prompt, work, ws, env, cfg.model))
     else:
         raise SystemExit(f"unknown arm-A agent {agent}")
     row["wall_s"] = round(time.time() - began, 1)
     return given, open(p).read(), row
 
 
+def _run(cmd, cwd, env, timeout):
+    """(stdout, exit code); -1 and the output so far on timeout.
+
+    The child runs in its own process group and the WHOLE group is killed on
+    timeout. `subprocess.run(timeout=)` kills only the direct child: a
+    `cortex` killed that way left its generator driver and the model CLI under
+    it running, still billing and still appending to a log the harness had
+    already read and a workspace it had already deleted."""
+    proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True, start_new_session=True)
+    try:
+        out, _ = proc.communicate(timeout=timeout)
+        return out, proc.returncode
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        out, _ = proc.communicate()
+        return out or "", -1
+
+
+def _events(out):
+    events = []
+    for line in out.splitlines():
+        try:
+            events.append(json.loads(line))
+        except ValueError:
+            pass
+    return events
+
+
+def _tool_use(name, inp, ws, tools, suspect):
+    inp = json.dumps(inp)
+    tools.append({"name": name, "input": inp[:400]})
+    if OUTSIDE.search(inp.replace(ws, "<WS>")):
+        suspect.append({"name": name, "input": inp[:400]})
+
+
+def _claim_line(text):
+    return text.splitlines()[-1].strip().strip("`*").strip() if text else ""
+
+
+def _claude_agent(prompt, work, ws, env, model):
+    """PREREG.md arm A: `claude -p`, as the primary ran it."""
+    cmd = [CLAUDE, "-p", prompt, "--model", model,
+           "--output-format", "stream-json", "--verbose",
+           "--tools", "Bash,Read,Edit,Write,Glob,Grep",
+           "--allowedTools", "Bash(axon test:*)", "Bash(axon check:*)",
+           "Bash(axon run:*)",
+           "--permission-mode", "acceptEdits",
+           "--strict-mcp-config", "--no-session-persistence",
+           "--max-turns", "40", "--max-budget-usd", str(A_TASK_CEILING)]
+    out, rc = _run(cmd, work, env, 900)
+    events = _events(out)
+    res = next((e for e in reversed(events) if e.get("type") == "result"), {})
+    tools, suspect = [], []
+    for e in events:
+        if e.get("type") != "assistant":
+            continue
+        for c in (e.get("message") or {}).get("content") or []:
+            if c.get("type") == "tool_use":
+                _tool_use(c.get("name"), c.get("input"), ws, tools, suspect)
+    denials = res.get("permission_denials") or []
+    text = (res.get("result") or "").strip()
+    last = _claim_line(text)
+    u = res.get("usage") or {}
+    return dict(
+        exit=rc, is_error=res.get("is_error"), subtype=res.get("subtype"),
+        final_text=text[-1500:], claim=(rc == 0 and not res.get("is_error") and last == "FIXED"),
+        claim_line=last, cost_usd=res.get("total_cost_usd") or 0.0,
+        models=sorted((res.get("modelUsage") or {}).keys()),
+        input_tokens=u.get("input_tokens"), output_tokens=u.get("output_tokens"),
+        cache_read=u.get("cache_read_input_tokens"),
+        cache_create=u.get("cache_creation_input_tokens"),
+        num_turns=res.get("num_turns"), api_ms=res.get("duration_api_ms"),
+        tool_uses=tools, outside_access_suspect=suspect,
+        permission_denials=[json.dumps(d)[:300] for d in denials],
+        result_event_seen=bool(res),
+        # No result event (timeout, crash): the spend happened but was not
+        # reported. The budget counts the per-task ceiling instead.
+        cost_bound_usd=None if res else A_TASK_CEILING,
+    )
+
+
+# PREREG-micode.md arm A's tool set: the six tools the primary's `claude -p`
+# was given (`--tools Bash,Read,Edit,Write,Glob,Grep`), as a micode project
+# mode. A micode mode admits exactly the tools it lists; the ceiling is the
+# headless default's (`approval.headless = auto` answers up to sensitive).
+MICODE_A_MODE = ("---\nmode: primary\nname: plain\n"
+                 "description: plain coding agent, the primary's six tools\n"
+                 "tools: bash, read, edit, write, glob, grep\n"
+                 "tier_ceiling: sensitive\n---\n")
+
+
+def _micode_agent(prompt, work, ws, env, model):
+    """PREREG-micode.md arm A: `micode exec` with cwd = the task workspace.
+
+    micode keeps its state in `<cwd>/.micode/` and has no setting that moves
+    it, so the mode file goes there and the whole directory is removed after
+    the run, before the workspace is listed or graded (grading reads only the
+    task file in any case)."""
+    os.makedirs(os.path.join(work, ".micode", "agents"))
+    open(os.path.join(work, ".micode", "agents", "plain.md"), "w").write(MICODE_A_MODE)
+    env = {k: v for k, v in env.items() if k != "ANTHROPIC_BASE_URL"}
+    cmd = [MICODE, "exec", "--format", "jsonl", "--no-skills", "--mode", "plain",
+           "--config", f"provider.model={model}",
+           # A summarizing call outside the turn stream would be spend the
+           # turn_end usage below does not see.
+           "--config", "compaction.enabled=off",
+           prompt]
+    out, rc = _run(cmd, work, env, 900)
+    shutil.rmtree(os.path.join(work, ".micode"))
+    events = _events(out)
+    start = next((e for e in events if e.get("type") == "session_start"), {})
+    ends = [e for e in events if e.get("type") == "turn_end"]
+    errors = [json.dumps(e)[:400] for e in events if e.get("type") == "session_error"]
+    retries = [json.dumps(e)[:400] for e in events if e.get("type") == "retry"]
+    tools, suspect, gated = [], [], []
+    text = ""
+    for e in events:
+        t = e.get("type")
+        if t == "turn_start":
+            text = ""
+        elif t == "assistant_delta":
+            text += e.get("text") or ""
+        elif t == "tool_call":
+            _tool_use(e.get("name"), e.get("args"), ws, tools, suspect)
+        elif t == "gate_decision" and (e.get("decision") or {}).get("kind") != "logged":
+            # Anything the gate did not simply log: asked (and how it was
+            # answered) or refused. Recorded whole; its vocabulary is micode's.
+            gated.append(json.dumps(e)[:300])
+    text = text.strip()
+    last = _claim_line(text)
+    tok = lambda k: sum((e.get("usage") or {}).get(k) or 0 for e in ends)
+    inp, outp = tok("input_tokens"), tok("output_tokens")
+    cr, cw = tok("cache_read_input_tokens"), tok("cache_creation_input_tokens")
+    completed = rc == 0 and bool(ends) and not errors
+    return dict(
+        exit=rc, is_error=bool(errors) or rc != 0, final_text=text[-1500:],
+        claim=completed and last == "FIXED", claim_line=last,
+        cost_usd=round(estimate_usd(model, inp, outp, cr, cw), 6), cost_estimated=True,
+        models=[start["model"]] if start.get("model") else [],
+        input_tokens=inp, output_tokens=outp, cache_read=cr, cache_create=cw,
+        num_turns=len(ends), tool_uses=tools, outside_access_suspect=suspect,
+        gate_escalations=gated, session_errors=errors, retries=retries,
+        rate_limited=any(RATE_LIMIT.search(s) for s in errors + retries),
+        result_event_seen=completed,
+        # Killed at 900 s: the turn in flight was billed and never reported.
+        usage_partial=rc == -1,
+    )
+    row["wall_s"] = round(time.time() - began, 1)
+    return given, open(p).read(), row
+
+
 # ---------------------------------------------------------------- arm B
 
-def run_arm_b(task, generator, ws):
+def run_arm_b(task, generator, ws, cfg):
     rel = task["file"]
     p = os.path.join(ws, rel)
     given = task["broken"]
     open(p, "w").write(given)
-    rc, out = 0, ""
     loc = subprocess.run([CORTEX, "locate", "--workspace", ws, "--file", rel,
                           "--check", task["hidden"], "--axon", AXON, "--json"],
                          capture_output=True, text=True, timeout=300)
@@ -317,20 +460,14 @@ def run_arm_b(task, generator, ws):
         if isinstance(v, dict) and v.get("schema") == "cortex-locate/1":
             ranked = [r["symbol"] for r in v.get("ranked", [])]
             break
-    gen = {"real": "cmd:" + DRIVER, "oracle": "literal:" + task["oracle_body"],
+    gen = {"real": "cmd:" + DRIVERS[cfg.transport], "oracle": "literal:" + task["oracle_body"],
            "none": "none"}[generator]
     log = os.path.join(ws, "model.jsonl")
-    env = dict(os.environ, CORTEX_MODEL_LOG=log, CORTEX_MODEL=MODEL)
+    env = dict(os.environ, CORTEX_MODEL_LOG=log, CORTEX_MODEL=cfg.model or PRIMARY_MODEL)
     began = time.time()
-    try:
-        proc = subprocess.run(
-            [CORTEX, "repair", "--workspace", ws, "--file", rel, "--check", task["hidden"],
-             "--axon", AXON, "--write-prefix", rel, "--candidates", CANDIDATES,
-             "--generator", gen, "--json"],
-            capture_output=True, text=True, timeout=2400, env=env)
-        rc, out = proc.returncode, proc.stdout
-    except subprocess.TimeoutExpired:
-        rc = -1
+    out, rc = _run([CORTEX, "repair", "--workspace", ws, "--file", rel, "--check", task["hidden"],
+                    "--axon", AXON, "--write-prefix", rel, "--candidates", CANDIDATES,
+                    "--generator", gen, "--json"], None, env, 2400)
     wall = time.time() - began
     verdict = {}
     for line in reversed(out.strip().splitlines()):
@@ -342,13 +479,28 @@ def run_arm_b(task, generator, ws):
             verdict = v
             break
     calls = [json.loads(l) for l in open(log) if l.strip()] if os.path.exists(log) else []
+    if cfg.transport == "micode":
+        # micode reports tokens, not dollars: price every call, failed ones
+        # included (they were billed), at the list price of the model asked for.
+        for c in calls:
+            c["cost_usd"] = estimate_usd(c.get("requested_model"), c.get("input_tokens"),
+                                         c.get("output_tokens"), c.get("cache_read"),
+                                         c.get("cache_create"))
+    failed = [c for c in calls if c.get("extraction_status") == "call_failed"]
+    errs = [s for c in calls for s in (c.get("session_errors") or []) + (c.get("retries") or [])]
     row = {
         "exit": rc, "claim": rc == 0, "outcome": verdict.get("outcome"),
         "verdict_read": bool(verdict), "attempted": verdict.get("attempted", []),
         "localization_rank": ranked.index(task["symbol"]) + 1 if task["symbol"] in ranked else 0,
         "ranked_top": ranked[: int(CANDIDATES)],
-        "proposals": len(calls),
+        # Proposals that reached the loop. A failed micode call is logged by
+        # micode.sh (claude_cli.sh logs none) and counted separately.
+        "proposals": len(calls) - len(failed),
+        "failed_calls": len(failed),
         "cost_usd": round(sum(c.get("cost_usd") or 0 for c in calls), 6),
+        "cost_estimated": cfg.transport == "micode",
+        "rate_limited": any(RATE_LIMIT.search(s) for s in errs),
+        "call_errors": errs[:20],
         "input_tokens": sum(c.get("input_tokens") or 0 for c in calls),
         "output_tokens": sum(c.get("output_tokens") or 0 for c in calls),
         "cache_read": sum(c.get("cache_read") or 0 for c in calls),
@@ -357,7 +509,8 @@ def run_arm_b(task, generator, ws):
         "api_ms": sum(c.get("duration_api_ms") or 0 for c in calls),
         "extraction_status": [c.get("extraction_status") for c in calls],
         "per_proposal": [{k: c.get(k) for k in ("candidate", "cost_usd", "input_tokens",
-                                                 "output_tokens", "extraction_status")}
+                                                 "output_tokens", "cache_read", "cache_create",
+                                                 "duration_api_ms", "extraction_status")}
                          for c in calls],
         "wall_s": round(wall, 1),
     }
@@ -373,8 +526,8 @@ A_TASK_CEILING = 3.0
 
 
 def spent(root=RESULTS):
-    """Model spend recorded in EVERY row under results/ (probes, pilot, full
-    run, both arms): the PREREG cap is one cap across all of them."""
+    """Model spend recorded in EVERY row under `root` (probes, pilot, full
+    run, both arms): a PREREG cap is one cap across all of them."""
     total = 0.0
     for f in glob.glob(os.path.join(root, "**", "*.jsonl"), recursive=True):
         for line in open(f):
@@ -384,19 +537,45 @@ def spent(root=RESULTS):
     return total
 
 
+# Consecutive paid tasks whose model calls hit a rate limit before the run
+# stops launching tasks (PREREG-micode: record and report, never retry forever).
+RATE_LIMIT_STOP = 3
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("corpus")
     ap.add_argument("--arm", choices=["A", "B"], required=True)
-    ap.add_argument("--agent", default="claude", help="arm A: claude|oracle|cheat|noop")
+    ap.add_argument("--agent", default="real",
+                    help="arm A: real|oracle|cheat|exit0|forge|noop")
     ap.add_argument("--generator", default="real", help="arm B: real|oracle|none")
+    ap.add_argument("--transport", choices=["claude", "micode"], default="claude",
+                    help="the CLI that carries the real model, both arms")
+    ap.add_argument("--model", default=None,
+                    help=f"model id; default {PRIMARY_MODEL} for --transport claude, "
+                         "required for micode")
     ap.add_argument("--out", required=True)
     ap.add_argument("--only", default="", help="comma-separated task ids")
     ap.add_argument("--parallel", type=int, default=1)
     ap.add_argument("--cap-usd", type=float, default=150.0)
+    ap.add_argument("--spend-root", default=RESULTS,
+                    help="every *.jsonl under it counts toward --cap-usd")
+    ap.add_argument("--reserve-usd", type=float, default=None,
+                    help="what one task in flight may still spend; required for "
+                         "micode (it has no per-task dollar ceiling)")
     a = ap.parse_args()
     if a.parallel > 3:
         raise SystemExit("at most 3 parallel tasks (shared machine)")
+    variant = a.agent if a.arm == "A" else a.generator
+    paid = variant == "real"
+    if a.model is None:
+        if a.transport == "micode" and paid:
+            raise SystemExit("--transport micode needs --model")
+        a.model = PRIMARY_MODEL if a.transport == "claude" else None
+    if paid and a.transport == "micode":
+        estimate_usd(a.model, 0, 0, 0, 0)  # no price recorded: stop before any call
+        if a.reserve_usd is None:
+            raise SystemExit("--transport micode needs --reserve-usd")
 
     corpus = load_corpus(a.corpus)
     tasks = corpus["tasks"]
@@ -408,21 +587,30 @@ def main():
     if os.path.exists(a.out):
         done = {json.loads(l)["id"] for l in open(a.out) if l.strip()}
     tasks = [t for t in tasks if t["id"] not in done]
-    # What one task in flight may still spend: arm A's own ceiling; arm B has
-    # none of its own, so the pilot's measured maximum is passed in.
-    reserve = A_TASK_CEILING if a.arm == "A" else float(os.environ.get("B_TASK_RESERVE", "3"))
+    # What one task in flight may still spend: arm A on claude has its own
+    # ceiling; otherwise the pilot's measured maximum is passed in.
+    if a.reserve_usd is not None:
+        reserve = a.reserve_usd
+    elif a.arm == "A":
+        reserve = A_TASK_CEILING
+    else:
+        reserve = float(os.environ.get("B_TASK_RESERVE", "3"))
     in_flight = [0]
-    variant = a.agent if a.arm == "A" else a.generator
-    paid = (a.arm == "A" and a.agent == "claude") or (a.arm == "B" and a.generator == "real")
+    rate_limited_run = [0]
+    version = lambda b: subprocess.run([b, "--version"], capture_output=True,
+                                       text=True).stdout.strip()
     meta = {
-        "arm": a.arm, "variant": variant, "model": MODEL if paid else None,
+        "arm": a.arm, "variant": variant, "model": a.model if paid else None,
+        "transport": a.transport if paid else None,
         "commit": subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD"],
                                  capture_output=True, text=True).stdout.strip(),
-        "driver_sha256_16": hashlib.sha256(open(DRIVER, "rb").read()).hexdigest()[:16],
+        "driver_sha256_16": hashlib.sha256(open(DRIVERS[a.transport], "rb").read()).hexdigest()[:16],
         "axon_sha256_16": hashlib.sha256(open(AXON, "rb").read()).hexdigest()[:16],
         "cortex_sha256_16": hashlib.sha256(open(CORTEX, "rb").read()).hexdigest()[:16],
-        "claude_version": subprocess.run([CLAUDE, "--version"], capture_output=True,
-                                         text=True).stdout.strip() if paid else None,
+        "claude_version": version(CLAUDE) if paid and a.transport == "claude" else None,
+        "micode_version": version(MICODE) if paid and a.transport == "micode" else None,
+        "cost_basis": (PRICE_SOURCE if paid and a.transport == "micode"
+                       else "reported by the claude CLI" if paid else None),
     }
     print(f"provenance: {json.dumps(meta)}", file=sys.stderr, flush=True)
     lock = threading.Lock()
@@ -433,7 +621,7 @@ def main():
             return
         if paid:
             with lock:
-                s = spent()
+                s = spent(a.spend_root)
                 if s + (in_flight[0] + 1) * reserve > a.cap_usd:
                     stop.set()
                     print(f"BUDGET CAP: ${s:.2f} spent + {in_flight[0] + 1} task(s) x "
@@ -443,10 +631,10 @@ def main():
         ws = tempfile.mkdtemp(prefix=f"ab{a.arm}_")
         try:
             if a.arm == "A":
-                given, final, row = run_arm_a(t, a.agent, ws)
+                given, final, row = run_arm_a(t, a.agent, ws, a)
                 row["extra_files"] = sorted(set(os.listdir(os.path.join(ws, "work"))) - {t["file"]})
             else:
-                given, final, row = run_arm_b(t, a.generator, ws)
+                given, final, row = run_arm_b(t, a.generator, ws, a)
             g = grade(t, given, final)
         finally:
             shutil.rmtree(ws, ignore_errors=True)
@@ -459,6 +647,11 @@ def main():
             # crashed stays reserved for the rest of the run.
             if paid:
                 in_flight[0] -= 1
+                rate_limited_run[0] = rate_limited_run[0] + 1 if row.get("rate_limited") else 0
+                if rate_limited_run[0] >= RATE_LIMIT_STOP and not stop.is_set():
+                    stop.set()
+                    print(f"RATE LIMIT STOP: {RATE_LIMIT_STOP} consecutive tasks hit a "
+                          "rate limit", file=sys.stderr, flush=True)
         print(f"  {a.arm}/{variant} {t['id']} claim={row['claim']} verified_clean="
               f"{row['verified_clean']} tampered={row['tests_tampered']} "
               f"${row['cost_usd']:.3f} {row['wall_s']}s", file=sys.stderr, flush=True)

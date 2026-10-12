@@ -152,6 +152,13 @@ if ab_md:
     _ab_verdict = json.load(open(ab_path))["analysis"]["verdict"]["verdict"]
     if _ab_verdict not in readme:
         missing.append(("A/B verdict", _ab_verdict))
+# The micode re-runs (`ab/PREREG-micode.md`), one summary per model, sourced
+# the same way: their rendered text, and each verdict must be quoted.
+for _p in sorted(glob.glob(os.path.join(HERE, "ab", "results-micode", "summary-*.json"))):
+    _s = json.load(open(_p))
+    sourced |= set(re.findall(r"\b\d{1,3}\.\d{1,2}\b", _s["markdown"]))
+    if _s["analysis"]["verdict"]["verdict"] not in readme:
+        missing.append((f"A/B verdict ({os.path.basename(_p)})", _s["analysis"]["verdict"]["verdict"]))
 
 _unverified(art)
 sourced |= {str(v) for _, v in unverified}
