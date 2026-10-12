@@ -448,6 +448,11 @@ def add(history, root, *, set_, agent, rows, corpus, config, notes, baselines=()
 
 def compare(recs, root, a_id, b_id):
     """A is the incumbent, B the candidate, judged in the scorecard's strict order."""
+    return judge(recs, verify(recs, root), a_id, b_id)
+
+
+def judge(recs, norms, a_id, b_id):
+    """`compare` on runs `verify` already recomputed (`norms`: run_id -> rows)."""
     by_id = {r["run_id"]: r for r in recs}
     for i in (a_id, b_id):
         if i not in by_id:
@@ -455,7 +460,6 @@ def compare(recs, root, a_id, b_id):
     A, B = by_id[a_id], by_id[b_id]
     if A["corpus"]["sha256"] != B["corpus"]["sha256"]:
         raise Refused("the two runs were scored on different corpora")
-    norms = verify(recs, root)
     p = pair(norms[b_id], norms[a_id])
     ma, mb = A["metrics"], B["metrics"]
     steps = []
@@ -678,7 +682,76 @@ refusals and the report's determinism on fixtures.
 """
 
 
-def render_readme(recs, root, locdir):
+TREND_STEPS = ("false successes", "verified", "proposals / fix", "cost / fix", "wall / fix",
+               "truth first")
+
+
+def trend_lines(runs, norms, idx):
+    """Per set: the latest cortex run against the earliest cortex run on the
+    same corpus and against each of its own baselines, by `judge`."""
+    out = ["", "## Trend", "",
+           "Per set, the latest cortex run (B) against the earliest cortex run on the same "
+           "corpus and against each of its own baselines (A), judged as `compare A B` judges "
+           "them, in the strict order. Values are A → B. Only the verified step is a test "
+           "(exact McNemar); the later steps are descriptive.", "",
+           "| set | latest (B) | against (A) | " + " | ".join(TREND_STEPS)
+           + " | first criterion that separates them |",
+           "|---" * (len(TREND_STEPS) + 4) + "|"]
+    by_id = {r["run_id"]: r for r in runs}
+
+    def val(rec, k, v):
+        if v is None:
+            return "n/a"
+        if k == 1:
+            return f"{v}/{rec['metrics']['n']}"
+        if k == 2:
+            return f"{v:.2f}"
+        if k == 3:
+            return analyse.usd(v, 3) + ("*" if rec["metrics"]["cost_is_estimate"] else "")
+        if k == 4:
+            return f"{v:.1f}s"
+        if k == 5:
+            return f"{v}/{rec['metrics']['n']}"
+        return str(v)
+
+    rows = 0
+    for s in SETS:
+        cortex = [r for r in runs if r["set"] == s and r["agent"] == "cortex"]
+        if not cortex:
+            continue
+        latest = cortex[-1]
+        against = []
+        first = next(r for r in cortex if r["corpus"]["sha256"] == latest["corpus"]["sha256"])
+        if first is not latest:
+            against.append((first["run_id"], "earliest cortex"))
+        for b, _ in pairings(latest):
+            if b in [a for a, _ in against]:
+                against = [(a, k + "; baseline" if a == b else k) for a, k in against]
+            else:
+                against.append((b, "baseline"))
+        for a_id, kind in against:
+            c = judge(runs, norms, a_id, latest["run_id"])
+            A = by_id[a_id]
+            cells = []
+            for k, st in enumerate(c["steps"]):
+                cell = f"{val(A, k, st['A'])} → {val(latest, k, st['B'])}"
+                if k == 1:
+                    cell += f" (p = {c['paired']['mcnemar_p']:.3g})"
+                cells.append(cell)
+            k = next((k for k, st in enumerate(c["steps"]) if st["better"]), None)
+            sep = "none" if k is None else (
+                f"{TREND_STEPS[k]}: {'B (latest)' if c['steps'][k]['better'] == 'B' else 'A'}"
+                + ("" if c["steps"][k]["tested"] else ", untested"))
+            out.append(f"| {s} | {idx[latest['run_id']]}. `{latest['run_id']}` | "
+                       f"{idx[a_id]}. `{a_id}` ({kind}) | " + " | ".join(cells) + f" | {sep} |")
+            rows += 1
+    if not rows:
+        out.append("| (no cortex run has anything to compare against yet) |"
+                   + " |" * (len(TREND_STEPS) + 3))
+    return out
+
+
+def render_readme(recs, root, locdir, norms):
     runs = ordered(recs)
     idx = {r["run_id"]: i + 1 for i, r in enumerate(runs)}
     out = [README_HEAD, "## Runs", "",
@@ -735,6 +808,8 @@ def render_readme(recs, root, locdir):
     if not any_pair:
         out.append("| (no paired runs yet) | | | | | | | | |")
 
+    out += trend_lines(runs, norms, idx)
+
     out += ["", "## Held-out and once-set use", ""]
     held = [r for r in runs if r["set"] == "heldout"]
     if not held:
@@ -756,8 +831,9 @@ def render_readme(recs, root, locdir):
     out += ["", "## Progress plot", "",
             "![progress](progress.svg)", "",
             "x = runs in date order (the `#` above). Panels: verified rate with 95% CI, "
-            "false successes, cost per verified fix (log scale; hollow = estimate), "
-            "truth-first rate. Colour = agent (blue cortex, orange plain); marker = set "
+            "false successes, proposals per verified fix (cortex only), cost per verified fix "
+            "(log scale; hollow = estimate), truth-first rate. Colour = agent (blue cortex, "
+            "orange plain); marker = set "
             "(circle dev, square heldout, diamond once, triangle field).", ""]
     return "\n".join(out)
 
@@ -783,10 +859,19 @@ def marker(set_, x, y, color, hollow=False, title=None):
 def render_svg(recs):
     runs = ordered(recs)
     n = max(len(runs), 1)
-    W, L, R, TOP, PH, GAP, BOTTOM = 960, 80, 20, 70, 150, 46, 230
-    H = TOP + 4 * PH + 3 * GAP + BOTTOM
-    pw = W - L - R
-    step = pw / n
+    labels = [label(i, r) for i, r in enumerate(runs, 1)]
+    NP, PW, R, TOP, PH, GAP = 5, 860, 20, 70, 150, 46
+    step = PW / n
+    # The x labels hang down-left from their tick at -35 degrees; size the left
+    # and bottom margins so the longest one is never cut off (6.4 px per
+    # character over-estimates 11 px sans-serif).
+    widths = [6.4 * len(s) for s in labels]
+    cos35, sin35 = math.cos(math.radians(35)), math.sin(math.radians(35))
+    L = max([80] + [math.ceil(8 + w * cos35 - (i + 0.5) * step) for i, w in enumerate(widths)])
+    BOTTOM = math.ceil(max([0.0] + [w * sin35 for w in widths]) + 40)
+    W = L + PW + R
+    H = TOP + NP * PH + (NP - 1) * GAP + BOTTOM
+    pw = PW
     xs = [L + (i + 0.5) * step for i in range(len(runs))]
     o = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
          f'viewBox="0 0 {W} {H}" font-family="sans-serif" font-size="11">',
@@ -852,14 +937,34 @@ def render_svg(recs):
         o.append(marker(r["set"], x, y, col, title=f"{r['run_id']}: {fs} false successes"))
         o.append(f'<text x="{x + 8:.1f}" y="{y + 4:.1f}" fill="{"#c0392b" if fs else "#333333"}">{fs}</text>')
 
-    # 3. Cost per verified fix, log scale.
+    # 3. Proposals per verified fix: cortex only, the plain agent proposes no
+    # candidate patches.
+    ppv = [r["metrics"]["proposals_per_verified"] for r in runs
+           if r["metrics"]["proposals_per_verified"] is not None]
+    pmax = max(ppv + [1.0])
+    pstep = next(s for s in (m * 10 ** e for e in range(12) for m in (1, 2, 5)) if pmax / s <= 5)
+    ptop = pstep * math.ceil(pmax / pstep)
+    ymap = lambda v: PH - v / ptop * PH
+    y0 = panel(2, "Proposals per verified fix (cortex only)",
+               [pstep * i for i in range(int(ptop / pstep) + 1)], ymap, str)
+    for x, r in zip(xs, runs):
+        v = r["metrics"]["proposals_per_verified"]
+        if v is None:
+            na(x, y0)
+            continue
+        col = COLORS[r["agent"]]
+        y = y0 + ymap(v)
+        o.append(marker(r["set"], x, y, col, title=f"{r['run_id']}: {v:.2f} proposals per verified fix"))
+        o.append(f'<text x="{x + 8:.1f}" y="{y + 4:.1f}" fill="#333333">{v:.2f}</text>')
+
+    # 4. Cost per verified fix, log scale.
     cpv = [r["metrics"]["cost_per_verified"] for r in runs if r["metrics"]["cost_per_verified"]]
     lo_d = math.floor(math.log10(min(cpv))) if cpv else -3
     hi_d = math.ceil(math.log10(max(cpv))) if cpv else 0
     if hi_d == lo_d:
         hi_d += 1
     ymap = lambda v: PH - (math.log10(v) - lo_d) / (hi_d - lo_d) * PH
-    y0 = panel(2, "Cost per verified fix, USD (log scale; hollow = estimated)",
+    y0 = panel(3, "Cost per verified fix, USD (log scale; hollow = estimated)",
                [10.0 ** d for d in range(lo_d, hi_d + 1)], ymap,
                lambda t: f"${t:.{max(0, -int(round(math.log10(t))))}f}")
     for x, r in zip(xs, runs):
@@ -872,9 +977,9 @@ def render_svg(recs):
                         title=f"{r['run_id']}: {analyse.usd(v, 3)} per verified fix"
                               + (" (estimated)" if m["cost_is_estimate"] else "")))
 
-    # 4. Truth-first rate.
+    # 5. Truth-first rate.
     ymap = lambda v: PH - v * PH
-    y0 = panel(3, "Truth first (first attempted function is the defective one)",
+    y0 = panel(4, "Truth first (first attempted function is the defective one)",
                [0.0, 0.25, 0.5, 0.75, 1.0], ymap, lambda t: f"{100 * t:.0f}%")
     for x, r in zip(xs, runs):
         m, col = r["metrics"], COLORS[r["agent"]]
@@ -885,18 +990,18 @@ def render_svg(recs):
                         title=f"{r['run_id']}: truth first {m['truth_first']}/{m['n']}"))
 
     # X labels under the last panel.
-    ybase = TOP + 4 * PH + 3 * GAP + 14
-    for i, (x, r) in enumerate(zip(xs, runs), 1):
+    ybase = TOP + NP * PH + (NP - 1) * GAP + 14
+    for x, r, text in zip(xs, runs, labels):
         o.append(f'<text x="{x:.1f}" y="{ybase}" text-anchor="end" '
-                 f'transform="rotate(-35 {x:.1f} {ybase})">{escape(label(i, r))}</text>')
+                 f'transform="rotate(-35 {x:.1f} {ybase})">{escape(text)}</text>')
     o.append("</svg>")
     return "\n".join(o) + "\n"
 
 
 def render(history, root, locdir):
     recs = load_history(history)
-    verify(recs, root)
-    readme = render_readme(recs, root, locdir)
+    norms = verify(recs, root)
+    readme = render_readme(recs, root, locdir, norms)
     svg = render_svg(recs)
     ET.fromstring(svg)  # must be well-formed XML
     return readme, svg
@@ -1074,6 +1179,18 @@ def selftest():
                "report is not byte-identical on a second run")
         expect("used 2 times" in texts[0], "heldout use count missing from README")
         expect("Once-set: 2 candidates scored" in texts[0], "once-set count missing")
+        expect("| dev | 2. `B` | 1. `A` (baseline) | 1 → 0 |" in texts[0]
+               and "false successes: B (latest), untested |" in texts[0],
+               "trend: dev latest cortex vs its baseline missing or misjudged")
+        expect("| heldout | 6. `H2` | 5. `H1` (earliest cortex) |" in texts[0]
+               and "| once | 4. `O3` | 3. `O1` (earliest cortex) |" in texts[0],
+               "trend: latest vs earliest cortex run missing")
+        expect("Proposals per verified fix (cortex only)" in texts[1], "SVG proposals panel missing")
+        cos35 = math.cos(math.radians(35))
+        for m_ in re.finditer(r'<text x="([\d.]+)" y="[\d.]+" text-anchor="end" '
+                              r'transform="rotate\(-35[^"]*">([^<]*)</text>', texts[1]):
+            expect(float(m_.group(1)) - 6.4 * len(m_.group(2)) * cos35 >= 0,
+                   f"x label clipped on the left: {m_.group(2)}")
         try:
             ET.fromstring(texts[1])
         except ET.ParseError as e:

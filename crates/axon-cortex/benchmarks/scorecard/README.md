@@ -139,6 +139,15 @@ Paired on the tasks both runs scored. Significant = two-sided exact McNemar p < 
 | 6. `dev-2026-10-12-cortex-opus-5.5-micode-breadth-spectrum` | 5. `dev-2026-10-12-plain-opus-5.5-micode` | 60 | 55 | 0 | 5 | 0 | 0.0625 | no |
 | 7. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 4. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` | 60 | 54 | 2 | 2 | 2 | 1 | no |
 
+## Trend
+
+Per set, the latest cortex run (B) against the earliest cortex run on the same corpus and against each of its own baselines (A), judged as `compare A B` judges them, in the strict order. Values are A → B. Only the verified step is a test (exact McNemar); the later steps are descriptive.
+
+| set | latest (B) | against (A) | false successes | verified | proposals / fix | cost / fix | wall / fix | truth first | first criterion that separates them |
+|---|---|---|---|---|---|---|---|---|---|
+| dev | 7. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 2. `dev-2026-10-12-cortex-haiku-4.5-claude-depth-spectrum` (earliest cortex) | 0 → 0 | 54/60 → 56/60 (p = 0.688) | 7.37 → 2.14 | $0.547 → $0.001187* | 258.1s → 8.7s | 25/60 → 59/60 | proposals / fix: B (latest), untested |
+| dev | 7. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 4. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` (baseline) | 0 → 0 | 56/60 → 56/60 (p = 1) | 3.55 → 2.14 | $0.001091* → $0.001187* | 11.3s → 8.7s | 26/60 → 59/60 | proposals / fix: B (latest), untested |
+
 ## Held-out and once-set use
 
 Held-out set: used 0 times.
@@ -172,4 +181,4 @@ Computed from `crates/axon-cortex/benchmarks/locrank/results/*.jsonl` (offline: 
 
 ![progress](progress.svg)
 
-x = runs in date order (the `#` above). Panels: verified rate with 95% CI, false successes, cost per verified fix (log scale; hollow = estimate), truth-first rate. Colour = agent (blue cortex, orange plain); marker = set (circle dev, square heldout, diamond once, triangle field).
+x = runs in date order (the `#` above). Panels: verified rate with 95% CI, false successes, proposals per verified fix (cortex only), cost per verified fix (log scale; hollow = estimate), truth-first rate. Colour = agent (blue cortex, orange plain); marker = set (circle dev, square heldout, diamond once, triangle field).
