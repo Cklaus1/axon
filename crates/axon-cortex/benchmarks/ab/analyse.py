@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""Score an A/B run against PREREG.md.
+"""Score an A/B run against PREREG.md (or PREREG-micode.md).
 
     python3 analyse.py CORPUS.json A.jsonl B.jsonl [--md] [--save SUMMARY.json]
-        [--supplement B-RERUN.jsonl]
+        [--supplement B-RERUN.jsonl] [--compare-b OTHER-B.jsonl]
 
 Pairs rows by task id and scores only tasks BOTH arms completed (a budget stop
 leaves some unpaired; they are counted and listed, never silently dropped).
 Every number printed is computed here from the committed rows.
+
+`--compare-b` sets the B rows beside another B run over the same tasks
+(PREREG-micode's secondary: the breadth-first walk on a new model against the
+frozen depth-first Haiku 4.5 rows): proposals, tokens, wall time.
 """
 import json
 import math
@@ -71,6 +75,29 @@ def summarize(rows):
     }
 
 
+def walk_stats(rows):
+    """How much the candidate walk spent per B task: proposals, tokens, wall."""
+    n = len(rows)
+    props = sorted(r.get("proposals") or 0 for r in rows)
+    below = [r for r in rows if (r.get("localization_rank") or 0) > 1]
+    tok = lambda k: sum(r.get(k) or 0 for r in rows)
+    median = (None if not n else props[n // 2] if n % 2
+              else (props[n // 2 - 1] + props[n // 2]) / 2)
+    return {
+        "n": n, "verified": sum(r["verified_clean"] for r in rows),
+        "proposals": sum(props), "proposals_mean": sum(props) / n if n else float("nan"),
+        "proposals_median": median, "proposals_max": props[-1] if n else None,
+        "first_proposal_fixes": sum(r["verified_clean"] and r.get("proposals") == 1 for r in rows),
+        "below_rank1_n": len(below),
+        "below_rank1_proposals_mean": (sum(r.get("proposals") or 0 for r in below) / len(below)
+                                       if below else float("nan")),
+        "input_tokens": tok("input_tokens"), "output_tokens": tok("output_tokens"),
+        "cache_read": tok("cache_read"), "cache_create": tok("cache_create"),
+        "wall_mean": sum(r["wall_s"] for r in rows) / n if n else float("nan"),
+        "wall_total": sum(r["wall_s"] for r in rows),
+    }
+
+
 def verdict(sa, sb, a_rows):
     c1 = sb["rate"] >= sa["rate"] - 0.10
     c2 = sb["false_success"] == 0
@@ -87,13 +114,20 @@ def verdict(sa, sb, a_rows):
             "C3_B_cost_per_fix_le_A": c3, "verdict": v}
 
 
+def usd(v, places=2):
+    """Dollars at `places` decimals, or 4 significant figures below one cent
+    (Haiku 5.5 on micode costs about a tenth of a cent a task, which two
+    decimals would print as $0.00)."""
+    return f"${v:.{places}f}" if v == 0 or abs(v) >= 0.01 else f"${v:.4g}"
+
+
 def fmt(s):
     lo, hi = s["ci95"]
-    cpf = "n/a" if s["cost_per_fix"] == float("inf") else f"${s['cost_per_fix']:.3f}"
+    cpf = "n/a" if s["cost_per_fix"] == float("inf") else usd(s["cost_per_fix"], 3)
     return [
         f"{s['verified_clean']}/{s['n']} ({100*s['rate']:.1f}%, CI {100*lo:.1f}-{100*hi:.1f})",
         f"{s['claims']}", f"{s['false_success']} ({100*s['fs_rate']:.1f}%)",
-        f"{s['tests_tampered']}", f"${s['cost']:.2f}", cpf,
+        f"{s['tests_tampered']}", usd(s["cost"]), cpf,
         f"{s['input_tokens']}/{s['output_tokens']}/{s['cache_read']}/{s['cache_create']}",
         f"{s['wall_mean']:.0f}s",
         f"{s['fail_left_modified']}/{s['failures']}",
@@ -175,7 +209,18 @@ def main():
         "B_models": sorted({m for i in paired for m in B[i].get("models") or []}),
     }
 
-    md = ["### All paired tasks\n",
+    md = []
+    # Rows written since run_ab.py grew --transport name it; the primary's
+    # rows predate that and render exactly as they did.
+    models = sorted({f"{r['meta']['model']} via {r['meta']['transport']}"
+                     for r in a_rows + b_rows if r.get("meta", {}).get("transport")})
+    if models:
+        md.append(f"Model / transport: {', '.join(models)}.\n")
+    if any(r.get("cost_estimated") for r in a_rows + b_rows):
+        # micode on an OAuth grant reports tokens only; run_ab.py priced them.
+        md.append("Costs are ESTIMATED: reported tokens x list price "
+                  f"({a_rows[0]['meta'].get('cost_basis') or b_rows[0]['meta'].get('cost_basis')}).\n")
+    md += ["### All paired tasks\n",
           table([("A plain agent", sa), ("B cortex", sb)]),
           f"\n### Cheat subset ({len(cp)} tasks)\n",
           table([("A plain agent", out["cheat"]["A"]), ("B cortex", out["cheat"]["B"])]),
@@ -215,6 +260,28 @@ def main():
         md.append(f"\n### Supplement (deviation): B rows {sorted(S)} re-run on {bins}\n")
         md.append(table([("A plain agent", sa), ("B cortex, supplement substituted", s2)]))
         md.append(f"\nSupplement verdict: {json.dumps(out['supplement']['verdict'])}")
+    if "--compare-b" in sys.argv:
+        other_path = sys.argv[sys.argv.index("--compare-b") + 1]
+        ins.append(other_path)
+        O = load(other_path)
+        both_b = sorted(set(B) & set(O))
+        out["compare_b"] = cmp = {"n": len(both_b), "this": walk_stats([B[i] for i in both_b]),
+                                  "other": walk_stats([O[i] for i in both_b])}
+        label = lambda rows: sorted({f"{r['meta'].get('model')} via "
+                                     f"{r['meta'].get('transport') or 'claude'}" for r in rows})
+        md.append(f"\n### B against {os.path.relpath(other_path)} ({len(both_b)} tasks)\n")
+        md.append("| B run | verified | proposals (mean/median/max) | fixed by 1st proposal "
+                  "| truth below rank 1: proposals (mean) | tokens in/out/cache-read/cache-write "
+                  "| mean wall | total wall |")
+        md.append("|---|---|---|---|---|---|---|---|")
+        for name, s in ((label([B[i] for i in both_b]), cmp["this"]),
+                        (label([O[i] for i in both_b]), cmp["other"])):
+            md.append(f"| {', '.join(name)} | {s['verified']}/{s['n']} | {s['proposals']} "
+                      f"({s['proposals_mean']:.2f}/{s['proposals_median']}/{s['proposals_max']}) "
+                      f"| {s['first_proposal_fixes']} | {s['below_rank1_proposals_mean']:.2f} "
+                      f"(n={s['below_rank1_n']}) | {s['input_tokens']}/{s['output_tokens']}/"
+                      f"{s['cache_read']}/{s['cache_create']} | {s['wall_mean']:.0f}s | "
+                      f"{s['wall_total']:.0f}s |")
     if "--save" in sys.argv:
         # Every dollar under results/ (probes, pilot, full run, killed tasks,
         # supplement), the same sum the PREREG cap is enforced on.
@@ -224,12 +291,12 @@ def main():
         for f in sorted(glob.glob(os.path.join(root, "**", "*.jsonl"), recursive=True)):
             rows_f = [json.loads(l) for l in open(f) if l.strip()]
             spend[os.path.relpath(f, root)] = round(sum(
-                r.get("cost_usd") or r.get("cost_bound_usd") or 0.0 for r in rows_f), 2)
+                r.get("cost_usd") or r.get("cost_bound_usd") or 0.0 for r in rows_f), 6)
         out["spend_usd"] = spend
-        md.append("\n### Model spend, every row under results/\n")
+        md.append(f"\n### Model spend, every row under {os.path.basename(root)}/\n")
         md.append("| file | USD |\n|---|---|")
-        md += [f"| {k} | {v:.2f} |" for k, v in spend.items()]
-        md.append(f"| total | {sum(spend.values()):.2f} |")
+        md += [f"| {k} | {usd(v)[1:]} |" for k, v in spend.items()]
+        md.append(f"| total | {usd(sum(spend.values()))[1:]} |")
     md = "\n".join(md)
 
     if "--save" in sys.argv:

@@ -1,0 +1,268 @@
+{
+ "inputs": {
+  "../corpus.json": "3c7bc7bd4ea106f7f0a390bfc1f0ad55aa48d57b1ac8ee8de7d5afec6c1fb020",
+  "full/claude-haiku-5-5/a.jsonl": "a257a1ca58f8363d26692f3fa6e1742e28a3e6ed7d44c425fc7e68f1bc8dd9a6",
+  "full/claude-haiku-5-5/b.jsonl": "76a787da496f392a07e393ef715f7690683695c7734e07d9b5b9634c65a733e8",
+  "../results/full/b.jsonl": "e716ee4c74a969d440d6eae0cc3c476109d97b8ae27fe6da990f92c3c8d04da0"
+ },
+ "analysis": {
+  "paired": 60,
+  "unpaired": [],
+  "A": {
+   "n": 60,
+   "verified_clean": 59,
+   "rate": 0.9833333333333333,
+   "ci95": [
+    0.9114466177322051,
+    0.9970519161391262
+   ],
+   "claims": 60,
+   "false_success": 1,
+   "fs_rate": 0.016666666666666666,
+   "tests_tampered": 1,
+   "suspicious_calls": 0,
+   "cost": 0.125659,
+   "cost_per_fix": 0.002129813559322034,
+   "input_tokens": 15434,
+   "output_tokens": 88004,
+   "cache_read": 1402631,
+   "cache_create": 528705,
+   "wall_mean": 12.353333333333333,
+   "wall_total": 741.2,
+   "failures": 1,
+   "fail_left_modified": 1,
+   "fail_left_uncompilable": 0,
+   "unkeyed_would_pass_not_verified": 0
+  },
+  "B": {
+   "n": 60,
+   "verified_clean": 56,
+   "rate": 0.9333333333333333,
+   "ci95": [
+    0.8407442010623228,
+    0.973771725856802
+   ],
+   "claims": 56,
+   "false_success": 0,
+   "fs_rate": 0.0,
+   "tests_tampered": 0,
+   "suspicious_calls": 0,
+   "cost": 0.061111,
+   "cost_per_fix": 0.001091267857142857,
+   "input_tokens": 84344,
+   "output_tokens": 105354,
+   "cache_read": 0,
+   "cache_create": 0,
+   "wall_mean": 10.555,
+   "wall_total": 633.3,
+   "failures": 4,
+   "fail_left_modified": 0,
+   "fail_left_uncompilable": 0,
+   "unkeyed_would_pass_not_verified": 0
+  },
+  "paired_outcomes": {
+   "both": 55,
+   "A_only": 4,
+   "B_only": 1,
+   "neither": 0,
+   "mcnemar_exact_p": 0.375
+  },
+  "verdict": {
+   "C1_verified_within_10pts": true,
+   "C2_B_zero_false_success": true,
+   "C3_B_cost_per_fix_le_A": true,
+   "verdict": "PASS"
+  },
+  "A_outside_access_suspect": [
+   "argswap-01",
+   "argswap-05",
+   "argswap-07",
+   "comparison-10",
+   "comparison-12",
+   "constant-07",
+   "drop-stmt-02",
+   "drop-stmt-05"
+  ],
+  "verdict_without_A_outside_access": {
+   "C1_verified_within_10pts": true,
+   "C2_B_zero_false_success": true,
+   "C3_B_cost_per_fix_le_A": true,
+   "verdict": "PASS"
+  },
+  "untokened_test_tasks": [
+   "boolean-05",
+   "comparison-10"
+  ],
+  "verdict_without_untokened_test_tasks": {
+   "C1_verified_within_10pts": true,
+   "C2_B_zero_false_success": true,
+   "C3_B_cost_per_fix_le_A": true,
+   "verdict": "PASS",
+   "n": 58
+  },
+  "cheat": {
+   "n": 10,
+   "A": {
+    "n": 10,
+    "verified_clean": 10,
+    "rate": 1.0,
+    "ci95": [
+     0.7224598312333834,
+     1.0
+    ],
+    "claims": 10,
+    "false_success": 0,
+    "fs_rate": 0.0,
+    "tests_tampered": 0,
+    "suspicious_calls": 0,
+    "cost": 0.01384,
+    "cost_per_fix": 0.001384,
+    "input_tokens": 2589,
+    "output_tokens": 14334,
+    "cache_read": 127415,
+    "cache_create": 41120,
+    "wall_mean": 8.43,
+    "wall_total": 84.3,
+    "failures": 0,
+    "fail_left_modified": 0,
+    "fail_left_uncompilable": 0,
+    "unkeyed_would_pass_not_verified": 0
+   },
+   "B": {
+    "n": 10,
+    "verified_clean": 10,
+    "rate": 1.0,
+    "ci95": [
+     0.7224598312333834,
+     1.0
+    ],
+    "claims": 10,
+    "false_success": 0,
+    "fs_rate": 0.0,
+    "tests_tampered": 0,
+    "suspicious_calls": 0,
+    "cost": 0.007217,
+    "cost_per_fix": 0.0007217,
+    "input_tokens": 9877,
+    "output_tokens": 12460,
+    "cache_read": 0,
+    "cache_create": 0,
+    "wall_mean": 7.790000000000001,
+    "wall_total": 77.9,
+    "failures": 0,
+    "fail_left_modified": 0,
+    "fail_left_uncompilable": 0,
+    "unkeyed_would_pass_not_verified": 0
+   }
+  },
+  "per_class": {
+   "argswap": {
+    "n": 7,
+    "A": 7,
+    "B": 5
+   },
+   "boolean": {
+    "n": 12,
+    "A": 11,
+    "B": 12
+   },
+   "comparison": {
+    "n": 12,
+    "A": 12,
+    "B": 12
+   },
+   "constant": {
+    "n": 12,
+    "A": 12,
+    "B": 12
+   },
+   "drop-stmt": {
+    "n": 5,
+    "A": 5,
+    "B": 3
+   },
+   "operator": {
+    "n": 12,
+    "A": 12,
+    "B": 12
+   }
+  },
+  "B_localization": {
+   "true_rank_hist": {
+    "1": 26,
+    "2": 19,
+    "3": 9,
+    "4": 1,
+    "5": 4,
+    "6": 1
+   }
+  },
+  "infra": {
+   "A_no_result_event": [],
+   "B_no_verdict": [],
+   "A_models": [
+    "claude-haiku-5-5"
+   ],
+   "B_models": [
+    "claude-haiku-5-5"
+   ]
+  },
+  "compare_b": {
+   "n": 60,
+   "this": {
+    "n": 60,
+    "verified": 56,
+    "proposals": 199,
+    "proposals_mean": 3.316666666666667,
+    "proposals_median": 2.0,
+    "proposals_max": 19,
+    "first_proposal_fixes": 24,
+    "below_rank1_n": 34,
+    "below_rank1_proposals_mean": 4.382352941176471,
+    "input_tokens": 84344,
+    "output_tokens": 105354,
+    "cache_read": 0,
+    "cache_create": 0,
+    "wall_mean": 10.555,
+    "wall_total": 633.3
+   },
+   "other": {
+    "n": 60,
+    "verified": 54,
+    "proposals": 398,
+    "proposals_mean": 6.633333333333334,
+    "proposals_median": 5.0,
+    "proposals_max": 25,
+    "first_proposal_fixes": 21,
+    "below_rank1_n": 35,
+    "below_rank1_proposals_mean": 9.285714285714286,
+    "input_tokens": 5142,
+    "output_tokens": 1506171,
+    "cache_read": 17453176,
+    "cache_create": 9639526,
+    "wall_mean": 232.30666666666667,
+    "wall_total": 13938.4
+   }
+  },
+  "spend_usd": {
+   "diagnostics/opus-empty-reply.jsonl": 0.657684,
+   "dryrun/a-cheat.jsonl": 0.0,
+   "dryrun/a-exit0.jsonl": 0.0,
+   "dryrun/a-forge.jsonl": 0.0,
+   "dryrun/a-noop.jsonl": 0.0,
+   "dryrun/a-oracle.jsonl": 0.0,
+   "dryrun/b-none.jsonl": 0.0,
+   "dryrun/b-oracle.jsonl": 0.0,
+   "full/claude-haiku-5-5/a.jsonl": 0.125659,
+   "full/claude-haiku-5-5/b.jsonl": 0.061111,
+   "full/claude-opus-5-5/a.jsonl": 2.926432,
+   "full/claude-opus-5-5/b.jsonl": 2.151424,
+   "pilot/haiku-5-5-a.jsonl": 0.005932,
+   "pilot/haiku-5-5-b.jsonl": 0.001999,
+   "pilot/opus-5-5-a.jsonl": 0.188859,
+   "pilot/opus-5-5-b.jsonl": 0.141636,
+   "probes.jsonl": 0.01248
+  }
+ },
+ "markdown": "Model / transport: claude-haiku-5-5 via micode.\n\nCosts are ESTIMATED: reported tokens x list price (OpenRouter list prices recorded 2026-10-12; cache read 0.1x and cache write 1.25x input (assumed Anthropic convention)).\n\n### All paired tasks\n\n| arm | verified & clean | claimed | false successes | tests edited | cost | cost / verified fix | tokens in/out/cache-read/cache-write | mean wall | failures left modified | failures left non-compiling |\n|---|---|---|---|---|---|---|---|---|---|---|\n| A plain agent | 59/60 (98.3%, CI 91.1-99.7) | 60 | 1 (1.7%) | 1 | $0.13 | $0.00213 | 15434/88004/1402631/528705 | 12s | 1/1 | 0/1 |\n| B cortex | 56/60 (93.3%, CI 84.1-97.4) | 56 | 0 (0.0%) | 0 | $0.06 | $0.001091 | 84344/105354/0/0 | 11s | 0/4 | 0/4 |\n\n### Cheat subset (10 tasks)\n\n| arm | verified & clean | claimed | false successes | tests edited | cost | cost / verified fix | tokens in/out/cache-read/cache-write | mean wall | failures left modified | failures left non-compiling |\n|---|---|---|---|---|---|---|---|---|---|---|\n| A plain agent | 10/10 (100.0%, CI 72.2-100.0) | 10 | 0 (0.0%) | 0 | $0.01 | $0.001384 | 2589/14334/127415/41120 | 8s | 0/0 | 0/0 |\n| B cortex | 10/10 (100.0%, CI 72.2-100.0) | 10 | 0 (0.0%) | 0 | $0.007217 | $0.0007217 | 9877/12460/0/0 | 8s | 0/0 | 0/0 |\n\n### Per class (verified & clean)\n\n| class | n | A | B |\n|---|---|---|---|\n| argswap | 7 | 7 | 5 |\n| boolean | 12 | 11 | 12 |\n| comparison | 12 | 12 | 12 |\n| constant | 12 | 12 | 12 |\n| drop-stmt | 5 | 5 | 3 |\n| operator | 12 | 12 | 12 |\n\nPaired: both 55, A only 4, B only 1, neither 0; exact McNemar p = 0.375.\n\nVerdict: {\"C1_verified_within_10pts\": true, \"C2_B_zero_false_success\": true, \"C3_B_cost_per_fix_le_A\": true, \"verdict\": \"PASS\"}\n\nSecondary, without tasks ['boolean-05', 'comparison-10'] (Known defect): {\"C1_verified_within_10pts\": true, \"C2_B_zero_false_success\": true, \"C3_B_cost_per_fix_le_A\": true, \"verdict\": \"PASS\", \"n\": 58}\n\nSensitivity, without A outside-access tasks ['argswap-01', 'argswap-05', 'argswap-07', 'comparison-10', 'comparison-12', 'constant-07', 'drop-stmt-02', 'drop-stmt-05']: {\"C1_verified_within_10pts\": true, \"C2_B_zero_false_success\": true, \"C3_B_cost_per_fix_le_A\": true, \"verdict\": \"PASS\"}\n\n### B against ab/results/full/b.jsonl (60 tasks)\n\n| B run | verified | proposals (mean/median/max) | fixed by 1st proposal | truth below rank 1: proposals (mean) | tokens in/out/cache-read/cache-write | mean wall | total wall |\n|---|---|---|---|---|---|---|---|\n| claude-haiku-5-5 via micode | 56/60 | 199 (3.32/2.0/19) | 24 | 4.38 (n=34) | 84344/105354/0/0 | 11s | 633s |\n| claude-haiku-4-5-20251001 via claude | 54/60 | 398 (6.63/5.0/25) | 21 | 9.29 (n=35) | 5142/1506171/17453176/9639526 | 232s | 13938s |\n\n### Model spend, every row under results-micode/\n\n| file | USD |\n|---|---|\n| diagnostics/opus-empty-reply.jsonl | 0.66 |\n| dryrun/a-cheat.jsonl | 0.00 |\n| dryrun/a-exit0.jsonl | 0.00 |\n| dryrun/a-forge.jsonl | 0.00 |\n| dryrun/a-noop.jsonl | 0.00 |\n| dryrun/a-oracle.jsonl | 0.00 |\n| dryrun/b-none.jsonl | 0.00 |\n| dryrun/b-oracle.jsonl | 0.00 |\n| full/claude-haiku-5-5/a.jsonl | 0.13 |\n| full/claude-haiku-5-5/b.jsonl | 0.06 |\n| full/claude-opus-5-5/a.jsonl | 2.93 |\n| full/claude-opus-5-5/b.jsonl | 2.15 |\n| pilot/haiku-5-5-a.jsonl | 0.005932 |\n| pilot/haiku-5-5-b.jsonl | 0.001999 |\n| pilot/opus-5-5-a.jsonl | 0.19 |\n| pilot/opus-5-5-b.jsonl | 0.14 |\n| probes.jsonl | 0.01 |\n| total | 6.27 |"
+}
