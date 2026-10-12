@@ -40,9 +40,10 @@ records and reasons), so --merge and --check-status refuse it and no T7 list
 cites it. Selection misses any change outside the anchor and the test's own
 source that alters what the test observes (a callee, another module on the
 path, a helper, a fixture, a dependency); the full run at the final head is the
-evidence of record (tasks/build-loop-r51.md). A selection of more than 30%
-(BROAD_SELECTION) of the scope's active rows duplicates that full run: it is
-printed with its counts and the run stops before any cell unless --force.
+evidence of record (tasks/build-loop-r51.md). The run stops before any cell
+unless --force when the selection is BROAD (more than 30%, BROAD_SELECTION, of
+the rows the records cover: it duplicates their full run) or holds UNRECORDED
+rows (rows no record covers; scripts/v022_mut_select.py, STOPS).
 
 Refuses to run on a tree with ANY uncommitted change (C9 round 4: a check of
 crates/ alone let a locally edited scripts/ or profiles/ guard -- 24 rows guard
@@ -8802,7 +8803,7 @@ def main():
     elif granularity is not None:
         sys.exit("--granularity selects rows only with --changed-since")
     if force and changed_arg is None:
-        sys.exit("--force overrides only --changed-since's broad-selection stop")
+        sys.exit("--force overrides only --changed-since's stops")
     if len(args) != 1 or scope not in ("g01", "pci", "binding", "psv", "all"):
         sys.exit("usage: v022_g01_mutations.py [--scope=g01|pci|binding|psv|all] [--shard=K/N] "
                  "[--only=M1,M2,...] [--changed-since=A.json[,B.json...] [--granularity=file|fn] [--force]] "
@@ -8837,11 +8838,11 @@ def main():
         picked, records = select_rows.select(universe, ATTACK_MARKERS, row_digest, row_good,
                                              changed_arg.split(","), commit, granularity)
         select_rows.report(picked, len(universe), granularity)
-        broad = select_rows.broad_warning(len(picked), sum(1 for m in MUTATIONS if in_scope(m[0], scope)), scope)
-        if broad and not force:
-            sys.exit(f"{broad}\nrefused: no cell ran (--force runs this selection anyway)")
-        if broad:
-            print(f"{broad}\n--force: running it anyway", flush=True)
+        stop = "\n".join(select_rows.stops(picked, len(universe)))
+        if stop and not force:
+            sys.exit(f"{stop}\nrefused: no cell ran (--force runs this selection anyway)")
+        if stop:
+            print(f"{stop}\n--force: running it anyway", flush=True)
         selection = {"records": [{"path": p, "commit": c} for p, c in records], "granularity": granularity,
                      "selected": picked, "evidence": select_rows.NOT_EVIDENCE}
         only = set(picked)

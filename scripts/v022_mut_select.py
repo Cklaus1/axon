@@ -48,10 +48,16 @@ at REV, the records' rows are compared with REV's tree):
     python3 scripts/v022_mut_select.py --changed-since=A.json[,B.json...]
         [--granularity=file|fn] [--scope=S] [--only=M1,M2] [--head=REV] [--shards=N]
 
-BROAD SELECTION: a selection of more than BROAD_SELECTION (30%) of the
-scope's active rows (counted without --only) is printed as such: the lane run
-duplicates the full run at the final head, the evidence of record, and
-`v022_g01_mutations.py --changed-since` stops before any cell unless --force.
+STOPS (`v022_g01_mutations.py --changed-since` runs no cell unless --force;
+the preview prints the same lines):
+  BROAD SELECTION  more than BROAD_SELECTION (30%) of the rows the records
+                   cover (scope and --only) are selected for a reason other
+                   than `absent`: the lane run duplicates the full run of
+                   those rows at the final head, the evidence of record;
+  UNRECORDED       any `absent` row: the records do not cover it, so there is
+                   nothing to compare it with; narrow --scope/--only to the
+                   recorded rows, or run the unrecorded rows as their own
+                   baseline run. Never counted in the ratio above.
 
 SHARD PLAN (--shards=N; --changed-since is then optional): how
 `v022_g01_mutations.py --shard=K/N` splits the rows it would run. Rows in the
@@ -81,9 +87,10 @@ GRANULARITIES = ("file", "fn")
 REASONS = ("absent", "not-killed", "registry", "anchor", "test")
 NOT_EVIDENCE = ("incremental selection (--changed-since): lane feedback, NOT evidence; never merged "
                 "as a shard nor cited as a T7 list; the full run at the final head is the evidence of record")
-# A --changed-since selection above this share of the scope's active rows is a
-# full run in all but name (R51's merge into main: 2263/2299 rows, 7260 s, then
-# repeated by the full run at the final head): the run stops unless --force.
+# A --changed-since selection above this share of the RECORDED rows (absent
+# rows excluded) is the records' full run in all but name (R51's merge into
+# main: 408 of the 444 rows the T7 lists recorded, besides 1855 rows no record
+# covered): the run stops unless --force.
 BROAD_SELECTION = 0.30
 # Packages whose tests run as root, in a private mount/PID namespace, or as a
 # guest's PID-1 supervisor. Under parallel shards their rows failed on clean
@@ -429,16 +436,22 @@ def report(selected, total, granularity):
     print(f"NOT EVIDENCE: {NOT_EVIDENCE}", flush=True)
 
 
-def broad_warning(selected, scope_rows, scope):
-    """The warning for a selection of `selected` rows that is more than
-    BROAD_SELECTION of the scope's `scope_rows` active rows (counted without
-    --only), or None."""
-    if selected <= BROAD_SELECTION * scope_rows:
-        return None
-    return (f"BROAD SELECTION: {selected}/{scope_rows} active rows of scope {scope} selected "
-            f"({100 * selected / scope_rows:.0f}% > {BROAD_SELECTION:.0%}): this lane run duplicates the full "
-            "run at the final head, which is the evidence of record; run that instead (v022_g01_mutations.py "
-            "--changed-since stops here unless --force)")
+def stops(selected, rows):
+    """The stop lines (module doc: STOPS) for a selection `selected` ({id:
+    [reasons]}) of `rows` rows (scope and --only), [] when it may run."""
+    absent = sum(1 for rs in selected.values() if rs[0].startswith("absent:"))
+    recorded, changed = rows - absent, len(selected) - absent
+    out = []
+    if changed > BROAD_SELECTION * recorded:
+        out.append(f"BROAD SELECTION: {changed}/{recorded} recorded rows selected "
+                   f"({100 * changed / recorded:.0f}% > {BROAD_SELECTION:.0%}; absent rows not counted): this lane "
+                   "run duplicates the full run of those rows at the final head, which is the evidence of record; "
+                   "run that instead")
+    if absent:
+        out.append(f"UNRECORDED: the --changed-since records do not cover {absent}/{rows} rows of this scope and "
+                   "--only (selected as absent): narrow --scope/--only to the recorded rows, or run the unrecorded "
+                   "rows as their own baseline run")
+    return out
 
 
 # ── the shard plan ──────────────────────────────────────────────────────────
@@ -582,9 +595,8 @@ def main():
                               opts["--changed-since"].split(","), head, gran, git)
         print(f"registry and tree at {head}; records at " + ", ".join(f"{p} ({c[:8]})" for p, c in records))
         report(sel, len(rows), gran)
-        broad = broad_warning(len(sel), len(scope_rows), scope)
-        if broad:
-            print(broad, flush=True)
+        for line in stops(sel, len(rows)):
+            print(line, flush=True)
         rows = [r for r in rows if r[0] in sel]
     if shards is not None:
         print(f"--shard=K/{shards} at {head[:8]} (scope {scope}):")
