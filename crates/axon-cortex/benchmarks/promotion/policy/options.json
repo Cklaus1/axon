@@ -1,0 +1,17 @@
+{
+  "schema": "cortex-promotion-options/1",
+  "slots": ["ranker", "audit", "walk", "model", "transport"],
+  "options": {
+    "ranker.spectrum": "spectrum",
+    "ranker.or.claude-haiku-5.5": "openrouter:anthropic/claude-haiku-5.5",
+    "audit.off": "off",
+    "audit.or.claude-haiku-5.5": "openrouter:anthropic/claude-haiku-5.5",
+    "walk.breadth": "breadth",
+    "walk.depth": "depth",
+    "model.claude-haiku-5-5": "claude-haiku-5-5",
+    "model.claude-opus-5-5": "claude-opus-5-5",
+    "model.claude-haiku-4-5-20251001": "claude-haiku-4-5-20251001",
+    "transport.micode": "micode",
+    "transport.claude": "claude"
+  }
+}

@@ -1,0 +1,35 @@
+{
+ "schema": "cortex-promotion-plan/1",
+ "experiment_id": "dryrun-auditoff-reject",
+ "dry_run": true,
+ "set": "heldout",
+ "corpus": {
+  "path": "crates/axon-cortex/benchmarks/heldout/heldout.json",
+  "sha256": "2b977f7d5cbede6fed3ce59d85b871f9cd6a13b2477fe3379e74a82b4987d3fa"
+ },
+ "incumbent": {
+  "path": "crates/axon-cortex/benchmarks/promotion/policy/cortex-policy.json",
+  "sha256": "2f2f31cf2b0d7c850fbc623c97cbdff4b0b3655eb9935244f12e0892485f6485"
+ },
+ "candidate": {
+  "path": "crates/axon-cortex/benchmarks/promotion/candidates/audit-off.json",
+  "sha256": "ed4cc7402bce1151c4665b2b6133bf5b4de1622baf5905ba77835a3e1b65efa7"
+ },
+ "discovery_run": "dev-2026-10-12-cortex-haiku-4.5-claude-depth-spectrum",
+ "rule": {
+  "cortex": [
+   "candidate false successes = 0 on the heldout set",
+   "verified not significantly lower than the incumbent's: paired exact McNemar (two-sided, alpha 0.05, scorecard.judge)",
+   "proposals per verified fix OR cost per verified fix (generation + ranker + audit, scorecard metrics) strictly lower"
+  ],
+  "axon_loop": "admission ACCEPT under quality_margin / economic_threshold below, exact bounds, unknown outcomes count against the candidate",
+  "decision": "PROMOTE iff axon-loop admits ACCEPT AND every cortex criterion holds; otherwise REJECT (or INCONCLUSIVE when axon-loop says so)",
+  "evidence": "exactly one scorecard run per arm, both added to the history AFTER this plan's commit (promote.py refuses otherwise)"
+ },
+ "axon_loop": {
+  "quality_margin": "pass_rate_margin_ppm=110000",
+  "economic_threshold": "report_only",
+  "why": "110000 ppm is just above 5/47: the largest one-directional verified drop exact McNemar (alpha 0.05) cannot detect at n=47 is 5 tasks, so the two quality gates agree; costs are list-price estimates, so axon-loop economics report only and the cost criterion lives in the cortex rule"
+ },
+ "notes": "DRY RUN, zero cost. Incumbent arm: --generator oracle with Cortex's defaults; candidate arm: --generator none with CORTEX_AUDIT=off (verifies nothing). Exercises the REJECT path; decides nothing about Cortex."
+}

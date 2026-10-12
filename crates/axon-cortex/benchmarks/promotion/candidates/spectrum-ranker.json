@@ -1,0 +1,8 @@
+{
+  "schema": "cortex-policy/1",
+  "ranker": "spectrum",
+  "audit": "openrouter:anthropic/claude-haiku-5.5",
+  "walk": "breadth",
+  "model": "claude-haiku-5-5",
+  "transport": "micode"
+}
