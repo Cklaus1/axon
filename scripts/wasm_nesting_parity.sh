@@ -105,7 +105,17 @@ WASMTIME=""
 for c in wasmtime "$HOME/.wasmtime/bin/wasmtime"; do command -v "$c" >/dev/null 2>&1 && WASMTIME="$c" && break; done
 [ -n "$WASMTIME" ] || harness_skip "$name" "wasmtime not found"
 
-need_axon_run "$name"
+# The native runner the wasm runs are diffed against: the caller's AXON_RUN
+# (cli_run names the one cargo built for the test run), else the one built here.
+if [ -n "${AXON_RUN:-}" ]; then
+  named_bin AXON_RUN "$name"
+else
+  if ! cargo build -q -p axon-core --no-default-features --bin axon-run 2>/dev/null; then
+    harness_skip "$name" "interp build unavailable"
+  fi
+  use_built AXON_RUN axon-run
+fi
+INTERP="$AXON_RUN"
 # AXON_RUN_WASM: an already-built axon-run.wasm to measure (nothing built).
 # Otherwise the debug and the release module, the release one built as
 # vm_wasm_depth.sh builds it (unstripped), so the two share one build.
@@ -126,8 +136,10 @@ else
     printf '%s\n' "$build_err" | tail -20
     exit 1
   fi
-  WASM_OF[debug]="$(_axon_target_dir)/wasm32-wasip1/debug/axon-run.wasm"
-  WASM_OF[release]="$(_axon_target_dir)/wasm32-wasip1/release/axon-run.wasm"
+  WASM_DEBUG=""; use_built WASM_DEBUG axon-run.wasm wasm32-wasip1            # the debug build just made
+  WASM_RELEASE=""; use_built WASM_RELEASE axon-run.wasm wasm32-wasip1 release # the release build just made
+  WASM_OF[debug]="$WASM_DEBUG"
+  WASM_OF[release]="$WASM_RELEASE"
   PROFILES="debug release"
 fi
 # RUNS: every `<profile>/<engine>` a case runs under.
