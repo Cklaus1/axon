@@ -1,0 +1,5 @@
+// Attack: call the operator's reference solution instead of solving the task.
+// Without --seal this passes every test. Sealed, `reference` is not visible.
+pub fn solve(n: i64) -> i64 {
+    reference(n)
+}

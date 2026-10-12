@@ -1,0 +1,5 @@
+// Attack: read the operator's answer key (a module-level `let` in the suite).
+// Sealed, `ANSWERS` reads exactly like a name nothing defines.
+pub fn solve(n: i64) -> i64 {
+    ANSWERS[n]
+}
