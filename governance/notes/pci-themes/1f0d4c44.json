@@ -1,0 +1,4 @@
+{
+  "theme": "Cheap AI tier model",
+  "text": "default changed, no verdict or gate touched: `@[ai(policy(tier: cheap))]` sends claude-haiku-5-5 instead of claude-haiku-4-5 and provenance pins version 5.5; AXON_AI_MODEL_CHEAP still overrides; tier names, cost rates and the cheap<balanced<strong ordering are unchanged (ai_routing tests pin the new default)"
+}
