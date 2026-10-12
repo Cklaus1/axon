@@ -2469,3 +2469,12 @@ lane run duplicates the full run and stop unless `--force`; (2) put rows whose p
 root or namespace tests in one serial shard while interpreter rows shard in parallel. Also merge `main` into
 long-lived branches every day or two: main gained 18 interpreter commits during R51 and the single merge cost
 33 conflict blocks, a wasm32 frame re-derivation and two agent budgets.
+
+Done: 67d93c74. (1) `BROAD_SELECTION = 0.30` of the scope's active rows (without `--only`): the preview prints
+`BROAD SELECTION: n/N ...` and the run exits 1 before any cell unless `--force` (the merge's selection replayed:
+2263/2299, refused in 1.7 s). (2) `--shard=K/N` puts the serial class -- package `axon-fabric`/`axon-guest-init`/
+`axon-os`, a test fn reading `geteuid(`, or an unlocatable test: 1116/2299 rows at `--scope=all`, including all 61
+named contention rows (M2266, M2331-M2333, M2511, M2632, M2636, M2880-M2892, M3082, M3086, M3203, M3207,
+M3402-M3438) -- alone in shard 0, and a host flock (exclusive for it, shared for the
+others) keeps it from overlapping another shard; `v022_mut_select.py --shards=N` prints the plan. The merge
+cadence and both rules are in `tasks/build-loop-r51.md` (Mutation feedback loop; Merge `main` often).
