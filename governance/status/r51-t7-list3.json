@@ -2,10 +2,10 @@
   "schema": "axon-v022-mutation-run/3",
   "gate": "all",
   "scope": "all",
-  "commit": "aae0690efdefcf91d7598a95f585a0c43d37aca8",
+  "commit": "34217115caa6b1707e6a12d5bf207d8963292a92",
   "registry_blobs": {
-    "scripts/v022_g01_mutations.py": "10658de3c424645afc061df55b4d9c79d1a0fe06",
-    "scripts/v022_attack_markers.py": "88325a97b9e9b488fb9b0a2d7d9a8334a16f719d"
+    "scripts/v022_g01_mutations.py": "dafb9b19facddf086d28fb0e369c6403fce9e276",
+    "scripts/v022_attack_markers.py": "b2862de3e9196d7d6e46854384a20dece7736440"
   },
   "tree_clean": true,
   "environment": {
@@ -31,7 +31,7 @@
   "toolchain": {
     "rustc": "rustc 1.99.0-nightly (375b1431b 2026-07-10)",
     "cargo": "cargo 1.99.0-nightly (59800466c 2026-07-07)",
-    "axon_bin_sha256": "344fe5b631bfd7ae368fd15ac77b49bb3a106d178254042f5273f8817ec69d73"
+    "axon_bin_sha256": "5bb7d5ee5c89aca33373e147936c03741eb0ef351ea25d8169587b7bdf8237da"
   },
   "shard": null,
   "only": [
@@ -52,8 +52,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "ATTACK: a duplicate `impl Show2 for Option<i64>` was not refused as a duplicate impl",
-      "kill_evidence": "thread 'resolver::tests::a_refinement_may_start_with_a_deferred_name_and_impl_text_is_axon' (4158905) panicked at crates/axon-core/src/resolver.rs:3403:9: | ATTACK: a duplicate `impl Show2 for Option<i64>` was not refused as a duplicate impl (the trait-impl rule did not decide; another check's words reached the user): [\"the method `show2` on `Option` (a method call cannot tell two impls apart) is defined more than once in this program\"]",
-      "cell_output": "/var/tmp/v022-cells/cell-M60-2b8d696d12d1.log"
+      "kill_evidence": "thread 'resolver::tests::a_refinement_may_start_with_a_deferred_name_and_impl_text_is_axon' (1964219) panicked at crates/axon-core/src/resolver.rs:3403:9: | ATTACK: a duplicate `impl Show2 for Option<i64>` was not refused as a duplicate impl (the trait-impl rule did not decide; another check's words reached the user): [\"the method `show2` on `Option` (a method call cannot tell two impls apart) is defined more than once in this program\"]",
+      "cell_output": "/var/tmp/v022-cells/cell-M60-de8eddd98051.log"
     },
     {
       "id": "M89",
@@ -67,8 +67,8 @@
       "baseline": "passed",
       "result": "killed",
       "attack_marker": "sched_spawn \\[secret\\] Ok\\(Completed\\)",
-      "kill_evidence": "thread 'interp::taint_tests::a_sealed_caller_cannot_tell_an_operator_name_from_a_missing_one_on_any_path' (4161975) panicked at crates/axon-core/src/interp/taint_tests.rs:2742:5: | ORACLE: 4 of 140 pairs differ: | sched_spawn [secret] Ok(Completed)  ||  [zznosuch] Err(\"sealed code (the candidate under test) cannot use `@`: no such function or value is visible to it\") | sched_spawn [ad] Ok(Completed)  ||  [zznosuch] Err(\"sealed code (the candidate under test) cannot use `@`: no such function or value is visible to it\") | sched_spawn [nonadapt] Ok(Completed)  ||  [zznosuch] Err(\"sealed code (the",
-      "cell_output": "/var/tmp/v022-cells/cell-M89-7f64c9110061.log"
+      "kill_evidence": "thread 'interp::taint_tests::a_sealed_caller_cannot_tell_an_operator_name_from_a_missing_one_on_any_path' (1966446) panicked at crates/axon-core/src/interp/taint_tests.rs:2925:5: | ORACLE: 4 of 140 pairs differ: | sched_spawn [secret] Ok(Completed)  ||  [zznosuch] Err(\"sealed code (the candidate under test) cannot use `@`: no such function or value is visible to it\") | sched_spawn [ad] Ok(Completed)  ||  [zznosuch] Err(\"sealed code (the candidate under test) cannot use `@`: no such function or value is visible to it\") | sched_spawn [nonadapt] Ok(Completed)  ||  [zznosuch] Err(\"sealed code (the",
+      "cell_output": "/var/tmp/v022-cells/cell-M89-49047fcf7c19.log"
     }
   ]
 }
