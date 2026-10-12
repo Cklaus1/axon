@@ -1,0 +1,74 @@
+{
+  "schema": "axon-v022-mutation-run/3",
+  "gate": "all",
+  "scope": "all",
+  "commit": "4983b6346af16c275a15910a21403c28dcf4dc1b",
+  "registry_blobs": {
+    "scripts/v022_g01_mutations.py": "10658de3c424645afc061df55b4d9c79d1a0fe06",
+    "scripts/v022_attack_markers.py": "88325a97b9e9b488fb9b0a2d7d9a8334a16f719d"
+  },
+  "tree_clean": true,
+  "environment": {
+    "euid": 0,
+    "etc_axon_present": true,
+    "unset": [
+      "AXON",
+      "AXON_BIN",
+      "CORTEX_BIN"
+    ],
+    "host": {
+      "hostname": "gpumaster",
+      "kernel": "Linux 7.0.0-34-generic",
+      "nproc": 32,
+      "mem_total": "257022384 kB",
+      "toolchain": {
+        "rustc": "rustc 1.99.0-nightly (375b1431b 2026-07-10)\nbinary: rustc\ncommit-hash: 375b1431b7d89d1c2e2bc168c011848ae12b7d14\ncommit-date: 2026-07-10\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0-nightly\nLLVM version: 22.1.8",
+        "cargo": "cargo 1.99.0-nightly (59800466c 2026-07-07)",
+        "llvm_system": "17.0.6"
+      }
+    }
+  },
+  "toolchain": {
+    "rustc": "rustc 1.99.0-nightly (375b1431b 2026-07-10)",
+    "cargo": "cargo 1.99.0-nightly (59800466c 2026-07-07)",
+    "axon_bin_sha256": "01a3a48723229ecbdd20eb345b43d2e2e3f762def6b16886458c50cef0c5336e"
+  },
+  "shard": null,
+  "only": [
+    "M3268",
+    "M3269"
+  ],
+  "all_killed": true,
+  "mutations": [
+    {
+      "id": "M3268",
+      "guard": "ORACLE (am114, runner): no resolver position is a sealed one, so a sealed predicate is not resolved",
+      "file": "crates/axon-core/src/resolver.rs",
+      "package": "axon-psv",
+      "old_sha256": "3994146f45c95ea85f51aff0f4db90f5aabe4ec4c1ec9ea138e4526fcf2c99fa",
+      "new_sha256": "66d99dcec5daddeddf4db1bd828182aac3d2c1ac4adc63c986d55609bc2d607d",
+      "target": "--test sealed_frames",
+      "test": "a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one",
+      "baseline": "passed",
+      "result": "killed",
+      "attack_marker": "verify predicate: ACCEPT/REFUSE differs",
+      "kill_evidence": "thread 'a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one' (2516740) panicked at crates/axon-psv/tests/sealed_frames.rs:1517:5: | ATTACK: [first in the file (bare fn at byte 0)] refinement predicate: ACCEPT/REFUSE differs: operator name Unknown/None vs missing name Passed/Some(true) | ATTACK: [first in the file (bare fn at byte 0)] verify predicate: ACCEPT/REFUSE differs: operator name Unknown/None vs missing name Passed/Some(true) | ATTACK: [first in the file (bare fn at byte 0)] struct refinement predicate: ACCEPT/REFUSE differs: operator name Unknown/None v",
+      "cell_output": "/var/tmp/v022-cells/cell-M3268-4c366b333e21.log"
+    },
+    {
+      "id": "M3269",
+      "guard": "ORACLE (am114, runner): no item belongs to the sealed-only program",
+      "file": "crates/axon-core/src/resolver.rs",
+      "package": "axon-psv",
+      "old_sha256": "4ee79d4fda69fc3c1f9146f7aae751dcc6562a9b60baa41d749a307d4dc48feb",
+      "new_sha256": "4c79bcf78e7447cda664cc612d40d11fbf2edfdd0c99481d6b15582de2c03132",
+      "target": "--test sealed_frames",
+      "test": "a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one",
+      "baseline": "passed",
+      "result": "killed",
+      "attack_marker": "the text differs|ACCEPT/REFUSE differs|both texts are EMPTY",
+      "kill_evidence": "thread 'a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one' (2523853) panicked at crates/axon-psv/tests/sealed_frames.rs:1517:5: | ATTACK: [first in the file (bare fn at byte 0)] fn call: the text differs: | operator name: \"{\\\"schema\\\":\\\"axon-diag/1\\\",\\\"severity\\\":\\\"error\\\",\\\"code\\\":\\\"E0004\\\",,\\\"line\\\":1,\\\"col\\\":1,\\\"message\\\":\\\"a sealed module (the candidate under test) cannot use `ofn`, which the operator's code defines\\\",\\\"help\\\":\\\"the candidate-under-test interface is one-directional: the suite imports the candidate's names, never the reverse \u2014 define what t",
+      "cell_output": "/var/tmp/v022-cells/cell-M3269-c46ee457263f.log"
+    }
+  ]
+}
