@@ -1,0 +1,72 @@
+// A small order-pricing module with ONE defect, used by examples/cortex/run.sh
+// and docs/CORTEX.md to demonstrate `cortex locate` and `cortex repair`.
+//
+// The defect: orders of EXACTLY 100 should get the 10% discount, but
+// `discount` uses `>` where the rule says "100 or more".
+//
+// Tests:
+//   visible_*         the evidence localization works from. One of them fails.
+//   hidden_discount_boundary
+//                     the adjudicator passed as `--check`. Cortex never puts
+//                     it in the generator's prompt and never counts it as
+//                     localization evidence. It FAILS on this file, which is
+//                     what lets it witness a repair.
+//
+// `axon test examples/cortex/pricing.ax` therefore reports 2 failures. That is
+// the point of the file; do not "fix" it here.
+
+// 10% off orders of 100 or more.
+fn discount(total: i64) -> i64 {
+    if total > 100 { total / 10 } else { 0 }
+}
+
+// Free shipping from 50 up, otherwise a flat 5.
+fn shipping(total: i64) -> i64 {
+    if total >= 50 { 0 } else { 5 }
+}
+
+fn subtotal(qty: i64, unit: i64) -> i64 {
+    qty * unit
+}
+
+fn final_price(qty: i64, unit: i64) -> i64 {
+    let t = subtotal(qty, unit)
+    t - discount(t) + shipping(t)
+}
+
+@[test]
+fn visible_small_order() {
+    assert_eq(final_price(2, 10), 25)
+}
+
+@[test]
+fn visible_large_order() {
+    assert_eq(final_price(4, 50), 180)
+}
+
+@[test]
+fn visible_boundary_order() {
+    assert_eq(final_price(10, 10), 90)
+}
+
+@[test]
+fn visible_subtotal() {
+    assert_eq(subtotal(3, 7), 21)
+}
+
+@[test]
+fn visible_shipping_threshold() {
+    assert_eq(shipping(49), 5)
+    assert_eq(shipping(50), 0)
+}
+
+@[test]
+fn hidden_discount_boundary() {
+    assert_eq(discount(99), 0)
+    assert_eq(discount(100), 10)
+    assert_eq(discount(250), 25)
+}
+
+fn main() {
+    println(to_str(final_price(10, 10)))
+}
