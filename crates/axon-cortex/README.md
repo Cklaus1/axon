@@ -8,17 +8,23 @@ it never shows the thing that produced the result. A language model contributes
 one thing to that loop — the text of a repair — and nothing else.
 
 ```bash
-cargo build -p axon-cortex --bins --features ai
+cargo build -p axon-core --no-default-features --bin axon   # the checker
+cargo build -p axon-cortex --bins          # add --features ai for ai:MODEL
 
 cortex locate --file broken.ax --check hidden_completion   # what is broken?
 cortex repair --file broken.ax --check hidden_completion \
-              --write-prefix broken.ax --generator ai:claude-haiku-4-5-20251001
+              --write-prefix broken.ax --generator 'literal:n * 2'
 ```
 
 ```
 from failing check(s) visible_repro: trying double (1.00)
 verified_done after 3 step(s) — repaired `double`
 ```
+
+(`fixtures/broken.ax`, run from a copy of it; `--axon PATH` names the
+checker when `axon` is not on `PATH`.) The user guide, with every outcome
+demonstrated, is [`docs/CORTEX.md`](../../docs/CORTEX.md); a runnable example
+is [`examples/cortex/`](../../examples/cortex/).
 
 ## What each piece refuses to do
 
@@ -63,15 +69,19 @@ does not.
 **The episode** cannot leave the workspace worse than it found it. A patch that
 makes the file stop compiling is undone, and the revert is recorded rather than
 performed silently: an episode that hid its reverts would make a generator that
-breaks the build indistinguishable from one that never proposed anything.
+breaks the build indistinguishable from one that never proposed anything. A
+run that ends in any non-zero exit except 27 writes the file back exactly as
+it found it.
 
 **Localization** ranks the functions the defect might be in, by Ochiai over
 the call spectrum — the PASSING checks are evidence too, because a function
 every check exercises is poor evidence for a defect. Measured against real code rather
 than the fixture — 111 trials across five defect classes, see `benchmarks/` —
 the top candidate is the sole most-suspicious one in 31.5% of cases while the
-truth reaches rank 3 in 89.2%, which is why a run walks the top three rather
-than stopping at one. A test is never a candidate. A wrong candidate costs budget and never costs correctness:
+truth reaches rank 3 in 89.2%, which is why a run walks the top three
+(`--candidates`, default 3; `--budget`, default 8 steps per candidate) rather
+than stopping at one. `--symbol` skips localization and tries only that
+function. A test is never a candidate. A wrong candidate costs budget and never costs correctness:
 the hidden check adjudicates every attempt, and each attempt starts from the
 state the run found.
 
@@ -82,23 +92,29 @@ about whether to widen a grant, supply a generator, or fix a PATH.
 
 | code | meaning |
 |---|---|
-| 0 | a hidden check accepted the repair — not "the loop finished" |
-| 2 | usage error; nothing was decided or run |
+| 0 | the hidden check accepted the repair AND no check in the file still fails — not "the loop finished" |
+| 2 | usage error, including a `--check` that names no `@[test]` in the file; nothing was decided |
 | 20 | budget exhausted |
 | 21 | going in circles — the generator is not helping |
-| 22 | the checker could not run |
+| 22 | the checker could not run (missing or changed `--axon`, registry mismatch) |
 | 23 | authority: the grant does not cover this |
 | 24 | no usable proposal |
 | 25 | no repair target could be established, or the named symbol does not exist |
 | 26 | `--check` already passes — it cannot witness a repair |
+| 27 | adjudicated, not clean: the check passed and nothing regressed, but checks that were already failing still fail. The patch is KEPT |
+
+Known defect: on the local (non-Fabric) check path a body that calls `exit(0)`
+before the hidden test's assertions run is reported as exit 0. See "Known
+defect" in [`docs/CORTEX.md`](../../docs/CORTEX.md); the fix is on branch
+`fix/cortex-completion-key`.
 
 ## Generators
 
 | spec | use |
 |---|---|
-| `none` | observe and adjudicate only; a needed patch reports exit 24 |
-| `ai:MODEL` | a language model (`--features ai`) |
-| `cmd:PATH` | your own program — prompt on its stdin, proposed body on its stdout |
+| `none` (default) | observe and adjudicate only; a needed patch reports exit 24 |
+| `ai:MODEL` | a language model through `axon-ai`; only in a build with `--features ai` (otherwise exit 2). Key from `ANTHROPIC_API_KEY` or `AXON_AI_API_KEY` |
+| `cmd:PATH` | your own program — prompt on its stdin, proposed body on its stdout; 120 s per call (`AXON_CORTEX_GENERATOR_TIMEOUT_MS`) |
 | `literal:BODY` | a body you already know, pushed through the same grant check and the same hidden check a model's would face |
 
 `cmd:` exists so Cortex can be driven by whatever model you already have — a
