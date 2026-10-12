@@ -444,5 +444,13 @@ examples, one injected defect per trial, five defect shapes; real-model run of
   `exit(0)` would have counted as a verified, clean repair. Per-trial bodies
   were not recorded, so this cannot be ruled out from the record.
 
+A preregistered A/B against a plain coding agent (same model, 60 injected
+defects, 2026-10-12) is in
+[`crates/axon-cortex/benchmarks/README.md`](../crates/axon-cortex/benchmarks/README.md#cortex-vs-a-plain-coding-agent-ab-2026-10-12).
+Its verdict is "safety only": both agents fixed about as many defects, Cortex
+had no false successes where the plain agent had some, and Cortex cost several
+times more per fix. That run used the depth-first walk; the breadth-first walk
+now on main was not part of it.
+
 Not covered by Cortex at all: multi-function fixes, signature changes, files
 other than `--file`, and anything the hidden check does not assert.

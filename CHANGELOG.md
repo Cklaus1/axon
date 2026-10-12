@@ -1,5 +1,9 @@
 # Axon Changelog
 
+## Cortex vs a plain coding agent: preregistered A/B
+
+- **axon-cortex benchmarks:** `benchmarks/ab/` holds a 60-task corpus of injected defects, a keyed grader, `run_ab.py`, `analyse.py`, the raw results and `PREREG.md`, committed before any paid trial. With Haiku 4.5 on both arms, the verdict is "safety only": Cortex verified 54/60 with 0 false successes, the plain agent 55/60 with 4, and Cortex cost $0.547 per verified fix against $0.060. Results are in `benchmarks/README.md` and linked from `docs/CORTEX.md`. The run predates the breadth-first walk.
+
 ## `cortex repair` walks its candidates breadth-first
 
 - **axon-cortex:** without `--symbol`, `cortex repair` used to run each ranked candidate's whole episode (up to `--budget` steps) before trying the next. It now gives every one of the top `--candidates` ONE proposal first, in rank order, and only if none is verified resumes each candidate that pass 1 paused, in rank order, with the rest of its own budget and the rejected attempts it already collected (`runner::CandidateProgress`, `Runner::run_episode_resumable`). No candidate gets more steps or proposals than before. Unchanged: a refusal or a blocked environment ends the walk; `verified_done` ends it; `--symbol` (one target) runs exactly as before; each attempt restores the file, takes a fresh grant and is adjudicated by the hidden check under a fresh completion key; the exit code is the last outcome's. There is no opt-out (`--walk depth`): no consumer depends on the order.
