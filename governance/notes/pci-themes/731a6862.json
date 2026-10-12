@@ -1,0 +1,4 @@
+{
+  "theme": "PCI completion-token kinds",
+  "text": "evidence narrowed, one verdict stricter: a should_fail test is tokened only when the program REJECTED the run (a panic, an Err or a `?` on one, a refinement/verify/policy/budget/sandbox stop), never when an exit(n) or an escaped control transfer stopped it (TestFailure::rejected); such a test still reports ok, untokened. A @[forall] property is tokened only when every case completed, and each case is now judged like a plain test (Interp::test_end): a case ending on Err (or a `?` on Err/None) FAILS the property where it used to pass, and a case that hit an early plain `return` passes untokened. test_completion.rs pins every kind against Python-computed HMAC vectors; M68, M77, M1936, M1937 re-anchored to the moved text with equivalent mutants"
+}

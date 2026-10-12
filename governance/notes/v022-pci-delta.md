@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 8a2ace8e043312719be29c83dcace7d6836a891f
+generated-at: 731a6862b4f9f7ff96e1a3c2850171b2eee9243b
 
-`git diff --numstat 31413ca7..8a2ace8e -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..731a6862 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -51,7 +51,7 @@ generated-at: 8a2ace8e043312719be29c83dcace7d6836a891f
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
 | `crates/axon-core/src/infer.rs` | 3 | 2 |
-| `crates/axon-core/src/interp.rs` | 7817 | 3306 |
+| `crates/axon-core/src/interp.rs` | 7875 | 3309 |
 | `crates/axon-core/src/interp/builtins.rs` | 746 | 594 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1364 | 0 |
@@ -63,13 +63,13 @@ generated-at: 8a2ace8e043312719be29c83dcace7d6836a891f
 | `crates/axon-core/src/interp/kernel_tests.rs` | 336 | 0 |
 | `crates/axon-core/src/interp/pick_tests.rs` | 394 | 0 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
-| `crates/axon-core/src/interp/proptest.rs` | 48 | 21 |
+| `crates/axon-core/src/interp/proptest.rs` | 99 | 63 |
 | `crates/axon-core/src/interp/sink_tests.rs` | 1099 | 0 |
 | `crates/axon-core/src/interp/sym.rs` | 1200 | 0 |
 | `crates/axon-core/src/interp/taint.rs` | 1659 | 0 |
 | `crates/axon-core/src/interp/taint_tests.rs` | 4355 | 0 |
 | `crates/axon-core/src/interp/tests_v022_a.rs` | 1184 | 0 |
-| `crates/axon-core/src/interp/tests_v022_b.rs` | 2082 | 0 |
+| `crates/axon-core/src/interp/tests_v022_b.rs` | 2083 | 0 |
 | `crates/axon-core/src/interp/tests_v022_c.rs` | 152 | 0 |
 | `crates/axon-core/src/interp/tests_v022_s4.rs` | 600 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 516 | 516 |
@@ -80,7 +80,7 @@ generated-at: 8a2ace8e043312719be29c83dcace7d6836a891f
 | `crates/axon-core/src/interp/vm/tests.rs` | 2688 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
 | `crates/axon-core/src/lib.rs` | 116 | 21 |
-| `crates/axon-core/src/main.rs` | 799 | 243 |
+| `crates/axon-core/src/main.rs` | 838 | 256 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
 | `crates/axon-core/src/mut_borrow.rs` | 800 | 0 |
 | `crates/axon-core/src/parser.rs` | 457 | 31 |
@@ -89,9 +89,9 @@ generated-at: 8a2ace8e043312719be29c83dcace7d6836a891f
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 52867 | 7240 |
+| total | 53016 | 7298 |
 
-`git log --reverse 31413ca7..8a2ace8e -- crates/axon-core/src`:
+`git log --reverse 31413ca7..731a6862 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -356,7 +356,9 @@ generated-at: 8a2ace8e043312719be29c83dcace7d6836a891f
 | 798ee6e1 | R51 merge-main | wasm32 only (`#[cfg(target_arch = "wasm32")] mod nest_cost`): RUN release 528 -> 544 and CALL_FAST_ARG 208/320 -> 224/336, the frames wasm_stack_budget.py measures on the merged build (main's pure-tier entry and r51's typed frame writes together); no native code changes |
 | 6332d1e3 | R51 merge-main | cost only (env.rs): Bindings::get_var and get_var_mut_t resolve by get_var_idx's rule (slot, NOT_LOCAL, innermost name) with the slot hit returned from the branch that bounds-checked it; the merged index form paid a second bounds check on every VM variable read (vm_perf_gate collatz +0.779 % over REF, now -1.758 %); no seal or taint change: the T=true writes still guard and record the taint |
 | 8a2ace8e | R51 merge-main | cost only: Bindings::get_var back to the get_var_idx form (its own-branch fast path, inlined into the tree's callers, grew six wasm32 frames); get_var_mut_t keeps the one-bounds-check slot hit (vm_perf_gate collatz -0.584 % vs REF). wasm32 only (#[cfg(target_arch = "wasm32")] mod nest_cost): CALL_MUT release 320 -> 336, STORE_LOCAL_STACK_SLOW release 208 -> 224, CALL_FAST_INLINE debug 256 -> 240, CALL_MUT_OP debug 336 -> 320, each the frame wasm_stack_budget.py measures on the merged build; no seal or taint change |
-| 261 commits | | |
+| c5bdbad1 | PCI completion-token kinds | evidence widened, pass/fail unchanged: `axon test --completion-key-stdin` now also tokens a should_fail test whose failure the interpreter observed (any failure other than exit(0), so including an exit(n), n != 0) and an @[forall] property all of whose cases held; previously only a plain body that returned normally was tokened, so a token-requiring verifier (cortex LocalInterpreterExecutor, Fabric) counted every passing should_fail/forall test as failed. A plain test or forall case ended by exit(0), and a should_fail body ended by exit(0), still get no token. The exit(n) should_fail token is withdrawn by the next commit |
+| 731a6862 | PCI completion-token kinds | evidence narrowed, one verdict stricter: a should_fail test is tokened only when the program REJECTED the run (a panic, an Err or a `?` on one, a refinement/verify/policy/budget/sandbox stop), never when an exit(n) or an escaped control transfer stopped it (TestFailure::rejected); such a test still reports ok, untokened. A @[forall] property is tokened only when every case completed, and each case is now judged like a plain test (Interp::test_end): a case ending on Err (or a `?` on Err/None) FAILS the property where it used to pass, and a case that hit an early plain `return` passes untokened. test_completion.rs pins every kind against Python-computed HMAC vectors; M68, M77, M1936, M1937 re-anchored to the moved text with equivalent mutants |
+| 263 commits | | |
 <!-- END MECHANICAL -->
 
 
