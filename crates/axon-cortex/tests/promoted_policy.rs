@@ -49,13 +49,15 @@ fn policy_file_is_what_the_last_decision_placed() {
     let (bytes, _) = policy();
     let p = promotion_dir().join("decisions.jsonl");
     let text = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+    // Collected, not `.last()`: every row's schema is checked, not only the tail.
     let last = text
         .lines()
         .filter(|l| !l.trim().is_empty())
         .map(|l| serde_json::from_str::<Value>(l).expect("decision record is JSON"))
         .inspect(|r| assert_eq!(r["schema"], "cortex-promotion-decision/1"))
         .filter(|r| PLACING.contains(&r["decision"].as_str().unwrap_or("")))
-        .last()
+        .collect::<Vec<_>>()
+        .pop()
         .expect("decisions.jsonl places no policy");
     let got = format!("{:x}", Sha256::digest(&bytes));
     assert_eq!(
@@ -97,7 +99,11 @@ fn walk_is_the_promoted_walk() {
     // budget), pinned behaviourally by tests/cli.rs C16b/C16c. A different
     // walk is a code change those tests see; this one sees the policy side.
     let (_, p) = policy();
-    assert_eq!(field(&p, "walk"), "breadth", "policy walk vs the compiled walk");
+    assert_eq!(
+        field(&p, "walk"),
+        "breadth",
+        "policy walk vs the compiled walk"
+    );
 }
 
 #[test]
