@@ -95,8 +95,8 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_AI_PROVIDER` | live-AI codec: `anthropic` or `openai` |
 | `AXON_AI_BASE_URL` | gateway URL for live AI calls |
 | `AXON_AI_API_KEY` | API key for live AI calls |
-| `AXON_AI_MODEL_CHEAP` | override the model `@[ai(tier: cheap)]` resolves to |
-| `AXON_AI_MODEL_BALANCED` | override the model `@[ai(tier: balanced)]` resolves to |
+| `AXON_AI_MODEL_CHEAP` | override the model `@[ai(tier: cheap)]` resolves to (default `claude-haiku-5-5`); also the first choice for every `ai_extract_*` call and `axon improve discover --ai` |
+| `AXON_AI_MODEL_BALANCED` | override the model `@[ai(tier: balanced)]` resolves to (default `claude-sonnet-4-6`); `ai_extract_*` and `axon improve discover --ai` fall back to it when AXON_AI_MODEL_CHEAP is unset, then to `claude-haiku-5-5` |
 | `AXON_AI_MODEL_STRONG` | override the model `@[ai(tier: strong)]` resolves to |
 | `AXON_BUDGET_TOKENS` | run-wide AI token cap; the call that would exceed it halts with E1303 (exit 5) BEFORE dispatch. A malformed value fails closed to 0 |
 | `AXON_DOTENV` | path to a `.env` file to load for AI configuration |
@@ -307,7 +307,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `ai_complete(prompt: str) -> Result<str, str>` | Send prompt to the Anthropic API (claude-sonnet-4-6) and return the reply. Returns Ok(reply) or Err(message). Requires ANTHROPIC_API_KEY env var. |
 | `ai_cost_spent() -> i64` | Phase-7 cost_meter / F4: cumulative AI spend so far this run, in integer micro-dollars (µ$). Every dispatched `ai_complete` (mock or live) adds its per-token cost (tier rate × estimated tokens); an offline fallback adds nothing. The kernel cost meter that `llm_gateway.ax` modeled — read it to gate on a real cost budget (distinct from R3c's per-call-count `@[ai(policy(budget:N))]`). Deterministic, so it works under AXON_AI_MOCK. |
 | `ai_extract_uncertain_f64(prompt: str) -> Result<Uncertain<f64>, str>` | Same as ai_extract_uncertain_i64 but value is f64. |
-| `ai_extract_uncertain_i64(prompt: str) -> Result<Uncertain<i64>, str>` | Send `prompt` to Anthropic with a structured-output tool. The LLM returns its answer plus a self-reported confidence in [0,1]. Returns Ok(Uncertain<i64>) or Err(reason). Requires ANTHROPIC_API_KEY. |
+| `ai_extract_uncertain_i64(prompt: str) -> Result<Uncertain<i64>, str>` | Send `prompt` to Anthropic with a structured-output tool. The LLM returns its answer plus a self-reported confidence in [0,1]. Returns Ok(Uncertain<i64>) or Err(reason). Requires ANTHROPIC_API_KEY. Model: AXON_AI_MODEL_CHEAP, else AXON_AI_MODEL_BALANCED, else claude-haiku-5-5 (the same for every `ai_extract` form, interpreted or native). |
 | `append_file(path: str, content: str) -> Result<(), str>` | Append `content` to the end of `path`, creating the file if it does not exist. Returns Ok(()) or Err(message). This is the counterpart to `write_file`, which TRUNCATES — reaching for `write_file` twice to build a file up is the mistake this exists to prevent. Capability-wise it is a WRITE (`fs: [write(...)]`): it reads the existing bytes only in order to rewrite them and never surfaces them to the caller, so it opens no read channel. |
 | `arr_all(xs: [T], pred: fn(T) -> bool) -> bool` | True if ALL elements satisfy the predicate. Short-circuits on first false. Empty array → true (vacuous truth). |
 | `arr_any(xs: [T], pred: fn(T) -> bool) -> bool` | True if at least one element satisfies the predicate. Short-circuits. |

@@ -44,7 +44,7 @@ export AXON_AI_MODEL_BALANCED="anthropic/claude-sonnet-4-6"
 | `AXON_AI_PROVIDER` | `anthropic` (default) or `openai`. Selects the wire format. Unknown → Anthropic. |
 | `AXON_AI_BASE_URL` | Base URL for the active provider. Falls back to `ANTHROPIC_BASE_URL`, then the provider default (`api.anthropic.com` / `api.openai.com`). Trailing slash tolerated; the provider's path (`/v1/messages` or `/v1/chat/completions`) is appended. |
 | `AXON_AI_API_KEY` | API key. Falls back to `ANTHROPIC_API_KEY`. Sent as `x-api-key` (Anthropic) or `Authorization: Bearer` (OpenAI). |
-| `AXON_AI_MODEL_{CHEAP,BALANCED,STRONG}` | Per-tier model id. Set these to the backend's model strings when not on Anthropic. |
+| `AXON_AI_MODEL_{CHEAP,BALANCED,STRONG}` | Per-tier model id. Set these to the backend's model strings when not on Anthropic. The structured decision calls (every `ai_extract_*`, and `axon improve discover --ai`) send `AXON_AI_MODEL_CHEAP`, else `AXON_AI_MODEL_BALANCED`, else `claude-haiku-5-5` (`decision_model()`); plain `ai_complete` with no tier sends `claude-sonnet-4-6`. |
 | `ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY` | Legacy names, still honored (back-compat). The neutral `AXON_AI_*` names win when both are set. |
 | `AXON_AI_MOCK=1` | Deterministic offline stub — no key, no network. Used by demos/CI. |
 

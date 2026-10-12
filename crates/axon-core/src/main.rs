@@ -1780,7 +1780,10 @@ fn cmd_improve_discover_ai(programs: &[axon_core::ast::Program], dir: &Path) {
         // parsed for candidate template names and validated against the registry.
         #[cfg(feature = "asi-runtime")]
         {
-            let model = axon_core::ai_routing::Tier::Balanced.api_model();
+            // A template pick is a decision: the cheap tier's model (Haiku 5.5
+            // unless overridden), resolved exactly as the `ai_extract_*` paths
+            // resolve theirs. The id recorded in `proposed_by` is the one sent.
+            let model = axon_ai::decision_model();
             (
                 DiscoveryMode::Ai {
                     model: model.clone(),

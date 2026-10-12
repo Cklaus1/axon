@@ -48,6 +48,9 @@ use std::alloc::Layout;
 // Model strings are already env-overridable per tier (AXON_AI_MODEL_{CHEAP,
 // BALANCED,STRONG}) — set those to the backend's model ids (e.g.
 // "meta/llama-3.1-70b-instruct" for NIM) when using a non-Anthropic provider.
+// The structured decision paths (`ai_extract_*`) resolve their model through
+// [`decision_model`]: AXON_AI_MODEL_CHEAP, then AXON_AI_MODEL_BALANCED, then
+// `claude-haiku-5-5`.
 
 // -- .env loading --------------------------------------------------------------
 //
@@ -438,6 +441,33 @@ const MOCK_AI_COMPLETE: &str = "Mock summary: the single most important fact, st
 /// original hardcoded value). Tier-aware callers pass the resolved tier's model.
 const DEFAULT_MODEL: &str = "claude-sonnet-4-6";
 
+/// The built-in model for the structured DECISION paths — every
+/// `ai_extract_*` builtin (interpreter and native extern alike, both of which
+/// reach [`complete_structured_inner`]) and `axon improve discover --ai`. These
+/// calls return one typed value (a bool, a number, a template pick), which is
+/// the cheap tier's job: Haiku 5.5, the same default as
+/// `ai_routing::Tier::Cheap` in axon-core.
+pub const DECISION_MODEL_DEFAULT: &str = "claude-haiku-5-5";
+
+/// The model a structured decision call sends, resolved per call:
+///
+///   1. `AXON_AI_MODEL_CHEAP` — the cheap tier's override, because these are
+///      cheap-tier calls;
+///   2. `AXON_AI_MODEL_BALANCED` — kept because this path honoured ONLY that
+///      variable before it moved to the cheap tier, so a deployment that named
+///      its backend's model there (an OpenAI-compatible provider, a gateway)
+///      keeps sending the model it configured rather than an Anthropic id its
+///      backend cannot serve;
+///   3. [`DECISION_MODEL_DEFAULT`].
+///
+/// Set-but-empty counts as unset, as in `Tier::api_model`.
+pub fn decision_model() -> String {
+    ["AXON_AI_MODEL_CHEAP", "AXON_AI_MODEL_BALANCED"]
+        .iter()
+        .find_map(|k| std::env::var(k).ok().filter(|s| !s.is_empty()))
+        .unwrap_or_else(|| DECISION_MODEL_DEFAULT.to_string())
+}
+
 fn ai_complete_inner(prompt: &str) -> Result<String, String> {
     ai_complete_inner_model(prompt, DEFAULT_MODEL)
 }
@@ -632,7 +662,7 @@ pub fn post_json_bearer(
 /// JSON shape without going over the wire.
 pub fn build_typed_uncertain_body(prompt: &str, value_type: &str) -> serde_json::Value {
     serde_json::json!({
-        "model": "claude-sonnet-4-6",
+        "model": DECISION_MODEL_DEFAULT,
         "max_tokens": 1024,
         "tools": [{
             "name": "answer",
@@ -795,13 +825,10 @@ fn complete_structured_inner(
 
     let p = provider();
     let key = api_key(p)?;
-    // The interpreter passes the tier-resolved model via the plain path; the
-    // structured path historically pinned sonnet. Honor the balanced-tier model
-    // override so a non-Anthropic provider can name its own model.
-    let model = std::env::var("AXON_AI_MODEL_BALANCED")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| DEFAULT_MODEL.to_string());
+    // The decision paths' model: the cheap tier's override, then the balanced
+    // one this path honoured before (back-compat), then Haiku 5.5. See
+    // `decision_model`.
+    let model = decision_model();
 
     let body = match p {
         Provider::Anthropic => {
@@ -904,7 +931,7 @@ pub fn complete_typed_uncertain_f64(prompt: &str) -> Result<(f64, f64), String> 
 /// `"boolean"`.  Exposed as `pub` for unit-test pinning of the JSON shape.
 pub fn build_typed_flat_body(prompt: &str, value_type: &str) -> serde_json::Value {
     serde_json::json!({
-        "model": "claude-sonnet-4-6",
+        "model": DECISION_MODEL_DEFAULT,
         "max_tokens": 1024,
         "tools": [{
             "name": "answer",
@@ -1330,6 +1357,42 @@ mod tests {
         }
     }
 
+    /// The structured decision paths send the CHEAP tier's model: its override
+    /// first, then the BALANCED override this path honoured before (so a
+    /// non-Anthropic backend configured there keeps its model), then Haiku 5.5.
+    /// Set-but-empty counts as unset.
+    #[test]
+    fn decision_model_precedence_cheap_then_balanced_then_haiku() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let prev_cheap = std::env::var("AXON_AI_MODEL_CHEAP").ok();
+        let prev_bal = std::env::var("AXON_AI_MODEL_BALANCED").ok();
+
+        std::env::remove_var("AXON_AI_MODEL_CHEAP");
+        std::env::remove_var("AXON_AI_MODEL_BALANCED");
+        assert_eq!(decision_model(), "claude-haiku-5-5");
+
+        std::env::set_var("AXON_AI_MODEL_BALANCED", "gw-balanced");
+        assert_eq!(decision_model(), "gw-balanced");
+
+        std::env::set_var("AXON_AI_MODEL_CHEAP", "gw-cheap");
+        assert_eq!(decision_model(), "gw-cheap");
+
+        std::env::set_var("AXON_AI_MODEL_CHEAP", "");
+        assert_eq!(decision_model(), "gw-balanced");
+        std::env::set_var("AXON_AI_MODEL_BALANCED", "");
+        assert_eq!(decision_model(), "claude-haiku-5-5");
+
+        for (k, prev) in [
+            ("AXON_AI_MODEL_CHEAP", prev_cheap),
+            ("AXON_AI_MODEL_BALANCED", prev_bal),
+        ] {
+            match prev {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
+    }
+
     /// The structured-output request body must declare a single `answer` tool
     /// whose schema requires both `value` and `confidence`, and the tool_choice
     /// must force that tool.  This is the contract that turns LLM output into
@@ -1338,7 +1401,7 @@ mod tests {
     #[test]
     fn typed_body_i64_has_required_shape() {
         let body = build_typed_uncertain_body("How many planets?", "integer");
-        assert_eq!(body["model"], "claude-sonnet-4-6");
+        assert_eq!(body["model"], "claude-haiku-5-5");
         assert_eq!(body["max_tokens"], 1024);
 
         let tools = body["tools"].as_array().expect("tools is array");
@@ -1545,7 +1608,7 @@ mod tests {
     #[test]
     fn typed_flat_body_i64_has_required_shape() {
         let body = build_typed_flat_body("How many planets?", "integer");
-        assert_eq!(body["model"], "claude-sonnet-4-6");
+        assert_eq!(body["model"], "claude-haiku-5-5");
         let tools = body["tools"].as_array().expect("tools is array");
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0]["name"], "answer");

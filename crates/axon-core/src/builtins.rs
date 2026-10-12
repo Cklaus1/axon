@@ -1479,7 +1479,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "ai_extract_uncertain_i64",
         params: &[("prompt", "str")],
         ret: "Result<Uncertain<i64>, str>",
-        doc: "Send `prompt` to Anthropic with a structured-output tool. The LLM returns its answer plus a self-reported confidence in [0,1]. Returns Ok(Uncertain<i64>) or Err(reason). Requires ANTHROPIC_API_KEY.",
+        doc: "Send `prompt` to Anthropic with a structured-output tool. The LLM returns its answer plus a self-reported confidence in [0,1]. Returns Ok(Uncertain<i64>) or Err(reason). Requires ANTHROPIC_API_KEY. Model: AXON_AI_MODEL_CHEAP, else AXON_AI_MODEL_BALANCED, else claude-haiku-5-5 (the same for every `ai_extract` form, interpreted or native).",
     },
     BuiltinFn {
         name: "ai_extract_uncertain_f64",
