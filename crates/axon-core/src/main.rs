@@ -380,8 +380,10 @@ enum Command {
         jobs: usize,
 
         /// Read a per-run secret (hex) as the FIRST line of stdin, before any
-        /// program code runs, and mark each test that COMPLETED — its body
-        /// returned normally, not via `exit(0)` or an `Err` — with
+        /// program code runs, and mark each test whose PASS the interpreter
+        /// decided itself — a plain body that returned normally (not via
+        /// `exit(0)`), a `should_fail` body whose failure it observed, or an
+        /// `@[forall]` property every case of which completed — with
         /// `"completion": HMAC-SHA256(secret, "axon-test-completion/1\0" + name)`.
         /// A caller that must know the test really finished (Fabric) checks it.
         #[arg(
@@ -6214,8 +6216,11 @@ struct TestOutcome {
     passed: bool,
     duration_ms: u64,
     error: Option<String>,
-    /// The test body returned normally (see `interp::TestEnd`).
-    completed: bool,
+    /// The interpreter decided this pass itself: a plain body returned
+    /// normally (see `interp::TestEnd`), a `should_fail` body's failure was
+    /// observed, or every case of a property held. An early `exit(0)` never
+    /// sets it, so it is what a completion token attests.
+    decided: bool,
 }
 
 /// HMAC-SHA256 (RFC 2104) over `msg`, hex.
@@ -6475,7 +6480,7 @@ fn cmd_test(
         .iter()
         .map(|(name, should_fail, forall_cases)| {
             let start = Instant::now();
-            let mut completed = false;
+            let mut decided = false;
             let (passed, error) = if let Some(cases) = forall_cases {
                 // Property test (R8): randomize params, shrink on failure.
                 use axon_core::interp::PropertyOutcome;
@@ -6484,8 +6489,16 @@ fn cmd_test(
                         false,
                         Some(format!("should_fail forall '{name}' held over {cases} cases")),
                     ),
-                    PropertyOutcome::Passed { .. } => (true, None),
-                    PropertyOutcome::Failed { .. } if *should_fail => (true, None),
+                    // A case that stops early (`exit`, a refinement stop) fails
+                    // the property (R51 §3), so `Passed` means every case completed.
+                    PropertyOutcome::Passed { .. } => {
+                        decided = true;
+                        (true, None)
+                    }
+                    PropertyOutcome::Failed { .. } if *should_fail => {
+                        decided = true;
+                        (true, None)
+                    }
                     PropertyOutcome::Failed { counterexample, message, seed } => (
                         false,
                         Some(format!(
@@ -6496,29 +6509,33 @@ fn cmd_test(
                 }
             } else {
                 // Plain zero-arg @[test].
-                // Property tests issue no completion evidence (yet): their
-                // cases run many times and "completed" is not one event.
                 use axon_core::interp::TestEnd;
                 match axon_core::interp::run_test_fn_outcome(&program, name) {
                     Ok(end) => match (end.failure_exit(), *should_fail) {
                         // An `Err` return or a `?` exit is a failure (R51 §3).
-                        (Some(_), true) => (true, None),
+                        (Some(_), true) => {
+                            decided = true;
+                            (true, None)
+                        }
                         (Some(why), false) => (false, Some(why.to_string())),
                         (None, true) => (
                             false,
                             Some(format!("should_fail test '{name}' completed without panicking")),
                         ),
                         (None, false) => {
-                            completed = end == TestEnd::Completed;
+                            decided = end == TestEnd::Completed;
                             (true, None)
                         }
                     },
-                    Err(_) if *should_fail => (true, None),
+                    Err(_) if *should_fail => {
+                        decided = true;
+                        (true, None)
+                    }
                     Err(e) => (false, Some(e)),
                 }
             };
             let duration_ms = start.elapsed().as_millis() as u64;
-            TestOutcome { name: name.clone(), passed, duration_ms, error, completed }
+            TestOutcome { name: name.clone(), passed, duration_ms, error, decided }
         })
         .collect();
 
@@ -6542,7 +6559,7 @@ fn cmd_test(
 
         if json {
             if r.passed {
-                match completion_key.as_deref().filter(|_| r.completed) {
+                match completion_key.as_deref().filter(|_| r.decided) {
                     Some(k) => println!(
                         "{{\"name\":{:?},\"status\":\"ok\",\"duration_ms\":{},\"completion\":\"{}\"}}",
                         r.name,

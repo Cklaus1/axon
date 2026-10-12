@@ -1,5 +1,7 @@
 //! Protected Check Isolation: `axon test --completion-key-stdin` issues a
-//! completion token ONLY for a test whose body returned normally.
+//! completion token ONLY for a pass the interpreter decided itself: a plain
+//! body that returned normally, a `should_fail` body whose failure it
+//! observed, or a property all of whose cases completed.
 //!
 //! The verifier (Fabric) hands a per-run secret in on stdin and counts a pass
 //! only when it carries a token derived from that secret. So what this binary
@@ -15,7 +17,17 @@ const KEY: &str = "000102030405060708090a0b0c0d0e0f";
 /// (Python `hmac`), so the vector pins the construction, not just itself.
 const T_DONE: &str = "b85dea18c9ae462e99521708e782bc551d35d21d7b708f05beb5abdf9416c195";
 
+const SRC: &str = "fn bail(n: i64) -> i64 {\n    if n > 0 { exit(0) }\n    n\n}\n\
+     @[test]\nfn t_done() { assert_eq(bail(0), 0) }\n\
+     @[test]\nfn t_err() -> Result<i64, str> { Err(\"no\") }\n\
+     @[test]\nfn t_q() -> Result<i64, str> {\n    let n = parse_int(\"x\")?\n    Ok(n)\n}\n\
+     @[test]\nfn t_exit() { assert_eq(bail(1), 99) }\n";
+
 fn run(stdin: &str) -> (i32, String) {
+    run_src(SRC, stdin)
+}
+
+fn run_src(src: &str, stdin: &str) -> (i32, String) {
     // A unique file per call: the tests run in parallel in one process, and a
     // shared path let one truncate the source another child was reading.
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -23,15 +35,7 @@ fn run(stdin: &str) -> (i32, String) {
     let d = std::env::temp_dir().join(format!("axon_completion_{}", std::process::id()));
     std::fs::create_dir_all(&d).unwrap();
     let f = d.join(format!("t{}.ax", N.fetch_add(1, Ordering::Relaxed)));
-    std::fs::write(
-        &f,
-        "fn bail(n: i64) -> i64 {\n    if n > 0 { exit(0) }\n    n\n}\n\
-         @[test]\nfn t_done() { assert_eq(bail(0), 0) }\n\
-         @[test]\nfn t_err() -> Result<i64, str> { Err(\"no\") }\n\
-         @[test]\nfn t_q() -> Result<i64, str> {\n    let n = parse_int(\"x\")?\n    Ok(n)\n}\n\
-         @[test]\nfn t_exit() { assert_eq(bail(1), 99) }\n",
-    )
-    .unwrap();
+    std::fs::write(&f, src).unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_axon"))
         .args(["test", "--json", "--jobs", "1", "--completion-key-stdin"])
         .arg(&f)
@@ -89,5 +93,34 @@ fn a_missing_or_short_completion_key_is_refused_before_any_test_runs() {
         let (code, out) = run(bad);
         assert_eq!(code, 2, "{bad:?}: {out}");
         assert!(!out.contains("t_done"), "{bad:?} ran tests: {out}");
+    }
+}
+
+/// HMAC-SHA256(KEY, "axon-test-completion/1\0" + name), computed with Python
+/// `hmac` (which reproduces `T_DONE` above).
+const SF_PANICS: &str = "1c17829caa07c3329ca7574fcf04c9922d96f16873d7350eccc56971964031ec";
+const P_HOLDS: &str = "249607ce7c3f2a42257bd8a0c92cc4b76fe4bf352501b17668ace2e5fa8ddac6";
+
+#[test]
+fn an_observed_should_fail_and_a_held_property_are_tokened_an_early_exit_is_not() {
+    // Without a token a keyed caller (cortex repair, Fabric) counts the pass as
+    // failed, so every file with a should_fail or @[forall] test could never be
+    // verified clean. Each pass below is one the interpreter decided; each
+    // `exit(0)` path must still fail and carry no completion token.
+    let src = "fn bail(n: i64) -> i64 {\n    if n > 0 { exit(0) }\n    n\n}\n\
+         @[test(should_fail)]\nfn sf_panics() { assert_eq(bail(0), 1) }\n\
+         @[test(should_fail)]\nfn sf_exit() { assert_eq(bail(1), 1) }\n\
+         @[test]\n@[forall(n: 20)]\nfn p_holds(a: i64) { assert(wrapping_add(a, 0) == a) }\n\
+         @[test]\n@[forall(n: 20)]\nfn p_exit(a: i64) { assert_eq(bail(1), a) }\n";
+    let (code, out) = run_src(src, &format!("{KEY}\n"));
+    assert_eq!(code, 3, "{out}");
+    for (t, tok) in [("sf_panics", SF_PANICS), ("p_holds", P_HOLDS)] {
+        let l = line(&out, t);
+        assert!(l.contains("\"status\":\"ok\""), "{t}: {l}");
+        assert!(l.contains(&format!("\"completion\":\"{tok}\"")), "{t}: {l}");
+    }
+    for t in ["sf_exit", "p_exit"] {
+        let l = line(&out, t);
+        assert!(l.contains("\"status\":\"failed\""), "{t}: {l}");
     }
 }
