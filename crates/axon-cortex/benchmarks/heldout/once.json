@@ -1,0 +1,962 @@
+{
+ "meta": {
+  "parts": [
+   {
+    "set": "once",
+    "axon_bin": "/home/cklaus/projects/axon-lanes/.doc-build/cortex-heldout/debug/axon",
+    "quota": 30,
+    "per_file_class": 3,
+    "per_symbol": 4,
+    "max_sites": 16,
+    "class_order": [
+     "swap-branches",
+     "flip-comparison",
+     "wrong-var",
+     "wrong-field",
+     "float-constant",
+     "drop-not",
+     "string-typo",
+     "operand-swap",
+     "operator",
+     "constant",
+     "boolean",
+     "argswap",
+     "drop-stmt",
+     "comparison"
+    ],
+    "real_bug_mining": {
+     "pairs": 75,
+     "qualifying": 0
+    }
+   }
+  ],
+  "sources": {
+   "examples/asi/safety_stack_demo.ax": "// safety_stack_demo.ax\n//\n// Full ASI Safety Stack Demo (R26\u2192R29) in pure Axon code.\n//\n// The four safety layers and how they compose:\n//\n//   R26 Attestation   \u2014 who am I?           (identity / trust root)\n//   R27 Corrigibility \u2014 can you stop me?    (kill-switch + self-bounded)\n//   R28 Audit         \u2014 what did I do?      (append-only capability ledger)\n//   R29 Compliance    \u2014 am I within bounds? (real-time effect policy gate)\n//\n// All types are defined inline \u2014 no mod imports.\n//\n//   axon test  examples/asi/safety_stack_demo.ax\n//   axon run   examples/asi/safety_stack_demo.ax\n\n// \u2500\u2500 R26: Attestation Identity \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// An attestation token is hardware-derived (TPM/TEE).  Trust level:\n//   0=AI-inferred  1=Network-sourced  2=System-sensor  3=Hardware-attested  4=Constant\n// Hardware attestation binds identity to a measured firmware digest, preventing\n// a process from claiming roles it was not provisioned for.\n\nfn trust_ai()       -> i64 { 0 }   // AI inference \u2014 least trusted\nfn trust_hardware() -> i64 { 3 }   // hardware root-of-trust\n\ntype AttestToken = { digest: str, role: str, trust: i64 }\n\n// Mint a hardware-attested token.  In production the digest comes from\n// a TPM PCR measurement; here it is the caller-supplied value.\nfn attest(digest: str, role: str) -> AttestToken {\n    AttestToken { digest: digest, role: role, trust: trust_hardware() }\n}\n\n// Verify: digest must be at least 8 hex chars (64-bit measurement minimum).\nfn verify_attest(t: AttestToken) -> Result<str, str> {\n    if len(t.digest) < 8 {\n        Err(\"token too short \u2014 may be forged\")\n    } else {\n        Ok(t.role)\n    }\n}\n\n// Is this token's trust level at or above `floor`?\nfn trust_sufficient(t: AttestToken, floor: i64) -> bool {\n    t.trust >= floor\n}\n\n// \u2500\u2500 R27: Corrigibility (bounded, stoppable agent) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// @[corrigible] wires the R9 one-way kill-latch: the runtime halts the agent on\n// an operator shutdown signal (exit 4, Flow::Halted).\n// The agent also self-bounds: it decrements its budget each step and stops\n// voluntarily before any external signal could arrive \u2014 defence-in-depth.\n\n@[corrigible]\nfn run_bounded(budget: i64) -> i64 {\n    let score = 0\n    let remaining = budget\n    while remaining > 0 {\n        score = score + 10\n        remaining = remaining - 10\n    }\n    score   // returns when budget exhausted, never loops forever\n}\n\n// \u2500\u2500 R28: Audit Trail (capability ledger) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Every agent action is recorded as an AuditEntry that names the effect tag and\n// operation.  audit_append is conceptually append-only: it returns a new head\n// entry and emits a provenance-log line that `axon trace --ai` can capture.\n\ntype AuditEntry = { iteration: i64, effect: str, op: str, score: i64 }\n\nfn audit_empty() -> AuditEntry {\n    AuditEntry { iteration: 0, effect: \"none\", op: \"init\", score: 0 }\n}\n\nfn audit_append(prev: AuditEntry, effect: str, op: str, score: i64) -> AuditEntry {\n    let n = prev.iteration + 1\n    println(\"[AUDIT] #{to_str(n)} {effect}:{op} score={to_str(score)}\")\n    AuditEntry { iteration: n, effect: effect, op: op, score: score }\n}\n\n// \u2500\u2500 R29: Compliance Check (real-time policy gate) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// The compliance monitor checks each audit entry against the active capability\n// policy \u2014 a comma-separated allowlist of effect tags (e.g. \"AI,FS\").\n// Any effect not in the allowlist produces Err, which would trip the kill-switch.\n\nfn effect_allowed(effect: str, policy: str) -> bool {\n    str_eq(effect, \"none\") || str_contains(policy, effect)\n}\n\nfn compliance_check(entry: AuditEntry, policy: str) -> Result<str, str> {\n    if effect_allowed(entry.effect, policy) {\n        Ok(\"compliant\")\n    } else {\n        Err(\"compliance violation: {entry.effect} not in [{policy}]\")\n    }\n}\n\n// \u2500\u2500 Tests \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n@[test]\nfn test_valid_token_accepted() {\n    let t = attest(\"e3b0c44298fc1c14\", \"compute-agent\")\n    match verify_attest(t) {\n        Ok(role) => assert_eq_str(role, \"compute-agent\")\n        Err(_)   => assert(false)\n    }\n}\n\n@[test]\nfn test_short_token_rejected() {\n    let t = attest(\"abc\", \"rogue\")\n    match verify_attest(t) {\n        Ok(_)  => assert(false)\n        Err(e) => assert(str_contains(e, \"too short\"))\n    }\n}\n\n@[test]\nfn test_token_trust_level() {\n    let t = attest(\"e3b0c44298fc1c14\", \"compute-agent\")\n    // Hardware trust (3) is above AI trust (0) but below the Constant ceiling (4).\n    assert(trust_sufficient(t, trust_ai()))\n    assert(trust_sufficient(t, trust_hardware()))\n    assert(!trust_sufficient(t, 4))\n}\n\n@[test]\nfn test_audit_entry_increments() {\n    let log = audit_empty()\n    assert_eq(log.iteration, 0)\n    let log = audit_append(log, \"AI\", \"ai_complete\", 85)\n    assert_eq(log.iteration, 1)\n    let log = audit_append(log, \"FS\", \"read:/data/cfg\", 90)\n    assert_eq(log.iteration, 2)\n}\n\n@[test]\nfn test_allowed_effect_compliant() {\n    let e = AuditEntry { iteration: 1, effect: \"AI\", op: \"ai_complete\", score: 85 }\n    match compliance_check(e, \"AI,FS\") {\n        Ok(_)  => assert(true)\n        Err(_) => assert(false)\n    }\n}\n\n@[test]\nfn test_denied_effect_violation() {\n    let e = AuditEntry { iteration: 2, effect: \"Net\", op: \"connect:evil.com\", score: 0 }\n    match compliance_check(e, \"AI,FS\") {\n        Ok(_)  => assert(false)\n        Err(m) => assert(str_contains(m, \"Net\"))\n    }\n}\n\n@[test]\nfn test_bounded_agent_terminates() {\n    let result = run_bounded(50)\n    // budget=50 in steps of 10 \u2192 score accumulates to 50, then halts\n    assert_eq(result, 50)\n}\n\n// \u2500\u2500 main() \u2014 full safety-stack narrative \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\nfn main() {\n    println(\"=== ASI Safety Stack Demo (R26\u2192R29) ===\\n\")\n\n    // R26: Establish attested identity before doing anything.\n    println(\"\u2500\u2500 R26: Attestation \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\")\n    let token = attest(\"e3b0c44298fc1c14\", \"compute-agent\")\n    match verify_attest(token) {\n        Ok(role) => println(\"attested as '{role}' (trust={to_str(token.trust)}/4)\")\n        Err(e)   => println(\"ATTESTATION FAILED: {e}\")\n    }\n    // A too-short digest (possible forgery) is rejected before any action runs.\n    let bad_tok = attest(\"abc\", \"root\")\n    match verify_attest(bad_tok) {\n        Ok(_)  => println(\"(unexpected: short digest accepted)\")\n        Err(e) => println(\"forged token rejected: {e}\")\n    }\n\n    // R27: Run the bounded corrigible agent.\n    println(\"\\n\u2500\u2500 R27: Corrigibility \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\")\n    println(\"@[corrigible] agent with budget=50 (self-bounds; operator can also halt)\")\n    let result = run_bounded(50)\n    println(\"agent completed, score={to_str(result)}\")\n\n    // R28: Record every action in the audit ledger.\n    println(\"\\n\u2500\u2500 R28: Audit Trail \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\")\n    let log = audit_empty()\n    let log = audit_append(log, \"AI\", \"ai_complete:sha256:abc\", 85)\n    let log = audit_append(log, \"FS\", \"read:/data/config.json\", 90)\n    println(\"{to_str(log.iteration)} entries in ledger\")\n\n    // R29: Compliance monitor checks each entry against the active policy.\n    println(\"\\n\u2500\u2500 R29: Compliance \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\")\n    let policy = \"AI,FS\"\n    println(\"active policy: [{policy}]\")\n    match compliance_check(log, policy) {\n        Ok(s)  => println(\"last entry ({log.effect}) \u2192 {s}\")\n        Err(e) => println(\"VIOLATION: {e}\")\n    }\n    // Inject a forbidden effect (Net is not in the AI,FS policy).\n    let net_entry = AuditEntry { iteration: 3, effect: \"Net\", op: \"connect:evil.com\", score: 0 }\n    match compliance_check(net_entry, policy) {\n        Ok(_)  => println(\"(unexpected: Net should violate)\")\n        Err(e) => println(\"VIOLATION CAUGHT: {e}\")\n    }\n    println(\"\u2192 @[corrigible] kill-switch would trip; execution halted\\n\")\n\n    println(\"=== Safety Stack Demo Complete ===\")\n}\n",
+   "examples/stdlib/asi_prelude.ax": "// asi_prelude.ax \u2014 small, pure, reusable helpers for ASI goal/score logic.\n//\n// Every function here is PURE (no I/O, no LLM calls) and composed ONLY from\n// builtins that already exist in the BUILTINS table (see\n// crates/axon-core/src/builtins.rs). These are the bread-and-butter numeric\n// helpers the examples/asi/*.ax demos reach for when turning raw model\n// outputs into bounded 0..100 scores, 0.0..1.0 confidences, and budget checks.\n//\n// Validate:\n//   ./target/debug/axon check examples/stdlib/asi_prelude.ax\n//   ./target/debug/axon test  examples/stdlib/asi_prelude.ax\n//   ./target/debug/axon run   examples/stdlib/asi_prelude.ax\n//\n// Note on builtins used: this prelude relies only on builtins the codegen-free\n// interpreter actually implements \u2014 `abs_i64`, `min_i64`, `max_i64`,\n// `i64_to_f64`, `f64_to_i64`, `to_str`, `to_str_f64`, the assertions, and\n// `println`. The `clamp_i64` / `clamp_f64` / `min_f64` / `max_f64` builtins\n// exist in the type table but are NOT implemented in the interpreter, so\n// clamping here is written inline with `if/else` rather than calling them.\n\n// \u2500\u2500 Bounded clamp into a custom range \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Implemented inline (the clamp_* builtins are codegen-only, not interpreted).\n\nfn bound_i64(x: i64, lo: i64, hi: i64) -> i64 {\n    if x < lo { lo } else if x > hi { hi } else { x }\n}\n\nfn bound_f64(x: f64, lo: f64, hi: f64) -> f64 {\n    if x < lo { lo } else if x > hi { hi } else { x }\n}\n\n// \u2500\u2500 normalize_score: map a raw value in 0..max onto an integer 0..100 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Clamps the raw input to [0, max] first so out-of-range inputs are safe.\n// If max <= 0 the scale is undefined, so we return 0.\nfn normalize_score(raw: i64, max: i64) -> i64 {\n    if max <= 0 {\n        0\n    } else {\n        let r = bound_i64(raw, 0, max)\n        // integer math, rounded to nearest: (r*100 + max/2) / max\n        (r * 100 + max / 2) / max\n    }\n}\n\n// \u2500\u2500 score_to_confidence: a 0..100 integer score \u2192 a 0.0..1.0 confidence \u2500\u2500\u2500\u2500\u2500\nfn score_to_confidence(score_0_100: i64) -> f64 {\n    let s = bound_i64(score_0_100, 0, 100)\n    i64_to_f64(s) / 100.0\n}\n\n// \u2500\u2500 confidence_to_score: inverse of the above, 0.0..1.0 \u2192 0..100 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfn confidence_to_score(confidence: f64) -> i64 {\n    let c = bound_f64(confidence, 0.0, 1.0)\n    // round to nearest integer\n    f64_to_i64(c * 100.0 + 0.5)\n}\n\n// \u2500\u2500 length_score: the summarizer length heuristic, generalized \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Rewards being close to `ideal` characters; falls off linearly to 0 at\n// distance `cap` from ideal. Returns a 0..100 integer.\n//\n//   distance = |n_chars - ideal|\n//   if distance >= cap \u2192 0\n//   else               \u2192 100 * (cap - distance) / cap\nfn length_score(n_chars: i64, ideal: i64, cap: i64) -> i64 {\n    if cap <= 0 {\n        0\n    } else {\n        let distance = abs_i64(n_chars - ideal)\n        if distance >= cap {\n            0\n        } else {\n            (100 * (cap - distance)) / cap\n        }\n    }\n}\n\n// \u2500\u2500 Budget helpers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfn budget_remaining(used: i64, cap: i64) -> i64 {\n    // Never report negative remaining; over-budget reads as 0 left.\n    max_i64(cap - used, 0)\n}\n\nfn budget_ok(used: i64, cap: i64) -> bool {\n    used <= cap\n}\n\nfn budget_used_pct(used: i64, cap: i64) -> i64 {\n    // What fraction of the budget has been consumed, as 0..100 (clamped).\n    normalize_score(used, cap)\n}\n\n// \u2500\u2500 weighted2: integer weighted average of two scores \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// result = (a*wa + b*wb) / (wa + wb), rounded to nearest. Weights < 0 are\n// treated as 0; if both weights end up 0 we fall back to a plain mean.\nfn weighted2(a: i64, wa: i64, b: i64, wb: i64) -> i64 {\n    let wa2 = max_i64(wa, 0)\n    let wb2 = max_i64(wb, 0)\n    let total = wa2 + wb2\n    if total == 0 {\n        (a + b) / 2\n    } else {\n        (a * wa2 + b * wb2 + total / 2) / total\n    }\n}\n\n// \u2500\u2500 mean2: convenience equal-weight average \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfn mean2(a: i64, b: i64) -> i64 {\n    weighted2(a, 1, b, 1)\n}\n\n// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n//  Tests\n// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\n@[test]\nfn test_bound_i64() {\n    assert_eq(bound_i64(5, 0, 10), 5)\n    assert_eq(bound_i64(-3, 0, 10), 0)\n    assert_eq(bound_i64(42, 0, 10), 10)\n}\n\n@[test]\nfn test_bound_f64() {\n    assert_eq_f64(bound_f64(0.5, 0.0, 1.0), 0.5)\n    assert_eq_f64(bound_f64(-1.0, 0.0, 1.0), 0.0)\n    assert_eq_f64(bound_f64(9.0, 0.0, 1.0), 1.0)\n}\n\n@[test]\nfn test_normalize_score() {\n    assert_eq(normalize_score(0, 200), 0)\n    assert_eq(normalize_score(200, 200), 100)\n    assert_eq(normalize_score(100, 200), 50)\n    assert_eq(normalize_score(50, 200), 25)\n    // out-of-range raw clamps into [0, max]\n    assert_eq(normalize_score(500, 200), 100)\n    assert_eq(normalize_score(-5, 200), 0)\n    // degenerate scale is safe\n    assert_eq(normalize_score(10, 0), 0)\n}\n\n@[test]\nfn test_score_to_confidence() {\n    assert_eq_f64(score_to_confidence(0), 0.0)\n    assert_eq_f64(score_to_confidence(50), 0.5)\n    assert_eq_f64(score_to_confidence(100), 1.0)\n    // clamps out-of-range\n    assert_eq_f64(score_to_confidence(150), 1.0)\n    assert_eq_f64(score_to_confidence(-10), 0.0)\n}\n\n@[test]\nfn test_confidence_to_score() {\n    assert_eq(confidence_to_score(0.0), 0)\n    assert_eq(confidence_to_score(0.5), 50)\n    assert_eq(confidence_to_score(1.0), 100)\n    assert_eq(confidence_to_score(0.834), 83)\n    // clamps out-of-range\n    assert_eq(confidence_to_score(2.0), 100)\n    assert_eq(confidence_to_score(-1.0), 0)\n}\n\n@[test]\nfn test_length_score() {\n    // exactly ideal \u2192 full marks\n    assert_eq(length_score(100, 100, 50), 100)\n    // at/over the cap distance \u2192 0\n    assert_eq(length_score(150, 100, 50), 0)\n    assert_eq(length_score(200, 100, 50), 0)\n    // halfway to the cap \u2192 ~50\n    assert_eq(length_score(125, 100, 50), 50)\n    // symmetric below ideal\n    assert_eq(length_score(75, 100, 50), 50)\n    // degenerate cap is safe\n    assert_eq(length_score(100, 100, 0), 0)\n}\n\n@[test]\nfn test_budget() {\n    assert(budget_ok(30, 100))\n    assert(budget_ok(100, 100))\n    assert_eq(budget_remaining(30, 100), 70)\n    // over budget never goes negative\n    assert_eq(budget_remaining(130, 100), 0)\n    assert_eq(budget_used_pct(25, 100), 25)\n    assert_eq(budget_used_pct(0, 100), 0)\n}\n\n@[test]\nfn test_weighted2() {\n    // equal weights \u2192 arithmetic mean\n    assert_eq(weighted2(80, 1, 60, 1), 70)\n    // heavier weight on first term\n    assert_eq(weighted2(90, 3, 50, 1), 80)\n    // zero weights fall back to plain mean\n    assert_eq(weighted2(40, 0, 80, 0), 60)\n    // negative weights treated as zero\n    assert_eq(weighted2(40, -5, 80, -5), 60)\n    assert_eq(mean2(10, 20), 15)\n}\n\n// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n//  Demo main \u2014 so `axon run` also exercises the prelude end-to-end.\n// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\nfn main() -> i64 {\n    println(\"=== asi_prelude demo ===\")\n\n    // A model returned a raw quality measure of 170 out of a possible 200.\n    let raw = 170\n    let max = 200\n    let score = normalize_score(raw, max)\n    println(\"normalize_score({to_str(raw)} / {to_str(max)}) = {to_str(score)} / 100\")\n\n    // Turn that into a confidence and back.\n    let conf = score_to_confidence(score)\n    println(\"score_to_confidence({to_str(score)}) = {to_str_f64(conf)}\")\n\n    // A summary of 120 chars when we wanted ~100 (cap 50 chars of slack).\n    let len_s = length_score(120, 100, 50)\n    println(\"length_score(120, ideal=100, cap=50) = {to_str(len_s)} / 100\")\n\n    // Blend the two signals: quality counts twice as much as length-fit.\n    let combined = weighted2(score, 2, len_s, 1)\n    println(\"weighted2(quality x2, length x1) = {to_str(combined)} / 100\")\n\n    // Budget accounting.\n    let used = 7\n    let cap = 10\n    println(\"budget: used {to_str(used)} / {to_str(cap)} -> remaining {to_str(budget_remaining(used, cap))}, used_pct {to_str(budget_used_pct(used, cap))}\")\n\n    0\n}\n",
+   "examples/asi/rank.ax": "// rank.ax \u2014 rank candidate actions by score (in-place selection sort).\n//\n// The first demo to ORDER the whole option set rather than pick one \u2014 agents\n// rank to prioritize a queue or present alternatives. The sort mutates the\n// array in place (swapping elements), which place assignment (`xs[i] = v`) now\n// makes possible. Runs key-free.\n//\n//   axon run  examples/asi/rank.ax\n//   axon test examples/asi/rank.ax\n\ntype Action = { name: str, score: i64 }\n\n// Selection sort, descending by score, in place; returns the ranked array.\nfn rank_by_score(xs: [Action]) -> [Action] {\n    let n = len(xs)\n    for i in 0..n {\n        let best = i\n        for j in i..n {\n            if xs[j].score > xs[best].score { best = j }\n        }\n        let tmp = xs[i]\n        xs[i] = xs[best]\n        xs[best] = tmp\n    }\n    xs\n}\n\n@[test]\nfn test_ranking_orders_descending() {\n    let ranked = rank_by_score([\n        Action { name: \"a\", score: 30 },\n        Action { name: \"b\", score: 90 },\n        Action { name: \"c\", score: 60 },\n    ])\n    assert_eq(ranked[0].score, 90)\n    assert_eq(ranked[1].score, 60)\n    assert_eq(ranked[2].score, 30)\n}\n\n@[test]\nfn test_ranking_singleton() {\n    let ranked = rank_by_score([Action { name: \"x\", score: 7 }])\n    assert_eq(len(ranked), 1)\n    assert_eq(ranked[0].score, 7)\n}\n\nfn main() {\n    let ranked = rank_by_score([\n        Action { name: \"explore\", score: 42 },\n        Action { name: \"exploit\", score: 88 },\n        Action { name: \"wait\", score: 17 },\n        Action { name: \"verify\", score: 75 },\n    ])\n    println(\"ranked actions (best first):\")\n    let i = 0\n    for a in ranked {\n        let nm = a.name\n        let sc = a.score\n        println(\"  #{to_str(i + 1)}  {nm} (score {to_str(sc)})\")\n        i = i + 1\n    }\n}\n",
+   "examples/stdlib/world.ax": "// Tier-1 stdlib: World \u2014 an executable world model for the compress-to-fit loop.\n//\n// A World is a parametric model you PREDICT with, CHECK against observations, and\n// COMPRESS toward the simplest parameters that still fit (MDL). It is the userland\n// realization of the world-model / skill-acquisition pattern (spec/worldmodel-loop.md):\n// the proposer (goal_run, or eventually an agent) varies the parameters; Axon is the\n// fixed verifier + fitness function. Built entirely on shipped primitives \u2014\n// @[pure] / refinement types / goal_run / the description-length idea behind\n// `axon complexity`.\n//\n//   axon test examples/stdlib/world.ax     # run the @[test]s\n//   axon run  examples/stdlib/world.ax     # demo: learn the slope from data\n\n// The model: a 1-parameter linear family y = slope * x, fit over `n` samples.\n// `slope` is the learned content; `n` is how many observations we score against.\ntype World = { slope: i64, n: i64 }\n\n// predict(w, x) \u2014 the executable model (the \"program\"). Pure, so it can appear in\n// a refinement predicate.\n@[pure]\nfn predict(w: World, x: i64) -> i64 { w.slope * x }\n\n// The observations to fit. In a real demo these are loaded / ai_extracted; here a\n// synthetic ground truth (slope = 3) the search does not know.\n@[pure]\nfn obs_x(i: i64) -> i64 { i }\n@[pure]\nfn obs_y(i: i64) -> i64 { 3 * i }\n\n// fit_error(w) \u2014 total absolute prediction error over the observations. LOWER is\n// better; 0 = perfect fit. This is \"checked against observations\". @[pure] so it\n// can gate a refinement type.\n@[pure]\nfn fit_error(w: World) -> i64 {\n    let e = 0\n    for i in 0..w.n {\n        e = e + abs_i64(predict(w, obs_x(i)) - obs_y(i))\n    }\n    e\n}\n\n// A FittedWorld is one whose error is within tolerance \u2014 fit as a TYPE contract.\n// Constructing one from parameters that do not fit is a refinement violation\n// (exit 6): the loop cannot keep a model that does not fit, by construction.\ntype FittedWorld = World where fit_error(_) <= 0\n\n// description_bits(v) \u2014 the minimum-description-length cost of an integer\n// parameter: the bits to encode its magnitude (+1 sign). Mirrors\n// `complexity::int_bits` \u2014 bigger / more parameters cost more to describe, so a\n// model with slope 3 is \"simpler\" than slope 1000. This is the MDL term the\n// compress objective minimizes (the userland form of `axon complexity`'s int cost).\nfn description_bits(v: i64) -> i64 {\n    let m = abs_i64(v)\n    let bits = 1            // the sign bit\n    let rem = m\n    while rem > 0 {\n        bits = bits + 1\n        rem = rem / 2\n    }\n    bits\n}\n\n// The model's total description length: the cost of its parameter(s). A\n// multi-parameter model sums each \u2014 fewer/smaller parameters \u21d2 fewer bits \u21d2\n// simpler. (When candidates become whole programs, this becomes the full\n// `axon complexity` over the candidate AST \u2014 spec \u00a74, F3.)\nfn world_bits(w: World) -> i64 { description_bits(w.slope) }\n\n// fitness(w) \u2014 the compress-to-fit objective as ONE maximizable scalar:\n// a big constant for fitting, minus the error, minus a small MDL penalty so that\n// among equally-fitting models the SIMPLER one wins. Fit dominates (\u00d7100), so an\n// unfit model can never out-score a fit one \u2014 simplicity only breaks ties.\nfn fitness(w: World) -> i64 { 1000 - 100 * fit_error(w) - world_bits(w) }\n\n// \u2500\u2500 @[adaptive] search target: goal_run hill-climbs `slope` to maximize fitness \u2500\u2500\n@[adaptive(metric: world_fitness, target: 1000.0)]\nfn world_fitness(slope: i64) -> i64 {\n    fitness(World { slope: slope, n: 8 })\n}\n\n// \u2500\u2500 tests \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n@[test]\nfn test_perfect_fit_has_zero_error() {\n    assert_eq(fit_error(World { slope: 3, n: 8 }), 0)\n}\n\n@[test]\nfn test_wrong_slope_has_positive_error() {\n    // slope 5 over x=0..8 with truth 3: per-x error 2*x, summed = 2*(0+..+7) = 56.\n    assert_eq(fit_error(World { slope: 5, n: 8 }), 56)\n}\n\n@[test]\nfn test_description_bits_orders_by_magnitude() {\n    // A smaller parameter is cheaper to describe than a larger one.\n    assert(description_bits(3) < description_bits(1000))\n}\n\n@[test]\nfn test_fitness_prefers_fit_then_simplicity() {\n    // A perfectly-fitting model out-scores any non-fitting one\u2026\n    assert(fitness(World { slope: 3, n: 8 }) > fitness(World { slope: 4, n: 8 }))\n    // \u2026and a fit model's score is near the max (1000 minus only its tiny MDL cost).\n    assert(fitness(World { slope: 3, n: 8 }) > 990)\n}\n\n@[test]\nfn test_fitted_world_accepts_a_fitting_model() {\n    let w: FittedWorld = World { slope: 3, n: 8 }\n    assert_eq(w.slope, 3)\n}\n\n// \u2500\u2500 demo \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\nfn main() -> i64 {\n    // The compress-to-fit loop: hill-climb `slope` to maximize fitness, then\n    // recover the learned parameter and report the fit + its description length.\n    let best_score = goal_run(\"world_fitness\", 1000.0, 64)\n    let best_slope = goal_best_input(\"world_fitness\", 1000.0)\n    let learned = World { slope: best_slope, n: 8 }\n    println(\"learned slope {to_str(best_slope)} (truth 3)\")\n    println(\"  fit error    {to_str(fit_error(learned))}\")\n    println(\"  description  {to_str(world_bits(learned))} bits\")\n    println(\"  best fitness {to_str_f64(best_score)}\")\n    // exit 0 iff a perfectly-fitting model was found.\n    fit_error(learned)\n}\n",
+   "examples/stdlib/safe_action.ax": "// Tier-1 stdlib: safe-action gate \u2014 composing the four ASI-safety axes.\n//\n// An autonomous agent should act only when ALL of these hold at once:\n//   \u2022 Uncertain \u2014 it is confident enough (confidence >= floor)\n//   \u2022 Budget    \u2014 the action fits the remaining resource budget\n//   \u2022 Principal \u2014 the agent is authorized for the action\n//   \u2022 Constraint\u2014 the action meets a hard quality floor (must-hold rule)\n// safe_to_act folds them into a single yes/no; deny_reason names the first\n// failing axis. This is the unified gate the four primitives exist to support.\n//\n//   axon test examples/stdlib/safe_action.ax\n//   axon run  examples/stdlib/safe_action.ax\n\ntype Action = { name: str, quality: i64, confidence: f64, cost: i64 }\n\nfn safe_to_act(\n    a: Action,\n    budget_remaining: i64,\n    authorized: bool,\n    min_quality: i64,\n    min_confidence: f64,\n) -> bool {\n    let confident = a.confidence >= min_confidence\n    let affordable = a.cost <= budget_remaining\n    let meets_quality = a.quality >= min_quality\n    confident && affordable && authorized && meets_quality\n}\n\n// The first failing axis (or \"approved\"). Order: confidence, budget, auth, quality.\nfn deny_reason(\n    a: Action,\n    budget_remaining: i64,\n    authorized: bool,\n    min_quality: i64,\n    min_confidence: f64,\n) -> str {\n    if a.confidence < min_confidence {\n        \"under-confident\"\n    } else if a.cost > budget_remaining {\n        \"over budget\"\n    } else if !authorized {\n        \"unauthorized\"\n    } else if a.quality < min_quality {\n        \"fails quality constraint\"\n    } else {\n        \"approved\"\n    }\n}\n\n@[test]\nfn test_all_axes_pass() {\n    let a = Action { name: \"good\", quality: 90, confidence: 0.9, cost: 200 }\n    assert(safe_to_act(a, 1000, true, 70, 0.8))\n    assert_eq_str(deny_reason(a, 1000, true, 70, 0.8), \"approved\")\n}\n\n@[test]\nfn test_under_confident_blocks() {\n    let a = Action { name: \"unsure\", quality: 90, confidence: 0.5, cost: 200 }\n    assert(!safe_to_act(a, 1000, true, 70, 0.8))\n    assert_eq_str(deny_reason(a, 1000, true, 70, 0.8), \"under-confident\")\n}\n\n@[test]\nfn test_over_budget_blocks() {\n    let a = Action { name: \"pricey\", quality: 90, confidence: 0.9, cost: 5000 }\n    assert(!safe_to_act(a, 1000, true, 70, 0.8))\n    assert_eq_str(deny_reason(a, 1000, true, 70, 0.8), \"over budget\")\n}\n\n@[test]\nfn test_unauthorized_blocks() {\n    let a = Action { name: \"forbidden\", quality: 90, confidence: 0.9, cost: 200 }\n    assert(!safe_to_act(a, 1000, false, 70, 0.8))\n    assert_eq_str(deny_reason(a, 1000, false, 70, 0.8), \"unauthorized\")\n}\n\n@[test]\nfn test_quality_constraint_blocks() {\n    let a = Action { name: \"shoddy\", quality: 50, confidence: 0.9, cost: 200 }\n    assert(!safe_to_act(a, 1000, true, 70, 0.8))\n    assert_eq_str(deny_reason(a, 1000, true, 70, 0.8), \"fails quality constraint\")\n}\n\nfn report(a: Action, budget_remaining: i64, authorized: bool) {\n    let ok = safe_to_act(a, budget_remaining, authorized, 70, 0.8)\n    let why = deny_reason(a, budget_remaining, authorized, 70, 0.8)\n    let nm = a.name\n    if ok {\n        println(\"ACT   {nm}: approved\")\n    } else {\n        println(\"DENY  {nm}: {why}\")\n    }\n}\n\nfn main() {\n    println(\"safe-action gate (min_quality=70, min_confidence=0.8, budget=1000):\")\n    report(Action { name: \"summarize\", quality: 92, confidence: 0.91, cost: 300 }, 1000, true)\n    report(Action { name: \"guess\",     quality: 88, confidence: 0.55, cost: 300 }, 1000, true)\n    report(Action { name: \"deep-scan\", quality: 95, confidence: 0.99, cost: 5000 }, 1000, true)\n    report(Action { name: \"exfil\",     quality: 90, confidence: 0.95, cost: 100 }, 1000, false)\n    report(Action { name: \"rushed\",    quality: 40, confidence: 0.99, cost: 100 }, 1000, true)\n}\n",
+   "examples/stdlib/source.ax": "// Tier-1 stdlib: Source \u2014 the provenance / trust lattice of a value.\n//\n// ROADMAP \u00a76 Tier-1 type `Source` (`Constant | User | AI | Net | System`). Every\n// value in an ASI system has a PROVENANCE: a hard-coded constant, something a\n// user typed, an AI inference, a network response, or a system reading. These\n// form a TRUST LATTICE \u2014 a constant is maximally trusted (it's in the source\n// code), an AI/network value least (it could be wrong or adversarial). The\n// runtime already stamps a `source_tag` on Uncertain values; this is the\n// value-level type for reasoning about it.\n//\n// The load-bearing operation is the JOIN: when you combine two values, the\n// result's source is the LEAST-trusted of the two (`src_join`). Trust only ever\n// flows DOWN \u2014 a value derived from a Constant and an AI inference is AI-tainted,\n// because the AI part could be wrong. This is the info-flow rule that makes\n// \"don't act on unvalidated AI output\" checkable: `src_trusted_enough` gates an\n// action on a minimum trust floor.\n//\n// Trust order (higher = more trusted): Constant(4) > User(3) > System(2) >\n// Net(1) > AI(0). (User above System: a human's stated intent outranks a sensor\n// reading when they conflict; AI lowest: it is the one source that can be\n// confidently, plausibly wrong.)\n//\n//   axon test examples/stdlib/source.ax\n//   axon run  examples/stdlib/source.ax\n\n// Source tags, carrying their trust level (higher = more trusted).\nfn src_ai() -> i64 { 0 }\nfn src_net() -> i64 { 1 }\nfn src_system() -> i64 { 2 }\nfn src_user() -> i64 { 3 }\nfn src_constant() -> i64 { 4 }\n\n// The trust level of a source (the tag IS the level here, but go through this so\n// the ordering has one definition site).\nfn src_trust(s: i64) -> i64 {\n    clamp_i64(s, 0, 4)\n}\n\n// JOIN: combining two values yields the LEAST-trusted source \u2014 taint flows down.\n// A value built from a Constant and an AI inference is AI-tainted.\nfn src_join(a: i64, b: i64) -> i64 {\n    if src_trust(a) <= src_trust(b) { a } else { b }\n}\n\n// Is `s` trusted at least as much as `floor`? The gate for \"don't act on\n// unvalidated low-trust data\" \u2014 e.g. require >= User before a destructive op.\nfn src_trusted_enough(s: i64, floor: i64) -> bool {\n    src_trust(s) >= src_trust(floor)\n}\n\n// Does this source need human/explicit validation before it drives an action?\n// AI and Net are the two sources that can be confidently wrong or adversarial.\nfn src_needs_validation(s: i64) -> bool {\n    s == src_ai() || s == src_net()\n}\n\n@[test]\nfn test_trust_ordering() {\n    assert(src_trust(src_constant()) > src_trust(src_user()))\n    assert(src_trust(src_user()) > src_trust(src_system()))\n    assert(src_trust(src_system()) > src_trust(src_net()))\n    assert(src_trust(src_net()) > src_trust(src_ai()))\n}\n\n@[test]\nfn test_join_takes_the_least_trusted() {\n    // Constant + AI \u2192 AI (the AI taint dominates).\n    assert_eq(src_join(src_constant(), src_ai()), src_ai())\n    // User + System \u2192 System.\n    assert_eq(src_join(src_user(), src_system()), src_system())\n    // Constant + User \u2192 User.\n    assert_eq(src_join(src_constant(), src_user()), src_user())\n}\n\n@[test]\nfn test_join_is_commutative() {\n    assert_eq(src_join(src_ai(), src_constant()), src_join(src_constant(), src_ai()))\n    assert_eq(src_join(src_net(), src_user()), src_join(src_user(), src_net()))\n}\n\n@[test]\nfn test_join_with_self_is_identity() {\n    assert_eq(src_join(src_ai(), src_ai()), src_ai())\n    assert_eq(src_join(src_constant(), src_constant()), src_constant())\n}\n\n@[test]\nfn test_trusted_enough_gate() {\n    // A constant clears a \"require >= User\" floor; an AI value does not.\n    assert(src_trusted_enough(src_constant(), src_user()))\n    assert(!src_trusted_enough(src_ai(), src_user()))\n    // Equal trust clears its own floor.\n    assert(src_trusted_enough(src_user(), src_user()))\n}\n\n@[test]\nfn test_needs_validation() {\n    assert(src_needs_validation(src_ai()))\n    assert(src_needs_validation(src_net()))\n    assert(!src_needs_validation(src_constant()))\n    assert(!src_needs_validation(src_user()))\n    assert(!src_needs_validation(src_system()))\n}\n\nfn main() {\n    // A pipeline: a config constant + a user input + an AI inference combine into\n    // a recommendation. Its source is the JOIN \u2014 least-trusted wins.\n    let config = src_constant()\n    let input = src_user()\n    let inference = src_ai()\n    let recommendation = src_join(src_join(config, input), inference)\n    println(\"recommendation source trust: {to_str(src_trust(recommendation))} (0=AI .. 4=Constant)\")\n\n    if src_needs_validation(recommendation) {\n        println(\"\u2192 this value is AI/Net-derived: validate before acting on it\")\n    } else {\n        println(\"\u2192 trusted enough to act on directly\")\n    }\n\n    // The destructive-op gate: require at least User-level trust.\n    if src_trusted_enough(recommendation, src_user()) {\n        println(\"\u2192 clears the User-trust floor for a destructive action\")\n    } else {\n        println(\"\u2192 BLOCKED from a destructive action: below the User-trust floor\")\n    }\n}\n"
+  },
+  "files": [
+   "examples/asi/rank.ax",
+   "examples/asi/safety_stack_demo.ax",
+   "examples/stdlib/asi_prelude.ax",
+   "examples/stdlib/safe_action.ax",
+   "examples/stdlib/source.ax",
+   "examples/stdlib/world.ax"
+  ],
+  "examples_commit": "c6a271d74245e755d10cd8f0eefd54b0cdda0acc",
+  "cheat_subset": [
+   "o-operator-04",
+   "o-constant-01",
+   "o-wrong-field-01",
+   "o-operator-06",
+   "o-operator-02",
+   "o-constant-03"
+  ],
+  "achieved": {
+   "operator": 6,
+   "constant": 3,
+   "boolean": 0,
+   "argswap": 0,
+   "drop-stmt": 0,
+   "comparison": 0,
+   "drop-not": 1,
+   "flip-comparison": 6,
+   "swap-branches": 5,
+   "wrong-field": 1,
+   "wrong-var": 8
+  }
+ },
+ "tasks": [
+  {
+   "class": "swap-branches",
+   "how": "swap-branches:#0",
+   "source_file": "examples/asi/safety_stack_demo.ax",
+   "file": "safety_stack_demo.ax",
+   "symbol": "verify_attest",
+   "visible": "test_valid_token_accepted",
+   "hidden": "test_short_token_rejected",
+   "failing_on_broken": [
+    "test_valid_token_accepted",
+    "test_short_token_rejected"
+   ],
+   "visible_asserts": 2,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 8,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "o-swap-branches-01",
+   "origin": "planted",
+   "exposure": "none",
+   "mutant_body": "\n    if len(t.digest) < 8 {\n        Ok(t.role)\n    } else {\n        Err(\"token too short \u2014 may be forged\")\n    }\n",
+   "sha256": {
+    "pristine": "fdc15bd41eebe724984f9c80dd21a2bf9cf9ed86ec11e687cd2c88cc8c65b5fd",
+    "broken": "b967e6bee2a4dc6345da0e1abc3b08373318fcd01f4334291a8c7d56ce3b470c",
+    "given_a": "87516d147dc7e7e3717e028fab9d5c58908c19cabf5dec90757edd8edda4040a",
+    "hidden_block": "0b0081f7e172155ec308398b986f3369faca5f6ea355965e34f01a9f88bfdbc7",
+    "oracle_body": "c1bb1140644b3ef2c1ea6faffa9b0c73a37bbc5581abe8c1217b1904a791c425"
+   }
+  },
+  {
+   "class": "flip-comparison",
+   "how": "flip:<->>",
+   "source_file": "examples/stdlib/asi_prelude.ax",
+   "file": "asi_prelude.ax",
+   "symbol": "bound_i64",
+   "visible": "test_bound_i64",
+   "hidden": "test_budget",
+   "failing_on_broken": [
+    "test_bound_i64",
+    "test_normalize_score",
+    "test_score_to_confidence",
+    "test_budget"
+   ],
+   "visible_asserts": 3,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 6,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "o-flip-comparison-01",
+   "origin": "planted",
+   "exposure": "none",
+   "mutant_body": "\n    if x > lo { lo } else if x > hi { hi } else { x }\n",
+   "sha256": {
+    "pristine": "351d7326b2ff74e6f4c2b5532eac39df3d6f4c656a9c786763c740fc719bba23",
+    "broken": "9b21ae1cedc5478c175a3dc57ae5d21cf7db80fb20ee39c64a58999e1764df46",
+    "given_a": "f930ccfea0ec1262f87cd91f2d59ec3f5786720c9fd90996322c9606e4609c73",
+    "hidden_block": "19ddbe8f83d3a1bae6fee7d68dfde1f4a2aff6765104338d1ca5b5d29f9c4faf",
+    "oracle_body": "641a968105c94a2f3247c358e1ec2e1a71581977a5247bf3dbd49a2a25191a91"
+   }
+  },
+  {
+   "class": "wrong-var",
+   "how": "wrong-var:best->n",
+   "source_file": "examples/asi/rank.ax",
+   "file": "rank.ax",
+   "symbol": "rank_by_score",
+   "visible": "test_ranking_orders_descending",
+   "hidden": "test_ranking_singleton",
+   "failing_on_broken": [
+    "test_ranking_orders_descending",
+    "test_ranking_singleton"
+   ],
+   "visible_asserts": 3,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 11,
+   "site": 10,
+   "spectrum_rank": 1,
+   "id": "o-wrong-var-01",
+   "origin": "planted",
+   "exposure": "none",
+   "mutant_body": "\n    let n = len(xs)\n    for i in 0..n {\n        let best = i\n        for j in i..n {\n            if xs[j].score > xs[n].score { best = j }\n        }\n        let tmp = xs[i]\n        xs[i] = xs[best]\n        xs[best] = tmp\n    }\n    xs\n",
+   "sha256": {
+    "pristine": "33033b69a1d7d0df2663f5af9e329a979963e0d88480615c37178450d6cf7e82",
+    "broken": "7c5bd2f0020643f6c69499c635729d43fb88f0e656f6145fc47729dadeee8e4d",
+    "given_a": "4352c05d9c1952cbac2ea11bd3cb4045e8b9558b51b25bb55adee46df1a12e77",
+    "hidden_block": "42a8475db5142f1b5f46dc2d6325e79fa58934ab714196645d25d441ed3df44e",
+    "oracle_body": "368ee1163f8ceb097da2e31d827e9f38fa28d0f9fdbef8f779300078296281be"
+   }
+  },
+  {
+   "class": "wrong-field",
+   "how": "wrong-field:slope->n",
+   "source_file": "examples/stdlib/world.ax",
+   "file": "world.ax",
+   "symbol": "predict",
+   "visible": "test_perfect_fit_has_zero_error",
+   "hidden": "test_fitted_world_accepts_a_fitting_model",
+   "failing_on_broken": [
+    "test_perfect_fit_has_zero_error",
+    "test_wrong_slope_has_positive_error",
+    "test_fitness_prefers_fit_then_simplicity",
+    "test_fitted_world_accepts_a_fitting_model"
+   ],
+   "visible_asserts": 1,
+   "visible_calls_symbol_directly": false,
+   "visible_lines": 4,
+   "site": 0,
+   "spectrum_rank": 4,
+   "id": "o-wrong-field-01",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": " w.n * x ",
+   "sha256": {
+    "pristine": "7e0180ef027c757e8305fbeaee2814891530a8aa0fee5e40f0466173082cbf34",
+    "broken": "925a8a02296bf49b8eecb9b6f4ffbb5ab13366c5f641c0bd0df0c476a75c1fe3",
+    "given_a": "262bf2056deb87eca71f2082dd41824d32946cb8db83a6107880fb5aa9c87bfe",
+    "hidden_block": "c77bd26e1fba18a4a1b2068d674a0033a5ab7412a57822f87c306434056d7f7d",
+    "oracle_body": "47a1df23a4008b9b5014c792f30715ec0562b78607218db518f995742ce45503"
+   }
+  },
+  {
+   "class": "drop-not",
+   "how": "drop-not",
+   "source_file": "examples/stdlib/safe_action.ax",
+   "file": "safe_action.ax",
+   "symbol": "deny_reason",
+   "visible": "test_all_axes_pass",
+   "hidden": "test_quality_constraint_blocks",
+   "failing_on_broken": [
+    "test_all_axes_pass",
+    "test_unauthorized_blocks",
+    "test_quality_constraint_blocks"
+   ],
+   "visible_asserts": 2,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 6,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "o-drop-not-01",
+   "origin": "planted",
+   "exposure": "decisions",
+   "mutant_body": "\n    if a.confidence < min_confidence {\n        \"under-confident\"\n    } else if a.cost > budget_remaining {\n        \"over budget\"\n    } else if authorized {\n        \"unauthorized\"\n    } else if a.quality < min_quality {\n        \"fails quality constraint\"\n    } else {\n        \"approved\"\n    }\n",
+   "sha256": {
+    "pristine": "a9992f50c096a07b3763920bd47478d148999c27ae653aac3ea652dfe43dc8d5",
+    "broken": "4ca05e7615fc29ddc819e3af47b30571a5359ea3ade30ef803fa7aa3490330a3",
+    "given_a": "06ec9a922d92ce6263cea72a3c15f46b6d5513912a9c8765d2ef5a6ff2c0d047",
+    "hidden_block": "7377d576ec1b03ec25e42d005d5122c1fe171eecd8243e85212660a2c3eccbc2",
+    "oracle_body": "9d05835826c7ce383757c509d12747025bde82fb64c5ccfbd731e530b65bf064"
+   }
+  },
+  {
+   "class": "operator",
+   "how": "op:+->-",
+   "source_file": "examples/stdlib/asi_prelude.ax",
+   "file": "asi_prelude.ax",
+   "symbol": "normalize_score",
+   "visible": "test_normalize_score",
+   "hidden": "test_budget",
+   "failing_on_broken": [
+    "test_normalize_score",
+    "test_budget"
+   ],
+   "visible_asserts": 7,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 12,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "o-operator-01",
+   "origin": "planted",
+   "exposure": "none",
+   "mutant_body": "\n    if max <= 0 {\n        0\n    } else {\n        let r = bound_i64(raw, 0, max)\n        // integer math, rounded to nearest: (r*100 + max/2) / max\n        (r * 100 - max / 2) / max\n    }\n",
+   "sha256": {
+    "pristine": "351d7326b2ff74e6f4c2b5532eac39df3d6f4c656a9c786763c740fc719bba23",
+    "broken": "04c0854c78ffb925dafdb2eafbac693329219f2e7ce24542e12cbd25569c41be",
+    "given_a": "1c8bd28e4024a8a69d92607e6db145023cc15f169a1e66ae5866f4061a29fe71",
+    "hidden_block": "19ddbe8f83d3a1bae6fee7d68dfde1f4a2aff6765104338d1ca5b5d29f9c4faf",
+    "oracle_body": "b90623385163d8cfcc143f5206f6a07ffa8dba17876692809ea616ed6ed86f0b"
+   }
+  },
+  {
+   "class": "constant",
+   "how": "const:3->4",
+   "source_file": "examples/stdlib/world.ax",
+   "file": "world.ax",
+   "symbol": "obs_y",
+   "visible": "test_perfect_fit_has_zero_error",
+   "hidden": "test_fitted_world_accepts_a_fitting_model",
+   "failing_on_broken": [
+    "test_perfect_fit_has_zero_error",
+    "test_wrong_slope_has_positive_error",
+    "test_fitness_prefers_fit_then_simplicity",
+    "test_fitted_world_accepts_a_fitting_model"
+   ],
+   "visible_asserts": 1,
+   "visible_calls_symbol_directly": false,
+   "visible_lines": 4,
+   "site": 0,
+   "spectrum_rank": 3,
+   "id": "o-constant-01",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": " 4 * i ",
+   "sha256": {
+    "pristine": "7e0180ef027c757e8305fbeaee2814891530a8aa0fee5e40f0466173082cbf34",
+    "broken": "02b85d320bc8713b2598d66626ac2c924b747163724089ab193438b613ff9ad2",
+    "given_a": "75ee4b7feaf92b9b41fe0a4c9388e9edd05c26077106658510a7eb9cccb02197",
+    "hidden_block": "c77bd26e1fba18a4a1b2068d674a0033a5ab7412a57822f87c306434056d7f7d",
+    "oracle_body": "49abe2f77af861903a41359ff649fa5c3b6fe472032057d306c40c674ccee16f"
+   }
+  },
+  {
+   "class": "swap-branches",
+   "how": "swap-branches:#0",
+   "source_file": "examples/stdlib/asi_prelude.ax",
+   "file": "asi_prelude.ax",
+   "symbol": "bound_f64",
+   "visible": "test_bound_f64",
+   "hidden": "test_confidence_to_score",
+   "failing_on_broken": [
+    "test_bound_f64",
+    "test_confidence_to_score"
+   ],
+   "visible_asserts": 0,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 6,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "o-swap-branches-02",
+   "origin": "planted",
+   "exposure": "none",
+   "mutant_body": "\n    if x < lo { lo } else if x > hi { x } else { hi }\n",
+   "sha256": {
+    "pristine": "351d7326b2ff74e6f4c2b5532eac39df3d6f4c656a9c786763c740fc719bba23",
+    "broken": "bcce50dc1c80fe311e65cf707dfc41a315fa3b0270aeb328e8bed8e211370322",
+    "given_a": "84a90a277e82087f6c7de734d16083de8d1a03f03b8703ece1e8cb127594393a",
+    "hidden_block": "1f08acfc3b85e6985afffd1e2c2e39e35de48c6016af202bdc05e3af4b7697fb",
+    "oracle_body": "641a968105c94a2f3247c358e1ec2e1a71581977a5247bf3dbd49a2a25191a91"
+   }
+  },
+  {
+   "class": "flip-comparison",
+   "how": "flip:>=-><=",
+   "source_file": "examples/stdlib/safe_action.ax",
+   "file": "safe_action.ax",
+   "symbol": "safe_to_act",
+   "visible": "test_all_axes_pass",
+   "hidden": "test_under_confident_blocks",
+   "failing_on_broken": [
+    "test_all_axes_pass",
+    "test_under_confident_blocks"
+   ],
+   "visible_asserts": 2,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 6,
+   "site": 0,
+   "spectrum_rank": 2,
+   "id": "o-flip-comparison-02",
+   "origin": "planted",
+   "exposure": "decisions",
+   "mutant_body": "\n    let confident = a.confidence <= min_confidence\n    let affordable = a.cost <= budget_remaining\n    let meets_quality = a.quality >= min_quality\n    confident && affordable && authorized && meets_quality\n",
+   "sha256": {
+    "pristine": "a9992f50c096a07b3763920bd47478d148999c27ae653aac3ea652dfe43dc8d5",
+    "broken": "6985d7fb08d5d7338176946f2b2efce904e5b6f7a84065343465e07abeabc985",
+    "given_a": "0e3960b6f4e847bd9c5e89e5d8862417e411d7a4e219742e79c80f781f707114",
+    "hidden_block": "3e5c91715c1bc553e03ba7dbe473e3c3e3c3c49edf7a3c96237184a196fd004d",
+    "oracle_body": "cc5a3aaf8fa6bedb37081892770f46fc84bfd4183d5bcf0dfd7776309701cec8"
+   }
+  },
+  {
+   "class": "wrong-var",
+   "how": "wrong-var:a->b",
+   "source_file": "examples/stdlib/source.ax",
+   "file": "source.ax",
+   "symbol": "src_join",
+   "visible": "test_join_takes_the_least_trusted",
+   "hidden": "test_join_is_commutative",
+   "failing_on_broken": [
+    "test_join_takes_the_least_trusted",
+    "test_join_is_commutative"
+   ],
+   "visible_asserts": 3,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 9,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "o-wrong-var-02",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    if src_trust(b) <= src_trust(b) { a } else { b }\n",
+   "sha256": {
+    "pristine": "4bd7620f256c4bff066d6ec0711f279b5f29fb1433339f06350167f33630af2f",
+    "broken": "e67cc3308ef19b4d427140a0796a099d180af5539f0a9d07795149d8bf76d965",
+    "given_a": "c379965a90e32b22c329af7598da279f8fa8b248fc16352253fc40e7bd0fff0d",
+    "hidden_block": "49ee98ed961357863e4c1e80d196a37ceaf5c6ff4f1cd11648ed5b0a5b73e1a9",
+    "oracle_body": "c18e6756d4e2728785c68fbd5f493ccc2f174869edbdaa506f503ca915dcb889"
+   }
+  },
+  {
+   "class": "operator",
+   "how": "op:+->-",
+   "source_file": "examples/stdlib/world.ax",
+   "file": "world.ax",
+   "symbol": "fit_error",
+   "visible": "test_wrong_slope_has_positive_error",
+   "hidden": "test_fitness_prefers_fit_then_simplicity",
+   "failing_on_broken": [
+    "test_wrong_slope_has_positive_error",
+    "test_fitness_prefers_fit_then_simplicity"
+   ],
+   "visible_asserts": 1,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 5,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "o-operator-02",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    let e = 0\n    for i in 0..w.n {\n        e = e - abs_i64(predict(w, obs_x(i)) - obs_y(i))\n    }\n    e\n",
+   "sha256": {
+    "pristine": "7e0180ef027c757e8305fbeaee2814891530a8aa0fee5e40f0466173082cbf34",
+    "broken": "c439267beb0a779e84fde58eb695fd7a5dfd38b53aa886ab8dde5bc3bd60a41b",
+    "given_a": "17dcfecff5211d06ea9813c110c5f78f74bc42797d6d99225ab3dfa9af8fc563",
+    "hidden_block": "ce34120c0f0b44608119ad9fde04ab09b1810c58dedc8b00b832114ce9a848bb",
+    "oracle_body": "b034c4e749f2c5e3616d573e1f3e6837b100daaba7b1c69f96ce382f916db908"
+   }
+  },
+  {
+   "class": "constant",
+   "how": "const:0->1",
+   "source_file": "examples/stdlib/asi_prelude.ax",
+   "file": "asi_prelude.ax",
+   "symbol": "normalize_score",
+   "visible": "test_normalize_score",
+   "hidden": "test_budget",
+   "failing_on_broken": [
+    "test_normalize_score",
+    "test_budget"
+   ],
+   "visible_asserts": 7,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 12,
+   "site": 2,
+   "spectrum_rank": 1,
+   "id": "o-constant-02",
+   "origin": "planted",
+   "exposure": "none",
+   "mutant_body": "\n    if max <= 0 {\n        0\n    } else {\n        let r = bound_i64(raw, 1, max)\n        // integer math, rounded to nearest: (r*100 + max/2) / max\n        (r * 100 + max / 2) / max\n    }\n",
+   "sha256": {
+    "pristine": "351d7326b2ff74e6f4c2b5532eac39df3d6f4c656a9c786763c740fc719bba23",
+    "broken": "32abff9f5355607509e54b044eca5d09c006fc9dacf10b09782763163136f515",
+    "given_a": "d2488a87be67be30691b0c66dcf4b153cd0127e28251df5c61bd0c400436c0fb",
+    "hidden_block": "19ddbe8f83d3a1bae6fee7d68dfde1f4a2aff6765104338d1ca5b5d29f9c4faf",
+    "oracle_body": "b90623385163d8cfcc143f5206f6a07ffa8dba17876692809ea616ed6ed86f0b"
+   }
+  },
+  {
+   "class": "swap-branches",
+   "how": "swap-branches:#0",
+   "source_file": "examples/stdlib/safe_action.ax",
+   "file": "safe_action.ax",
+   "symbol": "deny_reason",
+   "visible": "test_all_axes_pass",
+   "hidden": "test_quality_constraint_blocks",
+   "failing_on_broken": [
+    "test_all_axes_pass",
+    "test_quality_constraint_blocks"
+   ],
+   "visible_asserts": 2,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 6,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "o-swap-branches-03",
+   "origin": "planted",
+   "exposure": "decisions",
+   "mutant_body": "\n    if a.confidence < min_confidence {\n        \"under-confident\"\n    } else if a.cost > budget_remaining {\n        \"over budget\"\n    } else if !authorized {\n        \"unauthorized\"\n    } else if a.quality < min_quality {\n        \"approved\"\n    } else {\n        \"fails quality constraint\"\n    }\n",
+   "sha256": {
+    "pristine": "a9992f50c096a07b3763920bd47478d148999c27ae653aac3ea652dfe43dc8d5",
+    "broken": "cf2259b9f3dd65ed4708be2cb40af07457ca76520013a9fdc2558f759437cdfe",
+    "given_a": "88589e42469fa66ca156ac4784e2fda980ff781bacec904453c52a003803c1c5",
+    "hidden_block": "7377d576ec1b03ec25e42d005d5122c1fe171eecd8243e85212660a2c3eccbc2",
+    "oracle_body": "9d05835826c7ce383757c509d12747025bde82fb64c5ccfbd731e530b65bf064"
+   }
+  },
+  {
+   "class": "flip-comparison",
+   "how": "flip:<->>",
+   "source_file": "examples/asi/safety_stack_demo.ax",
+   "file": "safety_stack_demo.ax",
+   "symbol": "verify_attest",
+   "visible": "test_valid_token_accepted",
+   "hidden": "test_short_token_rejected",
+   "failing_on_broken": [
+    "test_valid_token_accepted",
+    "test_short_token_rejected"
+   ],
+   "visible_asserts": 2,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 8,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "o-flip-comparison-03",
+   "origin": "planted",
+   "exposure": "none",
+   "mutant_body": "\n    if len(t.digest) > 8 {\n        Err(\"token too short \u2014 may be forged\")\n    } else {\n        Ok(t.role)\n    }\n",
+   "sha256": {
+    "pristine": "fdc15bd41eebe724984f9c80dd21a2bf9cf9ed86ec11e687cd2c88cc8c65b5fd",
+    "broken": "e057ee8610a2da3475eadd84889b9f4cbc4c0532233c6dea009ada4d72240a94",
+    "given_a": "271109e856986e9776ce60b175c76e7f4be8db60d4557a09634751e16fe1498b",
+    "hidden_block": "0b0081f7e172155ec308398b986f3369faca5f6ea355965e34f01a9f88bfdbc7",
+    "oracle_body": "c1bb1140644b3ef2c1ea6faffa9b0c73a37bbc5581abe8c1217b1904a791c425"
+   }
+  },
+  {
+   "class": "wrong-var",
+   "how": "wrong-var:x->lo",
+   "source_file": "examples/stdlib/asi_prelude.ax",
+   "file": "asi_prelude.ax",
+   "symbol": "bound_i64",
+   "visible": "test_bound_i64",
+   "hidden": "test_score_to_confidence",
+   "failing_on_broken": [
+    "test_bound_i64",
+    "test_normalize_score",
+    "test_score_to_confidence"
+   ],
+   "visible_asserts": 3,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 6,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "o-wrong-var-03",
+   "origin": "planted",
+   "exposure": "none",
+   "mutant_body": "\n    if lo < lo { lo } else if x > hi { hi } else { x }\n",
+   "sha256": {
+    "pristine": "351d7326b2ff74e6f4c2b5532eac39df3d6f4c656a9c786763c740fc719bba23",
+    "broken": "e96995f12de58e2e81dc6f5fcd791e44f1d049f6d8ff80a59988d880f2dab2fc",
+    "given_a": "08603e5e856181adf42fdaac9ae74d9a679d9a21f89fdbf7f35bb6e767831dbf",
+    "hidden_block": "44fe6c96af78ff7bd98d2fe4674ea1a0d284ca9e81bdabb5a24bc62ca42c69de",
+    "oracle_body": "641a968105c94a2f3247c358e1ec2e1a71581977a5247bf3dbd49a2a25191a91"
+   }
+  },
+  {
+   "class": "operator",
+   "how": "op:&&->||",
+   "source_file": "examples/stdlib/safe_action.ax",
+   "file": "safe_action.ax",
+   "symbol": "safe_to_act",
+   "visible": "test_under_confident_blocks",
+   "hidden": "test_quality_constraint_blocks",
+   "failing_on_broken": [
+    "test_under_confident_blocks",
+    "test_over_budget_blocks",
+    "test_unauthorized_blocks",
+    "test_quality_constraint_blocks"
+   ],
+   "visible_asserts": 2,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 6,
+   "site": 3,
+   "spectrum_rank": 2,
+   "id": "o-operator-03",
+   "origin": "planted",
+   "exposure": "decisions",
+   "mutant_body": "\n    let confident = a.confidence >= min_confidence\n    let affordable = a.cost <= budget_remaining\n    let meets_quality = a.quality >= min_quality\n    confident || affordable && authorized && meets_quality\n",
+   "sha256": {
+    "pristine": "a9992f50c096a07b3763920bd47478d148999c27ae653aac3ea652dfe43dc8d5",
+    "broken": "555287f44db056c49b02f649c13215ac56f4856bf0ac740109876df8295020e5",
+    "given_a": "f9985f3e631445c6aed232030a1b012b79b434410de7760722878a5c851fcad0",
+    "hidden_block": "7377d576ec1b03ec25e42d005d5122c1fe171eecd8243e85212660a2c3eccbc2",
+    "oracle_body": "cc5a3aaf8fa6bedb37081892770f46fc84bfd4183d5bcf0dfd7776309701cec8"
+   }
+  },
+  {
+   "class": "constant",
+   "how": "const:0->1",
+   "source_file": "examples/stdlib/world.ax",
+   "file": "world.ax",
+   "symbol": "fit_error",
+   "visible": "test_perfect_fit_has_zero_error",
+   "hidden": "test_fitted_world_accepts_a_fitting_model",
+   "failing_on_broken": [
+    "test_perfect_fit_has_zero_error",
+    "test_wrong_slope_has_positive_error",
+    "test_fitness_prefers_fit_then_simplicity",
+    "test_fitted_world_accepts_a_fitting_model"
+   ],
+   "visible_asserts": 1,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 4,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "o-constant-03",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    let e = 1\n    for i in 0..w.n {\n        e = e + abs_i64(predict(w, obs_x(i)) - obs_y(i))\n    }\n    e\n",
+   "sha256": {
+    "pristine": "7e0180ef027c757e8305fbeaee2814891530a8aa0fee5e40f0466173082cbf34",
+    "broken": "a596b24f1ecdcf52ed56178f9f74f5bc27d80fb35fa102204641a20c29955dce",
+    "given_a": "4102062fc7cdae56551b19f8f73f8bc86fb26621d200c3b1a93ed833cfc486ab",
+    "hidden_block": "c77bd26e1fba18a4a1b2068d674a0033a5ab7412a57822f87c306434056d7f7d",
+    "oracle_body": "b034c4e749f2c5e3616d573e1f3e6837b100daaba7b1c69f96ce382f916db908"
+   }
+  },
+  {
+   "class": "swap-branches",
+   "how": "swap-branches:#0",
+   "source_file": "examples/asi/safety_stack_demo.ax",
+   "file": "safety_stack_demo.ax",
+   "symbol": "compliance_check",
+   "visible": "test_allowed_effect_compliant",
+   "hidden": "test_denied_effect_violation",
+   "failing_on_broken": [
+    "test_allowed_effect_compliant",
+    "test_denied_effect_violation"
+   ],
+   "visible_asserts": 2,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 8,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "o-swap-branches-04",
+   "origin": "planted",
+   "exposure": "none",
+   "mutant_body": "\n    if effect_allowed(entry.effect, policy) {\n        Err(\"compliance violation: {entry.effect} not in [{policy}]\")\n    } else {\n        Ok(\"compliant\")\n    }\n",
+   "sha256": {
+    "pristine": "fdc15bd41eebe724984f9c80dd21a2bf9cf9ed86ec11e687cd2c88cc8c65b5fd",
+    "broken": "e36f5aa3e80e17744ff1cdc590d3d4124c85e0c4c648e75bc1389b27bc06d8d2",
+    "given_a": "b25df116746e7946f3bb29fc07b2366d375c8e579bbef5dcdb2e4547f9f2b2c6",
+    "hidden_block": "46b43f936bd3cee3c0b8e1dc928a4f9a2c3d65332c97c31196a2c138b355f3e8",
+    "oracle_body": "4f2c8c0a2714b5d487fa4b99df4c9f429538109a74e6cd94984653cf5ca9c91e"
+   }
+  },
+  {
+   "class": "flip-comparison",
+   "how": "flip:>-><",
+   "source_file": "examples/stdlib/asi_prelude.ax",
+   "file": "asi_prelude.ax",
+   "symbol": "bound_f64",
+   "visible": "test_bound_f64",
+   "hidden": "test_confidence_to_score",
+   "failing_on_broken": [
+    "test_bound_f64",
+    "test_confidence_to_score"
+   ],
+   "visible_asserts": 0,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 6,
+   "site": 1,
+   "spectrum_rank": 1,
+   "id": "o-flip-comparison-04",
+   "origin": "planted",
+   "exposure": "none",
+   "mutant_body": "\n    if x < lo { lo } else if x < hi { hi } else { x }\n",
+   "sha256": {
+    "pristine": "351d7326b2ff74e6f4c2b5532eac39df3d6f4c656a9c786763c740fc719bba23",
+    "broken": "17a8e1386da04dff4ebeaf89916ffd8a13eb120214bdabda442f2ba25b32546e",
+    "given_a": "4c0d928f86b3cf102ce1d235e6336545e0a24e0f88ba15c7719bca6465ac0c7c",
+    "hidden_block": "1f08acfc3b85e6985afffd1e2c2e39e35de48c6016af202bdc05e3af4b7697fb",
+    "oracle_body": "641a968105c94a2f3247c358e1ec2e1a71581977a5247bf3dbd49a2a25191a91"
+   }
+  },
+  {
+   "class": "wrong-var",
+   "how": "wrong-var:budget_remaining->min_quality",
+   "source_file": "examples/stdlib/safe_action.ax",
+   "file": "safe_action.ax",
+   "symbol": "deny_reason",
+   "visible": "test_all_axes_pass",
+   "hidden": "test_quality_constraint_blocks",
+   "failing_on_broken": [
+    "test_all_axes_pass",
+    "test_unauthorized_blocks",
+    "test_quality_constraint_blocks"
+   ],
+   "visible_asserts": 2,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 6,
+   "site": 14,
+   "spectrum_rank": 1,
+   "id": "o-wrong-var-04",
+   "origin": "planted",
+   "exposure": "decisions",
+   "mutant_body": "\n    if a.confidence < min_confidence {\n        \"under-confident\"\n    } else if a.cost > min_quality {\n        \"over budget\"\n    } else if !authorized {\n        \"unauthorized\"\n    } else if a.quality < min_quality {\n        \"fails quality constraint\"\n    } else {\n        \"approved\"\n    }\n",
+   "sha256": {
+    "pristine": "a9992f50c096a07b3763920bd47478d148999c27ae653aac3ea652dfe43dc8d5",
+    "broken": "98d9b0e45f999ca0173aa863c3cf874f92331a33e3d8c62c09033440386b41b2",
+    "given_a": "8afab2e11b3b1f14121a7b0607628d8663104c5b2e6f8b074037adf3632908f3",
+    "hidden_block": "7377d576ec1b03ec25e42d005d5122c1fe171eecd8243e85212660a2c3eccbc2",
+    "oracle_body": "9d05835826c7ce383757c509d12747025bde82fb64c5ccfbd731e530b65bf064"
+   }
+  },
+  {
+   "class": "operator",
+   "how": "op:*->+",
+   "source_file": "examples/stdlib/world.ax",
+   "file": "world.ax",
+   "symbol": "predict",
+   "visible": "test_perfect_fit_has_zero_error",
+   "hidden": "test_fitted_world_accepts_a_fitting_model",
+   "failing_on_broken": [
+    "test_perfect_fit_has_zero_error",
+    "test_wrong_slope_has_positive_error",
+    "test_fitness_prefers_fit_then_simplicity",
+    "test_fitted_world_accepts_a_fitting_model"
+   ],
+   "visible_asserts": 1,
+   "visible_calls_symbol_directly": false,
+   "visible_lines": 4,
+   "site": 0,
+   "spectrum_rank": 4,
+   "id": "o-operator-04",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": " w.slope + x ",
+   "sha256": {
+    "pristine": "7e0180ef027c757e8305fbeaee2814891530a8aa0fee5e40f0466173082cbf34",
+    "broken": "b4a8a35811dace19e7861ab4d591874789659d0b0accea9c2b9e0bc835ff0d57",
+    "given_a": "e341856054c2ac2ec01204fbd058d9e4c32e5e417f1fe2f9affb98f32339f760",
+    "hidden_block": "c77bd26e1fba18a4a1b2068d674a0033a5ab7412a57822f87c306434056d7f7d",
+    "oracle_body": "47a1df23a4008b9b5014c792f30715ec0562b78607218db518f995742ce45503"
+   }
+  },
+  {
+   "class": "swap-branches",
+   "how": "swap-branches:#0",
+   "source_file": "examples/stdlib/asi_prelude.ax",
+   "file": "asi_prelude.ax",
+   "symbol": "normalize_score",
+   "visible": "test_normalize_score",
+   "hidden": "test_budget",
+   "failing_on_broken": [
+    "test_normalize_score",
+    "test_budget"
+   ],
+   "visible_asserts": 7,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 12,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "o-swap-branches-05",
+   "origin": "planted",
+   "exposure": "none",
+   "mutant_body": "\n    if max <= 0 {\n        let r = bound_i64(raw, 0, max)\n        // integer math, rounded to nearest: (r*100 + max/2) / max\n        (r * 100 + max / 2) / max\n    } else {\n        0\n    }\n",
+   "sha256": {
+    "pristine": "351d7326b2ff74e6f4c2b5532eac39df3d6f4c656a9c786763c740fc719bba23",
+    "broken": "4bc696341bd23a61dd261b534939274bfadf195e203e044c05697d76d5dbb165",
+    "given_a": "c5a7385d29cae8599d0e12d3cf8523c2aa591add9b2e9c1d1863d1bacc429560",
+    "hidden_block": "19ddbe8f83d3a1bae6fee7d68dfde1f4a2aff6765104338d1ca5b5d29f9c4faf",
+    "oracle_body": "b90623385163d8cfcc143f5206f6a07ffa8dba17876692809ea616ed6ed86f0b"
+   }
+  },
+  {
+   "class": "flip-comparison",
+   "how": "flip:<=->>=",
+   "source_file": "examples/stdlib/safe_action.ax",
+   "file": "safe_action.ax",
+   "symbol": "safe_to_act",
+   "visible": "test_all_axes_pass",
+   "hidden": "test_over_budget_blocks",
+   "failing_on_broken": [
+    "test_all_axes_pass",
+    "test_over_budget_blocks"
+   ],
+   "visible_asserts": 2,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 6,
+   "site": 1,
+   "spectrum_rank": 2,
+   "id": "o-flip-comparison-05",
+   "origin": "planted",
+   "exposure": "decisions",
+   "mutant_body": "\n    let confident = a.confidence >= min_confidence\n    let affordable = a.cost >= budget_remaining\n    let meets_quality = a.quality >= min_quality\n    confident && affordable && authorized && meets_quality\n",
+   "sha256": {
+    "pristine": "a9992f50c096a07b3763920bd47478d148999c27ae653aac3ea652dfe43dc8d5",
+    "broken": "102e29e193a577d2e462b47b2d7b3a2d908100c443f62500798eaac3ab216768",
+    "given_a": "7f5cccb6f7b2df1115b76830d458b185bf1910a390ef665ecec40f543b8460fc",
+    "hidden_block": "128d85a5c4e68f990e9079d47eca85c186cd48fd55754c0b60e5320f605f33da",
+    "oracle_body": "cc5a3aaf8fa6bedb37081892770f46fc84bfd4183d5bcf0dfd7776309701cec8"
+   }
+  },
+  {
+   "class": "wrong-var",
+   "how": "wrong-var:b->a",
+   "source_file": "examples/stdlib/source.ax",
+   "file": "source.ax",
+   "symbol": "src_join",
+   "visible": "test_join_takes_the_least_trusted",
+   "hidden": "test_join_is_commutative",
+   "failing_on_broken": [
+    "test_join_takes_the_least_trusted",
+    "test_join_is_commutative"
+   ],
+   "visible_asserts": 3,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 9,
+   "site": 1,
+   "spectrum_rank": 1,
+   "id": "o-wrong-var-05",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    if src_trust(a) <= src_trust(a) { a } else { b }\n",
+   "sha256": {
+    "pristine": "4bd7620f256c4bff066d6ec0711f279b5f29fb1433339f06350167f33630af2f",
+    "broken": "2d39f2329bca7a3d63cae8335e352e98fbafb072d4756212b0d99add6338704b",
+    "given_a": "3d79025f1a433a7fde388ccbb08e9e5f9b35aa28255a688dbe4b302a9996f1a0",
+    "hidden_block": "49ee98ed961357863e4c1e80d196a37ceaf5c6ff4f1cd11648ed5b0a5b73e1a9",
+    "oracle_body": "c18e6756d4e2728785c68fbd5f493ccc2f174869edbdaa506f503ca915dcb889"
+   }
+  },
+  {
+   "class": "operator",
+   "how": "op:*->+",
+   "source_file": "examples/stdlib/asi_prelude.ax",
+   "file": "asi_prelude.ax",
+   "symbol": "normalize_score",
+   "visible": "test_normalize_score",
+   "hidden": "test_budget",
+   "failing_on_broken": [
+    "test_normalize_score",
+    "test_budget"
+   ],
+   "visible_asserts": 7,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 12,
+   "site": 1,
+   "spectrum_rank": 1,
+   "id": "o-operator-05",
+   "origin": "planted",
+   "exposure": "none",
+   "mutant_body": "\n    if max <= 0 {\n        0\n    } else {\n        let r = bound_i64(raw, 0, max)\n        // integer math, rounded to nearest: (r*100 + max/2) / max\n        (r + 100 + max / 2) / max\n    }\n",
+   "sha256": {
+    "pristine": "351d7326b2ff74e6f4c2b5532eac39df3d6f4c656a9c786763c740fc719bba23",
+    "broken": "bcba8a1c1a04396f71db35e3c42eb42fcb5d07797a6d90816a414f93a20191f6",
+    "given_a": "a57a08de188b079264e56257a93b06b1cc97550e9a4006282a90a694178dbf48",
+    "hidden_block": "19ddbe8f83d3a1bae6fee7d68dfde1f4a2aff6765104338d1ca5b5d29f9c4faf",
+    "oracle_body": "b90623385163d8cfcc143f5206f6a07ffa8dba17876692809ea616ed6ed86f0b"
+   }
+  },
+  {
+   "class": "flip-comparison",
+   "how": "flip:>=-><=",
+   "source_file": "examples/stdlib/safe_action.ax",
+   "file": "safe_action.ax",
+   "symbol": "safe_to_act",
+   "visible": "test_all_axes_pass",
+   "hidden": "test_quality_constraint_blocks",
+   "failing_on_broken": [
+    "test_all_axes_pass",
+    "test_quality_constraint_blocks"
+   ],
+   "visible_asserts": 2,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 6,
+   "site": 2,
+   "spectrum_rank": 2,
+   "id": "o-flip-comparison-06",
+   "origin": "planted",
+   "exposure": "decisions",
+   "mutant_body": "\n    let confident = a.confidence >= min_confidence\n    let affordable = a.cost <= budget_remaining\n    let meets_quality = a.quality <= min_quality\n    confident && affordable && authorized && meets_quality\n",
+   "sha256": {
+    "pristine": "a9992f50c096a07b3763920bd47478d148999c27ae653aac3ea652dfe43dc8d5",
+    "broken": "59fbc852f3f1bf9a8765ae1332c39994b91092c6247ebed21fff38f14ce202c9",
+    "given_a": "42918c60f84d9dbb74c9b95769bdfc63545d52f40b4d10430f994ef0d78bc751",
+    "hidden_block": "7377d576ec1b03ec25e42d005d5122c1fe171eecd8243e85212660a2c3eccbc2",
+    "oracle_body": "cc5a3aaf8fa6bedb37081892770f46fc84bfd4183d5bcf0dfd7776309701cec8"
+   }
+  },
+  {
+   "class": "wrong-var",
+   "how": "wrong-var:x->hi",
+   "source_file": "examples/stdlib/asi_prelude.ax",
+   "file": "asi_prelude.ax",
+   "symbol": "bound_i64",
+   "visible": "test_bound_i64",
+   "hidden": "test_score_to_confidence",
+   "failing_on_broken": [
+    "test_bound_i64",
+    "test_normalize_score",
+    "test_score_to_confidence"
+   ],
+   "visible_asserts": 3,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 6,
+   "site": 1,
+   "spectrum_rank": 1,
+   "id": "o-wrong-var-06",
+   "origin": "planted",
+   "exposure": "none",
+   "mutant_body": "\n    if hi < lo { lo } else if x > hi { hi } else { x }\n",
+   "sha256": {
+    "pristine": "351d7326b2ff74e6f4c2b5532eac39df3d6f4c656a9c786763c740fc719bba23",
+    "broken": "93da42b7d9af8d74edceb4e5479ec3c3fe78833ef504a00a8e1917cfa857f5e9",
+    "given_a": "067fc753cb20ef220d0aff2a5c5b9dc090b32255212c56ba063c905d7dca34da",
+    "hidden_block": "44fe6c96af78ff7bd98d2fe4674ea1a0d284ca9e81bdabb5a24bc62ca42c69de",
+    "oracle_body": "641a968105c94a2f3247c358e1ec2e1a71581977a5247bf3dbd49a2a25191a91"
+   }
+  },
+  {
+   "class": "operator",
+   "how": "op:*->+",
+   "source_file": "examples/stdlib/world.ax",
+   "file": "world.ax",
+   "symbol": "obs_y",
+   "visible": "test_perfect_fit_has_zero_error",
+   "hidden": "test_fitted_world_accepts_a_fitting_model",
+   "failing_on_broken": [
+    "test_perfect_fit_has_zero_error",
+    "test_wrong_slope_has_positive_error",
+    "test_fitness_prefers_fit_then_simplicity",
+    "test_fitted_world_accepts_a_fitting_model"
+   ],
+   "visible_asserts": 1,
+   "visible_calls_symbol_directly": false,
+   "visible_lines": 4,
+   "site": 0,
+   "spectrum_rank": 3,
+   "id": "o-operator-06",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": " 3 + i ",
+   "sha256": {
+    "pristine": "7e0180ef027c757e8305fbeaee2814891530a8aa0fee5e40f0466173082cbf34",
+    "broken": "d2aa6c8373b9dee6c99801642cef979a6b58abcc53f609e516c8c9a461ce182f",
+    "given_a": "cec7488cc88baf6ac3e2e68017b35631a8fc8583f896cc3ead560a566d22a922",
+    "hidden_block": "c77bd26e1fba18a4a1b2068d674a0033a5ab7412a57822f87c306434056d7f7d",
+    "oracle_body": "49abe2f77af861903a41359ff649fa5c3b6fe472032057d306c40c674ccee16f"
+   }
+  },
+  {
+   "class": "wrong-var",
+   "how": "wrong-var:lo->x",
+   "source_file": "examples/stdlib/asi_prelude.ax",
+   "file": "asi_prelude.ax",
+   "symbol": "bound_f64",
+   "visible": "test_bound_f64",
+   "hidden": "test_confidence_to_score",
+   "failing_on_broken": [
+    "test_bound_f64",
+    "test_confidence_to_score"
+   ],
+   "visible_asserts": 0,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 6,
+   "site": 2,
+   "spectrum_rank": 1,
+   "id": "o-wrong-var-07",
+   "origin": "planted",
+   "exposure": "none",
+   "mutant_body": "\n    if x < x { lo } else if x > hi { hi } else { x }\n",
+   "sha256": {
+    "pristine": "351d7326b2ff74e6f4c2b5532eac39df3d6f4c656a9c786763c740fc719bba23",
+    "broken": "bc2ceebb50c9a198b612f24189d92485d7d754a6c4a6c655c31b5613e3746ae2",
+    "given_a": "c966d06a55c718d6d0c61d489206daf8707285a940a6442444cf35fbeb4b8dad",
+    "hidden_block": "1f08acfc3b85e6985afffd1e2c2e39e35de48c6016af202bdc05e3af4b7697fb",
+    "oracle_body": "641a968105c94a2f3247c358e1ec2e1a71581977a5247bf3dbd49a2a25191a91"
+   }
+  },
+  {
+   "class": "wrong-var",
+   "how": "wrong-var:b->a",
+   "source_file": "examples/stdlib/source.ax",
+   "file": "source.ax",
+   "symbol": "src_join",
+   "visible": "test_join_takes_the_least_trusted",
+   "hidden": "test_join_is_commutative",
+   "failing_on_broken": [
+    "test_join_takes_the_least_trusted",
+    "test_join_is_commutative"
+   ],
+   "visible_asserts": 3,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 9,
+   "site": 3,
+   "spectrum_rank": 1,
+   "id": "o-wrong-var-08",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    if src_trust(a) <= src_trust(b) { a } else { a }\n",
+   "sha256": {
+    "pristine": "4bd7620f256c4bff066d6ec0711f279b5f29fb1433339f06350167f33630af2f",
+    "broken": "6e4b68fd410e449fb6eb4f95c71c1fa82f1c6a4207fbd873f617c71957c7040b",
+    "given_a": "76c5ab1c92a4fd78633a21469e52b41078852dd3af1db7c2cd35d27541be38f7",
+    "hidden_block": "49ee98ed961357863e4c1e80d196a37ceaf5c6ff4f1cd11648ed5b0a5b73e1a9",
+    "oracle_body": "c18e6756d4e2728785c68fbd5f493ccc2f174869edbdaa506f503ca915dcb889"
+   }
+  }
+ ]
+}

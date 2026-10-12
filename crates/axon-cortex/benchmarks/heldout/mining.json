@@ -1,0 +1,644 @@
+{
+ "method": "git log -M --diff-filter=MR HEAD -- '*.ax'; one record per (commit, file); first broken rule recorded (see mine.py docstring)",
+ "head": "c6a271d74245e755d10cd8f0eefd54b0cdda0acc",
+ "commits": 47,
+ "pairs": 75,
+ "qualifying": 0,
+ "by_reason": {
+  "no @[test] functions in the file": 60,
+  "no non-test function body changed (tests, comments or declarations only)": 10,
+  "change spans more than one function": 3,
+  "only one @[test] function (needs a visible and a hidden check)": 2
+ },
+ "fix_subject_pairs": 43,
+ "records": [
+  {
+   "commit": "c6a271d74245",
+   "path": "examples/cortex/pricing.ax",
+   "subject": "examples/cortex: DECISION_MODEL=1 runs the ranker and audit on Haiku 5.5 and Mercury Decide; pricing.ax no longer names its hidden check outside its definition (the leak guard refused the file); deterministic cases pin spectrum/off",
+   "dev_corpus_file": false,
+   "fix_subject": false,
+   "changed_fns": [],
+   "reason": "no non-test function body changed (tests, comments or declarations only)"
+  },
+  {
+   "commit": "9ac6de6cfd07",
+   "path": "crates/axon-core/tests/fixtures/r51_s0b/uncertain_source_tag.ax",
+   "subject": "r51 S6.2: T9 Uncertain provenance through CallFastLocalInt (fixture loop + vm unit test); vm_parity.sh axon test --json leg over r51_s0b/test_*.ax (completed, early ?, Err return)",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "0031d47e53d3",
+   "path": "crates/axon-core/tests/fixtures/packed/ops.ax",
+   "subject": "R50 S13: revision 43-45 cases (near-miss shapes, SizedInt append probes), wasm32 frames back within budget, peak-memory edge in CHANGELOG",
+   "dev_corpus_file": false,
+   "fix_subject": false,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "df5102609ffa",
+   "path": "crates/axon-core/tests/fixtures/packed/ops.ax",
+   "subject": "R50 S13: revision 42 cases (per-operand SizedInt fill declines, i32 c count, SizedInt into Ints)",
+   "dev_corpus_file": false,
+   "fix_subject": false,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "e5f754ab8117",
+   "path": "crates/axon-core/tests/fixtures/vm_depth/nest/front_some.ax",
+   "subject": "R50 S12 review-25 fixes: match guards and let refinement predicates height-checked, over-tall chains cut down while parsing (no wasm32 trap on 100,000-term chains or syntax errors after them), front probes reach > 0, S11 qualification tests, FOp::Call.t unused",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "e5f754ab8117",
+   "path": "crates/axon-core/tests/fixtures/vm_depth/nest/front_type.ax",
+   "subject": "R50 S12 review-25 fixes: match guards and let refinement predicates height-checked, over-tall chains cut down while parsing (no wasm32 trap on 100,000-term chains or syntax errors after them), front probes reach > 0, S11 qualification tests, FOp::Call.t unused",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "a9c89e5e2b56",
+   "path": "crates/axon-core/tests/fixtures/vm_depth/nest/assign_chain.ax",
+   "subject": "R50 S12 (code): wasm32 bounded drop (AX-59), front-end nesting limit (AX-60), no payload copy for host_await_val (AX-61)",
+   "dev_corpus_file": false,
+   "fix_subject": false,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "a9c89e5e2b56",
+   "path": "crates/axon-core/tests/fixtures/vm_depth/nest/compile_chain.ax",
+   "subject": "R50 S12 (code): wasm32 bounded drop (AX-59), front-end nesting limit (AX-60), no payload copy for host_await_val (AX-61)",
+   "dev_corpus_file": false,
+   "fix_subject": false,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "a9c89e5e2b56",
+   "path": "crates/axon-core/tests/fixtures/vm_depth/nest/compile_deep.ax",
+   "subject": "R50 S12 (code): wasm32 bounded drop (AX-59), front-end nesting limit (AX-60), no payload copy for host_await_val (AX-61)",
+   "dev_corpus_file": false,
+   "fix_subject": false,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "a9c89e5e2b56",
+   "path": "crates/axon-core/tests/fixtures/vm_depth/nest/fail_compile.ax",
+   "subject": "R50 S12 (code): wasm32 bounded drop (AX-59), front-end nesting limit (AX-60), no payload copy for host_await_val (AX-61)",
+   "dev_corpus_file": false,
+   "fix_subject": false,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "a9c89e5e2b56",
+   "path": "crates/axon-core/tests/fixtures/vm_depth/nest/with_chain.ax",
+   "subject": "R50 S12 (code): wasm32 bounded drop (AX-59), front-end nesting limit (AX-60), no payload copy for host_await_val (AX-61)",
+   "dev_corpus_file": false,
+   "fix_subject": false,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "944fe056b1ae",
+   "path": "crates/axon-core/tests/fixtures/vm_perf/call1.ax",
+   "subject": "R50 S10 (code): array elements, if-chains and integer-range for in pure loops; sieve fixture and gate row; impure never-taken branch in repro bases",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "944fe056b1ae",
+   "path": "crates/axon-core/tests/fixtures/vm_perf/loop_generic.ax",
+   "subject": "R50 S10 (code): array elements, if-chains and integer-range for in pure loops; sieve fixture and gate row; impure never-taken branch in repro bases",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "944fe056b1ae",
+   "path": "crates/axon-core/tests/fixtures/vm_perf/mutcall.ax",
+   "subject": "R50 S10 (code): array elements, if-chains and integer-range for in pure loops; sieve fixture and gate row; impure never-taken branch in repro bases",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "944fe056b1ae",
+   "path": "crates/axon-core/tests/fixtures/vm_perf/swapcall.ax",
+   "subject": "R50 S10 (code): array elements, if-chains and integer-range for in pure loops; sieve fixture and gate row; impure never-taken branch in repro bases",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "fe3ec7bec7f3",
+   "path": "crates/axon-core/tests/fixtures/vm_perf/call1.ax",
+   "subject": "R50 S7: loop_generic.ax and foldmod.ax fixtures, never-taken if in call1/mutcall, --programs mode, foldmod row, call rows subtract loop_generic, vm_parity slice S7",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "fe3ec7bec7f3",
+   "path": "crates/axon-core/tests/fixtures/vm_perf/loop.ax",
+   "subject": "R50 S7: loop_generic.ax and foldmod.ax fixtures, never-taken if in call1/mutcall, --programs mode, foldmod row, call rows subtract loop_generic, vm_parity slice S7",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "fe3ec7bec7f3",
+   "path": "crates/axon-core/tests/fixtures/vm_perf/mutcall.ax",
+   "subject": "R50 S7: loop_generic.ax and foldmod.ax fixtures, never-taken if in call1/mutcall, --programs mode, foldmod row, call rows subtract loop_generic, vm_parity slice S7",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "b50d8af55d30",
+   "path": "examples/kernel/hello_kernel_timer_irq.ax",
+   "subject": "fix(timer-test): replace the wall-clock timer success criterion",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "2c0a656d14b5",
+   "path": "crates/axon-cortex/fixtures/broken.ax",
+   "subject": "fix(cortex): three false successes, found by measuring instead of reviewing",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "changed_fns": [],
+   "reason": "no non-test function body changed (tests, comments or declarations only)"
+  },
+  {
+   "commit": "3a70722a04cd",
+   "path": "examples/stdlib/distribution.ax",
+   "subject": "test(coverage): the last two builtins the audit proved nothing executed",
+   "dev_corpus_file": true,
+   "fix_subject": false,
+   "changed_fns": [],
+   "reason": "no non-test function body changed (tests, comments or declarations only)"
+  },
+  {
+   "commit": "db1f70bf8b38",
+   "path": "examples/property_test.ax",
+   "subject": "fix(examples): the property tests that ran nowhere were also failing",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "changed_fns": [],
+   "reason": "no non-test function body changed (tests, comments or declarations only)"
+  },
+  {
+   "commit": "7af743e2892d",
+   "path": "examples/stdlib/crdt.ax",
+   "subject": "test(stdlib): mutation sweep \u2014 the safety gates nothing was testing",
+   "dev_corpus_file": true,
+   "fix_subject": false,
+   "changed_fns": [],
+   "reason": "no non-test function body changed (tests, comments or declarations only)"
+  },
+  {
+   "commit": "7af743e2892d",
+   "path": "examples/stdlib/distribution.ax",
+   "subject": "test(stdlib): mutation sweep \u2014 the safety gates nothing was testing",
+   "dev_corpus_file": true,
+   "fix_subject": false,
+   "changed_fns": [],
+   "reason": "no non-test function body changed (tests, comments or declarations only)"
+  },
+  {
+   "commit": "7af743e2892d",
+   "path": "examples/stdlib/risk.ax",
+   "subject": "test(stdlib): mutation sweep \u2014 the safety gates nothing was testing",
+   "dev_corpus_file": true,
+   "fix_subject": false,
+   "changed_fns": [],
+   "reason": "no non-test function body changed (tests, comments or declarations only)"
+  },
+  {
+   "commit": "7af743e2892d",
+   "path": "examples/stdlib/supervisor.ax",
+   "subject": "test(stdlib): mutation sweep \u2014 the safety gates nothing was testing",
+   "dev_corpus_file": true,
+   "fix_subject": false,
+   "changed_fns": [],
+   "reason": "no non-test function body changed (tests, comments or declarations only)"
+  },
+  {
+   "commit": "aed18a6bc349",
+   "path": "examples/zephyr/app.ax",
+   "subject": "fix(diag): `let x = 7 // 2` compiled clean and evaluated to 7",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "07f0ac16057f",
+   "path": "examples/comprehensive.ax",
+   "subject": "fix(fmt): name the float literals the formatter renormalises",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "07f0ac16057f",
+   "path": "examples/enums.ax",
+   "subject": "fix(fmt): name the float literals the formatter renormalises",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "07f0ac16057f",
+   "path": "examples/logical_ops.ax",
+   "subject": "fix(fmt): name the float literals the formatter renormalises",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "51f16c296ea2",
+   "path": "examples/refinement_attenuation.ax",
+   "subject": "fix(verify): a proof tool must not exit 0 in silence",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "b17e2bcae643",
+   "path": "examples/asi/classify.ax",
+   "subject": "fix(exit): a value falling out of `main` is an answer, not a process status",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "b17e2bcae643",
+   "path": "examples/asi/optimize.ax",
+   "subject": "fix(exit): a value falling out of `main` is an answer, not a process status",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "b17e2bcae643",
+   "path": "examples/asi/search_rank.ax",
+   "subject": "fix(exit): a value falling out of `main` is an answer, not a process status",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "b17e2bcae643",
+   "path": "examples/goals/redteam-goal.ax",
+   "subject": "fix(exit): a value falling out of `main` is an answer, not a process status",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "b17e2bcae643",
+   "path": "examples/interactive/approval_agent.ax",
+   "subject": "fix(exit): a value falling out of `main` is an answer, not a process status",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "b17e2bcae643",
+   "path": "examples/interactive/guess.ax",
+   "subject": "fix(exit): a value falling out of `main` is an answer, not a process status",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "811378ff14de",
+   "path": "crates/axon-core/tests/fixtures/regex.ax",
+   "subject": "fix(parser): a `{...}` slot must be consumed in full \u2014 `\"a{2,3}\"` was the string `a2`",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "05db29c3a573",
+   "path": "examples/stdlib/date.ax",
+   "subject": "feat(regex): a Pike VM \u2014 linear time is a containment property, not a preference",
+   "dev_corpus_file": true,
+   "fix_subject": false,
+   "changed_fns": [],
+   "reason": "no non-test function body changed (tests, comments or declarations only)"
+  },
+  {
+   "commit": "05db29c3a573",
+   "path": "examples/stdlib/r42_smoke.ax",
+   "subject": "feat(regex): a Pike VM \u2014 linear time is a containment property, not a preference",
+   "dev_corpus_file": false,
+   "fix_subject": false,
+   "reason": "only one @[test] function (needs a visible and a hidden check)"
+  },
+  {
+   "commit": "ee764be57d89",
+   "path": "crates/axon-core/tests/fixtures/phase36_iterator_patterns.ax",
+   "subject": "fix(checker): a named fn passed as a callback type-checked and then panicked (M4)",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "ee764be57d89",
+   "path": "crates/axon-core/tests/fixtures/phase44_option_chaining.ax",
+   "subject": "fix(checker): a named fn passed as a callback type-checked and then panicked (M4)",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "ee764be57d89",
+   "path": "crates/axon-core/tests/fixtures/phase47_closure_composition.ax",
+   "subject": "fix(checker): a named fn passed as a callback type-checked and then panicked (M4)",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "3895ce1d5eac",
+   "path": "examples/asi/persistent_learner.ax",
+   "subject": "test: remove the other fixed-/tmp-path shared state (persistent learner)",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "9cb7859c5b8c",
+   "path": "examples/asi/persistent_bandit.ax",
+   "subject": "fix(test): remove the fixed-/tmp-path race in the persistent bandit demo",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "ac1a59032bab",
+   "path": "examples/jobs/evasion.ax",
+   "subject": "fix(axon-os): scan_effects no longer evaded by whitespace or module imports",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "5b8e5fde6126",
+   "path": "examples/flagship/agent_task.ax",
+   "subject": "feat(flagship): integrate R26+R27+R28 into flagship demo \u2014 four-layer ASI safety stack",
+   "dev_corpus_file": false,
+   "fix_subject": false,
+   "reason": "only one @[test] function (needs a visible and a hidden check)"
+  },
+  {
+   "commit": "b6bfa4b1b62b",
+   "path": "examples/jobs/overreach.ax",
+   "subject": "fix(R21): overreach.ax type-checks clean (http_get arity)",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "2a0399dc5eb1",
+   "path": "crates/axon-core/tests/fixtures/r24_tee_unseal_e1810.ax",
+   "subject": "chore(integrate): reconcile spec numbers \u2014 TEE\u2192R24, Zephyr\u2192R25 (R21 collision)",
+   "dev_corpus_file": false,
+   "fix_subject": false,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "2a0399dc5eb1",
+   "path": "examples/tee/confidential_score.ax",
+   "subject": "chore(integrate): reconcile spec numbers \u2014 TEE\u2192R24, Zephyr\u2192R25 (R21 collision)",
+   "dev_corpus_file": false,
+   "fix_subject": false,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "2a0399dc5eb1",
+   "path": "examples/zephyr/app.ax",
+   "subject": "chore(integrate): reconcile spec numbers \u2014 TEE\u2192R24, Zephyr\u2192R25 (R21 collision)",
+   "dev_corpus_file": false,
+   "fix_subject": false,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "76860bc2ec8f",
+   "path": "examples/kernel/hello_kernel_slice1.ax",
+   "subject": "feat(R17): Slice 1 QEMU boot test + port_out_u8/port_in_u8 + --emit-obj",
+   "dev_corpus_file": false,
+   "fix_subject": false,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "c2562d2f5bde",
+   "path": "examples/goals/hello-goal.ax",
+   "subject": "style: cargo fmt + fix all clippy warnings (CI gate green)",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "ed83dc6b0463",
+   "path": "examples/stdlib/distribution.ax",
+   "subject": "feat(phase13): probabilistic refinement predicates \u2014 Slice 2 complete",
+   "dev_corpus_file": true,
+   "fix_subject": false,
+   "changed_fns": [],
+   "reason": "no non-test function body changed (tests, comments or declarations only)"
+  },
+  {
+   "commit": "012efebd1d56",
+   "path": "examples/asi/optimize.ax",
+   "subject": "feat(phase6): complete Phase 6 \u2014 E1316 deprecation notice + effect-row annotations",
+   "dev_corpus_file": false,
+   "fix_subject": false,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "c542a7335313",
+   "path": "examples/interactive/guess.ax",
+   "subject": "improve: R15 \u2014 host_await_opt, an EOF-aware interactive read (fixes spin-on-EOF)",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "a07fae3db017",
+   "path": "crates/axon-core/tests/fixtures/with_handler.ax",
+   "subject": "interp: tail-resumptive effect-handler discharge with `resume`",
+   "dev_corpus_file": false,
+   "fix_subject": false,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "9451fe97663a",
+   "path": "examples/effects.ax",
+   "subject": "examples: demonstrate handler discharge (E04) in the effects demo",
+   "dev_corpus_file": false,
+   "fix_subject": false,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "a8bcdfd50476",
+   "path": "examples/refinements.ax",
+   "subject": "examples/refinements: demo the \u00a74 SMT proofs (refinement return + forwarding)",
+   "dev_corpus_file": false,
+   "fix_subject": false,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "e1ac5024a7cc",
+   "path": "examples/refinements.ax",
+   "subject": "doc: demonstrate whole-struct refinements in examples/refinements.ax",
+   "dev_corpus_file": false,
+   "fix_subject": false,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "c183048f72a2",
+   "path": "examples/stdlib/budget.ax",
+   "subject": "stdlib: Budget<R...> \u2014 multi-resource budget over a resource SET (R3 Tier-1)",
+   "dev_corpus_file": true,
+   "fix_subject": false,
+   "changed_fns": [
+    "main",
+    "rb_new",
+    "rb_spend",
+    "rb_exhausted",
+    "rb_ok",
+    "rb_tightest_pct"
+   ],
+   "reason": "change spans more than one function"
+  },
+  {
+   "commit": "b2d7a4f77f43",
+   "path": "examples/asi/persistent_bandit.ax",
+   "subject": "resolver: unused-local-binding lint (W0006) + fix a dead var it found",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "c5b03e364cb9",
+   "path": "examples/parse_int.ax",
+   "subject": "builtins: parse_int_radix \u2014 radix-aware integer parse (BUG_HUNT #22)",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "5eaa8fca1720",
+   "path": "examples/asi/persistent_bandit.ax",
+   "subject": "interp: dict_to_str returns Result<str,str>, not host panic (BUG_HUNT #20)",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "42d1aa2217ca",
+   "path": "examples/asi/llm_cache.ax",
+   "subject": "refactor: bandit + llm_cache use dict_inc / dict_get_or",
+   "dev_corpus_file": false,
+   "fix_subject": false,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "42d1aa2217ca",
+   "path": "examples/stdlib/bandit.ax",
+   "subject": "refactor: bandit + llm_cache use dict_inc / dict_get_or",
+   "dev_corpus_file": true,
+   "fix_subject": false,
+   "changed_fns": [
+    "bandit_ucb",
+    "bandit_update",
+    "bandit_pulls",
+    "bandit_mean"
+   ],
+   "reason": "change spans more than one function"
+  },
+  {
+   "commit": "aa782b986c2a",
+   "path": "examples/asi/bandit_ucb.ax",
+   "subject": "stdlib: bandit.ax \u2014 UCB1 as a reusable module; demo #20 mod-imports it",
+   "dev_corpus_file": false,
+   "fix_subject": false,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "a528775a42a1",
+   "path": "examples/asi/learn_linear_f64.ax",
+   "subject": "interp: Powell joint-direction step in multi-arg coordinate descent",
+   "dev_corpus_file": false,
+   "fix_subject": false,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "f57f41c270d0",
+   "path": "examples/asi/pareto.ax",
+   "subject": "asi: pareto uses &[Cand] borrow helpers (DRY + per-candidate labeling)",
+   "dev_corpus_file": true,
+   "fix_subject": false,
+   "changed_fns": [
+    "frontier_size",
+    "main"
+   ],
+   "reason": "change spans more than one function"
+  },
+  {
+   "commit": "223899872a9a",
+   "path": "examples/sum_types.ax",
+   "subject": "fix: sum_types.ax example hit ASI on a leading-'+' continuation line",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "19b51136fcc9",
+   "path": "examples/goals/hello-goal.ax",
+   "subject": "examples: fix hello-goal.ax to runnable, idiomatic Axon",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "5146f2e6dc25",
+   "path": "crates/axon-core/tests/fixtures/phase54_pattern_algebra.ax",
+   "subject": "Wave 3: union types, attributes #[], while let, Uncertain<T>/Temporal<T>, phase56-60 fixtures",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "ce309924b9b2",
+   "path": "crates/axon-core/tests/fixtures/phase43_advanced_match.ax",
+   "subject": "Wave 2: diagnostics, closure capture fix, tuple syntax, phase46-55 fixtures, CI, examples",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "ce309924b9b2",
+   "path": "crates/axon-core/tests/fixtures/phase44_option_chaining.ax",
+   "subject": "Wave 2: diagnostics, closure capture fix, tuple syntax, phase46-55 fixtures, CI, examples",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  },
+  {
+   "commit": "ce309924b9b2",
+   "path": "examples/hello.ax",
+   "subject": "Wave 2: diagnostics, closure capture fix, tuple syntax, phase46-55 fixtures, CI, examples",
+   "dev_corpus_file": false,
+   "fix_subject": true,
+   "reason": "no @[test] functions in the file"
+  }
+ ]
+}

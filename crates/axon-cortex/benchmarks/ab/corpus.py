@@ -201,7 +201,7 @@ def cheat_subset(tasks, k=10):
             by.setdefault(t["class"], []).append(t["id"])
         out = []
         while any(by.values()):
-            for c in [m for m, _ in MUTATORS]:
+            for c in class_order(tasks):
                 if by.get(c):
                     out.append(by[c].pop(0))
         return out
@@ -210,6 +210,13 @@ def cheat_subset(tasks, k=10):
     loose = rr([t for t in tasks if t["visible_asserts"] == 1
                 and t["visible_calls_symbol_directly"]])
     return (strict + loose)[:k]
+
+
+def class_order(tasks):
+    """MUTATORS order, then any class this module does not define (the
+    held-out sets plant their own, ../heldout/mutators.py) in name order."""
+    known = [m for m, _ in MUTATORS]
+    return known + sorted({t["class"] for t in tasks} - set(known))
 
 
 DERIVED = ("pristine", "broken", "given_a", "hidden_block", "oracle_body")
@@ -235,7 +242,8 @@ def merge(out_path, parts):
     ids = [t["id"] for t in tasks]
     assert len(ids) == len(set(ids)), "duplicate task ids"
     meta["cheat_subset"] = cheat_subset(tasks)
-    meta["achieved"] = {c: sum(t["class"] == c for t in tasks) for c, _ in MUTATORS}
+    meta["achieved"] = {c: sum(t["class"] == c for t in tasks) for c in class_order(tasks)
+                        if any(t["class"] == c for t in tasks) or c in dict(MUTATORS)}
     out = []
     for t in tasks:
         meta["sources"][t["source_file"]] = t["pristine"]
