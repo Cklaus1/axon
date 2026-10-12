@@ -1,0 +1,4 @@
+{
+  "theme": "R51 merge-main",
+  "text": "cost only (env.rs): Bindings::get_var and get_var_mut_t resolve by get_var_idx's rule (slot, NOT_LOCAL, innermost name) with the slot hit returned from the branch that bounds-checked it; the merged index form paid a second bounds check on every VM variable read (vm_perf_gate collatz +0.779 % over REF, now -1.758 %); no seal or taint change: the T=true writes still guard and record the taint"
+}

@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 798ee6e1b2a6f72cf0aab6319685d423893a65ba
+generated-at: 6332d1e3d35b1922cfd9222edcd0a817418d51fc
 
-`git diff --numstat 31413ca7..798ee6e1 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..6332d1e3 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -57,7 +57,7 @@ generated-at: 798ee6e1b2a6f72cf0aab6319685d423893a65ba
 | `crates/axon-core/src/interp/conform_tests.rs` | 1364 | 0 |
 | `crates/axon-core/src/interp/crossing_tests.rs` | 438 | 0 |
 | `crates/axon-core/src/interp/dispatch_tests.rs` | 639 | 0 |
-| `crates/axon-core/src/interp/env.rs` | 1221 | 0 |
+| `crates/axon-core/src/interp/env.rs` | 1236 | 0 |
 | `crates/axon-core/src/interp/eval.rs` | 2194 | 606 |
 | `crates/axon-core/src/interp/goal.rs` | 87 | 42 |
 | `crates/axon-core/src/interp/kernel_tests.rs` | 336 | 0 |
@@ -89,9 +89,9 @@ generated-at: 798ee6e1b2a6f72cf0aab6319685d423893a65ba
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 52858 | 7240 |
+| total | 52873 | 7240 |
 
-`git log --reverse 31413ca7..798ee6e1 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..6332d1e3 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -354,7 +354,8 @@ generated-at: 798ee6e1b2a6f72cf0aab6319685d423893a65ba
 | 8f5dbdd6 | R51 merge-main | joins r51/int 75f385b5 onto main 8de8e43e (R50 S10-S13, AX-59/AX-60); conflicts under src resolved keeping both sides: main's newtypes (VBox, Elems, DictMap, Queue, Held<ClosureCode>, Captures bindings in a Held) carry r51's seal fields (ClosureVal contract/seal, FnEntry seal flag, sealed fn values), r51's VM taint arguments (get_var_mut_t::<VM_SEALED>, give_frame_t) are applied to main's new VM paths, fold_leaf keeps r51's seal_pin_vm gate, conform/taint walks iterate Elems::vals; nest_cost constants provisionally the larger of the two sides (re-derived in a follow-up); the tree evaluator's seal edges are unchanged |
 | ffa39ba5 | R51 merge-main | tests only (taint_tests.rs, tests_v022_b.rs, vm/tests.rs): the holder and name-lookup drift lists cover main's newtypes and purefn.rs; new sealed attack cases over packed arrays and a sealed-run test that no pure tier or bulk loop runs |
 | 798ee6e1 | R51 merge-main | wasm32 only (`#[cfg(target_arch = "wasm32")] mod nest_cost`): RUN release 528 -> 544 and CALL_FAST_ARG 208/320 -> 224/336, the frames wasm_stack_budget.py measures on the merged build (main's pure-tier entry and r51's typed frame writes together); no native code changes |
-| 259 commits | | |
+| 6332d1e3 | R51 merge-main | cost only (env.rs): Bindings::get_var and get_var_mut_t resolve by get_var_idx's rule (slot, NOT_LOCAL, innermost name) with the slot hit returned from the branch that bounds-checked it; the merged index form paid a second bounds check on every VM variable read (vm_perf_gate collatz +0.779 % over REF, now -1.758 %); no seal or taint change: the T=true writes still guard and record the taint |
+| 260 commits | | |
 <!-- END MECHANICAL -->
 
 
