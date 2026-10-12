@@ -524,6 +524,9 @@ def run_arm_b(task, generator, ws, cfg):
         "audit": verdict.get("audit"),
         "escalation": verdict.get("escalation"),
         "ranker_cost_usd": (verdict.get("ranker") or {}).get("cost_usd"),
+        # What each candidate's generator was shown: `view` or `body_only`
+        # with the reason (PREREG-gencontext.md); absent from older rows.
+        "generator_context": verdict.get("generator_context"),
     }
     return given, open(p).read(), row
 
