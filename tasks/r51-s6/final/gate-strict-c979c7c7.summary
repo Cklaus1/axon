@@ -1,0 +1,48 @@
+── gate: VISION.md focus ──────────────────────────────────────────
+── gate: cortex v0.22 package (pinned integrity → honesty → validator → suite) ──
+── gate: cargo fmt --all --check ──────────────────────────────────
+── gate: no wildcard CORS ────────────────────────────────────────
+── gate: no nested package roots ─────────────────────────────────
+── gate: v0.22 protected readiness (derived; certified artifacts pinned) ──
+── gate: managed-run supervision (result ownership + cancellation scope) ──
+── gate: cortex policy boundary tests ─────────────────────────────
+── gate: v0.22 closed-loop crate tests (contracts, loop, fabric) ──
+── gate: v0.22 Stage-5 executed gates (G03 G08 G10 G11 G13 G28 G32) ──
+── gate: v0.22 Protected Check Isolation surfaces ──
+── gate: v0.22 trust-root preflight mechanism (dev mode) ──
+SKIP: no built guest image (AXON_KERNEL_BACKEND=linux scripts/build-guest-image.sh)
+v0.22 PSV real-guest boot test: SKIP (non-result: not proven on this host)
+── gate: native codegen build ─────────────────────────────────────
+── gate: serde-json feature builds (axon lsp / axon parse --json) ─
+── gate: clippy (lib, -D warnings) ────────────────────────────────
+── gate: clippy runtime crates (-D warnings) ─────────────────────
+── gate: clippy coverage (every crate gated or excused) ──────────
+── gate: tests (--no-default-features) ─────────────────────────────
+── gate: restore the codegen binary after the no-default test stage ──
+── gate: join: v0.22 trust-root preflight mechanism (ran in the background) ──
+── gate: lockfile tracked and current ────────────────────────────
+── gate: required crate verification (manifest-driven) ───────────
+── gate: clippy (--all-targets, -D warnings) ─────────────────────
+── gate: clippy codegen feature (--all-targets, -D warnings) ─────
+── gate: codegen-gated integration tests ────────────────────────
+── gate: builtin-externs drift tests (R1d slice 3) ──────────────
+── gate: parity suite (interp ↔ codegen / AOT-wasm) ─────────────
+  SKIP  android_compute_parity         (SKIP — Android NDK not found (set ANDROID_NDK_HOME or ANDR)
+  SKIP  browser_compute_parity         (opt-in harness — skipping (set BROWSER_PARITY=1 to run in )
+parity_all: 54 passed, 2 skipped, 0 failed (of 56 harnesses)
+parity_all: PASS — no interp↔codegen / AOT-wasm divergence ✓ (54 harnesses asserted)
+── gate: WASI env-control refusal (wasip1 vs browser) ───────────
+── gate: all-examples parity (previously unwired) ───────────────
+── gate: per-requirement acceptance gates (R22, R44) ────────────
+── gate: previously-unwired harnesses (eBPF verifier, TEE simulation) ──
+── gate: domain round-trips (FIX, FHIR, Modbus — previously unwired) ──
+── gate: acceptance gates R33, R34, R39 (previously unwired) ────
+  SKIP loop_interop_gate: SKIP — MiCode peer absent (set MICODE_DIR to a MiCode v0.22 checkout) — this measured NOTHING
+  SKIP v022_micode_gates: SKIP — no MiCode worktree at /home/cklaus/projects/axon-lanes/r51-mm/../micode-v022-wt and MICODE_DIR unset — this measured NOTHING
+  SKIP b263_qualify: SKIP — profile user axonb263 missing (useradd --system --user-group axonb263) (nothing asserted, no evidence written)
+── gate: clippy + tests (smt feature, Z3) ───────────────────────
+── gate: skipped harnesses (non-results, NOT passes) ───────────────
+  45 harness(es) SKIPPED — these gates measured nothing:
+✅ gate PASSED
+test results: passed 6588 failed 0
+rc=0 wall=2228s CARGO_TARGET_DIR unset; head c979c7c7

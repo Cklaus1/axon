@@ -1,7 +1,7 @@
 # R51 — One interpreter for v0.22's sealed runs and R50's bytecode engine
 
 **Spec ID:** `R51-sealed-engine-unification`
-**Status:** Implementing (all slices S0-S7 built on `r51/int`; not merged into `main`). Reviewed 2026-10-10 (Step 1
+**Status:** Landed 2026-10-12 (all slices S0-S7; `r51/int` merged into `main` as r51/merge-main). Reviewed 2026-10-10 (Step 1
 adversarial review: VmPin, TaintPort, S0Merge, EvidenceGates; reports under `governance/reviews/2026-10-10-r51-*.md`).
 Open questions resolved (§12). S6.1 (2026-10-11): `SEAL_RUNTIME_COMPLETE = true`; sealed runs execute on the tree
 engine with the seal, the deferred-test registry is empty. Per-slice receipts are in §14.
@@ -10,7 +10,7 @@ engine with the seal, the deferred-test registry is empty. Per-slice receipts ar
 
 ```spec-meta
 id: R51-sealed-engine-unification
-status-claim: Implementing
+status-claim: Landed
 depends-on: R50-register-vm
 blocks: none
 blocked-by: none
@@ -534,7 +534,10 @@ Every receipt below is committed; per-head detail (commands, counts, wall times,
 | §10 perf | f3a92b26 | `tasks/r51-s7/stack/vm_perf_gate.log` | programs and `--repros S1,S2` PASS |
 | S6.3 / Q1 sealed suite-verdict wall time | c9266cd0 fixture `tasks/r51-s6/q1` | `run.sh <axon> 5`, medians | sealed (tree) 1.386 s; unsealed VM 0.179 s; unsealed tree 0.466 s. About 3× the unsealed tree, 7.7× the VM. No target (§10); VM speed for sealed runs logged in `tasks/opportunities.md` |
 | S7 confirmation review | 3921a309 | `governance/reviews/2026-10-11-r51-S7-{SealSoundness,UnsealedParity,EvidenceAudit}.md` | SealSoundness 0 blockers / 0 major; UnsealedParity 0 / 4 major; EvidenceAudit 0 / 2 major. Every MAJOR fixed or declared in §3: r51/s7decl 9e67b796, r51/s7stack 36396ef2, r51/s7reg 7e9693cb |
-| T7 final head | aae0690e | `governance/status/r51-t7-list{0,1,2,3}.json` (`--scope=all --only`, clean tree, one head) | **444/444 KILLED by their own attack**, 0 REFUSED_ELSEWHERE, 0 survivors, 0 stale. 444 = the 442 rows of the e946f06d lists after S7 + M60 and M89, reinstated as active rows (their retired-guard full-suite cells failed on tests only they satisfy) |
+| T7 final head (r51/int) | aae0690e | `git show 0d011f8d:governance/status/r51-t7-list{0,1,2,3}.json` (`--scope=all --only`, clean tree, one head; superseded by the merged-head row) | **444/444 KILLED by their own attack**, 0 REFUSED_ELSEWHERE, 0 survivors, 0 stale. 444 = the 442 rows of the e946f06d lists after S7 + M60 and M89, reinstated as active rows (their retired-guard full-suite cells failed on tests only they satisfy) |
 | S6 paired-disable | 2b0e7438 / 0f6a92d4 | `governance/status/v022-psv-paired-disable.json` | 58/58 records hold. M58 STALE_REFACTORED -> M59 holds; M3260 holds (full suite SUITE_OK, no skip) after harness_integrity stopped inheriting cargo's leaked `AXON_GIT_SHA`; M60 and M89 moved back to active rows (above) |
 | Post-S7 implementation review | 9b15996e | `governance/reviews/2026-10-11-r51-postS7-implementation-review.md` | crates/: 0 blocker / 0 major. Evidence scripts: F1 MAJOR (a rename into crates/axon-core/src passed as a pure join) and F2/F5/F6 fixed on r51/pjfix (merged aae0690e; `pci_delta_note` 11/11 incl. two new refusal cases, each failing with its fix reverted); F3 closed by the single-head T7 row above; F4 NOTE kept (M60's killer checks the E0002 duplicate-impl text, which is the row's property) |
 | S6 strict gate + smoke | 0d011f8d | `./scripts/gate.sh --strict` (`CARGO_TARGET_DIR` unset; `tasks/r51-s6/final/gate-strict-0d011f8d.summary`); `tasks/r51-smoke/run.sh <axon> post`; Q1 `run.sh <axon> 5` | **gate PASSED**, rc 0, 30 min, 6554 tests passed / 0 failed; 45 harnesses SKIPPED for missing host prerequisites (MiCode peer, `axonb263` user, guest image, Android NDK; listed in the summary), none counted as a pass. The first strict run (c7e6d98c) failed on this spec's `Reviewed` claim with `evidence: none`, corrected by `truth:` commit 41626fa9. Smoke: 6/6 PASS. Q1 medians: sealed 1.349 s, unsealed VM 0.178 s, unsealed tree 0.445 s |
+| Merge into `main`: T7 | 34217115 | `governance/status/r51-t7-list{0,1,2,3}.json` (`--scope=all --only`, clean tree, one head) | **444/444 KILLED by their own attack**, 0 REFUSED_ELSEWHERE, 0 survivors, 0 stale. Before it, the serial delta of the 256 rows the merge touched: 255 KILLED, M531 REFUSED_ELSEWHERE (axon-fabric launcher row, not an R51 row; logged in `tasks/opportunities.md`) |
+| Merge into `main`: paired-disable | ef65d3e3 | `--only=M58` (the one retired row whose anchored file the merge changed) | M58 holds (STALE_REFACTORED -> M59, KILLED in the T7 row above); the other 57 records' anchored files are unchanged since r51/int |
+| Merge into `main`: strict gate + smoke | c979c7c7 (smoke, Q1: ef65d3e3; c979c7c7 changes only the artifact allowlist) | `./scripts/gate.sh --strict` (`tasks/r51-s6/final/gate-strict-c979c7c7.summary`); `tasks/r51-smoke/run.sh <axon> post`; Q1 `run.sh <axon> 5` | **gate PASSED**, rc 0, 37 min, 6588 tests passed / 0 failed; 45 harnesses SKIPPED (same host prerequisites). The first run failed at artifact admission on main's own 18f36e23 (the v0.23 cortex package tracks a second copy of the allowlisted `minimal.np`), fixed by allowlisting that byte-identical copy. Smoke 6/6 PASS. Q1 medians: sealed 1.324 s, unsealed VM 0.119 s, unsealed tree 0.433 s |
