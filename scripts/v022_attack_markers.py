@@ -97,8 +97,10 @@ ATTACK_MARKERS = {
     'M60': r"ATTACK: a duplicate `impl Show2 for Option<i64>` was not refused as a duplicate impl",
     'M61': 'failed: let: \\[\\]',
     'M62': 'failed: refinement: \\[\\]',
-    'M63': 'failed: exit\\(0\\): .*left: true\\s+right: false',
-    'M64': 'failed: forged ok line: .*left: true\\s+right: false',
+    # R51 S6.1 (35ffd577): each case asserts its verdict, so an uncompleted
+    # test the receipt still counts is `Passed` where `Unknown` is wanted.
+    'M63': 'failed: exit\\(0\\): .*left: Passed\\s+right: Unknown',
+    'M64': 'failed: forged ok line: .*left: Passed\\s+right: Unknown',
     'M65': 't_err: Ok\\(Completed\\)',
     'M67': 't_exit: Ok\\(Completed\\)',
     'M68': 'was tagged as completed',
