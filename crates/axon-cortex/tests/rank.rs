@@ -8,11 +8,14 @@
 //! script; under `--features ai` a loopback server stands in for OpenRouter.
 //! Nothing here reaches the network.
 
+mod common;
+
+use axon_cortex::openrouter::Client;
 use axon_cortex::rank::{
-    self, RankInput, RankReport, Ranker, RankerSpec, Transport, MAX_PROMPT_CHARS,
+    self, Advice, RankInput, RankReport, Ranker, RankerSpec, MAX_PROMPT_CHARS,
 };
+use common::scripted::{Scripted, KEY};
 use serde_json::{json, Value};
-use std::cell::RefCell;
 use std::time::Duration;
 
 const SRC: &str = "\
@@ -26,45 +29,9 @@ fn visible_sum() { assert_eq(alpha(1) + beta(1) + gamma(1), 6) }
 fn hidden_grader() { assert_eq(gamma(1), 2) assert_eq(SECRET_BODY_MARKER, 1) }
 fn main() { println(to_str(alpha(1))) }
 ";
-const KEY: &str = "sk-or-test-KEY-0123456789";
 
 fn names(xs: &[&str]) -> Vec<String> {
     xs.iter().map(|s| s.to_string()).collect()
-}
-
-/// Records every request and answers each from `replies`, in order.
-struct Scripted {
-    replies: RefCell<Vec<Result<(u16, String), String>>>,
-    seen: RefCell<Vec<(String, String, Value)>>,
-}
-
-impl Scripted {
-    fn new(replies: Vec<Result<(u16, String), String>>) -> Self {
-        Scripted {
-            replies: RefCell::new(replies),
-            seen: RefCell::new(Vec::new()),
-        }
-    }
-    fn requests(&self) -> Vec<(String, String, Value)> {
-        self.seen.borrow().clone()
-    }
-}
-
-impl Transport for Scripted {
-    fn post_json(
-        &self,
-        url: &str,
-        key: &str,
-        body: &Value,
-        _timeout: Duration,
-    ) -> Result<(u16, String), String> {
-        self.seen
-            .borrow_mut()
-            .push((url.to_string(), key.to_string(), body.clone()));
-        let mut r = self.replies.borrow_mut();
-        assert!(!r.is_empty(), "more requests than scripted replies");
-        r.remove(0)
-    }
 }
 
 fn chat_reply(content: &str) -> Result<(u16, String), String> {
@@ -91,14 +58,16 @@ fn decision_reply(choice: &str, probs: Value) -> Result<(u16, String), String> {
     ))
 }
 
-fn ranker<'t>(spec: RankerSpec, t: &'t dyn Transport) -> Ranker<'t> {
+fn ranker<'t>(spec: RankerSpec, t: &'t dyn axon_cortex::openrouter::Transport) -> Ranker<'t> {
     Ranker {
         spec,
-        key: Some(KEY.to_string()),
-        transport: Some(t),
-        chat_url: "http://chat.invalid/v1/chat/completions".into(),
-        decisions_url: "http://decide.invalid/alpha/decisions".into(),
-        timeout: Duration::from_secs(20),
+        client: Client {
+            key: Some(KEY.to_string()),
+            transport: Some(t),
+            chat_url: "http://chat.invalid/v1/chat/completions".into(),
+            decisions_url: "http://decide.invalid/alpha/decisions".into(),
+            timeout: Duration::from_secs(20),
+        },
     }
 }
 
@@ -328,7 +297,7 @@ fn rank_without_a_key_the_default_selects_spectrum_with_a_reason() {
 
     let t = Scripted::new(vec![]);
     let mut r = ranker(rank::select(None, None).unwrap(), &t);
-    r.key = None;
+    r.client.key = None;
     let rep = run(&r, SRC, &spectrum());
     assert_fell_back(
         &rep,
@@ -340,7 +309,7 @@ fn rank_without_a_key_the_default_selects_spectrum_with_a_reason() {
 
     // A build without an HTTP client says that, rather than pretending.
     let mut r = ranker(haiku(), &t);
-    r.transport = None;
+    r.client.transport = None;
     let rep = run(&r, SRC, &spectrum());
     assert_fell_back(
         &rep,
@@ -481,6 +450,77 @@ fn rank_decision_orders_by_probability_with_spectrum_ties() {
     );
 }
 
+/// (g) Escalation advice is derived from the ranking alone: `cheap` whenever
+/// a ranker answered (its top-1 is the walk's first candidate), `cheap` when
+/// localization found one function, `unavailable` when no model localized
+/// anything. A `decision:` ranker's top-1 probability and margin ride along
+/// as data.
+#[test]
+fn escalation_follows_the_route_rule() {
+    // Chat ranker: no probabilities, and none are needed.
+    let t = Scripted::new(vec![chat_reply(
+        r#"{"ranking": ["gamma", "alpha", "beta"]}"#,
+    )]);
+    let rep = run(&ranker(haiku(), &t), SRC, &spectrum());
+    let e = rank::escalation(&rep, 3);
+    assert_eq!(e.advice, Advice::Cheap);
+    assert!(e.basis.contains("put `gamma` first"), "{}", e.basis);
+    assert_eq!((e.top_p, e.margin), (None, None));
+    assert_eq!(
+        e.to_json(),
+        json!({"advice": "cheap", "basis": e.basis, "top_p": null, "margin": null})
+    );
+    assert!(e.line().starts_with("escalation: cheap ("), "{}", e.line());
+
+    // Decision ranker: top-1 p and the margin to #2, no threshold applied.
+    let t = Scripted::new(vec![decision_reply(
+        "beta",
+        json!({"alpha": 0.1, "beta": 0.6, "gamma": 0.3}),
+    )]);
+    let rep = run(&ranker(mercury(), &t), SRC, &spectrum());
+    assert_eq!(rep.probabilities, Some(vec![0.6, 0.3, 0.1]));
+    let e = rank::escalation(&rep, 3);
+    assert_eq!(e.advice, Advice::Cheap);
+    assert_eq!(e.top_p, Some(0.6));
+    assert!((e.margin.unwrap() - 0.3).abs() < 1e-9);
+    assert!(
+        e.basis.contains("top-1 p=0.600, margin to #2 0.300"),
+        "{}",
+        e.basis
+    );
+
+    // A fallback: no model answer, so no advice.
+    let t = Scripted::new(vec![Ok((500, "{}".into()))]);
+    let rep = run(&ranker(haiku(), &t), SRC, &spectrum());
+    let e = rank::escalation(&rep, 3);
+    assert_eq!(e.advice, Advice::Unavailable);
+    assert!(e.basis.contains("HTTP 500"), "{}", e.basis);
+    assert!(e.line().starts_with("escalation unavailable: "));
+    assert_eq!(e.to_json()["advice"], "unavailable");
+
+    // Spectrum by name: no model asked.
+    let rep = run(&ranker(RankerSpec::Spectrum, &t), SRC, &spectrum());
+    let e = rank::escalation(&rep, 3);
+    assert_eq!(e.advice, Advice::Unavailable);
+    assert!(e.basis.contains("asks no model"), "{}", e.basis);
+
+    // `--candidates 1` over three located functions: nothing was reordered.
+    let rep = run(&ranker(haiku(), &t), SRC, &names(&["alpha"]));
+    let e = rank::escalation(&rep, 3);
+    assert_eq!(e.advice, Advice::Unavailable);
+    assert!(e.basis.contains("one eligible candidate"), "{}", e.basis);
+
+    // Localization found exactly one function: cheap, no model needed.
+    let e = rank::escalation(&rep, 1);
+    assert_eq!(e.advice, Advice::Cheap);
+    assert!(
+        e.basis.contains("found one function, `alpha`"),
+        "{}",
+        e.basis
+    );
+    assert!(t.requests().len() == 1, "only the HTTP 500 call was made");
+}
+
 /// The prompt is capped; over the cap the file gives way to the candidates,
 /// shortened, and every candidate is still named.
 #[test]
@@ -577,11 +617,13 @@ mod over_http {
     fn http_ranker(url: &str, timeout: Duration) -> Ranker<'static> {
         Ranker {
             spec: haiku(),
-            key: Some(KEY.to_string()),
-            transport: Some(&rank::HttpTransport),
-            chat_url: url.to_string(),
-            decisions_url: url.to_string(),
-            timeout,
+            client: Client {
+                key: Some(KEY.to_string()),
+                transport: Some(&axon_cortex::openrouter::HttpTransport),
+                chat_url: url.to_string(),
+                decisions_url: url.to_string(),
+                timeout,
+            },
         }
     }
 

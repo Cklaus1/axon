@@ -35,26 +35,18 @@
 //! replaced by the candidate functions alone, truncated evenly, before any
 //! failing check is shortened.
 
+use crate::openrouter::{model_id, quote, Client};
 use serde_json::{json, Value};
-use std::time::{Duration, Instant};
 
-pub const OPENROUTER_CHAT_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
-pub const OPENROUTER_DECISIONS_URL: &str = "https://openrouter.ai/api/alpha/decisions";
-/// The only place the key is read from. It is never logged, written or echoed.
-pub const KEY_ENV: &str = "OPENROUTER_API_KEY";
 /// Ranker selection when `--ranker` is absent.
 pub const RANKER_ENV: &str = "CORTEX_RANKER";
 /// The model behind the default ranker: 60/60 truth-first on LocRank.
 pub const DEFAULT_CHAT_MODEL: &str = "anthropic/claude-haiku-5.5";
-/// Wall-clock bound on the one call a ranking makes.
-pub const TIMEOUT: Duration = Duration::from_secs(20);
 /// Upper bound on the characters of one ranking request's text.
 pub const MAX_PROMPT_CHARS: usize = 24_000;
 /// No candidate is cut below this many characters while a failing check could
 /// be shortened instead.
 const MIN_CANDIDATE_CHARS: usize = 400;
-/// Error bodies quoted in a reason are cut to this many characters.
-const MAX_QUOTED: usize = 200;
 
 /// LocRank's system prompt, verbatim: the one measured at 60/60.
 pub const CHAT_SYSTEM: &str =
@@ -84,15 +76,7 @@ pub enum RankerSpec {
 
 impl RankerSpec {
     pub fn parse(s: &str) -> Result<Self, String> {
-        let model = |m: &str| -> Result<String, String> {
-            if m.is_empty() || m.chars().any(char::is_whitespace) {
-                Err(format!(
-                    "ranker `{s}`: the model id must be non-empty with no spaces"
-                ))
-            } else {
-                Ok(m.to_string())
-            }
-        };
+        let model = |m: &str| model_id("ranker", s, m);
         if s == "spectrum" {
             Ok(RankerSpec::Spectrum)
         } else if let Some(m) = s.strip_prefix("openrouter:") {
@@ -173,6 +157,9 @@ pub struct RankReport {
     /// As reported by OpenRouter (`usage.cost`); `0` for spectrum; `None` when
     /// unknown.
     pub cost_usd: Option<f64>,
+    /// A `decision:` ranker's probabilities, in `order`. `None` for every
+    /// other ranker and for a fallback.
+    pub probabilities: Option<Vec<f64>>,
     /// The requested ranker was unavailable (as opposed to: there was nothing
     /// to reorder).
     fell_back: bool,
@@ -230,67 +217,19 @@ pub struct RankView {
     pub candidates: Vec<(String, String)>,
 }
 
-/// One JSON POST. `Err` is transport only; any HTTP status is `Ok`.
-pub trait Transport {
-    fn post_json(
-        &self,
-        url: &str,
-        key: &str,
-        body: &Value,
-        timeout: Duration,
-    ) -> Result<(u16, String), String>;
-}
-
-/// The workspace's model HTTP client (`axon-ai`, reqwest + rustls).
-#[cfg(feature = "ai")]
-pub struct HttpTransport;
-
-#[cfg(feature = "ai")]
-impl Transport for HttpTransport {
-    fn post_json(
-        &self,
-        url: &str,
-        key: &str,
-        body: &Value,
-        timeout: Duration,
-    ) -> Result<(u16, String), String> {
-        axon_ai::post_json_bearer(url, key, body, timeout)
-    }
-}
-
-/// The transport this build has, if any.
-pub fn default_transport() -> Option<&'static dyn Transport> {
-    #[cfg(feature = "ai")]
-    {
-        Some(&HttpTransport)
-    }
-    #[cfg(not(feature = "ai"))]
-    {
-        None
-    }
-}
-
-/// A configured ranking step. Deliberately not `Debug`: it holds the key.
+/// A configured ranking step. Deliberately not `Debug`: its client holds the
+/// key.
 pub struct Ranker<'t> {
     pub spec: RankerSpec,
-    pub key: Option<String>,
-    pub transport: Option<&'t dyn Transport>,
-    pub chat_url: String,
-    pub decisions_url: String,
-    pub timeout: Duration,
+    pub client: Client<'t>,
 }
 
 impl Ranker<'static> {
-    /// The production configuration: key from [`KEY_ENV`], this build's
-    /// transport, OpenRouter's endpoints, [`TIMEOUT`].
+    /// The production configuration ([`Client::from_env`]).
     pub fn from_env(spec: RankerSpec) -> Self {
         Ranker {
             spec,
-            key: std::env::var(KEY_ENV).ok().filter(|k| !k.is_empty()),
-            transport: default_transport(),
-            chat_url: OPENROUTER_CHAT_URL.into(),
-            decisions_url: OPENROUTER_DECISIONS_URL.into(),
-            timeout: TIMEOUT,
+            client: Client::from_env(),
         }
     }
 }
@@ -306,13 +245,15 @@ impl Ranker<'_> {
                       order: Vec<String>,
                       latency_ms: Option<u64>,
                       cost_usd: Option<f64>,
+                      probabilities: Option<Vec<f64>>,
                       fell_back: bool| RankReport {
             requested: requested.clone(),
             used: used.to_string(),
-            reason: reason.map(|r| self.redact(&r)),
+            reason: reason.map(|r| self.client.redact(&r)),
             order,
             latency_ms,
             cost_usd,
+            probabilities,
             fell_back,
         };
         let fallback = |reason: String, latency_ms: Option<u64>, cost_usd: Option<f64>| {
@@ -322,12 +263,21 @@ impl Ranker<'_> {
                 spectrum.clone(),
                 latency_ms,
                 cost_usd,
+                None,
                 true,
             )
         };
 
         if self.spec == RankerSpec::Spectrum {
-            return report("spectrum", None, spectrum.clone(), None, Some(0.0), false);
+            return report(
+                "spectrum",
+                None,
+                spectrum.clone(),
+                None,
+                Some(0.0),
+                None,
+                false,
+            );
         }
         if spectrum.len() < 2 {
             return report(
@@ -336,81 +286,163 @@ impl Ranker<'_> {
                 spectrum.clone(),
                 None,
                 Some(0.0),
+                None,
                 false,
             );
         }
-        let Some(key) = self.key.as_deref() else {
-            return fallback(format!("{KEY_ENV} not set"), None, None);
-        };
-        let Some(transport) = self.transport else {
-            return fallback(
-                "this build has no HTTP client: rebuild with `--features ai`".into(),
-                None,
-                None,
-            );
-        };
+        if let Err(e) = self.client.ready() {
+            return fallback(e, None, None);
+        }
         let view = match build_view(input) {
             Ok(v) => v,
             Err(e) => return fallback(e, None, None),
         };
         let (url, body) = match &self.spec {
-            RankerSpec::OpenRouter(m) => (&self.chat_url, chat_body(m, &view, input.eligible)),
-            RankerSpec::Decision(m) => (&self.decisions_url, decision_body(m, &view)),
+            RankerSpec::OpenRouter(m) => {
+                (&self.client.chat_url, chat_body(m, &view, input.eligible))
+            }
+            RankerSpec::Decision(m) => (&self.client.decisions_url, decision_body(m, &view)),
             RankerSpec::Spectrum => unreachable!("handled above"),
         };
 
-        let began = Instant::now();
-        let sent = transport.post_json(url, key, &body, self.timeout);
-        let latency = Some(began.elapsed().as_millis() as u64);
-        let (status, text) = match sent {
+        let reply = match self.client.post(url, &body) {
             Ok(r) => r,
-            Err(e) => return fallback(e, latency, None),
+            Err(f) => return fallback(f.reason, f.latency_ms, f.cost_usd),
         };
-        if status != 200 {
-            return fallback(format!("HTTP {status}: {}", quote(&text)), latency, None);
-        }
-        let resp: Value = match crate::parse_strict(&text) {
-            Ok(v) => v,
-            Err(e) => return fallback(format!("response is not JSON: {e}"), latency, None),
-        };
-        let cost = resp["usage"]["cost"].as_f64();
-        if let Some(err) = resp.get("error").filter(|e| !e.is_null()) {
-            return fallback(
-                format!("error body: {}", quote(&err.to_string())),
-                latency,
-                cost,
-            );
-        }
+        let (latency, cost) = (Some(reply.latency_ms), reply.cost_usd);
         let proposed = match &self.spec {
-            RankerSpec::OpenRouter(_) => parse_chat(&resp),
-            RankerSpec::Decision(_) => parse_decision(&resp, input.eligible),
+            RankerSpec::OpenRouter(_) => parse_chat(&reply.body).map(|o| (o, None)),
+            RankerSpec::Decision(_) => parse_decision(&reply.body, input.eligible).map(|ps| {
+                let (o, p): (Vec<String>, Vec<f64>) = ps.into_iter().unzip();
+                (o, Some(p))
+            }),
             RankerSpec::Spectrum => unreachable!("handled above"),
         };
-        match proposed.and_then(|p| validate_ranking(input.eligible, &p)) {
-            Ok(order) => report(&requested, None, order, latency, cost, false),
+        match proposed
+            .and_then(|(p, probs)| validate_ranking(input.eligible, &p).map(|order| (order, probs)))
+        {
+            Ok((order, probs)) => report(&requested, None, order, latency, cost, probs, false),
             Err(e) => fallback(e, latency, cost),
-        }
-    }
-
-    fn redact(&self, s: &str) -> String {
-        match self.key.as_deref() {
-            Some(k) if !k.is_empty() => s.replace(k, "<redacted>"),
-            _ => s.to_string(),
         }
     }
 }
 
-/// First [`MAX_QUOTED`] characters of `s`, on one line.
-fn quote(s: &str) -> String {
-    let one_line: String = s
-        .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .take(MAX_QUOTED)
-        .collect();
-    if s.chars().count() > MAX_QUOTED {
-        format!("{one_line}…")
-    } else {
-        one_line
+// ---------------------------------------------------------------- escalation
+
+/// What [`escalation`] advises.
+///
+/// There is no `strong`: the rule below is the only derivation with
+/// evidence, and in a walk that follows the ranker it cannot produce one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Advice {
+    /// The cheap generator's first proposal is predicted to be verified.
+    Cheap,
+    /// No model localized anything this run, so the rule has no input.
+    Unavailable,
+}
+
+/// Cheap-vs-strong advice derived from the ranking step, with no model call
+/// of its own. Advice only: the generator stays the operator's choice.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Escalation {
+    pub advice: Advice,
+    pub basis: String,
+    /// `decision:` rankers only: the first candidate's probability and its
+    /// margin over the second. Recorded so a later benchmark can calibrate a
+    /// `strong` trigger; no threshold is applied to them here.
+    pub top_p: Option<f64>,
+    pub margin: Option<f64>,
+}
+
+impl Escalation {
+    pub fn to_json(&self) -> Value {
+        json!({
+            "advice": match self.advice {
+                Advice::Cheap => "cheap",
+                Advice::Unavailable => "unavailable",
+            },
+            "basis": self.basis,
+            "top_p": self.top_p,
+            "margin": self.margin,
+        })
+    }
+
+    /// The one stderr line.
+    pub fn line(&self) -> String {
+        match self.advice {
+            Advice::Cheap => format!("escalation: cheap ({})", self.basis),
+            Advice::Unavailable => format!("escalation unavailable: {}", self.basis),
+        }
+    }
+}
+
+/// DecisionBench's route derivation (`analyse.py` `route_via_loc`): the cheap
+/// model's FIRST proposal is predicted verified iff the model's own
+/// localization (its top-1) is the candidate the walk tries first; a task
+/// whose localization found ONE function takes the cheap path. Asked
+/// directly, decision models scored 0.36-0.76 on the routing question; the
+/// same models' loc answers through this rule scored 0.85-0.95 (11 of 14),
+/// claude-haiku-5.5 0.92. The rule reads only the top-1, so the chat
+/// permutation ranker (no probabilities) is covered: its top-1 is a loc
+/// answer, measured 60/60 on LocRank with the very prompt it sends.
+///
+/// Here the walk follows the ranker's order, so whenever a ranker answered,
+/// its top-1 IS the first candidate and the advice is `cheap`. (Comparing to
+/// the spectrum's top instead would predict a spectrum-order walk that does
+/// not run.) No ranker answer — spectrum by name, a fallback, or a list cut to
+/// one name by `--candidates` — leaves the rule without input: `unavailable`.
+///
+/// `located` is how many functions the spectrum ranked before `--candidates`
+/// cut the list.
+pub fn escalation(report: &RankReport, located: usize) -> Escalation {
+    let rule = "DecisionBench route rule: cheap iff the model's top candidate is the one \
+                the walk tries first";
+    let none = |basis: String| Escalation {
+        advice: Advice::Unavailable,
+        basis,
+        top_p: None,
+        margin: None,
+    };
+    if located == 1 {
+        return Escalation {
+            advice: Advice::Cheap,
+            basis: format!(
+                "localization found one function, `{}`; DecisionBench route rule: \
+                 a one-candidate task takes the cheap path",
+                report.order.first().map_or("", String::as_str)
+            ),
+            top_p: None,
+            margin: None,
+        };
+    }
+    if report.used == "spectrum" {
+        return none(match (&report.reason, report.fell_back) {
+            (Some(r), true) => format!(
+                "the ranker {} gave no localization ({r}); {rule}",
+                report.requested
+            ),
+            (Some(r), false) => format!("no model ranked the candidates: {r}; {rule}"),
+            (None, _) => format!("spectrum order asks no model; {rule}"),
+        });
+    }
+    let top = report.order.first().map_or("", String::as_str);
+    let (top_p, margin) = match report.probabilities.as_deref() {
+        Some([p1, p2, ..]) => (Some(*p1), Some(p1 - p2)),
+        Some([p1]) => (Some(*p1), None),
+        _ => (None, None),
+    };
+    let probs = match (top_p, margin) {
+        (Some(p), Some(m)) => format!("; top-1 p={p:.3}, margin to #2 {m:.3}"),
+        _ => String::new(),
+    };
+    Escalation {
+        advice: Advice::Cheap,
+        basis: format!(
+            "{} put `{top}` first and the walk tries it first; {rule}{probs}",
+            report.used
+        ),
+        top_p,
+        margin,
     }
 }
 
@@ -537,11 +569,11 @@ pub fn parse_chat(resp: &Value) -> Result<Vec<String>, String> {
         .collect()
 }
 
-/// `answers.buggy_function` → every option ordered by its probability,
-/// highest first, ties kept in spectrum order. The probabilities must cover
-/// exactly the options, each in [0, 1], summing to 1 ± 0.05 (DecisionBench's
+/// `answers.buggy_function` → every option with its probability, highest
+/// first, ties kept in spectrum order. The probabilities must cover exactly
+/// the options, each in [0, 1], summing to 1 ± 0.05 (DecisionBench's
 /// validation).
-pub fn parse_decision(resp: &Value, eligible: &[String]) -> Result<Vec<String>, String> {
+pub fn parse_decision(resp: &Value, eligible: &[String]) -> Result<Vec<(String, f64)>, String> {
     let ans = resp["answers"]
         .get(DECISION_QID)
         .and_then(Value::as_object)
@@ -578,17 +610,13 @@ pub fn parse_decision(resp: &Value, eligible: &[String]) -> Result<Vec<String>, 
     if (sum - 1.0).abs() > 0.05 {
         return Err(format!("probabilities sum to {sum:.3}"));
     }
-    let mut order: Vec<(usize, f64)> = eligible
+    let mut order: Vec<(String, f64)> = eligible
         .iter()
-        .enumerate()
-        .map(|(i, e)| (i, probs[e.as_str()].as_f64().unwrap_or(0.0)))
+        .map(|e| (e.clone(), probs[e.as_str()].as_f64().unwrap_or(0.0)))
         .collect();
     // Stable: equal probabilities keep spectrum order.
     order.sort_by(|a, b| b.1.total_cmp(&a.1));
-    Ok(order
-        .into_iter()
-        .map(|(i, _)| eligible[i].clone())
-        .collect())
+    Ok(order)
 }
 
 // ---------------------------------------------------------------- the view
@@ -697,7 +725,7 @@ pub fn build_view(input: &RankInput<'_>) -> Result<RankView, String> {
 }
 
 /// `s` cut to at most `n` characters (on a char boundary), marked as cut.
-fn truncate(s: &str, n: usize) -> String {
+pub(crate) fn truncate(s: &str, n: usize) -> String {
     const MARK: &str = "\n    // … truncated";
     if s.chars().count() <= n {
         return s.to_string();
@@ -709,7 +737,7 @@ fn truncate(s: &str, n: usize) -> String {
 }
 
 /// Does `text` contain `name` as a whole identifier?
-fn mentions(text: &str, name: &str) -> bool {
+pub(crate) fn mentions(text: &str, name: &str) -> bool {
     let ident = |c: char| c.is_alphanumeric() || c == '_';
     let mut from = 0;
     while let Some(i) = text[from..].find(name) {
@@ -743,7 +771,7 @@ fn def_line(src: &str, name: &str) -> Option<usize> {
 
 /// `[start, end)` of `fn NAME`, from the comment and attribute lines directly
 /// above it to its closing brace and the newline after it.
-fn fn_span(src: &str, name: &str) -> Option<(usize, usize)> {
+pub(crate) fn fn_span(src: &str, name: &str) -> Option<(usize, usize)> {
     let def = def_line(src, name)?;
     let mut start = def;
     while start > 0 {

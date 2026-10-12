@@ -855,6 +855,139 @@ fn cli_ranker_falls_back_visibly_and_reports_itself() {
     assert!(!err.contains("ranker "), "{err}");
 }
 
+/// The audit and the escalation advice in the CLI. The audit runs only after
+/// a VERIFIED fix and changes nothing: exit 0, the verdict and the repaired
+/// file are the same with and without it, and an audit that could not run
+/// prints ONE line saying why. A run that verified nothing has `audit: null`
+/// and no audit line. Escalation advice follows the ranking step: one line,
+/// an `escalation` object, `null` when nothing was ranked.
+///
+/// The clean and suspect answers need a model reply, which only the scripted
+/// transport gives (`tests/audit.rs`); the binary has no endpoint override
+/// by design (it would be a place to send the key). The exit code cannot
+/// follow the audit because it is fixed before the audit runs.
+#[test]
+fn cli_audit_is_review_only_and_escalation_is_reported() {
+    let run = |name: &str,
+               truth: &str,
+               env_audit: Option<&str>,
+               extra: &[&str]|
+     -> (i32, serde_json::Value, String, String) {
+        let (ws, gen) = walk_fixture(name, truth);
+        let mut c = common::cortex();
+        c.env_remove("CORTEX_AUDIT");
+        if let Some(a) = env_audit {
+            c.env("CORTEX_AUDIT", a);
+        }
+        let out = c
+            .args(["repair", "--workspace"])
+            .arg(&ws)
+            .args(["--file", "three.ax", "--check", "hidden", "--axon"])
+            .arg(axon_bin())
+            .arg("--generator")
+            .arg(format!("cmd:{}", gen.display()))
+            .args(["--write-prefix", "three.ax", "--json"])
+            .args(extra)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+        let v = serde_json::from_str(stdout.trim()).unwrap_or(serde_json::Value::Null);
+        let file = std::fs::read_to_string(ws.join("three.ax")).unwrap_or_default();
+        (out.status.code().unwrap_or(-1), v, stderr, file)
+    };
+
+    // Off: the reference run.
+    let (code0, v0, err0, file0) = run("audit_off", "gamma:0", None, &["--audit", "off"]);
+    assert_eq!(code0, 0, "{err0}{v0}");
+    assert!(!err0.contains("audit "), "{err0}");
+    assert_eq!(v0["audit"]["verdict"], "off");
+
+    // The default, no key: unavailable, one line, the same verdict and file.
+    let (code, v, err, file) = run("audit_default", "gamma:0", None, &[]);
+    assert_eq!(
+        code, 0,
+        "an audit that cannot run changes no verdict: {err}{v}"
+    );
+    assert_eq!(
+        (&v["outcome"], &v["symbol"]),
+        (&v0["outcome"], &v0["symbol"])
+    );
+    assert_eq!(file, file0, "the audit never touches the file");
+    let line = "audit openrouter:anthropic/claude-haiku-5.5 unavailable: \
+                OPENROUTER_API_KEY not set";
+    assert_eq!(
+        err.matches(line).count(),
+        1,
+        "exactly one audit line: {err}"
+    );
+    assert_eq!(
+        v["audit"],
+        serde_json::json!({
+            "requested": "openrouter:anthropic/claude-haiku-5.5",
+            "used": null,
+            "verdict": "unavailable",
+            "p": null,
+            "latency_ms": null,
+            "cost_usd": null,
+            "reason": "OPENROUTER_API_KEY not set",
+        })
+    );
+
+    // The env selects; the flag beats a bad env.
+    let (code, v, err, _) = run(
+        "audit_env",
+        "gamma:0",
+        Some("decision:inception/mercury-decide"),
+        &[],
+    );
+    assert_eq!(code, 0, "{err}{v}");
+    assert_eq!(v["audit"]["requested"], "decision:inception/mercury-decide");
+    let (code, v, err, _) = run("audit_flag", "gamma:0", Some("bogus"), &["--audit", "off"]);
+    assert_eq!(code, 0, "{err}{v}");
+    let (code, _, err, _) = run("audit_bad", "gamma:0", Some("bogus"), &[]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("CORTEX_AUDIT: unknown audit `bogus`"), "{err}");
+
+    // Nothing verified: no audit, no line, the failure exit untouched.
+    let (code, v, err, _) = run("audit_unverified", "none:9", None, &["--budget", "2"]);
+    assert_eq!(code, 20, "{err}{v}");
+    assert_eq!(v["audit"], serde_json::Value::Null);
+    assert!(!err.contains("audit "), "{err}");
+
+    // Escalation: spectrum order asks no model, so the advice is unavailable.
+    assert_eq!(v0["escalation"]["advice"], "unavailable");
+    assert!(
+        v0["escalation"]["basis"]
+            .as_str()
+            .unwrap()
+            .starts_with("spectrum order asks no model"),
+        "{}",
+        v0["escalation"]
+    );
+    assert_eq!(
+        err0.matches("escalation unavailable: ").count(),
+        1,
+        "{err0}"
+    );
+    // A ranker that fell back: unavailable, naming why.
+    let (_, v, err, _) = run(
+        "esc_fallback",
+        "gamma:0",
+        None,
+        &["--ranker", "openrouter:x/y"],
+    );
+    assert_eq!(v["escalation"]["advice"], "unavailable", "{err}");
+    assert!(v["escalation"]["basis"]
+        .as_str()
+        .unwrap()
+        .contains("OPENROUTER_API_KEY not set"));
+    // An explicit target ranks nothing: no advice at all.
+    let (_, v, err, _) = run("esc_symbol", "gamma:0", None, &["--symbol", "gamma"]);
+    assert_eq!(v["escalation"], serde_json::Value::Null);
+    assert!(!err.contains("escalation"), "{err}");
+}
+
 /// C16c — pass 2 resumes each candidate in rank order with the REST of its
 /// own budget and its own history, so no candidate gets more than the
 /// depth-first walk gave it, and the report shows the real attempt order.

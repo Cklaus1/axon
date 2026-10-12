@@ -27,9 +27,11 @@ use serde::{Deserialize, Serialize};
 pub mod action;
 #[cfg(feature = "ai")]
 pub mod ai;
+pub mod audit;
 pub mod episode;
 pub mod generate;
 pub mod locate;
+pub mod openrouter;
 pub mod rank;
 pub mod runner;
 pub mod select;

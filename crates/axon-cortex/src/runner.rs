@@ -272,6 +272,9 @@ pub struct CandidateProgress {
     rejected: Vec<crate::generate::RejectedAttempt>,
     last_applied: Option<String>,
     baseline_passing: Option<Vec<String>>,
+    /// The checks failing when this candidate's episode first started (the
+    /// hidden check included), read from the same run as `baseline_passing`.
+    baseline_failing: Option<Vec<String>>,
     steps: usize,
     proposals: usize,
     paused: bool,
@@ -281,6 +284,12 @@ impl CandidateProgress {
     /// Steps of the budget this candidate has used, across every resumption.
     pub fn steps(&self) -> usize {
         self.steps
+    }
+    /// The checks that were failing when this candidate's episode first
+    /// started, hidden check included; `None` before it started or when that
+    /// baseline could not be taken.
+    pub fn baseline_failing(&self) -> Option<&[String]> {
+        self.baseline_failing.as_deref()
     }
     /// Times the generator has been asked for this candidate.
     pub fn proposals(&self) -> usize {
@@ -772,7 +781,10 @@ impl Runner {
             Some(b) => b.clone(),
             None => {
                 let b = match self.check_outcomes(&target.path, "") {
-                    Ok((_, passing)) => passing,
+                    Ok((failing, passing)) => {
+                        progress.baseline_failing = Some(failing);
+                        passing
+                    }
                     Err(e) => {
                         self.episode.push(EpisodeEvent::CheckRun {
                             name: format!("baseline UNAVAILABLE: {e}"),

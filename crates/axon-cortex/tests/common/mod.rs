@@ -9,6 +9,8 @@
 //! suite. Here the final path is only ever written by `cp`, a child process,
 //! so no write fd to it exists in the test process at all.
 
+pub mod scripted;
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -61,6 +63,7 @@ pub fn copy_executable(src: impl AsRef<Path>, dst: impl AsRef<Path>, mode: u32) 
 pub fn cortex() -> std::process::Command {
     let mut c = std::process::Command::new(env!("CARGO_BIN_EXE_cortex"));
     c.env_remove("OPENROUTER_API_KEY")
-        .env("CORTEX_RANKER", "spectrum");
+        .env("CORTEX_RANKER", "spectrum")
+        .env("CORTEX_AUDIT", "off");
     c
 }

@@ -79,6 +79,22 @@ cortex locate --file PATH --check NAME [--workspace DIR] [--axon PATH] [--json]
                          The model sees the file without the --check function,
                          the visible failing checks and the candidates — never
                          the check that adjudicates. Ignored with --symbol.
+                         After ranking, one `escalation:` line (and
+                         `escalation` in --json) gives cheap-vs-strong advice
+                         for the generator, derived from the ranking with no
+                         extra call: `cheap` whenever a ranker answered,
+                         `unavailable` when none did. Advice only.
+  --audit SPEC           off | openrouter:MODEL | decision:MODEL. After a
+                         VERIFIED fix, asks one model whether the patch games
+                         the tests (special-cases their inputs, hardcodes
+                         their outputs, weakens a check) and prints `audit
+                         SPEC: clean|suspect (...)` or `audit SPEC
+                         unavailable: REASON`. Review only: it never changes
+                         the verdict, the exit code or the file. Default: env
+                         CORTEX_AUDIT, else
+                         openrouter:anthropic/claude-haiku-5.5. The model sees
+                         the file as found without the --check function, the
+                         visible failing checks and the diff.
   --generator SPEC       none (default) | ai:MODEL | cmd:PATH | literal:BODY
                          cmd: runs YOUR program — the prompt on its stdin, the
                          proposed body on its stdout. No credentials enter this
@@ -313,6 +329,7 @@ fn main() {
     let mut json = false;
     let mut candidates: usize = 3;
     let mut ranker_flag: Option<String> = None;
+    let mut audit_flag: Option<String> = None;
 
     while let Some(a) = args.next() {
         let mut val = |flag: &str| -> String {
@@ -327,6 +344,7 @@ fn main() {
             "--principal" => principal = val("--principal"),
             "--generator" => generator_spec = val("--generator"),
             "--ranker" => ranker_flag = Some(val("--ranker")),
+            "--audit" => audit_flag = Some(val("--audit")),
             "--axon" => axon_bin = std::path::PathBuf::from(val("--axon")),
             "--check-registry" => {
                 check_registry = Some(std::path::PathBuf::from(val("--check-registry")))
@@ -410,6 +428,12 @@ fn main() {
     )
     .unwrap_or_else(|e| usage(&e));
     let mut ranker_report: Option<axon_cortex::rank::RankReport> = None;
+    let mut escalation: Option<axon_cortex::rank::Escalation> = None;
+    let audit_spec = axon_cortex::audit::select(
+        audit_flag.as_deref(),
+        std::env::var(axon_cortex::audit::AUDIT_ENV).ok().as_deref(),
+    )
+    .unwrap_or_else(|e| usage(&e));
 
     let fabric = fabric_executor(&fabric_args, check_registry.as_deref());
     let mut runner = registered_runner(
@@ -526,6 +550,7 @@ fn main() {
         // THE RANKING STEP. It may only permute these names: the eligible set
         // is fixed above, by evidence, before any model is consulted. Every
         // failure keeps the spectrum order and says so on one line.
+        let located = ranked.len();
         let eligible: Vec<String> = ranked
             .into_iter()
             .take(candidates)
@@ -553,6 +578,11 @@ fn main() {
                     .map_or_else(|| "?".to_string(), |c| format!("{c:.6}"))
             );
         }
+        // Advice for the operator's next choice of generator, from the
+        // ranking alone. It changes nothing in this run.
+        let advice = axon_cortex::rank::escalation(&report, located);
+        eprintln!("{}", advice.line());
+        escalation = Some(advice);
         let order = report.order.clone();
         ranker_report = Some(report);
         order
@@ -703,6 +733,40 @@ fn main() {
     }
     let repaired = (code == 0).then(|| attempted.last().cloned().unwrap_or_default());
 
+    // THE AUDIT, after the verdict, the exit code and the file are all
+    // settled: it reads them and can change none of them. Only a verified fix
+    // is audited; anything else has nothing to review.
+    let audit = repaired.as_ref().map(|sym| {
+        let failing: &[String] = prev
+            .and_then(|i| progress[i].baseline_failing())
+            .unwrap_or(&[]);
+        let report = match std::fs::read_to_string(workspace.join(&file)) {
+            Ok(patched) => axon_cortex::audit::Auditor::from_env(audit_spec.clone()).audit(
+                &axon_cortex::audit::AuditInput {
+                    file: &file,
+                    original: &original,
+                    patched: &patched,
+                    symbol: sym,
+                    hidden_check: &check,
+                    failing,
+                },
+            ),
+            Err(e) => axon_cortex::audit::AuditReport {
+                requested: audit_spec.label(),
+                used: None,
+                verdict: axon_cortex::audit::Verdict::Unavailable,
+                p: None,
+                latency_ms: None,
+                cost_usd: None,
+                reason: Some(format!("cannot read the patched {file}: {e}")),
+            },
+        };
+        if let Some(line) = report.line() {
+            eprintln!("{line}");
+        }
+        report
+    });
+
     if json {
         println!(
             "{}",
@@ -750,6 +814,12 @@ fn main() {
                 // and why they differ when they do. `null` with --symbol,
                 // where nothing was ranked.
                 "ranker": ranker_report.as_ref().map(|r| r.to_json()),
+                // Cheap-vs-strong advice derived from that ranking. `null`
+                // where nothing was ranked.
+                "escalation": escalation.as_ref().map(|e| e.to_json()),
+                // The review-only tamper audit of a verified fix. `null`
+                // when nothing was verified.
+                "audit": audit.as_ref().map(|a| a.to_json()),
             })
         );
     } else {

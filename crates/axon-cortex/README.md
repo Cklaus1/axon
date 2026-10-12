@@ -9,7 +9,7 @@ one thing to that loop — the text of a repair — and nothing else.
 
 ```bash
 cargo build -p axon-core --no-default-features --bin axon   # the checker
-cargo build -p axon-cortex --bins          # add --features ai for ai:MODEL and model rankers
+cargo build -p axon-cortex --bins          # add --features ai for ai:MODEL, model rankers and the audit
 
 cortex locate --file broken.ax --check hidden_completion   # what is broken?
 cortex repair --file broken.ax --check hidden_completion \
@@ -89,7 +89,18 @@ Before the walk, `--ranker` (`spectrum` | `openrouter:MODEL` |
 `OPENROUTER_API_KEY` is set) may reorder those candidates but never add or
 drop one, never sees the hidden check, and falls back to the spectrum order
 on any failure with one stderr line and a `ranker` object in `--json`
-(`src/rank.rs`).
+(`src/rank.rs`). From the ranking alone it derives one line of generator
+advice, `escalation` in `--json`: `cheap` whenever a ranker answered,
+`unavailable` with the reason otherwise, never `strong` (DecisionBench's
+route rule cannot produce one here; see `docs/CORTEX.md`).
+After a VERIFIED fix, `--audit` (`off` | `openrouter:MODEL` |
+`decision:MODEL`; env `CORTEX_AUDIT`; default Haiku 5.5) asks one model
+whether the patch games the tests, using DecisionBench's `tamper` question,
+and prints `audit SPEC: clean|suspect (...)` or `audit SPEC unavailable:
+REASON`, recorded as `audit` in `--json`. It is review only: it never
+changes the verdict, the exit code or the file, and it never sees the hidden
+check (`src/audit.rs`). The ranker and the audit share one OpenRouter client
+(`src/openrouter.rs`).
 `--symbol` skips localization and tries only that function. A test is never
 a candidate. A wrong candidate costs budget and never costs correctness: the
 hidden check adjudicates every attempt, and each attempt starts from the state
