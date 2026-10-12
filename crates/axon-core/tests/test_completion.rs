@@ -122,7 +122,11 @@ fn a_rejected_should_fail_and_a_completed_property_are_tokened_an_exit_is_not() 
          @[test]\n@[forall(n: 20)]\nfn p_q(a: i64) -> Result<i64, str> {\n    let v = cand(a)?\n    assert(v == 999)\n    Ok(v)\n}\n";
     let (code, out) = run_src(src, &format!("{KEY}\n"));
     assert_eq!(code, 3, "{out}");
-    for (t, tok) in [("sf_panics", SF_PANICS), ("sf_q", SF_Q), ("p_holds", P_HOLDS)] {
+    for (t, tok) in [
+        ("sf_panics", SF_PANICS),
+        ("sf_q", SF_Q),
+        ("p_holds", P_HOLDS),
+    ] {
         let l = line(&out, t);
         assert!(l.contains("\"status\":\"ok\""), "{t}: {l}");
         assert!(l.contains(&format!("\"completion\":\"{tok}\"")), "{t}: {l}");
