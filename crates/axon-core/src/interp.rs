@@ -4701,9 +4701,49 @@ fn run_program_inner(
 /// did not panic or exit non-zero, and it did not end on a failure value
 /// ([`TestEnd::failure_exit`], R51 §3). Otherwise `Err(message)`.
 pub fn run_test_fn(program: &Program, name: &str) -> Result<(), String> {
-    match run_test_fn_outcome(program, name)?.failure_exit() {
+    match run_test_fn_outcome(program, name)
+        .map_err(|f| f.message)?
+        .failure_exit()
+    {
         Some(why) => Err(why.to_string()),
         None => Ok(()),
+    }
+}
+
+/// Why a test (or one property case) failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TestFailure {
+    pub message: String,
+    /// The program itself decided against the run: an assertion or `panic`,
+    /// or a `@[verify]`, refinement, AI-policy, goal-budget, sandbox,
+    /// multi-shot or kill-switch stop. `false` when the run only STOPPED: an
+    /// `exit(n)`, a control transfer that escaped (`break`/`continue`/
+    /// `resume`/a handler completion), or a program that could not be built
+    /// or initialised. A `should_fail` pass is attested with a completion
+    /// token only on a rejection, so a body that just exits cannot stand in
+    /// for the input being refused.
+    pub rejected: bool,
+}
+
+impl TestFailure {
+    fn rejected(m: impl Into<String>) -> Self {
+        TestFailure {
+            message: m.into(),
+            rejected: true,
+        }
+    }
+    fn stopped(m: impl Into<String>) -> Self {
+        TestFailure {
+            message: m.into(),
+            rejected: false,
+        }
+    }
+}
+
+/// A refusal to build or initialise the program: nothing in it ran.
+impl From<String> for TestFailure {
+    fn from(m: String) -> Self {
+        TestFailure::stopped(m)
     }
 }
 
@@ -4744,7 +4784,7 @@ impl TestEnd {
     }
 }
 
-pub fn run_test_fn_outcome(program: &Program, name: &str) -> Result<TestEnd, String> {
+pub fn run_test_fn_outcome(program: &Program, name: &str) -> Result<TestEnd, TestFailure> {
     let sealed_dirs = crate::resolver::sealed_module_dirs();
     on_deep_stack(|| run_test_fn_inner(program, name, &sealed_dirs))
 }
@@ -4754,13 +4794,13 @@ fn run_test_fn_inner(
     program: &Program,
     name: &str,
     sealed_dirs: &[std::path::PathBuf],
-) -> Result<TestEnd, String> {
+) -> Result<TestEnd, TestFailure> {
     let mut interp = Interp::build_in(program, sealed_dirs)?;
     if let Err(f) = interp.init_globals() {
-        return Err(flow_to_msg(f));
+        return Err(flow_to_msg(f).into());
     }
     let Some(f) = interp.fns.get(name).copied() else {
-        return Err(format!("no function `{name}`"));
+        return Err(format!("no function `{name}`").into());
     };
     interp.test_outcome(f)
 }
@@ -4768,10 +4808,23 @@ fn run_test_fn_inner(
 impl<'p> Interp<'p> {
     /// Run the `@[test]` fn `f` (globals initialised) and classify how it
     /// ended: [`run_test_fn_outcome`] after the build.
-    fn test_outcome(&self, f: &'p FnDef) -> Result<TestEnd, String> {
+    fn test_outcome(&self, f: &'p FnDef) -> Result<TestEnd, TestFailure> {
+        let r = self.run_test_frame(f, Vec::new());
+        self.test_end(r)
+    }
+
+    /// Call `f` with `args` as the test frame, recording whether its own body
+    /// ran to its end (`test_body_finished`, read by [`Interp::test_end`]).
+    /// A property case runs here too, so it is judged like a plain test.
+    pub(super) fn run_test_frame(&self, f: &'p FnDef, args: Vec<Value>) -> R {
         self.test_frame_depth.set(self.call_depth.get() + 1);
         self.test_body_finished.set(false);
-        match self.call_test_fn(f) {
+        self.call_test_fn(f, args)
+    }
+
+    /// How the test frame run by [`Interp::run_test_frame`] ended.
+    pub(super) fn test_end(&self, r: R) -> Result<TestEnd, TestFailure> {
+        match r {
             // COMPLETED is decided on one fact: the test's own body evaluated to
             // its end (`call_fn_in_general` records it). A `return` or a `?` is
             // an ordinary `Ok` at the test's frame, so the returned VALUE cannot
@@ -4786,52 +4839,54 @@ impl<'p> Interp<'p> {
                 "the test body ended early (a `return`): it did not complete".to_string(),
             )),
             Ok(_) => Ok(TestEnd::Completed),
-            Err(Flow::Panic(m)) => Err(m.into()),
+            Err(Flow::Panic(m)) => Err(TestFailure::rejected(m)),
             // A verify failure inside a test is still a failure (drives
             // `@[test(should_fail)]`); surface its message like a panic.
-            Err(Flow::VerifyFailed(m)) => Err(m.into()),
+            Err(Flow::VerifyFailed(m)) => Err(TestFailure::rejected(m)),
             // A corrigibility halt inside a test is a failure too (lets
             // `@[test(should_fail)]` assert the kill-switch latched).
-            Err(Flow::Halted(m)) => Err(m.into()),
+            Err(Flow::Halted(m)) => Err(TestFailure::rejected(m)),
             // An AI-policy stop inside a test is a failure (surfaces like a panic;
             // also lets `@[test(should_fail)]` assert the policy gate fired).
-            Err(Flow::AiPolicyUnreachable(m)) => Err(m.into()),
+            Err(Flow::AiPolicyUnreachable(m)) => Err(TestFailure::rejected(m)),
             // A refinement-precondition violation inside a test is a failure too
             // (lets `@[test(should_fail)]` assert a bad arg is caught).
-            Err(Flow::RefineViolation(m)) => Err(m.into()),
+            Err(Flow::RefineViolation(m)) => Err(TestFailure::rejected(m)),
             // A kernel-goal budget exhaustion inside a test is a failure too (lets
             // `@[test(should_fail)]` assert the budget ceiling fired).
-            Err(Flow::GoalBudgetExhausted(m)) => Err(m.into()),
+            Err(Flow::GoalBudgetExhausted(m)) => Err(TestFailure::rejected(m)),
             // A sandbox violation inside a test is a failure (lets
             // `@[test(should_fail)]` assert the sandbox ceiling fired).
-            Err(Flow::SandboxViolation(m)) => Err(m.into()),
-            Err(Flow::Resume(_)) => {
-                Err("`resume` called outside an effect-handler arm".to_string())
-            }
+            Err(Flow::SandboxViolation(m)) => Err(TestFailure::rejected(m)),
+            Err(Flow::Resume(_)) => Err(TestFailure::stopped(
+                "`resume` called outside an effect-handler arm",
+            )),
             // E1314 multi-shot-unsound inside a test is a failure (lets
             // `@[test(should_fail)]` assert the unsound-replay case is refused).
-            Err(Flow::MultiShotUnsound(m)) => Err(m.into()),
+            Err(Flow::MultiShotUnsound(m)) => Err(TestFailure::rejected(m)),
             Err(Flow::Exit(0)) => Ok(TestEnd::EndedEarly(
                 "`exit(0)` ended the test before it completed".to_string(),
             )),
-            Err(Flow::Exit(n)) => Err(format!("exited with code {n}")),
+            // `exit(n)` stops the process; it decides nothing about the input.
+            Err(Flow::Exit(n)) => Err(TestFailure::stopped(format!("exited with code {n}"))),
             // Unreachable: the test's frame ends its own `return` (and
             // `contain_frame` every other transfer). Kept so the match stays
             // total; it grants nothing.
-            Err(Flow::Return(_)) => Err("`return` escaped the test's own frame".to_string()),
+            Err(Flow::Return(_)) => Err(TestFailure::stopped(
+                "`return` escaped the test's own frame",
+            )),
             // A `break` / `continue` (or an effect-handler completion) that
             // escapes a function unwinds the test BEFORE its assertions ran: the
             // test did not complete, so it did not pass. It used to count as
             // clean, which let a candidate's function end the operator's
             // acceptance test early and have Fabric sign a pass (v0.22 G01 final
             // re-audit, executed).
-            Err(Flow::Break) | Err(Flow::Continue) => Err(
-                "a `break`/`continue` escaped a function and unwound the test before it completed"
-                    .to_string(),
-            ),
-            Err(Flow::HandlerDone(..)) => {
-                Err("an effect handler completed outside its handled computation".to_string())
-            }
+            Err(Flow::Break) | Err(Flow::Continue) => Err(TestFailure::stopped(
+                "a `break`/`continue` escaped a function and unwound the test before it completed",
+            )),
+            Err(Flow::HandlerDone(..)) => Err(TestFailure::stopped(
+                "an effect handler completed outside its handled computation",
+            )),
         }
     }
 }
@@ -5679,11 +5734,11 @@ impl<'p> Interp<'p> {
         result
     }
 
-    /// Run the `@[test]` fn `f` with no arguments, always on
-    /// [`Interp::call_fn_in_general`]: the one path that records whether the
-    /// test frame's body ran to its end (`test_body_finished`), so the
-    /// common call path carries no test check (cost only).
-    fn call_test_fn(&self, f: &'p FnDef) -> R {
+    /// Run the `@[test]` fn `f` (a property case passes its drawn `args`),
+    /// always on [`Interp::call_fn_in_general`]: the one path that records
+    /// whether the test frame's body ran to its end (`test_body_finished`),
+    /// so the common call path carries no test check (cost only).
+    fn call_test_fn(&self, f: &'p FnDef, args: Vec<Value>) -> R {
         let owned;
         let entry = match self.fn_of_def.get(&(f as *const FnDef as usize)) {
             Some(&i) => &self.fn_table[i as usize],
@@ -5694,7 +5749,7 @@ impl<'p> Interp<'p> {
         };
         let mut env = self.take_frame();
         let result = match self.enter_fn(f) {
-            Ok(_guard) => self.call_fn_in_general(entry, Vec::new(), &mut env),
+            Ok(_guard) => self.call_fn_in_general(entry, args, &mut env),
             Err(flow) => Err(flow),
         };
         self.give_frame(env);
@@ -8831,7 +8886,7 @@ fn main() { }
             let Some(f) = ix.fns.get(name).copied() else {
                 return Err(format!("no function `{name}`"));
             };
-            ix.test_outcome(f)
+            ix.test_outcome(f).map_err(|f| f.message)
         })
     }
 
@@ -9169,7 +9224,7 @@ fn main() { }
         on_deep_stack(|| {
             DISPATCH_RULE_OFF.with(|c| c.set(!rule || taint_only));
             TAINT_FORCE_ON.with(|c| c.set(taint_only));
-            run_test_fn_inner(&prog, test, &[sdir])
+            run_test_fn_inner(&prog, test, &[sdir]).map_err(|f| f.message)
         })
     }
 
@@ -9192,7 +9247,7 @@ fn main() { }
                 interp.max_depth = limit;
                 interp.init_globals().map_err(flow_to_msg)?;
                 let f = interp.fns.get("t").copied().expect("the suite defines `t`");
-                interp.test_outcome(f)
+                interp.test_outcome(f).map_err(|f| f.message)
             });
             let m = out.expect_err("the candidate never reaches its answer");
             assert!(!m.contains("in `expected`"), "limit {limit}: {m}");

@@ -1,0 +1,4 @@
+{
+  "theme": "PCI completion-token kinds",
+  "text": "evidence widened, pass/fail unchanged: `axon test --completion-key-stdin` now also tokens a should_fail test whose failure the interpreter observed (any failure other than exit(0), so including an exit(n), n != 0) and an @[forall] property all of whose cases held; previously only a plain body that returned normally was tokened, so a token-requiring verifier (cortex LocalInterpreterExecutor, Fabric) counted every passing should_fail/forall test as failed. A plain test or forall case ended by exit(0), and a should_fail body ended by exit(0), still get no token. The exit(n) should_fail token is withdrawn by the next commit"
+}

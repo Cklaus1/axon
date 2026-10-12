@@ -382,8 +382,9 @@ enum Command {
         /// Read a per-run secret (hex) as the FIRST line of stdin, before any
         /// program code runs, and mark each test whose PASS the interpreter
         /// decided itself — a plain body that returned normally (not via
-        /// `exit(0)`), a `should_fail` body whose failure it observed, or an
-        /// `@[forall]` property every case of which completed — with
+        /// `exit(0)`), a `should_fail` body the program REJECTED (a panic,
+        /// `Err`, or a refinement/verify/policy stop; never an `exit(n)`), or
+        /// an `@[forall]` property every case of which completed — with
         /// `"completion": HMAC-SHA256(secret, "axon-test-completion/1\0" + name)`.
         /// A caller that must know the test really finished (Fabric) checks it.
         #[arg(
@@ -6217,9 +6218,10 @@ struct TestOutcome {
     duration_ms: u64,
     error: Option<String>,
     /// The interpreter decided this pass itself: a plain body returned
-    /// normally (see `interp::TestEnd`), a `should_fail` body's failure was
-    /// observed, or every case of a property held. An early `exit(0)` never
-    /// sets it, so it is what a completion token attests.
+    /// normally (see `interp::TestEnd`), a `should_fail` body was rejected
+    /// by the program (`interp::TestFailure::rejected`), or every case of a
+    /// property completed. No `exit(n)` ever sets it, so it is what a
+    /// completion token attests.
     decided: bool,
 }
 
@@ -6485,21 +6487,25 @@ fn cmd_test(
                 // Property test (R8): randomize params, shrink on failure.
                 use axon_core::interp::PropertyOutcome;
                 match axon_core::interp::run_property_test(&program, name, *cases) {
-                    PropertyOutcome::Passed { cases } if *should_fail => (
+                    PropertyOutcome::Passed { cases, .. } if *should_fail => (
                         false,
                         Some(format!("should_fail forall '{name}' held over {cases} cases")),
                     ),
                     // A case that stops early (`exit`, a refinement stop) fails
-                    // the property (R51 §3), so `Passed` means every case completed.
-                    PropertyOutcome::Passed { .. } => {
-                        decided = true;
+                    // the property (R51 §3), and so does one that ends on
+                    // `Err`/`None`; `completed` says no case passed through an
+                    // early `return`.
+                    PropertyOutcome::Passed { completed, .. } => {
+                        decided = completed;
                         (true, None)
                     }
-                    PropertyOutcome::Failed { .. } if *should_fail => {
-                        decided = true;
+                    // Attested only when the reported case was REJECTED by the
+                    // program, not stopped by an `exit`.
+                    PropertyOutcome::Failed { rejected, .. } if *should_fail => {
+                        decided = rejected;
                         (true, None)
                     }
-                    PropertyOutcome::Failed { counterexample, message, seed } => (
+                    PropertyOutcome::Failed { counterexample, message, seed, .. } => (
                         false,
                         Some(format!(
                             "property failed at [{counterexample}]: {message} (reproduce: AXON_SEED={seed})"
@@ -6527,11 +6533,14 @@ fn cmd_test(
                             (true, None)
                         }
                     },
-                    Err(_) if *should_fail => {
-                        decided = true;
+                    // Attested only when the program REJECTED the run (a panic,
+                    // a refinement or verify stop, ...), not when an `exit(n)`
+                    // or an escaped control transfer stopped it.
+                    Err(e) if *should_fail => {
+                        decided = e.rejected;
                         (true, None)
                     }
-                    Err(e) => (false, Some(e)),
+                    Err(e) => (false, Some(e.message)),
                 }
             };
             let duration_ms = start.elapsed().as_millis() as u64;

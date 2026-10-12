@@ -11,14 +11,18 @@ use super::*;
 
 /// Outcome of a `forall` property test (R8).
 pub enum PropertyOutcome {
-    /// All `cases` random inputs passed.
-    Passed { cases: u32 },
+    /// All `cases` random inputs passed. `completed`: every case's body ran
+    /// to its end ([`TestEnd::Completed`]); a case that passed through an
+    /// early plain `return` clears it, as it does for a plain test.
+    Passed { cases: u32, completed: bool },
     /// A case failed; `counterexample` is the SHRUNK minimal input (rendered),
-    /// `message` is the assertion/panic message, `seed` reproduces the run.
+    /// `message` is the assertion/panic message, `seed` reproduces the run,
+    /// `rejected` is [`TestFailure::rejected`] of that reported case.
     Failed {
         counterexample: String,
         message: String,
         seed: u64,
+        rejected: bool,
     },
     /// The property fn has an unsupported param type / shape.
     Unsupported(String),
@@ -70,6 +74,7 @@ pub(super) fn run_property_test_inner(
     };
 
     // Try `cases` random inputs; on the first failing one, shrink it.
+    let mut completed = true;
     for _ in 0..cases {
         let args: Vec<Value> = match gens
             .iter()
@@ -84,47 +89,51 @@ pub(super) fn run_property_test_inner(
                     counterexample: String::new(),
                     message: flow_to_msg(f),
                     seed,
+                    rejected: false,
                 }
             }
         };
-        if let Err(msg) = run_once(&interp, f, &args) {
-            // Found a failing case — shrink toward minimal.
-            let (shrunk_args, shrunk_msg) = shrink(&interp, f, &gens, args, msg);
-            let ce = render_args(&f.params, &shrunk_args);
-            return PropertyOutcome::Failed {
-                counterexample: ce,
-                message: shrunk_msg,
-                seed,
-            };
+        match run_once(&interp, f, &args) {
+            Ok(case_completed) => completed &= case_completed,
+            Err(fail) => {
+                // Found a failing case — shrink toward minimal.
+                let (shrunk_args, shrunk) = shrink(&interp, f, &gens, args, fail);
+                let ce = render_args(&f.params, &shrunk_args);
+                return PropertyOutcome::Failed {
+                    counterexample: ce,
+                    message: shrunk.message,
+                    seed,
+                    rejected: shrunk.rejected,
+                };
+            }
         }
     }
-    PropertyOutcome::Passed { cases }
+    PropertyOutcome::Passed { cases, completed }
 }
 
-/// Run the property fn once with `args`; Ok(()) if it passed (no panic),
-/// Err(message) if an assert/panic fired.
+/// Run the property fn once with `args`, judged as a plain test is (R51 §3):
+/// `Ok(true)` if the case's body ran to its end, `Ok(false)` if it passed
+/// through an early plain `return`, `Err` if it failed - including an early
+/// end on `Err`/`None` (a `?`), so a property cannot pass a case whose
+/// assertions a `?` skipped.
 pub(super) fn run_once<'p>(
     interp: &Interp<'p>,
     f: &'p FnDef,
     args: &[Value],
-) -> Result<(), String> {
-    match interp.call_fn(f, args.to_vec()) {
-        Ok(_) => Ok(()),
-        Err(Flow::Panic(m)) | Err(Flow::VerifyFailed(m)) => Err(m.into()),
-        // `call_fn` ends a `return` at the property fn's own frame, so this arm
-        // is unreachable; kept total. `exit(0)` ends the case BEFORE it
-        // completed, which is not a pass (PCI 11: affirmative completion).
-        Err(Flow::Return(_)) => Ok(()),
-        Err(Flow::Exit(0)) => {
-            Err("`exit(0)` ended the property case before it completed".to_string())
-        }
-        // A `break`/`continue` escaping a function unwound the property
-        // before its assertions ran: not a pass (v0.22 G01 final re-audit).
-        Err(Flow::Break) | Err(Flow::Continue) => Err(
-            "a `break`/`continue` escaped a function and unwound the property before it completed"
-                .to_string(),
-        ),
-        Err(other) => Err(super::flow_to_msg(other)),
+) -> Result<bool, TestFailure> {
+    match interp.run_test_frame(f, args.to_vec()) {
+        // `exit(0)` ends the case BEFORE it completed, which is not a pass
+        // (PCI 11: affirmative completion).
+        Err(Flow::Exit(0)) => Err(TestFailure::stopped(
+            "`exit(0)` ended the property case before it completed",
+        )),
+        r => match interp.test_end(r)? {
+            TestEnd::Completed => Ok(true),
+            end => match end.failure_exit() {
+                Some(why) => Err(TestFailure::rejected(why)),
+                None => Ok(false),
+            },
+        },
     }
 }
 
@@ -132,16 +141,16 @@ pub(super) fn run_once<'p>(
 /// still fails. For ints/floats this BINARY-SEARCHES toward zero (so a property
 /// failing at `a >= 50` shrinks to exactly `a = 50`, not just "some smaller
 /// failing value"); strings truncate; bool flips true→false. Returns the
-/// minimal failing args + the message from that minimal case.
+/// minimal failing args + the failure from that minimal case.
 pub(super) fn shrink<'p>(
     interp: &Interp<'p>,
     f: &'p FnDef,
     gens: &[PropGen],
     start: Vec<Value>,
-    start_msg: String,
-) -> (Vec<Value>, String) {
+    start_fail: TestFailure,
+) -> (Vec<Value>, TestFailure) {
     let mut best = start;
-    let mut best_msg = start_msg;
+    let mut best_fail = start_fail;
     // A few passes let later-arg shrinks re-enable earlier-arg shrinks.
     for _ in 0..4 {
         let mut improved = false;
@@ -156,10 +165,10 @@ pub(super) fn shrink<'p>(
                 let mut t0 = best.clone();
                 t0[i] = zero.clone();
                 let (mut pass, zero_fails) = match run_once(interp, f, &t0) {
-                    Ok(()) => (Some(zero), false),
+                    Ok(_) => (Some(zero), false),
                     Err(m) => {
                         best = t0;
-                        best_msg = m;
+                        best_fail = m;
                         improved = true;
                         (None, true)
                     }
@@ -172,10 +181,10 @@ pub(super) fn shrink<'p>(
                         match run_once(interp, f, &trial) {
                             Err(m) => {
                                 best = trial;
-                                best_msg = m;
+                                best_fail = m;
                                 improved = true;
                             }
-                            Ok(()) => {
+                            Ok(_) => {
                                 pass = Some(mid);
                             }
                         }
@@ -189,10 +198,10 @@ pub(super) fn shrink<'p>(
                     match run_once(interp, f, &trial) {
                         Err(m) => {
                             best = trial;
-                            best_msg = m;
+                            best_fail = m;
                             improved = true;
                         }
-                        Ok(()) => break,
+                        Ok(_) => break,
                     }
                 }
             }
@@ -201,7 +210,7 @@ pub(super) fn shrink<'p>(
             break;
         }
     }
-    (best, best_msg)
+    (best, best_fail)
 }
 
 /// A generator+shrinker for one property parameter type.

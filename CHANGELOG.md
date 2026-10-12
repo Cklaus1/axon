@@ -1,5 +1,10 @@
 # Axon Changelog
 
+## Completion tokens for `should_fail` and `@[forall]` passes
+
+- **`axon test --completion-key-stdin`:** a `@[test(should_fail)]` the program rejected (a panic, an `Err` or a `?` on one, a refinement, verify or policy stop) and a `@[forall]` property every case of which completed now carry a completion token. Before, only plain tests did, so `cortex repair` and Fabric counted every passing `should_fail` and property test as failed, and a file with one (e.g. `examples/stdlib/distribution.ax`) could never be verified clean. A `should_fail` test stopped by `exit(n)` and a property with a case that hit an early `return` still pass without a token.
+- **Behaviour change:** a `@[forall]` case that ends on `Err` (or a `?` on `Err`/`None`) now fails the property, as it fails a plain test; it used to pass.
+
 ## User guides and runnable examples for sealed tests, Cortex and the closed loop
 
 - **Sealed tests:** `docs/SEALED_TESTS.md` (safe grading recipe first: `AXON_ALLOWED_EFFECTS=` empty or `--completion-key-stdin`; without either, a sealed candidate that calls `exit(0)` passes every test), a section in `spec/axon-for-llms.md`, and `examples/sealed/` (honest, wrong and four attack candidates; `run.sh` asserts every verdict, run by `cli_run`).

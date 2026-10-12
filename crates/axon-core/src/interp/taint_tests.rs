@@ -1408,7 +1408,7 @@ pub(super) fn run(suite: &str, cand: &str, rules: Rules) -> Result<TestEnd, Stri
     on_deep_stack(|| {
         DISPATCH_RULE_OFF.with(|c| c.set(!static_on));
         TAINT_FORCE_ON.with(|c| c.set(taint_on));
-        run_test_fn_inner(&prog, "t", &sealed)
+        run_test_fn_inner(&prog, "t", &sealed).map_err(|f| f.message)
     })
 }
 

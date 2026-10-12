@@ -655,6 +655,7 @@ fn runtime_sealing_holds_without_the_static_check() {
         // (as `sealed_outcome` does), so no lock is needed.
         on_deep_stack(|| {
             run_test_fn_inner(&prog, test, &[std::path::PathBuf::from("/pci-rt-sealed")])
+                .map_err(|f| f.message)
         })
     };
     // Honest definitions of everything the suite imports; an attack

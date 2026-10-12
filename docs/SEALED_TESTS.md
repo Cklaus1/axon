@@ -348,11 +348,15 @@ Without `--json` the same results are printed as `test <name> ... ok` lines and
 ### 4.4 Completion tokens (`--completion-key-stdin`)
 
 With `--completion-key-stdin`, `axon test` reads a hex key (at least 16 bytes)
-from stdin before running any program code, and each test whose body
-completed gets a `"completion"` field: HMAC-SHA256(key,
-`"axon-test-completion/1\0" + test name`), hex. A test that ended through
-`exit(0)` or an early plain `return` is still reported `ok`, but without a
-token. Candidate code cannot compute a token without the key.
+from stdin before running any program code, and each pass the interpreter
+decided itself gets a `"completion"` field: HMAC-SHA256(key,
+`"axon-test-completion/1\0" + test name`), hex. Those passes are a plain test
+whose body completed, a `@[test(should_fail)]` the program rejected (a panic,
+an `Err`, a refinement or verify stop), and a `@[forall]` property every case
+of which completed. A test that ended through `exit(0)` or an early plain
+`return`, a `should_fail` test stopped by `exit(n)`, and a property with a case
+that hit an early `return` are still reported `ok`, but without a token.
+Candidate code cannot compute a token without the key.
 `examples/sealed/check_tokens.py` checks them. Here `IO` is granted on purpose
 so `exit(0)` runs:
 

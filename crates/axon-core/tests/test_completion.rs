@@ -99,27 +99,40 @@ fn a_missing_or_short_completion_key_is_refused_before_any_test_runs() {
 /// HMAC-SHA256(KEY, "axon-test-completion/1\0" + name), computed with Python
 /// `hmac` (which reproduces `T_DONE` above).
 const SF_PANICS: &str = "1c17829caa07c3329ca7574fcf04c9922d96f16873d7350eccc56971964031ec";
+const SF_Q: &str = "c3aac3ac2fb46b4e2142b42b14afe3c8dda2689c501af28cf814b2ffeddd57ca";
 const P_HOLDS: &str = "249607ce7c3f2a42257bd8a0c92cc4b76fe4bf352501b17668ace2e5fa8ddac6";
 
 #[test]
-fn an_observed_should_fail_and_a_held_property_are_tokened_an_early_exit_is_not() {
+fn a_rejected_should_fail_and_a_completed_property_are_tokened_an_exit_is_not() {
     // Without a token a keyed caller (cortex repair, Fabric) counts the pass as
     // failed, so every file with a should_fail or @[forall] test could never be
-    // verified clean. Each pass below is one the interpreter decided; each
-    // `exit(0)` path must still fail and carry no completion token.
-    let src = "fn bail(n: i64) -> i64 {\n    if n > 0 { exit(0) }\n    n\n}\n\
+    // verified clean. A should_fail pass is tokened only when the program
+    // REJECTED the run (a panic, a `?` on `Err`); one an `exit(n)` stopped
+    // passes untokened. A property is tokened only when every case completed;
+    // a case ending on `Err` fails it, as it fails a plain test.
+    let src = "fn bail(n: i64) -> i64 {\n    if n == 1 { exit(1) }\n    if n > 1 { exit(0) }\n    n\n}\n\
+         fn cand(a: i64) -> Result<i64, str> { Err(\"no\") }\n\
          @[test(should_fail)]\nfn sf_panics() { assert_eq(bail(0), 1) }\n\
-         @[test(should_fail)]\nfn sf_exit() { assert_eq(bail(1), 1) }\n\
+         @[test(should_fail)]\nfn sf_q() -> Result<i64, str> {\n    let v = cand(1)?\n    Ok(v)\n}\n\
+         @[test(should_fail)]\nfn sf_exit0() { assert_eq(bail(2), 1) }\n\
+         @[test(should_fail)]\nfn sf_exit1() { assert_eq(bail(1), 1) }\n\
          @[test]\n@[forall(n: 20)]\nfn p_holds(a: i64) { assert(wrapping_add(a, 0) == a) }\n\
-         @[test]\n@[forall(n: 20)]\nfn p_exit(a: i64) { assert_eq(bail(1), a) }\n";
+         @[test]\n@[forall(n: 20)]\nfn p_ret(a: i64) {\n    if a != 12345 { return }\n    assert(false)\n}\n\
+         @[test]\n@[forall(n: 20)]\nfn p_exit(a: i64) { assert_eq(bail(2), a) }\n\
+         @[test]\n@[forall(n: 20)]\nfn p_q(a: i64) -> Result<i64, str> {\n    let v = cand(a)?\n    assert(v == 999)\n    Ok(v)\n}\n";
     let (code, out) = run_src(src, &format!("{KEY}\n"));
     assert_eq!(code, 3, "{out}");
-    for (t, tok) in [("sf_panics", SF_PANICS), ("p_holds", P_HOLDS)] {
+    for (t, tok) in [("sf_panics", SF_PANICS), ("sf_q", SF_Q), ("p_holds", P_HOLDS)] {
         let l = line(&out, t);
         assert!(l.contains("\"status\":\"ok\""), "{t}: {l}");
         assert!(l.contains(&format!("\"completion\":\"{tok}\"")), "{t}: {l}");
     }
-    for t in ["sf_exit", "p_exit"] {
+    for t in ["sf_exit1", "p_ret"] {
+        let l = line(&out, t);
+        assert!(l.contains("\"status\":\"ok\""), "{t}: {l}");
+        assert!(!l.contains("completion"), "{t} was tokened: {l}");
+    }
+    for t in ["sf_exit0", "p_exit", "p_q"] {
         let l = line(&out, t);
         assert!(l.contains("\"status\":\"failed\""), "{t}: {l}");
     }
