@@ -1,0 +1,5 @@
+{
+  "sidecar_policy_ref": "SET-BY-RUN.SH: the trial's policy_ref",
+  "acf_policy_digest": "acf1:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "projection_ref": "cl22:9999999999999999999999999999999999999999999999999999999999999999"
+}

@@ -1,0 +1,39 @@
+{
+  "schema": "axon.loop.assignment/1",
+  "experiment_id": "demo-exp",
+  "scope": {
+    "tenant_id": "demo-tenant",
+    "task_family": "demo-coding"
+  },
+  "issuer_ref": "op:admitter",
+  "trials": [
+    {
+      "task_id": "task-0",
+      "arm_id": "incumbent",
+      "trial_id": "i0",
+      "attempt_id": "i0-a1",
+      "policy_ref": "SET-BY-RUN.SH: incumbent policy_ref"
+    },
+    {
+      "task_id": "task-1",
+      "arm_id": "incumbent",
+      "trial_id": "i1",
+      "attempt_id": "i1-a1",
+      "policy_ref": "SET-BY-RUN.SH: incumbent policy_ref"
+    },
+    {
+      "task_id": "task-0",
+      "arm_id": "challenger-1",
+      "trial_id": "c0",
+      "attempt_id": "c0-a1",
+      "policy_ref": "SET-BY-RUN.SH: candidate policy_ref"
+    },
+    {
+      "task_id": "task-1",
+      "arm_id": "challenger-1",
+      "trial_id": "c1",
+      "attempt_id": "c1-a1",
+      "policy_ref": "SET-BY-RUN.SH: candidate policy_ref"
+    }
+  ]
+}

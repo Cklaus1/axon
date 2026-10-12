@@ -239,6 +239,14 @@ fn test_add() {
 
 Run with `axon test file.ax` or `axon test --jobs 0` for parallel execution.
 
+### Grading untrusted code and repairing it
+
+| Guide | What it covers | Runnable example |
+|---|---|---|
+| [`docs/SEALED_TESTS.md`](docs/SEALED_TESTS.md) | `axon test --seal`: grade a candidate (e.g. AI-written code) with your own tests, where the candidate cannot see or call the suite's definitions. Start with the safe recipe in §1. | `examples/sealed/run.sh` |
+| [`docs/CORTEX.md`](docs/CORTEX.md) | `cortex locate` / `cortex repair`: rank suspect functions, let a model propose a body for one, accept it only when a hidden check passes. | `examples/cortex/run.sh` |
+| [`docs/CLOSED_LOOP_WALKTHROUGH.md`](docs/CLOSED_LOOP_WALKTHROUGH.md) | `axon-loop`: policy pointer, frozen experiment plans, evaluation, admission, rollback. Development class only; MiCode and Fabric inputs are sample JSON. | `examples/closed-loop/run.sh` |
+
 ## Builtins
 
 **I/O**: `print`, `println`, `eprint`, `eprintln`, `read_line`, `read_file`, `write_file`  

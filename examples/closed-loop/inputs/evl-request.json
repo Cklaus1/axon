@@ -1,0 +1,15 @@
+{
+  "schema": "axon.loop.evl-request/1",
+  "experiment_id": "demo-exp",
+  "scope": {
+    "tenant_id": "demo-tenant",
+    "task_family": "demo-coding"
+  },
+  "evaluator_ref": "evl:evaluator",
+  "subject_issuers": [
+    "agent:worker"
+  ],
+  "policies": "SET-BY-RUN.SH: [incumbent policy, candidate policy]",
+  "assigned": "SET-BY-RUN.SH: the assignment's trials without attempt_id",
+  "trials": "SET-BY-RUN.SH: one {episode, context, acf_request, acf_receipt, projection, verification_request, verification_receipt, verification_attestation} per delivered trial"
+}

@@ -1,0 +1,49 @@
+{
+  "schema": "axon.closed-loop.episode/1",
+  "identity": {
+    "task_id": "SET-BY-RUN.SH",
+    "arm_id": "SET-BY-RUN.SH",
+    "trial_id": "SET-BY-RUN.SH",
+    "attempt_id": "SET-BY-RUN.SH",
+    "operation_id": "SET-BY-RUN.SH",
+    "execution_id": "SET-BY-RUN.SH"
+  },
+  "scope": {
+    "tenant_id": "demo-tenant",
+    "task_family": "demo-coding"
+  },
+  "policy_ref": "SET-BY-RUN.SH",
+  "controls_ref": "cl22:2222222222222222222222222222222222222222222222222222222222222222",
+  "context_ref": "SET-BY-RUN.SH",
+  "candidate_set_ref": "SET-BY-RUN.SH",
+  "input_workspace_ref": "acf1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "output_workspace_ref": "acf1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "acf_request_ref": "SET-BY-RUN.SH",
+  "acf_receipt_ref": "SET-BY-RUN.SH",
+  "source_episode_ref": "cl22:8888888888888888888888888888888888888888888888888888888888888888",
+  "authority_epoch": "SET-BY-RUN.SH",
+  "status": "completed",
+  "verification": {
+    "result": "SET-BY-RUN.SH: passed | failed",
+    "matched_checks": 2,
+    "issuer_ref": "demo:verifier",
+    "verifier_ref": "SET-BY-RUN.SH: cl22 of the check receipt",
+    "output_workspace_ref": "acf1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "evidence_refs": [
+      "SET-BY-RUN.SH: cl22 of the check request"
+    ]
+  },
+  "usage": {
+    "state": "final",
+    "cost_micro": "SET-BY-RUN.SH",
+    "unresolved_liability_micro": 0,
+    "currency": "USD",
+    "price_schedule_ref": "cl22:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "attempt_refs": [
+      "SET-BY-RUN.SH: cl22 of the trial id"
+    ]
+  },
+  "corpus_role": "SET-BY-RUN.SH",
+  "data_use_ref": "cl22:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "projection_ref": null
+}

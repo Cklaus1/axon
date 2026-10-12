@@ -14,6 +14,20 @@ Callers:
 
 No `axon` CLI verb reaches this crate.
 
+## Usage
+
+[`docs/CLOSED_LOOP_WALKTHROUGH.md`](../../docs/CLOSED_LOOP_WALKTHROUGH.md)
+drives every stage of the loop on a scratch store, with real output. The
+stages are config, registries, pointer, EVO, plan, assignment, intake, EVL,
+admission, TEL, and revoke/rollback, plus the keyed ledger. The runnable
+script is `examples/closed-loop/run.sh`; its hand-written inputs are in
+`examples/closed-loop/inputs/`.
+
+```text
+cargo build -p axon-loop --bin axon-loop
+bash examples/closed-loop/run.sh target/debug/axon-loop
+```
+
 ## What it is
 
 * `pointer` / `epoch`: a per-scope fenced active-policy pointer and its

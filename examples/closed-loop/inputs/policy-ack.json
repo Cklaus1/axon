@@ -1,0 +1,18 @@
+{
+  "schema": "micode.closed-loop.policy-ack/1",
+  "pin": {
+    "state": "pinned",
+    "policy_id": "SET-BY-RUN.SH",
+    "policy_ref": "SET-BY-RUN.SH",
+    "controls_ref": "SET-BY-RUN.SH",
+    "candidate_set_ref": "SET-BY-RUN.SH",
+    "shortlist": "SET-BY-RUN.SH"
+  },
+  "candidates": [
+    "edit",
+    "read",
+    "search",
+    "write"
+  ],
+  "candidate_set_ref": "SET-BY-RUN.SH"
+}

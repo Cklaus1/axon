@@ -4681,10 +4681,16 @@ fn all_examples_typecheck_clean() {
         "bad_heap.ax",
         "bad_helper.ax",
     ];
+    // examples/sealed/ is a suite plus candidate modules that only resolve
+    // together (AXON_PATH=<suite>:<candidate>), and two candidates are attacks
+    // DESIGNED to be refused (E0001) under --seal. Guarded by
+    // `sealed_examples_grade_every_candidate_as_expected` below.
+    let sealed_examples = std::path::Path::new(&root).join("sealed");
     for f in &files {
         if f.file_name()
             .and_then(|n| n.to_str())
             .is_some_and(|n| DENY_CASE_EXAMPLES.contains(&n))
+            || f.starts_with(&sealed_examples)
         {
             continue;
         }
@@ -4701,6 +4707,26 @@ fn all_examples_typecheck_clean() {
             String::from_utf8_lossy(&out.stdout)
         );
     }
+}
+
+#[test]
+fn sealed_examples_grade_every_candidate_as_expected() {
+    // docs/SEALED_TESTS.md walks through examples/sealed/run.sh: the honest
+    // candidate passes, the wrong one, the one shipping its own @[test] and the
+    // one calling exit(0) (under an empty effect ceiling) fail, the two that
+    // name operator code are refused, AXON_ENGINE=vm is refused, the controls
+    // show two attacks passing once a safeguard is dropped, and only the honest
+    // candidate earns completion tokens. The script exits non-zero on any
+    // mismatch.
+    let out = harness(&ex("sealed/run.sh"))
+        .output()
+        .expect("run sealed/run.sh");
+    assert!(
+        out.status.success(),
+        "examples/sealed/run.sh reported a mismatch:\n{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]
@@ -32243,9 +32269,51 @@ fn every_example_with_at_test_actually_runs_under_axon_test() {
         files.len()
     );
 
+    // examples/sealed/ only resolves as suite + candidate under --seal; it is
+    // graded by `sealed_examples_grade_every_candidate_as_expected`.
+    let sealed_examples = std::path::Path::new(&root).join("sealed");
+    // Deliberately broken inputs: the file IS the bug a walkthrough repairs
+    // (docs/CORTEX.md, examples/cortex/run.sh). Its failing set is pinned
+    // exactly, so the bug can neither vanish nor spread unnoticed.
+    let expected_failures: &[(&str, &[&str])] = &[(
+        "cortex/pricing.ax",
+        &["visible_boundary_order", "hidden_discount_boundary"],
+    )];
     let mut total_passed = 0usize;
     let mut broken: Vec<String> = Vec::new();
     for f in &files {
+        if f.starts_with(&sealed_examples) {
+            continue;
+        }
+        let rel = f
+            .strip_prefix(&root)
+            .ok()
+            .and_then(|p| p.to_str())
+            .unwrap_or_default()
+            .trim_start_matches('/');
+        if let Some((_, want)) = expected_failures.iter().find(|(p, _)| *p == rel) {
+            let out = axon().arg("test").arg(f).output().expect("spawn axon test");
+            let text = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let mut failed: Vec<&str> = text
+                .lines()
+                .filter_map(|l| l.strip_prefix("test ")?.strip_suffix(" ... FAILED"))
+                .collect();
+            failed.sort_unstable();
+            let mut want = want.to_vec();
+            want.sort_unstable();
+            if out.status.code() == Some(0) || failed != want {
+                broken.push(format!(
+                    "{}: expected exactly {want:?} to fail, got exit {:?} failing {failed:?}",
+                    f.display(),
+                    out.status.code()
+                ));
+            }
+            continue;
+        }
         let out = axon().arg("test").arg(f).output().expect("spawn axon test");
         let text = format!(
             "{}{}",

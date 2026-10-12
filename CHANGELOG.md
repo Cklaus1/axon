@@ -1,5 +1,11 @@
 # Axon Changelog
 
+## User guides and runnable examples for sealed tests, Cortex and the closed loop
+
+- **Sealed tests:** `docs/SEALED_TESTS.md` (safe grading recipe first: `AXON_ALLOWED_EFFECTS=` empty or `--completion-key-stdin`; without either, a sealed candidate that calls `exit(0)` passes every test), a section in `spec/axon-for-llms.md`, and `examples/sealed/` (honest, wrong and four attack candidates; `run.sh` asserts every verdict, run by `cli_run`).
+- **Cortex:** `docs/CORTEX.md` (locate, repair with `literal:`/`cmd:`/`ai:`, every exit code incl. 27) and `examples/cortex/` (`run.sh` covers exits 0/21/23/26 and the `exit(0)` body, now refused). `benchmarks/drivers/claude_cli.sh` returned no body (exit 127 on every call since 06002848: an apostrophe closed its quoted Python); fixed, with `tests/claude_driver.rs`.
+- **Closed loop:** `docs/CLOSED_LOOP_WALKTHROUGH.md` and `examples/closed-loop/run.sh`, which drives the development-class flow end to end on a scratch store (pointer, plan, EVO, intake, EVL, admit, promote, TEL, revoke, rollback; keyed ledger) without MiCode or Fabric (their inputs are sample JSON), and asserts 10 expected refusals.
+
 ## `cortex repair`: a check passes only with proof its test completed
 
 - **axon-cortex:** every check `cortex repair` adjudicates with (the hidden check's verdict and the visible checks that decide accept/revert) now runs `axon test --json --completion-key-stdin` under a fresh random key per dispatch, and a test counts as passed only if it reported `ok` AND carries the completion token for its name under that key; an `ok` without it is counted failed. Plain `axon test` reports a test ended by `exit(0)` as `ok`, so a candidate body `exit(0)` used to make `cortex repair` print `verified_done` and exit 0 with the defect replaced by an exit; it now ends `no_progress` (exit 21) with the file restored. A printed, forged result line (with or without a counterfeit token) cannot supply the token. `LocalInterpreterExecutor::with_completion_key` keeps the raw report for a caller that adjudicates the tokens itself (the Fabric).

@@ -1,0 +1,4 @@
+// Honest but wrong: doubles instead of squaring. The suite must fail it.
+pub fn solve(n: i64) -> i64 {
+    n + n
+}

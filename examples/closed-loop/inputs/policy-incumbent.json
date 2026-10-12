@@ -1,0 +1,19 @@
+{
+  "schema": "axon.closed-loop.policy/1",
+  "policy_id": "incumbent",
+  "parent_policy_ref": "cl22:0000000000000000000000000000000000000000000000000000000000000000",
+  "scope": {
+    "tenant_id": "demo-tenant",
+    "task_family": "demo-coding"
+  },
+  "mode": "shortlist_only",
+  "candidate_set_ref": "SET-BY-RUN.SH: candidate_set_ref from step 'candidates put'",
+  "controls_ref": "cl22:2222222222222222222222222222222222222222222222222222222222222222",
+  "shortlist": [
+    "read",
+    "search",
+    "edit"
+  ],
+  "discovery_evidence_refs": [],
+  "authority_expansion": false
+}
