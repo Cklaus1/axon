@@ -2030,6 +2030,118 @@ fn r51_t1b_a_sealed_run_compiles_nothing() {
     assert_eq!(lambdas, 0, "sealed run compiled a lambda body");
 }
 
+/// The R50 S11-S13 VM tiers on [`R51_T1B_TIERS_SRC`]: a pure-i64 fn (`fib`,
+/// the S11 register tier), a bulk fill and a bulk count over a packed
+/// `Bools` array (S13), and `arr_fold` over a packed `Ints` array (the S7
+/// `fold_leaf`).
+const R51_T1B_TIERS_SRC: &str = "\
+fn fib(n: i64) -> i64 {
+    if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+}
+fn t() -> i64 {
+    let a = arr_repeat(false, 64)
+    let i = 1
+    while i < 64 {
+        a[i] = true
+        i = i + 3
+    }
+    let n = 0
+    for k in 0..64 {
+        if a[k] { n = n + 1 }
+    }
+    let xs = arr_range(0, 10)
+    let total = arr_fold(xs, 0, |acc: i64, x: i64| acc + x)
+    fib(15) + n + total
+}
+";
+
+/// R51 T1b for main's VM-only tiers (R50 S11 pure fns, S13 bulk loops): a
+/// sealed run (the pin's engine, eager) builds no pure-tier code for any fn
+/// and runs no bulk fill or count, so none of them is a path by which a
+/// value crosses the seal; it computes what the VM does. A sealed `Interp`
+/// handed the VM anyway (the pin bypassed, as in
+/// `r51_t7_a_sealed_run_given_the_vm_builds_no_vm_body`) is refused before
+/// either tier runs. Control: the same program unsealed on the VM builds
+/// `fib`'s pure code and moves both bulk counters.
+#[test]
+fn r51_t1b_a_sealed_run_enters_no_pure_tier_or_bulk_loop() {
+    let prog = crate::parse_source(R51_T1B_TIERS_SRC).expect("parses");
+    let runs = super::pure::probe::bulk_runs;
+    let tiers = |interp: &Interp<'_>| -> Vec<String> {
+        interp
+            .fn_table
+            .iter()
+            .zip(interp.pure_slots.iter())
+            .filter(|(_, s)| matches!(s.code.get(), Some(Some(_))))
+            .map(|(e, _)| e.def.name.clone())
+            .collect()
+    };
+    let moved = |a: [u32; 3], b: [u32; 3]| a.iter().zip(b).map(|(x, y)| x - y).sum::<u32>();
+    let run = |sealed: bool, engine: Engine| {
+        let dirs = if sealed {
+            vec![std::path::PathBuf::from("/r51-t1b-tiers")]
+        } else {
+            Vec::new()
+        };
+        let mut interp = Interp::build_with(&prog, &dirs, engine);
+        assert_eq!((interp.seal.active, interp.engine), (sealed, engine));
+        interp.vm_eager = true;
+        interp.vm_trace = false;
+        interp.init_globals().expect("no globals");
+        let before = runs();
+        let got = interp.call_fn(interp.fns["t"], vec![]).expect("t runs");
+        let after = runs();
+        let Value::Int(n) = got else {
+            panic!("t gave {got:?}")
+        };
+        let pure = tiers(&interp);
+        let bulk = (
+            moved(after.fills, before.fills),
+            moved(after.counts, before.counts),
+        );
+        (n, pure, bulk)
+    };
+    let (want, pure, bulk) = run(false, Engine::Vm);
+    assert_eq!(want, 610 + 21 + 45);
+    assert_eq!(pure, ["fib"], "control: fib has pure code");
+    assert_eq!(bulk, (1, 1), "control: one bulk fill and one bulk count");
+
+    let engine = engine_for(true, true, None, None).expect("a sealed run is allowed");
+    let (got, pure, bulk) = run(true, engine);
+    assert_eq!(got, want);
+    assert!(
+        pure.is_empty(),
+        "ATTACK: a sealed run built pure code for {pure:?}"
+    );
+    assert_eq!(bulk, (0, 0), "ATTACK: a sealed run ran a bulk loop");
+
+    let dirs = [std::path::PathBuf::from("/r51-t1b-tiers")];
+    let mut interp = Interp::build_with(&prog, &dirs, Engine::Vm);
+    assert!(interp.seal.active);
+    interp.vm_eager = true;
+    interp.vm_trace = false;
+    interp.init_globals().expect("no globals");
+    let f = interp.fns["t"];
+    let before = runs();
+    let refused =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| interp.call_fn(f, vec![])));
+    let after = runs();
+    assert!(refused.is_err(), "the sealed VM run was not refused");
+    let pure = tiers(&interp);
+    assert!(
+        pure.is_empty(),
+        "ATTACK: a sealed VM run built pure code for {pure:?}"
+    );
+    assert_eq!(
+        (
+            moved(after.fills, before.fills),
+            moved(after.counts, before.counts)
+        ),
+        (0, 0),
+        "ATTACK: a sealed VM run ran a bulk loop"
+    );
+}
+
 /// The S9 first-entry marks `interp`'s run set: (some fn-table entry, some
 /// resolved lambda body). Only a VM path sets one (`first_entry_on_tree`,
 /// `compile_lambda`); the tree never does.

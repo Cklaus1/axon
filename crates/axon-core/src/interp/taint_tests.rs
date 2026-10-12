@@ -1712,6 +1712,157 @@ fn bypass_shapes_hunted_after_the_first_cut() {
     attacks_are_live(&cases);
 }
 
+/// Main's R50 S13 packed arrays (`Elems` `Bools`/`Ints`/`Floats`, built by
+/// `arr_repeat` of a plain scalar and by `arr_range`) on the sealed tree: an
+/// element read out of one (the `index_in_place` and `index_value` paths, a
+/// `for` loop, `arr_fold`, `len`), a write into one (`write_place`, a packed
+/// store that keeps the form) and an append (`arr_push`) carry the taint
+/// exactly as a `Vals` array's do, into the name rule and the pick rule.
+/// The taint rides on the holder (binding or expression), never on the
+/// element, so the form cannot drop it; these cases pin that. The honest
+/// controls name the fn through an index, which the static name rule
+/// over-refuses (as for any `names[k]`), so they are `stricter`.
+fn packed_cases() -> Vec<Case> {
+    use Expect::*;
+    let dbl = "fn double(x: i64) -> i64 { 0 }\n";
+    let ints = format!("fn is() -> [i64] {{ arr_repeat(1, 2) }}\n{dbl}");
+    let range = format!("fn is() -> [i64] {{ arr_range(1, 3) }}\n{dbl}");
+    let idx = format!("{IDX}{dbl}");
+    let names = "[\"double\", \"reference\"]";
+    let run_k = |pre: &str| {
+        format!(
+            "{SB}{pre}    let got = sandbox_run(sb, {names}[k], 21)\n    assert(got == reference(21))"
+        )
+    };
+    vec![
+        case(
+            "a packed Ints element, in place",
+            REF,
+            &run_k("    let xs = is()\n    let k = xs[0]\n"),
+            &ints,
+            Refused,
+        ),
+        case(
+            "a packed Ints element, by value",
+            REF,
+            &run_k("    let k = is()[0]\n"),
+            &ints,
+            Refused,
+        ),
+        case(
+            "an arr_range element",
+            REF,
+            &run_k("    let xs = is()\n    let k = xs[0]\n"),
+            &range,
+            Refused,
+        ),
+        case(
+            "a candidate int stored into an operator packed array",
+            REF,
+            &run_k("    let xs = arr_repeat(0, 2)\n    xs[0] = idx()\n    let k = xs[0]\n"),
+            &idx,
+            Refused,
+        ),
+        case(
+            "a candidate int stored at another index (the holder's taint covers every element)",
+            REF,
+            &run_k("    let xs = arr_repeat(1, 2)\n    xs[1] = idx()\n    let k = xs[0]\n"),
+            &idx,
+            Refused,
+        ),
+        case(
+            "a packed array the candidate built, iterated",
+            REF,
+            &run_k("    let k = 0\n    for x in is() { k = x }\n"),
+            &ints,
+            Refused,
+        ),
+        case(
+            "arr_fold over a packed array the candidate built",
+            REF,
+            &run_k("    let k = arr_fold(is(), 0, |a, x| x)\n"),
+            &ints,
+            Refused,
+        ),
+        case(
+            "the length of a packed array the candidate built",
+            REF,
+            &run_k("    let k = len(is()) - 1\n"),
+            &ints,
+            Refused,
+        ),
+        case(
+            "a candidate int appended to an operator packed array",
+            REF,
+            &run_k("    let xs = arr_push(arr_repeat(0, 1), idx())\n    let k = xs[1]\n"),
+            &idx,
+            Refused,
+        ),
+        case(
+            "a packed Bools element as a branch",
+            REF,
+            &run_k("    let bs = bs()\n    let k = 0\n    if bs[1] { k = 1 }\n"),
+            &format!("fn bs() -> [bool] {{ arr_repeat(true, 2) }}\n{dbl}"),
+            Refused,
+        ),
+        case(
+            "a packed Floats element as a branch",
+            REF,
+            &run_k("    let fs = fs()\n    let k = if fs[0] > 0.5 { 1 } else { 0 }\n"),
+            &format!("fn fs() -> [f64] {{ arr_repeat(1.0, 2) }}\n{dbl}"),
+            Refused,
+        ),
+        case(
+            "a packed Ints element picks an operator closure",
+            REF,
+            &format!("{OPS}    let xs = is()\n    assert((ops[xs[0]])(21) == reference(21))"),
+            &ints,
+            Refused,
+        ),
+        stricter(case(
+            "an operator packed array",
+            REF,
+            &run_k("    let xs = arr_repeat(1, 2)\n    let k = xs[0]\n"),
+            &idx,
+            Ok,
+        )),
+        stricter(case(
+            "an operator packed array beside a candidate int",
+            REF,
+            &run_k("    let n = idx()\n    let xs = arr_range(1, 3)\n    let k = xs[0]\n"),
+            &idx,
+            Ok,
+        )),
+        stricter(case(
+            "an operator int stored into an operator packed array",
+            REF,
+            &run_k("    let xs = arr_repeat(0, 2)\n    xs[0] = 1\n    let k = xs[0]\n"),
+            &idx,
+            Ok,
+        )),
+    ]
+}
+
+#[test]
+fn a_packed_array_carries_its_holders_taint() {
+    // The forms these cases rely on: a plain scalar repeats packed and a
+    // range is packed (else the cases test only the `Vals` path).
+    let form = |v: Value| Elems::repeat(&v, 2).expect("small").form();
+    assert_eq!(
+        (
+            form(Value::Int(1)),
+            form(Value::Bool(true)),
+            form(Value::Float(1.0))
+        ),
+        ("Ints", "Bools", "Floats")
+    );
+    assert_eq!(Elems::range(1..3, 2).expect("small").form(), "Ints");
+    let cases = packed_cases();
+    check(&cases, Rules::TaintOnly);
+    check(&cases, Rules::Both);
+    attacks_are_live(&cases);
+}
+
 /// One attack per hook of the taint, so a mutation row can remove a hook and
 /// name the case that must then get through (amendment 102).
 fn hook_cases() -> Vec<Case> {
@@ -1985,6 +2136,12 @@ fn every_dict_builtin_is_a_listed_writer_or_a_reader_that_does_not_write() {
 /// `Snapshot` on main): the scan looks for those names too. The rows main
 /// adds over v0.22 are its new holders (the env split, the resolution
 /// tables' literals, and the VM's operands, which never run sealed).
+///
+/// Main's R50 S12/S13 wrap a value's contents in newtypes (`VBox`, `Elems`
+/// and its `Rep`, `DictMap`, `Queue`, `Fields`), so a type that names one of
+/// them holds values as one naming `Value` does: the scan looks for those
+/// names too, and reads a one-line tuple struct (`struct VBox(..);`) as well
+/// as a braced body.
 #[test]
 fn every_type_that_holds_a_value_keeps_its_taint() {
     const HOLDERS: &[(&str, &str)] = &[
@@ -2009,6 +2166,18 @@ fn every_type_that_holds_a_value_keeps_its_taint() {
         ("Op", "a VM instruction's literal value; the VM never runs a sealed frame (a sealed run is pinned to the tree engine, `VM_SEALED`)"),
         ("Opnd", "a VM operand's literal value; the VM never runs a sealed frame (`VM_SEALED`)"),
         ("StackTail", "call arguments on a VM activation's operand stack; the VM never runs a sealed frame (`VM_SEALED`)"),
+        ("VBox", "a `Some`/`Ok`/`Err` payload (R50 S12 newtype over v0.22's `Box<Value>`): read out by a match or `?`, whose result carries the scrutinee's taint"),
+        ("Fields", "a record's or variant's fields (R50 S12 newtype): a field read carries its holder's taint"),
+        ("StructVal", "a record value: its `Fields`, as `Fields`"),
+        ("EnumVal", "a variant value: its `Fields`, as `Fields`"),
+        ("DictMap", "a dict's map (R50 S12 newtype): a dict is one object with one taint (`Taint::objs`, by address)"),
+        ("Queue", "a channel's queue (R50 S12 newtype): a channel is one object with one taint (`Taint::objs`), stamped at creation"),
+        ("Elems", "an array's or tuple's elements (R50 S13): arrays are not scanned; an element read carries its holder's taint, a write joins the written value's taint into the holder's binding (`a_packed_array_carries_its_holders_taint`)"),
+        ("Rep", "`Elems`' representation: `Vals` holds values, `Bools`/`Ints`/`Floats` the bits of plain scalars; no form keeps a taint, the holder does, so the form cannot drop one"),
+        ("ElemsRef", "a borrowed read view of an `Elems`' storage: a read through it is an element read of the array (its holder's taint)"),
+        ("ElemsMut", "a borrowed write view of an `Elems`' storage: a write through it is a write to the array its holder's binding owns (`write_place` joins the taint)"),
+        ("ElemsIter", "iterates an `Elems`' elements for a loop or a builtin: each element carries the iterated array's taint"),
+        ("LoopMem", "the R50 S13 VM register loop's arrays; VM engine only, never in a sealed run (`r51_t1b_a_sealed_run_enters_no_pure_tier_or_bulk_loop`)"),
     ];
     let mut found: Vec<String> = Vec::new();
     for (_, src) in sources() {
@@ -2031,21 +2200,35 @@ fn every_type_that_holds_a_value_keeps_its_taint() {
                     .collect();
                 let mut j = i + 1;
                 let mut mentions = false;
+                let holds = |w: &str| {
+                    w.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                        .any(|x| {
+                            matches!(
+                                x,
+                                "Value"
+                                    | "Env"
+                                    | "Bindings"
+                                    | "Snapshot"
+                                    | "Captures"
+                                    | "VBox"
+                                    | "Elems"
+                                    | "Rep"
+                                    | "DictMap"
+                                    | "Queue"
+                                    | "Fields"
+                            )
+                        })
+                };
                 if l.trim_end().ends_with('{') {
                     while j < lines.len() && lines[j] != "}" {
                         let w = lines[j];
                         if !w.trim_start().starts_with("//") {
-                            mentions |=
-                                w.split(|c: char| !(c.is_alphanumeric() || c == '_'))
-                                    .any(|x| {
-                                        matches!(
-                                            x,
-                                            "Value" | "Env" | "Bindings" | "Snapshot" | "Captures"
-                                        )
-                                    });
+                            mentions |= holds(w);
                         }
                         j += 1;
                     }
+                } else if l.trim_end().ends_with(';') {
+                    mentions = holds(&rest[name.len()..]);
                 }
                 if mentions {
                     found.push(name);
