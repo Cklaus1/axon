@@ -9,7 +9,6 @@
 //! reported it as the generator declining.
 
 #[path = "../../axon-core/tests/script_spawn/mod.rs"]
-#[allow(dead_code)]
 mod script_spawn;
 
 use std::io::Write;
@@ -23,7 +22,8 @@ Its body is currently:\n```\nif total > 100 { total / 10 } else { 0 }\n```\n";
 /// Run the driver with `claude` on PATH replaced by a stub that prints
 /// `reply` as the CLI's JSON envelope. Returns (exit code, stdout, log text).
 fn run_driver(tag: &str, reply: &str) -> (Option<i32>, String, String) {
-    let dir = std::env::temp_dir().join(format!("cortex-claude-driver-{}-{tag}", std::process::id()));
+    let dir =
+        std::env::temp_dir().join(format!("cortex-claude-driver-{}-{tag}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let envelope = serde_json::json!({
@@ -38,7 +38,10 @@ fn run_driver(tag: &str, reply: &str) -> (Option<i32>, String, String) {
     let stub = dir.join("claude");
     std::fs::write(
         &stub,
-        format!("#!/bin/sh\ncat >/dev/null\ncat '{}'\n", dir.join("envelope.json").display()),
+        format!(
+            "#!/bin/sh\ncat >/dev/null\ncat '{}'\n",
+            dir.join("envelope.json").display()
+        ),
     )
     .unwrap();
     #[cfg(unix)]
@@ -52,7 +55,8 @@ fn run_driver(tag: &str, reply: &str) -> (Option<i32>, String, String) {
         dir.display(),
         std::env::var("PATH").unwrap_or_default()
     );
-    let driver = script_spawn::repo_root().join("crates/axon-cortex/benchmarks/drivers/claude_cli.sh");
+    let driver =
+        script_spawn::repo_root().join("crates/axon-cortex/benchmarks/drivers/claude_cli.sh");
     let mut child = script_spawn::script("sh", &driver, script_spawn::Bins::NoWorkspaceBinary)
         .env("PATH", path)
         .env("CORTEX_MODEL_LOG", &log)
