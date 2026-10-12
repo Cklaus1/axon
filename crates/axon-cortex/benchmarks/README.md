@@ -213,8 +213,8 @@ agent on the same model fixed all 47 (paired exact McNemar p = 0.031). Those six
 misses used about three quarters of each Cortex arm's proposals. The section is
 left as written; on held-out tasks the generator, not ranking, was the
 bottleneck. Giving the generator the ranker's view of the file and the
-visible tests' feedback closed that gap: 47/47 on the same set (exploratory)
-and 30/30, equal to the plain agent, on `once.json`
+visible tests' feedback closed that gap: all 47 verified on the same set
+(exploratory) and all 30, equal to the plain agent, on `once.json`
 (`heldout/results/gencontext/README.md`).
 
 ## Call depth
