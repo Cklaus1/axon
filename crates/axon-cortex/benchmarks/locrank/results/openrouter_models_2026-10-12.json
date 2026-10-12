@@ -1,0 +1,396 @@
+{
+ "fetched_utc": "2026-10-12T16:47:10Z",
+ "source": "https://openrouter.ai/api/v1/models",
+ "models": {
+  "qwen/qwen3-coder-next": {
+   "name": "Qwen: Qwen3 Coder Next",
+   "pricing_per_mtok": {
+    "prompt": 0.12,
+    "completion": 0.8
+   },
+   "pricing_raw": {
+    "prompt": "0.00000012",
+    "completion": "0.0000008",
+    "input_cache_read": "0.00000007"
+   },
+   "context_length": 262144,
+   "max_completion_tokens": 235929,
+   "reasoning": null,
+   "created": 1770164101,
+   "endpoints": [
+    {
+     "provider": "Parasail",
+     "tag": "parasail/bf16",
+     "uptime_last_30m": 100,
+     "latency_p50_ms": null,
+     "throughput": null
+    }
+   ]
+  },
+  "openai/gpt-6-luna": {
+   "name": "OpenAI: GPT-6 Luna",
+   "pricing_per_mtok": {
+    "prompt": 0.1,
+    "completion": 0.5
+   },
+   "pricing_raw": {
+    "prompt": "0.0000001",
+    "completion": "0.0000005",
+    "web_search": "0.01",
+    "input_cache_read": "0.00000001",
+    "input_cache_write": "0.000000125",
+    "overrides": [
+     {
+      "min_prompt_tokens": 272000,
+      "prompt": "0.0000002",
+      "completion": "0.00000075",
+      "input_cache_read": "0.00000002",
+      "input_cache_write": "0.00000025"
+     }
+    ]
+   },
+   "context_length": 1050000,
+   "max_completion_tokens": 128000,
+   "reasoning": {
+    "mandatory": false,
+    "default_enabled": true,
+    "supported_efforts": [
+     "max",
+     "xhigh",
+     "high",
+     "medium",
+     "low",
+     "none"
+    ],
+    "default_effort": "medium"
+   },
+   "created": 1790100786,
+   "endpoints": [
+    {
+     "provider": "OpenAI",
+     "tag": "openai/flex",
+     "uptime_last_30m": 96.66666666666667,
+     "latency_p50_ms": null,
+     "throughput": null
+    },
+    {
+     "provider": "OpenAI",
+     "tag": "openai",
+     "uptime_last_30m": 100,
+     "latency_p50_ms": null,
+     "throughput": null
+    },
+    {
+     "provider": "Azure",
+     "tag": "azure",
+     "uptime_last_30m": 100,
+     "latency_p50_ms": null,
+     "throughput": null
+    },
+    {
+     "provider": "Azure",
+     "tag": "azure/us",
+     "uptime_last_30m": 100,
+     "latency_p50_ms": null,
+     "throughput": null
+    },
+    {
+     "provider": "Azure",
+     "tag": "azure/eu",
+     "uptime_last_30m": 100,
+     "latency_p50_ms": null,
+     "throughput": null
+    },
+    {
+     "provider": "Amazon Bedrock",
+     "tag": "amazon-bedrock/us-east-1",
+     "uptime_last_30m": 100,
+     "latency_p50_ms": null,
+     "throughput": null
+    },
+    {
+     "provider": "OpenAI",
+     "tag": "openai/fast",
+     "uptime_last_30m": 100,
+     "latency_p50_ms": null,
+     "throughput": null
+    }
+   ]
+  },
+  "anthropic/claude-haiku-5.5": {
+   "name": "Anthropic: Claude Haiku 5.5",
+   "pricing_per_mtok": {
+    "prompt": 0.1,
+    "completion": 0.5
+   },
+   "pricing_raw": {
+    "prompt": "0.0000001",
+    "completion": "0.0000005",
+    "web_search": "0.01",
+    "input_cache_read": "0.00000001",
+    "input_cache_write": "0.000000125",
+    "input_cache_write_1h": "0.0000002",
+    "overrides": [
+     {
+      "min_prompt_tokens": 100000,
+      "prompt": "0.0000005",
+      "completion": "0.0000025",
+      "input_cache_read": "0.00000005",
+      "input_cache_write": "0.000000625",
+      "input_cache_write_1h": "0.000001"
+     }
+    ]
+   },
+   "context_length": 1000000,
+   "max_completion_tokens": 128000,
+   "reasoning": {
+    "mandatory": false,
+    "supported_efforts": [
+     "max",
+     "xhigh",
+     "high",
+     "medium",
+     "low"
+    ],
+    "default_effort": "medium"
+   },
+   "created": 1791397883,
+   "endpoints": [
+    {
+     "provider": "Google",
+     "tag": "google-vertex/global",
+     "uptime_last_30m": 100,
+     "latency_p50_ms": null,
+     "throughput": null
+    },
+    {
+     "provider": "Claude Platform on AWS",
+     "tag": "claude-on-aws",
+     "uptime_last_30m": 100,
+     "latency_p50_ms": null,
+     "throughput": null
+    },
+    {
+     "provider": "Azure",
+     "tag": "azure/global",
+     "uptime_last_30m": 100,
+     "latency_p50_ms": null,
+     "throughput": null
+    },
+    {
+     "provider": "Anthropic",
+     "tag": "anthropic",
+     "uptime_last_30m": 100,
+     "latency_p50_ms": null,
+     "throughput": null
+    },
+    {
+     "provider": "Amazon Bedrock",
+     "tag": "amazon-bedrock",
+     "uptime_last_30m": 100,
+     "latency_p50_ms": null,
+     "throughput": null
+    },
+    {
+     "provider": "Google",
+     "tag": "google-vertex/europe",
+     "uptime_last_30m": 100,
+     "latency_p50_ms": null,
+     "throughput": null
+    },
+    {
+     "provider": "Google",
+     "tag": "google-vertex/us",
+     "uptime_last_30m": 100,
+     "latency_p50_ms": null,
+     "throughput": null
+    },
+    {
+     "provider": "Azure",
+     "tag": "azure/us",
+     "uptime_last_30m": null,
+     "latency_p50_ms": null,
+     "throughput": null
+    },
+    {
+     "provider": "Amazon Bedrock",
+     "tag": "amazon-bedrock/us-east-1",
+     "uptime_last_30m": 100,
+     "latency_p50_ms": null,
+     "throughput": null
+    },
+    {
+     "provider": "Amazon Bedrock",
+     "tag": "amazon-bedrock/eu-west-1",
+     "uptime_last_30m": 100,
+     "latency_p50_ms": null,
+     "throughput": null
+    }
+   ]
+  },
+  "anthropic/claude-haiku-4.5": {
+   "name": "Anthropic: Claude Haiku 4.5",
+   "pricing_per_mtok": {
+    "prompt": 1.0,
+    "completion": 5.0
+   },
+   "pricing_raw": {
+    "prompt": "0.000001",
+    "completion": "0.000005",
+    "web_search": "0.01",
+    "input_cache_read": "0.0000001",
+    "input_cache_write": "0.00000125",
+    "input_cache_write_1h": "0.000002"
+   },
+   "context_length": 200000,
+   "max_completion_tokens": 64000,
+   "reasoning": {
+    "mandatory": false
+   },
+   "created": 1760547638,
+   "endpoints": [
+    {
+     "provider": "Azure",
+     "tag": "azure/global",
+     "uptime_last_30m": 100,
+     "latency_p50_ms": null,
+     "throughput": null
+    },
+    {
+     "provider": "Amazon Bedrock",
+     "tag": "amazon-bedrock/global",
+     "uptime_last_30m": 100,
+     "latency_p50_ms": null,
+     "throughput": null
+    },
+    {
+     "provider": "Google",
+     "tag": "google-vertex/global",
+     "uptime_last_30m": 100,
+     "latency_p50_ms": null,
+     "throughput": null
+    },
+    {
+     "provider": "Anthropic",
+     "tag": "anthropic",
+     "uptime_last_30m": 100,
+     "latency_p50_ms": null,
+     "throughput": null
+    },
+    {
+     "provider": "Amazon Bedrock",
+     "tag": "amazon-bedrock/us",
+     "uptime_last_30m": 100,
+     "latency_p50_ms": null,
+     "throughput": null
+    },
+    {
+     "provider": "Google",
+     "tag": "google-vertex/us-east5",
+     "uptime_last_30m": null,
+     "latency_p50_ms": null,
+     "throughput": null
+    },
+    {
+     "provider": "Amazon Bedrock",
+     "tag": "amazon-bedrock/eu-west-1",
+     "uptime_last_30m": 100,
+     "latency_p50_ms": null,
+     "throughput": null
+    },
+    {
+     "provider": "Google",
+     "tag": "google-vertex/europe",
+     "uptime_last_30m": null,
+     "latency_p50_ms": null,
+     "throughput": null
+    }
+   ]
+  },
+  "cohere/north-mini-code:free": {
+   "name": "Cohere: North Mini Code (free)",
+   "pricing_per_mtok": {
+    "prompt": 0.0,
+    "completion": 0.0
+   },
+   "pricing_raw": {
+    "prompt": "0",
+    "completion": "0"
+   },
+   "context_length": 256000,
+   "max_completion_tokens": 64000,
+   "reasoning": {
+    "mandatory": false
+   },
+   "created": 1781723748,
+   "endpoints": [
+    {
+     "provider": "Cohere",
+     "tag": "cohere",
+     "uptime_last_30m": 100,
+     "latency_p50_ms": null,
+     "throughput": null
+    }
+   ]
+  },
+  "nvidia/nemotron-3.5-lightning:free": {
+   "name": "NVIDIA: Nemotron 3.5 Lightning (free)",
+   "pricing_per_mtok": {
+    "prompt": 0.0,
+    "completion": 0.0
+   },
+   "pricing_raw": {
+    "prompt": "0",
+    "completion": "0"
+   },
+   "context_length": 1000000,
+   "max_completion_tokens": 65536,
+   "reasoning": {
+    "mandatory": false
+   },
+   "created": 1786452751,
+   "endpoints": [
+    {
+     "provider": "Nvidia",
+     "tag": "nvidia/nvfp4",
+     "uptime_last_30m": 100,
+     "latency_p50_ms": null,
+     "throughput": null
+    }
+   ]
+  },
+  "nvidia/nemotron-3-super-120b-a12b:free": {
+   "name": "NVIDIA: Nemotron 3 Super (free)",
+   "pricing_per_mtok": {
+    "prompt": 0.0,
+    "completion": 0.0
+   },
+   "pricing_raw": {
+    "prompt": "0",
+    "completion": "0"
+   },
+   "context_length": 262144,
+   "max_completion_tokens": 235929,
+   "reasoning": {
+    "mandatory": false,
+    "default_enabled": true,
+    "supports_max_tokens": true,
+    "supported_efforts": [
+     "medium",
+     "low"
+    ],
+    "default_effort": "medium"
+   },
+   "created": 1773245239,
+   "endpoints": [
+    {
+     "provider": "Nvidia",
+     "tag": "nvidia",
+     "uptime_last_30m": 100,
+     "latency_p50_ms": null,
+     "throughput": null
+    }
+   ]
+  }
+ }
+}
