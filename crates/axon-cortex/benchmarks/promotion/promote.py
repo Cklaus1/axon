@@ -1008,10 +1008,16 @@ def cmd_standin(a):
                       f"(--generator {'|'.join(STANDIN_VARIANTS)}) only; meta is {meta}")
     asked = {}
     for k in ("ranker", "audit"):
-        s = {(r.get(k) or {}).get("requested") for r in raw}
-        if len(s) != 1 or None in s:
-            raise Refused(f"{a.rows}: rows do not agree on the requested {k}: {sorted(map(str, s))}")
-        asked[k] = s.pop()
+        s = {(r.get(k) or {}).get("requested") for r in raw} - {None}
+        declared = getattr(a, k)
+        if len(s) > 1:
+            raise Refused(f"{a.rows}: rows disagree on the requested {k}: {sorted(s)}")
+        if s and declared and declared not in s:
+            raise Refused(f"--{k} {declared} but the rows requested {sorted(s)}")
+        if not s and not declared:
+            raise Refused(f"{a.rows}: no row ran the {k} (the audit runs only on a verified "
+                          f"patch); say what it was configured to with --{k}")
+        asked[k] = s.pop() if s else declared
     used = sorted({(r.get("ranker") or {}).get("used") or "?" for r in raw})
     out = []
     for r in raw:
@@ -1055,6 +1061,8 @@ def main(argv=None):
     s.add_argument("--rows", required=True)
     s.add_argument("--corpus", required=True)
     s.add_argument("--out", required=True)
+    s.add_argument("--ranker", help="only when no row records the requested ranker")
+    s.add_argument("--audit", help="only when no row ran the audit (nothing verified)")
     a = ap.parse_args(argv)
     try:
         if a.cmd == "run":
