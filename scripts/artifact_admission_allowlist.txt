@@ -19,3 +19,9 @@ crates/axon-core/tests/fixtures/sandbox_scope_copy_read.ax
 # runs by scripts/cortex_package_gate_v022.sh. Not build output: it is upstream
 # package content, byte-copied, and its digest is re-checked on every gate run.
 docs/axon_cortex_v0_22/axon-cortex-build-v0_22/fixtures/neural_programs/minimal.np
+
+# The same fixture inside the extracted Cortex v0.23 build package (18f36e23),
+# which carries the v0.22 package as `parent/`. Byte-identical to the v0.22
+# entry above (cmp, 2026-10-12). Upstream package content, not build output.
+# No gate re-checks this copy's digest; the v0.22 copy above is the verified one.
+docs/axon_cortex_v0_23/axon-cortex-build-v0_23/parent/axon-cortex-build-v0_22/fixtures/neural_programs/minimal.np
