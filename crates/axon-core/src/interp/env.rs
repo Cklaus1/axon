@@ -675,10 +675,17 @@ impl Bindings {
         }
     }
 
-    /// The value of the binding [`Bindings::get_var_idx`] finds.
+    /// The value of the binding [`Bindings::get_var_idx`] finds, resolved by
+    /// the same rule. The slot hit returns from the branch that proved it in
+    /// bounds, so a variable read pays one bounds check, not the second the
+    /// index form re-checks (cost only: `vm_perf_gate.sh` collatz).
     #[inline(always)]
     pub(super) fn get_var(&self, name: Sym, slot: u32) -> Option<&Value> {
-        self.get_var_idx(name, slot).map(|i| &self.vars[i].1)
+        match self.vars.get(slot as usize) {
+            Some((k, v)) if *k == name => Some(v),
+            _ if slot == NOT_LOCAL => None,
+            _ => self.get(name),
+        }
     }
 
     /// The taint of binding `i` (an index a lookup returned). Panics on an
@@ -755,7 +762,9 @@ impl Bindings {
     }
 
     /// [`Bindings::get_var_mut`] for a caller that knows the run (see
-    /// [`Bindings::guard`]).
+    /// [`Bindings::guard`]), resolved by [`Bindings::get_var_idx`]'s rule
+    /// with the slot hit in its own branch (one bounds check, as
+    /// [`Bindings::get_var`]).
     #[inline(always)]
     pub(super) fn get_var_mut_t<const T: bool>(
         &mut self,
@@ -763,8 +772,14 @@ impl Bindings {
         slot: u32,
         t: u8,
     ) -> Option<&mut Value> {
-        let i = self.get_var_idx(name, slot)?;
-        Some(self.value_mut_t::<T>(i, t))
+        let i = slot as usize;
+        if i < self.vars.len() && self.vars[i].0 == name {
+            return Some(self.value_mut_t::<T>(i, t));
+        }
+        if slot == NOT_LOCAL {
+            return None;
+        }
+        self.get_mut_t::<T>(name, t)
     }
 
     /// Replace binding `i`'s value with `val` carrying taint `t`, returning
