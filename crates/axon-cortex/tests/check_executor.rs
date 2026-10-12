@@ -339,6 +339,60 @@ fn an_empty_mandatory_match_is_not_run_never_passed() {
     let _ = std::fs::remove_dir_all(&ws);
 }
 
+#[test]
+fn a_test_that_ended_early_is_never_passed() {
+    // `axon test` reports a test ended by `exit(0)` as `ok`. By default the
+    // executor keys every dispatch itself and counts a pass only with that
+    // key's completion token, which a body that did not RETURN never earns.
+    let ws = tmpdir("ended_early");
+    std::fs::write(
+        ws.join("f.ax"),
+        "fn double(n: i64) -> i64 {\n    exit(0)\n    0\n}\n\n\
+         @[test]\nfn hidden_completion() { assert_eq(double(3), 6) }\n\n\
+         @[test]\nfn t_returns() { assert_eq(1, 1) }\n",
+    )
+    .unwrap();
+    let req = CheckRequest {
+        workspace: &ws,
+        rel_path: "f.ax",
+        filter: None,
+    };
+    let mut reg = CheckRegistry::new();
+    reg.register_pinned(LOCAL_AXON_TEST_ID, &axon_bin())
+        .unwrap();
+    let rep = LocalInterpreterExecutor::from_registry(&reg)
+        .unwrap()
+        .run_checks(&req)
+        .unwrap();
+    assert_eq!(
+        rep.verdict("hidden_completion"),
+        CheckVerdict::Failed,
+        "{rep:?}"
+    );
+    assert_eq!(rep.verdict("t_returns"), CheckVerdict::Passed, "{rep:?}");
+
+    // The library entry point (`Runner::new`, pin on first use) is the same.
+    let mut r = Runner::new(axon_bin(), &ws);
+    assert!(!r.verify(true, "hidden_completion", "f.ax"));
+
+    // A caller that supplies its OWN key adjudicates the tokens itself (the
+    // Fabric does): the report comes back raw, the early end visible as a
+    // pass with no token for its name.
+    let key = vec![9u8; 32];
+    let raw = LocalInterpreterExecutor::from_registry(&reg)
+        .unwrap()
+        .with_completion_key(key.clone())
+        .run_checks(&req)
+        .unwrap();
+    assert_eq!(raw.verdict("hidden_completion"), CheckVerdict::Passed);
+    let want = axon_cortex::runner::completion_token(&key, "hidden_completion");
+    assert!(!raw
+        .completion
+        .iter()
+        .any(|(n, t)| n == "hidden_completion" && *t == want));
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
 // ── C9 round 2, LOOP workstream: one suite-id parser (PSV-5, M384) ──────────
 
 /// A check suite id holding a separator of `check-suite:<id>@<version>#<entry>`

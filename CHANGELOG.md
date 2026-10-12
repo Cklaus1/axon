@@ -1,5 +1,9 @@
 # Axon Changelog
 
+## `cortex repair`: a check passes only with proof its test completed
+
+- **axon-cortex:** every check `cortex repair` adjudicates with (the hidden check's verdict and the visible checks that decide accept/revert) now runs `axon test --json --completion-key-stdin` under a fresh random key per dispatch, and a test counts as passed only if it reported `ok` AND carries the completion token for its name under that key; an `ok` without it is counted failed. Plain `axon test` reports a test ended by `exit(0)` as `ok`, so a candidate body `exit(0)` used to make `cortex repair` print `verified_done` and exit 0 with the defect replaced by an exit; it now ends `no_progress` (exit 21) with the file restored. A printed, forged result line (with or without a counterfeit token) cannot supply the token. `LocalInterpreterExecutor::with_completion_key` keeps the raw report for a caller that adjudicates the tokens itself (the Fabric).
+
 ## R51 S7: accurate early-end and handler-arm texts; refinement names match the checker
 
 - **`axon test`:** a test that ends early on `None` (`return None`, or a `?` on `None`) still fails, now with "the test ended on `Err`, or early on `None` (a `return None` or a `?` on `None`): it did not complete"; it used to say only "the test returned `Err` (or a `?` ended it on `Err`/`None`)". Under `AXON_VM_EAGER=1` the bytecode engine read a test body's own early `return` as a completion; such a body now runs on the tree, as on the default engine.

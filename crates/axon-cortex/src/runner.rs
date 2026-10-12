@@ -1606,9 +1606,9 @@ pub struct CheckRequest<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckReport {
     /// `(test name, completion token)` for each passing test whose body
-    /// COMPLETED, as `axon test --completion-key-stdin` reports it (empty when
-    /// no key was given). A caller that needs affirmative completion evidence
-    /// checks the token with [`completion_token`].
+    /// COMPLETED, as `axon test --completion-key-stdin` reports it. A caller
+    /// that supplied its own key checks the token with [`completion_token`];
+    /// otherwise the executor already has (absent token ⇒ not in `passed`).
     pub completion: Vec<(String, String)>,
     pub failed: Vec<String>,
     pub passed: Vec<String>,
@@ -2095,8 +2095,12 @@ struct ExecLimits {
     /// Start the check process from an EMPTY environment, so only what is
     /// set explicitly here reaches it.
     clean_env: bool,
-    /// A per-run completion secret, written to the check's stdin (never its
-    /// environment, which `/proc/self/environ` would expose).
+    /// A caller-supplied completion secret, written to the check's stdin
+    /// (never its environment, which `/proc/self/environ` would expose). The
+    /// caller then adjudicates the tokens itself (the Fabric does), so the
+    /// report is returned RAW. `None` — the default — means the executor
+    /// draws a fresh key for every dispatch and enforces completion itself:
+    /// see [`LocalInterpreterExecutor::run_checks`].
     completion_key: Option<Vec<u8>>,
     /// Module directories the check runs SEALED (`axon test --seal`): code
     /// from them cannot reach any name the rest of the program defines.
@@ -2149,9 +2153,13 @@ impl LocalInterpreterExecutor {
         self
     }
 
-    /// Ask the interpreter for affirmative completion evidence: it reads `key`
-    /// from stdin before any program code runs and tags each test whose body
-    /// COMPLETED with [`completion_token`].
+    /// Ask the interpreter for affirmative completion evidence under a key
+    /// the CALLER holds: it reads `key` from stdin before any program code
+    /// runs and tags each test whose body COMPLETED with
+    /// [`completion_token`]. The report is then returned raw — a pass without
+    /// a token stays in `passed` — because the caller has said it adjudicates
+    /// the tokens. Without this, the executor keys every dispatch itself and
+    /// enforces completion (the default, fail-closed).
     pub fn with_completion_key(mut self, key: Vec<u8>) -> Self {
         self.limits.completion_key = Some(key);
         self
@@ -2243,9 +2251,27 @@ impl CheckExecutor for LocalInterpreterExecutor {
         }
     }
 
+    /// Every dispatch carries a completion key. When the caller supplied none
+    /// (every Cortex caller), a FRESH random key is drawn for this dispatch
+    /// and enforced here: a test counts as passed only if it reported `ok`
+    /// AND carries the token for its name under that key. An `ok` without
+    /// it is moved to `failed`.
+    ///
+    /// Plain `axon test` reports a test that ended early — `exit(0)` from the
+    /// code under test — as `ok`, by design (the program asked to stop). Read
+    /// as a pass, a candidate body `exit(0)` "passed" every check it was
+    /// adjudicated by and `cortex repair` exited 0 with the defect replaced
+    /// by an exit. The token is issued only for a body that RETURNED, it is
+    /// keyed per dispatch over stdin before program code runs, so the
+    /// program can neither earn it by stopping nor forge it by printing a
+    /// result line. Absent is never passed.
     fn run_checks(&self, req: &CheckRequest<'_>) -> std::io::Result<CheckReport> {
         // Refusal happens here, before any Command is built.
         let exe = self.verified_path()?;
+        let (key, enforce) = match &self.limits.completion_key {
+            Some(k) => (k.clone(), false),
+            None => (fresh_completion_key()?, true),
+        };
         let mut cmd = std::process::Command::new(&exe);
         // The check runs IN its own workspace. It used to inherit the
         // launcher's cwd, so a suite's relative runtime read (a fixture, an
@@ -2260,9 +2286,7 @@ impl CheckExecutor for LocalInterpreterExecutor {
         if let Some(f) = req.filter {
             cmd.arg("--filter").arg(f);
         }
-        if self.limits.completion_key.is_some() {
-            cmd.arg("--completion-key-stdin");
-        }
+        cmd.arg("--completion-key-stdin");
         for d in &self.limits.sealed {
             cmd.arg("--seal").arg(d);
         }
@@ -2275,7 +2299,7 @@ impl CheckExecutor for LocalInterpreterExecutor {
         for (k, v) in &self.limits.env {
             cmd.env(k, v);
         }
-        let (text, code, truncated) = run_limited(&mut cmd, &self.limits)?;
+        let (text, code, truncated) = run_limited(&mut cmd, &self.limits, &key)?;
         if truncated {
             return Err(std::io::Error::other(format!(
                 "check output exceeded the {}-byte capture bound; a truncated run \
@@ -2285,8 +2309,38 @@ impl CheckExecutor for LocalInterpreterExecutor {
         }
         let mut report = parse_axon_test_json(&text, req.rel_path)?;
         report.exit_code = code;
+        if enforce {
+            require_completion(&mut report, &key);
+        }
         Ok(report)
     }
+}
+
+/// A fresh 32-byte completion key from the OS. No randomness, no verdict: a
+/// predictable key is one a program could forge tokens under.
+fn fresh_completion_key() -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut k = vec![0u8; 32];
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut k))
+        .map_err(|e| std::io::Error::other(format!("no randomness for the completion key: {e}")))?;
+    Ok(k)
+}
+
+/// Keep in `passed` only the names that carry their completion token under
+/// `key`; every other `ok` is moved to `failed`. Per NAME, so a forged
+/// token-less `ok` line printed beside the real, tokened one changes
+/// nothing, and a forged line alone never makes a pass.
+fn require_completion(report: &mut CheckReport, key: &[u8]) {
+    let completion = &report.completion;
+    let (kept, unproven): (Vec<String>, Vec<String>) = std::mem::take(&mut report.passed)
+        .into_iter()
+        .partition(|name| {
+            let want = completion_token(key, name);
+            completion.iter().any(|(n, t)| n == name && *t == want)
+        });
+    report.passed = kept;
+    report.failed.extend(unproven);
 }
 
 /// Spawn `cmd`, drain both pipes (bounded, if asked), enforce the wall-clock
@@ -2294,6 +2348,7 @@ impl CheckExecutor for LocalInterpreterExecutor {
 fn run_limited(
     cmd: &mut std::process::Command,
     limits: &ExecLimits,
+    completion_key: &[u8],
 ) -> std::io::Result<(String, Option<i32>, bool)> {
     use std::io::Read;
     use std::process::Stdio;
@@ -2329,17 +2384,13 @@ fn run_limited(
         }
     }
     let mut child = cmd
-        .stdin(if limits.completion_key.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
-    if let (Some(key), Some(mut stdin)) = (&limits.completion_key, child.stdin.take()) {
+    if let Some(mut stdin) = child.stdin.take() {
         use std::io::Write;
-        let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
+        let hex: String = completion_key.iter().map(|b| format!("{b:02x}")).collect();
         // Written then closed: the program finds stdin at EOF.
         let _ = writeln!(stdin, "{hex}");
     }
