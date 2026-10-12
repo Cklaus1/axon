@@ -675,17 +675,10 @@ impl Bindings {
         }
     }
 
-    /// The value of the binding [`Bindings::get_var_idx`] finds, resolved by
-    /// the same rule. The slot hit returns from the branch that proved it in
-    /// bounds, so a variable read pays one bounds check, not the second the
-    /// index form re-checks (cost only: `vm_perf_gate.sh` collatz).
+    /// The value of the binding [`Bindings::get_var_idx`] finds.
     #[inline(always)]
     pub(super) fn get_var(&self, name: Sym, slot: u32) -> Option<&Value> {
-        match self.vars.get(slot as usize) {
-            Some((k, v)) if *k == name => Some(v),
-            _ if slot == NOT_LOCAL => None,
-            _ => self.get(name),
-        }
+        self.get_var_idx(name, slot).map(|i| &self.vars[i].1)
     }
 
     /// The taint of binding `i` (an index a lookup returned). Panics on an
@@ -762,9 +755,10 @@ impl Bindings {
     }
 
     /// [`Bindings::get_var_mut`] for a caller that knows the run (see
-    /// [`Bindings::guard`]), resolved by [`Bindings::get_var_idx`]'s rule
-    /// with the slot hit in its own branch (one bounds check, as
-    /// [`Bindings::get_var`]).
+    /// [`Bindings::guard`]), resolved by [`Bindings::get_var_idx`]'s rule.
+    /// The slot hit returns from the branch that bounds-checked it, so a VM
+    /// store pays one bounds check, not the second the index form re-checks
+    /// (cost only: `vm_perf_gate.sh` collatz).
     #[inline(always)]
     pub(super) fn get_var_mut_t<const T: bool>(
         &mut self,

@@ -2357,7 +2357,7 @@ pub(super) mod nest_cost {
     pub const DISPATCH_CALL: usize = b(176, 0);
     pub const DISPATCH_NAMED: usize = b(144, 192);
     pub const IMPL_METHOD: usize = b(96, 192);
-    pub const CALL_MUT: usize = b(208, 320);
+    pub const CALL_MUT: usize = b(208, 336);
     pub const CALL_FN: usize = b(112, 128);
     pub const CALL_FN_ENTRY: usize = b(112, 224);
     pub const CALL_FN_IN: usize = b(160, 208);
@@ -2386,8 +2386,8 @@ pub(super) mod nest_cost {
     pub const RUN_LAMBDA_TREE: usize = RUN;
     pub const RUN: usize = b(336, 544);
     pub const CALL_FAST_ARG: usize = b(224, 336);
-    pub const CALL_FAST_INLINE: usize = b(256, 416);
-    pub const CALL_MUT_OP: usize = b(336, 432);
+    pub const CALL_FAST_INLINE: usize = b(240, 416);
+    pub const CALL_MUT_OP: usize = b(320, 432);
     pub const ASSIGN_IN_PLACE: usize = b(176, 224);
     pub const BIND_LET: usize = b(160, 224);
     pub const CHAN_METHOD: usize = b(128, 96);
@@ -2406,7 +2406,7 @@ pub(super) mod nest_cost {
     pub const CALL_UNPROVEN: usize = b(192, 272);
     pub const RECORD_OP: usize = b(160, 160);
     pub const STORE_BIN_SLOW: usize = b(192, 192);
-    pub const STORE_LOCAL_STACK_SLOW: usize = b(192, 208);
+    pub const STORE_LOCAL_STACK_SLOW: usize = b(192, 224);
     pub const GOAL_EVAL_HOLDOUT: usize = b(128, 400);
     pub const RUN_GOAL: usize = b(672, 1024);
     pub const RUN_GOAL_CATEGORICAL: usize = b(416, 640);
