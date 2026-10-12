@@ -115,6 +115,7 @@ refusals and the report's determinism on fixtures.
 | 4 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` | 2026-10-12 | dev | cortex | claude-haiku-5-5 / micode | spectrum / off / breadth | 56/60 (93.3%, 84.1%-97.4%) | 0 | 3.55 | $0.001091* | 11.3s | 26/60 |
 | 5 | `dev-2026-10-12-plain-opus-5.5-micode` | 2026-10-12 | dev | plain | claude-opus-5-5 / micode | none / off / - | 60/60 (100.0%, 94.0%-100.0%) | 0 | n/a | $0.049* | 9.4s | n/a |
 | 6 | `dev-2026-10-12-cortex-opus-5.5-micode-breadth-spectrum` | 2026-10-12 | dev | cortex | claude-opus-5-5 / micode | spectrum / off / breadth | 55/60 (91.7%, 81.9%-96.4%) | 0 | 3.42 | $0.039* | 20.5s | 26/60 |
+| 7 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 2026-10-12 | dev | cortex | claude-haiku-5-5 / micode | openrouter:anthropic/claude-haiku-5.5 / off / breadth | 56/60 (93.3%, 84.1%-97.4%) | 0 | 2.14 | $0.001187* | 8.7s | 59/60 |
 
 Per run: configuration hashes, corpus and notes.
 
@@ -124,6 +125,7 @@ Per run: configuration hashes, corpus and notes.
 - **4. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum`**: rows `crates/axon-cortex/benchmarks/ab/results-micode/full/claude-haiku-5-5/b.jsonl`; corpus `crates/axon-cortex/benchmarks/ab/corpus.json` (sha256 3c7bc7bd4ea106f7, n=60); cortex commit 9d94cfff2d9e; cortex sha256 ae75cf92fcc7ea89; candidates 6; budget 8; total cost $0.061*. PREREG-micode.md, arm B: breadth-first walk; cortex built without --features ai, so candidates are walked in spectrum order. Cost ESTIMATED: reported tokens x OpenRouter list price recorded 2026-10-12. cortex_sha256 is the 16-hex prefix the rows record.
 - **5. `dev-2026-10-12-plain-opus-5.5-micode`**: rows `crates/axon-cortex/benchmarks/ab/results-micode/full/claude-opus-5-5/a.jsonl`; corpus `crates/axon-cortex/benchmarks/ab/corpus.json` (sha256 3c7bc7bd4ea106f7, n=60); total cost $2.926*. PREREG-micode.md, arm A: micode 0.3.0 exec on the user's OAuth grant, no turn or dollar cap, 900 s timeout. Cost ESTIMATED: reported tokens x OpenRouter list price recorded 2026-10-12.
 - **6. `dev-2026-10-12-cortex-opus-5.5-micode-breadth-spectrum`**: rows `crates/axon-cortex/benchmarks/ab/results-micode/full/claude-opus-5-5/b.jsonl`; corpus `crates/axon-cortex/benchmarks/ab/corpus.json` (sha256 3c7bc7bd4ea106f7, n=60); cortex commit 9d94cfff2d9e; cortex sha256 ae75cf92fcc7ea89; candidates 6; budget 8; total cost $2.151*. PREREG-micode.md, arm B: breadth-first walk; cortex built without --features ai, so candidates are walked in spectrum order. Cost ESTIMATED: reported tokens x OpenRouter list price recorded 2026-10-12. cortex_sha256 is the 16-hex prefix the rows record.
+- **7. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5`**: rows `crates/axon-cortex/benchmarks/ab/results-ranker/full/b.jsonl`; corpus `crates/axon-cortex/benchmarks/ab/corpus.json` (sha256 3c7bc7bd4ea106f7, n=60); cortex commit 141945295194; cortex sha256 73c02176a800b273; candidates 6; budget 8; total cost $0.066*. PREREG-ranker PASS. The dev set built the ranker (LocRank), so this is necessary, not sufficient; the heldout set decides. Cost includes ranker_cost_usd (OpenRouter-reported) plus micode list-price estimates.
 
 ## Which differences are significant
 
@@ -135,6 +137,7 @@ Paired on the tasks both runs scored. Significant = two-sided exact McNemar p < 
 | 4. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` | 3. `dev-2026-10-12-plain-haiku-5.5-micode` | 60 | 55 | 1 | 4 | 0 | 0.375 | no |
 | 4. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` | 2. `dev-2026-10-12-cortex-haiku-4.5-claude-depth-spectrum` | 60 | 53 | 3 | 1 | 3 | 0.625 | no |
 | 6. `dev-2026-10-12-cortex-opus-5.5-micode-breadth-spectrum` | 5. `dev-2026-10-12-plain-opus-5.5-micode` | 60 | 55 | 0 | 5 | 0 | 0.0625 | no |
+| 7. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 4. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` | 60 | 54 | 2 | 2 | 2 | 1 | no |
 
 ## Held-out and once-set use
 
