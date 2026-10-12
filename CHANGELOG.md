@@ -1,5 +1,14 @@
 # Axon Changelog
 
+## Cortex: tracking whether it gets better
+
+- **Scorecard (`crates/axon-cortex/benchmarks/scorecard/`):** an append-only `history.jsonl` of scored runs, with metrics recomputed from committed rows. `report` writes the README table and `progress.svg`. `compare` applies the order false successes, then verified fixes, then proposals per fix, then cost. The six earlier dev runs are backfilled.
+- **Ranker on the dev set (PREREG-ranker, PASS):** with Haiku 5.5 as the `--ranker`, 56/60 verified and 0 false successes, the same as spectrum order. Proposals fell from 199 to 120, generator model time from 593 s to 333 s, and the true function was tried first in 59 of 60 tasks instead of 26. Cost per fix did not change: the ranker call costs about what it saves.
+- **Held-out sets (`benchmarks/heldout/`):** `heldout.json` (47 tasks) and `once.json` (30 tasks), planted in files the dev corpus never used. Mining real fix commits found 0 of 75 that qualified.
+- **Held-out run (PREREG-heldout):** the ranker passed narrowly: 41 = 41 verified, 0 false successes, 4.93 to 4.39 proposals per fix, true function first in 45 instead of 25. The plain micode agent on the same model verified 47/47 and beat both Cortex modes (paired exact McNemar p = 0.031). Cortex tried the right function in every task it missed. The misses are fix-writing failures, because the generator sees only the function body. `benchmarks/README.md` records this as a correction to its earlier "the generator is not the bottleneck" finding.
+- **`cortex repair --label-log PATH`** (env `CORTEX_LABEL_LOG`): appends one `cortex-label/1` row per run, with the outcome, the attempts and the verified symbol as `truth`. Source is included only with `--label-source`. `benchmarks/labels/to_items.py` converts the rows into LocRank and DecisionBench items.
+- **Promotion (`benchmarks/promotion/promote.py`):** Cortex's default config changes only through a frozen `axon-loop` evaluation, which covers plan, admission, transition and rollback. The policy in force is recorded as grandfathered, admitted without held-out evidence. `tests/promoted_policy.rs` ties the defaults in `rank.rs`, `audit.rs` and the drivers to that policy. A zero-cost dry run promotes, rolls back and rejects.
+
 ## `examples/cortex` exercises the decision models
 
 - **The sample never reached a model:** `pricing.ax` named its hidden check in a header comment, so the leak guard refused the file to the ranker and the audit (`ranker ... unavailable: the hidden check's name appears outside its own definition`) even with a key and a `--features ai` build. The comment now says `hidden_*`; the name appears only in the test's own definition.

@@ -637,7 +637,8 @@ examples, one injected defect per trial, five defect shapes; real-model run of
 - Once the right function is the candidate, the model needed under one
   proposal per repair (0.92 mean); 7.15 proposals on average went to wrong
   candidates first. **91%** of inference spend ($8.50 of $9.29) went to wrong
-  candidates. Ranking, not the generator, is the cost driver.
+  candidates. In that run, ranking rather than the generator drove cost. The
+  held-out run below does not support this as a general rule.
 - Safety floor in that run: 0 false successes, 0 dirty workspaces on failure.
   That run predates the completion-token check, and its own clean-file oracle
   (`benchmarks/common.py`) used plain `axon test`, so a body that called
@@ -651,6 +652,24 @@ Its verdict is "safety only": both agents fixed about as many defects, Cortex
 had no false successes where the plain agent had some, and Cortex cost several
 times more per fix. That run used the depth-first walk; the breadth-first walk
 now on main was not part of it.
+
+Held-out run (47 planted defects in files the dev corpus never used,
+Haiku 5.5 via micode, 2026-10-12;
+[`benchmarks/heldout/results/README.md`](../crates/axon-cortex/benchmarks/heldout/results/README.md)):
+
+- With `--ranker`, the true function was tried first in 45 of 47 tasks,
+  against 25 in spectrum order. Both Cortex modes verified 41 and had 0 false
+  successes.
+- A plain coding agent on the same model verified **47/47** (paired exact
+  McNemar p = 0.031) in about half the wall time.
+- Cortex tried the true function in every one of its six misses. They are
+  fix-writing failures: the generator saw only the function body, not the
+  signature, the types, or the visible failing test.
+
+Runs over time are tracked in
+[`benchmarks/scorecard/`](../crates/axon-cortex/benchmarks/scorecard/README.md).
+Cortex's default configuration changes only through
+[`benchmarks/promotion/`](../crates/axon-cortex/benchmarks/promotion/README.md).
 
 Not covered by Cortex at all: multi-function fixes, signature changes, files
 other than `--file`, and anything the hidden check does not assert.

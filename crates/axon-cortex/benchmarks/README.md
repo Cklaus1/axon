@@ -177,7 +177,7 @@ a case that does not belong here.
 
 ## Corrections, recorded
 
-Four, because a measurement that was wrong and then quietly restated is worse
+Five, because a measurement that was wrong and then quietly restated is worse
 than no measurement.
 
 **The adjudicator was chosen before the defect was known.** It was the file's
@@ -203,6 +203,16 @@ commit had renamed, and invoked `cortex repair` with no grant and no
 generator, so every trial was refused and scored "error". It could not have
 produced the numbers printed beside it. Deleted; `topk.py`, `oracle.py`,
 `adversary.py` and `guessing.py` read `--json`.
+
+**"The generator is not the bottleneck" did not hold on held-out tasks.** The
+2026-09-20 section below draws that conclusion from 13 trials with an
+external generator. On the 47 held-out tasks (`heldout/results/README.md`,
+2026-10-12), Cortex attempted the true function in all six tasks it missed
+(first, in 5 of 6, under the ranker) and still failed them, while a plain
+agent on the same model fixed all 47 (paired exact McNemar p = 0.031). Those six
+misses used about three quarters of each Cortex arm's proposals. The section is
+left as written; on held-out tasks the generator, not ranking, is the
+bottleneck.
 
 ## Call depth
 
@@ -577,3 +587,24 @@ was not measured.
   edits, would be a different experiment.
 * The dollar figures are list-price estimates on an assumed cache pricing,
   not money billed.
+
+## Tracking progress over time
+
+Every scored run lands in one append-only history, and Cortex's defaults
+change only through a frozen evaluation:
+
+* [`scorecard/`](scorecard/README.md): `history.jsonl` (metrics recomputed
+  from committed rows), `report` (README table and `progress.svg`), and
+  `compare` in the strict order: false successes, then verified fixes, then
+  proposals per fix, then cost.
+* [`heldout/`](heldout/README.md): `heldout.json` (47 tasks, now spent) and
+  `once.json` (30 tasks, each used for one decision only), planted in files
+  the dev corpus never used. The first held-out run is in
+  `heldout/results/README.md`.
+* [`labels/`](labels/README.md): `cortex repair --label-log` rows from real
+  runs, and `to_items.py`, which turns them into LocRank and DecisionBench
+  items.
+* [`promotion/`](promotion/README.md): `promote.py` takes a candidate config
+  through `axon-loop` (frozen plan, evaluation, admission, transition,
+  rollback). The policy in force is recorded as grandfathered, admitted
+  without held-out evidence.
