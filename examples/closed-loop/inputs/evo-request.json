@@ -11,5 +11,5 @@
   "seed": 3,
   "new_policy_id": "candidate-1",
   "proposer_ref": "agent:proposer",
-  "rationale": "drop a rarely useful tool from the shortlist"
+  "rationale": "try a different tool order within the same shortlist"
 }
