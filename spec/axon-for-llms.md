@@ -154,6 +154,26 @@ fn test_must_panic() { assert(1 == 2) }   // passes only if the body panics
 
 Run with `axon test file.ax`. `assert_eq` is `i64`-only and prints both values on failure.
 
+### Sealed tests (when your code is the candidate)
+
+An operator may grade your module with `axon test suite.ax --seal DIR`, where `DIR` holds
+your files. Full guide: [`docs/SEALED_TESTS.md`](../docs/SEALED_TESTS.md). What matters
+when you write the candidate:
+
+- **Implement exactly the requested interface**: the module file name (`sol.ax` for
+  `mod sol`) and the `pub fn` signatures the suite imports.
+- **Use only builtins and names your own files define.** Anything the suite defines (its
+  helpers, reference solution, answer tables, types) is invisible: using it is a check error
+  (`E0001`/`E0004`, exit 2) and the run is refused before any test executes.
+- **Do not reuse the suite's top-level names**, even for your own locals, parameters or
+  `for` variables: a local named like a suite global is `E0004`, and a top-level item with the
+  same name as a suite item is `E0002`. Prefer specific names over generic ones such as
+  `expected`, `reference`, `ANSWERS`.
+- **Do not print or call `exit`.** Graders usually run with no effects allowed
+  (`AXON_ALLOWED_EFFECTS=`); then `println`/`eprintln`/`exit`/`read_file` fail the test.
+- **Your own `@[test]` functions are ignored** under `--seal`; only the operator's tests count.
+- Sealed runs execute on the tree engine; `AXON_ENGINE=vm` with `--seal` is refused (exit 2).
+
 ---
 
 ## 6. Gotchas (the things that bite an LLM)
