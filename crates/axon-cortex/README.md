@@ -103,10 +103,10 @@ about whether to widen a grant, supply a generator, or fix a PATH.
 | 26 | `--check` already passes — it cannot witness a repair |
 | 27 | adjudicated, not clean: the check passed and nothing regressed, but checks that were already failing still fail. The patch is KEPT |
 
-Known defect: on the local (non-Fabric) check path a body that calls `exit(0)`
-before the hidden test's assertions run is reported as exit 0. See "Known
-defect" in [`docs/CORTEX.md`](../../docs/CORTEX.md); the fix is on branch
-`fix/cortex-completion-key`.
+A check passes only with a completion token: every check child runs with
+`--completion-key-stdin` and a fresh per-run key, so a body that calls
+`exit(0)` (which plain `axon test` reports as `ok`) or prints a forged result
+line is not accepted. See [`docs/CORTEX.md`](../../docs/CORTEX.md).
 
 ## Generators
 

@@ -371,38 +371,32 @@ events:   snapshot, snapshot, observed, action_allowed, claimed, verified, snaps
 ## Relationship to sealed runs
 
 The check is not run in-process. Cortex spawns the pinned `axon` binary as a
-child (`axon test FILE --json --filter NAME`, via `LocalInterpreterExecutor`)
-and reads its NDJSON verdict. That executor can also pass `--seal DIR` (the
-candidate's modules cannot name anything the operator's suite defines, E0004)
-and `--completion-key-stdin` (each test that ran to its end is tagged with an
-HMAC the candidate cannot compute). The Fabric submit path
-(`crates/axon-fabric/src/submit.rs`) sets both for every check it launches.
-The plain `cortex repair` command used throughout this guide sets neither: its
-check child is an ordinary `axon test` run, which is what the known defect
-below depends on.
+child (`axon test FILE --json --filter NAME --completion-key-stdin`, via
+`LocalInterpreterExecutor`) and reads its NDJSON verdict. Every check gets a
+fresh random key over stdin, and a test counts as passed only if its result
+line carries the matching completion token (an HMAC the candidate cannot
+compute); an `ok` line without one is a failure. The executor can also pass
+`--seal DIR` (the candidate's modules cannot name anything the operator's suite
+defines, E0004). The Fabric submit path (`crates/axon-fabric/src/submit.rs`)
+sets both and checks the tokens itself.
 
-## Known defect: a body that calls `exit(0)` is accepted
+## Why the completion token matters
 
 Plain `axon test` reports a test whose process exits 0 part-way through as
-`ok`. Because the local check child does not ask for completion evidence, a
-body that exits before the hidden test's assertions run is accepted:
+`ok`. Before the checker required completion tokens, a body that exited before
+the hidden test's assertions ran was accepted:
 
 ```
 $ cortex repair --file pricing.ax --check hidden_discount_boundary --symbol discount --write-prefix pricing.ax --axon $AXON --generator $'literal:exit(0)\n    0'
 verified_done after 3 step(s) — repaired `discount`
 exit=0
-19:fn discount(total: i64) -> i64 {exit(0)
-20-    0}
 ```
 
-That is a false success. Forging the verdict by printing JSON lines WITHOUT
-exiting was tried and rejected (exit 21, file restored): the real failure line
-still follows the forged one. The fix (local check child run with
-`--completion-key-stdin`, verdict requiring the completion token) is on branch
-`fix/cortex-completion-key`. Until it lands, `examples/cortex/run.sh` reports
-this case as `EXPECTED FAIL ... (not counted)` instead of failing. Treat a
-`verified_done` from an untrusted generator (any `cmd:` or `ai:`) as
-unconfirmed until then: read the patched body.
+Now the same run ends `no_progress` (exit 21) and the file is restored;
+`examples/cortex/run.sh` asserts it. Forging the verdict by printing JSON
+result or summary lines, with or without exiting, is refused too: a forged
+line has no valid token. A test of your own that legitimately ends through
+`exit(0)` therefore counts as failed when Cortex adjudicates it.
 
 ## Measured numbers and limits
 
@@ -421,8 +415,10 @@ examples, one injected defect per trial, five defect shapes; real-model run of
   candidates first. **91%** of inference spend ($8.50 of $9.29) went to wrong
   candidates. Ranking, not the generator, is the cost driver.
 - Safety floor in that run: 0 false successes, 0 dirty workspaces on failure.
-  The `exit(0)` defect above post-dates that measurement and is not counted in
-  it.
+  That run predates the completion-token check, and its own clean-file oracle
+  (`benchmarks/common.py`) used plain `axon test`, so a body that called
+  `exit(0)` would have counted as a verified, clean repair. Per-trial bodies
+  were not recorded, so this cannot be ruled out from the record.
 
 Not covered by Cortex at all: multi-function fixes, signature changes, files
 other than `--file`, and anything the hidden check does not assert.

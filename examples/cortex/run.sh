@@ -123,24 +123,16 @@ expect 23 "--write-prefix does not cover pricing.ax" -- \
 same_as_source "after the refusal"
 
 # 6. A body that ends the test process with `exit(0)` before any assertion
-#    runs. It must NOT be accepted. KNOWN DEFECT: plain `axon test` reports a
-#    test ended by exit(0) as ok, and cortex's local checker does not yet ask
-#    for completion evidence, so this run is accepted (exit 0) until branch
-#    fix/cortex-completion-key merges. Until then a 0 here is reported as an
-#    EXPECTED FAIL and not counted; any non-zero exit must restore the file.
+#    runs. It must NOT be accepted: plain `axon test` reports a test ended by
+#    exit(0) as ok, so cortex's checker runs every check with a per-run
+#    completion key and counts a test as passed only with its token. The
+#    candidate never completes the hidden check: no progress, file restored.
 fresh
-echo
-echo "== a body that calls exit(0) must not verify"
-"$CORTEX_BIN" repair --workspace "$W" "${common[@]}" --symbol discount \
+expect 21 "a body that calls exit(0) must not verify" -- \
+  "$CORTEX_BIN" repair --workspace "$W" "${common[@]}" --symbol discount \
   --write-prefix pricing.ax --generator "literal:exit(0)
     0"
-got=$?
-if [ "$got" = 0 ]; then
-  echo "-- expected non-zero, got 0: EXPECTED FAIL until fix/cortex-completion-key merges (false success; not counted)"
-else
-  echo "-- expected non-zero, got $got: ok"
-  same_as_source "after the rejection"
-fi
+same_as_source "after the rejection"
 
 # 7. Optional: a real model writes the body. Its outcome is not fixed, so it
 #    is reported, not asserted.

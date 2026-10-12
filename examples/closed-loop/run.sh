@@ -62,7 +62,9 @@ cl22() {
     printf 'cl22:%s' "${h%% *}"
 }
 
-now_ms() { date +%s%3N; }
+# Not `date +%s%3N`: uutils `date` (the default on recent Ubuntu) ignores the
+# 3 width and printed timestamps up to ~1 s in the future, which EVL refuses.
+now_ms() { local ns; ns=$(date +%s%N); echo $((ns / 1000000)); }
 
 show_cmd() {
     local s="axon-loop $*"
