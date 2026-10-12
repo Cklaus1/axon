@@ -3,6 +3,7 @@
 
     python3 analyse.py                 # print the tables (= results/summary.md)
     python3 analyse.py --write-readme  # also replace the block between the README markers
+    python3 analyse.py --phase full-fast --only-decision  # rank a run (even one in progress)
 
 Scoring (see README "Method"):
   * an HTTP error or a malformed answer is WRONG and is counted in `err`;
@@ -16,12 +17,14 @@ Scoring (see README "Method"):
     paired bootstrap CI of the difference to the leader contains 0.
 """
 import argparse
+import calendar
 import glob
 import json
 import os
 import random
 import re
 import statistics
+import time
 
 from run import ALIASES, CHAT_MODELS, DECISION_MODELS, SKIPPED, STABILITY_PER_CAT, read_jsonl, slug, subset
 
@@ -150,18 +153,222 @@ def model_label(m):
     return f"`{m}`" + (" (chat)" if m in CHAT_MODELS else "")
 
 
-def analyse():
+def calls_in(rows):
+    """HTTP calls behind `rows`: a batched call wrote one row per question."""
+    return len({r.get("batch_id") or (r["model"], r["item"], r.get("repeat")) for r in rows})
+
+
+def cmap(rows, items):
+    return {i: bool(rows[(i, 0)]["correct"]) if (i, 0) in rows else False for i in items}
+
+
+def ts_s(ts):
+    return calendar.timegm(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ"))
+
+
+def fmt_delta(point, lo, hi):
+    t = f"{point:+.2f} [{lo:+.2f}, {hi:+.2f}]"
+    return f"**{t}**" if lo > 0 or hi < 0 else t
+
+
+def runlog(outdir):
+    p = os.path.join(RESULTS, outdir, "RUNLOG.json")
+    return json.load(open(p)) if os.path.exists(p) else []
+
+
+def compare(w, items, by_cat, cats, samples, A, Bm, a_name, b_name, models):
+    """Per model: macro accuracy of A and B and Δ = B − A per category, each with a
+    paired bootstrap 95% CI over items (bold = the CI excludes 0); then the mean Δ
+    over all models, resampling the same items for every model."""
+    def cat_mean(cm, ids):
+        return sum(cm[i] for i in ids) / len(ids)
+    w(f"| model | {a_name} | {b_name} | Δ macro [95% CI] | " + " | ".join(f"Δ {c}" for c in cats) + " |")
+    w("|---|---|---|---|" + "---|" * len(cats))
+    maps = {m: (cmap(A[m], items), cmap(Bm[m], items)) for m in models}
+    for m in models:
+        ca, cb = maps[m]
+        dm = sorted(macro(cb, s, cats) - macro(ca, s, cats) for s in samples)
+        cells = []
+        for c in cats:
+            dc = sorted(cat_mean(cb, s[c]) - cat_mean(ca, s[c]) for s in samples)
+            cells.append(fmt_delta(cat_mean(cb, by_cat[c]) - cat_mean(ca, by_cat[c]), pct(dc, .025), pct(dc, .975)))
+        w(f"| `{m}` | {macro(ca, by_cat, cats):.3f} | {macro(cb, by_cat, cats):.3f} | "
+          f"{fmt_delta(macro(cb, by_cat, cats) - macro(ca, by_cat, cats), pct(dm, .025), pct(dm, .975))} | "
+          + " | ".join(cells) + " |")
+    cells = []
+    for c in cats:
+        def mean_delta(ids):
+            return statistics.mean(cat_mean(cb, ids) - cat_mean(ca, ids) for ca, cb in maps.values())
+        dc = sorted(mean_delta(s[c]) for s in samples)
+        cells.append(fmt_delta(mean_delta(by_cat[c]), pct(dc, .025), pct(dc, .975)))
+    dm = sorted(statistics.mean(macro(cb, s, cats) - macro(ca, s, cats) for ca, cb in maps.values()) for s in samples)
+    w(f"| **mean of {len(models)} models** | {statistics.mean(macro(a, by_cat, cats) for a, _ in maps.values()):.3f} | "
+      f"{statistics.mean(macro(b, by_cat, cats) for _, b in maps.values()):.3f} | "
+      f"{fmt_delta(statistics.mean(macro(b, by_cat, cats) - macro(a, by_cat, cats) for a, b in maps.values()), pct(dm, .025), pct(dm, .975))} | "
+      + " | ".join(cells) + " |")
+
+
+def speed_and_batch(w, items, by_cat, cats, samples, full):
+    """The two harness experiments, both decision models only and outside the ranking:
+    results/full-fast/ (the unbatched set again, 32 in flight, per-model pools) and
+    results/full-batched/ (--batch). Returns every answer that changed between
+    results/full and results/full-fast."""
+    fast = load_phase("full-fast", items)
+    batched = load_phase("full-batched", items)
+    dm = [m for m in DECISION_MODELS if m not in ALIASES]
+    flips = {}
+    if not fast:
+        return flips
+    w("## Harness speed (decision models; not part of the ranking)\n")
+    w("The ranking above comes from `results/full/`: one pool of 4 workers shared by all 18 models, "
+      f"chat and decision calls interleaved. `results/full-fast/` re-runs the same {len(dm) * len(items):,} "
+      "decision-model requests (byte-identical bodies) with the new scheduler: a pool per model (8 workers), at most "
+      "32 requests in flight overall, 429 back-off per model. `results/full-batched/` is the `--batch` variant "
+      "below. `results/full-fast2/` repeats `full-fast` after two scheduler fixes: a 60 s per-attempt timeout "
+      "for decision calls (was 180 s), and a per-model limit that rises to an equal share of the 32 slots as "
+      "other models finish.\n")
+    w("| run | scheduler | models | HTTP calls | decisions | wall | decision models done | 429 responses / calls retried |")
+    w("|---|---|---|---|---|---|---|---|")
+    rows = [r for m in full for r in full[m].values()]
+    t0 = min(ts_s(r["ts"]) for r in rows)
+    t_all = max(ts_s(r["ts"]) + (r.get("latency_s") or 0) for r in rows) - t0
+    t_dec = max(ts_s(r["ts"]) + (r.get("latency_s") or 0) for r in rows if r["model"] in DECISION_MODELS) - t0
+    w(f"| `full` (ranking) | one pool, 4 in flight | {len(full)} (14 decision + 4 chat) | {calls_in(rows)} | "
+      f"{len(rows)} | {t_all / 60:.1f} min (row timestamps) | {t_dec / 60:.1f} min | "
+      f"429 not logged / {sum(1 for r in rows if (r.get('attempts') or 1) > 1)} |")
+    fast2 = load_phase("full-fast2", items)
+    runs = (("full-fast", fast), ("full-batched", batched), ("full-fast2", fast2))
+    for name, ph in runs:
+        for e in runlog(name):
+            rr = [r for m in ph for r in ph[m].values()]
+            sched = (f"pool per model ({e['workers_per_model']['decision']}"
+                     + (", more as models finish" if e.get("per_model_limit") else "") + f"), {e['concurrency']} in flight"
+                     + (f", {e['timeout_s']['decision']} s timeout" if e.get("timeout_s") else ", 180 s timeout")
+                     + (", batched" if e["batch"] else ""))
+            w(f"| `{name}` | {sched} | {len(e['models'])} decision | {e['calls']} | "
+              f"{len(rr) if len(runlog(name)) == 1 else '-'} | {e['wall_s'] / 60:.1f} min | "
+              f"{(e['decision_models_done_s'] or 0) / 60:.1f} min | "
+              f"{sum(d['n429'] for d in e['models'].values())} / "
+              f"{len({r.get('batch_id') or r['item'] + r['model'] for r in rr if (r.get('attempts') or 1) > 1})} |")
+    for name, ph in runs:
+        for e in runlog(name):
+            hit = {m: d["n429"] for m, d in e["models"].items() if d["n429"]}
+            slow = sorted(e["models"].items(), key=lambda kv: -(kv[1]["done_s"] or 0))[:3]
+            w(f"\n`{name}`: 429s per model: " + (", ".join(f"`{m}` {n}" for m, n in hit.items()) if hit else "none")
+              + ". Slowest models to finish: " + ", ".join(f"`{m}` {d['done_s'] / 60:.1f} min" for m, d in slow) + ".")
+            rr = [r for m in ph for r in ph[m].values()]
+            long = [r for r in rr if (r.get("elapsed_s") or 0) - (r.get("latency_s") or 0) > 30]
+            if long:
+                w(f"Calls that spent over 30 s in failed attempts before their answer: {len(long)}.")
+    w("")
+
+    # drift check: full (first run) vs full-fast, the same request bodies
+    models = [m for m in dm if m in full and m in fast]
+    w("### Same requests, second sample: `full` vs `full-fast` (drift check)\n")
+    w("Δ = full-fast − full. A flip is an item whose answer (choice, or p_yes ≥ 0.5) differs between the "
+      "two runs; →wrong / →right count flips that changed correctness. Every flip is listed in "
+      "`results/summary.json` (`flips_full_vs_full_fast`).\n")
+    compare(w, items, by_cat, cats, samples, full, fast, "full", "full-fast", models)
+    w("\n| model | answers changed | →wrong | →right | errors full / fast | resolved id changed | flipped correctness |")
+    w("|---|---|---|---|---|---|---|")
+    for m in models:
+        a, b = full[m], fast[m]
+        fl = []
+        for i in sorted(items):
+            ra, rb = a.get((i, 0), {}), b.get((i, 0), {})
+            ka, kb = answer_key(items[i], ra), answer_key(items[i], rb)
+            if ka != kb:
+                fl.append({"item": i, "full": ka, "full_fast": kb, "label": items[i]["label"],
+                           "full_correct": bool(ra.get("correct")), "full_fast_correct": bool(rb.get("correct"))})
+        flips[m] = fl
+        to_wrong = [f["item"] for f in fl if f["full_correct"] and not f["full_fast_correct"]]
+        to_right = [f["item"] for f in fl if f["full_fast_correct"] and not f["full_correct"]]
+        ids_a = sorted({r.get("model_resolved") for r in a.values() if r.get("model_resolved")})
+        ids_b = sorted({r.get("model_resolved") for r in b.values() if r.get("model_resolved")})
+        moved = to_wrong + to_right
+        w(f"| `{m}` | {len(fl)}/{len(items)} | {len(to_wrong)} | {len(to_right)} | "
+          f"{sum(1 for r in a.values() if r.get('error'))} / {sum(1 for r in b.values() if r.get('error'))} | "
+          f"{'no' if ids_a == ids_b else ', '.join(ids_a) + ' → ' + ', '.join(ids_b)} | "
+          + (", ".join(f"`{x}`" for x in moved) if 0 < len(moved) <= 6 else f"{len(moved)} items" if moved else "-")
+          + " |")
+    w("")
+
+    if not batched:
+        return flips
+    # ---------------- batched questions
+    w("## Batched questions (separate variant; not part of the ranking)\n")
+    w("`run.py --full --only-decision --batch` sends one state per group of items whose states are equal "
+      "apart from their own `proposed_patch` / `ranked_candidates`, with one question per item in the "
+      "same `questions` map. The per-item fields move under `per_question.<qid>`, and that question's "
+      "instructions name the path. A single-item group is the unbatched request, byte for byte. A "
+      "missing or malformed answer is wrong for that question only. The comparison is against "
+      "`full-fast`, the unbatched sample taken just before it, so drift between days does not enter.\n")
+    sizes, grouped = {}, {c: 0 for c in cats}
+    any_m = next(m for m in dm if m in batched)
+    for r in batched[any_m].values():
+        sizes[r.get("batch_id") or r["item"]] = r.get("batch_size", 1)
+        if r.get("batch_size", 1) > 1:
+            grouped[r["cat"]] += 1
+    hist = {}
+    for n in sizes.values():
+        hist[n] = hist.get(n, 0) + 1
+    w("| category | items | asked together with other items | asked alone |")
+    w("|---|---|---|---|")
+    for c in cats:
+        w(f"| {c} | {len(by_cat[c])} | {grouped[c]} | {len(by_cat[c]) - grouped[c]} |")
+    w(f"| **all** | {len(items)} | {sum(grouped.values())} | {len(items) - sum(grouped.values())} |")
+    w(f"\nCalls per model: {len(sizes)} batched instead of {len(items)}.")
+    w("\nQuestions per call: " + ", ".join(f"{n}: {k} calls" for n, k in sorted(hist.items())) + ". "
+      "Gate items never group: each tool call is its own evidence. The groups are one PoC task "
+      "(loc + route, plus its repair and tamper patches) or the six sealed candidates against one suite.\n")
+    models = [m for m in dm if m in fast and m in batched]
+    tot_u = sum(calls_in(list(fast[m].values())) for m in models)
+    tot_b = sum(calls_in(list(batched[m].values())) for m in models)
+    w(f"HTTP calls over the {len(models)} decision models: {tot_u} unbatched → {tot_b} batched "
+      f"({tot_u - tot_b} saved, {(tot_u - tot_b) / tot_u:.0%}).\n")
+    w("Accuracy, batched vs unbatched (Δ = batched − unbatched):\n")
+    compare(w, items, by_cat, cats, samples, fast, batched, "unbatched", "batched", models)
+    w("\nGate items are single-question calls in both runs (the same request twice), so their Δ "
+      "measures sampling noise alone.\n")
+    w("| model | calls unbatched / batched | p50 s per call (unbatched / batched) | $/1k decisions (unbatched / batched) | "
+      "errors unbatched / batched | missing or malformed answers in a batch |")
+    w("|---|---|---|---|---|---|")
+    for m in models:
+        u, b = list(fast[m].values()), list(batched[m].values())
+        lat_u = [r["latency_s"] for r in u if r.get("http_status") == 200]
+        lat_b = list({r.get("batch_id") or r["item"]: r["latency_s"] for r in b if r.get("http_status") == 200}.values())
+        cu, cb = sum(float(r.get("cost") or 0) for r in u), sum(float(r.get("cost") or 0) for r in b)
+        w(f"| `{m}` | {calls_in(u)} / {calls_in(b)} | {pct(lat_u, .5):.2f} / {pct(lat_b, .5):.2f} | "
+          f"{1000 * cu / len(u):.3f} / {1000 * cb / len(b):.3f} | "
+          f"{sum(1 for r in u if r.get('error'))} / {sum(1 for r in b if r.get('error'))} | "
+          f"{sum(1 for r in b if r.get('batch_size', 1) > 1 and r.get('error_class') == 'malformed')} |")
+    w("")
+    return flips
+
+
+
+def analyse(phase="full", only_decision=False, brief=False):
+    """brief: ranking and per-category tables only, over the models that have
+    answered every item in `phase` (a run still in progress ranks what is done)."""
     items = load_items()
-    full = load_phase("full", items)
+    full = load_phase(phase, items)
     pilot = load_phase("pilot", items)
     stab = load_phase("stability", items)
-    probe = read_jsonl(os.path.join(RESULTS, "probe.jsonl"))
     by_cat = {c: sorted(i for i, x in items.items() if x["cat"] == c) for c in CATS}
     cats = [c for c in CATS if by_cat[c]]
     loc_truth = {i.split("/", 1)[1]: items[i]["label"] for i in by_cat["loc"]}
-    models = [m for m in DECISION_MODELS + CHAT_MODELS if m in full and m not in ALIASES]
+    models = [m for m in (DECISION_MODELS if only_decision else DECISION_MODELS + CHAT_MODELS)
+              if m in full and m not in ALIASES]
     lines = []
     w = lines.append
+    if brief:
+        running = {m: len(full[m]) for m in models if any((i, 0) not in full[m] for i in items)}
+        models = [m for m in models if m not in running]
+        w(f"Phase `{phase}`" + (", decision models only" if only_decision else "") + ". "
+          + ("Still running (rows so far): " + ", ".join(f"`{m}` {n}/{len(items)}" for m, n in running.items())
+             if running else "Every model has answered every item.") + "\n")
+        if not models:
+            return "\n".join(lines) + "\n"
 
     # per-model stats
     S = {}
@@ -355,6 +562,9 @@ def analyse():
                                               "broken by p50 latency, then cost)" if len(ties) > 1 else "")
           + f". Mean accuracy over all ranked models: {ease:.2f}.\n")
 
+    if brief:
+        return "\n".join(lines) + "\n"
+
     # ---------------- calibration on noul
     w("### Calibration on yes/no items (repair + tamper, answered items only)\n")
     w("| model | Brier | ECE (10 bins) |")
@@ -438,32 +648,42 @@ def analyse():
 
     # ---------------- spend
     w("### Spend (sum of `usage.cost` returned by OpenRouter)\n")
-    w("| phase | calls | $ |")
-    w("|---|---|---|")
-    total, calls = 0.0, 0
-    phases = ["probe"] + sorted(d for d in os.listdir(RESULTS) if os.path.isdir(os.path.join(RESULTS, d)))
-    for phase in phases:
-        paths = ([os.path.join(RESULTS, "probe.jsonl")] if phase == "probe"
-                 else glob.glob(os.path.join(RESULTS, phase, "*.jsonl")))
+    w("| phase | HTTP calls | decisions | $ |")
+    w("|---|---|---|---|")
+    total, calls, decisions = 0.0, 0, 0
+    for ph in ["probe"] + sorted(d for d in os.listdir(RESULTS) if os.path.isdir(os.path.join(RESULTS, d))):
+        paths = ([os.path.join(RESULTS, "probe.jsonl")] if ph == "probe"
+                 else glob.glob(os.path.join(RESULTS, ph, "*.jsonl")))
         rows = [r for p in paths for r in read_jsonl(p)]
         c = sum(float(r.get("cost") or 0) for r in rows)
         total += c
-        calls += len(rows)
-        w(f"| {phase} | {len(rows)} | {c:.4f} |")
-    w(f"| **total** | {calls} | **{total:.4f}** |\n")
-    w("Per model, full run: " + ", ".join(f"`{m}` ${S[m]['cost']:.4f}" for m in order) + ".")
+        calls += calls_in(rows)
+        decisions += len(rows)
+        w(f"| {ph} | {calls_in(rows)} | {len(rows)} | {c:.4f} |")
+    w(f"| **total** | {calls} | {decisions} | **{total:.4f}** |\n")
+    w("Per model, full run: " + ", ".join(f"`{m}` ${S[m]['cost']:.4f}" for m in order) + ".\n")
+    flips = speed_and_batch(w, items, by_cat, cats, samples, full)
     summary = {m: {k: v for k, v in S[m].items() if k != "correct"} for m in models}
     json.dump({"order": order, "models": summary, "spend_total": total, "baselines": base,
-               "majority": maj}, open(os.path.join(RESULTS, "summary.json"), "w"), indent=1, sort_keys=True)
+               "majority": maj, "flips_full_vs_full_fast": flips},
+              open(os.path.join(RESULTS, "summary.json"), "w"), indent=1, sort_keys=True)
     return "\n".join(lines) + "\n"
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--write-readme", action="store_true")
+    ap.add_argument("--phase", default="full",
+                    help="rank this results/ subdirectory (brief: ranking and per-category tables, "
+                         "complete models only; nothing is written)")
+    ap.add_argument("--only-decision", action="store_true", help="decision models only")
     a = ap.parse_args()
-    md = analyse()
-    open(os.path.join(RESULTS, "summary.md"), "w").write(md)
+    brief = a.phase != "full" or a.only_decision
+    if brief and a.write_readme:
+        raise SystemExit("--write-readme renders the full report: drop --phase/--only-decision")
+    md = analyse(a.phase, a.only_decision, brief)
+    if not brief:
+        open(os.path.join(RESULTS, "summary.md"), "w").write(md)
     print(md)
     if a.write_readme:
         text = open(README).read()

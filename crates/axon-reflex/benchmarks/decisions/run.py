@@ -7,7 +7,28 @@
     python3 run.py --full                # every item x every working model  -> results/full/
     python3 run.py --stability           # 30-item subset x 3 more repeats   -> results/stability/
     python3 run.py --drift --models M --repeat N  # whole set again for M -> results/drift/
+    python3 run.py --full --only-decision --outdir full-fast   # decision models only, own dir
+    python3 run.py --full --only-decision --batch              # batched variant -> results/full-batched/
     python3 analyse.py                   # tables (README) from the JSONL above
+    python3 analyse.py --phase full-fast --only-decision       # rank whatever has finished
+
+Scheduling: every model gets its own worker pool (8 workers for a decision
+model, 4 for a chat model) and all pools run at once, decision models
+submitted first; a global semaphore keeps at most --concurrency (default 32)
+HTTP requests in flight, held only for the duration of one request. A 429
+pauses only that model (Retry-After when the response sends one, else
+exponential), so a slow chat model or a throttled provider never holds up
+the others. Each run appends wall time, calls and per-model 429 counts to
+results/<outdir>/RUNLOG.json.
+
+--batch sends one state with several questions: items whose states are equal
+apart from their own `proposed_patch` / `ranked_candidates` (the same PoC
+task; the six sealed candidates against one suite) go in one call; those
+per-item fields move under `per_question.<qid>` and that question's
+instructions say so. Each answer is
+mapped back to its item; a missing or malformed answer is wrong for that
+item only. Batched results are a separate variant, never ranked with the
+unbatched runs.
 
 Every run RESUMES: a (model, item, repeat) already recorded is not called again,
 so re-running any phase over the committed JSONL makes no requests. Python 3
@@ -73,12 +94,28 @@ NO_TEMPERATURE = {"anthropic/claude-haiku-5.5", "anthropic/claude-opus-5.5"}
 NO_SCHEMA = {"typesafe/jev-router"}
 # Reserved per call in flight, before its real cost is known.
 RESERVE = {"decision": 0.002, "chat": 0.04}
-MAX_CONCURRENT = 4
+# HTTP requests in flight, all models together (--concurrency). The pilot, the
+# first full run, the stability and drift phases ran at 4 (a shared machine).
+CONCURRENCY = 32
+SLOTS = threading.BoundedSemaphore(CONCURRENCY)
+# Requests in flight per model: WORKERS[kind] while many models run, rising to an
+# equal share of CONCURRENCY as models finish (the slowest model is not left at 8
+# with the other slots idle).
+WORKERS = {"decision": 8, "chat": 4}
+# Per-attempt timeout. The slowest successful decision call in any run took 49 s;
+# in results/full-fast three calls hung until the earlier 180 s timeout, which set
+# that run's wall time.
+TIMEOUT = {"decision": 60, "chat": 180}
 # An alias that resolves to a model already in the list: run in the probe and the
 # pilot only, to check it returns the same answers, and never ranked twice.
 ALIASES = {"~typesafe/jev-latest": "typesafe/jev-1.13"}
-RETRY_STATUS = {408, 429, 500, 502, 503, 504}
-MAX_ATTEMPTS = 3
+RETRY_STATUS = {408, 500, 502, 503, 504}
+MAX_ATTEMPTS = 3      # attempts that end in a transient non-429 failure
+MAX_429 = 8           # 429s tolerated per call before it is recorded as an HTTP error
+MAX_BACKOFF_S = 60
+# State fields that belong to one item, not to the evidence it shares with others
+# (--batch groups items whose states are equal without them).
+PER_ITEM = ("proposed_patch", "ranked_candidates")
 PILOT_PER_CAT = 2
 STABILITY_PER_CAT = 6
 STABILITY_REPEATS = 3
@@ -151,31 +188,84 @@ def spent():
 
 # ---------------------------------------------------------------- HTTP
 
+def retry_after_s(headers):
+    """Retry-After in seconds (delta form only), or None."""
+    try:
+        v = float((headers or {}).get("Retry-After"))
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) and v >= 0 else None
+
+
 def post(url, body, timeout=180):
+    """(status, text, latency_s, retry_after_s). Holds one global slot while in flight."""
     key = os.environ.get("OPENROUTER_API_KEY")
     if not key:
         raise SystemExit("OPENROUTER_API_KEY is not set (. /root/.openrouter.env)")
     data = json.dumps(body).encode()
     req = urllib.request.Request(url, data, {"Authorization": "Bearer " + key,
                                              "Content-Type": "application/json"})
-    began = time.time()
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            raw = r.read()
-            return r.status, raw.decode("utf-8", "replace"), time.time() - began
-    except urllib.error.HTTPError as e:
-        return e.code, e.read().decode("utf-8", "replace"), time.time() - began
-    except Exception as e:  # timeout, connection reset
-        return None, f"{type(e).__name__}: {e}", time.time() - began
+    with SLOTS:
+        began = time.time()
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                raw = r.read()
+                return r.status, raw.decode("utf-8", "replace"), time.time() - began, None
+        except urllib.error.HTTPError as e:
+            return e.code, e.read().decode("utf-8", "replace"), time.time() - began, retry_after_s(e.headers)
+        except Exception as e:  # timeout, connection reset
+            return None, f"{type(e).__name__}: {e}", time.time() - began, None
 
 
-def call_with_retry(url, body):
-    """(status, text, latency_of_last_attempt, attempts). Bounded; only transient failures retried."""
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        status, text, took = post(url, body)
-        if status == 200 or (status is not None and status not in RETRY_STATUS) or attempt == MAX_ATTEMPTS:
-            return status, text, took, attempt
-        time.sleep(5 * attempt)
+class Throttle:
+    """One model's 429 back-off. A 429 pauses only this model's calls; the
+    sleeping worker holds no global slot, so other models keep running."""
+
+    def __init__(self):
+        self.lock, self.until, self.streak, self.n429 = threading.Lock(), 0.0, 0, 0
+
+    def wait(self):
+        while True:
+            with self.lock:
+                d = self.until - time.time()
+            if d <= 0:
+                return
+            time.sleep(min(d, 5.0))
+
+    def hit(self, retry_after):
+        with self.lock:
+            self.n429 += 1
+            self.streak += 1
+            delay = retry_after if retry_after is not None else min(MAX_BACKOFF_S, 2.0 ** self.streak)
+            self.until = max(self.until, time.time() + min(delay, MAX_BACKOFF_S))
+
+    def ok(self):
+        with self.lock:
+            self.streak = 0
+
+
+def call_with_retry(url, body, throttle=None, timeout=180):
+    """(status, text, latency_of_last_attempt, attempts, n429). Bounded: up to
+    MAX_ATTEMPTS transient failures (sleeping 5 s, 10 s between them) and
+    MAX_429 rate limits (backing off through `throttle`, one per model)."""
+    throttle = throttle or Throttle()
+    attempts = n429 = 0
+    while True:
+        throttle.wait()
+        status, text, took, retry_after = post(url, body, timeout)
+        attempts += 1
+        if status == 429:
+            n429 += 1
+            throttle.hit(retry_after)
+            if n429 < MAX_429:
+                continue
+            return status, text, took, attempts, n429
+        if status == 200:
+            throttle.ok()
+        failures = attempts - n429
+        if status == 200 or (status is not None and status not in RETRY_STATUS) or failures >= MAX_ATTEMPTS:
+            return status, text, took, attempts, n429
+        time.sleep(5 * failures)
 
 
 # ---------------------------------------------------------------- validation
@@ -251,46 +341,104 @@ def parse_chat(text):
         return None, "chat reply is not one JSON object"
 
 
-def run_one(model, item, phase, repeat):
+def batch_qids(group):
+    """Question ids for one call: the item's own qid, suffixed with the item's
+    kind when two items in the group share it (two patches for one task)."""
+    qids = [x["qid"] for x in group]
+    out = [q if qids.count(q) == 1 else q + "__" + re.sub(r"[^A-Za-z0-9]+", "_", x["id"].split("/", 2)[-1]).strip("_")
+           for q, x in zip(qids, group)]
+    assert len(set(out)) == len(out), out
+    return out
+
+
+def decision_body(model, group):
+    """One item: exactly the unbatched request. Several (--batch): the shared
+    evidence once, each question's own fields under `per_question.<qid>`."""
+    qids = batch_qids(group)
+    if len(group) == 1:
+        return {"model": model, "state": group[0]["state"], "questions": {qids[0]: group[0]["question"]}}, qids
+    state = {k: v for k, v in group[0]["state"].items() if k not in PER_ITEM}
+    per, questions = {}, {}
+    for q, x in zip(qids, group):
+        extra = {k: v for k, v in x["state"].items() if k in PER_ITEM}
+        question = dict(x["question"])
+        if extra:
+            per[q] = extra
+            names = ", ".join(f"`{k}`" for k in extra)
+            question["instructions"] = (f"For this question, {names} {'is' if len(extra) == 1 else 'are'} "
+                                        f"under `per_question.{q}` in the state. " + question["instructions"])
+        questions[q] = question
+    if per:
+        state["per_question"] = per
+    return {"model": model, "state": state, "questions": questions}, qids
+
+
+def chat_body(model, item):
+    body = {"model": model, "max_tokens": 1024, "usage": {"include": True},
+            "messages": [{"role": "system", "content": CHAT_SYSTEM},
+                         {"role": "user", "content": chat_prompt(item)}]}
+    if model not in NO_SCHEMA:
+        body.update(response_format=answer_schema(item), provider={"require_parameters": True})
+    if model not in NO_TEMPERATURE:
+        body["temperature"] = 0
+    return body
+
+
+def run_group(model, group, phase, repeat, throttle=None):
+    """One HTTP call answering every item in `group`; one row per item. A batch
+    row carries its share of the call's cost (`cost`) and the whole call's
+    (`batch_cost`, `batch_*_tokens`); latency is the call's."""
     kind = kind_of(model)
-    row = {"model": model, "kind": kind, "phase": phase, "repeat": repeat, "item": item["id"],
-           "cat": item["cat"], "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     if kind == "decision":
-        body = {"model": model, "state": item["state"], "questions": {item["qid"]: item["question"]}}
+        body, qids = decision_body(model, group)
         url = DECISIONS_URL
     else:
-        body = {"model": model, "max_tokens": 1024, "usage": {"include": True},
-                "messages": [{"role": "system", "content": CHAT_SYSTEM},
-                             {"role": "user", "content": chat_prompt(item)}]}
-        if model not in NO_SCHEMA:
-            body.update(response_format=answer_schema(item), provider={"require_parameters": True})
-        if model not in NO_TEMPERATURE:
-            body["temperature"] = 0
-        url = CHAT_URL
-    row["request_sha16"] = sha16(json.dumps(body, sort_keys=True))
-    status, text, took, attempts = call_with_retry(url, body)
-    row.update(http_status=status, latency_s=round(took, 3), attempts=attempts)
-    parsed, err, resp = None, None, None
+        if len(group) != 1:
+            raise SystemExit("--batch is for decision models only")
+        body, qids, url = chat_body(model, group[0]), [group[0]["qid"]], CHAT_URL
+    common = {"model": model, "kind": kind, "phase": phase, "repeat": repeat,
+              "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+              "request_sha16": sha16(json.dumps(body, sort_keys=True))}
+    began = time.time()
+    status, text, took, attempts, n429 = call_with_retry(url, body, throttle, TIMEOUT[kind])
+    common.update(http_status=status, latency_s=round(took, 3), elapsed_s=round(time.time() - began, 3),
+                  attempts=attempts, n429=n429)
+    batched = len(group) > 1
+    if batched:
+        common.update(batch_id=common["request_sha16"], batch_size=len(group))
+    call_err, resp = None, None
     if status != 200:
-        err = f"http {status}: {text[:300]}"
+        call_err = f"http {status}: {text[:300]}"
     else:
         try:
             resp = json.loads(text)
         except ValueError:
-            err = "response is not JSON"
+            call_err = "response is not JSON"
     if resp is not None:
         if "error" in resp and not resp.get("answers") and not resp.get("choices"):
-            err = f"error body: {json.dumps(resp['error'])[:300]}"
+            call_err = f"error body: {json.dumps(resp['error'])[:300]}"
         usage = resp.get("usage") or {}
-        row["model_resolved"] = resp.get("model")
-        row["provider"] = resp.get("provider")
-        row["input_tokens"] = usage.get("input_tokens", usage.get("prompt_tokens"))
-        row["output_tokens"] = usage.get("output_tokens", usage.get("completion_tokens"))
-        row["cost"] = usage.get("cost")
+        tin = usage.get("input_tokens", usage.get("prompt_tokens"))
+        tout = usage.get("output_tokens", usage.get("completion_tokens"))
+        cost = usage.get("cost")
+        common.update(model_resolved=resp.get("model"), provider=resp.get("provider"))
+        if batched:
+            common.update(batch_input_tokens=tin, batch_output_tokens=tout, batch_cost=cost,
+                          cost=None if cost is None else cost / len(group))
+        else:
+            common.update(input_tokens=tin, output_tokens=tout, cost=cost)
+    rows = []
+    for item, qid in zip(group, qids):
+        row = dict(common, item=item["id"], cat=item["cat"])
+        if batched:
+            row["batch_qid"] = qid
+        parsed, err = None, call_err
         if err is None and kind == "decision":
-            ans = (resp.get("answers") or {}).get(item["qid"])
+            ans = (resp.get("answers") or {}).get(qid)
             row["answer"] = ans
-            if isinstance(ans, dict) and ans.get("type") not in (None, item["qtype"]):
+            if ans is None:
+                err = f"no answer for question {qid!r}"
+            elif isinstance(ans, dict) and ans.get("type") not in (None, item["qtype"]):
                 err = f"answer type {ans.get('type')!r} != {item['qtype']}"
             else:
                 parsed, err = validate(item, ans)
@@ -305,11 +453,16 @@ def run_one(model, item, phase, repeat):
             if err is None:
                 row["answer"] = ans
                 parsed, err = validate(item, ans)
-    row["parsed"] = parsed
-    row["error"] = err
-    row["error_class"] = (None if err is None else "http" if status != 200 else "malformed")
-    row["correct"] = correct(item, parsed) if err is None else False
-    return row
+        row["parsed"] = parsed
+        row["error"] = err
+        row["error_class"] = (None if err is None else "http" if status != 200 else "malformed")
+        row["correct"] = correct(item, parsed) if err is None else False
+        rows.append(row)
+    return rows
+
+
+def run_one(model, item, phase, repeat, throttle=None):
+    return run_group(model, [item], phase, repeat, throttle)[0]
 
 
 # ---------------------------------------------------------------- phases
@@ -322,44 +475,133 @@ def working_models():
     return [m for m in DECISION_MODELS + CHAT_MODELS if m in last and last[m].get("error") is None]
 
 
-def run_phase(phase, items, models, repeats, cap):
-    os.makedirs(os.path.join(RESULTS, phase), exist_ok=True)
+def groups_of(items, batch):
+    """Unbatched: one item per call. --batch: items whose state is identical
+    apart from PER_ITEM fields (the same PoC task, or the six sealed candidates
+    against one suite) share a call. A MiCode gate item's tool call is its whole
+    evidence, so gate items never group."""
+    if not batch:
+        return [[x] for x in items]
+    groups = {}
+    for x in items:
+        s = x["state"]
+        key = (json.dumps({k: v for k, v in s.items() if k not in PER_ITEM}, sort_keys=True)
+               if isinstance(s, dict) else "solo:" + x["id"])
+        groups.setdefault(key, []).append(x)
+    return [sorted(g, key=lambda x: x["id"]) for g in groups.values()]
+
+
+def run_phase(phase, items, models, repeats, cap, outdir=None, batch=False):
+    """Every model gets its own pool; all pools run at once (decision models
+    submitted first); SLOTS bounds the HTTP requests in flight overall, and a
+    model has at most max(WORKERS[kind], CONCURRENCY // models still running)."""
+    outdir = outdir or phase
+    d = os.path.join(RESULTS, outdir)
+    os.makedirs(d, exist_ok=True)
     budget = Budget(cap)
-    jobs = []
+    groups = groups_of(items, batch)
+    jobs = {}
     for m in models:
         for rep in repeats:
-            out = os.path.join(RESULTS, phase, f"{slug(m)}.jsonl" if len(repeats) == 1 and rep == 0
-                               else f"{slug(m)}.r{rep}.jsonl")
+            out = os.path.join(d, f"{slug(m)}.jsonl" if len(repeats) == 1 and rep == 0 else f"{slug(m)}.r{rep}.jsonl")
             done = {r["item"] for r in read_jsonl(out)}
-            jobs += [(m, x, rep, out) for x in items if x["id"] not in done]
-    print(f"{phase}: {len(jobs)} calls to make; spent so far ${budget.base:.4f} of ${cap:.2f}", file=sys.stderr)
+            jobs.setdefault(m, []).extend((g, rep, out) for g in groups if not all(x["id"] in done for x in g))
+        # Within a model, a fixed pseudo-random order mixes the categories.
+        jobs[m].sort(key=lambda j: sha16(j[0][0]["id"] + str(j[1])))
+    n_calls = sum(len(v) for v in jobs.values())
+    print(f"{outdir}: {n_calls} calls to make ({sum(len(g) for v in jobs.values() for g, _, _ in v)} decisions); "
+          f"spent so far ${budget.base:.4f} of ${cap:.2f}; {CONCURRENCY} in flight max", file=sys.stderr)
     lock, stop = threading.Lock(), threading.Event()
+    throttles = {m: Throttle() for m in models}
+    calls = {m: 0 for m in models}
+    finished = {}
+    cv = threading.Condition()
+    inflight = {m: 0 for m in models}
+    active = {m for m in models if jobs[m]}
+    began, started = time.time(), time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-    def work(job):
-        m, x, rep, out = job
+    def limit(m):
+        return max(WORKERS[kind_of(m)], CONCURRENCY // max(1, len(active)))
+
+    def work(m, job):
+        g, rep, out = job
         if stop.is_set():
             return
-        reserve = RESERVE[kind_of(m)]
+        reserve = RESERVE[kind_of(m)] * len(g)
+        with cv:
+            while inflight[m] >= limit(m):
+                cv.wait()
+            inflight[m] += 1
         if not budget.reserve(reserve):
             stop.set()
             print(f"STOP: spend cap ${cap:.2f} reached", file=sys.stderr)
+            with cv:
+                inflight[m] -= 1
+                cv.notify_all()
             return
-        row = None
+        rows = None
         try:
-            row = run_one(m, x, phase, rep)
+            rows = run_group(m, g, outdir, rep, throttles[m])
         finally:
-            budget.settle(reserve, float((row or {}).get("cost") or 0.0))
+            with cv:
+                inflight[m] -= 1
+                cv.notify_all()
+            budget.settle(reserve, sum(float(r.get("cost") or 0.0) for r in rows or []))
         with lock:
             with open(out, "a") as f:
-                f.write(json.dumps(row, sort_keys=True) + "\n")
-        if row["error"]:
-            print(f"  {m} {x['id']}: {row['error'][:160]}", file=sys.stderr)
+                f.write("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows))
+            calls[m] += 1
+        errs = [r for r in rows if r["error"]]
+        if errs:
+            more = f" (+{len(errs) - 1} more in this call)" if len(errs) > 1 else ""
+            print(f"  {m} {errs[0]['item']}{more}: {errs[0]['error'][:160]}", file=sys.stderr)
 
-    # Interleave models so one slow model does not serialise the run.
-    jobs.sort(key=lambda j: (sha16(j[1]["id"] + str(j[2])), j[0]))
-    with cf.ThreadPoolExecutor(MAX_CONCURRENT) as ex:
-        list(ex.map(work, jobs))
-    print(f"{phase}: done; spent ${spent():.4f}", file=sys.stderr)
+    def on_done(m):
+        def cb(_):
+            with lock:
+                remaining[m] -= 1
+                last = remaining[m] == 0
+                if last:
+                    finished[m] = round(time.time() - began, 1)
+                    print(f"  {m}: done at +{finished[m]:.0f}s", file=sys.stderr)
+            if last:
+                with cv:
+                    active.discard(m)
+                    cv.notify_all()
+        return cb
+
+    ordered = [m for m in models if kind_of(m) == "decision"] + [m for m in models if kind_of(m) == "chat"]
+    pools = {m: cf.ThreadPoolExecutor(CONCURRENCY, thread_name_prefix=slug(m)) for m in ordered if jobs[m]}
+    remaining = {m: len(jobs[m]) for m in pools}
+    futs = []
+    for m, pool in pools.items():
+        for j in jobs[m]:
+            f = pool.submit(work, m, j)
+            f.add_done_callback(on_done(m))
+            futs.append(f)
+    for f in futs:
+        f.result()
+    for pool in pools.values():
+        pool.shutdown()
+    wall = round(time.time() - began, 1)
+
+    def done_at(kind):
+        ts = [finished[m] for m in pools if kind_of(m) == kind and m in finished]
+        return max(ts) if ts else None
+    if n_calls:
+        log_p = os.path.join(d, "RUNLOG.json")
+        log = json.load(open(log_p)) if os.path.exists(log_p) else []
+        log.append({"outdir": outdir, "batch": batch, "started": started, "wall_s": wall,
+                    "concurrency": CONCURRENCY, "workers_per_model": WORKERS, "timeout_s": TIMEOUT,
+                    "per_model_limit": "max(workers, concurrency // models running)", "calls": sum(calls.values()),
+                    "decision_models_done_s": done_at("decision"), "chat_models_done_s": done_at("chat"),
+                    "stopped_by_cap": stop.is_set(),
+                    "models": {m: {"calls": calls[m], "done_s": finished.get(m), "n429": throttles[m].n429}
+                               for m in pools}})
+        json.dump(log, open(log_p, "w"), indent=1, sort_keys=True)
+    n429 = {m: t.n429 for m, t in throttles.items() if t.n429}
+    print(f"{outdir}: done in {wall:.0f}s; {sum(calls.values())} calls; 429s per model: {n429 or 'none'}; "
+          f"spent ${spent():.4f}", file=sys.stderr)
     return not stop.is_set()
 
 
@@ -376,7 +618,7 @@ def probe(models):
     out = os.path.join(RESULTS, "probe.jsonl")
     os.makedirs(RESULTS, exist_ok=True)
     budget = Budget(10 ** 9)
-    with cf.ThreadPoolExecutor(MAX_CONCURRENT) as ex:
+    with cf.ThreadPoolExecutor(CONCURRENCY) as ex:
         rows = list(ex.map(lambda m: run_one(m, PROBE_ITEM, "probe", 0), models))
     with open(out, "a") as f:
         for r in rows:
@@ -388,14 +630,23 @@ def probe(models):
 
 
 def main():
+    global CONCURRENCY, SLOTS
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     g = ap.add_mutually_exclusive_group(required=True)
     for p in ("probe", "pilot", "full", "stability", "drift", "list"):
         g.add_argument("--" + p, action="store_true")
     ap.add_argument("--models", help="comma-separated subset (default: every model the last probe found working)")
+    k = ap.add_mutually_exclusive_group()
+    k.add_argument("--only-decision", action="store_true", help="decision models only (/api/alpha/decisions)")
+    k.add_argument("--only-chat", action="store_true", help="chat baselines only")
+    ap.add_argument("--batch", action="store_true",
+                    help="--full only: one call per group of items sharing evidence -> results/full-batched/")
+    ap.add_argument("--outdir", help="results subdirectory (default: the phase name; full-batched with --batch)")
+    ap.add_argument("--concurrency", type=int, default=CONCURRENCY, help="HTTP requests in flight, all models")
     ap.add_argument("--cap-usd", type=float, default=10.0)
     ap.add_argument("--repeat", type=int, default=1, help="repeat index for --drift")
     a = ap.parse_args()
+    CONCURRENCY, SLOTS = a.concurrency, threading.BoundedSemaphore(a.concurrency)
     items = load_set()
     if a.list:
         print(json.dumps({"decision": DECISION_MODELS, "chat": CHAT_MODELS, "skipped": SKIPPED}, indent=1))
@@ -404,20 +655,27 @@ def main():
         probe(a.models.split(",") if a.models else DECISION_MODELS + CHAT_MODELS)
         return
     models = a.models.split(",") if a.models else working_models()
+    if a.only_decision or a.only_chat:
+        models = [m for m in models if (kind_of(m) == "decision") == a.only_decision]
     if not models:
         raise SystemExit("no working models: run --probe first")
+    if a.batch and not a.full:
+        raise SystemExit("--batch goes with --full")
+    if a.batch and any(kind_of(m) == "chat" for m in models):
+        raise SystemExit("--batch is for decision models only: add --only-decision")
+    ranked = [m for m in models if m not in ALIASES]
     if a.pilot:
-        ok = run_phase("pilot", subset(items, PILOT_PER_CAT, "pilot"), models, [0], a.cap_usd)
+        ok = run_phase("pilot", subset(items, PILOT_PER_CAT, "pilot"), models, [0], a.cap_usd, a.outdir)
     elif a.full:
-        ok = run_phase("full", items, [m for m in models if m not in ALIASES], [0], a.cap_usd)
+        ok = run_phase("full", items, ranked, [0], a.cap_usd,
+                       a.outdir or ("full-batched" if a.batch else None), a.batch)
     elif a.drift:
         # Whole-set extra samples (--repeat N, 1-based), for a model whose stability repeats
         # disagree with its full run (used for perplexity/pplx-decider-v1.1-27b; pass --models).
-        ok = run_phase("drift", items, [m for m in models if m not in ALIASES], [a.repeat], a.cap_usd)
+        ok = run_phase("drift", items, ranked, [a.repeat], a.cap_usd, a.outdir)
     else:
-        ok = run_phase("stability", subset(items, STABILITY_PER_CAT, "stability"),
-                       [m for m in models if m not in ALIASES],
-                       list(range(1, STABILITY_REPEATS + 1)), a.cap_usd)
+        ok = run_phase("stability", subset(items, STABILITY_PER_CAT, "stability"), ranked,
+                       list(range(1, STABILITY_REPEATS + 1)), a.cap_usd, a.outdir)
     sys.exit(0 if ok else 3)
 
 

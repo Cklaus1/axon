@@ -1,0 +1,89 @@
+[
+ {
+  "batch": true,
+  "calls": 1526,
+  "chat_models_done_s": null,
+  "concurrency": 32,
+  "decision_models_done_s": 147.8,
+  "models": {
+   "cloudflare/clef": {
+    "calls": 109,
+    "done_s": 28.8,
+    "n429": 0
+   },
+   "cloudflare/clef-flash": {
+    "calls": 109,
+    "done_s": 28.8,
+    "n429": 0
+   },
+   "cloudflare/clef-omni": {
+    "calls": 109,
+    "done_s": 26.7,
+    "n429": 0
+   },
+   "inception/mercury-decide": {
+    "calls": 109,
+    "done_s": 28.8,
+    "n429": 0
+   },
+   "jaredpalmer/kev-4b": {
+    "calls": 109,
+    "done_s": 29.9,
+    "n429": 0
+   },
+   "liquid/d1": {
+    "calls": 109,
+    "done_s": 26.5,
+    "n429": 0
+   },
+   "microsoft/microsoft-decision-1": {
+    "calls": 109,
+    "done_s": 27.2,
+    "n429": 0
+   },
+   "nace-ai/drex-v1.5": {
+    "calls": 109,
+    "done_s": 27.1,
+    "n429": 0
+   },
+   "openai/gpt-6-luna-decisions": {
+    "calls": 109,
+    "done_s": 39.4,
+    "n429": 0
+   },
+   "perplexity/pplx-decider-v1.1-27b": {
+    "calls": 109,
+    "done_s": 25.7,
+    "n429": 0
+   },
+   "togethercomputer/tev1-4b-experimental": {
+    "calls": 109,
+    "done_s": 27.7,
+    "n429": 0
+   },
+   "typesafe/jev-1.13": {
+    "calls": 109,
+    "done_s": 26.5,
+    "n429": 0
+   },
+   "upstage/solar-decide": {
+    "calls": 109,
+    "done_s": 147.8,
+    "n429": 0
+   },
+   "upstage/solar-decide-flash": {
+    "calls": 109,
+    "done_s": 30.4,
+    "n429": 0
+   }
+  },
+  "outdir": "full-batched",
+  "started": "2026-10-12T18:40:31Z",
+  "stopped_by_cap": false,
+  "wall_s": 147.8,
+  "workers_per_model": {
+   "chat": 4,
+   "decision": 8
+  }
+ }
+]

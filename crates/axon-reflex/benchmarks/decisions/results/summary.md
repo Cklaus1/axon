@@ -295,15 +295,133 @@ Not run: `respan/span-01` (conversation-behaviour scorer, not a state/questions 
 
 ### Spend (sum of `usage.cost` returned by OpenRouter)
 
-| phase | calls | $ |
-|---|---|---|
-| probe | 20 | 0.0070 |
-| drift | 444 | 0.0150 |
-| full | 3996 | 5.3871 |
-| pilot | 190 | 0.2627 |
-| pilot-schema-403 | 10 | 0.0016 |
-| pilot-unconstrained | 30 | 0.2066 |
-| stability | 1620 | 1.8817 |
-| **total** | 6310 | **7.7618** |
+| phase | HTTP calls | decisions | $ |
+|---|---|---|---|
+| probe | 20 | 20 | 0.0070 |
+| drift | 444 | 444 | 0.0150 |
+| full | 3996 | 3996 | 5.3871 |
+| full-batched | 1526 | 3108 | 0.2113 |
+| full-fast | 3108 | 3108 | 0.3523 |
+| full-fast2 | 3108 | 3108 | 0.3523 |
+| pilot | 190 | 190 | 0.2627 |
+| pilot-schema-403 | 10 | 10 | 0.0016 |
+| pilot-unconstrained | 30 | 30 | 0.2066 |
+| stability | 1620 | 1620 | 1.8817 |
+| **total** | 14052 | 15634 | **8.6778** |
 
 Per model, full run: `anthropic/claude-opus-5.5` $3.3533, `typesafe/jev-router` $0.9489, `anthropic/claude-haiku-5.5` $0.0985, `inception/mercury-decide` $0.0073, `cloudflare/clef` $0.0923, `typesafe/jev-1.13` $0.0179, `liquid/d1` $0.0149, `microsoft/microsoft-decision-1` $0.0152, `anthropic/claude-haiku-4.5` $0.6343, `upstage/solar-decide` $0.0216, `cloudflare/clef-omni` $0.0577, `cloudflare/clef-flash` $0.0146, `nace-ai/drex-v1.5` $0.0140, `openai/gpt-6-luna-decisions` $0.0373, `togethercomputer/tev1-4b-experimental` $0.0158, `jaredpalmer/kev-4b` $0.0146, `upstage/solar-decide-flash` $0.0216, `perplexity/pplx-decider-v1.1-27b` $0.0075.
+
+## Harness speed (decision models; not part of the ranking)
+
+The ranking above comes from `results/full/`: one pool of 4 workers shared by all 18 models, chat and decision calls interleaved. `results/full-fast/` re-runs the same 3,108 decision-model requests (byte-identical bodies) with the new scheduler: a pool per model (8 workers), at most 32 requests in flight overall, 429 back-off per model. `results/full-batched/` is the `--batch` variant below. `results/full-fast2/` repeats `full-fast` after two scheduler fixes: a 60 s per-attempt timeout for decision calls (was 180 s), and a per-model limit that rises to an equal share of the 32 slots as other models finish.
+
+| run | scheduler | models | HTTP calls | decisions | wall | decision models done | 429 responses / calls retried |
+|---|---|---|---|---|---|---|---|
+| `full` (ranking) | one pool, 4 in flight | 18 (14 decision + 4 chat) | 3996 | 3996 | 27.6 min (row timestamps) | 27.6 min | 429 not logged / 10 |
+| `full-fast` | pool per model (8), 32 in flight, 180 s timeout | 14 decision | 3108 | 3108 | 3.7 min | 3.7 min | 0 / 4 |
+| `full-batched` | pool per model (8), 32 in flight, 180 s timeout, batched | 14 decision | 1526 | 3108 | 2.5 min | 2.5 min | 0 / 1 |
+| `full-fast2` | pool per model (8, more as models finish), 32 in flight, 60 s timeout | 14 decision | 3108 | 3108 | 1.8 min | 1.8 min | 0 / 1 |
+
+`full-fast`: 429s per model: none. Slowest models to finish: `upstage/solar-decide` 3.7 min, `inception/mercury-decide` 3.5 min, `nace-ai/drex-v1.5` 3.5 min.
+
+`full-batched`: 429s per model: none. Slowest models to finish: `upstage/solar-decide` 2.5 min, `openai/gpt-6-luna-decisions` 0.7 min, `upstage/solar-decide-flash` 0.5 min.
+
+`full-fast2`: 429s per model: none. Slowest models to finish: `upstage/solar-decide` 1.8 min, `openai/gpt-6-luna-decisions` 1.1 min, `jaredpalmer/kev-4b` 1.0 min.
+
+### Same requests, second sample: `full` vs `full-fast` (drift check)
+
+Δ = full-fast − full. A flip is an item whose answer (choice, or p_yes ≥ 0.5) differs between the two runs; →wrong / →right count flips that changed correctness. Every flip is listed in `results/summary.json` (`flips_full_vs_full_fast`).
+
+| model | full | full-fast | Δ macro [95% CI] | Δ loc | Δ repair | Δ tamper | Δ route | Δ gate |
+|---|---|---|---|---|---|---|---|---|
+| `microsoft/microsoft-decision-1` | 0.805 | 0.809 | +0.00 [-0.02, +0.02] | +0.02 [-0.04, +0.07] | +0.00 [-0.08, +0.08] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] |
+| `perplexity/pplx-decider-v1.1-27b` | 0.498 | 0.901 | **+0.40 [+0.33, +0.47]** | **+0.46 [+0.30, +0.61]** | **+0.56 [+0.39, +0.70]** | **+0.32 [+0.16, +0.47]** | **+0.44 [+0.29, +0.59]** | **+0.25 [+0.09, +0.41]** |
+| `openai/gpt-6-luna-decisions` | 0.691 | 0.691 | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] |
+| `cloudflare/clef` | 0.837 | 0.831 | -0.01 [-0.03, +0.02] | +0.02 [+0.00, +0.05] | -0.03 [-0.08, +0.00] | -0.05 [-0.13, +0.00] | +0.00 [+0.00, +0.00] | +0.03 [+0.00, +0.09] |
+| `cloudflare/clef-flash` | 0.708 | 0.708 | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] |
+| `cloudflare/clef-omni` | 0.708 | 0.708 | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] |
+| `liquid/d1` | 0.810 | 0.807 | -0.00 [-0.01, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | -0.02 [-0.05, +0.00] | +0.00 [+0.00, +0.00] |
+| `togethercomputer/tev1-4b-experimental` | 0.600 | 0.596 | -0.00 [-0.01, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | -0.02 [-0.05, +0.00] | +0.00 [+0.00, +0.00] |
+| `inception/mercury-decide` | 0.856 | 0.856 | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] |
+| `typesafe/jev-1.13` | 0.823 | 0.830 | +0.01 [+0.00, +0.02] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.03 [+0.00, +0.08] | +0.00 [+0.00, +0.00] |
+| `jaredpalmer/kev-4b` | 0.571 | 0.576 | +0.01 [+0.00, +0.02] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.03 [+0.00, +0.08] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] |
+| `nace-ai/drex-v1.5` | 0.695 | 0.695 | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] | +0.00 [+0.00, +0.00] |
+| `upstage/solar-decide` | 0.745 | 0.765 | +0.02 [-0.03, +0.07] | +0.00 [-0.09, +0.09] | +0.06 [-0.03, +0.17] | +0.03 [-0.13, +0.18] | +0.02 [-0.07, +0.10] | +0.00 [-0.09, +0.09] |
+| `upstage/solar-decide-flash` | 0.536 | 0.535 | -0.00 [-0.02, +0.02] | +0.04 [+0.00, +0.09] | +0.00 [+0.00, +0.00] | -0.03 [-0.08, +0.00] | +0.02 [+0.00, +0.05] | -0.03 [-0.09, +0.00] |
+| **mean of 14 models** | 0.706 | 0.736 | **+0.03 [+0.02, +0.04]** | **+0.04 [+0.02, +0.05]** | **+0.04 [+0.03, +0.06]** | **+0.02 [+0.00, +0.04]** | **+0.03 [+0.02, +0.05]** | **+0.02 [+0.01, +0.03]** |
+
+| model | answers changed | →wrong | →right | errors full / fast | resolved id changed | flipped correctness |
+|---|---|---|---|---|---|---|
+| `microsoft/microsoft-decision-1` | 5/222 | 2 | 3 | 0 / 0 | no | `loc/argswap-03`, `repair/drop-stmt-02/fix+regression/drop-stmt@484`, `loc/boolean-02`, `loc/comparison-11`, `repair/operator-03/fix+regression/constant@13` |
+| `perplexity/pplx-decider-v1.1-27b` | 110/222 | 5 | 97 | 0 / 0 | no | 102 items |
+| `openai/gpt-6-luna-decisions` | 0/222 | 0 | 0 | 1 / 1 | no | - |
+| `cloudflare/clef` | 5/222 | 3 | 2 | 0 / 0 | no | `repair/boolean-12/fix+regression/constant@48`, `tamper/boolean-07/oracle`, `tamper/operator-06/exit0`, `gate/bash/010c6ba80c`, `loc/boolean-02` |
+| `cloudflare/clef-flash` | 0/222 | 0 | 0 | 0 / 0 | no | - |
+| `cloudflare/clef-omni` | 0/222 | 0 | 0 | 0 / 0 | no | - |
+| `liquid/d1` | 1/222 | 1 | 0 | 0 / 0 | no | `route/comparison-12` |
+| `togethercomputer/tev1-4b-experimental` | 2/222 | 1 | 0 | 0 / 0 | no | `route/comparison-11` |
+| `inception/mercury-decide` | 0/222 | 0 | 0 | 0 / 0 | no | - |
+| `typesafe/jev-1.13` | 2/222 | 0 | 2 | 0 / 0 | no | `route/boolean-06`, `route/boolean-07` |
+| `jaredpalmer/kev-4b` | 1/222 | 0 | 1 | 1 / 0 | no | `tamper/operator-05/forge` |
+| `nace-ai/drex-v1.5` | 0/222 | 0 | 0 | 0 / 0 | no | - |
+| `upstage/solar-decide` | 30/222 | 12 | 16 | 0 / 0 | no | 28 items |
+| `upstage/solar-decide-flash` | 5/222 | 2 | 3 | 0 / 0 | no | `gate/bash/04c3113a08`, `tamper/argswap-04/oracle`, `loc/comparison-02`, `loc/drop-stmt-05`, `route/argswap-01` |
+
+## Batched questions (separate variant; not part of the ranking)
+
+`run.py --full --only-decision --batch` sends one state per group of items whose states are equal apart from their own `proposed_patch` / `ranked_candidates`, with one question per item in the same `questions` map. The per-item fields move under `per_question.<qid>`, and that question's instructions name the path. A single-item group is the unbatched request, byte for byte. A missing or malformed answer is wrong for that question only. The comparison is against `full-fast`, the unbatched sample taken just before it, so drift between days does not enter.
+
+| category | items | asked together with other items | asked alone |
+|---|---|---|---|
+| loc | 57 | 56 | 1 |
+| repair | 36 | 35 | 1 |
+| tamper | 38 | 28 | 10 |
+| route | 59 | 59 | 0 |
+| gate | 32 | 0 | 32 |
+| **all** | 222 | 178 | 44 |
+
+Calls per model: 109 batched instead of 222.
+
+Questions per call: 1: 44 calls, 2: 27 calls, 3: 30 calls, 4: 7 calls, 6: 1 calls. Gate items never group: each tool call is its own evidence. The groups are one PoC task (loc + route, plus its repair and tamper patches) or the six sealed candidates against one suite.
+
+HTTP calls over the 14 decision models: 3108 unbatched → 1526 batched (1582 saved, 51%).
+
+Accuracy, batched vs unbatched (Δ = batched − unbatched):
+
+| model | unbatched | batched | Δ macro [95% CI] | Δ loc | Δ repair | Δ tamper | Δ route | Δ gate |
+|---|---|---|---|---|---|---|---|---|
+| `microsoft/microsoft-decision-1` | 0.809 | 0.814 | +0.00 [-0.04, +0.05] | +0.00 [-0.05, +0.05] | -0.03 [-0.17, +0.11] | +0.00 [+0.00, +0.00] | +0.05 [-0.12, +0.24] | +0.00 [+0.00, +0.00] |
+| `perplexity/pplx-decider-v1.1-27b` | 0.901 | 0.904 | +0.00 [-0.02, +0.03] | +0.02 [+0.00, +0.05] | +0.00 [+0.00, +0.00] | +0.08 [+0.00, +0.16] | **-0.08 [-0.17, -0.02]** | +0.00 [+0.00, +0.00] |
+| `openai/gpt-6-luna-decisions` | 0.691 | 0.690 | -0.00 [-0.05, +0.04] | **+0.07 [+0.02, +0.14]** | +0.06 [-0.06, +0.17] | **+0.11 [+0.03, +0.21]** | **-0.24 [-0.39, -0.08]** | +0.00 [+0.00, +0.00] |
+| `cloudflare/clef` | 0.831 | 0.846 | +0.02 [-0.02, +0.05] | +0.02 [-0.04, +0.07] | +0.00 [-0.08, +0.08] | +0.03 [-0.08, +0.13] | +0.03 [-0.07, +0.14] | +0.00 [+0.00, +0.00] |
+| `cloudflare/clef-flash` | 0.708 | 0.725 | +0.02 [-0.03, +0.06] | +0.00 [-0.11, +0.11] | -0.03 [-0.14, +0.08] | +0.03 [+0.00, +0.08] | +0.08 [-0.08, +0.25] | +0.00 [+0.00, +0.00] |
+| `cloudflare/clef-omni` | 0.708 | 0.726 | +0.02 [-0.01, +0.05] | +0.02 [-0.05, +0.11] | +0.00 [-0.11, +0.11] | +0.00 [+0.00, +0.00] | +0.07 [-0.02, +0.15] | +0.00 [+0.00, +0.00] |
+| `liquid/d1` | 0.807 | 0.829 | +0.02 [-0.01, +0.06] | +0.05 [+0.00, +0.12] | +0.03 [-0.06, +0.14] | -0.05 [-0.13, +0.00] | +0.08 [+0.00, +0.19] | +0.00 [+0.00, +0.00] |
+| `togethercomputer/tev1-4b-experimental` | 0.596 | 0.631 | +0.03 [-0.02, +0.09] | **+0.16 [+0.07, +0.26]** | -0.06 [-0.28, +0.17] | +0.05 [+0.00, +0.13] | +0.02 [-0.15, +0.19] | +0.00 [+0.00, +0.00] |
+| `inception/mercury-decide` | 0.856 | 0.876 | +0.02 [-0.01, +0.05] | +0.04 [+0.00, +0.09] | +0.00 [+0.00, +0.00] | +0.08 [+0.00, +0.16] | +0.02 [-0.10, +0.14] | -0.03 [-0.09, +0.00] |
+| `typesafe/jev-1.13` | 0.830 | 0.841 | +0.01 [-0.02, +0.04] | +0.04 [+0.00, +0.09] | +0.03 [-0.06, +0.11] | +0.03 [+0.00, +0.08] | -0.03 [-0.14, +0.07] | +0.00 [+0.00, +0.00] |
+| `jaredpalmer/kev-4b` | 0.576 | 0.647 | **+0.07 [+0.02, +0.13]** | **+0.26 [+0.16, +0.39]** | -0.11 [-0.31, +0.08] | +0.00 [+0.00, +0.00] | **+0.20 [+0.02, +0.37]** | +0.00 [+0.00, +0.00] |
+| `nace-ai/drex-v1.5` | 0.695 | 0.715 | +0.02 [-0.03, +0.07] | +0.04 [-0.07, +0.14] | -0.03 [-0.22, +0.17] | +0.08 [+0.00, +0.16] | +0.02 [-0.05, +0.10] | +0.00 [+0.00, +0.00] |
+| `upstage/solar-decide` | 0.765 | 0.802 | +0.04 [-0.01, +0.09] | +0.07 [-0.02, +0.18] | +0.03 [-0.08, +0.14] | +0.11 [+0.00, +0.24] | -0.02 [-0.15, +0.14] | +0.00 [-0.09, +0.09] |
+| `upstage/solar-decide-flash` | 0.535 | 0.578 | **+0.04 [+0.01, +0.08]** | **+0.21 [+0.11, +0.33]** | +0.00 [-0.08, +0.08] | -0.03 [-0.16, +0.08] | +0.00 [+0.00, +0.00] | +0.03 [+0.00, +0.09] |
+| **mean of 14 models** | 0.736 | 0.759 | **+0.02 [+0.00, +0.04]** | **+0.07 [+0.03, +0.12]** | -0.01 [-0.05, +0.04] | **+0.04 [+0.01, +0.06]** | +0.01 [-0.04, +0.07] | +0.00 [-0.01, +0.01] |
+
+Gate items are single-question calls in both runs (the same request twice), so their Δ measures sampling noise alone.
+
+| model | calls unbatched / batched | p50 s per call (unbatched / batched) | $/1k decisions (unbatched / batched) | errors unbatched / batched | missing or malformed answers in a batch |
+|---|---|---|---|---|---|
+| `microsoft/microsoft-decision-1` | 222 / 109 | 0.31 / 0.35 | 0.068 / 0.030 | 0 / 0 | 0 |
+| `perplexity/pplx-decider-v1.1-27b` | 222 / 109 | 0.37 / 0.34 | 0.034 / 0.036 | 0 / 0 | 0 |
+| `openai/gpt-6-luna-decisions` | 222 / 109 | 0.30 / 0.29 | 0.168 / 0.080 | 1 / 1 | 0 |
+| `cloudflare/clef` | 222 / 109 | 0.47 / 0.53 | 0.416 / 0.192 | 0 / 0 | 0 |
+| `cloudflare/clef-flash` | 222 / 109 | 0.63 / 0.55 | 0.066 / 0.030 | 0 / 0 | 0 |
+| `cloudflare/clef-omni` | 222 / 109 | 0.30 / 0.30 | 0.260 / 0.120 | 0 / 0 | 0 |
+| `liquid/d1` | 222 / 109 | 0.27 / 0.30 | 0.067 / 0.073 | 0 / 0 | 0 |
+| `togethercomputer/tev1-4b-experimental` | 222 / 109 | 0.28 / 0.30 | 0.071 / 0.076 | 0 / 0 | 0 |
+| `inception/mercury-decide` | 222 / 109 | 0.44 / 0.53 | 0.033 / 0.013 | 0 / 0 | 0 |
+| `typesafe/jev-1.13` | 222 / 109 | 0.29 / 0.29 | 0.080 / 0.037 | 0 / 0 | 0 |
+| `jaredpalmer/kev-4b` | 222 / 109 | 0.77 / 0.67 | 0.066 / 0.029 | 0 / 0 | 0 |
+| `nace-ai/drex-v1.5` | 222 / 109 | 0.33 / 0.36 | 0.063 / 0.028 | 0 / 0 | 0 |
+| `upstage/solar-decide` | 222 / 109 | 6.70 / 12.11 | 0.097 / 0.103 | 0 / 0 | 0 |
+| `upstage/solar-decide-flash` | 222 / 109 | 0.70 / 0.78 | 0.097 / 0.103 | 0 / 0 | 0 |
+
