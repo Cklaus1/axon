@@ -211,8 +211,11 @@ external generator. On the 47 held-out tasks (`heldout/results/README.md`,
 (first, in 5 of 6, under the ranker) and still failed them, while a plain
 agent on the same model fixed all 47 (paired exact McNemar p = 0.031). Those six
 misses used about three quarters of each Cortex arm's proposals. The section is
-left as written; on held-out tasks the generator, not ranking, is the
-bottleneck.
+left as written; on held-out tasks the generator, not ranking, was the
+bottleneck. Giving the generator the ranker's view of the file and the
+visible tests' feedback closed that gap: 47/47 on the same set (exploratory)
+and 30/30, equal to the plain agent, on `once.json`
+(`heldout/results/gencontext/README.md`).
 
 ## Call depth
 
@@ -600,7 +603,9 @@ change only through a frozen evaluation:
 * [`heldout/`](heldout/README.md): `heldout.json` (47 tasks, now spent) and
   `once.json` (30 tasks, each used for one decision only), planted in files
   the dev corpus never used. The first held-out run is in
-  `heldout/results/README.md`.
+  `heldout/results/README.md`; the generator-context run, including the
+  first use of `once.json`, is in `heldout/results/gencontext/README.md`
+  (`heldout/PREREG-gencontext.md`).
 * [`labels/`](labels/README.md): `cortex repair --label-log` rows from real
   runs, and `to_items.py`, which turns them into LocRank and DecisionBench
   items.

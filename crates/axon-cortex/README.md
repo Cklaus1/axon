@@ -161,6 +161,13 @@ any other proposal.
 model, not a reason to skip the adjudication — and hand-editing the file runs
 neither.
 
+The prompt carries the file with the hidden check cut out (signature, types,
+siblings), the visible failing tests and what they print, and for each
+rejected attempt the visible tests' output or the compiler's diagnostics -
+never the hidden check's name, source or output. Where that view cannot be
+built, the body-only prompt is used and `generator_context` in `--json` says
+why. Details: [`docs/CORTEX.md`](../../docs/CORTEX.md#what-a-generator-sees-and-what-it-never-sees).
+
 ## Tests
 
 ```bash

@@ -393,6 +393,48 @@ refused after 2 step(s)
 Whatever the source, the body goes through the same grant check, compile check
 and hidden check.
 
+#### What a generator sees, and what it never sees
+
+A `cmd:` or `ai:` generator gets one prompt per proposal. It contains:
+
+- the file being repaired with the hidden check CUT OUT: the target's
+  signature, the types and comments it depends on, its sibling functions and
+  the other tests. Over the size cap the ranker uses (`rank::MAX_PROMPT_CHARS`),
+  the target alone is shown and the prompt says it is an excerpt;
+- the source of the visible failing tests, and what they print and assert when
+  the file as it stands is run with the hidden check cut out;
+- the target's current body and the checker's facts about the file;
+- every rejected attempt in this episode, with what the visible side said
+  about it: for `it compiled but did not fix the problem`, the visible tests'
+  verdicts and output with that attempt applied; for `it did not compile`, the
+  compiler's first diagnostics. At most 2 KB per attempt.
+
+This is the material the ranker is already shown, built by the same function
+(`rank::build_view`) with the same size cap and leak guard.
+
+The hidden check stays sealed. Its name, its source, its verdict beyond
+"rejected" and its output never reach a generator: every visible run that
+produces feedback runs a copy of the file the hidden check was removed from,
+so there is no hidden output to filter. A generator that could read why it
+failed the adjudicator would be writing against the grader. The visible tests
+are different: they are what you want fixed, a plain coding agent runs them
+freely, and showing what they print tells a generator nothing the grader
+knows.
+
+When the view cannot be built - the hidden check's name appears outside its
+own definition (a comment, a call, a string), or no visible failing test is
+defined in the file - the generator gets the body-only prompt instead.
+`cortex repair` says so on stderr, once per candidate, and records it under
+`generator_context` in `--json`:
+
+```
+generator context for `sched_new` unavailable: the hidden check's name appears outside its own definition, so the file cannot be shown without it; using the body-only prompt
+
+"generator_context": [{"symbol": "sched_new", "used": "body_only", "reason": "the hidden check's name appears outside its own definition, so the file cannot be shown without it"}]
+```
+
+(`used` is `view` when nothing fell back; `reason` is then `null`.)
+
 #### `literal:` - no model
 
 Use it when you know the fix and want it adjudicated rather than hand-applied:
@@ -662,9 +704,16 @@ Haiku 5.5 via micode, 2026-10-12;
   successes.
 - A plain coding agent on the same model verified **47/47** (paired exact
   McNemar p = 0.031) in about half the wall time.
-- Cortex tried the true function in every one of its six misses. They are
+- Cortex tried the true function in every one of its six misses. They were
   fix-writing failures: the generator saw only the function body, not the
   signature, the types, or the visible failing test.
+- With the generator shown the file without the hidden check and the visible
+  tests' feedback (see "What a generator sees" above), Cortex verified 47/47
+  on the same set (exploratory: the set had been inspected), and on the
+  unused `once.json` (30 tasks) matched the plain agent: 30/30 for the plain
+  agent, Cortex in spectrum order and Cortex with the ranker, 0 false
+  successes, in 76 s and 91 s of wall time against the agent's 190 s
+  ([`benchmarks/heldout/results/gencontext/README.md`](../crates/axon-cortex/benchmarks/heldout/results/gencontext/README.md)).
 
 Runs over time are tracked in
 [`benchmarks/scorecard/`](../crates/axon-cortex/benchmarks/scorecard/README.md).
