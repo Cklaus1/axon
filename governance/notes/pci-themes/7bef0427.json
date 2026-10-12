@@ -1,0 +1,4 @@
+{
+  "theme": "Structured AI decision model",
+  "text": "default changed, no verdict or gate touched: the ai_extract_* structured-output path and `axon improve discover --ai` send claude-haiku-5-5 instead of claude-sonnet-4-6 via axon_ai::decision_model (AXON_AI_MODEL_CHEAP, then AXON_AI_MODEL_BALANCED, then the default); main.rs swaps Tier::Balanced.api_model() for that resolver and builtins.rs/env_registry.rs change doc strings only; the E1407 registry check, mock stubs, native refusal and tier routing are unchanged"
+}
