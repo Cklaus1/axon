@@ -1,0 +1,14 @@
+{
+  "schema": "axon.loop.candidate-set/1",
+  "scope": {
+    "tenant_id": "demo-tenant",
+    "task_family": "demo-coding"
+  },
+  "candidates": [
+    "edit",
+    "read",
+    "search",
+    "write"
+  ],
+  "issuer_ref": "op:admitter"
+}

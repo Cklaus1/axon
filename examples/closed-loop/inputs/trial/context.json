@@ -1,0 +1,60 @@
+{
+  "schema": "axon.closed-loop.context/1",
+  "context_id": "demo-context",
+  "identity": {
+    "task_id": "SET-BY-RUN.SH",
+    "arm_id": "SET-BY-RUN.SH",
+    "trial_id": "SET-BY-RUN.SH",
+    "attempt_id": "SET-BY-RUN.SH",
+    "operation_id": "SET-BY-RUN.SH",
+    "execution_id": "SET-BY-RUN.SH"
+  },
+  "scope": {
+    "tenant_id": "demo-tenant",
+    "task_family": "demo-coding"
+  },
+  "expected": {
+    "repo_id": "demo-repo",
+    "base_commit": "demo-exact-base",
+    "workspace_ref": "acf1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "branch": "demo-branch",
+    "worktree_id": "demo-worktree",
+    "working_directory": "/isolated/demo",
+    "build_namespace": "/build/demo-attempt",
+    "model_ref": "cl22:3333333333333333333333333333333333333333333333333333333333333333",
+    "role": "implementation",
+    "namespace_ref": "cl22:4444444444444444444444444444444444444444444444444444444444444444",
+    "read_paths": [
+      "src/main.rs"
+    ],
+    "write_paths": [
+      "src/main.rs"
+    ],
+    "is_primary_worktree": false
+  },
+  "observed": {
+    "repo_id": "demo-repo",
+    "base_commit": "demo-exact-base",
+    "workspace_ref": "acf1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "branch": "demo-branch",
+    "worktree_id": "demo-worktree",
+    "working_directory": "/isolated/demo",
+    "build_namespace": "/build/demo-attempt",
+    "model_ref": "cl22:3333333333333333333333333333333333333333333333333333333333333333",
+    "role": "implementation",
+    "namespace_ref": "cl22:4444444444444444444444444444444444444444444444444444444444444444",
+    "read_paths": [
+      "src/main.rs"
+    ],
+    "write_paths": [
+      "src/main.rs"
+    ],
+    "is_primary_worktree": false
+  },
+  "expected_issuer_ref": "demo:parent",
+  "observed_issuer_ref": "demo:observer",
+  "observed_evidence_ref": "cl22:5555555555555555555555555555555555555555555555555555555555555555",
+  "created_ms": "SET-BY-RUN.SH: now (ms)",
+  "expires_ms": "SET-BY-RUN.SH: now + 1h",
+  "authority_epoch": "SET-BY-RUN.SH: current pointer epoch"
+}

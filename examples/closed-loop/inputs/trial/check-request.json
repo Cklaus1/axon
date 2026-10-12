@@ -1,0 +1,39 @@
+{
+  "schema": "acf-compute-request/1",
+  "operation_id": "SET-BY-RUN.SH",
+  "task_id": "SET-BY-RUN.SH",
+  "trial_id": "SET-BY-RUN.SH",
+  "attempt_id": "SET-BY-RUN.SH",
+  "principal_ref": "principal:acceptance-check",
+  "grant_ref": "grant:check",
+  "approval_ref": null,
+  "job_kind": "registered_check",
+  "registered_executable_ref": "demo-acceptance-check",
+  "executable_digest": "SET-BY-RUN.SH: the pinned executable_digest",
+  "workspace_version_ref": "acf1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "semantic_state_ref": null,
+  "policy_digest": "acf1:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "required": {
+    "engine": "axon_interpreter",
+    "hardware_isolation": false,
+    "os": "none",
+    "architecture": "x86_64",
+    "network_mode": "deny",
+    "checkpoint_kind": "none"
+  },
+  "limits": {
+    "cpu_millicores": 1000,
+    "memory_bytes": 268435456,
+    "disk_bytes": 268435456,
+    "wall_time_ms": 60000,
+    "output_bytes": 1048576,
+    "max_cost_micro": 100,
+    "currency_code": "USD",
+    "price_schedule_ref": "unpriced:demo"
+  },
+  "argv": [
+    "check:acceptance",
+    "t_"
+  ],
+  "result_schema_ref": "cortex-check-report/1"
+}

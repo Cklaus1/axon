@@ -1,0 +1,31 @@
+{
+  "schema": "axon.loop.config/1",
+  "trusted_admitters": ["op:admitter"],
+  "trusted_verifiers": ["demo:verifier"],
+  "trusted_observers": ["demo:observer"],
+  "verifier_keys": {
+    "demo:verifier": "SET-BY-RUN.SH: 64-hex Ed25519 public key of the demo verifier"
+  },
+  "verifier_pins": {
+    "demo:verifier": {
+      "registered_executable_ref": "demo-acceptance-check",
+      "executable_digest": "SET-BY-RUN.SH: acf1 digest of {registered_executable_ref, sha256}",
+      "backend_profiles": ["fabric:local-interpreter"],
+      "check_suites": ["check-suite:acceptance@acf1:5555555555555555555555555555555555555555555555555555555555555555#accept.ax"]
+    }
+  },
+  "task_acceptance": {
+    "task-0": {
+      "check_suite": "check-suite:acceptance@acf1:5555555555555555555555555555555555555555555555555555555555555555#accept.ax",
+      "check": "t_"
+    },
+    "task-1": {
+      "check_suite": "check-suite:acceptance@acf1:5555555555555555555555555555555555555555555555555555555555555555#accept.ax",
+      "check": "t_"
+    }
+  },
+  "protected_scopes": [],
+  "trusted_monitors": [],
+  "monitor_keys": {},
+  "observer_keys": {}
+}

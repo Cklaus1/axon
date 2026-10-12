@@ -1,0 +1,7 @@
+{
+  "schema": "axon.loop.admit-request/1",
+  "experiment_id": "demo-exp",
+  "evaluation_ref": "SET-BY-RUN.SH: evaluation_ref from 'evl evaluate'",
+  "admitter_ref": "op:admitter",
+  "mechanism_test": false
+}
