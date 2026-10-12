@@ -1,0 +1,1 @@
+{"id": "probe-permissions", "purpose": "arm A sandbox probe: axon test allowed; Read /etc/hostname, cat, ls outside workspace all denied", "cost_usd": 0.0341751, "model": "claude-haiku-4-5-20251001"}
