@@ -2446,3 +2446,26 @@ Fix (two parts, both needed): `require_idle.py` also reports BUSY when any singl
 saturated by foreign tasks over the window (per-CPU deltas from `/proc/stat`, or per-task `processor` from
 `/proc/<pid>/stat`); and the test pins its probe to the CPU with the most idle time in its affinity and fails with a
 message after a deadline instead of hanging (crates/ change: classify it in `governance/notes/pci-themes/`).
+
+## G01 M531: the launcher's Fabric-uid gate has no attack that isolates it
+
+Found 2026-10-12 (R51 merge into main, serial delta at 34217115: 255/256 KILLED). M531 removes
+`if caller_uid != c.fabric_uid` in `crates/axon-fabric/src/privileged_launcher.rs`; its attack test
+`a_non_root_fabric_reaches_a_root_launch_only_through_the_helper` (and the observe-route attack) still fail because
+M1544's parent-uid check (amendment 68) refuses the same request, so the row is REFUSED_ELSEWHERE, not KILLED. Its code
+and tests are byte-identical on v0.22 c9ed2ddd, r51/int and the merge: pre-existing, outside R51's 444 interpreter
+rows. Fix (operator decision): either retire M531 as a paired-disable pair with M1544 (record in
+`governance/status/v022-psv-paired-disable.json`, each guard's full suite shown failing without the pair), or add an
+attack whose caller passes the parent-uid check but is not the Fabric uid, so M531 alone refuses it.
+
+## Mutation lane feedback duplicates the full run after a broad merge; root shards run in parallel
+
+Found 2026-10-12 (R51 merge into main). `--changed-since --granularity=file` selected 2263/2299 rows because the merge
+touched `interp.rs`: a 7260 s lane run that the mandatory full T7 at the final head repeats. The four shards ran root,
+namespace and guest tests concurrently and 22 rows failed on the clean baseline from contention (stale `opkit-ns.*`
+scratch roots, a signal not forwarded within 5 s); the serial re-run (2267 s) killed all 22. Fix: (1) in
+`scripts/v022_mut_select.py`/`v022_g01_mutations.py`, when the selection exceeds ~30% of active rows print that the
+lane run duplicates the full run and stop unless `--force`; (2) put rows whose package is `axon-fabric`/`axon-os`
+root or namespace tests in one serial shard while interpreter rows shard in parallel. Also merge `main` into
+long-lived branches every day or two: main gained 18 interpreter commits during R51 and the single merge cost
+33 conflict blocks, a wasm32 frame re-derivation and two agent budgets.

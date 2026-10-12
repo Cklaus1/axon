@@ -398,6 +398,22 @@ decision taken:
   (refined 126 → 119, with_chain 107 → 102, mut_with3 117/126 → 112/122); debug reach unchanged except 1-level
   drops on break_fast, lambda_chain, lambda_self and mut_with3. Every probe past its reach still ends in the
   recursion-limit panic (exit 101), never a trap; VM ≥ tree on every probe. Receipt: tasks/r51-baseline.md.
+
+  *Merge into `main` (r51/merge-main, 34217115)* [REVISED: added, reason: main gained R50 S10–S13 after R51
+  branched.] The merged build's frames differ from both sides; each constant below is again the frame
+  `wasm_stack_budget.py` measures on the merged build (none below it; `vm_wasm_depth.sh` PASS debug and release).
+  Constants whose merged value is not R51's (every other constant keeps the R51 column above):
+
+  | Constant | main 8de8e43e | R51 75f385b5 | merged 34217115 |
+  |---|---|---|---|
+  | `RUN` | 336/528 | 336/528 | 336/544 |
+  | `CALL_FAST` | 208/320 | 224/288 | 224/320 |
+  | `CALL_FAST_ARG` | 208/320 | 208/288 | 224/336 |
+  | `CALL_FAST_INLINE` | 256/416 | 256/320 | 240/416 |
+  | `CALL_MUT` | 160/320 | 208/320 | 208/336 |
+  | `CALL_MUT_OP` | 288/416 | 336/432 | 320/432 |
+  | `COMPILE_STMT` | 800/672 | 800/656 | 800/672 |
+  | `STORE_LOCAL_STACK_SLOW` | 192/208 | 192/208 | 192/224 |
 - *native*: the guard counts calls and the interpreter thread reserves `max_depth × STACK_BYTES_PER_FRAME`
   (floor `MIN_STACK_BYTES`). R51's release `eval_arm::<false>` frame is 1024 B (5864c423's `eval`: 912 B);
   stack per call level grew 3.5–12.3% (release) and 6.1–10.5% (debug) on the tree engine, up to 19.3% on the
