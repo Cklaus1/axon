@@ -177,7 +177,11 @@ fn a_failed_micode_call_exits_non_zero_and_still_logs_its_tokens() {
     );
     let r = run_driver("error", &stream, 1);
     assert_ne!(r.code, Some(0));
-    assert!(r.stdout.is_empty(), "a failed call returned a body: {}", r.stdout);
+    assert!(
+        r.stdout.is_empty(),
+        "a failed call returned a body: {}",
+        r.stdout
+    );
     let row: serde_json::Value = serde_json::from_str(r.log.trim()).expect("one JSON log line");
     assert_eq!(row["extraction_status"], "call_failed");
     assert_eq!(row["input_tokens"], 10);
