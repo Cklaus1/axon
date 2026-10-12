@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: ffa39ba5e74f874cffbe3b961e7d20b26d09c590
+generated-at: 798ee6e1b2a6f72cf0aab6319685d423893a65ba
 
-`git diff --numstat 31413ca7..ffa39ba5 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..798ee6e1 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -91,7 +91,7 @@ generated-at: ffa39ba5e74f874cffbe3b961e7d20b26d09c590
 | `crates/axon-core/src/types.rs` | 28 | 0 |
 | total | 52858 | 7240 |
 
-`git log --reverse 31413ca7..ffa39ba5 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..798ee6e1 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -353,7 +353,8 @@ generated-at: ffa39ba5e74f874cffbe3b961e7d20b26d09c590
 | 4bf993b8 | R51 S6 paired-disable reinstatements | TEST-ONLY (resolver.rs, cfg(test)): a_refinement_may_start_with_a_deferred_name_and_impl_text_is_axon's duplicate-impl assertion states its attack (ATTACK: a duplicate impl was not refused as one), the condition unchanged; the registry reinstates M60 (killed by that test) and M89 (killed by the scheduler_spawn pair of a_sealed_caller_cannot_tell_an_operator_name_from_a_missing_one_on_any_path) ACTIVE, their retired-guard full-suite cells having failed; no interpreter or resolver code changed, no unsealed behaviour change |
 | 8f5dbdd6 | R51 merge-main | joins r51/int 75f385b5 onto main 8de8e43e (R50 S10-S13, AX-59/AX-60); conflicts under src resolved keeping both sides: main's newtypes (VBox, Elems, DictMap, Queue, Held<ClosureCode>, Captures bindings in a Held) carry r51's seal fields (ClosureVal contract/seal, FnEntry seal flag, sealed fn values), r51's VM taint arguments (get_var_mut_t::<VM_SEALED>, give_frame_t) are applied to main's new VM paths, fold_leaf keeps r51's seal_pin_vm gate, conform/taint walks iterate Elems::vals; nest_cost constants provisionally the larger of the two sides (re-derived in a follow-up); the tree evaluator's seal edges are unchanged |
 | ffa39ba5 | R51 merge-main | tests only (taint_tests.rs, tests_v022_b.rs, vm/tests.rs): the holder and name-lookup drift lists cover main's newtypes and purefn.rs; new sealed attack cases over packed arrays and a sealed-run test that no pure tier or bulk loop runs |
-| 258 commits | | |
+| 798ee6e1 | R51 merge-main | wasm32 only (`#[cfg(target_arch = "wasm32")] mod nest_cost`): RUN release 528 -> 544 and CALL_FAST_ARG 208/320 -> 224/336, the frames wasm_stack_budget.py measures on the merged build (main's pure-tier entry and r51's typed frame writes together); no native code changes |
+| 259 commits | | |
 <!-- END MECHANICAL -->
 
 
