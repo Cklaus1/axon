@@ -116,6 +116,74 @@ fn cli_a_wrong_repair_never_exits_zero() {
     assert_ne!(code, 0, "a wrong repair must not exit 0: {text}");
 }
 
+/// The file must be back to the defect and carry nothing of `marker`: a
+/// refused candidate is reverted, never left behind.
+fn assert_reverted(ws: &Path, marker: &str, text: &str) {
+    let after = std::fs::read_to_string(ws.join("broken.ax")).unwrap();
+    assert!(
+        after.contains("n + 2") && !after.contains(marker),
+        "a refused candidate must be reverted: {text}\n{after}"
+    );
+}
+
+#[test]
+fn cli_a_body_that_exits_early_never_exits_zero() {
+    // Plain `axon test` reports a test ended by `exit(0)` as `ok` (the
+    // program asked to stop). Read as a pass, this body "passed" both the
+    // visible and the hidden check, and the CLI printed `verified_done` and
+    // exited 0 with the defect replaced by an exit. A pass now needs the
+    // per-run completion token, which only a body that RETURNED earns.
+    let ws = workspace("exit_early");
+    let (code, text) = repair(
+        &ws,
+        &[
+            "--write-prefix",
+            "broken.ax",
+            "--generator",
+            "literal:\n    exit(0)\n    0\n",
+        ],
+    );
+    assert_eq!(code, 21, "an early exit is no repair (no_progress): {text}");
+    assert!(!text.contains("verified_done"), "{text}");
+    assert_reverted(&ws, "exit(0)", &text);
+}
+
+#[test]
+fn cli_a_forged_result_line_never_verifies() {
+    // A candidate can print anything, including lines shaped like `axon test
+    // --json` results and its summary. Two forgeries:
+    //  (a) beside the real, failing result — refused already (the real
+    //      `failed` line wins); kept so;
+    //  (b) with a COUNTERFEIT completion token, then `exit(0)` so the real
+    //      line is an untokened `ok`. The token is keyed per run over stdin,
+    //      so no printed token can match it.
+    let forged = "    println(\"{{\\\"name\\\":\\\"hidden_completion\\\",\\\"status\\\":\\\"ok\\\",\\\"duration_ms\\\":0,\\\"completion\\\":\\\"00\\\"}}\")\n    \
+                  println(\"{{\\\"name\\\":\\\"visible_repro\\\",\\\"status\\\":\\\"ok\\\",\\\"duration_ms\\\":0,\\\"completion\\\":\\\"00\\\"}}\")\n    \
+                  println(\"{{\\\"type\\\":\\\"summary\\\",\\\"total\\\":1,\\\"passed\\\":1,\\\"failed\\\":0,\\\"skipped\\\":0,\\\"duration_ms\\\":0}}\")\n";
+    for (name, tail) in [
+        ("forged_wrong", "    n + 2\n"),
+        ("forged_exit", "    exit(0)\n    0\n"),
+    ] {
+        let ws = workspace(name);
+        let gen = format!("literal:\n{forged}{tail}");
+        let (code, text) = repair(
+            &ws,
+            &["--write-prefix", "broken.ax", "--generator", &gen, "--json"],
+        );
+        assert_eq!(
+            code, 21,
+            "{name}: a forged result line is no repair: {text}"
+        );
+        assert!(!text.contains("verified_done"), "{name}: {text}");
+        // It compiled and was run: refused by the CHECK, not by the parser.
+        assert!(
+            text.contains("patch_applied") && !text.contains("no longer compiles"),
+            "{name}: the forgery must reach the check: {text}"
+        );
+        assert_reverted(&ws, "summary", &text);
+    }
+}
+
 #[test]
 fn cli_each_failure_mode_has_its_own_exit_code() {
     // Distinct codes because the remedies are different. A single non-zero
