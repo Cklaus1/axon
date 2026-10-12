@@ -1558,6 +1558,11 @@ _ORT = (_CTX + "; openrouter.rs, the HTTP client the ranker (rank.rs) and the au
         "share: every refusal here becomes a ranker fallback to spectrum order or an "
         "`unavailable` audit; no protected crate names axon_cortex::openrouter (grep "
         "`axon_cortex::openrouter` crates/*/src)")
+_LBL = (_CTX + "; label.rs, `cortex repair --label-log`: the row is written after the verdict, "
+        "the exit code and the file are settled, and a failed write is one stderr line that "
+        "never changes a verdict, an exit code, a file or the walk (an empty --label-log flag "
+        "is a usage error before any of them runs); no protected crate names "
+        "axon_cortex::label (grep `axon_cortex::label` crates/*/src)")
 _EXE = ("NOT ON THE PROTECTED ROUTE (checkable): a registered EXECUTOR. A protected request's "
         "executable is the qualified guest interpreter (submit.rs: LINUX_GUEST_AXON_ID, pinned by "
         "the qualification's guest_axon_sha256); the registry's executors are read only by "
@@ -2572,6 +2577,24 @@ EXEMPT += [
     ('crates/axon-cortex/src/audit.rs',
      '        Some(t) => return Err(format!("answer type {t} is not `noul`")),',
      _AUD),
+    ('crates/axon-cortex/src/label.rs',
+     '        Some("") => Err("--label-log needs a non-empty path".to_string()),',
+     _LBL),
+    ('crates/axon-cortex/src/label.rs',
+     '            "source": self.include_source.then_some(self.source),',
+     _LBL),
+    ('crates/axon-cortex/src/label.rs',
+     'pub fn build_sha256() -> Option<String> {',
+     _LBL),
+    ('crates/axon-cortex/src/label.rs',
+     'pub const SCHEMA: &str = "cortex-label/1";',
+     _LBL),
+    ('crates/axon-cortex/src/label.rs',
+     '        opts.mode(0o600);',
+     _LBL),
+    ('crates/axon-cortex/src/label.rs',
+     '        return Err(format!("short write: {n} of {} bytes", line.len()));',
+     _LBL),
     ('crates/axon-cortex/src/rank.rs',
      'fn mentions(text: &str, name: &str) -> bool {',
      _RNK),
@@ -4142,6 +4165,10 @@ VALUE_EXEMPT += [
     ('crates/axon-psv/src/runner.rs', 'run~dflt', 1, 'std::path::Path::new(".")', 'REMAINDER', 'REMAINDER (survey, amendment 115, config): editing this value (std::path::Path::new(".") -> std::path::Path::new(".x")) leaves the whole `axon-psv` suite and the whole axon-fabric suite (gpumaster, one site at a time) green; a secret path with no parent (only `/`)'),
 ]
 # END EQ9 VALUE_EXEMPT
+# Hand-judged NOTROUTE value sites (not from a survey).
+VALUE_EXEMPT += [
+    ('crates/axon-cortex/src/label.rs', 'append', 1, '0o600', 'NOTROUTE', _LBL),
+]
 
 
 def load_rows():
