@@ -60,6 +60,11 @@ fn an_unclassified_interpreter_commit_is_refused() {
 
 /// `pci_delta.py --emit ARGS...`: whether it passed, stdout, stderr.
 fn emit(args: &[&str]) -> (bool, String, String) {
+    emit_env(args, &[])
+}
+
+/// `emit` with `env` added to the script's environment (and so to every git it runs).
+fn emit_env(args: &[&str], env: &[(&str, &str)]) -> (bool, String, String) {
     let r = repo_root();
     let o = script(
         "python3",
@@ -71,6 +76,7 @@ fn emit(args: &[&str]) -> (bool, String, String) {
     .current_dir(&r)
     .env("PYTHONDONTWRITEBYTECODE", "1")
     .env_remove("PYTHONPATH")
+    .envs(env.iter().copied())
     .output()
     .unwrap();
     (
@@ -106,9 +112,11 @@ fn git(args: &[&str], env: &[(&str, &str)], input: Option<&[u8]>) -> String {
     String::from_utf8_lossy(&o.stdout).trim().to_string()
 }
 
-/// `git merge-tree --write-tree` of `a` and `b` (plain: no note driver): the tree and the conflicted paths.
-fn merge_tree(a: &str, b: &str) -> (String, Vec<String>) {
+/// `git [CONFIG...] merge-tree --write-tree` of `a` and `b` (no note driver; `config` is `-c k=v`
+/// arguments): the tree and the conflicted paths.
+fn merge_tree_with(config: &[&str], a: &str, b: &str) -> (String, Vec<String>) {
     let o = std::process::Command::new("git")
+        .args(config)
         .args([
             "merge-tree",
             "--write-tree",
@@ -129,6 +137,11 @@ fn merge_tree(a: &str, b: &str) -> (String, Vec<String>) {
     let out = String::from_utf8(o.stdout).unwrap();
     let mut parts = out.split('\0').filter(|p| !p.is_empty()).map(String::from);
     (parts.next().unwrap(), parts.collect())
+}
+
+/// `git merge-tree --write-tree` of `a` and `b` (plain: no note driver): the tree and the conflicted paths.
+fn merge_tree(a: &str, b: &str) -> (String, Vec<String>) {
+    merge_tree_with(&[], a, b)
 }
 
 /// Fixed identity and dates for the scratch commits below (unreferenced objects in the repository's
@@ -156,7 +169,8 @@ fn blob(bytes: &[u8]) -> String {
     git(&["hash-object", "-w", "--stdin"], &[], Some(bytes))
 }
 
-/// `base`'s tree with each path set to a blob (`Some`) or removed (`None`), through a private index.
+/// `base`'s tree with each path set to a blob (`Some`, added if new) or removed (`None`), through a
+/// private index.
 fn tree_with(base: &str, edits: &[(&str, Option<String>)]) -> String {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static N: AtomicUsize = AtomicUsize::new(0);
@@ -170,7 +184,12 @@ fn tree_with(base: &str, edits: &[(&str, Option<String>)]) -> String {
     for (path, b) in edits {
         match b {
             Some(b) => git(
-                &["update-index", "--cacheinfo", &format!("100644,{b},{path}")],
+                &[
+                    "update-index",
+                    "--add",
+                    "--cacheinfo",
+                    &format!("100644,{b},{path}"),
+                ],
                 ix,
                 None,
             ),
@@ -316,6 +335,90 @@ fn a_merge_that_conflicted_in_the_interpreter_is_unclassified_however_resolved()
             "{out}"
         );
     }
+}
+
+/// The listing (`git log -- crates/axon-core/src`) does not follow renames, so the replay must not
+/// either. Side A moves a file from outside crates/axon-core/src into it; side B edits the file at its
+/// old path (B is never listed); the merge carries B's edit into the interpreter, which is what git's
+/// merge WITH rename detection gives, without a conflict. It is UNCLASSIFIED: with renames off, the
+/// replayed tree has the moved file without B's edit.
+#[test]
+fn a_merge_that_brings_an_unlisted_edit_in_through_a_rename_is_unclassified() {
+    let (old, new) = (
+        "crates/pci-scratch/a.rs",
+        "crates/axon-core/src/pci_scratch_a.rs",
+    );
+    let text = "fn a() {\n    one();\n    two();\n    three();\n}\n";
+    let base = commit(
+        &tree_with("558885e5", &[(old, Some(blob(text.as_bytes())))]),
+        &["558885e5"],
+        "scratch: a.rs outside the interpreter",
+    );
+    let moved = commit(
+        &tree_with(&base, &[(old, None), (new, Some(blob(text.as_bytes())))]),
+        &[&base],
+        "scratch: move a.rs into the interpreter",
+    );
+    let edited = blob(text.replace("two();", "backdoor();").as_bytes());
+    let edit = commit(
+        &tree_with(&base, &[(old, Some(edited.clone()))]),
+        &[&base],
+        "scratch: edit a.rs outside the interpreter",
+    );
+    let (mtree, listed) = merge_tree_with(&["-c", "merge.renames=true"], &moved, &edit);
+    assert!(listed.is_empty(), "{listed:?}");
+    assert_eq!(
+        git(&["rev-parse", &format!("{mtree}:{new}")], &[], None),
+        edited,
+        "git's merge did not carry the edit through the rename"
+    );
+    let m = commit(&mtree, &[&moved, &edit], "Merge branch 'scratch'");
+
+    let (ok, out, _) = emit(&[&m]);
+    assert!(!ok);
+    assert!(
+        !out.contains(&format!("| {} |", &edit[..8])),
+        "the edit outside the interpreter is listed:\n{out}"
+    );
+    assert!(
+        out.contains(&format!("\n| {} | UNCLASSIFIED |  |\n", &m[..8])),
+        "{out}"
+    );
+}
+
+/// The replay does not take its merge driver from configuration: with `merge.default=union` (given
+/// to the script as command-scope configuration, which outranks repository, user and system files,
+/// and is not written to the shared repository config), both sides' appends to lib.rs merge without a
+/// conflict, and a merge recording that union is still UNCLASSIFIED, because the plain text merge
+/// conflicts there.
+#[test]
+fn a_union_merge_default_does_not_hide_an_interpreter_conflict() {
+    let (base, file) = ("558885e5", "crates/axon-core/src/lib.rs");
+    let side = |line: &str| {
+        commit(
+            &tree_with(base, &[(file, Some(appended(base, file, line)))]),
+            &[base],
+            &format!("scratch: lib.rs {line}"),
+        )
+    };
+    let (one, two) = (side("// side one"), side("// side two"));
+    let (_, listed) = merge_tree_with(&["-c", "merge.default=text"], &one, &two);
+    assert!(listed.iter().any(|c| c == file), "{listed:?}");
+    let (utree, listed) = merge_tree_with(&["-c", "merge.default=union"], &one, &two);
+    assert!(listed.is_empty(), "{listed:?}");
+    let m = commit(&utree, &[&one, &two], "Merge branch 'scratch'");
+
+    let union: &[(&str, &str)] = &[
+        ("GIT_CONFIG_COUNT", "1"),
+        ("GIT_CONFIG_KEY_0", "merge.default"),
+        ("GIT_CONFIG_VALUE_0", "union"),
+    ];
+    let (ok, out, _) = emit_env(&[&m], union);
+    assert!(!ok);
+    assert!(
+        out.contains(&format!("\n| {} | UNCLASSIFIED |  |\n", &m[..8])),
+        "{out}"
+    );
 }
 
 /// `pci_delta.py --check` with one in-memory change (`--plant KEY:OLD=>NEW`): the output, and
