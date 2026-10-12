@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Score an A/B run against PREREG.md.
 
-    python3 analyse.py CORPUS.json A.jsonl B.jsonl [--md]
+    python3 analyse.py CORPUS.json A.jsonl B.jsonl [--md] [--save SUMMARY.json]
 
 Pairs rows by task id and scores only tasks BOTH arms completed (a budget stop
 leaves some unpaired; they are counted and listed, never silently dropped).
@@ -174,28 +174,40 @@ def main():
         "B_models": sorted({m for i in paired for m in B[i].get("models") or []}),
     }
 
-    if "--md" in sys.argv:
-        print("### All paired tasks\n")
-        print(table([("A plain agent", sa), ("B cortex", sb)]))
-        print(f"\n### Cheat subset ({len(cp)} tasks)\n")
-        print(table([("A plain agent", out["cheat"]["A"]), ("B cortex", out["cheat"]["B"])]))
-        print("\n### Per class (verified & clean)\n")
-        print("| class | n | A | B |\n|---|---|---|---|")
-        for c, v in out["per_class"].items():
-            print(f"| {c} | {v['n']} | {v['A']} | {v['B']} |")
-        po = out["paired_outcomes"]
-        print(f"\nPaired: both {po['both']}, A only {po['A_only']}, B only {po['B_only']}, "
+    md = ["### All paired tasks\n",
+          table([("A plain agent", sa), ("B cortex", sb)]),
+          f"\n### Cheat subset ({len(cp)} tasks)\n",
+          table([("A plain agent", out["cheat"]["A"]), ("B cortex", out["cheat"]["B"])]),
+          "\n### Per class (verified & clean)\n",
+          "| class | n | A | B |\n|---|---|---|---|"]
+    for c, v in out["per_class"].items():
+        md.append(f"| {c} | {v['n']} | {v['A']} | {v['B']} |")
+    po = out["paired_outcomes"]
+    md.append(f"\nPaired: both {po['both']}, A only {po['A_only']}, B only {po['B_only']}, "
               f"neither {po['neither']}; exact McNemar p = {po['mcnemar_exact_p']:.3g}.")
-        print(f"\nVerdict: {json.dumps(out['verdict'])}")
-        sec = out["verdict_without_untokened_test_tasks"]
-        print(f"\nSecondary, without tasks {untokened} (Known defect): {json.dumps(sec)}")
-        if "verdict_without_A_outside_access" in out:
-            print(f"\nSensitivity, without A outside-access tasks {contaminated}: "
+    md.append(f"\nVerdict: {json.dumps(out['verdict'])}")
+    sec = out["verdict_without_untokened_test_tasks"]
+    md.append(f"\nSecondary, without tasks {untokened} (Known defect): {json.dumps(sec)}")
+    if "verdict_without_A_outside_access" in out:
+        md.append(f"\nSensitivity, without A outside-access tasks {contaminated}: "
                   f"{json.dumps(out['verdict_without_A_outside_access'])}")
-        if unpaired:
-            print(f"\nUnpaired (not scored): {unpaired}")
-    else:
-        print(json.dumps(out, indent=1, default=str))
+    if unpaired:
+        md.append(f"\nUnpaired (not scored): {unpaired}")
+    md = "\n".join(md)
+
+    if "--save" in sys.argv:
+        # The artifact the README's results section is checked against
+        # (`../check_docs.py`): every figure the prose cites must occur in
+        # this rendered text.
+        import hashlib
+        save = sys.argv[sys.argv.index("--save") + 1]
+        ins = [sys.argv[1], sys.argv[2], sys.argv[3]]
+        rel = lambda p: os.path.relpath(os.path.abspath(p), os.path.dirname(os.path.abspath(save)))
+        json.dump({"inputs": {rel(p): hashlib.sha256(open(p, "rb").read()).hexdigest()
+                              for p in ins},
+                   "analysis": out, "markdown": md},
+                  open(save, "w"), indent=1, default=str)
+    print(md if "--md" in sys.argv else json.dumps(out, indent=1, default=str))
 
 
 if __name__ == "__main__":
