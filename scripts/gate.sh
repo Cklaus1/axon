@@ -585,6 +585,16 @@ stage_analyser_selftest() {
     || fail "analyser attributes proposals to candidates unsoundly"
 }
 
+# The Cortex scorecard: its statistics and refusals on fixtures, then every
+# recorded run re-verified against its rows (sha256 + recomputed metrics) and
+# README.md / progress.svg compared with a fresh render. A history line whose
+# rows changed, or a page nobody regenerated, fails here.
+stage_scorecard() {
+  python3 crates/axon-cortex/benchmarks/scorecard/scorecard.py selftest \
+    && python3 crates/axon-cortex/benchmarks/scorecard/scorecard.py report --check \
+    || fail "cortex scorecard self-test failed or README/progress.svg are stale"
+}
+
 # The completeness manifest regenerates AXON-COMPLETENESS.md and refuses a row
 # claiming a production proof or a mutation it cannot cite. Wired here because
 # a manifest nobody runs is a table of assertions, which is the state it was
@@ -612,6 +622,7 @@ par "v0.22 re-survey and value survey" stage_resurvey
 par "v0.22 release-claim separation" stage_claim_separation
 par "benchmark docs" stage_benchmark_docs
 par "analyser selftest" stage_analyser_selftest
+par "cortex scorecard" stage_scorecard
 par "completeness manifest" stage_completeness
 par_join
 
