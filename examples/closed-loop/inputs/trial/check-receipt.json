@@ -1,0 +1,24 @@
+{
+  "schema": "acf-execution-receipt/1",
+  "operation_id": "SET-BY-RUN.SH",
+  "task_id": "SET-BY-RUN.SH",
+  "trial_id": "SET-BY-RUN.SH",
+  "attempt_id": "SET-BY-RUN.SH",
+  "execution_id": "SET-BY-RUN.SH",
+  "backend_profile_ref": "fabric:local-interpreter",
+  "input_workspace_ref": "acf1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "output_workspace_ref": null,
+  "policy_digest": "acf1:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "status": "completed",
+  "process_exit_code": 0,
+  "verification": "SET-BY-RUN.SH: passed | failed",
+  "matched_checks": 2,
+  "evidence_source": "supervisor_observed",
+  "evidence_refs": [
+    "cl22-report:demo",
+    "check-suite:acceptance@acf1:5555555555555555555555555555555555555555555555555555555555555555#accept.ax"
+  ],
+  "usage_state": "unknown",
+  "cost_micro": null,
+  "unresolved_liability_micro": 100
+}

@@ -1,0 +1,10 @@
+{
+  "schema": "axon.loop.baseline/1",
+  "scope": {
+    "tenant_id": "demo-tenant",
+    "task_family": "demo-coding"
+  },
+  "policy_ref": "SET-BY-RUN.SH: incumbent policy_ref",
+  "issuer_ref": "op:admitter",
+  "reason_ref": "cl22:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+}

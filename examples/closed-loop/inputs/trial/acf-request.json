@@ -1,0 +1,36 @@
+{
+  "schema": "acf-compute-request/1",
+  "operation_id": "SET-BY-RUN.SH",
+  "task_id": "SET-BY-RUN.SH",
+  "trial_id": "SET-BY-RUN.SH",
+  "attempt_id": "SET-BY-RUN.SH",
+  "principal_ref": "demo:worker-principal",
+  "grant_ref": "demo:grant-not-authorized",
+  "approval_ref": null,
+  "job_kind": "registered_check",
+  "registered_executable_ref": "demo:agent-run",
+  "executable_digest": "acf1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "workspace_version_ref": "acf1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "semantic_state_ref": null,
+  "policy_digest": "acf1:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "required": {
+    "engine": "native_process",
+    "hardware_isolation": true,
+    "os": "linux",
+    "architecture": "x86_64",
+    "network_mode": "deny",
+    "checkpoint_kind": "logical_workspace"
+  },
+  "limits": {
+    "cpu_millicores": 1000,
+    "memory_bytes": 268435456,
+    "disk_bytes": 1073741824,
+    "wall_time_ms": 30000,
+    "output_bytes": 1048576,
+    "max_cost_micro": 100000,
+    "currency_code": "USD",
+    "price_schedule_ref": "demo:unpriced"
+  },
+  "argv": [],
+  "result_schema_ref": "demo:agent-run-result/1"
+}
