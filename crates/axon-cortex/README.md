@@ -106,6 +106,17 @@ a candidate. A wrong candidate costs budget and never costs correctness: the
 hidden check adjudicates every attempt, and each attempt starts from the state
 the run found.
 
+`--label-log PATH` (env `CORTEX_LABEL_LOG`; the flag wins; off when neither)
+appends one `cortex-label/1` JSON line per run that reached the walk: the
+file's sha256 as found, the check, the spectrum ranking with scores, the
+ranker's report, every attempt in order, proposals per candidate, the outcome
+and exit code, and `truth`, the repaired symbol (null unless `verified_done`).
+The line is written after the verdict, in one `O_APPEND` write to a file
+created 0600; a failed write is one stderr line and never changes the exit
+code. The file's text is recorded only with `--label-source`, because source
+can be sensitive (`src/label.rs`; fields, privacy note and the converter to
+LocRank and DecisionBench items in `benchmarks/labels/`).
+
 ## Exit codes
 
 One per outcome. A single non-zero would say something went wrong and nothing
