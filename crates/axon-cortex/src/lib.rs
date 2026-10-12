@@ -30,6 +30,7 @@ pub mod ai;
 pub mod episode;
 pub mod generate;
 pub mod locate;
+pub mod rank;
 pub mod runner;
 pub mod select;
 

@@ -56,7 +56,7 @@ fn repair(ws: &Path, extra: &[&str]) -> (i32, String) {
 /// `repair` with the adjudicating check spelled by the caller, for the rows
 /// whose subject IS which check was named.
 fn repair_with(ws: &Path, check: &[&str], extra: &[&str]) -> (i32, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+    let out = common::cortex()
         .args(["repair", "--workspace"])
         .arg(ws)
         .args(["--file", "broken.ax", "--symbol", "double"])
@@ -243,10 +243,7 @@ fn cli_a_malformed_request_decides_nothing() {
         vec!["repair", "--file", "x.ax", "--symbol", "f"], // no --check
         vec!["repair", "--nonsense"],
     ] {
-        let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
-            .args(&args)
-            .output()
-            .unwrap();
+        let out = common::cortex().args(&args).output().unwrap();
         assert_eq!(
             out.status.code(),
             Some(2),
@@ -317,7 +314,7 @@ fn cli_localizes_its_own_target_and_refuses_to_guess() {
 
     // 1. One failing check naming one function: repaired without being told.
     let ws = workspace("loc_ok");
-    let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+    let out = common::cortex()
         .args(["repair", "--workspace"])
         .arg(&ws)
         .args([
@@ -375,7 +372,7 @@ fn cli_localizes_its_own_target_and_refuses_to_guess() {
          fn main() { println(to_str(alpha(1))) }\n",
     )
     .unwrap();
-    let out2 = Command::new(env!("CARGO_BIN_EXE_cortex"))
+    let out2 = common::cortex()
         .args(["repair", "--workspace"])
         .arg(&ws2)
         .args(["--file", "two.ax", "--check", "hidden", "--axon"])
@@ -412,7 +409,7 @@ fn cli_localizes_its_own_target_and_refuses_to_guess() {
          fn main() { println(to_str(1)) }\n",
     )
     .unwrap();
-    let out2b = Command::new(env!("CARGO_BIN_EXE_cortex"))
+    let out2b = common::cortex()
         .args(["repair", "--workspace"])
         .arg(&ws2)
         .args(["--file", "none.ax", "--check", "hidden", "--axon"])
@@ -433,7 +430,7 @@ fn cli_localizes_its_own_target_and_refuses_to_guess() {
     //    adjudicator and leaves another check failing is not a repair: the same ambiguous file repairs fine when told which.
     //    Without this row, "refuses when ambiguous" is satisfied by a build
     //    that refuses always.
-    let out3 = Command::new(env!("CARGO_BIN_EXE_cortex"))
+    let out3 = common::cortex()
         .args(["repair", "--workspace"])
         .arg(&ws2)
         // `beta`, NOT `alpha`. The two tie at 1.0 and the ranking breaks ties
@@ -567,7 +564,7 @@ fn cli_walks_the_ranking_and_isolates_each_attempt() {
     std::fs::copy(&src, ws.join("ambiguous.ax")).unwrap();
 
     let run = |extra: &[&str]| -> (i32, String, String) {
-        let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        let out = common::cortex()
             .args(["repair", "--workspace"])
             .arg(&ws)
             .args([
@@ -705,7 +702,7 @@ fn walk_run(
     gen: &Path,
     extra: &[&str],
 ) -> (i32, serde_json::Value, String, Vec<String>) {
-    let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+    let out = common::cortex()
         .args(["repair", "--workspace"])
         .arg(ws)
         .args(["--file", "three.ax", "--check", "hidden", "--axon"])
@@ -763,6 +760,101 @@ fn cli_walk_gives_every_candidate_one_proposal_before_any_gets_two() {
     assert_eq!(v["outcome"], "verified_done");
 }
 
+/// The ranking step's CLI wiring. Without a key the default ranker keeps the
+/// spectrum order, prints ONE line saying why, and records it under `ranker`;
+/// `spectrum` asked for by name prints nothing; the flag beats the env; a bad
+/// spec is a usage error before anything runs; `--symbol` ranks nothing.
+#[test]
+fn cli_ranker_falls_back_visibly_and_reports_itself() {
+    let run = |name: &str,
+               env_ranker: Option<&str>,
+               extra: &[&str]|
+     -> (i32, serde_json::Value, String) {
+        let (ws, gen) = walk_fixture(name, "gamma:0");
+        let mut c = common::cortex();
+        c.env_remove("CORTEX_RANKER");
+        if let Some(r) = env_ranker {
+            c.env("CORTEX_RANKER", r);
+        }
+        let out = c
+            .args(["repair", "--workspace"])
+            .arg(&ws)
+            .args(["--file", "three.ax", "--check", "hidden", "--axon"])
+            .arg(axon_bin())
+            .arg("--generator")
+            .arg(format!("cmd:{}", gen.display()))
+            .args(["--write-prefix", "three.ax", "--json"])
+            .args(extra)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+        let v = serde_json::from_str(stdout.trim()).unwrap_or(serde_json::Value::Null);
+        (out.status.code().unwrap_or(-1), v, stderr)
+    };
+
+    // The default, no key.
+    let (code, v, err) = run("rank_default", None, &[]);
+    assert_eq!(code, 0, "a ranker fallback changes no verdict: {err}{v}");
+    let line = "ranker openrouter:anthropic/claude-haiku-5.5 unavailable: \
+                OPENROUTER_API_KEY not set; using spectrum order";
+    assert_eq!(
+        err.matches(line).count(),
+        1,
+        "exactly one fallback line: {err}"
+    );
+    assert_eq!(
+        v["ranker"],
+        serde_json::json!({
+            "requested": "openrouter:anthropic/claude-haiku-5.5",
+            "used": "spectrum",
+            "reason": "OPENROUTER_API_KEY not set",
+            "order": ["alpha", "beta", "gamma"],
+            "latency_ms": null,
+            "cost_usd": null,
+        })
+    );
+    assert_eq!(names(&v["attempted"]), ["alpha", "beta", "gamma"]);
+
+    // Spectrum by name: used as asked, so no line at all.
+    let (code, v, err) = run("rank_spectrum", Some("spectrum"), &[]);
+    assert_eq!(code, 0, "{err}{v}");
+    assert!(!err.contains("ranker "), "{err}");
+    assert_eq!(v["ranker"]["used"], "spectrum");
+    assert_eq!(v["ranker"]["reason"], serde_json::Value::Null);
+
+    // The flag beats the env, even an env that would not parse.
+    let (code, v, err) = run(
+        "rank_flag",
+        Some("bogus"),
+        &["--ranker", "decision:inception/mercury-decide"],
+    );
+    assert_eq!(code, 0, "{err}{v}");
+    assert!(err.contains(
+        "ranker decision:inception/mercury-decide unavailable: OPENROUTER_API_KEY not set"
+    ));
+    assert_eq!(
+        v["ranker"]["requested"],
+        "decision:inception/mercury-decide"
+    );
+
+    // A bad spec decides nothing.
+    let (code, _, err) = run("rank_bad_env", Some("bogus"), &[]);
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.contains("CORTEX_RANKER: unknown ranker `bogus`"),
+        "{err}"
+    );
+    let (code, _, err) = run("rank_bad_flag", None, &["--ranker", "openrouter:"]);
+    assert_eq!(code, 2, "{err}");
+
+    // An explicit target is an instruction: nothing is ranked.
+    let (code, v, err) = run("rank_symbol", None, &["--symbol", "gamma"]);
+    assert_eq!(code, 0, "{err}{v}");
+    assert_eq!(v["ranker"], serde_json::Value::Null);
+    assert!(!err.contains("ranker "), "{err}");
+}
+
 /// C16c — pass 2 resumes each candidate in rank order with the REST of its
 /// own budget and its own history, so no candidate gets more than the
 /// depth-first walk gave it, and the report shows the real attempt order.
@@ -801,7 +893,7 @@ fn cli_walk_resumes_each_candidate_with_its_remaining_budget_and_history() {
     // proposed, every candidate spends its whole budget: four proposals each,
     // exactly what a depth-first episode of 8 steps makes.
     let (ws2, gen2) = walk_fixture("walk_none", "none");
-    let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+    let out = common::cortex()
         .args(["repair", "--workspace"])
         .arg(&ws2)
         .args(["--file", "three.ax", "--check", "hidden", "--axon"])
@@ -867,7 +959,7 @@ fn cli_walk_refusal_stops_it_and_a_named_symbol_is_never_paused() {
 #[test]
 fn cli_locate_reports_the_ranking_with_its_scores() {
     let ws = workspace("locate_json");
-    let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+    let out = common::cortex()
         .args(["locate", "--workspace"])
         .arg(&ws)
         .args([
@@ -937,7 +1029,7 @@ fn cli_refuses_to_grade_a_repair_against_bytes_the_repair_wrote() {
     //    named check never exercised the broken function.
     let ws2 = workspace("unwitnessable");
     let before2 = std::fs::read_to_string(ws2.join("broken.ax")).unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+    let out = common::cortex()
         .args(["repair", "--workspace"])
         .arg(&ws2)
         .args(["--file", "broken.ax", "--symbol", "double"])
@@ -1022,7 +1114,7 @@ fn cli_repairs_a_file_that_compiles_with_warnings() {
     );
     assert!(check.status.success(), "and it must still compile");
 
-    let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+    let out = common::cortex()
         .args(["repair", "--workspace"])
         .arg(&ws)
         .args([
@@ -1079,7 +1171,7 @@ fn cli_repairs_a_file_that_compiles_with_warnings() {
          fn main() { println(to_str(helper_alpha(2))) }\n",
     )
     .unwrap();
-    let out2 = Command::new(env!("CARGO_BIN_EXE_cortex"))
+    let out2 = common::cortex()
         .args(["repair", "--workspace"])
         .arg(&ws)
         .args(["--file", "nomatch.ax", "--check", "hidden_case", "--axon"])
@@ -1129,7 +1221,7 @@ fn cli_drives_an_external_generator_and_shows_it_no_grader() {
         p
     };
     let run = |gen: &str| -> (i32, String, String) {
-        let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        let out = common::cortex()
             .args(["repair", "--workspace"])
             .arg(&ws)
             .args([
@@ -1253,7 +1345,7 @@ fn cli_patches_the_selected_symbol_not_a_name_it_prefixes() {
     )
     .unwrap();
 
-    let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+    let out = common::cortex()
         .args(["repair", "--workspace"])
         .arg(&ws)
         .args([
@@ -1315,7 +1407,7 @@ fn cli_survives_a_generator_that_misbehaves() {
     // slow-but-honest generator on a loaded host as "did not answer").
     let run = |gen: &std::path::PathBuf, timeout_ms: &str| -> (i32, String) {
         std::fs::copy(fixtures.join("broken.ax"), ws.join("broken.ax")).unwrap();
-        let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        let out = common::cortex()
             .args(["repair", "--workspace"])
             .arg(&ws)
             .args([
@@ -1439,7 +1531,7 @@ fn cli_fails_closed_when_the_recheck_cannot_run() {
             real = axon_bin().display()
         ),
     );
-    let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+    let out = common::cortex()
         .args(["repair", "--workspace"])
         .arg(&ws)
         .args([
@@ -1490,7 +1582,7 @@ fn cli_fails_closed_when_the_recheck_cannot_run() {
         "gush.sh",
         "#!/bin/sh\ncat >/dev/null\nhead -c 3000000 /dev/zero | tr '\\0' 'y'\n".to_string(),
     );
-    let out2 = Command::new(env!("CARGO_BIN_EXE_cortex"))
+    let out2 = common::cortex()
         .args(["repair", "--workspace"])
         .arg(&ws)
         .args([
@@ -1558,7 +1650,7 @@ fn cli_shows_the_generator_the_same_body_on_the_warned_path() {
         0o755,
     );
 
-    let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+    let out = common::cortex()
         .args(["repair", "--workspace"])
         .arg(&ws)
         .args([
@@ -1611,7 +1703,7 @@ fn cli_ships_evidence_a_reader_can_verify() {
     use axon_cortex::episode::Episode;
 
     let ws = workspace("evidence");
-    let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+    let out = common::cortex()
         .args(["repair", "--workspace"])
         .arg(&ws)
         .args([
@@ -1670,7 +1762,7 @@ fn cli_ships_evidence_a_reader_can_verify() {
     // And the negative: a run that does NOT verify must not carry an episode
     // claiming it did.
     let ws2 = workspace("evidence_fail");
-    let out2 = Command::new(env!("CARGO_BIN_EXE_cortex"))
+    let out2 = common::cortex()
         .args(["repair", "--workspace"])
         .arg(&ws2)
         .args([
@@ -1721,7 +1813,7 @@ fn cli_restores_a_workspace_when_a_run_stops_mid_repair() {
 
     for budget in ["2", "4"] {
         std::fs::write(ws.join("broken.ax"), &before).unwrap();
-        let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        let out = common::cortex()
             .args(["repair", "--workspace"])
             .arg(&ws)
             .args(["--file", "broken.ax", "--symbol", "double"])

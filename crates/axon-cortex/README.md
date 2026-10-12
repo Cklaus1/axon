@@ -9,7 +9,7 @@ one thing to that loop — the text of a repair — and nothing else.
 
 ```bash
 cargo build -p axon-core --no-default-features --bin axon   # the checker
-cargo build -p axon-cortex --bins          # add --features ai for ai:MODEL
+cargo build -p axon-cortex --bins          # add --features ai for ai:MODEL and model rankers
 
 cortex locate --file broken.ax --check hidden_completion   # what is broken?
 cortex repair --file broken.ax --check hidden_completion \
@@ -84,6 +84,12 @@ than stopping at one. The walk is breadth-first: every candidate gets one
 proposal before any gets a second, then each candidate is resumed in rank
 order with the rest of its own budget and its own rejected attempts, so no
 candidate gets more than it would have had alone (see `docs/CORTEX.md`).
+Before the walk, `--ranker` (`spectrum` | `openrouter:MODEL` |
+`decision:MODEL`; env `CORTEX_RANKER`; default a Haiku 5.5 ranking when
+`OPENROUTER_API_KEY` is set) may reorder those candidates but never add or
+drop one, never sees the hidden check, and falls back to the spectrum order
+on any failure with one stderr line and a `ranker` object in `--json`
+(`src/rank.rs`).
 `--symbol` skips localization and tries only that function. A test is never
 a candidate. A wrong candidate costs budget and never costs correctness: the
 hidden check adjudicates every attempt, and each attempt starts from the state

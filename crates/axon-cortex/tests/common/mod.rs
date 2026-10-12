@@ -49,3 +49,18 @@ pub fn write_executable(path: &Path, bytes: impl AsRef<[u8]>, mode: u32) {
 pub fn copy_executable(src: impl AsRef<Path>, dst: impl AsRef<Path>, mode: u32) {
     cp(src.as_ref(), dst.as_ref(), mode);
 }
+
+/// The `cortex` binary with the ranking step pinned to spectrum.
+///
+/// Without this, a run that localizes its own target would consult the default
+/// model ranker whenever the environment running the suite holds
+/// `OPENROUTER_API_KEY` — a network call, a spend, and a candidate order that
+/// is no longer the one these rows assert. The ranker has its own hermetic
+/// tests (`tests/rank.rs`); the rows that check its CLI wiring set the
+/// variables back explicitly.
+pub fn cortex() -> std::process::Command {
+    let mut c = std::process::Command::new(env!("CARGO_BIN_EXE_cortex"));
+    c.env_remove("OPENROUTER_API_KEY")
+        .env("CORTEX_RANKER", "spectrum");
+    c
+}

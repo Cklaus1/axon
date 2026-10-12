@@ -68,6 +68,17 @@ cortex locate --file PATH --check NAME [--workspace DIR] [--axon PATH] [--json]
                          figures; they are not quoted here because a number
                          embedded in --help outlives the measurement it came
                          from.
+  --ranker SPEC          spectrum | openrouter:MODEL | decision:MODEL. Reorders
+                         the --candidates names above before the walk; it can
+                         never add or drop one. Default: env CORTEX_RANKER,
+                         else openrouter:anthropic/claude-haiku-5.5, which
+                         needs OPENROUTER_API_KEY and a `--features ai` build.
+                         Any failure (no key, HTTP error, 20 s timeout, an
+                         answer that is not a permutation) keeps the spectrum
+                         order and prints `ranker SPEC unavailable: REASON`.
+                         The model sees the file without the --check function,
+                         the visible failing checks and the candidates — never
+                         the check that adjudicates. Ignored with --symbol.
   --generator SPEC       none (default) | ai:MODEL | cmd:PATH | literal:BODY
                          cmd: runs YOUR program — the prompt on its stdin, the
                          proposed body on its stdout. No credentials enter this
@@ -301,6 +312,7 @@ fn main() {
     let mut write_prefixes: Vec<String> = Vec::new();
     let mut json = false;
     let mut candidates: usize = 3;
+    let mut ranker_flag: Option<String> = None;
 
     while let Some(a) = args.next() {
         let mut val = |flag: &str| -> String {
@@ -314,6 +326,7 @@ fn main() {
             "--check" => check = val("--check"),
             "--principal" => principal = val("--principal"),
             "--generator" => generator_spec = val("--generator"),
+            "--ranker" => ranker_flag = Some(val("--ranker")),
             "--axon" => axon_bin = std::path::PathBuf::from(val("--axon")),
             "--check-registry" => {
                 check_registry = Some(std::path::PathBuf::from(val("--check-registry")))
@@ -389,6 +402,14 @@ fn main() {
                 )),
             },
         };
+    // Also before anything runs: a mistyped ranker is a command-line error,
+    // not a fallback to spectrum that a reader would take for a choice.
+    let ranker_spec = axon_cortex::rank::select(
+        ranker_flag.as_deref(),
+        std::env::var(axon_cortex::rank::RANKER_ENV).ok().as_deref(),
+    )
+    .unwrap_or_else(|e| usage(&e));
+    let mut ranker_report: Option<axon_cortex::rank::RankReport> = None;
 
     let fabric = fabric_executor(&fabric_args, check_registry.as_deref());
     let mut runner = registered_runner(
@@ -502,11 +523,39 @@ fn main() {
             failing.join(", "),
             shown.join(" then ")
         );
-        ranked
+        // THE RANKING STEP. It may only permute these names: the eligible set
+        // is fixed above, by evidence, before any model is consulted. Every
+        // failure keeps the spectrum order and says so on one line.
+        let eligible: Vec<String> = ranked
             .into_iter()
             .take(candidates)
             .map(|(n, _)| n)
-            .collect()
+            .collect();
+        let report = axon_cortex::rank::Ranker::from_env(ranker_spec.clone()).rank(
+            &axon_cortex::rank::RankInput {
+                file: &file,
+                source: &src,
+                hidden_check: &check,
+                failing: &failing,
+                eligible: &eligible,
+            },
+        );
+        if let Some(line) = report.fallback_line() {
+            eprintln!("{line}");
+        } else if report.reason.is_none() && report.used != "spectrum" {
+            eprintln!(
+                "ranker {}: trying {} ({} ms, ${})",
+                report.used,
+                report.order.join(" then "),
+                report.latency_ms.unwrap_or(0),
+                report
+                    .cost_usd
+                    .map_or_else(|| "?".to_string(), |c| format!("{c:.6}"))
+            );
+        }
+        let order = report.order.clone();
+        ranker_report = Some(report);
+        order
     };
 
     // Each attempt starts from the state this run FOUND, not from whatever the
@@ -697,6 +746,10 @@ fn main() {
                 // Present only under --fabric-journal: the acf-execution-receipt/1
                 // of every check this run dispatched, in order.
                 "receipts": fabric.as_ref().map(|f| f.receipts()),
+                // The ranking step: what was asked for, what ordered the walk,
+                // and why they differ when they do. `null` with --symbol,
+                // where nothing was ranked.
+                "ranker": ranker_report.as_ref().map(|r| r.to_json()),
             })
         );
     } else {

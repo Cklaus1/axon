@@ -571,6 +571,53 @@ pub fn complete_with_model_usage(prompt: &str, model: &str) -> Result<(String, i
     ai_complete_inner_model_usage(prompt, model)
 }
 
+/// One JSON `POST` to an endpoint the CALLER names, with a bearer key the
+/// caller holds and a wall-clock bound on the whole exchange.
+///
+/// For Rust callers that speak a wire format other than the two above (Cortex's
+/// candidate ranker calls OpenRouter's chat and decisions endpoints). None of
+/// the `AXON_AI_*` / `.env` resolution applies: the URL and key arrive as
+/// arguments, so nothing in the environment can redirect where the key goes.
+///
+/// Returns `(status, body)` for any HTTP answer, error statuses included, so
+/// the caller decides what a 429 or a 500 means. `Err` is transport only
+/// (connect, TLS, timeout, unreadable body). The key never appears in an error
+/// this function builds: it travels in a header, and `reqwest` reports URLs,
+/// not headers.
+pub fn post_json_bearer(
+    url: &str,
+    key: &str,
+    body: &serde_json::Value,
+    timeout: std::time::Duration,
+) -> Result<(u16, String), String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(timeout)
+        .build()
+        .map_err(|e| format!("HTTP client could not be built: {e}"))?;
+    let response = client
+        .post(url)
+        .header("authorization", format!("Bearer {key}"))
+        .header("content-type", "application/json")
+        .json(body)
+        .send()
+        .map_err(|e| {
+            if e.is_timeout() {
+                format!("timed out after {} s", timeout.as_secs_f64())
+            } else {
+                format!("HTTP request failed: {e}")
+            }
+        })?;
+    let status = response.status().as_u16();
+    let text = response.text().map_err(|e| {
+        if e.is_timeout() {
+            format!("timed out after {} s", timeout.as_secs_f64())
+        } else {
+            format!("failed to read response body: {e}")
+        }
+    })?;
+    Ok((status, text))
+}
+
 // -- Layer-3 ASI: typed structured-output ("Uncertain<T>") ---------------------
 //
 // These helpers force Anthropic to return its answer through a tool-use call

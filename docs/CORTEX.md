@@ -31,12 +31,19 @@ Do not use it for:
 ```bash
 cargo build -p axon-core --no-default-features --bin axon   # the checker
 cargo build -p axon-cortex --bins                           # cortex
-cargo build -p axon-cortex --bins --features ai             # only if you want ai:MODEL
+cargo build -p axon-cortex --bins --features ai             # ai:MODEL and model rankers
 ```
 
 `cortex` runs the checker as `axon` from `PATH` unless `--axon PATH` is given.
 It hashes that binary at startup and refuses a check if the bytes change
 during the run.
+
+The model rankers (`--ranker openrouter:` / `decision:`, the default whenever
+`OPENROUTER_API_KEY` is set) also need `--features ai`, because they use
+`axon-ai`'s HTTP client. The benchmark drivers build without it
+(`cargo build -p axon-cortex --bins`), so a PoC run on that binary prints
+`ranker ... unavailable: this build has no HTTP client` and walks in spectrum
+order. Build with `--features ai` for the ranker to take effect there.
 
 ## The example used below
 
@@ -133,6 +140,7 @@ cortex repair --file PATH --check NAME [--symbol NAME] [options]
 | `--budget N` | 8 | maximum steps per candidate, summed over both passes of the walk |
 | `--write-prefix P` | none | path prefix the episode may write; repeatable. With none, nothing may be written |
 | `--generator SPEC` | `none` | where patch bodies come from (below) |
+| `--ranker SPEC` | see below | without `--symbol`: who orders the `--candidates` names before the walk |
 | `--axon PATH` | `axon` | the checker binary |
 | `--principal NAME` | `agent` | recorded as the acting principal |
 | `--json` | off | machine-readable outcome on stdout |
@@ -163,6 +171,66 @@ waits for two proposals. The cost: a truth at rank 1 that needs a second
 proposal now waits for one proposal from every other candidate. There is no
 switch back to depth-first, because no consumer needs that order. The figures
 are in the CHANGELOG entry for this change.
+
+### Ordering the candidates: `--ranker`
+
+Between localization and the walk, a ranker may REORDER the top
+`--candidates` names. It can never add a name or drop one: the eligible set is
+fixed by the spectrum first, and an answer that is not exactly a permutation
+of it is rejected (the rules of `axon_reflex::shortlist::decide`, plus "every
+name present"; `crates/axon-reflex/tests/cortex_rank_agreement.rs` holds the
+two to the same answers).
+
+| spec | what orders the walk |
+|---|---|
+| `spectrum` | the spectrum order, as `locate` prints it; no network |
+| `openrouter:MODEL` | a chat-completions call to OpenRouter asking for a JSON ranking of the names (LocRank's prompt) |
+| `decision:MODEL` | OpenRouter's decisions API (`/api/alpha/decisions`), one `choice` question over the names; ordered by returned probability, ties by spectrum order. Meant for `inception/mercury-decide` |
+
+Selection: `--ranker`, else the `CORTEX_RANKER` environment variable, else
+`openrouter:anthropic/claude-haiku-5.5`. Without `OPENROUTER_API_KEY` that
+default walks in spectrum order and says so (`reason: "OPENROUTER_API_KEY not
+set"`), so a keyless run walks exactly as before. The key is read from the
+environment only and is never printed or written. A malformed spec is a usage
+error (exit 2), not a fallback.
+
+The model sees only what Cortex sees: the file with the `--check` function cut
+out, the visible failing checks, and the candidate names and bodies. Never the
+adjudicating check; a request that still contains its name is not sent. The
+prompt is capped (24,000 characters), and candidate bodies are truncated
+first.
+
+**Fallback is never silent.** No key, a build without `--features ai`, an
+HTTP error, a 20 s timeout, or an answer that is malformed or not a
+permutation keeps the spectrum order and prints one line:
+
+```
+ranker openrouter:anthropic/claude-haiku-5.5 unavailable: OPENROUTER_API_KEY not set; using spectrum order
+```
+
+When the model's order is used, the line says so instead
+(`ranker openrouter:anthropic/claude-haiku-5.5: trying goal then budget_new then ... (1092 ms, $0.000337)`).
+With `--json`, the outcome carries the same facts (`null` with `--symbol`):
+
+```json
+"ranker": {"requested": "openrouter:anthropic/claude-haiku-5.5", "used": "spectrum",
+           "reason": "OPENROUTER_API_KEY not set", "order": ["budget_remaining", "goal_budget_left", "budget_new", "constraint", "goal"],
+           "latency_ms": null, "cost_usd": null}
+```
+
+`reason` is `null` when the requested ranker ordered the walk. A ranker never
+changes the exit code, the verdict, or which check adjudicates: every attempt
+is still judged by the hidden check under a fresh completion key.
+
+Why a model here: on the 60-task PoC corpus the spectrum puts the broken
+function first in 25 of 60 tasks. Reordering the same top 6,
+`anthropic/claude-haiku-5.5` put it first in 60 of 60 (p50 2.0 s, $0.0007 per
+task;
+[`crates/axon-cortex/benchmarks/locrank/`](../crates/axon-cortex/benchmarks/locrank/results/summary.md)),
+and `inception/mercury-decide` in 53 of 57 (0.93; p50 0.45 s, about $0.00003 per
+decision;
+[`crates/axon-reflex/benchmarks/decisions/`](../crates/axon-reflex/benchmarks/decisions/README.md)).
+Both are offline replays of `locate`'s candidates, not end-to-end repair runs.
 
 ### Granting write access: `--write-prefix`
 

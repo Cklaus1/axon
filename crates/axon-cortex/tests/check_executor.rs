@@ -217,10 +217,7 @@ fn a_registry_file_must_state_the_right_digest() {
 }
 
 fn cortex(args: &[&str]) -> (i32, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_cortex"))
-        .args(args)
-        .output()
-        .unwrap();
+    let out = common::cortex().args(args).output().unwrap();
     (
         out.status.code().unwrap_or(-1),
         format!(
