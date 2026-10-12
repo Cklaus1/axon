@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R51 S0)",
+  "text": "INTERPRETER: perf(interp): 16-byte Value, Box<str> Flow, Sym-keyed records, cached string literals (AX-46, AX-47): not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it"
+}

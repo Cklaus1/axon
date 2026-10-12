@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S6 T7 merge",
+  "text": "joins r51/t7oracle (11172ce5, 6ae5d56c: oracle rows M2622/M2623/M2925/M2946/M3343, new row M3495 sealed `&mut` direct-call oracle) onto r51/int 15cbfa4a (t7shape: sealed width re-tag, M3230/M3231/M3256 text, M1996 marker); only this table and the note conflicted, resolved by keeping both sides; no change beyond the commits it joins"
+}

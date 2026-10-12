@@ -13,17 +13,30 @@
 //!   axon-vm principal add <name> [options]  Register a principal
 //!   axon-vm principal list                  List principals
 
-use std::io::{Read, Write};
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use std::{env, fs, process};
 
 use base64::Engine as _;
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
+
+// B262: the Firecracker launch path lives in the library target now.
+use axon_vm::admit::{
+    admit, extended_baseline_path, kernel_baseline_path, AdmitError, AdmitRequest, ExtendedTcb,
+    KernelPin,
+};
+#[cfg(test)]
+use axon_vm::admit::{effects_not_granted_by, measure_and_attest_inner};
+#[cfg(test)]
+use axon_vm::firecracker::MmdsPayload;
+#[cfg(test)]
+use axon_vm::firecracker::{
+    embed_policy_in_cmdline, parse_guest_sentinel, EchoHandler, HostAwaitHandler,
+};
+use axon_vm::firecracker::{
+    run_in_firecracker, FirecrackerBin, GuestOutcome, LaunchSpec, DEFAULT_SOCKET_TIMEOUT,
+};
 
 use axon_attest::{
     measure_host_stack, measure_kernel, measure_kernel_bytes, report_to_json,
@@ -48,11 +61,7 @@ const CHAIN_VERIFY_FAIL_EXIT_CODE: i32 = 15;
 /// R31: extended measurement failed — required component missing/unreadable (exit 12).
 const EXTENDED_TCB_MEASURE_FAIL: i32 = 12;
 
-/// R31/T52: the measured extended TCB did not match the pinned expectation, or
-/// no expectation was pinned at all. Shares the attestation exit code (10) with
-/// the kernel-baseline gate — both mean "the software about to run is not the
-/// software that was blessed".
-const EXTENDED_TCB_MISMATCH: i32 = 10;
+// R31/T52 extended-TCB mismatch (exit 10) is `axon_vm::admit::ATTESTATION_EXIT_CODE`.
 
 /// R33: cross-VM safety quorum not met — insufficient approvals (or empty/timeout
 /// in the fuller protocol). Reserved per `governance/specs/R33-cross-vm-safety-quorum.md`
@@ -589,18 +598,6 @@ enum QuorumCmd {
 }
 
 // ── Data types ────────────────────────────────────────────────────────────────
-
-/// Schema: axon-vm-mmds/1 — written to MMDS before VM boot.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct MmdsPayload {
-    schema: String,
-    run_id: String,
-    principal: Option<String>,
-    allowed_effects: Option<Vec<String>>,
-    budget_tokens: Option<u64>,
-    source_hash: Option<String>,
-    seccomp_bpf_b64: Option<String>,
-}
 
 /// Schema: axon-manifest/1 — sidecar emitted by `axon build --emit-manifest`. `schema`/`source`/
 /// `binary`/`per_fn` mirror the full sidecar schema for documentation/forward-compat even though
@@ -1237,184 +1234,90 @@ fn cmd_run(
         None
     };
 
-    // Derive allowed effects: an explicit AXON_VM_ALLOWED_EFFECTS override (comma-
-    // separated effect names) tightens the policy beyond the manifest — useful for
-    // defense-in-depth and for exercising the in-kernel syscall gate. Otherwise prefer
-    // the manifest's effect union, fall back to the principal, then open.
-    let allowed_effects = if let Ok(forced) = env::var("AXON_VM_ALLOWED_EFFECTS") {
-        let forced: Vec<String> = forced
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-
-        // The override may only TIGHTEN. It replaced the manifest outright, so
-        // `AXON_VM_ALLOWED_EFFECTS=FS,Net,Exec` on a program whose `.axmeta`
-        // grants only `FS` delivered all three to the guest — an environment
-        // variable widening a grant past the program's own signed manifest.
-        //
-        // R36 §S0 names this as one of four fail-open policy-provenance
-        // defaults and says the fix outright: it "must be checked as a subset
-        // rather than a replacement". The comment above already claimed the
-        // override "tightens the policy beyond the manifest"; only the claim was
-        // true.
-        //
-        // Checked ONLY against a manifest. With no manifest the override is the
-        // sole grant and there is nothing to be a subset of — and the
-        // no-grant-at-all path below already refuses that case.
-        if let Some(union) = manifest.effect_union.as_ref() {
-            let extra = effects_not_granted_by(&forced, union);
-            if !extra.is_empty() {
-                eprintln!(
-                    "axon-vm: AXON_VM_ALLOWED_EFFECTS may only narrow the manifest's \
-                     effect grant, not widen it. Not in the manifest: {}. Manifest grants: {}.",
-                    extra.join(", "),
-                    union.join(", ")
-                );
-                process::exit(2);
-            }
-        }
-        Some(forced)
+    // D-019: the launch gates — narrow-only override (R36 §S0), no null grant
+    // (T48), kernel attestation with no TOFU (R26/P7-KRN-05) and, if requested,
+    // the extended TCB (R31/T52) — live in `axon_vm::admit`, which is the only
+    // way to obtain the `AdmittedLaunch` the launch API requires. This used to
+    // be the ONLY place they ran, so a library caller skipped all four. Exit
+    // codes and messages are unchanged (pinned by tests/cli_parity).
+    let effects_override = env::var("AXON_VM_ALLOWED_EFFECTS").ok();
+    let kernel_baseline = kernel_baseline_path();
+    let ext_baseline = extended_baseline_path();
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."));
+    let axon_os_path = exe_dir.join("axon-os");
+    let axon_audit_path = exe_dir.join("axon-audit-writer");
+    let axon_audit_opt = if axon_audit_path.exists() {
+        Some(axon_audit_path.as_path())
     } else {
-        manifest
-            .effect_union
-            .clone()
-            .or_else(|| principal.as_ref().map(|p| p.allowed_effects.clone()))
+        None
     };
-
-    // AUDIT T48 (finding OSK-P7-C3; R36 §2 site 1). `allowed_effects: None`
-    // serialises as `null`, and the guest kernel used to read an absent/non-array
-    // field as EffectSet(0xFF) — EVERY effect. That is not an exotic path: it is
-    // what this function emits for any program with no `.axmeta` manifest and no
-    // `--principal`, i.e. the DEFAULT run. The guest now denies on ambiguity, but
-    // launching with no grant at all is still a producer-side defect: it would
-    // boot a guest that can do nothing and report it as a policy violation,
-    // blaming the program for the launcher's omission. Refuse here and say which
-    // of the three sources to supply.
-    let Some(allowed_effects) = allowed_effects else {
-        let msg = concat!(
-            "no effect grant: the program has no `.axmeta` manifest ",
-            "(`axon build --emit-manifest`), no `--principal` was given, and ",
-            "AXON_VM_ALLOWED_EFFECTS is unset. Refusing to launch rather than ",
-            "sending a null policy to the guest"
-        );
-        if json_out {
-            let out = serde_json::json!({
-                "schema": "axon-vm-run/1",
-                "ok": false,
-                "run_id": run_id,
-                "exit_code": -1,
-                "error": msg,
-                "principal": principal_name,
-                "no_effect_grant": true,
-            });
-            println!("{}", serde_json::to_string_pretty(&out).unwrap());
+    let admitted = admit(&AdmitRequest {
+        run_id: &run_id,
+        kernel: &kernel_path,
+        principal: principal_name.as_deref(),
+        manifest_effects: manifest.effect_union.as_deref(),
+        principal_effects: principal.as_ref().map(|p| p.allowed_effects.as_slice()),
+        effects_override: effects_override.as_deref(),
+        budget_tokens: principal.as_ref().map(|p| p.budget_tokens),
+        source_hash: Some(&source_hash),
+        seccomp_bpf_b64: seccomp_b64.as_deref(),
+        kernel_pin: if no_attest {
+            KernelPin::DevBypass
         } else {
-            eprintln!("axon-vm: {msg}");
-        }
-        process::exit(2);
-    };
-
-    let budget_tokens = principal.as_ref().map(|p| p.budget_tokens);
-
-    // Construct the MMDS payload.
-    let mmds_payload = MmdsPayload {
-        schema: "axon-vm-mmds/1".to_string(),
-        run_id: run_id.clone(),
-        principal: principal_name.clone(),
-        allowed_effects: Some(allowed_effects),
-        budget_tokens,
-        source_hash: Some(source_hash),
-        seccomp_bpf_b64: seccomp_b64,
-    };
-
-    // R26: mandatory kernel attestation before any VM boot.
-    // Measure the kernel and verify it against a PINNED expected digest —
-    // --expect-digest, else ~/.axon/kernel_baseline.sha256. Exits 10 on mismatch
-    // AND on no pin at all (no trust-on-first-use). --no-attest is the only
-    // bypass; no environment variable can disable this gate.
-    if let Err(e) = measure_and_attest(&kernel_path, no_attest, expect_digest.as_deref()) {
-        if json_out {
-            let out = serde_json::json!({
-                "schema": "axon-vm-run/1",
-                "ok": false,
-                "run_id": run_id,
-                "exit_code": -1,
-                "elapsed_ms": start.elapsed().as_millis(),
-                "error": e.to_string(),
-                "principal": principal_name,
-                "risk": manifest.risk,
-                "attestation_failed": true,
-            });
-            println!("{}", serde_json::to_string_pretty(&out).unwrap());
-        } else {
-            eprintln!("axon-vm: {e}");
-        }
-        process::exit(10);
-    }
-
-    // R31: extended TCB gate — measure full safety stack before booting.
-    // Any measure failure → exit 12 (component missing/unreadable).
-    // The VM is NEVER spawned until this gate passes.
-    if extended_tcb {
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-            .unwrap_or_else(|| PathBuf::from("."));
-        let axon_os_path = exe_dir.join("axon-os");
-        let axon_audit_path = exe_dir.join("axon-audit-writer");
-        let axon_audit_opt = if axon_audit_path.exists() {
-            Some(axon_audit_path.as_path())
-        } else {
-            None
-        };
-        match measure_host_stack(&kernel_path, Some(axon_os_path.as_path()), axon_audit_opt) {
-            Ok(ext) => {
-                // AUDIT T52 (finding P4-OS-11). This printed
-                // "✓ extended TCB: … (4/4 components verified)" and moved on. It
-                // had MEASURED four components and verified none: `verify_extended`
-                // was never called and no expected value existed to call it with.
-                // The flag's own doc promised "Mismatch → exit 10", an arm nothing
-                // could reach.
-                //
-                // Same rule as the T32 kernel baseline: an expectation is
-                // REQUIRED, and its absence is a refusal rather than
-                // trust-on-first-use. TOFU against a user-writable file is not a
-                // gate — an attacker who can swap a TCB component can also delete
-                // the baseline, and the next boot would bless the tampered stack.
-                let expected = expect_axtcb1_ext.clone().or_else(|| {
-                    std::fs::read_to_string(extended_baseline_path())
-                        .ok()
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                });
-                let Some(expected) = expected else {
-                    eprintln!(
-                        "axon-vm: --extended-tcb requires a pinned expectation. Measured {} \
-                         but have nothing to verify it against.\n                           Pin it once:  axon-vm attest --kernel <path> --extended-tcb --pin-extended\n                           Or pass:      --expect-axtcb1-ext {}",
-                        ext.axtcb1_ext, ext.axtcb1_ext
-                    );
-                    process::exit(EXTENDED_TCB_MISMATCH);
-                };
-                match verify_extended(&ext, &expected) {
-                    Ok(()) => eprintln!(
-                        "✓ extended TCB verified against pin: {} (4/4 components)",
-                        ext.axtcb1_ext
-                    ),
-                    Err(e) => {
-                        eprintln!("axon-vm: EXTENDED TCB MISMATCH: {e}");
-                        eprintln!("  expected {expected}");
-                        eprintln!("  measured {}", ext.axtcb1_ext);
-                        process::exit(EXTENDED_TCB_MISMATCH);
-                    }
+            KernelPin::Verify {
+                expect_digest: expect_digest.as_deref(),
+                baseline: &kernel_baseline,
+            }
+        },
+        extended_tcb: extended_tcb.then_some(ExtendedTcb {
+            axon_os: &axon_os_path,
+            axon_audit: axon_audit_opt,
+            expect: expect_axtcb1_ext.as_deref(),
+            baseline: &ext_baseline,
+        }),
+    });
+    let admitted = match admitted {
+        Ok(a) => a,
+        Err(e) => {
+            let json_extra = match &e {
+                AdmitError::NoEffectGrant => Some(serde_json::json!({
+                    "schema": "axon-vm-run/1",
+                    "ok": false,
+                    "run_id": run_id,
+                    "exit_code": -1,
+                    "error": e.to_string(),
+                    "principal": principal_name,
+                    "no_effect_grant": true,
+                })),
+                AdmitError::KernelAttestation(_) => Some(serde_json::json!({
+                    "schema": "axon-vm-run/1",
+                    "ok": false,
+                    "run_id": run_id,
+                    "exit_code": -1,
+                    "elapsed_ms": start.elapsed().as_millis(),
+                    "error": e.to_string(),
+                    "principal": principal_name,
+                    "risk": manifest.risk,
+                    "attestation_failed": true,
+                })),
+                // These three were always plain stderr, even under --json.
+                AdmitError::OverrideWidens { .. }
+                | AdmitError::ExtendedTcbUnpinned { .. }
+                | AdmitError::ExtendedTcbMismatch { .. }
+                | AdmitError::ExtendedTcbMeasure(_) => None,
+            };
+            match json_extra {
+                Some(out) if json_out => {
+                    println!("{}", serde_json::to_string_pretty(&out).unwrap())
                 }
+                _ => eprintln!("axon-vm: {e}"),
             }
-            Err(e) => {
-                eprintln!("axon-vm: extended TCB measurement failed: {e}");
-                process::exit(EXTENDED_TCB_MEASURE_FAIL);
-            }
+            process::exit(e.exit_code());
         }
-    }
+    };
 
     // R33: cross-VM safety quorum gate — collected BEFORE any VM boots.
     // The Firecracker launch never runs unless the quorum check passes.
@@ -1499,17 +1402,27 @@ fn cmd_run(
         fc_socket.unwrap_or_else(|| PathBuf::from(format!("/tmp/axon-vm-{}.sock", process::id())));
 
     // Launch Firecracker, configure the VM, and run the program.
-    let result = run_in_firecracker(
-        &program,
-        &kernel_path,
-        &initrd_path,
-        mem_mib,
-        vcpus,
-        vsock_port,
-        &socket_path,
-        &mmds_payload,
-        principal.as_ref(),
-    );
+    // AXON_VM_SOCKET_TIMEOUT_SECS (default 5) — read here and passed in, so the
+    // library holds no ambient knob of its own (ACF-G22).
+    let socket_timeout = env::var("AXON_VM_SOCKET_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .map(std::time::Duration::from_secs)
+        .unwrap_or(DEFAULT_SOCKET_TIMEOUT);
+    let result = FirecrackerBin::resolve().and_then(|firecracker| {
+        run_in_firecracker(&LaunchSpec {
+            admitted: &admitted,
+            firecracker: &firecracker,
+            program: &program,
+            initrd: &initrd_path,
+            mem_mib,
+            vcpus,
+            vsock_port,
+            socket_path: &socket_path,
+            principal_mem_mib: principal.as_ref().map(|p| p.mem_mib),
+            socket_timeout,
+        })
+    });
 
     let elapsed_ms = start.elapsed().as_millis();
 
@@ -2174,566 +2087,6 @@ fn cmd_quorum_check(
     report_quorum_result(result, n, json_out);
 }
 
-// ── Firecracker orchestration ─────────────────────────────────────────────────
-
-/// What the GUEST did — as distinct from whether the launcher successfully drove
-/// the Firecracker API, which is all `Result::is_ok` on the launch ever told us
-/// (P7-KRN-04). A run whose guest never reported anything is not a success.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GuestOutcome {
-    /// The guest signalled a policy violation on the serial console (`-VIOLATION8`).
-    Violation,
-    /// The guest signalled a panic (`-PANIC<n>`).
-    Panic(i32),
-    /// The guest announced a clean exit (`-EXIT<n>`), or Firecracker exited on its
-    /// own and the guest made no distress signal.
-    Exited(i32),
-    /// The deadline passed with no guest signal and no Firecracker exit.
-    Timeout,
-}
-
-impl GuestOutcome {
-    fn as_str(self) -> &'static str {
-        match self {
-            GuestOutcome::Violation => "violation",
-            GuestOutcome::Panic(_) => "panic",
-            GuestOutcome::Exited(_) => "exited",
-            GuestOutcome::Timeout => "timeout",
-        }
-    }
-}
-
-struct RunResult {
-    exit_code: i32,
-    outcome: GuestOutcome,
-}
-
-/// Serial-console sentinels the guest kernel writes immediately before halting.
-/// `axon-vm` had no parser for these at all: the guest correctly announced
-/// "policy violation, exit 8" on COM1 and the host reported `ok:true` (P7-KRN-04).
-fn parse_guest_sentinel(line: &str) -> Option<GuestOutcome> {
-    // The guest prefixes with an ANSI erase-line; match on the tail.
-    let l = line.trim_end();
-    if l.ends_with("-VIOLATION8") {
-        return Some(GuestOutcome::Violation);
-    }
-    if let Some(idx) = l.rfind("-PANIC") {
-        if let Ok(code) = l[idx + "-PANIC".len()..].trim().parse::<i32>() {
-            return Some(GuestOutcome::Panic(code));
-        }
-    }
-    if let Some(idx) = l.rfind("-EXIT") {
-        if let Ok(code) = l[idx + "-EXIT".len()..].trim().parse::<i32>() {
-            return Some(GuestOutcome::Exited(code));
-        }
-    }
-    None
-}
-
-// Pre-existing 9-arg shape, found (not introduced) while adding axon-vm to gate.sh's clippy
-// coverage 2026-07-19 — a real grouping-into-a-config-struct refactor is a separate, larger
-// change than that gate-coverage fix; allowed here rather than bundled in.
-#[allow(clippy::too_many_arguments)]
-fn run_in_firecracker(
-    program: &Path,
-    kernel: &Path,
-    initrd: &Path,
-    mem_mib: u64,
-    vcpus: u64,
-    vsock_port: u32,
-    socket_path: &Path,
-    mmds: &MmdsPayload,
-    principal: Option<&Principal>,
-) -> Result<RunResult, Box<dyn std::error::Error>> {
-    // Check Firecracker is installed.
-    let fc_bin = which_firecracker()?;
-
-    // Spawn Firecracker.
-    let mut fc = Command::new(&fc_bin)
-        .arg("--api-sock")
-        .arg(socket_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-
-    // Drain Firecracker's stdout/stderr (the guest serial console + FC logs) to our
-    // stderr on background threads. Without this the piped buffers fill and the guest
-    // BLOCKS — a deadlock, since `fc.wait()` can't return until FC exits and FC can't
-    // make progress while its stdout pipe is full. Draining also surfaces the guest
-    // boot log (set AXON_VM_QUIET=1 to suppress).
-    //
-    // The stdout drain also WATCHES for the guest's exit sentinels. The guest kernel
-    // writes `-VIOLATION8` to COM1 and then attempts an ACPI S5 power-off — which
-    // Firecracker does not implement, so the guest spins in `hlt` and the run would
-    // otherwise be reported as a 124 timeout with `ok:true` (P7-KRN-04). Reading the
-    // sentinel means the guest's own verdict decides the outcome, independent of
-    // whether it manages to power the machine off.
-    let quiet = env::var("AXON_VM_QUIET").map(|v| v == "1").unwrap_or(false);
-    let signal: Arc<Mutex<Option<GuestOutcome>>> = Arc::new(Mutex::new(None));
-    let mut drains = Vec::new();
-    if let Some(out) = fc.stdout.take() {
-        let sig = Arc::clone(&signal);
-        drains.push(std::thread::spawn(move || {
-            drain_to_stderr(out, "guest", quiet, Some(sig))
-        }));
-    }
-    if let Some(err) = fc.stderr.take() {
-        drains.push(std::thread::spawn(move || {
-            drain_to_stderr(err, "fc", quiet, None)
-        }));
-    }
-
-    // Wait for Firecracker to create its API socket (typically < 50ms; a fixed 5s margin
-    // was found flaky under heavy host CPU contention — R30's own acceptance gate observed
-    // acc_a1/acc_a4 failing at this exact R26_ATTESTATION stage under concurrent load, isolated
-    // reruns always passing clean, "root cause not chased further" per REQUIREMENTS.md — a
-    // starved Firecracker process spawn can plausibly take longer than 5s to even get scheduled.
-    // Tunable via AXON_VM_SOCKET_TIMEOUT_SECS (default 5), mirroring AXON_VM_TIMEOUT_SECS below.
-    let socket_timeout_secs: u64 = env::var("AXON_VM_SOCKET_TIMEOUT_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(5);
-    let api = wait_for_socket(socket_path, Duration::from_secs(socket_timeout_secs))?;
-
-    // Configure boot source.
-    // The policy is embedded in the cmdline as base64-JSON so the guest kernel
-    // can read it without a virtio-net driver (K2 cmdline-reader path).
-    let boot_args = embed_policy_in_cmdline(
-        "console=ttyS0 reboot=k panic=1 pci=off nomodules \
-         init=/init -- /init /usr/bin/axon run /axon/program.ax",
-        mmds,
-    );
-    fc_put(
-        &api,
-        "/boot-source",
-        &serde_json::json!({
-            "kernel_image_path": kernel.to_str().unwrap(),
-            "boot_args": boot_args,
-            "initrd_path": initrd.to_str().unwrap(),
-        }),
-    )?;
-
-    // Configure machine.
-    fc_put(
-        &api,
-        "/machine-config",
-        &serde_json::json!({
-            "vcpu_count": vcpus,
-            "mem_size_mib": mem_mib,
-        }),
-    )?;
-
-    // Configure vsock device so the guest can use host_await.
-    // uds_path is the host-side Unix socket; the guest connects via CID 2.
-    let vsock_host_uds = format!("/tmp/axon-vm-vsock-{}.sock", process::id());
-    fc_put(
-        &api,
-        "/vsock",
-        &serde_json::json!({
-            "guest_cid": 3,
-            "uds_path": vsock_host_uds,
-        }),
-    )?;
-
-    // MMDS is a SECONDARY policy channel and requires a network interface to bind to.
-    // This launcher delivers the policy via the kernel cmdline (`axon.policy=<base64>`,
-    // the K2 cmdline-reader path) and configures no NIC, so MMDS V2 config with an empty
-    // `network_interfaces` is rejected (400) — correctly. Make it best-effort: try it for
-    // hosts that do add a NIC, but never fail the run, since the cmdline already carries
-    // the policy. (Was a hard `?` that aborted every run at /mmds/config.)
-    if let Err(e) = fc_put(
-        &api,
-        "/mmds/config",
-        &serde_json::json!({
-            "version": "V2",
-            "network_interfaces": [],
-        }),
-    ) {
-        eprintln!("axon-vm: MMDS config skipped ({e}); policy is delivered via the kernel cmdline");
-    } else {
-        // Only write the payload if MMDS config succeeded.
-        let mmds_content = serde_json::json!({ "latest": { "axon": mmds } });
-        if let Err(e) = fc_put(&api, "/mmds", &mmds_content) {
-            eprintln!("axon-vm: MMDS payload write skipped ({e})");
-        }
-    }
-
-    // Apply cgroup limits via jailer-style resource controls (if principal has limits).
-    // In production use, Firecracker would be launched via jailer with uid/gid isolation.
-    // Here we set balloon memory limits instead (available without jailer).
-    if let Some(p) = principal {
-        if p.mem_mib < mem_mib {
-            fc_put(
-                &api,
-                "/balloon",
-                &serde_json::json!({
-                    "amount_mib": mem_mib - p.mem_mib,
-                    "deflate_on_oom": true,
-                }),
-            )?;
-        }
-    }
-
-    // Start a vsock relay thread to bridge vsock ↔ host_await callbacks.
-    // Uses EchoHandler by default; plug in a custom HostAwaitHandler to forward
-    // requests to a real host process (e.g. a stdin/stdout bridge).
-    let vsock_uds = vsock_host_uds.clone();
-    let handler: Arc<dyn HostAwaitHandler> = Arc::new(EchoHandler);
-    let _vsock_thread = std::thread::spawn(move || {
-        vsock_relay(&vsock_uds, vsock_port, handler);
-    });
-
-    // Copy the .ax program into a tmpfs-backed guest path.
-    // For real deployments this would be a read-only virtio-blk device.
-    // We pass it via a read-only drive.
-    let prog_abs = program.canonicalize()?;
-    fc_put(
-        &api,
-        "/drives/program",
-        &serde_json::json!({
-            "drive_id": "program",
-            "path_on_host": prog_abs.to_str().unwrap(),
-            "is_root_device": false,
-            "is_read_only": true,
-        }),
-    )?;
-
-    // Start the VM.
-    fc_put(
-        &api,
-        "/actions",
-        &serde_json::json!({"action_type": "InstanceStart"}),
-    )?;
-
-    // Bounded wait: the guest should run the program and power off (`reboot=k panic=1`
-    // turns a finished/paniced guest into a Firecracker exit). A guest that never powers
-    // off must NOT hang the host — kill it after the deadline and report. Tunable via
-    // AXON_VM_TIMEOUT_SECS (default 45).
-    let timeout_secs: u64 = env::var("AXON_VM_TIMEOUT_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(45);
-    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
-    // A guest that has announced its verdict on the serial console gets a short
-    // grace period to power itself off, then is reaped. Its own verdict stands
-    // either way — a guest that says "policy violation" and then fails to shut
-    // down has still refused the operation, and reporting that as a timeout (or,
-    // before this, as ok:true) inverts the security-relevant result.
-    let sentinel_grace = Duration::from_secs(2);
-    let mut sentinel_seen_at: Option<Instant> = None;
-    let (exit_code, outcome) = loop {
-        if let Some(status) = fc.try_wait()? {
-            // Firecracker exited. A sentinel, if any, is the more specific answer.
-            let sig = *signal.lock().unwrap();
-            break match sig {
-                Some(GuestOutcome::Violation) => (8, GuestOutcome::Violation),
-                Some(GuestOutcome::Panic(c)) => (c, GuestOutcome::Panic(c)),
-                Some(GuestOutcome::Exited(c)) => (c, GuestOutcome::Exited(c)),
-                _ => {
-                    let c = status.code().unwrap_or(1);
-                    (c, GuestOutcome::Exited(c))
-                }
-            };
-        }
-
-        let sig = *signal.lock().unwrap();
-        if let Some(o) = sig {
-            let since = *sentinel_seen_at.get_or_insert_with(Instant::now);
-            if since.elapsed() >= sentinel_grace {
-                let _ = fc.kill();
-                let _ = fc.wait();
-                eprintln!(
-                    "axon-vm: guest signalled {} but did not power off — reaped. \
-                     (The guest's ACPI S5 write is a no-op under Firecracker; the \
-                     guest verdict is authoritative.)",
-                    o.as_str()
-                );
-                break match o {
-                    GuestOutcome::Violation => (8, o),
-                    GuestOutcome::Panic(c) => (c, o),
-                    GuestOutcome::Exited(c) => (c, o),
-                    other => (0, other),
-                };
-            }
-        }
-
-        if Instant::now() >= deadline {
-            let _ = fc.kill();
-            let _ = fc.wait();
-            eprintln!(
-                "axon-vm: guest did not power off within {timeout_secs}s — killed. \
-                 See the guest log above; the guest image's init must run the program \
-                 and then poweroff/reboot for the VM to exit."
-            );
-            break (124, GuestOutcome::Timeout);
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    };
-
-    for d in drains {
-        let _ = d.join();
-    }
-
-    // Clean up socket files.
-    let _ = fs::remove_file(socket_path);
-    let _ = fs::remove_file(&vsock_host_uds);
-
-    Ok(RunResult { exit_code, outcome })
-}
-
-/// Read a single HTTP/1.1 response from a (keep-alive) stream without relying on the
-/// connection closing: read until the header terminator `\r\n\r\n`, then read exactly
-/// `Content-Length` more bytes if present. Firecracker replies `204 No Content` (no body)
-/// to a successful PUT and keeps the socket open, so reading to EOF would deadlock.
-fn read_http_response(stream: &mut UnixStream) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let mut resp = Vec::new();
-    let mut buf = [0u8; 1024];
-    let header_end = loop {
-        let n = stream.read(&mut buf)?;
-        if n == 0 {
-            return Ok(resp); // connection closed before full headers
-        }
-        resp.extend_from_slice(&buf[..n]);
-        if let Some(pos) = resp.windows(4).position(|w| w == b"\r\n\r\n") {
-            break pos + 4;
-        }
-    };
-    // Parse Content-Length (case-insensitive) from the headers.
-    let headers = String::from_utf8_lossy(&resp[..header_end]).to_ascii_lowercase();
-    let content_len: usize = headers
-        .lines()
-        .find_map(|l| l.strip_prefix("content-length:"))
-        .and_then(|v| v.trim().parse().ok())
-        .unwrap_or(0);
-    // Read the remaining body bytes, if any.
-    while resp.len() < header_end + content_len {
-        let n = stream.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        resp.extend_from_slice(&buf[..n]);
-    }
-    Ok(resp)
-}
-
-/// Copy a child stream (Firecracker stdout = guest serial console, or stderr = FC log)
-/// line-by-line to our stderr with a tag. Prevents the piped-buffer deadlock and surfaces
-/// the guest boot log. `quiet` suppresses the echo but still drains.
-/// When `signal` is supplied (the guest serial console), each line is also scanned
-/// for a guest exit sentinel; the FIRST one seen wins and is recorded for the
-/// launcher's wait loop.
-fn drain_to_stderr<R: std::io::Read + Send + 'static>(
-    r: R,
-    tag: &'static str,
-    quiet: bool,
-    signal: Option<Arc<Mutex<Option<GuestOutcome>>>>,
-) {
-    use std::io::BufRead;
-    let reader = std::io::BufReader::new(r);
-    for line in reader.lines() {
-        match line {
-            Ok(l) => {
-                if let (Some(sig), Some(outcome)) = (&signal, parse_guest_sentinel(&l)) {
-                    let mut g = sig.lock().unwrap();
-                    if g.is_none() {
-                        *g = Some(outcome);
-                    }
-                }
-                if !quiet {
-                    eprintln!("[{tag}] {l}");
-                }
-            }
-            Err(_) => break,
-        }
-    }
-}
-
-// ── Firecracker API client (raw HTTP/1.1 over Unix socket) ────────────────────
-
-/// Represents a connection to the Firecracker API socket.
-struct FcApi {
-    socket_path: PathBuf,
-}
-
-fn wait_for_socket(path: &Path, timeout: Duration) -> Result<FcApi, Box<dyn std::error::Error>> {
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if path.exists() {
-            return Ok(FcApi {
-                socket_path: path.to_owned(),
-            });
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    Err(format!(
-        "Firecracker socket not ready after {}s: {}",
-        timeout.as_secs(),
-        path.display()
-    )
-    .into())
-}
-
-/// PUT a JSON body to a Firecracker API endpoint.
-fn fc_put(
-    api: &FcApi,
-    path: &str,
-    body: &serde_json::Value,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let body_str = serde_json::to_string(body)?;
-    let request = format!(
-        "PUT {path} HTTP/1.1\r\n\
-         Host: localhost\r\n\
-         Content-Type: application/json\r\n\
-         Content-Length: {}\r\n\
-         Accept: */*\r\n\
-         Connection: close\r\n\
-         \r\n{body_str}",
-        body_str.len()
-    );
-
-    let dbg = env::var("AXON_VM_DEBUG").map(|v| v == "1").unwrap_or(false);
-    if dbg {
-        eprintln!("[axon-vm] → PUT {path}");
-    }
-    let mut stream = UnixStream::connect(&api.socket_path)?;
-    // Firecracker's API server keeps the connection open (it ignores our
-    // `Connection: close`), so reading until EOF (`read_to_end`) HANGS FOREVER on the
-    // very first request. Read only up to the end of the HTTP headers, then the
-    // Content-Length body if any. A read timeout is a backstop against a wedged socket.
-    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
-    stream.write_all(request.as_bytes())?;
-    stream.flush()?;
-
-    let resp = read_http_response(&mut stream)?;
-    if dbg {
-        eprintln!("[axon-vm] ← {path} ({} bytes)", resp.len());
-    }
-    let resp_str = String::from_utf8_lossy(&resp);
-
-    let status_line = resp_str.lines().next().unwrap_or("");
-    // e.g. "HTTP/1.1 204 No Content"
-    let status_code: u16 = status_line
-        .split_whitespace()
-        .nth(1)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-
-    if !(200..300).contains(&status_code) {
-        return Err(
-            format!("Firecracker API PUT {path} returned {status_line}\n{resp_str}").into(),
-        );
-    }
-
-    Ok(())
-}
-
-// ── HostAwaitHandler trait ────────────────────────────────────────────────────
-
-/// Trait for handling `host_await` requests forwarded from guest Axon programs
-/// over vsock.
-///
-/// Implement this trait to plug in a custom relay. For example, a stdio relay
-/// would forward each request to the host process's stdin and return the reply
-/// from stdout — the same mechanism as `run_suspendable_stdio` uses on the
-/// plain interpreter path. By default `EchoHandler` is wired in, which echoes
-/// each request back unchanged (useful for smoke-testing the vsock plumbing
-/// and as a starting point for custom handlers).
-///
-/// # `--host-await-echo` note
-///
-/// The default `EchoHandler` is the equivalent of running axon-vm with a
-/// hypothetical `--host-await-echo` flag: every `host_await` call in the
-/// guest receives its own request payload as the reply. To replace it, wrap
-/// your handler in `Arc::new(...)` and pass it to `vsock_relay` directly.
-pub trait HostAwaitHandler: Send + Sync {
-    /// Process a UTF-8 request payload received from the guest.
-    ///
-    /// Return `Some(reply)` to send the reply string back, or `None` to write
-    /// a zero-length frame (the EOF sentinel that signals the guest the
-    /// connection is closing).
-    fn handle(&self, request: &str) -> Option<String>;
-}
-
-/// Default handler: echoes the request back as the reply, unchanged.
-///
-/// Useful for smoke-testing the vsock plumbing without a real `host_await`
-/// implementation. Replace with a handler that forwards to your host process
-/// when interactive behavior is required.
-pub struct EchoHandler;
-
-impl HostAwaitHandler for EchoHandler {
-    fn handle(&self, request: &str) -> Option<String> {
-        Some(request.to_string())
-    }
-}
-
-// ── vsock relay ───────────────────────────────────────────────────────────────
-
-/// vsock relay: listens on the host-side UDS path that Firecracker maps as
-/// CID 2 (host). For each guest connection on `vsock_port`, reads a
-/// length-prefixed request, calls `handler`, and writes back a
-/// length-prefixed reply.
-///
-/// # Protocol
-///
-/// Each frame is: 4-byte little-endian u32 length, followed by `length` bytes
-/// of UTF-8 payload. A reply frame with length=0 is the EOF sentinel
-/// (returned when `handler.handle` returns `None`).
-///
-/// # Concurrency
-///
-/// Each accepted connection is dispatched to a new thread so concurrent guest
-/// `host_await` calls do not block one another.
-fn vsock_relay(uds_path: &str, _vsock_port: u32, handler: Arc<dyn HostAwaitHandler>) {
-    use std::os::unix::net::UnixListener;
-
-    // Firecracker requires the UDS path to not exist yet.
-    let _ = fs::remove_file(uds_path);
-    let listener = match UnixListener::bind(uds_path) {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("axon-vm: vsock relay bind failed: {e}");
-            return;
-        }
-    };
-
-    for stream in listener.incoming() {
-        match stream {
-            Ok(mut s) => {
-                let handler = Arc::clone(&handler);
-                std::thread::spawn(move || {
-                    // Read 4-byte LE length + payload.
-                    let mut lbuf = [0u8; 4];
-                    if s.read_exact(&mut lbuf).is_err() {
-                        return;
-                    }
-                    let len = u32::from_le_bytes(lbuf) as usize;
-                    let mut buf = vec![0u8; len];
-                    if s.read_exact(&mut buf).is_err() {
-                        return;
-                    }
-                    let req = String::from_utf8_lossy(&buf);
-
-                    // Dispatch to the handler and write back the reply.
-                    match handler.handle(&req) {
-                        Some(reply) => {
-                            let rlen = (reply.len() as u32).to_le_bytes();
-                            let _ = s.write_all(&rlen);
-                            let _ = s.write_all(reply.as_bytes());
-                        }
-                        None => {
-                            // EOF sentinel: length=0, no payload.
-                            let _ = s.write_all(&0u32.to_le_bytes());
-                        }
-                    }
-                });
-            }
-            Err(_) => break,
-        }
-    }
-}
-
 // ── BPF policy generation ─────────────────────────────────────────────────────
 
 /// Generate a seccomp-BPF allowlist program from a list of syscall names.
@@ -3104,23 +2457,6 @@ static SYSCALL_TABLE: &[(&str, u32)] = &[
 /// A sidecar that exists but cannot be read is now an error the caller must
 /// handle. Absent stays `Ok(None)` — that is a real, distinct state ("no policy
 /// declared"), and the caller refuses on it separately.
-/// Effects in `forced` that the manifest's `union` does not grant.
-///
-/// Empty means the override is a subset — a narrowing, which is what
-/// `AXON_VM_ALLOWED_EFFECTS` is for. Anything returned is an attempted WIDENING
-/// of a program's own signed grant by an environment variable, which R36 §S0
-/// names as a fail-open policy-provenance default.
-///
-/// Extracted so the rule is testable without booting a VM: the call site is
-/// inside the launch path and exits the process.
-fn effects_not_granted_by(forced: &[String], union: &[String]) -> Vec<String> {
-    forced
-        .iter()
-        .filter(|e| !union.contains(e))
-        .cloned()
-        .collect()
-}
-
 fn load_manifest(program: &Path) -> Result<Option<AxonManifest>, String> {
     let meta_path = program.with_extension("axmeta");
     if !meta_path.exists() {
@@ -3148,132 +2484,7 @@ fn sha256_file(path: &Path) -> String {
 
 // ── R26: kernel attestation gate ─────────────────────────────────────────────
 
-/// Path of the on-disk kernel baseline pin (`~/.axon/kernel_baseline.sha256`).
-/// Where the pinned extended-TCB (`axtcb1-ext:`) baseline lives (AUDIT T52).
-/// Sibling of `kernel_baseline_path`, same no-trust-on-first-use rule.
-fn extended_baseline_path() -> PathBuf {
-    let home = env::var("HOME").unwrap_or_default();
-    PathBuf::from(format!("{}/.axon/axtcb1_ext_baseline", home))
-}
-
-fn kernel_baseline_path() -> PathBuf {
-    let home = env::var("HOME").unwrap_or_default();
-    PathBuf::from(format!("{}/.axon/kernel_baseline.sha256", home))
-}
-
-/// Measure the kernel at `kernel_path` and verify it against a PINNED expected
-/// digest — either `expect_digest` (operator-supplied, strongest) or the stored
-/// baseline in `~/.axon/kernel_baseline.sha256`.
-///
-/// - Mismatch: returns `Err`; the caller exits 10 (kernel tampered / wrong image).
-/// - **No pin at all: also a refusal.** There is deliberately no trust-on-first-use
-///   here. TOFU against a user-writable file is not a gate: an attacker who can
-///   swap the kernel can also `rm` the baseline, and the next boot would silently
-///   bless the tampered image as the new baseline (P7-KRN-05). Establish a
-///   baseline explicitly with `axon-vm attest --kernel <path> --pin-baseline`.
-/// - `no_attest = true`: prints a WARNING and short-circuits to `Ok` (dev mode).
-///   This is the ONLY bypass. `AXON_CI_NO_KVM=1` used to disable the gate here as
-///   well — an ambient inherited environment variable silently turning off the
-///   TCB check on a production host — and no longer does.
-///
-/// Uses `axon_attest::measure_kernel` from the R26 attestation crate, so the
-/// digest is byte-identical with what `axon-vm attest` records.
-fn measure_and_attest(
-    kernel_path: &Path,
-    no_attest: bool,
-    expect_digest: Option<&str>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let baseline_path = kernel_baseline_path();
-    measure_and_attest_inner(kernel_path, no_attest, expect_digest, &baseline_path)
-}
-
-/// Inner implementation of `measure_and_attest`, parameterised over the baseline
-/// path so tests can use a temp directory rather than writing to `~/.axon/`.
-fn measure_and_attest_inner(
-    kernel_path: &Path,
-    no_attest: bool,
-    expect_digest: Option<&str>,
-    baseline_path: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if no_attest {
-        eprintln!("[axon-vm] WARNING: --no-attest: skipping attestation (dev mode only)");
-        return Ok(());
-    }
-
-    // Kernel must exist before we can measure it.
-    if !kernel_path.exists() {
-        return Err(format!("kernel not found: {}", kernel_path.display()).into());
-    }
-
-    // Measure using axon-attest — same SHA-256 algorithm as `axon-vm attest`.
-    let measurement = measure_kernel(kernel_path)?;
-    let digest_hex = hex::encode(measurement.digest);
-
-    // An operator-supplied pin wins over the on-disk baseline: it does not depend
-    // on a file the attacker can reach.
-    let (expected, source) = match expect_digest {
-        Some(d) => (d.trim().to_string(), "--expect-digest"),
-        None => match fs::read_to_string(baseline_path) {
-            Ok(b) => (b.trim().to_string(), "baseline"),
-            Err(_) => {
-                eprintln!("[axon-vm] ATTESTATION FAILED: no pinned kernel baseline");
-                eprintln!("[axon-vm]   measured: {digest_hex}");
-                eprintln!(
-                    "[axon-vm]   expected: (none — {} is absent)",
-                    baseline_path.display()
-                );
-                eprintln!(
-                    "[axon-vm]   pin it explicitly:  axon-vm attest --kernel {} --pin-baseline",
-                    kernel_path.display()
-                );
-                eprintln!("[axon-vm]   or pass:            --expect-digest <sha256>");
-                eprintln!("[axon-vm]   or, for dev only:   --no-attest");
-                return Err(
-                    "attestation failed: no pinned baseline (refusing to trust on first use)"
-                        .into(),
-                );
-            }
-        },
-    };
-
-    if expected != digest_hex {
-        eprintln!("[axon-vm] ATTESTATION FAILED: kernel digest mismatch");
-        eprintln!("[axon-vm]   expected: {expected} ({source})");
-        eprintln!("[axon-vm]   got:      {digest_hex}");
-        return Err("attestation failed: kernel tampered".into());
-    }
-    eprintln!(
-        "[axon-vm] attestation OK: digest {} ({source})",
-        &digest_hex[..16]
-    );
-
-    Ok(())
-}
-
-// ── Helper: find Firecracker binary ──────────────────────────────────────────
-
-fn which_firecracker() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    for candidate in &[
-        "firecracker",
-        "/usr/local/bin/firecracker",
-        "/opt/firecracker/firecracker",
-    ] {
-        let path = PathBuf::from(candidate);
-        if path.exists() {
-            return Ok(path);
-        }
-        // Try PATH lookup.
-        if let Ok(out) = Command::new("which").arg(candidate).output() {
-            if out.status.success() {
-                let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                if !s.is_empty() {
-                    return Ok(PathBuf::from(s));
-                }
-            }
-        }
-    }
-    Err("firecracker not found in PATH or /usr/local/bin; install from github.com/firecracker-microvm/firecracker".into())
-}
+// (The attestation gate and its baseline paths moved to `axon_vm::admit`, D-019.)
 
 // ── Gap 7: Principal registry ─────────────────────────────────────────────────
 
@@ -3367,16 +2578,6 @@ fn cmd_principal_list() {
             p.allowed_effects.join(",")
         );
     }
-}
-
-// ── Policy-in-cmdline embedding ───────────────────────────────────────────────
-
-/// Append `axon.policy=<base64-json>` to `base_cmdline` so the guest kernel can
-/// read the boot policy from the Linux cmdline without a virtio-net driver.
-fn embed_policy_in_cmdline(base_cmdline: &str, mmds: &MmdsPayload) -> String {
-    let json = serde_json::to_string(mmds).unwrap_or_default();
-    let b64 = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
-    format!("{base_cmdline} axon.policy={b64}")
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -3953,7 +3154,7 @@ mod tests {
             schema: "axon-vm-mmds/1".to_string(),
             run_id: "test-run-1".to_string(),
             principal: Some("test-agent".to_string()),
-            allowed_effects: Some(vec!["AI".to_string(), "Net".to_string()]),
+            allowed_effects: vec!["AI".to_string(), "Net".to_string()],
             budget_tokens: Some(5000),
             source_hash: None,
             seccomp_bpf_b64: None,

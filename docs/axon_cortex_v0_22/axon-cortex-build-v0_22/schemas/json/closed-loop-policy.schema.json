@@ -1,0 +1,84 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "axon.closed-loop.policy/1"
+    },
+    "policy_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "parent_policy_ref": {
+      "type": "string",
+      "pattern": "^(cl22|acf1|sha256):[0-9a-f]{64}$"
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tenant_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "task_family": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "task_family"
+      ]
+    },
+    "mode": {
+      "const": "shortlist_only"
+    },
+    "candidate_set_ref": {
+      "type": "string",
+      "pattern": "^(cl22|acf1|sha256):[0-9a-f]{64}$"
+    },
+    "controls_ref": {
+      "type": "string",
+      "pattern": "^(cl22|acf1|sha256):[0-9a-f]{64}$"
+    },
+    "shortlist": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+      },
+      "minItems": 1,
+      "maxItems": 256,
+      "uniqueItems": true
+    },
+    "discovery_evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(cl22|acf1|sha256):[0-9a-f]{64}$"
+      },
+      "minItems": 0,
+      "maxItems": 256,
+      "uniqueItems": true
+    },
+    "authority_expansion": {
+      "const": false
+    }
+  },
+  "required": [
+    "schema",
+    "policy_id",
+    "parent_policy_ref",
+    "scope",
+    "mode",
+    "candidate_set_ref",
+    "controls_ref",
+    "shortlist",
+    "discovery_evidence_refs",
+    "authority_expansion"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:axon:closed-loop:policy:1",
+  "title": "Proposed eligible shortlist policy; no authority or activation token"
+}

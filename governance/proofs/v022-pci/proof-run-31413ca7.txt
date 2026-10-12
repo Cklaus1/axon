@@ -1,0 +1,31 @@
+== 1a axon clippy
+RC=0
+== 0 rebuild interpreter
+RC=0
+== 1b axon loop/contracts/fabric/cortex tests
+RC=0
+pass 473 fail 0
+== 1d PCI surface runner
+RC=0
+v022_pci_gates: PASS — 18 rows
+== 1c axon-core clippy (interpreter) + full suite (default features, default target dir)
+RC=0
+RC=0
+pass 1573 fail 0
+== 2 micode clippy+tests
+RC=0
+RC=0
+pass 5306 fail 0
+== 3 mutations
+RC=0
+94/94 killed; baselines all pass
+== 4 interop
+RC=0
+loop_interop_gate: PASS — 250 assertions (axon 31413ca7, micode b72cf4c4)
+== 5 micode gates
+RC=0
+v022_micode_gates: PASS — 19 rows (micode b72cf4c4)
+== trees after
+0
+0
+FREEZE_DONE

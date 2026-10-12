@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S6.2",
+  "text": "TEST-ONLY: interp/taint_tests.rs gains T8.2 positional probes (a tainted binding then a clean one at the sandbox_run name sink, per former raw vars writer: bind_params, bind_params_sealed, goal_met, slotted and by-name closure params, capture lend/copy/write-back, &mut read-back), T8.3 every fresh predicate env (parameter refinement, struct field and whole-struct where, @[verify] scalar and Uncertain), T8.5/T8.6 honest controls (in-place hook rows, clean operands, clean captures); no behaviour change"
+}

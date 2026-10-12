@@ -53,7 +53,8 @@
         "approval verification",
         "grant intersection",
         "profiles",
-        "supervisor"
+        "supervisor",
+        "isolation labels / IsolationRequirement (runtime.rs; v0.22)"
       ],
       "required": [
         "cargo test --locked -p axon-os"
@@ -120,13 +121,15 @@
       "surfaces": [
         "VM boundary",
         "attestation report",
-        "measurement"
+        "measurement",
+        "library launch path (run_in_firecracker; v0.22)"
       ],
       "required": [
         "cargo test --locked -p axon-vm"
       ],
       "gate_compiles": true,
-      "gate_tests": true
+      "gate_tests": true,
+      "verified_by": "The required command includes tests/lib_launch.rs, whose live boot RETURNS EARLY reporting ok when firecracker, /dev/kvm or the kernel artifact at <repo>/target/x86_64-axon-metal/release is absent. Since 4c908c3 (FG-043 fixed) that skip is recorded to target/harness-skips.log, listed at the end of every gate run, and fatal under AXON_HARNESS_STRICT=1; without that variable a green run of this command still does not prove the library launch path booted anything, and its positive control remains the FG-041 vacuous allow path."
     },
     "cortex-policy-adapter": {
       "class": "A",
@@ -147,7 +150,8 @@
       "surfaces": [
         "serving transports",
         "authority core",
-        "refusal round-trip"
+        "refusal round-trip",
+        "DEC shortlist (shortlist.rs; v0.22, no production caller)"
       ],
       "required": [
         "cargo test --locked -p axon-reflex"
@@ -326,6 +330,87 @@
       ],
       "gate_compiles": true,
       "gate_tests": false
+    },
+    "axon-loop": {
+      "class": "A",
+      "why": "v0.22 closed-loop authority: the fenced policy pointer and authority epoch, admission decisions, and the hash-chained ledger that is the store's one source of authority. It decides which policy becomes active. Its ledger is UNKEYED (D-C1, open) \u2014 which makes running its tests more necessary, not less.",
+      "surfaces": [
+        "policy pointer / authority epoch fence",
+        "admission rules",
+        "authority ledger (unkeyed)",
+        "EVL paired-trial evaluation",
+        "MiCode sidecar intake",
+        "axon-loop CLI"
+      ],
+      "required": [
+        "cargo test --locked -p axon-loop"
+      ],
+      "verified_by": "NOTE: tests/intake_dec_driver.rs::produce_policy is #[ignore] and runs only under scripts/loop_interop_gate.sh, which `gate.sh --strict` invokes (54f41c3) and CI does not \u2014 the Axon<->MiCode interop leg is NOT covered by this required command, and when the MiCode worktree is absent the strict stage records a SKIP (a non-result).",
+      "gate_compiles": true,
+      "gate_tests": true
+    },
+    "axon-loop-contracts": {
+      "class": "A",
+      "why": "Strict parsing and the cl22 digest for every v0.22 contract document (episodes, policies, compute requests, receipts). A parse that accepts an unknown field, a float budget or a non-canonical document feeds a forged or ambiguous input straight into axon-loop admission and axon-fabric dispatch. Refs it defines are content hashes, NOT authenticated identity.",
+      "surfaces": [
+        "strict contract parsing",
+        "cl22 canonical digest",
+        "semantic checks"
+      ],
+      "required": [
+        "cargo test --locked -p axon-loop-contracts"
+      ],
+      "gate_compiles": true,
+      "gate_tests": true
+    },
+    "axon-fabric": {
+      "class": "B",
+      "why": "The v0.22 compute fabric: executes registered checks (and, on the Linux profile, interpreter runs) through a durable operation journal with budget reservations, and chooses the backend a job's isolation claim rests on. It also performs an admission step, but that step is currently NON-BINDING (hard-coded Restricted probe grant, D-C2/R5, open), so the authority surface is recorded here rather than earning class A.",
+      "surfaces": [
+        "operation journal / reservations",
+        "submit path",
+        "backend selection and qualification",
+        "cortex --fabric-journal executor seam"
+      ],
+      "required": [
+        "cargo test --locked -p axon-fabric"
+      ],
+      "prerequisite": "the interpreter and cortex binaries must be built first; tests locate them via AXON_BIN / CORTEX_BIN, then the test's own target dir, then <repo>/target/debug (d8116b3) and FAIL, never skip, when absent. gate.sh builds both before this stage. Caveat (red-team D-05): the final <repo>/target/debug fallback is not logged, so a run under a custom CARGO_TARGET_DIR can use a different build without saying so. Verified 2026-09-24: 35 passed / 1 ignored.",
+      "verified_by": "journal.rs::crash_child is #[ignore] by design \u2014 it is the child-process body the sigkill_after_* restart tests spawn, so it IS exercised. The linux-microvm-protected dispatch is tested only against a stand-in launcher; the real scripts/fc_linux_profile.sh + b263_qualify.sh need root/jailer and are invoked by no gate.",
+      "gate_compiles": true,
+      "gate_tests": true
+    },
+    "axon-psv": {
+      "class": "A",
+      "why": "The protected suite-verdict protocol (v022-psv-protocol.md): the launch manifest and its canonical digest, the per-attempt completion-key derivation, the input check, the guest verdict, the preflight observation's field joins, and axon-psv-runner \u2014 the trusted guest runner that holds the per-attempt secret and decides what executes. A defect here lets a candidate forge, replay or reach completion evidence.",
+      "surfaces": [
+        "launch manifest verify",
+        "completion key derivation",
+        "input check",
+        "trusted guest runner (secret custody)",
+        "preflight observation joins"
+      ],
+      "required": [
+        "cargo test --locked -p axon-psv"
+      ],
+      "prerequisite": "the runner tests execute the REAL interpreter (AXON_BIN, else <target>/debug/axon) and FAIL, never skip, when it is absent; the uid-drop leg of the custody test runs only as root.",
+      "gate_compiles": true,
+      "gate_tests": true
+    },
+    "axon-workspace-recipe": {
+      "class": "A",
+      "why": "The ONE WorkspaceVersion byte recipe and tree walker, shared by the host (axon-cortex re-exports it; axon-fabric's importer walks with it) and the protected guest runner. Every candidate/suite identity a verdict is bound to is computed here; a divergence would let two sides disagree about which tree was judged.",
+      "surfaces": [
+        "acf1 canonical bytes",
+        "workspace manifest bytes / version ref",
+        "tree walker (import rules)"
+      ],
+      "required": [
+        "cargo test --locked -p axon-fabric --test workspace"
+      ],
+      "verified_by": "crates/axon-fabric/tests/workspace.rs: the cross-language vector and the_guest_tree_digest_is_the_store_reference (the crate has no tests of its own; its behaviour is pinned where both sides meet).",
+      "gate_compiles": true,
+      "gate_tests": true
     }
   },
   "inventory_note": "gate_compiles: the strict gate builds this crate (clippy --all-targets builds its tests too). gate_tests: the strict gate RUNS its required commands. The distinction is the point \u2014 before 2026-09-22 the gate compiled 20 of 22 crates and ran the tests of 5, and nothing recorded the gap."

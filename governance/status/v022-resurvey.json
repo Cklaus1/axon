@@ -1,0 +1,1082 @@
+{
+ "schema": "axon-v022-resurvey/1",
+ "commit": "e9991613577d34d0498414386f09570a1572ab15",
+ "tree_clean": true,
+ "gate_sha256": "41a0b81d586b5ed84f14098c528fac4cf84a54a8a9105e3cf69aa562f01edd9a",
+ "sample": {
+  "pct": 25,
+  "salt": "e9991613577d34d0498414386f09570a1572ab15",
+  "mode": "auto",
+  "rule": "an entry is drawn when sha256(salt|key)[:8] mod 100 < pct"
+ },
+ "estimate_seconds": 8700,
+ "seconds": 803.1,
+ "finished_unix": 1791492818,
+ "host": "gpumaster",
+ "families": {
+  "value": {
+   "observed": 139,
+   "drawn": 38,
+   "killed": 38,
+   "survived": [],
+   "not_remeasured": 0
+  },
+  "py": {
+   "observed": 60,
+   "drawn": 17,
+   "killed": 17,
+   "survived": [],
+   "not_remeasured": 0
+  },
+  "guard": {
+   "observed": 11,
+   "drawn": 4,
+   "killed": 2,
+   "survived": [],
+   "not_remeasured": 2
+  }
+ },
+ "entries": [
+  {
+   "key": "crates/axon-cortex/src/runner.rs|observe|1|\"check\"",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-cortex -- --skip a_callers_scheduling_state_never_reaches_the_root_launch",
+     "failing": [
+      "<binary> -p axon-cortex --test conformance",
+      "cxg_c02_selection_follows_the_observation_and_refuses_to_guess",
+      "cxg_c13_a_patch_that_breaks_the_build_is_undone"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "Running tests/generator_cap.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/generator_cap-2eaac34430d76253)\n     Running tests/skills.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/skills-2731da0020faa3de)\n   Doc-tests axon_cortex\nerror: 1 target failed:\n    `-p axon-cortex --test conformance`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-cortex --test conformance",
+    "cxg_c02_selection_follows_the_observation_and_refuses_to_guess",
+    "cxg_c13_a_patch_that_breaks_the_build_is_undone",
+    "cxg_g02_an_observation_distinguishes_clean_from_warned"
+   ]
+  },
+  {
+   "key": "crates/axon-cortex/src/runner.rs|run_checks|3|\"--filter\"",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-cortex -- --skip a_callers_scheduling_state_never_reaches_the_root_launch",
+     "failing": [
+      "<binary> -p axon-cortex --test check_executor",
+      "<binary> -p axon-cortex --test cli",
+      "<binary> -p axon-cortex --test conformance"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "s/generator_cap-2eaac34430d76253)\n     Running tests/skills.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/skills-2731da0020faa3de)\n   Doc-tests axon_cortex\nerror: 3 targets failed:\n    `-p axon-cortex --test check_executor`\n    `-p axon-cortex --test cli`\n    `-p axon-cortex --test conformance`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-cortex --test check_executor",
+    "<binary> -p axon-cortex --test cli",
+    "<binary> -p axon-cortex --test conformance",
+    "a_digest_changed_executable_is_refused_with_zero_effects"
+   ]
+  },
+  {
+   "key": "crates/axon-cortex/src/runner.rs|run_checks|9|\"--journal\"",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --test cortex_via_fabric --",
+     "failing": [
+      "<binary> -p axon-fabric --test cortex_via_fabric",
+      "cortex_locate_through_the_fabric_reports_receipts",
+      "cortex_repair_adjudicates_through_the_fabric"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": " debuginfo] target(s) in 1.87s\n     Running tests/cortex_via_fabric.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/cortex_via_fabric-cdfa5316c875f391)\nerror: test failed, to rerun pass `-p axon-fabric --test cortex_via_fabric`\nerror: 1 target failed:\n    `-p axon-fabric --test cortex_via_fabric`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --test cortex_via_fabric",
+    "cortex_locate_through_the_fabric_reports_receipts",
+    "cortex_repair_adjudicates_through_the_fabric",
+    "cortex_under_a_stale_epoch_runs_nothing"
+   ]
+  },
+  {
+   "key": "crates/axon-cortex/src/runner.rs|run_checks|10|\"--check-registry\"",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --test cortex_via_fabric --",
+     "failing": [
+      "<binary> -p axon-fabric --test cortex_via_fabric",
+      "cortex_locate_through_the_fabric_reports_receipts",
+      "cortex_repair_adjudicates_through_the_fabric"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": " debuginfo] target(s) in 1.82s\n     Running tests/cortex_via_fabric.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/cortex_via_fabric-cdfa5316c875f391)\nerror: test failed, to rerun pass `-p axon-fabric --test cortex_via_fabric`\nerror: 1 target failed:\n    `-p axon-fabric --test cortex_via_fabric`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --test cortex_via_fabric",
+    "cortex_locate_through_the_fabric_reports_receipts",
+    "cortex_repair_adjudicates_through_the_fabric",
+    "cortex_under_a_stale_epoch_runs_nothing"
+   ]
+  },
+  {
+   "key": "crates/axon-cortex/src/runner.rs|run_checks|11|\"--grant-registry\"",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --test cortex_via_fabric --",
+     "failing": [
+      "<binary> -p axon-fabric --test cortex_via_fabric",
+      "cortex_locate_through_the_fabric_reports_receipts",
+      "cortex_repair_adjudicates_through_the_fabric"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": " debuginfo] target(s) in 1.83s\n     Running tests/cortex_via_fabric.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/cortex_via_fabric-cdfa5316c875f391)\nerror: test failed, to rerun pass `-p axon-fabric --test cortex_via_fabric`\nerror: 1 target failed:\n    `-p axon-fabric --test cortex_via_fabric`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --test cortex_via_fabric",
+    "cortex_locate_through_the_fabric_reports_receipts",
+    "cortex_repair_adjudicates_through_the_fabric",
+    "cortex_under_a_stale_epoch_runs_nothing"
+   ]
+  },
+  {
+   "key": "crates/axon-cortex/src/runner.rs|run_checks|16|\"--workspace\"",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --test cortex_via_fabric --",
+     "failing": [
+      "<binary> -p axon-fabric --test cortex_via_fabric",
+      "cortex_locate_through_the_fabric_reports_receipts",
+      "cortex_repair_adjudicates_through_the_fabric"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": " debuginfo] target(s) in 1.94s\n     Running tests/cortex_via_fabric.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/cortex_via_fabric-cdfa5316c875f391)\nerror: test failed, to rerun pass `-p axon-fabric --test cortex_via_fabric`\nerror: 1 target failed:\n    `-p axon-fabric --test cortex_via_fabric`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --test cortex_via_fabric",
+    "cortex_locate_through_the_fabric_reports_receipts",
+    "cortex_repair_adjudicates_through_the_fabric"
+   ]
+  },
+  {
+   "key": "crates/axon-cortex/src/runner.rs|run_checks|17|std::process::Stdio::piped()",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --test cortex_via_fabric --",
+     "failing": [
+      "<binary> -p axon-fabric --test cortex_via_fabric",
+      "cortex_locate_through_the_fabric_reports_receipts",
+      "cortex_repair_adjudicates_through_the_fabric"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": " debuginfo] target(s) in 1.95s\n     Running tests/cortex_via_fabric.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/cortex_via_fabric-cdfa5316c875f391)\nerror: test failed, to rerun pass `-p axon-fabric --test cortex_via_fabric`\nerror: 1 target failed:\n    `-p axon-fabric --test cortex_via_fabric`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --test cortex_via_fabric",
+    "cortex_locate_through_the_fabric_reports_receipts",
+    "cortex_repair_adjudicates_through_the_fabric",
+    "cortex_under_a_stale_epoch_runs_nothing"
+   ]
+  },
+  {
+   "key": "crates/axon-cortex/src/runner.rs|run_limited|3|Stdio::piped()",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-cortex -- --skip a_callers_scheduling_state_never_reaches_the_root_launch",
+     "failing": [
+      "<binary> -p axon-cortex --test check_executor",
+      "<binary> -p axon-cortex --test cli",
+      "<binary> -p axon-cortex --test conformance"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "s/generator_cap-2eaac34430d76253)\n     Running tests/skills.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/skills-2731da0020faa3de)\n   Doc-tests axon_cortex\nerror: 3 targets failed:\n    `-p axon-cortex --test check_executor`\n    `-p axon-cortex --test cli`\n    `-p axon-cortex --test conformance`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-cortex --test check_executor",
+    "<binary> -p axon-cortex --test cli",
+    "<binary> -p axon-cortex --test conformance",
+    "a_digest_changed_executable_is_refused_with_zero_effects"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/git_data.rs|entries|1|0o40000",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --bin axon-provenance --",
+     "failing": [
+      "<binary> -p axon-fabric --bin axon-provenance",
+      "provenance::tests::a_clean_tree_is_clean_and_names_its_head",
+      "provenance::tests::a_config_git_cannot_read_is_never_a_clean_tree"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "yong/repo\"\n\u2502  No config files with names [\"lefthook\" \".lefthook\" \".config/lefthook\"] have been found in \"/var/tmp/axon-evidence/jobs/eq7R2/tmp/.tmpHy9KId/repo\"\nerror: test failed, to rerun pass `-p axon-fabric --bin axon-provenance`\nerror: 1 target failed:\n    `-p axon-fabric --bin axon-provenance`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --bin axon-provenance",
+    "provenance::tests::a_clean_tree_is_clean_and_names_its_head",
+    "provenance::tests::a_config_git_cannot_read_is_never_a_clean_tree",
+    "provenance::tests::a_linked_worktree_disguised_as_a_git_directory_is_dirty"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/git_data.rs|git_cmd|22|\"-c\"",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --bin axon-provenance --",
+     "failing": [
+      "<binary> -p axon-fabric --bin axon-provenance",
+      "git_data::tests::a_forged_ancestor_object_does_not_make_head_descend",
+      "git_data::tests::a_gitfile_or_symlinked_git_dir_is_refused"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "AnkL/repo\"\n\u2502  No config files with names [\"lefthook\" \".lefthook\" \".config/lefthook\"] have been found in \"/var/tmp/axon-evidence/jobs/eq7R2/tmp/.tmpDDlvDM/repo\"\nerror: test failed, to rerun pass `-p axon-fabric --bin axon-provenance`\nerror: 1 target failed:\n    `-p axon-fabric --bin axon-provenance`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --bin axon-provenance",
+    "git_data::tests::a_forged_ancestor_object_does_not_make_head_descend",
+    "git_data::tests::a_gitfile_or_symlinked_git_dir_is_refused",
+    "git_data::tests::a_linked_worktree_disguised_as_a_git_directory_is_refused"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/git_data.rs|git_cmd|24|\"-c\"",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --bin axon-provenance --",
+     "failing": [
+      "<binary> -p axon-fabric --bin axon-provenance",
+      "git_data::tests::a_forged_ancestor_object_does_not_make_head_descend",
+      "git_data::tests::a_gitfile_or_symlinked_git_dir_is_refused"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "xUWO/repo\"\n\u2502  No config files with names [\"lefthook\" \".lefthook\" \".config/lefthook\"] have been found in \"/var/tmp/axon-evidence/jobs/eq7R2/tmp/.tmppVDVUU/repo\"\nerror: test failed, to rerun pass `-p axon-fabric --bin axon-provenance`\nerror: 1 target failed:\n    `-p axon-fabric --bin axon-provenance`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --bin axon-provenance",
+    "git_data::tests::a_forged_ancestor_object_does_not_make_head_descend",
+    "git_data::tests::a_gitfile_or_symlinked_git_dir_is_refused",
+    "git_data::tests::a_linked_worktree_disguised_as_a_git_directory_is_refused"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/git_data.rs|git_cmd|31|\"--work-tree\"",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --bin axon-provenance --",
+     "failing": [
+      "<binary> -p axon-fabric --bin axon-provenance",
+      "git_data::tests::a_forged_ancestor_object_does_not_make_head_descend",
+      "git_data::tests::a_gitfile_or_symlinked_git_dir_is_refused"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "Ldh8/repo\"\n\u2502  No config files with names [\"lefthook\" \".lefthook\" \".config/lefthook\"] have been found in \"/var/tmp/axon-evidence/jobs/eq7R2/tmp/.tmpJYbWYU/repo\"\nerror: test failed, to rerun pass `-p axon-fabric --bin axon-provenance`\nerror: 1 target failed:\n    `-p axon-fabric --bin axon-provenance`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --bin axon-provenance",
+    "git_data::tests::a_forged_ancestor_object_does_not_make_head_descend",
+    "git_data::tests::a_gitfile_or_symlinked_git_dir_is_refused",
+    "git_data::tests::a_linked_worktree_disguised_as_a_git_directory_is_refused"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/git_data.rs|open|2|\"--batch\"",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --bin axon-provenance --",
+     "failing": [
+      "<binary> -p axon-fabric --bin axon-provenance",
+      "git_data::tests::a_forged_ancestor_object_does_not_make_head_descend",
+      "git_data::tests::a_tracked_symlink_is_judged_by_its_target_and_by_nothing_else"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "4QGt/repo\"\n\u2502  No config files with names [\"lefthook\" \".lefthook\" \".config/lefthook\"] have been found in \"/var/tmp/axon-evidence/jobs/eq7R2/tmp/.tmpEVTOrx/repo\"\nerror: test failed, to rerun pass `-p axon-fabric --bin axon-provenance`\nerror: 1 target failed:\n    `-p axon-fabric --bin axon-provenance`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --bin axon-provenance",
+    "git_data::tests::a_forged_ancestor_object_does_not_make_head_descend",
+    "git_data::tests::a_tracked_symlink_is_judged_by_its_target_and_by_nothing_else",
+    "git_data::tests::a_tree_entry_that_is_not_what_git_writes_is_refused_as_malformed"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/git_data.rs|worktree_differs|3|0o100755",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --test readiness --",
+     "failing": [
+      "<binary> -p axon-fabric --test readiness",
+      "a_production_verifier_built_from_a_dirty_tree_certifies_nothing"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "tmp/.tmpYHX6RN/repo\"\n\u2502  No config files with names [\"lefthook\" \".lefthook\" \".config/lefthook\"] have been found in \"/var/tmp/axon-evidence/jobs/eq7R2/tmp/.tmpYHX6RN/repo\"\nerror: test failed, to rerun pass `-p axon-fabric --test readiness`\nerror: 1 target failed:\n    `-p axon-fabric --test readiness`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --test readiness",
+    "a_production_verifier_built_from_a_dirty_tree_certifies_nothing"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/privileged_launcher.rs|become_root|3|0",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --test privileged_launcher --",
+     "failing": [
+      "<binary> -p axon-fabric --test privileged_launcher",
+      "the_root_helper_takes_roots_identity_not_its_callers_groups"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "fo] target(s) in 1.54s\n     Running tests/privileged_launcher.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/privileged_launcher-ab0beac7462eeb25)\nerror: test failed, to rerun pass `-p axon-fabric --test privileged_launcher`\nerror: 1 target failed:\n    `-p axon-fabric --test privileged_launcher`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --test privileged_launcher",
+    "the_root_helper_takes_roots_identity_not_its_callers_groups"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/privileged_launcher.rs|become_root|6|0",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --test grant_registry_authority --",
+     "failing": [
+      "<binary> -p axon-fabric --test grant_registry_authority",
+      "a_protected_launch_reads_its_epoch_only_from_the_pinned_store",
+      "a_symlinked_signer_key_signs_nothing"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "4s\n     Running tests/grant_registry_authority.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/grant_registry_authority-aec50315483a78f3)\nerror: test failed, to rerun pass `-p axon-fabric --test grant_registry_authority`\nerror: 1 target failed:\n    `-p axon-fabric --test grant_registry_authority`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --test grant_registry_authority",
+    "a_protected_launch_reads_its_epoch_only_from_the_pinned_store",
+    "a_symlinked_signer_key_signs_nothing",
+    "an_owner_writable_signer_key_signs_nothing"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/privileged_launcher.rs|hand_over|7|uid",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --lib -- --skip",
+     "failing": [
+      "<binary> -p axon-fabric --lib",
+      "privileged_launcher::tests::the_hand_over_never_follows_a_symlink"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "n-evidence/jobs/eq7R2/tmp/.tmp46SFmZ/repo\"\n\u2502  No config files with names [\"lefthook\" \".lefthook\" \".config/lefthook\"] have been found in \"/var/tmp/axon-evidence/jobs/eq7R2/tmp/.tmpF17OBf/repo\"\nerror: test failed, to rerun pass `-p axon-fabric --lib`\nerror: 1 target failed:\n    `-p axon-fabric --lib`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --lib",
+    "privileged_launcher::tests::the_hand_over_never_follows_a_symlink"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/privileged_launcher.rs|verify_inputs|1|Some(a.operator_uid)",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --test privileged_launcher --",
+     "failing": [
+      "<binary> -p axon-fabric --test privileged_launcher",
+      "a_boot_input_the_helper_cannot_vouch_for_launches_nothing",
+      "a_profile_manifest_another_uid_owns_launches_nothing"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "fo] target(s) in 1.81s\n     Running tests/privileged_launcher.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/privileged_launcher-ab0beac7462eeb25)\nerror: test failed, to rerun pass `-p axon-fabric --test privileged_launcher`\nerror: 1 target failed:\n    `-p axon-fabric --test privileged_launcher`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --test privileged_launcher",
+    "a_boot_input_the_helper_cannot_vouch_for_launches_nothing",
+    "a_profile_manifest_another_uid_owns_launches_nothing"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/provenance.rs|ignored_by_untracked_rule|4|\"--no-index\"",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --bin axon-provenance --",
+     "failing": [
+      "<binary> -p axon-fabric --bin axon-provenance",
+      "provenance::tests::an_allowlist_reached_through_a_symlink_excuses_nothing",
+      "provenance::tests::an_allowlist_that_is_not_operator_owned_excuses_nothing"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "3sSS/repo\"\n\u2502  No config files with names [\"lefthook\" \".lefthook\" \".config/lefthook\"] have been found in \"/var/tmp/axon-evidence/jobs/eq7R2/tmp/.tmpppNGku/repo\"\nerror: test failed, to rerun pass `-p axon-fabric --bin axon-provenance`\nerror: 1 target failed:\n    `-p axon-fabric --bin axon-provenance`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --bin axon-provenance",
+    "provenance::tests::an_allowlist_reached_through_a_symlink_excuses_nothing",
+    "provenance::tests::an_allowlist_that_is_not_operator_owned_excuses_nothing",
+    "provenance::tests::an_allowlisted_generated_path_is_excused_and_nothing_else"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/sealed_exec.rs|open_verified|1|0o022",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --lib -- --skip",
+     "failing": [
+      "<binary> -p axon-fabric --lib",
+      "sealed_exec::tests::a_group_writable_launcher_is_refused"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "n-evidence/jobs/eq7R2/tmp/.tmpkIiuRr/repo\"\n\u2502  No config files with names [\"lefthook\" \".lefthook\" \".config/lefthook\"] have been found in \"/var/tmp/axon-evidence/jobs/eq7R2/tmp/.tmpWw9B6Z/repo\"\nerror: test failed, to rerun pass `-p axon-fabric --lib`\nerror: 1 target failed:\n    `-p axon-fabric --lib`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --lib",
+    "sealed_exec::tests::a_group_writable_launcher_is_refused"
+   ]
+  },
+  {
+   "key": "crates/axon-loop/src/evo.rs|propose|1|false",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-loop -- --skip a_callers_scheduling_state_never_reaches_the_root_launch",
+     "failing": [
+      "<binary> -p axon-loop --test activation_sites",
+      "<binary> -p axon-loop --test admit_verdict_sites",
+      "<binary> -p axon-loop --test assignment"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": " --test registries`\n    `-p axon-loop --test rules_sites`\n    `-p axon-loop --test safety`\n    `-p axon-loop --test safety_sites`\n    `-p axon-loop --test store_integrity`\n    `-p axon-loop --test strict_protected_sites`\n    `-p axon-loop --test strict_sites`\n    `-p axon-loop --test unknown_kinds`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-loop --test activation_sites",
+    "<binary> -p axon-loop --test admit_verdict_sites",
+    "<binary> -p axon-loop --test assignment",
+    "<binary> -p axon-loop --test candidates"
+   ]
+  },
+  {
+   "key": "crates/axon-os/src/runtime.rs|run_sandboxed|1|\"run\"",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-os -- --skip a_callers_scheduling_state_never_reaches_the_root_launch",
+     "failing": [
+      "<binary> -p axon-os --test acceptance",
+      "<binary> -p axon-os --test r27_acceptance",
+      "<binary> -p axon-os --test r29_compliance"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "on-35226b92c5873d22)\nerror: test failed, to rerun pass `-p axon-os --test replay_authorization`\n   Doc-tests axon_os\nerror: 4 targets failed:\n    `-p axon-os --test acceptance`\n    `-p axon-os --test r27_acceptance`\n    `-p axon-os --test r29_compliance`\n    `-p axon-os --test replay_authorization`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-os --test acceptance",
+    "<binary> -p axon-os --test r27_acceptance",
+    "<binary> -p axon-os --test r29_compliance",
+    "<binary> -p axon-os --test replay_authorization"
+   ]
+  },
+  {
+   "key": "crates/axon-psv/src/lib.rs|mode_is_normalised|1|0o755",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-psv -- --skip a_callers_scheduling_state_never_reaches_the_root_launch",
+     "failing": [
+      "<binary> -p axon-psv --test protocol",
+      "inputs_carrying_an_extended_attribute_are_refused",
+      "inputs_holding_what_the_digest_cannot_see_are_refused"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "57)\n     Running tests/runner.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/runner-8634675e6fbe9742)\n     Running tests/sealed_frames.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/sealed_frames-15b027c9b525bd58)\n   Doc-tests axon_psv\nerror: 1 target failed:\n    `-p axon-psv --test protocol`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-psv --test protocol",
+    "inputs_carrying_an_extended_attribute_are_refused",
+    "inputs_holding_what_the_digest_cannot_see_are_refused"
+   ]
+  },
+  {
+   "key": "crates/axon-psv/src/runner.rs|exec_axon_test|10|Stdio::piped()",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-psv -- --skip a_callers_scheduling_state_never_reaches_the_root_launch",
+     "failing": [
+      "<binary> -p axon-psv --test rng_isolation",
+      "<binary> -p axon-psv --test runner",
+      "<binary> -p axon-psv --test sealed_frames"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "/tmp/axon-evidence/targets/eq7/debug/deps/sealed_frames-15b027c9b525bd58)\nerror: test failed, to rerun pass `-p axon-psv --test sealed_frames`\n   Doc-tests axon_psv\nerror: 3 targets failed:\n    `-p axon-psv --test rng_isolation`\n    `-p axon-psv --test runner`\n    `-p axon-psv --test sealed_frames`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-psv --test rng_isolation",
+    "<binary> -p axon-psv --test runner",
+    "<binary> -p axon-psv --test sealed_frames",
+    "a_candidate_calls_its_own_fn_value_and_never_reads_an_operator_global"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/backend.rs|run_privileged~flow|1|\"--test-config\".into()",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --test psv_dispatch --",
+     "failing": [
+      "<binary> -p axon-fabric --test psv_dispatch",
+      "a_candidate_cannot_supply_the_acceptance_test_through_fabric",
+      "a_candidate_cannot_write_a_failure_over_a_genuine_pass"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "ofile [unoptimized + debuginfo] target(s) in 1.34s\n     Running tests/psv_dispatch.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/psv_dispatch-035d6ef0d81db55a)\nerror: test failed, to rerun pass `-p axon-fabric --test psv_dispatch`\nerror: 1 target failed:\n    `-p axon-fabric --test psv_dispatch`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --test psv_dispatch",
+    "a_candidate_cannot_supply_the_acceptance_test_through_fabric",
+    "a_candidate_cannot_write_a_failure_over_a_genuine_pass",
+    "a_candidate_changed_under_the_guest_is_refused_there"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/backend.rs|run_privileged~flow|3|LAUNCH_PATH",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --test psv_dispatch --",
+     "failing": [
+      "<binary> -p axon-fabric --test psv_dispatch",
+      "fabric_hands_the_privileged_helper_exactly_its_flag_and_its_path"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "ofile [unoptimized + debuginfo] target(s) in 1.33s\n     Running tests/psv_dispatch.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/psv_dispatch-035d6ef0d81db55a)\nerror: test failed, to rerun pass `-p axon-fabric --test psv_dispatch`\nerror: 1 target failed:\n    `-p axon-fabric --test psv_dispatch`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --test psv_dispatch",
+    "fabric_hands_the_privileged_helper_exactly_its_flag_and_its_path"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/backend.rs|run_direct~flow|4|\"--policy\".into()",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --test psv_dispatch --",
+     "failing": [
+      "<binary> -p axon-fabric --test psv_dispatch",
+      "a_dev_route_launch_is_never_attested_protected",
+      "a_guest_under_a_policy_the_manifest_does_not_name_yields_no_verdict"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "ofile [unoptimized + debuginfo] target(s) in 1.28s\n     Running tests/psv_dispatch.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/psv_dispatch-035d6ef0d81db55a)\nerror: test failed, to rerun pass `-p axon-fabric --test psv_dispatch`\nerror: 1 target failed:\n    `-p axon-fabric --test psv_dispatch`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --test psv_dispatch",
+    "a_dev_route_launch_is_never_attested_protected",
+    "a_guest_under_a_policy_the_manifest_does_not_name_yields_no_verdict",
+    "a_pinned_program_another_uid_owns_is_refused_at_every_consumer_of_the_owner"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/backend.rs|run_direct~flow|5|\"--psv-candidate\".into()",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --test psv_dispatch --",
+     "failing": [
+      "<binary> -p axon-fabric --test psv_dispatch",
+      "a_dev_route_launch_is_never_attested_protected",
+      "a_guest_under_a_policy_the_manifest_does_not_name_yields_no_verdict"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "ofile [unoptimized + debuginfo] target(s) in 1.05s\n     Running tests/psv_dispatch.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/psv_dispatch-035d6ef0d81db55a)\nerror: test failed, to rerun pass `-p axon-fabric --test psv_dispatch`\nerror: 1 target failed:\n    `-p axon-fabric --test psv_dispatch`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --test psv_dispatch",
+    "a_dev_route_launch_is_never_attested_protected",
+    "a_guest_under_a_policy_the_manifest_does_not_name_yields_no_verdict",
+    "a_pinned_program_another_uid_owns_is_refused_at_every_consumer_of_the_owner"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/backend.rs|run_direct~flow|6|\"--psv-suite\".into()",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --test psv_dispatch --",
+     "failing": [
+      "<binary> -p axon-fabric --test psv_dispatch",
+      "a_dev_route_launch_is_never_attested_protected",
+      "a_guest_under_a_policy_the_manifest_does_not_name_yields_no_verdict"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "ofile [unoptimized + debuginfo] target(s) in 1.17s\n     Running tests/psv_dispatch.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/psv_dispatch-035d6ef0d81db55a)\nerror: test failed, to rerun pass `-p axon-fabric --test psv_dispatch`\nerror: 1 target failed:\n    `-p axon-fabric --test psv_dispatch`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --test psv_dispatch",
+    "a_dev_route_launch_is_never_attested_protected",
+    "a_guest_under_a_policy_the_manifest_does_not_name_yields_no_verdict",
+    "a_pinned_program_another_uid_owns_is_refused_at_every_consumer_of_the_owner"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/backend.rs|run_direct~flow|7|\"--psv-job\".into()",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --test psv_dispatch --",
+     "failing": [
+      "<binary> -p axon-fabric --test psv_dispatch",
+      "a_dev_route_launch_is_never_attested_protected",
+      "a_guest_under_a_policy_the_manifest_does_not_name_yields_no_verdict"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "ofile [unoptimized + debuginfo] target(s) in 1.16s\n     Running tests/psv_dispatch.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/psv_dispatch-035d6ef0d81db55a)\nerror: test failed, to rerun pass `-p axon-fabric --test psv_dispatch`\nerror: 1 target failed:\n    `-p axon-fabric --test psv_dispatch`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --test psv_dispatch",
+    "a_dev_route_launch_is_never_attested_protected",
+    "a_guest_under_a_policy_the_manifest_does_not_name_yields_no_verdict",
+    "a_pinned_program_another_uid_owns_is_refused_at_every_consumer_of_the_owner"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/observer.rs|relayed~flow|2|\"--test-config\".into()",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --test observer_service --",
+     "failing": [
+      "<binary> -p axon-fabric --test observer_service",
+      "an_observe_relay_helper_owned_by_a_stranger_is_never_executed",
+      "fabric_asks_the_helper_for_an_observation_with_exactly_its_flags_and_its_path"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "ed + debuginfo] target(s) in 1.53s\n     Running tests/observer_service.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/observer_service-81499d00feba397e)\nerror: test failed, to rerun pass `-p axon-fabric --test observer_service`\nerror: 1 target failed:\n    `-p axon-fabric --test observer_service`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --test observer_service",
+    "an_observe_relay_helper_owned_by_a_stranger_is_never_executed",
+    "fabric_asks_the_helper_for_an_observation_with_exactly_its_flags_and_its_path",
+    "the_observer_service_observes_through_the_helper_once_per_nonce"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/observer.rs|run_program~flow|5|\"PATH\"",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --test psv_dispatch --",
+     "failing": [
+      "<binary> -p axon-fabric --test psv_dispatch",
+      "fabric_runs_its_direct_launcher_and_its_observer_with_exactly_their_flags_and_path"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "ofile [unoptimized + debuginfo] target(s) in 1.44s\n     Running tests/psv_dispatch.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/psv_dispatch-035d6ef0d81db55a)\nerror: test failed, to rerun pass `-p axon-fabric --test psv_dispatch`\nerror: 1 target failed:\n    `-p axon-fabric --test psv_dispatch`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --test psv_dispatch",
+    "fabric_runs_its_direct_launcher_and_its_observer_with_exactly_their_flags_and_path"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/privileged_launcher.rs|verify_inputs~flow|2|owner",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --test privileged_launcher --",
+     "failing": [
+      "<binary> -p axon-fabric --test privileged_launcher",
+      "a_boot_input_the_helper_cannot_vouch_for_launches_nothing"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "fo] target(s) in 1.69s\n     Running tests/privileged_launcher.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/privileged_launcher-ab0beac7462eeb25)\nerror: test failed, to rerun pass `-p axon-fabric --test privileged_launcher`\nerror: 1 target failed:\n    `-p axon-fabric --test privileged_launcher`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --test privileged_launcher",
+    "a_boot_input_the_helper_cannot_vouch_for_launches_nothing"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/privileged_launcher.rs|run~flow|1|\"--policy\".into()",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --test privileged_launcher --",
+     "failing": [
+      "<binary> -p axon-fabric --test privileged_launcher",
+      "a_genuine_observation_of_one_policy_never_launches_another",
+      "the_root_helper_hands_its_launcher_exactly_its_flags_and_its_path"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "fo] target(s) in 1.38s\n     Running tests/privileged_launcher.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/privileged_launcher-ab0beac7462eeb25)\nerror: test failed, to rerun pass `-p axon-fabric --test privileged_launcher`\nerror: 1 target failed:\n    `-p axon-fabric --test privileged_launcher`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --test privileged_launcher",
+    "a_genuine_observation_of_one_policy_never_launches_another",
+    "the_root_helper_hands_its_launcher_exactly_its_flags_and_its_path"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/privileged_launcher.rs|run~flow|2|s(&p.staging.join(\"policy.json\"))",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --test privileged_launcher --",
+     "failing": [
+      "<binary> -p axon-fabric --test privileged_launcher",
+      "a_genuine_observation_of_one_policy_never_launches_another",
+      "the_root_helper_hands_its_launcher_exactly_its_flags_and_its_path"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "fo] target(s) in 1.07s\n     Running tests/privileged_launcher.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/privileged_launcher-ab0beac7462eeb25)\nerror: test failed, to rerun pass `-p axon-fabric --test privileged_launcher`\nerror: 1 target failed:\n    `-p axon-fabric --test privileged_launcher`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --test privileged_launcher",
+    "a_genuine_observation_of_one_policy_never_launches_another",
+    "the_root_helper_hands_its_launcher_exactly_its_flags_and_its_path"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/privileged_launcher.rs|run~flow|4|s(&p.staging.join(\"candidate\"))",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --test privileged_launcher --",
+     "failing": [
+      "<binary> -p axon-fabric --test privileged_launcher",
+      "the_root_helper_hands_its_launcher_exactly_its_flags_and_its_path"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "fo] target(s) in 1.08s\n     Running tests/privileged_launcher.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/privileged_launcher-ab0beac7462eeb25)\nerror: test failed, to rerun pass `-p axon-fabric --test privileged_launcher`\nerror: 1 target failed:\n    `-p axon-fabric --test privileged_launcher`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --test privileged_launcher",
+    "the_root_helper_hands_its_launcher_exactly_its_flags_and_its_path"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/privileged_launcher.rs|run~flow|6|s(&p.staging.join(\"check\"))",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --test privileged_launcher --",
+     "failing": [
+      "<binary> -p axon-fabric --test privileged_launcher",
+      "the_root_helper_hands_its_launcher_exactly_its_flags_and_its_path"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "fo] target(s) in 1.06s\n     Running tests/privileged_launcher.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/privileged_launcher-ab0beac7462eeb25)\nerror: test failed, to rerun pass `-p axon-fabric --test privileged_launcher`\nerror: 1 target failed:\n    `-p axon-fabric --test privileged_launcher`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --test privileged_launcher",
+    "the_root_helper_hands_its_launcher_exactly_its_flags_and_its_path"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/privileged_launcher.rs|run~flow|12|\"--artifacts-dir\".into()",
+   "family": "value",
+   "ran": [
+    {
+     "cmd": "cargo test --no-fail-fast -p axon-fabric --test privileged_launcher --",
+     "failing": [
+      "<binary> -p axon-fabric --test privileged_launcher",
+      "the_root_helper_hands_its_launcher_exactly_its_flags_and_its_path"
+     ],
+     "base": [],
+     "rc": 101,
+     "tail": "fo] target(s) in 1.10s\n     Running tests/privileged_launcher.rs (/var/tmp/axon-evidence/targets/eq7/debug/deps/privileged_launcher-ab0beac7462eeb25)\nerror: test failed, to rerun pass `-p axon-fabric --test privileged_launcher`\nerror: 1 target failed:\n    `-p axon-fabric --test privileged_launcher`\n"
+    }
+   ],
+   "result": "KILLED",
+   "failing": [
+    "<binary> -p axon-fabric --test privileged_launcher",
+    "the_root_helper_hands_its_launcher_exactly_its_flags_and_its_path"
+   ]
+  },
+  {
+   "key": "scripts/guest_build_env.py|pinned_channel|1",
+   "family": "py",
+   "result": "KILLED",
+   "failing": [
+    "pinned_channel no rust-toolchain.toml"
+   ]
+  },
+  {
+   "key": "scripts/guest_build_env.py|ancestors_of|1",
+   "family": "py",
+   "result": "KILLED",
+   "failing": [
+    "ancestors_of relative path"
+   ]
+  },
+  {
+   "key": "scripts/guest_build_env.py|ancestors_of|2",
+   "family": "py",
+   "result": "KILLED",
+   "failing": [
+    "ancestors_of missing directory"
+   ]
+  },
+  {
+   "key": "scripts/guest_build_env.py|ancestors_problem|2",
+   "family": "py",
+   "result": "KILLED",
+   "failing": [
+    "ancestors_problem ancestors are not the parent's"
+   ]
+  },
+  {
+   "key": "scripts/guest_build_env.py|copy_tracked_tree|1",
+   "family": "py",
+   "result": "KILLED",
+   "failing": [
+    "copy_tracked_tree not a git tree"
+   ]
+  },
+  {
+   "key": "scripts/guest_build_env.py|reach_problem|1",
+   "family": "py",
+   "result": "KILLED",
+   "failing": [
+    "kernel a build parent the build uid cannot traverse",
+    "reach_problem a directory closed to other uids"
+   ]
+  },
+  {
+   "key": "scripts/guest_build_env.py|committed_file|1",
+   "family": "py",
+   "result": "KILLED",
+   "failing": [
+    "committed_file a path the committed tree does not hold"
+   ]
+  },
+  {
+   "key": "scripts/guest_build_env.py|proof_key|3",
+   "family": "py",
+   "result": "KILLED",
+   "failing": [
+    "proof_key no key at the pinned place"
+   ]
+  },
+  {
+   "key": "scripts/guest_build_env.py|proof_problems|4",
+   "family": "py",
+   "result": "KILLED",
+   "failing": [
+    "proof_problems no key at the pinned parent"
+   ]
+  },
+  {
+   "key": "scripts/guest_build_env.py|host_build|1",
+   "family": "py",
+   "result": "KILLED",
+   "failing": [
+    "host_build an output directory that exists"
+   ]
+  },
+  {
+   "key": "scripts/guest_build_env.py|host_record_problems|1",
+   "family": "py",
+   "result": "KILLED",
+   "failing": [
+    "host_record_problems no record in the directory",
+    "main check-host-record names why a directory is not a host build"
+   ]
+  },
+  {
+   "key": "scripts/guest_build_env.py|host_record_problems|2",
+   "family": "py",
+   "result": "KILLED",
+   "failing": [
+    "host_record_problems another schema"
+   ]
+  },
+  {
+   "key": "scripts/guest_build_env.py|rootfs|2",
+   "family": "py",
+   "result": "KILLED",
+   "failing": [
+    "rootfs a busybox that cannot list its applets"
+   ]
+  },
+  {
+   "key": "scripts/guest_build_env.py|kernel|3",
+   "family": "py",
+   "result": "KILLED",
+   "failing": [
+    "kernel a tarball that does not extract"
+   ]
+  },
+  {
+   "key": "scripts/guest_build_env.py|kernel|5",
+   "family": "py",
+   "result": "KILLED",
+   "failing": [
+    "line 529"
+   ]
+  },
+  {
+   "key": "scripts/guest_build_env.py|entry_problems|1",
+   "family": "py",
+   "result": "KILLED",
+   "failing": [
+    "entry_problems an entry that is not an object"
+   ]
+  },
+  {
+   "key": "scripts/guest_build_env.py|operator_file_problem|1",
+   "family": "py",
+   "result": "KILLED",
+   "failing": [
+    "operator_file_problem missing file"
+   ]
+  },
+  {
+   "key": "crates/axon-fabric/src/observer_service.rs|pub const MAX_REQUEST: u64 = 64 << 10;",
+   "family": "guard",
+   "result": "NOT RE-MEASURED (the edit is not an ok_or replacement)"
+  },
+  {
+   "key": "crates/axon-fabric/src/protected_host.rs|.ok_or_else(|| bad(\"signer.public_key is not a string\".into()))?",
+   "family": "guard",
+   "result": "KILLED",
+   "failing": [
+    "an_observer_section_value_of_the_wrong_kind_is_refused_as_that"
+   ]
+  },
+  {
+   "key": "crates/axon-loop-contracts/src/lib.rs|pub const PROTECTED_PROFILES: &[&str] = &[\"linux-microvm-protected\"];",
+   "family": "guard",
+   "result": "NOT RE-MEASURED (the edit is not an ok_or replacement)"
+  },
+  {
+   "key": "crates/axon-loop/src/tel.rs|.ok_or_else(|| LoopError::Refused(format!(\"{what} exceeds 2^53-1\")))?;",
+   "family": "guard",
+   "result": "KILLED",
+   "failing": [
+    "a_cost_total_beyond_2_53_is_never_summarized"
+   ]
+  }
+ ]
+}

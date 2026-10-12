@@ -1,0 +1,15 @@
+exit: Some(0)
+--- stdout ---
+Extend the chain: hash the program, chain onto the current tip, append, and print the new `entry_hash`. Refuses (exit 15) if the existing chain at `--store` fails verification against the genesis before appending
+
+Usage: axon-vm chain stamp [OPTIONS] --prog <PROG> --store <STORE>
+
+Options:
+      --prog <PROG>      Path to the .ax program being run (its SHA-256 is chained in)
+      --run-id <RUN_ID>  Run-id for this stamp. If omitted, a process-id + monotonic-clock id is generated (same scheme `axon-vm run` uses for its own run_id)
+      --store <STORE>    Path to the chain JSONL file (created if absent)
+      --kernel <KERNEL>  Guest kernel image used to derive the R31 genesis root (default: dist/guest/vmlinuz). Only consulted when the chain is empty
+  -h, --help             Print help
+
+--- stderr ---
+

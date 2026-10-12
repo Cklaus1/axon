@@ -747,6 +747,9 @@ fn children<'a>(e: &'a Expr, out: &mut Vec<&'a Expr>) {
         Expr::Match { subject, arms } => {
             out.push(subject);
             for a in arms {
+                // The GUARD is a sub-expression too. It was skipped, so every
+                // walker (the PCI sealing check among them) missed code in
+                // `x if …` (PCI candidate-3 review, executed).
                 out.extend(a.guard.as_ref());
                 out.push(&a.body);
             }
@@ -914,6 +917,36 @@ fn take_children(e: &mut Expr, out: &mut Vec<Expr>) {
     }
 }
 
+/// Every type or trait NAME a type mentions (`Named`, a generic's base,
+/// `dyn Trait`, a type parameter), outermost first.
+///
+/// Iterative on a heap stack, like [`walk_expr`] and for the same reason
+/// (AX-56): the walk must not spend native stack per nesting level. The visit
+/// order is the pre-order a recursion would give.
+pub fn walk_type_names<'a>(root: &'a AxonType, f: &mut dyn FnMut(&'a str)) {
+    let mut stack: Vec<&'a AxonType> = vec![root];
+    while let Some(t) = stack.pop() {
+        match t {
+            AxonType::Named(n) | AxonType::DynTrait(n) | AxonType::TypeParam(n) => f(n),
+            AxonType::Generic { base, args } => {
+                f(base);
+                stack.extend(args.iter().rev());
+            }
+            AxonType::Result { ok, err } => stack.extend([&**err, &**ok]),
+            AxonType::Option(x)
+            | AxonType::Chan(x)
+            | AxonType::Slice(x)
+            | AxonType::Ref(x)
+            | AxonType::RefMut(x)
+            | AxonType::RawPtr(x) => stack.push(x),
+            AxonType::Fn { params, ret } => {
+                stack.push(ret);
+                stack.extend(params.iter().rev());
+            }
+            AxonType::Tuple(xs) | AxonType::Union(xs) => stack.extend(xs.iter().rev()),
+        }
+    }
+}
 /// Every identifier in `e` used in VALUE position — i.e. every `Expr::Ident`
 /// except the plain-ident callee of a `Call` (`f` in `f(x)`). AX-25: a top-level
 /// fn named in value position is a first-class closure that may be called through
@@ -940,4 +973,67 @@ pub fn value_position_idents(e: &Expr) -> Vec<String> {
         }
     });
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn named(n: &str) -> AxonType {
+        AxonType::Named(n.to_string())
+    }
+
+    #[test]
+    fn walk_type_names_visits_outermost_first_in_source_order() {
+        let t = AxonType::Fn {
+            params: vec![
+                AxonType::Generic {
+                    base: "Vec".to_string(),
+                    args: vec![named("A")],
+                },
+                AxonType::Result {
+                    ok: Box::new(AxonType::TypeParam("T".to_string())),
+                    err: Box::new(AxonType::DynTrait("E".to_string())),
+                },
+            ],
+            ret: Box::new(AxonType::Option(Box::new(AxonType::Tuple(vec![
+                named("B"),
+                AxonType::Union(vec![named("C"), named("D")]),
+            ])))),
+        };
+        let mut seen = Vec::new();
+        walk_type_names(&t, &mut |n| seen.push(n));
+        assert_eq!(seen, ["Vec", "A", "T", "E", "B", "C", "D"]);
+    }
+
+    /// AX-56: the walk spends no native stack per nesting level, so a type far
+    /// deeper than any small stack can hold is walked on one.
+    #[test]
+    fn walk_type_names_walks_a_deep_type_on_a_small_stack_ax56() {
+        const DEPTH: usize = 100_000;
+        let mut t = named("Leaf");
+        for i in 0..DEPTH {
+            t = if i % 2 == 0 {
+                AxonType::Option(Box::new(t))
+            } else {
+                AxonType::Ref(Box::new(t))
+            };
+        }
+        let t = std::thread::Builder::new()
+            .stack_size(64 * 1024)
+            .spawn(move || {
+                let mut seen = Vec::new();
+                walk_type_names(&t, &mut |n| seen.push(n.to_string()));
+                assert_eq!(seen, ["Leaf"]);
+                t
+            })
+            .expect("spawn")
+            .join()
+            .expect("the walk must not overflow a 64 KiB stack");
+        // Tear the chain down level by level: the derived drop recurses.
+        let mut cur = t;
+        while let AxonType::Option(inner) | AxonType::Ref(inner) = cur {
+            cur = *inner;
+        }
+    }
 }

@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S6.1",
+  "text": "TEST-ONLY: interp::conform::walk_bound_tests::a_value_nested_past_the_bound_is_refused_not_left_unvisited moves back from interp/conform_tests.rs to its v0.22 module (end of interp/conform.rs, v0.22 body verbatim), the path the PCI am78 row and M1847 name; scripts v022_pci_gates.sh and psv_matrix_check.py read a file's include!d files too, so main's interp::tests rows in interp/tests_v022_*.rs resolve; no behaviour change; sealed runs as at 04d3ad7b"
+}

@@ -42,11 +42,15 @@ A refused cell leaves the session **unchanged** — that is the point: the sessi
 cannot be corrupted by a cell that would not compile.
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
 
-AXON = Path(__file__).resolve().parent.parent / "target" / "debug" / "axon"
+# The binary is the one the caller names in AXON -- never one that merely sits
+# in target/ (C9 round 4: that file was built from some other tree). Unnamed,
+# every command refuses.
+AXON = Path(os.environ["AXON"]) if os.environ.get("AXON") else None
 
 # A line opening one of these begins a DECLARATION; anything else at top level is
 # a statement belonging to this cell's `main`.
@@ -279,8 +283,8 @@ def main() -> int:
         sys.stderr.write(__doc__ or "")
         return 1
     verb, session = sys.argv[1], Path(sys.argv[2])
-    if not AXON.exists():
-        sys.stderr.write(f"axon binary not found at {AXON}\n")
+    if AXON is None or not AXON.is_file():
+        sys.stderr.write(f"no axon binary named (AXON={AXON}); name the build to run in AXON\n")
         return 1
     if verb == "new":
         d, b = session_files(session)

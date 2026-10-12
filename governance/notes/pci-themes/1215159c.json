@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S3b",
+  "text": "TEST-ONLY unit tests (interp/conform_tests.rs, cfg(test)) for the channel access hooks t_chan_access/t_chan_choice in the method-call and select arms, plus their drift test. Interpreter behaviour unchanged: not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

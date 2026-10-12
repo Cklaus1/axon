@@ -1,0 +1,148 @@
+{
+  "schema": "axon-v022-mutation-run/1",
+  "gate": "G01",
+  "commit": "d81890ce2f114c0d83e66f766fc6c5b993822ad4",
+  "all_killed": true,
+  "mutations": [
+    {
+      "id": "M01",
+      "guard": "Fabric never signs a replay",
+      "file": "crates/axon-fabric/src/signing.rs",
+      "package": "axon-fabric",
+      "target": "--test attestation",
+      "test": "a_replay_is_never_signed_not_even_a_genuine_one",
+      "baseline": "passed",
+      "result": "killed"
+    },
+    {
+      "id": "M02",
+      "guard": "attestation signature verification",
+      "file": "crates/axon-loop-contracts/src/attestation.rs",
+      "package": "axon-loop-contracts",
+      "target": "--lib",
+      "test": "attestation::tests::only_the_registered_key_is_accepted",
+      "baseline": "passed",
+      "result": "killed"
+    },
+    {
+      "id": "M03",
+      "guard": "attestation binding comparison",
+      "file": "crates/axon-loop-contracts/src/attestation.rs",
+      "package": "axon-loop-contracts",
+      "target": "--lib",
+      "test": "attestation::tests::every_bound_field_is_load_bearing",
+      "baseline": "passed",
+      "result": "killed"
+    },
+    {
+      "id": "M04",
+      "guard": "suite modules resolve before the candidate's",
+      "file": "crates/axon-fabric/src/submit.rs",
+      "package": "axon-fabric",
+      "target": "--test check_effects",
+      "test": "a_candidate_cannot_shadow_a_module_of_the_suite",
+      "baseline": "passed",
+      "result": "killed"
+    },
+    {
+      "id": "M05",
+      "guard": "intake: the policy's proposer is a subject",
+      "file": "crates/axon-loop/src/intake.rs",
+      "package": "axon-loop",
+      "target": "--test intake",
+      "test": "the_proposer_of_the_policy_cannot_verify_its_episodes",
+      "baseline": "passed",
+      "result": "killed"
+    },
+    {
+      "id": "M06",
+      "guard": "intake: the recorded suite version is the task's",
+      "file": "crates/axon-loop/src/intake.rs",
+      "package": "axon-loop",
+      "target": "--test intake",
+      "test": "a_verdict_from_another_pinned_version_of_the_suite_does_not_decide_the_task",
+      "baseline": "passed",
+      "result": "killed"
+    },
+    {
+      "id": "M07",
+      "guard": "intake: the acceptance pin is THIS task's",
+      "file": "crates/axon-loop/src/intake.rs",
+      "package": "axon-loop",
+      "target": "--test intake",
+      "test": "a_verdict_on_one_tasks_check_cannot_decide_another_task",
+      "baseline": "passed",
+      "result": "killed"
+    },
+    {
+      "id": "M08",
+      "guard": "intake: the attestation must verify",
+      "file": "crates/axon-loop/src/intake.rs",
+      "package": "axon-loop",
+      "target": "--test intake",
+      "test": "each_verification_rule_is_load_bearing_on_its_own",
+      "baseline": "passed",
+      "result": "killed"
+    },
+    {
+      "id": "M09",
+      "guard": "intake: the task/trial identity join",
+      "file": "crates/axon-loop/src/intake.rs",
+      "package": "axon-loop",
+      "target": "--test intake",
+      "test": "each_verification_rule_is_load_bearing_on_its_own",
+      "baseline": "passed",
+      "result": "killed"
+    },
+    {
+      "id": "M10",
+      "guard": "intake: the issuer is not the subject",
+      "file": "crates/axon-loop/src/intake.rs",
+      "package": "axon-loop",
+      "target": "--test intake",
+      "test": "each_verification_rule_is_load_bearing_on_its_own",
+      "baseline": "passed",
+      "result": "killed"
+    },
+    {
+      "id": "M11",
+      "guard": "EVL: a protected class counts only protected backends (D3)",
+      "file": "crates/axon-loop/src/evl.rs",
+      "package": "axon-loop",
+      "target": "--test protected_class",
+      "test": "a_protected_plan_counts_only_protected_backends",
+      "baseline": "passed",
+      "result": "killed"
+    },
+    {
+      "id": "M12",
+      "guard": "activation: a protected scope needs a protected evaluation (D3)",
+      "file": "crates/axon-loop/src/pointer.rs",
+      "package": "axon-loop",
+      "target": "--test protected_class",
+      "test": "a_protected_scope_promotes_only_on_a_protected_evaluation",
+      "baseline": "passed",
+      "result": "killed"
+    },
+    {
+      "id": "M13",
+      "guard": "freeze records the protected class (D3)",
+      "file": "crates/axon-loop/src/plan.rs",
+      "package": "axon-loop",
+      "target": "--test protected_class",
+      "test": "a_protected_plan_counts_only_protected_backends",
+      "baseline": "passed",
+      "result": "killed"
+    },
+    {
+      "id": "M14",
+      "guard": "EVL: a counted verdict cites its evidence",
+      "file": "crates/axon-loop/src/evl.rs",
+      "package": "axon-loop",
+      "target": "--test evidence_laundering",
+      "test": "a_counted_verdict_cites_the_evidence_it_was_authenticated_on",
+      "baseline": "passed",
+      "result": "killed"
+    }
+  ]
+}

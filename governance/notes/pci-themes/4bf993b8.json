@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S6 paired-disable reinstatements",
+  "text": "TEST-ONLY (resolver.rs, cfg(test)): a_refinement_may_start_with_a_deferred_name_and_impl_text_is_axon's duplicate-impl assertion states its attack (ATTACK: a duplicate impl was not refused as one), the condition unchanged; the registry reinstates M60 (killed by that test) and M89 (killed by the scheduler_spawn pair of a_sealed_caller_cannot_tell_an_operator_name_from_a_missing_one_on_any_path) ACTIVE, their retired-guard full-suite cells having failed; no interpreter or resolver code changed, no unsealed behaviour change"
+}

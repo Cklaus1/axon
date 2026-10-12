@@ -19,7 +19,16 @@ cd "$ROOT"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-need_codegen_axon random_i64_parity
+if [ -n "${AXON:-}" ]; then
+  named_bin AXON random_i64_parity
+else
+  echo "random_i64_parity: building codegen axon binary…"
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "random_i64_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
+  fi
+  use_built AXON axon
+fi
+require_codegen_axon random_i64_parity
 
 # AUDIT T51 (GATE-04). This used to `exit 0` here on a build failure — but
 # `build_run` is ALWAYS invoked as `code="$(build_run ...)"`, so the exit

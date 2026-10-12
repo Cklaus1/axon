@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 25 CLI verbs, 344 builtins, 24 attributes, 145 diagnostic codes (132 live, 13 reserved), 58 environment variables.
+The complete surface of this build — 25 CLI verbs, 344 builtins, 24 attributes, 146 diagnostic codes (133 live, 13 reserved), 62 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -68,19 +68,23 @@ Run `axon <verb> --help` for flags and long-form help.
 - `@[bpf]`
 - `@[enclave]`
 
-## Environment variables (58)
+## Environment variables (62)
 
 Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so a variable that quietly does nothing cannot appear here, and one that changes behaviour cannot be left out.
 
 | Variable | Effect |
 |---|---|
 | `AXON_SEED` | seed the RNG (u64) so `random_*` runs reproduce |
+| `AXON_EQ_ALONE` | TEST-ONLY re-exec marker: a test that must run in a fresh single-test process (it forks) re-runs itself with this set to its own name, so a multi-threaded test process never forks (axon-fabric observer_service, axon-guest-init) |
+| `AXON_EQ_GIT_ENV` | TEST-ONLY re-exec marker: the git_cmd environment test runs the child in a process whose environment it controls (axon-fabric git_data) |
+| `AXON_EQ_HARDEN` | TEST-ONLY re-exec marker: the helper's harden() test runs in a fresh single-test process because it forks (axon-fabric privileged_launcher) |
 | `AXON_MAX_DEPTH` | recursion-depth ceiling (default 6000, clamped to 1,000,000); the interpreter thread stack scales with it |
-| `AXON_ENGINE` | engine for fn bodies under `axon run`/`axon-run`/`axon test`/`axon goal`: `vm` (default; R50 bytecode engine, a body compiled on its second entry or on its first when it holds a loop that may run long, same observable behaviour) or `tree` (the reference tree-walker); any other value exits 2 before the program runs |
+| `AXON_ENGINE` | engine for fn bodies under `axon run`/`axon-run`/`axon test`/`axon goal`: `vm` (default; R50 bytecode engine, a body compiled on its second entry or on its first when it holds a loop that may run long, same observable behaviour) or `tree` (the reference tree-walker); any other value exits 2 before the program runs. A sealed run (`axon test --seal`, R51) executes on the tree only: unset or `tree` selects it, `vm` is refused (exit 2) |
 | `AXON_VM_TRACE` | `1`: under AXON_ENGINE=vm, print one `vm: ...` stderr line per compiled body (op and tree-fallback counts), per fallback, and `vm: defer <name>` per body whose first entry runs on the tree; never changes stdout or the exit code |
 | `AXON_VM_EAGER` | `1`: under AXON_ENGINE=vm, compile every body on its first entry instead of deferring a body with no long loop to its second entry (R50 S9); never changes stdout or the exit code |
 | `AXON_CLOCK` | deterministic virtual clock `<start_ms>[:<tick_ms>]`; `sleep_ms` advances it without really sleeping |
 | `AXON_PATH` | colon-separated module search path for `mod`/`use` imports |
+| `AXON_PATH_EXCLUSIVE` | exactly `1`: resolve modules ONLY from AXON_PATH, never `~/.axon/lib` or the binary's own library. Fabric sets it for every check it runs, so a verdict depends on nothing outside the suite and the candidate |
 | `AXON_STRICT` | promote advisory hazard diagnostics to errors (today E0302, an unused Result); `axon deploy` sets it itself |
 | `AXON_RUNTIME_DIR` | `axon build`: directory holding the prebuilt native runtime staticlibs (`libaxon_rt.a`, `libaxon_rt_ai.a`; `<dir>/<triple>/` for `--target`). When set it is the ONLY place searched; unset, the compiler uses the install layout beside it (`<bin>/../lib/axon/runtime/<profile>/`, see scripts/install.sh), else the runtime in the cargo target dir it was built into, which it rebuilds with the workspace's pinned toolchain only when that runtime is out of date; independent of the current directory, PATH and the caller's Rust toolchain |
 | `AXON_RECORD` | path to write a host journal: every call through the AxonHost seam, performed for real and appended with its outcome. As sensitive as the run it records |
@@ -100,7 +104,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_INTENT_GEN` | let `axon intent compile` fill TODO stubs via a live model (needs `--features asi-runtime`) |
 | `AXON_ALLOWED_EFFECTS` | ambient effect ceiling for the whole run; a true ceiling that an inner sandbox may narrow but never widen. EMPTY means deny every effect and is not the same as unset. Interpreter-only |
 | `AXON_PRINCIPAL` | the principal a run executes as — audit ATTRIBUTION only; it grants and withholds nothing |
-| `AXON_GUEST_ALLOW_NO_POLICY` | axon-guest-init: start the guest even though no MMDS capability policy could be loaded (no effect ceiling, no token cap, no seccomp). Development only — without it an unreadable policy REFUSES to start the guest, because an absent policy is not a permissive one |
+| `AXON_GUEST_ALLOW_NO_POLICY` | axon-guest-init: start the guest even though no capability policy could be loaded from the kernel cmdline (`axon.policy=`) or MMDS (no effect ceiling, no token cap, no seccomp). READ ONLY in builds with the non-default cargo feature `dev-allow-no-policy`; a default build ignores it and REFUSES, because Linux copies `NAME=value` cmdline words into init's environment, so a runtime flag would be reachable by whoever can append one |
 | `AXON_REQUIRE_CERTS` | fail closed on the R23 solver-free kernel-mint certificate check instead of the default silent pass |
 | `AXON_ATTEST_KEY` | operator-provisioned attestation key (hex, >=16 bytes). When set, axon-vm signs AND verifies the attestation report under it, so a report signed by anyone else fails. Unset falls back to an ephemeral per-process key, where signer and verifier are the same process — real integrity over the measurement, but attesting nothing to a third party |
 | `AXON_AUDIT_LEDGER` | path to the R28 capability audit ledger |
@@ -133,7 +137,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_TEE_ENCLAVE` | R24 TEE: set to 1 by the gramine-direct manifest to signal the workload is executing inside an enclave; this is what makes `tee_in_enclave()` return true. Read through the host seam, so it is recorded and replayed |
 | `AXON_TEE_MEASUREMENT` | R24 TEE: the simulated enclave launch measurement returned by `tee_attest_measurement()` when set, a stub otherwise. A genuine hardware-rooted quote comes only from confidential hardware. Read through the host seam |
 
-## Diagnostic codes (145, of which 132 live)
+## Diagnostic codes (146, of which 133 live)
 
 A code marked **reserved** is declared but emitted nowhere in this build. Listing those as if they were live would be the same defect this reference exists to fix.
 
@@ -145,7 +149,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `E0001` | cannot find name in this scope |
 | `E0002` | the name is defined more than once in this module |
 | `E0003` | module not found on AXON_PATH |
-| `E0004` | reserved (Phase 2): use of a non-exported item across modules |
+| `E0004` | a sealed module (`axon test --seal`, the candidate under test) used a name the rest of the program defines |
 | `E0301` | type-check failure with no more-specific code |
 | `E0302` | a `Result` returned by a call is unused — warns by default, error under AXON_STRICT |
 | `E0303` | type-check rule violation (Phase-1 R03) |
@@ -172,6 +176,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `E0502` | impl block missing method |
 | `E0503` | dyn trait cannot be used as value type |
 | `E0504` | trait bound not satisfied |
+| `E0505` | an impl for `f32`, `isize` or `usize` — the runtime represents those values as `f64`/`i64`, so the impl would never run |
 | `E0601` | use of moved value |
 | `E0602` | cannot move borrowed value |
 | `E0603` | borrow conflict |

@@ -37,7 +37,8 @@ command -v node >/dev/null 2>&1 || { echo "wasm_browser_host_await: node not fou
 echo "wasm_browser_host_await: building axon-wasm (wasm32-unknown-unknown)…"
 cargo build -q -p axon-wasm --target wasm32-unknown-unknown --release 2>/dev/null \
   || { echo "axon-wasm wasm build failed — skipping"; exit 0; }
-WASM="target/wasm32-unknown-unknown/release/axon_wasm.wasm"
+. scripts/lib/axon_bin.sh
+WASM=""; use_built WASM axon_wasm.wasm wasm32-unknown-unknown release  # the build just made
 DRIVER="scripts/wasm_browser_host_driver.js"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 

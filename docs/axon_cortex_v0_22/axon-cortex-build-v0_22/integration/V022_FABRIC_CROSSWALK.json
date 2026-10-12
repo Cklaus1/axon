@@ -1,0 +1,249 @@
+{
+  "schema": "axon.fabric-integration-crosswalk/1",
+  "version": "0.22",
+  "fabric_document_version": "0.1.0",
+  "original_bytes_preserved": true,
+  "not_a_runtime_qualification": true,
+  "rows": [
+    {
+      "fabric_task": "ACF-T00",
+      "milestone": "M0",
+      "master_task": "B255",
+      "disposition": "REQUIRED_M0_M2",
+      "fabric_gates": [
+        "ACF-G00",
+        "ACF-G01"
+      ],
+      "source": "integration/compute-fabric-v0_1-reference/manifests/tasks.json"
+    },
+    {
+      "fabric_task": "ACF-T01",
+      "milestone": "M0",
+      "master_task": "B258",
+      "disposition": "REQUIRED_M0_M2",
+      "fabric_gates": [
+        "ACF-G02",
+        "ACF-G03",
+        "ACF-G04",
+        "ACF-G05",
+        "ACF-G06",
+        "ACF-G07"
+      ],
+      "source": "integration/compute-fabric-v0_1-reference/manifests/tasks.json"
+    },
+    {
+      "fabric_task": "ACF-T02",
+      "milestone": "M1",
+      "master_task": "B259",
+      "disposition": "REQUIRED_M0_M2",
+      "fabric_gates": [
+        "ACF-G08",
+        "ACF-G09",
+        "ACF-G10"
+      ],
+      "source": "integration/compute-fabric-v0_1-reference/manifests/tasks.json"
+    },
+    {
+      "fabric_task": "ACF-T03",
+      "milestone": "M1",
+      "master_task": "B260",
+      "disposition": "REQUIRED_M0_M2",
+      "fabric_gates": [
+        "ACF-G11",
+        "ACF-G12",
+        "ACF-G13",
+        "ACF-G14",
+        "ACF-G15",
+        "ACF-G16"
+      ],
+      "source": "integration/compute-fabric-v0_1-reference/manifests/tasks.json"
+    },
+    {
+      "fabric_task": "ACF-T04",
+      "milestone": "M1",
+      "master_task": "B261",
+      "disposition": "REQUIRED_M0_M2",
+      "fabric_gates": [
+        "ACF-G17",
+        "ACF-G18",
+        "ACF-G19",
+        "ACF-G20"
+      ],
+      "source": "integration/compute-fabric-v0_1-reference/manifests/tasks.json"
+    },
+    {
+      "fabric_task": "ACF-T05",
+      "milestone": "M1",
+      "master_task": "B262",
+      "disposition": "REQUIRED_M0_M2",
+      "fabric_gates": [
+        "ACF-G21",
+        "ACF-G22"
+      ],
+      "source": "integration/compute-fabric-v0_1-reference/manifests/tasks.json"
+    },
+    {
+      "fabric_task": "ACF-T06",
+      "milestone": "M1",
+      "master_task": "B263",
+      "disposition": "REQUIRED_M0_M2",
+      "fabric_gates": [
+        "ACF-G23",
+        "ACF-G24",
+        "ACF-G25",
+        "ACF-G26",
+        "ACF-G27",
+        "ACF-G28"
+      ],
+      "source": "integration/compute-fabric-v0_1-reference/manifests/tasks.json"
+    },
+    {
+      "fabric_task": "ACF-T07",
+      "milestone": "M1",
+      "master_task": "B264",
+      "disposition": "REQUIRED_M0_M2",
+      "fabric_gates": [
+        "ACF-G29",
+        "ACF-G30",
+        "ACF-G31",
+        "ACF-G32",
+        "ACF-G33"
+      ],
+      "source": "integration/compute-fabric-v0_1-reference/manifests/tasks.json"
+    },
+    {
+      "fabric_task": "ACF-T08",
+      "milestone": "M2",
+      "master_task": "B271",
+      "disposition": "REQUIRED_M0_M2",
+      "fabric_gates": [
+        "ACF-G34",
+        "ACF-G35",
+        "ACF-G36",
+        "ACF-G37"
+      ],
+      "source": "integration/compute-fabric-v0_1-reference/manifests/tasks.json"
+    },
+    {
+      "fabric_task": "ACF-T09",
+      "milestone": "M3",
+      "master_task": null,
+      "disposition": "DEFERRED_EXTENSION",
+      "fabric_gates": [
+        "ACF-G38",
+        "ACF-G39",
+        "ACF-G40",
+        "ACF-G41"
+      ],
+      "source": "integration/compute-fabric-v0_1-reference/manifests/tasks.json"
+    },
+    {
+      "fabric_task": "ACF-T10",
+      "milestone": "M3",
+      "master_task": null,
+      "disposition": "DEFERRED_EXTENSION",
+      "fabric_gates": [
+        "ACF-G42",
+        "ACF-G43",
+        "ACF-G44"
+      ],
+      "source": "integration/compute-fabric-v0_1-reference/manifests/tasks.json"
+    },
+    {
+      "fabric_task": "ACF-T11",
+      "milestone": "M3",
+      "master_task": null,
+      "disposition": "DEFERRED_EXTENSION",
+      "fabric_gates": [
+        "ACF-G45",
+        "ACF-G46",
+        "ACF-G47"
+      ],
+      "source": "integration/compute-fabric-v0_1-reference/manifests/tasks.json"
+    },
+    {
+      "fabric_task": "ACF-T12",
+      "milestone": "M3",
+      "master_task": null,
+      "disposition": "DEFERRED_EXTENSION",
+      "fabric_gates": [
+        "ACF-G48",
+        "ACF-G49",
+        "ACF-G50",
+        "ACF-G51"
+      ],
+      "source": "integration/compute-fabric-v0_1-reference/manifests/tasks.json"
+    },
+    {
+      "fabric_task": "ACF-T13",
+      "milestone": "M4",
+      "master_task": null,
+      "disposition": "DEFERRED_EXTENSION",
+      "fabric_gates": [
+        "ACF-G52",
+        "ACF-G53",
+        "ACF-G54"
+      ],
+      "source": "integration/compute-fabric-v0_1-reference/manifests/tasks.json"
+    }
+  ],
+  "required_gates": [
+    "ACF-G00",
+    "ACF-G01",
+    "ACF-G02",
+    "ACF-G03",
+    "ACF-G04",
+    "ACF-G05",
+    "ACF-G06",
+    "ACF-G07",
+    "ACF-G08",
+    "ACF-G09",
+    "ACF-G10",
+    "ACF-G11",
+    "ACF-G12",
+    "ACF-G13",
+    "ACF-G14",
+    "ACF-G15",
+    "ACF-G16",
+    "ACF-G17",
+    "ACF-G18",
+    "ACF-G19",
+    "ACF-G20",
+    "ACF-G21",
+    "ACF-G22",
+    "ACF-G23",
+    "ACF-G24",
+    "ACF-G25",
+    "ACF-G26",
+    "ACF-G27",
+    "ACF-G28",
+    "ACF-G29",
+    "ACF-G30",
+    "ACF-G31",
+    "ACF-G32",
+    "ACF-G33",
+    "ACF-G34",
+    "ACF-G35",
+    "ACF-G36",
+    "ACF-G37"
+  ],
+  "deferred_gates": [
+    "ACF-G38",
+    "ACF-G39",
+    "ACF-G40",
+    "ACF-G41",
+    "ACF-G42",
+    "ACF-G43",
+    "ACF-G44",
+    "ACF-G45",
+    "ACF-G46",
+    "ACF-G47",
+    "ACF-G48",
+    "ACF-G49",
+    "ACF-G50",
+    "ACF-G51",
+    "ACF-G52",
+    "ACF-G53",
+    "ACF-G54"
+  ]
+}

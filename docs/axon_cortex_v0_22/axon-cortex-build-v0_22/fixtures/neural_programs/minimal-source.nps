@@ -1,0 +1,84 @@
+{
+  "schema": "axon.nps/1",
+  "name": "diagnostic_fixture",
+  "contract_version": "1",
+  "input_schema_ref": {
+    "id": "fixture:build-log-schema",
+    "revision": "fixture-v1",
+    "digest": "33fa369c1b52186255771543631321ff4efeb20cd27311873fb0d4789421394d"
+  },
+  "output_schema_ref": {
+    "id": "fixture:diagnostic-proposal-schema",
+    "revision": "fixture-v1",
+    "digest": "69b611a4427dab35e309af80cc503e93b5e7ac8e4f54676434d5e0e1a136e537"
+  },
+  "requirements": [
+    {
+      "id": "PRESERVE",
+      "modality": "MUST",
+      "statement": "Copy diagnostic code and source text only from supplied byte spans; do not invent missing fields.",
+      "validation_ref": {
+        "id": "fixture:source-copy-check",
+        "revision": "fixture-v1",
+        "digest": "4338082ad30505825e5fafca834ff8f9039fa4602808ad49567324c8858b4577"
+      }
+    }
+  ],
+  "semantic_validator_refs": [
+    {
+      "id": "fixture:source-copy-check",
+      "revision": "fixture-v1",
+      "digest": "4338082ad30505825e5fafca834ff8f9039fa4602808ad49567324c8858b4577"
+    }
+  ],
+  "applicability": {
+    "domain": "inert build-log format fixture",
+    "languages": [
+      "fixture"
+    ],
+    "max_input_bytes": 16384,
+    "guard_ref": {
+      "id": "fixture:fixture-only",
+      "revision": "fixture-v1",
+      "digest": "22b08a024cf905c9017c6b684c3da97fe2326a6a9842d5b274da621d0bb82990"
+    }
+  },
+  "effect_ceiling": {
+    "filesystem": "none",
+    "network": "deny",
+    "subprocess": "deny",
+    "environment": "none"
+  },
+  "data_policy_ref": {
+    "id": "fixture:fixture-local-only",
+    "revision": "fixture-v1",
+    "digest": "37a9c06152f3579241a13559a2969cd03fa1b86a5da708e6ad9379ef6f599df8"
+  },
+  "build": {
+    "mode": "spec_driven",
+    "backend_preference": "inert-reference",
+    "recipe_ref": {
+      "id": "fixture:inert-fixture-recipe",
+      "revision": "fixture-v1",
+      "digest": "8a38c6021ae7ce5a7cf0d400cdf6f56bb2fecb507b7c0eec453a94ff6dcff7b6"
+    },
+    "example_refs": []
+  },
+  "evaluation_policy_ref": {
+    "id": "fixture:not-evaluated",
+    "revision": "fixture-v1",
+    "digest": "246d69ffec022e15d9f8e438201b7aa8f9ddbe704544bc7b66551bec32f9b3fa"
+  },
+  "fallback_policy_ref": {
+    "id": "fixture:no-fallback",
+    "revision": "fixture-v1",
+    "digest": "63b212a720619df81ee052413d149ed72ac988c7ca6b19a121a17f9702cb7e31"
+  },
+  "provenance_refs": [
+    {
+      "id": "fixture:author-owned-format-fixture",
+      "revision": "fixture-v1",
+      "digest": "000e2e8bf4b0fcac4b9851b2ad31c925873907e626aff4a15e7c3206fdf6368b"
+    }
+  ]
+}

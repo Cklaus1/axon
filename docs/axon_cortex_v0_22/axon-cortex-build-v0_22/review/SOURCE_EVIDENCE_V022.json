@@ -1,0 +1,231 @@
+{
+  "schema": "axon.closed-loop-source-evidence/1",
+  "scope": "TARGETED_STATIC_REVIEW; no Rust/runtime test execution",
+  "evidence": [
+    {
+      "id": "A01",
+      "origin": "axon",
+      "path": "crates/axon-os/src/supervisor.rs",
+      "start_line": 18,
+      "end_line": 104,
+      "sha256": "7199b59f3d7101bc6c6cc638834f6812df7102cc180f6d50630a309dffb97eb2",
+      "note": "Existing supervisor owns approval/admission and observed run records; extend that convergence point."
+    },
+    {
+      "id": "A02",
+      "origin": "axon",
+      "path": "crates/axon-os/src/runtime.rs",
+      "start_line": 17,
+      "end_line": 66,
+      "sha256": "7b033ba159eee680c20795c77b6007e0dfd7558227db65008897858a43b8158f",
+      "note": "Program-oriented Runtime is not the generic arbitrary-native sandbox API."
+    },
+    {
+      "id": "A03",
+      "origin": "axon",
+      "path": "crates/axon-cortex/src/runner.rs",
+      "start_line": 110,
+      "end_line": 146,
+      "sha256": "3f970015a52590d79805654ceb0f1e0b25ee0425c9ca55661b2dbd169e232e68",
+      "note": "Authorized capability is distinct from a bare action."
+    },
+    {
+      "id": "A04",
+      "origin": "axon",
+      "path": "crates/axon-cortex/src/runner.rs",
+      "start_line": 1248,
+      "end_line": 1339,
+      "sha256": "3f970015a52590d79805654ceb0f1e0b25ee0425c9ca55661b2dbd169e232e68",
+      "note": "Registered check execution seam; the new CheckExecutor is proposed, not claimed present."
+    },
+    {
+      "id": "A05",
+      "origin": "axon",
+      "path": "crates/axon-vm/src/main.rs",
+      "start_line": 1,
+      "end_line": 83,
+      "sha256": "d2da243325792507c9f3ea88f87179eb3271525b160125ce30015dc728308232",
+      "note": "Actual Firecracker binary is the extraction target; a separate full-VM runtime is not assumed."
+    },
+    {
+      "id": "A06",
+      "origin": "axon",
+      "path": "crates/axon-reflex/src/lib.rs",
+      "start_line": 227,
+      "end_line": 264,
+      "sha256": "92cd5835658e6940a29f1d868b94ab53e47692be64b5aa83666c2603d0f2d9e7",
+      "note": "Reflex decision-core behavior in this snapshot is not evidence of a CLM implementation."
+    },
+    {
+      "id": "A07",
+      "origin": "axon",
+      "path": "scripts/cortex_package_gate.sh",
+      "start_line": 1,
+      "end_line": 110,
+      "sha256": "61b23c11afbf934452b71a4fed4f26bb1702c6ed13ce85a79cb51daa549f94b5",
+      "note": "Source gate has legacy vendor/manifest/CLI expectations; use reviewed migration rather than only changing a path."
+    },
+    {
+      "id": "M01",
+      "origin": "micode",
+      "path": "docs/axon-support/README.md",
+      "start_line": 1,
+      "end_line": 40,
+      "sha256": "b154dd731e18eb6f9d39a861cd1c033717f79831e86ba7a53db3c5edc94f972f",
+      "note": "Embedded support roadmap is v0.3 and separates Current/Intended/Partial/Deferred/UNVERIFIED."
+    },
+    {
+      "id": "M02",
+      "origin": "micode",
+      "path": "docs/axon-support/specs/MX-12-axon-bridge.md",
+      "start_line": 1,
+      "end_line": 50,
+      "sha256": "cff24178d3f29472321fa54ae817eccf7754a504d4823ac77fd1638c68a68a5a",
+      "note": "Versioned CX-16/MX-12 boundary already owns policy/experience transfer without authority transfer."
+    },
+    {
+      "id": "M03",
+      "origin": "micode",
+      "path": "docs/axon-support/specs/MX-08-challenger-lab.md",
+      "start_line": 1,
+      "end_line": 21,
+      "sha256": "86d518fad4f84aaa2ba7ddce66e6eda67f30b93cd5f720b4d879d525b7a2d24b",
+      "note": "Intended challenger harness is the integration owner, not proof that the live peer loop exists."
+    },
+    {
+      "id": "M04",
+      "origin": "micode",
+      "path": "crates/micode-delegate/src/spawner.rs",
+      "start_line": 77,
+      "end_line": 110,
+      "sha256": "7454a73638668549704d331c15356315d3887ac132859f8fbec41d90670915be",
+      "note": "Documented lack of path_globs/tool_allowlist parent-subset enforcement must not become a security assumption."
+    },
+    {
+      "id": "M05",
+      "origin": "micode",
+      "path": "crates/micode-git/src/worktree.rs",
+      "start_line": 150,
+      "end_line": 196,
+      "sha256": "68db1756a956c0376c20c94a2eb7325e488178741077e95df5a2b0048cefc904",
+      "note": "Existing worktree manager should be reused; worktree isolation is not OS confinement."
+    },
+    {
+      "id": "M06",
+      "origin": "micode",
+      "path": "EXECUTION_CONTEXT_RECEIPT_SPEC.md",
+      "start_line": 35,
+      "end_line": 85,
+      "sha256": "991de8603a0bf0b947f1f1155dae223d7be64529748ab73b606d5856b0206563",
+      "note": "Observed context gates first model turn; parent/task/worker/integrator share a receipt."
+    },
+    {
+      "id": "M07",
+      "origin": "micode",
+      "path": "EXECUTION_CONTEXT_RECEIPT_SPEC.md",
+      "start_line": 87,
+      "end_line": 179,
+      "sha256": "991de8603a0bf0b947f1f1155dae223d7be64529748ab73b606d5856b0206563",
+      "note": "Role-specific preflight, declared write scope and stale-on-return treatment already specified; exact base for paired experiments is a new stricter profile."
+    },
+    {
+      "id": "M08",
+      "origin": "micode",
+      "path": "crates/micode-verify/src/graduation.rs",
+      "start_line": 61,
+      "end_line": 91,
+      "sha256": "29ca1c93336b20a7f16d38b18f4760e8b0d5a397337e4aafc93ca5f430d44c2b",
+      "note": "Specific trust-judge enforcement verdict remains NoGo; unrelated Fabric verification cannot graduate it."
+    },
+    {
+      "id": "M09",
+      "origin": "micode",
+      "path": "crates/micode-persist/src/strategy_memory.rs",
+      "start_line": 1,
+      "end_line": 113,
+      "sha256": "378c7499227b3f1f25f68423653c9659bda694398bdb3bd917e18d34eabda1a4",
+      "note": "Existing strategy memory is not to be overwritten by a duplicate generic history store; observed outcome and experiment evidence remain separate."
+    },
+    {
+      "id": "M10",
+      "origin": "micode",
+      "path": "Cargo.toml",
+      "start_line": 1,
+      "end_line": 34,
+      "sha256": "32e3c1c5c01af4c5350651e2dc4d2dc5bf791f84c5c74c8619292532a575732a",
+      "note": "MiCode Cargo workspace version is independent of the Axon build-pack version."
+    },
+    {
+      "id": "F01",
+      "origin": "fabric",
+      "path": "specs/ACF-01-AXON-COMPUTE-FABRIC.md",
+      "start_line": 36,
+      "end_line": 72,
+      "sha256": "472993ba33fc64cf78552f9f51a01e7e4376f663775f2f9da11b67aee519792e",
+      "note": "Existing native execution and authority owners plus dependency direction."
+    },
+    {
+      "id": "F02",
+      "origin": "fabric",
+      "path": "specs/ACF-01-AXON-COMPUTE-FABRIC.md",
+      "start_line": 118,
+      "end_line": 164,
+      "sha256": "472993ba33fc64cf78552f9f51a01e7e4376f663775f2f9da11b67aee519792e",
+      "note": "Identity separation, new sidecars, grant intersection and strict request validation."
+    },
+    {
+      "id": "F03",
+      "origin": "fabric",
+      "path": "specs/ACF-01-AXON-COMPUTE-FABRIC.md",
+      "start_line": 189,
+      "end_line": 229,
+      "sha256": "472993ba33fc64cf78552f9f51a01e7e4376f663775f2f9da11b67aee519792e",
+      "note": "Durable journal, failure certainty and separate cleanup/billing state."
+    },
+    {
+      "id": "F04",
+      "origin": "fabric",
+      "path": "specs/ACF-01-AXON-COMPUTE-FABRIC.md",
+      "start_line": 231,
+      "end_line": 257,
+      "sha256": "472993ba33fc64cf78552f9f51a01e7e4376f663775f2f9da11b67aee519792e",
+      "note": "Durable workspace and fenced CAS publication."
+    },
+    {
+      "id": "F05",
+      "origin": "fabric",
+      "path": "specs/ACF-01-AXON-COMPUTE-FABRIC.md",
+      "start_line": 290,
+      "end_line": 325,
+      "sha256": "472993ba33fc64cf78552f9f51a01e7e4376f663775f2f9da11b67aee519792e",
+      "note": "First protected Linux path and separately qualified egress/secret/WASM work."
+    },
+    {
+      "id": "F06",
+      "origin": "fabric",
+      "path": "specs/ACF-01-AXON-COMPUTE-FABRIC.md",
+      "start_line": 326,
+      "end_line": 355,
+      "sha256": "472993ba33fc64cf78552f9f51a01e7e4376f663775f2f9da11b67aee519792e",
+      "note": "Whole-task costs and use of existing Cortex evidence/authority."
+    },
+    {
+      "id": "P01",
+      "origin": "v021",
+      "path": "build/RESEARCH_INTEGRATION_V021.md",
+      "start_line": 1,
+      "end_line": 54,
+      "sha256": "137f024fd041409c70869710913897c8108343f46b002b1302a6523578faeda9",
+      "note": "Plane aliases use existing owners; paper reproduction and mandatory live learned providers are separate qualifications."
+    },
+    {
+      "id": "P02",
+      "origin": "v021",
+      "path": "integration/MICODE_V015_PROPOSED_DELTA.md",
+      "start_line": 1,
+      "end_line": 19,
+      "sha256": "8a27f578f361807acefa8b1fffd493b713ac32148274908c3d1143c9a7ab6d29",
+      "note": "The historical v0.15 proposal was not delivered/tested MiCode peer work."
+    }
+  ]
+}

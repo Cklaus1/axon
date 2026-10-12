@@ -1,0 +1,22 @@
+{
+ "schema": "axon-v022-binding-freeze/1",
+ "candidate": "unknown-outcome-3",
+ "gates": [
+  "G01-r22-unknown-outcome"
+ ],
+ "axon_sha": "a9e4c269c08beb7854397aa2d067a41c7e907e6f",
+ "micode_sha": "fc6221a5fdc79de946484f893fa2a27ade0a5c24",
+ "stage5_runner_sha256": "c394fe5d745d29a4179385ec661b217eeb0b1c5676946bb104151b8917d72cf0",
+ "micode_runner_sha256": "423554978d0977c09c805a8baa36c353edf44cc01e9888c1de8fd2bbfeaedf71",
+ "mutation_driver_sha256": "e01b141ee4aa9b600b8c805055d7acc7162466107a02d5a1b985ab1ecb1e4b61",
+ "mutation_scope": "all",
+ "interop_gate_sha256": "e54bbcdc6aa16da6019dcbf7bee11959f6ee0000ef5915a01debcabf9eb2acaf",
+ "prior_reviews": [
+  "wf_849bc606-7e8 (candidate 1: 3 blockers)",
+  "wf_bac07f9d-087 (candidate 2: 1 blocker, silent provider past first-byte)"
+ ],
+ "discriminators": [
+  "vs micode e7fdb739: 14 of 33 8b assertions fail (candidate-1 blockers)",
+  "vs micode 3192e948: 3 of 37 8b assertions fail (u-pong-4, candidate-2 blocker)"
+ ]
+}

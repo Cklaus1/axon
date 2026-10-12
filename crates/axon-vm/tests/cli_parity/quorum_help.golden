@@ -1,0 +1,22 @@
+exit: Some(0)
+--- stdout ---
+R33: cross-VM safety quorum — VoteRequest/Response + strict-majority check.
+
+Votes are NOT cryptographically authenticated (AUDIT T49): a `.vote` file carries no signature, so anyone who can write the responses directory can manufacture approvals. `--run-id` binds votes to one proposal and `--expect-tcb` pins the expected voter identity; neither is a substitute for signing. Treat the responses directory as part of the TCB.
+
+Scoped file-based exchange (`governance/specs/R33-cross-vm-safety-quorum.md`): a proposing host writes a VoteRequest, peer hosts vote by writing a VoteResponse, and `check` aggregates `.vote` files with a pure strict-majority + attestation- consistency check. Voter identity is the R31 extended-TCB `axtcb1-ext:` digest (or a clearly-labeled CI mock identity under `AXON_CI_NO_KVM=1`).
+
+Usage: axon-vm quorum <COMMAND>
+
+Commands:
+  propose  Propose an action for cross-VM quorum approval
+  vote     Vote (approve/deny) on a received VoteRequest
+  check    Collect `.vote` response files from a directory and check strict-majority quorum
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+--- stderr ---
+

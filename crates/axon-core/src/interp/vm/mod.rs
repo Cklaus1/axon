@@ -31,10 +31,19 @@ mod pure;
 mod purefn;
 pub(in crate::interp) use purefn::{PFrame, PureSlot};
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
 
 pub(super) use compile::compile;
 use pure::{PureExpr, PureLoop, PureOp};
+
+/// The taint every binding write of the VM carries, and the `T` of the
+/// `Bindings` `_t::<T>` writers it calls. The VM never runs a sealed body
+/// (R51 §4 Fork 1: a sealed run is pinned to the tree engine, and the compile
+/// is refused under `seal.active`), so a frame it runs on has no taint store:
+/// its writers compile to the store-less code alone, with no branch on the
+/// store (R50's call-path budget), and `exec_on` asserts the store is absent.
+const VM_TAINT: u8 = 0;
+const VM_SEALED: bool = false;
 
 /// Which engine runs fn bodies. Chosen once per `Interp` (spec §4 Activation).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,23 +88,109 @@ pub fn set_engine(engine: Engine) {
     ENGINE_OVERRIDE.store(code, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// The engine an `Interp` being built runs with: [`set_engine`]'s choice, else
-/// `AXON_ENGINE`, else [`Engine::DEFAULT`]. An invalid `AXON_ENGINE` prints the
-/// spec §3 message and exits 2. `Interp::build` runs before any of the
-/// program does, under every entry (`axon run`, `axon-run`, `axon test`,
-/// `axon goal`), so this is the one place that check needs.
-pub(super) fn engine_at_build() -> Engine {
-    match ENGINE_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed) {
-        1 => return Engine::Tree,
-        2 => return Engine::Vm,
-        _ => {}
+/// Why an `Interp` is not built (R51 §4 Fork 1): the engine selection refused
+/// the run. Its `Display` is the message the CLI prints before exiting 2.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EngineRefusal {
+    /// A sealed run on a build whose runtime seal is incomplete
+    /// ([`SEALED_RUN_REFUSED`]).
+    SealIncomplete,
+    /// A sealed run with the VM requested, by `AXON_ENGINE=vm` or
+    /// [`set_engine`] ([`SEALED_RUN_VM_REFUSED`]).
+    SealedVm,
+    /// An `AXON_ENGINE` value that is neither `vm` nor `tree` (R50 §3).
+    Invalid(String),
+}
+
+impl std::fmt::Display for EngineRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EngineRefusal::SealIncomplete => f.write_str(SEALED_RUN_REFUSED),
+            EngineRefusal::SealedVm => f.write_str(SEALED_RUN_VM_REFUSED),
+            EngineRefusal::Invalid(msg) => f.write_str(msg),
+        }
     }
-    match std::env::var_os("AXON_ENGINE") {
-        None => Engine::DEFAULT,
-        Some(raw) => Engine::parse(&raw.to_string_lossy()).unwrap_or_else(|msg| {
+}
+
+/// The engine selection (R50 §3, R51 §4 Fork 1), as a pure function of its
+/// inputs: whether the run is `sealed`, whether this build's runtime seal is
+/// `complete`, [`set_engine`]'s choice and the `AXON_ENGINE` value.
+///
+/// A sealed run is decided first, so neither the override nor the variable
+/// can skip it: refused while the seal is incomplete, refused when the VM is
+/// requested (either way), refused on an invalid value, else the tree. No
+/// sealed run gets the VM, and an unset `AXON_ENGINE` (the production
+/// sealed child clears its environment) means the tree, not
+/// [`Engine::DEFAULT`]. An unsealed run: the override, else the variable,
+/// else [`Engine::DEFAULT`].
+pub(crate) fn engine_for(
+    sealed: bool,
+    complete: bool,
+    override_: Option<Engine>,
+    env: Option<&std::ffi::OsStr>,
+) -> Result<Engine, EngineRefusal> {
+    if let Some(pinned) = seal_engine_pin(sealed, complete, override_, env)? {
+        return Ok(pinned);
+    }
+    if let Some(engine) = override_ {
+        return Ok(engine);
+    }
+    Ok(env
+        .map(parse_engine)
+        .transpose()?
+        .unwrap_or(Engine::DEFAULT))
+}
+
+/// An `AXON_ENGINE` value as [`engine_for`] reads it.
+fn parse_engine(raw: &std::ffi::OsStr) -> Result<Engine, EngineRefusal> {
+    Engine::parse(&raw.to_string_lossy()).map_err(EngineRefusal::Invalid)
+}
+
+/// The seal pin, [`engine_for`]'s sealed half (R51 §4 Fork 1): `Ok(None)` for
+/// an unsealed run, which the pin leaves to R50 §3's selection; for a sealed
+/// run the refusal, or `Ok(Some(Engine::Tree))`, never the VM. Named so the
+/// refusal-coverage gate's `SEAL_FN` scans it (spec §8 T7).
+fn seal_engine_pin(
+    sealed: bool,
+    complete: bool,
+    override_: Option<Engine>,
+    env: Option<&std::ffi::OsStr>,
+) -> Result<Option<Engine>, EngineRefusal> {
+    if !sealed {
+        return Ok(None);
+    }
+    if !complete {
+        return Err(EngineRefusal::SealIncomplete);
+    }
+    if override_ == Some(Engine::Vm) {
+        return Err(EngineRefusal::SealedVm);
+    }
+    match env.map(parse_engine).transpose()? {
+        Some(Engine::Vm) => Err(EngineRefusal::SealedVm),
+        None | Some(Engine::Tree) => Ok(Some(Engine::Tree)),
+    }
+}
+
+/// The engine an `Interp` being built runs with: [`engine_for`] over the live
+/// inputs ([`set_engine`]'s choice, `AXON_ENGINE`, [`SEAL_RUNTIME_COMPLETE`]).
+/// A sealed run's refusal is returned, for the run entry to report; an
+/// unsealed run's invalid `AXON_ENGINE` prints the R50 §3 message and exits
+/// 2. `Interp::build` runs before any of the program does, under every entry
+/// (`axon run`, `axon-run`, `axon test`, `axon goal`), so this is the one
+/// place that check needs.
+pub(super) fn engine_at_build(sealed: bool) -> Result<Engine, EngineRefusal> {
+    let override_ = match ENGINE_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => Some(Engine::Tree),
+        2 => Some(Engine::Vm),
+        _ => None,
+    };
+    let env = std::env::var_os("AXON_ENGINE");
+    match engine_for(sealed, SEAL_RUNTIME_COMPLETE, override_, env.as_deref()) {
+        Err(EngineRefusal::Invalid(msg)) if !sealed => {
             eprintln!("{msg}");
             std::process::exit(2)
-        }),
+        }
+        selected => selected,
     }
 }
 
@@ -943,7 +1038,7 @@ fn pop(st: &mut Vec<Value>) -> Value {
 /// int is a no-op, so this skips only the drop glue.
 #[inline(always)]
 fn store(env: &mut Env, var: &Var<'_>, v: Value) -> Result<(), Flow> {
-    match env.get_var_mut(var.s, var.slot) {
+    match env.get_var_mut_t::<VM_SEALED>(var.s, var.slot, VM_TAINT) {
         Some(b) => {
             match (b, v) {
                 (Value::Int(d), Value::Int(n)) => *d = n,
@@ -980,7 +1075,7 @@ fn pop_scope(env: &mut Env, scopes: &mut u32) {
     let Some(n) = scopes.checked_sub(1) else {
         malformed()
     };
-    env.pop();
+    env.pop_t::<VM_SEALED>();
     *scopes = n;
 }
 
@@ -998,7 +1093,7 @@ fn for_bounds(st: &[Value]) -> (i64, i64) {
 #[inline(always)]
 fn for_enter(env: &mut Env, scopes: &mut u32, var: &Var<'_>, i: i64, scoped: bool) {
     env.push();
-    env.define_var(var.s, var.slot, Value::Int(i));
+    env.define_var_t::<VM_SEALED>(var.s, var.slot, Value::Int(i), VM_TAINT);
     *scopes += 1;
     if scoped {
         env.push();
@@ -1012,19 +1107,7 @@ fn for_enter(env: &mut Env, scopes: &mut u32, var: &Var<'_>, i: i64, scoped: boo
 /// at the slot `define_var` would bind it to. `false` (nothing done) else.
 #[inline(always)]
 fn for_rebind(env: &mut Env, var: &Var<'_>, i: i64) -> bool {
-    let Some(&m) = env.marks.last() else {
-        return false;
-    };
-    if env.vars.len() != m + 1 || var.slot as usize != m {
-        return false;
-    }
-    match env.vars.last_mut() {
-        Some((s, Value::Int(n))) if *s == var.s => {
-            *n = i;
-            true
-        }
-        _ => false,
-    }
+    env.rebind_loop_int_t::<VM_SEALED>(var.s, var.slot, i, VM_TAINT)
 }
 
 /// `l op r` without building an [`Operand`]: when both operands are ints and
@@ -1135,7 +1218,7 @@ pub(super) fn float_fast(op: &BinOp, a: f64, b: f64) -> Option<Scalar> {
 /// int or a float over a float is written in place.
 #[inline(always)]
 fn store_scalar(env: &mut Env, var: &Var<'_>, s: Scalar) -> Result<(), Flow> {
-    match env.get_var_mut(var.s, var.slot) {
+    match env.get_var_mut_t::<VM_SEALED>(var.s, var.slot, VM_TAINT) {
         Some(b) => {
             match (b, s) {
                 (Value::Int(d), Scalar::Int(n)) => *d = n,
@@ -1234,7 +1317,8 @@ fn index_fast(env: &Env, arr: &Var<'_>, idx: &Opnd<'_>) -> Option<Value> {
 /// case, nothing written.
 #[inline(always)]
 fn write_index_unique(env: &mut Env, base: &Var<'_>, i: usize, v: Value) -> Option<Value> {
-    let Some(Value::Array(items)) = env.get_var_mut(base.s, base.slot) else {
+    let Some(Value::Array(items)) = env.get_var_mut_t::<VM_SEALED>(base.s, base.slot, VM_TAINT)
+    else {
         return Some(v);
     };
     match Rc::get_mut(items) {
@@ -1286,6 +1370,19 @@ fn write_place_op(
 }
 
 impl<'p> Interp<'p> {
+    /// Whether this run executes on the VM: the engine [`engine_for`] chose
+    /// at build, which the seal pin never makes [`Engine::Vm`] for a sealed
+    /// run. The one read of `Interp::engine`: every engine gate
+    /// ([`Interp::run_body`], [`Interp::run_test_body`], [`Interp::run_lambda`],
+    /// `fold_leaf`) and the trace consult it (spec §8 T1d), so a sealed run
+    /// enters no VM path. Named so the refusal-coverage gate's `SEAL_FN` scans
+    /// it (spec §8 T7); inlined, so each gate's test is the field compare it
+    /// was.
+    #[inline(always)]
+    pub(super) fn seal_pin_vm(&self) -> bool {
+        self.engine == Engine::Vm
+    }
+
     /// Run a fn body: compiled under [`Engine::Vm`] for a fn-table entry, on
     /// the tree otherwise. `call_fn_in` is the only caller, at the point where
     /// it would evaluate `entry.def.body`; everything before and after the
@@ -1294,7 +1391,7 @@ impl<'p> Interp<'p> {
     /// the VM's, is not on the tree's), while both charge the same budget.
     #[inline(always)]
     pub(super) fn run_body(&self, entry: &FnEntry<'_>, env: &mut Env) -> R {
-        if self.engine == Engine::Vm {
+        if self.seal_pin_vm() {
             self.run_body_vm(entry, env)
         } else {
             self.run_body_tree(entry, env)
@@ -1331,6 +1428,34 @@ impl<'p> Interp<'p> {
             Some(body) if !body.lone_tree() => self.exec(body, env),
             _ => self.eval(&entry.def.body, env),
         }
+    }
+
+    /// [`Interp::run_body`] for the `@[test]` frame (`call_fn_in_general`):
+    /// the same engine and first-entry choice, but a `return` or `?` out of
+    /// the body stays `Err(Flow::Return(v))` on both engines (the VM's
+    /// [`Interp::exec`] ends it as `Ok(v)`), so the test runner can tell a
+    /// body that ran to its end from one that ended early (`TestEnd`). A
+    /// compiled body with its own `return` ([`Op::Return`], which ends the op
+    /// loop as `Ok(v)` even under [`Interp::exec_raw`]) runs on the tree: the
+    /// eager VM read an early `return None` as a completion
+    /// (S7-UnsealedParity-8). Once per test, so off the call path.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn run_test_body(&self, entry: &FnEntry<'_>, env: &mut Env) -> R {
+        nest_guard!(self, RUN_TEST_BODY);
+        if self.seal_pin_vm() {
+            let body = match entry.compiled.as_ref().and_then(std::cell::OnceCell::get) {
+                Some(body) => Some(body),
+                None if !self.first_entry_on_tree(entry) => self.compile_body(entry)?,
+                None => None,
+            };
+            if let Some(body) = body.filter(|body| {
+                !body.lone_tree() && !body.ops.iter().any(|op| matches!(op, Op::Return))
+            }) {
+                return self.exec_raw(body, env);
+            }
+        }
+        self.eval(&entry.def.body, env)
     }
 
     /// Compile a fn-table body on the entry that compiles it (S9's second
@@ -1396,7 +1521,7 @@ impl<'p> Interp<'p> {
     /// (AX-56, as [`Interp::run_body`] for fn bodies).
     #[inline(always)]
     pub(super) fn run_lambda(&self, code: &ClosureCode, env: &mut Env) -> R {
-        if self.engine == Engine::Vm {
+        if self.seal_pin_vm() {
             match code.compiled.as_ref() {
                 Some(lb) => {
                     let body = match lb.compiled() {
@@ -1485,6 +1610,17 @@ impl<'p> Interp<'p> {
     /// does not pay a call into it (cost only).
     #[inline(always)]
     pub(super) fn exec(&self, body: &Body<'_>, env: &mut Env) -> R {
+        match self.exec_raw(body, env) {
+            Err(Flow::Return(v)) => Ok(v),
+            out => out,
+        }
+    }
+
+    /// [`Interp::exec`] without ending a `Flow::Return(v)` at the body: the
+    /// `@[test]` frame's body ([`Interp::run_test_body`]) keeps it, as the
+    /// tree-walker's body does.
+    #[inline(always)]
+    fn exec_raw(&self, body: &Body<'_>, env: &mut Env) -> R {
         // A pooled frame's stack keeps the capacity it grew to; a new one
         // starts at the body's height so it does not regrow while the body
         // runs.
@@ -1510,7 +1646,7 @@ impl<'p> Interp<'p> {
             out = self.run(body, env, &mut st, &mut scopes, &mut pc);
         }
         for _ in 0..scopes {
-            env.pop();
+            env.pop_t::<VM_SEALED>();
         }
         if st.capacity() <= 4096 {
             if !st.is_empty() {
@@ -1524,10 +1660,7 @@ impl<'p> Interp<'p> {
                 std::mem::forget(old);
             }
         }
-        match out {
-            Err(Flow::Return(v)) => Ok(v),
-            out => out,
-        }
+        out
     }
 
     /// [`Interp::exec`] for a fast call (S5): the body runs on the caller's
@@ -1540,6 +1673,7 @@ impl<'p> Interp<'p> {
     /// dropped here, as `exec` drops them when it clears its stack).
     #[inline(always)]
     fn exec_on(&self, body: &Body<'_>, env: &mut Env, st: &mut Vec<Value>) -> R {
+        debug_assert!(!env.has_store(), "a VM activation on a sealed run's frame");
         let base = st.len();
         let mut scopes = 0u32;
         let mut pc = 0usize;
@@ -1559,7 +1693,7 @@ impl<'p> Interp<'p> {
             out = self.run(body, env, st, &mut scopes, &mut pc);
         }
         for _ in 0..scopes {
-            env.pop();
+            env.pop_t::<VM_SEALED>();
         }
         if st.len() > base {
             st.truncate(base);
@@ -1601,7 +1735,7 @@ impl<'p> Interp<'p> {
             (l.cont_scopes, l.cont)
         };
         while *scopes > keep {
-            env.pop();
+            env.pop_t::<VM_SEALED>();
             *scopes -= 1;
         }
         st.truncate(base + l.height as usize);
@@ -1848,7 +1982,14 @@ impl<'p> Interp<'p> {
                         // The arguments stay on the stack: a call that binds
                         // them to a fn's parameters moves them from there.
                         let argv = StackTail { st: &mut *st, at };
-                        self.dispatch_named(callee.name, callee.s, callee.slot, argv, *tier, env)
+                        self.dispatch_named::<VM_SEALED>(
+                            callee.name,
+                            callee.s,
+                            callee.slot,
+                            argv,
+                            *tier,
+                            env,
+                        )
                     };
                     st.push(tri!(v));
                 }
@@ -1913,7 +2054,7 @@ impl<'p> Interp<'p> {
                         Some(v) => v,
                         None => tri!(self.index_local_slow(arr, idx, env)),
                     };
-                    env.define_var(var.s, var.slot, v);
+                    env.define_var_t::<VM_SEALED>(var.s, var.slot, v, VM_TAINT);
                 }
                 Op::WriteIndexIndex {
                     base,
@@ -2004,7 +2145,7 @@ impl<'p> Interp<'p> {
                 }
                 Op::Define(var) => {
                     let v = pop(st);
-                    env.define_var(var.s, var.slot, v);
+                    env.define_var_t::<VM_SEALED>(var.s, var.slot, v, VM_TAINT);
                 }
                 Op::Drop => drop(pop(st)),
                 Op::ForTest {
@@ -2056,11 +2197,20 @@ impl<'p> Interp<'p> {
                 Op::Tree(e) => st.push(tri!(self.eval(e, env))),
                 Op::Let { var, ty } => {
                     let v = pop(st);
-                    tri!(self.bind_let(var.name, var.s, var.slot, Some(ty), v, env));
+                    tri!(self.bind_let::<VM_SEALED>(
+                        var.name,
+                        var.s,
+                        var.slot,
+                        Some(ty),
+                        v,
+                        VM_TAINT,
+                        env
+                    ));
                 }
                 Op::AssignInPlace { var, value, done } => {
                     if appendable(env, var)
-                        && tri!(self.assign_in_place(var.s, var.slot, var.name, value, env))
+                        && tri!(self
+                            .assign_in_place::<VM_SEALED>(var.s, var.slot, var.name, value, env))
                     {
                         pc = *done as usize;
                     }
@@ -2238,7 +2388,7 @@ impl<'p> Interp<'p> {
                         *scopes += 1;
                     }
                     let Some(v) = st.last() else { malformed() };
-                    if !tri!(self.match_pattern(pat, v, env)) {
+                    if !tri!(self.match_pattern::<VM_SEALED>(pat, v, env, VM_TAINT)) {
                         if *scoped {
                             pop_scope(env, scopes);
                         }
@@ -2277,7 +2427,7 @@ impl<'p> Interp<'p> {
                         env.push();
                         *scopes += 1;
                     }
-                    if tri!(self.match_pattern(pat, &v, env)) {
+                    if tri!(self.match_pattern::<VM_SEALED>(pat, &v, env, VM_TAINT)) {
                         if *body {
                             env.push();
                             *scopes += 1;
@@ -2301,7 +2451,7 @@ impl<'p> Interp<'p> {
                 Op::MethodRecv { method, args, done } => {
                     if let Some(Value::Chan(_)) = st.last() {
                         let Value::Chan(q) = pop(st) else { malformed() };
-                        st.push(tri!(self.chan_method(&q, method, args, env)));
+                        st.push(tri!(self.chan_method::<VM_SEALED>(&q, method, args, env)));
                         pc = *done as usize;
                     }
                 }
@@ -2358,7 +2508,7 @@ impl<'p> Interp<'p> {
         nest_guard!(self, STORE_BIN_SLOW);
         if let Some(value) = in_place {
             if appendable(env, var)
-                && self.assign_in_place(var.s, var.slot, var.name, value, env)?
+                && self.assign_in_place::<VM_SEALED>(var.s, var.slot, var.name, value, env)?
             {
                 return Ok(());
             }
@@ -2449,7 +2599,7 @@ impl<'p> Interp<'p> {
     /// `globals`, so `name[i]` reads it in place.
     #[inline(always)]
     fn bound_in_place(&self, var: &Var<'_>, env: &Env) -> bool {
-        env.get_var(var.s, var.slot).is_some() || self.globals.contains_key(&var.s)
+        env.get_var(var.s, var.slot).is_some() || self.is_global(var.s)
     }
 
     /// The value an inline operand evaluates to, as `eval` evaluates its
@@ -2647,7 +2797,7 @@ impl<'p> Interp<'p> {
             malformed()
         };
         let argv = StackTail { st, at };
-        self.dispatch_named(callee.name, callee.s, callee.slot, argv, None, env)
+        self.dispatch_named::<VM_SEALED>(callee.name, callee.s, callee.slot, argv, None, env)
     }
 
     /// [`Op::CallFast`] once proven (spec §4 S5): `call_fn_entry` →
@@ -2683,13 +2833,21 @@ impl<'p> Interp<'p> {
                     arity_mismatch(entry.def, argc)
                 } else {
                     let env = &mut *frame;
-                    debug_assert!(env.vars.is_empty() && env.marks.is_empty());
+                    debug_assert!(env.is_fresh());
                     if argc == 1 {
                         let a = pop(st);
-                        env.vars.push((entry.params[0], param_value(entry, 0, a)));
+                        env.push_var_t::<VM_SEALED>(
+                            entry.params[0],
+                            param_value::<VM_SEALED>(entry, 0, a),
+                            VM_TAINT,
+                        );
                     } else {
                         for (i, a) in st.drain(at..).enumerate() {
-                            env.vars.push((entry.params[i], param_value(entry, i, a)));
+                            env.push_var_t::<VM_SEALED>(
+                                entry.params[i],
+                                param_value::<VM_SEALED>(entry, i, a),
+                                VM_TAINT,
+                            );
                         }
                     }
                     self.fast_body(entry, env, st)
@@ -2700,7 +2858,7 @@ impl<'p> Interp<'p> {
                 Err(flow)
             }
         };
-        self.give_frame(frame);
+        self.give_frame_t::<VM_SEALED>(frame);
         if let Some(prev) = replay {
             self.pure_replay.set(prev);
         }
@@ -2732,12 +2890,16 @@ impl<'p> Interp<'p> {
         let mut frame = self.take_frame();
         let out = match self.enter_fn(entry.def) {
             Ok(_guard) => {
-                frame.vars.push((entry.params[0], param_value(entry, 0, a)));
+                frame.push_var_t::<VM_SEALED>(
+                    entry.params[0],
+                    param_value::<VM_SEALED>(entry, 0, a),
+                    VM_TAINT,
+                );
                 self.fast_body(entry, &mut frame, st)
             }
             Err(flow) => Err(flow),
         };
-        self.give_frame(frame);
+        self.give_frame_t::<VM_SEALED>(frame);
         if let Some(prev) = prev {
             self.pure_replay.set(prev);
         }
@@ -2872,7 +3034,7 @@ impl<'p> Interp<'p> {
                     None => match self.ident_unbound(var.name, var.s) {
                         Ok(v) => v,
                         Err(flow) => {
-                            self.give_frame(frame);
+                            self.give_frame_t::<VM_SEALED>(frame);
                             return Err(flow);
                         }
                     },
@@ -2882,14 +3044,14 @@ impl<'p> Interp<'p> {
                 Opnd::Const(v) => v.clone(),
                 Opnd::Stack => malformed(),
             };
-            frame.vars.push((p, param_value(entry, i, v)));
+            frame.push_var_t::<VM_SEALED>(p, param_value::<VM_SEALED>(entry, i, v), VM_TAINT);
         }
         self.set_call_tier(None);
         let out = match self.enter_fn(entry.def) {
             Ok(_guard) => self.fast_body(entry, &mut frame, st),
             Err(flow) => Err(flow),
         };
-        self.give_frame(frame);
+        self.give_frame_t::<VM_SEALED>(frame);
         out
     }
 
@@ -2927,7 +3089,7 @@ impl<'p> Interp<'p> {
                 Opnd::Const(v) => v.clone(),
                 Opnd::Stack => malformed(),
             };
-            Some(param_value(entry, k, a))
+            Some(param_value::<VM_SEALED>(entry, k, a))
         };
         // Every argument must be bound, read or not.
         for a in args {
@@ -2960,8 +3122,22 @@ impl<'p> Interp<'p> {
             },
             _ => return None,
         };
+        if ret_needs_check(&v) {
+            return self.leaf_return_checked(entry, v);
+        }
         self.set_call_tier(None);
-        Some(scalar_return(entry, v))
+        Some(v)
+    }
+
+    /// [`Interp::leaf_call`]'s end for a result the return boundary can ask
+    /// something of ([`sum_return`]): out of line, so the common result
+    /// (anything else) never joins this path (cost only, R51 S0b). A
+    /// confused `Result`/`Option` declines: the full path refuses it.
+    #[inline(never)]
+    fn leaf_return_checked(&self, entry: &FnEntry<'p>, v: Value) -> Option<Value> {
+        let v = sum_return(entry, v).ok()?;
+        self.set_call_tier(None);
+        Some(v)
     }
 
     /// The rest of a fast call once the parameters are bound, as
@@ -2975,24 +3151,26 @@ impl<'p> Interp<'p> {
             // A leaf body never sees `goal_met` (it declines one that names
             // it), so it is not bound for one (cost only).
             Some(body) if !body.lone_tree() => match body.leaf_value(env, true) {
-                Some(v) => return Ok(scalar_return(entry, v)),
+                Some(v) => return sum_return(entry, v),
                 None => match self.leaf_store(body, env) {
                     Some(out) => out,
                     None => {
                         // `goal_met` follows the parameters, as in `call_fn_common`.
-                        env.vars.push((SYM_GOAL_MET, Value::Int(0)));
+                        env.push_var_t::<VM_SEALED>(SYM_GOAL_MET, Value::Int(0), VM_TAINT);
                         self.exec_on(body, env, st)
                     }
                 },
             },
             _ => {
-                env.vars.push((SYM_GOAL_MET, Value::Int(0)));
+                env.push_var_t::<VM_SEALED>(SYM_GOAL_MET, Value::Int(0), VM_TAINT);
                 self.run_body(entry, env)
             }
         };
         match out {
-            Ok(v) | Err(Flow::Return(v)) => Ok(scalar_return(entry, v)),
-            Err(other) => Err(other),
+            Ok(v) | Err(Flow::Return(v)) => sum_return(entry, v),
+            // Loop control never crosses a function boundary (as
+            // `call_fn_common`): every fast call ends here.
+            Err(other) => Err(frame_edge(other, FrameEdge::Fn(&entry.def.name))),
         }
     }
 
@@ -3045,7 +3223,7 @@ impl<'p> Interp<'p> {
             return self.call_mut_general(entry, arg_nodes, args, tier.as_deref(), env, st, at);
         }
         let mut frame = self.take_frame();
-        frame.vars.reserve(argc + 1);
+        frame.reserve_t::<VM_SEALED>(argc + 1);
         let mut next_plain = at;
         for (i, o) in args.iter().enumerate() {
             let v = match o {
@@ -3064,7 +3242,7 @@ impl<'p> Interp<'p> {
                     None => match self.ident_unbound(var.name, var.s) {
                         Ok(v) => v,
                         Err(flow) => {
-                            self.give_frame(frame);
+                            self.give_frame_t::<VM_SEALED>(frame);
                             return Err(flow);
                         }
                     },
@@ -3072,12 +3250,16 @@ impl<'p> Interp<'p> {
                 o => match self.opnd_value(o, env) {
                     Ok(v) => v,
                     Err(flow) => {
-                        self.give_frame(frame);
+                        self.give_frame_t::<VM_SEALED>(frame);
                         return Err(flow);
                     }
                 },
             };
-            frame.vars.push((entry.params[i], param_value(entry, i, v)));
+            frame.push_var_t::<VM_SEALED>(
+                entry.params[i],
+                param_value::<VM_SEALED>(entry, i, v),
+                VM_TAINT,
+            );
         }
         // Every stack argument moved out, leaving a `Unit`: nothing to drop.
         while st.len() > at {
@@ -3086,19 +3268,20 @@ impl<'p> Interp<'p> {
         // Each `&mut` position holds a `Unit` placeholder until its
         // borrowed binding moves in.
         for r in refs {
-            let Some(b) = env.get_var_mut(r.var.s, r.var.slot) else {
-                self.give_frame(frame);
+            let Some(b) = env.get_var_mut_t::<VM_SEALED>(r.var.s, r.var.slot, VM_TAINT) else {
+                self.give_frame_t::<VM_SEALED>(frame);
                 let name = r.var.name;
                 return panic(format!("`&mut {name}`: `{name}` is not a local variable"));
             };
-            let v = param_value(entry, r.arg as usize, std::mem::replace(b, Value::Unit));
-            forget_scalar(std::mem::replace(&mut frame.vars[r.arg as usize].1, v));
+            let v =
+                param_value::<VM_SEALED>(entry, r.arg as usize, std::mem::replace(b, Value::Unit));
+            forget_scalar(frame.replace_t::<VM_SEALED>(r.arg as usize, v, VM_TAINT));
         }
         self.set_call_tier(tier.as_deref());
         let result = match self.enter_fn(entry.def) {
             Ok(_guard) => self.fast_body(entry, &mut frame, st),
             Err(flow) => {
-                self.give_frame(frame);
+                self.give_frame_t::<VM_SEALED>(frame);
                 return Err(flow);
             }
         };
@@ -3106,21 +3289,25 @@ impl<'p> Interp<'p> {
         // `goal_met` alone (param `i` at slot `i`; a leaf body binds no
         // `goal_met`) unless a `define` at the base scope added a binding;
         // then the name lookup finds it as `call_mut_with`'s does.
-        let exact = frame.vars.len() <= argc + 1;
+        let exact = frame.len() <= argc + 1;
         for r in refs {
             let out = match r.back {
-                true if exact => std::mem::replace(&mut frame.vars[r.arg as usize].1, Value::Unit),
-                true => match frame.get_mut(entry.params[r.arg as usize]) {
-                    Some(v) => std::mem::replace(v, Value::Unit),
-                    None => Value::Unit,
-                },
+                true if exact => {
+                    frame.replace_t::<VM_SEALED>(r.arg as usize, Value::Unit, VM_TAINT)
+                }
+                true => {
+                    match frame.get_mut_t::<VM_SEALED>(entry.params[r.arg as usize], VM_TAINT) {
+                        Some(v) => std::mem::replace(v, Value::Unit),
+                        None => Value::Unit,
+                    }
+                }
                 false => Value::Unit,
             };
-            if let Some(b) = env.get_var_mut(r.var.s, r.var.slot) {
+            if let Some(b) = env.get_var_mut_t::<VM_SEALED>(r.var.s, r.var.slot, VM_TAINT) {
                 forget_scalar(std::mem::replace(b, out));
             }
         }
-        self.give_frame(frame);
+        self.give_frame_t::<VM_SEALED>(frame);
         result
     }
 
@@ -3258,7 +3445,8 @@ impl<'p> Interp<'p> {
                 None => return false,
             }
         }
-        let Some(Value::Array(items)) = env.get_var_mut(m.arr.0, m.arr.1) else {
+        let Some(Value::Array(items)) = env.get_var_mut_t::<VM_SEALED>(m.arr.0, m.arr.1, VM_TAINT)
+        else {
             return false;
         };
         let Some(items) = Rc::get_mut(items) else {
@@ -3341,7 +3529,7 @@ impl<'p> Interp<'p> {
     /// `vm: tree <name>: <reason>` under `AXON_ENGINE=vm AXON_VM_TRACE=1`: a
     /// whole fn body runs on the tree-walker.
     pub(super) fn vm_trace_tree(&self, entry: &FnEntry<'_>, reason: &str) {
-        if self.engine == Engine::Vm && self.vm_trace {
+        if self.seal_pin_vm() && self.vm_trace {
             eprintln!("vm: tree {}: {reason}", self.vm_body_name(entry));
         }
     }

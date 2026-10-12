@@ -38,6 +38,27 @@
 //! "No authority basis was supplied" is not "the authority is current". Synthesising the second
 //! from the first is what turns an authority check into decoration.
 
+//!
+//! ## `--negotiate`: the closed-loop-profile/1 sidecar (B256)
+//!
+//! A separate, opt-in mode. It reads ONE `closed-loop-profile/1` offer on stdin
+//! and answers with what this build actually supports
+//! ([`LocalCapabilities::axon_v022`]) — never with what the offer claims, and
+//! never inferred from a document version:
+//!
+//! * exit 0, stdout = the canonical `role: accept` document;
+//! * exit 4, stdout = `{"unsupported": <code>, "reason": …}` — an EXPLICIT
+//!   Unsupported (an old peer's document, another profile version, no common
+//!   schema, an unmet requirement, a malformed or ambiguous offer). The caller
+//!   then keeps incumbent `protocol_version: 1` operation with its own authority;
+//!   nothing here widens or narrows the decision path;
+//! * exit 2, no stdout — nothing was negotiated (unreadable or oversize input).
+//!
+//! The decision wire (`protocol_version: 1`) is unchanged byte-for-byte, so an
+//! old client that never negotiates is served exactly as before, and an old
+//! ADAPTER, which rejects `--negotiate` as an unknown argument (exit 2), is
+//! recognisable to a new client as an old peer.
+
 use std::io::Read;
 
 use axon_cortex::action::{CheckRef, CompletionClaim, CortexAction, SymbolRef};
@@ -45,6 +66,52 @@ use axon_cortex::runner::{EditGrant, Refusal, Runner};
 use axon_cortex::WorkspaceSnapshot;
 
 const PROTOCOL_VERSION: u64 = 1;
+
+/// Same bound as a decision request: a profile offer is a few short id lists.
+const MAX_REQUEST: u64 = 1 << 20;
+
+/// Exit status of an explicit, decided Unsupported. Distinct from 2 (nothing
+/// decided) so a caller cannot mistake a broken adapter for a negotiated "no".
+const EXIT_UNSUPPORTED: i32 = 4;
+
+fn read_bounded_stdin() -> String {
+    let mut body = String::new();
+    if std::io::stdin()
+        .take(MAX_REQUEST + 1)
+        .read_to_string(&mut body)
+        .is_err()
+    {
+        fail("could not read the request");
+    }
+    if body.len() as u64 > MAX_REQUEST {
+        fail(&format!(
+            "request is larger than {MAX_REQUEST} bytes; an authority request \
+             is a handful of short fields and nothing was decided"
+        ));
+    }
+    body
+}
+
+/// `--negotiate`: see the module docs. Never reached with any other argument.
+fn negotiate_mode() -> ! {
+    use axon_loop_contracts::profile::{negotiate_wire, LocalCapabilities};
+    let body = read_bounded_stdin();
+    match negotiate_wire(Some(body.trim()), &LocalCapabilities::axon_v022()) {
+        Ok(accept) => {
+            let bytes = axon_loop_contracts::canonical_json(&accept.document)
+                .unwrap_or_else(|e| fail(&format!("could not encode the accept: {e}")));
+            println!("{}", String::from_utf8_lossy(&bytes));
+            std::process::exit(0)
+        }
+        Err(u) => {
+            println!(
+                "{}",
+                serde_json::json!({"unsupported": u.code(), "reason": u.to_string()})
+            );
+            std::process::exit(EXIT_UNSUPPORTED)
+        }
+    }
+}
 
 fn fail(reason: &str) -> ! {
     // Exit non-zero WITHOUT a decision. The client reads that as an infrastructure failure, which
@@ -55,7 +122,16 @@ fn fail(reason: &str) -> ! {
 }
 
 fn main() {
-    let mut args = std::env::args().skip(1);
+    // `--negotiate` is a mode, not a flag: alone, or it is a usage error. Mixing
+    // it with grant arguments would suggest the grant shapes the negotiation.
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    if argv.iter().any(|a| a == "--negotiate") {
+        if argv.len() != 1 {
+            fail("--negotiate takes no other arguments");
+        }
+        negotiate_mode();
+    }
+    let mut args = argv.into_iter();
     // No default. The module doc two screens up enumerates this exact class of
     // bug for the other two grant fields and concludes "Both now fail closed";
     // the THIRD field of the same grant still defaulted to `agent`, so a write
@@ -114,21 +190,7 @@ fn main() {
     // arbitrarily large one buffers it whole, and the failure mode is an
     // allocation abort — a non-2 exit with no decision and no message, which
     // is the one outcome this program is built to never produce.
-    const MAX_REQUEST: u64 = 1 << 20;
-    let mut body = String::new();
-    if std::io::stdin()
-        .take(MAX_REQUEST + 1)
-        .read_to_string(&mut body)
-        .is_err()
-    {
-        fail("could not read the request");
-    }
-    if body.len() as u64 > MAX_REQUEST {
-        fail(&format!(
-            "request is larger than {MAX_REQUEST} bytes; an authority request \
-             is a handful of short fields and nothing was decided"
-        ));
-    }
+    let body = read_bounded_stdin();
     // STRICTLY. This is the only place untrusted JSON enters the system, and
     // `parse_strict` exists for exactly it — yet it had no production caller
     // and this line used `serde_json` directly.

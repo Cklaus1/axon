@@ -15,12 +15,20 @@ compiler-verified.
 > boot cmdline, and **installs a real, policy-driven syscall gate** (a SYSCALL/SYSRET MSR
 > handler mapping syscalls→required effects). **It is the enforcer — not Linux.**
 >
-> **LIVE ENFORCEMENT IS DEMONSTRATED (`scripts/kernel_enforce_test.sh`).** K4/K5 launch the
-> program under the gate; the program's first effectful operation is a real `openat`
-> syscall, and end-to-end on real KVM: under an FS-withholding policy the hardware gate
-> **DENIES** it (`VIOLATION: syscall 257 blocked (FS not in policy)` → halt, exit code 8),
-> and under an FS-granting policy it **PERMITS** it (clean, no false violation). The gate is
-> policy-driven (allowed-effect bitmask shifts `0x1`/`0x3`/`0xff`).
+> **LIVE DENIAL IS DEMONSTRATED (`scripts/kernel_enforce_test.sh`); THE ALLOW PATH IS NOT
+> IMPLEMENTED.** K4/K5 launch the program under the gate; the program's first effectful
+> operation is a real `openat` syscall, and end-to-end on real KVM, under an FS-withholding
+> policy, the hardware gate **DENIES** it (`syscall-dispatch: nr=257` →
+> `VIOLATION: syscall 257 blocked (FS not in policy)` → halt, exit code 8). Under an
+> FS-granting policy the kernel does **NOT** issue the syscall at all: it reaches its grant
+> branch, prints `grant branch reached, no syscall issued (allow path deferred)` and halts
+> cleanly (`-EXIT0`). An earlier version of this page said the gate "PERMITS" the openat
+> there; that was false (FG-041 / F161) — the print was read as a permitted syscall that
+> never happened. The test now asserts the ABSENCE of any `syscall-dispatch:` line in that
+> case, so a clean `-EXIT0` under a granting policy is evidence only that the grant branch
+> was taken, not that any syscall was allowed through. The allow return path (dispatch → 0
+> → `sysretq` to ring 3) needs DPL-3 GDT segments that do not exist yet and is tracked
+> OPEN. The gate is policy-driven (allowed-effect bitmask shifts `0x1`/`0x3`/`0xff`).
 >
 > **Honest remaining gaps:** the demonstrating syscall is issued by the kernel (ring 0) at
 > the program's launch point, not yet by the interpreter as a ring-3 *user* program —
@@ -29,7 +37,8 @@ compiler-verified.
 > a machine-checked proof are also future work; "formally-verified" remains the design
 > target. (A seccomp-BPF allowlist exists as a secondary layer.) **Net: the gate provably
 > denies a real syscall by policy, live, on hardware — what's left is running the full
-> interpreter as a confined user process.**
+> interpreter as a confined user process, and the allow path (a granted syscall returning
+> to its caller via `sysretq`), which has never executed.**
 
 ## Why
 

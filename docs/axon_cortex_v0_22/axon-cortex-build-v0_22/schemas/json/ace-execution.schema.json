@@ -1,0 +1,1221 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:axon:ace-projection:1",
+  "title": "Bounded Axon ACE owner record projection; validation is not authority",
+  "$defs": {
+    "candidate": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "value_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "id",
+        "description",
+        "value_ref"
+      ],
+      "additionalProperties": false
+    },
+    "level": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "value": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "probability": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "p": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "required": [
+        "id",
+        "p"
+      ],
+      "additionalProperties": false
+    },
+    "feature": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "Supported",
+            "Unsupported",
+            "Unknown",
+            "Emulated"
+          ]
+        },
+        "evidence_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "emulation_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "evidence_ref",
+        "emulation_ref"
+      ],
+      "additionalProperties": false
+    },
+    "uncertainty": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "Unavailable",
+            "Inapplicable",
+            "Estimated"
+          ]
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "event_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "domain_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "estimator_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "value",
+        "event_ref",
+        "domain_ref",
+        "estimator_ref",
+        "evidence_ref"
+      ],
+      "additionalProperties": false
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "origin": {
+          "enum": [
+            "ProviderReportedDistribution",
+            "NativeOptionLogit",
+            "LearnedDecisionHead",
+            "SequenceLikelihood",
+            "GeneratedEstimate",
+            "EnsembleEstimate"
+          ]
+        },
+        "producer_vocabulary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "producer_tag": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "mapping_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "computation_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "evidence_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "normalization_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "origin",
+        "producer_vocabulary",
+        "producer_tag",
+        "mapping_ref",
+        "computation_ref",
+        "evidence_ref",
+        "normalization_ref"
+      ],
+      "additionalProperties": false
+    },
+    "PhysicalExecutionProfile": {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "const": "axon.ace-projection/1"
+        },
+        "record_type": {
+          "const": "PhysicalExecutionProfile"
+        },
+        "mapping_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "air_node_kind": {
+          "enum": [
+            "Decide",
+            "Generate",
+            "Rule"
+          ]
+        },
+        "cognitive_class": {
+          "enum": [
+            "REFLEX",
+            "GENERATE",
+            "RULE"
+          ]
+        },
+        "operation_kind": {
+          "enum": [
+            "DECIDE",
+            "TRANSFORM",
+            "PROJECT"
+          ]
+        },
+        "capability_class": {
+          "enum": [
+            "GENERAL_REFLEX",
+            "SPECIALIZED_REFLEX",
+            "GENERATE",
+            "NEURAL_PROGRAM",
+            "RULE"
+          ]
+        },
+        "physical_mechanism": {
+          "enum": [
+            "structured_generation",
+            "validated_text",
+            "candidate_token_scoring",
+            "sequence_scoring",
+            "learned_head",
+            "learned_function",
+            "deterministic_projection"
+          ]
+        },
+        "deployment_mode": {
+          "enum": [
+            "Embedded",
+            "LocalSidecar",
+            "RemoteService"
+          ]
+        },
+        "semantic_contract_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "capability_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "artifact_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "backend_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "effect_profile_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "mapping_revision": {
+          "const": "axon.ace-vocabulary-map/1"
+        }
+      },
+      "required": [
+        "profile",
+        "record_type",
+        "mapping_id",
+        "air_node_kind",
+        "cognitive_class",
+        "operation_kind",
+        "capability_class",
+        "physical_mechanism",
+        "deployment_mode",
+        "semantic_contract_ref",
+        "capability_ref",
+        "artifact_ref",
+        "backend_ref",
+        "effect_profile_ref",
+        "mapping_revision"
+      ],
+      "additionalProperties": false
+    },
+    "BackendFeatureProjection": {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "const": "axon.ace-projection/1"
+        },
+        "record_type": {
+          "const": "BackendFeatureProjection"
+        },
+        "backend_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "deployment_mode": {
+          "enum": [
+            "Embedded",
+            "LocalSidecar",
+            "RemoteService"
+          ]
+        },
+        "mode": {
+          "enum": [
+            "Production",
+            "Research",
+            "Shadow",
+            "Canary"
+          ]
+        },
+        "snapshot_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "features": {
+          "type": "object",
+          "properties": {
+            "Choice": {
+              "$ref": "#/$defs/feature"
+            },
+            "BinaryProbability": {
+              "$ref": "#/$defs/feature"
+            },
+            "OrdinalDistribution": {
+              "$ref": "#/$defs/feature"
+            },
+            "dynamic_candidates": {
+              "$ref": "#/$defs/feature"
+            },
+            "complete_scores": {
+              "$ref": "#/$defs/feature"
+            },
+            "question_isolation": {
+              "$ref": "#/$defs/feature"
+            },
+            "batching": {
+              "$ref": "#/$defs/feature"
+            },
+            "native_state": {
+              "$ref": "#/$defs/feature"
+            },
+            "cancellation": {
+              "$ref": "#/$defs/feature"
+            },
+            "usage": {
+              "$ref": "#/$defs/feature"
+            },
+            "immutable_identity": {
+              "$ref": "#/$defs/feature"
+            }
+          },
+          "required": [
+            "Choice",
+            "BinaryProbability",
+            "OrdinalDistribution",
+            "dynamic_candidates",
+            "complete_scores",
+            "question_isolation",
+            "batching",
+            "native_state",
+            "cancellation",
+            "usage",
+            "immutable_identity"
+          ],
+          "additionalProperties": false
+        },
+        "max_candidates": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "profile",
+        "record_type",
+        "backend_ref",
+        "deployment_mode",
+        "mode",
+        "snapshot_ref",
+        "features",
+        "max_candidates",
+        "max_input_tokens"
+      ],
+      "additionalProperties": false
+    },
+    "DecisionRequest": {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "const": "axon.ace-projection/1"
+        },
+        "record_type": {
+          "const": "DecisionRequest"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "question_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "family": {
+          "enum": [
+            "Choice",
+            "BinaryProbability",
+            "OrdinalDistribution"
+          ]
+        },
+        "observation_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "working_set_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "effective_input_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "definition_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "candidate_policy_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "candidate_order_policy_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/candidate"
+          },
+          "maxItems": 512
+        },
+        "candidate_set_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "candidate_order_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "event_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "levels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/level"
+          },
+          "maxItems": 512
+        },
+        "requires_complete_scores": {
+          "type": "boolean"
+        },
+        "selection_policy": {
+          "enum": [
+            "provider_choice",
+            "argmax",
+            "distribution_only"
+          ]
+        },
+        "tie_rule": {
+          "enum": [
+            "first_declared",
+            "not_applicable"
+          ]
+        }
+      },
+      "required": [
+        "profile",
+        "record_type",
+        "request_id",
+        "operation_id",
+        "question_id",
+        "family",
+        "observation_ref",
+        "working_set_ref",
+        "effective_input_ref",
+        "definition_ref",
+        "candidate_policy_ref",
+        "candidate_order_policy_ref",
+        "candidates",
+        "candidate_set_digest",
+        "candidate_order_digest",
+        "event_ref",
+        "levels",
+        "requires_complete_scores",
+        "selection_policy",
+        "tie_rule"
+      ],
+      "additionalProperties": false
+    },
+    "DecisionResult": {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "const": "axon.ace-projection/1"
+        },
+        "record_type": {
+          "const": "DecisionResult"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "question_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "family": {
+          "enum": [
+            "Choice",
+            "BinaryProbability",
+            "OrdinalDistribution"
+          ]
+        },
+        "observation_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "effective_input_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "candidate_set_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "candidate_order_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "outcome": {
+          "enum": [
+            "Value",
+            "Abstained",
+            "Refused",
+            "Failed",
+            "Canceled",
+            "DeadlineExceeded",
+            "OutcomeUnknown",
+            "Unsupported"
+          ]
+        },
+        "absence_reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "selected_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "distribution": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/probability"
+              },
+              "maxItems": 512
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "probability": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "event_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "levels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/level"
+          },
+          "maxItems": 512
+        },
+        "expectation": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "score_completeness": {
+          "enum": [
+            "complete",
+            "partial",
+            "unavailable"
+          ]
+        },
+        "score_provenance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/provenance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "correctness": {
+          "$ref": "#/$defs/uncertainty"
+        },
+        "applicability_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ood_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "profile",
+        "record_type",
+        "request_id",
+        "operation_id",
+        "question_id",
+        "family",
+        "observation_ref",
+        "effective_input_ref",
+        "candidate_set_digest",
+        "candidate_order_digest",
+        "outcome",
+        "absence_reason",
+        "selected_id",
+        "distribution",
+        "probability",
+        "event_ref",
+        "levels",
+        "expectation",
+        "score_completeness",
+        "score_provenance",
+        "correctness",
+        "applicability_ref",
+        "ood_ref"
+      ],
+      "additionalProperties": false
+    },
+    "StateHandleReceipt": {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "const": "axon.ace-projection/1"
+        },
+        "record_type": {
+          "const": "StateHandleReceipt"
+        },
+        "kind": {
+          "enum": [
+            "native_state",
+            "observation"
+          ]
+        },
+        "reuse_mode": {
+          "enum": [
+            "actual",
+            "opportunistic",
+            "rematerialized",
+            "none",
+            "unknown"
+          ]
+        },
+        "epoch": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bindings": {
+          "type": "object",
+          "properties": {
+            "backend_instance": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "base": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "adapter": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "tokenizer": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "renderer": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "processor": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "position": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "attention": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "precision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "cache_policy": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "principal": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "project": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "observation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "working_set": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "effective_input": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "policy_generation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "lease": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          "required": [
+            "backend_instance",
+            "model",
+            "base",
+            "adapter",
+            "tokenizer",
+            "renderer",
+            "processor",
+            "position",
+            "attention",
+            "precision",
+            "cache_policy",
+            "principal",
+            "project",
+            "observation",
+            "working_set",
+            "effective_input",
+            "policy_generation",
+            "lease"
+          ],
+          "additionalProperties": false
+        },
+        "expiry_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "native_handle_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "profile",
+        "record_type",
+        "kind",
+        "reuse_mode",
+        "epoch",
+        "bindings",
+        "expiry_ref",
+        "native_handle_ref"
+      ],
+      "additionalProperties": false
+    },
+    "ExecutionAttemptEvent": {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "const": "axon.ace-projection/1"
+        },
+        "record_type": {
+          "const": "ExecutionAttemptEvent"
+        },
+        "root_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "attempt_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "parent_attempt_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "enum": [
+            "Start",
+            "Terminal",
+            "LateResult"
+          ]
+        },
+        "requested_producer_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "selected_producer_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "observed_producer_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "accepted_producer_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "effective_input_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "reservation_upper_bound": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "actual_cost": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "enum": [
+                "Value",
+                "Abstained",
+                "Refused",
+                "Failed",
+                "Canceled",
+                "DeadlineExceeded",
+                "OutcomeUnknown",
+                "Unsupported"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "committed": {
+          "type": "boolean"
+        },
+        "remote_status": {
+          "enum": [
+            "NotStarted",
+            "Finished",
+            "StopConfirmed",
+            "Unknown"
+          ]
+        }
+      },
+      "required": [
+        "profile",
+        "record_type",
+        "root_id",
+        "attempt_id",
+        "parent_attempt_id",
+        "kind",
+        "requested_producer_ref",
+        "selected_producer_ref",
+        "observed_producer_ref",
+        "accepted_producer_ref",
+        "effective_input_ref",
+        "reservation_upper_bound",
+        "actual_cost",
+        "outcome",
+        "result_ref",
+        "committed",
+        "remote_status"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/PhysicalExecutionProfile"
+    },
+    {
+      "$ref": "#/$defs/BackendFeatureProjection"
+    },
+    {
+      "$ref": "#/$defs/DecisionRequest"
+    },
+    {
+      "$ref": "#/$defs/DecisionResult"
+    },
+    {
+      "$ref": "#/$defs/StateHandleReceipt"
+    },
+    {
+      "$ref": "#/$defs/ExecutionAttemptEvent"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+{
+  "theme": "key and completion",
+  "text": "the raw key read is unix-only so the wasm32 build compiles: build fix"
+}

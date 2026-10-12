@@ -246,6 +246,11 @@ impl Fields {
         self.0.iter().map(|(k, v)| (*k, v))
     }
 
+    /// The fields in place (a cast converts or wraps a field's value).
+    pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = (Sym, &mut Value)> {
+        self.0.iter_mut().map(|(k, v)| (*k, v))
+    }
+
     /// The fields with their names, sorted by name: the order every
     /// renderer (display, literal form, shape, `SendValue`) uses.
     pub(crate) fn by_name(&self) -> Vec<(Rc<str>, &Value)> {
@@ -874,13 +879,12 @@ mod bounded_drop {
         }
     }
 
+    /// The capture cell is an `Rc` of its own (R51 Fork 3): its bindings are
+    /// dropped by `Captures`' `Drop` (env.rs) when the cell's last holder
+    /// goes, so this drops only the code.
     impl Drop for ClosureVal {
         #[inline]
         fn drop(&mut self) {
-            let captured = &mut **self.captured.get_mut();
-            if !captured.is_empty() {
-                drop_bounded(take(captured));
-            }
             // SAFETY: `code` is a `ManuallyDrop` that only this `Drop` drops,
             // and nothing reads it after this line.
             drop_bounded(unsafe { ManuallyDrop::take(&mut self.code.0) });
@@ -908,7 +912,7 @@ mod bounded_drop {
     /// A container's contents whose drop was deferred (held only to be
     /// dropped).
     #[allow(dead_code)]
-    enum DropLater {
+    pub(super) enum DropLater {
         Pairs(Vec<(Sym, Value)>),
         Map(BTreeMap<String, Value>),
         Elems(Vec<Value>),
@@ -942,7 +946,7 @@ mod bounded_drop {
     /// each again at most [`DROP_INLINE_DEPTH`] levels deep. Never inlined,
     /// so the budget checker can name the drop cycle it bounds.
     #[inline(never)]
-    fn drop_bounded<T: Into<DropLater>>(x: T) {
+    pub(super) fn drop_bounded<T: Into<DropLater>>(x: T) {
         let d = DROP_DEPTH.get();
         if d >= DROP_INLINE_DEPTH {
             drop_defer(x.into());
@@ -1019,10 +1023,75 @@ impl Value {
 /// whole defining environment, and `code` (params + body) is shared by every
 /// closure made from the same lambda, so making, cloning or calling a closure
 /// never copies its body.
+///
+/// R51 spec Fork 3, closure representation A (TaintPort-5, -15, VmPin-5): the
+/// capture cell is its own `Rc`, so a cast to a declared `fn(..) -> ..`
+/// ([`conform::Contract`]) allocates a new `ClosureVal` that SHARES the cell
+/// and carries the contract for that reference only. Identity (the capture
+/// cell's taint and any address-keyed table) is the cell's address,
+/// `Rc::as_ptr(&captured)`, the same for every reference. The cell's
+/// per-binding taints live in [`Captures`] (S2); the seal marks are the typed
+/// [`SealMarks`], never entries of the slot-ordered `captured` bindings (an
+/// entry there would shift `param_base`).
 #[derive(Debug)]
 pub struct ClosureVal {
     pub code: Held<Rc<ClosureCode>>,
-    pub captured: RefCell<Held<Vec<(Sym, Value)>>>,
+    /// The cell's bindings are in a [`Held`] inside [`Captures`]: on wasm32
+    /// the cell's AX-59 bounded `Drop` (env.rs) drops them when its last
+    /// holder goes.
+    pub captured: Rc<RefCell<Captures>>,
+    /// The `fn(..) -> ..` types this REFERENCE crossed, outermost = latest
+    /// (veto interp.rs:104-112). `None` in an unsealed run.
+    pub contract: Option<Rc<conform::Contract>>,
+    pub seal: SealMarks,
+}
+
+impl ClosureVal {
+    /// A closure with no contract and no seal marks.
+    pub(crate) fn plain(code: Rc<ClosureCode>, captured: Captures) -> ClosureVal {
+        ClosureVal {
+            code: Held::new(code),
+            captured: Rc::new(RefCell::new(captured)),
+            contract: None,
+            seal: SealMarks::default(),
+        }
+    }
+}
+
+/// AX-40's lend test on representation A (R51 Fork 3): the capture cell can
+/// be lent to a call (moved out and back) only when nothing the body runs can
+/// reach it. Every `ClosureVal` that shares the cell (a cast's wrapper) is a
+/// way to reach it, so the cell must have exactly one holder, `cv`, and
+/// `cv`'s references must be exactly the `private_refs` the caller counted.
+#[inline(always)]
+pub(crate) fn cell_is_private(cv: &Rc<ClosureVal>, private_refs: usize) -> bool {
+    Rc::strong_count(&cv.captured) == 1 && Rc::strong_count(cv) == private_refs
+}
+
+/// Where a closure came from, in a sealed run (veto's capture-cell keys
+/// `SEALED_CLOSURE_MARK`, `SEALED_FNVAL_MARK` and `PIN_FN_MARK`,
+/// interp.rs:490-497). Always the default in an unsealed run.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SealMarks {
+    /// A SEALED frame created the closure: it runs sealed wherever it is
+    /// later called.
+    pub sealed_origin: bool,
+    /// A fn VALUE (`let g = f`) a sealed frame took of a candidate fn: a call
+    /// of it from sealed code is not a call of an operator closure, and an
+    /// operator closure may not be replaced by it.
+    pub sealed_fnval: bool,
+    /// The pin owner of the frame that created the closure (its `FnDef`
+    /// address, 0 outside any fn): the closure's body is judged by the
+    /// static pin analysis as that fn's code (veto `PIN_FN_MARK`).
+    pub pin_owner: usize,
+}
+
+impl SealMarks {
+    /// The candidate's closure (made in a sealed frame, or a sealed frame's
+    /// fn value), as opposed to the operator's.
+    pub(crate) fn is_candidates(self) -> bool {
+        self.sealed_origin || self.sealed_fnval
+    }
 }
 
 /// R13 native FFI: an opaque, affine native `Handle` = `{tag, payload}` where
@@ -1128,7 +1197,17 @@ pub enum Flow {
     /// path reifies the continuation by re-running the body, so the original
     /// suspended body is abandoned and its block value is `value`. Caught only by
     /// `eval_with_handler`; if it escapes, that is an interpreter bug.
-    HandlerDone(Value),
+    ///
+    /// The `usize` is the handler-stack index of the frame whose arm ran: only
+    /// the `with` block that pushed THAT frame may catch it. It used to be caught
+    /// by the nearest `with` of any kind, so a `with` in candidate code could
+    /// swallow a completion aimed at the operator's handler and keep running.
+    /// Boxed (v0.22 carries `(Value, usize)` inline) so `Flow`'s widest payload
+    /// stays one `Value`: the inline pair is 24 bytes, which moves `Flow`'s tag
+    /// into `Value`'s niche and costs every `R` the evaluator matches (+4.9%
+    /// instructions on collatz, +6.6% on the `loop_generic` repro). A
+    /// completion is rare; the allocation is paid only by it.
+    HandlerDone(Box<(Value, usize)>),
     /// Phase 6 (multi-shot): a handler arm tried to resume more than once (or
     /// resume non-tail) over a body that performs effects beyond the single
     /// intercepted operation — the replay-based continuation cannot soundly
@@ -1295,6 +1374,108 @@ pub const RUNTIME_PANIC_EXIT_CODE: i32 = 101;
 
 type R = Result<Value, Flow>;
 
+/// The edge of a frame, named in [`contain_frame`]'s refusal.
+#[derive(Clone, Copy)]
+pub(crate) enum FrameEdge<'a> {
+    /// A named fn's call.
+    Fn(&'a str),
+    /// A closure's call.
+    Closure,
+    /// A refinement or `@[verify]` predicate.
+    Predicate,
+    /// An effect-handler arm.
+    HandlerArm,
+}
+
+impl std::fmt::Display for FrameEdge<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FrameEdge::Fn(name) => write!(f, "`{name}`"),
+            FrameEdge::Closure => f.write_str("a closure"),
+            FrameEdge::Predicate => f.write_str("a predicate"),
+            FrameEdge::HandlerArm => f.write_str("an effect-handler arm"),
+        }
+    }
+}
+
+impl FrameEdge<'_> {
+    /// The panic text for a `break`/`continue` reaching this edge. A handler
+    /// arm may sit lexically inside a loop, so "outside a loop" would be false
+    /// there: the arm is its own frame and the loop is not its loop
+    /// (S7-UnsealedParity-1).
+    fn loop_control_escape(&self) -> String {
+        match self {
+            FrameEdge::HandlerArm => "`break`/`continue` cannot leave an effect-handler arm \
+                                      (a loop around the `with` is not the arm's loop)"
+                .to_string(),
+            _ => format!("`break`/`continue` outside a loop in {self}"),
+        }
+    }
+}
+
+/// A FRAME EDGE is an allowlist, not a list of known escapes (Protected Check
+/// Isolation 7/8/10/13). A call — named fn or closure — and a predicate
+/// evaluation may end only with a value or with an ABORTIVE flow that
+/// terminates or fails the program. Every flow that TRANSFERS control to some
+/// enclosing construct (`return`, `break`, `continue`, `resume`) is meaningful
+/// only inside the frame that raised it; leaving the frame is an error here,
+/// never a jump in whatever loop or fn the surrounding code is running.
+///
+/// Escapes used to be closed one at a time — `break` out of a callee (FG-063/
+/// 064), out of a predicate (FG-065), then `return` out of a predicate and a
+/// smuggled `resume` closure (PCI candidate-1 review): each ended the caller's
+/// loop or test early as a normal completion. A fn body's own `return` is its
+/// value before this runs. The work is in [`frame_edge`], off the `Ok` path.
+#[inline(always)]
+pub(crate) fn contain_frame(r: R, edge: FrameEdge<'_>) -> R {
+    match r {
+        Ok(v) => Ok(v),
+        Err(f) => Err(frame_edge(f, edge)),
+    }
+}
+
+/// [`contain_frame`]'s classification of a flow reaching a frame edge. The
+/// match has no wildcard, so a new `Flow` variant must be classified here
+/// before the crate compiles.
+#[cold]
+#[inline(never)]
+pub(crate) fn frame_edge(f: Flow, edge: FrameEdge<'_>) -> Flow {
+    let msg = match f {
+        // Transfers: meaningful only inside the frame that raised them.
+        Flow::Return(_) => format!("`return` escaped {edge}"),
+        Flow::Break | Flow::Continue => edge.loop_control_escape(),
+        Flow::Resume(_) => format!("`resume` escaped {edge}"),
+        // Abortive: they end or fail the program, so they may cross.
+        // `HandlerDone` is the one cross-frame completion, and it is
+        // addressed: only the `with` that installed its handler catches it.
+        Flow::Panic(_)
+        | Flow::VerifyFailed(_)
+        | Flow::Halted(_)
+        | Flow::AiPolicyUnreachable(_)
+        | Flow::Exit(_)
+        | Flow::HandlerDone(..)
+        | Flow::MultiShotUnsound(_)
+        | Flow::RefineViolation(_)
+        | Flow::GoalBudgetExhausted(_)
+        | Flow::SandboxViolation(_) => return f,
+    };
+    Flow::Panic(msg.into_boxed_str())
+}
+
+/// Loop control never leaves the frame it was written in: a `break`/`continue`
+/// reaching an effect-handler arm's edge has no loop of its own there and is an
+/// error AT that edge. The arm's other flows (`return`, `resume`, its value)
+/// are its caller's business (`run_handler_arm`). Without this, candidate code
+/// ended an operator test's loop before its assertions ran and the verdict was
+/// signed (v0.22 G01 final reviews, FG-063/064/065).
+#[inline(always)]
+pub(crate) fn contain_loop_control(r: R, edge: FrameEdge<'_>) -> R {
+    match r {
+        Err(Flow::Break) | Err(Flow::Continue) => Err(frame_edge(Flow::Break, edge)),
+        other => other,
+    }
+}
+
 fn panic<T>(msg: impl Into<String>) -> Result<T, Flow> {
     Err(Flow::Panic(msg.into().into_boxed_str()))
 }
@@ -1308,190 +1489,11 @@ fn ai_policy_err<T>(msg: impl Into<String>) -> Result<T, Flow> {
 
 // ── Lexical environment ──────────────────────────────────────────────────────
 
-/// A stack of lexical scopes, stored flat: every visible binding in one
-/// vector (outermost first), with `marks` holding the start index of each
-/// pushed scope (the base scope starts at 0 and has no mark).
-///
-/// Flat rather than one `HashMap` per scope because a call frame holds a
-/// handful of names, and pushing a scope allocates nothing. Semantics are
-/// the per-scope-map ones exactly — `define` replaces a same-named binding in
-/// the CURRENT scope (so a loop re-binding a name does not grow the stack) and
-/// shadows outer ones; lookups see the innermost binding first.
-///
-/// Each call frame (a fn call, a closure call) has its own `Env`, and a
-/// binding's index in `vars` is the frame SLOT [`Resolution`] gave it (AX-53),
-/// so a resolved variable access is `vars[slot]` — one index and one sym
-/// compare, independent of how many locals are in scope. Every binding keeps
-/// its sym, which serves code resolved by name ([`NAMED`]: a reverse scan,
-/// the innermost binding first), [`Env::snapshot`], and the fallback when a
-/// slot does not hold the expected binding.
-///
-/// `stack` is the operand stack of a bytecode-engine activation running on
-/// this frame (R50): `vm::exec` takes it for the activation and hands it back
-/// emptied, so a pooled frame brings a grown stack with it. The tree-walker
-/// never touches it.
-struct Env {
-    vars: Vec<(Sym, Value)>,
-    marks: Vec<usize>,
-    stack: Vec<Value>,
-}
-
-impl Env {
-    fn new() -> Self {
-        Env {
-            vars: Vec::new(),
-            marks: Vec::new(),
-            stack: Vec::new(),
-        }
-    }
-    fn push(&mut self) {
-        self.marks.push(self.vars.len());
-    }
-    fn pop(&mut self) {
-        let start = self.marks.pop().unwrap_or(0);
-        self.vars.truncate(start);
-    }
-    /// Empty the frame for reuse. A scalar binding has nothing to drop, so it
-    /// is forgotten instead of going through `Value`'s drop glue; every other
-    /// binding is dropped (cost only). A frame of scalars alone (the common
-    /// call's) is emptied by its length, inline; any other out of line.
-    #[inline(always)]
-    fn clear(&mut self) {
-        if self.vars.iter().all(|(_, v)| is_scalar(v)) && self.marks.is_empty() {
-            // SAFETY: a length of 0 is within capacity and leaves no
-            // element initialised past it to be read; the elements it
-            // forgets are scalars, which own nothing, so forgetting one
-            // is what dropping it does.
-            unsafe { self.vars.set_len(0) };
-        } else {
-            self.clear_slow();
-        }
-    }
-    #[inline(never)]
-    fn clear_slow(&mut self) {
-        while let Some((_, v)) = self.vars.pop() {
-            forget_scalar(v);
-        }
-        self.marks.clear();
-    }
-    /// Drop the bindings from index `len` on, as `vars.truncate(len)` does,
-    /// forgetting scalars as [`Env::clear`] does (R50 S4, cost only).
-    #[inline]
-    fn release_to(&mut self, len: usize) {
-        while self.vars.len() > len {
-            let Some((_, v)) = self.vars.pop() else { break };
-            forget_scalar(v);
-        }
-    }
-    fn define(&mut self, name: Sym, val: Value) {
-        let start = self.marks.last().copied().unwrap_or(0);
-        match self.vars[start..].iter_mut().find(|(k, _)| *k == name) {
-            Some(slot) => slot.1 = val,
-            None => self.vars.push((name, val)),
-        }
-    }
-    /// Bind `name` at frame slot `slot` (see [`Resolution::var`]), or by name
-    /// for [`NAMED`]. A slot is in the current scope (`Resolution` allocates
-    /// a scope's slots above every live one when the scope is entered), so
-    /// writing it replaces a same-named binding of this scope as `define`
-    /// does. A slot holding another binding (an env not laid out the way the
-    /// table assumed) falls back to `define`; the reads' fallback finds it.
-    #[inline]
-    fn define_var(&mut self, name: Sym, slot: u32, val: Value) {
-        let i = slot as usize;
-        // The common case: the slot is the next binding (a parameter, a
-        // `let` in a fresh scope). `i == len` implies `i >= start` and
-        // `slot != NAMED`, so this is the `None` arm below with nothing to
-        // fill (cost only, AX-53).
-        if i == self.vars.len() {
-            self.vars.push((name, val));
-            return;
-        }
-        let start = self.marks.last().copied().unwrap_or(0);
-        if slot == NAMED || i < start {
-            return self.define(name, val);
-        }
-        match self.vars.get_mut(i) {
-            Some(b) if b.0 == name || b.0 == SYM_NONE => *b = (name, val),
-            Some(_) => self.define(name, val),
-            None => {
-                self.vars.resize_with(i, || (SYM_NONE, Value::Unit));
-                self.vars.push((name, val));
-            }
-        }
-    }
-    fn get(&self, name: Sym) -> Option<&Value> {
-        self.vars
-            .iter()
-            .rev()
-            .find(|(k, _)| *k == name)
-            .map(|(_, v)| v)
-    }
-    /// The binding variable `name` resolved to `slot` (see
-    /// [`Resolution::var`]) reads: the slot's, if it holds `name`; none for
-    /// [`NOT_LOCAL`]; else the innermost binding of `name`.
-    #[inline]
-    fn get_var(&self, name: Sym, slot: u32) -> Option<&Value> {
-        match self.vars.get(slot as usize) {
-            Some((k, v)) if *k == name => Some(v),
-            _ if slot == NOT_LOCAL => None,
-            _ => self.get(name),
-        }
-    }
-    /// Update the binding [`Env::get_var`] reads; returns false if none exists.
-    #[inline]
-    fn assign_var(&mut self, name: Sym, slot: u32, val: Value) -> bool {
-        match self.get_var_mut(name, slot) {
-            Some(b) => {
-                *b = val;
-                true
-            }
-            None => false,
-        }
-    }
-    /// Mutable reference to the nearest existing binding (for place assignment).
-    fn get_mut(&mut self, name: Sym) -> Option<&mut Value> {
-        self.vars
-            .iter_mut()
-            .rev()
-            .find(|(k, _)| *k == name)
-            .map(|(_, v)| v)
-    }
-    /// Mutable reference to the binding [`Env::get_var`] reads.
-    #[inline]
-    fn get_var_mut(&mut self, name: Sym, slot: u32) -> Option<&mut Value> {
-        let i = slot as usize;
-        if i < self.vars.len() && self.vars[i].0 == name {
-            return Some(&mut self.vars[i].1);
-        }
-        if slot == NOT_LOCAL {
-            return None;
-        }
-        self.get_mut(name)
-    }
-    /// All visible bindings, each name once (inner shadows outer). Used to
-    /// snapshot the environment a handler arm or continuation replay runs in.
-    fn snapshot(&self) -> Vec<(Sym, Value)> {
-        let mut out = Vec::with_capacity(self.vars.len());
-        for (i, (k, v)) in self.vars.iter().enumerate() {
-            if *k != SYM_NONE && !self.vars[i + 1..].iter().any(|(inner, _)| inner == k) {
-                out.push((*k, v.clone()));
-            }
-        }
-        out
-    }
-    /// Build an env whose single base scope is a captured snapshot — used to
-    /// run a closure/handler-arm body in its defining environment. The
-    /// snapshot must bind each name at most once (as [`Env::snapshot`] and a
-    /// closure's capture cell do).
-    fn from_snapshot(captured: Vec<(Sym, Value)>) -> Self {
-        Env {
-            vars: captured,
-            marks: Vec::new(),
-            stack: Vec::new(),
-        }
-    }
-}
+// `Env` and its binding storage `Bindings` (R51 S2.1, spec §4 Fork 2): the
+// storage is private to interp/env.rs, so a binding (and in a sealed run its
+// taint) is written only through a method that takes the taint.
+mod env;
+use env::*;
 
 /// Whether `v` is a scalar: a value that owns nothing, so it has no drop
 /// glue to run.
@@ -1524,6 +1526,7 @@ fn forget_scalar(v: Value) {
 /// F5 (Phase 9): one live sandbox entry — a named principal + the concrete set
 /// of effects it allows at runtime. Created by `sandbox_create`; enforced by
 /// `call_builtin` whenever `active_sandbox` points at this entry.
+#[derive(Clone)]
 struct SandboxEntry {
     /// The principal handle this sandbox is scoped to (for audit attribution).
     principal: i64,
@@ -1554,6 +1557,327 @@ struct SandboxScope {
 
 // ── Interpreter ──────────────────────────────────────────────────────────────
 
+/// R51 §4 Fork 1, §7: whether this build carries the complete runtime seal
+/// (taint, seal edges, PICK, pins). It was `false` from S0 to S5, when every
+/// sealed run was refused whatever the engine; S6.1 flipped it to `true` in
+/// the commit where the seal tests (T3-T8) are green. Setting it back to
+/// `false` is the rollback: every sealed run is refused again.
+pub const SEAL_RUNTIME_COMPLETE: bool = true;
+
+/// R51 §3: the refusal every sealed run entry gives while
+/// [`SEAL_RUNTIME_COMPLETE`] is `false`. The CLI prints it on stderr and exits 2.
+pub const SEALED_RUN_REFUSED: &str = "sealed runs are refused on this build: the runtime seal is not complete (R51 SEAL_RUNTIME_COMPLETE)";
+
+/// R51 §3: the refusal a sealed run gives when the VM is requested
+/// (`AXON_ENGINE=vm` or `set_engine(Engine::Vm)`) on a build whose runtime
+/// seal is complete. The CLI prints it on stderr and exits 2.
+pub const SEALED_RUN_VM_REFUSED: &str = "a sealed run executes on the tree engine only (AXON_ENGINE=vm cannot carry the seal); unset AXON_ENGINE";
+
+/// R51: `Err(message)` when a run with `sealed` code must not execute on this
+/// build or with the engine asked for ([`EngineRefusal`]); `Ok` for every
+/// unsealed run, without reading the engine inputs. [`Interp::build`] makes
+/// the same decision for every run; `axon test` calls this first, so it
+/// refuses before printing any result line.
+pub fn sealed_run_refusal(sealed: bool) -> Result<(), String> {
+    if !sealed {
+        return Ok(());
+    }
+    vm::engine_at_build(true)
+        .map(|_| ())
+        .map_err(|refused| refused.to_string())
+}
+
+/// R51 S5, from v0.22 (Protected Check Isolation, RUNTIME sealing; C9
+/// amendment 53): which definitions of the program a sealed (candidate)
+/// module defines, by the ONE provenance rule (`resolver::span_in_sealed` of
+/// the definition's span). Built once in [`Interp::build_with`] for a sealed
+/// run; an unsealed run builds the empty default, which allocates nothing.
+///
+/// Frames carry provenance: a function by its definition's file, a closure by
+/// the frame that CREATED it, a handler arm by the frame that installed the
+/// `with` ([`Interp::with_frame`]).
+///
+/// Main's data model: a fn is keyed by its `FnDef` address (the key
+/// `fn_of_def` uses); a global by its `Sym`, since main's `globals` table is
+/// keyed by `Sym`, not by name text.
+///
+/// Readers by slice (R51 §11): `active` here (the VM compile refusal); the
+/// sets, [`Interp::fn_is_sealed`] and the frame counters are read by the S2
+/// taint and the S3 seal edges (`globals` by `seal_global`, `refines` by
+/// `seal_refine`, `types` by `seal_type`, `operator_methods` by
+/// `seal_method`); `fns` is read through `fn_is_sealed` by the S3 call edge.
+#[derive(Default)]
+pub(crate) struct Seal {
+    pub(crate) active: bool,
+    fns: std::collections::HashSet<usize>,
+    globals: std::collections::HashSet<Sym>,
+    refines: std::collections::HashSet<String>,
+    /// Struct types defined in a sealed module: their whole-struct `where`
+    /// runs under THEIR provenance, whoever constructs one.
+    types: std::collections::HashSet<String>,
+    /// Method names the OPERATOR's code defines (in its impls and traits).
+    /// In operator code such a name means the operator's method: a call that
+    /// would dispatch it to a sealed method (the receiver's runtime type is
+    /// one the candidate chose) is refused (C9 round 4, PSV-1, amendment 53).
+    operator_methods: std::collections::HashSet<String>,
+}
+
+// Test-only: the static dispatch rule (the pin analysis behind
+// `seal_name_args`, `seal_dispatch`, `seal_width`, `seal_width_unary`) is
+// switched off while a test of another seal layer runs, so that layer is
+// judged by its own attack (v0.22 interp.rs:475). Per thread, not v0.22's
+// process-global: main has no lock serialising sealed unit tests (R51 S4).
+#[cfg(test)]
+thread_local! { pub(crate) static DISPATCH_RULE_OFF: Cell<bool> = const { Cell::new(false) } }
+// Test-only: the runtime taint rules apply (`Interp::t_rules`, v0.22
+// interp.rs:480). Off by default in a unit test, so each older test judges
+// one STATIC layer by its own attack and the taint cannot refuse the same
+// attack first and hide a removed guard; the taint's own tests turn it on.
+#[cfg(test)]
+thread_local! { pub(crate) static TAINT_FORCE_ON: Cell<bool> = const { Cell::new(false) } }
+
+impl Seal {
+    /// The seal of `program` when `sealed` says which spans lie in the
+    /// sealed set. An impl method is sealed when the method or its block is.
+    fn of(program: &Program, sealed: &dyn Fn(crate::span::Span) -> bool) -> Seal {
+        let mut seal = Seal {
+            active: true,
+            ..Seal::default()
+        };
+        for item in &program.items {
+            match item {
+                Item::FnDef(f) if sealed(f.span) => {
+                    seal.fns.insert(f as *const FnDef as usize);
+                }
+                Item::ImplBlock(b) => {
+                    for m in &b.methods {
+                        if sealed(m.span) || sealed(b.span) {
+                            seal.fns.insert(m as *const FnDef as usize);
+                        }
+                    }
+                }
+                Item::LetDef { name, span, .. } if sealed(*span) => {
+                    seal.globals.insert(intern(name));
+                }
+                Item::RefineDef(r) if sealed(r.span) => {
+                    seal.refines.insert(r.name.clone());
+                }
+                Item::TypeDef(t) if sealed(t.span) => {
+                    seal.types.insert(t.name.clone());
+                }
+                _ => {}
+            }
+            match item {
+                Item::ImplBlock(b) if !sealed(b.span) => {
+                    for m in &b.methods {
+                        if !sealed(m.span) {
+                            seal.operator_methods.insert(m.name.clone());
+                        }
+                    }
+                }
+                Item::TraitDef(t) if !sealed(t.span) => {
+                    for m in &t.methods {
+                        seal.operator_methods.insert(m.name.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        seal
+    }
+}
+
+/// Restores the caller's `pin_fn` on drop.
+struct PinGuard<'a> {
+    cell: &'a Cell<usize>,
+    prev: usize,
+}
+impl Drop for PinGuard<'_> {
+    fn drop(&mut self) {
+        self.cell.set(self.prev);
+    }
+}
+
+/// Per-provenance kernel state (R51 S3, PCI runtime sealing; veto
+/// interp.rs:708-842). Every table that holds objects addressed by HANDLE —
+/// fibers, supervisors, principals, stores, LLM gateways, kernel goals,
+/// sandboxes — plus the attribution and constraint state they drive. A sealed
+/// (candidate) frame gets its OWN instance, so an operator handle does not
+/// exist from a sealed frame, whatever id is guessed, and a candidate's fibers
+/// never run in the operator's scheduler (PCI candidate-4 review: forged fiber
+/// ids read the operator's reference result, reset its failed fibers, and a
+/// predicted principal token spent its budget). Reached only through
+/// [`Interp::k`]; an unsealed run only ever reaches `kernels[0]`.
+struct Kernel {
+    /// In-memory provenance store: `@[adaptive]` fn name → recorded return
+    /// scores, in call order. Read by `goal_run` (mirrors `axon-rt`'s store).
+    provenance: RefCell<HashMap<String, Vec<f64>>>,
+    /// Per-call i64-prefix input tuple, in lock-step with `provenance`. The
+    /// vec collects every leading i64 arg the fn took (length = how many
+    /// of the fn's first args were i64). Empty when none were. Read by
+    /// `goal_best_input` (returns the first dim) and `goal_best_inputs`
+    /// (returns the full tuple), and used by the multi-arg coordinate-
+    /// descent hill-climb to seed the next sweep.
+    provenance_inputs: RefCell<HashMap<String, Vec<Vec<i64>>>>,
+    /// Per-call f64-prefix input tuple, mirror of `provenance_inputs` for
+    /// `@[adaptive] fn(f64, …) -> f64`. Read by `goal_best_input_f64` /
+    /// `goal_best_inputs_f64`. Lets the optimizer cover continuous-domain
+    /// problems (linear-regression weights, control parameters, etc.)
+    /// without forcing the user to discretize via integer indices.
+    provenance_inputs_f64: RefCell<HashMap<String, Vec<Vec<f64>>>>,
+    /// R9 corrigibility latch. `corrigible_halt()` sets this to `true`; once
+    /// set it never clears (there is intentionally no resume builtin). While
+    /// set, every call to an `@[corrigible]` fn is refused — its body never
+    /// runs — so the system cannot resist or reverse its own shutdown. A
+    /// one-way latch is the whole safety property: a kill-switch you can turn
+    /// back off is not a kill-switch.
+    corrigible_halted: Cell<bool>,
+    /// F3 (Phase 9): the name of the principal currently in scope for audit
+    /// attribution. Set via `principal_activate(handle)` to associate a kernel
+    /// principal with the execution context, so capability audit records carry the
+    /// principal name rather than the opaque "root" default. Defaults to "root".
+    current_principal: RefCell<String>,
+    /// Active `subject_to` constraint fn name during `goal_run_constrained`
+    /// (pillar-3 constrained search). When set, the optimizer scores an
+    /// INFEASIBLE candidate as maximally distant so it is rejected; the real
+    /// score is still recorded in provenance. `None` outside a constrained goal
+    /// (so plain `goal_run` is byte-identical). See `apply_goal_constraint`.
+    goal_constraint: RefCell<Option<String>>,
+    /// Phase 7 (R12 Slice 1): the live principal-authority registry. The
+    /// `principal_*` builtins mint/spend/authorize against it, so attenuation is
+    /// enforced by the KERNEL (the registry), not just as userland values. A
+    /// handle is a plain `i64` index. Empty until a program mints a root. The
+    /// sealed kernel's registry draws its handle tokens from its own stream
+    /// (`PrincipalRegistry::new_sealed`).
+    principals: RefCell<crate::kernel::PrincipalRegistry>,
+    /// Phase 7 (R12 Slice 2): the cooperative fiber scheduler. `scheduler_spawn`
+    /// queues a (named fn, arg) fiber; `scheduler_run` runs the ready fibers in a
+    /// seed-deterministic round-robin, catching a panicking fiber (recorded as
+    /// failed, not a process abort). The interpreter owns the run loop (it has
+    /// `call_fn`); the queue + ordering live in `kernel::Scheduler`.
+    scheduler: RefCell<crate::kernel::Scheduler>,
+    /// Phase 7 (R12 Slice 3): live supervisors, indexed by handle. Each oversees
+    /// an ordered set of scheduler fibers and, when one fails, restarts the set
+    /// its OTP strategy dictates — latching a halt (exit 4) on a crash loop.
+    supervisors: RefCell<Vec<crate::kernel::Supervisor>>,
+    /// Phase 7 (R12 Slice 4): durable stores, indexed by handle. Each is an
+    /// in-memory `kernel::Store` (rebuilt by replaying its NDJSON log on open)
+    /// plus the log path it appends applied ops to, so its value survives a fresh
+    /// process and a retried op_id dedups cross-process under linearizable.
+    stores: RefCell<Vec<(crate::kernel::Store, std::path::PathBuf)>>,
+    /// Phase 7 (R12 Slice 5): principal-scoped LLM gateways, indexed by handle.
+    /// Each mediates AI calls with per-token cost metering debited from its
+    /// principal's budget (Slice 1), degrading to a fallback + latch on overrun.
+    llm_gateways: RefCell<Vec<crate::kernel::LlmGateway>>,
+    /// Phase 7 (R12b): principal-scoped `KernelGoal`s, indexed by handle. Each
+    /// runs the existing optimizer (`run_goal`) scoped to a Slice-1 principal's
+    /// budget, refusing to exceed it (E1604, exit 7). See R12b-kernel-goal.md.
+    goals: RefCell<Vec<crate::kernel::KernelGoal>>,
+    /// F5 (Phase 9): registered sandboxes, indexed by handle (0-based). Created
+    /// by `sandbox_create`; the handle is the index into this vec.
+    sandboxes: RefCell<Vec<SandboxEntry>>,
+    /// F5 (Phase 9): the handle of the currently active sandbox (-1 = none).
+    /// `sandbox_run` sets this before calling the user fn and restores it after.
+    /// `call_builtin` reads it to gate effectful builtins.
+    active_sandbox: Cell<i64>,
+    /// The SEALED kernel's xorshift64 RNG state (`0` = not yet seeded). EVERY
+    /// draw — `random_*`, the distribution samplers, `srand`, the `goal_*`
+    /// searches and `@[forall]` input generation — goes through
+    /// [`Interp::rng_next`] / [`Interp::rng_reseed`], i.e. through the kernel
+    /// of the frame that is running, so a sealed candidate can neither
+    /// advance, reseed nor observe the operator's stream, whichever builtin it
+    /// uses (PSV-1). The OPERATOR kernel keeps main's process-global stream
+    /// ([`next_rand_u64`]), so an unsealed run draws exactly the sequence it
+    /// drew before R51, across every `Interp` of the process (one per `@[test]`
+    /// fn); this cell stays `0` in the operator kernel. (Veto gave the operator
+    /// kernel a per-`Interp` cell, which restarts the stream at each test.)
+    rng: Cell<u64>,
+    /// Whether this is the sealed (candidate) kernel. Its stream is its own
+    /// cell, seeded by a one-way derivation, so drawing from it reveals
+    /// nothing about the operator's seed — see [`sealed_rng_seed`].
+    rng_sealed: bool,
+}
+
+impl Kernel {
+    /// The kernel of one provenance: the operator's (`sealed == false`) or
+    /// the sealed candidate's, both under the SAME ambient effect ceiling
+    /// (`ambient`), so a sealed frame may narrow it but never widen it. The
+    /// sandbox registry and the active-handle field are derived from it.
+    fn new(sealed: bool, ambient: Vec<SandboxEntry>) -> Kernel {
+        Kernel {
+            provenance: RefCell::new(HashMap::new()),
+            provenance_inputs: RefCell::new(HashMap::new()),
+            provenance_inputs_f64: RefCell::new(HashMap::new()),
+            corrigible_halted: Cell::new(false),
+            current_principal: RefCell::new(
+                std::env::var("AXON_PRINCIPAL")
+                    .ok()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "root".to_string()),
+            ),
+            goal_constraint: RefCell::new(None),
+            principals: RefCell::new(if sealed {
+                crate::kernel::PrincipalRegistry::new_sealed()
+            } else {
+                crate::kernel::PrincipalRegistry::new()
+            }),
+            // Scheduler order is a function of spawn order + AXON_SEED (R12 §5
+            // determinism): derive the round-robin start offset from the seed.
+            scheduler: RefCell::new(crate::kernel::Scheduler::new(rng_seed() as usize)),
+            supervisors: RefCell::new(Vec::new()),
+            stores: RefCell::new(Vec::new()),
+            llm_gateways: RefCell::new(Vec::new()),
+            goals: RefCell::new(Vec::new()),
+            active_sandbox: Cell::new(if ambient.is_empty() { -1 } else { 0 }),
+            sandboxes: RefCell::new(ambient),
+            rng: Cell::new(0),
+            rng_sealed: sealed,
+        }
+    }
+
+    /// The next draw from THIS kernel's stream: the operator kernel's is the
+    /// process-global one; the sealed kernel's is its own, seeded on first use.
+    fn rng_next(&self) -> u64 {
+        if !self.rng_sealed {
+            return next_rand_u64();
+        }
+        let mut x = self.rng.get();
+        if x == 0 {
+            x = sealed_rng_seed(rng_seed());
+        }
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.rng.set(x);
+        x
+    }
+
+    /// `srand(n)`: reseed THIS kernel's stream only. `n == 0` maps to a
+    /// non-zero sentinel so it does not read as "not yet seeded".
+    fn rng_set(&self, n: i64) {
+        if self.rng_sealed {
+            self.rng.set((n as u64) | 1);
+        } else {
+            set_rand_seed(n);
+        }
+    }
+}
+
+/// The sealed kernel's initial RNG state: SHA-256 over a domain tag and the
+/// operator seed. Deterministic under `AXON_SEED` (replay still reproduces a
+/// candidate's draws), but one-way, so a candidate that reads its own stream
+/// (xorshift64's output IS its state) learns nothing about the operator's.
+fn sealed_rng_seed(operator_seed: u64) -> u64 {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"axon-sealed-rng/1\0");
+    h.update(operator_seed.to_le_bytes());
+    let d = h.finalize();
+    let mut b = [0u8; 8];
+    b.copy_from_slice(&d[..8]);
+    u64::from_le_bytes(b) | 1
+}
+
 pub struct Interp<'p> {
     fns: HashMap<String, &'p FnDef>,
     #[allow(dead_code)]
@@ -1577,26 +1901,20 @@ pub struct Interp<'p> {
     fn_table: Vec<FnEntry<'p>>,
     fn_of_sym: FxHashMap<Sym, u32>,
     fn_of_def: FxHashMap<usize, u32>,
-    /// In-memory provenance store: `@[adaptive]` fn name → recorded return
-    /// scores, in call order. Read by `goal_run` (mirrors `axon-rt`'s store).
-    provenance: RefCell<HashMap<String, Vec<f64>>>,
-    /// Per-call i64-prefix input tuple, in lock-step with `provenance`. The
-    /// vec collects every leading i64 arg the fn took (length = how many
-    /// of the fn's first args were i64). Empty when none were. Read by
-    /// `goal_best_input` (returns the first dim) and `goal_best_inputs`
-    /// (returns the full tuple), and used by the multi-arg coordinate-
-    /// descent hill-climb to seed the next sweep.
-    provenance_inputs: RefCell<HashMap<String, Vec<Vec<i64>>>>,
-    /// Per-call f64-prefix input tuple, mirror of `provenance_inputs` for
-    /// `@[adaptive] fn(f64, …) -> f64`. Read by `goal_best_input_f64` /
-    /// `goal_best_inputs_f64`. Lets the optimizer cover continuous-domain
-    /// problems (linear-regression weights, control parameters, etc.)
-    /// without forcing the user to discretize via integer indices.
-    provenance_inputs_f64: RefCell<HashMap<String, Vec<Vec<f64>>>>,
+    /// R51 S3: the KERNEL tables, one per provenance: `kernels[0]` for the
+    /// operator, `kernels[1]` for sealed (candidate) frames — selected by
+    /// [`Interp::k`] from `frame_sealed`.
+    kernels: [Kernel; 2],
     /// Current call-stack depth, bounded by `max_depth` so runaway recursion
     /// fails with a catchable panic rather than overflowing the (large but
     /// finite) interpreter thread stack and aborting the process.
     call_depth: Cell<usize>,
+    /// The call depth of the `@[test]` frame being run (`0` = none), and
+    /// whether THAT frame's body evaluated to its end. The one fact test
+    /// completion is decided on (C9 round 3, PSV-3): not the returned value's
+    /// tag, which a `?` on a type-confused `None` made read as a completion.
+    test_frame_depth: Cell<usize>,
+    test_body_finished: Cell<bool>,
     /// AX-56: on wasm32, the native-stack bytes the interpreter frames live
     /// right now have charged, bounded by `nest_limit` (see [`nest_cost`]).
     #[cfg(target_arch = "wasm32")]
@@ -1608,6 +1926,56 @@ pub struct Interp<'p> {
     /// or `AXON_MAX_DEPTH` (clamped) when set. Resolved once at build time so
     /// every `call_fn` sees a consistent value.
     max_depth: usize,
+    /// R51 S5 (Protected Check Isolation, RUNTIME sealing): which
+    /// definitions come from a sealed (candidate) module. `seal.active` is
+    /// the one "this run executes sealed code" bit: computed once in
+    /// [`Interp::build`] from the same input as the refuse-all pin, and
+    /// `vm::compile::compile` refuses to build a body while it is set.
+    pub(crate) seal: Seal,
+    /// The static pin analysis (`interp/pin.rs`) of a sealed run; empty, and
+    /// never computed, for an unsealed one.
+    pins: pin::Pins,
+    /// Frame provenance: whether the frame now running is a sealed
+    /// (candidate) frame. Changed only by [`Interp::with_frame`].
+    frame_sealed: Cell<bool>,
+    /// The fn whose body is running, for the pin analysis (its `FnDef`
+    /// address; a closure carries its creator's). 0 outside any fn.
+    pin_fn: Cell<usize>,
+    /// How many frames of each provenance are active (entered through
+    /// [`Interp::with_frame`] and not yet left). `with_frame` is the ONLY
+    /// place provenance changes, so these are exact. A sealed handler frame
+    /// answers an operation only when no OPERATOR frame was entered after it
+    /// was installed, and operator code never draws from the operator RNG
+    /// while a sealed frame is below it (both S3).
+    sealed_frames: Cell<usize>,
+    operator_frames: Cell<usize>,
+    /// R51 S2: the evaluator's taint state (`interp/taint.rs`): the
+    /// accumulator, the control taints, the kernel and world cells, shared
+    /// objects and module-level lets. Read and written only in a sealed run.
+    taint: taint::Taint,
+    /// R51 S3 (`interp/conform.rs`): the traits the program defines, and
+    /// which `(type, trait)` pairs it implements — what a `dyn Trait` or a
+    /// type parameter's bound is checked against (veto interp.rs:885-886).
+    user_traits: std::collections::HashSet<String>,
+    trait_impls: std::collections::HashSet<(String, String)>,
+    /// Each refinement type's base type (veto interp.rs:888): a cast to a
+    /// refinement is a cast to its base.
+    refine_bases: HashMap<String, &'p crate::ast::AxonType>,
+    /// The element types each channel OBJECT crossed (by address; the weak
+    /// handle keeps the address from being reused while the entry exists).
+    chan_contracts: RefCell<conform::ChanContracts>,
+    /// The dicts the operator handed sealed code (by address): what each held
+    /// (amendment 72 part 2, `interp/conform.rs`).
+    dict_snaps: RefCell<HashMap<usize, conform::DictSnap>>,
+    /// Bumped by every operator-side dict mutation: a snapshot from an older
+    /// epoch is retaken at the next hand-over.
+    dict_epoch: Cell<u64>,
+    /// The impl block each method was defined in (by `FnDef` address), for
+    /// reading its signature: `Self` and the impl's type parameters. Built
+    /// for a sealed run only (its one reader is [`Interp::fn_cx`]).
+    impl_of: HashMap<usize, &'p ImplBlock>,
+    /// [`Interp::fn_cx`]'s per-fn signature environments.
+    fn_cx_cache: RefCell<HashMap<usize, conform::Cx>>,
     /// R50: which engine runs fn bodies (`AXON_ENGINE`, or `set_engine` on a
     /// target without an environment). Read once, at build.
     engine: Engine,
@@ -1617,13 +1985,6 @@ pub struct Interp<'p> {
     /// R50 S9: `AXON_VM_EAGER=1`, read once at build: compile every body on
     /// its first entry. Only consulted under [`Engine::Vm`].
     vm_eager: bool,
-    /// R9 corrigibility latch. `corrigible_halt()` sets this to `true`; once
-    /// set it never clears (there is intentionally no resume builtin). While
-    /// set, every call to an `@[corrigible]` fn is refused — its body never
-    /// runs — so the system cannot resist or reverse its own shutdown. A
-    /// one-way latch is the whole safety property: a kill-switch you can turn
-    /// back off is not a kill-switch.
-    corrigible_halted: Cell<bool>,
     /// The Axon function currently executing, whose name attributes builtin
     /// side effects (e.g. R3's `ai_call` provenance records) to their caller.
     /// Set on entry to `call_fn`, restored on exit. `None` at top level. A
@@ -1643,17 +2004,6 @@ pub struct Interp<'p> {
     /// audit trail (`axon trace --ai` cost-attribution per goal). `None` outside
     /// any goal optimization.
     current_goal: RefCell<Option<String>>,
-    /// F3 (Phase 9): the name of the principal currently in scope for audit
-    /// attribution. Set via `principal_activate(handle)` to associate a kernel
-    /// principal with the execution context, so capability audit records carry the
-    /// principal name rather than the opaque "root" default. Defaults to "root".
-    current_principal: RefCell<String>,
-    /// Active `subject_to` constraint fn name during `goal_run_constrained`
-    /// (pillar-3 constrained search). When set, the optimizer scores an
-    /// INFEASIBLE candidate as maximally distant so it is rejected; the real
-    /// score is still recorded in provenance. `None` outside a constrained goal
-    /// (so plain `goal_run` is byte-identical). See `apply_goal_constraint`.
-    goal_constraint: RefCell<Option<String>>,
     /// Per-call AI tier from a `tier:` named arg (R3b), set by `eval_call` for
     /// the duration of a single builtin dispatch. `ai_complete`'s tier
     /// resolution reads this first (step 1: per-call > policy > default).
@@ -1746,41 +2096,6 @@ pub struct Interp<'p> {
     /// operation. `resume(v)` replays `body` (the handled `with`-block body) with
     /// `v` fed at the intercepted op and returns the continuation's value.
     resume_ctx: RefCell<Vec<ResumeCtx>>,
-    /// Phase 7 (R12 Slice 1): the live principal-authority registry. The
-    /// `principal_*` builtins mint/spend/authorize against it, so attenuation is
-    /// enforced by the KERNEL (the registry), not just as userland values. A
-    /// handle is a plain `i64` index. Empty until a program mints a root.
-    principals: RefCell<crate::kernel::PrincipalRegistry>,
-    /// Phase 7 (R12 Slice 2): the cooperative fiber scheduler. `scheduler_spawn`
-    /// queues a (named fn, arg) fiber; `scheduler_run` runs the ready fibers in a
-    /// seed-deterministic round-robin, catching a panicking fiber (recorded as
-    /// failed, not a process abort). The interpreter owns the run loop (it has
-    /// `call_fn`); the queue + ordering live in `kernel::Scheduler`.
-    scheduler: RefCell<crate::kernel::Scheduler>,
-    /// Phase 7 (R12 Slice 3): live supervisors, indexed by handle. Each oversees
-    /// an ordered set of scheduler fibers and, when one fails, restarts the set
-    /// its OTP strategy dictates — latching a halt (exit 4) on a crash loop.
-    supervisors: RefCell<Vec<crate::kernel::Supervisor>>,
-    /// Phase 7 (R12 Slice 4): durable stores, indexed by handle. Each is an
-    /// in-memory `kernel::Store` (rebuilt by replaying its NDJSON log on open)
-    /// plus the log path it appends applied ops to, so its value survives a fresh
-    /// process and a retried op_id dedups cross-process under linearizable.
-    stores: RefCell<Vec<(crate::kernel::Store, std::path::PathBuf)>>,
-    /// Phase 7 (R12 Slice 5): principal-scoped LLM gateways, indexed by handle.
-    /// Each mediates AI calls with per-token cost metering debited from its
-    /// principal's budget (Slice 1), degrading to a fallback + latch on overrun.
-    llm_gateways: RefCell<Vec<crate::kernel::LlmGateway>>,
-    /// Phase 7 (R12b): principal-scoped `KernelGoal`s, indexed by handle. Each
-    /// runs the existing optimizer (`run_goal`) scoped to a Slice-1 principal's
-    /// budget, refusing to exceed it (E1604, exit 7). See R12b-kernel-goal.md.
-    goals: RefCell<Vec<crate::kernel::KernelGoal>>,
-    /// F5 (Phase 9): registered sandboxes, indexed by handle (0-based). Created
-    /// by `sandbox_create`; the handle is the index into this vec.
-    sandboxes: RefCell<Vec<SandboxEntry>>,
-    /// F5 (Phase 9): the handle of the currently active sandbox (-1 = none).
-    /// `sandbox_run` sets this before calling the user fn and restores it after.
-    /// `call_builtin` reads it to gate effectful builtins.
-    active_sandbox: Cell<i64>,
     /// Phase 5: named refinement → its predicate Expr (binder `_`). Collected
     /// from `RefineDef` items (inline `where` on a param desugars to a synthetic
     /// named refinement during parsing). Drives the runtime precondition check in
@@ -1836,14 +2151,28 @@ struct HandlerFrame {
     /// REPLAY the continuation (re-run the body, feeding the resume value at the
     /// intercepted op). Unused by the bare-tail-resume fast path.
     body: SrcRef<crate::ast::Expr>,
-    env_snapshot: Vec<(Sym, Value)>,
+    env_snapshot: Snapshot,
+    /// Provenance of the frame that installed this handler: its arms run
+    /// under it (PCI runtime sealing).
+    sealed: bool,
+    /// `Interp::operator_frames` when this handler was installed. A SEALED
+    /// frame may answer an operation only while the count is unchanged, i.e.
+    /// no operator code lies between the `with` and the operation (PSV-1,
+    /// C9 round 3). See [`Interp::handler_may_answer`].
+    operator_frames: usize,
+    /// `Interp::pin_fn` when this handler was installed: the fn that OWNS the
+    /// `with` and so the arms' source text. The arm runs under THIS owner, not
+    /// under whichever fn happened to perform the effect (C9 round 10, PSV-1,
+    /// amendment 100): pin sites are keyed (owner, site text), so an arm run
+    /// under the performer's owner read the performer's verdicts.
+    pin_owner: usize,
 }
 
 /// A runtime handler arm: the arm as written, and a snapshot of the
 /// environment where the handler was written (so the arm closes over it).
 struct HandlerArmRt {
     arm: SrcRef<crate::ast::HandlerArm>,
-    captured: Vec<(Sym, Value)>,
+    captured: Snapshot,
 }
 
 impl HandlerArmRt {
@@ -1911,6 +2240,18 @@ struct ResumeReplay {
     /// Whether the feed has been consumed yet (the first hit consumes it; a
     /// second effect hit in the same replay is the unsound case → E1314).
     consumed: bool,
+    /// The taint of `feed` (the `resume(..)` argument, with the control it was
+    /// evaluated under): read when the replay yields it, so a value derived from
+    /// a candidate-chosen resume value stays tainted inside the replayed body
+    /// (amendment 117, loop finding 28). `0` in an unsealed run.
+    feed_t: u8,
+    /// Provenance of the handler whose arm armed this replay, and
+    /// `Interp::operator_frames` when it did. The feed answers an operation
+    /// only under the same rule as a live handler frame
+    /// ([`Interp::handler_may_answer`]): a sealed arm's `resume(v)` never
+    /// becomes the result of an operation the operator's code performs.
+    sealed: bool,
+    operator_frames: usize,
 }
 
 /// Phase 6 (multi-shot resume): the suspended computation a handler arm is
@@ -1925,7 +2266,12 @@ struct ResumeCtx {
     /// The `with`-block body to replay on each resume.
     body: SrcRef<crate::ast::Expr>,
     /// The environment snapshot the body originally evaluated in.
-    env_snapshot: Vec<(Sym, Value)>,
+    env_snapshot: Snapshot,
+    /// Provenance of the handler frame whose arm is servicing this body.
+    sealed: bool,
+    /// The pin owner of the fn that installed the handler: the replayed body is
+    /// that fn's own text, so it replays under that owner (amendment 100).
+    pin_owner: usize,
 }
 
 /// Default max interpreter call depth before a graceful "recursion limit"
@@ -2002,7 +2348,7 @@ pub(super) mod nest_cost {
             release
         }
     }
-    pub const EVAL: usize = b(192, 288);
+    pub const EVAL_ARM: usize = b(192, 304);
     pub const EVAL_BLOCK: usize = b(112, 0);
     pub const EVAL_BINOP: usize = b(144, 0);
     pub const EVAL_WITH_HANDLER: usize = b(144, 0);
@@ -2011,15 +2357,15 @@ pub(super) mod nest_cost {
     pub const DISPATCH_CALL: usize = b(176, 0);
     pub const DISPATCH_NAMED: usize = b(144, 192);
     pub const IMPL_METHOD: usize = b(96, 192);
-    pub const CALL_MUT: usize = b(160, 320);
+    pub const CALL_MUT: usize = b(208, 320);
     pub const CALL_FN: usize = b(112, 128);
-    pub const CALL_FN_ENTRY: usize = b(112, 192);
-    pub const CALL_FN_IN: usize = b(160, 176);
-    pub const CALL_FN_IN_GENERAL: usize = b(224, 528);
+    pub const CALL_FN_ENTRY: usize = b(112, 224);
+    pub const CALL_FN_IN: usize = b(160, 208);
+    pub const CALL_FN_FRAME: usize = b(272, 576);
     pub const CALL_LOCAL_CLOSURE: usize = b(112, 128);
     pub const CALL_CLOSURE_ARG: usize = b(112, 272);
-    pub const CALL_CLOSURE_OWNED_BY: usize = b(256, 336);
-    pub const CALL_BUILTIN: usize = b(496, 704);
+    pub const CALL_CLOSURE_FRAME: usize = b(256, 336);
+    pub const CALL_BUILTIN: usize = b(496, 720);
     pub const RUN_BODY_VM: usize = b(160, 208);
     /// The tree's fn body charges what a VM level does above its own
     /// (smaller) frame: the VM's fn body plus its op loop ([`RUN`], which a
@@ -2027,46 +2373,72 @@ pub(super) mod nest_cost {
     /// through), so the VM panics no shallower than the tree there (spec
     /// R50 §4 Recursion).
     pub const RUN_BODY_TREE: usize = RUN_BODY_VM + RUN;
+    /// The `@[test]` frame's body runner charges what `run_body_tree` does.
+    pub const RUN_TEST_BODY: usize = RUN_BODY_VM + RUN;
     /// A compile frame and its unguarded tail (`compile`, `Vec` growth).
     /// Live only while one compile runs, never under the recursion; the
     /// checker fits them like the in-cycle constants.
     pub const COMPILE_BODY: usize = b(1504, 1024);
     pub const COMPILE_LAMBDA: usize = b(1616, 976);
     /// The tree's lambda body charges what a compiled VM lambda level does
-    /// above `call_closure_owned_by`, its op loop ([`RUN`]), so the VM
+    /// above `call_closure_frame`, its op loop ([`RUN`]), so the VM
     /// panics no shallower than the tree there (spec R50 §4 Recursion).
     pub const RUN_LAMBDA_TREE: usize = RUN;
     pub const RUN: usize = b(336, 528);
     pub const CALL_FAST_ARG: usize = b(208, 320);
     pub const CALL_FAST_INLINE: usize = b(256, 416);
-    pub const CALL_MUT_OP: usize = b(288, 416);
+    pub const CALL_MUT_OP: usize = b(336, 432);
     pub const ASSIGN_IN_PLACE: usize = b(176, 224);
-    pub const BIND_LET: usize = b(128, 208);
+    pub const BIND_LET: usize = b(160, 224);
     pub const CHAN_METHOD: usize = b(128, 96);
-    pub const DISPATCH_RESUME: usize = b(224, 176);
-    pub const EVAL_NATIVE_CALL: usize = b(240, 320);
-    pub const FINISH_RECORD: usize = b(160, 384);
+    pub const DISPATCH_RESUME: usize = b(224, 208);
+    pub const EVAL_NATIVE_CALL: usize = b(256, 320);
+    pub const FINISH_RECORD: usize = b(160, 432);
     pub const RUN_LOOP_BODY: usize = b(112, 128);
     pub const BUILTIN_SCHEDULER_RUN_ONCE: usize = b(128, 304);
     pub const CALL_CLOSURE: usize = b(112, 128);
-    pub const CALL_FN_GOAL: usize = b(464, 928);
+    pub const CALL_FN_GOAL: usize = b(480, 928);
     pub const FINISH_CALL_COLD: usize = b(224, 496);
     pub const FLATTEN_PLACE: usize = b(128, 160);
-    pub const CALL_FAST: usize = b(208, 320);
+    pub const CALL_FAST: usize = b(224, 320);
     pub const CALL_FAST_LOCAL_INT_SLOW: usize = b(176, 176);
-    pub const CALL_MUT_GENERAL: usize = b(176, 288);
+    pub const CALL_MUT_GENERAL: usize = b(176, 304);
     pub const CALL_UNPROVEN: usize = b(192, 272);
     pub const RECORD_OP: usize = b(160, 160);
     pub const STORE_BIN_SLOW: usize = b(192, 192);
     pub const STORE_LOCAL_STACK_SLOW: usize = b(192, 208);
-    pub const GOAL_EVAL_HOLDOUT: usize = b(112, 400);
-    pub const RUN_GOAL: usize = b(672, 1008);
+    pub const GOAL_EVAL_HOLDOUT: usize = b(128, 400);
+    pub const RUN_GOAL: usize = b(672, 1024);
     pub const RUN_GOAL_CATEGORICAL: usize = b(416, 640);
-    pub const RUN_GOAL_MULTISTART: usize = b(640, 1152);
+    pub const RUN_GOAL_MULTISTART: usize = b(672, 1152);
     pub const RUN_GOAL_RANDOM: usize = b(208, 368);
-    pub const RUN_GOAL_WARM: usize = b(656, 1024);
+    pub const RUN_GOAL_WARM: usize = b(656, 1040);
     pub const COMPILE_EXPR: usize = b(816, 688);
     pub const COMPILE_STMT: usize = b(800, 672);
+    /// `P(dist op k)` (R51 moved it out of `eval_call`'s frame, which no
+    /// longer carries it as an unguarded tail).
+    pub const EVAL_PROB_PRED: usize = b(208, 224);
+    /// The sealed run's instances (R51): the `::<true>` instance of a
+    /// function compiled once per run kind, and the functions only a sealed
+    /// run enters. An unsealed run charges none of them.
+    pub const EVAL_ARM_SEALED: usize = b(336, 656);
+    pub const EVAL_BLOCK_SEALED: usize = b(128, 0);
+    pub const EVAL_BINOP_SEALED: usize = b(336, 0);
+    pub const EVAL_CALL_SEALED: usize = b(400, 0);
+    pub const DISPATCH_CALL_SEALED: usize = b(176, 304);
+    pub const DISPATCH_NAMED_SEALED: usize = b(176, 0);
+    pub const BIND_LET_SEALED: usize = b(160, 256);
+    pub const RUN_LOOP_BODY_SEALED: usize = b(112, 128);
+    pub const CHAN_METHOD_SEALED: usize = b(128, 112);
+    pub const ASSIGN_IN_PLACE_SEALED: usize = b(176, 0);
+    pub const CALL_FN_FRAME_SEALED: usize = b(272, 592);
+    pub const CALL_CLOSURE_FRAME_SEALED: usize = b(352, 416);
+    pub const IMPL_METHOD_SEALED: usize = b(160, 256);
+    pub const EVAL_TAINTED: usize = b(144, 144);
+    pub const CALL_FN_SEALED: usize = b(288, 176);
+    pub const CALL_MUT_SEALED: usize = b(192, 384);
+    pub const RUN_ARM_SEALED: usize = b(480, 144);
+    pub const STRUCT_REFINE_SEALED: usize = b(288, 112);
 }
 
 /// Hard ceiling on the configurable recursion limit. `AXON_MAX_DEPTH` is
@@ -2074,17 +2446,35 @@ pub(super) mod nest_cost {
 /// overflows *before* the guard fires (which would reintroduce the very
 /// process-abort the guard exists to prevent). Paired with the stack-size
 /// scaling in [`stack_size_for_depth`]: at this ceiling the thread stack is
-/// ~8 GiB, leaving ample headroom over the ~256 KB/frame worst case.
+/// [`MAX_STACK_BYTES`] of reserved address space.
 const MAX_DEPTH_CEILING: usize = 1_000_000;
 
-/// Native stack budget per interpreter call frame, used to size the thread
-/// stack so the [`resolve_max_depth`] guard always trips before a real
-/// overflow. Generous (2×) over the observed ~128 KB debug frame.
-const STACK_BYTES_PER_FRAME: usize = 256 * 1024;
+/// Native stack budget per interpreter call level, used to size the thread
+/// stack so the [`resolve_max_depth`] guard trips before a real overflow. Only
+/// call depth is counted, so a level whose call sits inside deeply nested
+/// expressions can still use more than this (each nesting level is one more
+/// evaluator frame). R51 (S7-UnsealedParity-10): 256 KiB → 320 KiB, with
+/// [`MIN_STACK_BYTES`] 1 GiB → 1.25 GiB, because splitting the evaluator per
+/// run kind grew the unsealed native frames (release `eval_arm::<false>`
+/// 1024 B, was `eval` 912 B; stack per level +3.5–12.3% release, +6.1–10.5%
+/// debug on the tree engine, up to +19.3% debug on the VM, measured
+/// 2026-10-11): ×1.25 keeps every level the base tree reached reachable. The
+/// reserve is address space; only the pages a run touches are resident.
+const STACK_BYTES_PER_FRAME: usize = 320 * 1024;
 
-/// Minimum interpreter thread stack — the historical 1 GiB floor, so shallow
-/// runs keep their previous generous headroom regardless of the depth setting.
-const MIN_STACK_BYTES: usize = 1024 * 1024 * 1024;
+/// Minimum interpreter thread stack, so shallow runs keep generous headroom
+/// regardless of the depth setting (the historical 1 GiB floor, scaled with
+/// [`STACK_BYTES_PER_FRAME`] so the crossover stays at 4096 levels).
+const MIN_STACK_BYTES: usize = 1280 * 1024 * 1024;
+
+/// Largest interpreter thread stack: the reserve 5864c423 gave
+/// [`MAX_DEPTH_CEILING`] (1,000,000 × 256 KiB, ~244 GiB). Past ~800,000
+/// levels the ×1.25 per-level reserve would exceed it, and Linux's heuristic
+/// overcommit refuses a single mapping larger than RAM + swap, so the thread
+/// would fail to spawn where 5864c423 ran (S7-UnsealedParity-10). Capped,
+/// every depth reserves at least what 5864c423 did and never more than its
+/// largest reserve. Saturating: wasm32's 32-bit `usize` (no thread there).
+const MAX_STACK_BYTES: usize = MAX_DEPTH_CEILING.saturating_mul(256 * 1024);
 
 /// Resolve the effective recursion limit: `AXON_MAX_DEPTH` if set to a positive
 /// integer (clamped to [`MAX_DEPTH_CEILING`]), else [`RECURSION_LIMIT`]. A
@@ -2115,7 +2505,7 @@ fn max_depth_from_env(raw: Option<&str>) -> usize {
 fn stack_size_for_depth(depth: usize) -> usize {
     depth
         .saturating_mul(STACK_BYTES_PER_FRAME)
-        .max(MIN_STACK_BYTES)
+        .clamp(MIN_STACK_BYTES, MAX_STACK_BYTES)
 }
 
 /// Restores the call depth and the caller's `current_fn` when a `call_fn`
@@ -2147,13 +2537,53 @@ impl<const W: usize> Drop for NestGuard<'_, W> {
     }
 }
 
+/// [`NestGuard`] for [`Interp::enter_nest_t`]: gives back `S` in the
+/// `::<true>` (sealed) instance, `F` in the `::<false>` one.
+#[cfg(target_arch = "wasm32")]
+pub(super) struct NestGuardT<'a, const T: bool, const F: usize, const S: usize>(&'a Cell<usize>);
+#[cfg(target_arch = "wasm32")]
+impl<const T: bool, const F: usize, const S: usize> NestGuardT<'_, T, F, S> {
+    const W: usize = if T { S } else { F };
+}
+#[cfg(target_arch = "wasm32")]
+impl<const T: bool, const F: usize, const S: usize> Drop for NestGuardT<'_, T, F, S> {
+    #[inline(always)]
+    fn drop(&mut self) {
+        self.0.set(self.0.get() - Self::W);
+    }
+}
+
 /// AX-56: charges the enclosing interpreter function's native frame
 /// (`nest_cost::$cost`) against the wasm32 stack budget until it returns, or
 /// returns the recursion-limit panic when the budget is spent, running
 /// `$spent` first (to release arguments the function owns). Expands to
 /// nothing off wasm32. Measured 2026-10-09: this `?` form leaves smaller
-/// unoptimised frames than an `Option` guard with `let .. else`.
+/// unoptimised frames than an `Option` guard with `let .. else`. A function
+/// compiled once per run kind (`f<const T: bool>`, R51) names both of its
+/// instances' constants: `nest_guard!(self, if T { F_SEALED } else { F })`.
 macro_rules! nest_guard {
+    ($interp:ident, if $t:ident { $sealed:ident } else { $cost:ident }) => {
+        #[cfg(target_arch = "wasm32")]
+        let _nest = $interp.enter_nest_t::<
+            $t,
+            { $crate::interp::nest_cost::$cost },
+            { $crate::interp::nest_cost::$sealed },
+        >()?;
+    };
+    ($interp:ident, if $t:ident { $sealed:ident } else { $cost:ident }, $spent:block) => {
+        #[cfg(target_arch = "wasm32")]
+        let _nest = match $interp.enter_nest_t::<
+            $t,
+            { $crate::interp::nest_cost::$cost },
+            { $crate::interp::nest_cost::$sealed },
+        >() {
+            Ok(g) => g,
+            Err(flow) => {
+                $spent
+                return Err(flow);
+            }
+        };
+    };
     ($interp:ident, $cost:ident) => {
         #[cfg(target_arch = "wasm32")]
         let _nest = $interp.enter_nest::<{ $crate::interp::nest_cost::$cost }>()?;
@@ -2317,22 +2747,107 @@ fn lambda_arity_mismatch(want: usize, got: usize) -> R {
     panic(format!("lambda: expected {want} args, got {got}"))
 }
 
-/// Soft typing at the RETURN boundary: a fn declared `-> T` (a plain
-/// scalar) whose body produces an `Uncertain<T>`/`Temporal<T>` unwraps to
-/// the inner value — the same rule as a plain-T parameter. Without this,
-/// `fn f() -> i64 { uncertain }` leaked the struct and `f() + 1` silently
-/// produced 0. A fn declared `-> Uncertain<T>`/`-> Temporal<T>` keeps it.
-/// Only unwrap when the declared return is a plain SCALAR (i64/i32/
-/// f64/bool); a str/struct/tuple/soft-wrapper return is left untouched.
+/// Bind a closure call's arguments as the parameters of `code` in the
+/// fresh scope above `base` (the cell's bindings), each with taint `t(i)`.
+/// Slotted parameters are the next bindings, so they are pushed in place, as
+/// `define_var` would (cost only).
 #[inline(always)]
-fn scalar_return(entry: &FnEntry<'_>, result: Value) -> Value {
-    // Only a struct can be a soft wrapper (cost only, R50 S5).
-    if entry.ret_is_scalar && matches!(result, Value::Struct(_)) {
-        if let Some(inner) = value::soft_inner(&result) {
-            return inner;
-        }
+fn bind_closure_params(
+    frame: &mut Env,
+    code: &ClosureCode,
+    base: usize,
+    args: impl ClosureArgs,
+    t: impl Fn(usize) -> u8,
+) {
+    if code.param_base.map(|b| b as usize) == Some(base) {
+        frame.reserve(code.params.len());
+        args.bind(|i, v| frame.push_var(code.params[i], v, t(i)));
+    } else {
+        args.bind(|i, v| {
+            let slot = code.param_base.map_or(NAMED, |b| b + i as u32);
+            frame.define_var(code.params[i], slot, v, t(i));
+        });
     }
-    result
+}
+
+/// Whether the return boundary ([`sum_return`]) can ask anything of `v`:
+/// only a struct (a soft wrapper) or a `Result`/`Option` constructor can be
+/// asked anything. `Struct`..=`Err` is one contiguous tag range (`Enum`,
+/// inside it, returns as is), so this is one compare, and it reads only the
+/// value, never the entry (cost only, R51 S0b).
+#[inline(always)]
+fn ret_needs_check(v: &Value) -> bool {
+    matches!(
+        v,
+        Value::Struct(_)
+            | Value::Enum(_)
+            | Value::Some(_)
+            | Value::None
+            | Value::Ok(_)
+            | Value::Err(_)
+    )
+}
+
+/// The return boundary, one fn on every return path of both engines: what
+/// `entry`'s declared return type ([`FnEntry::ret`]) asks of `result`
+/// ([`scalar_return`]), tested on the value's tag first
+/// ([`ret_needs_check`]).
+#[inline(always)]
+fn sum_return(entry: &FnEntry<'_>, result: Value) -> R {
+    if ret_needs_check(&result) {
+        return scalar_return(entry, result);
+    }
+    Ok(result)
+}
+
+/// [`sum_return`] for a struct or a `Result`/`Option` constructor.
+///
+/// Soft typing: a fn declared `-> T` (a plain scalar) whose body produces
+/// an `Uncertain<T>`/`Temporal<T>` unwraps to the inner value — the same
+/// rule as a plain-T parameter. Without this, `fn f() -> i64 { uncertain }`
+/// leaked the struct and `f() + 1` silently produced 0. A fn declared
+/// `-> Uncertain<T>`/`-> Temporal<T>` keeps it; a str/struct/tuple/soft-
+/// wrapper return is left untouched.
+///
+/// A value whose constructor contradicts the declared `Result`/`Option`
+/// return type is a runtime type confusion (an untyped `dict_get` yields a
+/// free type variable, so a stored `None` type-checks as a `Result`):
+/// refused here, the one boundary every return crosses on both engines,
+/// instead of letting a caller's `?` read it as the other type (v0.22 C9
+/// round 3, PSV-3).
+#[inline(always)]
+fn scalar_return(entry: &FnEntry<'_>, result: Value) -> R {
+    match (entry.ret, &result) {
+        (RetCheck::Scalar, Value::Struct(_)) => {
+            if let Some(inner) = value::soft_inner(&result) {
+                return Ok(inner);
+            }
+        }
+        (RetCheck::Result, Value::Some(_) | Value::None)
+        | (RetCheck::Option, Value::Ok(_) | Value::Err(_)) => {
+            return Err(sum_confusion(entry, &result));
+        }
+        _ => {}
+    }
+    Ok(result)
+}
+
+#[cold]
+#[inline(never)]
+fn sum_confusion(entry: &FnEntry<'_>, result: &Value) -> Flow {
+    let declared = if entry.ret == RetCheck::Result {
+        "Result"
+    } else {
+        "Option"
+    };
+    Flow::Panic(
+        format!(
+            "`{}` is declared to return {declared} but produced {} — a runtime type confusion",
+            entry.def.name,
+            value::display(result)
+        )
+        .into_boxed_str(),
+    )
 }
 
 /// Argument `a` as `entry`'s parameter `i` binds it. Soft typing:
@@ -2343,26 +2858,32 @@ fn scalar_return(entry: &FnEntry<'_>, result: Value) -> Value {
 /// dropped at this T-typed boundary. R19 Slice B: coerce Int→SizedInt when
 /// the declared param type is a non-i64 integer width, so arithmetic inside
 /// the callee's body uses width-correct ops (completeness, I-9).
+/// In a sealed run (`SEALED`) a `SizedInt` of another width is left for the
+/// declared-type cast that follows ([`coerce_to_sized`]).
 #[inline(always)]
-fn param_value(entry: &FnEntry<'_>, i: usize, a: Value) -> Value {
+fn param_value<const SEALED: bool>(entry: &FnEntry<'_>, i: usize, a: Value) -> Value {
     match entry.param_coerce[i] {
         // Only a struct can be a soft wrapper: anything else binds as is
         // when there is no width to coerce to (cost only, R50 S5).
         (_, None) if !matches!(a, Value::Struct(_)) => a,
-        (unwrap_soft, width) => param_value_coerced(unwrap_soft, width, a),
+        (unwrap_soft, width) => param_value_coerced::<SEALED>(unwrap_soft, width, a),
     }
 }
 
 /// [`param_value`]'s soft unwrap and sized-int coercion.
 #[inline(never)]
-fn param_value_coerced(unwrap_soft: bool, width: Option<IntWidth>, a: Value) -> Value {
+fn param_value_coerced<const SEALED: bool>(
+    unwrap_soft: bool,
+    width: Option<IntWidth>,
+    a: Value,
+) -> Value {
     let a = if unwrap_soft {
         value::soft_inner(&a).unwrap_or(a)
     } else {
         a
     };
     match width {
-        Some(width) => coerce_to_sized(a, width),
+        Some(width) => coerce_to_sized::<SEALED>(a, width),
         None => a,
     }
 }
@@ -2784,8 +3305,13 @@ pub fn run_named_fn_as_bool_with_score(
     score: Option<i64>,
 ) -> Option<i32> {
     on_deep_stack(|| {
-        let mut interp =
-            Interp::build(program).with_discharged(crate::verify::Discharged::default());
+        let mut interp = match Interp::build(program) {
+            Ok(ix) => ix.with_discharged(crate::verify::Discharged::default()),
+            Err(refused) => {
+                eprintln!("error: {refused}");
+                return Some(2);
+            }
+        };
         if !interp.fns.contains_key(fn_name) {
             return None;
         }
@@ -3199,22 +3725,25 @@ impl SendValue {
                 params,
                 body,
                 captured,
-            } => Value::Closure(Rc::new(ClosureVal {
-                code: Held::new(Rc::new(ClosureCode::unresolved(
+            } => Value::Closure(Rc::new(ClosureVal::plain(
+                Rc::new(ClosureCode::unresolved(
                     params.iter().map(|p| intern(p)).collect(),
                     *body,
-                ))),
+                )),
                 // A closure that crossed the host boundary gets a FRESH capture
                 // cell: the SendValue path is a deep clone by construction (a
                 // shared cell is exactly what it cannot carry), so the two sides
-                // are independent counters, not aliases (T40 + R15 Slice 2).
-                captured: RefCell::new(Held::new(
+                // are independent counters, not aliases (T40 + R15 Slice 2). A
+                // `SendValue` carries no taint, so the cell has none: a sealed
+                // frame that calls it stops (`Captures::plain`; R51 S3's deep
+                // copy edge is where a sealed crossing gets its taints).
+                Captures::plain(
                     captured
                         .into_iter()
                         .map(|(k, v)| (intern(&k), v.into_value()))
                         .collect(),
-                )),
-            })),
+                ),
+            ))),
             SendValue::Tuple(xs) => Value::tuple(xs.into_iter().map(Self::into_value).collect()),
             SendValue::Dict(entries) => {
                 let map: std::collections::BTreeMap<String, Value> = entries
@@ -4023,7 +4552,14 @@ fn run_program_inner(
     discharged: crate::verify::Discharged,
     map_status: bool,
 ) -> i32 {
-    let mut interp = Interp::build(program).with_discharged(discharged);
+    let mut interp = match Interp::build(program) {
+        Ok(ix) => ix.with_discharged(discharged),
+        Err(refused) => {
+            let _ = std::io::stdout().flush();
+            eprintln!("error: {refused}");
+            return 2;
+        }
+    };
     // BUG_HUNT #23: a missing entry point is a COMPILE-time error (the program
     // is malformed), not a runtime panic. Report it cleanly with exit 2 (the
     // compile-error code) instead of `panic: no main` + exit 101 — and never
@@ -4113,7 +4649,7 @@ fn run_program_inner(
             eprintln!("axon: panic: `resume` called outside an effect-handler arm");
             101
         }
-        Err(Flow::HandlerDone(_)) => {
+        Err(Flow::HandlerDone(..)) => {
             // A multi-shot handler's `HandlerDone` escaped its `with` block — an
             // interpreter bug (it is always caught by `eval_with_handler`). Treat
             // as a panic rather than a silent exit.
@@ -4161,49 +4697,142 @@ fn run_program_inner(
 
 /// Run a single zero-argument function (e.g. an `@[test]`) by name.
 ///
-/// Returns `Ok(())` if it completed without panicking, or `Err(message)` on a
-/// runtime panic / non-zero `exit`. Used by `axon test` to run tests in-process.
+/// Returns `Ok(())` exactly when `axon test` passes it as a plain test: it
+/// did not panic or exit non-zero, and it did not end on a failure value
+/// ([`TestEnd::failure_exit`], R51 §3). Otherwise `Err(message)`.
 pub fn run_test_fn(program: &Program, name: &str) -> Result<(), String> {
-    on_deep_stack(|| run_test_fn_inner(program, name))
+    match run_test_fn_outcome(program, name)?.failure_exit() {
+        Some(why) => Err(why.to_string()),
+        None => Ok(()),
+    }
 }
 
-fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
-    let mut interp = Interp::build(program);
+/// How a test that did not fail ENDED — the affirmative evidence Protected
+/// Check Isolation rests on. `Completed` means the test body itself returned
+/// normally, with a value that is not an `Err`. That is NOT evidence that every
+/// assertion ran: an assertion inside a closure handed to code that never calls
+/// it does not execute, and the test still completes (PSV-3; a suite must
+/// assert after the call). A
+/// test ended by `exit(0)` from below it, or one that returned `Err`, is
+/// `EndedEarly`: no completion evidence is issued for it, so a check that
+/// requires completion does not count it. `axon test` reports an early end
+/// on a failure value ([`TestEnd::failure_exit`]) as a failure, and any
+/// other early end as passing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TestEnd {
+    Completed,
+    EndedEarly(String),
+}
+
+/// [`TestEnd::EndedEarly`]'s reason for a test that ended on a failure value:
+/// it returned `Err` (at its tail, through `return` or through `?`), or a
+/// `return`/`?` ended its body early with `None`. An early `return None` and
+/// a `?` on `None` leave the same trace, so both fail (S7-UnsealedParity-8).
+const TEST_ENDED_ON_FAILURE: &str = "the test ended on `Err`, or early on `None` (a `return None` \
+                                     or a `?` on `None`): it did not complete";
+
+impl TestEnd {
+    /// The reason, when the test ended on a failure value — an `Err`, or an
+    /// early `None` (`return None` or a `?`) — rather than through `exit(0)`
+    /// or a plain `return`. `axon test` fails such a test (R51 §3: a test
+    /// passes only if its body completed).
+    pub fn failure_exit(&self) -> Option<&str> {
+        match self {
+            TestEnd::EndedEarly(m) if m == TEST_ENDED_ON_FAILURE => Some(m),
+            _ => None,
+        }
+    }
+}
+
+pub fn run_test_fn_outcome(program: &Program, name: &str) -> Result<TestEnd, String> {
+    let sealed_dirs = crate::resolver::sealed_module_dirs();
+    on_deep_stack(|| run_test_fn_inner(program, name, &sealed_dirs))
+}
+
+/// `sealed_dirs`: the run's sealed set ([`Interp::build_in`]).
+fn run_test_fn_inner(
+    program: &Program,
+    name: &str,
+    sealed_dirs: &[std::path::PathBuf],
+) -> Result<TestEnd, String> {
+    let mut interp = Interp::build_in(program, sealed_dirs)?;
     if let Err(f) = interp.init_globals() {
         return Err(flow_to_msg(f));
     }
     let Some(f) = interp.fns.get(name).copied() else {
         return Err(format!("no function `{name}`"));
     };
-    match interp.call_fn(f, vec![]) {
-        Ok(_) => Ok(()),
-        Err(Flow::Panic(m)) => Err(m.into()),
-        // A verify failure inside a test is still a failure (drives
-        // `@[test(should_fail)]`); surface its message like a panic.
-        Err(Flow::VerifyFailed(m)) => Err(m.into()),
-        // A corrigibility halt inside a test is a failure too (lets
-        // `@[test(should_fail)]` assert the kill-switch latched).
-        Err(Flow::Halted(m)) => Err(m.into()),
-        // An AI-policy stop inside a test is a failure (surfaces like a panic;
-        // also lets `@[test(should_fail)]` assert the policy gate fired).
-        Err(Flow::AiPolicyUnreachable(m)) => Err(m.into()),
-        // A refinement-precondition violation inside a test is a failure too
-        // (lets `@[test(should_fail)]` assert a bad arg is caught).
-        Err(Flow::RefineViolation(m)) => Err(m.into()),
-        // A kernel-goal budget exhaustion inside a test is a failure too (lets
-        // `@[test(should_fail)]` assert the budget ceiling fired).
-        Err(Flow::GoalBudgetExhausted(m)) => Err(m.into()),
-        // A sandbox violation inside a test is a failure (lets
-        // `@[test(should_fail)]` assert the sandbox ceiling fired).
-        Err(Flow::SandboxViolation(m)) => Err(m.into()),
-        Err(Flow::Resume(_)) => Err("`resume` called outside an effect-handler arm".to_string()),
-        // E1314 multi-shot-unsound inside a test is a failure (lets
-        // `@[test(should_fail)]` assert the unsound-replay case is refused).
-        Err(Flow::MultiShotUnsound(m)) => Err(m.into()),
-        Err(Flow::Exit(0)) => Ok(()),
-        Err(Flow::Exit(n)) => Err(format!("exited with code {n}")),
-        // A stray return/break/continue escaping the fn — treat as clean.
-        Err(_) => Ok(()),
+    interp.test_outcome(f)
+}
+
+impl<'p> Interp<'p> {
+    /// Run the `@[test]` fn `f` (globals initialised) and classify how it
+    /// ended: [`run_test_fn_outcome`] after the build.
+    fn test_outcome(&self, f: &'p FnDef) -> Result<TestEnd, String> {
+        self.test_frame_depth.set(self.call_depth.get() + 1);
+        self.test_body_finished.set(false);
+        match self.call_test_fn(f) {
+            // COMPLETED is decided on one fact: the test's own body evaluated to
+            // its end (`call_fn_in_general` records it). A `return` or a `?` is
+            // an ordinary `Ok` at the test's frame, so the returned VALUE cannot
+            // say whether the assertions after it ran: a `?` on a type-confused
+            // `None` returned `None`, which read as a completion and was minted
+            // a token (C9 round 3, PSV-3).
+            Ok(Value::Err(_)) => Ok(TestEnd::EndedEarly(TEST_ENDED_ON_FAILURE.to_string())),
+            Ok(Value::None) if !self.test_body_finished.get() => {
+                Ok(TestEnd::EndedEarly(TEST_ENDED_ON_FAILURE.to_string()))
+            }
+            Ok(_) if !self.test_body_finished.get() => Ok(TestEnd::EndedEarly(
+                "the test body ended early (a `return`): it did not complete".to_string(),
+            )),
+            Ok(_) => Ok(TestEnd::Completed),
+            Err(Flow::Panic(m)) => Err(m.into()),
+            // A verify failure inside a test is still a failure (drives
+            // `@[test(should_fail)]`); surface its message like a panic.
+            Err(Flow::VerifyFailed(m)) => Err(m.into()),
+            // A corrigibility halt inside a test is a failure too (lets
+            // `@[test(should_fail)]` assert the kill-switch latched).
+            Err(Flow::Halted(m)) => Err(m.into()),
+            // An AI-policy stop inside a test is a failure (surfaces like a panic;
+            // also lets `@[test(should_fail)]` assert the policy gate fired).
+            Err(Flow::AiPolicyUnreachable(m)) => Err(m.into()),
+            // A refinement-precondition violation inside a test is a failure too
+            // (lets `@[test(should_fail)]` assert a bad arg is caught).
+            Err(Flow::RefineViolation(m)) => Err(m.into()),
+            // A kernel-goal budget exhaustion inside a test is a failure too (lets
+            // `@[test(should_fail)]` assert the budget ceiling fired).
+            Err(Flow::GoalBudgetExhausted(m)) => Err(m.into()),
+            // A sandbox violation inside a test is a failure (lets
+            // `@[test(should_fail)]` assert the sandbox ceiling fired).
+            Err(Flow::SandboxViolation(m)) => Err(m.into()),
+            Err(Flow::Resume(_)) => {
+                Err("`resume` called outside an effect-handler arm".to_string())
+            }
+            // E1314 multi-shot-unsound inside a test is a failure (lets
+            // `@[test(should_fail)]` assert the unsound-replay case is refused).
+            Err(Flow::MultiShotUnsound(m)) => Err(m.into()),
+            Err(Flow::Exit(0)) => Ok(TestEnd::EndedEarly(
+                "`exit(0)` ended the test before it completed".to_string(),
+            )),
+            Err(Flow::Exit(n)) => Err(format!("exited with code {n}")),
+            // Unreachable: the test's frame ends its own `return` (and
+            // `contain_frame` every other transfer). Kept so the match stays
+            // total; it grants nothing.
+            Err(Flow::Return(_)) => Err("`return` escaped the test's own frame".to_string()),
+            // A `break` / `continue` (or an effect-handler completion) that
+            // escapes a function unwinds the test BEFORE its assertions ran: the
+            // test did not complete, so it did not pass. It used to count as
+            // clean, which let a candidate's function end the operator's
+            // acceptance test early and have Fabric sign a pass (v0.22 G01 final
+            // re-audit, executed).
+            Err(Flow::Break) | Err(Flow::Continue) => Err(
+                "a `break`/`continue` escaped a function and unwound the test before it completed"
+                    .to_string(),
+            ),
+            Err(Flow::HandlerDone(..)) => {
+                Err("an effect handler completed outside its handled computation".to_string())
+            }
+        }
     }
 }
 
@@ -4236,14 +4865,59 @@ fn verify_fn_label(fn_name: &str) -> String {
 }
 
 impl<'p> Interp<'p> {
-    pub fn build(program: &'p Program) -> Self {
+    /// Build the interpreter for `program`.
+    ///
+    /// `Err` (an [`EngineRefusal`]'s message) when the run is sealed and must
+    /// not execute: this build's runtime seal is incomplete
+    /// ([`SEALED_RUN_REFUSED`]), the VM is requested
+    /// ([`SEALED_RUN_VM_REFUSED`]) or `AXON_ENGINE` is invalid (R51 §4 Fork
+    /// 1, §7). Every run entry passes through here, so no sealed run executes
+    /// unprotected or on the VM, whoever spawned it.
+    pub fn build(program: &'p Program) -> Result<Self, String> {
+        Self::build_in(program, &crate::resolver::sealed_module_dirs())
+    }
+
+    /// [`Interp::build`] for the sealed set `sealed_dirs` (the process's
+    /// `resolver::sealed_module_dirs()` there): the one input both the
+    /// refusal and the seal state are computed from. `engine_for` decides a
+    /// sealed run before it looks at the override or `AXON_ENGINE`. Taking
+    /// the set as a value lets a test build a sealed run without publishing
+    /// it to every concurrent build in the process.
+    fn build_in(program: &'p Program, sealed_dirs: &[std::path::PathBuf]) -> Result<Self, String> {
+        let engine =
+            vm::engine_at_build(!sealed_dirs.is_empty()).map_err(|refused| refused.to_string())?;
+        Ok(Self::build_with(program, sealed_dirs, engine))
+    }
+
+    /// [`Interp::build`] with the sealed set (`sealed_dirs`, empty for an
+    /// unsealed run) and the engine already decided (`engine` is
+    /// [`vm::engine_for`]'s choice for that run). A sealed run computes its
+    /// [`Seal`] and its pins here, once; an unsealed run computes neither.
+    fn build_with(
+        program: &'p Program,
+        sealed_dirs: &[std::path::PathBuf],
+        engine: Engine,
+    ) -> Self {
         pin_ai_net_allowlist(program);
+        let (seal, pins) = if sealed_dirs.is_empty() {
+            (Seal::default(), pin::Pins::default())
+        } else {
+            let sealed = |sp: crate::span::Span| crate::resolver::span_in_sealed(sp, sealed_dirs);
+            (
+                Seal::of(program, &sealed),
+                pin::Pins::build(program, &sealed),
+            )
+        };
         let mut fns = HashMap::new();
         let mut structs = HashMap::new();
         let mut enums = HashMap::new();
         let mut methods = HashMap::new();
         let mut global_defs = Vec::new();
         let mut refine_preds = HashMap::new();
+        let mut user_traits = std::collections::HashSet::new();
+        let mut trait_impls = std::collections::HashSet::new();
+        let mut refine_bases = HashMap::new();
+        let mut impl_of = HashMap::new();
 
         for item in &program.items {
             match item {
@@ -4254,6 +4928,10 @@ impl<'p> Interp<'p> {
                     // Phase 5: index the predicate so `call_fn` can evaluate it as
                     // a runtime precondition when a param's type is this refinement.
                     refine_preds.insert(r.name.clone(), r.predicate.as_ref());
+                    refine_bases.insert(r.name.clone(), &r.base);
+                }
+                Item::TraitDef(t) => {
+                    user_traits.insert(t.name.clone());
                 }
                 Item::TypeDef(t) => {
                     structs.insert(t.name.clone(), t);
@@ -4261,14 +4939,23 @@ impl<'p> Interp<'p> {
                 Item::EnumDef(e) => {
                     enums.insert(e.name.clone(), e);
                 }
-                Item::ImplBlock(ImplBlock {
-                    for_type,
-                    methods: ms,
-                    ..
-                }) => {
+                Item::ImplBlock(
+                    b @ ImplBlock {
+                        trait_name,
+                        for_type,
+                        methods: ms,
+                        ..
+                    },
+                ) => {
                     let tn = type_name_of(for_type);
+                    if !trait_name.is_empty() {
+                        trait_impls.insert((tn.clone(), trait_name.clone()));
+                    }
                     for m in ms {
                         methods.insert((tn.clone(), m.name.clone()), m);
+                        if seal.active {
+                            impl_of.insert(m as *const FnDef as usize, b);
+                        }
                     }
                 }
                 Item::LetDef { name, value, .. } => {
@@ -4305,14 +4992,11 @@ impl<'p> Interp<'p> {
                     compiled: Some(std::cell::OnceCell::new()),
                     hot: res.hot_fn(f),
                     index: idx,
-                    ..FnEntry::new(f, &fns)
+                    ..FnEntry::new(f, &fns, seal.active)
                 });
             }
         }
 
-        // Read the ambient effect ceiling once; both the sandbox registry
-        // and the active-handle field below are derived from it.
-        let ambient = ambient_sandbox();
         Interp {
             res,
             pure_slots: fn_table.iter().map(|_| vm::PureSlot::default()).collect(),
@@ -4325,28 +5009,43 @@ impl<'p> Interp<'p> {
             methods,
             global_defs,
             globals: FxHashMap::default(),
-            provenance: RefCell::new(HashMap::new()),
-            provenance_inputs: RefCell::new(HashMap::new()),
-            provenance_inputs_f64: RefCell::new(HashMap::new()),
+            kernels: {
+                // Read the ambient effect ceiling once (its parse warns on
+                // stderr); both kernels start under the SAME ceiling.
+                let ambient = ambient_sandbox();
+                [
+                    Kernel::new(false, ambient.clone()),
+                    Kernel::new(true, ambient),
+                ]
+            },
             call_depth: Cell::new(0),
+            test_frame_depth: Cell::new(0),
+            test_body_finished: Cell::new(false),
             #[cfg(target_arch = "wasm32")]
             nest: Cell::new(0),
             #[cfg(target_arch = "wasm32")]
             nest_limit: resolve_max_depth().saturating_mul(NEST_PER_DEPTH),
             max_depth: resolve_max_depth(),
-            engine: vm::engine_at_build(),
+            seal,
+            pins,
+            frame_sealed: Cell::new(false),
+            pin_fn: Cell::new(0),
+            sealed_frames: Cell::new(0),
+            operator_frames: Cell::new(0),
+            taint: taint::Taint::default(),
+            user_traits,
+            trait_impls,
+            refine_bases,
+            chan_contracts: RefCell::new(HashMap::new()),
+            dict_snaps: RefCell::new(HashMap::new()),
+            dict_epoch: Cell::new(0),
+            impl_of,
+            fn_cx_cache: RefCell::new(HashMap::new()),
+            engine,
             vm_trace: vm::trace_at_build(),
             vm_eager: vm::eager_at_build(),
-            corrigible_halted: Cell::new(false),
             enclosing_agent: RefCell::new(None),
             current_goal: RefCell::new(None),
-            current_principal: RefCell::new(
-                std::env::var("AXON_PRINCIPAL")
-                    .ok()
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| "root".to_string()),
-            ),
-            goal_constraint: RefCell::new(None),
             current_fn: Cell::new(None),
             current_call_tier: RefCell::new(None),
             callees: RefCell::new(Vec::new()),
@@ -4364,16 +5063,6 @@ impl<'p> Interp<'p> {
             handlers: RefCell::new(Vec::new()),
             resume_replay: RefCell::new(None),
             resume_ctx: RefCell::new(Vec::new()),
-            principals: RefCell::new(crate::kernel::PrincipalRegistry::new()),
-            // Scheduler order is a function of spawn order + AXON_SEED (R12 §5
-            // determinism): derive the round-robin start offset from the seed.
-            scheduler: RefCell::new(crate::kernel::Scheduler::new(rng_seed() as usize)),
-            supervisors: RefCell::new(Vec::new()),
-            stores: RefCell::new(Vec::new()),
-            llm_gateways: RefCell::new(Vec::new()),
-            goals: RefCell::new(Vec::new()),
-            active_sandbox: Cell::new(if ambient.is_empty() { -1 } else { 0 }),
-            sandboxes: RefCell::new(ambient),
             refine_preds,
             main_locals: RefCell::new(HashMap::new()),
             discharged: crate::verify::Discharged::default(),
@@ -4395,6 +5084,351 @@ impl<'p> Interp<'p> {
         self
     }
 
+    /// Whether `f` was defined in a sealed (candidate) module of this run.
+    /// Read by the S2 taint and the S3 call crossing (R51 §11).
+    pub(crate) fn fn_is_sealed(&self, f: &FnDef) -> bool {
+        self.seal.active && self.seal.fns.contains(&(f as *const FnDef as usize))
+    }
+
+    /// What sealed code is told when a name does not resolve FOR IT: the
+    /// operator's fn and a fn that does not exist read the same, so a sealed
+    /// caller cannot use the refusal to learn which names the operator defines
+    /// (existence oracle, C9 round 10).
+    pub(crate) fn sealed_no_fn_msg(name: &str) -> String {
+        format!(
+            "sealed code (the candidate under test) cannot use `{name}`: no such function or \
+             value is visible to it"
+        )
+    }
+
+    /// The error for a name that resolves to nothing: the common text above for
+    /// a sealed caller, `plain` for anyone else.
+    pub(crate) fn no_such_fn<T>(&self, name: &str, plain: String) -> Result<T, Flow> {
+        if self.seal.active && self.frame_sealed.get() {
+            return panic(Self::sealed_no_fn_msg(name));
+        }
+        panic(plain)
+    }
+
+    /// Whether handler `frame` may answer (or abort) the operation being
+    /// performed now. An operator frame may answer anything. A SEALED frame
+    /// may answer only while no operator frame has been entered since it was
+    /// installed: otherwise the operation belongs to — or unwinds through —
+    /// the operator's code, and the candidate would choose its result or skip
+    /// the rest of it (C9 round 3, PSV-1). The single predicate for live
+    /// frames (`run_handler_arm`) and the replay feed.
+    pub(crate) fn handler_may_answer(&self, sealed: bool, operator_frames: usize) -> bool {
+        !sealed || operator_frames == self.operator_frames.get()
+    }
+    /// Run `g` with the frame's provenance set to `sealed`, restoring it
+    /// after: the ONE place provenance changes, so the per-provenance frame
+    /// counts stay exact. The S3 seal edges enter frames through it.
+    pub(crate) fn with_frame<T>(&self, sealed: bool, g: impl FnOnce() -> T) -> T {
+        let prev = self.frame_sealed.replace(sealed);
+        let count = if sealed {
+            &self.sealed_frames
+        } else {
+            &self.operator_frames
+        };
+        count.set(count.get() + 1);
+        if sealed {
+            self.taint.entries.set(self.taint.entries.get() + 1);
+        }
+        let out = g();
+        count.set(count.get() - 1);
+        self.frame_sealed.set(prev);
+        out
+    }
+
+    /// The kernel of the frame now running: the operator's, or the sealed
+    /// candidate's own. Handle-addressed state is only ever reached through
+    /// it. `frame_sealed` is never set in an unsealed run, so that run only
+    /// ever reaches `kernels[0]`.
+    #[inline(always)]
+    fn k(&self) -> &Kernel {
+        &self.kernels[usize::from(self.frame_sealed.get())]
+    }
+
+    /// The ONLY way to draw a random number: from the running frame's kernel.
+    /// A sealed frame draws from the candidate's own stream and so can never
+    /// advance or observe the operator's (PSV-1).
+    ///
+    /// OPERATOR code running ABOVE a sealed frame (a closure the suite handed
+    /// the candidate, an operator handler arm answering a candidate operation)
+    /// is REFUSED: the candidate decides how many times such code runs, so
+    /// every draw it made would advance the operator's stream by a count the
+    /// candidate chose, and steer the operator's next challenge (C9 round 3,
+    /// PSV-1, amendment 46).
+    pub(crate) fn rng_next(&self) -> Result<u64, Flow> {
+        self.rng_guard()?;
+        Ok(self.k().rng_next())
+    }
+
+    /// The ONLY way to reseed (`srand`): the running frame's kernel only,
+    /// under the same refusal as [`Interp::rng_next`].
+    pub(crate) fn rng_reseed(&self, n: i64) -> Result<(), Flow> {
+        self.rng_guard()?;
+        self.k().rng_set(n);
+        Ok(())
+    }
+
+    fn rng_guard(&self) -> Result<(), Flow> {
+        if !self.frame_sealed.get() && self.sealed_frames.get() > 0 {
+            return panic(
+                "the operator's random stream cannot be used by operator code that sealed code \
+                 (the candidate under test) is running — the candidate would choose how far it \
+                 advances; draw before handing the code to the candidate",
+            );
+        }
+        Ok(())
+    }
+
+    /// The NAME rule's edge (C9 round 10, amendment 100): operator code does not
+    /// hand a name-resolving builtin (`sandbox_run`, `scheduler_spawn`,
+    /// `goal_eval` ...) a name the candidate could have chosen. A `str` the
+    /// candidate returned is a perfectly good `str`, and the builtin then ran
+    /// whichever operator fn it named. Judged at the CALL SITE, by the static
+    /// name-purity analysis (`interp/pin.rs`): an operator literal, constant or
+    /// operator fn result passes; a candidate fn's result, a parameter or any
+    /// untyped read does not. Fail-closed: an unrecorded site is refused.
+    pub(crate) fn seal_name_args(&self, builtin: &str, args: &[Expr]) -> Result<(), Flow> {
+        if !self.seal.active || self.frame_sealed.get() {
+            return Ok(());
+        }
+        let Some(idxs) = pin::name_sink(builtin) else {
+            return Ok(());
+        };
+        #[cfg(test)]
+        if DISPATCH_RULE_OFF.with(Cell::get) {
+            return Ok(());
+        }
+        for &i in idxs {
+            if let Some(a) = args.get(i) {
+                if !self.pins.name_determined(self.pin_fn.get(), a) {
+                    return panic(format!(
+                        "operator code gave `{builtin}` a function name nothing on the operator \
+                         side determined (argument {}) — the candidate would choose which \
+                         function runs; name it with a literal or a constant the operator wrote",
+                        i + 1
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The method-dispatch edge: in operator code, a method name the operator
+    /// defines is the operator's. A method call selects its method by the
+    /// receiver's RUNTIME type, which the candidate chooses (its declared
+    /// return type, or a type confusion), so without this edge the candidate
+    /// chose which code ran under the operator's judging method's name — the
+    /// C9 round-4 review's keyed pass. A candidate's OWN method names (its
+    /// API, which the suite may call) are not affected.
+    pub(crate) fn seal_method(&self, f: &FnDef, tn: &str) -> Result<(), Flow> {
+        if self.seal.active
+            && !self.frame_sealed.get()
+            && self.fn_is_sealed(f)
+            && self.seal.operator_methods.contains(&f.name)
+        {
+            return panic(format!(
+                "operator code called `.{}()`, a method the operator defines, on a value of type \
+                 `{tn}` whose `{}` is the candidate's — the candidate would choose the code that \
+                 runs under the operator's method",
+                f.name, f.name
+            ));
+        }
+        Ok(())
+    }
+
+    /// The DISPATCH rule (C9 round 6, amendment 83): in a sealed run, operator
+    /// code does not select an operator impl's method by the runtime type of a
+    /// receiver nothing on the operator side determined (`interp/pin.rs`). The
+    /// impl is chosen by that type, which for a value read from a dict, a
+    /// channel, an unannotated lambda parameter or an unbound generic position
+    /// is the candidate's choice. Applies only where there is an impl to choose
+    /// between (two or more operator impl types define the method). The
+    /// runtime form is [`Interp::t_check_dispatch`] (R51 S4).
+    pub(crate) fn seal_dispatch(
+        &self,
+        receiver: &Expr,
+        f: &FnDef,
+        recv: &Value,
+        tn: &str,
+    ) -> Result<(), Flow> {
+        if !self.seal.active || self.frame_sealed.get() || self.fn_is_sealed(f) {
+            return Ok(());
+        }
+        // Tests of the OTHER seal layers observe their attacks through a dispatch
+        // on an untyped read - exactly what this rule refuses first. They run
+        // with the rule off (as a paired-disable cell does) so each layer is
+        // judged by its own attack; the rule's own tests run with it on.
+        #[cfg(test)]
+        if DISPATCH_RULE_OFF.with(Cell::get) {
+            return Ok(());
+        }
+        if !self.pins.selects_between_impls(&f.name) {
+            return Ok(());
+        }
+        // A receiver that is an operator-defined struct or enum selects an
+        // impl the operator chose: sealed code cannot build one (E0004).
+        let operator_value = match recv {
+            Value::Struct(s) => self.pins.is_operator_type(&sym_name(s.name)),
+            Value::Enum(e) => self.pins.is_operator_type(&sym_name(e.enum_name)),
+            _ => false,
+        };
+        if operator_value {
+            return Ok(());
+        }
+        if !self.pins.determined(self.pin_fn.get(), receiver, &f.name) {
+            return panic(format!(
+                "operator code dispatched `{}` on a value whose type nothing on the operator side \
+                 determined (here `{tn}`) — the candidate would choose the impl; pin it with \
+                 `let x: T = ...`",
+                f.name
+            ));
+        }
+        Ok(())
+    }
+
+    /// The dispatch rule's arithmetic arm (amendment 83): operator code does
+    /// not do arithmetic on a fixed-width integer whose WIDTH nothing on the
+    /// operator side determined — a `u8` the candidate chose wraps where the
+    /// operator's `i64` does not (`(v << 1) == 254` with `v = 255 as u8`).
+    pub(crate) fn seal_width(
+        &self,
+        op: &BinOp,
+        left: &Expr,
+        right: &Expr,
+        l: &Value,
+        r: &Value,
+    ) -> Result<(), Flow> {
+        if !self.seal.active || self.frame_sealed.get() {
+            return Ok(());
+        }
+        if !(width_sized(l) || width_sized(r)) {
+            return Ok(());
+        }
+        if matches!(
+            op,
+            BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq
+        ) {
+            return Ok(());
+        }
+        #[cfg(test)]
+        if DISPATCH_RULE_OFF.with(Cell::get) {
+            return Ok(());
+        }
+        if !self
+            .pins
+            .determined_arith(self.pin_fn.get(), op, left, right)
+        {
+            return panic(format!(
+                "operator code did arithmetic on a fixed-width integer whose width nothing on the \
+                 operator side determined ({} {:?} {}) — the candidate would choose the \
+                 wrapping; pin it with `let x: T = ...`",
+                l.type_name(),
+                op,
+                r.type_name()
+            ));
+        }
+        Ok(())
+    }
+
+    /// The arithmetic arm's UNARY form: `-x` and `~x` on a fixed-width integer
+    /// wrap at a width the candidate chose exactly as `x + y` does, and the
+    /// binary arm never saw them (C9 round 9 sweep: `(-xs[0]) == 252` completed
+    /// for a candidate `4 as u8`).
+    pub(crate) fn seal_width_unary(
+        &self,
+        op: &UnaryOp,
+        operand: &Expr,
+        v: &Value,
+    ) -> Result<(), Flow> {
+        if !self.seal.active || self.frame_sealed.get() {
+            return Ok(());
+        }
+        if !width_sized(v) || !matches!(op, UnaryOp::Neg | UnaryOp::BitNot) {
+            return Ok(());
+        }
+        #[cfg(test)]
+        if DISPATCH_RULE_OFF.with(Cell::get) {
+            return Ok(());
+        }
+        if !self.pins.determined_unary(self.pin_fn.get(), op, operand) {
+            return panic(format!(
+                "operator code did arithmetic on a fixed-width integer whose width nothing on the \
+                 operator side determined ({op:?} {}) — the candidate would choose the wrapping; \
+                 pin it with `let x: T = ...`",
+                v.type_name()
+            ));
+        }
+        Ok(())
+    }
+
+    /// The global-read edge: a sealed frame may not read an operator global.
+    pub(crate) fn seal_global(&self, s: Sym) -> Result<(), Flow> {
+        if self.seal.active && self.frame_sealed.get() && !self.seal.globals.contains(&s) {
+            return panic(Self::sealed_no_fn_msg(&sym_name(s)));
+        }
+        Ok(())
+    }
+
+    /// Whether `s` is a module-level `let`: existence only, no value.
+    #[inline(always)]
+    pub(crate) fn is_global(&self, s: Sym) -> bool {
+        self.globals.contains_key(&s)
+    }
+
+    /// THE ONLY read of a module-level `let` by name from running code: the
+    /// global-read edge ([`Interp::seal_global`]) applied at the one lookup, so
+    /// no arm (a receiver fast path, an index fast path, a closure-constant
+    /// call) can reach `self.globals` around it (C9 round 9: `TABLE[0]`,
+    /// `CFG.k`, `PAIR.0` read an operator global from sealed code because two
+    /// fast paths skipped the edge). `Ok(None)`: no such global.
+    /// Drift: `every_global_read_goes_through_global_ref`.
+    #[inline(always)]
+    pub(crate) fn global_ref(&self, s: Sym) -> Result<Option<&Value>, Flow> {
+        match self.globals.get(&s) {
+            Some(v) => {
+                if self.seal.active {
+                    self.seal_global(s)?;
+                }
+                Ok(Some(v))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// The refinement edge: a candidate's refinement never runs in operator
+    /// code (a refinement attaches BY NAME, so a candidate `type DictTable =
+    /// … where P` ran P inside the operator's helper — PCI candidate-3 review).
+    pub(crate) fn seal_refine(&self, rname: &str) -> Result<(), Flow> {
+        if self.seal.active && !self.frame_sealed.get() && self.seal.refines.contains(rname) {
+            return panic(format!(
+                "the refinement `{rname}` is the candidate's and cannot run in the operator's code"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Look up a function by NAME for a builtin that will run it (scheduler,
+    /// goal, sandbox …). The call edge applies at RESOLUTION time, so a name a
+    /// sealed frame queues cannot run later on the operator's behalf.
+    pub(crate) fn fn_by_name(&self, name: &str) -> Result<Option<&'p FnDef>, Flow> {
+        match self.fns.get(name).copied() {
+            Some(f) => {
+                self.seal_call(f)?;
+                Ok(Some(f))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Whether struct type `name` was defined in a sealed module.
+    pub(crate) fn seal_type(&self, name: &str) -> bool {
+        self.seal.active && self.seal.types.contains(name)
+    }
+
     /// Evaluate module-level constants in source order, so each may reference
     /// those defined before it. Populates [`Interp::globals`].
     fn init_globals(&mut self) -> Result<(), Flow> {
@@ -4402,12 +5436,38 @@ impl<'p> Interp<'p> {
             return Ok(());
         }
         let defs = std::mem::take(&mut self.global_defs);
-        let mut env = Env::new();
+        if self.seal.active {
+            return self.init_globals_sealed(&defs);
+        }
+        let mut env = self.new_env();
         for (name, expr) in &defs {
             let v = self.eval(expr, &mut env)?;
-            env.define(intern(name), v);
+            env.define(intern(name), v, 0);
         }
-        self.globals = env.snapshot().into_iter().collect();
+        self.globals = env.snapshot().into_parts().0.into_iter().collect();
+        Ok(())
+    }
+
+    /// [`Interp::init_globals`] in a sealed run (R51 S3, veto interp.rs:
+    /// 3292-3303). Each initialiser runs under its own definition's
+    /// provenance (a candidate's `let` is a sealed frame: the call edge, its
+    /// own kernel, and its value tainted ALL), in a FRESH environment: an
+    /// earlier global is reached through `global_ref`, so the global-read
+    /// edge sees every read (a shared env let a later initialiser read an
+    /// earlier global as a LOCAL, past the edge; PCI candidate-4 review). The
+    /// let carries the taint its initialiser was computed with
+    /// (`Interp::t_global`).
+    #[cold]
+    #[inline(never)]
+    fn init_globals_sealed(&mut self, defs: &[(String, &'p Expr)]) -> Result<(), Flow> {
+        for (name, expr) in defs {
+            let s = intern(name);
+            let sealed = self.seal.globals.contains(&s);
+            let mut env = self.new_env();
+            let v = self.with_frame(sealed, || self.eval(expr, &mut env))?;
+            self.t_set_global(s, self.taint.last.get());
+            self.globals.insert(s, v);
+        }
         Ok(())
     }
 
@@ -4493,7 +5553,7 @@ impl<'p> Interp<'p> {
     /// F3 (Phase 9): the name of the principal currently in scope for audit
     /// attribution. Defaults to "root"; overridden by `principal_activate`.
     fn current_principal_name(&self) -> String {
-        self.current_principal.borrow().clone()
+        self.k().current_principal.borrow().clone()
     }
 
     /// Whether the currently-executing fn carries an `@[ai(policy)]` attribute.
@@ -4559,11 +5619,11 @@ impl<'p> Interp<'p> {
     /// and another for the telemetry writer. `IO` is the row the effect
     /// catalog gives filesystem and console builtins.
     fn provenance_write_permitted(&self) -> bool {
-        let handle = self.active_sandbox.get();
+        let handle = self.k().active_sandbox.get();
         if handle < 0 {
             return true; // no ceiling in force
         }
-        let sbs = self.sandboxes.borrow();
+        let sbs = self.k().sandboxes.borrow();
         match sbs.get(handle as usize) {
             Some(sb) => {
                 crate::interp::builtins::first_effect_outside_ceiling(sb, &["IO"]).is_none()
@@ -4584,11 +5644,19 @@ impl<'p> Interp<'p> {
         }
     }
 
+    /// The call edge: a sealed frame may run only sealed functions.
+    pub(crate) fn seal_call(&self, f: &FnDef) -> Result<(), Flow> {
+        if self.seal.active && self.frame_sealed.get() && !self.fn_is_sealed(f) {
+            return panic(Self::sealed_no_fn_msg(&f.name));
+        }
+        Ok(())
+    }
+
     fn call_fn(&self, f: &'p FnDef, args: impl CallArgs) -> R {
         nest_guard!(self, CALL_FN);
         match self.fn_of_def.get(&(f as *const FnDef as usize)) {
             Some(&i) => self.call_fn_entry(&self.fn_table[i as usize], args),
-            None => self.call_fn_entry(&FnEntry::new(f, &self.fns), args),
+            None => self.call_fn_entry(&FnEntry::new(f, &self.fns, self.seal.active), args),
         }
     }
 
@@ -4611,45 +5679,26 @@ impl<'p> Interp<'p> {
         result
     }
 
-    /// AX-54: an empty call frame from the pool of finished calls' frames, so
-    /// a call does not allocate its bindings and scope marks. Boxed, so
-    /// taking and returning one moves a pointer, not the frame.
-    #[inline(always)]
-    fn take_frame(&self) -> Box<Env> {
-        if let Some(env) = self.frame_spare.take() {
-            return env;
-        }
-        self.take_pooled_frame()
-    }
-
-    #[inline(never)]
-    fn take_pooled_frame(&self) -> Box<Env> {
-        match self.env_pool.borrow_mut().pop() {
-            Some(env) => env,
-            None => Box::new(Env::new()),
-        }
-    }
-
-    /// Return a finished call's frame to the spare slot (the slot's previous
-    /// frame to the pool), emptied here (dropping the bindings where dropping
-    /// the frame did); a frame that grew unusually large is not kept.
-    #[inline(always)]
-    fn give_frame(&self, mut env: Box<Env>) {
-        env.clear();
-        if env.vars.capacity() > 1024 {
-            return;
-        }
-        if let Some(prev) = self.frame_spare.replace(Some(env)) {
-            self.pool_frame(prev);
-        }
-    }
-
-    #[inline(never)]
-    fn pool_frame(&self, env: Box<Env>) {
-        let mut pool = self.env_pool.borrow_mut();
-        if pool.len() < 64 {
-            pool.push(env);
-        }
+    /// Run the `@[test]` fn `f` with no arguments, always on
+    /// [`Interp::call_fn_in_general`]: the one path that records whether the
+    /// test frame's body ran to its end (`test_body_finished`), so the
+    /// common call path carries no test check (cost only).
+    fn call_test_fn(&self, f: &'p FnDef) -> R {
+        let owned;
+        let entry = match self.fn_of_def.get(&(f as *const FnDef as usize)) {
+            Some(&i) => &self.fn_table[i as usize],
+            None => {
+                owned = FnEntry::new(f, &self.fns, self.seal.active);
+                &owned
+            }
+        };
+        let mut env = self.take_frame();
+        let result = match self.enter_fn(f) {
+            Ok(_guard) => self.call_fn_in_general(entry, Vec::new(), &mut env),
+            Err(flow) => Err(flow),
+        };
+        self.give_frame(env);
+        result
     }
 
     /// AX-54: an empty argument vector with room for `n`, reusing one that a
@@ -4731,6 +5780,23 @@ impl<'p> Interp<'p> {
         Ok(NestGuard(&self.nest))
     }
 
+    /// [`Interp::enter_nest`] for a function compiled once per run kind
+    /// (`f<const T: bool>`, R51): its `::<true>` instance, which runs exactly
+    /// in a sealed run, charges `S`, its `::<false>` instance `F`, so each
+    /// instance's constant covers that instance's own frame.
+    #[cfg(target_arch = "wasm32")]
+    #[inline(always)]
+    pub(super) fn enter_nest_t<const T: bool, const F: usize, const S: usize>(
+        &self,
+    ) -> Result<NestGuardT<'_, T, F, S>, Flow> {
+        let n = self.nest.get() + NestGuardT::<T, F, S>::W;
+        if n > self.nest_limit {
+            return Err(self.nest_exceeded());
+        }
+        self.nest.set(n);
+        Ok(NestGuardT(&self.nest))
+    }
+
     #[cfg(target_arch = "wasm32")]
     #[cold]
     #[inline(never)]
@@ -4746,9 +5812,19 @@ impl<'p> Interp<'p> {
         )
     }
 
+    /// The depth-limit refusal of a call of `f`. The call edge is decided
+    /// first, as v0.22's `call_fn_sealed` ran `seal_call` before the depth
+    /// check (veto interp.rs:3581): a sealed caller at the limit reads an
+    /// operator fn exactly as one nothing defines, never by its name
+    /// (S7-Seal-2). Below the limit `call_fn_sealed` makes the same check, so
+    /// the order is v0.22's on every path while the call path itself stays
+    /// as it was; `seal_call` is `Ok` whenever the seal is not active.
     #[cold]
     #[inline(never)]
     fn depth_exceeded(&self, f: &FnDef) -> Flow {
+        if let Err(refused) = self.seal_call(f) {
+            return refused;
+        }
         Flow::Panic(
             format!(
                 "recursion limit exceeded ({}) in `{}` — infinite or excessively deep recursion? \
@@ -4761,33 +5837,153 @@ impl<'p> Interp<'p> {
 
     /// [`Interp::call_fn_in`]'s common path, after the guards: the arity
     /// check, the parameters, `goal_met`, the body and the scalar return.
+    /// Only a [`FnEntry::plain`] entry takes it, and no entry of a sealed run
+    /// is plain, so its frame has no taint store and binds with `0`.
     #[inline(always)]
     fn call_fn_common(&self, entry: &FnEntry<'p>, mut args: impl CallArgs, env: &mut Env) -> R {
         let f = entry.def;
         if f.params.len() != args.count() {
             return arity_mismatch(f, args.count());
         }
-        self.bind_params(entry, args.values(), env);
+        self.bind_params(entry, args.values(), env, 0);
         args.done(self);
         // `goal_met` follows the parameters (its slot in `Resolution`, the
         // next one: see `bind_params`); it is 0 for a fn without `@[goal]`.
-        env.vars.push((SYM_GOAL_MET, Value::Int(0)));
+        env.push_var_t::<false>(SYM_GOAL_MET, Value::Int(0), 0);
         let result = match self.run_body(entry, env) {
             Ok(v) | Err(Flow::Return(v)) => v,
-            Err(other) => return Err(other),
+            Err(other) => return Err(frame_edge(other, FrameEdge::Fn(&entry.def.name))),
         };
-        Ok(scalar_return(entry, result))
+        sum_return(entry, result)
     }
 
     /// [`Interp::call_fn_in`] for a fn with an attribute-driven step around
     /// its body (`@[agent]`, `@[ai]` metering, `@[corrigible]`, a zone,
-    /// `@[goal]`, `@[verify]`, `main`'s binding capture) or in a program that
-    /// declares refinements, after the depth and `current_fn` guards.
+    /// `@[goal]`, `@[verify]`, `main`'s binding capture), in a program that
+    /// declares refinements, or in a sealed run (no entry is
+    /// [`FnEntry::plain`] there), after the depth and `current_fn` guards.
+    ///
+    /// The frame is compiled twice (R51 S2.3, veto's `call_fn_frame::<T>`):
+    /// `::<true>` with the taint hooks, run exactly in a sealed run, and
+    /// `::<false>`, which is the code an unsealed run always ran.
+    #[inline(always)]
+    fn call_fn_in_general(&self, entry: &FnEntry<'p>, args: Vec<Value>, env: &mut Env) -> R {
+        if self.seal_frames() {
+            self.call_fn_sealed(entry, args, env)
+        } else {
+            self.call_fn_frame::<false>(entry, args, env, false)
+        }
+    }
+
+    /// Whether [`Interp::call_fn_in_general`] enters the callee's frame
+    /// through [`Interp::call_fn_sealed`] (the call edge, the crossing, the
+    /// `::<true>` instantiation): exactly in a sealed run. Named so the
+    /// refusal-coverage gate's `SEAL_FN` scans it (spec §8 T7); inlined, so
+    /// the test is the field read it was.
+    #[inline(always)]
+    fn seal_frames(&self) -> bool {
+        self.seal.active
+    }
+
+    /// A sealed run's call (veto `call_fn_sealed`, interp.rs:3579-3632): the
+    /// call edge, then the callee's frame entered through
+    /// [`Interp::with_frame`] under the callee's provenance and pin owner. A
+    /// candidate fn called from operator code is the seal CROSSING: every
+    /// dict in the arguments is snapshotted on the way in and every dict
+    /// sealed code mutated is checked on the way out (amendment 72 part 2),
+    /// the arguments and result are cast in the frame (strictly, the result),
+    /// and from inside a scheduler fiber or an abortable handler body what
+    /// follows is control-dependent on the candidate (amendment 117).
     #[inline(never)]
-    fn call_fn_in_general(&self, entry: &FnEntry<'p>, mut args: Vec<Value>, env: &mut Env) -> R {
-        nest_guard!(self, CALL_FN_IN_GENERAL);
+    fn call_fn_sealed(&self, entry: &FnEntry<'p>, args: Vec<Value>, env: &mut Env) -> R {
+        nest_guard!(self, CALL_FN_SEALED);
+        let f = entry.def;
+        self.seal_call(f)?;
+        let callee = self.fn_is_sealed(f);
+        let crossing = callee && !self.frame_sealed.get();
+        if crossing {
+            for a in &args {
+                self.dict_edge_in(a)?;
+            }
+        }
+        let r = {
+            let _pin_guard = PinGuard {
+                cell: &self.pin_fn,
+                prev: self.pin_fn.replace(f as *const FnDef as usize),
+            };
+            self.with_frame(callee, || {
+                self.call_fn_frame::<true>(entry, args, env, crossing)
+            })
+        };
+        // The frame restored the caller's control taints (`t_frame`). Operator
+        // code in a scheduler fiber (or in the body of a `with handler` that
+        // can abort it) that called sealed code: a panic in the callee would
+        // have ended the fiber here, and an operation it performed would have
+        // ended the body, so what follows is control-dependent on the
+        // candidate whether or not it panicked (amendment 117, loop finding
+        // 15; veto interp.rs:3615-3623).
+        if crossing && (self.taint.catchable.get() | self.taint.abortable.get()) != 0 {
+            let st = &self.taint.sticky;
+            st.set(st.get() | taint::VAL);
+        }
+        if crossing && r.is_ok() {
+            self.dict_edge_out()?;
+        }
+        // An operator-typed value a sealed fn hands back is a pick: sealed
+        // code cannot build one, so it got it from an argument or a closure
+        // and chose which (amendment 121; veto interp.rs:3627-3636).
+        if crossing {
+            if let Ok(v) = &r {
+                if self.t_holds_op(v) {
+                    self.t_touch(taint::PICK);
+                }
+            }
+        }
+        r
+    }
+
+    /// The type environment of `f`'s signature for ONE activation: the
+    /// signature part is cached per fn; the type-parameter bindings are fresh
+    /// (veto interp.rs:3640-3653). A sealed run's only.
+    fn fn_cx(&self, f: &FnDef) -> conform::Cx {
+        let key = f as *const FnDef as usize;
+        let cached = self.fn_cx_cache.borrow().get(&key).cloned();
+        let cx = match cached {
+            Some(cx) => cx,
+            None => {
+                let cx = conform::Cx::of_fn(f, self.impl_of.get(&key).copied());
+                self.fn_cx_cache.borrow_mut().insert(key, cx.clone());
+                cx
+            }
+        };
+        cx.fresh()
+    }
+
+    #[inline(never)]
+    fn call_fn_frame<const T: bool>(
+        &self,
+        entry: &FnEntry<'p>,
+        mut args: Vec<Value>,
+        env: &mut Env,
+        crossing: bool,
+    ) -> R {
+        nest_guard!(
+            self,
+            if T {
+                CALL_FN_FRAME_SEALED
+            } else {
+                CALL_FN_FRAME
+            }
+        );
         let f = entry.def;
         let params = &entry.params;
+        // The taint the arguments arrived with (their union, in `acc`), and
+        // the caller's control taints, which an early exit out of a tainted
+        // branch in this frame may raise and the caller never sees: restored
+        // when the frame ends, whatever the outcome (veto interp.rs:4033,
+        // 3593, 3612-3613; amendment 102).
+        let entry_t = self.ta::<T>();
+        let _ctl = self.t_frame::<T>();
         // R4/I-13: if THIS fn is an `@[agent]`, it becomes the enclosing agent for
         // everything it transitively calls; otherwise the caller's enclosing agent
         // is inherited unchanged. Restored on return so sibling calls aren't
@@ -4818,7 +6014,7 @@ impl<'p> Interp<'p> {
         // never happen, and the latch never clears — the function cannot resist
         // or reverse its own shutdown. Keyed on the annotation, enforced by the
         // engine, so a user cannot write a corrigible fn that ignores the halt.
-        if entry.corrigible && self.corrigible_halted.get() {
+        if entry.corrigible && self.k().corrigible_halted.get() {
             return Err(Flow::Halted(
                 format!(
                     "`{}` refused: corrigibility kill-switch is latched \
@@ -4856,7 +6052,14 @@ impl<'p> Interp<'p> {
             Some(Value::Int(n)) => Some(*n),
             _ => None,
         };
-        self.bind_params(entry, &mut args, env);
+        // A sealed run casts every argument to its parameter's declared type
+        // in the signature's environment for this activation, and the result
+        // to the declared return type (amendment 53, `interp/conform.rs`).
+        let cx = if T { Some(self.fn_cx(f)) } else { None };
+        match &cx {
+            Some(cx) => self.bind_params_sealed(entry, &mut args, env, entry_t, cx)?,
+            None => self.bind_params(entry, &mut args, env, 0),
+        }
         args.clear();
         self.recycle_args(args);
         // Phase 5: refinement-type PRECONDITIONS. A parameter `p: T where P`
@@ -4874,13 +6077,19 @@ impl<'p> Interp<'p> {
             for (p, s) in f.params.iter().zip(params.iter()) {
                 if let crate::ast::AxonType::Named(rname) = &p.ty {
                     if let Some(pred) = self.refine_preds.get(rname.as_str()).copied() {
+                        self.seal_refine(rname)?;
                         let val = env.get(*s).cloned().unwrap_or(Value::Unit);
-                        let mut pred_env = Env::new();
-                        pred_env.define(SYM_UNDERSCORE, val.clone());
+                        // The predicate frame sees the value with the taint
+                        // the arguments arrived with (veto interp.rs:4168-4173).
+                        let mut pred_env = self.new_env();
+                        pred_env.define_t::<T>(SYM_UNDERSCORE, val.clone(), entry_t);
                         // Also bind the parameter name (for inline refinements
                         // `p: T where E[p] > k` that use the param name directly).
-                        pred_env.define(*s, val.clone());
-                        if let Value::Bool(false) = self.eval(pred, &mut pred_env)? {
+                        pred_env.define_t::<T>(*s, val.clone(), entry_t);
+                        if let Value::Bool(false) = contain_frame(
+                            self.eval_t::<T>(pred, &mut pred_env),
+                            FrameEdge::Predicate,
+                        )? {
                             return Err(Flow::RefineViolation(
                                 format!(
                                     "parameter `{}` of `{}` (= {}) violates the refinement `{}` — \
@@ -4903,14 +6112,16 @@ impl<'p> Interp<'p> {
         // — i.e. on the WORST (minimum) score — so a fn cannot pass by
         // overfitting one point. With no held-out set, fall back to the best
         // observed training score.
-        let goal_met = if entry.has_goal {
+        let goal = if entry.has_goal {
             self.call_fn_goal(f)?
         } else {
-            0
+            None
         };
         // `goal_met` follows the parameters (its slot in `Resolution`, the
-        // next one: see `bind_params`).
-        env.vars.push((SYM_GOAL_MET, Value::Int(goal_met)));
+        // next one: see `bind_params`). The goal search ran the metric, which
+        // a sealed run may have supplied: everything (veto interp.rs:4262-4267).
+        let goal_t = if T && goal.is_some() { taint::ALL } else { 0 };
+        env.push_var_t::<T>(SYM_GOAL_MET, Value::Int(goal.unwrap_or(0)), goal_t);
         // PROTOTYPE (RLM session option 2): when dumping bindings, run main's
         // top-level statements WITHOUT the extra block scope (eval_block pops
         // its scope before returning, discarding the locals), then capture the
@@ -4938,13 +6149,24 @@ impl<'p> Interp<'p> {
             } else {
                 self.eval(&f.body, env)
             }
+        } else if self.call_depth.get() == self.test_frame_depth.get() {
+            // PSV-3: the test frame's completion is WHETHER ITS BODY RAN TO
+            // ITS END. A `return` or a `?` (whatever it carried) did not.
+            let r = self.run_test_body(entry, env);
+            self.test_body_finished.set(r.is_ok());
+            r
         } else {
             self.run_body(entry, env)
         };
+        // The taint of the value the body produced, before anything else is
+        // evaluated.
+        let body_t = self.t_body::<T>(&body_result);
         if capture && !matches!(body_result, Err(ref e) if !matches!(e, Flow::Return(_))) {
             // `goal_met` is injected by call_fn, not a user binding.
             let snap = env
                 .snapshot()
+                .into_parts()
+                .0
                 .into_iter()
                 .filter(|(k, _)| *k != SYM_GOAL_MET)
                 .map(|(k, v)| (sym_name(k).to_string(), v))
@@ -4954,21 +6176,34 @@ impl<'p> Interp<'p> {
         let result = match body_result {
             Ok(v) => v,
             Err(Flow::Return(v)) => v,
-            Err(other) => return Err(other),
+            // Loop control never crosses a function boundary: a `break` or
+            // `continue` with no loop of its own in this body is an error
+            // HERE, not a jump in whatever loop the CALLER happens to be
+            // running (v0.22 G01 final re-audit of candidate 2, executed).
+            Err(other) => return Err(frame_edge(other, FrameEdge::Fn(&f.name))),
         };
-        let result = scalar_return(entry, result);
+        let (result, body_t) = match &cx {
+            Some(cx) => self.seal_ret(f, result, cx, crossing, body_t)?,
+            None => (result, body_t),
+        };
+        let result = sum_return(entry, result)?;
 
-        if entry.has_epilogue || !self.refine_preds.is_empty() {
-            return self.finish_call_cold(
+        let result = if entry.has_epilogue || !self.refine_preds.is_empty() {
+            self.finish_call_cold(
                 entry,
                 result,
                 env,
                 input_arg,
                 input_args,
                 input_args_f64,
-            );
+                (entry_t, body_t),
+            )?
+        } else {
+            result
+        };
+        if T {
+            self.t_frame_exit(entry_t, body_t, &result);
         }
-
         Ok(result)
     }
 
@@ -4979,101 +6214,196 @@ impl<'p> Interp<'p> {
     /// Parameter `i` lives in frame slot `i` (AX-53): the frame starts empty
     /// (`call_fn_in`'s callers take it from `take_frame`), so each parameter
     /// is the next binding and is pushed, which is what `Env::define_var`
-    /// does for a slot equal to the frame's length (cost only).
+    /// does for a slot equal to the frame's length (cost only). Every
+    /// parameter carries taint `t` (the frame's [`Interp::t_params`]; `0`
+    /// outside a sealed run).
     #[inline(always)]
-    fn bind_params(&self, entry: &FnEntry<'p>, args: &mut [Value], env: &mut Env) {
-        debug_assert!(env.vars.is_empty() && env.marks.is_empty());
-        // One `extend` over a trusted-length iterator reserves once instead
-        // of a capacity check per push (cost only, R50 S5).
-        env.vars.extend(
+    fn bind_params(&self, entry: &FnEntry<'p>, args: &mut [Value], env: &mut Env, t: u8) {
+        env.bind_fresh(
             entry
                 .params
                 .iter()
                 .zip(args.iter_mut())
                 .enumerate()
-                .map(|(i, (&p, a))| (p, param_value(entry, i, std::mem::replace(a, Value::Unit)))),
+                .map(|(i, (&p, a))| {
+                    (
+                        p,
+                        param_value::<false>(entry, i, std::mem::replace(a, Value::Unit)),
+                    )
+                }),
+            |_| t,
         );
     }
 
-    /// R5 `@[goal(...)]` sugar for [`Interp::call_fn_in`]: whether the goal is
-    /// met. Out of line so the common call's frame does not carry it (AX-54).
+    /// [`Interp::bind_params`] in a sealed run (veto interp.rs:4106-4148):
+    /// each argument, after the soft unwrap and the sized-int coercion, is
+    /// CAST to its parameter's declared type in `cx` and refused when it is
+    /// another type. A parameter whose declared type is closed is a pin:
+    /// the cast verified the argument against a type the OPERATOR wrote, so
+    /// in an operator frame it does not carry the TYPE taint (amendment 102).
     #[inline(never)]
-    fn call_fn_goal(&self, f: &FnDef) -> Result<i64, Flow> {
+    fn bind_params_sealed(
+        &self,
+        entry: &FnEntry<'p>,
+        args: &mut [Value],
+        env: &mut Env,
+        entry_t: u8,
+        cx: &conform::Cx,
+    ) -> Result<(), Flow> {
+        let f = entry.def;
+        for (i, (p, a)) in f.params.iter().zip(args.iter_mut()).enumerate() {
+            *a = param_value::<true>(entry, i, std::mem::replace(a, Value::Unit));
+            if let Err(why) = self.cast(a, &p.ty, cx) {
+                return panic(format!(
+                    "argument `{}` of `{}` is declared `{}` but is {} — a runtime type confusion \
+                     ({why})",
+                    p.name,
+                    f.name,
+                    crate::doc::render_type(&p.ty),
+                    value::display(a)
+                ));
+            }
+        }
+        let t = self.t_params::<true>(entry_t);
+        let operator = !self.frame_sealed.get();
+        env.bind_fresh(
+            entry
+                .params
+                .iter()
+                .zip(args.iter_mut())
+                .map(|(&p, a)| (p, std::mem::replace(a, Value::Unit))),
+            |i| {
+                if t & taint::TYP != 0 && operator && self.t_pins(&f.params[i].ty) {
+                    t & !taint::TYP
+                } else {
+                    t
+                }
+            },
+        );
+        Ok(())
+    }
+
+    /// The result of a sealed run's call, CAST to the declared return type
+    /// (veto interp.rs:4331-4378; C9 round 3/4, amendment 53): the whole
+    /// declared type, so a value an untyped `dict_get` produced never reaches
+    /// a caller that would dispatch on its runtime type. At a seal `crossing`
+    /// a value at a type parameter no argument determined is refused too,
+    /// and a fn with no declared return hands the operator exactly `()`
+    /// (amendment 72). An OPERATOR fn's closed declared return is a pin: its
+    /// result drops the TYPE taint.
+    #[inline(never)]
+    fn seal_ret(
+        &self,
+        f: &FnDef,
+        mut result: Value,
+        cx: &conform::Cx,
+        crossing: bool,
+        mut body_t: u8,
+    ) -> Result<(Value, u8), Flow> {
+        let mismatch = match f.return_type.as_ref() {
+            Some(rt) => self.cast(&mut result, rt, &cx.strict(crossing)).err(),
+            None if crossing => {
+                result = Value::Unit;
+                None
+            }
+            None => None,
+        };
+        if let Some(why) = mismatch {
+            return panic(format!(
+                "`{}` is declared to return `{}` but produced {} — a runtime type confusion ({why})",
+                f.name,
+                f.return_type
+                    .as_ref()
+                    .map(crate::doc::render_type)
+                    .unwrap_or_default(),
+                value::display(&result),
+            ));
+        }
+        if body_t & taint::TYP != 0
+            && !self.frame_sealed.get()
+            && f.return_type.as_ref().is_some_and(|rt| self.t_pins(rt))
+        {
+            body_t &= !taint::TYP;
+        }
+        Ok((result, body_t))
+    }
+
+    /// R5 `@[goal(...)]` sugar for [`Interp::call_fn_in`]: whether the goal is
+    /// met, or `None` when `f` has no goal spec and no search ran. Out of line
+    /// so the common call's frame does not carry it (AX-54).
+    #[inline(never)]
+    fn call_fn_goal(&self, f: &FnDef) -> Result<Option<i64>, Flow> {
         nest_guard!(self, CALL_FN_GOAL);
-        let mut goal_met: i64 = 0;
-        let goal_spec = self.goal_spec_of(f);
-        if let Some(spec) = goal_spec {
-            // Dispatch on the selected strategy (PRD L889-899). All run the
-            // metric and accumulate provenance the same way; they differ only in
-            // HOW they explore. The held-out gate below is strategy-agnostic.
-            let me = spec.max_evals;
-            match spec.strategy {
-                GoalStrategy::HillClimb => {
-                    let _ = self.run_goal(&spec.metric, spec.target, me)?;
-                }
-                GoalStrategy::Random => {
-                    let _ = self.run_goal_random(
-                        &spec.metric,
-                        spec.target,
-                        me.max(1),
-                        spec.lo,
-                        spec.hi,
-                    )?;
-                }
-                GoalStrategy::Multistart => {
-                    let (starts, per) = split_budget(me);
-                    let _ = self.run_goal_multistart(
-                        &spec.metric,
-                        spec.target,
-                        starts,
-                        per,
-                        spec.lo,
-                        spec.hi,
-                    )?;
-                }
-                GoalStrategy::Tournament => {
-                    let _ = self.run_goal_tournament(
-                        &spec.metric,
-                        spec.target,
-                        me.max(1),
-                        spec.lo,
-                        spec.hi,
-                        false,
-                    )?;
-                }
-                GoalStrategy::Bayesian => {
-                    // Exploit-biased tournament (single elite + heavy refine).
-                    let _ = self.run_goal_tournament(
-                        &spec.metric,
-                        spec.target,
-                        me.max(1),
-                        spec.lo,
-                        spec.hi,
-                        true,
-                    )?;
+        let Some(spec) = self.goal_spec_of(f) else {
+            return Ok(None);
+        };
+        // Dispatch on the selected strategy (PRD L889-899). All run the
+        // metric and accumulate provenance the same way; they differ only in
+        // HOW they explore. The held-out gate below is strategy-agnostic.
+        let me = spec.max_evals;
+        match spec.strategy {
+            GoalStrategy::HillClimb => {
+                let _ = self.run_goal(&spec.metric, spec.target, me)?;
+            }
+            GoalStrategy::Random => {
+                let _ =
+                    self.run_goal_random(&spec.metric, spec.target, me.max(1), spec.lo, spec.hi)?;
+            }
+            GoalStrategy::Multistart => {
+                let (starts, per) = split_budget(me);
+                let _ = self.run_goal_multistart(
+                    &spec.metric,
+                    spec.target,
+                    starts,
+                    per,
+                    spec.lo,
+                    spec.hi,
+                )?;
+            }
+            GoalStrategy::Tournament => {
+                let _ = self.run_goal_tournament(
+                    &spec.metric,
+                    spec.target,
+                    me.max(1),
+                    spec.lo,
+                    spec.hi,
+                    false,
+                )?;
+            }
+            GoalStrategy::Bayesian => {
+                // Exploit-biased tournament (single elite + heavy refine).
+                let _ = self.run_goal_tournament(
+                    &spec.metric,
+                    spec.target,
+                    me.max(1),
+                    spec.lo,
+                    spec.hi,
+                    true,
+                )?;
+            }
+        }
+        let s = if spec.holdout_set.is_empty() {
+            self.best_observed(&spec.metric, spec.target, 0)
+        } else {
+            let mut worst = f64::INFINITY;
+            for h in &spec.holdout_set {
+                let score = self.goal_eval_holdout(&spec.metric, *h)?;
+                if score < worst {
+                    worst = score;
                 }
             }
-            let s = if spec.holdout_set.is_empty() {
-                self.best_observed(&spec.metric, spec.target, 0)
-            } else {
-                let mut worst = f64::INFINITY;
-                for h in &spec.holdout_set {
-                    let score = self.goal_eval_holdout(&spec.metric, *h)?;
-                    if score < worst {
-                        worst = score;
-                    }
-                }
-                worst
-            };
-            goal_met = if s >= spec.target { 1i64 } else { 0i64 };
-        }
-        Ok(goal_met)
+            worst
+        };
+        Ok(Some(if s >= spec.target { 1i64 } else { 0i64 }))
     }
 
     /// The steps after the body that only a refined, zoned (`@[adaptive]` /
     /// `@[experiment]`) or `@[verify]` fn takes, for [`Interp::call_fn_in`].
     /// Out of line so the common call's frame does not carry them (AX-54).
+    /// The last argument is the frame's `(entry_t, body_t)`: what the arguments
+    /// arrived with and what the body's value carries (both `0` outside a sealed run).
     #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
     fn finish_call_cold(
         &self,
         entry: &FnEntry<'_>,
@@ -5082,10 +6412,10 @@ impl<'p> Interp<'p> {
         input_arg: Option<i64>,
         input_args: Vec<i64>,
         input_args_f64: Vec<f64>,
+        (entry_t, body_t): (u8, u8),
     ) -> R {
         nest_guard!(self, FINISH_CALL_COLD);
         let f = entry.def;
-        let is_adaptive_zone = entry.adaptive;
         // Phase 5: refinement-type POSTCONDITION — the dual of the entry-time
         // precondition check in `call_fn_in`. A fn declared `-> T where P` must produce a
         // value satisfying `P`. The checker discharges a CONSTANT return (E1209)
@@ -5102,14 +6432,17 @@ impl<'p> Interp<'p> {
         if !self.refine_preds.is_empty() && !self.discharged.refine_return_proven(&f.name) {
             if let Some(crate::ast::AxonType::Named(rname)) = &f.return_type {
                 if let Some(pred) = self.refine_preds.get(rname.as_str()).copied() {
+                    self.seal_refine(rname)?;
                     // R20 Slice 2: evaluate the predicate with `_` bound to the
                     // return value AND the fn's params still in scope, so a
                     // RELATIONAL return refinement (e.g.
                     // `-> (i64 where _ <= parent_rem)`) can reference parameters.
                     // `env` already holds the param bindings from the body; add
                     // `_` and evaluate against it instead of a bare env.
-                    env.define(SYM_UNDERSCORE, result.clone());
-                    if let Value::Bool(false) = self.eval(pred, env)? {
+                    env.define(SYM_UNDERSCORE, result.clone(), body_t);
+                    if let Value::Bool(false) =
+                        contain_frame(self.eval(pred, env), FrameEdge::Predicate)?
+                    {
                         return Err(Flow::RefineViolation(
                             format!(
                                 "the return value of `{}` (= {}) violates the refinement return \
@@ -5138,72 +6471,16 @@ impl<'p> Interp<'p> {
         //                        third zone real instead of a synonym.
         // Both still log to the JSONL, so a zoned fn that executes always
         // leaves a provenance record.
-        let experiment_label = &entry.experiment;
-        if is_adaptive_zone || experiment_label.is_some() {
-            if let Some(score) = numeric_score(&result) {
-                // The in-memory best store feeds `goal_run` — adaptive only.
-                // Experiment records are deliberately withheld so the optimizer
-                // never treats a baseline as a candidate to beat.
-                if is_adaptive_zone {
-                    self.provenance
-                        .borrow_mut()
-                        .entry(f.name.clone())
-                        .or_default()
-                        .push(score);
-                    self.provenance_inputs
-                        .borrow_mut()
-                        .entry(f.name.clone())
-                        .or_default()
-                        .push(input_args.clone());
-                    self.provenance_inputs_f64
-                        .borrow_mut()
-                        .entry(f.name.clone())
-                        .or_default()
-                        .push(input_args_f64.clone());
-                }
-                // Durable JSONL log (axon-rt's format) — every zoned execution,
-                // tagged with its zone (and label for experiments) so
-                // `axon trace`/observability can separate the streams.
-                let payload = match &result {
-                    Value::Int(n) => format!("ret_i64={n}"),
-                    _ => format!("ret_f64={score}"),
-                };
-                let (zone, label) = match &experiment_label {
-                    Some(l) => ("experiment", Some(l.as_str())),
-                    None => ("adaptive", None),
-                };
-                // PROVENANCE IS RUNTIME-OWNED TELEMETRY, NOT A PROGRAM EFFECT.
-                //
-                // This append is a durable filesystem write that no capability
-                // mechanism used to see: it is not a builtin call, so it never
-                // reached `pre_effect_gate`, where the ceiling is enforced.
-                // MEASURED — every one of these produced a row on disk, exit 0:
-                // a direct `@[adaptive]` call under
-                // `@[contained(fs: [], net: [], exec: none)]`; the same under
-                // `AXON_ALLOWED_EFFECTS=Pure`; and inside
-                // `sandbox_run(sandbox_create(p, ""), …)`, whose ceiling is
-                // deny-all. `goal_run` amplifies it — `max_evals <= 0` means
-                // unlimited, so a contained fn could drive an unbounded number
-                // of rows whose `score`, `input` and `payload` it chooses. That
-                // is a general durable store reached through the audit
-                // machinery, which is exactly what must not exist.
-                //
-                // The remedy is SUPPRESSION, not refusal. Refusing would abort
-                // every contained optimiser, and the optimiser does not need
-                // this write: the in-memory best store pushed just above is
-                // what `goal_run` reads, and it is untouched here. So a program
-                // denied filesystem effects keeps optimising and simply leaves
-                // no durable trace — it gains no capability it was refused, and
-                // there is no channel to amplify.
-                //
-                // Cross-process resume (`AXON_GOAL_CONTINUE`, which reads the
-                // log) does degrade under a restrictive ceiling. That is the
-                // correct direction: durable state is what was not granted.
-                if self.provenance_write_permitted() {
-                    append_provenance_jsonl(&f.name, &payload, score, input_arg, zone, label);
-                }
-            }
-        }
+        // Out of line: it never evaluates, so its frame is not on the
+        // recursion through this one (wasm32 stack budget, AX-56).
+        self.record_zone_provenance(
+            entry,
+            &result,
+            input_arg,
+            input_args,
+            input_args_f64,
+            (entry_t, body_t),
+        );
 
         // `@[verify(predicate)]`: runtime gate. Two paths:
         //  - For `confidence OP K` / `value OP K` (the codegen-decodable
@@ -5272,17 +6549,20 @@ impl<'p> Interp<'p> {
                         // `value`, `confidence`, `source_tag` in scope. Any
                         // boolean expression Axon understands is accepted —
                         // `&&`, `||`, comparisons, function calls, you name it.
-                        let mut pred_env = Env::new();
+                        let mut pred_env = self.new_env();
                         if let Some(v) = fields.get(SYM_VALUE) {
-                            pred_env.define(SYM_VALUE, v.clone());
+                            pred_env.define(SYM_VALUE, v.clone(), body_t);
                         }
                         if let Some(c) = fields.get(SYM_CONFIDENCE) {
-                            pred_env.define(SYM_CONFIDENCE, c.clone());
+                            pred_env.define(SYM_CONFIDENCE, c.clone(), body_t);
                         }
                         if let Some(s) = fields.get(SYM_SOURCE_TAG) {
-                            pred_env.define(SYM_SOURCE_TAG, s.clone());
+                            pred_env.define(SYM_SOURCE_TAG, s.clone(), body_t);
                         }
-                        let outcome = self.eval(&spec.predicate, &mut pred_env)?;
+                        let outcome = contain_frame(
+                            self.eval(&spec.predicate, &mut pred_env),
+                            FrameEdge::Predicate,
+                        )?;
                         if let Value::Bool(false) = outcome {
                             return Err(Flow::VerifyFailed(
                                 format!(
@@ -5337,9 +6617,12 @@ impl<'p> Interp<'p> {
                     }
                 } else {
                     // Composite predicate: bind `value` to the scalar and evaluate.
-                    let mut pred_env = Env::new();
-                    pred_env.define(SYM_VALUE, result.clone());
-                    let outcome = self.eval(&spec.predicate, &mut pred_env)?;
+                    let mut pred_env = self.new_env();
+                    pred_env.define(SYM_VALUE, result.clone(), body_t);
+                    let outcome = contain_frame(
+                        self.eval(&spec.predicate, &mut pred_env),
+                        FrameEdge::Predicate,
+                    )?;
                     if let Value::Bool(false) = outcome {
                         return Err(Flow::VerifyFailed(format!("verify failed in {}: composite predicate did not hold (value {}{})",
                         verify_fn_label(&f.name),
@@ -5351,6 +6634,96 @@ impl<'p> Interp<'p> {
         }
 
         Ok(result)
+    }
+
+    /// [`Interp::finish_call_cold`]'s R4 zone provenance injection (see
+    /// there): an `@[adaptive]` or `@[experiment]` fn's numeric return.
+    #[inline(never)]
+    fn record_zone_provenance(
+        &self,
+        entry: &FnEntry<'_>,
+        result: &Value,
+        input_arg: Option<i64>,
+        input_args: Vec<i64>,
+        input_args_f64: Vec<f64>,
+        (entry_t, body_t): (u8, u8),
+    ) {
+        let f = entry.def;
+        let is_adaptive_zone = entry.adaptive;
+        let experiment_label = &entry.experiment;
+        if is_adaptive_zone || experiment_label.is_some() {
+            if let Some(score) = numeric_score(result) {
+                // The in-memory best store feeds `goal_run` — adaptive only.
+                // Experiment records are deliberately withheld so the optimizer
+                // never treats a baseline as a candidate to beat.
+                if is_adaptive_zone {
+                    // The best store is kernel state a later call reads back:
+                    // it takes the taint of the record (veto interp.rs:4462;
+                    // the result's own taint where veto reads `taint.last`).
+                    self.t_provenance_write(entry_t | body_t, true, false);
+                    self.k()
+                        .provenance
+                        .borrow_mut()
+                        .entry(f.name.clone())
+                        .or_default()
+                        .push(score);
+                    self.k()
+                        .provenance_inputs
+                        .borrow_mut()
+                        .entry(f.name.clone())
+                        .or_default()
+                        .push(input_args.clone());
+                    self.k()
+                        .provenance_inputs_f64
+                        .borrow_mut()
+                        .entry(f.name.clone())
+                        .or_default()
+                        .push(input_args_f64.clone());
+                }
+                // Durable JSONL log (axon-rt's format) — every zoned execution,
+                // tagged with its zone (and label for experiments) so
+                // `axon trace`/observability can separate the streams.
+                let payload = match result {
+                    Value::Int(n) => format!("ret_i64={n}"),
+                    _ => format!("ret_f64={score}"),
+                };
+                let (zone, label) = match &experiment_label {
+                    Some(l) => ("experiment", Some(l.as_str())),
+                    None => ("adaptive", None),
+                };
+                // PROVENANCE IS RUNTIME-OWNED TELEMETRY, NOT A PROGRAM EFFECT.
+                //
+                // This append is a durable filesystem write that no capability
+                // mechanism used to see: it is not a builtin call, so it never
+                // reached `pre_effect_gate`, where the ceiling is enforced.
+                // MEASURED — every one of these produced a row on disk, exit 0:
+                // a direct `@[adaptive]` call under
+                // `@[contained(fs: [], net: [], exec: none)]`; the same under
+                // `AXON_ALLOWED_EFFECTS=Pure`; and inside
+                // `sandbox_run(sandbox_create(p, ""), …)`, whose ceiling is
+                // deny-all. `goal_run` amplifies it — `max_evals <= 0` means
+                // unlimited, so a contained fn could drive an unbounded number
+                // of rows whose `score`, `input` and `payload` it chooses. That
+                // is a general durable store reached through the audit
+                // machinery, which is exactly what must not exist.
+                //
+                // The remedy is SUPPRESSION, not refusal. Refusing would abort
+                // every contained optimiser, and the optimiser does not need
+                // this write: the in-memory best store pushed just above is
+                // what `goal_run` reads, and it is untouched here. So a program
+                // denied filesystem effects keeps optimising and simply leaves
+                // no durable trace — it gains no capability it was refused, and
+                // there is no channel to amplify.
+                //
+                // Cross-process resume (`AXON_GOAL_CONTINUE`, which reads the
+                // log) does degrade under a restrictive ceiling. That is the
+                // correct direction: durable state is what was not granted.
+                if self.provenance_write_permitted() {
+                    self.t_provenance_write(entry_t | body_t, false, true);
+                    append_provenance_jsonl(&f.name, &payload, score, input_arg, zone, label);
+                }
+            }
+        }
     }
 
     fn call_closure(&self, c: Value, mut args: Vec<Value>) -> R {
@@ -5375,13 +6748,20 @@ impl<'p> Interp<'p> {
     /// body runs can reach, so a closure that only that slot holds (a lambda
     /// written at the call) lends its capture cell on every call (AX-40).
     /// Builtins must call through the borrowed argument, not a clone of it,
-    /// or the clone defeats the lend.
+    /// or the clone defeats the lend. In a sealed run the callback's result
+    /// raises the builtin's control taint (`t_loop_pc`, veto's `call_cb`).
     #[inline]
     pub(super) fn call_closure_arg(&self, c: &Value, args: impl ClosureArgs) -> R {
         nest_guard!(self, CALL_CLOSURE_ARG, {
             args.bind(|_, v| drop(v));
         });
-        self.call_closure_owned_by(c, args, 1)
+        if self.seal.active {
+            let r = self.call_closure_frame::<true>(c, args, 1)?;
+            self.t_loop_pc();
+            Ok(r)
+        } else {
+            self.call_closure_frame::<false>(c, args, 1)
+        }
     }
 
     /// Run closure `c`. `private_refs` counts the references to its capture
@@ -5395,10 +6775,41 @@ impl<'p> Interp<'p> {
     /// their capacity), so a call on the lent path allocates nothing (R50
     /// S4, cost only). The body runs on the engine the `Interp` was built
     /// with ([`Interp::run_lambda`]).
+    ///
+    /// The frame is compiled twice (R51 S2.3, veto's `call_closure_owned_by::<T>`):
+    /// `::<true>` with the taint hooks, run exactly in a sealed run, and
+    /// `::<false>`, which is the code an unsealed run always ran.
+    #[inline(always)]
     fn call_closure_owned_by(&self, c: &Value, args: impl ClosureArgs, private_refs: usize) -> R {
-        nest_guard!(self, CALL_CLOSURE_OWNED_BY, {
-            args.bind(|_, v| drop(v));
-        });
+        if self.seal.active {
+            self.call_closure_frame::<true>(c, args, private_refs)
+        } else {
+            self.call_closure_frame::<false>(c, args, private_refs)
+        }
+    }
+
+    /// Never inlined: a caller that picks the instance at run time
+    /// ([`Interp::call_closure_arg`]) would otherwise hold both instances'
+    /// locals in its one frame on every callback level (wasm32 stack budget,
+    /// AX-56).
+    #[inline(never)]
+    fn call_closure_frame<const T: bool>(
+        &self,
+        c: &Value,
+        args: impl ClosureArgs,
+        private_refs: usize,
+    ) -> R {
+        nest_guard!(
+            self,
+            if T {
+                CALL_CLOSURE_FRAME_SEALED
+            } else {
+                CALL_CLOSURE_FRAME
+            },
+            {
+                args.bind(|_, v| drop(v));
+            }
+        );
         let Value::Closure(cv) = c else {
             args.bind(|_, v| drop(v));
             return not_callable(c);
@@ -5409,6 +6820,14 @@ impl<'p> Interp<'p> {
             let got = args.count();
             args.bind(|_, v| drop(v));
             return lambda_arity_mismatch(n, got);
+        }
+        // Operator code does not run an operator closure the candidate picked
+        // (amendment 102; veto interp.rs:4747-4751).
+        if T {
+            if let Err(e) = self.t_check_call_picked(cv) {
+                args.bind(|_, v| drop(v));
+                return Err(e);
+            }
         }
         // Base scope = captured bindings; a fresh scope holds the parameters.
         // Assignments land in the base scope and are written back below, which
@@ -5423,53 +6842,144 @@ impl<'p> Interp<'p> {
         // argument, stored in an array, dict or capture, or currently running):
         // a re-entrant call must see the cell as it stood before this call, and
         // this call's in-place writes would otherwise destroy that state.
-        let lend = Rc::strong_count(cv) == private_refs;
+        let lend = cell_is_private(cv, private_refs);
+        // The taint the arguments arrived with, the parameters', and the
+        // caller's control taints, restored when the frame ends (veto
+        // interp.rs:4753-4760, 4785-4789).
+        let entry_t = self.ta::<T>();
+        let in_t = self.t_params::<T>(entry_t);
+        let _ctl = self.t_frame::<T>();
+        // The seal edges of a closure call (veto interp.rs:4760-4783). A
+        // sealed frame calling an OPERATOR closure (not a candidate fn value)
+        // is `entering` operator code: the arguments are cast strictly, the
+        // dicts sealed code mutated are verified, and the operator code runs
+        // control-dependent on the candidate. A candidate closure called by
+        // operator code is the `crossing` the other way: the operator hands
+        // it the arguments (dict snapshot) and verifies on its return. The
+        // arguments are moved out here so they can be cast in place.
+        let mut pending = Some(args);
+        let mut checked: Vec<Value> = Vec::new();
+        let (entering, crossing) = if T {
+            let origin = cv.seal.sealed_origin;
+            let in_sealed = self.frame_sealed.get();
+            let entering = in_sealed && !origin && !cv.seal.sealed_fnval;
+            let crossing = origin && !in_sealed;
+            if let Some(a) = pending.take() {
+                checked.reserve(n);
+                a.bind(|_, v| checked.push(v));
+            }
+            if crossing {
+                for a in &checked {
+                    self.dict_edge_in(a)?;
+                }
+            }
+            if entering {
+                self.dict_edge_out()?;
+            }
+            self.closure_args_check(&cv.contract, &mut checked, entering)?;
+            if entering {
+                self.taint.pc.set(self.taint.pc.get() | taint::ALL);
+            }
+            (entering, crossing)
+        } else {
+            (false, false)
+        };
+        // A parameter whose declared type (at any layer of the closure's
+        // contract) is closed is a pin: the argument was cast to it (strictly,
+        // from a sealed caller), so its runtime type is the operator's; the
+        // value is not (amendment 102, veto interp.rs:4826-4837).
+        let pt = |i: usize| {
+            if T && in_t & taint::TYP != 0
+                && Self::param_types(&cv.contract, i)
+                    .iter()
+                    .any(|ty| self.t_pins(ty))
+            {
+                in_t & !taint::TYP
+            } else {
+                in_t
+            }
+        };
         let mut env = self.take_frame();
         if lend {
-            // The cell's vector becomes the frame's bindings and the frame's
-            // empty one waits in the cell; they swap back below, so both keep
-            // their capacity.
-            std::mem::swap(&mut env.vars, &mut *captured.borrow_mut());
+            // The cell's vectors become the frame's bindings (and their
+            // taints) and the frame's empty ones wait in the cell; they swap
+            // back below, so both keep their capacity.
+            env.lend_in(&mut captured.borrow_mut());
         } else {
-            let cell = captured.borrow();
-            env.vars.reserve(cell.len() + n);
-            env.vars.extend_from_slice(&cell);
+            env.copy_in(&captured.borrow(), n);
         }
         // The base scope (the cell's bindings) ends at `base`; a fresh scope
         // holds the parameters. Slotted parameters are the next bindings, so
         // they are pushed in place, as `define_var` would (cost only).
-        let base = env.vars.len();
+        let base = env.len();
         env.push();
-        if code.param_base.map(|b| b as usize) == Some(base) {
-            let vars = &mut env.vars;
-            vars.reserve(n);
-            args.bind(|i, v| vars.push((code.params[i], v)));
-        } else {
-            let frame = &mut *env;
-            args.bind(|i, v| {
-                let slot = code.param_base.map_or(NAMED, |b| b + i as u32);
-                frame.define_var(code.params[i], slot, v);
-            });
+        match pending {
+            Some(a) => bind_closure_params(&mut env, code, base, a, pt),
+            None => bind_closure_params(&mut env, code, base, &mut checked, pt),
         }
-        let out = self.run_lambda(code, &mut env);
+        // A closure's own `return` ends the closure (`run_lambda`); every
+        // other transfer is refused at its edge, as for a named fn. A sealed
+        // run is pinned to the tree (spec Fork 1), so its body runs through
+        // the sealed evaluator here, which tells a `return`'s taint from the
+        // body's (`run_lambda` folds the `return` into its value).
+        // A closure runs under the provenance of the frame that CREATED it and
+        // is judged by the pin analysis as its creator's code (veto
+        // interp.rs:4790-4803, 4848).
+        let (out, body_t) = if T {
+            let r = {
+                let _pin_guard = PinGuard {
+                    cell: &self.pin_fn,
+                    prev: self.pin_fn.replace(cv.seal.pin_owner),
+                };
+                self.with_frame(cv.seal.sealed_origin, || {
+                    self.eval_t::<true>(&code.body, &mut env)
+                })
+            };
+            let body_t = self.t_body::<true>(&r);
+            match r {
+                Err(Flow::Return(v)) => (Ok(v), body_t),
+                r => (r, body_t),
+            }
+        } else {
+            (self.run_lambda(code, &mut env), 0)
+        };
+        let out = contain_frame(out, FrameEdge::Closure);
         // The base scope holds exactly the cell's bindings, in the cell's
         // order: a `let` introduced inside the body lives in a pushed scope and
         // must not leak into the capture, and a parameter shadowing a captured
         // name must not overwrite it either, which is why the params live in
-        // their own pushed scope above.
+        // their own pushed scope above. Each captured name's taint goes back
+        // with its value.
         if lend {
-            // The cell holds the frame's empty vector; swap the bindings back.
-            env.release_to(base);
-            std::mem::swap(&mut env.vars, &mut *captured.borrow_mut());
+            // The cell holds the frame's empty vectors; swap the bindings back.
+            env.lend_back(base, &mut captured.borrow_mut());
         } else {
             // A re-entrant call may have written the cell meanwhile; this
             // call's write-back wins, as it always has.
-            let mut cell = captured.borrow_mut();
-            for ((_, slot), (_, v)) in cell.iter_mut().zip(&env.vars[..base]) {
-                *slot = v.clone();
-            }
+            env.write_back(base, &mut captured.borrow_mut());
         }
         self.give_frame(env);
+        if T {
+            let mut v = out?;
+            // The result is cast to every `fn` type this reference crossed
+            // (strictly when a candidate closure returns to operator code); a
+            // candidate closure returning to operator code is verified, an
+            // operator closure's result is handed to sealed code (veto
+            // interp.rs:4888-4897).
+            self.closure_ret_check(&cv.contract, &mut v, crossing)?;
+            if crossing {
+                self.dict_edge_out()?;
+            } else if entering {
+                self.dict_edge_in(&v)?;
+            }
+            self.t_frame_exit(entry_t, body_t, &v);
+            // A candidate closure hands an operator-typed value back to
+            // operator code: a pick (amendment 121; veto interp.rs:4919-4924).
+            if crossing && self.t_holds_op(&v) {
+                self.t_touch(taint::PICK);
+            }
+            return Ok(v);
+        }
         out
     }
 
@@ -5493,10 +7003,22 @@ impl<'p> Interp<'p> {
         if name.is_empty() {
             return false;
         }
-        self.fns.contains_key(name) || self.provenance.borrow().contains_key(name)
+        // A sealed caller names its OWN goals (an operator fn is not visible to it,
+        // and answers like a name nothing defines: the one existence message;
+        // veto interp.rs:4950, R51 S4).
+        let defined = match self.fns.get(name) {
+            Some(f) => !(self.seal.active && self.frame_sealed.get()) || self.fn_is_sealed(f),
+            None => false,
+        };
+        defined || self.k().provenance.borrow().contains_key(name)
     }
 
-    fn unknown_goal_name(name: &str) -> Flow {
+    /// The unknown-goal text; a sealed caller is told the common no-such-name
+    /// text instead (veto interp.rs:4959, R51 S4).
+    fn unknown_goal_name(&self, name: &str) -> Flow {
+        if self.seal.active && self.frame_sealed.get() {
+            return Flow::Panic(Self::sealed_no_fn_msg(name).into());
+        }
         Flow::Panic(
             format!(
                 "goal function `{name}` is not defined and has no recorded provenance — \
@@ -5555,7 +7077,7 @@ fn lit_to_val(lit: &Literal) -> Value {
     }
 }
 
-fn type_name_of(ty: &crate::ast::AxonType) -> String {
+pub(crate) fn type_name_of(ty: &crate::ast::AxonType) -> String {
     use crate::ast::AxonType::*;
     match ty {
         Named(n) => n.clone(),
@@ -5601,7 +7123,7 @@ fn write_place(
     v: Value,
     env: &mut Env,
 ) -> Result<(), Flow> {
-    let mut slot = env.get_var_mut(base, base_slot).ok_or_else(|| {
+    let mut slot = env.get_var_mut(base, base_slot, 0).ok_or_else(|| {
         Flow::Panic(format!("assignment to undefined variable `{}`", sym_name(base)).into())
     })?;
     let (last, prefix) = steps
@@ -5734,6 +7256,42 @@ mod goal;
 // (AX-18), in interp/sym.rs.
 mod sym;
 use sym::*;
+// The static pin analysis of a sealed run (R51 S5, from v0.22 C9 round 6,
+// amendment 83): which operator sites a type, or a name, nothing on the
+// operator side determined reaches. Built in `Interp::build_with` for a
+// sealed run only.
+mod pin;
+// The runtime taint of a sealed run (R51 S2, from v0.22 C9 round 11,
+// amendment 102): the accumulator, the control taints, the builtin classes.
+mod taint;
+// Its unit tests (R51 S2: the hooks of `eval_t::<true>`, driven directly).
+#[cfg(test)]
+mod taint_tests;
+// The per-frame `Kernel` split's unit tests (R51 S3).
+#[cfg(test)]
+mod kernel_tests;
+// The seal crossing's unit tests (R51 S3: calls between operator and sealed code).
+#[cfg(test)]
+mod crossing_tests;
+// Declared-type conformance at the seal's value boundaries (R51 S3, from
+// v0.22 C9 round 4, amendments 53/72/78): casts, closure and channel
+// contracts, the operator's dict snapshots.
+mod conform;
+// The seal sinks inside evaluation (R51 S3): global, name, width, refine,
+// type and method edges on a `build_with` sealed `Interp`.
+#[cfg(test)]
+mod sink_tests;
+// The PICK mark and the refusing closure sink (R51 S4: `t_note`, the pick
+// edges, `t_check_call_picked`), T8.1's laundering attacks.
+#[cfg(test)]
+mod pick_tests;
+// The receiver dispatch rule's unit tests (R51 S4: `t_check_dispatch`, the
+// dispatch-rule and taint-rule test switches, the goal-name refusal).
+#[cfg(test)]
+mod dispatch_tests;
+// Its unit tests (R51 S3: the casts and dict edges, driven directly).
+#[cfg(test)]
+mod conform_tests;
 // Core tree-walking evaluator (eval/eval_block/eval_call/eval_binop/
 // match_pattern) extracted to interp/eval.rs (R0 slice 5). Its methods live in a
 // second `impl Interp` block there; inherent methods resolve across split impl
@@ -5745,7 +7303,7 @@ mod eval;
 // same `Env` the tree-walker uses, and every node it does not lower is a `Tree`
 // op that calls `eval`.
 mod vm;
-pub use vm::{set_engine, Engine};
+pub use vm::{set_engine, Engine, EngineRefusal};
 // The builtin dispatch (`call_builtin`, the ~2400-line `match name`) extracted to
 // interp/builtins.rs (R0 slice 6). Moved as ONE method into a second `impl Interp`
 // block; its function-local `want`/`ok!` travel with it. eval.rs's call to
@@ -5788,9 +7346,12 @@ pub use provenance::{
 /// clock on first use). Single-threaded interpreter, so no CAS needed.
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
-/// Global xorshift64 RNG state. `0` means "uninitialized" — the first draw
-/// seeds it (see [`rng_seed`]). Explicitly settable via [`set_rand_seed`]
-/// (the `srand` builtin) for reproducible runs.
+/// Global xorshift64 RNG state: the OPERATOR kernel's stream (the sealed
+/// kernel has its own, `Kernel::rng`). `0` means "uninitialized" — the first
+/// draw seeds it (see [`rng_seed`]). Explicitly settable via [`set_rand_seed`]
+/// (the `srand` builtin) for reproducible runs. Read and written only by
+/// `Kernel::rng_next` / `Kernel::rng_set`, so every draw goes through
+/// [`Interp::rng_next`].
 static RNG_STATE: AtomicU64 = AtomicU64::new(0);
 
 /// Parse the ambient run-level token cap from `AXON_BUDGET_TOKENS`.
@@ -5893,13 +7454,15 @@ fn rng_seed() -> u64 {
     (now_ms() as u64) | 1
 }
 
-/// Explicitly set the RNG seed (the `srand(n)` builtin). `n == 0` is mapped
-/// to a non-zero sentinel so it doesn't read as "uninitialized".
+/// Explicitly set the operator RNG seed (`srand(n)` in an operator frame).
+/// `n == 0` is mapped to a non-zero sentinel so it doesn't read as
+/// "uninitialized".
 fn set_rand_seed(n: i64) {
     let s = (n as u64) | 1;
     RNG_STATE.store(s, AtomicOrdering::Relaxed);
 }
 
+/// The operator kernel's next draw (see [`RNG_STATE`]).
 fn next_rand_u64() -> u64 {
     let mut x = RNG_STATE.load(AtomicOrdering::Relaxed);
     if x == 0 {
@@ -6008,13 +7571,21 @@ fn make_uncertain(value: Value, confidence: f64) -> Value {
     make_uncertain_tagged(value, confidence, SRC_TAG_USER)
 }
 
+/// An `Uncertain` whose value came from a MODEL (`ai_extract_uncertain_*`, on
+/// the mock, replay and live paths alike). Stamps 1, as codegen does. These
+/// paths used `make_uncertain` and so stamped 0 — a model's answer read as
+/// user-constructed under `axon run`, the fail-open direction for a provenance
+/// field (UPGRADE_V0_20.md D-014).
+fn make_uncertain_ai(value: Value, confidence: f64) -> Value {
+    make_uncertain_tagged(value, confidence, SRC_TAG_AI)
+}
+
 /// `source_tag` values, as stamped by codegen. These are OBSERVABLE — the
 /// checker lists `source_tag` as a field of `Uncertain<T>` and both engines
 /// let a program read `u.source_tag` — so the interpreter must stamp the same
 /// number codegen does, or a program that branches on provenance takes a
 /// different branch under `axon run` than under `axon build`.
 pub(crate) const SRC_TAG_USER: i64 = 0;
-#[allow(dead_code)] // codegen stamps 1; the interp AI path is E0910-refused natively
 pub(crate) const SRC_TAG_AI: i64 = 1;
 pub(crate) const SRC_TAG_RUNTIME: i64 = 2;
 
@@ -6192,13 +7763,17 @@ fn axon_type_to_width(ty: &crate::ast::AxonType) -> Option<IntWidth> {
 /// Coerce a runtime value to a `SizedInt` when the target type is a non-i64
 /// integer. `Int(n)` → `SizedInt{n, ty}`. Any other value is returned as-is
 /// (the type-checker has already validated the types match; this is a
-/// representation upgrade only). `SizedInt` with a different width is
-/// re-tagged to the new width (preserves the stored bit-pattern; the checker
-/// ensures same-width ops only).
-fn coerce_to_sized(v: Value, width: IntWidth) -> Value {
+/// representation upgrade only). Outside a sealed run a `SizedInt` with a
+/// different width is re-tagged to the new width (preserves the stored
+/// bit-pattern; the checker ensures same-width ops only). In a sealed run
+/// (`SEALED`) it is left as it is, and the declared-type cast that follows
+/// refuses it: re-tagging it would turn one width into another without
+/// converting its value, before the cast could see it (v0.22 C9 round 4b,
+/// amendment 60; R51 T7, M921).
+fn coerce_to_sized<const SEALED: bool>(v: Value, width: IntWidth) -> Value {
     match v {
         Value::Int(n) => Value::SizedInt { val: n, ty: width },
-        Value::SizedInt { val, .. } => Value::SizedInt { val, ty: width },
+        Value::SizedInt { val, .. } if !SEALED => Value::SizedInt { val, ty: width },
         other => other,
     }
 }
@@ -6781,7 +8356,7 @@ fn main() { }
 
     #[test]
     fn stack_grows_with_depth_but_never_below_floor() {
-        // Shallow limits keep the historical 1 GiB floor. The crossover is
+        // Shallow limits keep the MIN_STACK_BYTES floor. The crossover is
         // MIN_STACK_BYTES / STACK_BYTES_PER_FRAME frames; below it, floored.
         let crossover = MIN_STACK_BYTES / STACK_BYTES_PER_FRAME; // 4096
         assert_eq!(stack_size_for_depth(1), MIN_STACK_BYTES);
@@ -6795,8 +8370,22 @@ fn main() { }
         // The default limit (6000 > 4096) already scales above the floor.
         assert!(stack_size_for_depth(RECURSION_LIMIT) > MIN_STACK_BYTES);
         // The ceiling can't overflow the multiply (saturating) — it produces a
-        // finite budget at or above the floor.
+        // finite budget at or above the floor, capped at 5864c423's largest
+        // reserve, which never shrinks below 5864c423's reserve at any depth.
         assert!(stack_size_for_depth(MAX_DEPTH_CEILING) >= MIN_STACK_BYTES);
+        assert_eq!(stack_size_for_depth(MAX_DEPTH_CEILING), MAX_STACK_BYTES);
+        for d in [
+            1,
+            4096,
+            RECURSION_LIMIT,
+            100_000,
+            800_000,
+            900_000,
+            MAX_DEPTH_CEILING,
+        ] {
+            let base = (d * 256 * 1024).max(1024 * 1024 * 1024);
+            assert!(stack_size_for_depth(d) >= base, "depth {d}");
+        }
     }
 
     // BUG_HUNT #20: dict_to_str must return Result<str,str>, not panic the
@@ -7221,6 +8810,1398 @@ fn main() { }
         let code = super::run_suspendable_hypercall(&prog);
         assert_eq!(code, 0);
     }
+
+    // ── R51 S0b: veto's non-seal interpreter fixes, on every engine ────────
+
+    /// `name`'s outcome as [`run_test_fn_outcome`] reports it, on one engine
+    /// (`eager`: the VM compiles every body on its first entry).
+    fn outcome_on(
+        prog: &Program,
+        name: &str,
+        engine: Engine,
+        eager: bool,
+    ) -> Result<TestEnd, String> {
+        on_deep_stack(|| {
+            let mut ix = Interp::build(prog)?;
+            ix.engine = engine;
+            ix.vm_eager = eager;
+            if let Err(f) = ix.init_globals() {
+                return Err(flow_to_msg(f));
+            }
+            let Some(f) = ix.fns.get(name).copied() else {
+                return Err(format!("no function `{name}`"));
+            };
+            ix.test_outcome(f)
+        })
+    }
+
+    /// `name`'s outcome on the tree, which the eager VM and the default VM
+    /// must reproduce exactly (R51 §3: each fix holds on both engines).
+    fn outcome(prog: &Program, name: &str) -> Result<TestEnd, String> {
+        let tree = outcome_on(prog, name, Engine::Tree, false);
+        for eager in [true, false] {
+            assert_eq!(
+                outcome_on(prog, name, Engine::Vm, eager),
+                tree,
+                "{name}: the VM (eager: {eager}) disagrees with the tree"
+            );
+        }
+        tree
+    }
+
+    /// v0.22 G01 final re-audit: a `break` escaping a function called by a
+    /// test used to count as a clean pass, so candidate code could end an
+    /// acceptance test before its assertion ran. It is a failure now; a test
+    /// that completes still passes.
+    #[test]
+    fn an_escaped_break_or_continue_does_not_pass_a_test() {
+        let prog = crate::parse_source(
+            "fn stop(n: i64) -> i64 {\n    if n > 0 { break }\n    n\n}\n\
+             fn skip(n: i64) -> i64 {\n    if n > 0 { continue }\n    n\n}\n\
+             @[test]\nfn t_break() { assert_eq(stop(1), 99) }\n\
+             @[test]\nfn t_continue() { assert_eq(skip(1), 99) }\n\
+             @[test]\nfn t_ok() { assert_eq(stop(0), 0) }\n",
+        )
+        .expect("parses");
+        assert!(outcome(&prog, "t_break").is_err());
+        assert!(outcome(&prog, "t_continue").is_err());
+        assert!(outcome(&prog, "t_ok").is_ok());
+        // Candidate 2's blocker: the escape lands in a loop the TEST owns. It
+        // must not end that loop and skip the assertions (while, for, and
+        // through a closure).
+        let prog = crate::parse_source(
+            "fn stop(n: i64) -> i64 {\n    if n > 0 { break }\n    n\n}\n\
+             fn skip(n: i64) -> i64 {\n    if n > 0 { continue }\n    n\n}\n\
+             @[test]\nfn t_while() {\n    let i = 1\n    while i < 4 {\n        assert_eq(stop(i), 99)\n        i = i + 1\n    }\n}\n\
+             @[test]\nfn t_for() {\n    for i in 1..4 {\n        assert_eq(skip(i), 99)\n    }\n}\n\
+             @[test]\nfn t_closure() {\n    let g = |n: i64| { if n > 0 { break }  n }\n    for i in 1..4 {\n        assert_eq(g(i), 99)\n    }\n}\n\
+             @[test]\nfn t_own_loop_ok() {\n    let i = 0\n    while true {\n        i = i + 1\n        if i > 2 { break }\n    }\n    assert_eq(i, 3)\n}\n",
+        )
+        .expect("parses");
+        for t in ["t_while", "t_for", "t_closure"] {
+            assert!(outcome(&prog, t).is_err(), "{t} passed");
+        }
+        assert_eq!(
+            outcome(&prog, "t_own_loop_ok"),
+            Ok(TestEnd::Completed),
+            "a test's own break still works"
+        );
+        // The property-test runner had the same hole.
+        let prog = crate::parse_source(
+            "fn stop(n: i64) -> i64 {\n    break\n    n\n}\n\
+             @[test]\n@[forall]\nfn p(n: i64) { assert_eq(stop(n), 99) }\n",
+        )
+        .expect("parses");
+        assert!(
+            matches!(
+                proptest::run_property_test(&prog, "p", 5),
+                proptest::PropertyOutcome::Failed { .. }
+            ),
+            "an escaped break passed a property case"
+        );
+    }
+
+    /// M58's own property: a `break`/`continue` raised in a named FUNCTION
+    /// BODY does not escape into the caller's loop. Each caller loops, so on
+    /// the VM the later calls run through the fast call paths.
+    #[test]
+    fn an_escaped_break_or_continue_from_a_function_body_does_not_pass_a_test() {
+        let prog = crate::parse_source(
+            "fn stop(n: i64) -> i64 {\n    if n > 0 { break }\n    n\n}\n\
+             fn skip(n: i64) -> i64 {\n    if n > 0 { continue }\n    n\n}\n\
+             @[test]\nfn t_break() { assert_eq(stop(1), 99) }\n\
+             @[test]\nfn t_continue() { assert_eq(skip(1), 99) }\n\
+             @[test]\nfn t_while() {\n    let i = 1\n    while i < 4 {\n        assert_eq(stop(i), 99)\n        i = i + 1\n    }\n}\n\
+             @[test]\nfn t_for() {\n    for i in 1..4 {\n        assert_eq(skip(i), 99)\n    }\n}\n\
+             @[test]\nfn t_ok() { assert_eq(stop(0), 0) }\n",
+        )
+        .expect("parses");
+        for t in ["t_break", "t_continue", "t_while", "t_for"] {
+            assert!(
+                outcome(&prog, t).is_err(),
+                "ATTACK: `{t}` passed: a break/continue escaped a function body"
+            );
+        }
+        assert!(outcome(&prog, "t_ok").is_ok(), "control: t_ok");
+    }
+
+    /// Candidate 4's final-review blocker (executed): a `break` in a candidate
+    /// function's parameter/return refinement, `@[verify]` predicate, or a
+    /// candidate type's struct refinement escaped the call and ended the
+    /// operator test's loop. Loop control is contained at every frame edge now.
+    #[test]
+    fn loop_control_does_not_escape_through_a_predicate() {
+        let cases = [
+            (
+                "return refinement",
+                "fn solve(n: i64) -> (i64 where if n > 0 { break } else { true }) { 0 }\n",
+            ),
+            (
+                "param refinement",
+                "fn solve(n: i64 where if n > 0 { break } else { true }) -> i64 { 0 }\n",
+            ),
+            (
+                "verify",
+                "@[verify(if value == 0 { break } else { true })]\nfn solve(n: i64) -> i64 { 0 }\n",
+            ),
+        ];
+        let mut passed = Vec::new();
+        for (why, def) in cases {
+            let src = format!(
+                "{def}@[test]\nfn t() {{\n    let i = 1\n    while i < 4 {{\n        assert_eq(solve(i), 42)\n        i = i + 1\n    }}\n}}\n"
+            );
+            let prog = crate::parse_source(&src).expect("parses");
+            if outcome(&prog, "t").is_ok() {
+                passed.push(why);
+            }
+        }
+        let prog = crate::parse_source(
+            "type Arg = { n: i64 } where if _.n > 0 { break } else { true }\n\
+             @[test]\nfn t() {\n    for i in 1..4 {\n        let a = Arg { n: i }\n        assert_eq(a.n, 42)\n    }\n}\n",
+        )
+        .expect("parses");
+        if outcome(&prog, "t").is_ok() {
+            passed.push("struct refinement");
+        }
+        assert!(
+            passed.is_empty(),
+            "these escapes passed the test: {passed:?}"
+        );
+    }
+
+    /// PCI 11/12/13: the affirmative completion point. `run_test_fn_outcome`
+    /// reports the early ends as `EndedEarly`, never `Completed`; `axon test`
+    /// fails the ones that ended on a failure value (R51 §3, `t_err`/`t_q`).
+    #[test]
+    fn a_test_completes_only_when_its_body_returns_normally() {
+        let prog = crate::parse_source(
+            "fn bail(n: i64) -> i64 {\n    if n > 0 { exit(0) }\n    n\n}\n\
+             fn early(n: i64) -> i64 {\n    if n > 0 { return 5 }\n    n\n}\n\
+             @[test]\nfn t_done() { assert_eq(early(0), 0) }\n\
+             @[test]\nfn t_exit() { assert_eq(bail(1), 99) }\n\
+             @[test]\nfn t_err() -> Result<i64, str> { Err(\"no\") }\n\
+             @[test]\nfn t_q() -> Result<i64, str> {\n    let n = parse_int(\"x\")?\n    assert_eq(n, 99)\n    Ok(n)\n}\n\
+             @[test]\nfn t_ok() -> Result<i64, str> { Ok(1) }\n\
+             @[test]\nfn t_return() { assert_eq(early(1), 99) }\n\
+             @[test]\nfn t_closure_return() {\n    let g = |n: i64| { if n > 0 { return 5 }  n }\n    assert_eq(g(1), 99)\n}\n",
+        )
+        .expect("parses");
+        assert_eq!(outcome(&prog, "t_done"), Ok(TestEnd::Completed));
+        assert_eq!(outcome(&prog, "t_ok"), Ok(TestEnd::Completed));
+        for t in ["t_exit", "t_err", "t_q"] {
+            let end = outcome(&prog, t);
+            assert!(matches!(end, Ok(TestEnd::EndedEarly(_))), "{t}: {end:?}");
+        }
+        for t in ["t_err", "t_q"] {
+            let end = outcome(&prog, t).expect("ended");
+            assert!(end.failure_exit().is_some(), "{t}: {end:?}");
+        }
+        let exit = outcome(&prog, "t_exit").expect("ended");
+        assert!(exit.failure_exit().is_none(), "t_exit: {exit:?}");
+        // PCI 8: a callee's `return` ends the callee, never the test — the
+        // assertion after it still runs and fails.
+        for t in ["t_return", "t_closure_return"] {
+            let end = outcome(&prog, t);
+            assert!(end.is_err(), "{t}: {end:?}");
+        }
+        // A property case that `exit(0)`s did not complete either.
+        let prog = crate::parse_source(
+            "fn bail(n: i64) -> i64 {\n    exit(0)\n    n\n}\n\
+             @[test]\n@[forall]\nfn p(n: i64) { assert_eq(bail(n), 99) }\n",
+        )
+        .expect("parses");
+        assert!(
+            matches!(
+                proptest::run_property_test(&prog, "p", 5),
+                proptest::PropertyOutcome::Failed { .. }
+            ),
+            "an exit(0) property case passed"
+        );
+    }
+
+    /// S7-UnsealedParity-8/9: an early `return None` fails like a `?` on
+    /// `None` (they leave the same trace), and the reason says so rather than
+    /// naming only `Err`; a tail `None` completes. `run_test_fn` gives the
+    /// verdict `axon test` gives: `Err` exactly for a failure exit, so
+    /// `axon improve`'s test-flip check reads the same verdict.
+    #[test]
+    fn an_early_none_fails_with_its_own_reason_and_run_test_fn_agrees() {
+        let prog = crate::parse_source(
+            "fn bail(n: i64) -> i64 {\n    if n > 0 { exit(0) }\n    n\n}\n\
+             @[test]\nfn t_return_none() -> Option<i64> {\n    let k = 0\n    if k == 0 { return None }\n    Some(1)\n}\n\
+             @[test]\nfn t_tail_none() -> Option<i64> { None }\n\
+             @[test]\nfn t_err() -> Result<i64, str> { Err(\"no\") }\n\
+             @[test]\nfn t_exit() { assert_eq(bail(1), 99) }\n\
+             @[test]\nfn t_done() { assert_eq(1, 1) }\n",
+        )
+        .expect("parses");
+        let end = outcome(&prog, "t_return_none").expect("ended");
+        let why = end
+            .failure_exit()
+            .expect("an early `return None` is a failure exit");
+        assert!(why.contains("`return None`"), "{why}");
+        assert_eq!(outcome(&prog, "t_tail_none"), Ok(TestEnd::Completed));
+        for t in ["t_return_none", "t_err"] {
+            assert_eq!(
+                run_test_fn(&prog, t),
+                Err(TEST_ENDED_ON_FAILURE.to_string()),
+                "{t}"
+            );
+        }
+        for t in ["t_tail_none", "t_exit", "t_done"] {
+            assert_eq!(run_test_fn(&prog, t), Ok(()), "{t}");
+        }
+    }
+
+    /// C9 round 3, PSV-3: a test is COMPLETED only when its body evaluated to
+    /// its end. A `?` on a type-confused `None` returned `None` from the
+    /// test, which is not an `Err`, so the returned VALUE read as a
+    /// completion. `t_find` is the route where the completion rule is the
+    /// ONLY guard: an `Option`-returning test whose `?` meets an honest
+    /// `None` returns a well-typed `None`. (Veto ran the candidate sealed;
+    /// the rule is the interpreter's, so here suite and candidate are one
+    /// unsealed program.)
+    #[test]
+    fn a_test_ended_by_question_mark_is_never_completed() {
+        let suite = "@[test]\nfn t_solve() -> Result<i64, str> {\n    let f = solver()\n    let v = f(21)?\n    assert_eq(v, 42)\n    Ok(v)\n}\n\
+                     @[test]\nfn t_find() -> Option<i64> {\n    let v = find(21)?\n    assert_eq(v, 42)\n    Some(v)\n}\n";
+        let honest = "fn solver() -> fn(i64) -> Result<i64, str> { |x: i64| Ok(x * 2) }\nfn find(x: i64) -> Option<i64> { Some(x * 2) }\n";
+        let err = "fn solver() -> fn(i64) -> Result<i64, str> { |x: i64| Err(\"no\") }\nfn find(x: i64) -> Option<i64> { Some(x) }\n";
+        let confused = "fn solver() -> fn(i64) -> Result<i64, str> {\n    |x: i64| {\n        let d = dict_new()\n        let n: Option<i64> = None\n        dict_set(d, \"k\", n)\n        match dict_get(d, \"k\") { Some(v) => v  None => Err(\"u\") }\n    }\n}\nfn find(x: i64) -> Option<i64> { None }\n";
+        let run = |cand: &str, t: &str| {
+            let prog = crate::parse_source(&format!("{cand}{suite}")).expect("parses");
+            outcome(&prog, t)
+        };
+        for t in ["t_solve", "t_find"] {
+            assert_eq!(run(honest, t), Ok(TestEnd::Completed), "control: {t}");
+        }
+        assert!(
+            matches!(run(err, "t_solve"), Ok(TestEnd::EndedEarly(_))),
+            "control: an honest Err ends the test early"
+        );
+        assert!(run(err, "t_find").is_err(), "control: wrong fails");
+        for t in ["t_solve", "t_find"] {
+            let out = run(confused, t);
+            assert!(
+                out != Ok(TestEnd::Completed),
+                "ATTACK: a test that ended early at `?` was counted complete ({t}): {out:?}"
+            );
+        }
+    }
+
+    /// C9 round 3, PSV-3: a `fn` declared `-> Result` never hands its caller a
+    /// `None` (nor an `Option` fn an `Ok`/`Err`). An untyped `dict_get` gives
+    /// a free type variable, so a stored `None` type-checks as the `Result`.
+    /// Refused at the return boundary, the test FAILS on the confusion
+    /// instead of ending early.
+    #[test]
+    fn a_declared_result_fn_never_returns_an_option() {
+        let suite = "@[test]\nfn t_solve() -> Result<i64, str> {\n    let v = solve(21)?\n    assert_eq(v, 42)\n    Ok(v)\n}\n";
+        let confused = "fn solve(x: i64) -> Result<i64, str> {\n    let d = dict_new()\n    let n: Option<i64> = None\n    dict_set(d, \"k\", n)\n    match dict_get(d, \"k\") {\n        Some(v) => v\n        None => Err(\"unreachable\")\n    }\n}\n";
+        let honest = "fn solve(x: i64) -> Result<i64, str> { Ok(x * 2) }\n";
+        let run = |cand: &str, suite: &str, t: &str| {
+            let prog = crate::parse_source(&format!("{cand}{suite}")).expect("parses");
+            outcome(&prog, t)
+        };
+        assert_eq!(
+            run(honest, suite, "t_solve"),
+            Ok(TestEnd::Completed),
+            "control"
+        );
+        let out = run(confused, suite, "t_solve");
+        assert!(
+            matches!(&out, Err(m) if m.contains("runtime type confusion")),
+            "ATTACK: a fn declared -> Result returned a None across its boundary: {out:?}"
+        );
+        let opt = "@[test]\nfn t_find() -> Option<i64> {\n    let v = find(21)?\n    Some(v)\n}\n";
+        let confused_opt = "fn find(x: i64) -> Option<i64> {\n    let d = dict_new()\n    let e: Result<i64, str> = Ok(42)\n    dict_set(d, \"k\", e)\n    match dict_get(d, \"k\") { Some(v) => v  None => None }\n}\n";
+        let out = run(confused_opt, opt, "t_find");
+        assert!(
+            matches!(&out, Err(m) if m.contains("runtime type confusion")),
+            "an Option fn returned an Ok across its boundary: {out:?}"
+        );
+    }
+
+    // ── R51 S5: the seal state, frame provenance and v0.22's pin analysis ────
+
+    /// A program whose `cand` part is loaded from the SEALED directory
+    /// `/<tag>-sealed` and whose `suite` part is the operator's; returns it
+    /// with that directory.
+    fn sealed_program(tag: &str, suite: &str, cand: &str) -> (Program, std::path::PathBuf) {
+        use crate::span::intern_source;
+        let sdir = format!("/{tag}-sealed");
+        let s = crate::parse_source_in(suite, intern_source(&format!("/{tag}-suite/h.ax"), suite))
+            .expect("suite parses");
+        let c = crate::parse_source_in(cand, intern_source(&format!("{sdir}/f.ax"), cand))
+            .expect("candidate parses");
+        let prog = Program {
+            items: s.items.into_iter().chain(c.items).collect(),
+        };
+        (prog, std::path::PathBuf::from(sdir))
+    }
+
+    /// v0.22's sealed-run harness: run `test` of `suite` with `cand` loaded
+    /// from a SEALED directory. v0.22 published that directory process-wide
+    /// (`set_sealed_module_dirs` under a test lock); on main every build that
+    /// sees a non-empty set is a sealed run, so a published set would seal
+    /// every concurrent test's build. The set is handed to this run's build only
+    /// ([`Interp::build_in`]). The other layers' tests run with the
+    /// receiver dispatch rule off ([`sealed_outcome_rule`]).
+    fn sealed_outcome(tag: &str, suite: &str, cand: &str, test: &str) -> Result<TestEnd, String> {
+        sealed_outcome_rule(tag, suite, cand, test, false)
+    }
+
+    /// `rule`: whether the dispatch rule (amendment 83) is on (v0.22
+    /// interp.rs:5765). The switches are per thread and set on the run's own
+    /// thread ([`on_deep_stack`] spawns it), which starts with both off.
+    fn sealed_outcome_rule(
+        tag: &str,
+        suite: &str,
+        cand: &str,
+        test: &str,
+        rule: bool,
+    ) -> Result<TestEnd, String> {
+        let (prog, sdir) = sealed_program(tag, suite, cand);
+        // `PSV1T_TAINT_ONLY=1` (a sweep of the whole suite, amendment 102)
+        // runs every rule-on test with the STATIC pin analysis off and only the
+        // runtime taint rules on: a verdict that changes is a hole in one of the two.
+        let taint_only = rule && std::env::var_os("PSV1T_TAINT_ONLY").is_some();
+        on_deep_stack(|| {
+            DISPATCH_RULE_OFF.with(|c| c.set(!rule || taint_only));
+            TAINT_FORCE_ON.with(|c| c.set(taint_only));
+            run_test_fn_inner(&prog, test, &[sdir])
+        })
+    }
+
+    /// S7-Seal-2: at every depth limit, a sealed caller's call of an operator
+    /// fn is refused by the call edge in the uniform words, never as
+    /// "recursion limit exceeded … in `expected`" (v0.22 ran `seal_call`
+    /// before the depth check, veto interp.rs:3581). Built without the static
+    /// check, which would refuse the name first. Limits below the call refuse
+    /// on the candidate's own recursion (`double`).
+    #[test]
+    fn a_sealed_caller_at_the_depth_limit_never_reads_an_operator_fn_by_name() {
+        let suite = "fn expected(n: i64) -> i64 { n * 2 }\n\
+                     @[test]\nfn t() { assert_eq(double(20), 40) }\n";
+        let cand = "fn double(n: i64) -> i64 { if n > 0 { double(n - 1) } else { expected(n) } }\n";
+        let (prog, sdir) = sealed_program("s7depth", suite, cand);
+        let (mut by_depth, mut by_seal) = (0, 0);
+        for limit in 1..40 {
+            let out = on_deep_stack(|| {
+                let mut interp = Interp::build_in(&prog, std::slice::from_ref(&sdir))?;
+                interp.max_depth = limit;
+                interp.init_globals().map_err(flow_to_msg)?;
+                let f = interp.fns.get("t").copied().expect("the suite defines `t`");
+                interp.test_outcome(f)
+            });
+            let m = out.expect_err("the candidate never reaches its answer");
+            assert!(!m.contains("in `expected`"), "limit {limit}: {m}");
+            if m.contains("recursion limit exceeded") {
+                by_depth += 1;
+            } else {
+                assert_eq!(m, Interp::sealed_no_fn_msg("expected"), "limit {limit}");
+                by_seal += 1;
+            }
+        }
+        assert!(by_depth > 0 && by_seal > 0, "{by_depth} / {by_seal}");
+    }
+
+    /// v0.22 (C9 round 4c): the operator's `Judge`, whose `u8` impl is the
+    /// lenient one, and the candidate's laundering helpers.
+    pub(super) const JUDGE8: &str = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nimpl Judge for u8 {\n    fn ok(self: u8) -> bool { true }\n}\n";
+    pub(super) const LAUNDER8: &str = "fn narrow(n: i64) -> u8 { n as u8 }\nfn stash(v: u8) -> Dict {\n    let d = dict_new()\n    dict_set(d, \"k\", v)\n    d\n}\n";
+
+    fn u8_or(some: &str, none: &str) -> String {
+        format!("match dict_get(stash(narrow(4)), \"k\") {{ Some(v) => {some}  None => {none} }}")
+    }
+
+    /// `match <laundered u8> { Some(v) => { a[0] = v } None => {} }` as the
+    /// body of a candidate `fill(a: &mut [i64])`.
+    fn mut_fill(decl: &str, act: &str) -> String {
+        format!(
+            "fn fill(a: {decl}) {{\n    {}\n}}\n",
+            u8_or(&format!("{{ {act} }}"), "{}")
+        )
+    }
+
+    /// v0.22's dispatch-rule harness (C9 round 6, amendment 83): `t` of
+    /// `suite` under the operator's `Judge`, against `cand` with the
+    /// laundering helpers, with the rule ON.
+    fn judged_on(tag: &str, suite: &str, cand: &str) -> Result<TestEnd, String> {
+        sealed_outcome_rule(
+            tag,
+            &format!("{JUDGE8}{suite}"),
+            &format!("{LAUNDER8}{cand}"),
+            "t",
+            true,
+        )
+    }
+
+    fn dispatch_refused(why: &str, suite: &str, cand: &str) {
+        let out = judged_on("r6-disp", suite, cand);
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("whose type nothing on the operator side determined")),
+            "ATTACK: operator code dispatched on a value of the candidate's chosen type ({why}): {out:?}"
+        );
+    }
+
+    /// C9 round 7 (amendment 88): the analysis trusts only what the OPERATOR chose.
+    fn r7_refused(why: &str, suite: &str, cand: &str) {
+        let out = judged_on("r7", suite, cand);
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("whose type nothing on the operator side determined")
+                    || m.contains("whose width nothing on the operator side determined")
+                    || m.contains("runtime type confusion")),
+            "ATTACK: the operator's analysis trusted a type the candidate chose ({why}): {out:?}"
+        );
+    }
+
+    /// The operator's sandbox suite: `body` runs in a sandbox scope.
+    fn sandbox_suite(body: &str) -> String {
+        format!("@[test]\nfn t() {{\n    let p = principal_root(\"r\", true, true, true, 100)\n    let sb = sandbox_create(p, \"IO\")\n{body}\n}}\n")
+    }
+
+    fn name_refused(what: &str, suite: &str, cand: &str) {
+        let out = judged_on("r10-name", suite, cand);
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("a function name nothing on the operator side determined")),
+            "ATTACK: the candidate's string chose the operator fn ({what}): {out:?}"
+        );
+    }
+
+    /// R51 S6.1: the harness's sealed run executes (S5 to S6 it was refused
+    /// at build): an honest candidate completes and a wrong one fails, so the
+    /// sealed tests below are not vacuous.
+    #[test]
+    fn the_sealed_harness_runs_the_suite_against_the_candidate() {
+        let suite = "@[test]\nfn t() {\n    assert(solve() == 41)\n}\n";
+        assert_eq!(
+            sealed_outcome("r51-s6-honest", suite, "fn solve() -> i64 { 41 }\n", "t"),
+            Ok(TestEnd::Completed),
+            "honest candidate"
+        );
+        assert!(
+            sealed_outcome("r51-s6-wrong", suite, "fn solve() -> i64 { 40 }\n", "t").is_err(),
+            "wrong candidate"
+        );
+    }
+
+    /// R51 S5: a sealed build records which definitions the sealed module
+    /// defines (by `FnDef` address, global `Sym`, refinement and type name),
+    /// which method names the OPERATOR defines, and computes the pins; an
+    /// unsealed build computes none of it. Built through `build_with`, the
+    /// seal state's input, so the engine choice is not part of the test.
+    #[test]
+    fn a_sealed_build_records_the_candidates_definitions_and_an_unsealed_one_none() {
+        let suite = "type OT = { q: i64 }\ntrait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nlet OG = 5\nfn op() -> i64 { OG }\n@[test]\nfn t() {\n    let v: i64 = 9\n    assert(v.ok())\n}\n";
+        let cand = "type CT = { k: i64 }\ntype CPos = i64 where _ > 0\nlet CG = 4\nfn solve() -> i64 { CG }\nimpl Judge for CT {\n    fn ok(self: CT) -> bool { true }\n}\n";
+        let (prog, sdir) = sealed_program("r51-s5-seal", suite, cand);
+        let addr = |name: &str| {
+            prog.items
+                .iter()
+                .find_map(|it| match it {
+                    Item::FnDef(f) if f.name == name => Some(f as *const FnDef as usize),
+                    _ => None,
+                })
+                .expect("fn")
+        };
+        let impl_ok = |sealed_impl: bool| {
+            prog.items
+                .iter()
+                .find_map(|it| match it {
+                    Item::ImplBlock(b)
+                        if crate::resolver::span_in_sealed(b.span, std::slice::from_ref(&sdir))
+                            == sealed_impl =>
+                    {
+                        Some(&b.methods[0] as *const FnDef as usize)
+                    }
+                    _ => None,
+                })
+                .expect("impl")
+        };
+        let sealed = Interp::build_with(&prog, std::slice::from_ref(&sdir), Engine::Tree);
+        let s = &sealed.seal;
+        assert!(s.active);
+        let mut fns: Vec<usize> = s.fns.iter().copied().collect();
+        fns.sort_unstable();
+        let mut want = vec![addr("solve"), impl_ok(true)];
+        want.sort_unstable();
+        assert_eq!(
+            fns, want,
+            "the sealed fns are the candidate's fn and impl method"
+        );
+        assert_eq!(
+            s.globals.iter().copied().collect::<Vec<_>>(),
+            vec![intern("CG")]
+        );
+        assert_eq!(
+            s.refines.iter().cloned().collect::<Vec<_>>(),
+            vec!["CPos".to_string()]
+        );
+        assert_eq!(
+            s.types.iter().cloned().collect::<Vec<_>>(),
+            vec!["CT".to_string()]
+        );
+        assert_eq!(
+            s.operator_methods.iter().cloned().collect::<Vec<_>>(),
+            vec!["ok".to_string()],
+            "the operator's trait and impl define `ok`; the candidate's impl adds nothing"
+        );
+        let op = sealed.fns["op"];
+        let sol = sealed.fns["solve"];
+        assert!(sealed.fn_is_sealed(sol) && !sealed.fn_is_sealed(op));
+        assert!(
+            sealed.pins.is_operator_type("OT") && !sealed.pins.is_operator_type("CT"),
+            "the operator's struct is an operator type, the candidate's never is"
+        );
+        let t = sealed.fns["t"];
+        let site = |f: &FnDef| {
+            let mut out = None;
+            crate::ast::walk_expr(&f.body, &mut |e: &Expr| {
+                if let Expr::MethodCall {
+                    receiver, method, ..
+                } = e
+                {
+                    out = Some((receiver.as_ref().clone(), method.clone()));
+                }
+            });
+            out.expect("a method call")
+        };
+        let (r, m) = site(t);
+        let owner = t as *const FnDef as usize;
+        assert!(
+            sealed.pins.determined(owner, &r, &m),
+            "the operator's pinned `v.ok()` is determined in a sealed build"
+        );
+        let unsealed = Interp::build_with(&prog, &[], Engine::Tree);
+        let u = &unsealed.seal;
+        assert!(!u.active);
+        assert!(
+            u.fns.is_empty()
+                && u.globals.is_empty()
+                && u.refines.is_empty()
+                && u.types.is_empty()
+                && u.operator_methods.is_empty()
+        );
+        assert!(!unsealed.fn_is_sealed(unsealed.fns["solve"]));
+        assert!(
+            !unsealed.pins.determined(owner, &r, &m),
+            "an unsealed build computes no pins"
+        );
+    }
+
+    /// R51 S5: `with_frame` sets the frame's provenance for its body only,
+    /// counts the frames of each provenance while they run, and restores
+    /// both on the way out, nested either way.
+    #[test]
+    fn with_frame_sets_provenance_for_its_body_and_restores_it() {
+        let prog = crate::parse_source("fn main() {}\n").expect("parses");
+        let ix = Interp::build_with(&prog, &[], Engine::Tree);
+        let state = |ix: &Interp| {
+            (
+                ix.frame_sealed.get(),
+                ix.sealed_frames.get(),
+                ix.operator_frames.get(),
+            )
+        };
+        assert_eq!(state(&ix), (false, 0, 0));
+        let seen = ix.with_frame(true, || {
+            let outer = state(&ix);
+            let inner = ix.with_frame(false, || {
+                let op = state(&ix);
+                let back = ix.with_frame(true, || state(&ix));
+                (op, back, state(&ix))
+            });
+            (outer, inner, state(&ix))
+        });
+        assert_eq!(
+            seen,
+            (
+                (true, 1, 0),
+                ((false, 1, 1), (true, 2, 1), (false, 1, 1)),
+                (true, 1, 0)
+            )
+        );
+        assert_eq!(state(&ix), (false, 0, 0));
+        assert_eq!(ix.with_frame(true, || 7), 7, "the body's value is returned");
+    }
+
+    /// The analysis itself, with the cast out of the picture: a variable passed
+    /// as `&mut x` is NOT determined; the same program without the call is.
+    #[test]
+    fn a_mut_operand_is_never_determined_by_the_pin_analysis() {
+        let verdict = |src: &str| {
+            let prog = crate::parse_source(src).expect("parses");
+            let pins = pin::Pins::build(&prog, &|_| false);
+            let mut out = None;
+            for item in &prog.items {
+                if let Item::FnDef(f) = item {
+                    if f.name != "t" {
+                        continue;
+                    }
+                    crate::ast::walk_expr(&f.body, &mut |e: &Expr| {
+                        if let Expr::MethodCall {
+                            receiver, method, ..
+                        } = e
+                        {
+                            if method == "ok" {
+                                out = Some(pins.determined(
+                                    f as *const FnDef as usize,
+                                    receiver,
+                                    method,
+                                ));
+                            }
+                        }
+                    });
+                }
+            }
+            out.expect("a call site")
+        };
+        let base = "trait Judge {\n    fn ok(self) -> bool\n}\nimpl Judge for i64 {\n    fn ok(self: i64) -> bool { self == 9 }\n}\nfn fill(a: &mut [i64]) { a[0] = 9 }\n";
+        let with = |call: &str| {
+            format!("{base}fn t() {{\n    let mut a = [1, 2, 3]\n    {call}\n    let r = a[0].ok()\n}}\n")
+        };
+        assert!(
+            verdict(&with("let z = 0")),
+            "control: a literal array is determined"
+        );
+        assert!(
+            !verdict(&with("fill(&mut a)")),
+            "ATTACK: a variable lent as `&mut` was still determined"
+        );
+        // A union annotation does not pin the one runtime type.
+        let un = format!("{base}fn t() {{\n    let a: i64 | u8 = 9\n    let r = a.ok()\n}}\n");
+        assert!(
+            !verdict(&un),
+            "ATTACK: a union annotation pinned the receiver"
+        );
+    }
+
+    /// The dispatch rule sees a `&mut` operand as OPEN: what the callee left in
+    /// it was not chosen by the operator. The honest suite re-pins.
+    #[test]
+    fn a_mut_operand_is_open_in_the_dispatch_analysis() {
+        let unpinned = "@[test]\nfn t() {\n    let mut a = [1, 2, 3]\n    fill(&mut a)\n    assert(a[0].ok())\n}\n";
+        let repinned = "@[test]\nfn t() {\n    let mut a = [1, 2, 3]\n    fill(&mut a)\n    let b: [i64] = a\n    assert(b[0].ok())\n}\n";
+        let good = "fn fill(a: &mut [i64]) { a[0] = 9 }\n";
+        let wrong = "fn fill(a: &mut [i64]) { a[0] = 4 }\n";
+        // The cost, stated: even an honest write is refused until re-pinned.
+        dispatch_refused("an un-re-pinned read after `&mut`", unpinned, good);
+        assert_eq!(
+            judged_on("r8-mutopen", repinned, good),
+            Ok(TestEnd::Completed),
+            "control: GOOD, re-pinned"
+        );
+        assert!(
+            judged_on("r8-mutopen", repinned, wrong).is_err(),
+            "control: WRONG fails"
+        );
+        let out = judged_on("r8-mutopen", repinned, &mut_fill("&mut [i64]", "a[0] = v"));
+        assert!(
+            out != Ok(TestEnd::Completed),
+            "ATTACK: re-pinned suite accepted the u8: {out:?}"
+        );
+        // The arithmetic arm, unpinned.
+        let width = "@[test]\nfn t() {\n    let mut a = [1, 2, 3]\n    fill(&mut a)\n    assert((a[0] << 1) == 254)\n}\n";
+        let out = judged_on(
+            "r8-mutopen",
+            width,
+            &mut_fill("&mut [i64]", "a[0] = v").replace("narrow(4)", "narrow(255)"),
+        );
+        assert!(
+            out != Ok(TestEnd::Completed),
+            "ATTACK: width arm accepted a `&mut` value: {out:?}"
+        );
+    }
+
+    /// The structural half of A: pin verdicts are keyed (owner, site text), so
+    /// two fns holding IDENTICAL text must never share one. The analysis keeps
+    /// them apart by owner; the interpreter must hand the right owner to every
+    /// frame that runs operator code (`every_frame_that_runs_stored_operator_code_sets_its_owner`).
+    #[test]
+    fn identical_site_text_in_two_fns_gets_two_verdicts() {
+        use crate::ast::walk_expr;
+        let src = "trait J { fn ok(self) -> bool }\nimpl J for i64 { fn ok(self: i64) -> bool { self == 9 } }\nimpl J for u8 { fn ok(self: u8) -> bool { true } }\nfn a() -> bool { let v: i64 = 9\n v.ok() }\nfn b() -> bool { let v = dict_get(dict_new(), \"k\")\n v.ok() }\n";
+        let prog = crate::parse_source(src).expect("parses");
+        let pins = pin::Pins::build(&prog, &|_| false);
+        let mut verdicts = Vec::new();
+        for it in &prog.items {
+            if let Item::FnDef(f) = it {
+                let mut site = None;
+                walk_expr(&f.body, &mut |e: &Expr| {
+                    if let Expr::MethodCall {
+                        receiver, method, ..
+                    } = e
+                    {
+                        site = Some((receiver.as_ref().clone(), method.clone()));
+                    }
+                });
+                let (r, m) = site.expect("a method call");
+                verdicts.push((
+                    f.name.clone(),
+                    pins.determined(f as *const FnDef as usize, &r, &m),
+                ));
+            }
+        }
+        assert_eq!(
+            verdicts,
+            vec![("a".to_string(), true), ("b".to_string(), false)]
+        );
+    }
+
+    /// Amendment 96, honest-program cost (fail-closed over-refusal, stated): the
+    /// VALUE of a `with handler` expression is undetermined to the dispatch rule
+    /// (a handler arm may answer with any value), so an operator dispatch on it
+    /// is refused until it is pinned. Dispatch on determined values INSIDE a
+    /// handler body or arm is unaffected.
+    #[test]
+    fn the_value_of_a_with_handler_expression_is_undetermined_until_pinned() {
+        let h = "with handler { on IO(p) => resume(Ok(\"x\")) } {\n        9\n    }";
+        let run = |suite: String| judged_on("r9-wh", &suite, "fn mk() -> i64 { 9 }\n");
+        let pinned = format!("@[test]\nfn t() {{\n    let v: i64 = {h}\n    assert(v.ok())\n}}\n");
+        assert_eq!(
+            run(pinned),
+            Ok(TestEnd::Completed),
+            "pinned: the cost is only the annotation"
+        );
+        let bare = format!("@[test]\nfn t() {{\n    let v = {h}\n    assert(v.ok())\n}}\n");
+        let out = run(bare);
+        assert!(
+            matches!(&out, Err(m) if m.contains("nothing on the operator side determined")),
+            "the value of a handler expression is undetermined: {out:?}"
+        );
+        let inside = "@[test]\nfn t() {\n    with handler { on IO(p) => resume(Ok(\"x\")) } {\n        let x: i64 = 9\n        assert(x.ok())\n    }\n}\n".to_string();
+        assert_eq!(
+            run(inside),
+            Ok(TestEnd::Completed),
+            "dispatch inside a handler body on a pinned value"
+        );
+    }
+
+    /// B2: a LOCAL binding named like an operator fn is not that fn.
+    #[test]
+    fn a_local_binding_named_like_an_operator_fn_is_not_judged_by_it() {
+        let suite = "fn f() -> i64 { 5 }\n@[test]\nfn t() {\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"f\") {\n        Some(f) => assert(f().ok())\n        None => assert(false)\n    }\n}\n";
+        r7_refused(
+            "a closure stored under a new key, called through a local named f",
+            suite,
+            "fn solve(d: Dict) { dict_set(d, \"f\", || 4 as u8) }\n",
+        );
+    }
+
+    /// The second blocker, at the call: a call through a name bound in the
+    /// local environment goes through that value, and a non-closure is not
+    /// callable. It used to fall through to a builtin or fn of the same NAME,
+    /// so a confused value in the operator's local `square` ran the
+    /// operator's own reference `fn square`. This route crosses no declared
+    /// fn type (a `Dict`'s values are untyped), so the cast cannot stand in.
+    #[test]
+    fn a_call_through_a_local_never_resolves_the_name_elsewhere() {
+        let suite = "fn square(n: i64) -> i64 { n * n }\n\
+                     @[test]\nfn t() {\n    match dict_get(table(), \"sq\") {\n        Some(square) => assert(square(3) == 9 && square(5) == 25)\n        None => assert(false)\n    }\n}\n\
+                     @[test]\nfn t_shadow() {\n    let square = |n: i64| n + 100\n    assert(square(1) == 101)\n}\n\
+                     @[test]\nfn t_plain() {\n    let sq = 4\n    assert(square(sq) == 16)\n}\n";
+        let table = |v: &str| {
+            format!("fn table() -> Dict {{\n    let d = dict_new()\n    dict_set(d, \"sq\", {v})\n    d\n}}\n")
+        };
+        let run = |v: &str, test: &str| sealed_outcome("f4call", suite, &table(v), test);
+        assert_eq!(
+            run("|n: i64| n * n", "t"),
+            Ok(TestEnd::Completed),
+            "control: the right closure"
+        );
+        assert!(
+            run("|n: i64| n + 1", "t").is_err(),
+            "control: the wrong closure fails"
+        );
+        assert_eq!(
+            run("0", "t_shadow"),
+            Ok(TestEnd::Completed),
+            "control: a local closure shadowing a fn is what the name calls"
+        );
+        assert_eq!(
+            run("0", "t_plain"),
+            Ok(TestEnd::Completed),
+            "control: with no local of that name, the fn is called"
+        );
+        let out = run("0", "t");
+        assert!(
+            out != Ok(TestEnd::Completed)
+                && matches!(&out, Err(m) if m.contains("is not callable")),
+            "ATTACK: a call through a local ran the operator's fn of the same name: {out:?}"
+        );
+    }
+
+    /// BLOCKER B. A `str` the candidate returned selects which OPERATOR fn a
+    /// name-resolving builtin runs. The name argument is a SINK: operator code
+    /// must give it a name-pure expression.
+    #[test]
+    fn a_function_name_the_candidate_chose_never_selects_an_operator_fn() {
+        let sbx = |name_expr: &str, pre: &str| {
+            format!(
+            "fn reference(x: i64) -> i64 {{ x * 2 }}\n{pre}{}",
+            sandbox_suite(&format!("    let got = sandbox_run(sb, {name_expr}, 21)\n    assert(got == reference(21))"))
+        )
+        };
+        let with_local =
+            |bind: &str| sbx("nm", "").replace("    let got", &format!("    {bind}\n    let got"));
+        let run = |suite: &str, cand: &str| judged_on("r10-name", suite, cand);
+        let attack = "fn entry() -> str { \"reference\" }\nfn double(x: i64) -> i64 { 0 }\n";
+        let honest = "fn entry() -> str { \"double\" }\nfn double(x: i64) -> i64 { x * 2 }\n";
+        // Controls: a literal, an operator-built name, an operator constant and a
+        // local bound to one all run the candidate's fn, and a wrong one fails keyed.
+        for (what, suite) in [
+            ("literal", sbx("\"double\"", "")),
+            ("operator fn result", sbx("which()", "fn which() -> str { \"dou\" + \"ble\" }\n")),
+            ("operator global", sbx("NAME", "let NAME = \"double\"\n")),
+            ("local of a literal", with_local("let nm = \"double\"")),
+            ("a branch between two literals", with_local("let nm = if reference(1) == 2 { \"double\" } else { \"reference\" }")),
+            ("a loop over a literal range", with_local("let names = [\"nope\", \"double\"]\n    let nm = \"x\"\n    for k in 1..2 { nm = names[k] }")),
+            ("an interpolation of literals", with_local("let part = \"ble\"\n    let nm = \"dou{part}\"")),
+        ] {
+            assert_eq!(run(&suite, honest), Ok(TestEnd::Completed), "control: honest via {what}");
+            assert!(
+                run(&suite, "fn entry() -> str { \"double\" }\nfn double(x: i64) -> i64 { 0 }\n").is_err(),
+                "control: wrong fails via {what}"
+            );
+        }
+        name_refused(
+            "sandbox_run, a candidate fn's result",
+            &sbx("entry()", ""),
+            attack,
+        );
+        name_refused(
+            "a local bound to it",
+            &with_local("let nm = entry()"),
+            attack,
+        );
+        name_refused(
+            "a local annotated str",
+            &with_local("let nm: str = entry()"),
+            attack,
+        );
+        name_refused(
+            "a parameter of an operator fn",
+            &sbx("pick(entry())", "fn pick(s: str) -> str { s }\n"),
+            attack,
+        );
+        name_refused(
+            "an operator fn that returns the candidate's",
+            &sbx("pick()", "fn pick() -> str { entry() }\n"),
+            attack,
+        );
+        name_refused(
+            "an operator fn that returns it by a return statement",
+            &sbx("pick()", "fn pick() -> str {\n    if reference(1) == 2 { return entry() }\n    \"double\"\n}\n"),
+            attack,
+        );
+        name_refused(
+            "built from the candidate's",
+            &sbx("\"re\" + entry()", ""),
+            "fn entry() -> str { \"ference\" }\n",
+        );
+        name_refused(
+            "built from a candidate int through to_str",
+            &sbx("\"dou\" + to_str(idx())", ""),
+            "fn idx() -> i64 { 1 }\nfn double(x: i64) -> i64 { 0 }\n",
+        );
+        name_refused(
+            "a dict read",
+            &with_local("let d = dict_new()\n    dict_set(d, \"k\", entry())\n    let nm = match dict_get(d, \"k\") { Some(s) => s  None => \"\" }"),
+            attack,
+        );
+        name_refused(
+            "an index chosen by the candidate",
+            &sbx("[\"double\", \"reference\"][idx()]", ""),
+            "fn idx() -> i64 { 1 }\nfn double(x: i64) -> i64 { 0 }\n",
+        );
+        name_refused(
+            "a loop variable",
+            &sbx("names[i]", "").replace("    let got", "    let names = [\"double\", \"reference\"]\n    let i = 0\n    for k in 0..idx() { i = k }\n    let got"),
+            "fn idx() -> i64 { 1 }\nfn double(x: i64) -> i64 { 0 }\n",
+        );
+    }
+
+    #[test]
+    fn goal_eval_takes_no_function_name_the_candidate_chose() {
+        let suite = "fn easy(x: i64) -> i64 { 100 }\nfn hard(x: i64) -> i64 { 0 }\n@[test]\nfn t() {\n    let s = goal_eval(NAME, 5)\n    assert(s > 50.0)\n}\n";
+        assert_eq!(
+            judged_on(
+                "r10-name",
+                &suite.replace("NAME", "\"easy\""),
+                "fn solve() -> i64 { 1 }\n"
+            ),
+            Ok(TestEnd::Completed),
+            "control: a literal"
+        );
+        assert!(
+            judged_on(
+                "r10-name",
+                &suite.replace("NAME", "\"hard\""),
+                "fn solve() -> i64 { 1 }\n"
+            )
+            .is_err(),
+            "control: the hard fn fails"
+        );
+        name_refused(
+            "goal_eval",
+            &suite.replace("NAME", "name()"),
+            "fn name() -> str { \"easy\" }\n",
+        );
+    }
+
+    #[test]
+    fn scheduler_spawn_takes_no_function_name_the_candidate_chose() {
+        let suite = "fn grade(x: i64) -> i64 { 9 }\n@[test]\nfn t() {\n    let id = scheduler_spawn(NAME, 0)\n    let n = scheduler_run()\n    assert(scheduler_result(id) == 9)\n}\n";
+        assert_eq!(
+            judged_on(
+                "r10-name",
+                &suite.replace("NAME", "\"grade\""),
+                "fn solve() -> i64 { 1 }\n"
+            ),
+            Ok(TestEnd::Completed),
+            "control: a literal names the operator's own fn"
+        );
+        name_refused(
+            "scheduler_spawn",
+            &suite.replace("NAME", "name()"),
+            "fn name() -> str { \"grade\" }\n",
+        );
+    }
+
+    #[test]
+    fn a_goal_constraint_and_a_kernel_goal_take_no_function_name_the_candidate_chose() {
+        let pre = "@[adaptive]\nfn metric(x: i64) -> i64 { x }\nfn ok_c(x: i64) -> bool { true }\n";
+        let constrained = format!("{pre}@[test]\nfn t() {{\n    let r = goal_run_constrained(\"metric\", CNAME, 10.0, 5)\n    assert(r >= 0.0)\n}}\n");
+        assert_eq!(
+            judged_on(
+                "r10-name",
+                &constrained.replace("CNAME", "\"ok_c\""),
+                "fn solve() -> i64 { 1 }\n"
+            ),
+            Ok(TestEnd::Completed),
+            "control: a literal constraint"
+        );
+        name_refused(
+            "goal_run_constrained's constraint",
+            &constrained.replace("CNAME", "cname()"),
+            "fn cname() -> str { \"ok_c\" }\n",
+        );
+        let kernel = format!("{pre}@[test]\nfn t() {{\n    let p = principal_root(\"r\", true, true, true, 100)\n    let g = kernel_goal_create(p, KNAME, 10.0)\n    let r = kernel_goal_run(g, 3)\n    assert(r >= 0.0)\n}}\n");
+        assert_eq!(
+            judged_on(
+                "r10-name",
+                &kernel.replace("KNAME", "\"metric\""),
+                "fn solve() -> i64 { 1 }\n"
+            ),
+            Ok(TestEnd::Completed),
+            "control: a literal goal"
+        );
+        name_refused(
+            "kernel_goal_create",
+            &kernel.replace("KNAME", "kname()"),
+            "fn kname() -> str { \"metric\" }\n",
+        );
+    }
+
+    /// A candidate's module-level `let` is the candidate's value; the verdict
+    /// of one fn's site never decides another's (the key carries the owner).
+    #[test]
+    fn a_candidates_global_and_a_sibling_fns_site_determine_nothing() {
+        r7_refused(
+            "a candidate global `let X = 4 as u8`",
+            "@[test]\nfn t() {\n    assert(X.ok())\n}\n",
+            "let X = 4 as u8\n",
+        );
+        let suite = "fn check(p: i64) -> bool { p.ok() }\n@[test]\nfn t() {\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {\n        Some(v) => {\n            let f = |p| p.ok()\n            assert(f(v))\n        }\n        None => assert(false)\n    }\n}\n";
+        r7_refused(
+            "the same receiver text as a sibling fn's pinned one",
+            suite,
+            "fn solve(d: Dict) { dict_set(d, \"k\", 4 as u8) }\n",
+        );
+    }
+
+    /// Adjacent (a)/(b): a verdict belongs to its own fn, and a candidate's
+    /// methods never steer an operator site.
+    #[test]
+    fn a_verdict_belongs_to_its_own_fn_and_the_candidate_steers_none() {
+        // An unrelated, never-called fn with `|p| p.ok()` does not refuse an
+        // honest fully annotated `check(p: i64)`.
+        let suite = "fn check(p: i64) -> bool { p.ok() }\nfn unrelated() { let f = |p| p.ok()\n    f(1) }\n@[test]\nfn t() {\n    let r: i64 = solve(3)\n    assert(check(r))\n}\n";
+        let out = judged_on("r7", suite, "fn solve(n: i64) -> i64 { n * n }\n");
+        assert_eq!(out, Ok(TestEnd::Completed), "control: {out:?}");
+        // A candidate method named like an operator method with an open return
+        // does not flip the operator's determined `let r = b.pick()`.
+        let suite = "type B = { v: i64 }\ntrait Pick {\n    fn pick(self) -> i64\n}\nimpl Pick for B {\n    fn pick(self: B) -> i64 { self.v }\n}\n@[test]\nfn t() {\n    let b = B { v: 9 }\n    let r = b.pick()\n    assert(r.ok())\n}\n";
+        let out = judged_on(
+            "r7",
+            suite,
+            "type CB = { w: i64 }\nfn pick<T>(self: CB) -> T { self.w }\n",
+        );
+        assert_eq!(
+            out,
+            Ok(TestEnd::Completed),
+            "control: a candidate method steers nothing: {out:?}"
+        );
+    }
+
+    /// B3: a trait name, `dyn`, `Option<Trait>`, `[Trait]` and a fn type
+    /// returning one do not constrain the runtime type.
+    #[test]
+    fn a_trait_annotation_does_not_pin_the_runtime_type() {
+        let cand = "fn solve(d: Dict) { dict_set(d, \"k\", 4 as u8) }\n";
+        let read = |ann: &str, use_: &str| {
+            format!("@[test]\nfn t() {{\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {{\n        Some(v) => {{\n            let y: {ann} = v\n            {use_}\n        }}\n        None => assert(false)\n    }}\n}}\n")
+        };
+        r7_refused("a trait name", &read("Judge", "assert(y.ok())"), cand);
+        r7_refused("dyn Judge", &read("dyn Judge", "assert(y.ok())"), cand);
+        let idj = "fn idj(x: Judge) -> Judge { x }\n@[test]\nfn t() {\n    let d = dict_new()\n    solve(d)\n    match dict_get(d, \"k\") {\n        Some(v) => {\n            let y = idj(v)\n            assert(y.ok())\n        }\n        None => assert(false)\n    }\n}\n";
+        r7_refused("a trait-typed fn and return", idj, cand);
+        r7_refused(
+            "Option<Judge>",
+            &read(
+                "Option<Judge>",
+                "match y { Some(z) => assert(z.ok())  None => assert(false) }",
+            ),
+            "fn solve(d: Dict) { dict_set(d, \"k\", Some(4 as u8)) }\n",
+        );
+    }
+
+    /// The identifiers called (`name(` / `.name(`) on one line.
+    fn called_idents(line: &str) -> Vec<String> {
+        let b: Vec<char> = line.chars().collect();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < b.len() {
+            if b[i].is_alphabetic() || b[i] == '_' {
+                let st = i;
+                while i < b.len() && (b[i].is_alphanumeric() || b[i] == '_') {
+                    i += 1;
+                }
+                // A call on some OTHER receiver (`ch.send(..)`, `x.get(..)`) is not
+                // a call of an interpreter fn of that name.
+                let pre: String = b[..st].iter().collect();
+                let other_receiver =
+                    pre.ends_with('.') && !pre.ends_with("self.") && !pre.ends_with("interp.");
+                if i < b.len() && b[i] == '(' && !other_receiver {
+                    out.push(b[st..i].iter().collect());
+                }
+            } else {
+                i += 1;
+            }
+        }
+        out
+    }
+
+    /// `(file, fn name, body)` of every fn item in the interpreter sources
+    /// (R51: every `interp/**/*.rs` but `vm/tests.rs`, cut at `mod tests {`).
+    fn fn_items() -> Vec<(String, String, String)> {
+        let mut out = Vec::new();
+        for (file, src) in vm::tests::r51_interp_sources() {
+            let lines: Vec<&str> = src.lines().collect();
+            let mut i = 0;
+            while i < lines.len() {
+                let l = lines[i];
+                let t = l.trim_start();
+                let indent = l.len() - t.len();
+                let t2 = t
+                    .strip_prefix("pub(super) ")
+                    .or_else(|| t.strip_prefix("pub(crate) "))
+                    .or_else(|| t.strip_prefix("pub(in crate::interp) "))
+                    .or_else(|| t.strip_prefix("pub "))
+                    .unwrap_or(t);
+                if let Some(rest) = t2.strip_prefix("fn ") {
+                    let name: String = rest
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                        .collect();
+                    let mut body = String::new();
+                    let mut j = i + 1;
+                    // The signature may span lines; the body ends at the line
+                    // that closes at the fn's own indent.
+                    while j < lines.len() {
+                        let lj = lines[j];
+                        if lj.len() - lj.trim_start().len() == indent
+                            && lj.trim_start().starts_with('}')
+                        {
+                            break;
+                        }
+                        body.push_str(lj);
+                        body.push('\n');
+                        j += 1;
+                    }
+                    out.push((file.clone(), name, body));
+                }
+                i += 1;
+            }
+        }
+        out
+    }
+
+    /// Every interpreter fn that runs a `Value::Closure` or an `FnDef`, found
+    /// by closure over the call graph from the primitives that do. The
+    /// evaluator (`eval.rs`), the bytecode engine (`vm/`, R50: the
+    /// evaluator's twin) and the builtin dispatcher are the graph's ROOTS, not
+    /// its nodes: everything reaches them.
+    fn user_code_runners() -> std::collections::HashSet<String> {
+        // R51: main's call path (AX-54 split `call_fn_frame`; `call_mut_with`
+        // is v0.22's `call_fn_mut`; AX-40 added `call_closure_arg`) and the
+        // VM entries a builtin arm calls directly (`fold_leaf`, T1d); R51 S2.3
+        // made the general fn frame and the closure frame const-generic
+        // (`call_fn_frame`, `call_closure_frame`).
+        const PRIMITIVES: &[&str] = &[
+            "call_fn",
+            "call_fn_entry",
+            "call_fn_in",
+            "call_fn_common",
+            "call_fn_in_general",
+            "call_fn_frame",
+            "call_test_fn",
+            "call_mut_with",
+            "call_closure",
+            "call_closure_arg",
+            "call_local_closure",
+            "call_closure_owned_by",
+            "call_closure_frame",
+            "run_body",
+            "run_test_body",
+            "run_lambda",
+            "fold_leaf",
+        ];
+        const ROOTS: &[&str] = &[
+            "eval",
+            "eval_call",
+            "eval_block",
+            "eval_binop",
+            "call_builtin",
+            "run_handler_arm",
+            "replay_continuation",
+            // Host entry points that START a run: no builtin arm reaches them
+            // (and `axon_host_await` is also the name of an extern declaration).
+            "run_program_inner",
+            "run_main",
+            "run_test_fn_inner",
+            "axon_host_await",
+            "run_named_fn_as_bool_with_score",
+            "run_suspendable_values_inner",
+            "run_property_test_inner",
+        ];
+        let items = fn_items();
+        let mut runners: std::collections::HashSet<String> =
+            PRIMITIVES.iter().map(|s| s.to_string()).collect();
+        loop {
+            let before = runners.len();
+            for (file, name, body) in &items {
+                if file == "eval.rs" || file.starts_with("vm/") || ROOTS.contains(&name.as_str()) {
+                    continue;
+                }
+                if body.lines().any(|l| {
+                    !l.trim_start().starts_with("//")
+                        && called_idents(l)
+                            .iter()
+                            .any(|c| runners.contains(c) && c != name)
+                }) {
+                    runners.insert(name.clone());
+                }
+            }
+            if runners.len() == before {
+                break;
+            }
+        }
+        runners
+    }
+
+    /// What the sweep established about a builtin that runs user code.
+    #[derive(Clone, Copy, PartialEq, Debug)]
+    enum Disp {
+        /// The result's type names a type variable (`[U]`, `T`): the pin
+        /// analysis treats it as undetermined.
+        Open,
+        /// A `Dict`: its values are an untyped position (amendment 83).
+        Dict,
+        /// A scalar the builtin builds itself (a count, a score, `()`).
+        Scalar,
+        /// The candidate fn's value is cast to the (closed, scalar) declared
+        /// type at the seal crossing in the arm itself (R51 S3 ports the cast:
+        /// `a_crossing_builtin_casts_a_sealed_fns_result_in_its_arm`).
+        Crossing,
+    }
+
+    /// `call_builtin`'s arms in `interp/builtins.rs`, split at their 12-space
+    /// `"name" … =>` headers: (the arm's names, its body).
+    pub(super) fn builtin_arms(src: &str) -> Vec<(Vec<String>, String)> {
+        let mut arms: Vec<(Vec<String>, String)> = Vec::new();
+        for line in src.lines() {
+            let indent = line.len() - line.trim_start().len();
+            let t = line.trim_start();
+            if indent == 12 && t.starts_with('"') && t.contains("=>") {
+                let head = &t[..t.find("=>").unwrap()];
+                let names = head
+                    .split('|')
+                    .map(|n| n.trim().trim_matches('"').to_string())
+                    .collect();
+                arms.push((names, String::new()));
+            } else if let Some(last) = arms.last_mut() {
+                last.1.push_str(line);
+                last.1.push('\n');
+            }
+        }
+        // R51: the sweep matched the real dispatcher, not an empty cut (295
+        // arms at S5).
+        assert!(arms.len() >= 250, "only {} builtin arms found", arms.len());
+        arms
+    }
+
+    /// v0.22 (C9 round 9, amendment 96): a `Disp::Crossing` builtin casts the
+    /// sealed fn's result to its declared type in the arm itself. The
+    /// classification half of v0.22's drift test runs now
+    /// (`every_builtin_that_runs_user_code_is_classified`); this half needs
+    /// the cast S3 ports.
+    #[test]
+    fn a_crossing_builtin_casts_a_sealed_fns_result_in_its_arm() {
+        let sources = vm::tests::r51_interp_sources();
+        let src = &sources
+            .iter()
+            .find(|(f, _)| f == "builtins.rs")
+            .expect("interp/builtins.rs")
+            .1;
+        let arms = builtin_arms(src);
+        let name = "sandbox_run";
+        let (_, body) = arms
+            .iter()
+            .find(|(ns, _)| ns.iter().any(|n| n == name))
+            .unwrap_or_else(|| panic!("no `{name}` arm"));
+        assert!(
+            body.contains("self.fn_is_sealed(f)"),
+            "DRIFT: `{name}` is classified Crossing but its arm casts no sealed fn's result"
+        );
+    }
+
+    /// C9 round 9 drift: every builtin that RUNS user code (a callback, a fn
+    /// named by string, a goal metric, a scheduler fiber) is classified by how
+    /// its result reaches operator code. A new one fails this test until it is
+    /// classified, and its declared return must be consistent with the class.
+    #[test]
+    fn every_builtin_that_runs_user_code_is_classified() {
+        use Disp::*;
+        const SCALAR_RETS: &[&str] = &["i64", "f64", "bool", "str", "()", "Result<i64, str>"];
+        const TABLE: &[(&str, Disp)] = &[
+            ("arr_all", Scalar),
+            ("arr_any", Scalar),
+            ("arr_count_if", Scalar),
+            ("arr_drop_while", Open),
+            ("arr_filter", Open),
+            ("arr_find", Open),
+            ("arr_fold", Open),
+            ("arr_group_by", Dict),
+            ("arr_map", Open),
+            ("arr_max_by", Open),
+            ("arr_min_by", Open),
+            ("arr_partition", Open),
+            ("arr_sort_by", Open),
+            ("arr_sum_by", Scalar),
+            ("arr_sum_by_f64", Scalar),
+            ("arr_take_while", Open),
+            ("arr_zip_with", Open),
+            ("dict_each", Scalar),
+            ("dict_filter", Dict),
+            ("dict_map_values", Dict),
+            ("goal_continue", Scalar),
+            ("goal_eval", Scalar),
+            ("goal_run", Scalar),
+            ("goal_run_categorical", Scalar),
+            ("goal_run_constrained", Scalar),
+            ("goal_run_multistart", Scalar),
+            ("goal_run_random", Scalar),
+            ("http_sse", Scalar),
+            ("http_sse_post", Scalar),
+            ("kernel_goal_run", Scalar),
+            ("sandbox_run", Crossing),
+            ("scheduler_run", Scalar),
+            ("supervisor_run", Scalar),
+        ];
+        let sources = vm::tests::r51_interp_sources();
+        let src = &sources
+            .iter()
+            .find(|(f, _)| f == "builtins.rs")
+            .expect("interp/builtins.rs")
+            .1;
+        let arms = builtin_arms(src);
+        // C9 round 10: not four literal call patterns. A builtin runs user code
+        // if its arm calls ANY fn that (transitively, through the interpreter's
+        // own fns) reaches a runner of a `Value::Closure` or an `FnDef`.
+        let runners = user_code_runners();
+        let runs_user_code = |body: &str| {
+            body.lines().any(|l| {
+                let l = l.trim_start();
+                !l.starts_with("//") && called_idents(l).iter().any(|c| runners.contains(c))
+            })
+        };
+        let declared: std::collections::HashMap<&str, &str> = crate::builtins::BUILTINS
+            .iter()
+            .map(|b| (b.name, b.ret))
+            .collect();
+        let mut found: Vec<String> = Vec::new();
+        for (names, body) in &arms {
+            if !runs_user_code(body) {
+                continue;
+            }
+            for n in names {
+                if declared.contains_key(n.as_str()) {
+                    found.push(n.clone());
+                }
+            }
+        }
+        found.sort();
+        found.dedup();
+        let mut want: Vec<String> = TABLE.iter().map(|(n, _)| n.to_string()).collect();
+        want.sort();
+        assert_eq!(
+            found, want,
+            "DRIFT: a builtin arm that runs user code is unclassified (or a classified one no longer does); decide how its result reaches operator code and list it"
+        );
+        for (name, disp) in TABLE {
+            let ret = declared[name];
+            let ok = match disp {
+                Open => pin::builtin_ret_open(ret),
+                Dict => ret == "Dict",
+                Scalar => SCALAR_RETS.contains(&ret),
+                Crossing => SCALAR_RETS.contains(&ret),
+            };
+            assert!(
+                ok,
+                "DRIFT: `{name}` is classified {disp:?} but declares `-> {ret}`"
+            );
+        }
+        // The goal metric and the property runner score or discard the result.
+        let goal = &sources
+            .iter()
+            .find(|(f, _)| f == "goal.rs")
+            .expect("interp/goal.rs")
+            .1;
+        let lines: Vec<&str> = goal.lines().collect();
+        let mut calls = 0;
+        for (i, l) in lines.iter().enumerate() {
+            if l.trim_start().starts_with("//") || !l.contains("self.call_fn(") {
+                continue;
+            }
+            calls += 1;
+            let window = lines[i..(i + 40).min(lines.len())].join("\n");
+            assert!(
+                window.contains("numeric_score(") || window.contains("Value::Bool("),
+                "DRIFT: goal.rs line {} runs user code and does not reduce the result to a score or a bool",
+                i + 1
+            );
+        }
+        assert!(calls >= 5, "only {calls} goal.rs call_fn sites found");
+    }
+    include!("interp/tests_v022_s4.rs");
+    include!("interp/tests_v022_a.rs");
+    include!("interp/tests_v022_b.rs");
+    include!("interp/tests_v022_c.rs");
 }
 
 #[cfg(test)]
@@ -7300,7 +10281,7 @@ mod literal_escape_tests {
             let src = format!("let x = {lit}\nfn main() -> i64 {{ 0 }}\n");
             let prog = crate::parse_source(&src)
                 .unwrap_or_else(|e| panic!("dumped literal must re-parse ({original:?}): {e}"));
-            let mut interp = Interp::build(&prog);
+            let mut interp = Interp::build(&prog).expect("unsealed build");
             interp.init_globals().expect("globals initialise");
             let got = interp
                 .globals

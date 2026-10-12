@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:axon:loop-contracts:closed-loop-profile:1",
+  "title": "CRATE-LOCAL (no package schema): closed-loop-profile/1 offer/accept negotiation document (B256). Byte rules: docs/CLOSED_LOOP_PROFILE_NEGOTIATION.md",
+  "description": "`role` selects the closed shape via if/then so that an unknown field in either shape is reported as an unknown field, not as 'matches none of oneOf'.",
+  "type": "object",
+  "properties": {
+    "role": {
+      "enum": [
+        "offer",
+        "accept"
+      ]
+    }
+  },
+  "required": [
+    "role"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "role": {
+            "const": "offer"
+          }
+        }
+      },
+      "then": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "schema": {
+            "const": "closed-loop-profile/1"
+          },
+          "role": {
+            "const": "offer"
+          },
+          "peer": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+          },
+          "schemas": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 64,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9.-]{0,95}/v?(0|[1-9][0-9]{0,3})$"
+            }
+          },
+          "features": {
+            "type": "array",
+            "maxItems": 64,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9.-]{0,95}/v?(0|[1-9][0-9]{0,3})$"
+            }
+          },
+          "adapters": {
+            "type": "array",
+            "maxItems": 64,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9.-]{0,95}/v?(0|[1-9][0-9]{0,3})$"
+            }
+          },
+          "required": {
+            "type": "array",
+            "maxItems": 64,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9.-]{0,95}/v?(0|[1-9][0-9]{0,3})$"
+            }
+          }
+        },
+        "required": [
+          "schema",
+          "role",
+          "peer",
+          "schemas",
+          "features",
+          "adapters",
+          "required"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {
+            "const": "accept"
+          }
+        }
+      },
+      "then": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "schema": {
+            "const": "closed-loop-profile/1"
+          },
+          "role": {
+            "const": "accept"
+          },
+          "peer": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+          },
+          "offer_ref": {
+            "type": "string",
+            "pattern": "^(cl22|acf1|sha256):[0-9a-f]{64}$"
+          },
+          "schemas": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 64,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9.-]{0,95}/v?(0|[1-9][0-9]{0,3})$"
+            }
+          },
+          "features": {
+            "type": "array",
+            "maxItems": 64,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9.-]{0,95}/v?(0|[1-9][0-9]{0,3})$"
+            }
+          },
+          "adapters": {
+            "type": "array",
+            "maxItems": 64,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9.-]{0,95}/v?(0|[1-9][0-9]{0,3})$"
+            }
+          }
+        },
+        "required": [
+          "schema",
+          "role",
+          "peer",
+          "offer_ref",
+          "schemas",
+          "features",
+          "adapters"
+        ]
+      }
+    }
+  ]
+}

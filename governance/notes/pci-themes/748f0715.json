@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S6 gaps",
+  "text": "TEST-ONLY: no_arm_of_a_pure_builtin_reads_or_advances_ambient_state moves verbatim from interp/sink_tests.rs to interp/taint_tests.rs, v0.22's module path, so the M3323/M3329 rows and the am117 gate row name a test that exists; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

@@ -1,0 +1,121 @@
+# axon-loop
+
+**Status: partial (v0.22).** A file-backed closed-loop store plus the
+`axon-loop` binary (JSON in, JSON out).
+
+Callers:
+
+* `axon-fabric` is the only in-workspace library caller, and it only reads
+  authority epochs.
+* The binary is driven by MiCode over files and by this crate's tests.
+* The paired interop harness `scripts/loop_interop_gate.sh` was invoked by
+  nothing at `279da778`; since 54f41c3 `gate.sh --strict` runs it (CI does
+  not). It does not pin the MiCode revision it tests against (red-team D-04).
+
+No `axon` CLI verb reaches this crate.
+
+## What it is
+
+* `pointer` / `epoch`: a per-scope fenced active-policy pointer and its
+  authority epoch. The pointer moves only by compare-and-swap on
+  `(expected_policy_ref, expected_epoch)`, and each move is journalled before
+  it is published.
+* `plan`: the experiment register. A `closed-loop-pilot/1` plan is frozen by
+  its `cl22:` digest.
+* `candidates` / `tasks`: registered candidate lists and task manifests. Each
+  is named by its list digest and stored under
+  `<kind>/<tenant>/<family>/<hex>.json`. Keying the path by scope means the
+  same list registered for two scopes is two files, never an overwrite
+  (NS3, fixed in stage 2).
+* `evo`: one bounded shortlist candidate, with its hypothesis history.
+* `evl`: paired-trial evaluation of exact artifacts. Unknown is never a pass.
+* `admission`: applies the frozen plan rule and returns ACCEPT, REJECT or
+  INCONCLUSIVE. This is **CX-11 policy admission**.
+* `tel`: whole-task economics over `Usage`. Unknown stays unknown.
+  `tel::join` joins Fabric receipts to sidecar usages per attempt ref (the
+  receipt's `cl22:` digest): the identical receipt twice is collapsed, two
+  different receipts for one `(operation_id, attempt_id)` are refused.
+  `cohort_cost` / `compare_per_trial` divide by every ASSIGNED trial and
+  order only two fully known cohorts; an unknown cost is `unresolved`, never
+  a cheaper winner (G10-r22-cohort-denominator, `tests/tel_price.rs`).
+* `price`: the price schedule is pinned by its `cl22:` content Ref. A
+  request's `limits.price_schedule_ref` (an ACF `OpaqueRef`) must be exactly
+  that Ref string, and a usage must name it too; a mismatch is refused (G10).
+  **There is no execution price schedule (D10):** a schedule claiming
+  execution coverage is refused, and every attempt's execution cost is
+  `unknown` holding its reservation. So a joined whole-task total is never a
+  known number today, and G10-r22-full-task-cost is not met.
+* `intake`: joins a MiCode `axon.closed-loop.episode/1` sidecar to a stored
+  policy and its context receipt, and records the result in the ledger.
+* `ledger`: the store's hash-chained `ledger.jsonl` + `ledger.head` +
+  `ledger.anchor`.
+
+## What it does NOT do
+
+* **No authentication.** `trusted_admitters`, `trusted_observers` and the
+  verifier set are operator premises, read from the store's `config.json`.
+  An `issuer_ref` names a party and proves nothing.
+* **Policy admission is not effect admission.** An ACCEPT, or the active-policy
+  pointer it moves, is **never a grant** and confers no effect authority. That
+  is what `axon-os::gate::admit` decides (D-C6,
+  `governance/cortex-v015/DISCREPANCIES.md` D-018).
+* **The ledger is keyed only when the operator provides a key (D-015).**
+  With `AXON_ATTEST_KEY` set (hex, at least 16 bytes: the same key and rule
+  `axon-vm` attests under), each ledger entry and `ledger.head` carry an
+  HMAC made with `axon_attest::hmac_sha256`, the primitive `axon-audit`'s
+  keyed chain uses. Its shape is the same too: a per-entry MAC plus an
+  authenticated `(count, last)` tip. Under a key, these are refused with
+  exit 2:
+  * a well-chained forged append with a rewritten head (F1);
+  * a forged evaluation line (F2);
+  * a truncation with a rewritten head (R2).
+
+  A wrong key, a keyed store opened without its key, and an unkeyed store
+  opened with a key are also refused. A malformed key value is refused
+  outright rather than silently running unkeyed.
+
+  Still out of model:
+  * **No key (the default).** There is deliberately no ephemeral key, so
+    F1, F2 and R2 are undetectable, as before.
+  * **Anyone holding the key.**
+  * **Restoring a genuine older keyed state (R1).** This needs a monotonic
+    external witness and is **OPEN**.
+  * **Deleting the anchor as well (R3/NS6c).**
+* **Plan approval is not `axon-os` approval.** `operator_approved` is a
+  **self-asserted** bool the submitter sets, and `approval_ref` is only
+  checked for being non-null. It reuses none of `axon-os`'s approval
+  verification (D-016, E_hardening H03). This is still open and was
+  deliberately not redesigned in stage 2.
+* **No cost metering of its own.** It consumes `Usage` as reported.
+
+## Red-team round 4 defects
+
+From red-team round 4, run independently against `dead41b` (operator-side
+evidence, `.axon-v022/redteam/axon-loop-r4-independent.md`, **not in the
+repository**). Stage 2 lane 2A fixed all three, each with a regression test
+that fails when the fix is reverted:
+
+| id | fix |
+|---|---|
+| NS3a/b/c | `candidate-sets/` and `task-manifests/` are keyed by `(scope, list)`, so registering the same list for another scope can no longer overwrite the first scope's record. Re-putting the list repairs a store written in the old layout. |
+| NS4p / NS4w | `evl` refuses a trial whose preflight observer is a subject issuer (the request's `subject_issuers` plus every arm's proposer), even when the operator lists it in `trusted_observers`. This mirrors the verifier rule. |
+| NS4b | An explicit `"trusted_observers": []` is valid and round-trips, and an absent field reads the same way. EVL then gives 0 verified passes, and pause/rollback still work. |
+
+Still open from that round, each out of model: R1 (see the ledger bullet
+above), R3/NS6c (deleting the anchor too), and PF1 (the context's
+`created_ms` is caller-supplied and unsigned).
+
+Ownership conflict D-C1 is partly resolved (keyed ledger under `AXON_ATTEST_KEY`; R1 open) and D-C2 is open. See
+`governance/cortex-v015/IMPLEMENTATION_MAP.md` §4a.
+
+## Axon ↔ MiCode
+
+MiCode writes episode sidecars, context receipts and policy acks under
+`<repo>/.micode/axon/closed-loop/`, and `axon-loop intake episode` reads them.
+Neither workspace has a Cargo dependency on the other. The MiCode side of this
+exchange is on branch `v022/micode`, which is based on
+`checkpoint/v014-reconciled`. **It is not releasable** until MiCode `tui` is
+merged into it, because it lacks `tui` commit `ed082601` (credential-to-host
+isolation). This was operator decision D3, 2026-09-24. Interop results against
+that branch show the two sides agree on bytes. They do not make the MiCode
+side releasable.

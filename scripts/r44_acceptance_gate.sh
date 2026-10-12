@@ -12,7 +12,13 @@
 # Exit 0 = all pass. Exit 1 = at least one failure.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-AXON="${AXON:-$ROOT/target/debug/axon}"
+# The binary the caller names in AXON, or the one built here -- never one that
+# merely sits in target/ (C9 round 4; scripts/lib/axon_bin.sh).
+. "$ROOT/scripts/lib/axon_bin.sh"
+if [ -z "${AXON:-}" ]; then
+    (cd "$ROOT" && cargo build -q -p axon-core --bin axon) || { echo "r44_acceptance_gate: axon build failed" >&2; exit 1; }
+    AXON="$(cd "$ROOT" && built_bin axon)" || exit 2
+fi
 fails=0
 pass() { echo "  PASS: $1"; }
 fail() { echo "  FAIL: $1"; fails=$((fails+1)); }

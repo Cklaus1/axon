@@ -1,0 +1,31 @@
+// R51 S0b (§8 T9): a test left early by `?` FAILS (veto kept it `ok`), on
+// every engine (`scripts/vm_parity.sh`'s test leg); the `?` that passes
+// through keeps the test running to its end.
+fn parse(s: str) -> Result<i64, str> {
+    let n = parse_int(s)?
+    Ok(n + 1)
+}
+
+@[test]
+fn t_q() -> Result<i64, str> {
+    let n = parse_int("x")?
+    assert_eq(n, 99)
+    Ok(n)
+}
+
+@[test]
+fn t_q_callee() -> Result<i64, str> {
+    let i = 0
+    while i < 3 {
+        let n = parse("y")?
+        i = i + n
+    }
+    Ok(i)
+}
+
+@[test]
+fn t_q_through() -> Result<i64, str> {
+    let n = parse("41")?
+    assert_eq(n, 42)
+    Ok(n)
+}

@@ -29,7 +29,15 @@ FLOOR=28   # actual is 29/29; headroom for minor churn, catches mass regression
 command -v node >/dev/null 2>&1 || { echo "wasm_browser_examples_parity: no node — skipping"; exit 0; }
 HOSTJS="scripts/wasm_browser_host.js"
 [ -f "$HOSTJS" ] || { echo "wasm_browser_examples_parity: host harness missing — skipping"; exit 0; }
-need_axon wasm_browser_examples_parity
+if [ -n "${AXON:-}" ]; then
+  named_bin AXON wasm_browser_examples_parity
+else
+  echo "wasm_browser_examples_parity: building codegen axon binary…"
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "wasm_browser_examples_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
+  fi
+  use_built AXON axon
+fi
 # Distinguish an ABSENT target from a BROKEN build. The probe used to be
 # `if ! cargo build ... 2>/dev/null` reporting "unavailable - skipping", which
 # said the same thing for both and threw away the compiler error naming which.
@@ -54,9 +62,14 @@ fi
 PROBE="$(mktemp -d)/p.ax"; printf 'fn main() { println("ok") }\n' > "$PROBE"
 _probe_err="$("$AXON" target build "$PROBE" --target wasm32-unknown-unknown 2>&1)"
 if [ ! -f "${PROBE%.ax}.linked.wasm" ]; then
-  # E0907: this `axon` has no codegen backend (see axon_has_no_codegen).
+  # E0907: this `axon` has no codegen backend. An interp-only $AXON is a skip
+  # (require_codegen_axon says so and exits); E0907 from a binary that CAN build
+  # native code is a broken compiler, not an absent toolchain.
   if echo "$_probe_err" | grep -q E0907; then
-    axon_has_no_codegen wasm_browser_examples_parity
+    require_codegen_axon wasm_browser_examples_parity
+    echo "wasm_browser_examples_parity: FAIL — \$AXON ($AXON) builds native code yet answered E0907:"
+    printf '%s\n' "$_probe_err" | head -5 | sed 's/^/        /'
+    exit 1
   fi
   echo "wasm_browser_examples_parity: browser link unavailable — skipping"; exit 0
 fi

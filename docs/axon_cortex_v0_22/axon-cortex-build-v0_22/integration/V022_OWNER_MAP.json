@@ -1,0 +1,154 @@
+{
+  "schema": "axon.closed-loop-owner-map/1",
+  "version": "0.22",
+  "new_authority": false,
+  "current_micode_source_supplied": true,
+  "preserve_source_cx35": true,
+  "historical_maps_are_not_current_peer_readiness": true,
+  "owners": [
+    {
+      "concern": "authority",
+      "axon_owner": "CX-03/CX-13",
+      "micode_owner": "MiCode local PermissionGate/delegation",
+      "fabric_role": "ACF-01 admission",
+      "source_evidence": [
+        "A01",
+        "A02",
+        "M04",
+        "F01",
+        "F02"
+      ],
+      "tasks": [
+        "B258",
+        "B267"
+      ]
+    },
+    {
+      "concern": "bridge",
+      "axon_owner": "CX-16",
+      "micode_owner": "MX-12",
+      "fabric_role": "ACF sidecar references",
+      "source_evidence": [
+        "M02",
+        "P02",
+        "F06"
+      ],
+      "tasks": [
+        "B256",
+        "B257",
+        "B268",
+        "B269"
+      ]
+    },
+    {
+      "concern": "context",
+      "axon_owner": "CX-28",
+      "micode_owner": "ExecutionContextReceipt + WorktreeManager",
+      "fabric_role": "WorkspaceVersion projection",
+      "source_evidence": [
+        "M05",
+        "M06",
+        "M07",
+        "F04"
+      ],
+      "tasks": [
+        "B261",
+        "B266"
+      ]
+    },
+    {
+      "concern": "execution",
+      "axon_owner": "CX-03/CX-13",
+      "micode_owner": "trusted orchestration + registered effect dispatch",
+      "fabric_role": "M0-M2 native Linux profile",
+      "source_evidence": [
+        "A02",
+        "A05",
+        "F03",
+        "F05"
+      ],
+      "tasks": [
+        "B259",
+        "B260",
+        "B262",
+        "B263"
+      ]
+    },
+    {
+      "concern": "evaluation",
+      "axon_owner": "CX-01/CX-21",
+      "micode_owner": "MX-08 + independent verification owners",
+      "fabric_role": "CheckExecutor/observed receipt",
+      "source_evidence": [
+        "A04",
+        "M03",
+        "M08"
+      ],
+      "tasks": [
+        "B264",
+        "B276"
+      ]
+    },
+    {
+      "concern": "learning",
+      "axon_owner": "CX-29/CX-33/CX-10",
+      "micode_owner": "existing strategy/episode producers",
+      "fabric_role": "evidence not cognition",
+      "source_evidence": [
+        "M09",
+        "P01",
+        "F06"
+      ],
+      "tasks": [
+        "B273",
+        "B274",
+        "B281"
+      ]
+    },
+    {
+      "concern": "promotion",
+      "axon_owner": "CX-11/CX-32",
+      "micode_owner": "policy adoption + subsequent-task acknowledgement",
+      "fabric_role": "workspace CAS not policy admission",
+      "source_evidence": [
+        "F04",
+        "M02"
+      ],
+      "tasks": [
+        "B277",
+        "B278",
+        "B279"
+      ]
+    }
+  ],
+  "aliases": [
+    {
+      "alias": "EVO",
+      "owner": "CX-29"
+    },
+    {
+      "alias": "DEC",
+      "owner": "CX-05"
+    },
+    {
+      "alias": "EVL",
+      "owner": "CX-01"
+    },
+    {
+      "alias": "RTR",
+      "owner": "CX-06"
+    },
+    {
+      "alias": "CVM",
+      "owner": "CX-28"
+    },
+    {
+      "alias": "SPX",
+      "owner": "CX-26"
+    },
+    {
+      "alias": "TEL",
+      "owner": "CX-10"
+    }
+  ]
+}

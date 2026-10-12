@@ -1,0 +1,13 @@
+// B263 (a): trivial workload. Expected stdout is fixtures/hello.expected.
+fn fib(n: i64) -> i64 {
+    if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+}
+
+fn main() {
+    println("b263 hello from the linux microvm")
+    println("fib(20) = {to_str(fib(20))}")
+    match write_file("/work/out/artifact.txt", "b263-artifact fib20={to_str(fib(20))}\n") {
+        Ok(_) => println("artifact written")
+        Err(e) => println("artifact FAILED {e}")
+    }
+}

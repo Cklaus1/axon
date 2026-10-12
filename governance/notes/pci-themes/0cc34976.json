@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S3d",
+  "text": "INTERPRETER seal sinks inside evaluation, every check gated on seal.active or the sealed instantiation (T): globals read only through global_ref (seal_global; is_global for the in-place existence tests, eval.rs and vm/mod.rs), the name rule at the eval call site and the name-resolving builtins (seal_name_args via pin.rs Ctx::npure, t_check_names), fn_by_name/no_such_fn with the uniform sealed text (scheduler_spawn, kernel_goal_create, goal_run_constrained, ident_unbound, unknown call), seal_width/seal_width_unary/t_check_width in eval_binop and the unary arm, seal_refine at the param/return/let/record refinement sites, seal_type and cast_field in finish_record, the let-annotation cast with the t_pins TYP strip, seal_method/seal_dispatch in the tree MethodCall arm (impl_method_sealed), chan_created and chan_send_check/dict_edge_in on the chan builtin and send; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

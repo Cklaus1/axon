@@ -48,7 +48,16 @@ fn main() -> i64 {
 }
 AX
 
-need_codegen_axon goal_unknown_name_parity
+if [ -n "${AXON:-}" ]; then
+  named_bin AXON goal_unknown_name_parity
+else
+  echo "goal_unknown_name_parity: building codegen axon binary…"
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "goal_unknown_name_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
+  fi
+  use_built AXON axon
+fi
+require_codegen_axon goal_unknown_name_parity
 
 # Run the interpreter with the deterministic AI stub and a fixed seed.
 run_interp() {

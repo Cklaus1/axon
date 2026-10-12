@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S6.1",
+  "text": "INTERPRETER the seal flip: SEAL_RUNTIME_COMPLETE = true, so a sealed run builds (Interp::build_in through engine_for) on the tree engine with the S2-S5 runtime seal instead of being refused; AXON_ENGINE=vm or set_engine(Vm) on a sealed run stays refused (exit 2), and engine_for keeps its complete input, so setting the const back to false is the rollback. The rest of its crates/axon-core/src diff is TEST-ONLY or docs: the 285 R51 ignores removed (registry empty), the three refuse-all guard tests retired or turned into a positive sealed-harness test, the width row's pre-S6 branch dropped, the AXON_ENGINE env_registry row loses its incomplete-seal sentence, stale 'refused until S6' module docs. No unsealed behaviour change: engine_for's unsealed rows read neither changed input"
+}

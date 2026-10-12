@@ -51,7 +51,16 @@ NDKBIN="$(ndk_bin)" || skip "Android NDK not found (set ANDROID_NDK_HOME or ANDR
 ADB="${ADB:-adb}"
 command -v "$ADB" >/dev/null 2>&1 || ADB="${ANDROID_HOME:-}/platform-tools/adb"
 
-need_codegen_axon android_compute_parity
+if [ -n "${AXON:-}" ]; then
+  named_bin AXON android_compute_parity
+else
+  echo "android_compute_parity: building codegen axon binary…"
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "android_compute_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
+  fi
+  use_built AXON axon
+fi
+require_codegen_axon android_compute_parity
 
 # ── Device discovery ──────────────────────────────────────────────────────────
 EMU_OK=0

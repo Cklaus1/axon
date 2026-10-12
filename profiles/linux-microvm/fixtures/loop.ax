@@ -1,0 +1,11 @@
+// B263 (e)/(f): a guest that never finishes on its own. Only the host's
+// wall-clock kill (or an injected VMM crash) can end this run.
+fn main() {
+    println("looping")
+    let i = 0
+    while i >= 0 {
+        i = i + 1
+        if i > 1000000000 { i = 0 }
+    }
+    println("unreachable")
+}

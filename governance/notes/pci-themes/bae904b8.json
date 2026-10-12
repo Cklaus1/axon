@@ -1,0 +1,4 @@
+{
+  "theme": "keyed failure token (main.rs)",
+  "text": "the interpreter keys every FAILURE it decides, so a printed failure line is not a verdict: narrowing"
+}

@@ -388,14 +388,17 @@ pub(super) struct FnEntry<'p> {
     pub(super) experiment: Option<String>,
     /// Has a `@[goal(...)]` attribute (R5).
     pub(super) has_goal: bool,
-    /// The declared return type is a plain scalar (`i64`/`i32`/`f64`/`bool`),
-    /// so a soft result unwraps at the return boundary.
-    pub(super) ret_is_scalar: bool,
+    /// What the return boundary (`Interp::sum_return`) checks of a result
+    /// against the declared return type: one byte, read only for a result
+    /// that is a struct or a `Result`/`Option` constructor.
+    pub(super) ret: RetCheck,
     /// Named `main` (the binding-dump capture applies to it).
     pub(super) is_main: bool,
     /// No attribute-driven step around the body: not `@[agent]`, `@[ai]`
     /// metered, `@[corrigible]`, zoned, `@[goal]`, `@[verify]` or `main`
-    /// (`Interp::call_fn_in` takes its common path).
+    /// (`Interp::call_fn_in` takes its common path). Never in a sealed run:
+    /// every call there takes the general path, whose sealed instantiation
+    /// carries the frame's taint (R51 S2.3), so the common path has none.
     pub(super) plain: bool,
     /// Has a zone (`adaptive`/`experiment`) or `@[verify]` step after the
     /// body (`Interp::finish_call_cold`).
@@ -416,10 +419,25 @@ pub(super) struct FnEntry<'p> {
     pub(super) index: u32,
 }
 
+/// [`FnEntry::ret`]: the declared return type as the return boundary sees it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum RetCheck {
+    /// Nothing to check: any value returns as is.
+    Plain,
+    /// A plain scalar (`i64`/`i32`/`f64`/`bool`): a soft result
+    /// (`Uncertain<T>`/`Temporal<T>`) unwraps to its inner value.
+    Scalar,
+    /// A `Result`: an `Option` constructor is a runtime type confusion.
+    Result,
+    /// An `Option`: a `Result` constructor is a runtime type confusion.
+    Option,
+}
+
 impl<'p> FnEntry<'p> {
     /// `fns` is the interpreter's by-name fn map, which the `current_fn`
-    /// readers (`Interp::current_ai_budget` & co.) consult.
-    pub(super) fn new(def: &'p FnDef, fns: &HashMap<String, &FnDef>) -> Self {
+    /// readers (`Interp::current_ai_budget` & co.) consult; `sealed` is the
+    /// run's `seal.active` (no entry of a sealed run is [`FnEntry::plain`]).
+    pub(super) fn new(def: &'p FnDef, fns: &HashMap<String, &FnDef>, sealed: bool) -> Self {
         use crate::ast::AxonType;
         let has_attr = |name: &str| def.attrs.iter().any(|a| a.name == name);
         let mut entry = FnEntry {
@@ -429,10 +447,9 @@ impl<'p> FnEntry<'p> {
                 .params
                 .iter()
                 .map(|p| {
-                    let soft = matches!(
-                        &p.ty,
-                        AxonType::Generic { base, .. } if base == "Uncertain" || base == "Temporal"
-                    );
+                    // The bare name counts too, as at every cast (v0.22
+                    // `call_fn`'s `is_soft_decl`).
+                    let soft = super::conform::is_soft_decl(&p.ty);
                     (!soft, super::axon_type_to_width(&p.ty))
                 })
                 .collect(),
@@ -452,10 +469,18 @@ impl<'p> FnEntry<'p> {
                 .find(|a| a.name == "experiment")
                 .map(|a| a.args.first().cloned().unwrap_or_default()),
             has_goal: has_attr("goal"),
-            ret_is_scalar: matches!(
-                &def.return_type,
-                Some(AxonType::Named(n)) if matches!(n.as_str(), "i64" | "i32" | "f64" | "bool")
-            ),
+            ret: match &def.return_type {
+                Some(AxonType::Named(n))
+                    if matches!(n.as_str(), "i64" | "i32" | "f64" | "bool") =>
+                {
+                    RetCheck::Scalar
+                }
+                Some(AxonType::Result { .. }) => RetCheck::Result,
+                Some(AxonType::Option(_)) => RetCheck::Option,
+                Some(AxonType::Generic { base, .. }) if base == "Result" => RetCheck::Result,
+                Some(AxonType::Generic { base, .. }) if base == "Option" => RetCheck::Option,
+                _ => RetCheck::Plain,
+            },
             is_main: def.name == "main",
             has_epilogue: has_attr("adaptive") || has_attr("experiment") || def.verify.is_some(),
             plain: false,
@@ -464,14 +489,24 @@ impl<'p> FnEntry<'p> {
             hot: false,
             index: u32::MAX,
         };
-        entry.plain = !(entry.is_agent
-            || entry.ai_metered
-            || entry.corrigible
-            || entry.adaptive
-            || entry.has_goal
-            || entry.is_main
-            || entry.has_epilogue);
+        entry.plain = !entry.seal_general(sealed);
         entry
+    }
+
+    /// Whether every call of this entry takes `Interp::call_fn_in_general`
+    /// (not [`FnEntry::plain`]): in a sealed run every call does, so it goes
+    /// through `call_fn_sealed` (R51 §4 Fork 1, VmPin-4a); otherwise a fn
+    /// with an attribute-driven step around its body does. Named so the
+    /// refusal-coverage gate's `SEAL_FN` scans it (spec §8 T7).
+    fn seal_general(&self, sealed: bool) -> bool {
+        sealed
+            || self.is_agent
+            || self.ai_metered
+            || self.corrigible
+            || self.adaptive
+            || self.has_goal
+            || self.is_main
+            || self.has_epilogue
     }
 }
 
@@ -795,6 +830,12 @@ impl Resolution {
     pub(super) fn lambda(&self, e: &Expr) -> Option<&LambdaInfo> {
         self.tagged(e as *const Expr as usize, LAMBDA_TAG)
             .map(|i| &self.lambdas[i])
+    }
+
+    /// Every lambda code in the table (R51 T1b reads their compiled cells).
+    #[cfg(test)]
+    pub(super) fn lambda_codes(&self) -> impl Iterator<Item = &ClosureCode> {
+        self.lambdas.iter().map(|l| &*l.code)
     }
 
     /// The resolution of struct literal node `e`, if it is in the table.

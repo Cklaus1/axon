@@ -1,0 +1,18 @@
+// B263 (d): touch N MiB of memory, N read from /work/job/mb.txt.
+// Doubling a string forces every byte to be written, so the pages are
+// really backed (an untouched reservation would prove nothing).
+fn main() {
+    let mb = match read_file("/work/job/mb.txt") {
+        Ok(s) => match parse_int(str_trim(s)) {
+            Ok(n) => n
+            Err(_) => 1
+        }
+        Err(_) => 1
+    }
+    let s = "x"
+    let target = mb * 1024 * 1024
+    while len(s) < target {
+        s = s + s
+    }
+    println("MEM-TOUCHED {to_str(len(s) / 1048576)} MiB")
+}

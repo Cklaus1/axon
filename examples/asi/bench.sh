@@ -18,14 +18,21 @@ JSON_OUT=0
 [[ "${1:-}" == "--json" ]] && JSON_OUT=1
 
 axon_bin() {
-    if [[ -x "$REPO/target/release/axon" ]]; then
-        echo "$REPO/target/release/axon"
-    elif [[ -x "$REPO/target/debug/axon" ]]; then
-        echo "$REPO/target/debug/axon"
-    else
-        echo "ERROR: axon binary not found. Run cargo build -p axon-core first." >&2
-        exit 1
+    # The binary the caller names in AXON, or the interpreter built HERE from
+    # this tree -- never one that merely sits in target/ or on PATH (C9 round 4;
+    # scripts/lib/axon_bin.sh).
+    if [[ -n "${AXON:-}" ]]; then
+        [[ -x "$AXON" ]] || { echo "ERROR: AXON=$AXON is not executable" >&2; exit 1; }
+        echo "$AXON"
+        return
     fi
+    # shellcheck source=/dev/null
+    . "$REPO/scripts/lib/axon_bin.sh"
+    (cd "$REPO" && cargo build -q -p axon-core --no-default-features --bin axon >&2) || {
+        echo "ERROR: axon binary not found and could not be built: cargo build -p axon-core --no-default-features --bin axon" >&2
+        exit 1
+    }
+    (cd "$REPO" && built_bin axon)
 }
 
 # Snapshot: lines in provenance log before this run.

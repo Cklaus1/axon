@@ -1,0 +1,19 @@
+exit: Some(0)
+--- stdout ---
+Run Axon programs in Firecracker microVMs
+
+Usage: axon-vm <COMMAND>
+
+Commands:
+  run        Run an Axon program in a microVM
+  principal  Manage principals
+  chain      R34: incremental attestation — rolling hash chain over `axon-vm run` invocations
+  quorum     R33: cross-VM safety quorum — VoteRequest/Response + strict-majority check
+  attest     R26: Measure a kernel image and produce a software-TPM attestation report
+  help       Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help
+
+--- stderr ---
+

@@ -1,0 +1,27 @@
+// R51 S0b (§8 T9): `axon test` verdicts, the same on every engine
+// (`scripts/vm_parity.sh`'s test leg). A body that completes passes; so do
+// `exit(0)` from a callee and a test's own plain `return`.
+fn bail(n: i64) -> i64 {
+    if n > 0 { exit(0) }
+    n
+}
+
+@[test]
+fn t_done() {
+    let s = 0
+    let i = 0
+    while i < 4 {
+        s = s + bail(0) + i
+        i = i + 1
+    }
+    assert_eq(s, 6)
+}
+
+@[test]
+fn t_exit() { assert_eq(bail(1), 99) }
+
+@[test]
+fn t_return() {
+    if true { return }
+    assert_eq(1, 2)
+}

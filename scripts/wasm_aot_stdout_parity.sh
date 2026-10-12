@@ -33,8 +33,25 @@ for rt in wasmtime "$HOME/.wasmtime/bin/wasmtime"; do
 done
 [ -n "$WASMRT" ] || { echo "wasm_aot_stdout_parity: no wasm runtime — skipping"; exit 0; }
 
-need_codegen_axon wasm_aot_stdout_parity
-need_axon_run wasm_aot_stdout_parity
+if [ -n "${AXON:-}" ]; then
+  named_bin AXON wasm_aot_stdout_parity
+else
+  echo "wasm_aot_stdout_parity: building codegen axon binary…"
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "wasm_aot_stdout_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
+  fi
+  use_built AXON axon
+fi
+require_codegen_axon wasm_aot_stdout_parity
+if [ -n "${AXON_RUN:-}" ]; then
+  named_bin AXON_RUN wasm_aot_stdout_parity
+else
+  if ! cargo build -q -p axon-core --no-default-features --bin axon-run 2>/dev/null; then
+    echo "wasm_aot_stdout_parity: interp build unavailable — skipping"; exit 0
+  fi
+  use_built AXON_RUN axon-run
+fi
+INTERP="$AXON_RUN"
 # Distinguish an ABSENT target from a BROKEN build. The probe used to be
 # `if ! cargo build ... 2>/dev/null` reporting "unavailable - skipping", which
 # said the same thing for both and threw away the compiler error naming which.

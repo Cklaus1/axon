@@ -1,0 +1,112 @@
+{
+  "schema": "axon.closed-loop-legacy-obligations/1",
+  "version": "0.22",
+  "policy": "Revalidate these existing behaviors on the selected new use sites. This mapping does not reset existing evidence or require unrelated historical task closures.",
+  "rows": [
+    {
+      "task": "B258",
+      "gates": [
+        "G00-authority",
+        "G00-assurance-separation",
+        "G03-forgery"
+      ]
+    },
+    {
+      "task": "B260",
+      "gates": [
+        "G03-budget",
+        "G03-crash",
+        "G13-quota",
+        "G13-recovery"
+      ]
+    },
+    {
+      "task": "B261",
+      "gates": [
+        "G03-payload",
+        "G03-race"
+      ]
+    },
+    {
+      "task": "B263",
+      "gates": [
+        "G13-escape",
+        "G13-tier",
+        "G13-kill"
+      ]
+    },
+    {
+      "task": "B264",
+      "gates": [
+        "G03-done",
+        "G00-missing-gate"
+      ]
+    },
+    {
+      "task": "B267",
+      "gates": [
+        "G03-fallback-recheck",
+        "G16-authority",
+        "G28-auth-before-rank"
+      ]
+    },
+    {
+      "task": "B269",
+      "gates": [
+        "G16-schema",
+        "G16-lineage",
+        "G16-version",
+        "G16-replay"
+      ]
+    },
+    {
+      "task": "B272",
+      "gates": [
+        "G28-protected-pin",
+        "G28-fail-safe-rules"
+      ]
+    },
+    {
+      "task": "B274",
+      "gates": [
+        "G01-evidence",
+        "G01-fairness",
+        "G01-reset",
+        "G01-leakage",
+        "G01-feedback-budget",
+        "G10-grouped-role-isolation"
+      ]
+    },
+    {
+      "task": "B277",
+      "gates": [
+        "G11-independent",
+        "G11-noninferiority",
+        "G11-authority"
+      ]
+    },
+    {
+      "task": "B278",
+      "gates": [
+        "G11-release-binding",
+        "G00-mutation"
+      ]
+    },
+    {
+      "task": "B279",
+      "gates": [
+        "G11-rollback",
+        "G11-scope"
+      ]
+    },
+    {
+      "task": "B281",
+      "gates": [
+        "G10-lineage",
+        "G10-replay",
+        "G10-secrets",
+        "G10-behavior-policy"
+      ]
+    }
+  ]
+}

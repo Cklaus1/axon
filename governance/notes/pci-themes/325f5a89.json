@@ -1,0 +1,4 @@
+{
+  "theme": "merged from main (R51 S0)",
+  "text": "INTERPRETER: R50 S1: call_fn_in's common path (FnEntry::plain, no refinements) is guards, arity, bind, goal_met, body, result; attribute-driven steps ...: not PCI-reviewed; on this tree every sealed run is refused (R51 SEAL_RUNTIME_COMPLETE = false), so no sealed run executes it"
+}

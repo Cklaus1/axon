@@ -1,0 +1,14 @@
+// R51 S0b: loop control in a refinement predicate is contained at the
+// predicate's edge.
+fn solve(n: i64 where if n > 2 { break } else { true }) -> i64 {
+    n + 40
+}
+
+fn main() {
+    let i = 0
+    while i < 5 {
+        println(to_str(solve(i)))
+        i = i + 1
+    }
+    println("unreachable: the loop ended silently")
+}

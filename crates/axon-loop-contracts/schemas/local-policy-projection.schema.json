@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:axon:loop-contracts:policy-projection:1",
+  "title": "CRATE-LOCAL (no package schema): the closed three-key projection bind_acf consumes; structural only, not authenticated",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "sidecar_policy_ref": {"type": "string", "pattern": "^(cl22|acf1|sha256):[0-9a-f]{64}$"},
+    "acf_policy_digest": {"type": "string", "pattern": "^acf1:[0-9a-f]{64}$"},
+    "projection_ref": {"type": "string", "pattern": "^(cl22|acf1|sha256):[0-9a-f]{64}$"}
+  },
+  "required": ["sidecar_policy_ref", "acf_policy_digest", "projection_ref"]
+}

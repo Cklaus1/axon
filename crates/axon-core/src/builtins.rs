@@ -2555,6 +2555,15 @@ pub fn is_impure_builtin(name: &str) -> bool {
             | "http_get" | "http_post" | "http_sse" | "http_sse_post"
             // time / scheduling / randomness — non-deterministic
             | "now_ms" | "now_ns" | "sleep_ms" | "random_i64" | "random_f64"
+            // The Temporal constructors and validity check read the SAME process
+            // clock `now_ms` reads (and, under a virtual `AXON_CLOCK`, a read
+            // advances it): a clock reader is a Time effect whatever it is
+            // called (amendment 117, PSV-1 loop findings 0/1/11/13).
+            | "temporal_now" | "temporal_new" | "temporal_is_valid"
+            // `srand` WRITES the process-global RNG state every draw above
+            // reads, so a "pure" call steered later randomness (PCI
+            // candidate-2 review): it is a Random effect, not pure.
+            | "srand"
             // environment / process control
             | "env_var" | "exit"
             // durable store — reads, appends to and deletes a log file. Absent
@@ -2668,10 +2677,12 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
         "host_await" | "host_await_opt" | "host_await_val" | "host_await_val_opt" => &["IO"],
 
         // Time / scheduling.
-        "now_ms" | "now_ns" | "sleep_ms" => &["Time"],
+        "now_ms" | "now_ns" | "sleep_ms" | "temporal_now" | "temporal_new" | "temporal_is_valid" => {
+            &["Time"]
+        }
 
         // Randomness / nondeterminism.
-        "random_i64" | "random_f64" => &["Random"],
+        "random_i64" | "random_f64" | "srand" => &["Random"],
 
         // Phase 13: distribution sampling.
         "gaussian_sample" | "beta_sample" | "categorical_sample" => &["Random"],

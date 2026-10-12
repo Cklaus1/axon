@@ -12,3 +12,10 @@
 # read.
 crates/axon-core/tests/fixtures/sandbox_scope_copy.ax
 crates/axon-core/tests/fixtures/sandbox_scope_copy_read.ax
+
+# The vendored Cortex v0.22 package's inert neural-program FORMAT fixture. It is
+# a stored-only zip by design (the .np container format under test), pinned by
+# the package's own SHA256SUMS_v0_22.json and verified before any package code
+# runs by scripts/cortex_package_gate_v022.sh. Not build output: it is upstream
+# package content, byte-copied, and its digest is re-checked on every gate run.
+docs/axon_cortex_v0_22/axon-cortex-build-v0_22/fixtures/neural_programs/minimal.np

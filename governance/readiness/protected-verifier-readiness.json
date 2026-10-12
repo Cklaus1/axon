@@ -1,0 +1,72 @@
+{
+  "schema": "protected-verifier-readiness/1",
+  "status": "NOT_READY",
+  "derived_by": "scripts/protected_verifier_ready.py",
+  "components": {
+    "g01_authenticity": {
+      "status": "PASS",
+      "evidence": "governance/proofs/v022-g01/REGISTRATION.md",
+      "axon_revision": "9ae4c605db3a44ba650909df69896383accc1afb",
+      "micode_revision": "dd4ea0a97a31486678b6c9f715c94c8ea38500b2",
+      "pinned": {
+        "governance/specs/v022-G01-claim.md": "12ce46ecd701fd06f54f5190d2f1a6d9e7fa296e8d9abc086971967f1098aadf",
+        "governance/proofs/v022-g01/REGISTRATION.md": "9e9e49254a6b53cb76c4f532477607b1506096c97a607246d746b365dfc42b51"
+      }
+    },
+    "pci_isolation": {
+      "status": "PASS",
+      "evidence": "governance/proofs/v022-pci/CERTIFICATION.md",
+      "axon_revision": "31413ca7abb6ff730e1b63718d4304c7a8402675",
+      "micode_revision": "b72cf4c4380335e5f5590181012e707cea259fab",
+      "pinned": {
+        "governance/specs/v022-protected-check-isolation.md": "bd5c6d326d04d12a7b3ab82b838d3e7aaa3e1bf90a9575d06f7d70f6992067ca",
+        "governance/proofs/v022-pci/CERTIFICATION.md": "afb94d6a47d637adb4702e0df71dc14b6b1fcf3c14365c5b1c318fdae8d57b05"
+      }
+    },
+    "verification_binding": {
+      "status": "PASS",
+      "requires_gates": [
+        "G01-r22-nonvacuous-outcome",
+        "G01-r22-unknown-outcome",
+        "G32-r22-receipt-roles",
+        "G32-r22-artifact-recheck",
+        "G32-r22-evidence-laundering",
+        "G32-r22-sidecar-bindings",
+        "G11-r22-independent-admission",
+        "G11-r22-admission-disposition",
+        "G11-r22-rollback-revalidate",
+        "G33-r22-decision-rule-freeze"
+      ]
+    },
+    "protected_backend": {
+      "status": "NOT_RUN",
+      "decided_by": "operator-installed axon-fabric verify-readiness",
+      "missing": [
+        "earned only on the protected host: operator verifier is not installed on this host (no valid trust root + pinned verifier); expected on the development host \u2014 the protected legs are earned only on the operator-controlled protected host"
+      ]
+    },
+    "g01_on_protected_backend": {
+      "status": "NOT_RUN",
+      "decided_by": "operator-installed axon-fabric verify-readiness",
+      "missing": [
+        "earned only on the protected host: operator verifier is not installed on this host (no valid trust root + pinned verifier); expected on the development host \u2014 the protected legs are earned only on the operator-controlled protected host"
+      ]
+    },
+    "pci_on_protected_backend": {
+      "status": "NOT_RUN",
+      "decided_by": "operator-installed axon-fabric verify-readiness",
+      "missing": [
+        "earned only on the protected host: operator verifier is not installed on this host (no valid trust root + pinned verifier); expected on the development host \u2014 the protected legs are earned only on the operator-controlled protected host"
+      ]
+    },
+    "no_open_blocking_false_greens": {
+      "status": "PASS",
+      "evidence": "AXON-COMPLETENESS.json"
+    }
+  },
+  "missing": [
+    "protected_backend",
+    "g01_on_protected_backend",
+    "pci_on_protected_backend"
+  ]
+}

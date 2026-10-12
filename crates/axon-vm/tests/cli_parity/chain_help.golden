@@ -1,0 +1,24 @@
+exit: Some(0)
+--- stdout ---
+R34: incremental attestation — rolling hash chain over `axon-vm run` invocations.
+
+Extends the R31 `axtcb1-ext:` boot measurement into an append-only per-run chain (`governance/specs/R34-incremental-attestation.md`): each `chain stamp` call binds the program's SHA-256, a run-id, and a timestamp onto the previous chain tip.
+
+`chain verify` detects modification in place and INTERIOR deletion. It cannot detect a truncated tail on its own — every prefix of a valid chain is itself a valid chain — so pass `--expect-head` (and/or `--expect-count`) to pin the tip against what you last saw. `--genesis` pins the ROOT, which is the wrong end.
+
+Usage: axon-vm chain <COMMAND>
+
+Commands:
+  stamp          Extend the chain: hash the program, chain onto the current tip, append, and print the new `entry_hash`. Refuses (exit 15) if the existing chain at `--store` fails verification against the genesis before appending
+  verify         Verify the whole chain from genesis, recomputing every link
+  show           Show the current chain state (spec §5.2): vm_id, boot_root, entry count, and the current head (tip). Read-only; never writes
+  export         Export the full chain as a self-contained JSON file (spec §5.4, schema `axon-chain-export/1`) for an auditor — verifiable via `chain verify-export` with no live VM or `--store` file required
+  verify-export  Verify an exported chain JSON (auditor side — no live VM required)
+  help           Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+--- stderr ---
+

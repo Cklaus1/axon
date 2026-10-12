@@ -5,6 +5,9 @@
 //! Uses `CARGO_BIN_EXE_axon`: the `axon` cargo built for this test run, with
 //! whatever features the run was given. Harness scripts get it too ([`harness`]).
 
+mod common;
+mod script_spawn;
+use script_spawn::Bins;
 use std::process::Command;
 
 fn axon() -> Command {
@@ -30,18 +33,23 @@ fn fixture(rel: &str) -> String {
 /// `dict_parity` divergence), spurious BUILD-FAILs in `all_examples_parity`,
 /// parity failures that passed when rerun alone.
 ///
-/// Passing both binaries makes every script (via `scripts/lib/axon_bin.sh`)
-/// build nothing and run exactly these. `axon-run` is the interpreter under any
+/// Naming both binaries makes every script (via `scripts/lib/axon_bin.sh`'s
+/// `named_bin`) build nothing and run exactly these; `script_spawn::script`
+/// strips any ambient binary variable first, so the caller's environment never
+/// chooses what runs. `axon-run` is the interpreter under any
 /// feature set, so cargo's build of it under this run's features is the same
 /// runner a `--no-default-features` build gives. Under `--no-default-features`
 /// `axon` cannot codegen, and a harness that needs native code SKIPs (it says
 /// so; under `AXON_HARNESS_STRICT=1` that skip is fatal).
 fn harness(script: &str) -> Command {
-    let mut c = Command::new("bash");
-    c.arg(script)
-        .env("AXON", env!("CARGO_BIN_EXE_axon"))
-        .env("AXON_RUN", env!("CARGO_BIN_EXE_axon-run"));
-    c
+    script_spawn::script(
+        "bash",
+        script,
+        Bins::Named(&[
+            ("AXON", env!("CARGO_BIN_EXE_axon")),
+            ("AXON_RUN", env!("CARGO_BIN_EXE_axon-run")),
+        ]),
+    )
 }
 
 /// AUDIT O006: record that a harness-backed test SKIPPED rather than ran.
@@ -1699,6 +1707,72 @@ fn principal_handle_cannot_be_forged_by_arithmetic_p7_sec_03() {
             && out4.contains("rootleft=60"),
         "attenuation and carving must be unchanged: {out4:?}"
     );
+}
+
+/// R51 S3: the per-frame `Kernel` split routes every draw through the running
+/// frame's kernel. An unsealed run only ever reaches the operator kernel, whose
+/// stream is main's process-global xorshift64, so the sequences below are the
+/// ones the r51/int binary at 688a18d2 printed (measured on both engines): a
+/// seeded `srand`, `srand(0)`, an `AXON_SEED` run, and the stream CONTINUING
+/// across the `@[test]` fns of one `axon test` process (one `Interp` each;
+/// v0.22's per-`Interp` operator cell would restart it at every test).
+#[test]
+fn the_unsealed_rng_sequence_is_unchanged_by_the_kernel_split() {
+    let dir = std::env::temp_dir().join(format!("axon_r51_rng_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |name: &str, src: &str, cmd: &str, seed: Option<&str>, engine: &str| {
+        let f = dir.join(name);
+        std::fs::write(&f, src).unwrap();
+        let mut c = axon();
+        c.args([cmd, f.to_str().unwrap()])
+            .env_remove("AXON_SEED")
+            .env("AXON_ENGINE", engine);
+        if let Some(s) = seed {
+            c.env("AXON_SEED", s);
+        }
+        let out = c.output().unwrap();
+        assert_eq!(out.status.code(), Some(0), "{name} ({engine}): {out:?}");
+        String::from_utf8_lossy(&out.stdout).to_string()
+    };
+    let srand = "fn main() -> i64 {\n\
+        srand(7)\n\
+        let a = random_i64(0, 1000)\n\
+        let b = random_i64(0, 1000)\n\
+        let c = random_i64(0, 1000)\n\
+        let d = random_i64(0, 1000)\n\
+        let e = random_i64(0, 1000)\n\
+        let f = random_i64(0, 1000)\n\
+        println(\"{to_str(a)},{to_str(b)},{to_str(c)},{to_str(d)},{to_str(e)},{to_str(f)}\")\n\
+        println(\"{to_str(random_f64())}\")\n\
+        srand(0)\n\
+        println(\"{to_str(random_i64(-50, 50))}\")\n\
+        0\n}\n";
+    let seeded = "fn main() -> i64 {\n\
+        let a = random_i64(0, 1000000)\n\
+        let b = random_i64(0, 1000000)\n\
+        let c = random_i64(0, 1000000)\n\
+        println(\"{to_str(a)},{to_str(b)},{to_str(c)}\")\n\
+        0\n}\n";
+    let tests = "@[test]\nfn t1() {\n    println(\"t1 {to_str(random_i64(0, 1000000))}\")\n}\n\
+        @[test]\nfn t2() {\n    println(\"t2 {to_str(random_i64(0, 1000000))}\")\n}\n";
+    for engine in ["vm", "tree"] {
+        assert_eq!(
+            run("srand.ax", srand, "run", None, engine),
+            "327,652,743,107,850,125\n0.283988\n11\n",
+            "{engine}: srand(7) / srand(0)"
+        );
+        assert_eq!(
+            run("seeded.ax", seeded, "run", Some("11"), engine),
+            "967371,542990,483699\n",
+            "{engine}: AXON_SEED=11"
+        );
+        let so = run("tests.ax", tests, "test", Some("11"), engine);
+        assert!(
+            so.contains("t1 967371\nt2 542990\n"),
+            "{engine}: the stream continues across the tests' Interps: {so}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -3530,6 +3604,9 @@ fn sandbox_scope_binds_fs_prefixes_and_net_hosts_exit_8() {
         ("fs prefix", "sandbox_scope_fs.ax"),
         ("path traversal", "sandbox_scope_traversal.ax"),
         ("net host", "sandbox_scope_net.ax"),
+        // An EMPTY host list is deny-all, not "unscoped" (D-001; the vendored
+        // Cortex packages still say the opposite in four places).
+        ("empty net list", "sandbox_scope_net_empty.ax"),
         // file_copy: arg 1 is a WRITE. The runtime classified the whole call
         // as one kind and had no arm for file_copy at all, so both its read
         // and its write escaped a scoped sandbox.
@@ -3559,6 +3636,16 @@ fn sandbox_scope_binds_fs_prefixes_and_net_hosts_exit_8() {
             !msg.contains("ESCAPED"),
             "[{label}] the out-of-scope access must never happen: {msg}"
         );
+        // Exit 8 alone does not say WHICH check fired. For the empty list it was
+        // measured: with "" misread as unscoped, `http_get` went out (and failed
+        // offline), then the job's `println` tripped the Net-only ceiling —
+        // ALSO exit 8. So the reason is asserted: the HOST was refused.
+        if label == "empty net list" {
+            assert!(
+                msg.contains("not permitted to reach host `evil.example.com`"),
+                "[{label}] must be refused BY THE HOST SCOPE, not by some later check: {msg}"
+            );
+        }
     }
     // The in-scope write must still succeed — a scope that denies everything
     // would pass the assertions above while being useless.
@@ -4490,6 +4577,46 @@ fn moderate_recursion_works() {
         out.status.code(),
         Some(0),
         "5000-deep recursion should run (5000 % 100 = 0)"
+    );
+}
+
+#[test]
+fn recursion_nested_in_expressions_keeps_the_base_stack_headroom() {
+    // R51 S7-UnsealedParity-10: splitting the evaluator per run kind grew the
+    // unsealed tree engine's native frames (release `eval_arm::<false>` 1024 B,
+    // was `eval` 912 B), and a call level nested k parentheses deep below the
+    // default limit (down(5990)) went from running to a stack-overflow abort
+    // (exit 134) on 5864c423-era programs. The thread stack reserve is scaled
+    // to cover the growth. k sits under 5864c423's own reach in each profile
+    // (release 280, debug 20 complete at 5990 levels there) and above the
+    // pre-fix reach (release 250, debug 18). Touches ~1.6 GB of stack.
+    let k = if cfg!(debug_assertions) { 20 } else { 270 };
+    let f = std::env::temp_dir().join(format!("axon_nestrec_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        format!(
+            "fn down(n: i64) -> i64 {{\n    if n == 0 {{ 0 }} else {{ {}down(n - 1){} + 1 }}\n}}\n\
+             fn main() {{ println(to_str(down(5990))) }}\n",
+            "(".repeat(k),
+            " + 0)".repeat(k)
+        ),
+    )
+    .unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_ENGINE", "tree")
+        .env_remove("AXON_MAX_DEPTH")
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout).trim()
+        ),
+        (Some(0), "5990"),
+        "a 5990-deep recursion nested {k} expressions deep must run, not abort: {}",
+        String::from_utf8_lossy(&out.stderr)
     );
 }
 
@@ -13830,7 +13957,7 @@ fn dict_from_pairs_holds_non_int_values_in_the_interpreter() {
             let ok = dict_len(df) == 2 && dict_len(ds) == 2 && f > 2.4 && str_eq(s, \"x\")\n  \
             if ok { 1 } else { 0 }\n\
         }\n";
-    let f = std::env::temp_dir().join(format!("axon_dfp_{}.ax", std::process::id()));
+    let f = std::env::temp_dir().join(format!("axon_dfp_nonint_{}.ax", std::process::id()));
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
@@ -23059,14 +23186,16 @@ fn r42_smoke_scenario_runs_end_to_end() {
         .spawn()
         .expect("spawn axon");
 
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // A hang bound, not a speed bound: 30 s was exceeded by an honest run on
+    // a loaded host.
+    let deadline = Instant::now() + Duration::from_secs(300);
     let status = loop {
         match child.try_wait().expect("try_wait") {
             Some(s) => break s,
             None => {
                 if Instant::now() > deadline {
                     let _ = child.kill();
-                    panic!("r42_smoke.ax did not finish within 30s — a hang is a failure");
+                    panic!("r42_smoke.ax did not finish within 300s — a hang is a failure");
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
@@ -28671,48 +28800,6 @@ fn fmt_names_the_float_literals_it_renormalises() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Write `bytes` to `dst` as an executable WITHOUT this process ever holding a
-/// write descriptor on `dst` (AX-51).
-///
-/// The test harness runs tests on many threads of ONE process. Writing an
-/// executable here (`fs::copy`, `fs::write`, `File::options().write(true)`)
-/// opens it for writing, and any sibling test that spawns a child at that
-/// moment forks a copy of the descriptor table, write descriptor included.
-/// `O_CLOEXEC` only drops it at that child's `exec`, so for that window the
-/// file has a writer and exec'ing it fails with ETXTBSY ("Text file busy") —
-/// measured in `a_different_compiler_with_the_same_path_size_and_mtime_misses_
-/// the_build_cache` under the full suite. Closing our descriptor first does not
-/// help, and neither does writing a temp file and renaming it: the forked child
-/// holds the same open file description of the same inode.
-///
-/// So the write happens in a CHILD process: `cat` opens `dst`, writes, exits,
-/// and nothing else ever has its descriptor. This process only holds a pipe.
-fn write_executable(dst: &std::path::Path, bytes: &[u8]) {
-    use std::io::Write;
-    use std::os::unix::fs::PermissionsExt;
-    let mut child = Command::new("sh")
-        .args(["-c", "exec cat > \"$0\""])
-        .arg(dst)
-        .stdin(std::process::Stdio::piped())
-        .spawn()
-        .expect("spawn cat to write the executable");
-    child.stdin.take().unwrap().write_all(bytes).unwrap();
-    assert!(child.wait().unwrap().success(), "writing {}", dst.display());
-    // chmod by path: no descriptor at all.
-    std::fs::set_permissions(dst, std::fs::Permissions::from_mode(0o755)).unwrap();
-}
-
-/// `cp src dst` for an executable, by the same rule as [`write_executable`]:
-/// the only process that ever opens `dst` for writing is `cp` itself.
-fn copy_executable(src: &std::path::Path, dst: &std::path::Path) {
-    let st = Command::new("cp")
-        .arg(src)
-        .arg(dst)
-        .status()
-        .expect("spawn cp");
-    assert!(st.success(), "cp {} {}", src.display(), dst.display());
-}
-
 /// The build cache ignored imported modules, so editing one served a stale
 /// binary.
 ///
@@ -28759,7 +28846,10 @@ fn editing_an_imported_module_invalidates_the_build_cache() {
     // compiler can change underneath it. Copying the binary once gives this
     // test a compiler identity nothing else can touch.
     let pinned = dir.join("axon-pinned");
-    copy_executable(std::path::Path::new(env!("CARGO_BIN_EXE_axon")), &pinned);
+    // Copied by a separate process: an in-process copy holds a write fd a
+    // sibling test thread's fork can inherit, and the exec below then fails
+    // with ETXTBSY ("Text file busy").
+    common::copy_executable(env!("CARGO_BIN_EXE_axon"), &pinned, 0o755);
 
     // A private cache dir, so this test neither reads nor pollutes the user's.
     let build = |tag: &str| -> Option<String> {
@@ -28863,7 +28953,7 @@ fn a_different_compiler_with_the_same_path_size_and_mtime_misses_the_build_cache
     let app = dir.join("app.ax");
     std::fs::write(&app, "fn main() { println(\"hi\") }\n").unwrap();
     let compiler = dir.join("axon");
-    copy_executable(std::path::Path::new(env!("CARGO_BIN_EXE_axon")), &compiler);
+    common::copy_executable(env!("CARGO_BIN_EXE_axon"), &compiler, 0o755);
 
     let entries = || {
         std::fs::read_dir(&cache)
@@ -28876,10 +28966,26 @@ fn a_different_compiler_with_the_same_path_size_and_mtime_misses_the_build_cache
     };
     let build = |tag: &str| -> Option<()> {
         let bin = dir.join(format!("{tag}.bin"));
-        let o = Command::new(&compiler)
-            .args(["build", app.to_str().unwrap(), "-o", bin.to_str().unwrap()])
-            .args(["--cache-dir", cache.to_str().unwrap()])
-            .output()
+        // `compiler` was just written (by a child `cp`, `common::copy_executable`);
+        // a write fd to a freshly written executable can still be open in some
+        // process when the first exec runs, which the kernel answers ETXTBSY (seen
+        // once in three loaded full runs, never alone). It is the kernel's
+        // transient answer, not the property under test: retry it.
+        let o = (0..50)
+            .find_map(|_| {
+                match Command::new(&compiler)
+                    .args(["build", app.to_str().unwrap(), "-o", bin.to_str().unwrap()])
+                    .args(["--cache-dir", cache.to_str().unwrap()])
+                    .output()
+                {
+                    Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        None
+                    }
+                    other => Some(other),
+                }
+            })
+            .expect("the copied compiler stayed busy for 5 s")
             .unwrap();
         let log = format!(
             "{}{}",
@@ -28921,7 +29027,8 @@ fn a_different_compiler_with_the_same_path_size_and_mtime_misses_the_build_cache
         .rposition(|w| w == needle)
         .expect("the compiler executable records its rustc version in `.comment`");
     bytes[at] = b'R';
-    write_executable(&compiler, &bytes);
+    // `cp` onto the existing file rewrites it in place: same path, same inode.
+    common::write_executable(&compiler, &bytes, 0o755);
     // Restoring the mtime needs no write access: futimens on a read-only
     // descriptor works for the owner, and a read descriptor is no writer.
     std::fs::File::open(&compiler)
@@ -29091,9 +29198,10 @@ fn recording_cargo(dir: &std::path::Path) -> (std::path::PathBuf, std::path::Pat
     std::fs::create_dir_all(&bin).unwrap();
     let marker = dir.join("cargo-ran");
     let cargo = bin.join("cargo");
-    write_executable(
+    common::write_executable(
         &cargo,
-        format!("#!/bin/sh\necho \"$@\" >> '{}'\nexit 1\n", marker.display()).as_bytes(),
+        format!("#!/bin/sh\necho \"$@\" >> '{}'\nexit 1\n", marker.display()),
+        0o755,
     );
     (bin, marker)
 }
@@ -29204,7 +29312,7 @@ fn an_installed_compiler_links_the_runtime_installed_beside_it_without_cargo() {
     std::fs::create_dir_all(&runtime_dir).unwrap();
     let installed_exe = prefix.join("bin/axon");
     if std::fs::hard_link(workspace_exe, &installed_exe).is_err() {
-        copy_executable(workspace_exe, &installed_exe);
+        common::copy_executable(workspace_exe, &installed_exe, 0o755);
     }
     std::fs::copy(&built, runtime_dir.join("libaxon_rt.a")).unwrap();
 
@@ -31897,6 +32005,30 @@ fn uncertain_dyn_and_deterministic_agree_in_both_engines() {
     let _ = std::fs::remove_file(&out_bin);
     assert_eq!(ngot, got, "native must agree with the interpreter");
 }
+
+#[test]
+fn a_bare_uncertain_parameter_keeps_its_wrapper_in_both_engines() {
+    // A parameter declared with the BARE name `Uncertain` is a soft
+    // declaration, as at every cast (`conform::is_soft_decl`): the argument
+    // keeps its wrapper. Main's call path only recognised `Uncertain<T>`, so
+    // `self.value` in `impl Judge for Uncertain` read the unwrapped i64 and
+    // panicked "field access on non-struct (i64)" on both engines (R51 T3: the
+    // gap v0.22's `a_declared_soft_type_casts_its_wrapper_and_its_inner_value`
+    // exposed). A non-soft parameter still receives the inner value (`inner`).
+    let src = "trait Judge {\n    fn ok(self) -> bool\n}\n\
+               impl Judge for Uncertain {\n    fn ok(self: Uncertain) -> bool { self.value == 9 }\n}\n\
+               fn conf(u: Uncertain) -> f64 { u.confidence }\n\
+               fn inner(n: i64) -> i64 { n + 1 }\n\
+               fn main() -> i64 {\n    \
+               let u = uncertain_dyn_i64(9, 0.5)\n    \
+               println(to_str(u.ok()))\n    \
+               println(to_str_f64(conf(u)))\n    \
+               println(to_str(inner(u)))\n    \
+               0\n}\n";
+    let (code, stdout, stderr) = vm_same_both_engines("bare_uncertain_param", src);
+    assert_eq!(code, Some(0), "stderr: {stderr}");
+    assert_eq!(stdout, "true\n0.5\n10\n", "stderr: {stderr}");
+}
 #[test]
 fn json_path_i64_names_which_of_three_failures_occurred() {
     // `json_path_i64` collapsed THREE different failures into one message:
@@ -33209,6 +33341,255 @@ fn a_wasm_link_failure_reports_the_linkers_own_error() {
         "the linker's OWN error was not surfaced — the caller's stock ABI \
          sentence is not evidence about this failure. stderr:\n{err}"
     );
+}
+
+#[test]
+fn uncertain_arithmetic_keeps_the_least_trusted_source_tag() {
+    // D-014, second half (found by the v0.20 adversarial review, reproduced):
+    // every binop result was built with `make_uncertain` → tag 0, in BOTH
+    // engines, so `u + 0` turned a model's answer into a "user-constructed"
+    // value — raw tag 1, after `+ 0` tag 0 — and a program trusting only
+    // `source_tag == 0` accepted it. A derived value now carries the LEAST
+    // trusted operand's tag: AI (1) > runtime (2) > user (0). Plain literals
+    // count as user. The user×user row is the control: a fix that stamped 1
+    // everywhere would break it.
+    let src = "fn main() -> i64 {\n  \
+               match ai_extract_uncertain_i64(\"n? 3\") {\n    \
+                 Ok(u) => {\n      \
+                   println(to_str((u + 0).source_tag))\n      \
+                   println(to_str((1 + u).source_tag))\n      \
+                   println(to_str((u * uncertain_new(2, 0.99)).source_tag))\n      \
+                   println(to_str((uncertain_dyn_i64(2, 0.5) - u).source_tag))\n    }\n    \
+                 Err(e) => println(e)\n  }\n  \
+               println(to_str((uncertain_dyn_i64(2, 0.5) * 3).source_tag))\n  \
+               println(to_str((uncertain_dyn_i64(2, 0.5) + uncertain_new(1, 0.9)).source_tag))\n  \
+               println(to_str((uncertain_new(1, 0.5) + uncertain_new(2, 0.9)).source_tag))\n  \
+               println(to_str((uncertain_new(1, 0.5) + 4).source_tag))\n  0\n}\n";
+    let f = tmp_ax("uncertain_binop_tag", src);
+    let run = axon()
+        .arg("run")
+        .arg(&f)
+        .env("AXON_AI_MOCK", "1")
+        .env_remove("AXON_AI_REPLAY")
+        .output()
+        .expect("spawn");
+    let got: Vec<String> = String::from_utf8_lossy(&run.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect();
+    assert_eq!(
+        got,
+        ["1", "1", "1", "1", "2", "2", "0", "0"],
+        "derived Uncertain must keep the least-trusted operand's source_tag. stderr: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+
+    // Native must agree: codegen's `emit_binop_uncertain` stored a constant 0.
+    // The native mock is `AXON_AI_MOCK` in the produced binary (axon-ai returns
+    // {1|1.0, 0.9} and codegen stamps 1), so the same env drives both engines.
+    let out_bin = std::env::temp_dir().join(format!("axon_ubtag_{}", std::process::id()));
+    let _ = std::fs::remove_file(&out_bin);
+    let build = axon()
+        .arg("build")
+        .arg(&f)
+        .arg("-o")
+        .arg(&out_bin)
+        .arg("--no-cache")
+        .output()
+        .expect("spawn build");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let _ = std::fs::remove_file(&f);
+    if msg.contains("requires building axon with the `codegen` feature") {
+        return;
+    }
+    assert_eq!(build.status.code(), Some(0), "must build: {msg}");
+    let nat = std::process::Command::new(&out_bin)
+        .env("AXON_AI_MOCK", "1")
+        .env_remove("AXON_AI_REPLAY")
+        .output()
+        .expect("run native");
+    let _ = std::fs::remove_file(&out_bin);
+    let ngot: Vec<String> = String::from_utf8_lossy(&nat.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect();
+    assert_eq!(
+        ngot, got,
+        "native must agree with the interpreter on derived provenance"
+    );
+}
+
+#[test]
+fn ai_extract_uncertain_is_stamped_ai_sourced_on_mock_and_replay_paths() {
+    // Found reconciling the Cortex v0.20 package (UPGRADE_V0_20.md D-014):
+    // CX-05 requires a value's ORIGIN to travel with it, and `source_tag` is
+    // Axon's field for exactly that (0 user-constructed, 1 AI, 2 runtime).
+    // Codegen stamps 1 for `ai_extract_uncertain_*` (codegen/builtins.rs, the
+    // `source_tag=1` store). The interpreter built every one of these through
+    // `make_uncertain`, which stamps 0 — so under `axon run` a MODEL-produced
+    // value read as user-constructed, and a program gating on
+    // `u.source_tag == 0` ("trust only what the user typed") accepted it.
+    // The comment on SRC_TAG_AI said the interp AI path was E0910-refused
+    // natively; it is not — the fixture builds natively.
+    //
+    // Each interp path built the value separately. Mock and replay-hit are
+    // driven here and are mutation-pinned. The LIVE path needs a key and the
+    // network, so it is NOT driven: reverting only its constructor survives this
+    // test (measured by the v0.20 adversarial review). It uses the same
+    // `make_uncertain_ai` call, which is the whole of the protection.
+    let src = "fn main() -> i64 {\n  \
+               match ai_extract_uncertain_i64(\"how many? 3\") {\n    \
+                 Ok(u) => println(to_str(u.source_tag))\n    \
+                 Err(e) => println(e)\n  }\n  \
+               match ai_extract_uncertain_f64(\"how warm? 2.5\") {\n    \
+                 Ok(u) => println(to_str(u.source_tag))\n    \
+                 Err(e) => println(e)\n  }\n  \
+               println(to_str(uncertain_new(1, 0.5).source_tag))\n  0\n}\n";
+    let f = tmp_ax("ai_extract_src_tag", src);
+
+    // Mock path. `uncertain_new` is the control: a fix that stamped 1
+    // everywhere would break it.
+    let run = axon()
+        .arg("run")
+        .arg(&f)
+        .env("AXON_AI_MOCK", "1")
+        .env_remove("AXON_AI_REPLAY")
+        .output()
+        .expect("spawn");
+    let got: Vec<String> = String::from_utf8_lossy(&run.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect();
+    assert_eq!(
+        got,
+        ["1", "1", "0"],
+        "mock path: AI-sourced values must carry source_tag 1"
+    );
+
+    // Replay-hit path: a pre-recorded cache, no mock, no key. The cache key is
+    // sha256(model \0 prompt) with the BUILTIN NAME as the model.
+    let cache = std::env::temp_dir().join(format!("axon_srctag_replay_{}", std::process::id()));
+    let key = |model: &str, prompt: &str| {
+        use sha2::{Digest, Sha256};
+        let d = Sha256::digest(format!("{model}\u{0}{prompt}").as_bytes());
+        d.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    };
+    let _ = std::fs::remove_file(&cache);
+    let rows = [
+        (key("ai_extract_uncertain_i64", "how many? 3"), "3|0.8"),
+        (key("ai_extract_uncertain_f64", "how warm? 2.5"), "2.5|0.7"),
+    ];
+    // Line format written by `ai_replay_store`: `<key> <tokens> <hex(response)>`.
+    let body: String = rows
+        .iter()
+        .map(|(k, r)| {
+            let hex: String = r.bytes().map(|b| format!("{b:02x}")).collect();
+            format!("{k} 0 {hex}\n")
+        })
+        .collect();
+    std::fs::write(&cache, body).unwrap();
+    let run = axon()
+        .arg("run")
+        .arg(&f)
+        .env_remove("AXON_AI_MOCK")
+        .env("AXON_AI_REPLAY", &cache)
+        .output()
+        .expect("spawn");
+    let got: Vec<String> = String::from_utf8_lossy(&run.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect();
+    let _ = std::fs::remove_file(&cache);
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(
+        got,
+        ["1", "1", "0"],
+        "replay path: a recorded AI answer is still AI-sourced. stderr: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+}
+
+/// C9 round 4c, PSV-1 (amendment 72), defence in depth for B2: a method call
+/// on `()` (a call of a fn with no declared return type) needs an impl for
+/// `()`; it is refused at check time, not dispatched at runtime on whatever
+/// the body ended on. Control: with `impl … for ()` it checks and runs.
+#[test]
+fn a_method_call_on_unit_without_an_impl_is_e0403() {
+    let run = |src: &str, verb: &str| {
+        let f = std::env::temp_dir().join(format!(
+            "axon_unitcall_{}_{}.ax",
+            std::process::id(),
+            src.len()
+        ));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args([verb, f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (
+            out.status.code(),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
+    };
+    let judge = "trait Judge {\n  fn ok(self) -> bool\n}\nimpl Judge for i64 {\n  fn ok(self: i64) -> bool { self == 9 }\n}\n";
+    let bad = format!(
+        "{judge}fn solve(n: i64) {{\n  println(to_str(n))\n}}\nfn main() {{\n  assert(solve(3).ok())\n}}\n"
+    );
+    let (code, msg) = run(&bad, "check");
+    assert!(
+        code == Some(2) && msg.contains("E0403") && msg.contains("on type `()`"),
+        "ATTACK: a method call on a unit fn's result passed the checker: {code:?} {msg}"
+    );
+    let good = format!(
+        "{judge}impl Judge for () {{\n  fn ok(self: ()) -> bool {{ true }}\n}}\nfn note(n: i64) {{\n  println(to_str(n))\n}}\nfn main() {{\n  assert(note(3).ok())\n}}\n"
+    );
+    let (code, msg) = run(&good, "run");
+    assert_eq!(code, Some(0), "control: an impl for () is called: {msg}");
+}
+
+/// C9 round 4c, PSV-1 (amendment 72), the MINOR: an impl for `f32`, `isize`
+/// or `usize` never runs (a method call dispatches on the value's runtime
+/// representation, `f64`/`i64`), so it is refused (E0505). Control: the same
+/// impl for `f64`/`i64` checks.
+#[test]
+fn an_impl_for_a_type_the_runtime_represents_as_another_is_e0505() {
+    for (alias, rep) in [("f32", "f64"), ("isize", "i64"), ("usize", "i64")] {
+        let src = |t: &str| {
+            format!("trait Judge {{\n  fn ok(self) -> bool\n}}\nimpl Judge for {t} {{\n  fn ok(self: {t}) -> bool {{ true }}\n}}\nfn main() {{\n}}\n")
+        };
+        for (t, refused) in [(alias, true), (rep, false)] {
+            let f = std::env::temp_dir().join(format!("axon_e0505_{}_{t}.ax", std::process::id()));
+            std::fs::write(&f, src(t)).unwrap();
+            let out = axon()
+                .args(["check", f.to_str().unwrap()])
+                .output()
+                .unwrap();
+            let _ = std::fs::remove_file(&f);
+            let msg = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            if refused {
+                assert!(
+                    out.status.code() == Some(2) && msg.contains("E0505"),
+                    "ATTACK: a dead impl for `{t}` passed the checker: {msg}"
+                );
+            } else {
+                assert_eq!(
+                    out.status.code(),
+                    Some(0),
+                    "control: an impl for `{t}` checks: {msg}"
+                );
+            }
+        }
+    }
 }
 
 /// Build `src` natively and run it; `None` when this axon has no codegen.
@@ -38539,4 +38920,313 @@ fn vm_purefn_mutual_and_multi_param() {
     let mut sorted = built.clone();
     sorted.sort();
     assert_eq!(sorted, ["fib", "is_even", "is_odd", "k"], "{built:?}");
+}
+
+// ── R51 S0b: veto's non-seal interpreter fixes, on both engines (§8 T9) ─────
+
+/// The S0b parity programs, `tests/fixtures/r51_s0b/<name>.ax` (also in the
+/// `vm_parity.sh` corpus).
+macro_rules! s0b_src {
+    ($name:literal) => {
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/r51_s0b/",
+            $name,
+            ".ax"
+        ))
+    };
+}
+
+/// R51 §3 row 5 (veto 4e7851bc, bcf9c0a7, 2175cc1b): a callee's `break`/
+/// `continue` never ends or skips the caller's loop; the call is an error at
+/// the frame edge it reaches. One program per edge: a named fn through
+/// `CallFastLocalInt` (`stop(i + 1)`) and an inline-argument `CallFast`
+/// (`skip(i)`), a closure, a refinement predicate, and an effect-handler arm
+/// whose `with` sits inside the loop (§3 handler-arm row, veto 2175cc1b; its
+/// text does not say "outside a loop", S7-UnsealedParity-1). Identical on the
+/// tree, the eager VM and the default VM (`vm_same_both_engines`).
+#[test]
+fn r51_s0b_loop_control_never_leaves_its_frame_on_either_engine() {
+    let cases: [(&str, &str, &str, &str); 5] = [
+        (
+            "s0b_fast_local_int",
+            s0b_src!("escape_fast_local_int"),
+            "1\n2\n3\n",
+            "outside a loop in `stop`",
+        ),
+        (
+            "s0b_fast_inline",
+            s0b_src!("escape_fast_inline"),
+            "0\n10\n20\n",
+            "outside a loop in `skip`",
+        ),
+        (
+            "s0b_closure",
+            s0b_src!("escape_closure"),
+            "0\n1\n",
+            "outside a loop in a closure",
+        ),
+        (
+            "s0b_predicate",
+            s0b_src!("escape_predicate"),
+            "40\n41\n42\n",
+            "outside a loop in a predicate",
+        ),
+        (
+            "s0b_handler_arm",
+            s0b_src!("escape_handler_arm"),
+            "",
+            "`break`/`continue` cannot leave an effect-handler arm (a loop around the `with` is \
+             not the arm's loop)",
+        ),
+    ];
+    for (tag, src, stdout_want, msg) in cases {
+        let (code, stdout, stderr) = vm_same_both_engines(tag, src);
+        assert_eq!(
+            (code, stdout.as_str()),
+            (Some(101), stdout_want),
+            "[{tag}] {stderr}"
+        );
+        assert!(stderr.contains(msg), "[{tag}] {stderr}");
+    }
+}
+
+/// R51 §3 row 6 (veto 91c2f676): a fn declared `-> Result` never returns a
+/// `None` across its boundary (an untyped `dict_get` makes one type-check).
+/// The caller reaches `solve` through the VM's fast call from its second
+/// iteration on; the refusal is the tree's on every engine.
+#[test]
+fn r51_s0b_a_confused_result_is_refused_at_the_return_on_either_engine() {
+    let (code, stdout, stderr) = vm_same_both_engines("s0b_sum", s0b_src!("sum_confusion"));
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(101), "1\n3\n5\n"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("`solve` is declared to return Result but produced None"),
+        "{stderr}"
+    );
+}
+
+/// R51 §3 row 6 at the VM's leaf call: `pass`'s body is one `Load` of its
+/// parameter, so the eager VM's compiled `drive` reaches it through
+/// `leaf_call`, whose return check runs out of line
+/// (`leaf_return_checked`). The confused `None` declines to the full path,
+/// which refuses it as the tree does.
+#[test]
+fn r51_s0b_a_confused_result_is_refused_at_a_leaf_return_on_either_engine() {
+    let (code, stdout, stderr) =
+        vm_same_both_engines("s0b_leaf_sum", s0b_src!("leaf_sum_confusion"));
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(101), "0\n2\n4\n"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("`pass` is declared to return Result but produced None"),
+        "{stderr}"
+    );
+}
+
+/// R51 §3 row 7 (veto ea9ba38d, 6de01247): `ai_extract_uncertain_*` results
+/// are AI-sourced, and a derived `Uncertain` keeps the least-trusted
+/// operand's `source_tag`, on the tree and on both VM entry modes, a
+/// `CallFastLocalInt` call (`tag_of(u + 0)` in a loop) included.
+#[test]
+fn r51_s0b_uncertain_provenance_is_the_same_on_either_engine() {
+    let f = tmp_ax("s0b_uncertain_tag", s0b_src!("uncertain_source_tag"));
+    for engine in ["tree", "vm", "vm-default"] {
+        let mut c = axon();
+        c.arg("run").arg(&f);
+        vm_engine_env(&mut c, engine);
+        let out = c
+            .env("AXON_AI_MOCK", "1")
+            .env_remove("AXON_AI_REPLAY")
+            .env_remove("AXON_VM_TRACE")
+            .output()
+            .expect("spawn axon run");
+        assert_eq!(
+            (
+                out.status.code(),
+                String::from_utf8_lossy(&out.stdout).into_owned()
+            ),
+            (Some(0), "1\n1\n1\n1\n1\n1\n1\n1\n2\n2\n0\n0\n".to_string()),
+            "[{engine}] {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let _ = std::fs::remove_file(&f);
+}
+
+/// R51 §3 rows 5-6 under `axon test` (veto 89256bd3, 91c2f676, 4e7851bc): a
+/// test passes only if its body completed. An `Err` return or a `?` exit
+/// FAILS (R51 §3; veto kept them `ok`); `exit(0)` and a test's own plain
+/// `return` stay `ok`; a callee's `break` / `continue` fails the test it
+/// unwound (through a fast call in the test's own loop, and through a
+/// closure). The same verdicts on every engine.
+#[test]
+fn r51_s0b_a_test_passes_only_if_its_body_completed_on_either_engine() {
+    let src = "fn bail(n: i64) -> i64 {\n    if n > 0 { exit(0) }\n    n\n}\n\
+               fn stop(n: i64) -> i64 {\n    if n > 2 { break }\n    n\n}\n\
+               @[test]\nfn t_done() { assert_eq(bail(0), 0) }\n\
+               @[test]\nfn t_err() -> Result<i64, str> { Err(\"no\") }\n\
+               @[test]\nfn t_q() -> Result<i64, str> {\n    let n = parse_int(\"x\")?\n    assert_eq(n, 99)\n    Ok(n)\n}\n\
+               @[test]\nfn t_exit() { assert_eq(bail(1), 99) }\n\
+               @[test]\nfn t_return() {\n    if true { return }\n    assert_eq(1, 2)\n}\n\
+               @[test]\nfn t_loop() {\n    let i = 0\n    while i < 5 {\n        assert_eq(stop(i + 1), i + 1)\n        i = i + 1\n    }\n}\n\
+               @[test]\nfn t_closure() {\n    let g = |n: i64| { if n > 1 { continue }  n }\n    for i in 0..4 {\n        assert_eq(g(i), i)\n    }\n}\n";
+    let f = tmp_ax("s0b_axon_test", src);
+    let want = [
+        ("t_done", "ok"),
+        ("t_err", "failed"),
+        ("t_q", "failed"),
+        ("t_exit", "ok"),
+        ("t_return", "ok"),
+        ("t_loop", "failed"),
+        ("t_closure", "failed"),
+    ];
+    let mut seen: Option<Vec<serde_json::Value>> = None;
+    for engine in ["tree", "vm", "vm-default"] {
+        let mut c = axon();
+        c.args(["test", "--json", "--jobs", "1"]).arg(&f);
+        vm_engine_env(&mut c, engine);
+        let out = c
+            .env_remove("AXON_VM_TRACE")
+            .output()
+            .expect("spawn axon test");
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        assert_eq!(out.status.code(), Some(3), "[{engine}] {stdout}");
+        let lines: Vec<serde_json::Value> = want
+            .iter()
+            .map(|(name, status)| {
+                let l = stdout
+                    .lines()
+                    .find(|l| l.contains(&format!("\"name\":\"{name}\"")))
+                    .unwrap_or_else(|| panic!("[{engine}] no line for {name}:\n{stdout}"));
+                assert!(
+                    l.contains(&format!("\"status\":\"{status}\"")),
+                    "[{engine}] {name}: {l}"
+                );
+                // Durations differ run to run; the rest of the line must not.
+                let mut v: serde_json::Value = serde_json::from_str(l).expect("a JSON line");
+                v.as_object_mut().unwrap().remove("duration_ms");
+                v
+            })
+            .collect();
+        match &seen {
+            None => seen = Some(lines),
+            Some(prev) => assert_eq!(prev, &lines, "[{engine}] vs tree"),
+        }
+    }
+    let _ = std::fs::remove_file(&f);
+}
+
+// ── R51 T1c: the sealed-engine pin at the CLI (spec §4 Fork 1, §6) ──────────
+
+/// R51 T1c: a suite in `suite/` judging a candidate in `cand/`, in a scratch
+/// directory unique to this process and `tag`.
+fn r51_seal_fixture(tag: &str) -> std::path::PathBuf {
+    let d = std::env::temp_dir().join(format!("axon_r51_t1c_{tag}_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(d.join("cand")).unwrap();
+    std::fs::create_dir_all(d.join("suite")).unwrap();
+    std::fs::write(
+        d.join("cand/f.ax"),
+        "pub fn double(x: i64) -> i64 {\n    let s = 0\n    let i = 0\n    while i < 2 {\n        s = s + x\n        i = i + 1\n    }\n    s\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        d.join("suite/accept.ax"),
+        "mod f\nuse f.{double}\n\n@[test]\nfn t_ok() { assert_eq(double(21), 42) }\n",
+    )
+    .unwrap();
+    d
+}
+
+/// `axon test --json` on the fixture in the production sealed child's shape
+/// (`env -i`: the environment cleared, then only PATH and the module path),
+/// with `AXON_VM_TRACE=1 AXON_VM_EAGER=1` so any compiled body would print a
+/// `vm:` line, and `AXON_ENGINE` set to `engine` when given.
+fn r51_seal_test(
+    d: &std::path::Path,
+    seal: bool,
+    engine: Option<&str>,
+) -> (Option<i32>, String, String) {
+    let mut c = axon();
+    c.current_dir(d.join("suite"))
+        .arg("test")
+        .arg(d.join("suite/accept.ax"))
+        .arg("--json")
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env(
+            "AXON_PATH",
+            format!("{}:{}", d.join("suite").display(), d.join("cand").display()),
+        )
+        .env("AXON_PATH_EXCLUSIVE", "1")
+        .env("AXON_VM_TRACE", "1")
+        .env("AXON_VM_EAGER", "1");
+    if seal {
+        c.arg("--seal").arg(d.join("cand"));
+    }
+    if let Some(e) = engine {
+        c.env("AXON_ENGINE", e);
+    }
+    let out = c.output().expect("spawn axon test");
+    (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// R51 T1c: `axon test --seal` never runs sealed code on the VM. With
+/// `AXON_ENGINE` unset (`env -i`, the production shape) or `tree` a sealed
+/// run passes on the tree; `vm` and an invalid value are refused (S0 to S5,
+/// with the runtime seal incomplete, every one of them was refused). A
+/// refusal is exit 2, its message on stderr
+/// and no summary line on stdout. No sealed run prints a `vm:` trace line.
+/// Control: the same suite unsealed, on the default VM, passes and does
+/// print them, so their absence is not vacuous.
+#[test]
+fn r51_t1c_a_sealed_axon_test_never_runs_on_the_vm() {
+    use axon_core::interp::SEALED_RUN_VM_REFUSED;
+    let d = r51_seal_fixture("pin");
+    let (code, so, se) = r51_seal_test(&d, false, None);
+    assert_eq!(code, Some(0), "control: {so}{se}");
+    assert!(so.contains("\"type\":\"summary\""), "control: {so}");
+    assert!(se.lines().any(|l| l.starts_with("vm: ")), "control: {se}");
+
+    let invalid = "AXON_ENGINE must be \"vm\" or \"tree\" (got \"garbage\")";
+    for engine in [None, Some("tree"), Some("vm"), Some("garbage")] {
+        let (code, so, se) = r51_seal_test(&d, true, engine);
+        let at = format!("AXON_ENGINE={engine:?}");
+        assert!(
+            !se.lines().any(|l| l.starts_with("vm: ")),
+            "{at}: a sealed run compiled: {se}"
+        );
+        let refusal = match engine {
+            None | Some("tree") => None,
+            Some("vm") => Some(SEALED_RUN_VM_REFUSED),
+            Some(_) => Some(invalid),
+        };
+        match refusal {
+            Some(msg) => {
+                let not_refused =
+                    format!("ATTACK: {at}: a sealed run was not refused before any result line");
+                assert_eq!(code, Some(2), "{not_refused}: {so}{se}");
+                assert_eq!(se, format!("error: {msg}\n"), "{not_refused}");
+                assert!(
+                    !so.contains("summary") && !so.contains("t_ok"),
+                    "{at}: stdout: {so}"
+                );
+            }
+            None => {
+                assert_eq!(code, Some(0), "{at}: {so}{se}");
+                assert!(so.contains("\"type\":\"summary\""), "{at}: {so}");
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&d);
 }

@@ -32,7 +32,15 @@ for rt in wasmtime "$HOME/.wasmtime/bin/wasmtime"; do
 done
 [ -n "$WASMRT" ] || { echo "wasm_browser_parity: no wasm runtime — skipping"; exit 0; }
 
-need_axon wasm_browser_parity
+if [ -n "${AXON:-}" ]; then
+  named_bin AXON wasm_browser_parity
+else
+  echo "wasm_browser_parity: building codegen axon binary…"
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "wasm_browser_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
+  fi
+  use_built AXON axon
+fi
 # The browser (unknown-unknown) axon-rt must be built for the wasi-free link.
 # Distinguish an ABSENT target from a BROKEN build. The probe used to be
 # `if ! cargo build ... 2>/dev/null` reporting "unavailable - skipping", which
@@ -58,13 +66,16 @@ fi
 # Probe: can this binary link an unknown-unknown module at all?
 PROBE="$(mktemp -d)/p.ax"; printf 'fn main() -> i64 { 7 }\n' > "$PROBE"
 # Report WHY the link failed instead of calling every cause "unavailable".
-# E0907 means this `axon` has no codegen backend: a skip when the caller chose
-# an interp-only binary, a FAIL when it is the codegen build made above and a
-# concurrent build replaced it. Neither is an absent toolchain.
+# E0907 means this `axon` has no codegen backend: a skip when $AXON is an
+# interp-only build (require_codegen_axon), a FAIL when it can build native code
+# and still answers E0907. Neither is an absent toolchain.
 _probe_err="$("$AXON" target build "$PROBE" --target wasm32-unknown-unknown 2>&1)"
 if [ ! -f "${PROBE%.ax}.linked.wasm" ]; then
   if echo "$_probe_err" | grep -q E0907; then
-    axon_has_no_codegen wasm_browser_parity
+    require_codegen_axon wasm_browser_parity
+    echo "wasm_browser_parity: FAIL — \$AXON ($AXON) builds native code yet answered E0907:"
+    printf '%s\n' "$_probe_err" | head -5 | sed 's/^/        /'
+    exit 1
   fi
   echo "wasm_browser_parity: unknown-unknown link unavailable — skipping"; exit 0
 fi

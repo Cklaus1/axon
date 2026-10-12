@@ -12,6 +12,22 @@
 | D-006 | approval row: required work already landed | package update proposed | — |
 | D-007 | four governance registries already exist | consolidation proposed | — |
 | **D-008** | cancellation killed only the direct child | **FIXED** — `process_group` + `killpg`; differential-verified | `fix/kill-the-process-group` |
+| D-014 | v0.22 added three crates; "No new crates" and the crate table said otherwise | recorded (docs corrected on `v022/stage1-c`) | `v022/stage1-c` |
+| D-015 | D-C1: `axon-loop` keeps a second, unkeyed ledger beside `axon-audit`'s keyed chain | **partly resolved** (keyed under `AXON_ATTEST_KEY`: F1/F2/R2 detected); R1 + no-key default **open** | `v022/stage2-2a` |
+| D-016 | D-C2: Fabric admits under a hard-coded grant; cortex hard-codes principal + zero policy digest | **fixed for the Fabric** (Stage 2 lane 2B); `axon-loop` plan approval still open | `crates/axon-fabric/tests/grant_authority.rs` |
+| D-017 | D-C3 / D-C5: duplicate `acf1:` canonicaliser; second reservation algebra | **fixed** (Stage 2 lane 2B) | `crates/axon-cortex/tests/fabric_acf1.rs`, `crates/axon-fabric/tests/journal.rs` |
+| D-018 | D-C6: "admission" names two different things; an ACCEPT is never a grant | invariant recorded; **open** until a test pins it | — |
+| **D-019** | `axon-vm` library entry bypassed `cmd_run`'s pre-launch gates | **FIXED** — `axon_vm::admit` holds the four gates; `LaunchSpec` requires an `AdmittedLaunch` only `admit()` can build (compile_fail doctest); quorum/chain remain CLI-only (`80a46767`); ACF-G22 cleanup (`aafd3f8f`) | `crates/axon-vm/src/admit.rs`, `tests/launch_cleanup.rs` |
+| D-020 | `linux-microvm-protected` is enclosure-only; eligibility ignores BLOCKED | **part fixed** — `HardwareIsolated` no longer accepts an unqualified VM (S3-7, `0f21a9fd`, mutation-checked); qualification now requires issuer-signed, unblocked-or-waived, fresh, clean evidence (S3-1, `5fbf44d3`); the in-guest policy channel (S3-5), the x3 waiver (D7) and signed re-qualification (S3-6) still open — Stage 3 | `crates/axon-os/tests/hardware_isolation.rs` |
+| D-021 | v0.22 package `EXISTING_AXON_MAP.md` repeats two stale claims | package update proposed | — |
+| **D-022** | interp stamped AI-sourced `Uncertain` as user-constructed, at the constructor and through arithmetic (both engines) | **FIXED** — ported; mutation-verified | ported from `D-014@upgrade/cortex-v0_20` |
+| **D-023** | reflex reply parse was last-wins; an id-less request was served as id 0 | **FIXED** — ported; mutation-verified | ported from `D-015@upgrade/cortex-v0_20` |
+| D-024 | CX-35 claimed by the repo (axon-reflex) and reserved by the package; CX-37 overlaps it | open — owner decision | ported from `D-016@upgrade/cortex-v0_20` |
+| D-025 | model self-reported confidence gates `@[verify]` / `deploy --gate verify` | open — owner decision | ported from `D-017@upgrade/cortex-v0_20` |
+| D-026 | typed approval/record structs silently drop unknown fields | open — fold into R24's `axon-approval/2` | ported from `D-018@upgrade/cortex-v0_20` |
+| D-027 | `axon trace --replay` re-runs LIVE AI calls under a "replaying" banner | open | ported from `D-019@upgrade/cortex-v0_20` |
+| D-028 | estimated token usage is indistinguishable from reported | open | ported from `D-020@upgrade/cortex-v0_20` |
+| D-029 | package fixture bundle carries the G10 price-schedule mismatch B270 now refuses | package — file upstream | `crates/axon-loop/tests/tel_price.rs` |
 
 None of the four fixes is on `main` yet: a `gate.sh --strict` run is in flight
 and several parity harnesses rebuild, so integrating mid-run would invalidate
@@ -577,3 +593,406 @@ engines — neither engine performs an effect the interpreter would forbid — a
 it does not make the CAPABILITY equivalent. A natively built binary still
 cannot enforce an effect ceiling, record a journal, or replay an AI call. Every
 matrix row says `explicitly-refused`, not `enforced`, for exactly that reason.
+
+---
+
+# v0.22 candidate records (D-014 … D-021)
+
+Filed 2026-09-24 against `v022/integration@279da778` on branch
+`v022/stage1-c` (Stage 1, "candidate honesty"). Every live-code citation is
+`git show 279da778:<path>`. Supporting analysis lives in the operator's
+untracked `.axon-v022/` directory — `analysis/D_architecture.json`,
+`analysis/E_hardening.json`, `analysis/F_guest_vm.json`,
+`redteam/axon-loop-r4-independent.md`, `evidence/b263/*.json`,
+`integration/gate_279da77.log`. **Those files are NOT in the repository**;
+they are cited as operator-side evidence and a reader without that directory
+cannot re-check them from this tree. Evidence class for each record: verified
+by reading the named source at `279da778` unless stated otherwise. Stage 1
+fixes none of the code defects below; it records them so the candidate cannot
+read greener than it is.
+
+## D-014 — "No new crates" and the crate table are false on the v0.22 line
+
+**Document passages.** `governance/cortex-v015/IMPLEMENTATION_MAP.md` §4:
+*"No new crates. Every gap below has an existing owner."* `ARCHITECTURE.md` §4
+listed no `axon-loop-contracts` / `axon-loop` / `axon-fabric`, and said of
+`axon-cortex`: *"no CLI verb calls it yet, so nothing here is on a user's
+path"*.
+
+**Live implementation.** Workspace `Cargo.toml` at `279da778` has three more
+members: `crates/axon-loop-contracts`, `crates/axon-loop`,
+`crates/axon-fabric`. The `axon-cortex` sentence was already false on `main`:
+the crate's own `cortex` binary (`src/bin/cortex.rs`, commit `d50d6af`, an
+ancestor of `main`) is its production caller; what remains true is that no
+`axon` CLI verb calls it. The candidate also records the crates in neither
+`AXON-COMPLETENESS.json` nor `governance/release-verification.json`, so
+`gate.sh` fails at "a completeness claim is not backed by evidence" (3 UNBACKED
+crates, `integration/gate_279da77.log`) — those two files are owned by another
+Stage-1 lane and are not changed here.
+
+**Resolution.** Docs corrected on this branch: `ARCHITECTURE.md` §4 rows +
+"Cortex family on the v0.22 candidate line"; `IMPLEMENTATION_MAP.md` carries a
+dated SUPERSEDED note and §4a. The crates are defensible (CX-11, CX-29/CX-33
+and ACF-01 had no code owner on `main`); the duplications they introduce are
+D-015 … D-018.
+
+**Owner.** Repository owner. **State.** Recorded.
+
+## D-015 — D-C1: a second, unkeyed hash-chained ledger
+
+**Document passage.** `IMPLEMENTATION_MAP.md` §4: *"Lineage chain (CX-10) →
+`axon-audit`'s `Ledger` — prev-hash chain, keyed tip, truncation detection, all
+built and tested"*, and *not* a new chain.
+
+**Live implementation.** `crates/axon-loop/src/ledger.rs:1-45` is a new
+`cl22:`-chained `ledger.jsonl` + `ledger.head` whose doc states the chain is
+*"UNKEYED sha256 in the same directory as the data"* and lists as OUT OF MODEL
+a consistent truncate-and-rewrite-head (R2), whole-store rollback (R1) and a
+well-chained forged append (F1/F2). `crates/axon-audit/src/lib.rs:237`
+`open_keyed` (HMAC) and `compute_tip` already close F1/F2/R2 for a holder of the
+key. Every "trusted" set in `axon-loop` is an operator premise from
+`config.json`, and the ledger stamps no writer identity from trusted runtime
+context — weaker than the repository's own `axon-ledger` rule (claim is not
+authority; `authenticated_admins`).
+
+**Why it matters.** `axon-loop`'s ledger is described as the store's ONE source
+of authority. An authority ledger whose forgery resistance is declared out of
+model, next to one that has it, is a regression of an invariant the repository
+already paid for.
+
+**Proposed resolution.** Keep the typed event log, anchor its head on
+`axon-audit`'s keyed primitives (or witness each entry's ref in an
+`axon-audit` keyed chain). **Stage 2.**
+
+**Resolution (Stage 2, lane 2A): partly resolved.** The typed event log is
+kept, and it is now keyed with `axon-audit`'s mechanism. The key comes from
+the operator key `axon-vm` already uses, `AXON_ATTEST_KEY` (hex, at least 16
+bytes). A malformed value is refused rather than dropping to unkeyed. The
+MACs reuse `axon-audit`'s own primitive and shape:
+
+* Each entry carries `mac = HMAC(k, digest(entry without mac))`. This is
+  `axon-audit`'s keyed `entry_hash`.
+* `ledger.head` carries `mac = HMAC(k, seq ‖ entry_ref)`. This is
+  `compute_tip`.
+
+The MACs use `axon_attest::hmac_sha256`, and `k` is domain-separated from the
+operator key. The key decides how the store is verified, never the files: a
+keyed opener refuses an unauthenticated line or head, and an unkeyed opener
+refuses a keyed ledger.
+
+**Measured.** This used `tests/keyed_ledger.rs` plus the independent rt4i
+harness, regenerated keyed. Under a key:
+
+| attack | result |
+|---|---|
+| F1 (forged well-chained append + recomputed head + projection) | exit 2 |
+| F1 with the head left alone | exit 2. Without the per-entry MAC it would have been rolled forward as a crash tail |
+| F2 (forged evaluation line + head, then the real admit) | admit exit 2 |
+| R2 (truncate + rewrite head) | exit 2 |
+
+Unkeyed controls of the same attacks still succeed. Two mutations were run:
+
+* Removing the head-MAC check fails the R2 test.
+* Removing the entry-MAC check fails the F1 roll-forward test.
+
+**Still open:**
+
+* **No key.** This is the default. There is deliberately no ephemeral key,
+  because a per-process key cannot verify what the previous process wrote.
+  F1, F2 and R2 stay undetectable.
+* **A key holder.** Anyone holding the key can mint any ledger.
+* **R1.** Restoring a genuine older keyed state needs a monotonic external
+  witness. Witnessing each head in an `axon-audit` `Ledger` was considered and
+  not done: that `Ledger` takes no inter-process lock, so concurrent
+  `axon-loop` processes would corrupt the witness chain. The OPEN state is
+  pinned by `r1_restoring_a_genuine_older_keyed_state_is_still_out_of_model`.
+* **R3/NS6c and PF1.** Unchanged.
+* **Writer identity.** No writer identity is stamped from trusted runtime
+  context (the `axon-ledger` `authenticated_admins` rule). This part is
+  **open**.
+
+**Related, same lane (not D-015).** red-team r4 NS3a/b/c is fixed.
+Candidate lists and task manifests are now stored under
+`<kind>/<tenant>/<family>/<hex>.json`, so registering the same list for a
+second scope cannot overwrite the first scope's record. A re-put repairs a
+store that the old flat layout bricked. NS4p/NS4w are fixed: EVL never accepts a subject issuer as the preflight
+observer of its own trials. NS4b is fixed: an explicit empty
+`trusted_observers` is valid, round-trips, and fails closed.
+
+## D-016 — D-C2: a fourth authority vocabulary; admission under a grant that is not enforced
+
+**Document passage.** `IMPLEMENTATION_MAP.md` §5 risk 2: *"A fourth authority
+vocabulary. Three exist … build on `axon_os::grant::Grant`."* ACF-01 (v0.22
+package) forbids a second identity/approval system.
+
+**Live implementation.**
+* `crates/axon-loop-contracts/src/compute.rs:96-97` — `principal_ref` /
+  `grant_ref` are `OpaqueRef` strings; `crates/axon-fabric/src/submit.rs` uses
+  them only to format `authority_ref`.
+* `crates/axon-fabric/src/submit.rs` `supervisor_admits` / `AdmissionProbe`
+  (≈ lines 315-398) — admission is `axon_os::supervise_requiring` over a runtime
+  that declares an EMPTY effect row and runs nothing, under
+  `Profile::Restricted.default_grant(..)` with `require_approval: false`,
+  whatever the request says. The check actually executed later is bounded only
+  by an OPTIONAL `effect_ceiling` (`SubmitConfig.effect_ceiling: Option<String>`
+  → `AXON_ALLOWED_EFFECTS`); `None` means no ceiling. The grant admitted is not
+  the grant enforced.
+* `crates/axon-cortex/src/bin/cortex.rs:187-189` — under `--fabric-journal`,
+  `principal_ref: "cortex:repair"` and `policy_digest: acf1:000…0` are
+  hard-coded.
+* `crates/axon-loop/src/plan.rs:52,77,166` — plan approval is a self-asserted
+  `operator_approved: bool` plus a non-null `approval_ref`; it does not reuse
+  `axon-os` approval verification.
+
+**Proposed resolution.** Resolve `grant_ref` to an `axon_os::grant::Grant` and
+pass THAT to `supervise_requiring`; enforce the same grant at dispatch; make the
+policy digest a required operator input or refuse.
+
+**Resolution (Stage 2, lane 2B).** `crates/axon-fabric/src/grants.rs`: an
+operator `axon-fabric-grant-registry/1` file maps `grant_ref` → a grant file
+pinned by sha256 and bound to one `principal_ref`; the file is parsed by
+`axon_os::parse_manifest` (no second grant parser). Unknown ref / unbound
+principal / edited file → `SubmitError::Unauthorized` (exit 7) before the
+journal is opened. `supervise_requiring` now runs under THAT grant with its
+`require_approval` policy (token = the grant file's `.approval` sibling,
+verified by axon-os) over a probe declaring the program's scanned effect row;
+`limits.max_cost_micro` must fit `grant.budget.cost_micro`. The executed check's
+`AXON_ALLOWED_EFFECTS` is derived from the admitted grant (`--effect-ceiling`
+removed); path-scoped and reproducible grants are `unsupported` (no backend can
+enforce them), and the Linux profile is eligible only for a grant withholding
+nothing (in-guest enforcement is Stage 3, B263 x1 — not claimed). The all-zero
+`policy_digest` is refused by the Fabric and by `FabricSubmitExecutor::new`;
+`cortex --fabric-journal` requires `--fabric-principal`, `--fabric-grant-ref`,
+`--fabric-grant-registry`, `--fabric-policy-digest` (exit 2 if absent).
+Tests: `tests/grant_authority.rs` (7) and
+`cortex_via_fabric.rs::cortex_fabric_mode_refuses_to_start_without_explicit_authority`,
+each refusal asserting no spawn, no launch record and (pre-journal refusals)
+no journal file. Mutation-checked: ceiling constant, hard-coded admitted grant,
+`require_approval` forced false, placeholder check, principal binding, digest
+check, empty scanned row, cortex hard-coded principal/digest — each fails a
+test. **Still OPEN:** the principal is bound, not authenticated;
+`axon-loop/src/plan.rs` self-asserted approval (lane 2A's crate).
+
+## D-017 — D-C3 / D-C5: duplicated canonicaliser; second budget algebra
+
+**D-C3.** Two `acf1:` implementations either side of the cortex → fabric process
+seam: `crates/axon-fabric/src/submit.rs:176-189` (`executable_digest`, `workspace_digest`, built on `axon_loop_contracts::canonical_bytes`) and
+`crates/axon-cortex/src/runner.rs:2326-2345` (`fabric_executable_digest`,
+`fabric_workspace_digest`: `serde_json::to_string` relying on sorted-map order,
+correct only for the ASCII values the Runner produces; equality asserted in
+tests, not by construction). The seam itself is accepted (a Cargo edge would
+be a cycle); the duplicate is not.
+
+**D-C5.** `crates/axon-fabric/src/journal.rs:796` `reserve` implements its own
+per-scope committed ≤ ceiling arithmetic beside
+`crates/axon-os/src/ledger.rs:36,72` `ResourceLedger::carve` (checked,
+never-decreasing, still without a production caller). The journal adds
+durability, `OutcomeUnknown` and liability that `ResourceLedger` lacks, so the
+fix is to use `carve` for the arithmetic, not to delete the journal.
+
+**Resolution.** One canonicaliser; ceiling arithmetic via `carve`.
+
+**D-C3 resolved (Stage 2, lane 2B).** The single implementation is
+`axon_cortex::runner::acf1_canonical_bytes` (flat string objects; keys sorted
+explicitly so serde_json `preserve_order` cannot move a digest; `cl22`
+escaping). It lives in `axon-cortex` because that is the lowest crate both
+sides link — `axon-cortex` gains no dependency. `axon_fabric::submit::
+{executable_digest, workspace_digest}` delegate to it. Tests:
+`axon-cortex/tests/fabric_acf1.rs` pins the bytes and digests to Python
+`json.dumps(sort_keys=True, separators=(',',':'), ensure_ascii=False)` output
+for an adversarial path (quote, backslash, C0, DEL, non-ASCII);
+`axon-fabric/tests/submit.rs::one_acf1_canonicaliser_serves_both_sides_of_the_seam`
+checks equality with the `cl22` form and that the Fabric has no canonicaliser
+of its own. Mutation-checked: re-introducing the Fabric's own implementation,
+dropping the sort, and escaping DEL each fail a test. Measured honestly: the
+pre-fix serde_json-based cortex implementation was byte-correct for these
+inputs; the defect was the duplication and its reliance on the map type's
+order, not a wrong digest today.
+
+**D-C5 resolved (Stage 2, lane 2B).** `journal.rs` `Rec::Reserved` now decides
+committed ≤ ceiling with `axon_os::ledger::ResourceLedger::carve` (its first
+production caller), through its existing public API — `ledger.rs` unchanged.
+Two semantic mismatches, handled rather than forced: (1) `ResourceLedger` has
+three fixed axes (compute/budget/persist_bytes) and the journal four
+dimensions, so each dimension is carved on its own single-axis ledger and the
+refused dimension is reported by name (`BudgetExceeded.dimension`);
+(2) `carve`'s `used` never decreases, but the journal must release a
+never-launched cancel and settle liability to a known charge, so the ledger is
+rebuilt per check from the journal-derived committed total rather than stored.
+One gap in `carve` itself was found and guarded, not fixed (axon-os is outside
+this lane's remit beyond reachability): it checks with `saturating_add` and
+then adds UNCHECKED, so at a cap of `u64::MAX` an overflowing carve is admitted
+and then overflows (panic in debug, wrap in release). The journal refuses an
+overflowing sum before calling it. Tests:
+`each_dimension_is_carved_through_the_axon_os_ledger`,
+`an_overflowing_reservation_is_refused_not_wrapped`. Mutation-checked:
+bypassing `carve` and removing the overflow guard each fail a behavioural
+test. A parallel `used + want > cap` comparison is meant to AGREE with `carve`,
+so no behavioural test can catch it; `the_reservation_check_is_resource_ledger_carve`
+pins the structure instead (source check: `carve_within` calls
+`ResourceLedger::carve`, the reserve path calls `carve_within`, `fits_within`
+is gone) and fails on that mutation.
+
+## D-018 — D-C6: "admission" is two concepts; an ACCEPT is never a grant
+
+**Live implementation.** `crates/axon-loop/src/admission.rs:1-8` is CX-11
+POLICY admission (a frozen experiment rule → ACCEPT / REJECT / INCONCLUSIVE,
+which may move the fenced active-policy pointer). `crates/axon-os/src/gate.rs:51`
+`admit` and `crates/axon-intent/src/admit.rs` are EFFECT admission (effects ⊆
+grant).
+
+**Invariant recorded.** An ACCEPT admission, or an active-policy pointer, confers
+NO effect authority. No code path may read one as a grant. Verified at
+`279da778` by reading: `axon-fabric` reads only the authority EPOCH from the
+loop store, never the pointer or an admission, as authority. No test pins this
+yet, so it holds by inspection only. **State.** Invariant recorded; OPEN until
+a test enforces it.
+
+## D-019 — the `axon-vm` library entry point bypasses `cmd_run`'s pre-launch gates
+
+**Document passage.** The `axon-vm` CLI's hardening (null-grant refusal,
+override-may-only-narrow, no-TOFU kernel attestation, extended-TCB compare,
+quorum), listed in `CLAUDE.md`/`ARCHITECTURE.md` as properties of `axon-vm`.
+
+**Live implementation.** B262 moved the launch path to
+`crates/axon-vm/src/firecracker.rs` (`run_in_firecracker`, exported from
+`src/lib.rs`). Those gates stay in `src/main.rs` `cmd_run`; the library applies
+none of them, and `MmdsPayload.allowed_effects` stays an `Option`. The guest
+still fails closed on a null policy, so the impact today is "may boot an
+unattested kernel". It is **latent**: the only callers are `main.rs` and
+`tests/lib_launch.rs`; `axon-fabric` references only `BACKEND_PROFILE`.
+Pre-existing and moved verbatim: after the Firecracker child is spawned, any
+`?` error path leaks the child and its sockets (ACF-G22); the vsock UDS name
+is pid-keyed.
+
+**Resolution.** Move the gates into the library, or make `LaunchSpec` require
+a verified grant/attestation token; clean up on every post-spawn error.
+**Stage 3. OPEN.** Source: `F_guest_vm.json` B262.
+
+## D-020 — `linux-microvm-protected` is an enclosure, not a policed guest, and its eligibility check ignores BLOCKED
+
+**Document passage.** The profile name, and `crates/axon-fabric/src/backend.rs`
+`LinuxProfileConfig::qualification`: *"Eligible only if the manifest in use is
+byte-identical to the one the evidence record qualified, and that record has
+zero FAIL assertions."*
+
+**Live implementation / evidence.**
+* Qualification record `evidence/b263/20260924T080432Z.json` (operator-side,
+  not in repo): **32 PASS / 0 FAIL / 4 BLOCKED**, `result: PASS_WITH_BLOCKED`,
+  `host: WSL2-nested` (operator decision D2; L0 Hyper-V outside the boundary).
+  BLOCKED: x1 guest policy channel (ACF-G25), x2 scope preservation (ACF-G26),
+  x3 L0 boundary, x4 trusted evidence issuer — the record is **unsigned**,
+  produced by an unauthenticated local root shell. Two earlier runs
+  (`075735Z`, `075923Z`) had FAILs.
+* `qualification()` checks schema, profile name, `FAIL == 0` and manifest sha.
+  It ignores BLOCKED (including x4), host, freshness, source rev, engine
+  digests and signatures, so an unsigned operator-writable JSON enables
+  protected dispatch.
+* The guest runs `profiles/linux-microvm/guest-init.sh`, NOT `axon-guest-init`:
+  no MMDS, no effect ceiling, no in-guest policy. Only the VM boundary is
+  enforced. Fabric honestly refuses requests needing an effect ceiling or
+  path-scoped grant on this backend (`backend.rs` refusal branch), which is
+  why it can only carry grant-free `interpreter_run`.
+* `profiles/linux-microvm/manifest.json`: `axon_tree_dirty_at_build: true` —
+  the guest `axon` is not reproducible from a commit.
+* Firecracker and jailer are fixed paths in `scripts/fc_linux_profile.sh`,
+  not digest-checked at launch.
+* `acpi=off` deviation, recorded in the README and `kernel-overlay.config`,
+  not in `manifest.json` fields.
+
+**Stage 3 status (2026-09-26; each fix mutation-verified in its lane).**
+
+| finding above | now |
+|---|---|
+| `qualification()` ignores BLOCKED / signature / freshness / digests / dirty trees | **fixed** — issuer-signed Ed25519 evidence, BLOCKED only under a signed unexpired waiver, fresh, engine digests pinned by the manifest (now REQUIRED), clean trees, host + caveat carried into receipts (`5fbf44d3`, `f10f055c`) |
+| guest runs `guest-init.sh`, no in-guest policy | **fixed** — the workload runs under `axon-guest-init`, which reads `axon.policy=` from the kernel cmdline and fails closed; the no-policy bypass is compiled out (`b0b66c99`, `6b9d8c24`); the launcher requires and binds `--policy` (`46c9ec34`); Fabric sends the admitted grant ceiling as that policy and lifts its refusal only on signed evidence with x1 PASS (`ac763e21`) |
+| manifest `axon_tree_dirty_at_build: true` | **fixed** — rebuilt from a clean tree (`d5a2c670`) |
+| firecracker/jailer not digest-checked | **fixed** — pinned in `manifest.engine`, checked before acquisition, re-checked in the chroot and on the running VMM (`4cc62633`, `46c9ec34`; b263 `g4`) |
+| `HardwareIsolated` accepted an unqualified VM | **fixed** (`0f21a9fd`) |
+
+New qualification record `evidence/b263/20260926T002631Z.json` (operator-side, unsigned,
+rev `d5a2c670`, clean): **39 PASS / 0 FAIL / 2 BLOCKED** — x1a–x1e PASS (ACF-G25, in-guest
+policy enforced and bound), x2 PASS as "unsupported axis refuses" (ACF-G26, operator default
+D8 — path/host projection NOT implemented), **x3 L0 boundary and x4 trusted issuer still
+BLOCKED**. Fabric refuses it: unsigned, and x3/x4 unwaived.
+
+**D-020 stays OPEN** until S3-6: the operator signs the record with their issuer key (x4) and
+decides whether to sign a waiver for x3 on this WSL2-nested host (D7). Neither can be done by an
+agent without making the record self-certifying.
+* `axon-fabric` tests exercise Linux dispatch through a STAND-IN launcher
+  (`crates/axon-fabric/tests/submit.rs:550-560`); they say nothing about the VM.
+  Neither `fc_linux_profile.sh` nor `b263_qualify.sh` is invoked by `gate.sh`
+  or CI.
+
+**Resolution.** Profile README relabelled "enclosure-only, NOT qualified as
+protected" on this branch. Code: require BLOCKED = 0 (or explicit waiver) plus
+issuer, freshness and engine digests; pin firecracker/jailer; rebuild from a
+clean tree; add the in-guest policy channel via `axon-guest-init` (operator
+decision D5). **Stage 3. OPEN.**
+
+## D-021 — the v0.22 package's `EXISTING_AXON_MAP.md` repeats two stale claims
+
+**Package passages** (`docs/axon_cortex_v0_22/axon-cortex-build-v0_22/EXISTING_AXON_MAP.md`
+rows 14-15, byte-identical to the v0.15 rows):
+
+> Principal/kernel registry — *"Audit identity is not authorization; check each
+> executor use …"* (as work to do)
+>
+> Sandbox APIs — *"Empty scoped list is not deny-all; …"*
+
+**Live implementation.**
+* `""` IS deny-all and `"*"` is unrestricted for `sandbox_create_scoped`
+  (D-001, and the capability-policy section of `CLAUDE.md`). Acting on the
+  package row would reintroduce empty = unscoped — a hole that was measured
+  and closed.
+* "Audit identity is not authorization" has LANDED for the ledger: `axon-ledger`
+  treats `--as` / `AXON_PRINCIPAL` as a claim and takes admin authority from the
+  real uid (`crates/axon-ledger/src/main.rs:559-583`, `authenticated_admins`;
+  `AXON_LEDGER_DEV_IMPERSONATE=1` is the only escape). What is NOT done is
+  applying that rule to the v0.22 stores (D-015, D-016).
+
+**Resolution.** Do not copy either row forward. Package update proposed; the
+package is third-party input and vendored byte-for-byte, so it is not edited.
+**Owner.** Repository owner.
+
+
+---
+
+# Records ported from the superseded v0.20 donor line (D-022 … D-028)
+
+These were filed on `upgrade/cortex-v0_20` (`/home/cklaus/projects/axon`) as
+D-014 … D-020. On this line those IDs already name v0.22 findings, so the donor
+records were given **new** IDs here rather than reused. The full donor text, with
+its measurements, is at `D-014@upgrade/cortex-v0_20` … in that branch's copy of
+this file (`git show upgrade/cortex-v0_20:governance/cortex-v015/DISCREPANCIES.md`),
+and the complete ID map is in `UPGRADE_V0_22_DONOR_PORT.md`.
+
+* **D-022** (donor D-014): fixed on this line by the ported commits
+  `6de01247` (constructor) and `ea9ba38d` (binop propagation, both engines).
+* **D-023** (donor D-015): fixed on this line by `624dec42`.
+* **D-024 … D-028** (donor D-016 … D-020): carried as OPEN. Nothing about them
+  changes by being ported; each still needs the decision or work its donor record
+  names. D-026's proposed schema name is NOT `axon-approval/2` as a new schema:
+  that name is allocated by `governance/specs/R24-defended-approval-boundary.md`.
+* **D-001** carried: the v0.22 package still says "empty scope = unscoped". The
+  repo behaviour (`""` = deny-all) stands, and is now pinned by the ported
+  `sandbox_scope_net_empty.ax` case, which asserts the refusal *reason*, not just exit 8.
+
+
+## D-029 — the v0.22 package's own fixture bundle carries the G10 price-schedule mismatch
+
+The package fixture bundle's `acf_request` names `fixture:synthetic-not-pricing` as its
+price schedule while its episode usage names a `cl22:` schedule Ref — exactly the
+OpaqueRef/Ref mismatch G10 forbids. Stage 5 (B270, `07a19b13`) now REFUSES that
+mismatch (`crates/axon-loop/src/price.rs`; `tests/tel_price.rs`), so the package fixture
+would be refused by the implementation. Package-side; the vendored pack is not edited.
+Proposed: file upstream.
+
+## D-030 — Axon's WorkspaceVersion import is stricter than MiCode's recipe
+
+Axon refuses case/NFC path collisions and a path that is both a file and a directory;
+MiCode's recipe (`docs/axon-support/WORKSPACE_VERSION_RECIPE.md` §2 on the MiCode line)
+does not. For every tree BOTH accept the digest is byte-identical (cross-language fixture,
+`crates/axon-fabric/tests/fixtures/`). Proposed: MiCode adopts the collision class so a
+tree cannot bind on one side and be refused on the other. Also recorded: `bind_acf` is now
+stricter than the package's `tools/closed_loop_reference.py` on receipt roles and recheck.

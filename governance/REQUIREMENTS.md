@@ -1,6 +1,6 @@
 # Axon Requirements — Top-10 Traceability Matrix
 
-**Source of truth:** `/home/cklaus/projects/BTask/packages/bcode/AI_Language_Plan.md` (the PRD).
+**Source of truth:** `AI_Language_Plan.md` (repo root, vendored by bbbef89) (the PRD).
 **This file:** maps the PRD's ~50 features down to the 10 load-bearing requirements,
 records honest current completion, names the gap, and points at the spec + acceptance
 tests that close it.

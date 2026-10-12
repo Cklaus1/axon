@@ -42,7 +42,16 @@ fn main() {
 AX
 
 # ── Build the codegen `axon` binary (default features = codegen). ─────────────
-need_codegen_axon provenance_parity
+if [ -n "${AXON:-}" ]; then
+  named_bin AXON provenance_parity
+else
+  echo "provenance_parity: building codegen axon binary…"
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "provenance_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
+  fi
+  use_built AXON axon
+fi
+require_codegen_axon provenance_parity
 
 # ── Interpreter run → provenance. ─────────────────────────────────────────────
 IPROV="$WORK/icache"

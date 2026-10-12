@@ -1,0 +1,113 @@
+{
+  "schema": "axon.source-owner-map/1",
+  "package_version": "0.21",
+  "aliases": [
+    {
+      "alias": "EVO",
+      "meaning": "Evolution",
+      "primary_owner": "CX-29",
+      "supporting_owners": [
+        "CX-08",
+        "CX-11",
+        "CX-12",
+        "CX-33"
+      ],
+      "new_authority": false
+    },
+    {
+      "alias": "DEC",
+      "meaning": "Decisions",
+      "primary_owner": "CX-05",
+      "supporting_owners": [
+        "CX-06",
+        "CX-24",
+        "CX-26",
+        "CX-34"
+      ],
+      "new_authority": false
+    },
+    {
+      "alias": "EVL",
+      "meaning": "Evaluation",
+      "primary_owner": "CX-01",
+      "supporting_owners": [
+        "CX-11",
+        "CX-21",
+        "CX-27"
+      ],
+      "new_authority": false
+    },
+    {
+      "alias": "RTR",
+      "meaning": "Routing",
+      "primary_owner": "CX-06",
+      "supporting_owners": [
+        "CX-03",
+        "CX-13",
+        "CX-34"
+      ],
+      "new_authority": false
+    },
+    {
+      "alias": "CVM",
+      "meaning": "Context working sets",
+      "primary_owner": "CX-28",
+      "supporting_owners": [
+        "CX-02",
+        "CX-10",
+        "CX-34"
+      ],
+      "new_authority": false
+    },
+    {
+      "alias": "SPX",
+      "meaning": "Speculative proposals",
+      "primary_owner": "CX-26",
+      "supporting_owners": [
+        "CX-03",
+        "CX-04",
+        "CX-13"
+      ],
+      "new_authority": false
+    },
+    {
+      "alias": "TEL",
+      "meaning": "Telemetry and economics",
+      "primary_owner": "CX-10",
+      "supporting_owners": [
+        "CX-13",
+        "CX-21",
+        "CX-32",
+        "CX-34"
+      ],
+      "new_authority": false
+    }
+  ],
+  "cx35": {
+    "package_state": "RESERVED",
+    "source_name": "CX-35 Reflex serving",
+    "source_path": "governance/cortex-v015/CX-35-reflex-serving.md",
+    "implementation": "crates/axon-reflex",
+    "canonical_contract_owner": "CX-05",
+    "related_owners": [
+      "CX-06",
+      "CX-13",
+      "CX-34",
+      "CX-37"
+    ],
+    "migration": "PRESERVE_SOURCE_ID_AND_RECORD_ALIAS; no automatic renumbering"
+  },
+  "versions": {
+    "build_pack": "0.21",
+    "cargo_workspace_observed": "0.1.0",
+    "reflex_wire_retained": "axon-reflex/1",
+    "cx36_revision_retained": "0.2",
+    "neural_formats_retained": [
+      "axon.nps/1",
+      "axon.np/1",
+      "axon.cjson/1"
+    ],
+    "ace_profile_retained": "axon.ace-execution/1",
+    "micode_consumer_target": "0.15 PROPOSED_NOT_SUPPLIED"
+  }
+}

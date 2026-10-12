@@ -18,7 +18,8 @@
 # Exit 0 = in sync. Exit 1 = drifted (the diff is printed).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-AXON="${AXON:-$ROOT/target/debug/axon}"
+. "$ROOT/scripts/lib/axon_bin.sh"
+named_bin AXON reference_gate  # only the binary the caller names
 DOC="$ROOT/AXON_REFERENCE.md"
 
 if [ ! -x "$AXON" ]; then

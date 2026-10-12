@@ -2354,3 +2354,95 @@ Next step if this matters: profile V8 while running the instrumented module
 growth is compiled-code size, deopt churn, or unwind/rewind bookkeeping. JSPI,
 which suspends without instrumenting anything, remains the structural answer
 and is a toolchain decision not made here.
+
+## R51 S6.3: sealed suite verdicts run about 3x the unsealed tree engine and about 7.7x the VM (spec §12 Q1)
+
+Measured (tasks/r51-baseline.md "Q1", fixture tasks/r51-s6/q1): a 4-test acceptance suite takes a median of 1.386 s
+sealed (tree engine, the only engine a sealed run may use), 0.466 s unsealed on the tree and 0.179 s unsealed on the
+VM. R51 §10 sets no sealed target, so this is not an R51 defect. Proposed order, cheapest first; each step only if
+the one before misses a stated budget:
+
+1. Set a sealed suite-verdict budget (for example p95 at or under N s on realistic PSV suites) and time real suites
+   against it. Today there is one 4-test fixture and no budget.
+2. Profile the sealed tree path (taint vector, seal edges, frame checks). Target about 1.5x the unsealed tree. One
+   engine changes; the mutation rows and attack tests already cover it.
+3. Finish VM coverage (R50 S9): `vm_parity.sh` still reports bodies with tree ops (264 at 371d3c07). A sealed run
+   must never move between engines mid-run, so a sealed VM needs a VM that runs everything on its own.
+4. Only then, a spec for the seal in the VM that **moves** it rather than copying it: one sealed engine, so every
+   seal edge, mutation row and attack test does not need a twin. The tree stays the reference semantics
+   (AGENTS.md) and `vm_parity.sh` keeps the two equal.
+
+Alternative to evaluate before step 4 [INFERENCE, not designed]: run candidate code in its own process or microVM
+(axon-vm Firecracker) and treat everything it returns as candidate data, so the seal holds at one boundary instead
+of in every VM fast path. Needs an adversarial review against PSV-1 (control taint, the PICK bit, receiver dispatch)
+first; it may not cover all of them. Note the Firecracker real-guest boot test is SKIP on this host (no guest kernel
+image), so the microVM path is not proven here.
+
+## R51 S7: a symlinked candidate module under a sealed directory is judged as operator code (S7-Seal-1, NOTE)
+
+`crates/axon-core/src/resolver.rs` (the sealed-file test: `p.canonicalize().unwrap_or(p)` then
+`sealed.iter().any(|d| p.starts_with(d))`); v0.22 has the same line (v022-ref resolver.rs:2438). A candidate
+file that is a symlink to a file outside the sealed directory canonicalizes outside it, so its code is judged as
+operator code: observed with the c01 attack candidate as `cand/sol.ax -> <outside>/sol.ax`, head and v0.22 both
+`p1f0` (the attack passes); the same candidate as a regular file is refused on both. Not introduced by R51.
+
+Impact today: none under the protected runner, which refuses any symlink in a guest input
+(`crates/axon-psv/src/lib.rs`, the input symlink check). It matters only to a caller of `axon test --seal` outside
+axon-psv: the seal assumes symlink-free inputs. Proposed severity [low]. Smallest fix: refuse a symlinked module
+file under a sealed directory where the loader reads it (or in `set_sealed_module_dirs`' callers), or also match
+the un-canonicalized path. Needs a sealed_frames attack test (symlinked candidate refused) and a mutation row.
+
+## R51 S7: native recursion nested in expressions can still abort the tree engine (BUG_HUNT #28 gap, pre-existing)
+
+[medium] The native recursion guard counts call depth only; the interpreter thread stack is
+`max_depth × STACK_BYTES_PER_FRAME` (floor `MIN_STACK_BYTES`). Each level of expression nesting around a call is one
+more evaluator frame (release `eval_arm::<false>` 1024 B, debug ~11 KB with `eval_binop`), so a call level nested
+deep enough in expressions overflows the real stack (exit 134 `has overflowed its stack`) before the guard trips.
+Pre-existing: 5864c423 aborts the same way. Measured 2026-10-11 (`fn down(n) { … (((down(n - 1) + 0) + 0) …) + 1 }`,
+k parens, `AXON_ENGINE=tree`, default limit 6000; sweep script `/var/tmp/r51-tmp/s7stack-sweep.py`):
+
+| build | deepest k completing at down(5990) | first aborting k at down(2000) |
+|---|---|---|
+| 5864c423 release | 280 (285 aborts) | 1000 |
+| f89f4d43 release (stack ×1.25, S7-UnsealedParity-10) | 300 (350 aborts) | 1000 |
+| 5864c423 debug | 20 (22 aborts) | 100 |
+| f89f4d43 debug | 24 (26 aborts) | 100 |
+
+The default VM completes every cell up to k = 1000 (release) / 200 (debug): its compiled bodies do not recurse per
+nesting level. Candidate fix (needs a spec row: base-134 cells would become exit 101, an unsealed behaviour change):
+on native, `eval_arm` compares the stack pointer against a floor recorded when `on_deep_stack` starts the thread
+(stack size minus a fixed reserve for the unguarded frames above the last evaluator frame) and returns the
+recursion-limit panic past it; one load and compare per evaluation on the tree engine, measured against §10 before
+landing. Raising the reserve further only moves the edge.
+
+## axon-fabric `build_state` tests fail the gate on any host with mold installed
+
+Found 2026-10-11 (R51 speed lane, gate profiling at 9e67b796): with `/usr/bin/mold` present, `scripts/gate.sh`
+(lines 71-74) exports `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS=-C link-arg=-fuse-ld=mold`. The `build()`
+helper in `crates/axon-fabric/tests/build_state.rs` removes `RUSTFLAGS`, `CARGO_ENCODED_RUSTFLAGS`,
+`CARGO_BUILD_RUSTFLAGS`, the wrappers and `CARGO_TARGET_DIR` from its child `cargo build`, but not the
+target-scoped `CARGO_TARGET_<triple>_RUSTFLAGS`. The child build therefore runs with the mold flag, axon-fabric's
+build script refuses it as a production build under a linker, and two tests fail
+(`a_production_build_under_a_wrapper_rustflags_or_linker_does_not_happen`'s clean-build control,
+`a_development_build_under_a_wrapper_records_it_in_its_identity`'s "recorded verbatim" assertion). The gate stops at
+"v0.22 closed-loop crate tests" in about 2 minutes. Not reached before: mold was absent from this host until
+2026-10-11 and was removed again the same day.
+
+Fix (crates/ change, needs a `governance/notes/pci-themes/<hash8>.json` classification): the helper also removes every `CARGO_TARGET_*_RUSTFLAGS` and
+`CARGO_TARGET_*_LINKER` variable of the parent environment, and a case asserts the control build still builds with
+the target-scoped flag set in the parent. Until then a host with mold cannot pass the gate.
+
+## `require_idle.py` cannot see one saturated CPU; the `privileged_launcher` scheduling test hangs on it
+
+Found 2026-10-11 (R51 final-head paired-disable at 2b0e7438). `axon-fabric`'s
+`a_callers_scheduling_state_never_reaches_the_root_launch` starts its probe under `SCHED_IDLE`, pinned to the first
+CPU of its affinity (CPU 0), and waits with no deadline. Six `sh -c 'while :; do :; done'` loops from another session
+(3.7 days old, SCHED_OTHER, pinned to CPU 0) kept CPU 0 at 100% user. The probe got 18 ms of CPU in 82 min, so the shard
+never returned: that explains this run and the 986ec715 paired-disable hang (`bounded_run` killed it at 7200 s).
+Killing the loops let the probe finish at once. `scripts/lib/require_idle.py` sums foreign CPU across the host: six
+loops sharing one CPU counted as about 1 core, under its threshold of 2, so the guard reported the host idle.
+
+Fix (two parts, both needed): `require_idle.py` also reports BUSY when any single CPU in the caller's affinity is
+saturated by foreign tasks over the window (per-CPU deltas from `/proc/stat`, or per-task `processor` from
+`/proc/<pid>/stat`); and the test pins its probe to the CPU with the most idle time in its affinity and fails with a
+message after a deadline instead of hanging (crates/ change: classify it in `governance/notes/pci-themes/`).

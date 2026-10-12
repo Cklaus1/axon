@@ -1,0 +1,4 @@
+{
+  "theme": "merge of origin/main (PR #8)",
+  "text": "joins the commits above; combines main's `call_fn_in`/`call_fn_mut` with the seal as one `call_fn_sealed` path, adds `&mut T` and Rc-array arms to conform.rs/pin.rs, keeps amendments 53-83 on the merged call path: no intended change in what is refused (rows re-run on this head)"
+}

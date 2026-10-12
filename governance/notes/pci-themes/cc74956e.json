@@ -1,0 +1,4 @@
+{
+  "theme": "amendment 100",
+  "text": "a handler arm and its continuation replay run under the pin owner of the fn that INSTALLED the handler, not the one that performed the effect; the name argument of every name-resolving builtin (sandbox_run, scheduler_spawn, goal_*, kernel_goal_create) must be an operator-chosen name (Ctx::npure) or the call is refused; an operator fn and a missing one read the same to sealed code; drift tests: narrowing, no widening"
+}

@@ -449,12 +449,32 @@ impl Parser {
     }
 
     fn current_span(&self) -> Span {
-        self.spans.get(self.pos).copied().unwrap_or(Span::dummy())
+        self.spans
+            .get(self.pos)
+            .copied()
+            .unwrap_or_else(|| self.eof_span())
+    }
+
+    /// The span "at" the end of input: zero-width, at the end of the last token,
+    /// in this file. It used to be `Span::dummy()` (0..0), so an item that ends
+    /// at end of file took `end = 0`, and one that ALSO starts at byte 0 (a bare
+    /// `fn` as the file's only or first-and-last item) was a DUMMY span: every
+    /// diagnostic about it was filed under the operator's entry file at line 0
+    /// (C9 round 15, amendment 121 -- the sealed/operator split in
+    /// `run_check_pipeline_located` reads the file off the span).
+    fn eof_span(&self) -> Span {
+        match self.spans.iter().rev().find(|s| !s.is_dummy()) {
+            Some(last) => Span::with_source(last.end, last.end, self.source),
+            None => Span::dummy(),
+        }
     }
 
     #[allow(dead_code)]
     fn span_at(&self, pos: usize) -> Span {
-        self.spans.get(pos).copied().unwrap_or(Span::dummy())
+        self.spans
+            .get(pos)
+            .copied()
+            .unwrap_or_else(|| self.eof_span())
     }
 
     /// Returns `true` if the token at the current position was preceded by a
@@ -1304,7 +1324,15 @@ impl Parser {
         // no root's height check sees it, so it is checked here.
         let predicate = self.height_checked(Self::parse_expr)?;
         let end = self.current_span().end;
-        let name = format!("__refine_{}", self.synthetic_refine_count);
+        // Qualified by the file's source id: numbered per file alone, the
+        // suite's and a candidate's first inline refinement were both
+        // `__refine_0`, and the merged program refused an honest candidate
+        // (E0002) — or, had it not, one predicate would have replaced the other.
+        let name = if self.source.is_unknown() {
+            format!("__refine_{}", self.synthetic_refine_count)
+        } else {
+            format!("__refine_{}_{}", self.source.0, self.synthetic_refine_count)
+        };
         self.synthetic_refine_count += 1;
         self.synthetic_refinements.push(RefineDef {
             name: name.clone(),
@@ -3715,6 +3743,21 @@ impl Parser {
     }
 }
 
+/// Read back a type rendered by [`axon_type_to_str`] (the element type a
+/// `chan<T>()` call carries in its callee name). `None` when the text is not
+/// exactly one type. R51 S3, from v0.22 parser.rs:3405 (amendment 72).
+pub(crate) fn parse_type_text(s: &str) -> Option<AxonType> {
+    let tokens: Vec<Token> = crate::lexer::Lexer::tokenize(s)
+        .ok()?
+        .into_iter()
+        .map(|(t, _)| t)
+        .collect();
+    let n = tokens.len();
+    let mut p = Parser::new(tokens);
+    let ty = p.parse_type().ok()?;
+    (p.pos == n).then_some(ty)
+}
+
 /// Convert an `AxonType` to its canonical string form for encoding in synthetic names.
 fn axon_type_to_str(ty: &AxonType) -> String {
     match ty {
@@ -3881,6 +3924,29 @@ mod tests {
             panic!()
         };
         assert!(matches!(&stmts[0].expr, Expr::Let { name, .. } if name == "x"));
+    }
+
+    /// C9 round 15 (amendment 121): an item that ENDS the file has a real span in its
+    /// own file. The end-of-input span used to be the dummy `0..0`, so a bare `fn` at
+    /// byte 0 that is the file's only item was a dummy span, and a diagnostic located
+    /// by it was filed under whichever file was the entry file, at no line.
+    #[test]
+    fn an_item_that_ends_the_file_has_a_real_span_in_its_own_file() {
+        use crate::span::intern_source;
+        let src = "fn only() -> i64 { 1 }";
+        let id = intern_source("/eof-span/f.ax", src);
+        let prog = crate::parse_source_in(src, id).expect("parses");
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        assert!(
+            !f.span.is_dummy() && !f.span.source.is_unknown(),
+            "ATTACK: an item that ends the file got a dummy span: {:?}",
+            f.span
+        );
+        assert_eq!(f.span.source, id, "the span names another file");
+        assert_eq!(f.span.start, 0);
+        assert_eq!(f.span.end, src.len(), "the item ends where the file does");
     }
 
     #[test]

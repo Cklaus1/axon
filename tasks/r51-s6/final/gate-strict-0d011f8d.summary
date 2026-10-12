@@ -1,0 +1,84 @@
+── gate: VISION.md focus ──────────────────────────────────────────
+── gate: cortex v0.22 package (pinned integrity → honesty → validator → suite) ──
+── gate: cargo fmt --all --check ──────────────────────────────────
+── gate: no wildcard CORS ────────────────────────────────────────
+── gate: no nested package roots ─────────────────────────────────
+── gate: v0.22 protected readiness (derived; certified artifacts pinned) ──
+── gate: managed-run supervision (result ownership + cancellation scope) ──
+── gate: cortex policy boundary tests ─────────────────────────────
+── gate: v0.22 closed-loop crate tests (contracts, loop, fabric) ──
+── gate: v0.22 Stage-5 executed gates (G03 G08 G10 G11 G13 G28 G32) ──
+── gate: v0.22 Protected Check Isolation surfaces ──
+── gate: v0.22 trust-root preflight mechanism (dev mode) ──
+── gate: native codegen build ─────────────────────────────────────
+── gate: serde-json feature builds (axon lsp / axon parse --json) ─
+── gate: clippy (lib, -D warnings) ────────────────────────────────
+── gate: clippy runtime crates (-D warnings) ─────────────────────
+── gate: clippy coverage (every crate gated or excused) ──────────
+── gate: tests (--no-default-features) ─────────────────────────────
+── gate: restore the codegen binary after the no-default test stage ──
+── gate: join: v0.22 trust-root preflight mechanism (ran in the background) ──
+── gate: lockfile tracked and current ────────────────────────────
+── gate: required crate verification (manifest-driven) ───────────
+── gate: clippy (--all-targets, -D warnings) ─────────────────────
+── gate: clippy codegen feature (--all-targets, -D warnings) ─────
+── gate: codegen-gated integration tests ────────────────────────
+── gate: builtin-externs drift tests (R1d slice 3) ──────────────
+── gate: parity suite (interp ↔ codegen / AOT-wasm) ─────────────
+parity_all: 53 passed, 2 skipped, 0 failed (of 55 harnesses)
+parity_all: PASS — no interp↔codegen / AOT-wasm divergence ✓ (53 harnesses asserted)
+── gate: WASI env-control refusal (wasip1 vs browser) ───────────
+── gate: all-examples parity (previously unwired) ───────────────
+── gate: per-requirement acceptance gates (R22, R44) ────────────
+── gate: previously-unwired harnesses (eBPF verifier, TEE simulation) ──
+── gate: domain round-trips (FIX, FHIR, Modbus — previously unwired) ──
+── gate: acceptance gates R33, R34, R39 (previously unwired) ────
+── gate: clippy + tests (smt feature, Z3) ───────────────────────
+── gate: skipped harnesses (non-results, NOT passes) ───────────────
+  45 harness(es) SKIPPED — these gates measured nothing:
+    · Android NDK/emulator unavailable — compute parity
+    · Android NDK unavailable — lifecycle adapter
+    · axon build (no codegen feature)
+    · axon-vm cli_parity case run_launch_no_firecracker_json (firecracker present at a fixed path, so the no-firecracker golden cannot be reproduced on this host)
+    · axon-vm lib_launch live boot (firecracker=true, kvm=true, kernel=false; looked in )
+    · b263_qualify
+    · codegen toolchain unavailable — native gfx parity
+    · codegen unavailable — agent action parity
+    · codegen unavailable — all-examples parity
+    · codegen unavailable — arr panic message parity
+    · codegen unavailable — arr reduce parity
+    · codegen unavailable — assert message parity
+    · codegen unavailable — bitwise/cast parity
+    · codegen unavailable — clock parity
+    · codegen unavailable — dict parity
+    · codegen unavailable — exec parity
+    · codegen unavailable — exit-code parity
+    · codegen unavailable — F11 input parity
+    · codegen unavailable — fuzz parity
+    · codegen unavailable — goal unknown-name parity
+    · codegen unavailable — handler-resume parity
+    · codegen unavailable — i64_radix panic parity
+    · codegen unavailable — parse_float_bool parity
+    · codegen unavailable — parse_int err parity
+    · codegen unavailable — parse_int_radix parity
+    · codegen unavailable — parse_or parity
+    · codegen unavailable — provenance parity test
+    · codegen unavailable — random_i64 parity
+    · codegen unavailable — str_count parity
+    · codegen unavailable — str utf8 parity
+    · codegen unavailable — to_str parity
+    · codegen/unix unavailable — recursion-guard parity
+    · codegen/wasm unavailable — AOT env parity
+    · codegen/wasm unavailable — AOT run parity
+    · codegen/wasm unavailable — AOT stdout parity
+    · codegen/wasm unavailable — AOT-wasm example sweep
+    · codegen/wasm unavailable — browser-target parity
+    · codegen/wasm unavailable — malloc ABI parity
+    · codegen/wasm unavailable — prune test
+    · codegen/wasm unavailable — str ABI parity
+    · loop_interop_gate
+    · node/codegen/wasm unavailable — browser example sweep
+    · node/codegen/wasm unavailable — browser I/O parity
+    · to_str-of-str native parity (no codegen feature)
+    · v022_micode_gates
+✅ gate PASSED

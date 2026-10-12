@@ -1,0 +1,46 @@
+exit: Some(0)
+--- stdout ---
+Vote (approve/deny) on a received VoteRequest.
+
+Measures this host's own R31 extended TCB as the voter identity (same CI-mock fallback as `propose`) and writes a `VoteResponse` JSON file.
+
+Usage: axon-vm quorum vote [OPTIONS]
+
+Options:
+      --request <REQUEST>
+          Path to the VoteRequest JSON to vote on. Required unless --listen is given
+
+      --approve
+          Approve the proposed action
+
+      --deny
+          Deny the proposed action
+
+      --reason <REASON>
+          Human-readable reason for the vote
+          
+          [default: ""]
+
+      --out <OUT>
+          Output path for the VoteResponse JSON. Required unless --listen is given
+
+      --listen <LISTEN>
+          R33.S2d: listen on this TCP port for ONE inbound VoteRequest instead of reading --request/writing --out as files (TCP-loopback CI stand-in for real AF_VSOCK, per R33 spec §5.2.2 — same --approve/--deny/--reason/--lineage-root decision either way). Blocks until exactly one connection arrives; an external caller owns any timeout
+
+      --kernel <KERNEL>
+          Guest kernel image to measure (default: dist/guest/vmlinuz)
+
+      --axon-os <AXON_OS>
+          axon-os binary to measure (default: sibling of this executable)
+
+      --axon-audit <AXON_AUDIT>
+          axon-audit-writer binary to measure (default: sibling; absent → R28-pending sentinel)
+
+      --lineage-root <LINEAGE_ROOT>
+          R33 §4.5: the R27 lineage-root this voter belongs to, for the per-coalition YES-vote cap enforced in `check_quorum`. Deliberately NOT defaulted to this voter's `voter_tcb` — in a healthy fleet every honest voter shares the same `voter_tcb` (same attested software), so that would make every legitimate vote look like one giant coalition. If omitted, a fresh value unique to this invocation is used, so the cap is a no-op unless an operator explicitly declares two votes as sharing a coalition
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+--- stderr ---
+

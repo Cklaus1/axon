@@ -1,0 +1,77 @@
+# Operator-visible changes since c9r4b (amendments 65-87)
+
+One list of everything the OPERATOR (the person who installs, pins and runs the protected host) has to do,
+know or re-do because of the C9 round-4c to round-6 changes. Each item names the file that defines it and
+the amendment (`governance/specs/v022-psv-protocol.md`) that states it. The deployment kit
+(`scripts/operator_deploy_protected_host.sh`) performs the installable parts and CHECKS the rest; its acceptance
+test is `scripts/test_operator_deploy.sh`, and the runbook is `governance/notes/v022-operator-runbook.md`.
+Nothing here is a counting or readiness change: Stage 7 and CX-21 still refuse unless the derived readiness is
+READY.
+
+PROTECTED_ONLY means the item matters only on a protected host (a test-trust or development build ignores it).
+
+## A. New or changed pins and configuration files
+
+| # | What changes | Defined in | Amendment |
+|---|---|---|---|
+| A1 | Helper config `/etc/axon/protected-launcher.json` gains `custodian.sha256`: the sha256 of the INSTALLED `axon-custodian`. A production helper refuses a config without it and checks, on every reply message, that the sender runs exactly that program. Needs Linux >= 6.5 (`SO_PASSPIDFD`); the kit BLOCKS an older kernel. | `scripts/operator_deploy_protected_host.sh` (`gen_configs`), `profiles/protected-host/protected-launcher.json.example`, `crates/axon-fabric/src/privileged_launcher.rs` | 65 |
+| A2 | Helper config gains `fabric {path, sha256, revision}`: the Fabric program the helper serves (required; a lowercase sha256, an absolute plain path, a 40-hex revision on a production host). The kit computes it from the installed `axon-fabric` (`verifier-manifest`) and refuses a mismatch; the preflight records `helper-fabric-pin-path` and `helper-fabric-pin-sha256`. A caller that is not that program gets exit 30 and nothing is launched or relayed. The pin is a guard against mistakes, not against an attacker who can already run as the Fabric uid (amendment 85 states what it does not close). | same files; `crates/axon-fabric/src/privileged_launcher.rs` (`authenticated()`) | 79, 85 |
+| A3 | Custodian config `/etc/axon/custodian.json` gains `observer_uid`: the uid the observer service runs as; it is neither root, the Fabric's nor the custodian's. The custodian answers its new `check` op only to that uid. | `crates/axon-fabric/src/custodian.rs`, `profiles/protected-host/custodian.json.example` | 79 |
+| A4 | Helper config `observer.service {socket, uid, sha256}` pins the observer SERVICE program; the host config's `observer` section carries NO `command` (a production Fabric refuses one). `--observer-bin` and `--observer-interpreter` no longer exist in the kit. | `profiles/protected-host/*.example`, `scripts/operator_deploy_protected_host.sh` | 68 |
+| A5 | New `/etc/axon/observer.json` (`axon-observer/1`, root 0644): `observer_uid`, `fabric_uid`, `caller_uid` (0), `socket`, `store`, `key_path`. | `profiles/protected-host/observer.json.example`, `crates/axon-fabric/src/observer_service.rs` | 68 |
+| A6 | New `/etc/axon/builder-pin.json` (`axon-builder-pin/1`: `{uid, parent}`, root-owned chain): who the builder is and where its private directory lives. The freeze and the kit REQUIRE it; build records and the host-build record are judged against it, never against what a record says about itself. The kit installs it in its `toolchain` step from `--builder-uid N --builder-parent DIR`. | `scripts/guest_build_env.py` (`operator_file_problem`, `image_problems`), `scripts/operator_deploy_protected_host.sh` | 86 |
+| A7 | `verifier.json` must be RE-PINNED: the verifier identity gained `build_state` (a build under `RUSTC_WRAPPER` or caller-chosen flags is refused, not recorded). | `scripts/operator_deploy_protected_host.sh` (`verifier` step), `crates/axon-fabric/src/readiness.rs` | 80, 86 |
+| A8 | Store keys are lowercase hex only. A store config holding an uppercase public key now fails to load, naming the role: re-register it in lowercase (`axon-fabric keygen` already prints lowercase). | `crates/axon-loop/src/store.rs` | 70 |
+| A9 | `b263_qualify.sh` is run with `--host-label <name> [--caveat <text>]`; the record carries the measured host (`host_facts`), and the kit holds its machine-id to this host's. The signed `x3` reason states only measured host facts. | `scripts/b263_qualify.sh`, `scripts/b263_host.py` | 65, 70 |
+| A10 | `/etc/axon/host-toolchain-pin.json` is READ by the freeze (it refuses without it), and every host tool the guest build recorded must match its path and sha256. | `scripts/guest_build_env.py` | 65 |
+
+## B. Services, users, keys and units
+
+| # | What changes | Defined in | Amendment |
+|---|---|---|---|
+| B1 | A fifth system user, `axon-observer` (own uid and group, no login; never the Fabric's, custodian's, verifier's, an agent's or root). The kit refuses two of the five users being the same. | `scripts/operator_deploy_protected_host.sh` | 68 |
+| B2 | The observer's key is generated BY THE OPERATOR AS that user, on the host: `sudo -u axon-observer axon-fabric keygen --out /var/lib/axon-observer/key/observer.pk8` (0400, directory 0700); its public half goes to `/etc/axon/trust/observer/observer.pub` (and to no other trust root). The kit never creates or reads it. | runbook step 5; `crates/axon-fabric/src/observer_service.rs` (`load_key`) | 68 |
+| B3 | `axon-observer.socket` (root 0600, root-only: the setuid helper is its only client) and `axon-observer.service` (own uid, `StateDirectory`), installed and enabled by the kit. | `profiles/protected-host/systemd/axon-observer.*` | 68 |
+| B4 | The custodian socket unit gains `ExecStartPost=setfacl -m u:<observer>:rw`, so the observer can ask the custodian whether a nonce is outstanding while the socket stays 0660 for the Fabric group. Needs the `acl` package (setfacl is required where systemd starts the unit, not under `--no-systemctl`). | `profiles/protected-host/systemd/axon-custodian.socket`, kit | 79 (obsbind follow-up) |
+| B5 | The observer observes only a nonce the custodian issued for that epoch; the custodian holds at most 1024 outstanding nonces and drops records past their max age at every issue (a flood is refused, not stored). | `crates/axon-fabric/src/custodian.rs`, `observer_service.rs` | 79 |
+| B6 | The custodian gives one connection an absolute deadline (30 s) for its request: a client that stops sending no longer holds the service. | `crates/axon-fabric/src/custodian.rs` (`REQUEST_DEADLINE`) | 85 |
+
+## C. The root helper (`axon-protected-launcher`) behaves differently
+
+| # | What changes | Defined in | Amendment |
+|---|---|---|---|
+| C1 | `harden()` resets caller state: interval timers disarmed; limits (STACK, RSS, MEMLOCK, LOCKS, SIGPENDING, MSGQUEUE, NICE, RTPRIO, RTTIME, and the rest the kernel lists) set to stated values; **the helper and the launcher it runs now run at nice 0, I/O class none, SCHED_OTHER, `oom_score_adj` 0 and every CPU, whatever the Fabric unit set** (`Nice=`, `OOMScoreAdjust=`, `CPUAffinity=`, `IOSchedulingClass=` are caller state, not the helper's); personality, timer slack and child-subreaper reset. A unit that wants another policy for the root side needs the helper in its own unit (the D2 follow-up). | `crates/axon-fabric/src/privileged_launcher.rs` (`harden()`) | 73 |
+| C2 | **Job-control shell refusal.** `harden()` starts a new session. A helper started as a process-group leader (an interactive shell's job control) cannot, and refuses the launch with exit 30 (`could not leave its caller's session`). Fabric spawns it as an ordinary child. | same | 73 |
+| C3 | **The reply channel is private.** In production the helper writes its reply to a PIPE it shares with only its parent, and refuses to answer when another process holds the pipe's other end (the executed exec race) or when stdout is not a pipe (a file or a terminal). Anything that runs a production helper must give it a pipe as stdout and read it itself. Fabric does. The `private_reply_channel` config key is test-trust only. | same (`reply_channel_private`) | 85 |
+| C4 | Environment clear, `PR_SET_NO_NEW_PRIVS`/dumpable and the root gid/groups are guarded by gate rows (a permission mode or process flag is a refusal site); behaviour unchanged. The Fabric unit still must NOT set `NoNewPrivileges=yes` or anything that implies it: the kit judges the unit's text and the preflight reads the running process (`--fabric-pid`). | `scripts/operator_deploy_protected_host.sh` (`fabric-unit`), `scripts/trust_root_preflight.sh` | 65, 87 |
+
+## D. Build, image and kit procedure
+
+| # | What changes | Defined in | Amendment |
+|---|---|---|---|
+| D1 | **The host binaries come from a CONTROLLED build, not a caller-built `--bin-dir`.** Run `python3 scripts/guest_build_env.py host-build OUTDIR` (as the pinned builder) from the standalone clone: it makes a fresh clone of HEAD, an empty target dir and `CARGO_HOME`, a constructed environment (no wrapper, flags or planted `cc`), one fixed `cargo build --release --locked -p axon-fabric --bins`, copies the four binaries and writes `OUTDIR/host-build.json`, SIGNED by the builder. Pass THAT directory as `--bin-dir`. | `scripts/guest_build_env.py` (`host-build`) | 86 |
+| D2 | **The kit REQUIRES the signed host-build record.** It refuses a `--bin-dir` with no such record, a binary that is not what the record names, a record the pinned builder did not sign, extra files, another source revision, or a missing `--builder-uid/--builder-parent`; it copies the directory aside first so what is judged is what is installed. A plain `cargo build` output is refused. | `scripts/operator_deploy_protected_host.sh` | 86 |
+| D3 | **The guest image must be REBUILT** (and the build proved by the pinned builder): the interpreter changed (amendments 72, 78, 83) and the build records now carry a proof and `dist` digests. Use the full controlled build, not `--rootfs-only`. | `scripts/build-guest-image.sh`, `scripts/guest_build_env.py` | 72, 78, 80, 83 |
+| D4 | The build judges cargo's effective configuration by structure: a committed target key, linker or `cfg(...)` table for a triple the build compiles for is refused (spelling no longer matters). | `scripts/guest_build_env.py` | 80 |
+| D5 | The protected-mode preflight takes `--observer` (required) and tries, as every actor, to open the observer's key, create in its directories and connect to its socket. | `scripts/trust_root_preflight.sh` | 68 |
+
+## E. Suite authors and the freeze
+
+| # | What changes | Defined in | Amendment |
+|---|---|---|---|
+| E1 | **Suite authors must annotate untyped reads.** Operator code (the suite) may not dispatch a method that two or more operator impl types define on a value whose type nothing on the operator side determined: a dict read, a channel receive, an unannotated lambda parameter or a match binding of one. The run refuses with `operator code dispatched ... on a value whose type nothing on the operator side determined`; pin it with `let x: T = ...`. The same determination applies to arithmetic on a fixed-width integer. Suites that were green before may now fail until annotated. | `crates/axon-core/src/interp.rs` (`seal_dispatch`), `crates/axon-core/src/interp/pin.rs` | 83 |
+| E2 | A value the operator held at a dict key or a type position is judged by what it held, deeply (nested containers, placeholders), and the operator's dicts are snapshotted at every seal crossing. | `crates/axon-core/src/interp/conform.rs` | 72, 78 |
+| E3 | **The freeze requires a `--join`ed paired-disable status file AND a `--merge`d mutation-run status file at the evidence commit.** `governance/status/v022-psv-paired-disable.json` must be the joined file (`hosts`, `toolchain`, no `shard`), complete (every retirement record), all at one commit and one toolchain; `governance/status/v022-psv-mutation-run.json` must be what `--merge` writes over `--scope=all`, every active row GOOD (killed by its own attack; REFUSED_ELSEWHERE, SURVIVED, stale or interpreter faults named), LIBRARY_PRIMITIVE rows counted apart. The commit may be the freeze commit or an ancestor with only `governance/status/` changed since. `--check-status PATH` runs the same judge. Neither file is faked or accepted partial. | `scripts/v022_paired_disable.py` (`status_problems`), `scripts/v022_mutation_status.py`, `scripts/v022_freeze_manifest.py` | 81, 87 |
+| E4 | The refusal-site gate's NOT_YET_SCANNED list must be empty at a freeze (`v022_refusal_coverage.py --freeze`), and the Protected Check Isolation delta note (`governance/notes/v022-pci-delta.md`) is generated and drift-tested (`python3 scripts/pci_delta.py --check`, `crates/axon-core/tests/pci_delta_note.rs`); after any later interpreter commit, regenerate it and re-pin the head it names. | `scripts/v022_refusal_coverage.py`, `scripts/pci_delta.py` | 71, 75, 76, 84 |
+| E5 | Shard runs: the axon-fabric suite runs as concurrent shard processes through `scripts/cargo_test_shards.py` (builds once, execs the built binaries); the evidence harnesses record host identity per record and refuse shards on different toolchains. | `scripts/cargo_test_shards.py`, `scripts/v022_paired_disable.py` | 67, 69, 77, 81 |
+
+## F. Order of operations after pulling this tree (summary)
+
+1. Standalone clone at the freeze commit, allowlist first (runbook step 1).
+2. Full controlled guest image build as the pinned builder (D3); install `builder-pin.json` (A6).
+3. `python3 scripts/guest_build_env.py host-build OUTDIR` (D1); pass `OUTDIR` as `--bin-dir` (D2).
+4. Kit dry run, review, `--apply`: creates the observer user and units (B1, B3), writes the configs with the Fabric, custodian and observer pins (A1-A5), re-pins `verifier.json` (A7).
+5. Provision keys: the Fabric attestation key, the observer key AS the observer user (B2); install the public halves.
+6. B263 qualification on this host (A9), signed by the operator offline.
+7. Start the Fabric unit (no `NoNewPrivileges`), run the kit again: the preflight runs with `--fabric-pid` and `--observer`.
+8. Freeze: joined paired-disable file and merged mutation-run file at the evidence commit (E3).

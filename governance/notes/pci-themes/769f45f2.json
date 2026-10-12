@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S3b",
+  "text": "TEST-ONLY unit tests (interp/conform_tests.rs) that kill the conform.rs mutation survivors (dict snapshot bound, epoch retake, first sealed mutation, fresh snapshot kept, dict-in-dict walk, array element judgement, cast depth bound, enum name); cast_at widened to pub(super) for the depth test, no behaviour change. Not PCI-reviewed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

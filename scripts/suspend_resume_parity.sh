@@ -42,7 +42,7 @@ if ! CARGO_TARGET_DIR="$WORK/interp-target" \
      cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null; then
   echo "suspend_resume_parity: interpreter build failed — cannot run"; exit 1
 fi
-AXON="${AXON:-$WORK/interp-target/debug/axon}"
+AXON="${AXON:-$WORK/interp-target/debug/axon}"  # the private build above, or the caller's
 
 # ── 1. CLI stdin regression: str / loop / EOF (Slice-1 cases, end-to-end) ──────
 # Each row is (program, piped-stdin, expected-VALUE). The value is printed, not
@@ -126,7 +126,9 @@ prog="$WORK/cg_refuse.ax"
 printf '%s\n' 'type P = { x: i64, y: i64 }
 fn main() -> i64 { let p = P { x: 1, y: 2 }  let r = host_await_val(p)  0 }' > "$prog"
 if cargo build -q -p axon-core --bin axon 2>/dev/null; then
-  msg="$(target/debug/axon build "$prog" -o "$WORK/cg_refuse.bin" --no-cache 2>&1)"
+  . scripts/lib/axon_bin.sh
+  CGAXON=""; use_built CGAXON axon  # the codegen build just made
+  msg="$("$CGAXON" build "$prog" -o "$WORK/cg_refuse.bin" --no-cache 2>&1)"
   ran=$((ran+1))
   # An explicit E0910, a codegen-less hint, or simply no binary produced all count
   # as a sound refusal (never a built binary that silently drops the suspension).

@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S6 T7 merge",
+  "text": "joins r51/int 371d3c07 (dd1ea380 and its THEMES/note commits) onto r51/s6rows; no conflict, no change beyond the commits it joins; sealed runs as at 04d3ad7b"
+}

@@ -1,0 +1,25 @@
+# Pinned Linux guest kernel for the protected Linux microVM profile (B263).
+# Sourced by scripts/build-guest-image.sh when AXON_KERNEL_BACKEND=linux.
+#
+# KERNEL_TARBALL_SHA256 is the value published in
+#   https://cdn.kernel.org/pub/linux/kernel/v6.x/sha256sums.asc
+# KERNEL_CONFIG is Firecracker v1.10.1's own CI guest config, byte for byte:
+#   https://raw.githubusercontent.com/firecracker-microvm/firecracker/v1.10.1/resources/guest_configs/microvm-kernel-ci-x86_64-6.1.config
+# The build copies it to .config, appends KERNEL_OVERLAY (one documented
+# symbol) and runs `make olddefconfig`. Beyond the overlay, the resulting deltas
+# are compiler-probe symbols (CC_VERSION_TEXT, GCC_VERSION, AS_VERSION,
+# CC_HAS_*); the sha256 of the effective .config is recorded in the manifest.
+KERNEL_VERSION=6.1.188
+KERNEL_URL=https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.1.188.tar.xz
+KERNEL_TARBALL_SHA256=ed4d0acb1307c235230c89efc094e210e6290593f94a7e617f28b1001101a33a
+KERNEL_CONFIG=kernel-6.1-firecracker-v1.10.1.config
+KERNEL_CONFIG_SHA256=391d8d498f89e56b391be5ea4a7501ebc44e6d094331ecaabdefed1da6b28a96
+# Minimal, documented deviation appended after the base config (see the file).
+KERNEL_OVERLAY=kernel-overlay.config
+KERNEL_OVERLAY_SHA256=adab3938e959467f5f89795066154f2b281a90d4cc89b5693796dee3188ba91f
+# Static busybox taken from the build host's busybox-static package. Pinned by
+# digest: a different busybox fails the build rather than silently changing
+# what runs inside the guest.
+BUSYBOX_SRC=/usr/bin/busybox
+BUSYBOX_PKG=busybox-static_1:1.37.0-7ubuntu1_ubuntu-26.04
+BUSYBOX_SHA256=df12634c17fcdca839ae5dc47d7627b7558511f7645de7c99ccf097a0f28ed5b

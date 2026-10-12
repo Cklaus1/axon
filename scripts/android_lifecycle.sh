@@ -56,7 +56,16 @@ NDKBIN="$(ndk_bin)" || skip "Android NDK not found"
 ADB="${ADB:-adb}"
 command -v "$ADB" >/dev/null 2>&1 || ADB="${ANDROID_HOME:-}/platform-tools/adb"
 
-need_codegen_axon android_lifecycle
+if [ -n "${AXON:-}" ]; then
+  named_bin AXON android_lifecycle
+else
+  echo "android_lifecycle: building codegen axon binary…"
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "android_lifecycle: codegen build unavailable (LLVM absent) — skipping"; exit 0
+  fi
+  use_built AXON axon
+fi
+require_codegen_axon android_lifecycle
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"; "$ADB" shell rm -rf /data/local/tmp/axon_lc 2>/dev/null' EXIT

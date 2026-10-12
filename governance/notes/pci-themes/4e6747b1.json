@@ -1,0 +1,4 @@
+{
+  "theme": "R51 T3c",
+  "text": "TEST-ONLY: ports 31 v0.22 interp::taint_tests / interp::tests rows and 3 misplaced rows under their v0.22 names (spec T3): v0.22's Case harness and case tables appended to interp/taint_tests.rs, v0.22's cfg(test) CONTROL_TABLE/CALLBACK_BUILTINS/SHORT_CIRCUIT_TABLE in interp/taint.rs, two interp::tests rows in interp/tests_v022_c.rs (included at the end of mod tests; JUDGE8/LAUNDER8 made pub(super)), every_channel_method_goes_through_the_one_access_helper moved from conform_tests.rs and every_kernel_builtin_that_draws_the_rng_is_coupled_to_the_world_cell from kernel_tests.rs; 17 case-running tests ignored R51 S6 and no_control_transfer_escapes_a_frame R51 S0b, all registered; no interpreter code changed; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

@@ -123,7 +123,8 @@ else
     fail "axon-vm binary FAILED to build"
 fi
 
-BIN="$REPO_ROOT/target/debug/axon-vm"
+. "$REPO_ROOT/scripts/lib/axon_bin.sh"
+BIN="$(cd "$REPO_ROOT" && built_bin axon-vm)" || exit 2  # the axon-vm just built
 
 # ── 6. End-to-end CLI journey: propose → 2 votes (deny+approve) → BLOCKED  ───
 #       (n=3) → third approve vote → MET (n=3, exit 0)                     ──
@@ -319,12 +320,12 @@ fi
 echo ""
 echo "10. R33 S4: axon deploy --quorum-dir cross-binary journey"
 
-AXON_BIN="$REPO_ROOT/target/debug/axon"
 if (cd "$REPO_ROOT" && cargo build -p axon-core --no-default-features --bin axon --quiet 2>&1); then
     pass "axon binary builds"
 else
     fail "axon binary FAILED to build"
 fi
+AXON_BIN="$(cd "$REPO_ROOT" && built_bin axon)" || exit 2  # the interpreter just built
 
 HELLO_AX="$REPO_ROOT/examples/hello.ax"
 

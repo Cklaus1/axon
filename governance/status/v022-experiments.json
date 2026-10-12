@@ -1,0 +1,21 @@
+{
+  "schema": "axon-v022-experiments-status/1",
+  "purpose": "Mutable state of the gated protected experiments. A state other than PREREGISTERED/NOT_RUN is refused by scripts/protected_verifier_ready.py --check while its readiness is not READY. `frozen_documents` pins each prerequisite document by path + sha256 once it is frozen (none yet).",
+  "gated_experiments": {
+    "stage7-pilot": {
+      "state": "PREREGISTERED",
+      "readiness": "stage7",
+      "entry_point": "scripts/v022_stage7_pilot.sh"
+    },
+    "CX-21 CODING-STRATEGY-001": {
+      "state": "PREREGISTERED",
+      "readiness": "cx21",
+      "entry_point": "scripts/v022_cx21_experiment.sh"
+    }
+  },
+  "frozen_documents": {},
+  "operator_items": [
+    "PROTECTED profile: deploy the axon-preflight-observer service (uid axon-observer, /run/axon/preflight-observer.sock) with its own online Ed25519 key, authorized by the operator root key. DECIDED in governance/specs/v022-ADR-002-preflight-observer.md; the DEV part (distinct keys per role, an observer holds no verifier/admitter/monitor role, a protected context must be observer-signed) is enforced. Remaining, PROTECTED host: provisioning, PreflightObservation protocol, receipt/intake joins.",
+    "B263: the operator's signature over the qualification evidence (D5: agents hold no private key)."
+  ]
+}

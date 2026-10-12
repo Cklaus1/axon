@@ -55,15 +55,17 @@ fi
 echo "wasm_fs_parity: building axon-run (native + wasm32-wasip1)…"
 # Native side: the caller's AXON_RUN (the binary under test) when given, so
 # nothing rebuilds target/debug/axon-run under harnesses executing it.
+. scripts/lib/axon_bin.sh
 if [ -n "${AXON_RUN:-}" ]; then
-  NATIVE="$AXON_RUN"
+  named_bin AXON_RUN wasm_fs_parity
 else
   cargo build -q -p axon-core --no-default-features --bin axon-run || { echo "native build failed"; exit 1; }
-  NATIVE="$ROOT/target/debug/axon-run"
+  use_built AXON_RUN axon-run
 fi
+NATIVE="$AXON_RUN"
 cargo build -q -p axon-core --no-default-features --bin axon-run --target wasm32-wasip1 || { echo "wasm build failed"; exit 1; }
 
-WASM="target/wasm32-wasip1/debug/axon-run.wasm"
+WASM=""; use_built WASM axon-run.wasm wasm32-wasip1  # the wasm build just made
 
 PROG="examples/file_roundtrip.ax"
 [ -f "$PROG" ] || { echo "wasm_fs_parity: $PROG missing"; exit 1; }

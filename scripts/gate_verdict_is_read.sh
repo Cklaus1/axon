@@ -28,8 +28,9 @@
 # blocks exactly as an absent gate does.
 set -uo pipefail
 cd "$(dirname "$0")/.."
-AXON="${AXON:-$PWD/target/debug/axon}"
-[ -x "$AXON" ] || { echo "SKIP: no binary at $AXON"; exit 0; }
+# Runs only the binary its caller names (scripts/lib/axon_bin.sh).
+. scripts/lib/axon_bin.sh
+named_bin AXON gate_verdict_is_read
 WS=$(mktemp -d); trap 'rm -rf "$WS"' EXIT
 fails=0
 

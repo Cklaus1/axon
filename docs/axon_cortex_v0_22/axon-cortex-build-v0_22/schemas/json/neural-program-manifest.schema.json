@@ -1,0 +1,520 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Neural Program Manifest v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "axon.np/1"
+    },
+    "canonicalization": {
+      "const": "axon.cjson/1"
+    },
+    "artifact_kind": {
+      "enum": [
+        "neural_program",
+        "conformance_fixture"
+      ]
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "contract_ref": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "digest"
+      ],
+      "additionalProperties": false
+    },
+    "source": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._/-]{0,239}$"
+        },
+        "raw_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "semantic_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "path",
+        "raw_digest",
+        "semantic_digest"
+      ],
+      "additionalProperties": false
+    },
+    "input_schema_ref": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "digest"
+      ],
+      "additionalProperties": false
+    },
+    "output_schema_ref": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "digest"
+      ],
+      "additionalProperties": false
+    },
+    "compiler": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "implementation_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "recipe_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "implementation_digest",
+        "recipe_digest"
+      ],
+      "additionalProperties": false
+    },
+    "target": {
+      "type": "object",
+      "properties": {
+        "backend_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "backend_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "runtime_profile_ref": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16384
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16384
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "id",
+            "revision",
+            "digest"
+          ],
+          "additionalProperties": false
+        },
+        "execution_kind": {
+          "enum": [
+            "adapter",
+            "standalone",
+            "fixture"
+          ]
+        },
+        "payload_format": {
+          "enum": [
+            "safetensors",
+            "gguf_lora",
+            "onnx",
+            "inert_fixture"
+          ]
+        },
+        "precision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "supported_operations": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "inspect",
+              "load",
+              "invoke",
+              "cancel",
+              "unload"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 256
+        },
+        "resource_limits": {
+          "type": "object",
+          "properties": {
+            "max_input_bytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "max_output_bytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "max_memory_bytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "max_wall_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "max_input_bytes",
+            "max_output_bytes",
+            "max_memory_bytes",
+            "max_wall_ms"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "backend_id",
+        "backend_revision",
+        "runtime_profile_ref",
+        "execution_kind",
+        "payload_format",
+        "precision",
+        "supported_operations",
+        "resource_limits"
+      ],
+      "additionalProperties": false
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "enum": [
+              "base_model",
+              "tokenizer",
+              "template",
+              "runtime",
+              "schema",
+              "validator",
+              "other"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          },
+          "revision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "revision",
+          "digest",
+          "bytes"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 256
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._/-]{0,239}$"
+          },
+          "role": {
+            "enum": [
+              "source",
+              "adapter",
+              "weights",
+              "graph",
+              "template",
+              "schema",
+              "fixture"
+            ]
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "path",
+          "role",
+          "sha256",
+          "bytes"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 256
+    },
+    "applicability_ref": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "digest"
+      ],
+      "additionalProperties": false
+    },
+    "effect_ceiling": {
+      "type": "object",
+      "properties": {
+        "filesystem": {
+          "enum": [
+            "none",
+            "scoped_read",
+            "scoped_write"
+          ]
+        },
+        "network": {
+          "enum": [
+            "deny",
+            "approved_only"
+          ]
+        },
+        "subprocess": {
+          "enum": [
+            "deny",
+            "registered_only"
+          ]
+        },
+        "environment": {
+          "enum": [
+            "none",
+            "projected_only"
+          ]
+        }
+      },
+      "required": [
+        "filesystem",
+        "network",
+        "subprocess",
+        "environment"
+      ],
+      "additionalProperties": false
+    },
+    "data_policy_ref": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "digest"
+      ],
+      "additionalProperties": false
+    },
+    "fallback_policy_ref": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "digest"
+      ],
+      "additionalProperties": false
+    },
+    "provenance_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          },
+          "revision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "digest"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 256
+    }
+  },
+  "required": [
+    "schema",
+    "canonicalization",
+    "artifact_kind",
+    "name",
+    "contract_ref",
+    "source",
+    "input_schema_ref",
+    "output_schema_ref",
+    "compiler",
+    "target",
+    "dependencies",
+    "assets",
+    "applicability_ref",
+    "effect_ceiling",
+    "data_policy_ref",
+    "fallback_policy_ref",
+    "provenance_refs"
+  ],
+  "additionalProperties": false
+}

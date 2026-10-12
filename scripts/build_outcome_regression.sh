@@ -122,15 +122,17 @@ command -v timeout >/dev/null 2>&1 || {
   exit 2
 }
 
-AXON="${AXON:-target/debug/axon}"
-if [ ! -x "$AXON" ]; then
+. scripts/lib/axon_bin.sh
+# The binary the caller names, or the one THIS harness builds -- never one
+# that merely sits under target/ (scripts/lib/axon_bin.sh).
+if [ -z "${AXON:-}" ]; then
   note "build_outcome_regression: building the codegen axon binary…"
   if ! cargo build -q -p axon-core --bin axon -j "$JOBS"; then
     note "build_outcome_regression: CANNOT MEASURE — \`cargo build -p axon-core --bin axon\` failed."
     note "  This harness measures the NATIVE backend; there is nothing to measure without it."
     exit 2
   fi
-  AXON="target/debug/axon"
+  use_built AXON axon
 fi
 [ -x "$AXON" ] || { note "build_outcome_regression: CANNOT MEASURE — \$AXON ($AXON) is not executable"; exit 2; }
 

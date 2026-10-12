@@ -1,0 +1,1016 @@
+{
+ "vectors": "closed-loop-profile/1 negotiation vectors",
+ "rules": "docs/CLOSED_LOOP_PROFILE_NEGOTIATION.md",
+ "note": "`offer`/`accept` are RAW TEXT (so duplicate and escaped keys can be expressed); `null` offer = the peer sent nothing. `expect.accept` is compared as parsed JSON; `offer_ref` is cl22 of the offer's canonical bytes. Checked by crates/axon-loop-contracts/tests/profile.rs.",
+ "negotiate": [
+  {
+   "name": "exact_match",
+   "why": "offer and local list the same schemas: all accepted",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\"],\"features\":[],\"adapters\":[],\"required\":[]}",
+   "expect": {
+    "accept": {
+     "schema": "closed-loop-profile/1",
+     "role": "accept",
+     "peer": "axon",
+     "offer_ref": "cl22:5bfc08d08db3a0672c30e0f7925f804e24c7d7e07fac78a1f3288c625cd20eb3",
+     "schemas": [
+      "axon.closed-loop.context/1",
+      "axon.closed-loop.episode/1",
+      "axon.closed-loop.policy/1",
+      "axon.closed-loop.transition/1"
+     ],
+     "features": [],
+     "adapters": []
+    }
+   }
+  },
+  {
+   "name": "subset",
+   "why": "offer lists a schema local lacks and a future id: only the intersection is accepted, sorted",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.context/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.policy/1\",\"axon.closed-loop.future/2\",\"axon.closed-loop.episode/1\"],\"features\":[],\"adapters\":[],\"required\":[]}",
+   "expect": {
+    "accept": {
+     "schema": "closed-loop-profile/1",
+     "role": "accept",
+     "peer": "axon",
+     "offer_ref": "cl22:52e0b3036a16a0de2cfead6db0307e91cc0c10bc72d83f07889562aaf5cd0138",
+     "schemas": [
+      "axon.closed-loop.episode/1",
+      "axon.closed-loop.policy/1"
+     ],
+     "features": [],
+     "adapters": []
+    }
+   }
+  },
+  {
+   "name": "no_common_schema",
+   "why": "disjoint schemas: Unsupported, even though a pinned adapter is shared (an adapter is never a fallback)",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.other/1\"],\"features\":[],\"adapters\":[\"cortex-policy-adapter/1\"],\"required\":[]}",
+   "expect": {
+    "unsupported": "no_common_schema"
+   }
+  },
+  {
+   "name": "version_is_exact",
+   "why": "policy/2 does not match policy/1: no version ranges",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.policy/2\"],\"features\":[],\"adapters\":[],\"required\":[]}",
+   "expect": {
+    "unsupported": "no_common_schema"
+   }
+  },
+  {
+   "name": "adapter_id_as_schema_is_not_inferred",
+   "why": "an adapter id offered in `schemas` does not match a local ADAPTER: vocabularies are separate",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "axon-bridge/v0"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon-bridge/v0\"],\"features\":[],\"adapters\":[],\"required\":[]}",
+   "expect": {
+    "unsupported": "no_common_schema"
+   }
+  },
+  {
+   "name": "usage2_both",
+   "why": "both sides list usage/2: it is agreed",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [
+     "usage/2"
+    ],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\"],\"features\":[\"usage/2\"],\"adapters\":[],\"required\":[]}",
+   "expect": {
+    "accept": {
+     "schema": "closed-loop-profile/1",
+     "role": "accept",
+     "peer": "axon",
+     "offer_ref": "cl22:f5231f72ed1c164ba9ea99b742a103f403a39fa8268b530f379cb511f836dce4",
+     "schemas": [
+      "axon.closed-loop.context/1",
+      "axon.closed-loop.episode/1",
+      "axon.closed-loop.policy/1",
+      "axon.closed-loop.transition/1"
+     ],
+     "features": [
+      "usage/2"
+     ],
+     "adapters": []
+    }
+   }
+  },
+  {
+   "name": "usage2_offer_only",
+   "why": "only the offer lists usage/2: NOT agreed",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\"],\"features\":[\"usage/2\"],\"adapters\":[],\"required\":[]}",
+   "expect": {
+    "accept": {
+     "schema": "closed-loop-profile/1",
+     "role": "accept",
+     "peer": "axon",
+     "offer_ref": "cl22:f5231f72ed1c164ba9ea99b742a103f403a39fa8268b530f379cb511f836dce4",
+     "schemas": [
+      "axon.closed-loop.context/1",
+      "axon.closed-loop.episode/1",
+      "axon.closed-loop.policy/1",
+      "axon.closed-loop.transition/1"
+     ],
+     "features": [],
+     "adapters": []
+    }
+   }
+  },
+  {
+   "name": "usage2_local_only",
+   "why": "only local lists usage/2: NOT agreed",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [
+     "usage/2"
+    ],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\"],\"features\":[],\"adapters\":[],\"required\":[]}",
+   "expect": {
+    "accept": {
+     "schema": "closed-loop-profile/1",
+     "role": "accept",
+     "peer": "axon",
+     "offer_ref": "cl22:5bfc08d08db3a0672c30e0f7925f804e24c7d7e07fac78a1f3288c625cd20eb3",
+     "schemas": [
+      "axon.closed-loop.context/1",
+      "axon.closed-loop.episode/1",
+      "axon.closed-loop.policy/1",
+      "axon.closed-loop.transition/1"
+     ],
+     "features": [],
+     "adapters": []
+    }
+   }
+  },
+  {
+   "name": "usage2_required_by_offerer",
+   "why": "offerer requires usage/2, local lacks it: Unsupported, not a silent downgrade to Usage/1",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\"],\"features\":[\"usage/2\"],\"adapters\":[],\"required\":[\"usage/2\"]}",
+   "expect": {
+    "unsupported": "required_not_agreed",
+    "side": "offerer",
+    "id": "usage/2"
+   }
+  },
+  {
+   "name": "usage2_required_by_local",
+   "why": "local requires usage/2, offer lacks it: Unsupported",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [
+     "usage/2"
+    ],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": [
+     "usage/2"
+    ]
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\"],\"features\":[],\"adapters\":[],\"required\":[]}",
+   "expect": {
+    "unsupported": "required_not_agreed",
+    "side": "local",
+    "id": "usage/2"
+   }
+  },
+  {
+   "name": "required_schema_missing",
+   "why": "offerer requires a schema local does not support",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\",\"axon.closed-loop.extra/1\"],\"features\":[],\"adapters\":[],\"required\":[\"axon.closed-loop.extra/1\"]}",
+   "expect": {
+    "unsupported": "required_not_agreed",
+    "side": "offerer",
+    "id": "axon.closed-loop.extra/1"
+   }
+  },
+  {
+   "name": "pinned_adapters_listed",
+   "why": "adapters are agreed only when both list them",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\"],\"features\":[],\"adapters\":[\"axon-bridge/v0\",\"cortex-policy-adapter/1\"],\"required\":[]}",
+   "expect": {
+    "accept": {
+     "schema": "closed-loop-profile/1",
+     "role": "accept",
+     "peer": "axon",
+     "offer_ref": "cl22:87191628660b09bfc957ceecdb44761ebee2f98b6a799f6507e8b85a81cfc282",
+     "schemas": [
+      "axon.closed-loop.context/1",
+      "axon.closed-loop.episode/1",
+      "axon.closed-loop.policy/1",
+      "axon.closed-loop.transition/1"
+     ],
+     "features": [],
+     "adapters": [
+      "cortex-policy-adapter/1"
+     ]
+    }
+   }
+  },
+  {
+   "name": "unknown_feature_ignored",
+   "why": "a feature local does not know is not selected; the rest proceeds",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\"],\"features\":[\"telemetry/9\"],\"adapters\":[],\"required\":[]}",
+   "expect": {
+    "accept": {
+     "schema": "closed-loop-profile/1",
+     "role": "accept",
+     "peer": "axon",
+     "offer_ref": "cl22:5f7b95e07f5e5df5e7effe02b9bab2d37f02692531b76d801cc44b0d6e490983",
+     "schemas": [
+      "axon.closed-loop.context/1",
+      "axon.closed-loop.episode/1",
+      "axon.closed-loop.policy/1",
+      "axon.closed-loop.transition/1"
+     ],
+     "features": [],
+     "adapters": []
+    }
+   }
+  },
+  {
+   "name": "absent_peer",
+   "why": "no profile document at all",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": null,
+   "expect": {
+    "unsupported": "no_offer"
+   }
+  },
+  {
+   "name": "old_peer_cortex_policy_v1",
+   "why": "a cortex-policy-adapter v1 request is not a profile offer; the adapter is not inferred",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"protocol_version\":1,\"action\":\"inspect\",\"principal\":\"agent\",\"target_path\":\"x\",\"snapshot_id\":\"s1\"}",
+   "expect": {
+    "unsupported": "not_a_profile"
+   }
+  },
+  {
+   "name": "old_peer_axon_bridge_v0",
+   "why": "a document tagged axon-bridge/v0 is not a profile offer; the adapter is not inferred",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"axon-bridge/v0\",\"episode_id\":\"ep-1\"}",
+   "expect": {
+    "unsupported": "not_a_profile"
+   }
+  },
+  {
+   "name": "other_profile_version",
+   "why": "closed-loop-profile/2 is refused, not downgraded",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/2\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\"],\"features\":[],\"adapters\":[],\"required\":[]}",
+   "expect": {
+    "unsupported": "unknown_profile_version"
+   }
+  },
+  {
+   "name": "unknown_field",
+   "why": "an unknown top-level field is refused",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\"],\"features\":[],\"adapters\":[],\"required\":[],\"extra\":true}",
+   "expect": {
+    "unsupported": "refused",
+    "refusal": "unknown_field"
+   }
+  },
+  {
+   "name": "duplicate_key",
+   "why": "a duplicate key is refused (not last-wins)",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\"],\"features\":[],\"adapters\":[],\"required\":[],\"schemas\":[\"axon.closed-loop.other/1\"]}",
+   "expect": {
+    "unsupported": "refused",
+    "refusal": "duplicate_key"
+   }
+  },
+  {
+   "name": "escaped_alias_key",
+   "why": "a key spelled with an escape that decodes to an existing key is refused",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\"],\"features\":[],\"adapters\":[],\"required\":[],\"sch\\u0065mas\":[\"axon.closed-loop.other/1\"]}",
+   "expect": {
+    "unsupported": "refused",
+    "refusal": "duplicate_key"
+   }
+  },
+  {
+   "name": "missing_required_list",
+   "why": "every list is required, even when empty",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\"],\"features\":[],\"adapters\":[]}",
+   "expect": {
+    "unsupported": "refused",
+    "refusal": "shape"
+   }
+  },
+  {
+   "name": "empty_schemas",
+   "why": "an offer with no schemas is malformed",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[],\"features\":[],\"adapters\":[],\"required\":[]}",
+   "expect": {
+    "unsupported": "refused",
+    "refusal": "shape"
+   }
+  },
+  {
+   "name": "duplicate_list_item",
+   "why": "list items are unique",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\",\"axon.closed-loop.context/1\"],\"features\":[],\"adapters\":[],\"required\":[]}",
+   "expect": {
+    "unsupported": "refused",
+    "refusal": "shape"
+   }
+  },
+  {
+   "name": "bad_id_case",
+   "why": "ids are lowercase and exact",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"Axon.closed-loop.policy/1\"],\"features\":[],\"adapters\":[],\"required\":[]}",
+   "expect": {
+    "unsupported": "refused",
+    "refusal": "shape"
+   }
+  },
+  {
+   "name": "bad_id_leading_zero",
+   "why": "versions have no leading zero",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.policy/01\"],\"features\":[],\"adapters\":[],\"required\":[]}",
+   "expect": {
+    "unsupported": "refused",
+    "refusal": "shape"
+   }
+  },
+  {
+   "name": "id_in_two_lists",
+   "why": "an id may appear in only one vocabulary",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\"],\"features\":[\"axon.closed-loop.context/1\"],\"adapters\":[],\"required\":[]}",
+   "expect": {
+    "unsupported": "refused",
+    "refusal": "semantic"
+   }
+  },
+  {
+   "name": "required_not_offered",
+   "why": "required must be a subset of what is offered",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\"],\"features\":[],\"adapters\":[],\"required\":[\"usage/2\"]}",
+   "expect": {
+    "unsupported": "refused",
+    "refusal": "semantic"
+   }
+  },
+  {
+   "name": "profile_tag_as_schema",
+   "why": "the profile document is not itself negotiable",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"closed-loop-profile/1\"],\"features\":[],\"adapters\":[],\"required\":[]}",
+   "expect": {
+    "unsupported": "refused",
+    "refusal": "semantic"
+   }
+  },
+  {
+   "name": "accept_sent_as_offer",
+   "why": "a role:accept document is not an offer",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"accept\",\"peer\":\"micode\",\"offer_ref\":\"cl22:0000000000000000000000000000000000000000000000000000000000000000\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\"],\"features\":[],\"adapters\":[]}",
+   "expect": {
+    "unsupported": "refused",
+    "refusal": "shape"
+   }
+  },
+  {
+   "name": "float",
+   "why": "no floats anywhere",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\"],\"features\":[],\"adapters\":[],\"required\":[],\"n\":1.0}",
+   "expect": {
+    "unsupported": "refused",
+    "refusal": "float"
+   }
+  },
+  {
+   "name": "not_an_object",
+   "why": "an array is not an offer",
+   "local": {
+    "peer": "axon",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [],
+    "adapters": [
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "[\"closed-loop-profile/1\"]",
+   "expect": {
+    "unsupported": "refused",
+    "refusal": "shape"
+   }
+  }
+ ],
+ "confirm": [
+  {
+   "name": "confirm_subset",
+   "why": "a subset accept bound to this offer is agreed",
+   "local": {
+    "peer": "micode",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [
+     "usage/2"
+    ],
+    "adapters": [
+     "axon-bridge/v0",
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\"],\"features\":[\"usage/2\"],\"adapters\":[\"axon-bridge/v0\",\"cortex-policy-adapter/1\"],\"required\":[]}",
+   "accept": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"accept\",\"peer\":\"axon\",\"offer_ref\":\"cl22:e95e2f29a57adf726f717d390465f9151d36a5f1ccb2425b05e95f56236f6be9\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\"],\"features\":[],\"adapters\":[\"cortex-policy-adapter/1\"]}",
+   "expect": {
+    "agreement": {
+     "schemas": [
+      "axon.closed-loop.context/1",
+      "axon.closed-loop.episode/1"
+     ],
+     "features": [],
+     "adapters": [
+      "cortex-policy-adapter/1"
+     ]
+    }
+   }
+  },
+  {
+   "name": "confirm_usage2",
+   "why": "usage/2 in the accept, offered by us: agreed",
+   "local": {
+    "peer": "micode",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [
+     "usage/2"
+    ],
+    "adapters": [
+     "axon-bridge/v0",
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\"],\"features\":[\"usage/2\"],\"adapters\":[\"axon-bridge/v0\",\"cortex-policy-adapter/1\"],\"required\":[]}",
+   "accept": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"accept\",\"peer\":\"axon\",\"offer_ref\":\"cl22:e95e2f29a57adf726f717d390465f9151d36a5f1ccb2425b05e95f56236f6be9\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\"],\"features\":[\"usage/2\"],\"adapters\":[\"cortex-policy-adapter/1\"]}",
+   "expect": {
+    "agreement": {
+     "schemas": [
+      "axon.closed-loop.context/1",
+      "axon.closed-loop.episode/1"
+     ],
+     "features": [
+      "usage/2"
+     ],
+     "adapters": [
+      "cortex-policy-adapter/1"
+     ]
+    }
+   }
+  },
+  {
+   "name": "confirm_usage2_not_offered",
+   "why": "an accept that selects usage/2 we did not offer is refused (one-sided Usage/2)",
+   "local": {
+    "peer": "micode",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [
+     "usage/2"
+    ],
+    "adapters": [
+     "axon-bridge/v0",
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\"],\"features\":[],\"adapters\":[\"axon-bridge/v0\",\"cortex-policy-adapter/1\"],\"required\":[]}",
+   "accept": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"accept\",\"peer\":\"axon\",\"offer_ref\":\"cl22:87191628660b09bfc957ceecdb44761ebee2f98b6a799f6507e8b85a81cfc282\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\"],\"features\":[\"usage/2\"],\"adapters\":[\"cortex-policy-adapter/1\"]}",
+   "expect": {
+    "unsupported": "not_offered"
+   }
+  },
+  {
+   "name": "confirm_offer_mismatch",
+   "why": "an accept bound to a different offer is refused",
+   "local": {
+    "peer": "micode",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [
+     "usage/2"
+    ],
+    "adapters": [
+     "axon-bridge/v0",
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\"],\"features\":[\"usage/2\"],\"adapters\":[\"axon-bridge/v0\",\"cortex-policy-adapter/1\"],\"required\":[]}",
+   "accept": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"accept\",\"peer\":\"axon\",\"offer_ref\":\"cl22:0000000000000000000000000000000000000000000000000000000000000000\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\"],\"features\":[],\"adapters\":[\"cortex-policy-adapter/1\"]}",
+   "expect": {
+    "unsupported": "offer_mismatch"
+   }
+  },
+  {
+   "name": "confirm_unoffered_schema",
+   "why": "an accept selecting an un-offered schema is refused",
+   "local": {
+    "peer": "micode",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [
+     "usage/2"
+    ],
+    "adapters": [
+     "axon-bridge/v0",
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\"],\"features\":[\"usage/2\"],\"adapters\":[\"axon-bridge/v0\",\"cortex-policy-adapter/1\"],\"required\":[]}",
+   "accept": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"accept\",\"peer\":\"axon\",\"offer_ref\":\"cl22:e95e2f29a57adf726f717d390465f9151d36a5f1ccb2425b05e95f56236f6be9\",\"schemas\":[\"axon.closed-loop.other/1\"],\"features\":[],\"adapters\":[\"cortex-policy-adapter/1\"]}",
+   "expect": {
+    "unsupported": "not_offered"
+   }
+  },
+  {
+   "name": "confirm_unknown_field",
+   "why": "an accept with an unknown field is refused",
+   "local": {
+    "peer": "micode",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [
+     "usage/2"
+    ],
+    "adapters": [
+     "axon-bridge/v0",
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\"],\"features\":[\"usage/2\"],\"adapters\":[\"axon-bridge/v0\",\"cortex-policy-adapter/1\"],\"required\":[]}",
+   "accept": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"accept\",\"peer\":\"axon\",\"offer_ref\":\"cl22:e95e2f29a57adf726f717d390465f9151d36a5f1ccb2425b05e95f56236f6be9\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\"],\"features\":[],\"adapters\":[\"cortex-policy-adapter/1\"],\"extra\":1}",
+   "expect": {
+    "unsupported": "refused",
+    "refusal": "unknown_field"
+   }
+  },
+  {
+   "name": "confirm_required_dropped",
+   "why": "an accept that drops what we required is refused",
+   "local": {
+    "peer": "micode",
+    "schemas": [
+     "axon.closed-loop.context/1",
+     "axon.closed-loop.episode/1",
+     "axon.closed-loop.policy/1",
+     "axon.closed-loop.transition/1"
+    ],
+    "features": [
+     "usage/2"
+    ],
+    "adapters": [
+     "axon-bridge/v0",
+     "cortex-policy-adapter/1"
+    ],
+    "required": []
+   },
+   "offer": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"offer\",\"peer\":\"micode\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\",\"axon.closed-loop.policy/1\",\"axon.closed-loop.transition/1\"],\"features\":[\"usage/2\"],\"adapters\":[\"axon-bridge/v0\",\"cortex-policy-adapter/1\"],\"required\":[\"usage/2\"]}",
+   "accept": "{\"schema\":\"closed-loop-profile/1\",\"role\":\"accept\",\"peer\":\"axon\",\"offer_ref\":\"cl22:b71da95a9cfc194b5929236cd93b59bef96d59a63b0ce9a653f0c21575eea254\",\"schemas\":[\"axon.closed-loop.context/1\",\"axon.closed-loop.episode/1\"],\"features\":[],\"adapters\":[\"cortex-policy-adapter/1\"]}",
+   "expect": {
+    "unsupported": "required_not_agreed",
+    "side": "offerer",
+    "id": "usage/2"
+   }
+  }
+ ]
+}

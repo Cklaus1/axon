@@ -1,0 +1,9 @@
+{
+  "schema": "axon-observer/1",
+  "observer_uid": 994,
+  "fabric_uid": 991,
+  "caller_uid": 0,
+  "socket": "/run/axon-observer/observer.sock",
+  "store": "/var/lib/axon-observer/observed",
+  "key_path": "/var/lib/axon-observer/key/observer.pk8"
+}

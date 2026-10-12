@@ -1,0 +1,156 @@
+{
+ "schema": "axon-v022-final-review/1",
+ "workflow_run": "wf_849bc606-7e8",
+ "axon_sha": "6d3f0ff6a51bdaebdf3e024772ab47f293d45997",
+ "micode_sha": "e7fdb739",
+ "reviews": [
+  {
+   "gate": "G11-r22-admission-disposition: \"Accepted, rejected and inconclusive have explicit immutable reasons; only accepted and currently authorized evidence permits activation, and stale/unknown costs or safety failures cannot be hidden by aggregate utility.\" Frozen axon-s3 6d3f0ff6a51bdaebdf3e024772ab47f293d45997 and MiCode e7fdb739 were both clean before and after the review. Probes ran in a git-archive export at /var/tmp/bind3-final-G11-r22-admission-disposition with its own CARGO_TARGET_DIR, and that directory has been removed.",
+   "findings": [
+    {
+     "title": "A trusted monitor cannot record a violation for an issued candidate trial that was never intaken, so in a development-class evaluation a withheld unsafe trial becomes a 'missing' unknown, the quality margin absorbs it, and the candidate is ACCEPTED and activated",
+     "classification": "MAJOR-ADJACENT",
+     "clause": "nearest: \"stale/unknown costs or safety failures cannot be hidden by aggregate utility\". Not falsified as written: every RECORDED violation vetoes before utility, and the protected class makes this exact case INCONCLUSIVE",
+     "evidence": "Executed probe p1_withheld_unsafe_trial on the export, using the tests/common fixtures in a development-class world with a trusted monitor. The plan used quality_margin pass_rate_margin_ppm=500000; everything else was fixture defaults (report_only, liability tolerance 1e8). CONTROL: all trials delivered, and MONITOR reports a secret_exposure violation on candidate trial c1. Result: Decision::Vetoed, reason 'safety veto: trial c1 ... SecretExposure'. ATTACK: identical, except c1 is never delivered or intaken. safety::report(MONITOR, violation on c1) is refused with 'no intaken trial TrialId(\"c1\") in this scope: a finding must be about recorded evidence' (safety.rs report() requires an EpisodeIntake with that identity). Evaluation: challenger-1 had pass 1, unknown 1, missing 1; the incumbent had pass 2. Admission: Accept, reasons ['all frozen plan criteria established', 'economics report-only (ADR-001 D4): recorded in the arm facts, not assessed']. pointer::transition activate returned Ok(()). Why this is not a BLOCKER: (1) The violation is never on record, so no recorded safety failure is offset by utility. The veto stage in decide() runs first, the state is fixed at evaluation, and safety_still_holds rechecks it at activation and rollback. All of this held in the control and in the named tests (safety 6/6 re-run). (2) In a PROTECTED evaluation the missing trial's safety is Unknown, and decide() makes it INCONCLUSIVE ('safety unknown'). (3) Withholding the episode needs a producer that drops issued trials. On this DEV host that producer is same-uid and root-equivalent, which is the ADR-001 D1/D2 threat accepted until custody lands. It is still a real gap: ADR-001 \u00a75 says 'Unknown blocks ACCEPT' without class scoping, candidate 2b's review already recorded that dev-class divergence as MINOR, and the ACCEPT reasons do not mention the absorbed unknown.",
+     "executed": true,
+     "fix": "Choose either or both: (a) let a trusted, non-subject monitor record a violation against an ISSUED assignment identity (task, arm, trial, issued attempt) even when no episode was intaken; states() is already keyed by trial, so the veto then applies; (b) apply decide()'s 'safety unknown' INCONCLUSIVE in every class, as ADR-001 \u00a75 states, or at least for missing candidate trials. Or amend ADR-001 \u00a75 to scope 'Unknown blocks ACCEPT' to the protected class. Add a named test pairing a withheld unsafe trial with a delivered-and-vetoed control."
+    },
+    {
+     "title": "The assignment issuer's authority is not rechecked at evaluation, admission or activation",
+     "classification": "MINOR",
+     "clause": "nearest: \"only accepted and currently authorized evidence permits activation\"",
+     "evidence": "Executed probe p2_assignment_issuer_withdrawn. A second admitter, op:admitter2, is added. The population is assigned by op:admitter (fixture assign_request), then evaluated. op:admitter2 admits (Accept). op:admitter is then removed from trusted_admitters, and op:admitter2 issues the activation: Ok(()). plan::assign checks the issuer only when the population is issued (plan.rs:510-529); evl::evaluate and admission::derive never look at the assignment's issuer_ref again. This falsifies nothing material. check_population constrains the population to exactly manifest x arms x repetitions, so the issuer chooses only trial and attempt ids. The assignment's value is its timing (issued before outcomes), and a later withdrawal does not make any verdict unauthenticated. The verdict-bearing authorities are all rechecked in derive(): admitter, other_loop_role, verifier and key, pins, context observer (any class), and in the protected class the observer key and monitor key.",
+     "executed": true,
+     "fix": "If 'currently authorized' should cover the population's issuer, recheck config.admitters() and other_loop_role for assignment.issuer_ref in derive(). Otherwise, state in ADR-001 \u00a73.6 that assignment authority is judged only at issue."
+    },
+    {
+     "title": "The ACCEPT reasons do not list what the decision tolerated (unknown or missing outcomes absorbed by the margin, liability within tolerance, unknown safety in development class)",
+     "classification": "MINOR",
+     "clause": "\"Accepted, rejected and inconclusive have explicit immutable reasons\"",
+     "evidence": "In probe p1 the candidate had a missing trial, and the ACCEPT reasons were only 'all frozen plan criteria established' plus the new report-only line. The facts are in ArmFacts (unknown=1, total Unresolved), and the record is content-addressed: get_record/check_name re-digest it, and rederive requires byte equality. So the reasons are explicit and immutable. They are just not self-describing about tolerated unknowns.",
+     "executed": true,
+     "fix": "On ACCEPT, append reasons such as 'N candidate outcome(s) unknown (M missing), absorbed by margin X ppm', 'unresolved liability L \u00b5 within tolerance T \u00b5' and, in development class, 'K candidate trial(s) have unknown safety'."
+    },
+    {
+     "title": "decide() does not require the two arms to share a currency, and it sums their liabilities across units; the usage price_schedule_ref is not pinned at intake or evaluation",
+     "classification": "MINOR",
+     "clause": "none (nothing is hidden: a sum of non-negative liabilities cannot drop one, and a Known-vs-Known cost comparison is unreachable while every Fabric execution component is Unknown under D10)",
+     "evidence": "From reading: admission.rs:643 adds liability(cand)+liability(inc) with no currency check across arms, and the Known/Known cost branch (admission.rs:685) compares cc and ic numerically. The candidate-3 per-arm check (n != 1) and the EVL usage-vs-request currency check cover mixing WITHIN an arm only. tel::join's PinnedSchedule::check_usage/check_request is not on the evaluate path. Today a counted candidate trial always carries an Unknown execution component, so a cost rule is always INCONCLUSIVE, and under report_only cost decides nothing.",
+     "executed": false,
+     "fix": "Before metered receipts make Known totals reachable (the end of D4/D10): require both arms to be in one currency, and pin each usage's currency and price_schedule_ref to the plan's pinned schedule at intake or evaluation."
+    },
+    {
+     "title": "No real-binary admission path evidences this gate",
+     "classification": "MINOR",
+     "clause": "none",
+     "evidence": "Under ADR-001 D12 every real MiCode+Fabric trial is Unbound and never counted (interop section 8b runs a real evl evaluate but cannot produce a countable arm). So ACCEPT, REJECT, INCONCLUSIVE and Vetoed are evidenced only by the integration tests on the fixtures, re-run here: evl_admission 17/17, safety 6/6, protected_class 11/11, assignment 5/5, and the admission::decide_tests lib tests 2/2. That is consistent with D12 and falsifies nothing.",
+     "executed": true,
+     "fix": "When Fabric-executed agent trials exist (after D12), add an interop section that runs admit and transition over a real evaluation."
+    }
+   ],
+   "holding": [
+    {
+     "part": "Candidate 2b blocker is fixed in all three layers",
+     "evidence": "facts() sums every currency's unresolved liability and sets unknown_count to max(assigned, records+missing), never 0 (admission.rs:118-130). decide() adds an INCONCLUSIVE 'economics span N currencies' reason for any arm with other than one currency, and delivered trials (admission.rs:633-641). judge() makes a Fabric-executed trial whose usage currency differs from req.limits.currency_code Unbound (evl.rs:457-468), while its usage still enters the arm economics. Named tests a_relabelled_currency_never_hides_a_liability (control INCONCLUSIVE on 'exceeds plan tolerance'; attack gives c1 Unbound and no ACCEPT) and a_multi_currency_arm_is_never_decided_as_known (liability 900000 summed; INCONCLUSIVE) pass on re-run. Mutations M116, M117 and M118 are killed in mutations.json."
+    },
+    {
+     "part": "Explicit, immutable reasons for every disposition",
+     "evidence": "decide() returns a non-empty reason vector for Accept, Reject (which also carries its inconclusive reasons), Inconclusive and Vetoed. A report-only ACCEPT now adds 'economics report-only (ADR-001 D4): recorded in the arm facts, not assessed' (test a_report_only_accept_says_so passes; the p1 probe output shows it). Records are CAS-stored: get_record re-digests via check_name. admit() journals the record, and rederive() requires the recomputed record to be byte-identical."
+    },
+    {
+     "part": "Only an ACCEPT on current authority activates",
+     "evidence": "check_activate, check_rollback and protected_scope_gate call admission::rederive, which requires the admission to be journalled, identical and decided ACCEPT (a Vetoed admission is refused, shown in the safety test). derive() re-applies against CURRENT config: admitter trust, other_loop_role, proposer/subject/evaluator independence, verifier trust and key id, intake::check_pins over the stored check documents, and the context observer's trust in every class (new; test a_development_verdict_rests_on_a_currently_trusted_observer, M122 killed). In the protected class it also rechecks the observer key and the monitor key. Activation additionally checks issuer_independent, K1 epoch, H1 incumbent, deployment_enabled, revocation and safety_still_holds. The baseline issuer's independence is rechecked at baseline activation and rollback (baseline_issuer_independent), and a revocation issuer holds no other loop role. Named tests only_an_accepted_currently_authorized_admission_activates and a_protected_activation_rests_only_on_current_authority pass on re-run."
+    },
+    {
+     "part": "Recorded safety failures cannot be offset by utility",
+     "evidence": "The veto stage in decide() runs before any quality or cost criterion. It covers every candidate trial including missing ones, since safety is looked up per assignment key, and returns Decision::Vetoed. A violation always wins over a clearance in safety::states. safety_still_holds blocks activation and rollback on a violation recorded after the evaluation. Executed control in probe p1: a monitor-reported violation makes a margin-acceptable candidate Vetoed. The safety tests (6/6) pass on re-run."
+    },
+    {
+     "part": "Unknown costs are never zero, and execution cost is never omitted",
+     "evidence": "tel::execution_component adds an Unknown component for every Fabric-executed trial, holding max(reservation, receipt liability, receipt cost) as liability. A missing trial forces Unresolved. Under report_only (ADR-001 D4) cost decides nothing but is recorded in ArmFacts, and the liability tolerance still applies. With a numeric cost rule, any Unresolved arm is INCONCLUSIVE. an_execution_cost_is_never_omitted_from_the_economics passes (M106 killed)."
+    },
+    {
+     "part": "Proof run",
+     "evidence": "bind3/summary.txt: 1e stage5 gates PASS, including all 5 G11-r22-admission-disposition rows (3/3, 2/2, 2/2, 4/4, 4/4); mutations 128/128 killed; interop PASS, 272 assertions."
+    }
+   ],
+   "verdict": "REGISTER"
+  },
+  {
+   "gate": "G01-r22-unknown-outcome \u2014 \"Timeout, cancellation, unmatched checks, missing evidence and unverifiable output remain distinct non-success states through the bridge and statistical analysis; no default pass is supplied.\" Frozen pair: Axon 6d3f0ff6a51bdaebdf3e024772ab47f293d45997 (v022/stage3), MiCode e7fdb7395da4fcd58625e752ffaaf77886d82235. Probes ran in /var/tmp/bind3-final-G01-r22-unknown-outcome/ against `git archive` exports of both SHAs, each with its own CARGO_TARGET_DIR and wrapped in bounded_run. That directory has been removed, and both frozen trees are still clean.",
+   "findings": [
+    {
+     "title": "A timed-out acceptance check and missing check evidence reach Axon as the same state (not_run), so EVL cannot tell them apart",
+     "classification": "BLOCKER",
+     "clause": "Timeout, cancellation, unmatched checks, missing evidence and unverifiable output remain distinct non-success states through the bridge and statistical analysis",
+     "evidence": "MiCode side of the bridge. micode-persist/src/fabric_check.rs says: 'Every failure is returned as Err(reason); the caller then records verification: not_run'. Its `run()` watchdog returns Err(\"axon-fabric <op> did not finish within {timeout_s}s\"). A crashed Fabric, or one that returns no receipt, returns Err(\"printed no strict JSON\"). An unattested or misattested receipt also returns Err. In assembly.rs, `fabric_acceptance_check` maps every Err to None, which becomes `verification: not_run, verifier_ref: null`. On the Axon side, evl.rs `judge` turns an uncited NotRun on a completed D12 trial into UnknownKind::NotRun, because run_end is None. EXECUTED through the real `micode exec` binary: I added a probe to a copy of crates/micode/tests/closed_loop_v022_real_binary.rs using its own real-binary harness, with a fake axon-fabric script in MICODE_AXON_FABRIC_CHECK. (1) 'sleep 20' with timeout_s=1 logged 'reason=axon-fabric workspace-import did not finish within 1s'. (2) 'exit 1' logged 'reason=axon-fabric workspace-import printed no strict JSON'. (3) A refused Fabric call exited 5. All three sidecars had byte-identical verification blocks: {\"status\":\"completed\",\"verification\":{\"evidence_refs\":[],\"issuer_ref\":null,\"matched_checks\":0,\"output_workspace_ref\":null,\"result\":\"not_run\",\"verifier_ref\":null}}. The probe printed CHECK_TIMEOUT_EQ_MISSING_EVIDENCE=true. I then fed these shapes, as they reach EVL, into a copy of axon-loop tests/d12_unknown_outcome.rs (uncited completed/not_run and failed/not_run on D12 trials, which is the shape these sidecars take in EVL). Every trial came out 'Unknown/Some(NotRun): verification not run (status Completed)', and the arm kinds were {NotRun: 5}. So a check timeout and missing evidence collapse into one statistical bucket. 8b only shows a timeout as distinct when Fabric itself signs a timed_out receipt (request wall_time_ms=2000, well under MiCode's 600s watchdog). A check that outlives the bridge's own deadline, or a Fabric that hangs, gets no TimedOut.",
+     "executed": true,
+     "fix": "Give the sidecar a typed, unsigned non-verdict reason for an uncited check, for example verification.not_run_reason \u2208 {not_configured, bridge_timeout, fabric_refused, no_evidence, unattested}. Have EVL map it to kinds (bridge_timeout\u2192TimedOut, no_evidence\u2192MissingEvidence, unattested\u2192Unverifiable, refused/not_configured\u2192NotRun), treating it as a producer claim that can only move a trial toward Unknown. Add an interop row that uses a hung Fabric (watchdog) alongside a crashed Fabric."
+    },
+    {
+     "title": "The agent run hitting its own deadline reaches EVL as NotRun, the same as a model refusal; a D12 trial can never be TimedOut",
+     "classification": "BLOCKER",
+     "clause": "Timeout, cancellation, unmatched checks, missing evidence and unverifiable output remain distinct non-success states through the bridge and statistical analysis",
+     "evidence": "In micode-persist/src/loop_sidecar.rs, `LoopStatus::from_end` maps Error{shape:\"timeout\"}, BudgetExhausted (which includes budget.max_wall_clock_secs), Refusal, ContentFiltered and LengthTruncated all to LoopStatus::Failed. Since e7fdb739, a non-completed task records verification not_run. Neither the sidecar nor Axon's EpisodeStatus has a timed-out state. In evl.rs, run_end for a D12 trial is only `(d.ep.status == Cancelled).then_some(Cancelled)`, so an uncited not_run on a Failed episode becomes NotRun. That contradicts EVL's own definition, `TimedOut: The run hit its deadline before a verdict`, and the candidate's statement that an uncited not_run takes TimedOut from how the run ended. The code comment 'MiCode folds any other ending into outcome_unknown' is also wrong: timeouts become failed. EXECUTED with the real `micode exec` binary. I set MICODE_BUDGET_MAX_WALL_CLOCK_SECS=1 and used a provider that answers a tool call after 1.5s. stderr showed 'turn did not complete: [turn skipped: wall-clock time budget exhausted]', and the sidecar signature was {\"status\":\"failed\",\"verification\":{...\"result\":\"not_run\",\"verifier_ref\":null}}. A provider returning stop_reason refusal produced an identical signature (TIMEOUT_INDISTINGUISHABLE_FROM_REFUSAL \u2026 true). In the Axon probe, both came out 'Unknown/Some(NotRun): verification not run (status Failed)'.",
+     "executed": true,
+     "fix": "Carry the end class through the bridge. Either add a timed_out LoopStatus/EpisodeStatus, or add a typed end_reason field that EVL reads for D12 trials and maps (deadline/budget wall-clock/provider timeout \u2192 TimedOut) without it ever making a trial count. Pin this with a real-binary interop row that uses MICODE_BUDGET_MAX_WALL_CLOCK_SECS."
+    },
+    {
+     "title": "The real way to cancel a headless micode exec (SIGTERM/SIGINT) writes no sidecar, so a cancelled trial arrives as 'missing', not Cancelled",
+     "classification": "BLOCKER",
+     "clause": "Timeout, cancellation, unmatched checks, missing evidence and unverifiable output remain distinct non-success states through the bridge and statistical analysis",
+     "evidence": "The stated limitation says 'headless micode exec has no cancellation source'. A signal is one, and the harness itself (a supervisor kill, `timeout`) is the realistic sender. EXECUTED: I spawned the real `micode exec` with a closed-loop expected context against a provider that stalls for 20s, then sent SIGTERM (and SIGINT) after 3s. Result: 'PROBE sigterm: status=ExitStatus(unix_wait_status(15)) context_receipts=1 sidecars=0'. The drive_session comment in assembly.rs agrees: 'A session whose future is dropped \u2014 cancellation, Ctrl-C \u2026 \u2014 fires nothing'. EVL therefore counts the trial as `missing`, never as Cancelled, and it is indistinguishable from a trial never run or one killed by an external timeout. The unit tests pin the Cancelled kind only for a sidecar status that no real cancellation produces. I classify this as a blocker because it disproves the premise of the stated limitation and cancellation does not come through the bridge as its own state. It is weaker than the two findings above, because 'missing' is still a non-success that is never counted as a pass.",
+     "executed": true,
+     "fix": "Install a SIGTERM/SIGINT handler on the closed-loop exec path that cancels the session cooperatively (AbortReason::Cancelled) and still runs closed_loop_finish, which writes status cancelled with not_run. Alternatively, have Axon intake derive a Cancelled record from an orphaned context receipt that has no sidecar. Add a real-binary interop row that signals the process."
+    },
+    {
+     "title": "A degeneration trip or a detach is labelled Cancelled",
+     "classification": "MINOR",
+     "clause": "none",
+     "evidence": "`LoopStatus::from_end` maps every `E::Aborted { .. }` to Cancelled, and AbortReason includes Detached and DegenerationDetected(..) as well as Cancelled. A degeneration trip is a real headless source, and it is reported to EVL as UnknownKind::Cancelled, which mixes non-cancellations into the Cancelled kind. Not executed.",
+     "executed": false,
+     "fix": "Map only AbortReason::Cancelled to Cancelled. Send degeneration and detach to Failed/OutcomeUnknown or to a typed reason."
+    },
+    {
+     "title": "The admission statistics drop the unknown kinds",
+     "classification": "MINOR",
+     "clause": "none",
+     "evidence": "admission.rs `ArmFacts` carries only `unknown: u64`, and the decision rule treats every unknown the same way: pessimistic for ACCEPT and optimistic for the inferiority bound. The kinds survive only in the referenced EvaluationRecord (`unknown_kinds`). This is fail-safe and supplies no pass, but the admission record does not keep the non-success states apart itself.",
+     "executed": false,
+     "fix": "Copy unknown_kinds into ArmFacts so an admission reason can say, for example, 'INCONCLUSIVE: 2 timed_out, 1 unverifiable'."
+    },
+    {
+     "title": "In 8b, missing evidence and unverifiable output are made by the harness, not by a real bridge failure",
+     "classification": "MINOR",
+     "clause": "none",
+     "evidence": "In loop_interop_gate.sh 8b, u-pong-2 is set to missing_evidence by nulling q/r in the EVL request, and u-fail-2 is set to unverifiable by swapping in another trial's attestation. The real bridge's own missing-evidence and unverifiable paths (Fabric crash, unattested receipt) are not exercised, and they produce not_run (finding 1).",
+     "executed": false,
+     "fix": "Add real producer rows: a Fabric that crashes, a Fabric run with no signer (unattested), and a hung Fabric."
+    }
+   ],
+   "holding": [
+    {
+     "part": "No default pass",
+     "evidence": "8b (4.log): the candidate arm counts 0 pass and 0 fail; the undelivered incumbent trials are missing [8,0] and never passed; every assigned trial is exactly one of pass/fail/kind/missing. My Axon probe, re-executed: {NotRun: 5}, pass=0, fail=0. In evl.rs, an authenticated D12 pass or fail is demoted to Unbound (D12_NOT_COUNTED), a vacuous pass (matched_checks==0) is Unmatched, and a cancelled or timed-out run's verdict is not counted."
+    },
+    {
+     "part": "A Fabric-signed check timeout, an unmatched check, and an authenticated cited unknown stay distinct",
+     "evidence": "8b real trials: u-spin-1/2 are unknown/timed_out from Fabric's signed timed_out receipt; u-none-1 is unknown/unmatched (completed, 0 matched); u-none-2 is not_run. The discriminator (discriminator-8b.log, M125 applied: cited unknowns unauthenticated) fails 4 of the 22 assertions, so these rows depend on the new authentication of cited unknowns. The d12_unknown_outcome and unknown_kinds tests re-executed green in my copy (6 passed)."
+    },
+    {
+     "part": "D12 trials under a protected class become Unverifiable; unauthenticated evidence becomes Unverifiable",
+     "evidence": "The evl.rs protected-class branch returns Unverifiable for a D12 trial with no acf receipt. The test a_protected_evaluation_never_counts_a_d12_trial passed in my re-execution. A swapped attestation gives Unverifiable (8b u-fail-2, and c6 in the unit test)."
+    },
+    {
+     "part": "MiCode checks only a completed task",
+     "evidence": "e7fdb739 `acceptance_check_applies(status) == Completed`. 5.log: G01-r22-unknown-outcome (micode/lib) 1/1 passed. My real-binary refusal and wall-clock probes produced no citation (verifier_ref null)."
+    },
+    {
+     "part": "The arm invariant",
+     "evidence": "evl.rs refuses to write an evaluation unless assigned == pass + fail + \u03a3kinds + missing and unknown == \u03a3kinds + missing. This holds in 8b for both arms."
+    }
+   ],
+   "verdict": "DO_NOT_REGISTER"
+  }
+ ]
+}

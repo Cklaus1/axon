@@ -46,8 +46,9 @@ if ! rustup target list --installed 2>/dev/null | grep -q '^wasm32-wasip1$'; the
   echo "wasi_env_control_gate: wasm32-wasip1 not installed — skipping"; exit 0
 fi
 
-AXON="${AXON:-target/debug/axon}"
-[ -x "$AXON" ] || { echo "wasi_env_control_gate: $AXON missing — build it first" >&2; exit 1; }
+# Runs only the binary its caller names (scripts/lib/axon_bin.sh).
+. scripts/lib/axon_bin.sh
+named_bin AXON wasi_env_control_gate
 
 echo "── WASI env-control gate ──────────────────────────────────────────"
 

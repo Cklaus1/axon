@@ -1,0 +1,13 @@
+// R51 S0b: a callee's `continue` does not skip the caller's iteration.
+// `skip(i)` compiles to an inline-argument `CallFast`.
+fn skip(n: i64) -> i64 {
+    if n > 2 { continue }
+    n * 10
+}
+
+fn main() {
+    for i in 0..6 {
+        println(to_str(skip(i)))
+    }
+    println("unreachable: the loop skipped silently")
+}

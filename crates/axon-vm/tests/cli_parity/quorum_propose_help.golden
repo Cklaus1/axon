@@ -1,0 +1,49 @@
+exit: Some(0)
+--- stdout ---
+Propose an action for cross-VM quorum approval.
+
+Measures this host's own R31 extended TCB (`axtcb1-ext:`) as the proposer identity — or a clearly-labeled CI mock identity when `AXON_CI_NO_KVM=1` or the real kernel/axon-os binaries are unavailable — and writes a `VoteRequest` JSON file for peer VMs to vote on.
+
+Usage: axon-vm quorum propose [OPTIONS] --run-id <RUN_ID> --prog <PROG> --action <ACTION> --out <OUT>
+
+Options:
+      --run-id <RUN_ID>
+          Unique id for this quorum instance (binds request and responses together)
+
+      --prog <PROG>
+          Path to the Axon program (or job description) being proposed
+
+      --action <ACTION>
+          Human-readable description of the proposed action
+
+      --out <OUT>
+          Output path for the VoteRequest JSON
+
+      --kernel <KERNEL>
+          Guest kernel image to measure (default: dist/guest/vmlinuz)
+
+      --axon-os <AXON_OS>
+          axon-os binary to measure (default: sibling of this executable)
+
+      --axon-audit <AXON_AUDIT>
+          axon-audit-writer binary to measure (default: sibling; absent → R28-pending sentinel)
+
+      --broadcast <BROADCAST>
+          R33.S2e: also broadcast the VoteRequest to these peers (comma-separated "host:port" TCP-loopback addresses — the R33 spec §5.2.2 CI stand-in for real AF_VSOCK) and run the same strict-majority check `quorum check` does against whatever VoteResponses come back within --deadline-ms, exiting with the same 0/13/14 convention. Omit for the original write-only behavior (unaffected)
+
+      --n <N>
+          Required fleet size for the --broadcast quorum check (operator-configured, NOT necessarily the number of --broadcast peers). Defaults to the peer count if omitted
+
+      --deadline-ms <DEADLINE_MS>
+          Deadline for the --broadcast round trip, in milliseconds
+          
+          [default: 5000]
+
+      --json
+          Emit JSON output (only meaningful with --broadcast)
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+--- stderr ---
+

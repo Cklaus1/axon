@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S4b",
+  "text": "TEST-ONLY: v0.22's S4 dispatch rows ported under their v0.22 names in interp/tests_v022_s4.rs (included at the end of interp.rs mod tests; ignored R51 S6, they need a live sealed run); tests/dispatch_rule_switch_is_test_only.rs un-ignored and extended to TAINT_FORCE_ON; drift tests for the goal-name call edge and the impl_method/dispatch_named sink classification; no behaviour change; every sealed run is still refused (SEAL_RUNTIME_COMPLETE = false)"
+}

@@ -1,0 +1,408 @@
+HEAD f3a92b2608004843204cd5001a436862efed639b 2026-10-11T12:35:06-04:00
+vm_wasm_depth: building axon-run (wasm32-wasip1, debug + release)…
+wasm_stack_budget: debug   assign_in_place            176 <= 176   ok  (frame 176)
+wasm_stack_budget: debug   assign_in_place_sealed     176 <= 176   ok  (frame 176)
+wasm_stack_budget: debug   bind_let                   160 <= 160   ok  (frame 160)
+wasm_stack_budget: debug   bind_let_sealed            160 <= 160   ok  (frame 160)
+wasm_stack_budget: debug   builtin_scheduler_run_once   128 <= 128   ok  (frame 128)
+wasm_stack_budget: debug   call_builtin               496 <= 496   ok  (frame 496)
+wasm_stack_budget: debug   call_closure               112 <= 112   ok  (frame 112)
+wasm_stack_budget: debug   call_closure_arg           112 <= 112   ok  (frame 112)
+wasm_stack_budget: debug   call_closure_frame         240 <= 256   ok  (frame 240)
+wasm_stack_budget: debug   call_closure_frame_sealed   352 <= 352   ok  (frame 224 + with_frame 112 + _RNCINvMsv_NtCsh7CfbOZcK29_9axon_core6interpNtB8_6Interp18call_closure_frameKb1_ANtB8_5Valuej2_E 16)
+wasm_stack_budget: debug   call_fast                  224 <= 224   ok  (frame 224)
+wasm_stack_budget: debug   call_fast_arg              208 <= 208   ok  (frame 208)
+wasm_stack_budget: debug   call_fast_inline           240 <= 256   ok  (frame 240)
+wasm_stack_budget: debug   call_fast_local_int_slow   176 <= 176   ok  (frame 176)
+wasm_stack_budget: debug   call_fn                    112 <= 112   ok  (frame 112)
+wasm_stack_budget: debug   call_fn_entry              112 <= 112   ok  (frame 112)
+wasm_stack_budget: debug   call_fn_frame              272 <= 272   ok  (frame 272)
+wasm_stack_budget: debug   call_fn_frame_sealed       272 <= 272   ok  (frame 272)
+wasm_stack_budget: debug   call_fn_goal               480 <= 480   ok  (frame 176 + run_goal_tournament 208 + run_goal_tournament::{closure#2} 96)
+wasm_stack_budget: debug   call_fn_in                 160 <= 160   ok  (frame 160)
+wasm_stack_budget: debug   call_fn_sealed             288 <= 288   ok  (frame 128 + with_frame 112 + call_fn_sealed::{closure#0} 48)
+wasm_stack_budget: debug   call_local_closure         112 <= 112   ok  (frame 112)
+wasm_stack_budget: debug   call_mut                   208 <= 208   ok  (frame 208)
+wasm_stack_budget: debug   call_mut_general           176 <= 176   ok  (frame 176)
+wasm_stack_budget: debug   call_mut_op                336 <= 336   ok  (frame 336)
+wasm_stack_budget: debug   call_mut_sealed            192 <= 192   ok  (frame 192)
+wasm_stack_budget: debug   call_unproven              192 <= 192   ok  (frame 192)
+wasm_stack_budget: debug   chan_method                128 <= 128   ok  (frame 128)
+wasm_stack_budget: debug   chan_method_sealed         128 <= 128   ok  (frame 128)
+wasm_stack_budget: debug   compile_body              1504 <= 1504  ok  (frame 80 + compile_entry 96 + interp::vm::compile::compile 112 + interp::vm::compile::moves 128 + _RNvMsG_NtCs9iKmSZBUgoW_5alloc3vecINtB5_3VecNtNtNtCsh7CfbOZcK29_9axon_core6interp2vm4MoveE4pushB 16 + _RNvMsG_NtCs9iKmSZBUgoW_5alloc3vecINtB5_3VecNtNtNtCsh7CfbOZcK29_9axon_core6interp2vm4MoveE8push_ 80 + _RNvMs4_NtCs9iKmSZBUgoW_5alloc7raw_vecINtB5_6RawVecNtNtNtCsh7CfbOZcK29_9axon_core6interp2vm4Move 64 + _RNvMs5_NtCs9iKmSZBUgoW_5alloc7raw_vecNtB5_11RawVecInner14grow_amortizedCs9PgpZ33EcYW_13axon_gfx 96 + _RNvMs5_NtCs9iKmSZBUgoW_5alloc7raw_vecNtB5_11RawVecInner11finish_growCs9PgpZ33EcYW_13axon_gfx_mo 160 + _RNvXs_NtCs9iKmSZBUgoW_5alloc5allocNtB4_6GlobalNtNtCsxl3rqi9QAX_4core5alloc9Allocator4growCs9Pgp 80 + <alloc[6c59c33cbe61e3bc]::alloc::Global>::grow_impl_runtime 144 + <alloc[6c59c33cbe61e3bc]::alloc::Global>::alloc_impl_runtime 80 + __rustc[d994dce46cc2e841]::__rust_alloc_zeroed 16 + __rustc[d994dce46cc2e841]::__rdl_alloc_zeroed 80 + posix_memalign 32 + internal_memalign 48 + dlmalloc 112 + prepend_alloc 80)
+wasm_stack_budget: debug   compile_expr               816 <= 816   ok  (frame 144 + compile_call_mut 144 + _RINvYINtNtNtNtCsxl3rqi9QAX_4core4iter8adapters3map3MapINtNtNtBc_5slice4iter4IterNtNtCsh7CfbOZcK 16 + _RINvXsf_NtCs9iKmSZBUgoW_5alloc3vecINtB6_3VecNtNtNtCsh7CfbOZcK29_9axon_core6interp2vm4OpndEINtNt 48 + _RNvXNtNtCs9iKmSZBUgoW_5alloc3vec14spec_from_iterINtB4_3VecNtNtNtCsh7CfbOZcK29_9axon_core6interp 16 + _RNvXs_NtNtCs9iKmSZBUgoW_5alloc3vec21spec_from_iter_nestedINtB6_3VecNtNtNtCsh7CfbOZcK29_9axon_co 80 + _RNvXs_NtNtCs9iKmSZBUgoW_5alloc3vec11spec_extendINtB6_3VecNtNtNtCsh7CfbOZcK29_9axon_core6interp2 16 + _RINvMsk_NtCs9iKmSZBUgoW_5alloc3vecINtB6_3VecNtNtNtCsh7CfbOZcK29_9axon_core6interp2vm4OpndE14ext 80 + _RINvYINtNtNtNtCsxl3rqi9QAX_4core4iter8adapters3map3MapINtNtNtBc_5slice4iter4IterNtNtCsh7CfbOZcK 32 + _RINvXs0_NtNtNtCsxl3rqi9QAX_4core4iter8adapters3mapINtB6_3MapINtNtNtBc_5slice4iter4IterNtNtCsh7C 32 + _RINvXs2J_NtNtCsxl3rqi9QAX_4core5slice4iterINtB7_4IterNtNtCsh7CfbOZcK29_9axon_core3ast4ExprENtNt 80 + _RNCINvNtNtNtCsxl3rqi9QAX_4core4iter8adapters3map8map_foldRNtNtCsh7CfbOZcK29_9axon_core3ast4Expr 48 + <interp::vm::compile::Compiler>::call_mut::{closure#3} 80)
+wasm_stack_budget: debug   compile_lambda            1616 <= 1616  ok  (frame 112 + _RINvMs1_NtNtCsh7CfbOZcK29_9axon_core6interp2vmNtB6_10LambdaBody3getNCNvMs5_B6_NtB8_6Interp14com 96 + compile_lambda::{closure#0} 80 + interp::vm::compile::compile 112 + interp::vm::compile::moves 128 + _RNvMsG_NtCs9iKmSZBUgoW_5alloc3vecINtB5_3VecNtNtNtCsh7CfbOZcK29_9axon_core6interp2vm4MoveE4pushB 16 + _RNvMsG_NtCs9iKmSZBUgoW_5alloc3vecINtB5_3VecNtNtNtCsh7CfbOZcK29_9axon_core6interp2vm4MoveE8push_ 80 + _RNvMs4_NtCs9iKmSZBUgoW_5alloc7raw_vecINtB5_6RawVecNtNtNtCsh7CfbOZcK29_9axon_core6interp2vm4Move 64 + _RNvMs5_NtCs9iKmSZBUgoW_5alloc7raw_vecNtB5_11RawVecInner14grow_amortizedCs9PgpZ33EcYW_13axon_gfx 96 + _RNvMs5_NtCs9iKmSZBUgoW_5alloc7raw_vecNtB5_11RawVecInner11finish_growCs9PgpZ33EcYW_13axon_gfx_mo 160 + _RNvXs_NtCs9iKmSZBUgoW_5alloc5allocNtB4_6GlobalNtNtCsxl3rqi9QAX_4core5alloc9Allocator4growCs9Pgp 80 + <alloc[6c59c33cbe61e3bc]::alloc::Global>::grow_impl_runtime 144 + <alloc[6c59c33cbe61e3bc]::alloc::Global>::alloc_impl_runtime 80 + __rustc[d994dce46cc2e841]::__rust_alloc_zeroed 16 + __rustc[d994dce46cc2e841]::__rdl_alloc_zeroed 80 + posix_memalign 32 + internal_memalign 48 + dlmalloc 112 + prepend_alloc 80)
+wasm_stack_budget: debug   compile_stmt               800 <= 800   ok  (frame 128 + compile_call_mut 144 + _RINvYINtNtNtNtCsxl3rqi9QAX_4core4iter8adapters3map3MapINtNtNtBc_5slice4iter4IterNtNtCsh7CfbOZcK 16 + _RINvXsf_NtCs9iKmSZBUgoW_5alloc3vecINtB6_3VecNtNtNtCsh7CfbOZcK29_9axon_core6interp2vm4OpndEINtNt 48 + _RNvXNtNtCs9iKmSZBUgoW_5alloc3vec14spec_from_iterINtB4_3VecNtNtNtCsh7CfbOZcK29_9axon_core6interp 16 + _RNvXs_NtNtCs9iKmSZBUgoW_5alloc3vec21spec_from_iter_nestedINtB6_3VecNtNtNtCsh7CfbOZcK29_9axon_co 80 + _RNvXs_NtNtCs9iKmSZBUgoW_5alloc3vec11spec_extendINtB6_3VecNtNtNtCsh7CfbOZcK29_9axon_core6interp2 16 + _RINvMsk_NtCs9iKmSZBUgoW_5alloc3vecINtB6_3VecNtNtNtCsh7CfbOZcK29_9axon_core6interp2vm4OpndE14ext 80 + _RINvYINtNtNtNtCsxl3rqi9QAX_4core4iter8adapters3map3MapINtNtNtBc_5slice4iter4IterNtNtCsh7CfbOZcK 32 + _RINvXs0_NtNtNtCsxl3rqi9QAX_4core4iter8adapters3mapINtB6_3MapINtNtNtBc_5slice4iter4IterNtNtCsh7C 32 + _RINvXs2J_NtNtCsxl3rqi9QAX_4core5slice4iterINtB7_4IterNtNtCsh7CfbOZcK29_9axon_core3ast4ExprENtNt 80 + _RNCINvNtNtNtCsxl3rqi9QAX_4core4iter8adapters3map8map_foldRNtNtCsh7CfbOZcK29_9axon_core3ast4Expr 48 + <interp::vm::compile::Compiler>::call_mut::{closure#3} 80)
+wasm_stack_budget: debug   dispatch_call              176 <= 176   ok  (frame 176)
+wasm_stack_budget: debug   dispatch_call_sealed       176 <= 176   ok  (frame 176)
+wasm_stack_budget: debug   dispatch_named             144 <= 144   ok  (frame 144)
+wasm_stack_budget: debug   dispatch_named_sealed      176 <= 176   ok  (frame 176)
+wasm_stack_budget: debug   dispatch_resume            224 <= 224   ok  (frame 96 + replay_continuation 128)
+wasm_stack_budget: debug   eval_arm                   192 <= 192   ok  (frame 192)
+wasm_stack_budget: debug   eval_arm_sealed            336 <= 336   ok  (frame 240 + eval_arm::<true: bool>::{closure#12} 96)
+wasm_stack_budget: debug   eval_binop                 144 <= 144   ok  (frame 144)
+wasm_stack_budget: debug   eval_binop_sealed          336 <= 336   ok  (frame 192 + short_circuit_tainted 128 + short_circuit_tainted::{closure#1} 16)
+wasm_stack_budget: debug   eval_block                  96 <= 112   ok  (frame 96)
+wasm_stack_budget: debug   eval_block_sealed          128 <= 128   ok  (frame 128)
+wasm_stack_budget: debug   eval_call                  160 <= 352   ok  (frame 160)
+wasm_stack_budget: debug   eval_call_sealed           400 <= 400   ok  (frame 208 + eval_name_sink_call 192)
+wasm_stack_budget: debug   eval_native_call           256 <= 256   ok  (frame 256)
+wasm_stack_budget: debug   eval_prob_pred             192 <= 208   ok  (frame 128 + eval_f64_val 64)
+wasm_stack_budget: debug   eval_tainted               144 <= 144   ok  (frame 144)
+wasm_stack_budget: debug   eval_with_handler          144 <= 144   ok  (frame 144)
+wasm_stack_budget: debug   finish_call_cold           224 <= 224   ok  (frame 224)
+wasm_stack_budget: debug   finish_record              160 <= 160   ok  (frame 160)
+wasm_stack_budget: debug   flatten_place              128 <= 128   ok  (frame 128)
+wasm_stack_budget: debug   goal_eval_holdout          128 <= 128   ok  (frame 128)
+wasm_stack_budget: debug   impl_method                 96 <= 96    ok  (frame 96)
+wasm_stack_budget: debug   impl_method_sealed         160 <= 160   ok  (frame 160)
+wasm_stack_budget: debug   record_op                  160 <= 160   ok  (frame 160)
+wasm_stack_budget: debug   run                        336 <= 336   ok  (frame 336)
+wasm_stack_budget: debug   run_arm_sealed             480 <= 480   ok  (frame 128 + _RINvMNtCsxl3rqi9QAX_4core6resultINtB3_6ResultuNtNtCsh7CfbOZcK29_9axon_core6interp4FlowE8and_the 32 + run_arm_sealed::{closure#0} 96 + with_frame 112 + run_arm_sealed::{closure#0}::{closure#0} 64 + _RINvMNtCsxl3rqi9QAX_4core6resultINtB3_6ResultbNtNtCsh7CfbOZcK29_9axon_core6interp4FlowE8and_the 32 + run_arm_sealed::{closure#0}::{closure#0}::{closure#0} 16)
+wasm_stack_budget: debug   run_body_tree               96 <= 496   ok  (frame 96)
+wasm_stack_budget: debug   run_body_vm                144 <= 160   ok  (frame 144)
+wasm_stack_budget: debug   run_goal                   672 <= 672   ok  (frame 144 + hill_climb_multi_i64 48 + hill_climb_multi_i64_from 224 + hill_climb_multi_i64_from::{closure#0} 128 + apply_goal_constraint 128)
+wasm_stack_budget: debug   run_goal_categorical       416 <= 416   ok  (frame 144 + run_goal_categorical::{closure#1} 144 + apply_goal_constraint 128)
+wasm_stack_budget: debug   run_goal_multistart        672 <= 672   ok  (frame 192 + hill_climb_multi_i64_from 224 + hill_climb_multi_i64_from::{closure#0} 128 + apply_goal_constraint 128)
+wasm_stack_budget: debug   run_goal_random            208 <= 208   ok  (frame 208)
+wasm_stack_budget: debug   run_goal_warm              656 <= 656   ok  (frame 176 + hill_climb_multi_i64_from 224 + hill_climb_multi_i64_from::{closure#0} 128 + apply_goal_constraint 128)
+wasm_stack_budget: debug   run_handler_arm            176 <= 192   ok  (frame 176)
+wasm_stack_budget: debug   run_lambda_tree            112 <= 336   ok  (frame 112)
+wasm_stack_budget: debug   run_loop_body              112 <= 112   ok  (frame 112)
+wasm_stack_budget: debug   run_loop_body_sealed       112 <= 112   ok  (frame 112)
+wasm_stack_budget: debug   run_test_body              144 <= 496   ok  (frame 144)
+wasm_stack_budget: debug   store_bin_slow             192 <= 192   ok  (frame 192)
+wasm_stack_budget: debug   store_local_stack_slow     192 <= 192   ok  (frame 192)
+wasm_stack_budget: debug   struct_refine_sealed       288 <= 288   ok  (frame 112 + with_frame 112 + struct_refine_sealed::{closure#0} 64)
+wasm_stack_budget: debug   cycle through eval: 126 functions, 80 guarded, 46 unguarded
+wasm_stack_budget: debug   cycle through compile_expr: 34 functions, 2 guarded, 32 unguarded
+wasm_stack_budget: debug   other recursion reachable from eval: bounded (PURE_DEPTH) 5, bounded (recurses once) 6, panic 1, source 32, std 17, value 34
+wasm_stack_budget: release assign_in_place            224 <= 224   ok  (frame 224)
+wasm_stack_budget: release assign_in_place_sealed   no instance (inlined in this profile)
+wasm_stack_budget: release bind_let                   224 <= 224   ok  (frame 224)
+wasm_stack_budget: release bind_let_sealed            256 <= 256   ok  (frame 256)
+wasm_stack_budget: release builtin_scheduler_run_once   272 <= 304   ok  (frame 272)
+wasm_stack_budget: release call_builtin               720 <= 720   ok  (frame 720)
+wasm_stack_budget: release call_closure               128 <= 128   ok  (frame 128)
+wasm_stack_budget: release call_closure_arg            80 <= 272   ok  (frame 80)
+wasm_stack_budget: release call_closure_frame         288 <= 336   ok  (frame 288)
+wasm_stack_budget: release call_closure_frame_sealed   416 <= 416   ok  (frame 416)
+wasm_stack_budget: release call_fast                  288 <= 288   ok  (frame 288)
+wasm_stack_budget: release call_fast_arg              288 <= 288   ok  (frame 288)
+wasm_stack_budget: release call_fast_inline           320 <= 320   ok  (frame 320)
+wasm_stack_budget: release call_fast_local_int_slow   176 <= 176   ok  (frame 176)
+wasm_stack_budget: release call_fn                    128 <= 128   ok  (frame 128)
+wasm_stack_budget: release call_fn_entry              224 <= 224   ok  (frame 224)
+wasm_stack_budget: release call_fn_frame              576 <= 576   ok  (frame 576)
+wasm_stack_budget: release call_fn_frame_sealed       592 <= 592   ok  (frame 592)
+wasm_stack_budget: release call_fn_goal               784 <= 928   ok  (frame 320 + run_goal_tournament 464)
+wasm_stack_budget: release call_fn_in                 208 <= 208   ok  (frame 208)
+wasm_stack_budget: release call_fn_sealed             176 <= 176   ok  (frame 176)
+wasm_stack_budget: release call_local_closure         128 <= 128   ok  (frame 128)
+wasm_stack_budget: release call_mut                   320 <= 320   ok  (frame 320)
+wasm_stack_budget: release call_mut_general           304 <= 304   ok  (frame 304)
+wasm_stack_budget: release call_mut_op                432 <= 432   ok  (frame 432)
+wasm_stack_budget: release call_mut_sealed            384 <= 384   ok  (frame 384)
+wasm_stack_budget: release call_unproven              272 <= 272   ok  (frame 272)
+wasm_stack_budget: release chan_method                 96 <= 96    ok  (frame 96)
+wasm_stack_budget: release chan_method_sealed         112 <= 112   ok  (frame 112)
+wasm_stack_budget: release compile_body              1024 <= 1024  ok  (frame 64 + compile_entry 112 + interp::vm::compile::compile 368 + _RNvMs4_NtCs9iKmSZBUgoW_5alloc7raw_vecINtB5_6RawVecNtNtCskRqPJ1iP3TJ_9axon_core3ast11NeverClause 96 + <alloc[6c59c33cbe61e3bc]::raw_vec::RawVecInner>::finish_grow 112 + posix_memalign 32 + internal_memalign 48 + dlmalloc 112 + prepend_alloc 80)
+wasm_stack_budget: release compile_expr               688 <= 688   ok  (frame 256 + compile_if_ 96 + compile_branch 176 + compile_operands 160)
+wasm_stack_budget: release compile_lambda             976 <= 976   ok  (frame 128 + interp::vm::compile::compile 368 + _RNvMs4_NtCs9iKmSZBUgoW_5alloc7raw_vecINtB5_6RawVecNtNtCskRqPJ1iP3TJ_9axon_core3ast11NeverClause 96 + <alloc[6c59c33cbe61e3bc]::raw_vec::RawVecInner>::finish_grow 112 + posix_memalign 32 + internal_memalign 48 + dlmalloc 112 + prepend_alloc 80)
+wasm_stack_budget: release compile_stmt               656 <= 656   ok  (frame 224 + compile_if_ 96 + compile_branch 176 + compile_operands 160)
+wasm_stack_budget: release dispatch_call            no instance (inlined in this profile)
+wasm_stack_budget: release dispatch_call_sealed       288 <= 304   ok  (frame 288)
+wasm_stack_budget: release dispatch_named             192 <= 192   ok  (frame 192)
+wasm_stack_budget: release dispatch_named_sealed    no instance (inlined in this profile)
+wasm_stack_budget: release dispatch_resume            208 <= 208   ok  (frame 208)
+wasm_stack_budget: release eval_arm                   304 <= 304   ok  (frame 304)
+wasm_stack_budget: release eval_arm_sealed            640 <= 656   ok  (frame 368 + eval_name_sink_call 272)
+wasm_stack_budget: release eval_binop               no instance (inlined in this profile)
+wasm_stack_budget: release eval_binop_sealed        no instance (inlined in this profile)
+wasm_stack_budget: release eval_block               no instance (inlined in this profile)
+wasm_stack_budget: release eval_block_sealed        no instance (inlined in this profile)
+wasm_stack_budget: release eval_call                  272 <= 320   ok  (frame 272)
+wasm_stack_budget: release eval_call_sealed         no instance (inlined in this profile)
+wasm_stack_budget: release eval_native_call           320 <= 320   ok  (frame 320)
+wasm_stack_budget: release eval_prob_pred             224 <= 224   ok  (frame 224)
+wasm_stack_budget: release eval_tainted               144 <= 144   ok  (frame 144)
+wasm_stack_budget: release eval_with_handler        no instance (inlined in this profile)
+wasm_stack_budget: release finish_call_cold           336 <= 496   ok  (frame 336)
+wasm_stack_budget: release finish_record              432 <= 432   ok  (frame 432)
+wasm_stack_budget: release flatten_place              144 <= 160   ok  (frame 144)
+wasm_stack_budget: release goal_eval_holdout          400 <= 400   ok  (frame 400)
+wasm_stack_budget: release impl_method                192 <= 192   ok  (frame 192)
+wasm_stack_budget: release impl_method_sealed         256 <= 256   ok  (frame 256)
+wasm_stack_budget: release record_op                  160 <= 160   ok  (frame 160)
+wasm_stack_budget: release run                        528 <= 528   ok  (frame 528)
+wasm_stack_budget: release run_arm_sealed             144 <= 144   ok  (frame 144)
+wasm_stack_budget: release run_body_tree               48 <= 736   ok  (frame 48)
+wasm_stack_budget: release run_body_vm                192 <= 208   ok  (frame 192)
+wasm_stack_budget: release run_goal                  1024 <= 1024  ok  (frame 240 + hill_climb_multi_f64_from 416 + hill_climb_multi_f64_from::{closure#0} 128 + apply_goal_constraint 240)
+wasm_stack_budget: release run_goal_categorical       640 <= 640   ok  (frame 256 + run_goal_categorical::{closure#1} 144 + apply_goal_constraint 240)
+wasm_stack_budget: release run_goal_multistart       1120 <= 1152  ok  (frame 336 + hill_climb_multi_i64_from 416 + hill_climb_multi_i64_from::{closure#0} 128 + apply_goal_constraint 240)
+wasm_stack_budget: release run_goal_random            320 <= 368   ok  (frame 320)
+wasm_stack_budget: release run_goal_warm             1040 <= 1040  ok  (frame 256 + hill_climb_multi_i64_from 416 + hill_climb_multi_i64_from::{closure#0} 128 + apply_goal_constraint 240)
+wasm_stack_budget: release run_handler_arm          no instance (inlined in this profile)
+wasm_stack_budget: release run_lambda_tree             64 <= 528   ok  (frame 64)
+wasm_stack_budget: release run_loop_body              128 <= 128   ok  (frame 128)
+wasm_stack_budget: release run_loop_body_sealed       128 <= 128   ok  (frame 128)
+wasm_stack_budget: release run_test_body              176 <= 736   ok  (frame 176)
+wasm_stack_budget: release store_bin_slow             192 <= 192   ok  (frame 192)
+wasm_stack_budget: release store_local_stack_slow     208 <= 208   ok  (frame 208)
+wasm_stack_budget: release struct_refine_sealed       112 <= 112   ok  (frame 112)
+wasm_stack_budget: release cycle through eval: 80 functions, 66 guarded, 14 unguarded
+wasm_stack_budget: release cycle through compile_expr: 9 functions, 2 guarded, 7 unguarded
+wasm_stack_budget: release other recursion reachable from eval: bounded (PURE_DEPTH) 5, bounded (recurses once) 6, bounded (taint depth) 5, panic 1, source 19, std 15, value 34
+vm_wasm_depth: debug   tree plain   linear  deepest=1614   ok (>= 167)
+vm_wasm_depth: debug   tree plain   default deepest=242    ok (>= 154)
+vm_wasm_depth: debug   tree plain   guard   exit=101       ok (depth panic at 128)
+vm_wasm_depth: debug   tree closure linear  deepest=1242   ok (>= 167)
+vm_wasm_depth: debug   tree closure default deepest=158    ok (>= 154)
+vm_wasm_depth: debug   tree closure guard   exit=101       ok (depth panic at 128)
+vm_wasm_depth: debug   tree mut     linear  deepest=3826   ok (>= 167)
+vm_wasm_depth: debug   tree mut     default deepest=471    ok (>= 154)
+vm_wasm_depth: debug   tree mut     guard   exit=101       ok (depth panic at 128)
+vm_wasm_depth: debug   tree with    linear  deepest=1169   ok (>= 167)
+vm_wasm_depth: debug   tree with    default deepest=187    ok (>= 154)
+vm_wasm_depth: debug   tree with    guard   exit=101       ok (depth panic at 128)
+vm_wasm_depth: debug   tree nest/assign_chain nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/break_fast nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/builtin   nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/compile_chain nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/compile_deep nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/distinct  nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/expr      nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/fail_compile nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/fold10    nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/fold      nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/handler_arm nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/interp    nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/lambda10  nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/lambda    nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/lambda_break nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/lambda_chain nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/lambda_self nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/let_with  nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/loop_for  nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/loop_while_let nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/loop_with nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/map       nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/match     nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/method    nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/mixed6    nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/mut_with3 nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/question  nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/refined   nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/with_body nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/with_chain nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   tree nest/with_expr nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   plain   linear  deepest=3213   ok (>= 167)
+vm_wasm_depth: debug   vm   plain   default deepest=953    ok (>= 154)
+vm_wasm_depth: debug   vm   plain   guard   exit=101       ok (depth panic at 128)
+vm_wasm_depth: debug   vm   closure linear  deepest=1526   ok (>= 167)
+vm_wasm_depth: debug   vm   closure default deepest=367    ok (>= 154)
+vm_wasm_depth: debug   vm   closure guard   exit=101       ok (depth panic at 128)
+vm_wasm_depth: debug   vm   mut     linear  deepest=3059   ok (>= 167)
+vm_wasm_depth: debug   vm   mut     default deepest=774    ok (>= 154)
+vm_wasm_depth: debug   vm   mut     guard   exit=101       ok (depth panic at 128)
+vm_wasm_depth: debug   vm   with    linear  deepest=1260   ok (>= 167)
+vm_wasm_depth: debug   vm   with    default deepest=217    ok (>= 154)
+vm_wasm_depth: debug   vm   with    guard   exit=101       ok (depth panic at 128)
+vm_wasm_depth: debug   vm   nest/assign_chain nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/break_fast nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/builtin   nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/compile_chain nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/compile_deep nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/distinct  nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/expr      nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/fail_compile nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/fold10    nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/fold      nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/handler_arm nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/interp    nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/lambda10  nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/lambda    nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/lambda_break nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/lambda_chain nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/lambda_self nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/let_with  nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/loop_for  nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/loop_while_let nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/loop_with nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/map       nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/match     nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/method    nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/mixed6    nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/mut_with3 nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/question  nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/refined   nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/with_body nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/with_chain nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   vm   nest/with_expr nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree plain   linear  deepest=21505  ok (>= 167)
+vm_wasm_depth: release tree plain   default deepest=245    ok (>= 154)
+vm_wasm_depth: release tree plain   guard   exit=101       ok (depth panic at 128)
+vm_wasm_depth: release tree closure linear  deepest=16774  ok (>= 167)
+vm_wasm_depth: release tree closure default deepest=163    ok (>= 154)
+vm_wasm_depth: release tree closure guard   exit=101       ok (depth panic at 128)
+vm_wasm_depth: release tree mut     linear  deepest=45582  ok (>= 167)
+vm_wasm_depth: release tree mut     default deepest=369    ok (>= 154)
+vm_wasm_depth: release tree mut     guard   exit=101       ok (depth panic at 128)
+vm_wasm_depth: release tree with    linear  deepest=15706  ok (>= 167)
+vm_wasm_depth: release tree with    default deepest=190    ok (>= 154)
+vm_wasm_depth: release tree with    guard   exit=101       ok (depth panic at 128)
+vm_wasm_depth: release tree nest/assign_chain nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/break_fast nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/builtin   nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/compile_chain nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/compile_deep nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/distinct  nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/expr      nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/fail_compile nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/fold10    nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/fold      nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/handler_arm nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/interp    nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/lambda10  nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/lambda    nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/lambda_break nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/lambda_chain nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/lambda_self nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/let_with  nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/loop_for  nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/loop_while_let nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/loop_with nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/map       nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/match     nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/method    nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/mixed6    nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/mut_with3 nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/question  nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/refined   nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/with_body nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/with_chain nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release tree nest/with_expr nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   plain   linear  deepest=46082  ok (>= 167)
+vm_wasm_depth: release vm   plain   default deepest=635    ok (>= 154)
+vm_wasm_depth: release vm   plain   guard   exit=101       ok (depth panic at 128)
+vm_wasm_depth: release vm   closure linear  deepest=22187  ok (>= 167)
+vm_wasm_depth: release vm   closure default deepest=260    ok (>= 154)
+vm_wasm_depth: release vm   closure guard   exit=101       ok (depth panic at 128)
+vm_wasm_depth: release vm   mut     linear  deepest=44613  ok (>= 167)
+vm_wasm_depth: release vm   mut     default deepest=541    ok (>= 154)
+vm_wasm_depth: release vm   mut     guard   exit=101       ok (depth panic at 128)
+vm_wasm_depth: release vm   with    linear  deepest=17186  ok (>= 167)
+vm_wasm_depth: release vm   with    default deepest=205    ok (>= 154)
+vm_wasm_depth: release vm   with    guard   exit=101       ok (depth panic at 128)
+vm_wasm_depth: release vm   nest/assign_chain nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/break_fast nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/builtin   nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/compile_chain nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/compile_deep nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/distinct  nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/expr      nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/fail_compile nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/fold10    nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/fold      nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/handler_arm nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/interp    nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/lambda10  nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/lambda    nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/lambda_break nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/lambda_chain nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/lambda_self nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/let_with  nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/loop_for  nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/loop_while_let nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/loop_with nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/map       nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/match     nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/method    nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/mixed6    nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/mut_with3 nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/question  nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/refined   nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/with_body nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/with_chain nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: release vm   nest/with_expr nest    exit=101       ok (recursion-limit panic, no trap)
+vm_wasm_depth: debug   default-stack plain   tree=242 vm=953 vm >= tree
+vm_wasm_depth: debug   default-stack closure tree=158 vm=367 vm >= tree
+vm_wasm_depth: debug   default-stack mut     tree=471 vm=774 vm >= tree
+vm_wasm_depth: debug   default-stack with    tree=187 vm=217 vm >= tree
+vm_wasm_depth: release default-stack plain   tree=245 vm=635 vm >= tree
+vm_wasm_depth: release default-stack closure tree=163 vm=260 vm >= tree
+vm_wasm_depth: release default-stack mut     tree=369 vm=541 vm >= tree
+vm_wasm_depth: release default-stack with    tree=190 vm=205 vm >= tree
+vm_wasm_depth: debug   reach plain          tree=126 vm=126 vm >= tree
+vm_wasm_depth: debug   reach closure        tree=104 vm=126 vm >= tree
+vm_wasm_depth: debug   reach mut            tree=126 vm=126 vm >= tree
+vm_wasm_depth: debug   reach with           tree=126 vm=126 vm >= tree
+vm_wasm_depth: debug   reach nest/assign_chain tree=62 vm=125 vm >= tree
+vm_wasm_depth: debug   reach nest/break_fast tree=64 vm=126 vm >= tree
+vm_wasm_depth: debug   reach nest/builtin   tree=126 vm=126 vm >= tree
+vm_wasm_depth: debug   reach nest/compile_chain tree=125 vm=125 vm >= tree
+vm_wasm_depth: debug   reach nest/compile_deep tree=17 vm=40 vm >= tree
+vm_wasm_depth: debug   reach nest/distinct  tree=126 vm=126 vm >= tree
+vm_wasm_depth: debug   reach nest/expr      tree=27 vm=126 vm >= tree
+vm_wasm_depth: debug   reach nest/fail_compile tree=72 vm=76 vm >= tree
+vm_wasm_depth: debug   reach nest/fold10    tree=19 vm=31 vm >= tree
+vm_wasm_depth: debug   reach nest/fold      tree=93 vm=126 vm >= tree
+vm_wasm_depth: debug   reach nest/handler_arm tree=86 vm=101 vm >= tree
+vm_wasm_depth: debug   reach nest/interp    tree=126 vm=126 vm >= tree
+vm_wasm_depth: debug   reach nest/lambda10  tree=21 vm=49 vm >= tree
+vm_wasm_depth: debug   reach nest/lambda    tree=67 vm=126 vm >= tree
+vm_wasm_depth: debug   reach nest/lambda_break tree=19 vm=21 vm >= tree
+vm_wasm_depth: debug   reach nest/lambda_chain tree=116 vm=127 vm >= tree
+vm_wasm_depth: debug   reach nest/lambda_self tree=116 vm=127 vm >= tree
+vm_wasm_depth: debug   reach nest/let_with  tree=70 vm=74 vm >= tree
+vm_wasm_depth: debug   reach nest/loop_for  tree=71 vm=126 vm >= tree
+vm_wasm_depth: debug   reach nest/loop_while_let tree=71 vm=126 vm >= tree
+vm_wasm_depth: debug   reach nest/loop_with tree=78 vm=91 vm >= tree
+vm_wasm_depth: debug   reach nest/map       tree=90 vm=126 vm >= tree
+vm_wasm_depth: debug   reach nest/match     tree=126 vm=126 vm >= tree
+vm_wasm_depth: debug   reach nest/method    tree=126 vm=126 vm >= tree
+vm_wasm_depth: debug   reach nest/mixed6    tree=31 vm=62 vm >= tree
+vm_wasm_depth: debug   reach nest/mut_with3 tree=125 vm=126 vm >= tree
+vm_wasm_depth: debug   reach nest/question  tree=126 vm=126 vm >= tree
+vm_wasm_depth: debug   reach nest/refined   tree=126 vm=126 vm >= tree
+vm_wasm_depth: debug   reach nest/with_body tree=102 vm=111 vm >= tree
+vm_wasm_depth: debug   reach nest/with_chain tree=116 vm=126 vm >= tree
+vm_wasm_depth: debug   reach nest/with_expr tree=70 vm=80 vm >= tree
+vm_wasm_depth: release reach plain          tree=126 vm=126 vm >= tree
+vm_wasm_depth: release reach closure        tree=90 vm=126 vm >= tree
+vm_wasm_depth: release reach mut            tree=126 vm=126 vm >= tree
+vm_wasm_depth: release reach with           tree=118 vm=126 vm >= tree
+vm_wasm_depth: release reach nest/assign_chain tree=62 vm=125 vm >= tree
+vm_wasm_depth: release reach nest/break_fast tree=56 vm=103 vm >= tree
+vm_wasm_depth: release reach nest/builtin   tree=109 vm=126 vm >= tree
+vm_wasm_depth: release reach nest/compile_chain tree=117 vm=125 vm >= tree
+vm_wasm_depth: release reach nest/compile_deep tree=15 vm=29 vm >= tree
+vm_wasm_depth: release reach nest/distinct  tree=126 vm=126 vm >= tree
+vm_wasm_depth: release reach nest/expr      tree=29 vm=126 vm >= tree
+vm_wasm_depth: release reach nest/fail_compile tree=69 vm=75 vm >= tree
+vm_wasm_depth: release reach nest/fold10    tree=15 vm=20 vm >= tree
+vm_wasm_depth: release reach nest/fold      tree=76 vm=126 vm >= tree
+vm_wasm_depth: release reach nest/handler_arm tree=80 vm=95 vm >= tree
+vm_wasm_depth: release reach nest/interp    tree=126 vm=126 vm >= tree
+vm_wasm_depth: release reach nest/lambda10  tree=18 vm=34 vm >= tree
+vm_wasm_depth: release reach nest/lambda    tree=58 vm=126 vm >= tree
+vm_wasm_depth: release reach nest/lambda_break tree=18 vm=19 vm >= tree
+vm_wasm_depth: release reach nest/lambda_chain tree=106 vm=114 vm >= tree
+vm_wasm_depth: release reach nest/lambda_self tree=106 vm=114 vm >= tree
+vm_wasm_depth: release reach nest/let_with  tree=68 vm=72 vm >= tree
+vm_wasm_depth: release reach nest/loop_for  tree=55 vm=126 vm >= tree
+vm_wasm_depth: release reach nest/loop_while_let tree=55 vm=126 vm >= tree
+vm_wasm_depth: release reach nest/loop_with tree=64 vm=74 vm >= tree
+vm_wasm_depth: release reach nest/map       tree=73 vm=126 vm >= tree
+vm_wasm_depth: release reach nest/match     tree=110 vm=126 vm >= tree
+vm_wasm_depth: release reach nest/method    tree=126 vm=126 vm >= tree
+vm_wasm_depth: release reach nest/mixed6    tree=26 vm=42 vm >= tree
+vm_wasm_depth: release reach nest/mut_with3 tree=112 vm=122 vm >= tree
+vm_wasm_depth: release reach nest/question  tree=126 vm=126 vm >= tree
+vm_wasm_depth: release reach nest/refined   tree=119 vm=126 vm >= tree
+vm_wasm_depth: release reach nest/with_body tree=95 vm=107 vm >= tree
+vm_wasm_depth: release reach nest/with_chain tree=102 vm=116 vm >= tree
+vm_wasm_depth: release reach nest/with_expr tree=69 vm=80 vm >= tree
+vm_wasm_depth: PASS — the wasm32 stack budget is sound (every recursion through eval is guarded, each nest_cost covers its frame and unguarded tail); every chain completes 167 in the linear stack and 154 under the default stack, and panics at 128; every nesting probe panics instead of trapping; under both engines and profiles
+rc=0

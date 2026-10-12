@@ -1,0 +1,15 @@
+exit: Some(0)
+--- stdout ---
+Export the full chain as a self-contained JSON file (spec §5.4, schema `axon-chain-export/1`) for an auditor — verifiable via `chain verify-export` with no live VM or `--store` file required
+
+Usage: axon-vm chain export [OPTIONS] --store <STORE> --out <OUT>
+
+Options:
+      --store <STORE>    Path to the chain JSONL file
+      --out <OUT>        Output path for the export JSON
+      --vm-id <VM_ID>    Label to embed in the export (informational; see `Show`'s vm_id doc) [default: default]
+      --kernel <KERNEL>  Guest kernel image used to derive the boot root when the chain is still empty (same fallback as `Show`)
+  -h, --help             Print help
+
+--- stderr ---
+

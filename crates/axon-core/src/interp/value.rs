@@ -22,6 +22,34 @@ pub(super) fn uncertain_parts(v: &Value) -> Option<(Value, f64)> {
     None
 }
 
+/// An operand's provenance tag: its `source_tag` if it is an `Uncertain`, else
+/// user-constructed (a plain literal or variable the program itself holds).
+fn uncertain_source_tag(v: &Value) -> i64 {
+    match v {
+        Value::Struct(s) if s.name == SYM_UNCERTAIN => match s.fields.get(SYM_SOURCE_TAG) {
+            Some(Value::Int(t)) => *t,
+            _ => SRC_TAG_USER,
+        },
+        _ => SRC_TAG_USER,
+    }
+}
+
+/// The provenance of a value DERIVED from two operands is the LEAST trusted of
+/// theirs: AI beats runtime beats user. Every binop result was stamped
+/// user-constructed, so `u + 0` turned a model's answer into a "user" value — the
+/// same laundering D-014 fixed at the constructor, one step later (found by the
+/// v0.20 adversarial review, reproduced: raw 1, after `+ 0` 0). Must match
+/// codegen's `emit_binop_uncertain`.
+pub(crate) fn combine_source_tags(a: i64, b: i64) -> i64 {
+    if a == SRC_TAG_AI || b == SRC_TAG_AI {
+        SRC_TAG_AI
+    } else if a == SRC_TAG_RUNTIME || b == SRC_TAG_RUNTIME {
+        SRC_TAG_RUNTIME
+    } else {
+        SRC_TAG_USER
+    }
+}
+
 /// The inner present `value` of a `Temporal<T>`, or `None` otherwise. Used by the
 /// Temporal binary-op soft-typing path.
 fn soft_temporal_inner(v: &Value) -> Option<Value> {
@@ -57,6 +85,21 @@ fn soft_inner_struct(v: &Value) -> Option<Value> {
         }
     }
     None
+}
+
+/// Whether arithmetic on `v` runs at a fixed WIDTH: a fixed-width integer, or
+/// an `Uncertain`/`Temporal` whose inner `value` is one (`eval_binop_vals`
+/// unwraps the soft wrapper and runs the inner operation at the inner width, so
+/// a width rule that looked only at the top-level value never saw it: amendment
+/// 117, PSV-1 loop finding 52). R51 S3, from v0.22 interp.rs:5268.
+pub(crate) fn width_sized(v: &Value) -> bool {
+    match v {
+        Value::SizedInt { .. } => true,
+        Value::Struct(s) if s.name == SYM_UNCERTAIN || s.name == SYM_TEMPORAL => {
+            s.fields.get(SYM_VALUE).is_some_and(width_sized)
+        }
+        _ => false,
+    }
 }
 
 // ── R19 Slice B — width-correct integer helpers ───────────────────────────────
@@ -663,11 +706,12 @@ pub(super) fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
         let lu = uncertain_parts(&l);
         let ru = uncertain_parts(&r);
         if lu.is_some() || ru.is_some() {
+            let tag = combine_source_tags(uncertain_source_tag(&l), uncertain_source_tag(&r));
             let (lv, lc) = lu.unwrap_or_else(|| (l.clone(), 1.0));
             let (rv, rc) = ru.unwrap_or_else(|| (r.clone(), 1.0));
             let inner = eval_binop_vals(op, lv, rv)?;
             let new_conf = lc.min(rc);
-            return Ok(make_uncertain(inner, new_conf));
+            return Ok(make_uncertain_tagged(inner, new_conf, tag));
         }
     }
 

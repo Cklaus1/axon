@@ -64,7 +64,8 @@ fi
 if ! cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null; then
   echo "acceptance_gate: interpreter build unavailable — running pure tests only"
 fi
-export AXON_BIN="$ROOT/target/debug/axon"
+. "$ROOT/scripts/lib/axon_bin.sh"
+AXON_BIN=""; use_built AXON_BIN axon; export AXON_BIN  # the interpreter just built
 
 echo "acceptance_gate: (4) full suite (unit + acceptance, incl. the real-CLI journey)…"
 if ! cargo test -q -p axon-os; then

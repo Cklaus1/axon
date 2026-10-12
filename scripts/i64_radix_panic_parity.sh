@@ -20,7 +20,16 @@ cd "$ROOT"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-need_codegen_axon i64_radix_panic_parity
+if [ -n "${AXON:-}" ]; then
+  named_bin AXON i64_radix_panic_parity
+else
+  echo "i64_radix_panic_parity: building codegen axon binary…"
+  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
+    echo "i64_radix_panic_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
+  fi
+  use_built AXON axon
+fi
+require_codegen_axon i64_radix_panic_parity
 
 run_case() {
   local label="$1" prog_src="$2" expect_exit="$3"

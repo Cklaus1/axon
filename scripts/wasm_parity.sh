@@ -63,15 +63,17 @@ fi
 echo "wasm_parity: building axon-run (native + wasm32-wasip1)…"
 # Native side: the caller's AXON_RUN (the binary under test) when given, so
 # nothing rebuilds target/debug/axon-run under harnesses executing it.
+. scripts/lib/axon_bin.sh
 if [ -n "${AXON_RUN:-}" ]; then
-  NATIVE="$AXON_RUN"
+  named_bin AXON_RUN wasm_parity
 else
   cargo build -q -p axon-core --no-default-features --bin axon-run || { echo "native build failed"; exit 1; }
-  NATIVE="$ROOT/target/debug/axon-run"
+  use_built AXON_RUN axon-run
 fi
+NATIVE="$AXON_RUN"
 cargo build -q -p axon-core --no-default-features --bin axon-run --target wasm32-wasip1 || { echo "wasm build failed"; exit 1; }
 
-WASM="target/wasm32-wasip1/debug/axon-run.wasm"
+WASM=""; use_built WASM axon-run.wasm wasm32-wasip1  # the wasm build just made
 
 # Pure-compute corpus (R7 §4.1 row 1): AUTO-DISCOVERED — every examples/*.ax with
 # a `fn main` that touches NONE of the host interface (fs/env/AI/threads/exec/
@@ -105,8 +107,9 @@ HOST_BUILTINS='read_file|write_file|append_file|file_size|file_exists|dir_create
 '|http_get|http_post|http_sse|ai_complete|ai_extract|ai_cost_spent'\
 '|exec|spawn|chan_|goal_|agent_detect|agent_uncertainty|agent_trace|zephyr_'\
 '|dstore_'\
+'|srand'\
 '|random_|gaussian_sample|beta_sample|categorical_sample'\
-'|now_ms|now_ns|sleep_ms|temporal_now'\
+'|now_ms|now_ns|sleep_ms|temporal_now|temporal_new|temporal_is_valid'\
 '|atomic_|volatile_|port_in_|port_out_|ptr_from_addr|fn_addr|tee_|bpf_'
 CORPUS=()
 for f in examples/*.ax; do

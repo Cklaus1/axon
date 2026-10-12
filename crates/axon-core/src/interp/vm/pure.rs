@@ -74,12 +74,17 @@ impl PureOp<'_> {
             // As `store` writes: an int over an int and a float over a
             // float in place. An unbound local declines, so the twin
             // panics as the tree does.
-            Sink::Store(var) => match (env.get_var_mut(var.s, var.slot)?, s) {
+            Sink::Store(var) => match (
+                env.get_var_mut_t::<VM_SEALED>(var.s, var.slot, VM_TAINT)?,
+                s,
+            ) {
                 (Value::Int(d), Scalar::Int(n)) => *d = n,
                 (Value::Float(d), Scalar::Float(f)) => *d = f,
                 (b, s) => *b = s.value(),
             },
-            Sink::Define(var) => env.define_var(var.s, var.slot, s.value()),
+            Sink::Define(var) => {
+                env.define_var_t::<VM_SEALED>(var.s, var.slot, s.value(), VM_TAINT)
+            }
             Sink::Branch { target, push } => match s {
                 Scalar::Bool(false) => return Some(*target),
                 Scalar::Bool(true) => {
@@ -813,7 +818,7 @@ fn local_int(env: &Env, v: &Var<'_>) -> Option<i64> {
 /// Overwrite the plain `Int` local `v` (read as one on this entry) with `x`.
 #[inline(always)]
 fn set_local_int(env: &mut Env, v: &Var<'_>, x: i64) {
-    match env.get_var_mut(v.s, v.slot) {
+    match env.get_var_mut_t::<VM_SEALED>(v.s, v.slot, VM_TAINT) {
         Some(Value::Int(d)) => *d = x,
         _ => unreachable!("vm: a bulk loop's local changed kind"),
     }
@@ -932,7 +937,7 @@ fn fill(
     let n = (top - j0 as i128) / s0 as i128 + 1;
     let last = j0 as i128 + (n - 1) * s0 as i128;
     let end = i64::try_from(j0 as i128 + n * s0 as i128).ok()?;
-    let Some(Value::Array(items)) = env.get_var_mut(a.s, a.slot) else {
+    let Some(Value::Array(items)) = env.get_var_mut_t::<VM_SEALED>(a.s, a.slot, VM_TAINT) else {
         return None;
     };
     let fits = match (items.view(), c0) {
@@ -1229,7 +1234,7 @@ impl<'p> PureLoop<'p> {
             undo: Vec::new(),
         };
         for (a, slot) in t.arrs.iter().zip(&mut mem.arrs) {
-            match env.get_var_mut(a.s, a.slot) {
+            match env.get_var_mut_t::<VM_SEALED>(a.s, a.slot, VM_TAINT) {
                 Some(v @ Value::Array(_)) => {
                     let Value::Array(items) = std::mem::replace(v, Value::Unit) else {
                         unreachable!()
@@ -1254,7 +1259,7 @@ impl<'p> PureLoop<'p> {
                 continue;
             }
             let x = r[i & 31];
-            match env.get_var_mut(v.s, v.slot) {
+            match env.get_var_mut_t::<VM_SEALED>(v.s, v.slot, VM_TAINT) {
                 Some(Value::Int(d)) => *d = x as i64,
                 Some(Value::Float(d)) => *d = f64::from_bits(x),
                 Some(Value::Bool(d)) => *d = x != 0,
@@ -1441,7 +1446,7 @@ impl<'p> PureLoop<'p> {
 fn put_arrays(env: &mut Env, arrs: &[LoopArr], mem: &mut LoopMem) {
     for (a, slot) in arrs.iter().zip(&mut mem.arrs) {
         if let Some(items) = slot.take() {
-            match env.get_var_mut(a.s, a.slot) {
+            match env.get_var_mut_t::<VM_SEALED>(a.s, a.slot, VM_TAINT) {
                 Some(v) => *v = Value::Array(items),
                 // Taken from this binding, and nothing in the region can
                 // unbind it.
@@ -1665,7 +1670,7 @@ impl Interp<'_> {
         from: usize,
         acc: &mut Value,
     ) -> usize {
-        if self.engine != Engine::Vm {
+        if !self.seal_pin_vm() {
             return 0;
         }
         let Some(x0) = xs.get(from) else {

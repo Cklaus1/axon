@@ -1,0 +1,10 @@
+{
+  "schema": "acf-editorial-checks/1",
+  "result": "PASS",
+  "markdown_documents": 8,
+  "markdown_local_links_checked": 7,
+  "balanced_code_fences": true,
+  "python_tools_parsed": 2,
+  "errors": [],
+  "note": "Links inside verbatim source-code excerpts are not package links."
+}

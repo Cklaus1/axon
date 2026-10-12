@@ -68,7 +68,8 @@ fi
 if ! cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null; then
   echo "r22_acceptance_gate: interpreter build unavailable — run leg skips cleanly"
 fi
-export AXON_BIN="$ROOT/target/debug/axon"
+. "$ROOT/scripts/lib/axon_bin.sh"
+AXON_BIN=""; use_built AXON_BIN axon; export AXON_BIN  # the interpreter just built
 
 echo "r22_acceptance_gate: (4) full suite (unit + acceptance, incl. the real-CLI journey)…"
 if ! cargo test -q -p axon-intent; then
@@ -76,7 +77,7 @@ if ! cargo test -q -p axon-intent; then
 fi
 
 echo "r22_acceptance_gate: (5) §9 quickstart commands against the built binary (A3)…"
-INTENT="$ROOT/target/debug/axon-intent"
+INTENT=""; use_built INTENT axon-intent  # built in step (3)
 W="$(mktemp -d)"; trap 'rm -rf "$W"' EXIT
 if ! AXON_AI_MOCK=1 "$INTENT" compile examples/intents/summarize.intent.md --out "$W/jobs" >/dev/null; then
   echo "  quickstart: compile failed"; exit 1

@@ -1,0 +1,334 @@
+{
+  "schema": "axon-v022-pci-final-review/1",
+  "candidate": 5,
+  "workflow": "wf_d51ff5e0-d2d",
+  "axon_sha": "31413ca7abb6ff730e1b63718d4304c7a8402675",
+  "micode_sha": "b72cf4c4380335e5f5590181012e707cea259fab",
+  "roles": [
+    {
+      "role": "mutation",
+      "findings": [
+        {
+          "title": "M89 (queued-name seal check at scheduler_spawn) is equivalent at the verdict level: its kill rests on the refusal message, not on an outcome flip",
+          "classification": "MINOR",
+          "surface": "21",
+          "clause": "none (the sub-claim 'checked when the name is resolved so a queued name cannot run later' holds; per-provenance kernels + the CALL edge (M86) independently prevent the queued fiber from running operator code)",
+          "evidence": "Executed in a git-archive copy of 31413ca7 under /var/tmp/pci-final-mutation (removed afterwards). I added a diagnostic copy of interp::tests::runtime_sealing_holds_without_the_static_check that prints each case's outcome instead of asserting, then applied M89's exact old/new text. Under M89: 'function named in a string' => Err(\"assertion failed: 0 != 42\") (still a FAILED test; only the seal-message check trips \u2014 matching the proof run's kill_evidence), and 'queues an operator function for later' => Ok(Completed), but that candidate is honest (double = n*2) and the queued fiber lives in the sealed kernel (kernels[1]) and never runs. No case turns a wrong candidate into a pass. The second fn_by_name site (kernel_goal_create, builtins.rs:4899) is not mutated either. Surface 21 still has working outcome-flip evidence from M86, M87, M88, M90, M91, M92, M95, M96, M97 (all re-executed below).",
+          "executed": true,
+          "fix": "Either retire M89 as verdict-equivalent (same as M58), or record that its kill is on the refusal message (as for M52/M60/M71). Optionally add a case where the resolution-time check is the only barrier, if one exists."
+        },
+        {
+          "title": "The handler-arm loop-control guard (contain_loop_control) is still not mutated and the whole axon-core lib suite survives removing it",
+          "classification": "MINOR",
+          "surface": "7",
+          "clause": "none (surface 7 claims 'Handler arms contain loop control'; a Break from an arm can surface only inside the arm-author's frame or at a call edge, where contain_frame (M59/M72) turns it into a panic, so the mutant looks equivalent)",
+          "evidence": "Executed: I replaced the Break/Continue arm of contain_loop_control (interp.rs:445) with pass-through and ran `cargo test -p axon-core --no-default-features --lib` (bounded_run 16G 1800, skipping my diagnostic tests). Result: 695 passed, 0 failed. This is the same unmutated sub-guard recorded as MINOR at candidate 2, and it still reproduces at this SHA. Surface 7 keeps working evidence through M59 (kill: 'these escapes passed the test: [return refinement, param refinement, verify, struct refinement]').",
+          "executed": true,
+          "fix": "Either add a test in which an arm's break/continue is the only thing that can escape, or record the guard as defence-in-depth that is covered by contain_frame."
+        },
+        {
+          "title": "Some PCI kills are on a message or side-effect assertion rather than on the verdict (M52, M60, M71). These were recorded before and still reproduce",
+          "classification": "MINOR",
+          "surface": "5, 2, 17",
+          "clause": "none",
+          "evidence": "From the frozen proof run's mutations.json (commit 31413ca7, all_killed true). M52 kills at check_effects.rs:669 (`e.kind() == \"malformed\"`): with the mutant a different refusal ('conflict: \u2026 is not one') fires, so the run is still refused. M60 kills on the E0002 message: the dispatch-key rule (M69) still refuses the duplicate impl. M71 kills at check_effects.rs:1067 on 'plant: the check wrote into the launcher's cwd' before the verdict assertion at 1068 (the verdict assertion would also flip for the 'plant' case). All three kills belong to their own guard, but they do not show a wrong verdict. Surfaces 2 and 17 have other outcome-flip evidence (M61/M62/M69/M75/M78/M82/M94; M71's verdict assertion). Surface 5 concerns an operator-configured state dir, not candidate bytes.",
+          "executed": false,
+          "fix": "Where practical, move each assertion so the kill lands on the verdict or refusal kind that proves the attack, or keep recording these as side-effect kills."
+        },
+        {
+          "title": "Fixed sub-claims with tests but no mutation: suite-side symlink refusal, duplicate struct/enum/module E0002, named-handler rebinding, the srand-is-Random classification",
+          "classification": "MINOR",
+          "surface": "2, 3, 10, 21",
+          "clause": "none",
+          "evidence": "Code reading: none of these sub-guards appears among the 45 PCI_IDS mutations. Each parent surface has at least one killed guard (surface 3: M57; surface 2: M60-M62/M75/M78/M82/M94; surface 10: M73/M74; surface 21: M86-M97). The spec itself records named handlers as 'not live' and the suite-side symlink as 'untested'. The suite side is operator-owned bytes, not candidate bytes.",
+          "executed": false,
+          "fix": "Add mutations for these sub-guards, or record them as unmutated in the spec's evidence column."
+        }
+      ],
+      "holding": [
+        {
+          "surface": "coverage map (all fixed in-scope surfaces)",
+          "evidence": "Every surface marked fixed has at least one killed PCI mutation: 1 M04; 2 M60-M62, M75, M78, M82, M83, M94; 2b M69, M70; 3 M57; 4 M53, M85; 5 M52; 6 M44, M55; 7 M59; 8 M72; 10 M73, M74; 11 M67, M68; 12 M65; 13 M63, M64, M68, M84; 14 (partial) M49; 17 M71; 21 M79-M81, M86-M97 (M93 static). Surface 9 rests on 7/8/10/21 as the spec says. mutations.json at commit 31413ca7: all 45 PCI_IDS rows have baseline=passed and result=killed; summary.txt: 94/94 killed, baselines all pass."
+        },
+        {
+          "surface": "21 runtime edges (outcome flips re-executed)",
+          "evidence": "Executed each mutant against a diagnostic copy of the sealing test that prints every case's outcome. M86 flips direct call, method, candidate closure, initializer, struct-where and handler-arm cases to Ok(Completed). M87 flips global read, match guard and initializer-global cases. M88 flips the refinement case. M90 and M91 flip the closure case. M92 flips the handler arm. M95 flips both initializer cases. M97 flips the struct-where case. Each is the guard's own outcome flip: a wrong candidate passes."
+        },
+        {
+          "surface": "21 per-provenance kernel incl. FG-082 (latch + adaptive store)",
+          "evidence": "Executed M96 (k() always returns kernels[0]). All four handle cases flip from Err to Ok(Completed): the forged fiber-result read, the restart of failed fibers, tripping the operator's kill-switch latch to skip its assertion, and reading the operator's adaptive trace by name. On the baseline all four are Err and all 8 honest cases pass. So FG-082's latch and adaptive store sit behind the mutated k() guard, and M96's kill covers them as well as the fiber case the proof log names."
+        },
+        {
+          "surface": "7, 8, 10, 11, 12, 13 kill evidence",
+          "evidence": "The proof-run kill evidence shows outcome flips at the guards' own assertions. M59: the listed escapes passed the test. M72: the param refinement gave Ok(Completed). M73: the resume closure gave Ok(Completed). M74: the t_handler assertion failed (interp.rs:4714). M65: t_err gave Ok(Completed). M67: t_exit gave Ok(Completed). M68: t_err was issued a completion token. M63: an exit(0) run was recorded Passed. M64: a forged ok line was recorded Passed. M84: Cortex accepted a non-Fabric verdict."
+        },
+        {
+          "surface": "1, 4, 6 kill evidence",
+          "evidence": "M04: the candidate's helper.ax judged its own broken double and Passed. M53: a trial-cache module judged the candidate and Passed. M85: the ambient module resolved. M44: AXON_STRICT from the launcher changed the verdict. M55: the check workload copied the signing key. Each is the guard's own effect."
+        },
+        {
+          "surface": "runner and gate wiring",
+          "evidence": "scripts/v022_pci_gates.sh (sha256 f8c87d11\u2026, matches manifest) has 18 rows naming exact tests for surfaces 1, 2, 2b, 3, 4, 5, 6, 7, 8/11/12, 10, 13, 14, 17 and 21. Every mutation's target test is among them. It fails on a missing test or a count mismatch, and 1d.log shows 18 rows OK. scripts/gate.sh:292 invokes it unconditionally (`./scripts/v022_pci_gates.sh || fail \u2026`). The mutation driver (sha256 e4fcfa21\u2026, matches manifest) classifies a kill only when the named test FAILS, never on a compile error. It restores and re-hashes each file after every mutant."
+        }
+      ],
+      "verdict": "CERTIFY"
+    },
+    {
+      "role": "adversary-namespace",
+      "findings": [
+        {
+          "title": "Candidate @[test]s matching the filter substring still run in the verifier process and issue their own completion tokens",
+          "classification": "FUTURE",
+          "surface": "14",
+          "clause": "14: partial: only the exact named test decides the verdict. A candidate test still runs in the verifier's process (before the operator's, in declaration order) and changes the exit code",
+          "evidence": "Executed with the frozen interpreter under the Fabric layout (suite dir first, candidate sealed via --seal, AXON_PATH_EXCLUSIVE=1, empty ceiling, --completion-key-stdin, --filter hidden). A candidate `@[test] fn hidden_completion_x() { assert(true) }` ran before the operator's test and got a valid-looking completion token on its own ok line. The operator's `hidden_completion` still failed ('assertion failed: 0 != 42') and the exit code was 3. The verdict for the named test was not changed, which matches the spec's own partial/FUTURE classification.",
+          "executed": true,
+          "fix": "Beyond v0.22: exclude sealed-module @[test] functions from test enumeration when --seal is set, or tell the runner the exact test name instead of a substring filter."
+        },
+        {
+          "title": "Process-global statics outside Kernel (RNG_STATE, TOKEN_STATE, regex cache) are shared across provenance; not exploitable under the empty ceiling",
+          "classification": "MINOR",
+          "surface": "21",
+          "clause": "none",
+          "evidence": "Code reading at 31413ca7. RNG_STATE (interp.rs:4014) is consumed only by random_*/srand/*_sample (Random effect) and the goal_run* variants (AI/Net/IO effects, builtins.rs builtin_effect_row), all refused under the empty ceiling. The RNG is also time-seeded when AXON_SEED is absent, which it is under Fabric's clean env. TOKEN_STATE only affects principal handle values, which resolve per-kernel. The regex cache is keyed by pattern and compiles deterministically. I found no route by which a candidate changes what the operator's check computes through these under the signable profile.",
+          "executed": false,
+          "fix": "Optionally move RNG_STATE into Kernel (or snapshot and restore it per provenance), so the isolation argument does not rest on the ceiling refusing every RNG consumer."
+        }
+      ],
+      "holding": [
+        {
+          "surface": "1/4 module resolution",
+          "evidence": "Code: lib.rs load_module_recursive searches `search_dirs` in order per use-path (suite dir before candidate dir), dedups by path string, and returns only AXON_PATH dirs under AXON_PATH_EXCLUSIVE=1 (lib.rs:509). span_in_sealed canonicalizes source paths before the prefix test, so a `..` path cannot unseal candidate bytes."
+        },
+        {
+          "surface": "2 redefinition (fn vs global closure)",
+          "evidence": "Executed: a candidate `fn helper` beside an operator `let helper = |x| x*2` was refused with E0002 ('the constant `helper` is defined more than once'). Code: fns, types, enums, lets and mods share one resolver table. A user fn named like a builtin never runs, because eval_call dispatches builtins first (eval.rs:1053)."
+        },
+        {
+          "surface": "2b dispatch-key methods",
+          "evidence": "Executed: a candidate `impl Other for i64 { fn answer }` beside the operator's `impl Answers for i64 { fn answer }` was refused with E0002 ('a method call cannot tell two impls apart'). Code: the resolver and the interpreter method table both key on interp::type_name_of, so they cannot disagree."
+        },
+        {
+          "surface": "2 enum variants",
+          "evidence": "Executed: a candidate `type Mood = Red | Green` beside the operator's `type Color = Red | Green` did not change the operator's match. The wrong candidate failed ('0 != 1'). Variants are registered qualified (Enum::Variant)."
+        },
+        {
+          "surface": "21 kill-switch latch per provenance (FG-082)",
+          "evidence": "Executed: a candidate global initializer calling corrigible_halt() (run sealed at init) did not stop the operator's @[corrigible] helper. With an honest candidate the operator's test passed with a completion token, so the latch is per-kernel."
+        },
+        {
+          "surface": "21 runtime call/global/refinement edges",
+          "evidence": "Code: call_fn applies seal_call on every call (interp.rs:3101), including methods and by-name via fn_by_name. seal_global applies on Ident and global-closure reads. seal_refine applies on let and param refinements. Closures carry a NUL-prefixed creator mark no identifier can name (eval.rs:628). Handler arms run under their `with`'s provenance (eval.rs:1224,1250). Global initializers run in a fresh env under their definition's provenance (interp.rs:2928). The Kernel selected by k() is keyed on frame_sealed."
+        },
+        {
+          "surface": "10 handler completion addressing",
+          "evidence": "Code: HandlerDone carries the handler-stack index and is caught only where d == depth (eval.rs eval_with_handler). contain_frame lets Resume/Return/Break/Continue cross no fn/closure frame (interp.rs:388)."
+        },
+        {
+          "surface": "13 completion evidence baseline",
+          "evidence": "Executed: an honest candidate gives an ok line with a completion token. A wrong candidate (n*3) fails with rc=3 and no token."
+        },
+        {
+          "surface": "native modules",
+          "evidence": "Code: gfx_mock and the domain registry are Interp fields outside Kernel, but every native::M call passes pre_effect_gate with the module's effects (IO/Net) before dispatch (eval.rs:770), so both are unreachable under the empty ceiling."
+        }
+      ],
+      "verdict": "CERTIFY"
+    },
+    {
+      "role": "scope",
+      "verdict": "CERTIFY",
+      "findings": [
+        {
+          "title": "The real-binary interop gate still exercises only the positive completion path",
+          "classification": "MINOR",
+          "surface": "13",
+          "clause": "none",
+          "evidence": "I re-ran scripts/loop_interop_gate.sh on the frozen pair with scratch target dirs: 250/250 PASS (axon 31413ca7, micode b72cf4c4). Section 8 (G3) covers Passed (t_ok_double, matched 1, which now needs a verifying token because the local path always passes Some(completion_key) to local_receipt), Failed (t_bad) and a name matching no test (unknown/0). No interop case has a candidate that ends the test early, such as exit(0) or an Err return, so the case where Fabric records Unknown for lack of evidence is covered only by the Fabric/core tests (a_pass_needs_evidence_that_the_test_completed, M63-M68, M84). This was recorded in every earlier candidate and still holds. It falsifies nothing.",
+          "executed": true,
+          "fix": "Add an interop G3 case whose candidate calls exit(0) (or returns Err) inside the interface call. Assert that the receipt verification is unknown and that the MiCode sidecar result is unknown."
+        },
+        {
+          "title": "The MiCode .env/axon.* closure is gated by unit-test rows only (the real binary holds)",
+          "classification": "MINOR",
+          "surface": "20",
+          "clause": "none",
+          "evidence": "v022_micode_gates.sh line 81 runs config unit tests only. I probed the real micode binary built from b72cf4c4 (the one the proof-run interop used), with a temp HOME and two local mock providers. (1) A repo .env with MICODE_PROVIDER_BASE_URL=B while the user config pointed at A: A got 1 request, B got 0. (2) A repo .env with MICODE_EXTENSIONS_TRUST_PROJECT=1: the project SessionStart hook did NOT run; the control (same flag in the real env) DID run it. (3) A repo .env with MICODE_AXON_EXPECTED_CONTEXT and MICODE_AXON_FABRIC_CHECK pointing at malformed files: the run proceeded normally (rc 0); the control (same values in the real env) gave TASK_NOT_STARTED EXECUTION_CONTEXT_MISMATCH (rc 1). (4) The same keys in the project .micode/config.toml [axon]: ignored (rc 0). Surface 20 holds on the real binary; only the gate row is weaker than the claim.",
+          "executed": true,
+          "fix": "Add a real-binary row to v022_micode_gates.sh or the interop gate that repeats probes (1)-(3) with their controls."
+        },
+        {
+          "title": "Cortex's local (non-Fabric) adjudicator still needs no completion evidence",
+          "classification": "FUTURE",
+          "surface": "13",
+          "clause": "none",
+          "evidence": "Code reading: Cortex-via-Fabric (FabricSubmitExecutor::run_checks) now needs Fabric's verification to be passed or failed before it reads the report (FG-076 holds). The local LocalAxonExecutor path parses `passed` without checking completion tokens. It is outside the Fabric registered_check scope and was recorded as FUTURE before.",
+          "executed": false,
+          "fix": "Give the local Cortex executor a per-run completion key and require the token for the named check, as Fabric does."
+        }
+      ],
+      "holding": [
+        {
+          "surface": "13 (completion evidence on every Fabric Passed path, local backend)",
+          "evidence": "Code: in submit.rs the only place ReceiptVerification::Passed is built for a registered_check is local_receipt. The local branch always passes Some(&completion_key) from fresh_completion_key(), and needs exit==0 plus a verifying HMAC token for the named test (or for every passed test when there is no filter). The Linux path yields NotRequested at most. replayed() returns a journal record and is never signed (REPLAYED). A registered suite is always Bound::Version, so it is always sealed and keyed. Executed: I rebuilt axon and axon-fabric from a git-archive of 31413ca7. These tests pass through the real Fabric submit and interpreter: a_pass_needs_evidence_that_the_test_completed, a_sealed_candidate_cannot_reach_operator_state_by_handle_or_definition, a_named_pass_in_a_run_that_exits_nonzero_is_not_a_pass, a_candidate_predicate_cannot_end_the_operators_test. My own probe used the signable empty-ceiling profile: an honest control is Passed. A candidate that emits a partial line to glue onto the operator's result line, forges ok lines on stdout and stderr, and adds a candidate @[test] joining through the substring filter (with and without a filter) gets Failed, never Passed. Under the empty ceiling even print/println are refused (IO), so the output-forgery channel is closed in scope."
+        },
+        {
+          "surface": "Readiness model: G01 and PCI never sufficient alone",
+          "evidence": "Code: nothing in axon-loop, axon-fabric or micode reads a gate registration or a PCI state. EVL counts a verdict in a Protected evaluation only when both legs' backend_profile_ref is in PROTECTED_PROFILES=[linux-microvm-protected] (evl.rs ~716). pointer.rs protected_scope_gate refuses development-class evaluations. Intake needs an attestation, and Fabric signs only an empty-ceiling local run or a microVM run (signing.rs), so a local verdict under a non-empty grant (surface 18) cannot count. The G01 registry row states PCI as a prerequisite and says overall protected-verifier readiness is NOT READY."
+        },
+        {
+          "surface": "20 (MiCode host, fc18bbc6/b72cf4c4)",
+          "evidence": "Executed on the real binary with controls (see the MINOR finding): a repo .env cannot redirect the provider, trust the repo's hooks, or set axon.*, and a project config.toml cannot set axon.* either."
+        },
+        {
+          "surface": "Interop / certification rule",
+          "evidence": "Re-executed loop_interop_gate.sh against the frozen trees: 250/250 PASS. Proof run: mutations.json has commit 31413ca7, all_killed true, and all 45 PCI_IDS rows passed-baseline/killed. v022_pci_gates.sh PASS 18 rows. Both frozen trees are still clean at their SHAs after my runs."
+        },
+        {
+          "surface": "21 (state outside Kernel)",
+          "evidence": "Audited the process statics and thread-locals in axon-core. RNG, clock, provenance log and goal_* are all effect-gated, so they are refused under the empty ceiling. The regex cache is keyed by pattern. TOKEN_STATE is MINOR and already recorded. The native::fix domain registry is effect-free and per-Interp rather than per-provenance, but its handles cannot be forged: Value::Handle is built only from native returns, and the slab never reuses a slot, so a candidate cannot reach an operator handle without being handed it. Executed: a candidate naming an operator struct type directly, in string interpolation, in a closure, in a match guard, or in a comptime-adjacent binding is refused with E0004."
+        }
+      ]
+    },
+    {
+      "role": "surface",
+      "verdict": "CERTIFY",
+      "findings": [
+        {
+          "title": "W0003 wrongly says the builtin `P` always wins; at runtime a non-distribution `P(...)` call falls through to a user fn named `P`",
+          "classification": "MINOR",
+          "surface": "2",
+          "clause": "none (outside the property: this is reached only when the operator's own suite calls `P` on a value that is not a distribution; without a candidate-supplied `P`, that suite already fails with `call to unknown function P`, so it depends on a name only the candidate defines, as the surface-2 interface note describes)",
+          "evidence": "Interp eval_call (crates/axon-core/src/interp/eval.rs ~998-1060) first tries eval_prob_pred. When that returns None, the call goes to call_builtin, which returns None for `P`, and then to user fns. Meanwhile the resolver prints W0003 saying 'the builtin takes precedence, so this function will not be called', which is not true for `P`. Executed on a copy of the frozen tree (interpreter build, empty ceiling, --seal, completion key): a suite whose own `P` usage is malformed fails with no candidate `P`, and behaves differently when one is present. For a well-typed distribution argument (Gaussian/Beta), the fallback path panics on the comparison, so no pass could be obtained there.",
+          "executed": true,
+          "fix": "Make `P`/`E`/`Var` true reserved names: refuse a user definition with E0002 rather than W0003, and make a failed eval_prob_pred a panic instead of falling through to user-fn lookup. Also correct W0003's text."
+        },
+        {
+          "title": "eval_prob_pred discards the Flow from its first evaluation of the left operand, then evaluates it again",
+          "classification": "MINOR",
+          "surface": "7",
+          "clause": "none",
+          "evidence": "eval.rs:1416 `let dist_val = self.eval(left, env).ok()?;` drops any Flow (Panic, Exit, HandlerDone \u2026) and then re-evaluates the whole argument on the normal path. That is the one place outside contain_frame where an abortive flow is silently dropped, and candidate code in that operand runs twice. The second evaluation propagates normally, so nothing is converted into a completion. Found by code reading, not executed.",
+          "executed": false,
+          "fix": "Evaluate the operand once, propagate any Err flow, and reuse the value."
+        },
+        {
+          "title": "Principal token stream (kernel.rs TOKEN_STATE) is still one process-global across both kernels",
+          "classification": "MINOR",
+          "surface": "21",
+          "clause": "none",
+          "evidence": "Already recorded as MINOR in candidate 4. With kernels per provenance, a token minted in one kernel does not resolve in the other, so a candidate advancing the stream changes only the VALUE of operator tokens, never access to them. No operator check result depends on that value. Still present at 31413ca7 (code reading).",
+          "executed": false,
+          "fix": "FUTURE: one token stream per Kernel."
+        }
+      ],
+      "holding": [
+        {
+          "surface": "1",
+          "evidence": "Suite dir comes first in AXON_PATH (submit.rs module_path). Runner row 'PCI 1 shadowing' a_candidate_cannot_shadow_a_module_of_the_suite; mutation M04 killed."
+        },
+        {
+          "surface": "2",
+          "evidence": "E0002 across the merged program. Runner rows 'PCI 2' (resolver duplicate_* tests); M60-M62, M75, M78, M82, M94 killed. At runtime, builtins win in eval_call because call_builtin returns Ok(None) only for unknown names (P is the exception above). A candidate refinement is refused in operator frames by seal_refine at all four sites (param, return, field, let)."
+        },
+        {
+          "surface": "2b",
+          "evidence": "Method key is (type_name_of, name) and unique; interp method table is keyed the same way. Runner row 2b; M69, M70 killed. Probe: an operator impl on a refinement type fails to typecheck (E0403) on its own, so there is no silent key mismatch."
+        },
+        {
+          "surface": "3",
+          "evidence": "Candidate-side link refusal: runner row 3 a_candidate_holding_a_symlink_is_refused; M57 killed. The suite side is still untested, as the spec already says."
+        },
+        {
+          "surface": "4",
+          "evidence": "AXON_PATH_EXCLUSIVE is set by Fabric (submit.rs ~937). Runner rows 4 (fabric + pci_isolation); M53, M85 killed."
+        },
+        {
+          "surface": "5",
+          "evidence": "Runner row 5; M52 killed (the spec already records that it kills on a side effect)."
+        },
+        {
+          "surface": "6",
+          "evidence": "runner.rs: env_clear, then AXON_ALLOWED_EFFECTS='' always set. The ambient sandbox is installed in BOTH kernels (mk_kernel). Runner row 6; M44, M55 killed. Executed: under an empty ceiling, pre_effect_gate refuses every builtin with a non-empty effect row BEFORE handler interception (builtins.rs 667 before 736)."
+        },
+        {
+          "surface": "7/8/10",
+          "evidence": "contain_frame is an exhaustive allowlist over Flow (interp.rs 388). call_fn and call_closure wrap it, and every predicate site calls contain_frame. with-handler pops its frame on every path, and HandlerDone is depth-addressed. Under the empty ceiling no effect op can reach a handler arm, because the gate runs before interception. Runner rows 7, 8/11/12, 10; M59, M72-M74 killed."
+        },
+        {
+          "surface": "11/12/13",
+          "evidence": "run_test_fn_inner maps Ok(Value::Err) and Exit(0) to EndedEarly, and every other flow to Err. A token is issued only when r.completed. The key is read from stdin before parse, and the HMAC is over name + fresh per-run key. Executed: the valid-token path verified independently in Python. Runner row 13; M63-M65, M67, M68, M84 killed."
+        },
+        {
+          "surface": "14",
+          "evidence": "Stated as partial. A fresh Interp::build (both kernels) runs per test. The process-globals shared across tests are only the token stream and RNG (Random refused), plus thread-locals rebuilt per on_deep_stack thread. Runner row 14; M49 killed."
+        },
+        {
+          "surface": "15/16",
+          "evidence": "Honestly stated as MINOR / mitigated. Failed-line JSON escapes control characters (main.rs cmd_test)."
+        },
+        {
+          "surface": "17",
+          "evidence": "runner.rs current_dir(req.workspace) = <run>/check. Runner row 17; M71 killed."
+        },
+        {
+          "surface": "21",
+          "evidence": "The Seal is built from item spans (canonicalized dirs on both sides). The CALL edge is in call_fn, and every by-name path (fn_by_name, goal.rs, scheduler, sandbox_run) ends in call_fn. The GLOBAL-READ edge covers Ident and closure-global lookup. Closure provenance is a NUL-keyed capture mark, which survives SendValue. The struct-where predicate runs sealed if the frame or type is sealed. Kernel[2] holds scheduler, principals, supervisors, stores, gateways, goals, sandboxes, active_sandbox, provenance and corrigible latch. Remaining Interp fields are attribution, AI meters (AI refused), handlers (unreachable under the empty ceiling) and native state (IO/Net-gated). Executed baseline: a candidate call to an operator helper is refused (E0004), and an honest candidate passes with a verified token. Runner rows 21; M79-M83, M86-M97 killed."
+        },
+        {
+          "surface": "18",
+          "evidence": "Honestly scoped out: local backend, same uid, non-empty grant."
+        },
+        {
+          "surface": "19",
+          "evidence": "Honestly stated as open. The completion key is wired only into LocalInterpreterExecutor (runner.rs); no microVM claim is made."
+        }
+      ]
+    },
+    {
+      "role": "adversary-control",
+      "findings": [
+        {
+          "title": "Clock-reading builtins temporal_now / temporal_new / temporal_is_valid are classified pure and run under the empty ceiling",
+          "classification": "MINOR",
+          "surface": "new (adjacent to 6/21)",
+          "clause": "none",
+          "evidence": "builtin_effect_row (crates/axon-core/src/builtins.rs:2623) gives now_ms/sleep_ms the Time row, but temporal_now, temporal_new and temporal_is_valid fall through to `_ => &[]`. They call program_now_ms(), which reads the real clock (interp/builtins.rs:87, 3798, 3807, 3866). Executed with a harness that copies Fabric's local registered_check launch (env cleared, AXON_ALLOWED_EFFECTS=\"\", AXON_PATH_EXCLUSIVE=1, AXON_PATH=suite:cand, --seal cand, --completion-key-stdin, Fabric's verdict and HMAC rule), against a scratch build of 31413ca7. A candidate `solve` busy-waits on temporal_now() for 50 ms. The operator's `assert(temporal_is_valid(t))` (horizon 20 ms) then fails, and the verdict is Failed. So wall time is readable in the signable profile without a Time grant. Candidate influence is limited to its own execution time while the suite calls it, and I found no route to a Passed verdict.",
+          "executed": true,
+          "fix": "Give temporal_now / temporal_new / temporal_is_valid (and any other builtin that calls program_now_ms) the Time effect row, or make them read a virtual clock under the signable profile. Add a row to builtin_effect_row_agrees_with_impurity."
+        }
+      ],
+      "holding": [
+        {
+          "surface": "13 (completion evidence)",
+          "evidence": "Code read: a Passed verdict needs HMAC(key, name) on the named test's ok line (axon-fabric submit.rs local_receipt). The key is read from stdin before any program code runs (main.rs cmd_test). The token is emitted only when run_test_fn_inner returns TestEnd::Completed; Ok(Value::Err), Exit(0), break/continue and HandlerDone all give no token. Executed: the honest candidate gives Passed and a wrong candidate gives Failed through the Fabric-mirroring harness. Forged lines cannot carry a valid token. Under the empty ceiling println, eprintln and exit are IO and are refused."
+        },
+        {
+          "surface": "12 (Err / early return)",
+          "evidence": "Executed: `?` on an Option inside a test is refused at type check (E0303), so there is no None-early-return analogue of the Err case. Test end via Ok(Value::Err) is EndedEarly (interp.rs:2682)."
+        },
+        {
+          "surface": "2 (redefinition)",
+          "evidence": "Executed: a candidate `fn hidden_completion`, a candidate `@[test] fn hidden_completion` and a candidate `let hidden_completion` each give E0002 and no summary, so the verdict is Unknown. A candidate fn named like a builtin (assert_eq, str_len) gets W0003, and the builtin wins at runtime (eval_call checks builtins before user fns). Only fn_addr and lidt (Hal) are in the table without an interpreter implementation. Struct typing is nominal: returning a candidate struct where the suite annotates an operator type gives E0102, so runtime method dispatch cannot be redirected to a candidate method."
+        },
+        {
+          "surface": "21 (runtime sealing)",
+          "evidence": "Executed: a candidate module pulled in transitively (cand/f.ax declares `mod g`) is sealed. The static path is refused with E0004. The by-name path, scheduler_spawn(\"secret\") from cand/g.ax and from cand/f.ax, is refused at runtime with \"sealed code ... cannot run `secret`\". Code read: every function lookup used by builtins (scheduler, sandbox_run, goal) goes through call_fn \u2192 seal_call. Closures carry the NUL-keyed provenance mark. Global initializers run under their definition's provenance in a fresh environment. Globals are immutable at runtime. Both the seal dirs and the source paths are canonicalized."
+        },
+        {
+          "surface": "6 / ceiling (signable profile)",
+          "evidence": "Code read: pre_effect_gate runs BEFORE effect-handler interception in call_builtin, so under the empty ceiling no effect op can reach any handler arm (operator's or candidate's). Surfaces 10 and 7 are therefore not reachable through handlers in scope. The ceiling is enforced through the per-provenance kernel. sandbox_create, sandbox_create_scoped and sandbox_run refuse widening against the active sandbox. Both kernels start with the ambient '' entry active (index 0), and nothing sets it to -1. Native gfx/domain modules go through the same gate (IO/Net). goal_run*, goal_* accessors and dstore_* are IO. The kernel goal uses the deterministic hill-climb."
+        },
+        {
+          "surface": "7/8 (frame edges)",
+          "evidence": "Code read: contain_frame is an exhaustive allowlist with no wildcard. The Return, Break, Continue and Resume transfers become panics at call, closure and predicate edges. HandlerDone is caught only by the `with` at the matching handler-stack depth. call_depth is restored by DepthGuard."
+        },
+        {
+          "surface": "14 (name filter)",
+          "evidence": "Code read: Fabric judges only the exact filter name. A candidate test that joins through the substring filter can only turn Passed into Unknown (nonzero exit) or cause a timeout (Unknown). It runs in a fresh Interp, and its only effect-free process-global writes are the RNG (via property tests; no effect-free operator consumer) and the principal token stream (recorded MINOR previously)."
+        }
+      ],
+      "verdict": "CERTIFY"
+    }
+  ]
+}

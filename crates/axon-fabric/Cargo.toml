@@ -1,0 +1,65 @@
+[package]
+name = "axon-fabric"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Axon compute fabric (v0.22 M1): durable operation journal, aggregate reservations, and the Fabric submit path"
+
+[[bin]]
+name = "axon-fabric"
+path = "src/bin/axon-fabric.rs"
+
+# Operator decision A: the ONLY root component of a protected host. Installed
+# setuid-root, executable by the Fabric group alone (privileged_launcher.rs).
+[[bin]]
+name = "axon-protected-launcher"
+path = "src/bin/axon-protected-launcher.rs"
+
+# Operator decision D6 / amendment 50: the custodian, its own uid on a
+# protected host (systemd socket-activated), issuing and spending the
+# observation nonce. `--dev` is a manual, never-protected launch.
+[[bin]]
+name = "axon-custodian"
+path = "src/bin/axon-custodian.rs"
+
+# Operator decisions G / G1, amendment 68: the preflight observer, its own uid
+# on a protected host (systemd socket-activated), answering only the root
+# helper's `--observe` relay and signing only what it measured.
+[[bin]]
+name = "axon-observer"
+path = "src/bin/axon-observer.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+axon-workspace-recipe = { path = "../axon-workspace-recipe" }
+axon-psv = { path = "../axon-psv" }
+# Ed25519 verification of qualification evidence (decision D6). Already in
+# the workspace lockfile via rustls; no new crate.
+ring = "0.17"
+# NFC for the workspace importer's namespace-collision refusal (B261).
+# Already in the workspace lockfile via url/idna; no new crate.
+icu_normalizer = { version = "2.2", default-features = false, features = ["compiled_data"] }
+axon-loop-contracts = { path = "../axon-loop-contracts" }
+axon-loop = { path = "../axon-loop" }
+axon-cortex = { path = "../axon-cortex" }
+axon-os = { path = "../axon-os" }
+axon-vm = { path = "../axon-vm" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[features]
+# TESTS ONLY: constructors for a trust root that is not the operator's (a
+# temp dir, the repository fixture). A production build (`cargo build`, no
+# dev-dependencies) never has it, and `verify-readiness` reports it, so a
+# test-trust build can never satisfy protected readiness.
+test-trust-root = []
+
+[dev-dependencies]
+# The loop's own join check over a Fabric-emitted bundle, under a test root.
+axon-loop-contracts = { path = "../axon-loop-contracts", features = ["test-trust-root"] }
+tempfile = "3"
+axon-fabric = { path = ".", features = ["test-trust-root"] }

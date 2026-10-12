@@ -7,6 +7,9 @@
 //!
 //! Every §0 acceptance check name appears here as a real, non-stubbed test.
 
+mod common;
+#[path = "../../axon-core/tests/script_spawn/mod.rs"]
+mod script_spawn;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -25,20 +28,29 @@ fn intent_bin() -> PathBuf {
 /// The R21 supervisor binary, built into the same target dir. None ⇒ skip the
 /// cross-spec run checks.
 fn axon_os_bin() -> Option<PathBuf> {
-    let p = workspace_root().join("target/debug/axon-os");
-    p.exists().then_some(p)
+    // Built from THIS tree by cargo (tests/script_spawn::workspace_bin).
+    Some(script_spawn::workspace_bin(
+        "AXON_OS",
+        &["build", "-p", "axon-os", "--bin", "axon-os"],
+        "axon-os",
+    ))
 }
 
 /// The interpreter the supervisor drives. None ⇒ skip end-to-end run checks.
 fn axon_bin() -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os("AXON_BIN") {
-        let p = PathBuf::from(p);
-        if p.exists() {
-            return Some(p);
-        }
-    }
-    let p = workspace_root().join("target/debug/axon");
-    p.exists().then_some(p)
+    // Built from THIS tree by cargo (tests/script_spawn::workspace_bin).
+    Some(script_spawn::workspace_bin(
+        "AXON_BIN",
+        &[
+            "build",
+            "-p",
+            "axon-core",
+            "--no-default-features",
+            "--bin",
+            "axon",
+        ],
+        "axon",
+    ))
 }
 
 fn intents() -> PathBuf {
@@ -368,12 +380,7 @@ fn acc_a4_synthesis_isolated_timeout() {
     let dir = tmp("a4");
     // A stand-in "axon" that ignores args and sleeps far past the timeout.
     let fake = dir.join("hang.sh");
-    std::fs::write(&fake, "#!/bin/sh\nsleep 30\n").unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    common::write_executable(&fake, "#!/bin/sh\nsleep 30\n", 0o755);
     let start = std::time::Instant::now();
     let mut cmd = Command::new(intent_bin());
     cmd.args([

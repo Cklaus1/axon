@@ -69,6 +69,9 @@
 #       (integer comparison, no rounding). The second check is the red one:
 #       eager compile-on-first-entry costs about 1.09 x tree.
 #
+# Any mode: the run first calls scripts/lib/require_idle.py and refuses (exit 75)
+# on a busy machine; --allow-busy proceeds and prints a WARNING line saying so.
+#
 # Exit: 0 every selected median within budget and every output golden;
 #       1 any median over budget or any output differing;
 #       2 "not measured": perf cannot count instructions:u on that CPU (or the
@@ -118,6 +121,7 @@ COMPILE_ROW="big-compile 5 101 95"
 
 MODE=programs
 SEL=""
+ALLOW_BUSY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --programs)
@@ -129,7 +133,8 @@ while [ $# -gt 0 ]; do
       if [ $# -gt 1 ] && [[ "$2" != --* ]]; then SEL="$2"; shift; fi ;;
     --repros=*) MODE=repros; SEL="${1#--repros=}" ;;
     --compile) MODE=compile ;;
-    -h|--help) sed -n '2,68p' "$0"; exit 0 ;;
+    --allow-busy) ALLOW_BUSY=1 ;;
+    -h|--help) sed -n '2,78p' "$0"; exit 0 ;;
     *) echo "vm_perf_gate: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
@@ -144,19 +149,36 @@ not_measured() {
 command -v perf >/dev/null 2>&1 || not_measured "perf is not installed"
 command -v taskset >/dev/null 2>&1 || not_measured "taskset is not installed"
 
+# Instruction counts survive load, but a loaded machine still perturbs the
+# build and the pinned CPU; refuse unless told otherwise (scripts/lib/require_idle.py).
+python3 "$ROOT/scripts/lib/require_idle.py" --label vm_perf_gate
+IDLE_RC=$?
+if [ "$IDLE_RC" -ne 0 ] && [ "$IDLE_RC" -ne 75 ]; then
+  echo "vm_perf_gate: refused: the idle guard itself failed (require_idle exit $IDLE_RC); --allow-busy covers a busy machine (exit 75) only" >&2
+  exit "$IDLE_RC"
+fi
+if [ "$IDLE_RC" -ne 0 ]; then
+  if [ "$ALLOW_BUSY" -eq 1 ]; then
+    echo "vm_perf_gate: WARNING: --allow-busy: measured on a BUSY machine (require_idle exit $IDLE_RC); not an idle-machine run"
+  else
+    echo "vm_perf_gate: refused: machine is busy (require_idle exit $IDLE_RC); rerun when idle or pass --allow-busy" >&2
+    exit "$IDLE_RC"
+  fi
+fi
+
 # The shipping configuration: no eager compile, no trace (R50 S9).
 unset AXON_VM_EAGER AXON_VM_TRACE
 
+. "$ROOT/scripts/lib/axon_bin.sh"
 if [ -n "${AXON_BIN:-}" ]; then
+  named_bin AXON_BIN vm_perf_gate
   AXON="$AXON_BIN"
 else
   echo "vm_perf_gate: building axon (release, --no-default-features)…"
   cargo build -q --release -p axon-core --no-default-features --bin axon \
     || not_measured "release build failed"
-  AXON="${CARGO_TARGET_DIR:-target}/release/axon"
+  AXON=""; use_built AXON axon "" release
 fi
-case "$AXON" in /*) ;; *) AXON="$ROOT/$AXON" ;; esac
-[ -x "$AXON" ] || not_measured "$AXON is not executable"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT

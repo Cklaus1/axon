@@ -1,0 +1,4 @@
+{
+  "theme": "R51 S7 mutation rows",
+  "text": "TEST-ONLY (interp/tests_v022_b.rs, cfg(test)): a_sealed_call_that_binds_nothing_still_meets_the_seal_edge, a sealed candidate's parameter-free call of an operator fn that binds nothing, refused by the seal edge (control: the candidate's own answer completes); the killer of M3493/M3494, whose cells now run with debug assertions off (the debug store assertion stopped their mutants before the attack; without it check_store misses a bindless chain and the mutant completes); no interpreter code changed, no unsealed behaviour change"
+}
