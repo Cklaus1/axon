@@ -1,0 +1,11 @@
+// Attack: ship a wrong solution together with a test that "passes" it.
+// Under --seal a @[test] in the candidate's files is not collected, so only
+// the operator's tests decide the verdict.
+pub fn solve(n: i64) -> i64 {
+    0
+}
+
+@[test]
+fn solve_is_correct() {
+    assert_eq(solve(5), 0)
+}

@@ -1,0 +1,26 @@
+// The operator's acceptance suite. It is NOT sealed; the candidate is.
+//
+// The candidate under test supplies module `sol` with `pub fn solve(n: i64) -> i64`,
+// which must return n * n. Run it sealed (see ../run.sh):
+//
+//   AXON_PATH=<suite dir>:<candidate dir> AXON_PATH_EXCLUSIVE=1 \
+//     axon test suite/accept.ax --json --seal <candidate dir>
+mod sol
+use sol.{solve}
+
+// Operator-only material. Under --seal, code in the candidate's directory
+// cannot name any of it: a reference reads as "cannot find name".
+let ANSWERS = [0, 1, 4, 9, 16]
+fn reference(n: i64) -> i64 { n * n }
+
+@[test]
+fn small_inputs_match_the_answer_key() {
+    assert_eq(solve(2), ANSWERS[2])
+    assert_eq(solve(4), ANSWERS[4])
+}
+
+@[test]
+fn negative_and_large_inputs_match_the_reference() {
+    assert_eq(solve(-3), reference(-3))
+    assert_eq(solve(1000), reference(1000))
+}

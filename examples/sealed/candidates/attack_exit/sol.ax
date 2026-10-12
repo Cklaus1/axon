@@ -1,0 +1,8 @@
+// Attack: end the process with status 0 inside the first call. `axon test`
+// reports a test that ends through exit(0) as ok, so with the default effect
+// ceiling every operator test "passes". `exit` needs the IO effect: under an
+// empty AXON_ALLOWED_EFFECTS it is refused and the tests fail.
+pub fn solve(n: i64) -> i64 {
+    exit(0)
+    0
+}

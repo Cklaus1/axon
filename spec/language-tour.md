@@ -445,6 +445,18 @@ fn test_panics_on_bad_input() {
 
 Run with: `axon test myfile.ax`
 
+To grade code you do not trust (for example code a model wrote) against your own suite, put
+the candidate's module files in their own directory and seal it:
+
+```sh
+AXON_PATH=suite:cand AXON_PATH_EXCLUSIVE=1 AXON_ALLOWED_EFFECTS= \
+    axon test suite/accept.ax --json --seal cand
+```
+
+Code under `cand` cannot name anything the suite defines, and its own `@[test]`s are not
+run. See [`docs/SEALED_TESTS.md`](../docs/SEALED_TESTS.md) and the runnable
+[`examples/sealed/`](../examples/sealed/).
+
 ---
 
 ## 16. AI Annotations (Deferred)
