@@ -1,0 +1,1502 @@
+{
+ "meta": {
+  "parts": [
+   {
+    "set": "heldout",
+    "axon_bin": "/home/cklaus/projects/axon-lanes/.doc-build/cortex-heldout/debug/axon",
+    "quota": 50,
+    "per_file_class": 3,
+    "per_symbol": 4,
+    "max_sites": 16,
+    "class_order": [
+     "swap-branches",
+     "flip-comparison",
+     "wrong-var",
+     "wrong-field",
+     "float-constant",
+     "drop-not",
+     "string-typo",
+     "operand-swap",
+     "operator",
+     "constant",
+     "boolean",
+     "argswap",
+     "drop-stmt",
+     "comparison"
+    ],
+    "real_bug_mining": {
+     "pairs": 75,
+     "qualifying": 0
+    }
+   }
+  ],
+  "sources": {
+   "examples/asi/budget_audit.ax": "// budget_audit.ax\n//\n// Demonstrates: KernelGoal + Budget enforcement + audit trail.\n//\n// An optimizer searches a score landscape under a hard token budget.\n// Each evaluation is recorded as a typed AuditEntry.  When the budget\n// is exhausted the loop stops \u2014 not when the score converges.\n//\n// The audit entry format mirrors what R28 will record automatically;\n// here we build it manually to show the pattern before R28 ships.\n//\n// Run:\n//   target/debug/axon run  examples/asi/budget_audit.ax\n//   target/debug/axon test examples/asi/budget_audit.ax\n\n// \u2500\u2500 Types \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\ntype AuditEntry = { seq: i64, effect: str, op: str, tokens: i64, score: i64 }\n\n// \u2500\u2500 Audit helpers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n// Record one evaluation: print the entry and return the typed struct.\nfn audit_record(seq: i64, effect: str, op: str, tokens: i64, score: i64) -> AuditEntry {\n    println(\"[AUDIT] #{to_str(seq)} {effect}:{op} tokens={to_str(tokens)} score={to_str(score)}\")\n    AuditEntry { seq: seq, effect: effect, op: op, tokens: tokens, score: score }\n}\n\n// \u2500\u2500 Score landscape \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n// Integer peak at x = 42 (score = 100), linear falloff, clamped at 0.\n@[adaptive]\nfn score_fn(x: i64) -> i64 {\n    let dist = if x > 42 { x - 42 } else { 42 - x }\n    let base = 100 - dist\n    if base < 0 { 0 } else { base }\n}\n\n// \u2500\u2500 Budget-gated optimizer \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n// Run the optimizer until the token budget is exhausted or the search\n// space is fully scanned (x = 0..99, step 1).  Each evaluation costs\n// 10 tokens.  Returns the best score found within the budget.\nfn run_with_audit(budget: i64) -> i64 {\n    let seq = 0\n    let tokens_spent = 0\n    let best = 0\n    let x = 0\n\n    while tokens_spent < budget && x < 100 {\n        let s = score_fn(x)\n        seq = seq + 1\n        tokens_spent = tokens_spent + 10\n        let _ = audit_record(seq, \"AI\", \"goal_eval\", tokens_spent, s)\n        if s > best {\n            best = s\n        }\n        x = x + 1\n    }\n\n    let exhausted = if tokens_spent >= budget { \"yes\" } else { \"no (scan complete)\" }\n    println(\"  Iterations:   {to_str(seq)}\")\n    println(\"  Tokens used:  {to_str(tokens_spent)} / {to_str(budget)}\")\n    println(\"  Best score:   {to_str(best)}\")\n    println(\"  Budget wall:  {exhausted}\")\n    best\n}\n\n// \u2500\u2500 Main \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\nfn main() -> i64 {\n    println(\"=== budget_audit.ax: KernelGoal + Budget + Audit Trail ===\")\n    println(\"Landscape: score_fn peaks at x=42 (score=100), linear falloff.\")\n    println(\"\")\n\n    // Run A \u2014 tight budget: 20 evals max (x=0..19, best = score_fn(19) = 77)\n    println(\"--- Run A: budget=200 tokens (20 evals, stops before peak) ---\")\n    let _a = run_with_audit(200)\n    println(\"\")\n\n    // Run B \u2014 full scan: 10 000 tokens covers x=0..99, hits x=42 (score=100)\n    println(\"--- Run B: budget=10000 tokens (full scan, finds peak) ---\")\n    let best_b = run_with_audit(10000)\n    println(\"\")\n\n    // KernelGoal principal-budget metering (R12b):\n    // Budget=50 evals; we only spend 10, leaving 40 \u2014 demonstrates metering\n    // without hitting the hard-exit wall that fires at exhaustion (exit 7).\n    println(\"--- Demo: KernelGoal principal-budget metering (R12b) ---\")\n    let _ = goal_clear(\"score_fn\")\n    let p = principal_root(\"optimizer\", false, false, false, 50)\n    let goal = kernel_goal_create(p, \"score_fn\", 100.0)\n    println(\"  Budget before run:  {to_str(kernel_goal_budget_left(goal))}\")\n    let best_kg = kernel_goal_run(goal, 10)\n    println(\"  KernelGoal best:    {to_str_f64(best_kg)}\")\n    println(\"  Evals charged:      {to_str(kernel_goal_spent(goal))}\")\n    println(\"  Budget remaining:   {to_str(kernel_goal_budget_left(goal))}\")\n    println(\"\")\n\n    if best_b == 100 {\n        println(\"PASS: full-budget run found the peak at x=42 (score=100).\")\n        0\n    } else {\n        println(\"FAIL: expected score 100, got {to_str(best_b)}\")\n        1\n    }\n}\n\n// \u2500\u2500 Tests \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n@[test]\nfn test_budget_stops_loop() {\n    // budget=50, cost=10/eval, step=1 \u2192 exactly 5 evals (x=0..4).\n    // score_fn(4) = 100 - |42-4| = 62; peak at x=42 is never reached.\n    let best = run_with_audit(50)\n    assert_eq(best, 62)\n}\n\n@[test]\nfn test_audit_entry_created() {\n    let e = audit_record(1, \"AI\", \"goal_eval\", 10, 85)\n    assert_eq(e.seq, 1)\n    assert_eq_str(e.effect, \"AI\")\n    assert_eq(e.score, 85)\n}\n\n@[test]\nfn test_score_fn_peaks_at_42() {\n    assert_eq(score_fn(42), 100)\n    assert(score_fn(0) < score_fn(42))\n    assert(score_fn(100) < score_fn(42))\n}\n\n@[test]\nfn test_unlimited_budget_finds_peak() {\n    // budget=10000, cost=10/eval \u2192 scans x=0..99 (1000 tokens total).\n    // Hits x=42 \u2192 score=100.\n    let best = run_with_audit(10000)\n    assert_eq(best, 100)\n}\n",
+   "examples/stdlib/plan.ax": "// Tier-2 stdlib: Plan, Schedule, Feedback \u2014 Goal-directedness pillar completions.\n//\n// ROADMAP \u00a76 three remaining Tier-2 types (all in Goal-directedness pillar):\n//\n//   Plan<T>       \u2014 \"Agent.propose() output\": a typed candidate action proposal\n//                   from an agent, carrying the proposed value, the agent's\n//                   confidence, and the reasoning trace that produced it.\n//\n//   Schedule      \u2014 \"when goals run\": a recurrence spec describing how often and\n//                   under what conditions a goal should be re-evaluated.\n//\n//   Feedback<G,M> \u2014 \"improvement-loop output\": the typed result of one iteration\n//                   of the improve loop \u2014 what changed, by how much, and whether\n//                   the improvement met the goal's target.\n//\n// Together these close the improve-cycle vocabulary: an agent PROPOSEs a Plan\n// \u2192 the system runs the goal on a SCHEDULE \u2192 each run produces Feedback \u2192 the\n// Feedback drives the next Plan proposal. This is the ROADMAP's self-improvement\n// loop made observable as first-class values rather than side effects.\n//\n//   axon test examples/stdlib/plan.ax\n//   axon run  examples/stdlib/plan.ax\n\n// \u2500\u2500 Plan \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// An agent's PROPOSAL for what to do next. Carrying the candidate value, the\n// agent's confidence in the proposal, and a short reasoning trace.\n//\n// `Plan` is what an @[agent] fn's `propose()` step returns \u2014 it's the interface\n// between the agent's internal deliberation and the goal runner's evaluation step.\n// The goal runner evaluates the plan, compares the score against the target, and\n// either accepts or generates feedback that drives the next proposal.\n//\n// Confidence is 0..100 (percentage). An agent proposing below `min_confidence`\n// signals it does not trust its own output \u2014 the goal runner should skip evaluation\n// and either re-propose or stop early.\n\ntype Plan = {\n    val:        i64,   // the proposed candidate value (the thing being optimized)\n    confidence: i64,   // agent's confidence in this proposal (0..100)\n    reason:     str,   // short prose trace of why this value was chosen\n    agent:      str,   // which agent produced this plan\n}\n\nfn plan(val: i64, confidence: i64, reason: str, agent: str) -> Plan {\n    assert(confidence >= 0 && confidence <= 100)\n    Plan { val: val, confidence: confidence, reason: reason, agent: agent }\n}\n\n// Shorthand for a confident plan (confidence = 100).\nfn plan_certain(val: i64, reason: str, agent: str) -> Plan {\n    Plan { val: val, confidence: 100, reason: reason, agent: agent }\n}\n\n// A plan with very low confidence \u2014 the agent signals uncertainty.\nfn plan_uncertain(val: i64, reason: str, agent: str) -> Plan {\n    Plan { val: val, confidence: 20, reason: reason, agent: agent }\n}\n\n// Should the goal runner skip evaluation of this plan?\n// True when the agent's confidence is below the threshold \u2014 don't waste compute\n// evaluating a plan the proposing agent already doubts.\nfn plan_skip(p: Plan, min_confidence: i64) -> bool {\n    p.confidence < min_confidence\n}\n\n// Is this plan from a specific agent?\nfn plan_from(p: Plan, agent_name: str) -> bool {\n    str_eq(p.agent, agent_name)\n}\n\n// Revise a plan: keep the same agent, update val and confidence.\nfn plan_revise(p: Plan, new_val: i64, new_confidence: i64, new_reason: str) -> Plan {\n    assert(new_confidence >= 0 && new_confidence <= 100)\n    Plan { val: new_val, confidence: new_confidence, reason: new_reason, agent: p.agent }\n}\n\n// \u2500\u2500 Schedule \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// A recurrence spec for when a goal should re-run. Three strategies:\n//\n//   interval \u2014 re-run every N evaluations (timer-free; good for offline batches)\n//   on_score \u2014 re-run only when the latest score falls below a threshold\n//              (reactive re-evaluation: trigger when quality degrades)\n//   budget   \u2014 re-run until a total evaluation budget is exhausted\n//\n// The scheduler reads a Schedule value and calls `schedule_should_run` to decide\n// whether the current tick merits running the goal again.\n\ntype Schedule = {\n    strategy:    i64,   // 0=interval, 1=on_score, 2=budget\n    interval_n:  i64,   // for strategy=0: run every N ticks\n    score_floor: i64,   // for strategy=1: re-run when score < floor\n    budget_cap:  i64,   // for strategy=2: max total evaluations\n    ticks:       i64,   // how many times schedule_tick has been called\n    runs:        i64,   // how many times the goal has actually run\n    last_score:  i64,   // most recently observed score (updated by schedule_record)\n}\n\nfn schedule_interval(every_n: i64) -> Schedule {\n    assert(every_n > 0)\n    Schedule { strategy: 0, interval_n: every_n, score_floor: 0, budget_cap: 0,\n               ticks: 0, runs: 0, last_score: 0 }\n}\n\nfn schedule_on_score(floor: i64) -> Schedule {\n    Schedule { strategy: 1, interval_n: 0, score_floor: floor, budget_cap: 0,\n               ticks: 0, runs: 0, last_score: floor + 1 }  // start above floor \u2192 don't fire immediately\n}\n\nfn schedule_budget(max_runs: i64) -> Schedule {\n    assert(max_runs > 0)\n    Schedule { strategy: 2, interval_n: 0, score_floor: 0, budget_cap: max_runs,\n               ticks: 0, runs: 0, last_score: 0 }\n}\n\n// Advance the tick counter. Call once per evaluation opportunity.\nfn schedule_tick(s: Schedule) -> Schedule {\n    Schedule { strategy: s.strategy, interval_n: s.interval_n, score_floor: s.score_floor,\n               budget_cap: s.budget_cap, ticks: s.ticks + 1, runs: s.runs, last_score: s.last_score }\n}\n\n// Record that the goal ran and what score it produced.\nfn schedule_record(s: Schedule, score: i64) -> Schedule {\n    Schedule { strategy: s.strategy, interval_n: s.interval_n, score_floor: s.score_floor,\n               budget_cap: s.budget_cap, ticks: s.ticks, runs: s.runs + 1, last_score: score }\n}\n\n// Should the goal run on this tick?\nfn schedule_should_run(s: Schedule) -> bool {\n    if s.strategy == 0 {\n        // interval: run every interval_n ticks\n        if s.interval_n == 0 { false } else { s.ticks % s.interval_n == 0 && s.ticks > 0 }\n    } else if s.strategy == 1 {\n        // on_score: run when last score fell below floor\n        s.last_score < s.score_floor\n    } else {\n        // budget: run until cap reached\n        s.runs < s.budget_cap\n    }\n}\n\n// Has this schedule exhausted its budget? Only meaningful for budget strategy.\nfn schedule_exhausted(s: Schedule) -> bool {\n    s.strategy == 2 && s.runs >= s.budget_cap\n}\n\n// \u2500\u2500 Feedback \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// The typed result of ONE improve-loop iteration. Bundles what the goal runner\n// observed: the plan that was proposed, the score it achieved, the previous best\n// score (so we know if this was an improvement), and whether the goal was met.\n//\n// The improve loop: propose Plan \u2192 run goal \u2192 produce Feedback \u2192 feed to next\n// Plan proposal \u2192 repeat. Feedback is the VALUE that flows between iterations.\n\ntype Feedback = {\n    plan:        Plan,   // the plan whose evaluation produced this feedback\n    score:       i64,    // the score achieved by running the goal on plan.val\n    prev_score:  i64,    // the best score before this evaluation\n    target:      i64,    // the goal's target threshold\n    goal_met:    bool,   // score >= target\n    improved:    bool,   // score > prev_score (got better, even if not yet met)\n    iteration:   i64,    // which iteration of the improve loop this is\n}\n\nfn feedback(plan: Plan, score: i64, prev_score: i64, target: i64, iter: i64) -> Feedback {\n    Feedback {\n        plan:       plan,\n        score:      score,\n        prev_score: prev_score,\n        target:     target,\n        goal_met:   score >= target,\n        improved:   score > prev_score,\n        iteration:  iter,\n    }\n}\n\n// How much did the score change? Positive = improvement, negative = regression.\nfn feedback_delta(f: Feedback) -> i64 { f.score - f.prev_score }\n\n// Is this feedback from a confident plan?\nfn feedback_is_confident(f: Feedback, min_confidence: i64) -> bool {\n    f.plan.confidence >= min_confidence\n}\n\n// Produce a summary string for logging/tracing.\nfn feedback_summary(f: Feedback) -> str {\n    let dir = if f.improved { \"\u2191\" } else { \"\u2192\" }\n    let met = if f.goal_met { \" [GOAL MET]\" } else { \"\" }\n    \"{dir} iter {to_str(f.iteration)}: score {to_str(f.score)} (was {to_str(f.prev_score)}){met}\"\n}\n\n// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n//  Tests\n// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\n// \u2500\u2500 Plan tests \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n@[test]\nfn test_plan_skip_below_confidence() {\n    let p = plan(42, 15, \"guessing\", \"agent-a\")\n    assert(plan_skip(p, 50))\n    assert(!plan_skip(p, 10))\n}\n\n@[test]\nfn test_plan_certain_has_full_confidence() {\n    let p = plan_certain(99, \"very sure\", \"agent-b\")\n    assert_eq(p.confidence, 100)\n    assert(!plan_skip(p, 90))\n}\n\n@[test]\nfn test_plan_revise_updates_fields() {\n    let p = plan(10, 50, \"first guess\", \"agent-a\")\n    let p2 = plan_revise(p, 20, 80, \"refined\")\n    assert_eq(p2.val, 20)\n    assert_eq(p2.confidence, 80)\n    assert(plan_from(p2, \"agent-a\"))  // agent preserved\n}\n\n@[test]\nfn test_plan_from_checks_agent() {\n    let p = plan(0, 100, \"ok\", \"alice\")\n    assert(plan_from(p, \"alice\"))\n    assert(!plan_from(p, \"bob\"))\n}\n\n// \u2500\u2500 Schedule tests \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n@[test]\nfn test_schedule_interval_fires_at_right_ticks() {\n    let s = schedule_interval(3)\n    let s1 = schedule_tick(s)   // tick 1 \u2014 should not fire\n    assert(!schedule_should_run(s1))\n    let s2 = schedule_tick(s1)  // tick 2 \u2014 should not fire\n    assert(!schedule_should_run(s2))\n    let s3 = schedule_tick(s2)  // tick 3 \u2014 should fire\n    assert(schedule_should_run(s3))\n    let s4 = schedule_tick(s3)  // tick 4 \u2014 should not fire\n    assert(!schedule_should_run(s4))\n}\n\n@[test]\nfn test_schedule_on_score_fires_when_score_drops() {\n    let s = schedule_on_score(80)\n    // Default last_score is above floor \u2014 should not fire.\n    assert(!schedule_should_run(s))\n    // Record a score drop:\n    let s2 = schedule_record(s, 70)   // score 70 < floor 80\n    assert(schedule_should_run(s2))\n    // Record recovery:\n    let s3 = schedule_record(s2, 90)  // score 90 >= floor 80\n    assert(!schedule_should_run(s3))\n}\n\n@[test]\nfn test_schedule_budget_exhausts() {\n    let s = schedule_budget(3)\n    assert(!schedule_exhausted(s))\n    let s1 = schedule_record(s, 80)\n    let s2 = schedule_record(s1, 85)\n    let s3 = schedule_record(s2, 90)\n    assert(schedule_exhausted(s3))\n    assert(!schedule_should_run(s3))\n}\n\n@[test]\nfn test_schedule_budget_allows_runs_within_cap() {\n    let s = schedule_budget(5)\n    let s1 = schedule_record(s, 80)\n    assert(schedule_should_run(s1))   // 1 run, cap 5 \u2192 still allowed\n}\n\n// \u2500\u2500 Feedback tests \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n@[test]\nfn test_feedback_goal_met_when_score_reaches_target() {\n    let p = plan_certain(90, \"try 90\", \"optimizer\")\n    let f = feedback(p, 90, 70, 85, 1)\n    assert(f.goal_met)\n    assert(f.improved)\n    assert_eq(feedback_delta(f), 20)\n}\n\n@[test]\nfn test_feedback_not_met_below_target() {\n    let p = plan_certain(75, \"try 75\", \"optimizer\")\n    let f = feedback(p, 75, 70, 85, 1)\n    assert(!f.goal_met)\n    assert(f.improved)    // better than prev (70\u219275)\n}\n\n@[test]\nfn test_feedback_not_improved_when_score_drops() {\n    let p = plan_certain(60, \"try 60\", \"optimizer\")\n    let f = feedback(p, 60, 70, 85, 2)\n    assert(!f.goal_met)\n    assert(!f.improved)\n    assert_eq(feedback_delta(f), -10)\n}\n\n@[test]\nfn test_feedback_is_confident_checks_plan() {\n    let p = plan(80, 60, \"moderate\", \"opt\")\n    let f = feedback(p, 80, 70, 85, 1)\n    assert(feedback_is_confident(f, 50))\n    assert(!feedback_is_confident(f, 80))\n}\n\n// \u2500\u2500 The improve loop: Plan \u2192 run \u2192 Feedback \u2192 next Plan \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Simulate 3 iterations of the self-improvement loop:\n// - agent proposes a value, goal runner evaluates, produces feedback,\n//   agent refines its proposal.\n@[test]\nfn test_improve_loop_converges_to_target() {\n    let target = 90\n\n    // Iteration 1: agent proposes 60\n    let p1 = plan(60, 70, \"initial guess\", \"optimizer\")\n    let f1 = feedback(p1, 60, 0, target, 1)\n    assert(!f1.goal_met)\n    assert(f1.improved)   // 60 > 0\n\n    // Iteration 2: agent sees feedback and proposes 80\n    let p2 = plan_revise(p1, 80, 80, \"improved based on feedback\")\n    let f2 = feedback(p2, 80, f1.score, target, 2)\n    assert(!f2.goal_met)\n    assert(f2.improved)   // 80 > 60\n\n    // Iteration 3: agent proposes 92\n    let p3 = plan_revise(p2, 92, 95, \"close to target\")\n    let f3 = feedback(p3, 92, f2.score, target, 3)\n    assert(f3.goal_met)   // 92 >= 90\n    assert(f3.improved)   // 92 > 80\n}\n\nfn main() -> i64 {\n    println(\"\u2500\u2500 plan: agent proposal lifecycle \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\")\n    let p = plan(75, 65, \"initial search point\", \"hill-climber\")\n    if plan_skip(p, 80) {\n        println(\"plan skipped (confidence {to_str(p.confidence)} < 80)\")\n    } else {\n        println(\"plan accepted: val={to_str(p.val)}, confidence={to_str(p.confidence)}\")\n    }\n    let p2 = plan_revise(p, 90, 90, \"refined after feedback\")\n    println(\"revised plan: val={to_str(p2.val)}, confidence={to_str(p2.confidence)}\")\n    println(\"\")\n    println(\"\u2500\u2500 schedule: recurrence policy \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\")\n    let sched = schedule_interval(2)\n    let s1 = schedule_tick(schedule_tick(sched))\n    if schedule_should_run(s1) {\n        println(\"interval schedule: tick 2 \u2192 fires\")\n    }\n    println(\"\")\n    println(\"\u2500\u2500 feedback: improvement loop result \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\")\n    let f = feedback(p2, 90, 75, 85, 3)\n    println(feedback_summary(f))\n    if f.goal_met {\n        println(\"\u2192 goal met on iteration {to_str(f.iteration)}\")\n    }\n    0\n}\n",
+   "examples/stdlib/reward.ax": "// examples/stdlib/reward.ax \u2014 composable metrics for ASI score functions.\n//\n// Every adaptive demo hand-codes a score expression like:\n//   let s = accuracy * 0.7 - 0.1 * tokens + (passes_redteam as i64) * 30\n// That works but bakes the metric into the optimization loop, making it\n// hard to swap, weight, or compose without rewriting the @[adaptive] fn.\n//\n// This module gives a tiny algebra of named, weight-able metrics that\n// compose without changing the optimizer surface. The score is still an\n// f64 (what `goal_run` / `@[adaptive]` understand); we add structure\n// around it so a multi-objective demo doesn't degenerate to a magic\n// arithmetic expression buried inside the scoring fn.\n//\n//   axon test examples/stdlib/reward.ax  \u2192 8 tests pass\n\n// A scalar metric with a known upper bound. `max` is the value at which\n// the metric is \"fully satisfied\"; the optimizer should drive `score`\n// toward `max`. Keeping the bound explicit lets combinators normalize\n// across metrics that live on different scales (a 0..100 accuracy score\n// and a 0..1 confidence score should mix as equals, not as 100:1).\ntype Reward = { name: str, score: f64, max: f64 }\n\nfn reward_new(name: str, score: f64, max: f64) -> Reward {\n    Reward { name: name, score: score, max: max }\n}\n\n// Normalize to [0, 1]. `max = 0` is treated as \"no reward\" rather than\n// dividing by zero \u2014 a degenerate case callers can branch on.\nfn reward_unit(r: Reward) -> f64 {\n    if r.max == 0.0 { 0.0 }\n    else { r.score / r.max }\n}\n\n// Weighted sum: combine two rewards into a single normalized score in\n// `[0, weight_a + weight_b]`. The weights stay in user space (not\n// baked into the metric) so the same Reward can participate in\n// multiple compositions.\nfn reward_blend(a: Reward, weight_a: f64, b: Reward, weight_b: f64) -> f64 {\n    weight_a * reward_unit(a) + weight_b * reward_unit(b)\n}\n\n// Scale a reward \u2014 useful when one metric needs to count more without\n// rewriting its underlying score. Returns a fresh Reward.\nfn reward_scale(r: Reward, factor: f64) -> Reward {\n    Reward { name: r.name, score: r.score * factor, max: r.max * factor }\n}\n\n// Penalize: subtract a fraction of a \"cost\" reward from a \"value\"\n// reward in normalized space. `cost_weight` is the discount factor\n// (0.1 means \"10% off the value for every unit of cost\"). Returns the\n// combined normalized score; negative if cost dominates.\nfn reward_penalize(value: Reward, cost: Reward, cost_weight: f64) -> f64 {\n    reward_unit(value) - cost_weight * reward_unit(cost)\n}\n\n// Take the minimum of two rewards \u2014 \"agent must do well on BOTH axes\".\n// Returns the normalized score of the weaker dim, so the optimizer is\n// forced to lift the laggard.\nfn reward_min(a: Reward, b: Reward) -> f64 {\n    let ua = reward_unit(a)\n    let ub = reward_unit(b)\n    if ua < ub { ua } else { ub }\n}\n\n// Take the max \u2014 \"any axis is fine\".\nfn reward_max(a: Reward, b: Reward) -> f64 {\n    let ua = reward_unit(a)\n    let ub = reward_unit(b)\n    if ua > ub { ua } else { ub }\n}\n\n// \u2500\u2500 Tests \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// `assert_eq_f64` does exact equality; for everything that isn't bit-exact we\n// fall back to an abs-difference check with `assert` so the tolerance is\n// explicit in the test.\n\nfn approx(a: f64, b: f64, eps: f64) -> bool {\n    let d = a - b\n    let abs_d = if d < 0.0 { -d } else { d }\n    abs_d < eps\n}\n\n@[test]\nfn test_unit_zero_max() {\n    let r = reward_new(\"empty\", 0.0, 0.0)\n    assert_eq_f64(reward_unit(r), 0.0)\n}\n\n@[test]\nfn test_unit_normal() {\n    let r = reward_new(\"acc\", 75.0, 100.0)\n    assert_eq_f64(reward_unit(r), 0.75)\n}\n\n@[test]\nfn test_unit_at_max() {\n    let r = reward_new(\"perfect\", 100.0, 100.0)\n    assert_eq_f64(reward_unit(r), 1.0)\n}\n\n@[test]\nfn test_blend_equal_weights() {\n    let a = reward_new(\"a\", 80.0, 100.0)    // unit = 0.8\n    let b = reward_new(\"b\", 0.5, 1.0)       // unit = 0.5\n    // 0.5 * 0.8 + 0.5 * 0.5 = 0.65\n    assert(approx(reward_blend(a, 0.5, b, 0.5), 0.65, 0.0001))\n}\n\n@[test]\nfn test_scale_preserves_unit_value() {\n    let r = reward_new(\"x\", 75.0, 100.0)\n    let r2 = reward_scale(r, 3.0)\n    // score and max both triple \u2192 unit stays 0.75\n    assert(approx(reward_unit(r2), 0.75, 0.0001))\n}\n\n@[test]\nfn test_penalize_subtracts_cost() {\n    let value = reward_new(\"v\", 100.0, 100.0)  // unit = 1.0\n    let cost  = reward_new(\"c\", 5.0, 10.0)     // unit = 0.5\n    // 1.0 - 0.1 * 0.5 = 0.95\n    assert(approx(reward_penalize(value, cost, 0.1), 0.95, 0.0001))\n}\n\n@[test]\nfn test_min_returns_weaker_dim() {\n    let a = reward_new(\"strong\", 90.0, 100.0) // 0.9\n    let b = reward_new(\"weak\",   30.0, 100.0) // 0.3\n    assert(approx(reward_min(a, b), 0.3, 0.0001))\n}\n\n@[test]\nfn test_max_returns_stronger_dim() {\n    let a = reward_new(\"strong\", 90.0, 100.0) // 0.9\n    let b = reward_new(\"weak\",   30.0, 100.0) // 0.3\n    assert(approx(reward_max(a, b), 0.9, 0.0001))\n}\n",
+   "examples/stdlib/principal_mint.ax": "// Tier-1 stdlib: Principal minting with attenuation \u2014 the capability_minter TCB\n// component at the USERLAND layer. Realizes ROADMAP \u00a76 row 7 (\"A Principal can\n// mint a sub-Principal with a strict subset of capabilities + budget\") and the\n// hard half of invariant I-12 (\"self-modification cannot weaken the TCB \u2014 may\n// never grant itself a capability it didn't already hold\").\n//\n// The safety property is ATTENUATION, enforced BY CONSTRUCTION in `mint`:\n//   \u2022 each child cap = (want_X && parent.X) \u2014 a child can hold C only if the\n//     parent holds C; escalation is unrepresentable, not merely rejected.\n//   \u2022 the child's budget is CARVED from the parent's remaining budget: the grant\n//     is clamped to what the parent has left, debited from the parent, and the\n//     child can never spend past it. The sum of live budgets stays bounded by\n//     the root cap \u2014 minting cannot manufacture authority.\n//\n// Self-contained: Budget is inlined from budget.ax (same move as goal.ax).\n//\n//   axon test examples/stdlib/principal_mint.ax   # run the @[test]s\n//   axon run  examples/stdlib/principal_mint.ax   # demo\n\n// \u2500\u2500 Budget (inlined from budget.ax) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\ntype Budget = { used: i64, cap: i64 }\n\nfn budget_new(cap: i64) -> Budget { Budget { used: 0, cap: cap } }\nfn budget_spend(b: Budget, amount: i64) -> Budget { Budget { used: b.used + amount, cap: b.cap } }\nfn budget_remaining(b: Budget) -> i64 { let r = b.cap - b.used  if r < 0 { 0 } else { r } }\nfn budget_exhausted(b: Budget) -> bool { b.used >= b.cap }\n\n// \u2500\u2500 Principal \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Capabilities (net/fs_write/exec) and a budget travel together. `parent` is the\n// name of the minting principal (\"-\" for a root), kept for audit lineage.\ntype Principal = {\n    name: str,\n    parent: str,\n    net: bool,\n    fs_write: bool,\n    exec: bool,\n    budget: Budget,\n}\n\n// A root Principal: the originating authority. Holds exactly the caps it is given\n// and the full budget. Everything below it can only attenuate from here.\nfn root(name: str, net: bool, fs_write: bool, exec: bool, budget_cap: i64) -> Principal {\n    Principal {\n        name: name, parent: \"-\",\n        net: net, fs_write: fs_write, exec: exec,\n        budget: budget_new(budget_cap),\n    }\n}\n\n// \u2500\u2500 Accessors / predicates \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfn p_budget_remaining(p: Principal) -> i64 { budget_remaining(p.budget) }\n\n// Does `p` hold the named capability? Unknown names answer false (deny by default).\nfn holds(p: Principal, cap: str) -> bool {\n    if str_eq(cap, \"net\") { p.net }\n    else if str_eq(cap, \"fs_write\") { p.fs_write }\n    else if str_eq(cap, \"exec\") { p.exec }\n    else { false }\n}\n\n// Whether `p` could mint a child wanting these caps + this budget at all \u2014 i.e.\n// it holds every requested cap and has at least 1 unit of budget left to carve.\n// (mint() is total and still safe without this; can_mint is the explicit gate.)\nfn can_mint(p: Principal, want_net: bool, want_fs_write: bool, want_exec: bool, budget_grant: i64) -> bool {\n    let caps_ok = (!want_net || p.net) && (!want_fs_write || p.fs_write) && (!want_exec || p.exec)\n    let budget_ok = budget_grant > 0 && p_budget_remaining(p) > 0\n    caps_ok && budget_ok\n}\n\n// \u2500\u2500 MINT \u2014 the attenuating constructor \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Returns (updated_parent_with_debited_budget, child). ATTENUATION is enforced\n// here by construction:\n//   \u2022 child cap_X = want_X && parent.X      \u2192 never more than the parent holds\n//   \u2022 grant      = clamp(budget_grant, 0, parent_remaining)  \u2192 never over-grant\n//   \u2022 parent.budget.used += grant            \u2192 the grant is carved, not conjured\nfn mint(\n    parent: Principal,\n    child_name: str,\n    want_net: bool,\n    want_fs_write: bool,\n    want_exec: bool,\n    budget_grant: i64,\n) -> (Principal, Principal) {\n    let c_net = want_net && parent.net\n    let c_fs = want_fs_write && parent.fs_write\n    let c_exec = want_exec && parent.exec\n    let grant = min_i64(max_i64(budget_grant, 0), p_budget_remaining(parent))\n    let new_parent = Principal {\n        name: parent.name, parent: parent.parent,\n        net: parent.net, fs_write: parent.fs_write, exec: parent.exec,\n        budget: budget_spend(parent.budget, grant),\n    }\n    let child = Principal {\n        name: child_name, parent: parent.name,\n        net: c_net, fs_write: c_fs, exec: c_exec,\n        budget: budget_new(grant),\n    }\n    (new_parent, child)\n}\n\n// \u2500\u2500 Spend on a Principal \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Debit `amount` from the principal's own budget, returning the updated principal.\n// Caps are untouched; only its carved budget can be consumed.\nfn p_spend(p: Principal, amount: i64) -> Principal {\n    Principal {\n        name: p.name, parent: p.parent,\n        net: p.net, fs_write: p.fs_write, exec: p.exec,\n        budget: budget_spend(p.budget, amount),\n    }\n}\n\n// \u2500\u2500 Authorization gate \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// An action declaring which caps it needs is authorized only if `p` holds every\n// one of them AND still has budget headroom. Mirrors agent.ax `authorized`.\nfn authorize(p: Principal, needs_net: bool, needs_fs_write: bool, needs_exec: bool) -> bool {\n    let caps = (!needs_net || p.net) && (!needs_fs_write || p.fs_write) && (!needs_exec || p.exec)\n    caps && !budget_exhausted(p.budget)\n}\n\n// \u2500\u2500 Tests \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n@[test]\nfn test_mint_subset_works() {\n    // A full-cap root mints a child asking for a strict subset; the child gets\n    // exactly the subset and a carved budget.\n    let r = root(\"root\", true, true, true, 100)\n    let (_r2, c) = mint(r, \"child\", true, false, true, 40)\n    assert(c.net)\n    assert(!c.fs_write)\n    assert(c.exec)\n    assert_eq(c.budget.cap, 40)\n    assert_eq_str(c.parent, \"root\")\n}\n\n@[test]\nfn test_mint_cannot_escalate_caps() {\n    // Parent lacks net. Child requests net \u2192 child does NOT get net. Escalation\n    // is impossible by construction (want_net && parent.net == false).\n    let r = root(\"root\", false, true, false, 100)\n    let (_r2, c) = mint(r, \"child\", true, true, true, 30)\n    assert(!c.net)        // requested but denied \u2014 parent had no net\n    assert(c.fs_write)    // requested and parent held it\n    assert(!c.exec)       // requested but denied \u2014 parent had no exec\n    assert(!holds(c, \"net\"))\n}\n\n@[test]\nfn test_budget_is_carved_from_parent() {\n    // The grant is debited from the parent and capped in the child; the two\n    // live budgets sum to no more than the original (carve, not conjure).\n    let r = root(\"root\", true, false, false, 100)\n    let (r2, c) = mint(r, \"child\", true, false, false, 40)\n    assert_eq(p_budget_remaining(r2), 60)   // parent debited by exactly 40\n    assert_eq(c.budget.cap, 40)             // child capped at the grant\n    assert_eq(c.budget.used, 0)\n    // child can spend up to the grant but no further\n    let c2 = p_spend(c, 40)\n    assert(budget_exhausted(c2.budget))\n    assert_eq(budget_remaining(c2.budget), 0)\n    // remaining child budget + remaining parent budget <= original root cap\n    assert(budget_remaining(c.budget) + p_budget_remaining(r2) <= 100)\n}\n\n@[test]\nfn test_overgrant_is_clamped_to_parent_remaining() {\n    // Root with only 50 left is asked to grant 200 \u2192 clamped to 50; parent\n    // drops to 0, child capped at 50. Authority cannot be manufactured.\n    let r = root(\"root\", true, true, true, 50)\n    let (r2, c) = mint(r, \"greedy\", true, true, true, 200)\n    assert_eq(c.budget.cap, 50)\n    assert_eq(p_budget_remaining(r2), 0)\n}\n\n@[test]\nfn test_chain_stays_attenuated() {\n    // root(net,fs,exec) \u2192 child(net,fs) \u2192 grandchild(net). At each hop a cap can\n    // only be dropped, never regained: grandchild \u2286 child \u2286 root. The grandchild\n    // re-requesting exec/fs gets neither, because the middle child never held them.\n    let r = root(\"root\", true, true, true, 100)\n    let (_r2, c) = mint(r, \"child\", true, true, false, 60)\n    assert(c.net && c.fs_write && !c.exec)\n    let (_c2, g) = mint(c, \"grand\", true, true, true, 30)\n    assert(g.net)        // child had net\n    assert(g.fs_write)   // child had fs\n    assert(!g.exec)      // child never had exec \u2192 grandchild can't get it\n    assert_eq(g.budget.cap, 30)   // budget attenuates too\n}\n\n@[test]\nfn test_no_cap_root_mints_only_no_cap_children() {\n    // A sandboxed root holds nothing; every child it mints \u2014 whatever it asks \u2014\n    // holds nothing. The floor is sealed.\n    let r = root(\"sandbox\", false, false, false, 100)\n    let (_r2, c) = mint(r, \"child\", true, true, true, 50)\n    assert(!c.net)\n    assert(!c.fs_write)\n    assert(!c.exec)\n    assert(!holds(c, \"net\") && !holds(c, \"fs_write\") && !holds(c, \"exec\"))\n}\n\n@[test]\nfn test_can_mint_gate() {\n    // can_mint reflects whether mint would actually grant anything: true when the\n    // parent holds the requested caps and has budget, false when it lacks a cap.\n    let r = root(\"root\", true, false, false, 100)\n    assert(can_mint(r, true, false, false, 10))    // wants net, has net, has budget\n    assert(!can_mint(r, true, true, false, 10))    // wants fs_write, lacks it\n    let drained = p_spend(r, 100)\n    assert(!can_mint(drained, true, false, false, 10))  // no budget left\n}\n\n@[test]\nfn test_authorize_requires_caps_and_budget() {\n    // The action gate: needs net \u2192 must hold net AND not be budget-exhausted.\n    let r = root(\"root\", true, false, false, 100)\n    assert(authorize(r, true, false, false))     // has net, has budget\n    assert(!authorize(r, false, true, false))    // needs fs_write, lacks it\n    let drained = p_spend(r, 100)\n    assert(!authorize(drained, true, false, false))  // budget exhausted \u2192 denied\n}\n\nfn main() {\n    // Demo: a full-authority root delegates a strict subset to a worker, which\n    // re-delegates a still-smaller subset to a sub-task. Authority only shrinks.\n    let r = root(\"orchestrator\", true, true, true, 1000)\n    let (r2, worker) = mint(r, \"fetch-worker\", true, false, false, 300)\n    let wn = to_str(worker.net)\n    let wf = to_str(worker.fs_write)\n    let we = to_str(worker.exec)\n    let wb = to_str(worker.budget.cap)\n    println(\"worker caps: net={wn} fs={wf} exec={we}, budget={wb}\")\n    let rem = to_str(p_budget_remaining(r2))\n    println(\"orchestrator budget left: {rem}\")\n    let (_w2, sub) = mint(worker, \"fetch-sub\", true, true, true, 500)\n    let sn = to_str(sub.net)\n    let sf = to_str(sub.fs_write)\n    let se = to_str(sub.exec)\n    let sb = to_str(sub.budget.cap)\n    println(\"sub caps: net={sn} fs={sf} exec={se} (fs/exec denied \u2014 worker never held them)\")\n    println(\"sub budget: {sb} (clamped to worker's 300)\")\n}\n",
+   "examples/stdlib/trace.ax": "// Tier-1 stdlib: Trace \u2014 a replayable execution record.\n//\n// ROADMAP \u00a76 Tier-1 type `Trace` (\"replayable execution record\"). A Trace is the\n// VALUE-level counterpart to the runtime provenance log (`axon trace` reads the\n// JSONL the engine writes): a record of the steps an autonomous run took, that\n// you can REPLAY and check for DIVERGENCE. The whole point of a replayable trace\n// is determinism auditing \u2014 replaying a recorded run must reproduce it; a replay\n// that DIVERGES is a non-determinism bug (an unseeded RNG, a wall-clock read, a\n// live network call that crept into a path that should be pure). The replay\n// engine's job is to catch exactly that.\n//\n// Modeled with two parallel `[i64]` arrays (action tag + result per step) since\n// this is pre-tuple-array userland. A step is `(action, result)`: `action` is an\n// opaque op tag (which tool/branch ran), `result` the i64 outcome it produced.\n//\n//   axon test examples/stdlib/trace.ax\n//   axon run  examples/stdlib/trace.ax\n\ntype Trace = {\n    actions: [i64],   // the op tag at each step (what ran)\n    results: [i64],   // the outcome each op produced\n}\n\nfn trace_new() -> Trace {\n    Trace { actions: [], results: [] }\n}\n\n// Append one recorded step. Immutable: returns a new Trace.\nfn trace_record(t: Trace, action: i64, result: i64) -> Trace {\n    Trace {\n        actions: arr_push(&t.actions, action),\n        results: arr_push(&t.results, result),\n    }\n}\n\n// Number of recorded steps.\nfn trace_len(t: Trace) -> i64 {\n    len(t.actions)\n}\n\n// The result recorded at step `i`, or -1 if out of range.\nfn trace_result_at(t: Trace, i: i64) -> i64 {\n    if i < 0 { 0 - 1 } else { if i >= len(t.results) { 0 - 1 } else { t.results[i] } }\n}\n\n// Two traces are EQUIVALENT iff they recorded the same actions in the same order\n// AND each produced the same result \u2014 i.e. a replay reproduced the original. A\n// difference in length, action order, or any result means DIVERGENCE.\nfn trace_equiv(a: Trace, b: Trace) -> bool {\n    if len(a.actions) != len(b.actions) {\n        false\n    } else {\n        let n = len(a.actions)\n        let i = 0\n        let ok = true\n        while i < n {\n            let same_act = a.actions[i] == b.actions[i]\n            let same_res = a.results[i] == b.results[i]\n            if same_act && same_res { ok = ok } else { ok = false }\n            i = i + 1\n        }\n        ok\n    }\n}\n\n// The index of the FIRST diverging step between a recorded trace and its replay,\n// or -1 when they are equivalent. This is what a replay engine reports: \"the runs\n// agreed up to step k, then diverged\" \u2014 the bisection point for the\n// non-determinism bug. A length difference past the shorter trace counts as\n// divergence at the first missing step.\nfn trace_divergence(a: Trace, b: Trace) -> i64 {\n    let n = min_i64(len(a.actions), len(b.actions))\n    let i = 0\n    let found = 0 - 1\n    while i < n {\n        let same_act = a.actions[i] == b.actions[i]\n        let same_res = a.results[i] == b.results[i]\n        if same_act && same_res {\n            i = i + 1\n        } else {\n            found = i\n            i = n\n        }\n    }\n    // Equal on the common prefix but different lengths \u2192 diverges at the prefix end.\n    if found < 0 {\n        if len(a.actions) == len(b.actions) { 0 - 1 } else { n }\n    } else {\n        found\n    }\n}\n\n@[test]\nfn test_trace_records_steps() {\n    let t = trace_record(trace_record(trace_new(), 1, 100), 2, 200)\n    assert_eq(trace_len(t), 2)\n    assert_eq(trace_result_at(t, 0), 100)\n    assert_eq(trace_result_at(t, 1), 200)\n    assert_eq(trace_result_at(t, 9), 0 - 1)\n}\n\n@[test]\nfn test_identical_replay_is_equivalent() {\n    // A deterministic replay reproduces the recorded trace exactly.\n    let original = trace_record(trace_record(trace_new(), 1, 10), 2, 20)\n    let replay = trace_record(trace_record(trace_new(), 1, 10), 2, 20)\n    assert(trace_equiv(original, replay))\n    assert_eq(trace_divergence(original, replay), 0 - 1)\n}\n\n@[test]\nfn test_divergent_result_is_caught() {\n    // Same actions, but step 1 produced a DIFFERENT result on replay (the\n    // signature of non-determinism). Equiv fails; divergence points at step 1.\n    let original = trace_record(trace_record(trace_new(), 1, 10), 2, 20)\n    let replay = trace_record(trace_record(trace_new(), 1, 10), 2, 99)\n    assert(!trace_equiv(original, replay))\n    assert_eq(trace_divergence(original, replay), 1)\n}\n\n@[test]\nfn test_divergent_action_is_caught() {\n    // The replay took a DIFFERENT branch at step 0 (action 1 vs 7).\n    let original = trace_record(trace_new(), 1, 10)\n    let replay = trace_record(trace_new(), 7, 10)\n    assert(!trace_equiv(original, replay))\n    assert_eq(trace_divergence(original, replay), 0)\n}\n\n@[test]\nfn test_length_mismatch_diverges_at_the_short_end() {\n    // The replay ran one extra step \u2014 they agree on the common prefix, then\n    // diverge at the point the shorter trace ended.\n    let original = trace_record(trace_new(), 1, 10)\n    let replay = trace_record(trace_record(trace_new(), 1, 10), 2, 20)\n    assert(!trace_equiv(original, replay))\n    assert_eq(trace_divergence(original, replay), 1)\n}\n\n@[test]\nfn test_empty_traces_are_equivalent() {\n    assert(trace_equiv(trace_new(), trace_new()))\n    assert_eq(trace_divergence(trace_new(), trace_new()), 0 - 1)\n}\n\nfn main() {\n    // Record a 3-step run, then replay it. A faithful (deterministic) replay is\n    // equivalent; a replay where step 1 drifted is caught with the exact step.\n    let recorded = trace_record(trace_record(trace_record(trace_new(), 1, 42), 2, 7), 3, 99)\n    println(\"recorded {to_str(trace_len(recorded))} steps\")\n\n    let good_replay = trace_record(trace_record(trace_record(trace_new(), 1, 42), 2, 7), 3, 99)\n    if trace_equiv(recorded, good_replay) {\n        println(\"faithful replay: equivalent (deterministic) \u2713\")\n    } else {\n        println(\"faithful replay: DIVERGED at step {to_str(trace_divergence(recorded, good_replay))}\")\n    }\n\n    // A replay where step 1's result drifted (e.g. an unseeded random crept in).\n    let bad_replay = trace_record(trace_record(trace_record(trace_new(), 1, 42), 2, 13), 3, 99)\n    let d = trace_divergence(recorded, bad_replay)\n    if d < 0 {\n        println(\"drifted replay: equivalent\")\n    } else {\n        println(\"drifted replay: DIVERGED at step {to_str(d)} \u2014 non-determinism caught\")\n    }\n}\n",
+   "examples/asi/taint_flow.ax": "// taint_flow.ax\n//\n// AI Taint Flow Demo \u2014 information security for AI-generated values.\n//\n// Trust axis (integrity):\n//   0=AI (untrusted)  1=Net  2=System  3=User  4=Constant\n//\n// Confidentiality axis:\n//   0=Public  1=Internal  2=Confidential  3=Secret\n//\n// Rule 1: AI-sourced values (trust=0) cannot drive consequential actions\n//         without human validation that elevates trust to the User floor (3).\n//\n// Rule 2: Secret data (level=3) cannot flow to AI sinks\n//         (AI clearance = 0 = Public; the gap is 3 levels).\n//\n//   axon test examples/asi/taint_flow.ax\n//   axon run  examples/asi/taint_flow.ax\n\n// \u2500\u2500 Trust level constants \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfn trust_ai()       -> i64 { 0 }\nfn trust_net()      -> i64 { 1 }\nfn trust_system()   -> i64 { 2 }\nfn trust_user()     -> i64 { 3 }\nfn trust_constant() -> i64 { 4 }\n\n// \u2500\u2500 Confidentiality level constants \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfn cl_public()       -> i64 { 0 }\nfn cl_internal()     -> i64 { 1 }\nfn cl_confidential() -> i64 { 2 }\nfn cl_secret()       -> i64 { 3 }\n\n// \u2500\u2500 Tainted: value + source trust level \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Trust propagates pessimistically: combining two Tainted values yields the\n// LOWER trust (taint is sticky). AI-sourced values start at trust=0.\ntype Tainted = { val: i64, trust: i64 }\n\nfn tainted_ai(v: i64)   -> Tainted { Tainted { val: v, trust: trust_ai() } }\nfn tainted_user(v: i64) -> Tainted { Tainted { val: v, trust: trust_user() } }\n\nfn tainted_needs_validation(t: Tainted) -> bool {\n    t.trust == trust_ai() || t.trust == trust_net()\n}\n\n// \u2500\u2500 Trusted: a Tainted value that has passed an explicit validation gate \u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// trust_validate succeeds only when t.trust >= floor; AI values (trust=0)\n// always fail a trust_user() floor (3) unless the trust level is explicitly\n// raised by a human approval step (see human_validate below).\ntype Trusted = { val: i64, trust: i64, floor: i64 }\n\nfn trust_validate(t: Tainted, floor: i64) -> Result<Trusted, str> {\n    if t.trust >= floor {\n        Ok(Trusted { val: t.val, trust: t.trust, floor: floor })\n    } else {\n        Err(\"trust below validation floor\")\n    }\n}\n\nfn trusted_val(t: Trusted) -> i64 { t.val }\n\n// \u2500\u2500 Secret: value + confidentiality level \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// A Secret at level L may only flow to a context whose clearance >= L.\n// AI/Net sinks have clearance = cl_public() = 0, so they cannot read\n// confidential or above \u2014 this is the exfiltration guard.\ntype Secret = { val: i64, level: i64 }\n\nfn secret_can_flow_to(s: Secret, reader_clearance: i64) -> bool {\n    reader_clearance >= s.level\n}\n\nfn secret_declassify(s: Secret, reader_clearance: i64) -> Result<i64, str> {\n    if secret_can_flow_to(s, reader_clearance) {\n        Ok(s.val)\n    } else {\n        Err(\"clearance insufficient for declassification\")\n    }\n}\n\n// \u2500\u2500 Human validation gate \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Simulates an explicit human reviewer approving an AI-generated value:\n//   Step 1 \u2014 Bounds-check: reject values outside a safe operational range.\n//   Step 2 \u2014 If safe: elevate trust to trust_user() (3) \u2192 Trusted.\n// This two-step gate is the core of the demo: trust_validate alone cannot\n// lift an AI value (trust=0) above the User floor without explicit human action.\nfn human_validate(t: Tainted, reviewer: str) -> Result<Trusted, str> {\n    if t.val < 0 || t.val > 1000000 {\n        Err(\"rejected by {reviewer}: {to_str(t.val)} out of safe range [0, 1000000]\")\n    } else {\n        Ok(Trusted { val: t.val, trust: trust_user(), floor: trust_user() })\n    }\n}\n\n// \u2500\u2500 Action gate: only Trusted values may drive consequential actions \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfn execute_transfer(trusted: Trusted, account: str) -> Result<str, str> {\n    Ok(\"transferred {to_str(trusted.val)} to {account} (trust={to_str(trusted.trust)}/4)\")\n}\n\n// \u2500\u2500 Tests \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n@[test]\nfn test_ai_output_is_untrusted() {\n    let t = tainted_ai(500)\n    assert_eq(t.trust, trust_ai())\n}\n\n@[test]\nfn test_ai_value_blocked_by_trust_validate_alone() {\n    // AI trust (0) cannot clear the User floor (3) without human elevation.\n    let t = tainted_ai(500)\n    match trust_validate(t, trust_user()) {\n        Ok(_)  => assert(false)\n        Err(_) => assert(true)\n    }\n}\n\n@[test]\nfn test_valid_ai_value_passes_human_validation() {\n    let t = tainted_ai(500)\n    match human_validate(t, \"alice\") {\n        Ok(trusted) => assert_eq(trusted_val(trusted), 500)\n        Err(_)      => assert(false)\n    }\n}\n\n@[test]\nfn test_human_validation_elevates_trust_to_user_level() {\n    let t = tainted_ai(500)\n    match human_validate(t, \"alice\") {\n        Ok(trusted) => assert_eq(trusted.trust, trust_user())\n        Err(_)      => assert(false)\n    }\n}\n\n@[test]\nfn test_out_of_range_ai_value_rejected() {\n    let t = tainted_ai(-999999)\n    match human_validate(t, \"alice\") {\n        Ok(_)  => assert(false)\n        Err(_) => assert(true)\n    }\n}\n\n@[test]\nfn test_secret_cannot_flow_to_ai() {\n    let balance = Secret { val: 50000, level: cl_secret() }\n    let ai_clearance = cl_public()\n    assert(!secret_can_flow_to(balance, ai_clearance))\n}\n\n@[test]\nfn test_secret_can_flow_to_authorized_context() {\n    let balance = Secret { val: 50000, level: cl_confidential() }\n    assert(secret_can_flow_to(balance, cl_confidential()))\n    assert(secret_can_flow_to(balance, cl_secret()))\n    assert(!secret_can_flow_to(balance, cl_public()))\n}\n\n@[test]\nfn test_trusted_value_drives_action() {\n    let t = tainted_ai(500)\n    match human_validate(t, \"alice\") {\n        Ok(trusted) => {\n            match execute_transfer(trusted, \"savings-account\") {\n                Ok(_)  => assert(true)\n                Err(_) => assert(false)\n            }\n        }\n        Err(_) => assert(false)\n    }\n}\n\n@[test]\nfn test_tainted_needs_validation_flags_ai_and_net() {\n    assert(tainted_needs_validation(tainted_ai(1)))\n    assert(!tainted_needs_validation(tainted_user(1)))\n}\n\n// \u2500\u2500 main() \u2014 three-scenario narrative \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\nfn main() {\n    println(\"=== AI Taint Flow Demo ===\\n\")\n\n    // Scenario 1: Happy path \u2014 AI recommends a safe value, human approves.\n    println(\"Scenario 1: Valid AI recommendation\")\n    let ai_rec = tainted_ai(500)\n    println(\"  AI recommendation: {to_str(ai_rec.val)} (trust={to_str(ai_rec.trust)}/4)\")\n    if tainted_needs_validation(ai_rec) {\n        println(\"  \u2192 flagged: needs human validation before action\")\n    }\n    match human_validate(ai_rec, \"alice\") {\n        Ok(trusted) => {\n            println(\"  Human validated: trust raised to {to_str(trusted.trust)}/4 (User level)\")\n            match execute_transfer(trusted, \"savings-account\") {\n                Ok(msg) => println(\"  SUCCESS: {msg}\")\n                Err(e)  => println(\"  ERROR: {e}\")\n            }\n        }\n        Err(e) => println(\"  BLOCKED: {e}\")\n    }\n\n    // Scenario 2: Injection attempt \u2014 AI recommends an out-of-range value.\n    println(\"\\nScenario 2: Malicious AI recommendation (value injection)\")\n    let evil_rec = tainted_ai(-999999)\n    println(\"  AI recommendation: {to_str(evil_rec.val)} (trust={to_str(evil_rec.trust)}/4)\")\n    match human_validate(evil_rec, \"alice\") {\n        Ok(_)  => println(\"  ERROR: should have been rejected!\")\n        Err(e) => println(\"  BLOCKED: {e}\")\n    }\n\n    // Scenario 3: Exfiltration attempt \u2014 confidential balance must not reach AI.\n    println(\"\\nScenario 3: Confidential data \u2014 exfiltration attempt blocked\")\n    let balance = Secret { val: 50000, level: cl_secret() }\n    let ai_clearance = cl_public()\n    println(\"  Account balance: classified at level {to_str(balance.level)}/3 (Secret)\")\n    println(\"  AI sink clearance:            {to_str(ai_clearance)}/3 (Public)\")\n    if secret_can_flow_to(balance, ai_clearance) {\n        println(\"  ERROR: secret flowed to AI!\")\n    } else {\n        println(\"  BLOCKED: balance (level={to_str(balance.level)}) cannot flow to AI (clearance={to_str(ai_clearance)})\")\n        println(\"  Safe: AI never sees the actual balance value\")\n    }\n    // A root-level context (clearance = cl_secret = 3) can still declassify.\n    match secret_declassify(balance, cl_secret()) {\n        Ok(v)  => println(\"  Root context (clearance=3) declassified: {to_str(v)}\")\n        Err(_) => println(\"  (unexpected block)\")\n    }\n\n    println(\"\\n=== Taint Flow Demo Complete ===\")\n}\n",
+   "examples/stdlib/constraint.ax": "// Tier-1 stdlib: Constraint \u2014 hard rules that must hold (vs soft scores).\n//\n// A goal's Score is a soft objective to maximize; a Constraint is a HARD rule\n// whose violation disqualifies a candidate outright (score 0), regardless of\n// how good it otherwise looks. Keeping the two separate is central to safe\n// optimization \u2014 you never deploy a high-scoring candidate that breaks a\n// must-hold rule.\n//\n//   axon test examples/stdlib/constraint.ax\n//   axon run  examples/stdlib/constraint.ax\n\ntype Constraint = { name: str, satisfied: bool }\n\nfn constraint(name: str, satisfied: bool) -> Constraint {\n    Constraint { name: name, satisfied: satisfied }\n}\n\n// A range constraint: `value` must be within [lo, hi].\nfn within(name: str, value: i64, lo: i64, hi: i64) -> Constraint {\n    constraint(name, value >= lo && value <= hi)\n}\n\n// A ceiling constraint: `value` must be <= cap.\nfn at_most(name: str, value: i64, cap: i64) -> Constraint {\n    constraint(name, value <= cap)\n}\n\n// Disqualify (score 0) when violated, reporting which rule failed; else pass\n// the score through unchanged.\nfn enforce(c: Constraint, score: i64) -> i64 {\n    if c.satisfied {\n        score\n    } else {\n        let nm = c.name\n        eprintln(\"constraint violated: {nm}\")\n        0\n    }\n}\n\n// Both constraints must hold.\nfn both(a: Constraint, b: Constraint) -> bool {\n    a.satisfied && b.satisfied\n}\n\n@[test]\nfn test_enforce_passthrough_when_ok() {\n    assert_eq(enforce(constraint(\"c\", true), 50), 50)\n}\n\n@[test]\nfn test_enforce_disqualifies_when_violated() {\n    assert_eq(enforce(constraint(\"c\", false), 50), 0)\n}\n\n@[test]\nfn test_within() {\n    assert(within(\"len\", 100, 0, 280).satisfied)\n    assert(!within(\"len\", 300, 0, 280).satisfied)\n}\n\n@[test]\nfn test_at_most() {\n    assert(at_most(\"tokens\", 7000, 8000).satisfied)\n    assert(!at_most(\"tokens\", 9000, 8000).satisfied)\n}\n\n@[test]\nfn test_both() {\n    assert(both(constraint(\"a\", true), constraint(\"b\", true)))\n    assert(!both(constraint(\"a\", true), constraint(\"b\", false)))\n}\n\nfn main() {\n    // A candidate summary: quality 92, but it must also fit in 280 chars.\n    let quality = 92\n    let length = 305\n    let fits = at_most(\"length<=280\", length, 280)\n    let final_score = enforce(fits, quality)\n    println(\"quality {to_str(quality)}, length {to_str(length)} -> final score {to_str(final_score)}\")\n    if final_score == 0 {\n        println(\"disqualified: a hard constraint was violated despite high quality\")\n    }\n}\n",
+   "examples/stdlib/principal.ax": "// Tier-1 stdlib: Principal \u2014 capability-based authorization for agents.\n//\n// An autonomous agent should only perform actions it is *permitted* to. A\n// Principal carries a capability set (mirroring @[contained]'s net/fs/exec\n// surface); `require_cap` gates an action's score on holding the capability,\n// denying (score 0) and reporting otherwise. This is the permission counterpart\n// to Budget (how much), Constraint (correctness), and Uncertain (how sure).\n//\n//   axon test examples/stdlib/principal.ax\n//   axon run  examples/stdlib/principal.ax\n\ntype Principal = { name: str, net: bool, fs_write: bool, exec: bool }\n\n// A principal with no capabilities \u2014 the safe default for an untrusted agent.\nfn sandboxed(name: str) -> Principal {\n    Principal { name: name, net: false, fs_write: false, exec: false }\n}\n\nfn principal(name: str, net: bool, fs_write: bool, exec: bool) -> Principal {\n    Principal { name: name, net: net, fs_write: fs_write, exec: exec }\n}\n\n// Allow `score` only if the capability is granted; else deny (0) + report.\nfn require_cap(granted: bool, cap: str, score: i64) -> i64 {\n    if granted {\n        score\n    } else {\n        let c = cap\n        eprintln(\"capability denied: {c}\")\n        0\n    }\n}\n\n@[test]\nfn test_sandboxed_denies() {\n    let p = sandboxed(\"agent\")\n    assert(!p.net)\n    assert(!p.fs_write)\n    assert(!p.exec)\n    assert_eq(require_cap(p.net, \"net\", 50), 0)\n}\n\n@[test]\nfn test_granted_allows() {\n    let p = principal(\"agent\", true, false, false)\n    assert(p.net)\n    assert_eq(require_cap(p.net, \"net\", 50), 50)\n}\n\n@[test]\nfn test_principal_capabilities() {\n    let p = principal(\"a\", true, false, true)\n    assert(p.net)\n    assert(!p.fs_write)\n    assert(p.exec)\n}\n\nfn main() {\n    let agent = sandboxed(\"summarizer\")\n    let s1 = require_cap(agent.net, \"net\", 80)\n    println(\"sandboxed agent, net action -> score {to_str(s1)} (denied)\")\n\n    let trusted = principal(\"trusted-fetcher\", true, false, false)\n    let s2 = require_cap(trusted.net, \"net\", 80)\n    println(\"net-granted agent, net action -> score {to_str(s2)} (allowed)\")\n\n    let s3 = require_cap(trusted.exec, \"exec\", 80)\n    println(\"net-granted agent, exec action -> score {to_str(s3)} (denied; no exec cap)\")\n}\n",
+   "examples/stdlib/tainted.ax": "// Tier-2 stdlib: info-flow lattice \u2014 Tainted, Trusted, Secret, Public.\n//\n// ROADMAP \u00a76 Tier-2 types: `Tainted<T>`, `Trusted<T>`, `Secret<T>`, `Public<T>`.\n// These are VALUE TYPES that pair an i64 with an info-flow property, making the\n// data-sensitivity and data-trust contracts OBSERVABLE and CHECKABLE in userland\n// \u2014 the value-level counterpart to the kernel `@[contained]` / effect-row checks.\n//\n// Two orthogonal axes:\n//\n//   TRUST axis (who produced this data? how reliable is it?)\n//   \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n//   Tainted  \u2014 wraps a value with a SOURCE TRUST LEVEL (0=AI .. 4=Constant).\n//              Combining two Tainted values yields the LOWER trust (taint propagates).\n//              Derived from source.ax's trust lattice.\n//   Trusted  \u2014 a Tainted value that has been EXPLICITLY VALIDATED against a floor.\n//              The validation is the explicit user approval the ROADMAP requires\n//              before a low-trust value can drive a consequential action.\n//\n//   CONFIDENTIALITY axis (who may READ this data?)\n//   \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n//   Secret   \u2014 wraps a value with a CONFIDENTIALITY LEVEL (0=public .. 3=secret).\n//              A Secret may only flow to a context whose CLEARANCE >= its level.\n//   Public   \u2014 a value with no flow restrictions (shorthand for Secret at level 0).\n//\n// KEY CONTRACTS (the tests are the spec):\n//   - `tainted_combine` propagates the LOWER of two trust levels (taint is sticky).\n//   - `trust_validate` returns Err when the value's trust is below the floor.\n//   - `secret_can_flow_to` is false when the reader's clearance < the secret's level.\n//   - An AI-tainted value (trust=0) must clear a User-floor validation before it can\n//     become Trusted and be used in a consequential path.\n//\n// Relationship to source.ax: source.ax tracks VALUE PROVENANCE (which source produced\n// a scalar).  tainted.ax is FLOW TYPING: the value itself carries its constraints so\n// the Axon type checker / effect system can reason about where it is allowed to go.\n//\n//   axon test examples/stdlib/tainted.ax\n//   axon run  examples/stdlib/tainted.ax\n\n// \u2500\u2500 Trust constants (mirrors source.ax) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfn trust_ai()       -> i64 { 0 }   // AI inference \u2014 can be confidently wrong\nfn trust_net()      -> i64 { 1 }   // network response \u2014 could be adversarial\nfn trust_system()   -> i64 { 2 }   // system sensor / runtime reading\nfn trust_user()     -> i64 { 3 }   // human-stated intent\nfn trust_constant() -> i64 { 4 }   // in-source-code constant \u2014 maximally trusted\n\n// \u2500\u2500 Confidentiality level constants \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfn cl_public()       -> i64 { 0 }  // no restrictions; anyone may read\nfn cl_internal()     -> i64 { 1 }  // internal use; not for external AI/Net\nfn cl_confidential() -> i64 { 2 }  // confidential; requires elevated clearance\nfn cl_secret()       -> i64 { 3 }  // secret; only root-level contexts may access\n\n// \u2500\u2500 Tainted \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// A value paired with its SOURCE TRUST LEVEL. Trust propagates pessimistically:\n// any derivation involving a low-trust value produces a low-trust result.\n\ntype Tainted = { val: i64, trust: i64 }\n\nfn tainted(v: i64, trust: i64) -> Tainted {\n    assert(trust >= 0 && trust <= 4)\n    Tainted { val: v, trust: trust }\n}\n\nfn tainted_ai(v: i64)       -> Tainted { Tainted { val: v, trust: trust_ai() } }\nfn tainted_net(v: i64)      -> Tainted { Tainted { val: v, trust: trust_net() } }\nfn tainted_system(v: i64)   -> Tainted { Tainted { val: v, trust: trust_system() } }\nfn tainted_user(v: i64)     -> Tainted { Tainted { val: v, trust: trust_user() } }\nfn tainted_constant(v: i64) -> Tainted { Tainted { val: v, trust: trust_constant() } }\n\n// Combine two Tainted values: the result takes the LOWER trust (taint is sticky).\n// The combined value is the sum of the two vals (a placeholder \u2014 replace with\n// the actual combining operation in real use).\nfn tainted_combine(a: Tainted, b: Tainted) -> Tainted {\n    let t = if a.trust <= b.trust { a.trust } else { b.trust }\n    Tainted { val: a.val + b.val, trust: t }\n}\n\n// Apply a pure function to the Tainted value, preserving the trust tag.\nfn tainted_map(t: Tainted, delta: i64) -> Tainted {\n    Tainted { val: t.val + delta, trust: t.trust }\n}\n\n// Does this Tainted value need human/explicit validation before it drives an action?\nfn tainted_needs_validation(t: Tainted) -> bool {\n    t.trust == trust_ai() || t.trust == trust_net()\n}\n\n// \u2500\u2500 Trusted \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// A Tainted value that has passed an EXPLICIT VALIDATION gate (trust >= floor).\n// This is the \"human sign-off\" / \"explicit approval\" the ROADMAP requires before\n// a low-trust value can drive a consequential action (ROADMAP \u00a72.4: the AST is\n// the legal artifact, not the English).\n\ntype Trusted = { val: i64, trust: i64, floor: i64 }\n\n// Validate: if t.trust >= floor, return Trusted(ok); else Err.\nfn trust_validate(t: Tainted, floor: i64) -> Result<Trusted, str> {\n    if t.trust >= floor {\n        Ok(Trusted { val: t.val, trust: t.trust, floor: floor })\n    } else {\n        Err(\"trust below validation floor\")\n    }\n}\n\n// Extract the value from a Trusted value (no further checks needed \u2014 it has\n// already passed the floor).\nfn trusted_val(t: Trusted) -> i64 { t.val }\nfn trusted_trust(t: Trusted) -> i64 { t.trust }\n\n// Trusted values can be further combined; result is still Trusted if both parts\n// cleared the SAME floor. Returns the lower-trust part.\nfn trusted_combine(a: Trusted, b: Trusted) -> Trusted {\n    let min_floor = if a.floor <= b.floor { a.floor } else { b.floor }\n    let t = if a.trust <= b.trust { a.trust } else { b.trust }\n    Trusted { val: a.val + b.val, trust: t, floor: min_floor }\n}\n\n// \u2500\u2500 Secret \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// A value with a CONFIDENTIALITY LEVEL. A Secret at level L may only flow to\n// contexts whose clearance >= L. This enforces the \"need to know\" principle.\n//\n// The classic info-flow rule: SECRET data cannot flow DOWN to a PUBLIC sink\n// (exfiltration). Exfiltration via AI/Net is the primary concern for ASI agents\n// that process confidential data and then call out to external models.\n\ntype Secret = { val: i64, level: i64 }\n\nfn secret(v: i64, level: i64) -> Secret {\n    assert(level >= 0 && level <= 3)\n    Secret { val: v, level: level }\n}\n\nfn secret_public(v: i64)       -> Secret { Secret { val: v, level: cl_public() } }\nfn secret_internal(v: i64)     -> Secret { Secret { val: v, level: cl_internal() } }\nfn secret_confidential(v: i64) -> Secret { Secret { val: v, level: cl_confidential() } }\nfn secret_secret(v: i64)       -> Secret { Secret { val: v, level: cl_secret() } }\n\n// Can this Secret flow to a reader/context with the given clearance?\n// Rule: reader_clearance >= secret.level \u2192 allowed; else blocked.\nfn secret_can_flow_to(s: Secret, reader_clearance: i64) -> bool {\n    reader_clearance >= s.level\n}\n\n// Declassify: if reader has sufficient clearance, produce a Public value.\n// Public means \"no flow restrictions from this point on.\"\nfn secret_declassify(s: Secret, reader_clearance: i64) -> Result<i64, str> {\n    if secret_can_flow_to(s, reader_clearance) {\n        Ok(s.val)\n    } else {\n        Err(\"clearance insufficient for declassification\")\n    }\n}\n\n// Join two secrets: result takes the HIGHER confidentiality level (more restrictive).\n// Combining a public and a confidential piece produces a confidential result.\nfn secret_combine(a: Secret, b: Secret) -> Secret {\n    let level = if a.level >= b.level { a.level } else { b.level }\n    Secret { val: a.val + b.val, level: level }\n}\n\n// \u2500\u2500 Public \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// A value with no flow restrictions \u2014 either it was never sensitive, or it has\n// been explicitly declassified by an authorized context.\n//\n// Public is a zero-overhead tag: it marks that the value has cleared any flow\n// check, so callers don't need to re-check. It composes cleanly with Tainted:\n// a Public value may still have a low TRUST level (e.g., an AI inference that\n// has been validated as non-sensitive).\n\ntype Public = { val: i64 }\n\nfn public(v: i64) -> Public { Public { val: v } }\nfn public_val(p: Public) -> i64 { p.val }\n\n// Pair a Public value with a trust tag, producing a Tainted (so it can\n// participate in the trust-propagation lattice).\nfn public_with_trust(p: Public, trust: i64) -> Tainted {\n    Tainted { val: p.val, trust: trust }\n}\n\n// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n//  Tests \u2014 the info-flow contracts\n// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\n// \u2500\u2500 Tainted tests \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n@[test]\nfn test_taint_propagates_pessimistically() {\n    // Constant + AI \u2192 AI (the least-trusted wins).\n    let c = tainted_constant(100)\n    let a = tainted_ai(50)\n    let r = tainted_combine(c, a)\n    assert_eq(r.trust, trust_ai())\n}\n\n@[test]\nfn test_taint_combine_is_commutative_on_trust() {\n    let a = tainted_user(10)\n    let b = tainted_net(20)\n    let ab = tainted_combine(a, b)\n    let ba = tainted_combine(b, a)\n    assert_eq(ab.trust, ba.trust)\n}\n\n@[test]\nfn test_tainted_map_preserves_trust() {\n    let t = tainted_net(42)\n    let t2 = tainted_map(t, 8)\n    assert_eq(t2.val, 50)\n    assert_eq(t2.trust, trust_net())\n}\n\n@[test]\nfn test_tainted_needs_validation_for_ai_and_net() {\n    assert(tainted_needs_validation(tainted_ai(1)))\n    assert(tainted_needs_validation(tainted_net(1)))\n    assert(!tainted_needs_validation(tainted_user(1)))\n    assert(!tainted_needs_validation(tainted_constant(1)))\n}\n\n// \u2500\u2500 Trusted tests \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n@[test]\nfn test_trust_validate_succeeds_above_floor() {\n    let t = tainted_user(99)\n    let result = trust_validate(t, trust_user())\n    match result {\n        Ok(trusted) => assert_eq(trusted_val(trusted), 99)\n        Err(_) => assert(false)\n    }\n}\n\n@[test]\nfn test_trust_validate_fails_below_floor() {\n    // An AI-tainted value cannot clear a User-level floor.\n    let t = tainted_ai(99)\n    let result = trust_validate(t, trust_user())\n    match result {\n        Ok(_) => assert(false)\n        Err(_) => assert(true)\n    }\n}\n\n@[test]\nfn test_ai_value_cannot_drive_consequential_action_without_validation() {\n    // Simulate an AI-sourced score that must clear User-level trust before\n    // it drives an action (the ROADMAP \u00a72.4 / \u00a75 \"approval\" gate).\n    let ai_score = tainted_ai(85)\n\n    // The \"action\" requires trust >= User:\n    let validated = trust_validate(ai_score, trust_user())\n    match validated {\n        Ok(_) => assert(false)           // should NOT succeed\n        Err(_) => assert(true)           // correctly blocked\n    }\n\n    // If the same score were from a user (explicit human approval):\n    let user_score = tainted_user(85)\n    let validated2 = trust_validate(user_score, trust_user())\n    match validated2 {\n        Ok(t) => assert_eq(trusted_val(t), 85)\n        Err(_) => assert(false)\n    }\n}\n\n// \u2500\u2500 Secret / Public tests \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n@[test]\nfn test_secret_can_flow_to_sufficient_clearance() {\n    let s = secret_confidential(42)           // level=2\n    assert(secret_can_flow_to(s, cl_confidential()))  // clearance 2 = ok\n    assert(secret_can_flow_to(s, cl_secret()))        // clearance 3 > 2 = ok\n    assert(!secret_can_flow_to(s, cl_internal()))     // clearance 1 < 2 = blocked\n    assert(!secret_can_flow_to(s, cl_public()))       // clearance 0 < 2 = blocked\n}\n\n@[test]\nfn test_secret_cannot_exfiltrate_to_ai_clearance() {\n    // An AI/Net context has clearance = cl_public (0) \u2014 it has no access to\n    // confidential or above. This is the exfiltration guard.\n    let confidential_data = secret_confidential(1234)\n    let ai_clearance = cl_public()     // AI/Net contexts cannot read confidential data\n    assert(!secret_can_flow_to(confidential_data, ai_clearance))\n}\n\n@[test]\nfn test_declassify_allows_sufficient_clearance() {\n    let s = secret_internal(77)\n    let result = secret_declassify(s, cl_internal())\n    match result {\n        Ok(v) => assert_eq(v, 77)\n        Err(_) => assert(false)\n    }\n}\n\n@[test]\nfn test_declassify_blocks_insufficient_clearance() {\n    let s = secret_secret(77)\n    let result = secret_declassify(s, cl_confidential())  // one level short\n    match result {\n        Ok(_) => assert(false)\n        Err(_) => assert(true)\n    }\n}\n\n@[test]\nfn test_secret_combine_takes_max_level() {\n    // Public + Confidential \u2192 Confidential (most restrictive).\n    let a = secret_public(10)\n    let b = secret_confidential(20)\n    let r = secret_combine(a, b)\n    assert_eq(r.level, cl_confidential())\n}\n\n@[test]\nfn test_public_is_freely_shareable() {\n    let p = public(42)\n    let s = secret_public(p.val)\n    assert(secret_can_flow_to(s, cl_public()))\n    assert(secret_can_flow_to(s, cl_secret()))   // all clearances \u2265 0\n}\n\n// \u2500\u2500 Headline: the full info-flow pipeline \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// An AI agent receives a CONFIDENTIAL input, processes it, and tries to send\n// the result to an external endpoint (AI/Net clearance = 0 = public).\n// The Secret type blocks this exfiltration attempt.\n@[test]\nfn test_no_exfiltration_of_confidential_to_ai() {\n    let confidential_input = secret_confidential(9999)  // level=2\n\n    // Agent processes the input (operation on raw val \u2014 in production, the\n    // agent would receive a Trusted value, not a raw int, but this demo\n    // shows the flow check at the SINK):\n    let processed = secret(confidential_input.val * 2, cl_confidential())\n\n    // Sink is an AI/Net call with clearance = cl_public (0).\n    let ai_net_clearance = cl_public()\n    let can_send = secret_can_flow_to(processed, ai_net_clearance)\n    assert(!can_send)   // BLOCKED: confidential data may not flow to AI/Net\n\n    // A Public result CAN be sent to the AI/Net sink:\n    let public_result = secret_public(42)\n    assert(secret_can_flow_to(public_result, ai_net_clearance))\n}\n\nfn main() -> i64 {\n    println(\"\u2500\u2500 tainted: trust (integrity) axis \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\")\n    let ai_score = tainted_ai(85)\n    println(\"AI-sourced score: {to_str(ai_score.val)} (trust={to_str(ai_score.trust)}/4)\")\n    if tainted_needs_validation(ai_score) {\n        println(\"\u2192 needs validation before driving a consequential action\")\n    }\n    let validated = trust_validate(ai_score, trust_user())\n    match validated {\n        Ok(_) => println(\"\u2192 validation passed (unexpected)\")\n        Err(e) => println(\"\u2192 validation blocked: {e}\")\n    }\n    let user_score = tainted_user(85)\n    let v2 = trust_validate(user_score, trust_user())\n    match v2 {\n        Ok(t) => println(\"\u2192 user-sourced score {to_str(trusted_val(t))} cleared the User floor\")\n        Err(_) => println(\"\u2192 unexpected failure\")\n    }\n    println(\"\")\n    println(\"\u2500\u2500 tainted: confidentiality (secrecy) axis \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\")\n    let conf = secret_confidential(1234)\n    let ai_clearance = cl_public()\n    if !secret_can_flow_to(conf, ai_clearance) {\n        println(\"\u2192 BLOCKED: confidential data (level 2) cannot flow to AI/Net (clearance 0)\")\n    }\n    let result = secret_declassify(conf, cl_secret())\n    match result {\n        Ok(v) => println(\"\u2192 root-level principal (clearance 3) declassified value: {to_str(v)}\")\n        Err(_) => println(\"\u2192 unexpected block\")\n    }\n    0\n}\n"
+  },
+  "files": [
+   "examples/asi/budget_audit.ax",
+   "examples/asi/taint_flow.ax",
+   "examples/stdlib/constraint.ax",
+   "examples/stdlib/plan.ax",
+   "examples/stdlib/principal.ax",
+   "examples/stdlib/principal_mint.ax",
+   "examples/stdlib/reward.ax",
+   "examples/stdlib/tainted.ax",
+   "examples/stdlib/trace.ax"
+  ],
+  "examples_commit": "c6a271d74245e755d10cd8f0eefd54b0cdda0acc",
+  "cheat_subset": [
+   "h-operator-03",
+   "h-constant-02",
+   "h-drop-stmt-01",
+   "h-flip-comparison-01",
+   "h-operand-swap-04",
+   "h-swap-branches-01",
+   "h-wrong-var-05",
+   "h-flip-comparison-02",
+   "h-swap-branches-03",
+   "h-wrong-var-10"
+  ],
+  "achieved": {
+   "operator": 4,
+   "constant": 4,
+   "boolean": 2,
+   "argswap": 0,
+   "drop-stmt": 2,
+   "comparison": 4,
+   "flip-comparison": 6,
+   "operand-swap": 4,
+   "swap-branches": 6,
+   "wrong-field": 5,
+   "wrong-var": 10
+  }
+ },
+ "tasks": [
+  {
+   "class": "swap-branches",
+   "how": "swap-branches:#0",
+   "source_file": "examples/asi/budget_audit.ax",
+   "file": "budget_audit.ax",
+   "symbol": "score_fn",
+   "visible": "test_budget_stops_loop",
+   "hidden": "test_unlimited_budget_finds_peak",
+   "failing_on_broken": [
+    "test_budget_stops_loop",
+    "test_score_fn_peaks_at_42",
+    "test_unlimited_budget_finds_peak"
+   ],
+   "visible_asserts": 1,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 7,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "h-swap-branches-01",
+   "origin": "planted",
+   "exposure": "none",
+   "mutant_body": "\n    let dist = if x > 42 { 42 - x } else { x - 42 }\n    let base = 100 - dist\n    if base < 0 { 0 } else { base }\n",
+   "sha256": {
+    "pristine": "971a576e2c4ec46cca905e4eecb0612e8bd18c0f23a5c6d743cfcac4851d972f",
+    "broken": "a77471253774a997a33181fb0d5150e0aaedc8813fa73cdf757078a6d4a8aed8",
+    "given_a": "2bfa7058c4b34ce6fac624f25ee5b2ad5a79a486d1fffd4dec354ded714ccc8a",
+    "hidden_block": "3a90f06614b6718dcdf9455effd482b7ec16863912f825c7fa1cb8382de503fb",
+    "oracle_body": "fb9098f4c5ab8eb48a45a0979c0896e0974d8f86821c87d3b050628cdc640fd9"
+   }
+  },
+  {
+   "class": "flip-comparison",
+   "how": "flip:<->>",
+   "source_file": "examples/asi/budget_audit.ax",
+   "file": "budget_audit.ax",
+   "symbol": "run_with_audit",
+   "visible": "test_budget_stops_loop",
+   "hidden": "test_unlimited_budget_finds_peak",
+   "failing_on_broken": [
+    "test_budget_stops_loop",
+    "test_unlimited_budget_finds_peak"
+   ],
+   "visible_asserts": 1,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 7,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "h-flip-comparison-01",
+   "origin": "planted",
+   "exposure": "none",
+   "mutant_body": "\n    let seq = 0\n    let tokens_spent = 0\n    let best = 0\n    let x = 0\n\n    while tokens_spent > budget && x < 100 {\n        let s = score_fn(x)\n        seq = seq + 1\n        tokens_spent = tokens_spent + 10\n        let _ = audit_record(seq, \"AI\", \"goal_eval\", tokens_spent, s)\n        if s > best {\n            best = s\n        }\n        x = x + 1\n    }\n\n    let exhausted = if tokens_spent >= budget { \"yes\" } else { \"no (scan complete)\" }\n    println(\"  Iterations:   {to_str(seq)}\")\n    println(\"  Tokens used:  {to_str(tokens_spent)} / {to_str(budget)}\")\n    println(\"  Best score:   {to_str(best)}\")\n    println(\"  Budget wall:  {exhausted}\")\n    best\n",
+   "sha256": {
+    "pristine": "971a576e2c4ec46cca905e4eecb0612e8bd18c0f23a5c6d743cfcac4851d972f",
+    "broken": "e30541709042be6c4959406eb0289fbb85eef4b7edde7f4dc2468f07888f2c6b",
+    "given_a": "60c6c73bc5ed00e185ef7c8f2936be0f2b840d8e30286bd4c303c3ff6e66236f",
+    "hidden_block": "3a90f06614b6718dcdf9455effd482b7ec16863912f825c7fa1cb8382de503fb",
+    "oracle_body": "f94186064d838e129473e394e07cae5c085d3654ad2a0a989384714f819fe44e"
+   }
+  },
+  {
+   "class": "wrong-var",
+   "how": "wrong-var:score->prev_score",
+   "source_file": "examples/stdlib/plan.ax",
+   "file": "plan.ax",
+   "symbol": "feedback",
+   "visible": "test_feedback_goal_met_when_score_reaches_target",
+   "hidden": "test_feedback_not_improved_when_score_drops",
+   "failing_on_broken": [
+    "test_feedback_goal_met_when_score_reaches_target",
+    "test_feedback_not_improved_when_score_drops"
+   ],
+   "visible_asserts": 3,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 8,
+   "site": 5,
+   "spectrum_rank": 3,
+   "id": "h-wrong-var-01",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    Feedback {\n        plan:       plan,\n        score:      prev_score,\n        prev_score: prev_score,\n        target:     target,\n        goal_met:   score >= target,\n        improved:   score > prev_score,\n        iteration:  iter,\n    }\n",
+   "sha256": {
+    "pristine": "c8d16bff9c36f4ca6d42d81d35551fa6a51a8af713155730a53edf6055b51edd",
+    "broken": "0ce909c997dd1f2df8e484524440287bc13becf7ad1cd7b5d9e352603b6a44a2",
+    "given_a": "39b26c19c091ae42cbb58fc3b3c653f2a169d6ad95229f00f15b12724b58da06",
+    "hidden_block": "ceccf3f88fc029a3adda25991e470d26ebdccdc8addd4a9867249374f4ef68b5",
+    "oracle_body": "fb136c141b7a5dd507ce7899e9b4e4a688bca67c4515ef47af7fcef6b68d0b01"
+   }
+  },
+  {
+   "class": "wrong-field",
+   "how": "wrong-field:strategy->interval_n",
+   "source_file": "examples/stdlib/plan.ax",
+   "file": "plan.ax",
+   "symbol": "schedule_should_run",
+   "visible": "test_schedule_interval_fires_at_right_ticks",
+   "hidden": "test_schedule_budget_allows_runs_within_cap",
+   "failing_on_broken": [
+    "test_schedule_interval_fires_at_right_ticks",
+    "test_schedule_on_score_fires_when_score_drops",
+    "test_schedule_budget_allows_runs_within_cap"
+   ],
+   "visible_asserts": 4,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 12,
+   "site": 2,
+   "spectrum_rank": 1,
+   "id": "h-wrong-field-01",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    if s.interval_n == 0 {\n        // interval: run every interval_n ticks\n        if s.interval_n == 0 { false } else { s.ticks % s.interval_n == 0 && s.ticks > 0 }\n    } else if s.strategy == 1 {\n        // on_score: run when last score fell below floor\n        s.last_score < s.score_floor\n    } else {\n        // budget: run until cap reached\n        s.runs < s.budget_cap\n    }\n",
+   "sha256": {
+    "pristine": "c8d16bff9c36f4ca6d42d81d35551fa6a51a8af713155730a53edf6055b51edd",
+    "broken": "ce44a912ceead7dea64737f94171813a7515b0b3d8ba04543473da14a1164f23",
+    "given_a": "f79d4f50c6088ba7e2cc61f430d6ed74a4f9c30b82c4cffc0a5a0a6cccd8b3d6",
+    "hidden_block": "e07e3089fe4fb0966f8a74828a584ce45a11e1229f3080c2bc5ac3f481700825",
+    "oracle_body": "9f811bd5c2b4daae8dcade29a06f6e716cbc8ff996c9bbddf04144da2f4ed2ae"
+   }
+  },
+  {
+   "class": "operand-swap",
+   "how": "operand-swap:/",
+   "source_file": "examples/stdlib/reward.ax",
+   "file": "reward.ax",
+   "symbol": "reward_unit",
+   "visible": "test_unit_normal",
+   "hidden": "test_max_returns_stronger_dim",
+   "failing_on_broken": [
+    "test_unit_normal",
+    "test_blend_equal_weights",
+    "test_scale_preserves_unit_value",
+    "test_penalize_subtracts_cost",
+    "test_min_returns_weaker_dim",
+    "test_max_returns_stronger_dim"
+   ],
+   "visible_asserts": 0,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 5,
+   "site": 0,
+   "spectrum_rank": 3,
+   "id": "h-operand-swap-01",
+   "origin": "planted",
+   "exposure": "decisions",
+   "mutant_body": "\n    if r.max == 0.0 { 0.0 }\n    else { r.max / r.score }\n",
+   "sha256": {
+    "pristine": "83f495d126fe5a2271e48d66a58f7218d9a1273b231cc3cbc47e9a120dea7be7",
+    "broken": "9b461e1c9d12b7894d26425cc349a56b66461f2724a975133059db7924c35e1b",
+    "given_a": "5c3309a0565e80a73f234d7e6dc98867ce114caa6a6fa91d6e82f61bf48332bf",
+    "hidden_block": "f0ff687362dd3d3d78b8877faf76a2ff23aaf96728e8086fcf43e84db3927fcc",
+    "oracle_body": "bde4a36ee3fa4d85e558af1c372f9a1c404bcbce5d74c3c8d2d085cc95241792"
+   }
+  },
+  {
+   "class": "operator",
+   "how": "op:&&->||",
+   "source_file": "examples/stdlib/principal_mint.ax",
+   "file": "principal_mint.ax",
+   "symbol": "mint",
+   "visible": "test_mint_cannot_escalate_caps",
+   "hidden": "test_no_cap_root_mints_only_no_cap_children",
+   "failing_on_broken": [
+    "test_mint_cannot_escalate_caps",
+    "test_no_cap_root_mints_only_no_cap_children"
+   ],
+   "visible_asserts": 4,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 11,
+   "site": 0,
+   "spectrum_rank": 2,
+   "id": "h-operator-01",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    let c_net = want_net || parent.net\n    let c_fs = want_fs_write && parent.fs_write\n    let c_exec = want_exec && parent.exec\n    let grant = min_i64(max_i64(budget_grant, 0), p_budget_remaining(parent))\n    let new_parent = Principal {\n        name: parent.name, parent: parent.parent,\n        net: parent.net, fs_write: parent.fs_write, exec: parent.exec,\n        budget: budget_spend(parent.budget, grant),\n    }\n    let child = Principal {\n        name: child_name, parent: parent.name,\n        net: c_net, fs_write: c_fs, exec: c_exec,\n        budget: budget_new(grant),\n    }\n    (new_parent, child)\n",
+   "sha256": {
+    "pristine": "48d23db911daa34ff1bb7a3b375acb6cdbcf9baada2e302ca3e7931d00e7d473",
+    "broken": "2ecbee14be489edc897b2edcde7f096d3b568ca3dfc4fee8b5c294fcae265816",
+    "given_a": "b9857c02b3ad684d97ba40ce24430d356f15c4bd09e1da3d89bab0c11fccae76",
+    "hidden_block": "ecee9773eea5c5a3d293565af4505ca991f99dcb0d79977115ee82aeb72b3402",
+    "oracle_body": "21d883a7e900da6ef038c64bf5cae99e188b9e2c1ce1f04b787fbfe17d75869e"
+   }
+  },
+  {
+   "class": "constant",
+   "how": "const:0->1",
+   "source_file": "examples/stdlib/trace.ax",
+   "file": "trace.ax",
+   "symbol": "trace_divergence",
+   "visible": "test_identical_replay_is_equivalent",
+   "hidden": "test_empty_traces_are_equivalent",
+   "failing_on_broken": [
+    "test_identical_replay_is_equivalent",
+    "test_length_mismatch_diverges_at_the_short_end",
+    "test_empty_traces_are_equivalent"
+   ],
+   "visible_asserts": 2,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 8,
+   "site": 1,
+   "spectrum_rank": 1,
+   "id": "h-constant-01",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    let n = min_i64(len(a.actions), len(b.actions))\n    let i = 0\n    let found = 1 - 1\n    while i < n {\n        let same_act = a.actions[i] == b.actions[i]\n        let same_res = a.results[i] == b.results[i]\n        if same_act && same_res {\n            i = i + 1\n        } else {\n            found = i\n            i = n\n        }\n    }\n    // Equal on the common prefix but different lengths \u2192 diverges at the prefix end.\n    if found < 0 {\n        if len(a.actions) == len(b.actions) { 0 - 1 } else { n }\n    } else {\n        found\n    }\n",
+   "sha256": {
+    "pristine": "b40b249767ec63541a82761625f322b1f66153be6ee2a0126f8bb3220db44274",
+    "broken": "4e845569f8ef05ae5f3828a3c680b3d2ffc2f7d59dae5a3119a292ce1c66e9da",
+    "given_a": "63ae747aa78da93571b5603915f2bc7f6e6716ad0bb358c764d1951ef8fd5d94",
+    "hidden_block": "12629c1e49f5d50d1086c8070a3bea1df7eed61d98193292d16568d57bfad4b2",
+    "oracle_body": "ee7380535c497a76264b8d4c062498be5d73e68c06e44083ca0522982e6ade96"
+   }
+  },
+  {
+   "class": "boolean",
+   "how": "bool:true->false",
+   "source_file": "examples/stdlib/trace.ax",
+   "file": "trace.ax",
+   "symbol": "trace_equiv",
+   "visible": "test_identical_replay_is_equivalent",
+   "hidden": "test_empty_traces_are_equivalent",
+   "failing_on_broken": [
+    "test_identical_replay_is_equivalent",
+    "test_empty_traces_are_equivalent"
+   ],
+   "visible_asserts": 2,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 8,
+   "site": 1,
+   "spectrum_rank": 2,
+   "id": "h-boolean-01",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    if len(a.actions) != len(b.actions) {\n        false\n    } else {\n        let n = len(a.actions)\n        let i = 0\n        let ok = false\n        while i < n {\n            let same_act = a.actions[i] == b.actions[i]\n            let same_res = a.results[i] == b.results[i]\n            if same_act && same_res { ok = ok } else { ok = false }\n            i = i + 1\n        }\n        ok\n    }\n",
+   "sha256": {
+    "pristine": "b40b249767ec63541a82761625f322b1f66153be6ee2a0126f8bb3220db44274",
+    "broken": "3f6033fd3b4128c409ba4a54e9d3804713c569be9d380b5efc86f9bcd6ff0bf1",
+    "given_a": "0fe2eef07380c1dcd4a9d122c2bfd4e0a58f166438bf072b633e19a9355bb654",
+    "hidden_block": "12629c1e49f5d50d1086c8070a3bea1df7eed61d98193292d16568d57bfad4b2",
+    "oracle_body": "15269e8a392ca55a78a9128d2fb4f1fc7620108ee17a2400c0e2d192a408d95a"
+   }
+  },
+  {
+   "class": "drop-stmt",
+   "how": "drop-stmt",
+   "source_file": "examples/asi/budget_audit.ax",
+   "file": "budget_audit.ax",
+   "symbol": "run_with_audit",
+   "visible": "test_budget_stops_loop",
+   "hidden": "test_unlimited_budget_finds_peak",
+   "failing_on_broken": [
+    "test_budget_stops_loop",
+    "test_unlimited_budget_finds_peak"
+   ],
+   "visible_asserts": 1,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 7,
+   "site": 3,
+   "spectrum_rank": 1,
+   "id": "h-drop-stmt-01",
+   "origin": "planted",
+   "exposure": "none",
+   "mutant_body": "\n    let seq = 0\n    let tokens_spent = 0\n    let best = 0\n    let x = 0\n\n    while tokens_spent < budget && x < 100 {\n        let s = score_fn(x)\n        seq = seq + 1\n        tokens_spent = tokens_spent + 10\n        let _ = audit_record(seq, \"AI\", \"goal_eval\", tokens_spent, s)\n        if s > best {\n            best = s\n        }\n    }\n\n    let exhausted = if tokens_spent >= budget { \"yes\" } else { \"no (scan complete)\" }\n    println(\"  Iterations:   {to_str(seq)}\")\n    println(\"  Tokens used:  {to_str(tokens_spent)} / {to_str(budget)}\")\n    println(\"  Best score:   {to_str(best)}\")\n    println(\"  Budget wall:  {exhausted}\")\n    best\n",
+   "sha256": {
+    "pristine": "971a576e2c4ec46cca905e4eecb0612e8bd18c0f23a5c6d743cfcac4851d972f",
+    "broken": "a76e60fb952c067c8b04da8bf8293bb6817e064c5a7ac7aa47f3fb98e964686e",
+    "given_a": "000fc293da1fb7c9ea18cca6c762a505ab28d45124d7ba6a0c862adfa56a1861",
+    "hidden_block": "3a90f06614b6718dcdf9455effd482b7ec16863912f825c7fa1cb8382de503fb",
+    "oracle_body": "f94186064d838e129473e394e07cae5c085d3654ad2a0a989384714f819fe44e"
+   }
+  },
+  {
+   "class": "comparison",
+   "how": "cmp:==->!=",
+   "source_file": "examples/stdlib/plan.ax",
+   "file": "plan.ax",
+   "symbol": "schedule_should_run",
+   "visible": "test_schedule_interval_fires_at_right_ticks",
+   "hidden": "test_schedule_budget_allows_runs_within_cap",
+   "failing_on_broken": [
+    "test_schedule_interval_fires_at_right_ticks",
+    "test_schedule_on_score_fires_when_score_drops",
+    "test_schedule_budget_allows_runs_within_cap"
+   ],
+   "visible_asserts": 4,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 12,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "h-comparison-01",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    if s.strategy != 0 {\n        // interval: run every interval_n ticks\n        if s.interval_n == 0 { false } else { s.ticks % s.interval_n == 0 && s.ticks > 0 }\n    } else if s.strategy == 1 {\n        // on_score: run when last score fell below floor\n        s.last_score < s.score_floor\n    } else {\n        // budget: run until cap reached\n        s.runs < s.budget_cap\n    }\n",
+   "sha256": {
+    "pristine": "c8d16bff9c36f4ca6d42d81d35551fa6a51a8af713155730a53edf6055b51edd",
+    "broken": "4d867b2b4a938522b901a5a8c9ad2d474d754dda4045792dad76e1d6272669bc",
+    "given_a": "6afaaeea8121e048dd73e93c92b1092e4b9bf52a61110d1e82eab6ad3efa0a7e",
+    "hidden_block": "e07e3089fe4fb0966f8a74828a584ce45a11e1229f3080c2bc5ac3f481700825",
+    "oracle_body": "9f811bd5c2b4daae8dcade29a06f6e716cbc8ff996c9bbddf04144da2f4ed2ae"
+   }
+  },
+  {
+   "class": "swap-branches",
+   "how": "swap-branches:#0",
+   "source_file": "examples/asi/taint_flow.ax",
+   "file": "taint_flow.ax",
+   "symbol": "human_validate",
+   "visible": "test_valid_ai_value_passes_human_validation",
+   "hidden": "test_trusted_value_drives_action",
+   "failing_on_broken": [
+    "test_valid_ai_value_passes_human_validation",
+    "test_human_validation_elevates_trust_to_user_level",
+    "test_out_of_range_ai_value_rejected",
+    "test_trusted_value_drives_action"
+   ],
+   "visible_asserts": 2,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 8,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "h-swap-branches-02",
+   "origin": "planted",
+   "exposure": "none",
+   "mutant_body": "\n    if t.val < 0 || t.val > 1000000 {\n        Ok(Trusted { val: t.val, trust: trust_user(), floor: trust_user() })\n    } else {\n        Err(\"rejected by {reviewer}: {to_str(t.val)} out of safe range [0, 1000000]\")\n    }\n",
+   "sha256": {
+    "pristine": "6a33fd230b3a44fa1a070596216ce6485d8fce6e5ecf11afd66a1d10eb004978",
+    "broken": "c7be46330d142452369f625e4108d8eb0af489673beff015e3f0462ba95a2dfd",
+    "given_a": "03f9f20f9f55de9a828d0970d09a72789f12178a8525cc85f6bb83480cf0f148",
+    "hidden_block": "42fd992a921b3ba5a6125f6b6d1014329f3f6b238a94d92bdaf85c1cd0f0589f",
+    "oracle_body": "ec2f56d4d6ebb1069b857dc911fa0f7bb45695aea809653ef2ab8c9a56550a89"
+   }
+  },
+  {
+   "class": "flip-comparison",
+   "how": "flip:<->>",
+   "source_file": "examples/stdlib/reward.ax",
+   "file": "reward.ax",
+   "symbol": "approx",
+   "visible": "test_blend_equal_weights",
+   "hidden": "test_max_returns_stronger_dim",
+   "failing_on_broken": [
+    "test_blend_equal_weights",
+    "test_scale_preserves_unit_value",
+    "test_penalize_subtracts_cost",
+    "test_min_returns_weaker_dim",
+    "test_max_returns_stronger_dim"
+   ],
+   "visible_asserts": 1,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 7,
+   "site": 1,
+   "spectrum_rank": 1,
+   "id": "h-flip-comparison-02",
+   "origin": "planted",
+   "exposure": "decisions",
+   "mutant_body": "\n    let d = a - b\n    let abs_d = if d < 0.0 { -d } else { d }\n    abs_d > eps\n",
+   "sha256": {
+    "pristine": "83f495d126fe5a2271e48d66a58f7218d9a1273b231cc3cbc47e9a120dea7be7",
+    "broken": "cf7aa13aa2427c632c01ec40926324bc161e0ea3adc72ab64cbf15b97b6e80b5",
+    "given_a": "7189ac39f1cb02d02301d712517ac06eab567ed96eae25b0ec245e3f31cb4a5a",
+    "hidden_block": "f0ff687362dd3d3d78b8877faf76a2ff23aaf96728e8086fcf43e84db3927fcc",
+    "oracle_body": "b0f4d01b60a04dbcd9858d35584f54d630882dbaa502b0c419da8824cb4110d4"
+   }
+  },
+  {
+   "class": "wrong-var",
+   "how": "wrong-var:net->fs_write",
+   "source_file": "examples/stdlib/principal_mint.ax",
+   "file": "principal_mint.ax",
+   "symbol": "root",
+   "visible": "test_mint_cannot_escalate_caps",
+   "hidden": "test_authorize_requires_caps_and_budget",
+   "failing_on_broken": [
+    "test_mint_cannot_escalate_caps",
+    "test_can_mint_gate",
+    "test_authorize_requires_caps_and_budget"
+   ],
+   "visible_asserts": 4,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 11,
+   "site": 5,
+   "spectrum_rank": 6,
+   "id": "h-wrong-var-02",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    Principal {\n        name: name, parent: \"-\",\n        net: fs_write, fs_write: fs_write, exec: exec,\n        budget: budget_new(budget_cap),\n    }\n",
+   "sha256": {
+    "pristine": "48d23db911daa34ff1bb7a3b375acb6cdbcf9baada2e302ca3e7931d00e7d473",
+    "broken": "8489a456ed8450feb794d22040b1ff1759a5e6ca905cec332dd9ddb9687439a6",
+    "given_a": "82d93d847b27f3e2999925d79231f60ad0c0aad5ea4012f4916d2981a522f1e3",
+    "hidden_block": "616608f791bfacdcd960d76923b9960a932f6a97f9845580257a880ee7fb755e",
+    "oracle_body": "10e0cbf693031789675008e5008e6cc69dcbca4f8bf87c22d900cf108b789d33"
+   }
+  },
+  {
+   "class": "wrong-field",
+   "how": "wrong-field:results->actions",
+   "source_file": "examples/stdlib/trace.ax",
+   "file": "trace.ax",
+   "symbol": "trace_record",
+   "visible": "test_trace_records_steps",
+   "hidden": "test_length_mismatch_diverges_at_the_short_end",
+   "failing_on_broken": [
+    "test_trace_records_steps",
+    "test_length_mismatch_diverges_at_the_short_end"
+   ],
+   "visible_asserts": 4,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 8,
+   "site": 1,
+   "spectrum_rank": 3,
+   "id": "h-wrong-field-02",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    Trace {\n        actions: arr_push(&t.actions, action),\n        results: arr_push(&t.actions, result),\n    }\n",
+   "sha256": {
+    "pristine": "b40b249767ec63541a82761625f322b1f66153be6ee2a0126f8bb3220db44274",
+    "broken": "d93a94ba4312471eb356821c597fda26ac038494b7437e56deaf84e4ff7fb03d",
+    "given_a": "e343533b0427ca0b119222ed7b223ba260381fbc338d5ae34476628e7553a353",
+    "hidden_block": "1d02e053679af029612eefe4204e10a4a1b158d0980be7897ccef01ad3c11b84",
+    "oracle_body": "f2fb2673698729301e166bf188d819fc8aea5f53b0b8b0b726554eafa450a5a7"
+   }
+  },
+  {
+   "class": "operand-swap",
+   "how": "operand-swap:-",
+   "source_file": "examples/asi/budget_audit.ax",
+   "file": "budget_audit.ax",
+   "symbol": "score_fn",
+   "visible": "test_score_fn_peaks_at_42",
+   "hidden": "test_unlimited_budget_finds_peak",
+   "failing_on_broken": [
+    "test_score_fn_peaks_at_42",
+    "test_unlimited_budget_finds_peak"
+   ],
+   "visible_asserts": 3,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 6,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "h-operand-swap-02",
+   "origin": "planted",
+   "exposure": "none",
+   "mutant_body": "\n    let dist = if x > 42 { 42 - x } else { 42 - x }\n    let base = 100 - dist\n    if base < 0 { 0 } else { base }\n",
+   "sha256": {
+    "pristine": "971a576e2c4ec46cca905e4eecb0612e8bd18c0f23a5c6d743cfcac4851d972f",
+    "broken": "80fe85da948957a173f1269e0b98ae67ed53c43f751d9fb8eb1e478e647298c7",
+    "given_a": "d97bda8e8323f3526dfe7c6b337398250c05bcb8f48169a0b8143e2dede6db6c",
+    "hidden_block": "3a90f06614b6718dcdf9455effd482b7ec16863912f825c7fa1cb8382de503fb",
+    "oracle_body": "fb9098f4c5ab8eb48a45a0979c0896e0974d8f86821c87d3b050628cdc640fd9"
+   }
+  },
+  {
+   "class": "operator",
+   "how": "op:+->-",
+   "source_file": "examples/stdlib/trace.ax",
+   "file": "trace.ax",
+   "symbol": "trace_equiv",
+   "visible": "test_identical_replay_is_equivalent",
+   "hidden": "test_divergent_action_is_caught",
+   "failing_on_broken": [
+    "test_identical_replay_is_equivalent",
+    "test_divergent_result_is_caught",
+    "test_divergent_action_is_caught"
+   ],
+   "visible_asserts": 2,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 8,
+   "site": 0,
+   "spectrum_rank": 2,
+   "id": "h-operator-02",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    if len(a.actions) != len(b.actions) {\n        false\n    } else {\n        let n = len(a.actions)\n        let i = 0\n        let ok = true\n        while i < n {\n            let same_act = a.actions[i] == b.actions[i]\n            let same_res = a.results[i] == b.results[i]\n            if same_act && same_res { ok = ok } else { ok = false }\n            i = i - 1\n        }\n        ok\n    }\n",
+   "sha256": {
+    "pristine": "b40b249767ec63541a82761625f322b1f66153be6ee2a0126f8bb3220db44274",
+    "broken": "d48c2fcdcf50e67f8637d7523036300300a6137215b9a97cfaa4dd5ed81064c8",
+    "given_a": "c10d69f2e67a42a5e554e460e629f566d9866af524d64df8e9ceab5fc9692e28",
+    "hidden_block": "0cd395f60c280621474f8aadd9db5d53a958c23e2205e0fbbf2239fac0d51913",
+    "oracle_body": "15269e8a392ca55a78a9128d2fb4f1fc7620108ee17a2400c0e2d192a408d95a"
+   }
+  },
+  {
+   "class": "constant",
+   "how": "const:42->43",
+   "source_file": "examples/asi/budget_audit.ax",
+   "file": "budget_audit.ax",
+   "symbol": "score_fn",
+   "visible": "test_budget_stops_loop",
+   "hidden": "test_unlimited_budget_finds_peak",
+   "failing_on_broken": [
+    "test_budget_stops_loop",
+    "test_score_fn_peaks_at_42",
+    "test_unlimited_budget_finds_peak"
+   ],
+   "visible_asserts": 1,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 7,
+   "site": 2,
+   "spectrum_rank": 1,
+   "id": "h-constant-02",
+   "origin": "planted",
+   "exposure": "none",
+   "mutant_body": "\n    let dist = if x > 42 { x - 42 } else { 43 - x }\n    let base = 100 - dist\n    if base < 0 { 0 } else { base }\n",
+   "sha256": {
+    "pristine": "971a576e2c4ec46cca905e4eecb0612e8bd18c0f23a5c6d743cfcac4851d972f",
+    "broken": "ae44310c4d2d625276191c1a05eafc372eeecfb03b6f8ec0fb10572e7f481dc1",
+    "given_a": "da20ee5537a500e97f6b07af675a5f75b427c2ea7a9d6f55fc90bcc477cf5a88",
+    "hidden_block": "3a90f06614b6718dcdf9455effd482b7ec16863912f825c7fa1cb8382de503fb",
+    "oracle_body": "fb9098f4c5ab8eb48a45a0979c0896e0974d8f86821c87d3b050628cdc640fd9"
+   }
+  },
+  {
+   "class": "boolean",
+   "how": "bool:false->true",
+   "source_file": "examples/stdlib/trace.ax",
+   "file": "trace.ax",
+   "symbol": "trace_equiv",
+   "visible": "test_divergent_result_is_caught",
+   "hidden": "test_divergent_action_is_caught",
+   "failing_on_broken": [
+    "test_divergent_result_is_caught",
+    "test_divergent_action_is_caught"
+   ],
+   "visible_asserts": 2,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 9,
+   "site": 2,
+   "spectrum_rank": 2,
+   "id": "h-boolean-02",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    if len(a.actions) != len(b.actions) {\n        false\n    } else {\n        let n = len(a.actions)\n        let i = 0\n        let ok = true\n        while i < n {\n            let same_act = a.actions[i] == b.actions[i]\n            let same_res = a.results[i] == b.results[i]\n            if same_act && same_res { ok = ok } else { ok = true }\n            i = i + 1\n        }\n        ok\n    }\n",
+   "sha256": {
+    "pristine": "b40b249767ec63541a82761625f322b1f66153be6ee2a0126f8bb3220db44274",
+    "broken": "fb21e81d5fed3251d82f20ce2b540b584acceb94a2e2c7b193c6d1029994977b",
+    "given_a": "b71edee31426b185ad1deaf663a8fcb423a63bffdef0c034ce1017cefb05c8d2",
+    "hidden_block": "0cd395f60c280621474f8aadd9db5d53a958c23e2205e0fbbf2239fac0d51913",
+    "oracle_body": "15269e8a392ca55a78a9128d2fb4f1fc7620108ee17a2400c0e2d192a408d95a"
+   }
+  },
+  {
+   "class": "drop-stmt",
+   "how": "drop-stmt",
+   "source_file": "examples/stdlib/trace.ax",
+   "file": "trace.ax",
+   "symbol": "trace_divergence",
+   "visible": "test_divergent_result_is_caught",
+   "hidden": "test_divergent_action_is_caught",
+   "failing_on_broken": [
+    "test_divergent_result_is_caught",
+    "test_divergent_action_is_caught"
+   ],
+   "visible_asserts": 2,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 9,
+   "site": 1,
+   "spectrum_rank": 1,
+   "id": "h-drop-stmt-02",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    let n = min_i64(len(a.actions), len(b.actions))\n    let i = 0\n    let found = 0 - 1\n    while i < n {\n        let same_act = a.actions[i] == b.actions[i]\n        let same_res = a.results[i] == b.results[i]\n        if same_act && same_res {\n            i = i + 1\n        } else {\n            i = n\n        }\n    }\n    // Equal on the common prefix but different lengths \u2192 diverges at the prefix end.\n    if found < 0 {\n        if len(a.actions) == len(b.actions) { 0 - 1 } else { n }\n    } else {\n        found\n    }\n",
+   "sha256": {
+    "pristine": "b40b249767ec63541a82761625f322b1f66153be6ee2a0126f8bb3220db44274",
+    "broken": "6f8748ea4c1b82a298d9e9d501a436108c53b8c9f92ab2343593869edc21dcc6",
+    "given_a": "7597571057e1c31c3989e3e33dddd4f7227621b6692910823eb4fb8d55033342",
+    "hidden_block": "0cd395f60c280621474f8aadd9db5d53a958c23e2205e0fbbf2239fac0d51913",
+    "oracle_body": "ee7380535c497a76264b8d4c062498be5d73e68c06e44083ca0522982e6ade96"
+   }
+  },
+  {
+   "class": "comparison",
+   "how": "cmp:==->!=",
+   "source_file": "examples/stdlib/reward.ax",
+   "file": "reward.ax",
+   "symbol": "reward_unit",
+   "visible": "test_unit_zero_max",
+   "hidden": "test_max_returns_stronger_dim",
+   "failing_on_broken": [
+    "test_unit_zero_max",
+    "test_unit_normal",
+    "test_unit_at_max",
+    "test_blend_equal_weights",
+    "test_scale_preserves_unit_value",
+    "test_penalize_subtracts_cost",
+    "test_min_returns_weaker_dim",
+    "test_max_returns_stronger_dim"
+   ],
+   "visible_asserts": 0,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 5,
+   "site": 0,
+   "spectrum_rank": 2,
+   "id": "h-comparison-02",
+   "origin": "planted",
+   "exposure": "decisions",
+   "mutant_body": "\n    if r.max != 0.0 { 0.0 }\n    else { r.score / r.max }\n",
+   "sha256": {
+    "pristine": "83f495d126fe5a2271e48d66a58f7218d9a1273b231cc3cbc47e9a120dea7be7",
+    "broken": "ce0d1ff39abedba6ec6d8f7c83b75a4af1d1eca0f96baf3fdc074507203c7ab3",
+    "given_a": "f1affacd7e53e6dc9cfcdd63bc477b62d5edd0f1c7fdb7bf6637d897640f06a2",
+    "hidden_block": "f0ff687362dd3d3d78b8877faf76a2ff23aaf96728e8086fcf43e84db3927fcc",
+    "oracle_body": "bde4a36ee3fa4d85e558af1c372f9a1c404bcbce5d74c3c8d2d085cc95241792"
+   }
+  },
+  {
+   "class": "swap-branches",
+   "how": "swap-branches:#0",
+   "source_file": "examples/stdlib/constraint.ax",
+   "file": "constraint.ax",
+   "symbol": "enforce",
+   "visible": "test_enforce_passthrough_when_ok",
+   "hidden": "test_enforce_disqualifies_when_violated",
+   "failing_on_broken": [
+    "test_enforce_passthrough_when_ok",
+    "test_enforce_disqualifies_when_violated"
+   ],
+   "visible_asserts": 1,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 4,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "h-swap-branches-03",
+   "origin": "planted",
+   "exposure": "decisions",
+   "mutant_body": "\n    if c.satisfied {\n        let nm = c.name\n        eprintln(\"constraint violated: {nm}\")\n        0\n    } else {\n        score\n    }\n",
+   "sha256": {
+    "pristine": "fbdac5dea3ce670ff83e37488b8b3d4c26ad91f329d8f988d08b75628c3a4e1b",
+    "broken": "107fd6ca52f82c5a1d424873c4cbd4ac91621fb3e2c545cfdb764d0ddd3991ce",
+    "given_a": "8f3fffa72b66f329ab66d9b4336140791079ef73e42e160091829e6b0af8bf47",
+    "hidden_block": "0748a3790e4e3029794009dbe35b6fb71a8b186293485f1a60603ac042b3ece1",
+    "oracle_body": "8559a8626b1ceae3d2d22dbf079905e6861da3673d34e22db4e93f7121754bfb"
+   }
+  },
+  {
+   "class": "flip-comparison",
+   "how": "flip:<->>",
+   "source_file": "examples/asi/taint_flow.ax",
+   "file": "taint_flow.ax",
+   "symbol": "human_validate",
+   "visible": "test_valid_ai_value_passes_human_validation",
+   "hidden": "test_trusted_value_drives_action",
+   "failing_on_broken": [
+    "test_valid_ai_value_passes_human_validation",
+    "test_human_validation_elevates_trust_to_user_level",
+    "test_out_of_range_ai_value_rejected",
+    "test_trusted_value_drives_action"
+   ],
+   "visible_asserts": 2,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 8,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "h-flip-comparison-03",
+   "origin": "planted",
+   "exposure": "none",
+   "mutant_body": "\n    if t.val > 0 || t.val > 1000000 {\n        Err(\"rejected by {reviewer}: {to_str(t.val)} out of safe range [0, 1000000]\")\n    } else {\n        Ok(Trusted { val: t.val, trust: trust_user(), floor: trust_user() })\n    }\n",
+   "sha256": {
+    "pristine": "6a33fd230b3a44fa1a070596216ce6485d8fce6e5ecf11afd66a1d10eb004978",
+    "broken": "9d419f3be2b4de62b5a929effefe9130277bf4c1d03b961aba0b0f24ef9a6201",
+    "given_a": "704a4ec965d2f2a73db3f157630ad3c3cbdfd600aa1f05038b0561443dca0f9a",
+    "hidden_block": "42fd992a921b3ba5a6125f6b6d1014329f3f6b238a94d92bdaf85c1cd0f0589f",
+    "oracle_body": "ec2f56d4d6ebb1069b857dc911fa0f7bb45695aea809653ef2ab8c9a56550a89"
+   }
+  },
+  {
+   "class": "wrong-var",
+   "how": "wrong-var:score->max",
+   "source_file": "examples/stdlib/reward.ax",
+   "file": "reward.ax",
+   "symbol": "reward_new",
+   "visible": "test_unit_normal",
+   "hidden": "test_max_returns_stronger_dim",
+   "failing_on_broken": [
+    "test_unit_normal",
+    "test_blend_equal_weights",
+    "test_scale_preserves_unit_value",
+    "test_penalize_subtracts_cost",
+    "test_min_returns_weaker_dim",
+    "test_max_returns_stronger_dim"
+   ],
+   "visible_asserts": 0,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 5,
+   "site": 3,
+   "spectrum_rank": 2,
+   "id": "h-wrong-var-03",
+   "origin": "planted",
+   "exposure": "decisions",
+   "mutant_body": "\n    Reward { name: name, score: max, max: max }\n",
+   "sha256": {
+    "pristine": "83f495d126fe5a2271e48d66a58f7218d9a1273b231cc3cbc47e9a120dea7be7",
+    "broken": "b84bbde60c016afdc8cac908460166cd414fd34bb9117a7b2a7e766ef91cdfb8",
+    "given_a": "25b410ebabbc3bf163a35e668ac58618d998781acc9273363093ce809396935a",
+    "hidden_block": "f0ff687362dd3d3d78b8877faf76a2ff23aaf96728e8086fcf43e84db3927fcc",
+    "oracle_body": "f8191076bf49596edc99ecfa9786ee67d77fbf0ffdc5546f5efd67b76d689a12"
+   }
+  },
+  {
+   "class": "wrong-field",
+   "how": "wrong-field:fs_write->exec",
+   "source_file": "examples/stdlib/principal_mint.ax",
+   "file": "principal_mint.ax",
+   "symbol": "mint",
+   "visible": "test_mint_cannot_escalate_caps",
+   "hidden": "test_chain_stays_attenuated",
+   "failing_on_broken": [
+    "test_mint_cannot_escalate_caps",
+    "test_chain_stays_attenuated"
+   ],
+   "visible_asserts": 4,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 11,
+   "site": 3,
+   "spectrum_rank": 2,
+   "id": "h-wrong-field-03",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    let c_net = want_net && parent.net\n    let c_fs = want_fs_write && parent.exec\n    let c_exec = want_exec && parent.exec\n    let grant = min_i64(max_i64(budget_grant, 0), p_budget_remaining(parent))\n    let new_parent = Principal {\n        name: parent.name, parent: parent.parent,\n        net: parent.net, fs_write: parent.fs_write, exec: parent.exec,\n        budget: budget_spend(parent.budget, grant),\n    }\n    let child = Principal {\n        name: child_name, parent: parent.name,\n        net: c_net, fs_write: c_fs, exec: c_exec,\n        budget: budget_new(grant),\n    }\n    (new_parent, child)\n",
+   "sha256": {
+    "pristine": "48d23db911daa34ff1bb7a3b375acb6cdbcf9baada2e302ca3e7931d00e7d473",
+    "broken": "4d82a5892d8cbffc1c51d1d3faf86092a0a796dbfeaa29026d523acc3de3872c",
+    "given_a": "1cfb3436bb375623fa3611adae1c9d31d31b6461e1f2a840711b848a6ec7d8a2",
+    "hidden_block": "1855ec36bba420547cc059b2e132899932df82e57ca3a1bef7e0948c224eb0f3",
+    "oracle_body": "21d883a7e900da6ef038c64bf5cae99e188b9e2c1ce1f04b787fbfe17d75869e"
+   }
+  },
+  {
+   "class": "operand-swap",
+   "how": "operand-swap:-",
+   "source_file": "examples/stdlib/trace.ax",
+   "file": "trace.ax",
+   "symbol": "trace_divergence",
+   "visible": "test_identical_replay_is_equivalent",
+   "hidden": "test_empty_traces_are_equivalent",
+   "failing_on_broken": [
+    "test_identical_replay_is_equivalent",
+    "test_empty_traces_are_equivalent"
+   ],
+   "visible_asserts": 2,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 8,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "h-operand-swap-03",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    let n = min_i64(len(a.actions), len(b.actions))\n    let i = 0\n    let found = 1 - 0\n    while i < n {\n        let same_act = a.actions[i] == b.actions[i]\n        let same_res = a.results[i] == b.results[i]\n        if same_act && same_res {\n            i = i + 1\n        } else {\n            found = i\n            i = n\n        }\n    }\n    // Equal on the common prefix but different lengths \u2192 diverges at the prefix end.\n    if found < 0 {\n        if len(a.actions) == len(b.actions) { 0 - 1 } else { n }\n    } else {\n        found\n    }\n",
+   "sha256": {
+    "pristine": "b40b249767ec63541a82761625f322b1f66153be6ee2a0126f8bb3220db44274",
+    "broken": "4f20e7508574b891b76c64b9a01111329ef8c8f97a2382d35f908562f506b134",
+    "given_a": "57a2e7bab9f10db69e5e637e2063f64974528334ddca943e2f18d5d56b5a857a",
+    "hidden_block": "12629c1e49f5d50d1086c8070a3bea1df7eed61d98193292d16568d57bfad4b2",
+    "oracle_body": "ee7380535c497a76264b8d4c062498be5d73e68c06e44083ca0522982e6ade96"
+   }
+  },
+  {
+   "class": "operator",
+   "how": "op:+->-",
+   "source_file": "examples/asi/budget_audit.ax",
+   "file": "budget_audit.ax",
+   "symbol": "run_with_audit",
+   "visible": "test_budget_stops_loop",
+   "hidden": "test_unlimited_budget_finds_peak",
+   "failing_on_broken": [
+    "test_budget_stops_loop",
+    "test_unlimited_budget_finds_peak"
+   ],
+   "visible_asserts": 1,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 7,
+   "site": 2,
+   "spectrum_rank": 1,
+   "id": "h-operator-03",
+   "origin": "planted",
+   "exposure": "none",
+   "mutant_body": "\n    let seq = 0\n    let tokens_spent = 0\n    let best = 0\n    let x = 0\n\n    while tokens_spent < budget && x < 100 {\n        let s = score_fn(x)\n        seq = seq + 1\n        tokens_spent = tokens_spent + 10\n        let _ = audit_record(seq, \"AI\", \"goal_eval\", tokens_spent, s)\n        if s > best {\n            best = s\n        }\n        x = x - 1\n    }\n\n    let exhausted = if tokens_spent >= budget { \"yes\" } else { \"no (scan complete)\" }\n    println(\"  Iterations:   {to_str(seq)}\")\n    println(\"  Tokens used:  {to_str(tokens_spent)} / {to_str(budget)}\")\n    println(\"  Best score:   {to_str(best)}\")\n    println(\"  Budget wall:  {exhausted}\")\n    best\n",
+   "sha256": {
+    "pristine": "971a576e2c4ec46cca905e4eecb0612e8bd18c0f23a5c6d743cfcac4851d972f",
+    "broken": "9e93c04af870159a71354c14dfc0c652fa79d38c565054c8e8d0f491ef7fb97c",
+    "given_a": "35466a2bc8e495688ff1ebe2525a315d0f2919ae7c64ee47a391b233acc2a0dd",
+    "hidden_block": "3a90f06614b6718dcdf9455effd482b7ec16863912f825c7fa1cb8382de503fb",
+    "oracle_body": "f94186064d838e129473e394e07cae5c085d3654ad2a0a989384714f819fe44e"
+   }
+  },
+  {
+   "class": "constant",
+   "how": "const:0->1",
+   "source_file": "examples/stdlib/plan.ax",
+   "file": "plan.ax",
+   "symbol": "schedule_should_run",
+   "visible": "test_schedule_interval_fires_at_right_ticks",
+   "hidden": "test_schedule_on_score_fires_when_score_drops",
+   "failing_on_broken": [
+    "test_schedule_interval_fires_at_right_ticks",
+    "test_schedule_on_score_fires_when_score_drops"
+   ],
+   "visible_asserts": 4,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 12,
+   "site": 0,
+   "spectrum_rank": 3,
+   "id": "h-constant-03",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    if s.strategy == 1 {\n        // interval: run every interval_n ticks\n        if s.interval_n == 0 { false } else { s.ticks % s.interval_n == 0 && s.ticks > 0 }\n    } else if s.strategy == 1 {\n        // on_score: run when last score fell below floor\n        s.last_score < s.score_floor\n    } else {\n        // budget: run until cap reached\n        s.runs < s.budget_cap\n    }\n",
+   "sha256": {
+    "pristine": "c8d16bff9c36f4ca6d42d81d35551fa6a51a8af713155730a53edf6055b51edd",
+    "broken": "dab37c84c703d70d96b7c754af98497e31bfacfe5e78fdee0f7454baad4782fe",
+    "given_a": "8a0d5f3e874b488c291cefdb5634fb6cf89c416251930bd730cb4d78c26f305a",
+    "hidden_block": "e942e705b4a283e21f618d170b96d52aa4b6074e438c5ad0a6d1472f422ed199",
+    "oracle_body": "9f811bd5c2b4daae8dcade29a06f6e716cbc8ff996c9bbddf04144da2f4ed2ae"
+   }
+  },
+  {
+   "class": "comparison",
+   "how": "cmp:==->!=",
+   "source_file": "examples/stdlib/trace.ax",
+   "file": "trace.ax",
+   "symbol": "trace_equiv",
+   "visible": "test_identical_replay_is_equivalent",
+   "hidden": "test_divergent_action_is_caught",
+   "failing_on_broken": [
+    "test_identical_replay_is_equivalent",
+    "test_divergent_action_is_caught"
+   ],
+   "visible_asserts": 2,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 8,
+   "site": 0,
+   "spectrum_rank": 2,
+   "id": "h-comparison-03",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    if len(a.actions) != len(b.actions) {\n        false\n    } else {\n        let n = len(a.actions)\n        let i = 0\n        let ok = true\n        while i < n {\n            let same_act = a.actions[i] != b.actions[i]\n            let same_res = a.results[i] == b.results[i]\n            if same_act && same_res { ok = ok } else { ok = false }\n            i = i + 1\n        }\n        ok\n    }\n",
+   "sha256": {
+    "pristine": "b40b249767ec63541a82761625f322b1f66153be6ee2a0126f8bb3220db44274",
+    "broken": "f52d650c9544f916bc43738c2ea45825c005cc24b160987b7c466fcc989cae2a",
+    "given_a": "e879998eda90c211c86ba8ead8ef301eebf37f1ca53220cde4e8bb2813bc062b",
+    "hidden_block": "0cd395f60c280621474f8aadd9db5d53a958c23e2205e0fbbf2239fac0d51913",
+    "oracle_body": "15269e8a392ca55a78a9128d2fb4f1fc7620108ee17a2400c0e2d192a408d95a"
+   }
+  },
+  {
+   "class": "swap-branches",
+   "how": "swap-branches:#0",
+   "source_file": "examples/stdlib/principal.ax",
+   "file": "principal.ax",
+   "symbol": "require_cap",
+   "visible": "test_sandboxed_denies",
+   "hidden": "test_granted_allows",
+   "failing_on_broken": [
+    "test_sandboxed_denies",
+    "test_granted_allows"
+   ],
+   "visible_asserts": 4,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 8,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "h-swap-branches-04",
+   "origin": "planted",
+   "exposure": "decisions",
+   "mutant_body": "\n    if granted {\n        let c = cap\n        eprintln(\"capability denied: {c}\")\n        0\n    } else {\n        score\n    }\n",
+   "sha256": {
+    "pristine": "59acfcc16988117c780a6028f570d08efa867d352895484a1ce96e36d789e871",
+    "broken": "3cf954c0cc91e8a45906e9ab56a3504ff1a25942485208ae531f4145521803bf",
+    "given_a": "e84e5a22d2c3ca6b2b20188f041a15b7c610819942df7ff8b1d9b1c60c1d2416",
+    "hidden_block": "109eff9a64d8dea00b9030a2a4a5da63c4e94709c58f7da8a71708beb3761cdd",
+    "oracle_body": "d00738b6e22091729d3546c78a98582c122d231e5312837d253f7e8a1fe1652c"
+   }
+  },
+  {
+   "class": "flip-comparison",
+   "how": "flip:>=-><=",
+   "source_file": "examples/stdlib/plan.ax",
+   "file": "plan.ax",
+   "symbol": "feedback",
+   "visible": "test_feedback_goal_met_when_score_reaches_target",
+   "hidden": "test_improve_loop_converges_to_target",
+   "failing_on_broken": [
+    "test_feedback_goal_met_when_score_reaches_target",
+    "test_feedback_not_met_below_target",
+    "test_feedback_not_improved_when_score_drops",
+    "test_improve_loop_converges_to_target"
+   ],
+   "visible_asserts": 3,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 8,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "h-flip-comparison-04",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    Feedback {\n        plan:       plan,\n        score:      score,\n        prev_score: prev_score,\n        target:     target,\n        goal_met:   score <= target,\n        improved:   score > prev_score,\n        iteration:  iter,\n    }\n",
+   "sha256": {
+    "pristine": "c8d16bff9c36f4ca6d42d81d35551fa6a51a8af713155730a53edf6055b51edd",
+    "broken": "1b9a7c3030895dbedd546d92ebdf5cfb00be7ca55a37642a4cbf31a30702ae26",
+    "given_a": "c079179671ef2a73fd0d43876fde469449b4a557d9c1aeb98fd62e16cd012ed9",
+    "hidden_block": "f769e57654fe165700d3ec99ea9e84237da72d89325b063eb1cfd9f0a0998583",
+    "oracle_body": "fb136c141b7a5dd507ce7899e9b4e4a688bca67c4515ef47af7fcef6b68d0b01"
+   }
+  },
+  {
+   "class": "wrong-var",
+   "how": "wrong-var:result->t",
+   "source_file": "examples/stdlib/trace.ax",
+   "file": "trace.ax",
+   "symbol": "trace_record",
+   "visible": "test_trace_records_steps",
+   "hidden": "test_divergent_result_is_caught",
+   "failing_on_broken": [
+    "test_trace_records_steps",
+    "test_divergent_result_is_caught"
+   ],
+   "visible_asserts": 4,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 8,
+   "site": 6,
+   "spectrum_rank": 3,
+   "id": "h-wrong-var-04",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    Trace {\n        actions: arr_push(&t.actions, action),\n        results: arr_push(&t.results, t),\n    }\n",
+   "sha256": {
+    "pristine": "b40b249767ec63541a82761625f322b1f66153be6ee2a0126f8bb3220db44274",
+    "broken": "bc7ca1845a25645ab746f4b1812c55a56c3602cb534b7d36114e0ed82412d060",
+    "given_a": "493dfbc68c075b485de4292f3a43ac212b8d7adb134115b7d78e673cc02995ef",
+    "hidden_block": "6c0e65b4c6fb614830bddfe784e6121e043121caf5720cc0bbc16dc487789920",
+    "oracle_body": "f2fb2673698729301e166bf188d819fc8aea5f53b0b8b0b726554eafa450a5a7"
+   }
+  },
+  {
+   "class": "wrong-field",
+   "how": "wrong-field:score->max",
+   "source_file": "examples/stdlib/reward.ax",
+   "file": "reward.ax",
+   "symbol": "reward_unit",
+   "visible": "test_unit_normal",
+   "hidden": "test_max_returns_stronger_dim",
+   "failing_on_broken": [
+    "test_unit_normal",
+    "test_blend_equal_weights",
+    "test_scale_preserves_unit_value",
+    "test_penalize_subtracts_cost",
+    "test_min_returns_weaker_dim",
+    "test_max_returns_stronger_dim"
+   ],
+   "visible_asserts": 0,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 5,
+   "site": 1,
+   "spectrum_rank": 3,
+   "id": "h-wrong-field-04",
+   "origin": "planted",
+   "exposure": "decisions",
+   "mutant_body": "\n    if r.max == 0.0 { 0.0 }\n    else { r.max / r.max }\n",
+   "sha256": {
+    "pristine": "83f495d126fe5a2271e48d66a58f7218d9a1273b231cc3cbc47e9a120dea7be7",
+    "broken": "9dc947f6bee257083abca452286c74d9c69f70b1b51ccf80a1d2a7f47ee31876",
+    "given_a": "4a95f314b4c524a0573aed4b4e8fbb33531d4dd2eb1ff4cfbd857c9fbb03f995",
+    "hidden_block": "f0ff687362dd3d3d78b8877faf76a2ff23aaf96728e8086fcf43e84db3927fcc",
+    "oracle_body": "bde4a36ee3fa4d85e558af1c372f9a1c404bcbce5d74c3c8d2d085cc95241792"
+   }
+  },
+  {
+   "class": "operand-swap",
+   "how": "operand-swap:-",
+   "source_file": "examples/asi/budget_audit.ax",
+   "file": "budget_audit.ax",
+   "symbol": "score_fn",
+   "visible": "test_budget_stops_loop",
+   "hidden": "test_unlimited_budget_finds_peak",
+   "failing_on_broken": [
+    "test_budget_stops_loop",
+    "test_score_fn_peaks_at_42",
+    "test_unlimited_budget_finds_peak"
+   ],
+   "visible_asserts": 1,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 7,
+   "site": 1,
+   "spectrum_rank": 1,
+   "id": "h-operand-swap-04",
+   "origin": "planted",
+   "exposure": "none",
+   "mutant_body": "\n    let dist = if x > 42 { x - 42 } else { x - 42 }\n    let base = 100 - dist\n    if base < 0 { 0 } else { base }\n",
+   "sha256": {
+    "pristine": "971a576e2c4ec46cca905e4eecb0612e8bd18c0f23a5c6d743cfcac4851d972f",
+    "broken": "430c0552118226a8f91bed0a20569c181f808ac16b090bd35365c411bf13415c",
+    "given_a": "e1da4b7d519ecedc9baa13c8ae049985ed49d2aa2d2336b7e409afdac9a9b06a",
+    "hidden_block": "3a90f06614b6718dcdf9455effd482b7ec16863912f825c7fa1cb8382de503fb",
+    "oracle_body": "fb9098f4c5ab8eb48a45a0979c0896e0974d8f86821c87d3b050628cdc640fd9"
+   }
+  },
+  {
+   "class": "operator",
+   "how": "op:&&->||",
+   "source_file": "examples/stdlib/principal_mint.ax",
+   "file": "principal_mint.ax",
+   "symbol": "mint",
+   "visible": "test_mint_subset_works",
+   "hidden": "test_no_cap_root_mints_only_no_cap_children",
+   "failing_on_broken": [
+    "test_mint_subset_works",
+    "test_no_cap_root_mints_only_no_cap_children"
+   ],
+   "visible_asserts": 5,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 12,
+   "site": 1,
+   "spectrum_rank": 1,
+   "id": "h-operator-04",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    let c_net = want_net && parent.net\n    let c_fs = want_fs_write || parent.fs_write\n    let c_exec = want_exec && parent.exec\n    let grant = min_i64(max_i64(budget_grant, 0), p_budget_remaining(parent))\n    let new_parent = Principal {\n        name: parent.name, parent: parent.parent,\n        net: parent.net, fs_write: parent.fs_write, exec: parent.exec,\n        budget: budget_spend(parent.budget, grant),\n    }\n    let child = Principal {\n        name: child_name, parent: parent.name,\n        net: c_net, fs_write: c_fs, exec: c_exec,\n        budget: budget_new(grant),\n    }\n    (new_parent, child)\n",
+   "sha256": {
+    "pristine": "48d23db911daa34ff1bb7a3b375acb6cdbcf9baada2e302ca3e7931d00e7d473",
+    "broken": "6c3b20e175655cac99aef2d8d7f8f82b88413f132c0993740e707ef2025796a7",
+    "given_a": "e91847b314e72c47a3e3343fce1a3505a21eca6a568ecd069e5f565e00e46cde",
+    "hidden_block": "ecee9773eea5c5a3d293565af4505ca991f99dcb0d79977115ee82aeb72b3402",
+    "oracle_body": "21d883a7e900da6ef038c64bf5cae99e188b9e2c1ce1f04b787fbfe17d75869e"
+   }
+  },
+  {
+   "class": "constant",
+   "how": "const:1->2",
+   "source_file": "examples/stdlib/plan.ax",
+   "file": "plan.ax",
+   "symbol": "schedule_should_run",
+   "visible": "test_schedule_on_score_fires_when_score_drops",
+   "hidden": "test_schedule_budget_allows_runs_within_cap",
+   "failing_on_broken": [
+    "test_schedule_on_score_fires_when_score_drops",
+    "test_schedule_budget_allows_runs_within_cap"
+   ],
+   "visible_asserts": 3,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 12,
+   "site": 4,
+   "spectrum_rank": 3,
+   "id": "h-constant-04",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    if s.strategy == 0 {\n        // interval: run every interval_n ticks\n        if s.interval_n == 0 { false } else { s.ticks % s.interval_n == 0 && s.ticks > 0 }\n    } else if s.strategy == 2 {\n        // on_score: run when last score fell below floor\n        s.last_score < s.score_floor\n    } else {\n        // budget: run until cap reached\n        s.runs < s.budget_cap\n    }\n",
+   "sha256": {
+    "pristine": "c8d16bff9c36f4ca6d42d81d35551fa6a51a8af713155730a53edf6055b51edd",
+    "broken": "a6d1c9b5ae0e2a7412b880721da07da89c138f7202666f31d5a79e308fa0af60",
+    "given_a": "431dc72085129aafe65713076a7fba7cd4e5b9131bc477152dd476fd7f233c9d",
+    "hidden_block": "e07e3089fe4fb0966f8a74828a584ce45a11e1229f3080c2bc5ac3f481700825",
+    "oracle_body": "9f811bd5c2b4daae8dcade29a06f6e716cbc8ff996c9bbddf04144da2f4ed2ae"
+   }
+  },
+  {
+   "class": "comparison",
+   "how": "cmp:==->!=",
+   "source_file": "examples/stdlib/trace.ax",
+   "file": "trace.ax",
+   "symbol": "trace_divergence",
+   "visible": "test_identical_replay_is_equivalent",
+   "hidden": "test_length_mismatch_diverges_at_the_short_end",
+   "failing_on_broken": [
+    "test_identical_replay_is_equivalent",
+    "test_divergent_result_is_caught",
+    "test_divergent_action_is_caught",
+    "test_length_mismatch_diverges_at_the_short_end"
+   ],
+   "visible_asserts": 2,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 8,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "h-comparison-04",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    let n = min_i64(len(a.actions), len(b.actions))\n    let i = 0\n    let found = 0 - 1\n    while i < n {\n        let same_act = a.actions[i] != b.actions[i]\n        let same_res = a.results[i] == b.results[i]\n        if same_act && same_res {\n            i = i + 1\n        } else {\n            found = i\n            i = n\n        }\n    }\n    // Equal on the common prefix but different lengths \u2192 diverges at the prefix end.\n    if found < 0 {\n        if len(a.actions) == len(b.actions) { 0 - 1 } else { n }\n    } else {\n        found\n    }\n",
+   "sha256": {
+    "pristine": "b40b249767ec63541a82761625f322b1f66153be6ee2a0126f8bb3220db44274",
+    "broken": "6cf709b31dbac036351951e677a561a30bba9fe96116a9ab93874fc932b849e3",
+    "given_a": "b914414136c7b26acfc804657ef1a1e8aeb1a680874911db7b258369e9ebdf2b",
+    "hidden_block": "1d02e053679af029612eefe4204e10a4a1b158d0980be7897ccef01ad3c11b84",
+    "oracle_body": "ee7380535c497a76264b8d4c062498be5d73e68c06e44083ca0522982e6ade96"
+   }
+  },
+  {
+   "class": "swap-branches",
+   "how": "swap-branches:#0",
+   "source_file": "examples/stdlib/tainted.ax",
+   "file": "tainted.ax",
+   "symbol": "secret_declassify",
+   "visible": "test_declassify_allows_sufficient_clearance",
+   "hidden": "test_declassify_blocks_insufficient_clearance",
+   "failing_on_broken": [
+    "test_declassify_allows_sufficient_clearance",
+    "test_declassify_blocks_insufficient_clearance"
+   ],
+   "visible_asserts": 2,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 9,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "h-swap-branches-05",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    if secret_can_flow_to(s, reader_clearance) {\n        Err(\"clearance insufficient for declassification\")\n    } else {\n        Ok(s.val)\n    }\n",
+   "sha256": {
+    "pristine": "61f92d3b01faf0db5dae5b74d1edf0bb9aa1de9dfe0638db2c66e4958abcfb7b",
+    "broken": "7cb5240a14380cb3937379585754a656730f21d5800d736bc4640abc6bc6a195",
+    "given_a": "c3e3e2ff04e63177da3bc72369e4571e316e451e442763bdfb50f49c35b9c11a",
+    "hidden_block": "dc23f7a2d1eb2e381886cbefdab3b0c053cad0519fc10ded0435b1399646188e",
+    "oracle_body": "1e6ccd3a92f644206d74993c59d3ee1d2d9e5d7604227578d4eacc43e88a66fd"
+   }
+  },
+  {
+   "class": "flip-comparison",
+   "how": "flip:>-><",
+   "source_file": "examples/asi/taint_flow.ax",
+   "file": "taint_flow.ax",
+   "symbol": "human_validate",
+   "visible": "test_valid_ai_value_passes_human_validation",
+   "hidden": "test_trusted_value_drives_action",
+   "failing_on_broken": [
+    "test_valid_ai_value_passes_human_validation",
+    "test_human_validation_elevates_trust_to_user_level",
+    "test_trusted_value_drives_action"
+   ],
+   "visible_asserts": 2,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 8,
+   "site": 1,
+   "spectrum_rank": 1,
+   "id": "h-flip-comparison-05",
+   "origin": "planted",
+   "exposure": "none",
+   "mutant_body": "\n    if t.val < 0 || t.val < 1000000 {\n        Err(\"rejected by {reviewer}: {to_str(t.val)} out of safe range [0, 1000000]\")\n    } else {\n        Ok(Trusted { val: t.val, trust: trust_user(), floor: trust_user() })\n    }\n",
+   "sha256": {
+    "pristine": "6a33fd230b3a44fa1a070596216ce6485d8fce6e5ecf11afd66a1d10eb004978",
+    "broken": "bbdf7852f06ab344723cc11bd03c7ac10ee07243776c615a765c0c30fcf21200",
+    "given_a": "d00fc2566d0baaee3f9f24d920f01bc3f214514dec4c7236dad16fb88fa4cefc",
+    "hidden_block": "42fd992a921b3ba5a6125f6b6d1014329f3f6b238a94d92bdaf85c1cd0f0589f",
+    "oracle_body": "ec2f56d4d6ebb1069b857dc911fa0f7bb45695aea809653ef2ab8c9a56550a89"
+   }
+  },
+  {
+   "class": "wrong-var",
+   "how": "wrong-var:tokens_spent->budget",
+   "source_file": "examples/asi/budget_audit.ax",
+   "file": "budget_audit.ax",
+   "symbol": "run_with_audit",
+   "visible": "test_budget_stops_loop",
+   "hidden": "test_unlimited_budget_finds_peak",
+   "failing_on_broken": [
+    "test_budget_stops_loop",
+    "test_unlimited_budget_finds_peak"
+   ],
+   "visible_asserts": 1,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 7,
+   "site": 0,
+   "spectrum_rank": 1,
+   "id": "h-wrong-var-05",
+   "origin": "planted",
+   "exposure": "none",
+   "mutant_body": "\n    let seq = 0\n    let tokens_spent = 0\n    let best = 0\n    let x = 0\n\n    while budget < budget && x < 100 {\n        let s = score_fn(x)\n        seq = seq + 1\n        tokens_spent = tokens_spent + 10\n        let _ = audit_record(seq, \"AI\", \"goal_eval\", tokens_spent, s)\n        if s > best {\n            best = s\n        }\n        x = x + 1\n    }\n\n    let exhausted = if tokens_spent >= budget { \"yes\" } else { \"no (scan complete)\" }\n    println(\"  Iterations:   {to_str(seq)}\")\n    println(\"  Tokens used:  {to_str(tokens_spent)} / {to_str(budget)}\")\n    println(\"  Best score:   {to_str(best)}\")\n    println(\"  Budget wall:  {exhausted}\")\n    best\n",
+   "sha256": {
+    "pristine": "971a576e2c4ec46cca905e4eecb0612e8bd18c0f23a5c6d743cfcac4851d972f",
+    "broken": "3310c32ce44f499c55dd2988ff8c3b9f79c0ff35bb5579cf5896fcb10f697782",
+    "given_a": "e50840716c95c807a3d2f375777a65cdaa6f13d9e0eeb30680061f03458a4f91",
+    "hidden_block": "3a90f06614b6718dcdf9455effd482b7ec16863912f825c7fa1cb8382de503fb",
+    "oracle_body": "f94186064d838e129473e394e07cae5c085d3654ad2a0a989384714f819fe44e"
+   }
+  },
+  {
+   "class": "wrong-field",
+   "how": "wrong-field:exec->fs_write",
+   "source_file": "examples/stdlib/principal_mint.ax",
+   "file": "principal_mint.ax",
+   "symbol": "mint",
+   "visible": "test_mint_cannot_escalate_caps",
+   "hidden": "test_chain_stays_attenuated",
+   "failing_on_broken": [
+    "test_mint_cannot_escalate_caps",
+    "test_chain_stays_attenuated"
+   ],
+   "visible_asserts": 4,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 11,
+   "site": 5,
+   "spectrum_rank": 2,
+   "id": "h-wrong-field-05",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    let c_net = want_net && parent.net\n    let c_fs = want_fs_write && parent.fs_write\n    let c_exec = want_exec && parent.fs_write\n    let grant = min_i64(max_i64(budget_grant, 0), p_budget_remaining(parent))\n    let new_parent = Principal {\n        name: parent.name, parent: parent.parent,\n        net: parent.net, fs_write: parent.fs_write, exec: parent.exec,\n        budget: budget_spend(parent.budget, grant),\n    }\n    let child = Principal {\n        name: child_name, parent: parent.name,\n        net: c_net, fs_write: c_fs, exec: c_exec,\n        budget: budget_new(grant),\n    }\n    (new_parent, child)\n",
+   "sha256": {
+    "pristine": "48d23db911daa34ff1bb7a3b375acb6cdbcf9baada2e302ca3e7931d00e7d473",
+    "broken": "413329c11b476fcb9e06a3a91da9d7d7ebde62edb42b3ab227da78f0e3d99ead",
+    "given_a": "179eb145d6c45aadd3c703f986a1a2d87e6a5bc7c9e5943d911b79949c77d93e",
+    "hidden_block": "1855ec36bba420547cc059b2e132899932df82e57ca3a1bef7e0948c224eb0f3",
+    "oracle_body": "21d883a7e900da6ef038c64bf5cae99e188b9e2c1ce1f04b787fbfe17d75869e"
+   }
+  },
+  {
+   "class": "swap-branches",
+   "how": "swap-branches:#0",
+   "source_file": "examples/stdlib/reward.ax",
+   "file": "reward.ax",
+   "symbol": "reward_unit",
+   "visible": "test_unit_zero_max",
+   "hidden": "test_max_returns_stronger_dim",
+   "failing_on_broken": [
+    "test_unit_zero_max",
+    "test_unit_normal",
+    "test_unit_at_max",
+    "test_blend_equal_weights",
+    "test_scale_preserves_unit_value",
+    "test_penalize_subtracts_cost",
+    "test_min_returns_weaker_dim",
+    "test_max_returns_stronger_dim"
+   ],
+   "visible_asserts": 0,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 5,
+   "site": 0,
+   "spectrum_rank": 2,
+   "id": "h-swap-branches-06",
+   "origin": "planted",
+   "exposure": "decisions",
+   "mutant_body": "\n    if r.max == 0.0 { r.score / r.max }\n    else { 0.0 }\n",
+   "sha256": {
+    "pristine": "83f495d126fe5a2271e48d66a58f7218d9a1273b231cc3cbc47e9a120dea7be7",
+    "broken": "4ef47293777f9ab6faaefc86713e9569e050b22931f547d5a802b2c7cc8910f9",
+    "given_a": "433d5e17b33d7540c9a9329b45a6bfd968c215934ace4c8d9e04688fe02bab84",
+    "hidden_block": "f0ff687362dd3d3d78b8877faf76a2ff23aaf96728e8086fcf43e84db3927fcc",
+    "oracle_body": "bde4a36ee3fa4d85e558af1c372f9a1c404bcbce5d74c3c8d2d085cc95241792"
+   }
+  },
+  {
+   "class": "flip-comparison",
+   "how": "flip:>-><",
+   "source_file": "examples/stdlib/plan.ax",
+   "file": "plan.ax",
+   "symbol": "feedback",
+   "visible": "test_feedback_goal_met_when_score_reaches_target",
+   "hidden": "test_improve_loop_converges_to_target",
+   "failing_on_broken": [
+    "test_feedback_goal_met_when_score_reaches_target",
+    "test_feedback_not_met_below_target",
+    "test_feedback_not_improved_when_score_drops",
+    "test_improve_loop_converges_to_target"
+   ],
+   "visible_asserts": 3,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 8,
+   "site": 1,
+   "spectrum_rank": 1,
+   "id": "h-flip-comparison-06",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    Feedback {\n        plan:       plan,\n        score:      score,\n        prev_score: prev_score,\n        target:     target,\n        goal_met:   score >= target,\n        improved:   score < prev_score,\n        iteration:  iter,\n    }\n",
+   "sha256": {
+    "pristine": "c8d16bff9c36f4ca6d42d81d35551fa6a51a8af713155730a53edf6055b51edd",
+    "broken": "e397ea30a07b9fb19b8d84cfa758530dee30e9a954162984a1d569605c33133e",
+    "given_a": "13c26f19ac476f9ae92ba8bdbc46ee97d3d717debc3eeab5e2fd8381df5f186a",
+    "hidden_block": "f769e57654fe165700d3ec99ea9e84237da72d89325b063eb1cfd9f0a0998583",
+    "oracle_body": "fb136c141b7a5dd507ce7899e9b4e4a688bca67c4515ef47af7fcef6b68d0b01"
+   }
+  },
+  {
+   "class": "wrong-var",
+   "how": "wrong-var:fs_write->net",
+   "source_file": "examples/stdlib/principal_mint.ax",
+   "file": "principal_mint.ax",
+   "symbol": "root",
+   "visible": "test_mint_cannot_escalate_caps",
+   "hidden": "test_authorize_requires_caps_and_budget",
+   "failing_on_broken": [
+    "test_mint_cannot_escalate_caps",
+    "test_can_mint_gate",
+    "test_authorize_requires_caps_and_budget"
+   ],
+   "visible_asserts": 4,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 11,
+   "site": 9,
+   "spectrum_rank": 6,
+   "id": "h-wrong-var-06",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    Principal {\n        name: name, parent: \"-\",\n        net: net, fs_write: net, exec: exec,\n        budget: budget_new(budget_cap),\n    }\n",
+   "sha256": {
+    "pristine": "48d23db911daa34ff1bb7a3b375acb6cdbcf9baada2e302ca3e7931d00e7d473",
+    "broken": "a52959a7ffb7b5463673fdc4bd6b39c913fc8eb06df3877f818f7c4dd1184d91",
+    "given_a": "92a3ded45c7f5860e291315ee0140b40f700647ab2e305bbc4ad905b09f0c088",
+    "hidden_block": "616608f791bfacdcd960d76923b9960a932f6a97f9845580257a880ee7fb755e",
+    "oracle_body": "10e0cbf693031789675008e5008e6cc69dcbca4f8bf87c22d900cf108b789d33"
+   }
+  },
+  {
+   "class": "wrong-var",
+   "how": "wrong-var:max->score",
+   "source_file": "examples/stdlib/reward.ax",
+   "file": "reward.ax",
+   "symbol": "reward_new",
+   "visible": "test_unit_normal",
+   "hidden": "test_max_returns_stronger_dim",
+   "failing_on_broken": [
+    "test_unit_normal",
+    "test_blend_equal_weights",
+    "test_scale_preserves_unit_value",
+    "test_penalize_subtracts_cost",
+    "test_min_returns_weaker_dim",
+    "test_max_returns_stronger_dim"
+   ],
+   "visible_asserts": 0,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 5,
+   "site": 5,
+   "spectrum_rank": 2,
+   "id": "h-wrong-var-07",
+   "origin": "planted",
+   "exposure": "decisions",
+   "mutant_body": "\n    Reward { name: name, score: score, max: score }\n",
+   "sha256": {
+    "pristine": "83f495d126fe5a2271e48d66a58f7218d9a1273b231cc3cbc47e9a120dea7be7",
+    "broken": "af12b0c375e0098266913a1508969605d2f20310f25e77eeb620eef38504f5c8",
+    "given_a": "ef297c691f3535cfc17134bbc7160189471be3368156b264b0af82e94237c345",
+    "hidden_block": "f0ff687362dd3d3d78b8877faf76a2ff23aaf96728e8086fcf43e84db3927fcc",
+    "oracle_body": "f8191076bf49596edc99ecfa9786ee67d77fbf0ffdc5546f5efd67b76d689a12"
+   }
+  },
+  {
+   "class": "wrong-var",
+   "how": "wrong-var:result->action",
+   "source_file": "examples/stdlib/trace.ax",
+   "file": "trace.ax",
+   "symbol": "trace_record",
+   "visible": "test_trace_records_steps",
+   "hidden": "test_divergent_result_is_caught",
+   "failing_on_broken": [
+    "test_trace_records_steps",
+    "test_divergent_result_is_caught"
+   ],
+   "visible_asserts": 4,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 8,
+   "site": 7,
+   "spectrum_rank": 3,
+   "id": "h-wrong-var-08",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    Trace {\n        actions: arr_push(&t.actions, action),\n        results: arr_push(&t.results, action),\n    }\n",
+   "sha256": {
+    "pristine": "b40b249767ec63541a82761625f322b1f66153be6ee2a0126f8bb3220db44274",
+    "broken": "168df13955ae3aa629c13a0fc8bc83ca29136bc5c110342f9f14655f2b5efc4e",
+    "given_a": "494d97e8d64017adfccb0879a51d6aa1f1313d80628a9a5999b8b33774d276a2",
+    "hidden_block": "6c0e65b4c6fb614830bddfe784e6121e043121caf5720cc0bbc16dc487789920",
+    "oracle_body": "f2fb2673698729301e166bf188d819fc8aea5f53b0b8b0b726554eafa450a5a7"
+   }
+  },
+  {
+   "class": "wrong-var",
+   "how": "wrong-var:score->target",
+   "source_file": "examples/stdlib/plan.ax",
+   "file": "plan.ax",
+   "symbol": "feedback",
+   "visible": "test_feedback_goal_met_when_score_reaches_target",
+   "hidden": "test_improve_loop_converges_to_target",
+   "failing_on_broken": [
+    "test_feedback_goal_met_when_score_reaches_target",
+    "test_feedback_not_improved_when_score_drops",
+    "test_improve_loop_converges_to_target"
+   ],
+   "visible_asserts": 3,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 8,
+   "site": 6,
+   "spectrum_rank": 2,
+   "id": "h-wrong-var-09",
+   "origin": "planted",
+   "exposure": "loc-0920",
+   "mutant_body": "\n    Feedback {\n        plan:       plan,\n        score:      target,\n        prev_score: prev_score,\n        target:     target,\n        goal_met:   score >= target,\n        improved:   score > prev_score,\n        iteration:  iter,\n    }\n",
+   "sha256": {
+    "pristine": "c8d16bff9c36f4ca6d42d81d35551fa6a51a8af713155730a53edf6055b51edd",
+    "broken": "90ed57e423595c0914273388673e9aac996fb38f51344dfc79ae920bfbbaa870",
+    "given_a": "48a7f4d0102bf0cd0afdc461624a890056a111970040f7a8c906b6db0859273e",
+    "hidden_block": "f769e57654fe165700d3ec99ea9e84237da72d89325b063eb1cfd9f0a0998583",
+    "oracle_body": "fb136c141b7a5dd507ce7899e9b4e4a688bca67c4515ef47af7fcef6b68d0b01"
+   }
+  },
+  {
+   "class": "wrong-var",
+   "how": "wrong-var:a->eps",
+   "source_file": "examples/stdlib/reward.ax",
+   "file": "reward.ax",
+   "symbol": "approx",
+   "visible": "test_blend_equal_weights",
+   "hidden": "test_max_returns_stronger_dim",
+   "failing_on_broken": [
+    "test_blend_equal_weights",
+    "test_scale_preserves_unit_value",
+    "test_penalize_subtracts_cost",
+    "test_min_returns_weaker_dim",
+    "test_max_returns_stronger_dim"
+   ],
+   "visible_asserts": 1,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 7,
+   "site": 1,
+   "spectrum_rank": 1,
+   "id": "h-wrong-var-10",
+   "origin": "planted",
+   "exposure": "decisions",
+   "mutant_body": "\n    let d = eps - b\n    let abs_d = if d < 0.0 { -d } else { d }\n    abs_d < eps\n",
+   "sha256": {
+    "pristine": "83f495d126fe5a2271e48d66a58f7218d9a1273b231cc3cbc47e9a120dea7be7",
+    "broken": "490f61d27a598b4f80ede6b53ede6b8b605ccac00e258d3ebfebbee536067f8a",
+    "given_a": "13a1ba6d1fc46b9a0470d3ccf24acaa2e0c74a80169d1e031e2ca7a591499c4a",
+    "hidden_block": "f0ff687362dd3d3d78b8877faf76a2ff23aaf96728e8086fcf43e84db3927fcc",
+    "oracle_body": "b0f4d01b60a04dbcd9858d35584f54d630882dbaa502b0c419da8824cb4110d4"
+   }
+  }
+ ]
+}
