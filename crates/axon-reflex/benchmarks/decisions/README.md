@@ -697,6 +697,11 @@ directly. **gate** is hard, because its labels are MiCode policy and not common 
   `upstage/solar-decide`, `upstage/solar-decide-flash`. 4 chat baselines:
   `anthropic/claude-haiku-4.5`, `anthropic/claude-haiku-5.5`,
   `anthropic/claude-opus-5.5`, `typesafe/jev-router`.
+- **Dropped from later runs.** `anthropic/claude-opus-5.5`, `typesafe/jev-router` and
+  `anthropic/claude-haiku-4.5` are no longer in `run.py`'s default model set (user
+  decision 2026-10-12: cost/latency; Haiku 5.5 tied them within noise). The only chat
+  baseline left is `anthropic/claude-haiku-5.5`. Their committed results above stay
+  in the ranking as the record of what ran (`run.CHAT_MODELS_2026_10_12`).
 - **Alias, not ranked.** `~typesafe/jev-latest` resolves to
   `typesafe/jev-1.13-20260917`. It gave 10/10 identical answers on the pilot.
 - **Blocked at the final probe: none.** Earlier the same day, `typesafe/jev-1.13`,

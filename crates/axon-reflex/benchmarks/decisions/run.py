@@ -83,8 +83,12 @@ SKIPPED = {"respan/span-01": "conversation-behaviour scorer, not a state/questio
            "respan/span-01-lite": "same family as respan/span-01",
            "respan/span-01-lite:free": "same family as respan/span-01",
            "inception/mercury-decide:free": "free alias of inception/mercury-decide (rate-limited); paid id used"}
-CHAT_MODELS = ["anthropic/claude-haiku-4.5", "anthropic/claude-haiku-5.5", "anthropic/claude-opus-5.5",
-               "typesafe/jev-router"]
+# The chat baselines of the committed 2026-10-12 runs (analyse.py ranks these).
+CHAT_MODELS_2026_10_12 = ["anthropic/claude-haiku-4.5", "anthropic/claude-haiku-5.5", "anthropic/claude-opus-5.5",
+                          "typesafe/jev-router"]
+# Later runs (user decision 2026-10-12: cost/latency; haiku-5.5 tied opus-5.5 and
+# jev-router within noise) call only this one. The others still run with --models.
+CHAT_MODELS = ["anthropic/claude-haiku-5.5"]
 # The listing (supported_parameters, 2026-10-12) has no `temperature` for these;
 # with require_parameters, sending it leaves no endpoint (HTTP 404).
 NO_TEMPERATURE = {"anthropic/claude-haiku-5.5", "anthropic/claude-opus-5.5"}

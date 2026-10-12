@@ -26,7 +26,11 @@ import re
 import statistics
 import time
 
-from run import ALIASES, CHAT_MODELS, DECISION_MODELS, SKIPPED, STABILITY_PER_CAT, read_jsonl, slug, subset
+from run import ALIASES, CHAT_MODELS_2026_10_12, DECISION_MODELS, SKIPPED, STABILITY_PER_CAT, read_jsonl, slug, subset
+
+# Ranks what the committed results hold: run.py's later default (CHAT_MODELS) is a
+# subset of these, so new runs need no change here.
+CHAT_MODELS = CHAT_MODELS_2026_10_12
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RESULTS = os.path.join(HERE, "results")
