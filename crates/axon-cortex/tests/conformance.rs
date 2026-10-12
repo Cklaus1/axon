@@ -1633,6 +1633,9 @@ fn cxg_c12_validate_enforces_each_constraint_it_states() {
         max_bytes: 16,
         rejected: Vec::new(),
         current_body: "\n    n + 2\n".into(),
+        context: axon_cortex::generate::GenContext::BodyOnly {
+            reason: "not under test here".into(),
+        },
     };
     let patch = |body: &str, id: &str| ProposedPatch {
         body: body.into(),

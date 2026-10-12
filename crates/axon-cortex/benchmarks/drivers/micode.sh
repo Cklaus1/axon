@@ -124,13 +124,16 @@ if not m:
                      "attribute this proposal to a candidate\n")
     sys.exit(3)
 candidate = m.group(1).strip()
+# Rejected attempts, counted by their header LINE: the prompt now also carries
+# the file and test output, where the bare words could appear.
+prior = len(re.findall(r"^Attempt \d+ was REJECTED because", prompt, re.M))
 row.update({
-    "proposal_number": 1 + prompt.count("Attempt ") if prompt else None,
-    "prior_rejections": prompt.count("was REJECTED because") if prompt else None,
+    "proposal_number": 1 + prior if prompt else None,
+    "prior_rejections": prior if prompt else None,
     "body": body,
     "extraction_status": status,
     "candidate": candidate,
-    "proposal_index_for_candidate": 1 + prompt.count("was REJECTED because"),
+    "proposal_index_for_candidate": 1 + prior,
 })
 with open(log, "a") as fh:
     fh.write(json.dumps(row) + "\n")

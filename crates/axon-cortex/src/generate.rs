@@ -45,24 +45,67 @@ pub struct PatchConstraints {
     /// attempts at one idea is a worse use of a budget than one attempt each at
     /// three.
     pub rejected: Vec<RejectedAttempt>,
+    /// What else the generator may read: the file it is repairing, minus the
+    /// hidden check — or, when that cannot be shown, why not.
+    pub context: GenContext,
+}
+
+/// The material a generator gets beyond the body.
+///
+/// The body alone was not enough to write a fix: a model shown
+/// `Reward { name: name, score: max, max: max }` without the signature could
+/// not know `score` was a parameter, and one shown `s.strategy == 1` without
+/// the struct could not know what `1` meant. The material is the RANKER's
+/// ([`crate::rank::build_view`]), built by the same function with the same
+/// size cap and the same leak guard, so there is one definition of "what a
+/// model may see of this file", not one per model call.
+#[derive(Debug, Clone)]
+pub enum GenContext {
+    /// The file with the hidden check cut out (or, over the size cap, the
+    /// target alone), the source of the VISIBLE failing checks, and the target's
+    /// signature; plus what those visible checks report on the file as it
+    /// stands (`visible_now`, `None` when they could not be run).
+    View {
+        view: crate::rank::RankView,
+        visible_now: Option<String>,
+    },
+    /// The view could not be built — the hidden check's name appears outside
+    /// its own definition, or no visible failing check is defined in the
+    /// file. The prompt is the body-only one, and the caller reports `reason`.
+    BodyOnly { reason: String },
+}
+
+impl GenContext {
+    /// Why the body-only prompt is in use; `None` when the view is.
+    pub fn fallback_reason(&self) -> Option<&str> {
+        match self {
+            GenContext::View { .. } => None,
+            GenContext::BodyOnly { reason } => Some(reason),
+        }
+    }
 }
 
 /// Why a previous proposal did not stick.
 ///
-/// Two reasons, and deliberately no third carrying detail. The adjudicating
-/// check's OUTPUT is never in here: a generator that could read why it failed
-/// the hidden check would be writing against the grader, and a result graded by
-/// something the author can read stops being evidence. What it learns is that
-/// an attempt was rejected and roughly how — enough to try a different idea,
-/// not enough to aim at the answer.
+/// The CLASS of rejection; anything more is in [`RejectedAttempt::feedback`],
+/// and the line between the two is the hidden check. Nothing about the HIDDEN
+/// check reaches a generator — not its name, not its source, not its verdict
+/// beyond "rejected", not a byte of its output: a generator that could read why
+/// it failed the adjudicator would be writing against the grader, and a result
+/// graded by something the author can read stops being evidence. The VISIBLE
+/// checks are a different matter. The generator is already shown their source
+/// (they are what the operator wants fixed, and a plain coding agent runs them
+/// freely), so what they print and assert against an attempt tells it nothing
+/// the grader knows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RejectionReason {
-    /// The patched file stopped compiling. The compiler's own diagnostics are
-    /// already visible to the generator through the observation, so naming the
-    /// class here leaks nothing new.
+    /// The patched file stopped compiling. The feedback carries the compiler's
+    /// first diagnostics, from compiling the file with the hidden check cut out.
     DidNotCompile,
     /// It compiled, and the check that adjudicates completion refused it. The
-    /// check's name and output are both withheld.
+    /// hidden check's name and output are withheld; the feedback carries what
+    /// the VISIBLE checks report on the attempt, from a run of the file with
+    /// the hidden check cut out.
     CheckRefused,
 }
 
@@ -80,7 +123,16 @@ impl std::fmt::Display for RejectionReason {
 pub struct RejectedAttempt {
     pub body: String,
     pub reason: RejectionReason,
+    /// What the visible side of the workspace said about it — compiler
+    /// diagnostics or visible-check results — bounded to
+    /// [`MAX_FEEDBACK_BYTES`]. Gathered from a file that does not contain
+    /// the hidden check, so none of it can come from the hidden check. `None`
+    /// when nothing could be gathered (and then nothing is invented).
+    pub feedback: Option<String>,
 }
+
+/// Upper bound on the feedback carried per rejected attempt.
+pub const MAX_FEEDBACK_BYTES: usize = 2048;
 
 /// A generated body, plus WHO generated it.
 ///
@@ -178,10 +230,16 @@ pub fn validate(
     Ok(())
 }
 
-/// What a generator is asked. Built from the body and the observed facts and
-/// nothing else — in particular NOT from the hidden check, which decides
-/// whether the result is accepted and would stop being evidence the moment
-/// the thing under test could read it.
+/// What a generator is asked.
+///
+/// Built from the body, the observed facts, and — when [`GenContext::View`] —
+/// the ranker's view of the file: the file with the hidden check cut out, the
+/// visible failing checks' source, what those checks report now, and for each
+/// rejected attempt what the visible checks or the compiler said about it.
+/// NEVER from the hidden check, which decides whether the result is accepted
+/// and would stop being evidence the moment the thing under test could read
+/// it. Every part shown is either cut from a file the hidden check was removed
+/// from, or produced by running such a file.
 pub fn build_prompt(obs: &Observation, target: &SymbolRef, c: &PatchConstraints) -> String {
     let mut facts = String::new();
     for (k, v) in &obs.facts {
@@ -206,6 +264,15 @@ pub fn build_prompt(obs: &Observation, target: &SymbolRef, c: &PatchConstraints)
             r.reason,
             r.body
         ));
+        if let Some(f) = &r.feedback {
+            let label = match r.reason {
+                RejectionReason::DidNotCompile => "The compiler reported",
+                RejectionReason::CheckRefused => {
+                    "With that attempt applied, the visible tests reported"
+                }
+            };
+            history.push_str(&format!("{label}:\n```\n{}\n```\n", f.trim_end()));
+        }
     }
     if !history.is_empty() {
         history = format!(
@@ -213,10 +280,47 @@ pub fn build_prompt(obs: &Observation, target: &SymbolRef, c: &PatchConstraints)
              again, and prefer a materially different approach:\n{history}"
         );
     }
+    let context = match &c.context {
+        GenContext::BodyOnly { .. } => String::new(),
+        GenContext::View { view, visible_now } => {
+            let signature = view
+                .candidates
+                .iter()
+                .find(|(n, _)| *n == target.symbol)
+                .map(|(_, s)| s.as_str())
+                .unwrap_or("");
+            let what = if view.is_complete() {
+                "The file, with one check that is not shown to you removed".to_string()
+            } else {
+                format!("From the file ({})", view.source_note)
+            };
+            let names: Vec<&str> = view.failing.iter().map(|(n, _)| n.as_str()).collect();
+            let tests: Vec<&str> = view.failing.iter().map(|(_, b)| b.trim_end()).collect();
+            let now = visible_now
+                .as_deref()
+                .map(|t| {
+                    format!(
+                        "What the visible tests report on the file as it stands:\n```\n{}\n```\n\n",
+                        t.trim_end()
+                    )
+                })
+                .unwrap_or_default();
+            format!(
+                "Signature: {signature}\n\n\
+                 {what}:\n```axon\n{source}\n```\n\n\
+                 Failing visible test(s): {names}\n```axon\n{tests}\n```\n\n\
+                 {now}",
+                source = view.source.trim_end(),
+                names = names.join(", "),
+                tests = tests.join("\n\n"),
+            )
+        }
+    };
     format!(
         "You are repairing one function in an Axon program.\n\n\
          File: {path}\n\
-         Function: {symbol}\n\n\
+         Function: {symbol}\n\
+         {context_sep}{context}\
          Its body is currently:\n\
          ```\n{body}\n```\n\n\
          What a checker observed about the file:\n{facts}\
@@ -227,6 +331,7 @@ pub fn build_prompt(obs: &Observation, target: &SymbolRef, c: &PatchConstraints)
          {max} bytes. Preserve the existing indentation style.",
         path = target.path,
         symbol = target.symbol,
+        context_sep = if context.is_empty() { "\n" } else { "" },
         body = c.current_body,
         history = history,
         max = c.max_bytes,

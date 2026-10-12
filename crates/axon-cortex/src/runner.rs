@@ -275,6 +275,9 @@ pub struct CandidateProgress {
     /// The checks failing when this candidate's episode first started (the
     /// hidden check included), read from the same run as `baseline_passing`.
     baseline_failing: Option<Vec<String>>,
+    /// What this candidate's generator is shown beyond the body; built at its
+    /// first proposal.
+    gen_context: Option<crate::generate::GenContext>,
     steps: usize,
     proposals: usize,
     paused: bool,
@@ -290,6 +293,11 @@ impl CandidateProgress {
     /// baseline could not be taken.
     pub fn baseline_failing(&self) -> Option<&[String]> {
         self.baseline_failing.as_deref()
+    }
+    /// What this candidate's generator was shown beyond the body; `None` when
+    /// no proposal was asked for.
+    pub fn generator_context(&self) -> Option<&crate::generate::GenContext> {
+        self.gen_context.as_ref()
     }
     /// Times the generator has been asked for this candidate.
     pub fn proposals(&self) -> usize {
@@ -938,11 +946,24 @@ impl Runner {
                                 }
                             }
                         };
+                    // The view is built once per candidate, from the file as
+                    // the candidate found it: every proposal replaces the same
+                    // body of the same file, so the material does not change.
+                    if progress.gen_context.is_none() {
+                        progress.gen_context = Some(self.generator_context(
+                            &target.path,
+                            &symbol.symbol,
+                            hidden_check,
+                            candidate_base.as_deref(),
+                            progress.baseline_failing.as_deref(),
+                        ));
+                    }
                     let constraints = crate::generate::PatchConstraints {
                         symbol: symbol.clone(),
                         max_bytes: 4096,
                         current_body,
                         rejected: rejected.clone(),
+                        context: progress.gen_context.clone().expect("built just above"),
                     };
                     progress.proposals += 1;
                     let proposal = match gen.propose(&obs, target, &constraints) {
@@ -1071,10 +1092,13 @@ impl Runner {
                 // out.
                 if ctx.last_check == VisibleCheck::Failed {
                     if let Some(body) = last_applied.take() {
+                        let feedback =
+                            self.visible_feedback(&target.path, hidden_check, VisibleRun::Tests);
                         push_rejected(
                             rejected,
                             body,
                             crate::generate::RejectionReason::CheckRefused,
+                            feedback,
                         );
                         // UNDO it here too. This is the path a file compiling
                         // with warnings takes, and it is the majority of real
@@ -1144,6 +1168,13 @@ impl Runner {
                     .map(|o| observed_compiles(&o) == Some(false))
                     .unwrap_or(false);
                 if broke {
+                    // The diagnostics, from the patched file with the hidden
+                    // check cut out, read before the restore below.
+                    let feedback = if last_applied.is_some() {
+                        self.visible_feedback(&target.path, hidden_check, VisibleRun::Compile)
+                    } else {
+                        None
+                    };
                     // Checked, not assumed. The event below asserts the file
                     // now holds these bytes; recording that after an ignored
                     // write would make the evidence record claim something
@@ -1164,6 +1195,7 @@ impl Runner {
                             rejected,
                             body,
                             crate::generate::RejectionReason::DidNotCompile,
+                            feedback,
                         );
                     }
                     self.episode.push(EpisodeEvent::PatchReverted {
@@ -1328,6 +1360,13 @@ impl Runner {
                 // generator editing back toward the original then re-created
                 // an earlier state and tripped the cycle detector on a cycle
                 // the loop had manufactured.
+                // What the VISIBLE checks say about the attempt, read before
+                // the undo below puts the file back.
+                let feedback = if last_applied.is_some() {
+                    self.visible_feedback(&target.path, hidden_check, VisibleRun::Tests)
+                } else {
+                    None
+                };
                 {
                     if restore_base(&self.workspace.join(&target.path), &candidate_base).is_err() {
                         return EpisodeOutcome::Blocked {
@@ -1348,13 +1387,15 @@ impl Runner {
                 }
                 // The claim covered whatever was last applied, so that body is
                 // now a known-insufficient attempt. Recorded WITHOUT the
-                // check's output: the generator learns its answer was rejected,
-                // not what the grader wanted.
+                // hidden check's output: the generator learns its answer was
+                // rejected and what the VISIBLE checks said about it (gathered
+                // above, before the undo), not what the grader wanted.
                 if let Some(body) = last_applied.take() {
                     push_rejected(
                         rejected,
                         body,
                         crate::generate::RejectionReason::CheckRefused,
+                        feedback,
                     );
                 }
             }
@@ -1490,6 +1531,145 @@ impl Runner {
             Ok(Some(false))
         } else {
             Ok(None)
+        }
+    }
+
+    /// [`Runner::visible_run`] on the file as it is on disk now — the attempt
+    /// still applied. `None` when nothing could be gathered: a rejection
+    /// without feedback is still a rejection, and nothing is invented for it.
+    fn visible_feedback(&self, rel_path: &str, hidden: &str, what: VisibleRun) -> Option<String> {
+        let now = std::fs::read_to_string(self.workspace.join(rel_path)).ok()?;
+        self.visible_run(rel_path, &now, hidden, what).ok()
+    }
+
+    /// Run `text` — the file under repair as it is now, or a patched version
+    /// of it — with the hidden check CUT OUT, and say what came back.
+    ///
+    /// This is how a generator learns what its attempt did without learning
+    /// anything from the grader. Filtering the hidden check's result out of an
+    /// ordinary run is not enough: the interpreter runs every test before it
+    /// prints any result, so what the test bodies PRINT is not attributed to a
+    /// test, and a filter by name would let the hidden check's own output
+    /// through. A run of a file in which the hidden check does not exist
+    /// cannot produce any of it. The same holds for compiler diagnostics,
+    /// which point into the hidden check when a body change breaks a call in
+    /// it.
+    ///
+    /// The copy is written beside the file (imports resolve as they would for
+    /// it) under a dot-name, its name is replaced by the real one in what is
+    /// returned, and it is removed before returning. Tests run through the
+    /// registered [`CheckExecutor`], with its limits, since the patched code
+    /// is a candidate's. `Err` when the name still appears in the cut file
+    /// (the same refusal [`crate::rank::build_view`] makes) or when nothing
+    /// could be run; the caller then shows nothing rather than a guess.
+    fn visible_run(
+        &self,
+        rel_path: &str,
+        text: &str,
+        hidden: &str,
+        what: VisibleRun,
+    ) -> Result<String, String> {
+        let cut = crate::rank::without_check(text, hidden);
+        if crate::rank::mentions(&cut, hidden) {
+            return Err(
+                "the hidden check's name appears outside its own definition, so the \
+                 file cannot be run without it"
+                    .into(),
+            );
+        }
+        let rel = Path::new(rel_path);
+        let name = rel
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .ok_or_else(|| format!("{rel_path} names no file"))?;
+        let copy_name = format!(".cortex-visible-{}-{name}", std::process::id());
+        let rel_copy = rel.with_file_name(&copy_name);
+        let rel_copy_str = rel_copy.to_string_lossy().into_owned();
+        let abs = self.workspace.join(&rel_copy);
+        std::fs::write(&abs, &cut).map_err(|e| format!("cannot write a visible copy: {e}"))?;
+        let ran = match what {
+            VisibleRun::Tests => self
+                .check_executor
+                .run_checks(&CheckRequest {
+                    workspace: &self.workspace,
+                    rel_path: &rel_copy_str,
+                    filter: None,
+                })
+                .map(|r| render_visible_tests(&r))
+                .map_err(|e| format!("the visible tests could not be run: {e}")),
+            VisibleRun::Compile => std::process::Command::new(&self.axon_bin)
+                .current_dir(&self.workspace)
+                .arg("check")
+                .arg(&abs)
+                .output()
+                .map(|o| {
+                    render_diagnostics(&format!(
+                        "{}{}",
+                        String::from_utf8_lossy(&o.stdout),
+                        String::from_utf8_lossy(&o.stderr)
+                    ))
+                })
+                .map_err(|e| format!("the checker could not be run: {e}")),
+        };
+        let _ = std::fs::remove_file(&abs);
+        let out = ran?
+            .replace(&abs.to_string_lossy().into_owned(), rel_path)
+            .replace(&copy_name, &name);
+        // Belt and braces: the hidden check is not in the file that ran, so
+        // nothing here can name it; a line that does anyway is dropped rather
+        // than shown.
+        let out: String = out
+            .lines()
+            .filter(|l| !crate::rank::mentions(l, hidden))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        Ok(bound_bytes(
+            out.trim_end(),
+            crate::generate::MAX_FEEDBACK_BYTES,
+        ))
+    }
+
+    /// What the generator for `symbol` may see: the ranker's view of the file
+    /// as the candidate found it (hidden check cut out, the visible failing
+    /// checks, the target's signature) and what the visible checks report on
+    /// it — or the reason none of it can be shown.
+    fn generator_context(
+        &self,
+        rel_path: &str,
+        symbol: &str,
+        hidden: &str,
+        base: Option<&str>,
+        failing: Option<&[String]>,
+    ) -> crate::generate::GenContext {
+        use crate::generate::GenContext;
+        let Some(src) = base else {
+            return GenContext::BodyOnly {
+                reason: format!("{rel_path} could not be read when the candidate started"),
+            };
+        };
+        let Some(failing) = failing else {
+            return GenContext::BodyOnly {
+                reason: "the failing checks could not be established when the candidate \
+                         started"
+                    .into(),
+            };
+        };
+        let visible: Vec<String> = failing.iter().filter(|n| *n != hidden).cloned().collect();
+        let eligible = [symbol.to_string()];
+        match crate::rank::build_view(&crate::rank::RankInput {
+            file: rel_path,
+            source: src,
+            hidden_check: hidden,
+            failing: &visible,
+            eligible: &eligible,
+        }) {
+            Ok(view) => GenContext::View {
+                view,
+                visible_now: self
+                    .visible_run(rel_path, src, hidden, VisibleRun::Tests)
+                    .ok(),
+            },
+            Err(reason) => GenContext::BodyOnly { reason },
         }
     }
 
@@ -1663,14 +1843,111 @@ fn restore_base(path: &std::path::Path, base: &Option<String>) -> std::io::Resul
 /// Deduplicated on the body, because the count of rejections is a coordinate
 /// of the stuck-check: a generator that proposes the same thing twice must not
 /// look like progress. Recorded once, the pair repeats and the episode stops.
+/// The feedback plays no part in it: the same body with different visible
+/// output is still the same idea.
 fn push_rejected(
     rejected: &mut Vec<crate::generate::RejectedAttempt>,
     body: String,
     reason: crate::generate::RejectionReason,
+    feedback: Option<String>,
 ) {
     if !rejected.iter().any(|r| r.body == body) {
-        rejected.push(crate::generate::RejectedAttempt { body, reason });
+        rejected.push(crate::generate::RejectedAttempt {
+            body,
+            reason,
+            feedback,
+        });
     }
+}
+
+/// What a visible run is asked.
+#[derive(Clone, Copy)]
+enum VisibleRun {
+    /// `axon test` on the file: verdicts, failure messages, printed output.
+    Tests,
+    /// `axon check` on the file: the first error diagnostics.
+    Compile,
+}
+
+/// Lines a visible-run summary keeps of what tests printed.
+const MAX_PRINTED_LINES: usize = 40;
+/// Error diagnostics a compile summary keeps.
+const MAX_DIAGNOSTICS: usize = 5;
+
+/// The rendered result of a visible test run, longest-lived facts first so the
+/// byte cap cuts the printed output before the verdicts.
+fn render_visible_tests(report: &CheckReport) -> String {
+    let mut s = format!(
+        "{} failed, {} passed\n",
+        report.failed.len(),
+        report.passed.len()
+    );
+    for name in &report.failed {
+        match report.messages.iter().find(|(n, _)| n == name) {
+            Some((_, m)) => s.push_str(&format!("FAILED {name}: {m}\n")),
+            None => s.push_str(&format!("FAILED {name}\n")),
+        }
+    }
+    let printed: Vec<&str> = report
+        .output
+        .iter()
+        .map(String::as_str)
+        .filter(|l| !l.trim().is_empty())
+        .take(MAX_PRINTED_LINES)
+        .collect();
+    if !printed.is_empty() {
+        s.push_str("printed:\n");
+        for l in printed {
+            s.push_str(l);
+            s.push('\n');
+        }
+    }
+    s
+}
+
+/// The first error diagnostics of an `axon check` transcript, one per line as
+/// `line L: CODE message (help)`.
+fn render_diagnostics(text: &str) -> String {
+    let mut s = String::new();
+    for l in text
+        .lines()
+        .filter(|l| l.contains("\"severity\":\"error\""))
+        .take(MAX_DIAGNOSTICS)
+    {
+        match serde_json::from_str::<serde_json::Value>(l.trim()) {
+            Ok(v) => {
+                let field = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("");
+                s.push_str(&format!(
+                    "line {}: {} {}",
+                    v.get("line").and_then(|x| x.as_u64()).unwrap_or(0),
+                    field("code"),
+                    field("message")
+                ));
+                if !field("help").is_empty() {
+                    s.push_str(&format!(" (help: {})", field("help")));
+                }
+                s.push('\n');
+            }
+            Err(_) => {
+                s.push_str(l.trim());
+                s.push('\n');
+            }
+        }
+    }
+    s
+}
+
+/// `s` cut to at most `max` bytes on a char boundary, marked when cut.
+fn bound_bytes(s: &str, max: usize) -> String {
+    const MARK: &str = "\n… (truncated)";
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let mut end = max.saturating_sub(MARK.len());
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{MARK}", &s[..end])
 }
 
 /// The verdict for exactly the check that was named.
@@ -1735,6 +2012,15 @@ pub struct CheckReport {
     /// The check process's own exit status, when a process was observed.
     /// Never used to infer a verdict.
     pub exit_code: Option<i32>,
+    /// `(test name, failure message)` for failed tests that carried one.
+    /// Never used to infer a verdict.
+    pub messages: Vec<(String, String)>,
+    /// Every line of the run's output that is not a JSON record: what the
+    /// test bodies printed, and the interpreter's own diagnostics. NOT
+    /// attributed to a test — the interpreter runs every test before printing
+    /// any result — so it is only ever shown for a run that contains no
+    /// hidden check. Never used to infer a verdict.
+    pub output: Vec<String>,
 }
 
 /// The verdict for ONE named check. Three-valued on purpose: a check with no
@@ -2599,9 +2885,11 @@ pub fn completion_token(key: &[u8], name: &str) -> String {
 pub fn parse_axon_test_json(text: &str, rel_path: &str) -> std::io::Result<CheckReport> {
     let (mut failed, mut passed, mut total) = (Vec::new(), Vec::new(), None);
     let mut completion = Vec::new();
-    for line in text.lines() {
-        let line = line.trim();
+    let (mut messages, mut output) = (Vec::new(), Vec::new());
+    for raw in text.lines() {
+        let line = raw.trim();
         if !line.starts_with('{') {
+            output.push(raw.to_string());
             continue;
         }
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
@@ -2624,7 +2912,12 @@ pub fn parse_axon_test_json(text: &str, rel_path: &str) -> std::io::Result<Check
                 }
                 passed.push(name.to_string())
             }
-            "failed" => failed.push(name.to_string()),
+            "failed" => {
+                if let Some(m) = v.get("message").and_then(|m| m.as_str()) {
+                    messages.push((name.to_string(), m.to_string()));
+                }
+                failed.push(name.to_string())
+            }
             // An unknown status is neither. Guessing which it resembles is
             // how a new status becomes a silent wrong answer.
             _ => {}
@@ -2644,6 +2937,8 @@ pub fn parse_axon_test_json(text: &str, rel_path: &str) -> std::io::Result<Check
         passed,
         total,
         exit_code: None,
+        messages,
+        output,
     })
 }
 
@@ -2967,6 +3262,8 @@ impl CheckExecutor for FabricSubmitExecutor {
             passed: names("passed"),
             total: rep["total"].as_u64().unwrap_or(0) as usize,
             exit_code: rep["exit_code"].as_i64().map(|c| c as i32),
+            messages: Vec::new(),
+            output: Vec::new(),
         })
     }
 }

@@ -40,6 +40,9 @@ fn propose_with(script_body: &str) -> (u64, Result<usize, String>) {
         max_bytes: 1 << 30,
         current_body: "fn f() {}".into(),
         rejected: vec![],
+        context: axon_cortex::generate::GenContext::BodyOnly {
+            reason: "not under test here".into(),
+        },
     };
     let before = peak_rss_kb();
     let got = CommandGenerator::new(exe.display().to_string())

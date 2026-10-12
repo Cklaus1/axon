@@ -625,14 +625,7 @@ const FULL_NOTE: &str = "complete file (hidden check removed)";
 
 /// Build the request material from `input`, or say why it cannot be shown.
 pub fn build_view(input: &RankInput<'_>) -> Result<RankView, String> {
-    let mut src = input.source.to_string();
-    // A name defined twice is cut twice; four is far past any real file.
-    for _ in 0..4 {
-        match fn_span(&src, input.hidden_check) {
-            Some((a, b)) => src.replace_range(a..b, ""),
-            None => break,
-        }
-    }
+    let src = without_check(input.source, input.hidden_check);
     let mut failing = Vec::new();
     for name in input.failing {
         if name == input.hidden_check {
@@ -722,6 +715,31 @@ pub fn build_view(input: &RankInput<'_>) -> Result<RankView, String> {
         );
     }
     Ok(view)
+}
+
+impl RankView {
+    /// The whole file (hidden check removed) is shown, not an excerpt.
+    pub fn is_complete(&self) -> bool {
+        self.source_note == FULL_NOTE
+    }
+}
+
+/// `src` with every definition of `fn HIDDEN` cut out, together with the
+/// comment and attribute lines directly above it ([`fn_span`]). The one
+/// mechanism by which the ranker's view, the audit's view, the generator's
+/// view and the generator's visible-check runs drop the adjudicating check.
+/// What remains may still MENTION the name; every caller refuses on that
+/// ([`mentions`]) rather than show it.
+pub(crate) fn without_check(src: &str, hidden: &str) -> String {
+    let mut s = src.to_string();
+    // A name defined twice is cut twice; four is far past any real file.
+    for _ in 0..4 {
+        match fn_span(&s, hidden) {
+            Some((a, b)) => s.replace_range(a..b, ""),
+            None => break,
+        }
+    }
+    s
 }
 
 /// `s` cut to at most `n` characters (on a char boundary), marked as cut.

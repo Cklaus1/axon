@@ -40,7 +40,7 @@
 //! the patched body.
 
 use crate::openrouter::{model_id, quote, Client};
-use crate::rank::{fn_span, mentions};
+use crate::rank::{fn_span, mentions, without_check};
 use serde_json::{json, Value};
 
 /// Audit selection when `--audit` is absent.
@@ -315,19 +315,8 @@ impl Auditor<'_> {
 
 /// Build the request material from `input`, or say why it cannot be shown.
 pub fn build_view(input: &AuditInput<'_>) -> Result<AuditView, String> {
-    let cut = |src: &str| {
-        let mut s = src.to_string();
-        // A name defined twice is cut twice; four is far past any real file.
-        for _ in 0..4 {
-            match fn_span(&s, input.hidden_check) {
-                Some((a, b)) => s.replace_range(a..b, ""),
-                None => break,
-            }
-        }
-        s
-    };
-    let before = cut(input.original);
-    let after = cut(input.patched);
+    let before = without_check(input.original, input.hidden_check);
+    let after = without_check(input.patched, input.hidden_check);
     if before == after {
         return Err("the patched file does not differ from the original".into());
     }

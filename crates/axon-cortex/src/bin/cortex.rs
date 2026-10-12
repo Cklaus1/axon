@@ -658,6 +658,7 @@ fn main() {
     // appears twice.
     let mut attempted: Vec<String> = Vec::new();
     let mut prev: Option<usize> = None;
+    let mut context_reported = vec![false; targets.len()];
     'walk: for pass in 1..=2 {
         for (i, target) in targets.iter().enumerate() {
             if pass == 2 && !progress[i].paused() {
@@ -707,6 +708,20 @@ fn main() {
                 generator.as_deref(),
                 &mut progress[i],
             );
+            // A generator shown less than the view is said so, once per
+            // candidate, when it happens — never left for a reader to infer
+            // from a worse result.
+            if !context_reported[i] {
+                if let Some(c) = progress[i].generator_context() {
+                    context_reported[i] = true;
+                    if let Some(reason) = c.fallback_reason() {
+                        eprintln!(
+                            "generator context for `{target}` unavailable: {reason}; \
+                             using the body-only prompt"
+                        );
+                    }
+                }
+            }
             match &outcome {
                 // The only success. Everything else is a reason to try the
                 // next attempt, and running out of attempts reports the LAST
@@ -895,6 +910,27 @@ fn main() {
                 // The review-only tamper audit of a verified fix. `null`
                 // when nothing was verified.
                 "audit": audit.as_ref().map(|a| a.to_json()),
+                // What each candidate's generator was shown: `view` (the file
+                // without the hidden check, the visible failing checks and
+                // their output) or `body_only`, with the reason. Only
+                // candidates a generator was asked about appear.
+                "generator_context": targets
+                    .iter()
+                    .zip(&progress)
+                    .filter_map(|(t, p)| {
+                        p.generator_context().map(|c| {
+                            serde_json::json!({
+                                "symbol": t,
+                                "used": if c.fallback_reason().is_some() {
+                                    "body_only"
+                                } else {
+                                    "view"
+                                },
+                                "reason": c.fallback_reason(),
+                            })
+                        })
+                    })
+                    .collect::<Vec<_>>(),
             })
         );
     } else {
