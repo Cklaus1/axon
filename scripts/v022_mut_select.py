@@ -49,13 +49,15 @@ at REV, the records' rows are compared with REV's tree):
         [--granularity=file|fn] [--scope=S] [--only=M1,M2] [--head=REV] [--shards=N]
 
 STOPS (`v022_g01_mutations.py --changed-since` runs no cell unless --force;
-the preview prints the same lines):
+the preview prints the same lines). Each needs at least BROAD_MIN_ROWS (20)
+rows as well as its share, so a few new rows or a small list run normally:
   BROAD SELECTION  more than BROAD_SELECTION (30%) of the rows the records
                    cover (scope and --only) are selected for a reason other
                    than `absent`: the lane run duplicates the full run of
                    those rows at the final head, the evidence of record;
-  UNRECORDED       any `absent` row: the records do not cover it, so there is
-                   nothing to compare it with; narrow --scope/--only to the
+  UNRECORDED       more than BROAD_SELECTION of the rows (scope and --only)
+                   are `absent`: the records do not cover them, so there is
+                   nothing to compare them with; narrow --scope/--only to the
                    recorded rows, or run the unrecorded rows as their own
                    baseline run. Never counted in the ratio above.
 
@@ -90,8 +92,11 @@ NOT_EVIDENCE = ("incremental selection (--changed-since): lane feedback, NOT evi
 # A --changed-since selection above this share of the RECORDED rows (absent
 # rows excluded) is the records' full run in all but name (R51's merge into
 # main: 408 of the 444 rows the T7 lists recorded, besides 1855 rows no record
-# covered): the run stops unless --force.
+# covered): the run stops unless --force. Absent rows above the same share of
+# the rows stop it too. Neither stops below BROAD_MIN_ROWS rows: a lane's few
+# new rows, or a small list, are what the selection is for.
 BROAD_SELECTION = 0.30
+BROAD_MIN_ROWS = 20
 # Packages whose tests run as root, in a private mount/PID namespace, or as a
 # guest's PID-1 supervisor. Under parallel shards their rows failed on clean
 # baselines (R51 merge: stale opkit-ns.* scratch roots, a signal not forwarded
@@ -442,12 +447,12 @@ def stops(selected, rows):
     absent = sum(1 for rs in selected.values() if rs[0].startswith("absent:"))
     recorded, changed = rows - absent, len(selected) - absent
     out = []
-    if changed > BROAD_SELECTION * recorded:
+    if changed >= BROAD_MIN_ROWS and changed > BROAD_SELECTION * recorded:
         out.append(f"BROAD SELECTION: {changed}/{recorded} recorded rows selected "
                    f"({100 * changed / recorded:.0f}% > {BROAD_SELECTION:.0%}; absent rows not counted): this lane "
                    "run duplicates the full run of those rows at the final head, which is the evidence of record; "
                    "run that instead")
-    if absent:
+    if absent >= BROAD_MIN_ROWS and absent > BROAD_SELECTION * rows:
         out.append(f"UNRECORDED: the --changed-since records do not cover {absent}/{rows} rows of this scope and "
                    "--only (selected as absent): narrow --scope/--only to the recorded rows, or run the unrecorded "
                    "rows as their own baseline run")

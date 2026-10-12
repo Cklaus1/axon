@@ -42,8 +42,9 @@ source that alters what the test observes (a callee, another module on the
 path, a helper, a fixture, a dependency); the full run at the final head is the
 evidence of record (tasks/build-loop-r51.md). The run stops before any cell
 unless --force when the selection is BROAD (more than 30%, BROAD_SELECTION, of
-the rows the records cover: it duplicates their full run) or holds UNRECORDED
-rows (rows no record covers; scripts/v022_mut_select.py, STOPS).
+the rows the records cover: it duplicates their full run) or UNRECORDED (more
+than 30% of the rows have no record), each only from BROAD_MIN_ROWS (20) rows
+on (scripts/v022_mut_select.py, STOPS).
 
 Refuses to run on a tree with ANY uncommitted change (C9 round 4: a check of
 crates/ alone let a locally edited scripts/ or profiles/ guard -- 24 rows guard
