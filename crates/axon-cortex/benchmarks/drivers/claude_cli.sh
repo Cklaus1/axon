@@ -29,6 +29,10 @@ out=$(printf '%s\n\nReturn ONLY the replacement body. No fences, no commentary.'
 # from the rejected-attempts section the loop wrote into it.
 CORTEX_PROMPT_TEXT="$prompt"
 export CORTEX_PROMPT_TEXT
+# The Python below sits inside ONE sh single-quoted string: a single quote
+# anywhere in it, comments included, ends the string and hands the rest to sh.
+# One did (an apostrophe in a comment), and every call exited 127 without a
+# body; tests/claude_driver.rs runs this file against a stub `claude`.
 printf '%s' "$out" | python3 -c '
 import json, os, re, sys
 
@@ -55,7 +59,7 @@ body = v.get("result") or ""
 # That inflates generator effort, understates first-shot success, and spends
 # money on unparsed prose. It is a transport defect being measured as model
 # quality.
-# The model's own text, kept before `body` is reassigned. Classifying against
+# The text the model returned, kept before `body` is reassigned. Classifying against
 # `raw` would be classifying the JSON envelope the CLI wraps it in, which
 # always starts with `{` — the status would be a constant, and a constant
 # dressed as a measurement is the failure this field exists to detect.
