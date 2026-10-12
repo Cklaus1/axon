@@ -130,7 +130,7 @@ cortex repair --file PATH --check NAME [--symbol NAME] [options]
 | `--workspace DIR` | `.` | directory to operate in; `--file` is relative to it |
 | `--symbol NAME` | none | repair only this function; skips localization |
 | `--candidates N` | 3 | without `--symbol`: how many ranked candidates to try, in order |
-| `--budget N` | 8 | maximum steps per candidate |
+| `--budget N` | 8 | maximum steps per candidate, summed over both passes of the walk |
 | `--write-prefix P` | none | path prefix the episode may write; repeatable. With none, nothing may be written |
 | `--generator SPEC` | `none` | where patch bodies come from (below) |
 | `--axon PATH` | `axon` | the checker binary |
@@ -140,8 +140,29 @@ cortex repair --file PATH --check NAME [--symbol NAME] [options]
 The `--fabric-*` and `--check-registry` options route checks through the
 `axon-fabric` submit path; they are not covered here (see `cortex --help`).
 
-Without `--symbol`, Cortex ranks candidates as `locate` does and tries the top
-`--candidates` in order. Each attempt starts from the file as the run found it.
+Without `--symbol`, Cortex ranks candidates as `locate` does and walks the top
+`--candidates` BREADTH-first. Pass 1 gives each candidate, in rank order, one
+proposal (one generator call, adjudicated by the hidden check). If none is
+verified, pass 2 resumes each candidate that pass 1 only paused, in rank
+order, with the rest of its own `--budget` and the rejected attempts its
+episode already collected. A candidate that stopped for its own reason in
+pass 1 (going in circles, no such symbol, no generator) is not resumed. No
+candidate gets more steps or proposals than it would have had if it ran
+alone. A refusal or a blocked environment still ends the whole walk at once.
+A single target (an explicit `--symbol`, or a ranking with one name) is never
+paused.
+
+Each attempt starts from the file as the run found it, under a fresh grant,
+and each one is adjudicated by the hidden check.
+
+Why breadth: with a real model, a wrong candidate usually spends its whole
+budget on several long proposals before it gives up, while the true function,
+once reached, is often repaired by its first proposal. Depth-first, a truth at
+rank 3 therefore waited for two complete wrong episodes. Breadth-first it
+waits for two proposals. The cost: a truth at rank 1 that needs a second
+proposal now waits for one proposal from every other candidate. There is no
+switch back to depth-first, because no consumer needs that order. The figures
+are in the CHANGELOG entry for this change.
 
 ### Granting write access: `--write-prefix`
 
@@ -224,8 +245,9 @@ cortex repair --workspace "$W" --file pricing.ax --check hidden_discount_boundar
 ```
 
 `REAL_MODEL=1 bash examples/cortex/run.sh` does exactly this after the
-deterministic cases. One run of it (2026-10-12, Haiku 4.5) - the outcome is
-reported, not asserted:
+deterministic cases. One run of it (2026-10-12, Haiku 4.5), recorded before
+the walk became breadth-first, so it shows each candidate's proposals
+together. The outcome is reported, not asserted:
 
 ```
 == REAL_MODEL: repair with cmd:.../crates/axon-cortex/benchmarks/drivers/claude_cli.sh (model claude-haiku-4-5-20251001)
@@ -359,8 +381,10 @@ events:   snapshot, snapshot, observed, action_allowed, claimed, verified, snaps
           action_allowed, patch_applied, snapshot, observed, snapshot, snapshot, observed, action_allowed, claimed, verified
 ```
 
-- `schema` is `cortex-repair/1`; `attempted` lists candidates in the order
-  tried; `episode_digest` is a digest over the event record.
+- `schema` is `cortex-repair/1`. `attempted` is the attempt log in the order
+  the attempts ran: a candidate resumed in pass 2 appears twice (for example
+  `["a", "b", "c", "a", "b", "c"]`), and `symbol` is its last entry on
+  success. `episode_digest` is a digest over the event record.
 - `snapshot` events carry content digests of the workspace; `patch_applied`
   carries `path`, `before_digest`, `after_digest`; `verified` carries `passed`
   and a `detail` such as ``claim_done=true: hidden check `hidden_discount_boundary` passed (3 test(s) ran)``.

@@ -80,10 +80,14 @@ than the fixture â€” 111 trials across five defect classes, see `benchmarks/` â€
 the top candidate is the sole most-suspicious one in 31.5% of cases while the
 truth reaches rank 3 in 89.2%, which is why a run walks the top three
 (`--candidates`, default 3; `--budget`, default 8 steps per candidate) rather
-than stopping at one. `--symbol` skips localization and tries only that
-function. A test is never a candidate. A wrong candidate costs budget and never costs correctness:
-the hidden check adjudicates every attempt, and each attempt starts from the
-state the run found.
+than stopping at one. The walk is breadth-first: every candidate gets one
+proposal before any gets a second, then each candidate is resumed in rank
+order with the rest of its own budget and its own rejected attempts, so no
+candidate gets more than it would have had alone (see `docs/CORTEX.md`).
+`--symbol` skips localization and tries only that function. A test is never
+a candidate. A wrong candidate costs budget and never costs correctness: the
+hidden check adjudicates every attempt, and each attempt starts from the state
+the run found.
 
 ## Exit codes
 
