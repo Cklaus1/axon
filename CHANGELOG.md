@@ -1,5 +1,9 @@
 # Axon Changelog
 
+## Cortex A/B re-run on Haiku 5.5 and Opus 5.5 through micode
+
+- **axon-cortex benchmarks:** `benchmarks/drivers/micode.sh` puts a model behind `--generator cmd:` through the `micode` CLI, in a mode with no tools, from a scratch directory, with the same log format as `claude_cli.sh`. It is tested against a stub `micode` (`tests/micode_driver.rs`). `ab/run_ab.py` gains `--transport micode --model M` for both arms and records model, transport, binary hashes and commit in every row. It prices tokens at list price because micode reports no dollars, kills a timed-out task's whole process group, and stops after 3 consecutive rate-limited tasks. `ab/analyse.py --compare-b` compares two B runs. Preregistered in `ab/PREREG-micode.md`, with the breadth-first walk, n=60 per arm: Haiku 5.5 PASS (Cortex 56/60 with 0 false successes, plain agent 59/60 with 1) and Opus 5.5 PASS (55/60 and 60/60, both with 0 false successes; C1 held by one task). All costs are list-price estimates; the total was $6.27. Results are in `benchmarks/README.md`. The Haiku 4.5 primary run is unchanged.
+
 ## Cortex vs a plain coding agent: preregistered A/B
 
 - **axon-cortex benchmarks:** `benchmarks/ab/` holds a 60-task corpus of injected defects, a keyed grader, `run_ab.py`, `analyse.py`, the raw results and `PREREG.md`, committed before any paid trial. With Haiku 4.5 on both arms, the verdict is "safety only": Cortex verified 54/60 with 0 false successes, the plain agent 55/60 with 4, and Cortex cost $0.547 per verified fix against $0.060. Results are in `benchmarks/README.md` and linked from `docs/CORTEX.md`. The run predates the breadth-first walk.

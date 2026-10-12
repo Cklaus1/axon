@@ -154,11 +154,13 @@ if ab_md:
         missing.append(("A/B verdict", _ab_verdict))
 # The micode re-runs (`ab/PREREG-micode.md`), one summary per model, sourced
 # the same way: their rendered text, and each verdict must be quoted.
+micode_md = ""
 for _p in sorted(glob.glob(os.path.join(HERE, "ab", "results-micode", "summary-*.json"))):
     _s = json.load(open(_p))
-    sourced |= set(re.findall(r"\b\d{1,3}\.\d{1,2}\b", _s["markdown"]))
+    micode_md += _s["markdown"] + "\n"
     if _s["analysis"]["verdict"]["verdict"] not in readme:
         missing.append((f"A/B verdict ({os.path.basename(_p)})", _s["analysis"]["verdict"]["verdict"]))
+sourced |= set(re.findall(r"\b\d{1,3}\.\d{1,2}\b", micode_md))
 
 _unverified(art)
 sourced |= {str(v) for _, v in unverified}
@@ -378,7 +380,7 @@ if rm is not None:
                         (rm["overall_verified_and_clean"]["n"],
                          rm["overall_verified_and_clean"]["of"])}
 legit_fractions |= {(int(a), int(b))
-                    for a, b in re.findall(r"\b(\d{1,3})\s*/\s*(\d{1,3})\b", ab_md)}
+                    for a, b in re.findall(r"\b(\d{1,3})\s*/\s*(\d{1,3})\b", ab_md + micode_md)}
 
 legit = {f"{a} / {b}" for a, b in legit_fractions} | {f"{a}/{b}" for a, b in legit_fractions}
 bad_fractions = sorted(
