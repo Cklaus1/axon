@@ -141,6 +141,18 @@ else:
     broke("real-model-2026-09-20.json is missing; the README section citing it "
           "would go unsourced")
 
+# A THIRD ARTIFACT: the Cortex-vs-plain-agent A/B (`ab/`). `ab/analyse.py
+# --save` stores the exact text it rendered; a figure the README's A/B section
+# cites counts as sourced only if that rendered text contains it, so a number
+# typed into the prose by hand is still an orphan.
+ab_path = os.path.join(HERE, "ab", "results", "summary.json")
+ab_md = json.load(open(ab_path))["markdown"] if os.path.exists(ab_path) else ""
+sourced |= set(re.findall(r"\b\d{1,3}\.\d{1,2}\b", ab_md))
+if ab_md:
+    _ab_verdict = json.load(open(ab_path))["analysis"]["verdict"]["verdict"]
+    if _ab_verdict not in readme:
+        missing.append(("A/B verdict", _ab_verdict))
+
 _unverified(art)
 sourced |= {str(v) for _, v in unverified}
 
@@ -358,6 +370,8 @@ if rm is not None:
     legit_fractions |= {(g["n"], g["of"]),
                         (rm["overall_verified_and_clean"]["n"],
                          rm["overall_verified_and_clean"]["of"])}
+legit_fractions |= {(int(a), int(b))
+                    for a, b in re.findall(r"\b(\d{1,3})\s*/\s*(\d{1,3})\b", ab_md)}
 
 legit = {f"{a} / {b}" for a, b in legit_fractions} | {f"{a}/{b}" for a, b in legit_fractions}
 bad_fractions = sorted(

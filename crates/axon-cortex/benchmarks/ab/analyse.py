@@ -2,6 +2,7 @@
 """Score an A/B run against PREREG.md.
 
     python3 analyse.py CORPUS.json A.jsonl B.jsonl [--md] [--save SUMMARY.json]
+        [--supplement B-RERUN.jsonl]
 
 Pairs rows by task id and scores only tasks BOTH arms completed (a budget stop
 leaves some unpaired; they are counted and listed, never silently dropped).
@@ -193,6 +194,42 @@ def main():
                   f"{json.dumps(out['verdict_without_A_outside_access'])}")
     if unpaired:
         md.append(f"\nUnpaired (not scored): {unpaired}")
+
+    ins = [sys.argv[1], sys.argv[2], sys.argv[3]]
+    if "--supplement" in sys.argv:
+        # A LABELLED deviation, never folded into the primary: arm-B rows
+        # re-run on a different binary replace the primary rows for those ids
+        # only, and the verdict is recomputed beside the primary one.
+        sup_path = sys.argv[sys.argv.index("--supplement") + 1]
+        ins.append(sup_path)
+        S = load(sup_path)
+        b2 = {i: S.get(i, B[i]) for i in paired}
+        s2 = summarize([b2[i] for i in paired])
+        bins = sorted({json.dumps({k: S[i]["meta"][k] for k in ("axon_sha256_16", "cortex_sha256_16")})
+                       for i in S})
+        out["supplement"] = {"replaced": sorted(S), "binaries": bins, "B": s2,
+                             "verdict": verdict(sa, s2, a_rows),
+                             "rows": {i: {"verified_clean": S[i]["verified_clean"],
+                                          "primary_verified_clean": B[i]["verified_clean"],
+                                          "cost_usd": S[i]["cost_usd"]} for i in sorted(S)}}
+        md.append(f"\n### Supplement (deviation): B rows {sorted(S)} re-run on {bins}\n")
+        md.append(table([("A plain agent", sa), ("B cortex, supplement substituted", s2)]))
+        md.append(f"\nSupplement verdict: {json.dumps(out['supplement']['verdict'])}")
+    if "--save" in sys.argv:
+        # Every dollar under results/ (probes, pilot, full run, killed tasks,
+        # supplement), the same sum the PREREG cap is enforced on.
+        import glob
+        root = os.path.dirname(os.path.abspath(sys.argv[sys.argv.index("--save") + 1]))
+        spend = {}
+        for f in sorted(glob.glob(os.path.join(root, "**", "*.jsonl"), recursive=True)):
+            rows_f = [json.loads(l) for l in open(f) if l.strip()]
+            spend[os.path.relpath(f, root)] = round(sum(
+                r.get("cost_usd") or r.get("cost_bound_usd") or 0.0 for r in rows_f), 2)
+        out["spend_usd"] = spend
+        md.append("\n### Model spend, every row under results/\n")
+        md.append("| file | USD |\n|---|---|")
+        md += [f"| {k} | {v:.2f} |" for k, v in spend.items()]
+        md.append(f"| total | {sum(spend.values()):.2f} |")
     md = "\n".join(md)
 
     if "--save" in sys.argv:
@@ -201,7 +238,6 @@ def main():
         # this rendered text.
         import hashlib
         save = sys.argv[sys.argv.index("--save") + 1]
-        ins = [sys.argv[1], sys.argv[2], sys.argv[3]]
         rel = lambda p: os.path.relpath(os.path.abspath(p), os.path.dirname(os.path.abspath(save)))
         json.dump({"inputs": {rel(p): hashlib.sha256(open(p, "rb").read()).hexdigest()
                               for p in ins},
