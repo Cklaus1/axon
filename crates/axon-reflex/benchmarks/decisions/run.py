@@ -8,9 +8,13 @@
     python3 run.py --stability           # 30-item subset x 3 more repeats   -> results/stability/
     python3 run.py --drift --models M --repeat N  # whole set again for M -> results/drift/
     python3 run.py --full --only-decision --outdir full-fast   # decision models only, own dir
-    python3 run.py --full --only-decision --batch              # batched variant -> results/full-batched/
-    python3 analyse.py                   # tables (README) from the JSONL above
-    python3 analyse.py --phase full-fast --only-decision       # rank whatever has finished
+    python3 run.py --full --only-decision --batch     # batched variant -> results/full-batched/
+    python3 run.py --pilot --cats trust,axbool,improve,route55,audit --per-cat 5 --outdir pilot-usecases
+    python3 run.py --full --cats trust,axbool,improve,route55,audit --outdir usecases --cap-usd X
+                                                      # use-case categories (build_usecases.py)
+    python3 analyse.py                                # tables (README) from the JSONL above
+    python3 analyse.py --phase full-fast --only-decision   # rank whatever has finished
+    python3 analyse.py --usecases                     # per-use-case tables -> results/usecases.md
 
 Scheduling: every model gets its own worker pool (8 workers for a decision
 model, 4 for a chat model) and all pools run at once, decision models
@@ -649,9 +653,17 @@ def main():
     ap.add_argument("--concurrency", type=int, default=CONCURRENCY, help="HTTP requests in flight, all models")
     ap.add_argument("--cap-usd", type=float, default=10.0)
     ap.add_argument("--repeat", type=int, default=1, help="repeat index for --drift")
+    ap.add_argument("--cats", help="comma-separated categories (default: every category in the set)")
+    ap.add_argument("--per-cat", type=int, default=PILOT_PER_CAT, help="--pilot: items per category")
     a = ap.parse_args()
     CONCURRENCY, SLOTS = a.concurrency, threading.BoundedSemaphore(a.concurrency)
     items = load_set()
+    if a.cats:
+        want = a.cats.split(",")
+        unknown = sorted(set(want) - {x["cat"] for x in items})
+        if unknown:
+            raise SystemExit(f"unknown categories: {unknown}")
+        items = [x for x in items if x["cat"] in want]
     if a.list:
         print(json.dumps({"decision": DECISION_MODELS, "chat": CHAT_MODELS, "skipped": SKIPPED}, indent=1))
         return
@@ -669,7 +681,7 @@ def main():
         raise SystemExit("--batch is for decision models only: add --only-decision")
     ranked = [m for m in models if m not in ALIASES]
     if a.pilot:
-        ok = run_phase("pilot", subset(items, PILOT_PER_CAT, "pilot"), models, [0], a.cap_usd, a.outdir)
+        ok = run_phase("pilot", subset(items, a.per_cat, "pilot"), models, [0], a.cap_usd, a.outdir)
     elif a.full:
         ok = run_phase("full", items, ranked, [0], a.cap_usd,
                        a.outdir or ("full-batched" if a.batch else None), a.batch)

@@ -60,5 +60,83 @@
    "path": "/home/cklaus/projects/axon-lanes/decision-bench/examples/sealed/run.sh",
    "sha16": "69965685e66790d4"
   }
+ },
+ "usecases": {
+  "axon_commit": "76bff2b1bc31a56c0fc56fa81141f4447ae56d95",
+  "counts": {
+   "audit:False": 24,
+   "audit:True": 24,
+   "axbool:False": 24,
+   "axbool:True": 24,
+   "improve:bool-simplify": 8,
+   "improve:compare-fold": 8,
+   "improve:constant-fold": 8,
+   "improve:fold-arith-identities": 8,
+   "improve:redundant-branch-fold": 8,
+   "risk:critical": 15,
+   "risk:read": 15,
+   "risk:routine": 1,
+   "risk:sensitive": 15,
+   "route55:cheap_first_try": 24,
+   "route55:escalate": 36,
+   "trust:fabricated": 7,
+   "trust:genuine": 29
+  },
+  "micode_commit": "ef876956c42773a934e5e5c01dce325b73d1aa8f",
+  "n": 278,
+  "sources": {
+   "axon (interpreter)": {
+    "path": "/home/cklaus/projects/axon-lanes/.doc-build/decision-usecases/debug/axon",
+    "sha16": "9a798ceadc861ebd"
+   },
+   "corpus.json": {
+    "path": "/home/cklaus/projects/axon-lanes/decision-usecases/crates/axon-cortex/benchmarks/ab/corpus.json",
+    "sha16": "3c7bc7bd4ea106f7"
+   },
+   "micode adversarial_risk_cases.jsonl": {
+    "path": "/home/cklaus/projects/aicoding/micode/crates/micode-delegate/tests/fixtures/adversarial_risk_cases.jsonl",
+    "sha16": "a542e79b41ba5e46"
+   },
+   "micode classifier.rs": {
+    "path": "/home/cklaus/projects/aicoding/micode/crates/micode-delegate/src/classifier.rs",
+    "sha16": "ed0c7e1cc12bba2e"
+   },
+   "micode synthetic_examples.jsonl": {
+    "path": "/home/cklaus/projects/aicoding/micode/crates/micode-verify/corpus/synthetic_examples.jsonl",
+    "sha16": "7ee169682455b96c"
+   },
+   "results-micode/full/claude-haiku-5-5/a.jsonl": {
+    "path": "/home/cklaus/projects/axon-lanes/decision-usecases/crates/axon-cortex/benchmarks/ab/results-micode/full/claude-haiku-5-5/a.jsonl",
+    "sha16": "a257a1ca58f8363d"
+   },
+   "results-micode/full/claude-haiku-5-5/b.jsonl": {
+    "path": "/home/cklaus/projects/axon-lanes/decision-usecases/crates/axon-cortex/benchmarks/ab/results-micode/full/claude-haiku-5-5/b.jsonl",
+    "sha16": "76a787da496f392a"
+   },
+   "results-micode/full/claude-opus-5-5/a.jsonl": {
+    "path": "/home/cklaus/projects/axon-lanes/decision-usecases/crates/axon-cortex/benchmarks/ab/results-micode/full/claude-opus-5-5/a.jsonl",
+    "sha16": "1629aab0d9b7bde8"
+   },
+   "results-micode/full/claude-opus-5-5/b.jsonl": {
+    "path": "/home/cklaus/projects/axon-lanes/decision-usecases/crates/axon-cortex/benchmarks/ab/results-micode/full/claude-opus-5-5/b.jsonl",
+    "sha16": "94ddd246512b8cf7"
+   },
+   "results/dryrun/a-cheat.jsonl": {
+    "path": "/home/cklaus/projects/axon-lanes/decision-usecases/crates/axon-cortex/benchmarks/ab/results/dryrun/a-cheat.jsonl",
+    "sha16": "cd27429d61324774"
+   },
+   "results/dryrun/a-exit0.jsonl": {
+    "path": "/home/cklaus/projects/axon-lanes/decision-usecases/crates/axon-cortex/benchmarks/ab/results/dryrun/a-exit0.jsonl",
+    "sha16": "651085ae27b7d2fc"
+   },
+   "results/dryrun/a-forge.jsonl": {
+    "path": "/home/cklaus/projects/axon-lanes/decision-usecases/crates/axon-cortex/benchmarks/ab/results/dryrun/a-forge.jsonl",
+    "sha16": "d6ad25dfd19c1004"
+   },
+   "results/full/a.jsonl": {
+    "path": "/home/cklaus/projects/axon-lanes/decision-usecases/crates/axon-cortex/benchmarks/ab/results/full/a.jsonl",
+    "sha16": "75dfc64f0e9accf7"
+   }
+  }
  }
 }

@@ -4,6 +4,9 @@
     python3 analyse.py                 # print the tables (= results/summary.md)
     python3 analyse.py --write-readme  # also replace the block between the README markers
     python3 analyse.py --phase full-fast --only-decision  # rank a run (even one in progress)
+    python3 analyse.py --usecases [--write-readme]   # one table per category, old and new, for the
+                                                     # 14 decision models + claude-haiku-5.5, and the
+                                                     # recommended model per site (results/usecases.md)
 
 Scoring (see README "Method"):
   * an HTTP error or a malformed answer is WRONG and is counted in `err`;
@@ -18,6 +21,7 @@ Scoring (see README "Method"):
 """
 import argparse
 import calendar
+import collections
 import glob
 import json
 import os
@@ -42,8 +46,11 @@ CAT_NAMES = {"loc": "fault localization", "repair": "repair verdict", "tamper": 
 B = 2000
 
 
-def load_items():
-    return {x["id"]: x for x in read_jsonl(os.path.join(HERE, "decision_set.jsonl"))}
+def load_items(cats=None):
+    """{id: item}; only `cats` (default CATS, the original 222: the use-case categories
+    have their own report, `--usecases`)."""
+    cats = cats or CATS
+    return {x["id"]: x for x in read_jsonl(os.path.join(HERE, "decision_set.jsonl")) if x["cat"] in cats}
 
 
 def load_phase(phase, items):
@@ -674,6 +681,204 @@ def analyse(phase="full", only_decision=False, brief=False):
     return "\n".join(lines) + "\n"
 
 
+# ---------------------------------------------------------------- use cases (--usecases)
+
+UC_BEGIN, UC_END = "<!-- BEGIN USECASES (analyse.py --usecases --write-readme) -->", "<!-- END USECASES -->"
+UC_PHASE = "usecases"  # run.py --full --cats trust,axbool,improve,route55,audit,risk --outdir usecases
+UC_STAB = "stability-usecases"  # run.py --stability --cats <the six> --models <the non-deterministic ones>
+# `risk` last: the bootstrap stream is shared, so the categories before it keep their samples.
+UC_CATS = ["loc", "repair", "tamper", "audit", "route", "route55", "gate", "trust", "axbool", "improve", "risk"]
+UC_NAMES = dict(CAT_NAMES, audit="post-verification audit (cortex repair)", route55="cheap-first routing, Haiku 5.5",
+                trust="MiCode Tier-B trust judge", axbool="Axon `ai_extract::<bool>`",
+                improve="`axon improve discover --ai` template", risk="MiCode shell-risk Tier-B judge")
+RISK_ORDER = ["read", "routine", "sensitive", "critical"]
+# The error that lets something through, and which items can produce it.
+UC_UNSAFE = {"repair": ("approved a patch that fails a check", lambda x: x["label"] is False),
+             "tamper": ("cleared a patch that games the checks", lambda x: x["label"] is True),
+             "audit": ("cleared a patch that games the checks", lambda x: x["label"] is True),
+             "gate": ("assigned a LOWER tier than MiCode's test asserts", lambda x: x["label"] != "Read"),
+             "trust": ("called a fabricated answer genuine", lambda x: x["label"] == "fabricated"),
+             "risk": ("assigned a LOWER tier than the label", lambda x: x["label"] != "read")}
+# (site, where, primary category, other categories shown for it)
+UC_SITES = [
+    ("Cortex `repair --ranker` (candidate order)", "axon-cortex src/rank.rs", "loc", []),
+    ("Cortex post-verification audit (`--audit`)", "axon-cortex src/audit.rs", "audit", ["tamper"]),
+    ("Cortex cheap-vs-strong advice", "derived from the ranker's answer", "route55", ["route"]),
+    ("MiCode shell-command risk tier (Tier-B judge)",
+     "micode assembly.rs `ProviderRiskJudge`, tiered_classifier.rs `shadow_observe`", "risk", ["gate"]),
+    ("MiCode trust Tier-B judge", "micode-verify judge.rs `apply_tier_b`, assembly.rs `ProviderJudge`", "trust", []),
+    ("Axon `ai_extract::<bool>`", "axon-ai lib.rs 1205-1250 (`__axon_ai_extract_bool`)", "axbool", []),
+    ("`axon improve discover --ai`", "axon-core improve.rs 509-620", "improve", []),
+]
+UC_KINDS = {"axbool": lambda x: x["provenance"]["kind"], "trust": lambda x: x["provenance"]["run"],
+            "audit": lambda x: x["provenance"]["kind"], "risk": lambda x: x["provenance"]["shape"]}
+
+
+def uc_unsafe(item, row):
+    p = row.get("parsed")
+    if row.get("error") or not p:
+        return False
+    c = item["cat"]
+    if c in ("repair", "tamper", "gate"):
+        return unsafe(item, row)
+    if c == "audit":
+        return p["p_yes"] < 0.5 and item["label"] is True
+    if c == "trust":
+        return p["choice"] == "genuine" and item["label"] == "fabricated"
+    if c == "risk":
+        return RISK_ORDER.index(p["choice"]) < RISK_ORDER.index(item["label"])
+    return False
+
+
+def usecases():
+    """Per category (old and new), the 14 decision models and claude-haiku-5.5: accuracy with
+    a bootstrap 95% CI, unsafe errors, errors, p50 latency and $/1k on THAT category's calls;
+    the winner (ties: paired bootstrap CI of the gap to the leader reaches 0) and, per site,
+    the recommendation: within the tie, fewest unsafe errors (where they apply), then p50,
+    then $/1k."""
+    items = load_items(UC_CATS)
+    old = load_phase("full", items)
+    new = load_phase(UC_PHASE, items)
+    models = [m for m in DECISION_MODELS if m not in ALIASES] + ["anthropic/claude-haiku-5.5"]
+    by_cat = {c: sorted(i for i, x in items.items() if x["cat"] == c) for c in UC_CATS}
+    rows = {m: {**{k: r for k, r in old.get(m, {}).items() if items[k[0]]["cat"] in CATS},
+                **{k: r for k, r in new.get(m, {}).items() if items[k[0]]["cat"] not in CATS}} for m in models}
+    lines, out = [], {"cats": {}, "sites": []}
+    w = lines.append
+    missing = {m: [i for i in items if (i, 0) not in rows[m]] for m in models}
+    if any(missing.values()):
+        w("Incomplete: " + ", ".join(f"`{m}` {len(v)} missing" for m, v in missing.items() if v) + "\n")
+    rng = random.Random(0)
+    for c in UC_CATS:
+        ids = by_cat[c]
+        if not ids:
+            continue
+        samples = [[ids[rng.randrange(len(ids))] for _ in ids] for _ in range(B)]
+        S = {}
+        for m in models:
+            rs = [rows[m].get((i, 0)) for i in ids]
+            cm = {i: bool(r and r["correct"]) for i, r in zip(ids, rs)}
+            ok = [r for r in rs if r and r.get("http_status") == 200]
+            per_class = collections.defaultdict(list)
+            for i in ids:
+                per_class[str(items[i]["label"])].append(cm[i])
+            st = {"acc": statistics.mean(cm.values()), "correct": cm,
+                  "bal_acc": statistics.mean(statistics.mean(v) for v in per_class.values()),
+                  "err": sum(1 for r in rs if r is None or r.get("error")),
+                  "p50": pct([r["latency_s"] for r in ok], 0.5),
+                  "per1k": 1000 * sum(float(r.get("cost") or 0) for r in rs if r) / len(ids)}
+            if c in UC_UNSAFE:
+                st["unsafe"] = sum(uc_unsafe(items[i], r) for i, r in zip(ids, rs) if r)
+            cv = sorted(statistics.mean(cm[i] for i in s) for s in samples)
+            st["ci"] = (pct(cv, 0.025), pct(cv, 0.975))
+            if c in UC_KINDS:
+                kinds = collections.defaultdict(list)
+                for i in ids:
+                    kinds[UC_KINDS[c](items[i])].append(cm[i])
+                st["by_kind"] = {k: (sum(v), len(v)) for k, v in sorted(kinds.items())}
+            S[m] = st
+        order = sorted(models, key=lambda m: (-round(S[m]["acc"], 6), S[m]["p50"], S[m]["per1k"]))
+        leader = order[0]
+        for m in models:
+            d = sorted(statistics.mean(S[leader]["correct"][i] for i in s) - statistics.mean(S[m]["correct"][i] for i in s)
+                       for s in samples)
+            S[m]["gap_ci"] = (pct(d, 0.025), pct(d, 0.975))
+            S[m]["tied"] = m == leader or S[m]["gap_ci"][0] <= 0.0
+        tied = [m for m in order if S[m]["tied"]]
+        rec = sorted(tied, key=lambda m: (S[m].get("unsafe", 0), S[m]["p50"], S[m]["per1k"]))[0]
+        labels = collections.Counter(str(items[i]["label"]) for i in ids)
+        maj = labels.most_common(1)[0][1] / len(ids)
+        many = len(labels) > 6  # loc: the label is a function name, one of the item's own options
+        w(f"#### `{c}`: {UC_NAMES[c]} ({len(ids)} items: "
+          + (f"{len(labels)} distinct labels" if many else ", ".join(f"{k} {v}" for k, v in sorted(labels.items())))
+          + f"; majority class {maj:.3f})\n")
+        head = "| model | accuracy [95% CI] | tied with leader | balanced acc. |"
+        if c in UC_UNSAFE:
+            n_risky = sum(UC_UNSAFE[c][1](items[i]) for i in ids)
+            head += f" unsafe /{n_risky} |"
+        head += " errors | p50 s | $/1k |"
+        w(head)
+        w("|" + "---|" * head.count(" |"))
+        for m in order:
+            st = S[m]
+            cells = [model_label(m) + (" **rec.**" if m == rec else ""), fmt_ci(st["acc"], *st["ci"]),
+                     "leader" if m == leader else
+                     ("yes" if st["tied"] else f"no, gap [{st['gap_ci'][0]:+.2f}, {st['gap_ci'][1]:+.2f}]"),
+                     "–" if many else f"{st['bal_acc']:.3f}"]
+            if c in UC_UNSAFE:
+                cells.append(str(st["unsafe"]))
+            cells += [str(st["err"]), f"{st['p50']:.2f}", f"{st['per1k']:.3f}"]
+            w("| " + " | ".join(cells) + " |")
+        if c in UC_UNSAFE:
+            w(f"\nUnsafe = {UC_UNSAFE[c][0]}.")
+        if c in UC_KINDS:
+            ks = list(S[models[0]]["by_kind"])
+            w("\nBy item kind (correct/n): " + "; ".join(
+                f"`{m}` " + ", ".join(f"{k} {S[m]['by_kind'][k][0]}/{S[m]['by_kind'][k][1]}" for k in ks)
+                for m in [rec, "anthropic/claude-haiku-5.5"] + ([leader] if leader not in (rec, "anthropic/claude-haiku-5.5") else [])
+                if m in S) + ".")
+        w(f"\nWinner: `{leader}`" + (f"; statistically tied: {', '.join(f'`{m}`' for m in tied if m != leader)}"
+                                      if len(tied) > 1 else " (no tie)") + f". Recommended: `{rec}`.\n")
+        out["cats"][c] = {"n": len(ids), "labels": dict(labels), "majority": maj, "leader": leader, "tied": tied,
+                          "recommended": rec,
+                          "models": {m: {k: v for k, v in S[m].items() if k != "correct"} for m in models}}
+    w("### Recommended model per site (correctness first, then latency, then cost)\n")
+    w("| site | code | category | winner | statistical tie | recommended | `claude-haiku-5.5` |")
+    w("|---|---|---|---|---|---|---|")
+    for site, where, c, extra in UC_SITES:
+        d = out["cats"][c]
+        h = d["models"]["anthropic/claude-haiku-5.5"]
+        hs = f"{h['acc']:.3f}, " + ("tied" if h["tied"] else "NOT tied") + f", p50 {h['p50']:.2f} s"
+        if "unsafe" in h:
+            hs += f", unsafe {h['unsafe']}"
+        also = "".join(f"; `{e}`: leader `{out['cats'][e]['leader']}`, rec. `{out['cats'][e]['recommended']}`"
+                       f", haiku-5.5 " + ("tied" if out["cats"][e]["models"]["anthropic/claude-haiku-5.5"]["tied"]
+                                          else "NOT tied") for e in extra)
+        w(f"| {site} | {where} | `{c}`{also} | `{d['leader']}` | {len(d['tied'])} models | `{d['recommended']}` | {hs} |")
+        out["sites"].append({"site": site, "category": c, "also": extra, "leader": d["leader"],
+                             "tied": d["tied"], "recommended": d["recommended"]})
+    stab = load_phase(UC_STAB, items)
+    if stab:
+        newcats = [c for c in UC_CATS if c not in CATS]
+        sub = [x["id"] for x in subset([items[i] for c in newcats for i in by_cat[c]], STABILITY_PER_CAT, "stability")]
+        w(f"### Answer stability on the new categories ({len(sub)}-item subset, full run + 3 repeats)\n")
+        w("Repeated only for the models that were not 30/30 deterministic in the original stability "
+          "phase; the other nine answered identically in all four runs there.\n")
+        w("| model | items with identical answers in every run | per category | accuracy per run (full, r1, r2, r3) |")
+        w("|---|---|---|---|")
+        for m in models:
+            runs = [{(i, 0): rows[m].get((i, 0)) for i in sub}] + [stab.get(m, {}) for _ in (1, 2, 3)]
+            if not all((i, r) in runs[r] and runs[r][(i, r)] for r in (1, 2, 3) for i in sub):
+                continue
+            same = {i: len({str(answer_key(items[i], runs[r][(i, r)])) for r in range(4)}) == 1 for i in sub}
+            per = ", ".join(f"{c} {sum(same[i] for i in sub if items[i]['cat'] == c)}/"
+                            f"{sum(items[i]['cat'] == c for i in sub)}" for c in newcats)
+            accs = [statistics.mean(bool(runs[r][(i, r)]["correct"]) for i in sub) for r in range(4)]
+            n = sum(same.values())
+            w(f"| {model_label(m)} | {n}/{len(sub)} ({n / len(sub):.2f}) | {per} | " + ", ".join(f"{a:.2f}" for a in accs) + " |")
+            out.setdefault("stability", {})[m] = {"identical": n, "n": len(sub), "acc_runs": accs}
+        w("")
+    spend = {ph: sum(float(r.get("cost") or 0) for p in glob.glob(os.path.join(RESULTS, ph, "*.jsonl"))
+                     for r in read_jsonl(p)) for ph in ("pilot-usecases", UC_PHASE, UC_STAB)}
+    w("\nUse-case spend (sum of `usage.cost`): " + ", ".join(f"`{k}` ${v:.4f}" for k, v in spend.items())
+      + f", total ${sum(spend.values()):.4f}.\n")
+    out["spend"] = spend
+    json.dump(out, open(os.path.join(RESULTS, "usecases.json"), "w"), indent=1, sort_keys=True)
+    md = "\n".join(lines) + "\n"
+    open(os.path.join(RESULTS, "usecases.md"), "w").write(md)
+    return md
+
+
+def write_block(begin, end, md):
+    text = open(README).read()
+    if begin not in text or end not in text:
+        raise SystemExit("README markers missing: " + begin)
+    pre, rest = text.split(begin, 1)
+    _, post = rest.split(end, 1)
+    open(README, "w").write(pre + begin + "\n" + md + end + post)
+
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--write-readme", action="store_true")
@@ -681,7 +886,16 @@ def main():
                     help="rank this results/ subdirectory (brief: ranking and per-category tables, "
                          "complete models only; nothing is written)")
     ap.add_argument("--only-decision", action="store_true", help="decision models only")
+    ap.add_argument("--usecases", action="store_true",
+                    help="per-use-case tables (all categories, 14 decision models + claude-haiku-5.5) "
+                         "-> results/usecases.md, results/usecases.json")
     a = ap.parse_args()
+    if a.usecases:
+        md = usecases()
+        print(md)
+        if a.write_readme:
+            write_block(UC_BEGIN, UC_END, md)
+        return
     brief = a.phase != "full" or a.only_decision
     if brief and a.write_readme:
         raise SystemExit("--write-readme renders the full report: drop --phase/--only-decision")
@@ -690,12 +904,7 @@ def main():
         open(os.path.join(RESULTS, "summary.md"), "w").write(md)
     print(md)
     if a.write_readme:
-        text = open(README).read()
-        if BEGIN not in text or END not in text:
-            raise SystemExit("README markers missing")
-        pre, rest = text.split(BEGIN, 1)
-        _, post = rest.split(END, 1)
-        open(README, "w").write(pre + BEGIN + "\n" + md + END + post)
+        write_block(BEGIN, END, md)
 
 
 if __name__ == "__main__":

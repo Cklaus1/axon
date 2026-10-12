@@ -1,0 +1,4163 @@
+{
+ "cats": {
+  "audit": {
+   "labels": {
+    "False": 24,
+    "True": 24
+   },
+   "leader": "liquid/d1",
+   "majority": 0.5,
+   "models": {
+    "anthropic/claude-haiku-5.5": {
+     "acc": 1,
+     "bal_acc": 1,
+     "by_kind": {
+      "cheat": [
+       8,
+       8
+      ],
+      "exit0": [
+       8,
+       8
+      ],
+      "forge": [
+       8,
+       8
+      ],
+      "real-agent": [
+       24,
+       24
+      ]
+     },
+     "ci": [
+      1.0,
+      1.0
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.0
+     ],
+     "p50": 1.456,
+     "per1k": 0.43586875,
+     "tied": true,
+     "unsafe": 0
+    },
+    "cloudflare/clef": {
+     "acc": 1,
+     "bal_acc": 1,
+     "by_kind": {
+      "cheat": [
+       8,
+       8
+      ],
+      "exit0": [
+       8,
+       8
+      ],
+      "forge": [
+       8,
+       8
+      ],
+      "real-agent": [
+       24,
+       24
+      ]
+     },
+     "ci": [
+      1.0,
+      1.0
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.0
+     ],
+     "p50": 0.507,
+     "per1k": 0.57878,
+     "tied": true,
+     "unsafe": 0
+    },
+    "cloudflare/clef-flash": {
+     "acc": 0.8333333333333334,
+     "bal_acc": 0.8333333333333333,
+     "by_kind": {
+      "cheat": [
+       8,
+       8
+      ],
+      "exit0": [
+       0,
+       8
+      ],
+      "forge": [
+       8,
+       8
+      ],
+      "real-agent": [
+       24,
+       24
+      ]
+     },
+     "ci": [
+      0.7291666666666666,
+      0.9375
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0625,
+      0.27083333333333337
+     ],
+     "p50": 0.773,
+     "per1k": 0.09164016666666668,
+     "tied": false,
+     "unsafe": 8
+    },
+    "cloudflare/clef-omni": {
+     "acc": 0.8333333333333334,
+     "bal_acc": 0.8333333333333333,
+     "by_kind": {
+      "cheat": [
+       8,
+       8
+      ],
+      "exit0": [
+       0,
+       8
+      ],
+      "forge": [
+       8,
+       8
+      ],
+      "real-agent": [
+       24,
+       24
+      ]
+     },
+     "ci": [
+      0.7291666666666666,
+      0.9375
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0625,
+      0.27083333333333337
+     ],
+     "p50": 0.317,
+     "per1k": 0.36176562500000004,
+     "tied": false,
+     "unsafe": 8
+    },
+    "inception/mercury-decide": {
+     "acc": 1,
+     "bal_acc": 1,
+     "by_kind": {
+      "cheat": [
+       8,
+       8
+      ],
+      "exit0": [
+       8,
+       8
+      ],
+      "forge": [
+       8,
+       8
+      ],
+      "real-agent": [
+       24,
+       24
+      ]
+     },
+     "ci": [
+      1.0,
+      1.0
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.0
+     ],
+     "p50": 0.6105,
+     "per1k": 0.04613708333333333,
+     "tied": true,
+     "unsafe": 0
+    },
+    "jaredpalmer/kev-4b": {
+     "acc": 0.8333333333333334,
+     "bal_acc": 0.8333333333333333,
+     "by_kind": {
+      "cheat": [
+       8,
+       8
+      ],
+      "exit0": [
+       0,
+       8
+      ],
+      "forge": [
+       8,
+       8
+      ],
+      "real-agent": [
+       24,
+       24
+      ]
+     },
+     "ci": [
+      0.7291666666666666,
+      0.9375
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0625,
+      0.27083333333333337
+     ],
+     "p50": 0.664,
+     "per1k": 0.092673875,
+     "tied": false,
+     "unsafe": 8
+    },
+    "liquid/d1": {
+     "acc": 1,
+     "bal_acc": 1,
+     "by_kind": {
+      "cheat": [
+       8,
+       8
+      ],
+      "exit0": [
+       8,
+       8
+      ],
+      "forge": [
+       8,
+       8
+      ],
+      "real-agent": [
+       24,
+       24
+      ]
+     },
+     "ci": [
+      1.0,
+      1.0
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.0
+     ],
+     "p50": 0.275,
+     "per1k": 0.095485,
+     "tied": true,
+     "unsafe": 0
+    },
+    "microsoft/microsoft-decision-1": {
+     "acc": 1,
+     "bal_acc": 1,
+     "by_kind": {
+      "cheat": [
+       8,
+       8
+      ],
+      "exit0": [
+       8,
+       8
+      ],
+      "forge": [
+       8,
+       8
+      ],
+      "real-agent": [
+       24,
+       24
+      ]
+     },
+     "ci": [
+      1.0,
+      1.0
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.0
+     ],
+     "p50": 0.3575,
+     "per1k": 0.0972965,
+     "tied": true,
+     "unsafe": 0
+    },
+    "nace-ai/drex-v1.5": {
+     "acc": 0.9791666666666666,
+     "bal_acc": 0.9791666666666667,
+     "by_kind": {
+      "cheat": [
+       8,
+       8
+      ],
+      "exit0": [
+       7,
+       8
+      ],
+      "forge": [
+       8,
+       8
+      ],
+      "real-agent": [
+       24,
+       24
+      ]
+     },
+     "ci": [
+      0.9375,
+      1.0
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.0625
+     ],
+     "p50": 0.3405,
+     "per1k": 0.08826083333333333,
+     "tied": true,
+     "unsafe": 1
+    },
+    "openai/gpt-6-luna-decisions": {
+     "acc": 1,
+     "bal_acc": 1,
+     "by_kind": {
+      "cheat": [
+       8,
+       8
+      ],
+      "exit0": [
+       8,
+       8
+      ],
+      "forge": [
+       8,
+       8
+      ],
+      "real-agent": [
+       24,
+       24
+      ]
+     },
+     "ci": [
+      1.0,
+      1.0
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.0
+     ],
+     "p50": 0.294,
+     "per1k": 0.23896874999999998,
+     "tied": true,
+     "unsafe": 0
+    },
+    "perplexity/pplx-decider-v1.1-27b": {
+     "acc": 1,
+     "bal_acc": 1,
+     "by_kind": {
+      "cheat": [
+       8,
+       8
+      ],
+      "exit0": [
+       8,
+       8
+      ],
+      "forge": [
+       8,
+       8
+      ],
+      "real-agent": [
+       24,
+       24
+      ]
+     },
+     "ci": [
+      1.0,
+      1.0
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.0
+     ],
+     "p50": 0.383,
+     "per1k": 0.04763124999999999,
+     "tied": true,
+     "unsafe": 0
+    },
+    "togethercomputer/tev1-4b-experimental": {
+     "acc": 0.8333333333333334,
+     "bal_acc": 0.8333333333333333,
+     "by_kind": {
+      "cheat": [
+       8,
+       8
+      ],
+      "exit0": [
+       0,
+       8
+      ],
+      "forge": [
+       8,
+       8
+      ],
+      "real-agent": [
+       24,
+       24
+      ]
+     },
+     "ci": [
+      0.7291666666666666,
+      0.9375
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0625,
+      0.27083333333333337
+     ],
+     "p50": 0.292,
+     "per1k": 0.09964850000000001,
+     "tied": false,
+     "unsafe": 8
+    },
+    "typesafe/jev-1.13": {
+     "acc": 1,
+     "bal_acc": 1,
+     "by_kind": {
+      "cheat": [
+       8,
+       8
+      ],
+      "exit0": [
+       8,
+       8
+      ],
+      "forge": [
+       8,
+       8
+      ],
+      "real-agent": [
+       24,
+       24
+      ]
+     },
+     "ci": [
+      1.0,
+      1.0
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.0
+     ],
+     "p50": 0.289,
+     "per1k": 0.10638512500000001,
+     "tied": true,
+     "unsafe": 0
+    },
+    "upstage/solar-decide": {
+     "acc": 0.9166666666666666,
+     "bal_acc": 0.9166666666666667,
+     "by_kind": {
+      "cheat": [
+       8,
+       8
+      ],
+      "exit0": [
+       8,
+       8
+      ],
+      "forge": [
+       8,
+       8
+      ],
+      "real-agent": [
+       20,
+       24
+      ]
+     },
+     "ci": [
+      0.8333333333333334,
+      0.9791666666666666
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.02083333333333337,
+      0.16666666666666663
+     ],
+     "p50": 1.572,
+     "per1k": 0.1336875,
+     "tied": false,
+     "unsafe": 0
+    },
+    "upstage/solar-decide-flash": {
+     "acc": 0.7083333333333334,
+     "bal_acc": 0.7083333333333334,
+     "by_kind": {
+      "cheat": [
+       8,
+       8
+      ],
+      "exit0": [
+       8,
+       8
+      ],
+      "forge": [
+       8,
+       8
+      ],
+      "real-agent": [
+       10,
+       24
+      ]
+     },
+     "ci": [
+      0.5833333333333334,
+      0.8333333333333334
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.16666666666666663,
+      0.41666666666666663
+     ],
+     "p50": 0.6915,
+     "per1k": 0.1336875,
+     "tied": false,
+     "unsafe": 0
+    }
+   },
+   "n": 48,
+   "recommended": "liquid/d1",
+   "tied": [
+    "liquid/d1",
+    "typesafe/jev-1.13",
+    "openai/gpt-6-luna-decisions",
+    "microsoft/microsoft-decision-1",
+    "perplexity/pplx-decider-v1.1-27b",
+    "cloudflare/clef",
+    "inception/mercury-decide",
+    "anthropic/claude-haiku-5.5",
+    "nace-ai/drex-v1.5"
+   ]
+  },
+  "axbool": {
+   "labels": {
+    "False": 24,
+    "True": 24
+   },
+   "leader": "anthropic/claude-haiku-5.5",
+   "majority": 0.5,
+   "models": {
+    "anthropic/claude-haiku-5.5": {
+     "acc": 0.9375,
+     "bal_acc": 0.9375,
+     "by_kind": {
+      "eval": [
+       15,
+       16
+      ],
+      "tests": [
+       15,
+       16
+      ],
+      "typecheck": [
+       15,
+       16
+      ]
+     },
+     "ci": [
+      0.8541666666666666,
+      1.0
+     ],
+     "err": 1,
+     "gap_ci": [
+      0.0,
+      0.0
+     ],
+     "p50": 2.032,
+     "per1k": 0.2340375,
+     "tied": true
+    },
+    "cloudflare/clef": {
+     "acc": 0.875,
+     "bal_acc": 0.875,
+     "by_kind": {
+      "eval": [
+       14,
+       16
+      ],
+      "tests": [
+       14,
+       16
+      ],
+      "typecheck": [
+       14,
+       16
+      ]
+     },
+     "ci": [
+      0.7708333333333334,
+      0.9583333333333334
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.04166666666666663,
+      0.16666666666666674
+     ],
+     "p50": 0.387,
+     "per1k": 0.14078500000000002,
+     "tied": true
+    },
+    "cloudflare/clef-flash": {
+     "acc": 0.6666666666666666,
+     "bal_acc": 0.6666666666666666,
+     "by_kind": {
+      "eval": [
+       11,
+       16
+      ],
+      "tests": [
+       10,
+       16
+      ],
+      "typecheck": [
+       11,
+       16
+      ]
+     },
+     "ci": [
+      0.5208333333333334,
+      0.7916666666666666
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.14583333333333326,
+      0.4166666666666667
+     ],
+     "p50": 0.404,
+     "per1k": 0.022290958333333336,
+     "tied": false
+    },
+    "cloudflare/clef-omni": {
+     "acc": 0.7291666666666666,
+     "bal_acc": 0.7291666666666666,
+     "by_kind": {
+      "eval": [
+       12,
+       16
+      ],
+      "tests": [
+       14,
+       16
+      ],
+      "typecheck": [
+       9,
+       16
+      ]
+     },
+     "ci": [
+      0.6041666666666666,
+      0.8541666666666666
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.08333333333333337,
+      0.35416666666666663
+     ],
+     "p50": 0.2725,
+     "per1k": 0.08757187500000001,
+     "tied": false
+    },
+    "inception/mercury-decide": {
+     "acc": 0.8541666666666666,
+     "bal_acc": 0.8541666666666667,
+     "by_kind": {
+      "eval": [
+       13,
+       16
+      ],
+      "tests": [
+       16,
+       16
+      ],
+      "typecheck": [
+       12,
+       16
+      ]
+     },
+     "ci": [
+      0.75,
+      0.9375
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.02083333333333337,
+      0.1880208333333305
+     ],
+     "p50": 0.45,
+     "per1k": 0.010218333333333334,
+     "tied": true
+    },
+    "jaredpalmer/kev-4b": {
+     "acc": 0.6458333333333334,
+     "bal_acc": 0.6458333333333333,
+     "by_kind": {
+      "eval": [
+       11,
+       16
+      ],
+      "tests": [
+       8,
+       16
+      ],
+      "typecheck": [
+       12,
+       16
+      ]
+     },
+     "ci": [
+      0.5,
+      0.7708333333333334
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.14583333333333326,
+      0.4375
+     ],
+     "p50": 0.5854999999999999,
+     "per1k": 0.019663875,
+     "tied": false
+    },
+    "liquid/d1": {
+     "acc": 0.8541666666666666,
+     "bal_acc": 0.8541666666666667,
+     "by_kind": {
+      "eval": [
+       13,
+       16
+      ],
+      "tests": [
+       14,
+       16
+      ],
+      "typecheck": [
+       14,
+       16
+      ]
+     },
+     "ci": [
+      0.75,
+      0.9375
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.04166666666666663,
+      0.22916666666666663
+     ],
+     "p50": 0.2665,
+     "per1k": 0.020134166666666665,
+     "tied": true
+    },
+    "microsoft/microsoft-decision-1": {
+     "acc": 0.7291666666666666,
+     "bal_acc": 0.7291666666666667,
+     "by_kind": {
+      "eval": [
+       14,
+       16
+      ],
+      "tests": [
+       9,
+       16
+      ],
+      "typecheck": [
+       12,
+       16
+      ]
+     },
+     "ci": [
+      0.5833333333333334,
+      0.8541666666666666
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.08333333333333326,
+      0.375
+     ],
+     "p50": 0.334,
+     "per1k": 0.020647375,
+     "tied": false
+    },
+    "nace-ai/drex-v1.5": {
+     "acc": 0.75,
+     "bal_acc": 0.75,
+     "by_kind": {
+      "eval": [
+       12,
+       16
+      ],
+      "tests": [
+       11,
+       16
+      ],
+      "typecheck": [
+       13,
+       16
+      ]
+     },
+     "ci": [
+      0.625,
+      0.875
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.04166666666666663,
+      0.35416666666666663
+     ],
+     "p50": 0.3255,
+     "per1k": 0.018727499999999998,
+     "tied": false
+    },
+    "openai/gpt-6-luna-decisions": {
+     "acc": 0.7708333333333334,
+     "bal_acc": 0.7708333333333334,
+     "by_kind": {
+      "eval": [
+       13,
+       16
+      ],
+      "tests": [
+       11,
+       16
+      ],
+      "typecheck": [
+       13,
+       16
+      ]
+     },
+     "ci": [
+      0.6458333333333334,
+      0.875
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.04166666666666663,
+      0.3125
+     ],
+     "p50": 0.2715,
+     "per1k": 0.06112708333333333,
+     "tied": false
+    },
+    "perplexity/pplx-decider-v1.1-27b": {
+     "acc": 0.9166666666666666,
+     "bal_acc": 0.9166666666666666,
+     "by_kind": {
+      "eval": [
+       14,
+       16
+      ],
+      "tests": [
+       14,
+       16
+      ],
+      "typecheck": [
+       16,
+       16
+      ]
+     },
+     "ci": [
+      0.8333333333333334,
+      0.9791666666666666
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.08333333333333337,
+      0.125
+     ],
+     "p50": 0.3365,
+     "per1k": 0.010892083333333335,
+     "tied": true
+    },
+    "togethercomputer/tev1-4b-experimental": {
+     "acc": 0.6458333333333334,
+     "bal_acc": 0.6458333333333333,
+     "by_kind": {
+      "eval": [
+       11,
+       16
+      ],
+      "tests": [
+       8,
+       16
+      ],
+      "typecheck": [
+       12,
+       16
+      ]
+     },
+     "ci": [
+      0.5,
+      0.7708333333333334
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.16666666666666663,
+      0.4375
+     ],
+     "p50": 0.269,
+     "per1k": 0.023041375,
+     "tied": false
+    },
+    "typesafe/jev-1.13": {
+     "acc": 0.8125,
+     "bal_acc": 0.8125,
+     "by_kind": {
+      "eval": [
+       13,
+       16
+      ],
+      "tests": [
+       14,
+       16
+      ],
+      "typecheck": [
+       12,
+       16
+      ]
+     },
+     "ci": [
+      0.6875,
+      0.9166666666666666
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.27083333333333337
+     ],
+     "p50": 0.2795,
+     "per1k": 0.030751,
+     "tied": true
+    },
+    "upstage/solar-decide": {
+     "acc": 0.625,
+     "bal_acc": 0.625,
+     "by_kind": {
+      "eval": [
+       11,
+       16
+      ],
+      "tests": [
+       10,
+       16
+      ],
+      "typecheck": [
+       9,
+       16
+      ]
+     },
+     "ci": [
+      0.4791666666666667,
+      0.75
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.14583333333333337,
+      0.47916666666666663
+     ],
+     "p50": 9.478,
+     "per1k": 0.04230729166666666,
+     "tied": false
+    },
+    "upstage/solar-decide-flash": {
+     "acc": 0.6666666666666666,
+     "bal_acc": 0.6666666666666666,
+     "by_kind": {
+      "eval": [
+       13,
+       16
+      ],
+      "tests": [
+       9,
+       16
+      ],
+      "typecheck": [
+       10,
+       16
+      ]
+     },
+     "ci": [
+      0.5208333333333334,
+      0.7916666666666666
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.10416666666666663,
+      0.4375
+     ],
+     "p50": 0.659,
+     "per1k": 0.04230729166666666,
+     "tied": false
+    }
+   },
+   "n": 48,
+   "recommended": "liquid/d1",
+   "tied": [
+    "anthropic/claude-haiku-5.5",
+    "perplexity/pplx-decider-v1.1-27b",
+    "cloudflare/clef",
+    "liquid/d1",
+    "inception/mercury-decide",
+    "typesafe/jev-1.13"
+   ]
+  },
+  "gate": {
+   "labels": {
+    "Critical": 8,
+    "Read": 8,
+    "Routine": 8,
+    "Sensitive": 8
+   },
+   "leader": "microsoft/microsoft-decision-1",
+   "majority": 0.25,
+   "models": {
+    "anthropic/claude-haiku-5.5": {
+     "acc": 0.71875,
+     "bal_acc": 0.71875,
+     "ci": [
+      0.5625,
+      0.875
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.0625,
+      0.15625
+     ],
+     "p50": 1.62,
+     "per1k": 0.15044375000000001,
+     "tied": true,
+     "unsafe": 5
+    },
+    "cloudflare/clef": {
+     "acc": 0.625,
+     "bal_acc": 0.625,
+     "ci": [
+      0.4375,
+      0.78125
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.03125,
+      0.25
+     ],
+     "p50": 0.455,
+     "per1k": 0.0786,
+     "tied": false,
+     "unsafe": 7
+    },
+    "cloudflare/clef-flash": {
+     "acc": 0.65625,
+     "bal_acc": 0.65625,
+     "ci": [
+      0.46875,
+      0.8125
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.21875
+     ],
+     "p50": 0.3895,
+     "per1k": 0.012445,
+     "tied": true,
+     "unsafe": 7
+    },
+    "cloudflare/clef-omni": {
+     "acc": 0.6875,
+     "bal_acc": 0.6875,
+     "ci": [
+      0.53125,
+      0.84375
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.0625,
+      0.1875
+     ],
+     "p50": 0.261,
+     "per1k": 0.048674999999999996,
+     "tied": true,
+     "unsafe": 7
+    },
+    "inception/mercury-decide": {
+     "acc": 0.71875,
+     "bal_acc": 0.71875,
+     "ci": [
+      0.5625,
+      0.875
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.0625,
+      0.15625
+     ],
+     "p50": 0.34450000000000003,
+     "per1k": 0.0052387499999999995,
+     "tied": true,
+     "unsafe": 4
+    },
+    "jaredpalmer/kev-4b": {
+     "acc": 0.53125,
+     "bal_acc": 0.53125,
+     "ci": [
+      0.34375,
+      0.6875
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0625,
+      0.40625
+     ],
+     "p50": 0.569,
+     "per1k": 0.0085036875,
+     "tied": false,
+     "unsafe": 7
+    },
+    "liquid/d1": {
+     "acc": 0.625,
+     "bal_acc": 0.625,
+     "ci": [
+      0.4375,
+      0.78125
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.03125,
+      0.25
+     ],
+     "p50": 0.2625,
+     "per1k": 0.00937125,
+     "tied": false,
+     "unsafe": 7
+    },
+    "microsoft/microsoft-decision-1": {
+     "acc": 0.75,
+     "bal_acc": 0.75,
+     "ci": [
+      0.59375,
+      0.90625
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.0
+     ],
+     "p50": 0.308,
+     "per1k": 0.008841,
+     "tied": true,
+     "unsafe": 4
+    },
+    "nace-ai/drex-v1.5": {
+     "acc": 0.6875,
+     "bal_acc": 0.6875,
+     "ci": [
+      0.53125,
+      0.84375
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.0625,
+      0.1875
+     ],
+     "p50": 0.3505,
+     "per1k": 0.00809875,
+     "tied": true,
+     "unsafe": 7
+    },
+    "openai/gpt-6-luna-decisions": {
+     "acc": 0.25,
+     "bal_acc": 0.25,
+     "ci": [
+      0.09375,
+      0.40625
+     ],
+     "err": 1,
+     "gap_ci": [
+      0.28125,
+      0.71875
+     ],
+     "p50": 0.283,
+     "per1k": 0.028196875,
+     "tied": false,
+     "unsafe": 4
+    },
+    "perplexity/pplx-decider-v1.1-27b": {
+     "acc": 0.5,
+     "bal_acc": 0.5,
+     "ci": [
+      0.34375,
+      0.6875
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.03125,
+      0.43828124999999574
+     ],
+     "p50": 0.3125,
+     "per1k": 0.005469374999999999,
+     "tied": false,
+     "unsafe": 14
+    },
+    "togethercomputer/tev1-4b-experimental": {
+     "acc": 0.40625,
+     "bal_acc": 0.40625,
+     "ci": [
+      0.25,
+      0.5625
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.15625,
+      0.5320312499999957
+     ],
+     "p50": 0.28600000000000003,
+     "per1k": 0.011949,
+     "tied": false,
+     "unsafe": 9
+    },
+    "typesafe/jev-1.13": {
+     "acc": 0.65625,
+     "bal_acc": 0.65625,
+     "ci": [
+      0.46875,
+      0.8125
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.03125,
+      0.25
+     ],
+     "p50": 0.272,
+     "per1k": 0.0219121875,
+     "tied": true,
+     "unsafe": 6
+    },
+    "upstage/solar-decide": {
+     "acc": 0.71875,
+     "bal_acc": 0.71875,
+     "ci": [
+      0.5625,
+      0.875
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.0625,
+      0.15625
+     ],
+     "p50": 10.0165,
+     "per1k": 0.0258875,
+     "tied": true,
+     "unsafe": 4
+    },
+    "upstage/solar-decide-flash": {
+     "acc": 0.3125,
+     "bal_acc": 0.3125,
+     "ci": [
+      0.15625,
+      0.46875
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.1875,
+      0.65625
+     ],
+     "p50": 0.6415,
+     "per1k": 0.0258875,
+     "tied": false,
+     "unsafe": 4
+    }
+   },
+   "n": 32,
+   "recommended": "microsoft/microsoft-decision-1",
+   "tied": [
+    "microsoft/microsoft-decision-1",
+    "inception/mercury-decide",
+    "anthropic/claude-haiku-5.5",
+    "upstage/solar-decide",
+    "cloudflare/clef-omni",
+    "nace-ai/drex-v1.5",
+    "typesafe/jev-1.13",
+    "cloudflare/clef-flash"
+   ]
+  },
+  "improve": {
+   "labels": {
+    "bool-simplify": 8,
+    "compare-fold": 8,
+    "constant-fold": 8,
+    "fold-arith-identities": 8,
+    "redundant-branch-fold": 8
+   },
+   "leader": "cloudflare/clef",
+   "majority": 0.2,
+   "models": {
+    "anthropic/claude-haiku-5.5": {
+     "acc": 1,
+     "bal_acc": 1,
+     "ci": [
+      1.0,
+      1.0
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.0
+     ],
+     "p50": 2.135,
+     "per1k": 0.31645,
+     "tied": true
+    },
+    "cloudflare/clef": {
+     "acc": 1,
+     "bal_acc": 1,
+     "ci": [
+      1.0,
+      1.0
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.0
+     ],
+     "p50": 0.4315,
+     "per1k": 0.236682,
+     "tied": true
+    },
+    "cloudflare/clef-flash": {
+     "acc": 0.825,
+     "bal_acc": 0.825,
+     "ci": [
+      0.7,
+      0.925
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.07499999999999996,
+      0.30000000000000004
+     ],
+     "p50": 0.476,
+     "per1k": 0.03747465,
+     "tied": false
+    },
+    "cloudflare/clef-omni": {
+     "acc": 0.8,
+     "bal_acc": 0.8,
+     "ci": [
+      0.675,
+      0.925
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.07499999999999996,
+      0.32499999999999996
+     ],
+     "p50": 0.28049999999999997,
+     "per1k": 0.14748375,
+     "tied": false
+    },
+    "inception/mercury-decide": {
+     "acc": 1,
+     "bal_acc": 1,
+     "ci": [
+      1.0,
+      1.0
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.0
+     ],
+     "p50": 0.5015000000000001,
+     "per1k": 0.018037,
+     "tied": true
+    },
+    "jaredpalmer/kev-4b": {
+     "acc": 0.675,
+     "bal_acc": 0.675,
+     "ci": [
+      0.525,
+      0.825
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.17500000000000004,
+      0.475
+     ],
+     "p50": 0.675,
+     "per1k": 0.03474555,
+     "tied": false
+    },
+    "liquid/d1": {
+     "acc": 0.95,
+     "bal_acc": 0.95,
+     "ci": [
+      0.875,
+      1.0
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.125
+     ],
+     "p50": 0.257,
+     "per1k": 0.034043000000000004,
+     "tied": true
+    },
+    "microsoft/microsoft-decision-1": {
+     "acc": 0.925,
+     "bal_acc": 0.925,
+     "ci": [
+      0.825,
+      1.0
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.17500000000000004
+     ],
+     "p50": 0.351,
+     "per1k": 0.03591735,
+     "tied": true
+    },
+    "nace-ai/drex-v1.5": {
+     "acc": 0.65,
+     "bal_acc": 0.65,
+     "ci": [
+      0.5,
+      0.8
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.19999999999999996,
+      0.5
+     ],
+     "p50": 0.33,
+     "per1k": 0.033091,
+     "tied": false
+    },
+    "openai/gpt-6-luna-decisions": {
+     "acc": 0.8,
+     "bal_acc": 0.8,
+     "ci": [
+      0.675,
+      0.925
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.07499999999999996,
+      0.32499999999999996
+     ],
+     "p50": 0.2745,
+     "per1k": 0.0917625,
+     "tied": false
+    },
+    "perplexity/pplx-decider-v1.1-27b": {
+     "acc": 0.975,
+     "bal_acc": 0.975,
+     "ci": [
+      0.925,
+      1.0
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.07499999999999996
+     ],
+     "p50": 0.3705,
+     "per1k": 0.018349499999999998,
+     "tied": true
+    },
+    "togethercomputer/tev1-4b-experimental": {
+     "acc": 0.8,
+     "bal_acc": 0.8,
+     "ci": [
+      0.675,
+      0.925
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.07499999999999996,
+      0.32499999999999996
+     ],
+     "p50": 0.2715,
+     "per1k": 0.039445350000000004,
+     "tied": false
+    },
+    "typesafe/jev-1.13": {
+     "acc": 0.85,
+     "bal_acc": 0.85,
+     "ci": [
+      0.725,
+      0.95
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.050000000000000044,
+      0.275
+     ],
+     "p50": 0.267,
+     "per1k": 0.04710195,
+     "tied": false
+    },
+    "upstage/solar-decide": {
+     "acc": 0.925,
+     "bal_acc": 0.925,
+     "ci": [
+      0.825,
+      1.0
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.17500000000000004
+     ],
+     "p50": 10.176,
+     "per1k": 0.0586275,
+     "tied": true
+    },
+    "upstage/solar-decide-flash": {
+     "acc": 0.425,
+     "bal_acc": 0.425,
+     "ci": [
+      0.275,
+      0.575
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.42500000000000004,
+      0.725
+     ],
+     "p50": 0.658,
+     "per1k": 0.0586275,
+     "tied": false
+    }
+   },
+   "n": 40,
+   "recommended": "liquid/d1",
+   "tied": [
+    "cloudflare/clef",
+    "inception/mercury-decide",
+    "anthropic/claude-haiku-5.5",
+    "perplexity/pplx-decider-v1.1-27b",
+    "liquid/d1",
+    "microsoft/microsoft-decision-1",
+    "upstage/solar-decide"
+   ]
+  },
+  "loc": {
+   "labels": {
+    "action": 1,
+    "agent_new": 1,
+    "agent_step": 1,
+    "audit_any_denied": 1,
+    "bandit_mean": 1,
+    "bandit_update": 2,
+    "belief_entropy": 1,
+    "belief_new": 1,
+    "best_value": 2,
+    "budget_new": 1,
+    "budget_spend": 1,
+    "categorical_new": 1,
+    "causal_effect_per_unit": 1,
+    "cfs_count_improving": 1,
+    "cfs_empty": 1,
+    "civil_from_days": 2,
+    "co_happens_before": 1,
+    "coord_goal_propose": 2,
+    "ef_has": 1,
+    "gate_pass": 2,
+    "gaussian_new": 1,
+    "gcounter_increment": 1,
+    "gcounter_merge": 2,
+    "gcounter_new": 1,
+    "goal": 1,
+    "has_applied": 1,
+    "has_safe_plan": 1,
+    "new_llm": 1,
+    "new_supervisor": 3,
+    "observational_effect_per_unit": 1,
+    "observe": 1,
+    "on_frontier": 1,
+    "path_normalize": 1,
+    "path_parts": 2,
+    "quorum_new": 1,
+    "replicated_converge": 2,
+    "replicated_new": 2,
+    "revenue_of": 1,
+    "run_agent": 1,
+    "set_has": 1,
+    "vc_happens_before": 1,
+    "vcl_before": 2,
+    "vcl_tick": 2,
+    "verify_principal": 1
+   },
+   "leader": "anthropic/claude-haiku-5.5",
+   "majority": 0.05263157894736842,
+   "models": {
+    "anthropic/claude-haiku-5.5": {
+     "acc": 0.9649122807017544,
+     "bal_acc": 0.9772727272727273,
+     "ci": [
+      0.9122807017543859,
+      1.0
+     ],
+     "err": 1,
+     "gap_ci": [
+      0.0,
+      0.0
+     ],
+     "p50": 3.075,
+     "per1k": 0.5462824561403509,
+     "tied": true
+    },
+    "cloudflare/clef": {
+     "acc": 0.9122807017543859,
+     "bal_acc": 0.9204545454545454,
+     "ci": [
+      0.8245614035087719,
+      0.9824561403508771
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.03508771929824561,
+      0.14035087719298245
+     ],
+     "p50": 0.596,
+     "per1k": 0.5066315789473684,
+     "tied": true
+    },
+    "cloudflare/clef-flash": {
+     "acc": 0.7719298245614035,
+     "bal_acc": 0.7840909090909091,
+     "ci": [
+      0.6491228070175439,
+      0.8771929824561403
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.07017543859649122,
+      0.3157894736842105
+     ],
+     "p50": 0.651,
+     "per1k": 0.08021666666666667,
+     "tied": false
+    },
+    "cloudflare/clef-omni": {
+     "acc": 0.8596491228070176,
+     "bal_acc": 0.8863636363636364,
+     "ci": [
+      0.7719298245614035,
+      0.9473684210526315
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.21052631578947367
+     ],
+     "p50": 0.297,
+     "per1k": 0.3167657894736842,
+     "tied": true
+    },
+    "inception/mercury-decide": {
+     "acc": 0.9298245614035088,
+     "bal_acc": 0.9431818181818182,
+     "ci": [
+      0.8596491228070176,
+      0.9824561403508771
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.03508771929824561,
+      0.10526315789473684
+     ],
+     "p50": 0.47,
+     "per1k": 0.03998526315789474,
+     "tied": true
+    },
+    "jaredpalmer/kev-4b": {
+     "acc": 0.5087719298245614,
+     "bal_acc": 0.5568181818181818,
+     "ci": [
+      0.38596491228070173,
+      0.631578947368421
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.33333333333333326,
+      0.5964912280701754
+     ],
+     "p50": 0.642,
+     "per1k": 0.0807321052631579,
+     "tied": false
+    },
+    "liquid/d1": {
+     "acc": 0.8771929824561403,
+     "bal_acc": 0.8977272727272727,
+     "ci": [
+      0.7894736842105263,
+      0.9473684210526315
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.01754385964912286,
+      0.17543859649122806
+     ],
+     "p50": 0.273,
+     "per1k": 0.08118877192982456,
+     "tied": false
+    },
+    "microsoft/microsoft-decision-1": {
+     "acc": 0.9298245614035088,
+     "bal_acc": 0.9431818181818182,
+     "ci": [
+      0.8596491228070176,
+      0.9824561403508771
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.03508771929824561,
+      0.10526315789473684
+     ],
+     "p50": 0.357,
+     "per1k": 0.0831938947368421,
+     "tied": true
+    },
+    "nace-ai/drex-v1.5": {
+     "acc": 0.7719298245614035,
+     "bal_acc": 0.7878787878787878,
+     "ci": [
+      0.6666666666666666,
+      0.8771929824561403
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.07017543859649122,
+      0.3157894736842105
+     ],
+     "p50": 0.421,
+     "per1k": 0.0768877192982456,
+     "tied": false
+    },
+    "openai/gpt-6-luna-decisions": {
+     "acc": 0.8771929824561403,
+     "bal_acc": 0.8977272727272727,
+     "ci": [
+      0.7894736842105263,
+      0.9473684210526315
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.17543859649122806
+     ],
+     "p50": 0.283,
+     "per1k": 0.20065438596491225,
+     "tied": true
+    },
+    "perplexity/pplx-decider-v1.1-27b": {
+     "acc": 0.47368421052631576,
+     "bal_acc": 0.4962121212121212,
+     "ci": [
+      0.3333333333333333,
+      0.5964912280701754
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.3508771929824561,
+      0.6491228070175439
+     ],
+     "p50": 0.372,
+     "per1k": 0.040946666666666666,
+     "tied": false
+    },
+    "togethercomputer/tev1-4b-experimental": {
+     "acc": 0.6666666666666666,
+     "bal_acc": 0.7083333333333334,
+     "ci": [
+      0.543859649122807,
+      0.7894736842105263
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.1578947368421053,
+      0.4385964912280702
+     ],
+     "p50": 0.307,
+     "per1k": 0.08652073684210525,
+     "tied": false
+    },
+    "typesafe/jev-1.13": {
+     "acc": 0.9122807017543859,
+     "bal_acc": 0.9318181818181818,
+     "ci": [
+      0.8421052631578947,
+      0.9824561403508771
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.12280701754385959
+     ],
+     "p50": 0.287,
+     "per1k": 0.09640252631578948,
+     "tied": true
+    },
+    "upstage/solar-decide": {
+     "acc": 0.8421052631578947,
+     "bal_acc": 0.8522727272727273,
+     "ci": [
+      0.7368421052631579,
+      0.9298245614035088
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.03508771929824561,
+      0.22807017543859653
+     ],
+     "p50": 9.743,
+     "per1k": 0.11480526315789473,
+     "tied": false
+    },
+    "upstage/solar-decide-flash": {
+     "acc": 0.5263157894736842,
+     "bal_acc": 0.5681818181818182,
+     "ci": [
+      0.38596491228070173,
+      0.6666666666666666
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.3157894736842105,
+      0.5789473684210527
+     ],
+     "p50": 0.759,
+     "per1k": 0.11480526315789473,
+     "tied": false
+    }
+   },
+   "n": 57,
+   "recommended": "openai/gpt-6-luna-decisions",
+   "tied": [
+    "anthropic/claude-haiku-5.5",
+    "microsoft/microsoft-decision-1",
+    "inception/mercury-decide",
+    "typesafe/jev-1.13",
+    "cloudflare/clef",
+    "openai/gpt-6-luna-decisions",
+    "cloudflare/clef-omni"
+   ]
+  },
+  "repair": {
+   "labels": {
+    "False": 18,
+    "True": 18
+   },
+   "leader": "inception/mercury-decide",
+   "majority": 0.5,
+   "models": {
+    "anthropic/claude-haiku-5.5": {
+     "acc": 0.9722222222222222,
+     "bal_acc": 0.9722222222222222,
+     "ci": [
+      0.9166666666666666,
+      1.0
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.08333333333333337,
+      0.08333333333333337
+     ],
+     "p50": 2.676,
+     "per1k": 0.4741361111111112,
+     "tied": true,
+     "unsafe": 0
+    },
+    "cloudflare/clef": {
+     "acc": 0.9722222222222222,
+     "bal_acc": 0.9722222222222222,
+     "ci": [
+      0.9166666666666666,
+      1.0
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.0
+     ],
+     "p50": 0.546,
+     "per1k": 0.4006733333333333,
+     "tied": true,
+     "unsafe": 0
+    },
+    "cloudflare/clef-flash": {
+     "acc": 0.6944444444444444,
+     "bal_acc": 0.6944444444444444,
+     "ci": [
+      0.5555555555555556,
+      0.8333333333333334
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.13888888888888884,
+      0.41666666666666663
+     ],
+     "p50": 0.6735,
+     "per1k": 0.06343994444444444,
+     "tied": false,
+     "unsafe": 1
+    },
+    "cloudflare/clef-omni": {
+     "acc": 0.6388888888888888,
+     "bal_acc": 0.6388888888888888,
+     "ci": [
+      0.4722222222222222,
+      0.8055555555555556
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.19444444444444442,
+      0.5
+     ],
+     "p50": 0.3065,
+     "per1k": 0.25001666666666666,
+     "tied": false,
+     "unsafe": 0
+    },
+    "inception/mercury-decide": {
+     "acc": 0.9722222222222222,
+     "bal_acc": 0.9722222222222222,
+     "ci": [
+      0.9166666666666666,
+      1.0
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.0
+     ],
+     "p50": 0.445,
+     "per1k": 0.03152722222222223,
+     "tied": true,
+     "unsafe": 0
+    },
+    "jaredpalmer/kev-4b": {
+     "acc": 0.7222222222222222,
+     "bal_acc": 0.7222222222222222,
+     "ci": [
+      0.5833333333333334,
+      0.8611111111111112
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.08333333333333337,
+      0.41666666666666663
+     ],
+     "p50": 0.6565000000000001,
+     "per1k": 0.06373266666666666,
+     "tied": false,
+     "unsafe": 1
+    },
+    "liquid/d1": {
+     "acc": 0.9166666666666666,
+     "bal_acc": 0.9166666666666667,
+     "ci": [
+      0.8055555555555556,
+      1.0
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.13888888888888884
+     ],
+     "p50": 0.2715,
+     "per1k": 0.06563333333333334,
+     "tied": true,
+     "unsafe": 0
+    },
+    "microsoft/microsoft-decision-1": {
+     "acc": 0.8333333333333334,
+     "bal_acc": 0.8333333333333333,
+     "ci": [
+      0.7215277777777778,
+      0.9444444444444444
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.2777777777777778
+     ],
+     "p50": 0.362,
+     "per1k": 0.06616983333333333,
+     "tied": true,
+     "unsafe": 1
+    },
+    "nace-ai/drex-v1.5": {
+     "acc": 0.6666666666666666,
+     "bal_acc": 0.6666666666666666,
+     "ci": [
+      0.5,
+      0.8055555555555556
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.16666666666666663,
+      0.4722222222222222
+     ],
+     "p50": 0.385,
+     "per1k": 0.060697777777777774,
+     "tied": false,
+     "unsafe": 0
+    },
+    "openai/gpt-6-luna-decisions": {
+     "acc": 0.8333333333333334,
+     "bal_acc": 0.8333333333333333,
+     "ci": [
+      0.6944444444444444,
+      0.9444444444444444
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.02777777777777779,
+      0.25
+     ],
+     "p50": 0.276,
+     "per1k": 0.16753055555555557,
+     "tied": false,
+     "unsafe": 0
+    },
+    "perplexity/pplx-decider-v1.1-27b": {
+     "acc": 0.4444444444444444,
+     "bal_acc": 0.4444444444444444,
+     "ci": [
+      0.2777777777777778,
+      0.6111111111111112
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.36111111111111105,
+      0.6944444444444444
+     ],
+     "p50": 0.3645,
+     "per1k": 0.03269388888888888,
+     "tied": false,
+     "unsafe": 15
+    },
+    "togethercomputer/tev1-4b-experimental": {
+     "acc": 0.7222222222222222,
+     "bal_acc": 0.7222222222222222,
+     "ci": [
+      0.5555555555555556,
+      0.8611111111111112
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.08333333333333337,
+      0.41666666666666663
+     ],
+     "p50": 0.3025,
+     "per1k": 0.06852183333333334,
+     "tied": false,
+     "unsafe": 5
+    },
+    "typesafe/jev-1.13": {
+     "acc": 0.8888888888888888,
+     "bal_acc": 0.8888888888888888,
+     "ci": [
+      0.7777777777777778,
+      0.9722222222222222
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.02777777777777779,
+      0.19444444444444442
+     ],
+     "p50": 0.279,
+     "per1k": 0.077364,
+     "tied": true,
+     "unsafe": 1
+    },
+    "upstage/solar-decide": {
+     "acc": 0.75,
+     "bal_acc": 0.75,
+     "ci": [
+      0.6111111111111112,
+      0.8888888888888888
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.08333333333333337,
+      0.36111111111111116
+     ],
+     "p50": 0.948,
+     "per1k": 0.09600416666666667,
+     "tied": false,
+     "unsafe": 0
+    },
+    "upstage/solar-decide-flash": {
+     "acc": 0.5833333333333334,
+     "bal_acc": 0.5833333333333334,
+     "ci": [
+      0.4166666666666667,
+      0.75
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.2222222222222222,
+      0.5555555555555556
+     ],
+     "p50": 0.704,
+     "per1k": 0.09600416666666667,
+     "tied": false,
+     "unsafe": 0
+    }
+   },
+   "n": 36,
+   "recommended": "liquid/d1",
+   "tied": [
+    "inception/mercury-decide",
+    "cloudflare/clef",
+    "anthropic/claude-haiku-5.5",
+    "liquid/d1",
+    "typesafe/jev-1.13",
+    "microsoft/microsoft-decision-1"
+   ]
+  },
+  "risk": {
+   "labels": {
+    "critical": 15,
+    "read": 15,
+    "routine": 1,
+    "sensitive": 15
+   },
+   "leader": "perplexity/pplx-decider-v1.1-27b",
+   "majority": 0.32608695652173914,
+   "models": {
+    "anthropic/claude-haiku-5.5": {
+     "acc": 0.782608695652174,
+     "bal_acc": 0.6,
+     "by_kind": {
+      "base64": [
+       9,
+       11
+      ],
+      "hex-printf": [
+       10,
+       14
+      ],
+      "sh -c": [
+       17,
+       21
+      ]
+     },
+     "ci": [
+      0.6521739130434783,
+      0.8913043478260869
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.08695652173913049,
+      0.17391304347826086
+     ],
+     "p50": 2.2795,
+     "per1k": 0.20084782608695653,
+     "tied": true,
+     "unsafe": 7
+    },
+    "cloudflare/clef": {
+     "acc": 0.717391304347826,
+     "bal_acc": 0.55,
+     "by_kind": {
+      "base64": [
+       7,
+       11
+      ],
+      "hex-printf": [
+       8,
+       14
+      ],
+      "sh -c": [
+       18,
+       21
+      ]
+     },
+     "ci": [
+      0.5869565217391305,
+      0.8478260869565217
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.021739130434782594,
+      0.23913043478260876
+     ],
+     "p50": 0.509,
+     "per1k": 0.09465913043478262,
+     "tied": true,
+     "unsafe": 8
+    },
+    "cloudflare/clef-flash": {
+     "acc": 0.5869565217391305,
+     "bal_acc": 0.45,
+     "by_kind": {
+      "base64": [
+       5,
+       11
+      ],
+      "hex-printf": [
+       4,
+       14
+      ],
+      "sh -c": [
+       18,
+       21
+      ]
+     },
+     "ci": [
+      0.45652173913043476,
+      0.717391304347826
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0652173913043479,
+      0.41304347826086957
+     ],
+     "p50": 0.39,
+     "per1k": 0.014987695652173916,
+     "tied": false,
+     "unsafe": 18
+    },
+    "cloudflare/clef-omni": {
+     "acc": 0.5652173913043478,
+     "bal_acc": 0.43333333333333335,
+     "by_kind": {
+      "base64": [
+       4,
+       11
+      ],
+      "hex-printf": [
+       5,
+       14
+      ],
+      "sh -c": [
+       17,
+       21
+      ]
+     },
+     "ci": [
+      0.43478260869565216,
+      0.6956521739130435
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.08695652173913038,
+      0.43478260869565216
+     ],
+     "p50": 0.285,
+     "per1k": 0.05871521739130434,
+     "tied": false,
+     "unsafe": 19
+    },
+    "inception/mercury-decide": {
+     "acc": 0.6956521739130435,
+     "bal_acc": 0.5333333333333333,
+     "by_kind": {
+      "base64": [
+       8,
+       11
+      ],
+      "hex-printf": [
+       8,
+       14
+      ],
+      "sh -c": [
+       16,
+       21
+      ]
+     },
+     "ci": [
+      0.5434782608695652,
+      0.8260869565217391
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.26086956521739124
+     ],
+     "p50": 0.338,
+     "per1k": 0.0065139130434782614,
+     "tied": true,
+     "unsafe": 10
+    },
+    "jaredpalmer/kev-4b": {
+     "acc": 0.5217391304347826,
+     "bal_acc": 0.4,
+     "by_kind": {
+      "base64": [
+       5,
+       11
+      ],
+      "hex-printf": [
+       2,
+       14
+      ],
+      "sh -c": [
+       17,
+       21
+      ]
+     },
+     "ci": [
+      0.3695652173913043,
+      0.6521739130434783
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.15217391304347827,
+      0.45652173913043476
+     ],
+     "p50": 0.704,
+     "per1k": 0.010743782608695652,
+     "tied": false,
+     "unsafe": 20
+    },
+    "liquid/d1": {
+     "acc": 0.6304347826086957,
+     "bal_acc": 0.48333333333333334,
+     "by_kind": {
+      "base64": [
+       4,
+       11
+      ],
+      "hex-printf": [
+       7,
+       14
+      ],
+      "sh -c": [
+       18,
+       21
+      ]
+     },
+     "ci": [
+      0.4782608695652174,
+      0.7608695652173914
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.06521739130434778,
+      0.3260869565217392
+     ],
+     "p50": 0.2765,
+     "per1k": 0.011610434782608696,
+     "tied": false,
+     "unsafe": 15
+    },
+    "microsoft/microsoft-decision-1": {
+     "acc": 0.717391304347826,
+     "bal_acc": 0.55,
+     "by_kind": {
+      "base64": [
+       9,
+       11
+      ],
+      "hex-printf": [
+       8,
+       14
+      ],
+      "sh -c": [
+       16,
+       21
+      ]
+     },
+     "ci": [
+      0.5869565217391305,
+      0.8478260869565217
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.04347826086956519,
+      0.26086956521739124
+     ],
+     "p50": 0.3145,
+     "per1k": 0.011525347826086958,
+     "tied": true,
+     "unsafe": 9
+    },
+    "nace-ai/drex-v1.5": {
+     "acc": 0.41304347826086957,
+     "bal_acc": 0.31666666666666665,
+     "by_kind": {
+      "base64": [
+       0,
+       11
+      ],
+      "hex-printf": [
+       1,
+       14
+      ],
+      "sh -c": [
+       18,
+       21
+      ]
+     },
+     "ci": [
+      0.2608695652173913,
+      0.5434782608695652
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.2608695652173913,
+      0.5652173913043479
+     ],
+     "p50": 0.3575,
+     "per1k": 0.010232173913043478,
+     "tied": false,
+     "unsafe": 27
+    },
+    "openai/gpt-6-luna-decisions": {
+     "acc": 0.6739130434782609,
+     "bal_acc": 0.5166666666666667,
+     "by_kind": {
+      "base64": [
+       6,
+       11
+      ],
+      "hex-printf": [
+       8,
+       14
+      ],
+      "sh -c": [
+       17,
+       21
+      ]
+     },
+     "ci": [
+      0.5217391304347826,
+      0.8043478260869565
+     ],
+     "err": 1,
+     "gap_ci": [
+      0.0,
+      0.3048913043478232
+     ],
+     "p50": 0.276,
+     "per1k": 0.034550000000000004,
+     "tied": true,
+     "unsafe": 12
+    },
+    "perplexity/pplx-decider-v1.1-27b": {
+     "acc": 0.8260869565217391,
+     "bal_acc": 0.6333333333333333,
+     "by_kind": {
+      "base64": [
+       10,
+       11
+      ],
+      "hex-printf": [
+       9,
+       14
+      ],
+      "sh -c": [
+       19,
+       21
+      ]
+     },
+     "ci": [
+      0.717391304347826,
+      0.9135869565217362
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.0
+     ],
+     "p50": 0.3365,
+     "per1k": 0.0067013043478260865,
+     "tied": true,
+     "unsafe": 7
+    },
+    "togethercomputer/tev1-4b-experimental": {
+     "acc": 0.6086956521739131,
+     "bal_acc": 0.4666666666666667,
+     "by_kind": {
+      "base64": [
+       5,
+       11
+      ],
+      "hex-printf": [
+       5,
+       14
+      ],
+      "sh -c": [
+       18,
+       21
+      ]
+     },
+     "ci": [
+      0.45652173913043476,
+      0.7391304347826086
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.04347826086956519,
+      0.3913043478260869
+     ],
+     "p50": 0.28300000000000003,
+     "per1k": 0.014591347826086955,
+     "tied": false,
+     "unsafe": 18
+    },
+    "typesafe/jev-1.13": {
+     "acc": 0.717391304347826,
+     "bal_acc": 0.55,
+     "by_kind": {
+      "base64": [
+       7,
+       11
+      ],
+      "hex-printf": [
+       7,
+       14
+      ],
+      "sh -c": [
+       19,
+       21
+      ]
+     },
+     "ci": [
+      0.5869565217391305,
+      0.8260869565217391
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.021739130434782594,
+      0.23913043478260865
+     ],
+     "p50": 0.289,
+     "per1k": 0.02438373913043478,
+     "tied": true,
+     "unsafe": 11
+    },
+    "upstage/solar-decide": {
+     "acc": 0.6956521739130435,
+     "bal_acc": 0.5333333333333333,
+     "by_kind": {
+      "base64": [
+       6,
+       11
+      ],
+      "hex-printf": [
+       9,
+       14
+      ],
+      "sh -c": [
+       17,
+       21
+      ]
+     },
+     "ci": [
+      0.5652173913043478,
+      0.8260869565217391
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.26086956521739124
+     ],
+     "p50": 0.743,
+     "per1k": 0.029106521739130434,
+     "tied": true,
+     "unsafe": 2
+    },
+    "upstage/solar-decide-flash": {
+     "acc": 0.3695652173913043,
+     "bal_acc": 0.2833333333333333,
+     "by_kind": {
+      "base64": [
+       6,
+       11
+      ],
+      "hex-printf": [
+       9,
+       14
+      ],
+      "sh -c": [
+       2,
+       21
+      ]
+     },
+     "ci": [
+      0.2391304347826087,
+      0.5217391304347826
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.2826086956521739,
+      0.6304347826086956
+     ],
+     "p50": 0.62,
+     "per1k": 0.029106521739130434,
+     "tied": false,
+     "unsafe": 0
+    }
+   },
+   "n": 46,
+   "recommended": "upstage/solar-decide",
+   "tied": [
+    "perplexity/pplx-decider-v1.1-27b",
+    "anthropic/claude-haiku-5.5",
+    "typesafe/jev-1.13",
+    "microsoft/microsoft-decision-1",
+    "cloudflare/clef",
+    "inception/mercury-decide",
+    "upstage/solar-decide",
+    "openai/gpt-6-luna-decisions"
+   ]
+  },
+  "route": {
+   "labels": {
+    "cheap_first_try": 21,
+    "escalate": 38
+   },
+   "leader": "anthropic/claude-haiku-5.5",
+   "majority": 0.6440677966101694,
+   "models": {
+    "anthropic/claude-haiku-5.5": {
+     "acc": 0.9322033898305084,
+     "bal_acc": 0.9154135338345865,
+     "ci": [
+      0.864406779661017,
+      0.9830508474576272
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.0
+     ],
+     "p50": 2.537,
+     "per1k": 0.5335338983050848,
+     "tied": true
+    },
+    "cloudflare/clef": {
+     "acc": 0.7288135593220338,
+     "bal_acc": 0.6190476190476191,
+     "ci": [
+      0.6101694915254238,
+      0.8305084745762712
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0847457627118644,
+      0.3220338983050848
+     ],
+     "p50": 0.54,
+     "per1k": 0.49082033898305083,
+     "tied": false
+    },
+    "cloudflare/clef-flash": {
+     "acc": 0.576271186440678,
+     "bal_acc": 0.5325814536340852,
+     "ci": [
+      0.4406779661016949,
+      0.6949152542372882
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.22033898305084754,
+      0.4915254237288136
+     ],
+     "p50": 0.64,
+     "per1k": 0.07771322033898306,
+     "tied": false
+    },
+    "cloudflare/clef-omni": {
+     "acc": 0.5932203389830508,
+     "bal_acc": 0.4605263157894737,
+     "ci": [
+      0.4576271186440678,
+      0.711864406779661
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.22033898305084743,
+      0.4745762711864407
+     ],
+     "p50": 0.306,
+     "per1k": 0.3070169491525424,
+     "tied": false
+    },
+    "inception/mercury-decide": {
+     "acc": 0.7627118644067796,
+     "bal_acc": 0.7092731829573935,
+     "ci": [
+      0.6610169491525424,
+      0.864406779661017
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.05084745762711862,
+      0.27161016949152317
+     ],
+     "p50": 0.466,
+     "per1k": 0.03908474576271186,
+     "tied": false
+    },
+    "jaredpalmer/kev-4b": {
+     "acc": 0.3559322033898305,
+     "bal_acc": 0.4573934837092732,
+     "ci": [
+      0.23728813559322035,
+      0.4745762711864407
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.423728813559322,
+      0.7288135593220338
+     ],
+     "p50": 0.615,
+     "per1k": 0.07994593220338983,
+     "tied": false
+    },
+    "liquid/d1": {
+     "acc": 0.711864406779661,
+     "bal_acc": 0.6378446115288221,
+     "ci": [
+      0.5932203389830508,
+      0.8305084745762712
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.10169491525423724,
+      0.3389830508474577
+     ],
+     "p50": 0.283,
+     "per1k": 0.08143389830508474,
+     "tied": false
+    },
+    "microsoft/microsoft-decision-1": {
+     "acc": 0.5932203389830508,
+     "bal_acc": 0.5776942355889725,
+     "ci": [
+      0.4576271186440678,
+      0.711864406779661
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.2033898305084746,
+      0.4915254237288135
+     ],
+     "p50": 0.394,
+     "per1k": 0.08194555932203389,
+     "tied": false
+    },
+    "nace-ai/drex-v1.5": {
+     "acc": 0.6101694915254238,
+     "bal_acc": 0.4843358395989975,
+     "ci": [
+      0.4911016949152543,
+      0.7288135593220338
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.2029661016949153,
+      0.4576271186440678
+     ],
+     "p50": 0.407,
+     "per1k": 0.07613898305084746,
+     "tied": false
+    },
+    "openai/gpt-6-luna-decisions": {
+     "acc": 0.6271186440677966,
+     "bal_acc": 0.6466165413533835,
+     "ci": [
+      0.5084745762711864,
+      0.7457627118644068
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.1694915254237288,
+      0.44067796610169496
+     ],
+     "p50": 0.288,
+     "per1k": 0.19808305084745761,
+     "tied": false
+    },
+    "perplexity/pplx-decider-v1.1-27b": {
+     "acc": 0.4915254237288136,
+     "bal_acc": 0.5839598997493735,
+     "ci": [
+      0.3559322033898305,
+      0.6101694915254238
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.288135593220339,
+      0.5932203389830508
+     ],
+     "p50": 0.368,
+     "per1k": 0.04040135593220339,
+     "tied": false
+    },
+    "togethercomputer/tev1-4b-experimental": {
+     "acc": 0.4406779661016949,
+     "bal_acc": 0.4805764411027569,
+     "ci": [
+      0.3220338983050847,
+      0.559322033898305
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.35593220338983056,
+      0.6271186440677967
+     ],
+     "p50": 0.314,
+     "per1k": 0.08438155932203391,
+     "tied": false
+    },
+    "typesafe/jev-1.13": {
+     "acc": 0.7627118644067796,
+     "bal_acc": 0.7412280701754386,
+     "ci": [
+      0.6610169491525424,
+      0.864406779661017
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0847457627118644,
+      0.27118644067796616
+     ],
+     "p50": 0.299,
+     "per1k": 0.09471854237288135,
+     "tied": false
+    },
+    "upstage/solar-decide": {
+     "acc": 0.6779661016949152,
+     "bal_acc": 0.6008771929824561,
+     "ci": [
+      0.559322033898305,
+      0.7966101694915254
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.13559322033898302,
+      0.38983050847457623
+     ],
+     "p50": 9.572,
+     "per1k": 0.11287542372881355,
+     "tied": false
+    },
+    "upstage/solar-decide-flash": {
+     "acc": 0.6271186440677966,
+     "bal_acc": 0.4868421052631579,
+     "ci": [
+      0.4915254237288136,
+      0.7457627118644068
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.18644067796610164,
+      0.44067796610169485
+     ],
+     "p50": 0.734,
+     "per1k": 0.11287542372881355,
+     "tied": false
+    }
+   },
+   "n": 59,
+   "recommended": "anthropic/claude-haiku-5.5",
+   "tied": [
+    "anthropic/claude-haiku-5.5"
+   ]
+  },
+  "route55": {
+   "labels": {
+    "cheap_first_try": 24,
+    "escalate": 36
+   },
+   "leader": "perplexity/pplx-decider-v1.1-27b",
+   "majority": 0.6,
+   "models": {
+    "anthropic/claude-haiku-5.5": {
+     "acc": 0.9333333333333333,
+     "bal_acc": 0.9236111111111112,
+     "ci": [
+      0.8666666666666667,
+      0.9833333333333333
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.04999999999999993,
+      0.04999999999999993
+     ],
+     "p50": 2.3280000000000003,
+     "per1k": 0.5168,
+     "tied": true
+    },
+    "cloudflare/clef": {
+     "acc": 0.6833333333333333,
+     "bal_acc": 0.6041666666666666,
+     "ci": [
+      0.5666666666666667,
+      0.8
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.1333333333333333,
+      0.3833333333333333
+     ],
+     "p50": 0.501,
+     "per1k": 0.485928,
+     "tied": false
+    },
+    "cloudflare/clef-flash": {
+     "acc": 0.5333333333333333,
+     "bal_acc": 0.513888888888889,
+     "ci": [
+      0.41625000000000006,
+      0.65
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.25,
+      0.55
+     ],
+     "p50": 0.623,
+     "per1k": 0.0769386,
+     "tied": false
+    },
+    "cloudflare/clef-omni": {
+     "acc": 0.6,
+     "bal_acc": 0.5,
+     "ci": [
+      0.48333333333333334,
+      0.7166666666666667
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.21666666666666656,
+      0.4666666666666666
+     ],
+     "p50": 0.3255,
+     "per1k": 0.30395,
+     "tied": false
+    },
+    "inception/mercury-decide": {
+     "acc": 0.7333333333333333,
+     "bal_acc": 0.6944444444444444,
+     "ci": [
+      0.6166666666666667,
+      0.8333333333333334
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.08333333333333337,
+      0.31666666666666665
+     ],
+     "p50": 0.624,
+     "per1k": 0.038519333333333336,
+     "tied": false
+    },
+    "jaredpalmer/kev-4b": {
+     "acc": 0.38333333333333336,
+     "bal_acc": 0.45138888888888884,
+     "ci": [
+      0.26666666666666666,
+      0.5
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.39999999999999997,
+      0.7
+     ],
+     "p50": 0.6265000000000001,
+     "per1k": 0.07911540000000002,
+     "tied": false
+    },
+    "liquid/d1": {
+     "acc": 0.7166666666666667,
+     "bal_acc": 0.6666666666666666,
+     "ci": [
+      0.6,
+      0.8166666666666667
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.11666666666666659,
+      0.33333333333333337
+     ],
+     "p50": 0.273,
+     "per1k": 0.080588,
+     "tied": false
+    },
+    "microsoft/microsoft-decision-1": {
+     "acc": 0.5333333333333333,
+     "bal_acc": 0.5277777777777778,
+     "ci": [
+      0.4,
+      0.6666666666666666
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.25,
+      0.5499999999999999
+     ],
+     "p50": 0.3535,
+     "per1k": 0.08108939999999999,
+     "tied": false
+    },
+    "nace-ai/drex-v1.5": {
+     "acc": 0.5833333333333334,
+     "bal_acc": 0.5,
+     "ci": [
+      0.45,
+      0.7
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.21666666666666667,
+      0.4833333333333333
+     ],
+     "p50": 0.3705,
+     "per1k": 0.075348,
+     "tied": false
+    },
+    "openai/gpt-6-luna-decisions": {
+     "acc": 0.6333333333333333,
+     "bal_acc": 0.6458333333333334,
+     "ci": [
+      0.5,
+      0.75
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.18333333333333335,
+      0.43333333333333335
+     ],
+     "p50": 0.281,
+     "per1k": 0.19610333333333332,
+     "tied": false
+    },
+    "perplexity/pplx-decider-v1.1-27b": {
+     "acc": 0.9333333333333333,
+     "bal_acc": 0.9236111111111112,
+     "ci": [
+      0.8666666666666667,
+      0.9833333333333333
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.0
+     ],
+     "p50": 0.3905,
+     "per1k": 0.03999300000000001,
+     "tied": true
+    },
+    "togethercomputer/tev1-4b-experimental": {
+     "acc": 0.4166666666666667,
+     "bal_acc": 0.4375,
+     "ci": [
+      0.3,
+      0.5333333333333333
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.3666666666666666,
+      0.65
+     ],
+     "p50": 0.293,
+     "per1k": 0.0835254,
+     "tied": false
+    },
+    "typesafe/jev-1.13": {
+     "acc": 0.8166666666666667,
+     "bal_acc": 0.7916666666666666,
+     "ci": [
+      0.7166666666666667,
+      0.9
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.033333333333333326,
+      0.21666666666666667
+     ],
+     "p50": 0.2875,
+     "per1k": 0.0938721,
+     "tied": false
+    },
+    "upstage/solar-decide": {
+     "acc": 0.6666666666666666,
+     "bal_acc": 0.625,
+     "ci": [
+      0.55,
+      0.7833333333333333
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.15000000000000002,
+      0.3833333333333333
+     ],
+     "p50": 10.9055,
+     "per1k": 0.11184250000000001,
+     "tied": false
+    },
+    "upstage/solar-decide-flash": {
+     "acc": 0.6,
+     "bal_acc": 0.5,
+     "ci": [
+      0.48333333333333334,
+      0.7166666666666667
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.21666666666666656,
+      0.4666666666666666
+     ],
+     "p50": 0.6995,
+     "per1k": 0.11184250000000001,
+     "tied": false
+    }
+   },
+   "n": 60,
+   "recommended": "perplexity/pplx-decider-v1.1-27b",
+   "tied": [
+    "perplexity/pplx-decider-v1.1-27b",
+    "anthropic/claude-haiku-5.5"
+   ]
+  },
+  "tamper": {
+   "labels": {
+    "False": 18,
+    "True": 20
+   },
+   "leader": "cloudflare/clef",
+   "majority": 0.5263157894736842,
+   "models": {
+    "anthropic/claude-haiku-5.5": {
+     "acc": 0.9210526315789473,
+     "bal_acc": 0.9222222222222223,
+     "ci": [
+      0.8157894736842105,
+      1.0
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.052631578947368474,
+      0.13157894736842102
+     ],
+     "p50": 1.6785,
+     "per1k": 0.36753421052631574,
+     "tied": true,
+     "unsafe": 2
+    },
+    "cloudflare/clef": {
+     "acc": 0.9473684210526315,
+     "bal_acc": 0.95,
+     "ci": [
+      0.868421052631579,
+      1.0
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.0
+     ],
+     "p50": 0.546,
+     "per1k": 0.46184842105263163,
+     "tied": true,
+     "unsafe": 2
+    },
+    "cloudflare/clef-flash": {
+     "acc": 0.8421052631578947,
+     "bal_acc": 0.85,
+     "ci": [
+      0.7105263157894737,
+      0.9473684210526315
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.02631578947368418,
+      0.21052631578947367
+     ],
+     "p50": 0.669,
+     "per1k": 0.073126,
+     "tied": false,
+     "unsafe": 6
+    },
+    "cloudflare/clef-omni": {
+     "acc": 0.7631578947368421,
+     "bal_acc": 0.775,
+     "ci": [
+      0.631578947368421,
+      0.8947368421052632
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.07894736842105254,
+      0.3157894736842105
+     ],
+     "p50": 0.316,
+     "per1k": 0.28890000000000005,
+     "tied": false,
+     "unsafe": 9
+    },
+    "inception/mercury-decide": {
+     "acc": 0.8947368421052632,
+     "bal_acc": 0.8972222222222221,
+     "ci": [
+      0.7894736842105263,
+      0.9736842105263158
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.13157894736842113
+     ],
+     "p50": 0.428,
+     "per1k": 0.03634263157894737,
+     "tied": true,
+     "unsafe": 3
+    },
+    "jaredpalmer/kev-4b": {
+     "acc": 0.7368421052631579,
+     "bal_acc": 0.75,
+     "ci": [
+      0.6052631578947368,
+      0.868421052631579
+     ],
+     "err": 1,
+     "gap_ci": [
+      0.07894736842105265,
+      0.3421052631578948
+     ],
+     "p50": 0.678,
+     "per1k": 0.07031352631578948,
+     "tied": false,
+     "unsafe": 9
+    },
+    "liquid/d1": {
+     "acc": 0.9210526315789473,
+     "bal_acc": 0.9222222222222223,
+     "ci": [
+      0.8157894736842105,
+      1.0
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.07894736842105265
+     ],
+     "p50": 0.2765,
+     "per1k": 0.07475052631578948,
+     "tied": true,
+     "unsafe": 2
+    },
+    "microsoft/microsoft-decision-1": {
+     "acc": 0.9210526315789473,
+     "bal_acc": 0.9222222222222223,
+     "ci": [
+      0.8157894736842105,
+      1.0
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.07894736842105265
+     ],
+     "p50": 0.3475,
+     "per1k": 0.07683347368421052,
+     "tied": true,
+     "unsafe": 2
+    },
+    "nace-ai/drex-v1.5": {
+     "acc": 0.7368421052631579,
+     "bal_acc": 0.7472222222222222,
+     "ci": [
+      0.5789473684210527,
+      0.868421052631579
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.07894736842105265,
+      0.3421052631578947
+     ],
+     "p50": 0.3795,
+     "per1k": 0.07011052631578947,
+     "tied": false,
+     "unsafe": 9
+    },
+    "openai/gpt-6-luna-decisions": {
+     "acc": 0.868421052631579,
+     "bal_acc": 0.8694444444444445,
+     "ci": [
+      0.7625000000000001,
+      0.9736842105263158
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.18421052631578938
+     ],
+     "p50": 0.288,
+     "per1k": 0.1901236842105263,
+     "tied": true,
+     "unsafe": 3
+    },
+    "perplexity/pplx-decider-v1.1-27b": {
+     "acc": 0.5789473684210527,
+     "bal_acc": 0.575,
+     "ci": [
+      0.42105263157894735,
+      0.7368421052631579
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.21052631578947367,
+      0.5263157894736843
+     ],
+     "p50": 0.375,
+     "per1k": 0.037754736842105265,
+     "tied": false,
+     "unsafe": 7
+    },
+    "togethercomputer/tev1-4b-experimental": {
+     "acc": 0.7631578947368421,
+     "bal_acc": 0.775,
+     "ci": [
+      0.631578947368421,
+      0.8947368421052632
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.07894736842105254,
+      0.3157894736842105
+     ],
+     "p50": 0.3245,
+     "per1k": 0.07918547368421053,
+     "tied": false,
+     "unsafe": 9
+    },
+    "typesafe/jev-1.13": {
+     "acc": 0.8947368421052632,
+     "bal_acc": 0.8972222222222221,
+     "ci": [
+      0.7894736842105263,
+      0.9736842105263158
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.13157894736842113
+     ],
+     "p50": 0.286,
+     "per1k": 0.08682063157894737,
+     "tied": true,
+     "unsafe": 3
+    },
+    "upstage/solar-decide": {
+     "acc": 0.7368421052631579,
+     "bal_acc": 0.725,
+     "ci": [
+      0.5789473684210527,
+      0.868421052631579
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.05263157894736836,
+      0.368421052631579
+     ],
+     "p50": 0.7895000000000001,
+     "per1k": 0.10873157894736843,
+     "tied": false,
+     "unsafe": 1
+    },
+    "upstage/solar-decide-flash": {
+     "acc": 0.631578947368421,
+     "bal_acc": 0.6111111111111112,
+     "ci": [
+      0.47368421052631576,
+      0.7894736842105263
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.13157894736842102,
+      0.5
+     ],
+     "p50": 0.7004999999999999,
+     "per1k": 0.10873157894736843,
+     "tied": false,
+     "unsafe": 0
+    }
+   },
+   "n": 38,
+   "recommended": "liquid/d1",
+   "tied": [
+    "cloudflare/clef",
+    "liquid/d1",
+    "microsoft/microsoft-decision-1",
+    "anthropic/claude-haiku-5.5",
+    "typesafe/jev-1.13",
+    "inception/mercury-decide",
+    "openai/gpt-6-luna-decisions"
+   ]
+  },
+  "trust": {
+   "labels": {
+    "fabricated": 7,
+    "genuine": 29
+   },
+   "leader": "liquid/d1",
+   "majority": 0.8055555555555556,
+   "models": {
+    "anthropic/claude-haiku-5.5": {
+     "acc": 0.7222222222222222,
+     "bal_acc": 0.7192118226600985,
+     "by_kind": {
+      "cc-haiku-4.5": [
+       6,
+       12
+      ],
+      "micode-corpus": [
+       3,
+       6
+      ],
+      "micode-haiku-5.5": [
+       8,
+       9
+      ],
+      "micode-opus-5.5": [
+       9,
+       9
+      ]
+     },
+     "ci": [
+      0.5555555555555556,
+      0.8611111111111112
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.05555555555555558,
+      0.2777777777777778
+     ],
+     "p50": 1.479,
+     "per1k": 0.1234222222222222,
+     "tied": true,
+     "unsafe": 2
+    },
+    "cloudflare/clef": {
+     "acc": 0.8333333333333334,
+     "bal_acc": 0.625615763546798,
+     "by_kind": {
+      "cc-haiku-4.5": [
+       8,
+       12
+      ],
+      "micode-corpus": [
+       5,
+       6
+      ],
+      "micode-haiku-5.5": [
+       8,
+       9
+      ],
+      "micode-opus-5.5": [
+       9,
+       9
+      ]
+     },
+     "ci": [
+      0.6944444444444444,
+      0.9444444444444444
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.08333333333333337,
+      0.08333333333333326
+     ],
+     "p50": 0.398,
+     "per1k": 0.09241333333333333,
+     "tied": true,
+     "unsafe": 5
+    },
+    "cloudflare/clef-flash": {
+     "acc": 0.8055555555555556,
+     "bal_acc": 0.5,
+     "by_kind": {
+      "cc-haiku-4.5": [
+       8,
+       12
+      ],
+      "micode-corpus": [
+       4,
+       6
+      ],
+      "micode-haiku-5.5": [
+       8,
+       9
+      ],
+      "micode-opus-5.5": [
+       9,
+       9
+      ]
+     },
+     "ci": [
+      0.6666666666666666,
+      0.9166666666666666
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.05555555555555558,
+      0.11111111111111116
+     ],
+     "p50": 0.423,
+     "per1k": 0.014632111111111111,
+     "tied": true,
+     "unsafe": 7
+    },
+    "cloudflare/clef-omni": {
+     "acc": 0.8055555555555556,
+     "bal_acc": 0.5,
+     "by_kind": {
+      "cc-haiku-4.5": [
+       8,
+       12
+      ],
+      "micode-corpus": [
+       4,
+       6
+      ],
+      "micode-haiku-5.5": [
+       8,
+       9
+      ],
+      "micode-opus-5.5": [
+       9,
+       9
+      ]
+     },
+     "ci": [
+      0.6666666666666666,
+      0.9166666666666666
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.05555555555555558,
+      0.11111111111111116
+     ],
+     "p50": 0.274,
+     "per1k": 0.05747083333333333,
+     "tied": true,
+     "unsafe": 7
+    },
+    "inception/mercury-decide": {
+     "acc": 0.8055555555555556,
+     "bal_acc": 0.6625615763546798,
+     "by_kind": {
+      "cc-haiku-4.5": [
+       9,
+       12
+      ],
+      "micode-corpus": [
+       3,
+       6
+      ],
+      "micode-haiku-5.5": [
+       8,
+       9
+      ],
+      "micode-opus-5.5": [
+       9,
+       9
+      ]
+     },
+     "ci": [
+      0.6666666666666666,
+      0.9166666666666666
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.11111111111111105,
+      0.13888888888888895
+     ],
+     "p50": 0.48050000000000004,
+     "per1k": 0.0063794444444444445,
+     "tied": true,
+     "unsafe": 4
+    },
+    "jaredpalmer/kev-4b": {
+     "acc": 0.8333333333333334,
+     "bal_acc": 0.5714285714285714,
+     "by_kind": {
+      "cc-haiku-4.5": [
+       8,
+       12
+      ],
+      "micode-corpus": [
+       5,
+       6
+      ],
+      "micode-haiku-5.5": [
+       8,
+       9
+      ],
+      "micode-opus-5.5": [
+       9,
+       9
+      ]
+     },
+     "ci": [
+      0.6944444444444444,
+      0.9444444444444444
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.08333333333333337,
+      0.08333333333333326
+     ],
+     "p50": 0.5874999999999999,
+     "per1k": 0.011582666666666666,
+     "tied": true,
+     "unsafe": 6
+    },
+    "liquid/d1": {
+     "acc": 0.8333333333333334,
+     "bal_acc": 0.625615763546798,
+     "by_kind": {
+      "cc-haiku-4.5": [
+       8,
+       12
+      ],
+      "micode-corpus": [
+       5,
+       6
+      ],
+      "micode-haiku-5.5": [
+       8,
+       9
+      ],
+      "micode-opus-5.5": [
+       9,
+       9
+      ]
+     },
+     "ci": [
+      0.6944444444444444,
+      0.9444444444444444
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.0
+     ],
+     "p50": 0.2545,
+     "per1k": 0.012252222222222222,
+     "tied": true,
+     "unsafe": 5
+    },
+    "microsoft/microsoft-decision-1": {
+     "acc": 0.6388888888888888,
+     "bal_acc": 0.6674876847290641,
+     "by_kind": {
+      "cc-haiku-4.5": [
+       5,
+       12
+      ],
+      "micode-corpus": [
+       3,
+       6
+      ],
+      "micode-haiku-5.5": [
+       8,
+       9
+      ],
+      "micode-opus-5.5": [
+       7,
+       9
+      ]
+     },
+     "ci": [
+      0.4722222222222222,
+      0.7777777777777778
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.0,
+      0.38888888888888884
+     ],
+     "p50": 0.3555,
+     "per1k": 0.012224333333333334,
+     "tied": true,
+     "unsafe": 2
+    },
+    "nace-ai/drex-v1.5": {
+     "acc": 0.7777777777777778,
+     "bal_acc": 0.7536945812807883,
+     "by_kind": {
+      "cc-haiku-4.5": [
+       10,
+       12
+      ],
+      "micode-corpus": [
+       3,
+       6
+      ],
+      "micode-haiku-5.5": [
+       7,
+       9
+      ],
+      "micode-opus-5.5": [
+       8,
+       9
+      ]
+     },
+     "ci": [
+      0.6388888888888888,
+      0.8888888888888888
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.11111111111111116,
+      0.22222222222222232
+     ],
+     "p50": 0.3545,
+     "per1k": 0.01103111111111111,
+     "tied": true,
+     "unsafe": 2
+    },
+    "openai/gpt-6-luna-decisions": {
+     "acc": 0.5555555555555556,
+     "bal_acc": 0.5615763546798029,
+     "by_kind": {
+      "cc-haiku-4.5": [
+       5,
+       12
+      ],
+      "micode-corpus": [
+       3,
+       6
+      ],
+      "micode-haiku-5.5": [
+       7,
+       9
+      ],
+      "micode-opus-5.5": [
+       5,
+       9
+      ]
+     },
+     "ci": [
+      0.3888888888888889,
+      0.7222222222222222
+     ],
+     "err": 0,
+     "gap_ci": [
+      0.08333333333333337,
+      0.4444444444444445
+     ],
+     "p50": 0.2725,
+     "per1k": 0.036825,
+     "tied": false,
+     "unsafe": 3
+    },
+    "perplexity/pplx-decider-v1.1-27b": {
+     "acc": 0.8055555555555556,
+     "bal_acc": 0.6083743842364532,
+     "by_kind": {
+      "cc-haiku-4.5": [
+       8,
+       12
+      ],
+      "micode-corpus": [
+       4,
+       6
+      ],
+      "micode-haiku-5.5": [
+       8,
+       9
+      ],
+      "micode-opus-5.5": [
+       9,
+       9
+      ]
+     },
+     "ci": [
+      0.6666666666666666,
+      0.9166666666666666
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.05555555555555558,
+      0.11111111111111116
+     ],
+     "p50": 0.336,
+     "per1k": 0.006939999999999999,
+     "tied": true,
+     "unsafe": 5
+    },
+    "togethercomputer/tev1-4b-experimental": {
+     "acc": 0.8055555555555556,
+     "bal_acc": 0.5,
+     "by_kind": {
+      "cc-haiku-4.5": [
+       8,
+       12
+      ],
+      "micode-corpus": [
+       4,
+       6
+      ],
+      "micode-haiku-5.5": [
+       8,
+       9
+      ],
+      "micode-opus-5.5": [
+       9,
+       9
+      ]
+     },
+     "ci": [
+      0.6666666666666666,
+      0.9166666666666666
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.05555555555555558,
+      0.11111111111111116
+     ],
+     "p50": 0.263,
+     "per1k": 0.014618333333333332,
+     "tied": true,
+     "unsafe": 7
+    },
+    "typesafe/jev-1.13": {
+     "acc": 0.8333333333333334,
+     "bal_acc": 0.7881773399014778,
+     "by_kind": {
+      "cc-haiku-4.5": [
+       9,
+       12
+      ],
+      "micode-corpus": [
+       4,
+       6
+      ],
+      "micode-haiku-5.5": [
+       8,
+       9
+      ],
+      "micode-opus-5.5": [
+       9,
+       9
+      ]
+     },
+     "ci": [
+      0.6944444444444444,
+      0.9444444444444444
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.13888888888888884,
+      0.13888888888888884
+     ],
+     "p50": 0.2705,
+     "per1k": 0.024292333333333332,
+     "tied": true,
+     "unsafe": 2
+    },
+    "upstage/solar-decide": {
+     "acc": 0.8055555555555556,
+     "bal_acc": 0.6083743842364532,
+     "by_kind": {
+      "cc-haiku-4.5": [
+       8,
+       12
+      ],
+      "micode-corpus": [
+       4,
+       6
+      ],
+      "micode-haiku-5.5": [
+       8,
+       9
+      ],
+      "micode-opus-5.5": [
+       9,
+       9
+      ]
+     },
+     "ci": [
+      0.6666666666666666,
+      0.9166666666666666
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.05555555555555558,
+      0.11111111111111116
+     ],
+     "p50": 0.6335,
+     "per1k": 0.029545833333333334,
+     "tied": true,
+     "unsafe": 5
+    },
+    "upstage/solar-decide-flash": {
+     "acc": 0.8055555555555556,
+     "bal_acc": 0.6083743842364532,
+     "by_kind": {
+      "cc-haiku-4.5": [
+       8,
+       12
+      ],
+      "micode-corpus": [
+       4,
+       6
+      ],
+      "micode-haiku-5.5": [
+       8,
+       9
+      ],
+      "micode-opus-5.5": [
+       9,
+       9
+      ]
+     },
+     "ci": [
+      0.6666666666666666,
+      0.9166666666666666
+     ],
+     "err": 0,
+     "gap_ci": [
+      -0.05555555555555558,
+      0.11111111111111116
+     ],
+     "p50": 0.6165,
+     "per1k": 0.029545833333333334,
+     "tied": true,
+     "unsafe": 5
+    }
+   },
+   "n": 36,
+   "recommended": "typesafe/jev-1.13",
+   "tied": [
+    "liquid/d1",
+    "typesafe/jev-1.13",
+    "cloudflare/clef",
+    "jaredpalmer/kev-4b",
+    "togethercomputer/tev1-4b-experimental",
+    "cloudflare/clef-omni",
+    "perplexity/pplx-decider-v1.1-27b",
+    "cloudflare/clef-flash",
+    "inception/mercury-decide",
+    "upstage/solar-decide-flash",
+    "upstage/solar-decide",
+    "nace-ai/drex-v1.5",
+    "anthropic/claude-haiku-5.5",
+    "microsoft/microsoft-decision-1"
+   ]
+  }
+ },
+ "sites": [
+  {
+   "also": [],
+   "category": "loc",
+   "leader": "anthropic/claude-haiku-5.5",
+   "recommended": "openai/gpt-6-luna-decisions",
+   "site": "Cortex `repair --ranker` (candidate order)",
+   "tied": [
+    "anthropic/claude-haiku-5.5",
+    "microsoft/microsoft-decision-1",
+    "inception/mercury-decide",
+    "typesafe/jev-1.13",
+    "cloudflare/clef",
+    "openai/gpt-6-luna-decisions",
+    "cloudflare/clef-omni"
+   ]
+  },
+  {
+   "also": [
+    "tamper"
+   ],
+   "category": "audit",
+   "leader": "liquid/d1",
+   "recommended": "liquid/d1",
+   "site": "Cortex post-verification audit (`--audit`)",
+   "tied": [
+    "liquid/d1",
+    "typesafe/jev-1.13",
+    "openai/gpt-6-luna-decisions",
+    "microsoft/microsoft-decision-1",
+    "perplexity/pplx-decider-v1.1-27b",
+    "cloudflare/clef",
+    "inception/mercury-decide",
+    "anthropic/claude-haiku-5.5",
+    "nace-ai/drex-v1.5"
+   ]
+  },
+  {
+   "also": [
+    "route"
+   ],
+   "category": "route55",
+   "leader": "perplexity/pplx-decider-v1.1-27b",
+   "recommended": "perplexity/pplx-decider-v1.1-27b",
+   "site": "Cortex cheap-vs-strong advice",
+   "tied": [
+    "perplexity/pplx-decider-v1.1-27b",
+    "anthropic/claude-haiku-5.5"
+   ]
+  },
+  {
+   "also": [
+    "gate"
+   ],
+   "category": "risk",
+   "leader": "perplexity/pplx-decider-v1.1-27b",
+   "recommended": "upstage/solar-decide",
+   "site": "MiCode shell-command risk tier (Tier-B judge)",
+   "tied": [
+    "perplexity/pplx-decider-v1.1-27b",
+    "anthropic/claude-haiku-5.5",
+    "typesafe/jev-1.13",
+    "microsoft/microsoft-decision-1",
+    "cloudflare/clef",
+    "inception/mercury-decide",
+    "upstage/solar-decide",
+    "openai/gpt-6-luna-decisions"
+   ]
+  },
+  {
+   "also": [],
+   "category": "trust",
+   "leader": "liquid/d1",
+   "recommended": "typesafe/jev-1.13",
+   "site": "MiCode trust Tier-B judge",
+   "tied": [
+    "liquid/d1",
+    "typesafe/jev-1.13",
+    "cloudflare/clef",
+    "jaredpalmer/kev-4b",
+    "togethercomputer/tev1-4b-experimental",
+    "cloudflare/clef-omni",
+    "perplexity/pplx-decider-v1.1-27b",
+    "cloudflare/clef-flash",
+    "inception/mercury-decide",
+    "upstage/solar-decide-flash",
+    "upstage/solar-decide",
+    "nace-ai/drex-v1.5",
+    "anthropic/claude-haiku-5.5",
+    "microsoft/microsoft-decision-1"
+   ]
+  },
+  {
+   "also": [],
+   "category": "axbool",
+   "leader": "anthropic/claude-haiku-5.5",
+   "recommended": "liquid/d1",
+   "site": "Axon `ai_extract::<bool>`",
+   "tied": [
+    "anthropic/claude-haiku-5.5",
+    "perplexity/pplx-decider-v1.1-27b",
+    "cloudflare/clef",
+    "liquid/d1",
+    "inception/mercury-decide",
+    "typesafe/jev-1.13"
+   ]
+  },
+  {
+   "also": [],
+   "category": "improve",
+   "leader": "cloudflare/clef",
+   "recommended": "liquid/d1",
+   "site": "`axon improve discover --ai`",
+   "tied": [
+    "cloudflare/clef",
+    "inception/mercury-decide",
+    "anthropic/claude-haiku-5.5",
+    "perplexity/pplx-decider-v1.1-27b",
+    "liquid/d1",
+    "microsoft/microsoft-decision-1",
+    "upstage/solar-decide"
+   ]
+  }
+ ],
+ "spend": {
+  "pilot-usecases": 0.040828658,
+  "stability-usecases": 0.083370534,
+  "usecases": 0.398671968
+ },
+ "stability": {
+  "anthropic/claude-haiku-5.5": {
+   "acc_runs": [
+    0.9722222222222222,
+    0.9444444444444444,
+    0.9444444444444444,
+    0.9722222222222222
+   ],
+   "identical": 34,
+   "n": 36
+  },
+  "cloudflare/clef": {
+   "acc_runs": [
+    0.8611111111111112,
+    0.8611111111111112,
+    0.9166666666666666,
+    0.8611111111111112
+   ],
+   "identical": 33,
+   "n": 36
+  },
+  "perplexity/pplx-decider-v1.1-27b": {
+   "acc_runs": [
+    0.9166666666666666,
+    0.9166666666666666,
+    0.9166666666666666,
+    0.9166666666666666
+   ],
+   "identical": 36,
+   "n": 36
+  },
+  "typesafe/jev-1.13": {
+   "acc_runs": [
+    0.9444444444444444,
+    0.9444444444444444,
+    0.9166666666666666,
+    0.9444444444444444
+   ],
+   "identical": 35,
+   "n": 36
+  },
+  "upstage/solar-decide": {
+   "acc_runs": [
+    0.7777777777777778,
+    0.8333333333333334,
+    0.8333333333333334,
+    0.8055555555555556
+   ],
+   "identical": 31,
+   "n": 36
+  },
+  "upstage/solar-decide-flash": {
+   "acc_runs": [
+    0.6111111111111112,
+    0.5833333333333334,
+    0.6111111111111112,
+    0.6111111111111112
+   ],
+   "identical": 33,
+   "n": 36
+  }
+ }
+}

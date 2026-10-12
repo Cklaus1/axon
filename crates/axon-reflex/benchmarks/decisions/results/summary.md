@@ -306,8 +306,11 @@ Not run: `respan/span-01` (conversation-behaviour scorer, not a state/questions 
 | pilot | 190 | 190 | 0.2627 |
 | pilot-schema-403 | 10 | 10 | 0.0016 |
 | pilot-unconstrained | 30 | 30 | 0.2066 |
+| pilot-usecases | 480 | 480 | 0.0408 |
 | stability | 1620 | 1620 | 1.8817 |
-| **total** | 14052 | 15634 | **8.6778** |
+| stability-usecases | 648 | 648 | 0.0834 |
+| usecases | 4170 | 4170 | 0.3987 |
+| **total** | 19350 | 20932 | **9.2007** |
 
 Per model, full run: `anthropic/claude-opus-5.5` $3.3533, `typesafe/jev-router` $0.9489, `anthropic/claude-haiku-5.5` $0.0985, `inception/mercury-decide` $0.0073, `cloudflare/clef` $0.0923, `typesafe/jev-1.13` $0.0179, `liquid/d1` $0.0149, `microsoft/microsoft-decision-1` $0.0152, `anthropic/claude-haiku-4.5` $0.6343, `upstage/solar-decide` $0.0216, `cloudflare/clef-omni` $0.0577, `cloudflare/clef-flash` $0.0146, `nace-ai/drex-v1.5` $0.0140, `openai/gpt-6-luna-decisions` $0.0373, `togethercomputer/tev1-4b-experimental` $0.0158, `jaredpalmer/kev-4b` $0.0146, `upstage/solar-decide-flash` $0.0216, `perplexity/pplx-decider-v1.1-27b` $0.0075.
 

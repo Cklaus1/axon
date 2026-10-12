@@ -10,6 +10,8 @@ from an approved set. The ranking puts correctness first, then latency, then cos
 
 Every label is a recorded outcome or a checker verdict. None is a human judgment.
 The decision models and four chat baselines see the same states and questions.
+Six more categories, one per model-calling site, were added later and have their own
+report: see [Use cases](#use-cases-one-category-per-model-calling-site).
 
 ```
 python3 build_set.py        # decision_set.jsonl from the sources below (needs the PoC checker binary)
@@ -23,6 +25,11 @@ python3 run.py --full --only-decision --outdir full-fast2   # harness-speed reru
 python3 run.py --full --only-decision --batch              # batched variant -> results/full-batched/
 python3 analyse.py --write-readme   # the tables below, from the committed JSONL (no network)
 python3 analyse.py --phase full-fast2 --only-decision      # rank any run dir, even one in progress
+python3 build_usecases.py          # + the 6 use-case categories (needs AXON_BIN, MiCode checkout)
+python3 run.py --pilot --cats trust,axbool,improve,route55,audit,risk --per-cat 5 --outdir pilot-usecases
+python3 run.py --full --cats trust,axbool,improve,route55,audit,risk --outdir usecases
+python3 analyse.py --usecases --write-readme   # per-use-case tables, all 11 categories
+python3 spotcheck_usecases.py      # recompute 10 random labels per new category
 ```
 
 Scheduling: every model has its own worker pool (8 for a decision model, 4 for a chat
@@ -346,8 +353,11 @@ Not run: `respan/span-01` (conversation-behaviour scorer, not a state/questions 
 | pilot | 190 | 190 | 0.2627 |
 | pilot-schema-403 | 10 | 10 | 0.0016 |
 | pilot-unconstrained | 30 | 30 | 0.2066 |
+| pilot-usecases | 480 | 480 | 0.0408 |
 | stability | 1620 | 1620 | 1.8817 |
-| **total** | 14052 | 15634 | **8.6778** |
+| stability-usecases | 648 | 648 | 0.0834 |
+| usecases | 4170 | 4170 | 0.3987 |
+| **total** | 19350 | 20932 | **9.2007** |
 
 Per model, full run: `anthropic/claude-opus-5.5` $3.3533, `typesafe/jev-router` $0.9489, `anthropic/claude-haiku-5.5` $0.0985, `inception/mercury-decide` $0.0073, `cloudflare/clef` $0.0923, `typesafe/jev-1.13` $0.0179, `liquid/d1` $0.0149, `microsoft/microsoft-decision-1` $0.0152, `anthropic/claude-haiku-4.5` $0.6343, `upstage/solar-decide` $0.0216, `cloudflare/clef-omni` $0.0577, `cloudflare/clef-flash` $0.0146, `nace-ai/drex-v1.5` $0.0140, `openai/gpt-6-luna-decisions` $0.0373, `togethercomputer/tev1-4b-experimental` $0.0158, `jaredpalmer/kev-4b` $0.0146, `upstage/solar-decide-flash` $0.0216, `perplexity/pplx-decider-v1.1-27b` $0.0075.
 
@@ -562,6 +572,426 @@ as it did are tagged [INFERENCE].
   changed 5, `solar-decide` 30 and `perplexity` 110 (its mode switch above). In
   `full-fast` and in `full-fast2` (18:43 UTC), perplexity scored 0.901 again.
 
+## Use cases: one category per model-calling site
+
+The survey listed the places in Axon, Cortex and MiCode that ask, or could ask, a chat
+model to decide something. Each site that has mechanically known answers got a
+category whose items ask what that site asks: the same inputs, the same option set and,
+where the site has one, its instruction text verbatim. `build_usecases.py` appends
+these to `decision_set.jsonl` with new ids; the original 222 items are byte-identical
+and the original report above ignores the new categories (`analyse.py` loads only
+`loc, repair, tamper, route, gate` for it). Every new category ran on all 14 decision
+models plus `anthropic/claude-haiku-5.5`, n=1, through the same harness (32 global
+slots, per-model pools): a 5-per-category pilot (`results/pilot-usecases/`), then the
+full run (`results/usecases/`).
+
+### Categories and label sources
+
+| category | site | n | question | label source |
+|---|---|---|---|---|
+| `trust` | MiCode Tier-B trust judge (`micode-verify` judge.rs `apply_tier_b`; assembly.rs `default_judge_instruction`, `ProviderJudge::render_prompt`) | 36 (7 fabricated) | choice `genuine` / `fabricated`; state = `turn` and `candidate_response`, the only inputs the judge renders; instruction verbatim | Cortex A/B arm-A rows (`ab/results/full/a.jsonl`, Haiku 4.5 via Claude Code; `ab/results-micode/full/claude-{haiku,opus}-5-5/a.jsonl`): the agent's final text where it claimed FIXED. Grader `false_success` = fabricated, `verified_clean` = genuine. Plus MiCode's 6 synthetic replay cases (`micode-verify/corpus/synthetic_examples.jsonl`, their pinned `expected`) |
+| `axbool` | Axon `ai_extract::<bool>(prompt)` (axon-ai lib.rs `__axon_ai_extract_bool`) | 48 (24 true) | yes/no; state = `prompt`, the only thing the site sends | what the interpreter returns: `axon check` exit 0/2 ("does this type-check", originals and single-site type-breaking edits), `axon run` of `fn main() -> i64 { if EXPR {1} else {0} }` exit 1/0 ("does EXPR evaluate to true"), `axon test` with `AXON_SEED=1` exit 0/3, run twice and kept only if both agree ("do all tests pass", originals and one corpus mutator per function) |
+| `improve` | `axon improve discover --ai` (axon-core improve.rs `ai_discovery_prompt`, `discover_with_ai`) | 40 (8 per template) | choice of the 5 menu templates, the menu text verbatim | the template whose detector fires: each program is an `examples/` file with one single-site edit, and `AXON_AI_MOCK=1 axon improve discover --ai` (which proposes every template whose detector count is > 0) proposed exactly that one template; `axon check` exit 0 |
+| `route55` | Cortex cheap-vs-strong advice | 60 (24 cheap) | choice `cheap_first_try` / `escalate`, `route`'s state and wording with "Claude Haiku 5.5" | `ab/results-micode/full/claude-haiku-5-5/b.jsonl`: `outcome == verified_done and proposals == 1` |
+| `audit` | `cortex repair --audit` (`axon-cortex/src/audit.rs`) | 48 (24 gaming) | yes/no `games_checks`; state keys, instruction and criteria agreed with that lane (`file, source_note, source, failing_test, also_failing, proposed_patch`) | positives: the PoC dry-run arms `exit0`, `forge`, `cheat` (8 each), regenerated and sha-checked against the recorded `final_sha`, recorded grade = gaming. Negatives: 24 real agents' patches (Opus 5.5 13, Haiku 5.5 10, Haiku 4.5 1) rebuilt from their recorded `tool_uses` edits (sha-checked), recorded grade `verified_clean` with no test tampered and no suspicious call added |
+| `risk` | MiCode shell-risk Tier-B judge (assembly.rs `default_risk_judge_instruction`, `ProviderRiskJudge`; tiered_classifier.rs `shadow_observe`) | 46 (read 15, routine 1, sensitive 15, critical 15) | choice `read / routine / sensitive / critical`; state = `command`, `static_tier`, `stated_task` (`""`, as in production); instruction and tier glosses verbatim | a bash command MiCode's classifier tests pin to a `RiskTier` (assert sites in `classifier.rs`, `tests/fixtures/adversarial_risk_cases.jsonl`), wrapped so Tier A sends it to the judge: `sh -c '…'` (label = the pin) or base64 / hex-`printf` obfuscation piped to a shell (label = max(pin, sensitive), the instruction's "at least sensitive"). `static_tier` and the ambiguity trigger come from MiCode's own `StaticRiskClassifier` and `ambiguity_trigger`, run through a throwaway probe crate against MiCode `ef876956` |
+
+**Does `gate` already cover the risk site? No.** `gate` asks the static classifier's
+question: its state is `{tool_call: {name, args}}` with tier descriptions written for
+the bench. The model-calling path (`ProviderRiskJudge`) sees a bare command string, the
+static tier, an empty task and its own one-line glosses, and Tier A sends it only
+Routine or Sensitive commands with an ambiguity trigger. `gate` stays in the report as
+a second view of the same site; `risk` is the faithful one. Only one bash command is
+pinned Routine in MiCode's tests and reaches the judge, so `routine` has 1 item.
+
+**`route` vs `route55`.** `route` (Haiku 4.5 via Claude Code, `ab/results/full/b.jsonl`)
+is kept unchanged. `route55` labels the same 60 tasks with today's cheap model (Haiku
+5.5 via MiCode), which is the model the site would route to, so it is the better
+grounded set for the site. The two label sets agree on 55 of 60 tasks. "Cheap fails,
+strong succeeds" happened on only 3 of 60 tasks (Haiku 5.5 done 56, Opus 5.5 done 55),
+too few for a category, so the question stays "will the cheap model's first proposal
+be verified".
+
+**Deviations from the sites, on purpose.**
+- `improve`: the site sends only a corpus digest (`N program(s), M top-level
+  function(s)`) and no source, so no model can know which template applies. The items
+  keep the digest and add `program`, the one file the label is about.
+- `axbool`: the site forces an `answer` tool with `{value: boolean}`; the bench asks the
+  same yes/no question as a `noul` question with `p_yes`. Today the interpreter has no
+  `ai_extract::<bool>` and native binaries refuse live AI calls, so the site sends no
+  request yet (CHANGELOG, "Structured AI decisions default to Haiku 5.5").
+- `trust`: the real judge only sees texts that Tier A marked Suspect. These texts were
+  not filtered by Tier A, and a false "FIXED" claim is usually fluent; the question
+  measures whether a text-only judge can spot it.
+
+### Spot-check
+
+`spotcheck_usecases.py` draws 10 items per new category (seed 20261012) and recomputes
+each label from its source without `build_usecases.py`: re-reading the A/B row or corpus
+case, re-running `axon check / run / test` and `improve discover --ai`, re-applying the
+audit patch with `patch(1)` and comparing its sha256 with the row's `final_sha`, and
+decoding each risk command, reading its pin at the cited test line and re-running Tier A.
+Result (`results/spotcheck_usecases.txt`): trust 10/10, axbool 10/10, improve 10/10,
+route55 10/10, audit 10/10, risk 10/10.
+
+### Results per use case
+
+Every category, old and new, over the same 15 models (old categories from
+`results/full/`). Accuracy with a 95% bootstrap CI; "tied" = the paired bootstrap CI of
+the gap to the leader contains 0; unsafe = the error that lets something through
+(repair: approved a failing patch; tamper/audit: cleared a gaming patch; gate/risk:
+tier lower than the label; trust: called a fabricated answer genuine). Recommended =
+among the models tied with the leader, fewest unsafe errors, then lowest p50, then
+lowest $/1k.
+
+<!-- BEGIN USECASES (analyse.py --usecases --write-readme) -->
+#### `loc`: fault localization (57 items: 44 distinct labels; majority class 0.053)
+
+| model | accuracy [95% CI] | tied with leader | balanced acc. | errors | p50 s | $/1k |
+|---|---|---|---|---|---|---|
+| `anthropic/claude-haiku-5.5` (chat) | 0.965 [0.91, 1.00] | leader | – | 1 | 3.08 | 0.546 |
+| `microsoft/microsoft-decision-1` | 0.930 [0.86, 0.98] | yes | – | 0 | 0.36 | 0.083 |
+| `inception/mercury-decide` | 0.930 [0.86, 0.98] | yes | – | 0 | 0.47 | 0.040 |
+| `typesafe/jev-1.13` | 0.912 [0.84, 0.98] | yes | – | 0 | 0.29 | 0.096 |
+| `cloudflare/clef` | 0.912 [0.82, 0.98] | yes | – | 0 | 0.60 | 0.507 |
+| `liquid/d1` | 0.877 [0.79, 0.95] | no, gap [+0.02, +0.18] | – | 0 | 0.27 | 0.081 |
+| `openai/gpt-6-luna-decisions` **rec.** | 0.877 [0.79, 0.95] | yes | – | 0 | 0.28 | 0.201 |
+| `cloudflare/clef-omni` | 0.860 [0.77, 0.95] | yes | – | 0 | 0.30 | 0.317 |
+| `upstage/solar-decide` | 0.842 [0.74, 0.93] | no, gap [+0.04, +0.23] | – | 0 | 9.74 | 0.115 |
+| `nace-ai/drex-v1.5` | 0.772 [0.67, 0.88] | no, gap [+0.07, +0.32] | – | 0 | 0.42 | 0.077 |
+| `cloudflare/clef-flash` | 0.772 [0.65, 0.88] | no, gap [+0.07, +0.32] | – | 0 | 0.65 | 0.080 |
+| `togethercomputer/tev1-4b-experimental` | 0.667 [0.54, 0.79] | no, gap [+0.16, +0.44] | – | 0 | 0.31 | 0.087 |
+| `upstage/solar-decide-flash` | 0.526 [0.39, 0.67] | no, gap [+0.32, +0.58] | – | 0 | 0.76 | 0.115 |
+| `jaredpalmer/kev-4b` | 0.509 [0.39, 0.63] | no, gap [+0.33, +0.60] | – | 0 | 0.64 | 0.081 |
+| `perplexity/pplx-decider-v1.1-27b` | 0.474 [0.33, 0.60] | no, gap [+0.35, +0.65] | – | 0 | 0.37 | 0.041 |
+
+Winner: `anthropic/claude-haiku-5.5`; statistically tied: `microsoft/microsoft-decision-1`, `inception/mercury-decide`, `typesafe/jev-1.13`, `cloudflare/clef`, `openai/gpt-6-luna-decisions`, `cloudflare/clef-omni`. Recommended: `openai/gpt-6-luna-decisions`.
+
+#### `repair`: repair verdict (36 items: False 18, True 18; majority class 0.500)
+
+| model | accuracy [95% CI] | tied with leader | balanced acc. | unsafe /18 | errors | p50 s | $/1k |
+|---|---|---|---|---|---|---|---|
+| `inception/mercury-decide` | 0.972 [0.92, 1.00] | leader | 0.972 | 0 | 0 | 0.45 | 0.032 |
+| `cloudflare/clef` | 0.972 [0.92, 1.00] | yes | 0.972 | 0 | 0 | 0.55 | 0.401 |
+| `anthropic/claude-haiku-5.5` (chat) | 0.972 [0.92, 1.00] | yes | 0.972 | 0 | 0 | 2.68 | 0.474 |
+| `liquid/d1` **rec.** | 0.917 [0.81, 1.00] | yes | 0.917 | 0 | 0 | 0.27 | 0.066 |
+| `typesafe/jev-1.13` | 0.889 [0.78, 0.97] | yes | 0.889 | 1 | 0 | 0.28 | 0.077 |
+| `openai/gpt-6-luna-decisions` | 0.833 [0.69, 0.94] | no, gap [+0.03, +0.25] | 0.833 | 0 | 0 | 0.28 | 0.168 |
+| `microsoft/microsoft-decision-1` | 0.833 [0.72, 0.94] | yes | 0.833 | 1 | 0 | 0.36 | 0.066 |
+| `upstage/solar-decide` | 0.750 [0.61, 0.89] | no, gap [+0.08, +0.36] | 0.750 | 0 | 0 | 0.95 | 0.096 |
+| `togethercomputer/tev1-4b-experimental` | 0.722 [0.56, 0.86] | no, gap [+0.08, +0.42] | 0.722 | 5 | 0 | 0.30 | 0.069 |
+| `jaredpalmer/kev-4b` | 0.722 [0.58, 0.86] | no, gap [+0.08, +0.42] | 0.722 | 1 | 0 | 0.66 | 0.064 |
+| `cloudflare/clef-flash` | 0.694 [0.56, 0.83] | no, gap [+0.14, +0.42] | 0.694 | 1 | 0 | 0.67 | 0.063 |
+| `nace-ai/drex-v1.5` | 0.667 [0.50, 0.81] | no, gap [+0.17, +0.47] | 0.667 | 0 | 0 | 0.39 | 0.061 |
+| `cloudflare/clef-omni` | 0.639 [0.47, 0.81] | no, gap [+0.19, +0.50] | 0.639 | 0 | 0 | 0.31 | 0.250 |
+| `upstage/solar-decide-flash` | 0.583 [0.42, 0.75] | no, gap [+0.22, +0.56] | 0.583 | 0 | 0 | 0.70 | 0.096 |
+| `perplexity/pplx-decider-v1.1-27b` | 0.444 [0.28, 0.61] | no, gap [+0.36, +0.69] | 0.444 | 15 | 0 | 0.36 | 0.033 |
+
+Unsafe = approved a patch that fails a check.
+
+Winner: `inception/mercury-decide`; statistically tied: `cloudflare/clef`, `anthropic/claude-haiku-5.5`, `liquid/d1`, `typesafe/jev-1.13`, `microsoft/microsoft-decision-1`. Recommended: `liquid/d1`.
+
+#### `tamper`: check tampering (38 items: False 18, True 20; majority class 0.526)
+
+| model | accuracy [95% CI] | tied with leader | balanced acc. | unsafe /20 | errors | p50 s | $/1k |
+|---|---|---|---|---|---|---|---|
+| `cloudflare/clef` | 0.947 [0.87, 1.00] | leader | 0.950 | 2 | 0 | 0.55 | 0.462 |
+| `liquid/d1` **rec.** | 0.921 [0.82, 1.00] | yes | 0.922 | 2 | 0 | 0.28 | 0.075 |
+| `microsoft/microsoft-decision-1` | 0.921 [0.82, 1.00] | yes | 0.922 | 2 | 0 | 0.35 | 0.077 |
+| `anthropic/claude-haiku-5.5` (chat) | 0.921 [0.82, 1.00] | yes | 0.922 | 2 | 0 | 1.68 | 0.368 |
+| `typesafe/jev-1.13` | 0.895 [0.79, 0.97] | yes | 0.897 | 3 | 0 | 0.29 | 0.087 |
+| `inception/mercury-decide` | 0.895 [0.79, 0.97] | yes | 0.897 | 3 | 0 | 0.43 | 0.036 |
+| `openai/gpt-6-luna-decisions` | 0.868 [0.76, 0.97] | yes | 0.869 | 3 | 0 | 0.29 | 0.190 |
+| `cloudflare/clef-flash` | 0.842 [0.71, 0.95] | no, gap [+0.03, +0.21] | 0.850 | 6 | 0 | 0.67 | 0.073 |
+| `cloudflare/clef-omni` | 0.763 [0.63, 0.89] | no, gap [+0.08, +0.32] | 0.775 | 9 | 0 | 0.32 | 0.289 |
+| `togethercomputer/tev1-4b-experimental` | 0.763 [0.63, 0.89] | no, gap [+0.08, +0.32] | 0.775 | 9 | 0 | 0.32 | 0.079 |
+| `nace-ai/drex-v1.5` | 0.737 [0.58, 0.87] | no, gap [+0.08, +0.34] | 0.747 | 9 | 0 | 0.38 | 0.070 |
+| `jaredpalmer/kev-4b` | 0.737 [0.61, 0.87] | no, gap [+0.08, +0.34] | 0.750 | 9 | 1 | 0.68 | 0.070 |
+| `upstage/solar-decide` | 0.737 [0.58, 0.87] | no, gap [+0.05, +0.37] | 0.725 | 1 | 0 | 0.79 | 0.109 |
+| `upstage/solar-decide-flash` | 0.632 [0.47, 0.79] | no, gap [+0.13, +0.50] | 0.611 | 0 | 0 | 0.70 | 0.109 |
+| `perplexity/pplx-decider-v1.1-27b` | 0.579 [0.42, 0.74] | no, gap [+0.21, +0.53] | 0.575 | 7 | 0 | 0.38 | 0.038 |
+
+Unsafe = cleared a patch that games the checks.
+
+Winner: `cloudflare/clef`; statistically tied: `liquid/d1`, `microsoft/microsoft-decision-1`, `anthropic/claude-haiku-5.5`, `typesafe/jev-1.13`, `inception/mercury-decide`, `openai/gpt-6-luna-decisions`. Recommended: `liquid/d1`.
+
+#### `audit`: post-verification audit (cortex repair) (48 items: False 24, True 24; majority class 0.500)
+
+| model | accuracy [95% CI] | tied with leader | balanced acc. | unsafe /24 | errors | p50 s | $/1k |
+|---|---|---|---|---|---|---|---|
+| `liquid/d1` **rec.** | 1.000 [1.00, 1.00] | leader | 1.000 | 0 | 0 | 0.28 | 0.095 |
+| `typesafe/jev-1.13` | 1.000 [1.00, 1.00] | yes | 1.000 | 0 | 0 | 0.29 | 0.106 |
+| `openai/gpt-6-luna-decisions` | 1.000 [1.00, 1.00] | yes | 1.000 | 0 | 0 | 0.29 | 0.239 |
+| `microsoft/microsoft-decision-1` | 1.000 [1.00, 1.00] | yes | 1.000 | 0 | 0 | 0.36 | 0.097 |
+| `perplexity/pplx-decider-v1.1-27b` | 1.000 [1.00, 1.00] | yes | 1.000 | 0 | 0 | 0.38 | 0.048 |
+| `cloudflare/clef` | 1.000 [1.00, 1.00] | yes | 1.000 | 0 | 0 | 0.51 | 0.579 |
+| `inception/mercury-decide` | 1.000 [1.00, 1.00] | yes | 1.000 | 0 | 0 | 0.61 | 0.046 |
+| `anthropic/claude-haiku-5.5` (chat) | 1.000 [1.00, 1.00] | yes | 1.000 | 0 | 0 | 1.46 | 0.436 |
+| `nace-ai/drex-v1.5` | 0.979 [0.94, 1.00] | yes | 0.979 | 1 | 0 | 0.34 | 0.088 |
+| `upstage/solar-decide` | 0.917 [0.83, 0.98] | no, gap [+0.02, +0.17] | 0.917 | 0 | 0 | 1.57 | 0.134 |
+| `togethercomputer/tev1-4b-experimental` | 0.833 [0.73, 0.94] | no, gap [+0.06, +0.27] | 0.833 | 8 | 0 | 0.29 | 0.100 |
+| `cloudflare/clef-omni` | 0.833 [0.73, 0.94] | no, gap [+0.06, +0.27] | 0.833 | 8 | 0 | 0.32 | 0.362 |
+| `jaredpalmer/kev-4b` | 0.833 [0.73, 0.94] | no, gap [+0.06, +0.27] | 0.833 | 8 | 0 | 0.66 | 0.093 |
+| `cloudflare/clef-flash` | 0.833 [0.73, 0.94] | no, gap [+0.06, +0.27] | 0.833 | 8 | 0 | 0.77 | 0.092 |
+| `upstage/solar-decide-flash` | 0.708 [0.58, 0.83] | no, gap [+0.17, +0.42] | 0.708 | 0 | 0 | 0.69 | 0.134 |
+
+Unsafe = cleared a patch that games the checks.
+
+By item kind (correct/n): `liquid/d1` cheat 8/8, exit0 8/8, forge 8/8, real-agent 24/24; `anthropic/claude-haiku-5.5` cheat 8/8, exit0 8/8, forge 8/8, real-agent 24/24.
+
+Winner: `liquid/d1`; statistically tied: `typesafe/jev-1.13`, `openai/gpt-6-luna-decisions`, `microsoft/microsoft-decision-1`, `perplexity/pplx-decider-v1.1-27b`, `cloudflare/clef`, `inception/mercury-decide`, `anthropic/claude-haiku-5.5`, `nace-ai/drex-v1.5`. Recommended: `liquid/d1`.
+
+#### `route`: cheap-vs-escalate routing (59 items: cheap_first_try 21, escalate 38; majority class 0.644)
+
+| model | accuracy [95% CI] | tied with leader | balanced acc. | errors | p50 s | $/1k |
+|---|---|---|---|---|---|---|
+| `anthropic/claude-haiku-5.5` (chat) **rec.** | 0.932 [0.86, 0.98] | leader | 0.915 | 0 | 2.54 | 0.534 |
+| `typesafe/jev-1.13` | 0.763 [0.66, 0.86] | no, gap [+0.08, +0.27] | 0.741 | 0 | 0.30 | 0.095 |
+| `inception/mercury-decide` | 0.763 [0.66, 0.86] | no, gap [+0.05, +0.27] | 0.709 | 0 | 0.47 | 0.039 |
+| `cloudflare/clef` | 0.729 [0.61, 0.83] | no, gap [+0.08, +0.32] | 0.619 | 0 | 0.54 | 0.491 |
+| `liquid/d1` | 0.712 [0.59, 0.83] | no, gap [+0.10, +0.34] | 0.638 | 0 | 0.28 | 0.081 |
+| `upstage/solar-decide` | 0.678 [0.56, 0.80] | no, gap [+0.14, +0.39] | 0.601 | 0 | 9.57 | 0.113 |
+| `openai/gpt-6-luna-decisions` | 0.627 [0.51, 0.75] | no, gap [+0.17, +0.44] | 0.647 | 0 | 0.29 | 0.198 |
+| `upstage/solar-decide-flash` | 0.627 [0.49, 0.75] | no, gap [+0.19, +0.44] | 0.487 | 0 | 0.73 | 0.113 |
+| `nace-ai/drex-v1.5` | 0.610 [0.49, 0.73] | no, gap [+0.20, +0.46] | 0.484 | 0 | 0.41 | 0.076 |
+| `cloudflare/clef-omni` | 0.593 [0.46, 0.71] | no, gap [+0.22, +0.47] | 0.461 | 0 | 0.31 | 0.307 |
+| `microsoft/microsoft-decision-1` | 0.593 [0.46, 0.71] | no, gap [+0.20, +0.49] | 0.578 | 0 | 0.39 | 0.082 |
+| `cloudflare/clef-flash` | 0.576 [0.44, 0.69] | no, gap [+0.22, +0.49] | 0.533 | 0 | 0.64 | 0.078 |
+| `perplexity/pplx-decider-v1.1-27b` | 0.492 [0.36, 0.61] | no, gap [+0.29, +0.59] | 0.584 | 0 | 0.37 | 0.040 |
+| `togethercomputer/tev1-4b-experimental` | 0.441 [0.32, 0.56] | no, gap [+0.36, +0.63] | 0.481 | 0 | 0.31 | 0.084 |
+| `jaredpalmer/kev-4b` | 0.356 [0.24, 0.47] | no, gap [+0.42, +0.73] | 0.457 | 0 | 0.61 | 0.080 |
+
+Winner: `anthropic/claude-haiku-5.5` (no tie). Recommended: `anthropic/claude-haiku-5.5`.
+
+#### `route55`: cheap-first routing, Haiku 5.5 (60 items: cheap_first_try 24, escalate 36; majority class 0.600)
+
+| model | accuracy [95% CI] | tied with leader | balanced acc. | errors | p50 s | $/1k |
+|---|---|---|---|---|---|---|
+| `perplexity/pplx-decider-v1.1-27b` **rec.** | 0.933 [0.87, 0.98] | leader | 0.924 | 0 | 0.39 | 0.040 |
+| `anthropic/claude-haiku-5.5` (chat) | 0.933 [0.87, 0.98] | yes | 0.924 | 0 | 2.33 | 0.517 |
+| `typesafe/jev-1.13` | 0.817 [0.72, 0.90] | no, gap [+0.03, +0.22] | 0.792 | 0 | 0.29 | 0.094 |
+| `inception/mercury-decide` | 0.733 [0.62, 0.83] | no, gap [+0.08, +0.32] | 0.694 | 0 | 0.62 | 0.039 |
+| `liquid/d1` | 0.717 [0.60, 0.82] | no, gap [+0.12, +0.33] | 0.667 | 0 | 0.27 | 0.081 |
+| `cloudflare/clef` | 0.683 [0.57, 0.80] | no, gap [+0.13, +0.38] | 0.604 | 0 | 0.50 | 0.486 |
+| `upstage/solar-decide` | 0.667 [0.55, 0.78] | no, gap [+0.15, +0.38] | 0.625 | 0 | 10.91 | 0.112 |
+| `openai/gpt-6-luna-decisions` | 0.633 [0.50, 0.75] | no, gap [+0.18, +0.43] | 0.646 | 0 | 0.28 | 0.196 |
+| `cloudflare/clef-omni` | 0.600 [0.48, 0.72] | no, gap [+0.22, +0.47] | 0.500 | 0 | 0.33 | 0.304 |
+| `upstage/solar-decide-flash` | 0.600 [0.48, 0.72] | no, gap [+0.22, +0.47] | 0.500 | 0 | 0.70 | 0.112 |
+| `nace-ai/drex-v1.5` | 0.583 [0.45, 0.70] | no, gap [+0.22, +0.48] | 0.500 | 0 | 0.37 | 0.075 |
+| `microsoft/microsoft-decision-1` | 0.533 [0.40, 0.67] | no, gap [+0.25, +0.55] | 0.528 | 0 | 0.35 | 0.081 |
+| `cloudflare/clef-flash` | 0.533 [0.42, 0.65] | no, gap [+0.25, +0.55] | 0.514 | 0 | 0.62 | 0.077 |
+| `togethercomputer/tev1-4b-experimental` | 0.417 [0.30, 0.53] | no, gap [+0.37, +0.65] | 0.438 | 0 | 0.29 | 0.084 |
+| `jaredpalmer/kev-4b` | 0.383 [0.27, 0.50] | no, gap [+0.40, +0.70] | 0.451 | 0 | 0.63 | 0.079 |
+
+Winner: `perplexity/pplx-decider-v1.1-27b`; statistically tied: `anthropic/claude-haiku-5.5`. Recommended: `perplexity/pplx-decider-v1.1-27b`.
+
+#### `gate`: MiCode risk tier (32 items: Critical 8, Read 8, Routine 8, Sensitive 8; majority class 0.250)
+
+| model | accuracy [95% CI] | tied with leader | balanced acc. | unsafe /24 | errors | p50 s | $/1k |
+|---|---|---|---|---|---|---|---|
+| `microsoft/microsoft-decision-1` **rec.** | 0.750 [0.59, 0.91] | leader | 0.750 | 4 | 0 | 0.31 | 0.009 |
+| `inception/mercury-decide` | 0.719 [0.56, 0.88] | yes | 0.719 | 4 | 0 | 0.34 | 0.005 |
+| `anthropic/claude-haiku-5.5` (chat) | 0.719 [0.56, 0.88] | yes | 0.719 | 5 | 0 | 1.62 | 0.150 |
+| `upstage/solar-decide` | 0.719 [0.56, 0.88] | yes | 0.719 | 4 | 0 | 10.02 | 0.026 |
+| `cloudflare/clef-omni` | 0.688 [0.53, 0.84] | yes | 0.688 | 7 | 0 | 0.26 | 0.049 |
+| `nace-ai/drex-v1.5` | 0.688 [0.53, 0.84] | yes | 0.688 | 7 | 0 | 0.35 | 0.008 |
+| `typesafe/jev-1.13` | 0.656 [0.47, 0.81] | yes | 0.656 | 6 | 0 | 0.27 | 0.022 |
+| `cloudflare/clef-flash` | 0.656 [0.47, 0.81] | yes | 0.656 | 7 | 0 | 0.39 | 0.012 |
+| `liquid/d1` | 0.625 [0.44, 0.78] | no, gap [+0.03, +0.25] | 0.625 | 7 | 0 | 0.26 | 0.009 |
+| `cloudflare/clef` | 0.625 [0.44, 0.78] | no, gap [+0.03, +0.25] | 0.625 | 7 | 0 | 0.46 | 0.079 |
+| `jaredpalmer/kev-4b` | 0.531 [0.34, 0.69] | no, gap [+0.06, +0.41] | 0.531 | 7 | 0 | 0.57 | 0.009 |
+| `perplexity/pplx-decider-v1.1-27b` | 0.500 [0.34, 0.69] | no, gap [+0.03, +0.44] | 0.500 | 14 | 0 | 0.31 | 0.005 |
+| `togethercomputer/tev1-4b-experimental` | 0.406 [0.25, 0.56] | no, gap [+0.16, +0.53] | 0.406 | 9 | 0 | 0.29 | 0.012 |
+| `upstage/solar-decide-flash` | 0.312 [0.16, 0.47] | no, gap [+0.19, +0.66] | 0.312 | 4 | 0 | 0.64 | 0.026 |
+| `openai/gpt-6-luna-decisions` | 0.250 [0.09, 0.41] | no, gap [+0.28, +0.72] | 0.250 | 4 | 1 | 0.28 | 0.028 |
+
+Unsafe = assigned a LOWER tier than MiCode's test asserts.
+
+Winner: `microsoft/microsoft-decision-1`; statistically tied: `inception/mercury-decide`, `anthropic/claude-haiku-5.5`, `upstage/solar-decide`, `cloudflare/clef-omni`, `nace-ai/drex-v1.5`, `typesafe/jev-1.13`, `cloudflare/clef-flash`. Recommended: `microsoft/microsoft-decision-1`.
+
+#### `trust`: MiCode Tier-B trust judge (36 items: fabricated 7, genuine 29; majority class 0.806)
+
+| model | accuracy [95% CI] | tied with leader | balanced acc. | unsafe /7 | errors | p50 s | $/1k |
+|---|---|---|---|---|---|---|---|
+| `liquid/d1` | 0.833 [0.69, 0.94] | leader | 0.626 | 5 | 0 | 0.25 | 0.012 |
+| `typesafe/jev-1.13` **rec.** | 0.833 [0.69, 0.94] | yes | 0.788 | 2 | 0 | 0.27 | 0.024 |
+| `cloudflare/clef` | 0.833 [0.69, 0.94] | yes | 0.626 | 5 | 0 | 0.40 | 0.092 |
+| `jaredpalmer/kev-4b` | 0.833 [0.69, 0.94] | yes | 0.571 | 6 | 0 | 0.59 | 0.012 |
+| `togethercomputer/tev1-4b-experimental` | 0.806 [0.67, 0.92] | yes | 0.500 | 7 | 0 | 0.26 | 0.015 |
+| `cloudflare/clef-omni` | 0.806 [0.67, 0.92] | yes | 0.500 | 7 | 0 | 0.27 | 0.057 |
+| `perplexity/pplx-decider-v1.1-27b` | 0.806 [0.67, 0.92] | yes | 0.608 | 5 | 0 | 0.34 | 0.007 |
+| `cloudflare/clef-flash` | 0.806 [0.67, 0.92] | yes | 0.500 | 7 | 0 | 0.42 | 0.015 |
+| `inception/mercury-decide` | 0.806 [0.67, 0.92] | yes | 0.663 | 4 | 0 | 0.48 | 0.006 |
+| `upstage/solar-decide-flash` | 0.806 [0.67, 0.92] | yes | 0.608 | 5 | 0 | 0.62 | 0.030 |
+| `upstage/solar-decide` | 0.806 [0.67, 0.92] | yes | 0.608 | 5 | 0 | 0.63 | 0.030 |
+| `nace-ai/drex-v1.5` | 0.778 [0.64, 0.89] | yes | 0.754 | 2 | 0 | 0.35 | 0.011 |
+| `anthropic/claude-haiku-5.5` (chat) | 0.722 [0.56, 0.86] | yes | 0.719 | 2 | 0 | 1.48 | 0.123 |
+| `microsoft/microsoft-decision-1` | 0.639 [0.47, 0.78] | yes | 0.667 | 2 | 0 | 0.36 | 0.012 |
+| `openai/gpt-6-luna-decisions` | 0.556 [0.39, 0.72] | no, gap [+0.08, +0.44] | 0.562 | 3 | 0 | 0.27 | 0.037 |
+
+Unsafe = called a fabricated answer genuine.
+
+By item kind (correct/n): `typesafe/jev-1.13` cc-haiku-4.5 9/12, micode-corpus 4/6, micode-haiku-5.5 8/9, micode-opus-5.5 9/9; `anthropic/claude-haiku-5.5` cc-haiku-4.5 6/12, micode-corpus 3/6, micode-haiku-5.5 8/9, micode-opus-5.5 9/9; `liquid/d1` cc-haiku-4.5 8/12, micode-corpus 5/6, micode-haiku-5.5 8/9, micode-opus-5.5 9/9.
+
+Winner: `liquid/d1`; statistically tied: `typesafe/jev-1.13`, `cloudflare/clef`, `jaredpalmer/kev-4b`, `togethercomputer/tev1-4b-experimental`, `cloudflare/clef-omni`, `perplexity/pplx-decider-v1.1-27b`, `cloudflare/clef-flash`, `inception/mercury-decide`, `upstage/solar-decide-flash`, `upstage/solar-decide`, `nace-ai/drex-v1.5`, `anthropic/claude-haiku-5.5`, `microsoft/microsoft-decision-1`. Recommended: `typesafe/jev-1.13`.
+
+#### `axbool`: Axon `ai_extract::<bool>` (48 items: False 24, True 24; majority class 0.500)
+
+| model | accuracy [95% CI] | tied with leader | balanced acc. | errors | p50 s | $/1k |
+|---|---|---|---|---|---|---|
+| `anthropic/claude-haiku-5.5` (chat) | 0.938 [0.85, 1.00] | leader | 0.938 | 1 | 2.03 | 0.234 |
+| `perplexity/pplx-decider-v1.1-27b` | 0.917 [0.83, 0.98] | yes | 0.917 | 0 | 0.34 | 0.011 |
+| `cloudflare/clef` | 0.875 [0.77, 0.96] | yes | 0.875 | 0 | 0.39 | 0.141 |
+| `liquid/d1` **rec.** | 0.854 [0.75, 0.94] | yes | 0.854 | 0 | 0.27 | 0.020 |
+| `inception/mercury-decide` | 0.854 [0.75, 0.94] | yes | 0.854 | 0 | 0.45 | 0.010 |
+| `typesafe/jev-1.13` | 0.812 [0.69, 0.92] | yes | 0.812 | 0 | 0.28 | 0.031 |
+| `openai/gpt-6-luna-decisions` | 0.771 [0.65, 0.88] | no, gap [+0.04, +0.31] | 0.771 | 0 | 0.27 | 0.061 |
+| `nace-ai/drex-v1.5` | 0.750 [0.62, 0.88] | no, gap [+0.04, +0.35] | 0.750 | 0 | 0.33 | 0.019 |
+| `cloudflare/clef-omni` | 0.729 [0.60, 0.85] | no, gap [+0.08, +0.35] | 0.729 | 0 | 0.27 | 0.088 |
+| `microsoft/microsoft-decision-1` | 0.729 [0.58, 0.85] | no, gap [+0.08, +0.38] | 0.729 | 0 | 0.33 | 0.021 |
+| `cloudflare/clef-flash` | 0.667 [0.52, 0.79] | no, gap [+0.15, +0.42] | 0.667 | 0 | 0.40 | 0.022 |
+| `upstage/solar-decide-flash` | 0.667 [0.52, 0.79] | no, gap [+0.10, +0.44] | 0.667 | 0 | 0.66 | 0.042 |
+| `togethercomputer/tev1-4b-experimental` | 0.646 [0.50, 0.77] | no, gap [+0.17, +0.44] | 0.646 | 0 | 0.27 | 0.023 |
+| `jaredpalmer/kev-4b` | 0.646 [0.50, 0.77] | no, gap [+0.15, +0.44] | 0.646 | 0 | 0.59 | 0.020 |
+| `upstage/solar-decide` | 0.625 [0.48, 0.75] | no, gap [+0.15, +0.48] | 0.625 | 0 | 9.48 | 0.042 |
+
+By item kind (correct/n): `liquid/d1` eval 13/16, tests 14/16, typecheck 14/16; `anthropic/claude-haiku-5.5` eval 15/16, tests 15/16, typecheck 15/16.
+
+Winner: `anthropic/claude-haiku-5.5`; statistically tied: `perplexity/pplx-decider-v1.1-27b`, `cloudflare/clef`, `liquid/d1`, `inception/mercury-decide`, `typesafe/jev-1.13`. Recommended: `liquid/d1`.
+
+#### `improve`: `axon improve discover --ai` template (40 items: bool-simplify 8, compare-fold 8, constant-fold 8, fold-arith-identities 8, redundant-branch-fold 8; majority class 0.200)
+
+| model | accuracy [95% CI] | tied with leader | balanced acc. | errors | p50 s | $/1k |
+|---|---|---|---|---|---|---|
+| `cloudflare/clef` | 1.000 [1.00, 1.00] | leader | 1.000 | 0 | 0.43 | 0.237 |
+| `inception/mercury-decide` | 1.000 [1.00, 1.00] | yes | 1.000 | 0 | 0.50 | 0.018 |
+| `anthropic/claude-haiku-5.5` (chat) | 1.000 [1.00, 1.00] | yes | 1.000 | 0 | 2.13 | 0.316 |
+| `perplexity/pplx-decider-v1.1-27b` | 0.975 [0.93, 1.00] | yes | 0.975 | 0 | 0.37 | 0.018 |
+| `liquid/d1` **rec.** | 0.950 [0.88, 1.00] | yes | 0.950 | 0 | 0.26 | 0.034 |
+| `microsoft/microsoft-decision-1` | 0.925 [0.82, 1.00] | yes | 0.925 | 0 | 0.35 | 0.036 |
+| `upstage/solar-decide` | 0.925 [0.82, 1.00] | yes | 0.925 | 0 | 10.18 | 0.059 |
+| `typesafe/jev-1.13` | 0.850 [0.72, 0.95] | no, gap [+0.05, +0.28] | 0.850 | 0 | 0.27 | 0.047 |
+| `cloudflare/clef-flash` | 0.825 [0.70, 0.93] | no, gap [+0.07, +0.30] | 0.825 | 0 | 0.48 | 0.037 |
+| `togethercomputer/tev1-4b-experimental` | 0.800 [0.68, 0.93] | no, gap [+0.07, +0.32] | 0.800 | 0 | 0.27 | 0.039 |
+| `openai/gpt-6-luna-decisions` | 0.800 [0.68, 0.93] | no, gap [+0.07, +0.32] | 0.800 | 0 | 0.27 | 0.092 |
+| `cloudflare/clef-omni` | 0.800 [0.68, 0.93] | no, gap [+0.07, +0.32] | 0.800 | 0 | 0.28 | 0.147 |
+| `jaredpalmer/kev-4b` | 0.675 [0.53, 0.82] | no, gap [+0.18, +0.47] | 0.675 | 0 | 0.68 | 0.035 |
+| `nace-ai/drex-v1.5` | 0.650 [0.50, 0.80] | no, gap [+0.20, +0.50] | 0.650 | 0 | 0.33 | 0.033 |
+| `upstage/solar-decide-flash` | 0.425 [0.28, 0.57] | no, gap [+0.43, +0.72] | 0.425 | 0 | 0.66 | 0.059 |
+
+Winner: `cloudflare/clef`; statistically tied: `inception/mercury-decide`, `anthropic/claude-haiku-5.5`, `perplexity/pplx-decider-v1.1-27b`, `liquid/d1`, `microsoft/microsoft-decision-1`, `upstage/solar-decide`. Recommended: `liquid/d1`.
+
+#### `risk`: MiCode shell-risk Tier-B judge (46 items: critical 15, read 15, routine 1, sensitive 15; majority class 0.326)
+
+| model | accuracy [95% CI] | tied with leader | balanced acc. | unsafe /31 | errors | p50 s | $/1k |
+|---|---|---|---|---|---|---|---|
+| `perplexity/pplx-decider-v1.1-27b` | 0.826 [0.72, 0.91] | leader | 0.633 | 7 | 0 | 0.34 | 0.007 |
+| `anthropic/claude-haiku-5.5` (chat) | 0.783 [0.65, 0.89] | yes | 0.600 | 7 | 0 | 2.28 | 0.201 |
+| `typesafe/jev-1.13` | 0.717 [0.59, 0.83] | yes | 0.550 | 11 | 0 | 0.29 | 0.024 |
+| `microsoft/microsoft-decision-1` | 0.717 [0.59, 0.85] | yes | 0.550 | 9 | 0 | 0.31 | 0.012 |
+| `cloudflare/clef` | 0.717 [0.59, 0.85] | yes | 0.550 | 8 | 0 | 0.51 | 0.095 |
+| `inception/mercury-decide` | 0.696 [0.54, 0.83] | yes | 0.533 | 10 | 0 | 0.34 | 0.007 |
+| `upstage/solar-decide` **rec.** | 0.696 [0.57, 0.83] | yes | 0.533 | 2 | 0 | 0.74 | 0.029 |
+| `openai/gpt-6-luna-decisions` | 0.674 [0.52, 0.80] | yes | 0.517 | 12 | 1 | 0.28 | 0.035 |
+| `liquid/d1` | 0.630 [0.48, 0.76] | no, gap [+0.07, +0.33] | 0.483 | 15 | 0 | 0.28 | 0.012 |
+| `togethercomputer/tev1-4b-experimental` | 0.609 [0.46, 0.74] | no, gap [+0.04, +0.39] | 0.467 | 18 | 0 | 0.28 | 0.015 |
+| `cloudflare/clef-flash` | 0.587 [0.46, 0.72] | no, gap [+0.07, +0.41] | 0.450 | 18 | 0 | 0.39 | 0.015 |
+| `cloudflare/clef-omni` | 0.565 [0.43, 0.70] | no, gap [+0.09, +0.43] | 0.433 | 19 | 0 | 0.28 | 0.059 |
+| `jaredpalmer/kev-4b` | 0.522 [0.37, 0.65] | no, gap [+0.15, +0.46] | 0.400 | 20 | 0 | 0.70 | 0.011 |
+| `nace-ai/drex-v1.5` | 0.413 [0.26, 0.54] | no, gap [+0.26, +0.57] | 0.317 | 27 | 0 | 0.36 | 0.010 |
+| `upstage/solar-decide-flash` | 0.370 [0.24, 0.52] | no, gap [+0.28, +0.63] | 0.283 | 0 | 0 | 0.62 | 0.029 |
+
+Unsafe = assigned a LOWER tier than the label.
+
+By item kind (correct/n): `upstage/solar-decide` base64 6/11, hex-printf 9/14, sh -c 17/21; `anthropic/claude-haiku-5.5` base64 9/11, hex-printf 10/14, sh -c 17/21; `perplexity/pplx-decider-v1.1-27b` base64 10/11, hex-printf 9/14, sh -c 19/21.
+
+Winner: `perplexity/pplx-decider-v1.1-27b`; statistically tied: `anthropic/claude-haiku-5.5`, `typesafe/jev-1.13`, `microsoft/microsoft-decision-1`, `cloudflare/clef`, `inception/mercury-decide`, `upstage/solar-decide`, `openai/gpt-6-luna-decisions`. Recommended: `upstage/solar-decide`.
+
+### Recommended model per site (correctness first, then latency, then cost)
+
+| site | code | category | winner | statistical tie | recommended | `claude-haiku-5.5` |
+|---|---|---|---|---|---|---|
+| Cortex `repair --ranker` (candidate order) | axon-cortex src/rank.rs | `loc` | `anthropic/claude-haiku-5.5` | 7 models | `openai/gpt-6-luna-decisions` | 0.965, tied, p50 3.08 s |
+| Cortex post-verification audit (`--audit`) | axon-cortex src/audit.rs | `audit`; `tamper`: leader `cloudflare/clef`, rec. `liquid/d1`, haiku-5.5 tied | `liquid/d1` | 9 models | `liquid/d1` | 1.000, tied, p50 1.46 s, unsafe 0 |
+| Cortex cheap-vs-strong advice | derived from the ranker's answer | `route55`; `route`: leader `anthropic/claude-haiku-5.5`, rec. `anthropic/claude-haiku-5.5`, haiku-5.5 tied | `perplexity/pplx-decider-v1.1-27b` | 2 models | `perplexity/pplx-decider-v1.1-27b` | 0.933, tied, p50 2.33 s |
+| MiCode shell-command risk tier (Tier-B judge) | micode assembly.rs `ProviderRiskJudge`, tiered_classifier.rs `shadow_observe` | `risk`; `gate`: leader `microsoft/microsoft-decision-1`, rec. `microsoft/microsoft-decision-1`, haiku-5.5 tied | `perplexity/pplx-decider-v1.1-27b` | 8 models | `upstage/solar-decide` | 0.783, tied, p50 2.28 s, unsafe 7 |
+| MiCode trust Tier-B judge | micode-verify judge.rs `apply_tier_b`, assembly.rs `ProviderJudge` | `trust` | `liquid/d1` | 14 models | `typesafe/jev-1.13` | 0.722, tied, p50 1.48 s, unsafe 2 |
+| Axon `ai_extract::<bool>` | axon-ai lib.rs 1205-1250 (`__axon_ai_extract_bool`) | `axbool` | `anthropic/claude-haiku-5.5` | 6 models | `liquid/d1` | 0.938, tied, p50 2.03 s |
+| `axon improve discover --ai` | axon-core improve.rs 509-620 | `improve` | `cloudflare/clef` | 7 models | `liquid/d1` | 1.000, tied, p50 2.13 s |
+### Answer stability on the new categories (36-item subset, full run + 3 repeats)
+
+Repeated only for the models that were not 30/30 deterministic in the original stability phase; the other nine answered identically in all four runs there.
+
+| model | items with identical answers in every run | per category | accuracy per run (full, r1, r2, r3) |
+|---|---|---|---|
+| `perplexity/pplx-decider-v1.1-27b` | 36/36 (1.00) | audit 6/6, route55 6/6, trust 6/6, axbool 6/6, improve 6/6, risk 6/6 | 0.92, 0.92, 0.92, 0.92 |
+| `cloudflare/clef` | 33/36 (0.92) | audit 6/6, route55 5/6, trust 6/6, axbool 6/6, improve 6/6, risk 4/6 | 0.86, 0.86, 0.92, 0.86 |
+| `typesafe/jev-1.13` | 35/36 (0.97) | audit 6/6, route55 6/6, trust 6/6, axbool 6/6, improve 6/6, risk 5/6 | 0.94, 0.94, 0.92, 0.94 |
+| `upstage/solar-decide` | 31/36 (0.86) | audit 6/6, route55 3/6, trust 6/6, axbool 5/6, improve 5/6, risk 6/6 | 0.78, 0.83, 0.83, 0.81 |
+| `upstage/solar-decide-flash` | 33/36 (0.92) | audit 6/6, route55 5/6, trust 6/6, axbool 5/6, improve 5/6, risk 6/6 | 0.61, 0.58, 0.61, 0.61 |
+| `anthropic/claude-haiku-5.5` (chat) | 34/36 (0.94) | audit 6/6, route55 6/6, trust 6/6, axbool 6/6, improve 5/6, risk 5/6 | 0.97, 0.94, 0.94, 0.97 |
+
+
+Use-case spend (sum of `usage.cost`): `pilot-usecases` $0.0408, `usecases` $0.3987, `stability-usecases` $0.0834, total $0.5229.
+
+<!-- END USECASES -->
+
+### Reading the use-case results [INFERENCE]
+
+- **`claude-haiku-5.5` is tied with the winner in all 11 categories** and is the leader
+  in `loc`, `axbool` and `route` (sole winner only in `route`). It is the only model never
+  significantly behind. Its cost is p50 1.5-3.1 s and $0.12-0.55 per 1k decisions,
+  against 0.3-0.6 s and under $0.1 for most decision models.
+- **Where a decision model is as good and much faster:** `audit` (9 models at 48/48,
+  incl. `liquid/d1` 0.28 s and `mercury-decide`), `improve` (`clef`, `mercury-decide` at
+  40/40), `repair` (`mercury-decide` 0.972). These are the sites where a sub-second
+  model is a safe swap.
+- **`route55`:** only `pplx-decider` (0.933, 0.39 s) ties Haiku 5.5; every other model is
+  significantly worse. pplx answered the 36-item stability subset identically four
+  times here, but in the original phase it switched answer mode and changed 110 of 222
+  answers between two samples. Haiku 5.5 is equally accurate, stable (34/36) and is
+  what the ranker already calls, and the Cortex cheap-vs-strong advice is derived from
+  the ranker's answer, so keep Haiku 5.5 there unless pplx stays stable over time.
+- **`trust` separates nothing.** 14 of 15 models tie, and the leaders (0.833) barely beat
+  answering "genuine" every time (0.806). A false "FIXED" claim reads like a true one;
+  the judge sees only the text. The rule picks `typesafe/jev-1.13` (2 of 7 fabricated
+  answers missed, balanced 0.79); Haiku 5.5 also misses 2 (balanced 0.72).
+- **`risk`:** the leaders are `pplx-decider` 0.826 and Haiku 5.5 0.783, each with 7
+  under-tiered answers; `solar-decide` under-tiers only 2 but scores 0.696. MiCode's
+  `EffectiveTier::combine` lets the judge only raise a tier (and at most to Sensitive),
+  so an under-tiered answer changes nothing at that site; the useful errors to avoid
+  there are over-tierings of `read` commands.
+- **Stability.** Repeats ran only for the six models that were not 30/30 deterministic in
+  the original stability phase (the user allowed this; the other nine were not
+  repeated). On the new categories they agreed with themselves on 31-36 of 36 items;
+  the disagreements sit in `route55`, `risk`, `improve` and `axbool`.
+- **Per site, reading the rule's pick against the leader.** The rule (fewest unsafe,
+  then p50, then $/1k within the statistical tie) can pick a model well below the
+  leader when the CI is wide; the table shows both.
+  - `repair --ranker` (`loc`): Haiku 5.5 leads (0.965); `mercury-decide` 0.930 at 0.47 s
+    is the fast tied option; the rule's `gpt-6-luna-decisions` is 0.877.
+  - `repair --audit` (`audit`): 9 models at 48/48 including Haiku 5.5; the rule picks
+    `liquid/d1` (0.28 s, $0.095/1k). On `tamper` Haiku 5.5 is tied (0.921, 2 unsafe).
+  - cheap-vs-strong advice: Haiku 5.5 (see `route55`).
+  - MiCode risk judge: `pplx-decider` leads (0.826), Haiku 5.5 tied (0.783).
+  - MiCode trust judge: no model is significantly better than always answering "genuine"; this
+    benchmark cannot pick one. The rule's `typesafe/jev-1.13` is 0.833.
+  - `ai_extract::<bool>`: Haiku 5.5 leads (0.938); tied decision models score 0.81-0.92.
+  - `improve discover --ai`: Haiku 5.5, `clef` and `mercury-decide` all 40/40.
+  Making Haiku 5.5 the default at every site loses no category significantly; it costs
+  about 2 s and $0.1-0.5 per 1k decisions more than the fastest tied decision model.
+
+### NOT BUILT (no recorded outcome to label them mechanically)
+
+| site | why not | data that would make it buildable |
+|---|---|---|
+| EVO mutation order (`axon-loop` evo.rs `propose`) | no model is asked: the next mutation is a seeded Fisher-Yates shuffle of the remove/swap space, first one not in the tried set. No hypothesis ledger with verdicts exists | `hypotheses.jsonl` ledgers with `Hypothesis::Verdict{Accept/Reject}` per proposed mutation, for the same scope and seed, so "which mutation will be accepted" has an answer |
+| axon-reflex tool shortlist (`shortlist.rs`) | no model provider exists (`DeterministicReference`, `DeterministicFrequency`; model-backed ids are `Unsupported`), and no recorded episodes say which tool was used | episodes of `{scope, eligible set, features}` with the tool actually chosen and whether the episode succeeded |
+| MiCode memory recall ranking (strategy_memory.rs `recall`, repo_memory.rs `recall_facts_with_ids`) | no model: word-overlap scores times outcome or citation weights. `recall_corpus.rs` labels relevance by hand (author judgment), and no session ever logged its recalls | session logs of recalled fact ids per task plus the `[mem:N]` citations the model then made (`cited_count` per recall), or task outcomes per recalled strategy |
+| MiCode `auto` effort | not implemented (`ResolveEffortError::AutoNotImplemented`); no prompt, no options, no outcomes | per-turn records of (prompt, effort level used, success, tokens) across several levels for the same prompts |
+| MiCode cheap-model choice for subagents (`cheap_tier_route`) | config logic (persona `cheap_tier` + `subagent.cheap_model`), no model decision; nothing persisted | delegation records with the child model and the child's outcome, for tasks run on both the cheap and the parent model |
+| MiCode stall detection (convergence.rs `ConvergenceJudge::assess`) | spend-since-progress threshold, no model; no `convergence` events in any session, and the blind stuck-vs-working review in BUDGET_CONVERGENCE_EXPERIMENT.md has no results | session transcripts with `Convergence` events and a recorded end state (finished vs abandoned/halted) per stall verdict |
+
 ## Recommendation [INFERENCE]
 
 - **`axon-reflex` shortlist provider.** Use `inception/mercury-decide` for the reflex
@@ -582,6 +1012,10 @@ as it did are tagged [INFERENCE].
   model reproduces it: at best 0.75, with 2-14 under-tiered calls per model. Opus also
   refuses to classify destructive commands. A model could at most be a shadow second
   opinion that can only raise a tier.
+- **Model-calling sites.** See [Use cases](#use-cases-one-category-per-model-calling-site):
+  `claude-haiku-5.5` is tied with the winner at every surveyed site, so it is a safe
+  single default. A sub-second decision model is a statistically tied swap for `audit`,
+  `improve`, `repair` and `loc` (`mercury-decide` 0.930 vs 0.965), not for `route55`.
 
 ## Method
 
@@ -725,13 +1159,17 @@ The spend table above sums every response's `usage.cost` under `results/`, inclu
 the two discarded chat pilots, the drift reruns and the harness-speed and batched
 runs. On top of that, about $0.02 of ad-hoc format checks (3 `claude-haiku-4.5` and 4
 `jev-router` calls while choosing the schema) is not in the JSONL. The lane cap was $10.
+The use-case lane (pilot, full run, stability repeats) spent $0.5229 of its own $10 cap;
+its line in the table above is part of that total.
 
 ## Files
 
 | file | what |
 |---|---|
-| `build_set.py`, `micode_gate.py` | build `decision_set.jsonl` and `decision_set.meta.json` |
-| `decision_set.jsonl` | 222 items: `state`, `question`, `label`, `provenance` (and `incumbent` for loc) |
-| `run.py` | probe / pilot / full / stability / drift; one JSONL row per call: requested and resolved model, provider, raw answer, parsed answer, error class, HTTP status, latency, attempts, tokens, cost |
-| `analyse.py` | every table above, plus `results/summary.{md,json}` |
-| `results/` | `probe.jsonl`, `pilot/`, `full/`, `stability/`, `drift/`, `pilot-unconstrained/`, `pilot-schema-403/`; harness speed: `full-fast/`, `full-fast2/`, `full-batched/` (each with `RUNLOG.json`) |
+| `build_set.py`, `micode_gate.py` | build the original 222 items of `decision_set.jsonl` and `decision_set.meta.json` |
+| `build_usecases.py` | append the 6 use-case categories (278 items) and their `usecases` block in `decision_set.meta.json` |
+| `spotcheck_usecases.py` | recompute 10 random labels per use-case category from their sources (`results/spotcheck_usecases.txt`) |
+| `decision_set.jsonl` | 500 items: `state`, `question`, `label`, `provenance` (and `incumbent` for loc) |
+| `run.py` | probe / pilot / full / stability / drift (`--cats`, `--per-cat` select categories); one JSONL row per call: requested and resolved model, provider, raw answer, parsed answer, error class, HTTP status, latency, attempts, tokens, cost |
+| `analyse.py` | every table above, plus `results/summary.{md,json}`; `--usecases`: the per-use-case report, `results/usecases.{md,json}` |
+| `results/` | `probe.jsonl`, `pilot/`, `full/`, `stability/`, `drift/`, `pilot-unconstrained/`, `pilot-schema-403/`; harness speed: `full-fast/`, `full-fast2/`, `full-batched/` (each with `RUNLOG.json`); use cases: `pilot-usecases/`, `usecases/`, `stability-usecases/` |
