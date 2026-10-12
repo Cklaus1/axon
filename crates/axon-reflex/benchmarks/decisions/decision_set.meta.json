@@ -1,0 +1,64 @@
+{
+ "counts": {
+  "gate:Critical": 8,
+  "gate:Read": 8,
+  "gate:Routine": 8,
+  "gate:Sensitive": 8,
+  "loc": 57,
+  "repair:False": 18,
+  "repair:True": 18,
+  "route:cheap_first_try": 21,
+  "route:escalate": 38,
+  "tamper:False": 18,
+  "tamper:True": 20
+ },
+ "full_source_max_chars": 12000,
+ "n": 222,
+ "poc_ab_commit": "b37ac1575c9f1123ea45a053a032c4da24f6712a",
+ "sources": {
+  "axon (checker)": {
+   "path": "/home/cklaus/projects/axon-lanes/.doc-build/poc-ab/debug/axon",
+   "sha16": "d2e1bd46634c6c6b"
+  },
+  "corpus.json": {
+   "path": "/home/cklaus/projects/axon-lanes/poc-ab/crates/axon-cortex/benchmarks/ab/corpus.json",
+   "sha16": "3c7bc7bd4ea106f7"
+  },
+  "dryrun/a-cheat.jsonl": {
+   "path": "/home/cklaus/projects/axon-lanes/poc-ab/crates/axon-cortex/benchmarks/ab/results/dryrun/a-cheat.jsonl",
+   "sha16": "cd27429d61324774"
+  },
+  "dryrun/a-exit0.jsonl": {
+   "path": "/home/cklaus/projects/axon-lanes/poc-ab/crates/axon-cortex/benchmarks/ab/results/dryrun/a-exit0.jsonl",
+   "sha16": "651085ae27b7d2fc"
+  },
+  "dryrun/a-forge.jsonl": {
+   "path": "/home/cklaus/projects/axon-lanes/poc-ab/crates/axon-cortex/benchmarks/ab/results/dryrun/a-forge.jsonl",
+   "sha16": "d6ad25dfd19c1004"
+  },
+  "dryrun/a-oracle.jsonl": {
+   "path": "/home/cklaus/projects/axon-lanes/poc-ab/crates/axon-cortex/benchmarks/ab/results/dryrun/a-oracle.jsonl",
+   "sha16": "123e80d84dd4db53"
+  },
+  "full/b.jsonl": {
+   "path": "/home/cklaus/projects/axon-lanes/poc-ab/crates/axon-cortex/benchmarks/ab/results/full/b.jsonl",
+   "sha16": "14606093d0c300b0"
+  },
+  "locate.jsonl": {
+   "path": "/home/cklaus/projects/axon-lanes/loc-rank/crates/axon-cortex/benchmarks/locrank/results/locate.jsonl",
+   "sha16": "acaeb2b83fc71275"
+  },
+  "micode adversarial_risk_cases.jsonl": {
+   "path": "/home/cklaus/projects/aicoding/micode/crates/micode-delegate/tests/fixtures/adversarial_risk_cases.jsonl",
+   "sha16": "a542e79b41ba5e46"
+  },
+  "micode classifier.rs": {
+   "path": "/home/cklaus/projects/aicoding/micode/crates/micode-delegate/src/classifier.rs",
+   "sha16": "ed0c7e1cc12bba2e"
+  },
+  "sealed/run.sh": {
+   "path": "/home/cklaus/projects/axon-lanes/decision-bench/examples/sealed/run.sh",
+   "sha16": "69965685e66790d4"
+  }
+ }
+}
