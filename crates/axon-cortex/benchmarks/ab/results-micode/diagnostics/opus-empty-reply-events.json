@@ -1,0 +1,164 @@
+[
+ {
+  "task": "boolean-07",
+  "symbol": "gate_pass",
+  "try": 0,
+  "rc": 0,
+  "text_len": 0,
+  "text_head": "",
+  "turn_end": [
+   {
+    "type": "turn_end",
+    "usage": {
+     "input_tokens": 277,
+     "output_tokens": 38,
+     "cache_read_input_tokens": 0,
+     "cache_creation_input_tokens": 0
+    },
+    "reason": null
+   }
+  ],
+  "events": [
+   "{\"type\": \"session_start\", \"session_id\": \"micode-session-1791830094964489629\", \"provider\": \"anthropic\", \"model\": \"claude-opus-5-5\", \"micode_version\": \"0.3.0\", \"workspace_root\": \"/var/tmp/r51-tmp/tmp9u8jrj3i\", \"head_commit\": null}",
+   "{\"type\": \"user_prompt\", \"text\": \"You are repairing one function in an Axon program.\\n\\nFile: phase14_tests.ax\\nFunction: gate_pass\\n\\nIts body is currently:\\n```\\n GateResult { passed: false, reason: \\\"ok\\\" } \\n```\\n\\nWhat a checker observed about the file:\\n- compiles: true\\n- compiles_cleanly: fal",
+   "{\"type\": \"turn_start\", \"turn\": 0, \"model\": \"claude-opus-5-5\"}",
+   "{\"type\": \"verify\", \"Trusted\": null}",
+   "{\"type\": \"turn_end\", \"usage\": {\"input_tokens\": 277, \"output_tokens\": 38, \"cache_read_input_tokens\": 0, \"cache_creation_input_tokens\": 0}, \"reason\": null}"
+  ]
+ },
+ {
+  "task": "boolean-07",
+  "symbol": "gate_pass",
+  "try": 1,
+  "rc": 0,
+  "text_len": 0,
+  "text_head": "",
+  "turn_end": [
+   {
+    "type": "turn_end",
+    "usage": {
+     "input_tokens": 277,
+     "output_tokens": 0,
+     "cache_read_input_tokens": 0,
+     "cache_creation_input_tokens": 0
+    },
+    "reason": null
+   }
+  ],
+  "events": [
+   "{\"type\": \"session_start\", \"session_id\": \"micode-session-1791830096606945157\", \"provider\": \"anthropic\", \"model\": \"claude-opus-5-5\", \"micode_version\": \"0.3.0\", \"workspace_root\": \"/var/tmp/r51-tmp/tmp9u8jrj3i\", \"head_commit\": null}",
+   "{\"type\": \"user_prompt\", \"text\": \"You are repairing one function in an Axon program.\\n\\nFile: phase14_tests.ax\\nFunction: gate_pass\\n\\nIts body is currently:\\n```\\n GateResult { passed: false, reason: \\\"ok\\\" } \\n```\\n\\nWhat a checker observed about the file:\\n- compiles: true\\n- compiles_cleanly: fal",
+   "{\"type\": \"turn_start\", \"turn\": 0, \"model\": \"claude-opus-5-5\"}",
+   "{\"type\": \"verify\", \"Trusted\": null}",
+   "{\"type\": \"turn_end\", \"usage\": {\"input_tokens\": 277, \"output_tokens\": 0, \"cache_read_input_tokens\": 0, \"cache_creation_input_tokens\": 0}, \"reason\": null}"
+  ]
+ },
+ {
+  "task": "boolean-07",
+  "symbol": "gate_pass",
+  "try": 2,
+  "rc": 0,
+  "text_len": 0,
+  "text_head": "",
+  "turn_end": [
+   {
+    "type": "turn_end",
+    "usage": {
+     "input_tokens": 277,
+     "output_tokens": 0,
+     "cache_read_input_tokens": 0,
+     "cache_creation_input_tokens": 0
+    },
+    "reason": null
+   }
+  ],
+  "events": [
+   "{\"type\": \"session_start\", \"session_id\": \"micode-session-1791830097597991919\", \"provider\": \"anthropic\", \"model\": \"claude-opus-5-5\", \"micode_version\": \"0.3.0\", \"workspace_root\": \"/var/tmp/r51-tmp/tmp9u8jrj3i\", \"head_commit\": null}",
+   "{\"type\": \"user_prompt\", \"text\": \"You are repairing one function in an Axon program.\\n\\nFile: phase14_tests.ax\\nFunction: gate_pass\\n\\nIts body is currently:\\n```\\n GateResult { passed: false, reason: \\\"ok\\\" } \\n```\\n\\nWhat a checker observed about the file:\\n- compiles: true\\n- compiles_cleanly: fal",
+   "{\"type\": \"turn_start\", \"turn\": 0, \"model\": \"claude-opus-5-5\"}",
+   "{\"type\": \"verify\", \"Trusted\": null}",
+   "{\"type\": \"turn_end\", \"usage\": {\"input_tokens\": 277, \"output_tokens\": 0, \"cache_read_input_tokens\": 0, \"cache_creation_input_tokens\": 0}, \"reason\": null}"
+  ]
+ },
+ {
+  "task": "operator-04",
+  "symbol": "new_supervisor",
+  "try": 0,
+  "rc": 0,
+  "text_len": 0,
+  "text_head": "",
+  "turn_end": [
+   {
+    "type": "turn_end",
+    "usage": {
+     "input_tokens": 300,
+     "output_tokens": 0,
+     "cache_read_input_tokens": 0,
+     "cache_creation_input_tokens": 0
+    },
+    "reason": null
+   }
+  ],
+  "events": [
+   "{\"type\": \"session_start\", \"session_id\": \"micode-session-1791830098976797323\", \"provider\": \"anthropic\", \"model\": \"claude-opus-5-5\", \"micode_version\": \"0.3.0\", \"workspace_root\": \"/var/tmp/r51-tmp/tmpvpg99c6k\", \"head_commit\": null}",
+   "{\"type\": \"user_prompt\", \"text\": \"You are repairing one function in an Axon program.\\n\\nFile: supervised_agent.ax\\nFunction: new_supervisor\\n\\nIts body is currently:\\n```\\n\\n    Supervisor { budget: budget, strikes: 0, max_strikes: max_strikes, halted: false, gained: 0 }\\n\\n```\\n\\nWhat a checker obse",
+   "{\"type\": \"turn_start\", \"turn\": 0, \"model\": \"claude-opus-5-5\"}",
+   "{\"type\": \"verify\", \"Trusted\": null}",
+   "{\"type\": \"turn_end\", \"usage\": {\"input_tokens\": 300, \"output_tokens\": 0, \"cache_read_input_tokens\": 0, \"cache_creation_input_tokens\": 0}, \"reason\": null}"
+  ]
+ },
+ {
+  "task": "operator-04",
+  "symbol": "new_supervisor",
+  "try": 1,
+  "rc": 0,
+  "text_len": 0,
+  "text_head": "",
+  "turn_end": [
+   {
+    "type": "turn_end",
+    "usage": {
+     "input_tokens": 300,
+     "output_tokens": 0,
+     "cache_read_input_tokens": 0,
+     "cache_creation_input_tokens": 0
+    },
+    "reason": null
+   }
+  ],
+  "events": [
+   "{\"type\": \"session_start\", \"session_id\": \"micode-session-1791830099877515175\", \"provider\": \"anthropic\", \"model\": \"claude-opus-5-5\", \"micode_version\": \"0.3.0\", \"workspace_root\": \"/var/tmp/r51-tmp/tmpvpg99c6k\", \"head_commit\": null}",
+   "{\"type\": \"user_prompt\", \"text\": \"You are repairing one function in an Axon program.\\n\\nFile: supervised_agent.ax\\nFunction: new_supervisor\\n\\nIts body is currently:\\n```\\n\\n    Supervisor { budget: budget, strikes: 0, max_strikes: max_strikes, halted: false, gained: 0 }\\n\\n```\\n\\nWhat a checker obse",
+   "{\"type\": \"turn_start\", \"turn\": 0, \"model\": \"claude-opus-5-5\"}",
+   "{\"type\": \"verify\", \"Trusted\": null}",
+   "{\"type\": \"turn_end\", \"usage\": {\"input_tokens\": 300, \"output_tokens\": 0, \"cache_read_input_tokens\": 0, \"cache_creation_input_tokens\": 0}, \"reason\": null}"
+  ]
+ },
+ {
+  "task": "operator-04",
+  "symbol": "new_supervisor",
+  "try": 2,
+  "rc": 0,
+  "text_len": 0,
+  "text_head": "",
+  "turn_end": [
+   {
+    "type": "turn_end",
+    "usage": {
+     "input_tokens": 300,
+     "output_tokens": 0,
+     "cache_read_input_tokens": 0,
+     "cache_creation_input_tokens": 0
+    },
+    "reason": null
+   }
+  ],
+  "events": [
+   "{\"type\": \"session_start\", \"session_id\": \"micode-session-1791830100736786093\", \"provider\": \"anthropic\", \"model\": \"claude-opus-5-5\", \"micode_version\": \"0.3.0\", \"workspace_root\": \"/var/tmp/r51-tmp/tmpvpg99c6k\", \"head_commit\": null}",
+   "{\"type\": \"user_prompt\", \"text\": \"You are repairing one function in an Axon program.\\n\\nFile: supervised_agent.ax\\nFunction: new_supervisor\\n\\nIts body is currently:\\n```\\n\\n    Supervisor { budget: budget, strikes: 0, max_strikes: max_strikes, halted: false, gained: 0 }\\n\\n```\\n\\nWhat a checker obse",
+   "{\"type\": \"turn_start\", \"turn\": 0, \"model\": \"claude-opus-5-5\"}",
+   "{\"type\": \"verify\", \"Trusted\": null}",
+   "{\"type\": \"turn_end\", \"usage\": {\"input_tokens\": 300, \"output_tokens\": 0, \"cache_read_input_tokens\": 0, \"cache_creation_input_tokens\": 0}, \"reason\": null}"
+  ]
+ }
+]

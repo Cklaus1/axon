@@ -114,13 +114,20 @@ def verdict(sa, sb, a_rows):
             "C3_B_cost_per_fix_le_A": c3, "verdict": v}
 
 
+def usd(v, places=2):
+    """Dollars at `places` decimals, or 4 significant figures below one cent
+    (Haiku 5.5 on micode costs about a tenth of a cent a task, which two
+    decimals would print as $0.00)."""
+    return f"${v:.{places}f}" if v == 0 or abs(v) >= 0.01 else f"${v:.4g}"
+
+
 def fmt(s):
     lo, hi = s["ci95"]
-    cpf = "n/a" if s["cost_per_fix"] == float("inf") else f"${s['cost_per_fix']:.3f}"
+    cpf = "n/a" if s["cost_per_fix"] == float("inf") else usd(s["cost_per_fix"], 3)
     return [
         f"{s['verified_clean']}/{s['n']} ({100*s['rate']:.1f}%, CI {100*lo:.1f}-{100*hi:.1f})",
         f"{s['claims']}", f"{s['false_success']} ({100*s['fs_rate']:.1f}%)",
-        f"{s['tests_tampered']}", f"${s['cost']:.2f}", cpf,
+        f"{s['tests_tampered']}", usd(s["cost"]), cpf,
         f"{s['input_tokens']}/{s['output_tokens']}/{s['cache_read']}/{s['cache_create']}",
         f"{s['wall_mean']:.0f}s",
         f"{s['fail_left_modified']}/{s['failures']}",
@@ -284,12 +291,12 @@ def main():
         for f in sorted(glob.glob(os.path.join(root, "**", "*.jsonl"), recursive=True)):
             rows_f = [json.loads(l) for l in open(f) if l.strip()]
             spend[os.path.relpath(f, root)] = round(sum(
-                r.get("cost_usd") or r.get("cost_bound_usd") or 0.0 for r in rows_f), 2)
+                r.get("cost_usd") or r.get("cost_bound_usd") or 0.0 for r in rows_f), 6)
         out["spend_usd"] = spend
         md.append(f"\n### Model spend, every row under {os.path.basename(root)}/\n")
         md.append("| file | USD |\n|---|---|")
-        md += [f"| {k} | {v:.2f} |" for k, v in spend.items()]
-        md.append(f"| total | {sum(spend.values()):.2f} |")
+        md += [f"| {k} | {usd(v)[1:]} |" for k, v in spend.items()]
+        md.append(f"| total | {usd(sum(spend.values()))[1:]} |")
     md = "\n".join(md)
 
     if "--save" in sys.argv:
