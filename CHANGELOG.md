@@ -1,5 +1,9 @@
 # Axon Changelog
 
+## Cheap AI tier defaults to Haiku 5.5
+
+- **Behaviour change:** `@[ai(policy(tier: cheap))]` now sends `claude-haiku-5-5` (was `claude-haiku-4-5`), and provenance records `anthropic:claude-haiku` version `5.5`. On the decision benchmark (`crates/axon-reflex/benchmarks/decisions/`) Haiku 5.5 scored 0.902 macro accuracy against Haiku 4.5's 0.793, at about a sixth of the price per decision; that benchmark measured decisions, not free-text generation. `AXON_AI_MODEL_CHEAP=claude-haiku-4-5` restores the old model. The balanced and strong tiers are unchanged.
+
 ## Cortex A/B re-run on Haiku 5.5 and Opus 5.5 through micode
 
 - **axon-cortex benchmarks:** `benchmarks/drivers/micode.sh` puts a model behind `--generator cmd:` through the `micode` CLI, in a mode with no tools, from a scratch directory, with the same log format as `claude_cli.sh`. It is tested against a stub `micode` (`tests/micode_driver.rs`). `ab/run_ab.py` gains `--transport micode --model M` for both arms and records model, transport, binary hashes and commit in every row. It prices tokens at list price because micode reports no dollars, kills a timed-out task's whole process group, and stops after 3 consecutive rate-limited tasks. `ab/analyse.py --compare-b` compares two B runs. Preregistered in `ab/PREREG-micode.md`, with the breadth-first walk, n=60 per arm: Haiku 5.5 PASS (Cortex 56/60 with 0 false successes, plain agent 59/60 with 1) and Opus 5.5 PASS (55/60 and 60/60, both with 0 false successes; C1 held by one task). All costs are list-price estimates; the total was $6.27. Results are in `benchmarks/README.md`. The Haiku 4.5 primary run is unchanged.

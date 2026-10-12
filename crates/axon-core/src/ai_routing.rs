@@ -53,7 +53,7 @@ impl Tier {
         match self {
             // (model id, version) — illustrative defaults; a host config maps
             // tiers to whatever concrete models it has provisioned.
-            Tier::Cheap => ("anthropic:claude-haiku", "4.5"),
+            Tier::Cheap => ("anthropic:claude-haiku", "5.5"),
             Tier::Balanced => ("anthropic:claude-sonnet", "4.6"),
             Tier::Strong => ("anthropic:claude-opus", "4.8"),
         }
@@ -68,7 +68,7 @@ impl Tier {
     /// provisioned without a recompile; the env value wins when set+non-empty.
     pub fn api_model(self) -> String {
         let (env_key, default) = match self {
-            Tier::Cheap => ("AXON_AI_MODEL_CHEAP", "claude-haiku-4-5"),
+            Tier::Cheap => ("AXON_AI_MODEL_CHEAP", "claude-haiku-5-5"),
             Tier::Balanced => ("AXON_AI_MODEL_BALANCED", "claude-sonnet-4-6"),
             Tier::Strong => ("AXON_AI_MODEL_STRONG", "claude-opus-4-8"),
         };
@@ -262,7 +262,7 @@ mod tests {
             && std::env::var_os("AXON_AI_MODEL_BALANCED").is_none()
             && std::env::var_os("AXON_AI_MODEL_STRONG").is_none()
         {
-            assert_eq!(Tier::Cheap.api_model(), "claude-haiku-4-5");
+            assert_eq!(Tier::Cheap.api_model(), "claude-haiku-5-5");
             assert_eq!(Tier::Balanced.api_model(), "claude-sonnet-4-6");
             assert_eq!(Tier::Strong.api_model(), "claude-opus-4-8");
             // All three distinct — selecting a tier changes the model.
