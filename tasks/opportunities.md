@@ -2461,7 +2461,9 @@ attack whose caller passes the parent-uid check but is not the Fabric uid, so M5
 ## Mutation lane feedback duplicates the full run after a broad merge; root shards run in parallel
 
 Found 2026-10-12 (R51 merge into main). `--changed-since --granularity=file` selected 2263/2299 rows because the merge
-touched `interp.rs`: a 7260 s lane run that the mandatory full T7 at the final head repeats. The four shards ran root,
+touched `interp.rs`: a 7260 s lane run. 408 of them are rows the T7 lists recorded (of 444), which the mandatory
+full T7 at the final head repeats; the other 1855 have no T7 record at all (absent), so T7 does not run them and the
+lane run was their only run, not a duplicate. The four shards ran root,
 namespace and guest tests concurrently and 22 rows failed on the clean baseline from contention (stale `opkit-ns.*`
 scratch roots, a signal not forwarded within 5 s); the serial re-run (2267 s) killed all 22. Fix: (1) in
 `scripts/v022_mut_select.py`/`v022_g01_mutations.py`, when the selection exceeds ~30% of active rows print that the
@@ -2469,3 +2471,17 @@ lane run duplicates the full run and stop unless `--force`; (2) put rows whose p
 root or namespace tests in one serial shard while interpreter rows shard in parallel. Also merge `main` into
 long-lived branches every day or two: main gained 18 interpreter commits during R51 and the single merge cost
 33 conflict blocks, a wasm32 frame re-derivation and two agent budgets.
+
+Done: 67d93c74, 124eee17, 0e60ef3a. (1) Two stops, each exiting 1 before any cell unless `--force`, also printed by
+the preview, each only from `BROAD_MIN_ROWS = 20` rows on. BROAD SELECTION: more than `BROAD_SELECTION = 0.30` of
+the rows the records cover are selected for a reason other than absent. UNRECORDED: more than 0.30 of the rows are
+absent, never counted in the BROAD ratio. A lane's few new rows, or a small list, run normally. The merge's selection
+replayed: BROAD 408/444 recorded (92%) plus UNRECORDED 1855/2299, refused in 1.8 s. `--only=<a T7 list>` against
+its own record gives BROAD only (list 0 `file`: 173/176); at `fn` it runs (45/176). (2) `--shard=K/N` puts the
+serial class --
+package `axon-fabric`/`axon-guest-init`/`axon-os`, a test fn reading `geteuid(`, or an unlocatable test: 1116/2299
+rows at `--scope=all`, including all 61
+named contention rows (M2266, M2331-M2333, M2511, M2632, M2636, M2880-M2892, M3082, M3086, M3203, M3207,
+M3402-M3438) -- alone in shard 0, and a host flock (exclusive for it, shared for the
+others) keeps it from overlapping another shard; `v022_mut_select.py --shards=N` prints the plan. The merge
+cadence and both rules are in `tasks/build-loop-r51.md` (Mutation feedback loop; Merge `main` often).

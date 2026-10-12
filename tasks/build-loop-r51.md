@@ -94,6 +94,32 @@ own source that alters what the test observes: replaying e946f06d's T7 lists aga
 KILLED -> REFUSED_ELSEWHERE through a debug assert in `interp/env.rs`, which neither row anchors; `file` selected
 both (369/439 rows, only because their test lives in the changed `interp.rs`), `fn` selected neither (115/439).
 
+**Selection stops.** `v022_g01_mutations.py --changed-since` runs no cell, exits 1 and prints why, unless
+`--force`; the preview prints the same lines (`scripts/v022_mut_select.py`, STOPS). Each stop needs at least
+`BROAD_MIN_ROWS` (20) rows as well as its share, so a lane's few new rows or a small list run normally. BROAD
+SELECTION: more than 30% (`BROAD_SELECTION`) of the rows the records cover (scope and `--only`) are selected for a
+reason other than `absent`. That duplicates the full run of those rows at the final head, the evidence of record,
+so run that instead. UNRECORDED: more than 30% of the rows (scope and `--only`) are `absent`, i.e. no record covers
+them. They never count toward BROAD. Narrow `--scope`/`--only` to the recorded rows, or run the unrecorded rows as
+their own baseline run. Below the floor or the share, absent rows run normally and the preview still lists them as
+absent. R51's merge into main (`--granularity=file`, `--scope=all`, the four T7 lists as records; the merge touched
+`interp.rs`) selected 2263/2299, a 7260 s lane run: 408 of the 444 recorded rows (BROAD, 92%) and 1855 rows no T7
+list holds (UNRECORDED). A T7 list against its own record at `file` is BROAD too (list 0: 173/176); at `fn` it runs
+(45/176), and so does list 3 at `file` (1/2, under the floor).
+**Serial class.** `--shard=K/N` puts every row whose test runs as root, in a private namespace or as a guest's
+supervisor -- package `axon-fabric`/`axon-guest-init`/`axon-os`, a test fn that reads `geteuid(`, or a test fn
+that cannot be located -- in shard 0 and nothing else there; the rest go round-robin to shards 1..N-1.
+`python3 scripts/v022_mut_select.py --scope=all --shards=N` prints the plan (at `--scope=all`: 1116 serial rows =
+1065 + 34 + 9 by package + 8 root-gated `axon-psv` runner/`axon-core` rows; N=4 gives 395/394/394 for shards 1-3).
+**Run shard 0 alone.** Under parallel shards these rows failed clean baselines (R51 merge: 22 rows, stale
+`opkit-ns.*` scratch roots, a signal not forwarded within 5 s; all KILLED when re-run serially). The harness
+enforces it on one host: a shard holding serial rows takes `/var/tmp/axon-v022-mutation-serial.lock`
+exclusively, every other shard takes it shared, so shards started together wait for each other. The lock covers
+`--shard` runs only: lists run as concurrent `--only` runs (T7's practice) must hold no serial row
+(`--shards=1 --only=<list>` names them). R51's four T7 lists hold one: M246 (list 2, root-gated
+`psv_test_selection::holding_a_completion_key_makes_the_process_non_dumpable`); the rest are `axon-core` and
+`axon-psv --test sealed_frames` rows.
+
 **PCI classification and lane merges.** Each `crates/axon-core/src` commit is classified by its own file,
 `governance/notes/pci-themes/<hash8>.json` = `{"theme": ..., "text": ...}` (`scripts/pci_delta.py` loads the
 directory; `--drop HASH8` forgets one). Two lanes that classify different commits merge without a conflict there.
@@ -110,6 +136,10 @@ keeps ours' mechanical block and merges the rest of the note three-way. Procedur
 → resolve real conflicts → commit → `python3 tasks/r51-pci-regen.py` (also re-installs the driver) → write a
 themes file only for a commit it reports UNCLASSIFIED → `python3 -B scripts/pci_delta.py --check` PASS → commit
 the note (the block pins the head, so the regen after a merge stays).
+
+**Merge `main` often.** A long-lived branch merges `main` every 1-2 days of main activity, not once at the end:
+R51's single merge on 2026-10-12 took in 18 interpreter commits at once and cost 33 conflict blocks, a wasm32
+frame re-derivation (`nest_cost`) and two agent budgets.
 
 ## Gates
 

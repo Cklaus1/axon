@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Incremental row selection for `v022_g01_mutations.py --changed-since`.
+"""Incremental row selection for `v022_g01_mutations.py --changed-since`, and
+the shard plan of `v022_g01_mutations.py --shard=K/N`.
 
 LANE FEEDBACK ONLY, NEVER EVIDENCE. A run over the selected rows is a sample
 (its OUT.json carries `only` and `changed_since`): `--merge` and
@@ -45,7 +46,29 @@ Preview or replay a selection without running anything (the registry is read
 at REV, the records' rows are compared with REV's tree):
 
     python3 scripts/v022_mut_select.py --changed-since=A.json[,B.json...]
-        [--granularity=file|fn] [--scope=S] [--only=M1,M2] [--head=REV]
+        [--granularity=file|fn] [--scope=S] [--only=M1,M2] [--head=REV] [--shards=N]
+
+STOPS (`v022_g01_mutations.py --changed-since` runs no cell unless --force;
+the preview prints the same lines). Each needs at least BROAD_MIN_ROWS (20)
+rows as well as its share, so a few new rows or a small list run normally:
+  BROAD SELECTION  more than BROAD_SELECTION (30%) of the rows the records
+                   cover (scope and --only) are selected for a reason other
+                   than `absent`: the lane run duplicates the full run of
+                   those rows at the final head, the evidence of record;
+  UNRECORDED       more than BROAD_SELECTION of the rows (scope and --only)
+                   are `absent`: the records do not cover them, so there is
+                   nothing to compare them with; narrow --scope/--only to the
+                   recorded rows, or run the unrecorded rows as their own
+                   baseline run. Never counted in the ratio above.
+
+SHARD PLAN (--shards=N; --changed-since is then optional): how
+`v022_g01_mutations.py --shard=K/N` splits the rows it would run. Rows in the
+SERIAL CLASS -- their test runs as root, in a private namespace, or as a
+guest's supervisor: package in SERIAL_PACKAGES, or a test fn that reads the
+effective uid (a root-gated test), or a test fn that cannot be located -- all
+go to shard 0, which holds nothing else; the other rows are dealt round-robin
+to shards 1..N-1 (to all N when there is no serial row). Shard 0 runs ALONE:
+the harness holds SERIAL_LOCK exclusively for it and shared for the others.
 """
 
 import importlib.util
@@ -66,6 +89,23 @@ GRANULARITIES = ("file", "fn")
 REASONS = ("absent", "not-killed", "registry", "anchor", "test")
 NOT_EVIDENCE = ("incremental selection (--changed-since): lane feedback, NOT evidence; never merged "
                 "as a shard nor cited as a T7 list; the full run at the final head is the evidence of record")
+# A --changed-since selection above this share of the RECORDED rows (absent
+# rows excluded) is the records' full run in all but name (R51's merge into
+# main: 408 of the 444 rows the T7 lists recorded, besides 1855 rows no record
+# covered): the run stops unless --force. Absent rows above the same share of
+# the rows stop it too. Neither stops below BROAD_MIN_ROWS rows: a lane's few
+# new rows, or a small list, are what the selection is for.
+BROAD_SELECTION = 0.30
+BROAD_MIN_ROWS = 20
+# Packages whose tests run as root, in a private mount/PID namespace, or as a
+# guest's PID-1 supervisor. Under parallel shards their rows failed on clean
+# baselines (R51 merge: stale opkit-ns.* scratch roots, a signal not forwarded
+# within 5 s); run alone, all of them were KILLED.
+SERIAL_PACKAGES = ("axon-fabric", "axon-guest-init", "axon-os")
+_ROOT_GATE = re.compile(r"\bgeteuid\s*\(")
+# Held exclusively by the --shard run that holds the serial class, shared by
+# every other --shard run: on one host the serial shard never overlaps another.
+SERIAL_LOCK = "/var/tmp/axon-v022-mutation-serial.lock"
 
 
 class Git:
@@ -401,6 +441,101 @@ def report(selected, total, granularity):
     print(f"NOT EVIDENCE: {NOT_EVIDENCE}", flush=True)
 
 
+def stops(selected, rows):
+    """The stop lines (module doc: STOPS) for a selection `selected` ({id:
+    [reasons]}) of `rows` rows (scope and --only), [] when it may run."""
+    absent = sum(1 for rs in selected.values() if rs[0].startswith("absent:"))
+    recorded, changed = rows - absent, len(selected) - absent
+    out = []
+    if changed >= BROAD_MIN_ROWS and changed > BROAD_SELECTION * recorded:
+        out.append(f"BROAD SELECTION: {changed}/{recorded} recorded rows selected "
+                   f"({100 * changed / recorded:.0f}% > {BROAD_SELECTION:.0%}; absent rows not counted): this lane "
+                   "run duplicates the full run of those rows at the final head, which is the evidence of record; "
+                   "run that instead")
+    if absent >= BROAD_MIN_ROWS and absent > BROAD_SELECTION * rows:
+        out.append(f"UNRECORDED: the --changed-since records do not cover {absent}/{rows} rows of this scope and "
+                   "--only (selected as absent): narrow --scope/--only to the recorded rows, or run the unrecorded "
+                   "rows as their own baseline run")
+    return out
+
+
+# ── the shard plan ──────────────────────────────────────────────────────────
+
+def serial_class(rows, tree):
+    """{id: why} of the rows of `rows` (registry 8-tuples) whose test runs as
+    root, in a private namespace or as a guest's supervisor (module doc: SHARD
+    PLAN), judged on `tree`."""
+    out = {}
+    for row in rows:
+        if row[5] in SERIAL_PACKAGES:
+            out[row[0]] = f"package {row[5]}"
+            continue
+        loc = located_test(tree, row)
+        if isinstance(loc, str):
+            out[row[0]] = f"test not located: {loc}"
+        elif any(_ROOT_GATE.search(blank_non_code(text)) for _, text in loc[1]):
+            out[row[0]] = f"root-gated test: {row[5]} {row[6]} {row[7]}"
+    return out
+
+
+def shard_plan(ids, n, serial):
+    """[ids of shard k for k in 0..n-1] of `ids` (registry order): every id of
+    `serial` alone in shard 0, the others round-robin over shards 1..n-1 (over
+    all n when none is serial, or n == 1)."""
+    ser = [m for m in ids if m in serial]
+    par = [m for m in ids if m not in serial]
+    if n == 1:
+        return [list(ids)]
+    if not ser:
+        return [par[k::n] for k in range(n)]
+    return [ser] + [par[k::n - 1] for k in range(n - 1)]
+
+
+def id_ranges(ids):
+    """`ids` in numeric order, a run of consecutive numbers as one range
+    (`M2880-M2892`): an id missing from `ids` breaks the range."""
+    def num(m):
+        d = re.fullmatch(r"M(\d+)", m)
+        return int(d.group(1)) if d else None
+    ordered = sorted(ids, key=lambda m: (num(m) is None, num(m) or 0, m))
+    out = []
+    for m in ordered:
+        k = num(m)
+        if out and k is not None and out[-1][2] is not None and k == out[-1][2] + 1:
+            out[-1] = (out[-1][0], m, k)
+        else:
+            out.append((m, m, k))
+    return ", ".join(a if a == b else f"{a}-{b}" for a, b, _ in out)
+
+
+def plan_report(plan, serial):
+    """Print the plan: the serial class (its ids, and why for each row that is
+    not in a SERIAL_PACKAGES package), then each shard and how it runs."""
+    n = len(plan)
+    ids = [m for s in plan for m in s]
+    ser = {m: serial[m] for m in ids if m in serial}
+    kinds = {}
+    for why in ser.values():
+        k = why.split(":")[0]
+        kinds[k] = kinds.get(k, 0) + 1
+    print(f"shard plan, N={n}: {len(ids)} rows; serial class {len(ser)} rows"
+          + (" (" + ", ".join(f"{k} {v}" for k, v in sorted(kinds.items())) + ")" if ser else ""))
+    for m, why in ser.items():
+        if not why.startswith("package "):
+            print(f"  SERIAL {m}  {why}")
+    if ser:
+        print(f"  serial ids: {id_ranges(ser)}")
+    for k, s in enumerate(plan):
+        if ser and k == 0:
+            print(f"shard 0/{n}: SERIAL CLASS, {len(s)} rows: run it ALONE, no other shard or mutation run on "
+                  f"this host meanwhile (a --shard run holds {SERIAL_LOCK} exclusively for it, shared for the "
+                  "others, so started together they wait for each other)")
+        else:
+            print(f"shard {k}/{n}: {len(s)} rows, in parallel with the other non-serial shards")
+    if n == 1 and ser:
+        print("  (N=1: the one shard holds the serial class, so it runs alone)")
+
+
 def registry_at(git, rev):
     """The mutation registry module as committed at `rev` (imported from a
     scratch copy of the two registry files; nothing of it is run)."""
@@ -435,12 +570,17 @@ def main():
     opts = {}
     for a in sys.argv[1:]:
         k, eq, v = a.partition("=")
-        if not eq or k not in ("--changed-since", "--granularity", "--scope", "--only", "--head"):
-            sys.exit("usage: v022_mut_select.py --changed-since=A.json[,B.json...] [--granularity=file|fn] "
-                     "[--scope=g01|pci|binding|psv|all] [--only=M1,M2] [--head=REV]")
+        if not eq or k not in ("--changed-since", "--granularity", "--scope", "--only", "--head", "--shards"):
+            sys.exit("usage: v022_mut_select.py [--changed-since=A.json[,B.json...]] [--granularity=file|fn] "
+                     "[--scope=g01|pci|binding|psv|all] [--only=M1,M2] [--head=REV] [--shards=N]")
         opts[k] = v
-    if "--changed-since" not in opts:
-        sys.exit("--changed-since=A.json[,B.json...] is required")
+    if "--changed-since" not in opts and "--shards" not in opts:
+        sys.exit("--changed-since=A.json[,B.json...] or --shards=N is required")
+    shards = None
+    if "--shards" in opts:
+        if not opts["--shards"].isdigit() or int(opts["--shards"]) < 1:
+            sys.exit(f"--shards={opts['--shards']}: want N >= 1")
+        shards = int(opts["--shards"])
     git = Git()
     head = git.commit(opts.get("--head", "HEAD"))
     if head is None:
@@ -452,12 +592,21 @@ def main():
         unknown = sorted(m for m in only if not any(r[0] == m for r in reg.MUTATIONS) or not reg.in_scope(m, scope))
         if unknown:
             sys.exit(f"--only: not active rows of scope {scope} at {head[:8]}: {unknown}")
-    rows = [r for r in reg.MUTATIONS if reg.in_scope(r[0], scope) and (only is None or r[0] in only)]
-    gran = opts.get("--granularity", "file")
-    sel, records = select(rows, reg.ATTACK_MARKERS, reg.row_digest, reg.row_good,
-                          opts["--changed-since"].split(","), head, gran, git)
-    print(f"registry and tree at {head}; records at " + ", ".join(f"{p} ({c[:8]})" for p, c in records))
-    report(sel, len(rows), gran)
+    scope_rows = [r for r in reg.MUTATIONS if reg.in_scope(r[0], scope)]
+    rows = [r for r in scope_rows if only is None or r[0] in only]
+    if "--changed-since" in opts:
+        gran = opts.get("--granularity", "file")
+        sel, records = select(rows, reg.ATTACK_MARKERS, reg.row_digest, reg.row_good,
+                              opts["--changed-since"].split(","), head, gran, git)
+        print(f"registry and tree at {head}; records at " + ", ".join(f"{p} ({c[:8]})" for p, c in records))
+        report(sel, len(rows), gran)
+        for line in stops(sel, len(rows)):
+            print(line, flush=True)
+        rows = [r for r in rows if r[0] in sel]
+    if shards is not None:
+        print(f"--shard=K/{shards} at {head[:8]} (scope {scope}):")
+        serial = serial_class(rows, git.tree(head))
+        plan_report(shard_plan([r[0] for r in rows], shards, serial), serial)
 
 
 if __name__ == "__main__":
