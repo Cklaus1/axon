@@ -4683,7 +4683,7 @@ fn all_examples_typecheck_clean() {
     ];
     // examples/sealed/ is a suite plus candidate modules that only resolve
     // together (AXON_PATH=<suite>:<candidate>), and two candidates are attacks
-    // DESIGNED to be refused (E0001). Guarded by
+    // DESIGNED to be refused (E0001) under --seal. Guarded by
     // `sealed_examples_grade_every_candidate_as_expected` below.
     let sealed_examples = std::path::Path::new(&root).join("sealed");
     for f in &files {
@@ -4712,10 +4712,12 @@ fn all_examples_typecheck_clean() {
 #[test]
 fn sealed_examples_grade_every_candidate_as_expected() {
     // docs/SEALED_TESTS.md walks through examples/sealed/run.sh: the honest
-    // candidate passes, the wrong one and the one shipping its own @[test]
-    // fail, the two that name operator code are refused, AXON_ENGINE=vm is
-    // refused, and the unsealed control shows the reference attack passing
-    // without --seal. The script exits non-zero on any mismatch.
+    // candidate passes, the wrong one, the one shipping its own @[test] and the
+    // one calling exit(0) (under an empty effect ceiling) fail, the two that
+    // name operator code are refused, AXON_ENGINE=vm is refused, the controls
+    // show two attacks passing once a safeguard is dropped, and only the honest
+    // candidate earns completion tokens. The script exits non-zero on any
+    // mismatch.
     let out = harness(&ex("sealed/run.sh")).output().expect("run sealed/run.sh");
     assert!(
         out.status.success(),
