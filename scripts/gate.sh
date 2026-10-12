@@ -512,8 +512,10 @@ stage_no_nested_crates() {
 # CX21Ready are DERIVED from evidence (governance/readiness/, generated only);
 # Stage 7 / CX-21 stay PREREGISTERED until their readiness is READY, and their
 # only entry points call the shared preflight FIRST, refusing otherwise.
-# (The trust-root preflight mechanism test builds axon-fabric as root, so it
-# stays in the serial cargo spine, after the PCI surfaces.)
+# (The trust-root preflight mechanism test builds axon-fabric as root; it runs
+# in the BACKGROUND (`par`) beside the serial spine, from after the PCI surfaces,
+# and is joined (`par_join`, failure-checked) before the manifest stage, so
+# before PASS.)
 stage_protected_readiness() {
   echo "── gate: v0.22 protected readiness (derived; certified artifacts pinned) ──"
   python3 -B scripts/protected_verifier_ready.py --check || fail "v0.22 protected readiness"

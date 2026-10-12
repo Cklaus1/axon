@@ -11,7 +11,13 @@ is the caller's own work; a burner anyone else started is not.
 
 Exit 0: foreign load <= --max-busy-cores (default 2.0).
 Exit 75 (EX_TEMPFAIL): busy; the top foreign consumers are printed as
-        pid comm cores. Anything unreadable is a usage error (exit 2), never a pass.
+        pid comm cores.
+Exit 2: a bad argument (argparse); a non-positive --sample-seconds exits 1.
+A process whose /proc/<pid>/stat cannot be read or parsed in a sample (it
+exited, or raced the read) is SKIPPED in that sample, never an error: missing
+from the second sample it is not counted at all; missing only from the first,
+its whole CPU time is counted. Any other failure (/proc itself unreadable)
+raises, exit 1, never 0.
 A process that starts and exits entirely inside the window is not seen;
 sustained load (what starves a SCHED_IDLE test) is.
 """

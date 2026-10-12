@@ -68,8 +68,19 @@ THEMES = load_themes()
 # (a registry, a status file) does not count: whatever the merge did there is not an interpreter change. A
 # merge that conflicted under crates/axon-core/src (however it was resolved, even to one side's text), or
 # that changes anything there git's merge does not (an evil merge), stays UNCLASSIFIED until a themes file
-# is written for it. The merge is replayed hermetically: attributes from a fixed tree that names only the
-# note's driver (below), the driver given on the command line, no user attributes file.
+# is written for it.
+# The replay runs with RENAME DETECTION OFF (merge.renames=false, merge.directoryRenames=false): the listing
+# (`git log -- crates/axon-core/src`) does not follow renames, so a commit that edits a file outside that
+# tree is never listed even when the other side moves the file into it. With renames on, git's merge would
+# carry that unlisted edit into crates/axon-core/src without a conflict and the merge would pass as a pure
+# join; with them off, the replayed tree has the moved file without the edit (the edit stays at the old
+# path, a conflict outside the tree), so the merge's tree differs and it is UNCLASSIFIED.
+# The replay does not depend on repository, user or system configuration for what it judges: rename
+# detection and merge.renormalize are pinned on the command line; attributes come from a fixed tree
+# (attr_tree) that gives every path the built-in text merge (`* merge`, which git resolves without reading
+# merge.default or any merge.<driver> setting, so a `merge.default=union` cannot hide a conflict) and the
+# note its driver, given on the command line; no user (core.attributesFile) or system (GIT_ATTR_NOSYSTEM)
+# attributes file is read.
 PURE_JOIN = "pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins"
 NOTE_ATTRIBUTE = "governance/notes/v022-pci-delta.md merge=pci-note"
 # The note's merge driver (`--merge-note`, .gitattributes `merge=pci-note`): the mechanical block is taken
@@ -81,11 +92,12 @@ _ATTR_TREE = []
 
 
 def attr_tree():
-    """A tree whose only file is a .gitattributes naming the note's driver: the pure-join replay reads
-    attributes from it, not from the worktree, the merge commit or a user file."""
+    """A tree whose only file is a .gitattributes giving every path the built-in text merge and the note
+    its driver: the pure-join replay reads attributes from it, not from the worktree, the merge commit or a
+    user file."""
     if not _ATTR_TREE:
         blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=ROOT, check=True, capture_output=True,
-                              text=True, input=NOTE_ATTRIBUTE + "\n").stdout.strip()
+                              text=True, input="* merge\n" + NOTE_ATTRIBUTE + "\n").stdout.strip()
         _ATTR_TREE.append(subprocess.run(["git", "mktree"], cwd=ROOT, check=True, capture_output=True, text=True,
                                          input=f"100644 blob {blob}\t.gitattributes\n").stdout.strip())
     return _ATTR_TREE[0]
@@ -97,9 +109,11 @@ def pure_join(h, subj):
     if len(parents) != 2:
         return None
     driver = f"{shlex.quote(sys.executable)} -B {shlex.quote(os.path.abspath(__file__))} --merge-note %O %A %B"
-    r = subprocess.run(["git", "-c", f"merge.pci-note.driver={driver}", "-c", f"core.attributesFile={os.devnull}",
-                        f"--attr-source={attr_tree()}", "merge-tree", "--write-tree", "-z", "--name-only",
-                        "--no-messages", *parents], cwd=ROOT, capture_output=True)
+    r = subprocess.run(["git", "-c", "merge.renames=false", "-c", "merge.directoryRenames=false",
+                        "-c", "merge.renormalize=false", "-c", f"merge.pci-note.driver={driver}",
+                        "-c", f"core.attributesFile={os.devnull}", f"--attr-source={attr_tree()}",
+                        "merge-tree", "--write-tree", "-z", "--name-only", "--no-messages", *parents],
+                       cwd=ROOT, capture_output=True, env={**os.environ, "GIT_ATTR_NOSYSTEM": "1"})
     if r.returncode not in (0, 1):
         sys.exit(f"pci_delta: git merge-tree {parents[0][:8]} {parents[1][:8]} (for {h[:8]}) exited {r.returncode}: "
                  + r.stderr.decode(errors="replace").strip())
