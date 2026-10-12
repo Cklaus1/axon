@@ -2384,8 +2384,8 @@ pub(super) mod nest_cost {
     /// above `call_closure_frame`, its op loop ([`RUN`]), so the VM
     /// panics no shallower than the tree there (spec R50 §4 Recursion).
     pub const RUN_LAMBDA_TREE: usize = RUN;
-    pub const RUN: usize = b(336, 528);
-    pub const CALL_FAST_ARG: usize = b(208, 320);
+    pub const RUN: usize = b(336, 544);
+    pub const CALL_FAST_ARG: usize = b(224, 336);
     pub const CALL_FAST_INLINE: usize = b(256, 416);
     pub const CALL_MUT_OP: usize = b(336, 432);
     pub const ASSIGN_IN_PLACE: usize = b(176, 224);
