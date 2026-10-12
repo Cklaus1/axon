@@ -1,16 +1,16 @@
 # R51 — One interpreter for v0.22's sealed runs and R50's bytecode engine
 
 **Spec ID:** `R51-sealed-engine-unification`
-**Status:** Reviewed (2026-10-10, Step 1 adversarial review: VmPin, TaintPort, S0Merge, EvidenceGates; reports
-under `governance/reviews/2026-10-10-r51-*.md`). Open questions resolved (§12). Building on `r51/unify`. S6.1
-(2026-10-11): `SEAL_RUNTIME_COMPLETE = true`; sealed runs execute on the tree engine with the seal, the deferred-test
-registry is empty.
+**Status:** Implementing (all slices S0-S7 built on `r51/int`; not merged into `main`). Reviewed 2026-10-10 (Step 1
+adversarial review: VmPin, TaintPort, S0Merge, EvidenceGates; reports under `governance/reviews/2026-10-10-r51-*.md`).
+Open questions resolved (§12). S6.1 (2026-10-11): `SEAL_RUNTIME_COMPLETE = true`; sealed runs execute on the tree
+engine with the seal, the deferred-test registry is empty. Per-slice receipts are in §14.
 **Risk class:** Structural and security-critical (re-homes the PSV-1 runtime seal onto a rewritten data model; adds a refusal on the default engine).
 **Author / date:** 2026-10-10, after merging `origin/main` (5864c423) into the v0.22 head (`c9r16/integrate15`, c9ed2ddd) was found to be a re-implementation, not a merge.
 
 ```spec-meta
 id: R51-sealed-engine-unification
-status-claim: Reviewed
+status-claim: Implementing
 depends-on: R50-register-vm
 blocks: none
 blocked-by: none
@@ -18,7 +18,7 @@ supersedes: none
 related: R50-register-vm, v022-protected-suite-verdict, v022-psv-protocol, v022-ADR-003-protected-certification-deferral, post-c9-hardening
 conflicts-with: none
 reserves: none planned (a sealed-run engine refusal reuses an existing exit code; §6)
-evidence: none
+evidence: scripts/vm_parity.sh; scripts/vm_wasm_depth.sh; scripts/vm_perf_gate.sh; tasks/r51-smoke/run.sh; mutation receipts governance/status/r51-t7-*.json; spec evidence ledger is §14
 ```
 
 R47–R49 are reserved by `R46-in-flight-operations.md` §2, so this spec takes R51.
