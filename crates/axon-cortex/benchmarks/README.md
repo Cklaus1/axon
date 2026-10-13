@@ -599,7 +599,12 @@ change only through a frozen evaluation:
 * [`scorecard/`](scorecard/README.md): `history.jsonl` (metrics recomputed
   from committed rows), `report` (README table and `progress.svg`), and
   `compare` in the strict order: false successes, then verified fixes, then
-  proposals per fix, then cost.
+  proposals per fix, then cost. A change to the repair code (the
+  `src/*.rs` and driver files listed under "Repair-path receipts" there) needs
+  a receipt: `scorecard.py receipt --check` in `scripts/gate.sh` fails until
+  `scorecard.py regress` (a paid dev run, `scorecard/PREREG-regress.md`) or
+  `scorecard.py waive --reason ...` records one. See `docs/CORTEX.md`,
+  "Repair-path receipts".
 * [`heldout/`](heldout/README.md): `heldout.json` (47 tasks, now spent) and
   `once.json` (30 tasks, each used for one decision only), planted in files
   the dev corpus never used. The first held-out run is in

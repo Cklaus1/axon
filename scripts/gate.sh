@@ -332,6 +332,8 @@ if [ "$FAST" = 1 ]; then
   par "v0.22 protected refusal-site coverage" python3 -B scripts/v022_refusal_coverage.py
   par "pci_delta.py --check" python3 -B scripts/pci_delta.py --check
   par "G01 mutation anchors (scripts/g01_anchors.py)" python3 -B scripts/g01_anchors.py
+  par "cortex repair-path receipt (scorecard.py receipt --check)" \
+    python3 -B crates/axon-cortex/benchmarks/scorecard/scorecard.py receipt --check
   par_join
 
   # Clippy on the crates this lane changed: every crates/<name>/ touched between
@@ -595,6 +597,18 @@ stage_scorecard() {
     || fail "cortex scorecard self-test failed or README/progress.svg are stale"
 }
 
+# The repair-path receipt: Cortex's CONFIG defaults change only through
+# promotion/, but a CODE change to what `cortex repair` proposes, accepts or
+# reports (the generator-context prompt was one) once became everyone's default
+# with no scored comparison. This refuses a working tree whose repair digest
+# has neither a dev run not judged worse than its incumbent nor a waiver in
+# history.jsonl. Offline, no key; the message names `scorecard.py regress` and
+# `scorecard.py waive`.
+stage_cortex_receipt() {
+  python3 -B crates/axon-cortex/benchmarks/scorecard/scorecard.py receipt --check \
+    || fail "cortex repair-path change has no receipt (scorecard.py regress, or waive)"
+}
+
 # The completeness manifest regenerates AXON-COMPLETENESS.md and refuses a row
 # claiming a production proof or a mutation it cannot cite. Wired here because
 # a manifest nobody runs is a table of assertions, which is the state it was
@@ -623,6 +637,7 @@ par "v0.22 release-claim separation" stage_claim_separation
 par "benchmark docs" stage_benchmark_docs
 par "analyser selftest" stage_analyser_selftest
 par "cortex scorecard" stage_scorecard
+par "cortex repair-path receipt" stage_cortex_receipt
 par "completeness manifest" stage_completeness
 par_join
 

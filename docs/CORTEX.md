@@ -568,7 +568,7 @@ Every one of these was produced on `pricing.ax` (or, for 27, on
 
 | code | outcome | file afterwards | what to do |
 |---|---|---|---|
-| 0 | `verified_done` | patched | nothing; the hidden check passed and nothing regressed |
+| 0 | `verified_done` | patched | nothing; the hidden check passed, nothing regressed, and `axon check` exits 0 on the file |
 | 2 | usage error | untouched | fix the command line (bad `--check`, unknown `--generator`, `ai:` without the feature) |
 | 20 | `budget_exhausted` | restored | raise `--budget`/`--candidates`, give `--symbol`, or the defect is not a one-body fix |
 | 21 | `no_progress` | restored | proposals stopped changing anything useful; the generator is not helping |
@@ -578,6 +578,18 @@ Every one of these was produced on `pricing.ax` (or, for 27, on
 | 25 | `no_such_symbol` / no target | untouched | `--symbol` does not exist, or no candidate could be ranked |
 | 26 | check cannot witness | untouched | `--check` already passes; name a check that currently fails |
 | 27 | `adjudicated_not_clean` | patched (KEPT) | the check passed and nothing regressed, but tests that were already failing still fail; look at those separately |
+
+`verified_done` also needs `axon check` on the patched file to exit 0.
+`check` exits 2 on any diagnostic, a note included, while `axon test` runs
+such a file anyway. So a body that passes every test but draws a diagnostic,
+such as the I0002 note on `let mut`, is undone and recorded as a rejected
+attempt (`CheckerObjected`). The checker's diagnostics, from the file with
+the hidden check cut out, go back to the generator as feedback. They are
+capped at the first 5 and 2 KB, like compiler feedback. If the file had a
+diagnostic before the repair started, `verified_done` needs that diagnostic
+gone too. That rule came from a measured false success: dev task
+drop-stmt-02, 4 of 4 reruns. A run where `axon check` cannot be executed is
+blocked (exit 22), not accepted.
 
 Exit 27, on the fixture that has two independent defects:
 
@@ -745,8 +757,95 @@ of wall time against 303 s.
 Runs over time are tracked in
 [`benchmarks/scorecard/`](../crates/axon-cortex/benchmarks/scorecard/README.md).
 Cortex's default configuration changes only through
-[`benchmarks/promotion/`](../crates/axon-cortex/benchmarks/promotion/README.md).
+[`benchmarks/promotion/`](../crates/axon-cortex/benchmarks/promotion/README.md),
+and a change to its repair code needs a receipt (below).
 
 Not covered by Cortex at all: multi-function fixes, signature changes, files
 other than `--file`, and anything the hidden check does not assert. On the
 hard set's out-of-scope defects it failed without claiming a fix (above).
+
+## Repair-path receipts
+
+Promotion governs Cortex's CONFIG defaults: the ranker, the audit, the walk,
+the model and the transport. It does not govern code. The generator-context
+change to `generate.rs`, `rank.rs` and `runner.rs` became everyone's default
+with no scored dev comparison. The receipt rule closes that gap.
+`python3 crates/axon-cortex/benchmarks/scorecard/scorecard.py receipt --check`
+runs in `scripts/gate.sh` (the gate and `--fast`). It works offline and needs
+no key. It passes when the working tree's REPAIR DIGEST equals main's (the
+digest at `git merge-base HEAD origin/main`: nothing changed). Otherwise
+`scorecard/history.jsonl` must hold, for the working tree's digest, one of
+these:
+
+- a **dev run** by agent `cortex` at that digest, on the receipt config (the
+  policy in force with the audit off: today Haiku 5.5 via micode, the Haiku
+  5.5 ranker, breadth walk, `--candidates 6`, budget 8) and on
+  `ab/corpus.json`, judged not worse than **main's run**: the latest run at
+  the merge-base digest, which `add --incumbent` records with the run
+  (`receipt_incumbent`), so a verdict never moves afterwards. The rule,
+  checked in order: any false success fails; fewer verified with exact
+  McNemar p < 0.05 fails; then proposals, wall and cost per task over the
+  tasks both verified, each with an exact two-sided sign test, and the first
+  one significantly worse (p < 0.05) fails. Otherwise it passes, and the
+  effort deltas are reported, not gated. When several runs share a digest,
+  the latest one decides. A run judged against an older main no longer
+  counts once main moves: `regress --again` renews it. `scorecard.py
+  regress` makes this run (`. /root/.openrouter.env` first). When main has
+  no run, it first measures main in a detached worktree at the merge-base.
+  Then it builds both binaries at HEAD, runs `run_ab.py --arm B`, adds the
+  run with `add --set dev` (paired against main's run and the plain agent),
+  runs `report`, then prints the comparison and the verdict. A whole dev run
+  costs a few cents. The procedure, rule and cap are preregistered once, in
+  [`scorecard/PREREG-regress.md`](../crates/axon-cortex/benchmarks/scorecard/PREREG-regress.md)
+  (amendments 1 and 2 changed the rule and the incumbent; each is dated and
+  says what had been seen when it was written).
+- a **waiver** for that digest:
+  `scorecard.py waive --reason "comments only in generate.rs"`. It is for a
+  change that cannot alter behaviour. The reason is printed in the scorecard
+  README. A digest that a run has already measured cannot be waived.
+
+`add` records each run's `repair_digest`, computed at the commit the rows
+were produced at with `git show COMMIT:PATH`. `regress` refuses a dirty
+tree, because the rows name HEAD.
+
+The repair digest is sha256 over (path, content), in path order, of
+`crates/axon-cortex/src/*.rs`, `src/bin/*.rs` and `benchmarks/drivers/*.sh`,
+minus two named exclusions. The digest takes directories, not a list of
+names, so a new module counts until someone excludes it in `scorecard.py`
+(`REPAIR_EXCLUDED`) with a reason. What each file decides:
+
+| file | why it is on the repair path |
+|---|---|
+| `bin/cortex.rs` | the CLI: flag and env defaults, localization wiring, the breadth walk, the verdict, the exit code, the `--json` report |
+| `runner.rs` | the episode runner: workspace, check execution, accept or reject of each proposal, the evidence it reports |
+| `generate.rs` | the generator prompt and context (what the model is asked), the `cmd:` and `literal:` generators, validation of the proposed body |
+| `rank.rs` | candidate order (spectrum and model ranker), `build_view` and its leak guard, which `generate.rs` also uses |
+| `openrouter.rs` | the ranker's (and the audit's) model call and its answer parsing; the policy ranker goes through it |
+| `audit.rs` | `select` (the off path the receipt config takes) and the audit verdict in `--json`; review only, but reported |
+| `locate.rs` | the suspiciousness ranking that produces the candidates |
+| `select.rs` | the next typed action chosen from an observation |
+| `action.rs`, `episode.rs`, `lib.rs` | the action types, the evidence events and `parse_strict`, which the runner and the ranker act on |
+| `benchmarks/drivers/*.sh` | the `cmd:` programs that carry the prompt to the model (`micode.sh` is the policy transport) |
+
+Excluded, each for a stated reason:
+
+- `ai.rs` (`--generator ai:MODEL`): neither the policy nor any benchmark
+  reaches it.
+- `label.rs`: it writes the `--label-log` row only. It decides no
+  candidate, verdict, exit code or `--json` field.
+- `axon-workspace-recipe`: the tree-digest recipe, an identity
+  computation.
+- `axon-ai`: the HTTP transport under `openrouter.rs`.
+- the `axon` interpreter: the oracle that adjudicates both arms, under its
+  own gate.
+- `run_ab.py`: the harness that grades the run. Its changes are
+  preregistered with the runs they serve.
+
+Limits. A receipt is a regression check on the set development is tuned on,
+not evidence that a change generalises. The audit is off in the receipt run,
+so an audit-prompt change is receipted without the audit being exercised.
+The model ranker is exercised only as the policy uses it. A receipt is one
+run against one incumbent (main's), so a small effort regression can pass
+unseen, and a lucky or unlucky main run moves every verdict judged against
+it. Rerunning with `regress --again` is allowed, and every rerun stays
+visible in the history.

@@ -1939,6 +1939,158 @@ fn cxg_c14_a_rejected_attempt_is_fed_back_without_leaking_the_grader() {
     );
 }
 
+/// C14b — a body every test passes is still rejected when `axon check`
+/// objects to the file, a note-level diagnostic included.
+///
+/// `axon test` runs a file `axon check` refuses: `check` exits 2 on ANY
+/// diagnostic, and `let mut` draws the I0002 note. Measured on the dev corpus
+/// (drop-stmt-02), a generator shown the file wrote `let mut s = start`,
+/// every test passed, and the episode returned VerifiedDone on a file the
+/// checker rejects, which the benchmark graded as a false success. This pins
+/// the rule: before VerifiedDone, `axon check` on the patched file exits 0;
+/// otherwise the attempt is undone and fed back as `CheckerObjected` with the
+/// checker's diagnostics.
+#[test]
+fn cxg_c14b_a_body_the_checker_objects_to_never_reaches_verified_done() {
+    use axon_cortex::action::SymbolRef;
+    use axon_cortex::generate::{
+        GenerationFailure, PatchConstraints, PatchGenerator, ProposedPatch, RejectionReason,
+    };
+    use axon_cortex::runner::EpisodeOutcome;
+    use axon_cortex::Observation;
+
+    const NOTED: &str = "\n    let mut m = n\n    m * 2\n";
+    let target = || SymbolRef {
+        path: "broken.ax".into(),
+        symbol: "double".into(),
+    };
+
+    // The premise, checked rather than assumed: with NOTED in place every
+    // test passes under `axon test`, and `axon check` exits non-zero with
+    // only a note (no error).
+    let (_, ws0) = stage("noted_premise");
+    let src = std::fs::read_to_string(ws0.join("broken.ax")).unwrap();
+    let noted_src = src.replace("\n    n + 2\n", NOTED);
+    assert_ne!(noted_src, src, "the fixture body moved: {src}");
+    std::fs::write(ws0.join("broken.ax"), &noted_src).unwrap();
+    let t = std::process::Command::new(axon_bin())
+        .arg("test")
+        .arg(ws0.join("broken.ax"))
+        .output()
+        .unwrap();
+    assert!(t.status.success(), "premise: `axon test` passes on NOTED");
+    let c = std::process::Command::new(axon_bin())
+        .arg("check")
+        .arg(ws0.join("broken.ax"))
+        .output()
+        .unwrap();
+    let diag = String::from_utf8_lossy(&c.stderr).into_owned();
+    assert!(
+        !c.status.success() && diag.contains("I0002") && !diag.contains("\"severity\":\"error\""),
+        "premise: `axon check` refuses NOTED on a note alone: {:?} {diag}",
+        c.status
+    );
+
+    /// Proposes NOTED until told it was rejected, then (if `learns`) the
+    /// clean body. Records every rejection list it was handed.
+    struct Noted {
+        learns: bool,
+        seen: std::sync::Mutex<Vec<Vec<axon_cortex::generate::RejectedAttempt>>>,
+    }
+    impl PatchGenerator for Noted {
+        fn id(&self) -> String {
+            "noted@1".into()
+        }
+        fn propose(
+            &self,
+            _o: &Observation,
+            _t: &SymbolRef,
+            c: &PatchConstraints,
+        ) -> Result<ProposedPatch, GenerationFailure> {
+            self.seen.lock().unwrap().push(c.rejected.clone());
+            let body = if self.learns && !c.rejected.is_empty() {
+                "\n    n * 2\n"
+            } else {
+                NOTED
+            };
+            Ok(ProposedPatch {
+                body: body.to_string(),
+                generator_id: self.id(),
+            })
+        }
+    }
+
+    // A generator that only ever proposes NOTED never gets VerifiedDone, and
+    // the file is left without it.
+    let (_, ws) = stage("noted_stubborn");
+    let mut r = Runner::new(axon_bin(), &ws);
+    let g = broken_grant(&mut r);
+    let stubborn = Noted {
+        learns: false,
+        seen: std::sync::Mutex::new(Vec::new()),
+    };
+    let out = r.run_episode(
+        &target(),
+        Some(&g),
+        "agent",
+        "hidden_completion",
+        8,
+        Some(&stubborn),
+    );
+    assert!(
+        !matches!(out, EpisodeOutcome::VerifiedDone { .. }),
+        "a body `axon check` refuses must never be verified, got {out:?}"
+    );
+    assert!(
+        !std::fs::read_to_string(ws.join("broken.ax"))
+            .unwrap()
+            .contains("let mut"),
+        "the refused body must be undone"
+    );
+
+    // A generator told why converges, and was told by the checker's own words.
+    let (_, ws2) = stage("noted_learner");
+    let mut r2 = Runner::new(axon_bin(), &ws2);
+    let g2 = broken_grant(&mut r2);
+    let learner = Noted {
+        learns: true,
+        seen: std::sync::Mutex::new(Vec::new()),
+    };
+    let out2 = r2.run_episode(
+        &target(),
+        Some(&g2),
+        "agent",
+        "hidden_completion",
+        8,
+        Some(&learner),
+    );
+    assert!(
+        matches!(out2, EpisodeOutcome::VerifiedDone { .. }),
+        "the clean body after the objection must verify, got {out2:?}"
+    );
+    let seen = learner.seen.lock().unwrap().clone();
+    let rej = &seen.last().expect("the generator was asked")[0];
+    assert_eq!(rej.body, NOTED);
+    assert_eq!(rej.reason, RejectionReason::CheckerObjected);
+    let fb = rej.feedback.as_deref().unwrap_or("");
+    assert!(
+        fb.contains("I0002") && fb.contains("(note)"),
+        "the feedback must carry the checker's diagnostic: {fb:?}"
+    );
+    for leaked in ["hidden_completion", "double(7)"] {
+        assert!(!fb.contains(leaked), "the feedback leaked `{leaked}`: {fb}");
+    }
+    assert!(
+        !std::fs::read_to_string(ws2.join("broken.ax"))
+            .unwrap()
+            .contains("let mut"),
+        "the verified file is the clean one"
+    );
+    for w in [&ws0, &ws, &ws2] {
+        let _ = std::fs::remove_dir_all(w);
+    }
+}
+
 /// C15 — Cortex finds the target itself, and what it refuses to nominate.
 ///
 /// These exercise `rank`, which is the function the binary calls. An earlier

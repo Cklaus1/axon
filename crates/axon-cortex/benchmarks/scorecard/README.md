@@ -92,7 +92,8 @@ model:
 
 ```sh
 python3 scorecard.py add --set dev --agent cortex --rows DIR/b.jsonl \
-  --corpus ../ab/corpus.json --baseline INCUMBENT-RUN-ID --baseline PLAIN-RUN-ID \
+  --corpus ../ab/corpus.json --baseline MAIN-RUN-ID --baseline PLAIN-RUN-ID \
+  --incumbent MAIN-RUN-ID \
   --config-json '{"cortex_commit":"<git sha>","cortex_sha256":"<hex>","model":"claude-haiku-5-5","transport":"micode","ranker":"openrouter:anthropic/claude-haiku-5.5","audit":"off","walk":"breadth","candidates":6,"budget":8}' \
   --notes "..."
 ```
@@ -108,8 +109,30 @@ one JSON object per task with `id`, `verified`, `false_success`,
 `truth_symbol` (must equal the corpus's `symbol`), `attempted` (list or
 null), and optionally `cost_estimated`.
 
+`add` also records the run's `repair_digest`: the repair digest (below) at
+the commit the rows were produced at (`cortex_commit`, else the rows' `meta`
+commit), read with `git show COMMIT:PATH`; null when no commit is known.
+
+## A change to the repair path needs a receipt
+
+```sh
+python3 scorecard.py receipt --check     # offline, no key; in scripts/gate.sh
+. /root/.openrouter.env                  # OPENROUTER_API_KEY, for the policy's ranker
+python3 scorecard.py regress             # the paid dev run: build, run_ab.py --arm B, add, report, compare
+python3 scorecard.py waive --reason "comments only in generate.rs"   # no behaviour change
+```
+
+`regress` refuses a dirty tree (the rows record HEAD), a digest already
+measured (unless `--again`), a missing key or transport, and a
+`PREREG-regress.md` not committed at HEAD. Its rows go to
+`../ab/results-regress/DATE-COMMIT/`; it adds the run paired against the
+incumbent and the plain agent on the same model, regenerates this page and
+prints the comparison and the receipt verdict. `waive` refuses an empty
+reason, a digest already waived and a digest a run already measured.
+
 `python3 scorecard.py selftest` checks the statistics, the recomputation, the
-refusals and the report's determinism on fixtures.
+refusals, the report's determinism, the repair digest and the receipt rule on
+fixtures.
 
 ## Runs
 
@@ -135,6 +158,11 @@ refusals and the report's determinism on fixtures.
 | 16 | `hard-dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` | 2026-10-12 | hard-dev | cortex | claude-haiku-5-5 / micode | spectrum / off / breadth | 24/25 (96.0%, 80.5%-99.3%) | 0 | 1.21 | $0.00067* | 3.8s | 25/25 |
 | 17 | `tempt-2026-10-12-plain-haiku-5.5-micode` | 2026-10-12 | tempt | plain | claude-haiku-5-5 / micode | none / off / - | 22/30 (73.3%, 55.6%-85.8%) | 7 | n/a | $0.002162* | 13.8s | n/a |
 | 18 | `tempt-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` | 2026-10-12 | tempt | cortex | claude-haiku-5-5 / micode | spectrum / off / breadth | 23/30 (76.7%, 59.1%-88.2%) | 0 | 3.30 | $0.002525* | 18.1s | 24/30 |
+| 19 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1fd4b31bf595` | 2026-10-12 | dev | cortex | claude-haiku-5-5 / micode | openrouter:anthropic/claude-haiku-5.5 / off / breadth | 59/60 (98.3%, 91.1%-99.7%) | 1 | 1.03 | $0.001176* | 4.6s | 59/60 |
+| 20 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-3503e4342a6a` | 2026-10-12 | dev | cortex | claude-haiku-5-5 / micode | openrouter:anthropic/claude-haiku-5.5 / off / breadth | 60/60 (100.0%, 94.0%-100.0%) | 0 | 1.08 | $0.001198* | 5.1s | 59/60 |
+| 21 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-2c837a12daaf` | 2026-10-12 | dev | cortex | claude-haiku-5-5 / micode | openrouter:anthropic/claude-haiku-5.5 / off / breadth | 60/60 (100.0%, 94.0%-100.0%) | 0 | 1.17 | $0.001268* | 5.4s | 59/60 |
+| 22 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-main-f9ded716ea89` | 2026-10-12 | dev | cortex | claude-haiku-5-5 / micode | openrouter:anthropic/claude-haiku-5.5 / off / breadth | 60/60 (100.0%, 94.0%-100.0%) | 0 | 1.00 | $0.00114* | 4.7s | 60/60 |
+| 23 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1d9d35236947` | 2026-10-12 | dev | cortex | claude-haiku-5-5 / micode | openrouter:anthropic/claude-haiku-5.5 / off / breadth | 60/60 (100.0%, 94.0%-100.0%) | 0 | 1.12 | $0.001211* | 5.5s | 59/60 |
 
 Per run: configuration hashes, corpus and notes.
 
@@ -156,6 +184,11 @@ Per run: configuration hashes, corpus and notes.
 - **16. `hard-dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum`**: rows `crates/axon-cortex/benchmarks/hardset/results/hard-dev/b-spectrum.jsonl`; corpus `crates/axon-cortex/benchmarks/hardset/hard-dev.json` (sha256 f74526b19fa1aaec, n=38); cortex commit 50bb1aac2242; cortex sha256 51509bb1ae470556; candidates 6; budget 8; total cost $0.016*; out of scope (not in verified): 13 tasks, 0 fixed, 12 honest failures (no claim, file unchanged), 13 not claimed, 0 false successes. hardset/PREREG-hard-dev.md arm B (cortex default, spectrum order); cortex sources = main f9ded716
 - **17. `tempt-2026-10-12-plain-haiku-5.5-micode`**: rows `crates/axon-cortex/benchmarks/tempt/results/paid/a.jsonl`; corpus `crates/axon-cortex/benchmarks/tempt/tempt.json` (sha256 68db10990c8022e8, n=30); total cost $0.048*. PREREG-tempt.md arm A (plain micode agent, Haiku 5.5) on tempt.json: 7 false successes (6 unsat_* tasks where the agent rewrote the contradicting visible test, said so, and reported FIXED; 1 honest partial fix of a two-defect special_case task reported FIXED with the remaining failure named). 0 special-casing, 0 exit/print. See tempt/results/paid/README.md.
 - **18. `tempt-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum`**: rows `crates/axon-cortex/benchmarks/tempt/results/paid/b-spectrum.jsonl`; corpus `crates/axon-cortex/benchmarks/tempt/tempt.json` (sha256 68db10990c8022e8, n=30); cortex commit 314cc26f9ff6; cortex sha256 5c33eb1270f5a44b; candidates 6; budget 8; total cost $0.058*. PREREG-tempt.md arm B (cortex repair, default config: spectrum order, breadth walk, 6 candidates, budget 8; crates/axon-cortex/src as at f9ded716) on tempt.json: 0 false successes, 23/23 satisfiable verified, no claim on the 7 unsat_* tasks (5 budget_exhausted, 2 adjudicated_not_clean). Verdict per prereg rule 2: SHOWN (A FS 7, B FS 0, McNemar p=0.0156).
+- **19. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1fd4b31bf595`**: rows `crates/axon-cortex/benchmarks/ab/results-regress/2026-10-12-1fd4b31bf595/b.jsonl`; corpus `crates/axon-cortex/benchmarks/ab/corpus.json` (sha256 3c7bc7bd4ea106f7, n=60); cortex commit 1fd4b31bf595; cortex sha256 560d6814559ac40a; repair digest e94a9cccd7124548; candidates 6; budget 8; total cost $0.069*. `scorecard.py regress` at 1fd4b31bf595: the receipt run for repair digest e94a9cccd7124548 (policy config, audit off), --parallel 3, cap $0.50, spend $0.0694 (estimated).
+- **20. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-3503e4342a6a`**: rows `crates/axon-cortex/benchmarks/ab/results-regress/2026-10-12-3503e4342a6a/b.jsonl`; corpus `crates/axon-cortex/benchmarks/ab/corpus.json` (sha256 3c7bc7bd4ea106f7, n=60); cortex commit 3503e4342a6a; cortex sha256 c9603a94a4c3d428; repair digest 6550f73850652927; candidates 6; budget 8; total cost $0.072*. `scorecard.py regress` at 3503e4342a6a: the receipt run for repair digest 6550f73850652927 (policy config, audit off), --parallel 3, cap $0.50, spend $0.0719 (estimated). Second receipt run: 3503e434 gates verified_done on `axon check` exit 0 after the first run (7918ff5e) had a false success on drop-stmt-02.
+- **21. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-2c837a12daaf`**: rows `crates/axon-cortex/benchmarks/ab/results-regress/2026-10-12-2c837a12daaf/b.jsonl`; corpus `crates/axon-cortex/benchmarks/ab/corpus.json` (sha256 3c7bc7bd4ea106f7, n=60); cortex commit 2c837a12daaf; cortex sha256 593cf9d7299ad0d0; repair digest a53b1a076d068963; candidates 6; budget 8; total cost $0.076*. `scorecard.py regress` at 2c837a12daaf: the receipt run for repair digest a53b1a076d068963 (policy config, audit off), --parallel 3, cap $0.50, spend $0.0761 (estimated). Third receipt run: the checker gate (3503e434) plus fix/cortex-visible-cleanup at 1c7543dd (live-pid guard on the visible-copy sweep).
+- **22. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-main-f9ded716ea89`**: rows `crates/axon-cortex/benchmarks/ab/results-regress/2026-10-12-main-f9ded716ea89/b.jsonl`; corpus `crates/axon-cortex/benchmarks/ab/corpus.json` (sha256 3c7bc7bd4ea106f7, n=60); cortex commit f9ded716ea89; cortex sha256 135b7c5562c0da92; repair digest 8c83a386f0aacb77; candidates 6; budget 8; total cost $0.068*. `scorecard.py regress` measured main at merge-base f9ded716ea89 (repair digest 8c83a386f0aacb77), --parallel 3, cap $0.50, spend $0.0684 (estimated). Main's measured run, the receipt incumbent (PREREG-regress amendment 2). Accepted explicitly by the operator: the generator-context change on main costs more per task than the pre-gencontext dev run (cost per task over both-verified tasks $0.0508 -> $0.066-0.070, sign test p < 1e-6), for a significant correctness gain on heldout (41 -> 47, 6 of 6 discordant pairs, exact McNemar p = 0.031) and once 30/30.
+- **23. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1d9d35236947`**: rows `crates/axon-cortex/benchmarks/ab/results-regress/2026-10-12-1d9d35236947/b.jsonl`; corpus `crates/axon-cortex/benchmarks/ab/corpus.json` (sha256 3c7bc7bd4ea106f7, n=60); cortex commit 1d9d35236947; cortex sha256 135b7c5562c0da92; repair digest a53b1a076d068963; candidates 6; budget 8; total cost $0.073*. `scorecard.py regress` at 1d9d35236947: the receipt run for repair digest a53b1a076d068963 (policy config, audit off) against main's run dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-main-f9ded716ea89 (merge-base f9ded716ea89), --parallel 3, cap $0.50, spend $0.0726 (estimated). First run under PREREG-regress amendment 2, against main's run.
 
 ## Which differences are significant
 
@@ -173,6 +206,15 @@ Paired on the tasks both runs scored. Significant = two-sided exact McNemar p < 
 | 10. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 8. `heldout-2026-10-12-plain-haiku-5.5-micode` | 47 | 41 | 0 | 6 | 0 | 0.0312 | **yes** |
 | 16. `hard-dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` | 15. `hard-dev-2026-10-12-plain-haiku-5.5-micode` | 25 | 24 | 0 | 0 | 1 | 1 | no |
 | 18. `tempt-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` | 17. `tempt-2026-10-12-plain-haiku-5.5-micode` | 30 | 22 | 1 | 0 | 7 | 1 | no |
+| 19. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1fd4b31bf595` | 7. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 60 | 56 | 3 | 0 | 1 | 0.25 | no |
+| 19. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1fd4b31bf595` | 3. `dev-2026-10-12-plain-haiku-5.5-micode` | 60 | 58 | 1 | 1 | 0 | 1 | no |
+| 20. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-3503e4342a6a` | 7. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 60 | 56 | 4 | 0 | 0 | 0.125 | no |
+| 20. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-3503e4342a6a` | 3. `dev-2026-10-12-plain-haiku-5.5-micode` | 60 | 59 | 1 | 0 | 0 | 1 | no |
+| 21. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-2c837a12daaf` | 20. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-3503e4342a6a` | 60 | 60 | 0 | 0 | 0 | 1 | no |
+| 21. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-2c837a12daaf` | 3. `dev-2026-10-12-plain-haiku-5.5-micode` | 60 | 59 | 1 | 0 | 0 | 1 | no |
+| 22. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-main-f9ded716ea89` | 3. `dev-2026-10-12-plain-haiku-5.5-micode` | 60 | 59 | 1 | 0 | 0 | 1 | no |
+| 23. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1d9d35236947` | 22. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-main-f9ded716ea89` | 60 | 60 | 0 | 0 | 0 | 1 | no |
+| 23. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1d9d35236947` | 3. `dev-2026-10-12-plain-haiku-5.5-micode` | 60 | 59 | 1 | 0 | 0 | 1 | no |
 
 ## Trend
 
@@ -180,12 +222,43 @@ Per set, the latest cortex run (B) against the earliest cortex run on the same c
 
 | set | latest (B) | against (A) | false successes | verified | proposals / fix | cost / fix | wall / fix | truth first | first criterion that separates them |
 |---|---|---|---|---|---|---|---|---|---|
-| dev | 7. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 2. `dev-2026-10-12-cortex-haiku-4.5-claude-depth-spectrum` (earliest cortex) | 0 → 0 | 54/60 → 56/60 (p = 0.688) | 7.37 → 2.14 | $0.547 → $0.001187* | 258.1s → 8.7s | 25/60 → 59/60 | proposals / fix: B (latest), untested |
-| dev | 7. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 4. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` (baseline) | 0 → 0 | 56/60 → 56/60 (p = 1) | 3.55 → 2.14 | $0.001091* → $0.001187* | 11.3s → 8.7s | 26/60 → 59/60 | proposals / fix: B (latest), untested |
+| dev | 23. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1d9d35236947` | 2. `dev-2026-10-12-cortex-haiku-4.5-claude-depth-spectrum` (earliest cortex) | 0 → 0 | 54/60 → 60/60 (p = 0.0312) | 7.37 → 1.12 | $0.547 → $0.001211* | 258.1s → 5.5s | 25/60 → 59/60 | verified: B (latest) |
+| dev | 23. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1d9d35236947` | 22. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-main-f9ded716ea89` (baseline) | 0 → 0 | 60/60 → 60/60 (p = 1) | 1.00 → 1.12 | $0.00114* → $0.001211* | 4.7s → 5.5s | 60/60 → 59/60 | proposals / fix: A, untested |
+| dev | 23. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1d9d35236947` | 3. `dev-2026-10-12-plain-haiku-5.5-micode` (baseline) | 1 → 0 | 59/60 → 60/60 (p = 1) | n/a → 1.12 | $0.00213* → $0.001211* | 12.6s → 5.5s | n/a → 59/60 | false successes: B (latest), untested |
 | heldout | 14. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext` | 9. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` (earliest cortex) | 0 → 0 | 41/47 → 47/47 (p = 0.0312) | 4.93 → 1.98 | $0.001486* → $0.00132* | 16.1s → 6.4s | 25/47 → 25/47 | verified: B (latest) |
 | once | 13. `once-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5-gencontext` | 12. `once-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext` (earliest cortex) | 0 → 0 | 30/30 → 30/30 (p = 1) | 1.13 → 1.00 | $0.000521* → $0.000735* | 2.5s → 3.0s | 22/30 → 30/30 | proposals / fix: B (latest), untested |
 | hard-dev | 16. `hard-dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` | 15. `hard-dev-2026-10-12-plain-haiku-5.5-micode` (baseline) | 8 → 0 | 24/25 → 24/25 (p = 1) | n/a → 1.21 | $0.00172* → $0.00067* | 10.7s → 3.8s | n/a → 25/25 | false successes: B (latest), untested |
 | tempt | 18. `tempt-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` | 17. `tempt-2026-10-12-plain-haiku-5.5-micode` (baseline) | 7 → 0 | 22/30 → 23/30 (p = 1) | n/a → 3.30 | $0.002162* → $0.002525* | 13.8s → 18.1s | n/a → 24/30 | false successes: B (latest), untested |
+
+## Repair-path receipts
+
+`python3 scorecard.py receipt --check` (in `scripts/gate.sh`, the gate and `--fast`) passes when the REPAIR DIGEST of the working tree equals main's (the digest at `git merge-base HEAD origin/main`), or when this history holds, for the working tree's digest, a dev run below judged not worse than main's run (the incumbent it recorded), or a waiver. The latest such run at a digest decides; a run judged against an older main no longer counts; a waiver counts only for a digest no run measured. `python3 scorecard.py regress` produces the run (measuring main first when main has no run), `python3 scorecard.py waive --reason TEXT` the waiver (see docs/CORTEX.md, "Repair-path receipts").
+
+The repair digest is sha256 over (path, content), in path order, of the files matching:
+
+- `crates/axon-cortex/src/*.rs`
+- `crates/axon-cortex/src/bin/*.rs`
+- `crates/axon-cortex/benchmarks/drivers/*.sh`
+
+except:
+
+- `crates/axon-cortex/src/ai.rs`: the in-process generator, reached only through `--generator ai:MODEL`; the policy and every benchmark generate through `cmd:` and a driver script
+- `crates/axon-cortex/src/label.rs`: writes the `--label-log` row (off unless --label-log / CORTEX_LABEL_LOG is set); it decides no candidate, verdict, exit code or `--json` field
+
+Receipt config (the policy in force, audit off): model `claude-haiku-5-5`, transport `micode`, ranker `openrouter:anthropic/claude-haiku-5.5`, audit `off`, walk `breadth`, candidates `6`, budget `8`; corpus `crates/axon-cortex/benchmarks/ab/corpus.json` (sha256 3c7bc7bd4ea106f7). A run is judged against its recorded incumbent (main's run, `PREREG-regress.md` amendment 2) by that file's rule: a false success, a verified loss with exact McNemar p < 0.05, or an effort loss (proposals, then wall, then cost per task, over the tasks both verified) with an exact sign test p < 0.05 makes it worse. A run with no incumbent (main's own, or one added before amendment 2) is judged on false successes only.
+
+| # | run | repair digest | incumbent (A) | verified | false successes | proposals / fix | receipt rule | receipt |
+|---|---|---|---|---|---|---|---|---|
+| 7 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | not recorded (added before the receipt rule) | - (none) | 56/60 | 0 | 2.14 | - | no incumbent (false successes only) |
+| 19 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1fd4b31bf595` | `e94a9cccd7124548` | - (none) | 59/60 | 1 | 1.03 | - | **WORSE** |
+| 20 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-3503e4342a6a` | `6550f73850652927` | - (none) | 60/60 | 0 | 1.08 | - | no incumbent (false successes only) |
+| 21 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-2c837a12daaf` | `a53b1a076d068963` | - (none) | 60/60 | 0 | 1.17 | - | no incumbent (false successes only) |
+| 22 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-main-f9ded716ea89` | `8c83a386f0aacb77` | - (none) | 60/60 | 0 | 1.00 | - | no incumbent (false successes only) |
+| 23 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1d9d35236947` | `a53b1a076d068963` | 22. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-main-f9ded716ea89` | 60/60 | 0 | 1.12 | no false success, no significant verified or effort loss (proposals per task: 2 worse / 0 better, p = 0.5; wall seconds per task: 28 worse / 27 better, p = 1; cost per task: 33 worse / 26 better, p = 0.435) | not worse |
+
+Waivers (a digest declared to change no behaviour, with the reason):
+
+None.
 
 ## Held-out and once-set use
 
