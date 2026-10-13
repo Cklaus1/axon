@@ -803,14 +803,15 @@ digest at `git merge-base HEAD origin/main`: nothing changed). Otherwise
 `scorecard/history.jsonl` must hold, for the working tree's digest, one of
 these:
 
-- a **dev run** by agent `cortex` at that digest, on the receipt config (the
-  policy in force with the audit off: today Haiku 5.5 via micode, the Haiku
-  5.5 ranker, breadth walk, `--candidates 6`, budget 8) and on
-  `ab/corpus.json`, judged not worse than **main's run**: the latest run at
-  the merge-base digest, which `add --incumbent` records with the run
+- a **receipt run** (set `receipt`) by agent `cortex` at that digest, on the
+  receipt config (the policy in force with the audit off: today Haiku 5.5
+  via micode, the Haiku 5.5 ranker, breadth walk, `--candidates 6`, budget 8)
+  and on `scorecard/receipt-corpus.json`, judged not worse than **main's
+  run**: the latest run at the merge-base digest, which `add --incumbent` records with the run
   (`receipt_incumbent`), so a verdict never moves afterwards. The rule,
   checked in order: any false success fails; fewer verified with exact
-  McNemar p < 0.05 fails; then proposals, wall and cost per task over the
+  McNemar p < 0.05, over the POOLED receipt corpus (below), fails; then
+  proposals, wall and cost per task over the
   tasks both verified, each with an exact two-sided sign test, and the first
   one significantly worse (p < 0.05) fails. Otherwise it passes, and the
   effort deltas are reported, not gated. When several runs share a digest,
@@ -819,12 +820,15 @@ these:
   regress` makes this run (`. /root/.openrouter.env` first). When main has
   no run, it first measures main in a detached worktree at the merge-base.
   Then it builds both binaries at HEAD, runs `run_ab.py --arm B`, adds the
-  run with `add --set dev` (paired against main's run and the plain agent),
-  runs `report`, then prints the comparison and the verdict. A whole dev run
-  costs a few cents. The procedure, rule and cap are preregistered once, in
+  run with `add --set receipt` (incumbent: main's run), runs `report`, then
+  prints the comparison, the verdict and each leg's own pairing. A receipt
+  run costs about $0.23 (main's run the same again when main has none). The
+  procedure, rule and cap are preregistered once, in
   [`scorecard/PREREG-regress.md`](../crates/axon-cortex/benchmarks/scorecard/PREREG-regress.md)
-  (amendments 1 and 2 changed the rule and the incumbent; each is dated and
-  says what had been seen when it was written).
+  (amendments 1 to 3 changed the rule, the incumbent and the set; each is
+  dated and says what had been seen when it was written). A dev-set receipt
+  recorded on or before 2026-10-13 (amendment 2) still counts for the digest
+  it measured, with its recorded verdict.
 - a **waiver** for that digest:
   `scorecard.py waive --reason "comments only in generate.rs"`. It is for a
   change that cannot alter behaviour. The reason is printed in the scorecard

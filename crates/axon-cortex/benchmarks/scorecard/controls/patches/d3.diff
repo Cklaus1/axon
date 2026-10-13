@@ -1,0 +1,9 @@
+diff --git a/crates/axon-cortex/src/generate.rs b/crates/axon-cortex/src/generate.rs
+index f70a57bd..4c73c104 100644
+--- a/crates/axon-cortex/src/generate.rs
++++ b/crates/axon-cortex/src/generate.rs
+@@ -323,3 +323,3 @@ pub fn build_prompt(obs: &Observation, target: &SymbolRef, c: &PatchConstraints)
+                  {now}",
+-                source = view.source.trim_end(),
++                source = "",
+                 names = names.join(", "),

@@ -141,3 +141,102 @@ run on heldout and once but not yet on dev. So this run is also that change's
 first dev number. The incumbent is
 `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5`: 56/60
 verified, 0 false successes, 2.14 proposals per verified fix.
+
+## Amendment 3 (2026-10-13), written after exploration on a harder receipt set
+
+Why. Main's code scores 60/60 on the dev corpus, so the receipt can never see
+a LOSS of fixes: with main at 60/60 and no gains possible, six fixes (10% of
+the set) must be lost before the verified step can fire, and a milder loss
+shows only as an effort change. hard-dev in-scope is at 24/25 and 25/25 with
+Haiku 5.5, which has the same ceiling.
+
+What had been seen before this amendment. Exploration under a lane budget of
+$3 (spend $2.159 counted by `run_ab.spent`; rows in `ceiling/explore/`,
+disclosed, not preregistered tests of this rule), all with `run_ab.py --arm B`
+and the receipt configuration unless noted:
+
+* Main's code on the three candidate legs (Haiku 5.5): dev 60/60 (1.00
+  proposals per fix; the committed run `2026-10-12-main-f9ded716ea89`),
+  hard-dev in-scope 25/25 (1.04), tempt 23/30 (1.00; 7 honest non-fixes, 0
+  false successes).
+* Option (b), a weaker generator. Haiku 4.5 (`claude-haiku-4-5-20251001`,
+  micode) on main's code: dev 60/60 (1.27 proposals per fix), hard-dev 24/25.
+  Also at the ceiling, and five times the list price ($0.346 against $0.068
+  for the dev leg). `claude-3-haiku-20240307` and `claude-3-5-haiku-latest`
+  return HTTP 404 through micode; micode has no OpenRouter provider
+  (`MICODE_PROVIDER=openrouter` is refused, the `openai` route returns HTTP
+  401 for `meta-llama/llama-3.1-8b-instruct` and `qwen/qwen3-8b`);
+  `claude-sonnet-4-5` is reachable but stronger. No weaker model reachable
+  through the existing transports lands below the ceiling on dev. It would
+  also stop the receipt exercising the policy model. Option (b) is rejected.
+* Option (a), a harder set made of already-exposed tasks. Three deliberately
+  degraded Cortex builds, one line each (`controls/patches/*.diff`, built in
+  throwaway worktrees at 3eeda452, never committed to `crates/axon-cortex/src/`),
+  were run on the three legs with Haiku 5.5. Verified, main against build, and
+  the exact McNemar test over the pooled 115 tasks:
+
+  | build | dev (60) | hard-dev (25) | tempt (30) | pooled, only-main : only-build, p |
+  |---|---|---|---|---|
+  | main | 60 | 25 | 23 | - |
+  | context-off (the generator sees the body alone) | 57 | 15 | 20 | 16 : 0, p = 3.1e-5 |
+  | source-off (the prompt's file source blanked) | 59 | 23 | 20 | 6 : 0, p = 0.031 |
+  | feedback-off (no retry feedback, no visible-test output) | 58 | 25 | 23 | 2 : 0, p = 0.5 |
+
+  The dev leg alone has 3 : 0, 1 : 0 and 2 : 0 against main's 60/60, none
+  significant. A fourth patch (test names hidden in the prompt) lost nothing on
+  hard-dev and tempt (0 : 0 over 55 tasks) and is listed as inert.
+* Haiku 4.5 on the feedback-off build: dev 58/60 against main's 60/60.
+
+The cost of option (a), stated plainly. The 25 hard-dev in-scope tasks and the
+30 tempt tasks have been run many times and their failures inspected: the
+receipt set is a regression set tuned on, exactly as the dev corpus is. It
+detects a loss of fixes on tasks that development has already seen. It is not
+evidence that a change generalises (held-out and once sets answer that), and a
+change could gain on unseen tasks while losing on these. The tempt tasks add a
+second view: a change that starts to cheat shows as false successes.
+
+Amended, replacing "Set", the dev-only parts of "Decision rule", "Spend cap"
+and "First run under this file" above:
+
+1. **Set.** `receipt-corpus.json`, built by `build_receipt_corpus.py` (sha256
+   `7ad2a9f1ce9ff16b5b8c3ee71d914b7005f68395ecec921f026adba22b912a7c`): all 60
+   dev tasks, the 25 in-scope hard-dev tasks (the 13 out-of-scope tasks have no
+   verified outcome to lose and are not in it) and all 30 tempt tasks, 115
+   tasks as ONE corpus, so one run, one pairing and one verdict cover them.
+   `meta.legs` names each leg's task ids. Each task is byte-for-byte the task
+   of its own set (`ab/corpus.py` rebuilds and sha-checks every one).
+2. **Run and set.** The configuration is unchanged (the policy in force, audit
+   off, Haiku 5.5 via micode, the Haiku 5.5 ranker, breadth walk, 6
+   candidates, budget 8). The run is added as `--set receipt` (a new set).
+3. **Decision rule.** Unchanged, and applied to the POOLED 115 tasks: false
+   success, then verified McNemar p < 0.05, then the sign tests on proposals,
+   wall and cost per task over the tasks both runs verified. The verdict per
+   leg (`leg_verdicts`) is printed beside it and never decides.
+4. **Incumbent.** Amendment 2 stands: the latest receipt-set cortex run at the
+   repair digest of `git merge-base HEAD origin/main`; with none, `regress`
+   measures main first. `regress --main-only` measures main alone (no HEAD run,
+   and HEAD may equal main), which is how main's first receipt-set run and its
+   replicate are recorded; a later `--again` run at that digest becomes the
+   incumbent, as the latest.
+5. **Legacy.** A dev-set receipt (the dev corpus alone, amendment 2) recorded
+   on or before 2026-10-13 still counts for the digest it measured, with the
+   verdict it was recorded under; no dev-set run dated later does. Existing
+   history verdicts are unchanged: no recorded row, incumbent or verdict moves.
+   The cutoff is the day this amendment is committed, so a branch that runs
+   `regress` under amendment 2 on the same day still gets its receipt; when
+   that branch merges, the merged repair digest needs a receipt-set run.
+6. **Spend cap.** $1.00 per `regress` invocation (`RECEIPT_CAP_USD`; was
+   $0.50), counting main's run if made. At the three legs' measured cost, main's
+   run is about $0.23 (dev $0.068 plus hard-dev $0.109 plus tempt $0.053
+   from the exploration runs) and so is HEAD's; $1.00 covers both with
+   margin. The lane's whole budget ($3) is separate and enforced by the
+   operator of this lane.
+7. **First rows under this amendment.** `regress --main-only` records main's
+   code (repair digest `a53b1a076d068963`) as a receipt-set run, then
+   `regress --main-only --again` records a replicate of it, to measure how many
+   tasks two runs of the same code disagree on. Those are the discordance
+   numbers `controls/README.md` uses for the power analysis. They gate nothing
+   (no incumbent). The positive controls (above) are re-judged against these
+   committed main rows, by `controls/controls.py`, and reported there; they
+   are design evidence. Neither the controls nor the power analysis is an
+   acceptance test of a future change.
