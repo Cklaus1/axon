@@ -1,0 +1,91 @@
+// Axon ASI demo: word-frequency analysis via the Dict primitive.
+//
+// First demo that uses the string-keyed Dict primitive shipped this
+// session. Counts word frequencies in a small corpus, ranks by
+// frequency, picks the most-common word — the kind of preprocessing
+// step a real LLM agent would do before crafting prompts.
+//
+// Showcases:
+//   • dict_new / dict_set / dict_get / dict_keys (state)
+//   • arr_group_by (array → Dict[str, [T]])
+//   • dict_map_values (Dict → Dict, value transform)
+//   • str_split, str_to_lower (text prep)
+//   • arr_sort_by (rank entries)
+//   • Tuple destructuring in for-loop body (top-k display)
+//
+//   axon run examples/asi/word_freq.ax
+
+fn corpus() -> str {
+    "the quick brown fox jumps over the lazy dog the dog sleeps the fox runs"
+}
+
+fn main() -> i64 {
+    let text = corpus()
+    let words = str_split(text, " ")
+    let lowered = arr_map(words, |w| str_to_lower(w))
+
+    // Bucket identical words together, then count each bucket size.
+    let by_word = arr_group_by(lowered, |w| w)
+    let counts = dict_map_values(by_word, |bucket| len(bucket))
+
+    println("=== word frequency ===")
+    println("vocab size: {to_str(dict_len(counts))}")
+
+    // Build [(word, count)] pairs so we can sort by count.
+    let keys = dict_keys(counts)
+    let pairs = arr_map(keys, |k| {
+        let n = match dict_get(counts, k) { Some(v) => v  None => 0 }
+        (k, n)
+    })
+    // Sort descending by count; ties keep input order (stable insertion sort).
+    let ranked = arr_sort_by(pairs, |a, b| b.1 - a.1)
+
+    // Print top 3.
+    let top_k = arr_take(ranked, 3)
+    println("top 3:")
+    for entry in top_k {
+        let (word, n) = entry
+        println("  {word}: {to_str(n)}")
+    }
+
+    // Pin: "the" should be #1 (4 occurrences), "fox" and "dog" tied at 2.
+    let (first_word, first_count) = ranked[0]
+    if str_eq(first_word, "the") && first_count == 4 { 1 } else { 0 }
+}
+
+@[test]
+fn test_corpus_words() {
+    let text = corpus()
+    let words = str_split(text, " ")
+    assert_eq(len(words), 15)
+    assert(words[0] == "the")
+    assert(words[3] == "fox")
+    assert(words[14] == "runs")
+    assert(str_starts_with(text, "the quick brown fox"))
+    assert(str_ends_with(text, "the fox runs"))
+}
+
+@[test]
+fn test_corpus_frequencies() {
+    let words = str_split(corpus(), " ")
+    let by_word = arr_group_by(words, |w| w)
+    let counts = dict_map_values(by_word, |bucket| len(bucket))
+    assert_eq(dict_len(counts), 10)
+    let the_n = match dict_get(counts, "the") { Some(v) => v  None => 0 }
+    let fox_n = match dict_get(counts, "fox") { Some(v) => v  None => 0 }
+    let dog_n = match dict_get(counts, "dog") { Some(v) => v  None => 0 }
+    let lazy_n = match dict_get(counts, "lazy") { Some(v) => v  None => 0 }
+    assert_eq(the_n, 4)
+    assert_eq(fox_n, 2)
+    assert_eq(dog_n, 2)
+    assert_eq(lazy_n, 1)
+}
+
+@[test]
+fn test_corpus_is_lowercase_and_trimmed() {
+    let text = corpus()
+    assert(str_to_lower(text) == text)
+    assert(str_trim(text) == text)
+    assert_eq(len(text), 71)
+    assert(str_contains(text, "lazy dog"))
+}

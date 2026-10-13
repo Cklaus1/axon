@@ -1,0 +1,234 @@
+{
+ "defects": [
+  {
+   "source": "asi/goal_attribute.ax",
+   "symbol": "quality",
+   "scope": "in",
+   "shape": "documented-constant",
+   "edits": [
+    {
+     "old": "    let peak = 7\n",
+     "new": "    let peak = 8\n"
+    }
+   ],
+   "context": "The header comment (line 3: `quality` peaks at x=7 -> 100) and the #[goal(..., holdout: 7)] attribute on main fix the peak at 7; the body only names a local `peak`."
+  },
+  {
+   "source": "asi/agent_metacognition.ax",
+   "symbol": "search",
+   "scope": "in",
+   "shape": "documented-constant",
+   "edits": [
+    {
+     "old": "fn search(x: i64) -> i64 { 100 - (x - 7) * (x - 7) }",
+     "new": "fn search(x: i64) -> i64 { 10 - (x - 7) * (x - 7) }"
+    }
+   ],
+   "context": "main drives `search` with goal_run(\"search\", 100.0, 30): the hill's peak must reach the 100.0 target, which the body alone does not state."
+  },
+  {
+   "source": "asi/experiment_zone.ax",
+   "symbol": "tuned",
+   "scope": "in",
+   "shape": "documented-constant",
+   "edits": [
+    {
+     "old": "    100 - (x - 7) * (x - 7)      // a hill peaking at x = 7",
+     "new": "    10 - (x - 7) * (x - 7)       // a hill peaking at x = 7"
+    }
+   ],
+   "context": "main optimizes `tuned` with goal_run(\"tuned\", 100.0, 40) and prints '(optimized toward 100)': the peak height 100 lives only in main; the body comment gives the peak position, not its value."
+  },
+  {
+   "source": "asi/categorical_goal.ax",
+   "symbol": "strategy_score",
+   "scope": "in",
+   "shape": "documented-constant",
+   "edits": [
+    {
+     "old": "    if choice == 4 { 98 }",
+     "new": "    if choice == 3 { 98 }"
+    }
+   ],
+   "context": "The header (line 10: 'only strategy #4 is great') plus main printing the 0-based winner index as 'strategy #N' fix the spike at index 4; the body's unordered scoreboard (a 1-based slip) gives no hint."
+  },
+  {
+   "source": "asi/contained.ax",
+   "symbol": "score_locally",
+   "scope": "in",
+   "shape": "param-meaning",
+   "edits": [
+    {
+     "old": "    if confidence >= 80 { base } else { base / 2 }",
+     "new": "    if quality >= 80 { base } else { base / 2 }"
+    }
+   ],
+   "context": "The signature's third parameter `confidence` (otherwise unused) is what the 80 threshold must gate; a body reader does not know a confidence parameter exists, and gating on quality reads plausibly."
+  },
+  {
+   "source": "asi/word_freq.ax",
+   "symbol": "corpus",
+   "scope": "in",
+   "shape": "documented-constant",
+   "edits": [
+    {
+     "old": "\"the quick brown fox jumps over the lazy dog the dog sleeps the fox runs\"",
+     "new": "\"the quick brown fox jumps over the lazy dog the dog sleeps the cat runs\""
+    }
+   ],
+   "context": "main's pin comment (line 51: 'the' #1 with 4, 'fox' and 'dog' tied at 2) fixes the word counts; the corpus string alone has no right word."
+  },
+  {
+   "source": "options.ax",
+   "symbol": "safe_div",
+   "scope": "in",
+   "shape": "param-meaning",
+   "edits": [
+    {
+     "old": "    if b == 0 {",
+     "new": "    if a == 0 {"
+    },
+    {
+     "old": "        Ok(a / b)",
+     "new": "        Ok(b / a)"
+    }
+   ],
+   "context": "The body is a self-consistent division with the roles of a and b swapped; only the signature order safe_div(a, b) (and main's safe_div(10, 2)) says a is the dividend and b the divisor."
+  },
+  {
+   "source": "tuples.ax",
+   "symbol": "divmod",
+   "scope": "in",
+   "shape": "param-meaning",
+   "edits": [
+    {
+     "old": "    (n / d, n % d)",
+     "new": "    (d / n, d % n)"
+    }
+   ],
+   "context": "Whether n or d is the dividend is fixed only outside the body: the signature order divmod(n, d) and main's `divmod(17, 5)` printed as '17/5 = 3 rem 2' (line 20-21)."
+  },
+  {
+   "source": "flagship/cve/CVE-2024-2771/escalation.ax",
+   "symbol": "add_manager",
+   "scope": "in",
+   "shape": "caller-contract",
+   "edits": [
+    {
+     "old": "    if caller_is_admin(caller_role) {",
+     "new": "    if caller_role == 1 {"
+    }
+   ],
+   "context": "An inline admin check reads as correct in isolation; only the header, main's comment (role 0 must print GRANTED) and the sibling `caller_is_admin` (the deliberately missing check the exemplar delegates to) show the exemplar must let the escalation through."
+  },
+  {
+   "source": "goals/brief-gate.ax",
+   "symbol": "make_brief",
+   "scope": "in",
+   "shape": "caller-contract",
+   "edits": [
+    {
+     "old": "    let k_con  = axon_concat(q, axon_concat(\"constraints\", q))",
+     "new": "    let k_con  = axon_concat(q, axon_concat(\"constraint\", q))"
+    }
+   ],
+   "context": "The key name the consumer reads is fixed outside the body: gate_brief calls check_field(brief_json, \"constraints\") and the header lists the required field as `constraints`; the body's parameter names are not shown."
+  },
+  {
+   "source": "asi/goal_attribute.ax",
+   "symbol": "quality",
+   "scope": "in",
+   "shape": "documented-constant",
+   "edits": [
+    {
+     "old": "    100 - dist * dist\n",
+     "new": "    10 - dist * dist\n"
+    }
+   ],
+   "context": "The peak height lives outside the body: the header (lines 3-5: peaks at x=7 -> 100, 'Because 100 >= 100') and #[goal(..., target: 100)] on main; the body's scale is arbitrary on its own."
+  },
+  {
+   "source": "zephyr/app.ax",
+   "symbol": "sensor_avg",
+   "scope": "in",
+   "shape": "param-meaning",
+   "edits": [
+    {
+     "old": "    (a + b + c + d) / 4\n",
+     "new": "    (a + b + c) / 3\n"
+    }
+   ],
+   "context": "An average of three readings is self-consistent; only the signature's fourth parameter `d` and the doc comment above ('Average of four sensor readings') say four readings are averaged."
+  },
+  {
+   "source": "goals/brief-gate.ax",
+   "symbol": "check_field",
+   "scope": "out",
+   "shape": "two-functions",
+   "edits": [
+    {
+     "old": "            if str_len(v) < 5 {",
+     "new": "            if str_len(v) <= 5 {"
+    },
+    {
+     "old": "    let k_con  = axon_concat(q, axon_concat(\"constraints\", q))",
+     "new": "    let k_con  = axon_concat(q, axon_concat(\"constraint\", q))"
+    }
+   ],
+   "context": "check_field rejects 5-char values and make_brief emits the key `constraint`: test_make_brief_exact_json only exercises make_brief while 'abcde' -> OK in test_check_field_length_boundary needs check_field, so no single body repairs both.",
+   "visible": "test_make_brief_exact_json",
+   "hidden": "test_check_field_length_boundary"
+  },
+  {
+   "source": "zephyr/app.ax",
+   "symbol": "sensor_avg",
+   "scope": "out",
+   "shape": "signature",
+   "edits": [
+    {
+     "old": "fn sensor_avg(a: i64, b: i64, c: i64, d: i64) -> (i64 where _ >= 0) {",
+     "new": "fn sensor_avg(a: i64, b: i64, c: i64, d: i64) -> (i64 where _ > 0) {"
+    }
+   ],
+   "context": "The refinement on the return type now forbids 0, yet tests require sensor_avg(0,0,0,0) == 0 and sensor_avg(0,0,0,3) == 0; no body can return 0 under a `_ > 0` contract, and no other function is involved."
+  },
+  {
+   "source": "flagship/cve/CVE-2024-2771/escalation.ax",
+   "symbol": "add_manager",
+   "scope": "out",
+   "shape": "two-functions",
+   "edits": [
+    {
+     "old": "    true\n}",
+     "new": "    _caller_role == 1\n}"
+    },
+    {
+     "old": "        \"GRANTED: {target_user} is now a manager\"",
+     "new": "        \"GRANTED: {target_user} is now manager\""
+    }
+   ],
+   "context": "caller_is_admin gets the 'intended' role check (fails test_caller_is_admin_has_no_check, which only that body can fix) and add_manager's message loses its article (fails the add_manager string tests, which caller_is_admin cannot fix); the hidden test needs both bodies right.",
+   "visible": "test_caller_is_admin_has_no_check",
+   "hidden": "test_add_manager_never_denies"
+  },
+  {
+   "source": "asi/experiment_zone.ax",
+   "symbol": "baseline",
+   "scope": "out",
+   "shape": "two-functions",
+   "edits": [
+    {
+     "old": "    100 - (x - 7) * (x - 7)      // a hill peaking at x = 7",
+     "new": "    100 - (x - 7) * (x + 7)      // a hill peaking at x = 7"
+    },
+    {
+     "old": "    50                            // a flat reference line",
+     "new": "    5                             // a flat reference line"
+    }
+   ],
+   "context": "tuned gets a sign slip (fails test_tuned_hill_peaks_at_7, only tuned's body can fix) and baseline a dropped digit (fails test_baseline_is_flat_50, only baseline's body can fix); the hidden test_baseline_versus_tuned needs both bodies right.",
+   "visible": "test_tuned_hill_peaks_at_7",
+   "hidden": "test_baseline_versus_tuned"
+  }
+ ]
+}

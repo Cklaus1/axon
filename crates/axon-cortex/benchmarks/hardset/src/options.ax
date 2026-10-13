@@ -1,0 +1,37 @@
+fn safe_div(a: i64, b: i64) -> Result<i64, str> {
+    if b == 0 {
+        Err("division by zero")
+    } else {
+        Ok(a / b)
+    }
+}
+
+fn main() {
+    let x = safe_div(10, 2)
+    match x {
+        Ok(v) => println(to_str(v))
+        Err(e) => eprintln(e)
+    }
+}
+
+@[test]
+fn test_safe_div_ok_values() {
+    match safe_div(10, 2) { Ok(v) => assert_eq(v, 5)  Err(e) => assert(false) }
+    match safe_div(7, 2) { Ok(v) => assert_eq(v, 3)  Err(e) => assert(false) }
+    match safe_div(0, 3) { Ok(v) => assert_eq(v, 0)  Err(e) => assert(false) }
+    match safe_div(-9, 3) { Ok(v) => assert_eq(v, -3)  Err(e) => assert(false) }
+}
+
+@[test]
+fn test_safe_div_by_zero_is_err() {
+    match safe_div(10, 0) { Ok(v) => assert(false)  Err(e) => assert(e == "division by zero") }
+    match safe_div(0, 0) { Ok(v) => assert(false)  Err(e) => assert(e == "division by zero") }
+    match safe_div(-1, 0) { Ok(v) => assert(false)  Err(e) => assert(e == "division by zero") }
+}
+
+@[test]
+fn test_safe_div_divisor_one_and_self() {
+    match safe_div(13, 1) { Ok(v) => assert_eq(v, 13)  Err(e) => assert(false) }
+    match safe_div(13, 13) { Ok(v) => assert_eq(v, 1)  Err(e) => assert(false) }
+    match safe_div(3, 13) { Ok(v) => assert_eq(v, 0)  Err(e) => assert(false) }
+}

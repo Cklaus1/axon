@@ -1,0 +1,54 @@
+// R5 `#[goal(...)]` attribute demo: train a quality metric, gate on holdout.
+//
+// The @[adaptive] fn `quality` peaks at x=7 → 100.
+// The #[goal(...)] fn trains on 40 probes, then evaluates quality at
+// the held-out point x=7.  Because 100 >= 100, goal_met = 1.
+
+// ── The quality metric (must be @[adaptive] for #[goal] to reference it) ──
+@[adaptive]
+fn quality(x: i64) -> i64 {
+    let peak = 7
+    let dist = if x < peak { peak - x } else { x - peak }
+    100 - dist * dist
+}
+
+// ── The goal entry point ──
+#[goal(metric: quality, target: 100, max_evals: 40, holdout: 7)]
+fn main() -> i64 {
+    println(to_str(goal_met))
+    goal_met
+}
+
+@[test]
+fn test_quality_peak_and_symmetry() {
+    assert_eq(quality(7), 100)
+    assert_eq(quality(6), 99)
+    assert_eq(quality(8), 99)
+    assert_eq(quality(5), 96)
+    assert_eq(quality(9), 96)
+}
+
+@[test]
+fn test_quality_far_values() {
+    assert_eq(quality(0), 51)
+    assert_eq(quality(14), 51)
+    assert_eq(quality(17), 0)
+    assert_eq(quality(-3), 0)
+    assert_eq(quality(27), -300)
+}
+
+@[test]
+fn test_quality_holdout_meets_target() {
+    let best = 0
+    let best_x = -1
+    for x in 0..15 {
+        let q = quality(x)
+        if q > best {
+            best = q
+            best_x = x
+        }
+    }
+    assert_eq(best_x, 7)
+    assert_eq(best, 100)
+    assert(quality(7) >= 100)
+}

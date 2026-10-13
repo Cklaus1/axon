@@ -1,0 +1,232 @@
+{
+ "defects": [
+  {
+   "source": "comprehensive.ax",
+   "symbol": "dot",
+   "scope": "in",
+   "shape": "struct-field",
+   "edits": [
+    {
+     "old": "a.x * b.x + a.y * b.y",
+     "new": "a.x * b.y + a.y * b.x"
+    }
+   ],
+   "context": "The body alone is a coherent mixed product that could be meant as a dot product (a.x*b.x + a.y*b.y) or a 2-D cross product (a.x*b.y - a.y*b.x); only the name `dot` (line 3) and the siblings `magnitude_sq` (line 8: dot(v, v) must be |v|^2) and `is_unit` (lines 12-13: compares it to 1) fix that each Vec2 field must pair with the SAME field of the other vector."
+  },
+  {
+   "source": "mobile/ios_compute_parity.ax",
+   "symbol": "sum_to",
+   "scope": "in",
+   "shape": "caller-contract",
+   "edits": [
+    {
+     "old": "while i <= n {",
+     "new": "while i < n {"
+    }
+   ],
+   "context": "Summing 1..n-1 or 1..n are both plausible loops from the body; the inclusive bound is fixed only by main's documented values `sum_to(100) // 5050` (line 40) and the mix arithmetic `(21*6765 + 5050) % 1000 = 115` (line 41)."
+  },
+  {
+   "source": "mobile/ios_compute_parity.ax",
+   "symbol": "fib",
+   "scope": "in",
+   "shape": "documented-constant",
+   "edits": [
+    {
+     "old": "if n < 2 { n } else",
+     "new": "if n < 2 { 1 } else"
+    }
+   ],
+   "context": "Base case 1 (the 1,1,2,3 convention) and base case n (the 0,1,1,2 convention) are both standard Fibonacci recursions; main's comment `fib(20) // 6765` (line 39) and the mix comment `21*6765` (line 41) select the 0-based convention."
+  },
+  {
+   "source": "fibonacci.ax",
+   "symbol": "fib_rec",
+   "scope": "in",
+   "shape": "documented-constant",
+   "edits": [
+    {
+     "old": "        n\n    } else {\n        fib_rec(n - 1)",
+     "new": "        1\n    } else {\n        fib_rec(n - 1)"
+    }
+   ],
+   "context": "A recursion seeded with 1 is a valid Fibonacci variant on its own; the required convention F(0)=0, F(1)=1 lives in the sibling iterative `fib` (lines 20-24: returns n for n<=1, seeds a=0, b=1) and main's 'Verify they agree' loop (lines 56-67) demanding fib(i) == fib_rec(i)."
+  },
+  {
+   "source": "error_handling.ax",
+   "symbol": "isqrt",
+   "scope": "in",
+   "shape": "documented-constant",
+   "edits": [
+    {
+     "old": "while i < 20 {",
+     "new": "while i < 2 {"
+    }
+   ],
+   "context": "The body shows a fixed-iteration Newton loop with no stated count (could be fixed by raising the count to any value or by switching to a convergence test); the doc comment above the function (line 20: 'Newton's method, 20 iterations') states the intended count."
+  },
+  {
+   "source": "closures_demo.ax",
+   "symbol": "reduce3",
+   "scope": "in",
+   "shape": "caller-contract",
+   "edits": [
+    {
+     "old": "acc = f(acc, a[i])",
+     "new": "acc = f(a[i], acc)"
+    }
+   ],
+   "context": "f(acc, x) (left fold) and f(x, acc) are both plausible from the body; the argument order is fixed by the callers' lambdas `(acc: i64, x: i64) => ...` in main (lines 86-87), which name the accumulator as the FIRST parameter."
+  },
+  {
+   "source": "closures_demo.ax",
+   "symbol": "reduce3",
+   "scope": "in",
+   "shape": "param-meaning",
+   "edits": [
+    {
+     "old": "let acc = init",
+     "new": "let acc = 0"
+    }
+   ],
+   "context": "Seeding a fold with 0 looks normal in the body alone; only the signature (line 48) shows an `init: i64` parameter that must seed the accumulator, and main's product call `reduce3(nums, 1, ...)` with comment `// 105` (lines 87-89) depends on it."
+  },
+  {
+   "source": "fintech/ledger.ax",
+   "symbol": "journal_balance",
+   "scope": "in",
+   "shape": "caller-contract",
+   "edits": [
+    {
+     "old": "(debit1 - credit1) + (debit2 - credit2)",
+     "new": "(credit1 - debit1) + (credit2 - debit2)"
+    }
+   ],
+   "context": "Credit-minus-debit and debit-minus-credit are both common ledger sign conventions and the broken body is internally consistent; the comment above the function (lines 99-103: 'debits are positive, credits negative', 'Legs: +debit1, -credit1, +debit2, -credit2') fixes the sign."
+  },
+  {
+   "source": "error_handling.ax",
+   "symbol": "safe_div",
+   "scope": "in",
+   "shape": "param-meaning",
+   "edits": [
+    {
+     "old": "if b == 0 {",
+     "new": "if a == 0 {"
+    },
+    {
+     "old": "Ok(a / b)",
+     "new": "Ok(b / a)"
+    }
+   ],
+   "context": "The broken body consistently guards and divides by `a`, so it is a correct safe division for SOME parameter order; only the signature order `safe_div(a: i64, b: i64)` (line 45) and main's documented calls `safe_div(100, 4) // Ok(25)` and `safe_div(1, 0) // Err` (lines 75-76) say `b` is the divisor."
+  },
+  {
+   "source": "algorithms.ax",
+   "symbol": "collatz_steps",
+   "scope": "in",
+   "shape": "documented-constant",
+   "edits": [
+    {
+     "old": "let steps = 0",
+     "new": "let steps = 1"
+    }
+   ],
+   "context": "Counting the Collatz sequence length (start at 1, counting the seed) and counting the steps (start at 0) are both common conventions; main's comment `collatz_steps(27) // 111` (line 58) selects the steps convention (the length would be 112)."
+  },
+  {
+   "source": "closures_demo.ax",
+   "symbol": "make_adder",
+   "scope": "in",
+   "shape": "caller-contract",
+   "edits": [
+    {
+     "old": "(x: i64) => x + n",
+     "new": "(x: i64) => x * n"
+    }
+   ],
+   "context": "The returned lambda `(x) => x * n` is a coherent scaler from the body alone; the doc comment above the function (line 60: 'Returns a lambda that adds `n` to its argument') and main's `add10(5) // 15` (line 95) require addition."
+  },
+  {
+   "source": "math.ax",
+   "symbol": "square",
+   "scope": "out",
+   "shape": "two-functions",
+   "edits": [
+    {
+     "old": "a + b",
+     "new": "a - b"
+    },
+    {
+     "old": "n * n",
+     "new": "n + n"
+    }
+   ],
+   "context": "Both `add` and `square` are independently broken, each with its own failing tests (test_add_values, test_square_values), and the hidden test_square_of_sum_documented calls square(add(..)); restoring either body leaves the other function's tests failing, and no edit to one body can change what the other returns."
+  },
+  {
+   "source": "mobile/ios_compute_parity.ax",
+   "symbol": "gcd",
+   "scope": "out",
+   "shape": "two-functions",
+   "edits": [
+    {
+     "old": "gcd(b, a % b)",
+     "new": "gcd(b, b % a)"
+    },
+    {
+     "old": "let i = 1",
+     "new": "let i = 2"
+    }
+   ],
+   "visible": "test_gcd_documented",
+   "hidden": "test_parity_mix_documented",
+   "context": "`gcd` recurses on b % a and `sum_to` skips the first term; each has its own failing test (test_gcd_documented, test_sum_to_documented) and the hidden parity-mix test multiplies gcd(..) and adds sum_to(..), so fixing either single body leaves the other's direct tests failing."
+  },
+  {
+   "source": "fintech/ledger.ax",
+   "symbol": "withdraw",
+   "scope": "out",
+   "shape": "signature",
+   "edits": [
+    {
+     "old": "fn withdraw(balance: Decimal, amount: Decimal) -> Decimal {",
+     "new": "fn withdraw(balance: Decimal, amount: Decimal where _ > 0d) -> Decimal {"
+    }
+   ],
+   "context": "The parameter refinement `amount: Decimal where _ > 0d` is checked at the call boundary before any body runs, so the zero-amount calls in test_withdraw_exact_amounts (withdraw(100d, 0d)) and test_withdraw_to_exactly_zero_is_allowed (withdraw(0d, 0d)) fail with a refinement violation whatever withdraw's (or any other) body does; only the signature can be fixed."
+  },
+  {
+   "source": "closures_demo.ax",
+   "symbol": "make_multiplier",
+   "scope": "out",
+   "shape": "two-functions",
+   "edits": [
+    {
+     "old": "(x: i64) => x + n",
+     "new": "(x: i64) => n - x"
+    },
+    {
+     "old": "(x: i64) => x * factor",
+     "new": "(x: i64) => x * x"
+    }
+   ],
+   "visible": "test_make_adder_documented",
+   "hidden": "test_compose_triple_then_add10",
+   "context": "make_adder subtracts its argument and make_multiplier squares it; each has its own failing test (test_make_adder_documented, test_make_multiplier_documented) and the hidden compose test calls add10(triple(..)) and triple(add10(..)), so restoring either single body leaves the other closure-factory wrong and its tests failing."
+  },
+  {
+   "source": "comprehensive.ax",
+   "symbol": "dot",
+   "scope": "out",
+   "shape": "type-definition",
+   "edits": [
+    {
+     "old": "type Vec2 = { x: f64, y: f64 }",
+     "new": "type Vec2 = { x: f64 where _ >= 0.0, y: f64 where _ >= 0.0 }"
+    }
+   ],
+   "context": "The struct refinement rejects negative components when a Vec2 is constructed, and the negative vectors are built inside the tests (test_dot_products (-2,3), test_magnitude_sq_values (-3,-4), test_is_unit_true_cases (0,-1)), so they fail before dot/magnitude_sq/is_unit run; no function-body edit can repair the type definition."
+  }
+ ]
+}

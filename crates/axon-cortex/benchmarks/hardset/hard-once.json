@@ -1,0 +1,656 @@
+{
+ "meta": {
+  "parts": [
+   {
+    "set": "hard-once",
+    "axon_bin": "/home/cklaus/projects/axon-lanes/.doc-build/cortex-hardset/debug/axon",
+    "real_bug_mining": {
+     "pairs": 49,
+     "qualifying": 0
+    }
+   }
+  ],
+  "sources": {
+   "crates/axon-cortex/benchmarks/hardset/src/asi/learn_linear.ax": "// Axon ASI demo: learn a linear model by black-box optimization.\n//\n// Showcases the new multi-arg coordinate-descent optimizer added this\n// session \u2014 see also `examples/asi/self_improve.ax` for the full\n// goal_run + goal_history + goal_best_input + Uncertain + @[verify]\n// surface. This demo focuses on the *fitting* loop:\n//\n//   1. Fixed dataset (eight points on y = 3x + 1).\n//   2. `neg_loss(a, b)` returns the negated sum-of-absolute-errors so\n//      higher = better (the optimizer's convention).\n//   3. `goal_run(\"neg_loss\", 0.0, 300)` coordinate-descends across both\n//      params, halving the step per dim until neither improves.\n//   4. `goal_best_inputs(\"neg_loss\", 0.0)` reads back the winning\n//      `(a*, b*)` tuple \u2014 both as i64 \u2014 for inspection and deployment.\n//\n// No LLM. Pure compute. The point is that the same loop scales to any\n// `fn(i64, \u2026, i64) -> i64` you can name: regression, scheduling,\n// resource allocation, etc.\n\nfn dataset_x(i: i64) -> i64 { [0, 1, 2, 3, 4, 5, 6, 7][i] }\nfn dataset_y(i: i64) -> i64 { [1, 4, 7, 10, 13, 16, 19, 22][i] }  // y = 3x + 1\nfn n_pts() -> i64 { 8 }\n\n// Loss = sum of |a*x + b - y|. We return its negation because the\n// optimizer drives the score toward `target`, and we want |error| \u2192 0.\n@[adaptive]\nfn neg_loss(a: i64, b: i64) -> i64 {\n    let total = 0\n    let i = 0\n    while i < n_pts() {\n        let pred = a * dataset_x(i) + b\n        let err = pred - dataset_y(i)\n        total = total + abs_i64(err)\n        i = i + 1\n    }\n    -total\n}\n\nfn main() -> i64 {\n    // \u2500\u2500 Fit \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    let budget = 300\n    let _ = goal_run(\"neg_loss\", 0.0, budget)\n    let xs = goal_best_inputs(\"neg_loss\", 0.0)\n    let a = xs[0]\n    let b = xs[1]\n\n    // \u2500\u2500 Report \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    let best_loss = -goal_run(\"neg_loss\", 0.0, 0)\n    let h = goal_history(\"neg_loss\")\n    println(\"=== linear regression by coordinate descent ===\")\n    println(\"budget:    {to_str(budget)} evals\")\n    println(\"trace len: {to_str(len(h))}\")\n    println(\"learned:   y = {to_str(a)}*x + {to_str(b)}\")\n    println(\"loss:      {to_str_f64(best_loss)} (zero = exact fit)\")\n\n    // Sanity: walk the dataset, print predictions side-by-side with truth.\n    let i = 0\n    while i < n_pts() {\n        let p = a * dataset_x(i) + b\n        println(\"  x={to_str(dataset_x(i))}  truth={to_str(dataset_y(i))}  pred={to_str(p)}\")\n        i = i + 1\n    }\n\n    // Exit code = 1 iff we hit the true coefficients with zero loss.\n    if a == 3 && b == 1 && best_loss == 0.0 { 1 } else { 0 }\n}\n\n@[test]\nfn test_dataset_x_values() {\n    assert_eq(dataset_x(0), 0)\n    assert_eq(dataset_x(3), 3)\n    assert_eq(dataset_x(7), 7)\n}\n\n@[test]\nfn test_dataset_y_on_line() {\n    assert_eq(dataset_y(0), 1)\n    assert_eq(dataset_y(4), 13)\n    assert_eq(dataset_y(7), 22)\n    for i in 0..n_pts() {\n        assert_eq(dataset_y(i), 3 * dataset_x(i) + 1)\n    }\n}\n\n@[test]\nfn test_n_pts_count() {\n    assert_eq(n_pts(), 8)\n    let sx = 0\n    let sy = 0\n    for i in 0..n_pts() {\n        sx = sx + dataset_x(i)\n        sy = sy + dataset_y(i)\n    }\n    assert_eq(sx, 28)\n    assert_eq(sy, 92)\n}\n\n@[test]\nfn test_neg_loss_exact_fit_is_zero() {\n    assert_eq(neg_loss(3, 1), 0)\n    assert_eq(neg_loss(3, 0), -8)\n    assert_eq(neg_loss(3, 2), -8)\n}\n\n@[test]\nfn test_neg_loss_wrong_slope() {\n    assert_eq(neg_loss(2, 1), -28)\n    assert_eq(neg_loss(4, 1), -28)\n    assert_eq(neg_loss(0, 0), -92)\n    assert_eq(neg_loss(-3, -1), -184)\n}\n\n@[test]\nfn test_neg_loss_maximized_at_truth() {\n    let best = neg_loss(3, 1)\n    for a in -2..8 {\n        for b in -3..5 {\n            if a != 3 || b != 1 { assert(neg_loss(a, b) < best) }\n        }\n    }\n}\n",
+   "crates/axon-cortex/benchmarks/hardset/src/asi/self_improve.ax": "// Axon ASI demo: autonomous self-improving search loop.\n//\n// Showcases the full optimizer-introspection surface added on\n// `merge-asi-layer3`: goal_run + goal_best_input + goal_history +\n// goal_clear, composed into a single self-improvement cycle that\n// inspects its own learning trajectory and decides when to stop.\n//\n//   1. Run the optimizer over an @[adaptive] objective.\n//   2. Read the full (input, score) trace via goal_history.\n//   3. Compute convergence stats: best, mean of the last 5 probes,\n//      number of distinct probes \u2014 i.e., introspect what was learned.\n//   4. Extract the winning probe via goal_best_input.\n//   5. Wrap the answer as Uncertain<i64> with a confidence derived\n//      from \"how close did we get to target?\" and pass it through\n//      a @[verify(confidence >= 0.95)] deploy gate.\n//   6. If the gate panics, the message names the rejected value AND\n//      the input that produced it (verify-panic enrichment) so a\n//      retry can pick up exactly where this attempt left off.\n//\n// No LLM. Pure compute. The objective is a numeric function whose\n// peak the optimizer has to find. Replace `objective` with anything\n// callable from Axon to apply the same loop to a real task.\n\n// \u2500\u2500 The objective (peak at x = 137) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// A noisy unimodal function. The hill-climb's wide-step seed locates the\n// peak via binary search; for a 50-eval budget that's well under the\n// budget. The redundant `+ 0` keeps the body multi-token so the parser\n// stays honest about ASI continuation across the arithmetic.\n\n@[adaptive]\nfn objective(x: i64) -> i64 {\n    let d = x - 137\n    1000 - d * d / 4 + 0\n}\n\n// \u2500\u2500 Confidence model \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// We trust the answer in proportion to \"how close did we get to the target\".\n// At target reached, confidence = 1.0; at target/2, confidence = 0.5.\n\nfn confidence_from_score(score: f64, target: f64) -> f64 {\n    if target == 0.0 { 0.0 }\n    else {\n        let raw = score / target\n        if raw < 0.0 { 0.0 }\n        else if raw > 1.0 { 1.0 }\n        else { raw }\n    }\n}\n\n// \u2500\u2500 Deploy gate \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Runtime @[verify] gate: confidence must be >= 0.95 or the program panics\n// with a message naming the rejected value + the input that produced it.\n\n@[verify(confidence >= 0.95)]\nfn deploy_gate(best_x: i64, best_score: f64, target: f64) -> Uncertain<i64> {\n    let c = confidence_from_score(best_score, target)\n    uncertain_dyn_i64(best_x, c)\n}\n\nfn main() {\n    let target = 1000.0\n    let budget = 50\n\n    // \u2500\u2500 1. Optimize \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    let _ = goal_clear(\"objective\")\n    let best_score = goal_run(\"objective\", target, budget)\n\n    // \u2500\u2500 2-3. Inspect the learning trajectory \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    let trace = goal_history(\"objective\")\n    let n = len(trace)\n\n    // Mean score over the last 5 probes (a crude \"is this converged?\" signal).\n    let sum_tail = 0.0\n    let tail_start = if n >= 5 { n - 5 } else { 0 }\n    let i = tail_start\n    while i < n {\n        let (_x, s) = trace[i]\n        sum_tail = sum_tail + s\n        i = i + 1\n    }\n    let tail_count = n - tail_start\n    let tail_mean = if tail_count > 0 {\n        sum_tail / i64_to_f64(tail_count)\n    } else { 0.0 }\n\n    // Number of distinct probes: a proxy for how broadly the search swept.\n    // (Trace can be long when convergence is slow; many repeats means the\n    // step size collapsed too early.)\n    let distinct = 0\n    let j = 0\n    while j < n {\n        let (xj, _sj) = trace[j]\n        let seen = false\n        let k = 0\n        while k < j {\n            let (xk, _sk) = trace[k]\n            if xk == xj { seen = true }\n            k = k + 1\n        }\n        if !seen { distinct = distinct + 1 }\n        j = j + 1\n    }\n\n    println(\"=== self-improvement cycle ===\")\n    println(\"budget:         {to_str(budget)} evals\")\n    println(\"trace length:   {to_str(n)}\")\n    println(\"distinct probes:{to_str(distinct)}\")\n    println(\"best score:     {to_str_f64(best_score)} / {to_str_f64(target)}\")\n    println(\"tail mean(5):   {to_str_f64(tail_mean)}\")\n\n    // \u2500\u2500 4. Extract the winning probe \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    let best_x = goal_best_input(\"objective\", target)\n    println(\"best input:     {to_str(best_x)} (peak is at 137)\")\n\n    // \u2500\u2500 5-6. Deploy gate (Uncertain + @[verify]) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    // The gate panics with the enriched message if confidence < 0.95. With\n    // this objective the optimizer reaches score = 1000, confidence = 1.0,\n    // so the gate passes.\n    let u = deploy_gate(best_x, best_score, target)\n    println(\"deploy gate:    PASS (confidence = {to_str_f64(u.confidence)})\")\n    println(\"verified value: {to_str(u.value)}\")\n}\n\n@[test]\nfn test_confidence_from_score_ratio_and_clamps() {\n    assert(abs_f64(confidence_from_score(1000.0, 1000.0) - 1.0) < 0.000001)\n    assert(abs_f64(confidence_from_score(500.0, 1000.0) - 0.5) < 0.000001)\n    assert(abs_f64(confidence_from_score(250.0, 1000.0) - 0.25) < 0.000001)\n    assert(abs_f64(confidence_from_score(0.0, 1000.0) - 0.0) < 0.000001)\n    assert(abs_f64(confidence_from_score(1500.0, 1000.0) - 1.0) < 0.000001)\n    assert(abs_f64(confidence_from_score(-200.0, 1000.0) - 0.0) < 0.000001)\n}\n\n@[test]\nfn test_confidence_from_score_zero_target() {\n    assert(abs_f64(confidence_from_score(1000.0, 0.0) - 0.0) < 0.000001)\n    assert(abs_f64(confidence_from_score(0.0, 0.0) - 0.0) < 0.000001)\n    assert(abs_f64(confidence_from_score(-5.0, 0.0) - 0.0) < 0.000001)\n    assert(abs_f64(confidence_from_score(30.0, 40.0) - 0.75) < 0.000001)\n}\n\n@[test]\nfn test_deploy_gate_passes_at_target() {\n    let u = deploy_gate(137, 1000.0, 1000.0)\n    assert_eq(u.value, 137)\n    assert(abs_f64(u.confidence - 1.0) < 0.000001)\n    let over = deploy_gate(140, 1200.0, 1000.0)\n    assert_eq(over.value, 140)\n    assert(abs_f64(over.confidence - 1.0) < 0.000001)\n}\n\n@[test]\nfn test_deploy_gate_threshold_boundary() {\n    let u = deploy_gate(42, 950.0, 1000.0)\n    assert_eq(u.value, 42)\n    assert(abs_f64(u.confidence - 0.95) < 0.000001)\n    let v = deploy_gate(-3, 990.0, 1000.0)\n    assert_eq(v.value, -3)\n    assert(abs_f64(v.confidence - 0.99) < 0.000001)\n}\n\n@[test]\nfn test_objective_peak_at_137() {\n    assert_eq(objective(137), 1000)\n    assert_eq(objective(139), 999)\n    assert_eq(objective(135), 999)\n    assert_eq(objective(141), 996)\n    assert_eq(objective(133), 996)\n    assert_eq(objective(136), 1000)\n}\n\n@[test]\nfn test_objective_far_from_peak() {\n    assert_eq(objective(157), 900)\n    assert_eq(objective(117), 900)\n    assert_eq(objective(77), 100)\n    assert_eq(objective(0), -3692)\n    assert(objective(137) > objective(150))\n}\n",
+   "crates/axon-cortex/benchmarks/hardset/src/algorithms.ax": "// Classic algorithms as an Axon integration test\n\nfn gcd(a: i64, b: i64) -> i64 {\n    if b == 0 {\n        a\n    } else {\n        gcd(b, a % b)\n    }\n}\n\nfn lcm(a: i64, b: i64) -> i64 {\n    a / gcd(a, b) * b\n}\n\nfn is_prime(n: i64) -> bool {\n    if n < 2 {\n        false\n    } else {\n        let i = 2\n        let result = true\n        while i * i <= n {\n            if n % i == 0 {\n                result = false\n            }\n            i = i + 1\n        }\n        result\n    }\n}\n\nfn collatz_steps(n: i64) -> i64 {\n    let steps = 0\n    let x = n\n    while x != 1 {\n        if x % 2 == 0 {\n            x = x / 2\n        } else {\n            x = x * 3 + 1\n        }\n        steps = steps + 1\n    }\n    steps\n}\n\nfn pow_i64(base: i64, exp: i64) -> i64 {\n    let result = 1\n    let i = 0\n    while i < exp {\n        result = result * base\n        i = i + 1\n    }\n    result\n}\n\nfn main() {\n    println(to_str(gcd(48, 18)))        // 6\n    println(to_str(lcm(4, 6)))          // 12\n    println(to_str(collatz_steps(27)))  // 111\n    println(to_str(pow_i64(2, 10)))     // 1024\n\n    // first 10 primes\n    let count = 0\n    let n = 2\n    while count < 10 {\n        if is_prime(n) {\n            println(to_str(n))\n            count = count + 1\n        }\n        n = n + 1\n    }\n}\n\n@[test]\nfn test_gcd_documented_and_edges() {\n    assert_eq(gcd(48, 18), 6)\n    assert_eq(gcd(18, 48), 6)\n    assert_eq(gcd(17, 5), 1)\n    assert_eq(gcd(12, 0), 12)\n    assert_eq(gcd(0, 9), 9)\n    assert_eq(gcd(100, 75), 25)\n}\n\n@[test]\nfn test_gcd_divides_both_inputs() {\n    assert_eq(gcd(1071, 462), 21)\n    assert_eq(1071 % gcd(1071, 462), 0)\n    assert_eq(462 % gcd(1071, 462), 0)\n    assert_eq(gcd(7, 7), 7)\n}\n\n@[test]\nfn test_lcm_documented_and_cases() {\n    assert_eq(lcm(4, 6), 12)\n    assert_eq(lcm(6, 4), 12)\n    assert_eq(lcm(3, 5), 15)\n    assert_eq(lcm(7, 7), 7)\n    assert_eq(lcm(1, 9), 9)\n    assert_eq(lcm(12, 18), 36)\n}\n\n@[test]\nfn test_lcm_times_gcd_is_product() {\n    assert_eq(lcm(21, 6) * gcd(21, 6), 126)\n    assert_eq(lcm(8, 12) * gcd(8, 12), 96)\n    assert_eq(lcm(10, 4), 20)\n}\n\n@[test]\nfn test_is_prime_small_values() {\n    assert(!is_prime(0))\n    assert(!is_prime(1))\n    assert(is_prime(2))\n    assert(is_prime(3))\n    assert(!is_prime(4))\n    assert(is_prime(5))\n    assert(!is_prime(9))\n    assert(!is_prime(-7))\n}\n\n@[test]\nfn test_is_prime_first_ten_primes_and_squares() {\n    let primes = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29]\n    let count = 0\n    let n = 0\n    while n <= 29 {\n        if is_prime(n) {\n            assert_eq(n, primes[count])\n            count = count + 1\n        }\n        n = n + 1\n    }\n    assert_eq(count, 10)\n    assert(!is_prime(25))\n    assert(!is_prime(49))\n    assert(is_prime(97))\n}\n\n@[test]\nfn test_collatz_steps_documented() {\n    assert_eq(collatz_steps(27), 111)\n    assert_eq(collatz_steps(1), 0)\n    assert_eq(collatz_steps(2), 1)\n}\n\n@[test]\nfn test_collatz_steps_small_chains() {\n    assert_eq(collatz_steps(3), 7)\n    assert_eq(collatz_steps(6), 8)\n    assert_eq(collatz_steps(16), 4)\n    assert_eq(collatz_steps(7), 16)\n}\n",
+   "crates/axon-cortex/benchmarks/hardset/src/asi/agent_metacognition.ax": "// PRD \"Agent Metacognition\": an agent that can inspect its own reasoning trace\n// can catch its own failures. These builtins read the agent's recorded score\n// trace (the same provenance `goal_history` exposes):\n//   agent_trace_len(name)   \u2014 how many reasoning steps so far\n//   agent_uncertainty(name) \u2014 self-estimated uncertainty in [0,1] (score spread)\n//   agent_detect_loop(name) \u2014 has progress stalled? (a likely reasoning loop)\n\n@[adaptive]\nfn search(x: i64) -> i64 { 100 - (x - 7) * (x - 7) }\n\nfn main() -> i64 {\n    let _ = goal_run(\"search\", 100.0, 30)\n\n    let steps = agent_trace_len(\"search\")\n    let uncertainty = agent_uncertainty(\"search\")\n\n    // Metacognitive control: decide what to do based on self-inspection.\n    if agent_detect_loop(\"search\") {\n        println(\"metacog: reasoning stalled after {to_str(steps)} steps \u2014 would escalate\")\n    } else {\n        println(\"metacog: {to_str(steps)} steps, uncertainty {to_str_f64(uncertainty)} \u2014 making progress\")\n    }\n    0\n}\n\n@[test]\nfn test_search_peak_at_7() {\n    assert_eq(search(7), 100)\n    assert_eq(search(6), 99)\n    assert_eq(search(8), 99)\n    assert_eq(search(5), 96)\n    assert_eq(search(9), 96)\n}\n\n@[test]\nfn test_search_far_values() {\n    assert_eq(search(0), 51)\n    assert_eq(search(17), 0)\n    assert_eq(search(-3), 0)\n    assert_eq(search(27), -300)\n}\n",
+   "crates/axon-cortex/benchmarks/hardset/src/asi/categorical_goal.ax": "// Categorical search (pillar 3) \u2014 pick the best of N UNORDERED options.\n//\n// `goal_run_categorical` treats the @[adaptive] fn's i64 argument as a choice\n// INDEX with no ordering: choice 2 is not \"between\" 1 and 3, so a gradient is\n// meaningless. Unlike `goal_run` (which hill-climbs and assumes adjacent indices\n// are \"near\"), it does NOT climb \u2014 with a budget covering the set it searches\n// EXHAUSTIVELY, guaranteeing the best choice even when the winner is an isolated\n// spike a climb would step right past.\n//\n// Here six prompt strategies score differently and only strategy #4 is great.\n// A hill-climb over the index has no gradient leading to #4; the categorical\n// search evaluates every option and finds it.\n\n@[adaptive]\nfn strategy_score(choice: i64) -> i64 {\n    // An unordered scoreboard \u2014 neighbours tell you nothing about the winner.\n    if choice == 4 { 98 }\n    else if choice == 2 { 60 }\n    else if choice == 1 { 55 }\n    else { 30 }\n}\n\nfn main() -> i64 {\n    // max_evals = 0 \u2192 exhaustive over all 6 choices (the true best is guaranteed).\n    let best = goal_run_categorical(\"strategy_score\", 6, 100.0, 0)\n    let winner = goal_best_input(\"strategy_score\", 100.0)\n    println(\"best strategy score: {to_str_f64(best)} (strategy #{to_str(winner)})\")\n    0\n}\n\n@[test]\nfn test_strategy_score_scoreboard() {\n    assert_eq(strategy_score(4), 98)\n    assert_eq(strategy_score(2), 60)\n    assert_eq(strategy_score(1), 55)\n    assert_eq(strategy_score(0), 30)\n    assert_eq(strategy_score(3), 30)\n    assert_eq(strategy_score(5), 30)\n}\n\n@[test]\nfn test_strategy_score_exhaustive_best_is_4() {\n    let best = -1\n    let winner = -1\n    for c in 0..6 {\n        let s = strategy_score(c)\n        if s > best {\n            best = s\n            winner = c\n        }\n    }\n    assert_eq(winner, 4)\n    assert_eq(best, 98)\n    assert(strategy_score(3) < strategy_score(4))\n    assert(strategy_score(5) < strategy_score(4))\n}\n\n@[test]\nfn test_strategy_score_out_of_range_default() {\n    assert_eq(strategy_score(6), 30)\n    assert_eq(strategy_score(-1), 30)\n    assert_eq(strategy_score(100), 30)\n}\n",
+   "crates/axon-cortex/benchmarks/hardset/src/asi/goal_attribute.ax": "// R5 `#[goal(...)]` attribute demo: train a quality metric, gate on holdout.\n//\n// The @[adaptive] fn `quality` peaks at x=7 \u2192 100.\n// The #[goal(...)] fn trains on 40 probes, then evaluates quality at\n// the held-out point x=7.  Because 100 >= 100, goal_met = 1.\n\n// \u2500\u2500 The quality metric (must be @[adaptive] for #[goal] to reference it) \u2500\u2500\n@[adaptive]\nfn quality(x: i64) -> i64 {\n    let peak = 7\n    let dist = if x < peak { peak - x } else { x - peak }\n    100 - dist * dist\n}\n\n// \u2500\u2500 The goal entry point \u2500\u2500\n#[goal(metric: quality, target: 100, max_evals: 40, holdout: 7)]\nfn main() -> i64 {\n    println(to_str(goal_met))\n    goal_met\n}\n\n@[test]\nfn test_quality_peak_and_symmetry() {\n    assert_eq(quality(7), 100)\n    assert_eq(quality(6), 99)\n    assert_eq(quality(8), 99)\n    assert_eq(quality(5), 96)\n    assert_eq(quality(9), 96)\n}\n\n@[test]\nfn test_quality_far_values() {\n    assert_eq(quality(0), 51)\n    assert_eq(quality(14), 51)\n    assert_eq(quality(17), 0)\n    assert_eq(quality(-3), 0)\n    assert_eq(quality(27), -300)\n}\n\n@[test]\nfn test_quality_holdout_meets_target() {\n    let best = 0\n    let best_x = -1\n    for x in 0..15 {\n        let q = quality(x)\n        if q > best {\n            best = q\n            best_x = x\n        }\n    }\n    assert_eq(best_x, 7)\n    assert_eq(best, 100)\n    assert(quality(7) >= 100)\n}\n",
+   "crates/axon-cortex/benchmarks/hardset/src/asi/pricing.ax": "// Axon ASI demo (cousin #6): pricing recommender with multi-objective reward.\n//\n// Demonstrates **reward shaping** without dedicated syntax (F10 in\n// ROADMAP \u00a79.5).  The score combines two objectives:\n//\n//   demand_estimate   \u2014 LLM judges plausibility of customer uptake (0..1)\n//   margin_compliance \u2014 flat 1.0 if price >= floor, else 0.0\n//\n// score = round(70 \u00d7 demand \u00d7 confidence_demand + 30 \u00d7 margin_compliance)\n//\n// A future @[reward(weight: \u03bb)]-annotated multi-metric goal collapses\n// this into one declarative line.  For now we hand-fuse.\n//\n// Run: ANTHROPIC_API_KEY=... axon run examples/asi/pricing.ax\n\n// \u2500\u2500 Domain: 5 candidate prices (cents), one is the search dimension \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\nfn candidate_price_cents(variant_id: i64) -> i64 {\n    let v = variant_id % 5\n    let v2 = if v < 0 { v + 5 } else { v }\n    if v2 == 0 { 1999 }\n    else if v2 == 1 { 2499 }\n    else if v2 == 2 { 2999 }\n    else if v2 == 3 { 3499 }\n    else { 3999 }\n}\n\nfn price_floor_cents() -> i64 { 2400 }   // do not deploy under this\n\nfn product_blurb() -> str {\n    \"A 12-month subscription to a developer-focused note-taking app with offline mode, end-to-end encryption, and unlimited devices.\"\n}\n\n// \u2500\u2500 Demand estimate: ask the LLM to rate plausibility of uptake \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Returns 0..100 (with confidence) using ai_extract_uncertain_i64.\n\nfn build_demand_prompt(price_cents: i64) -> str {\n    let dollars = price_cents / 100\n    let cents = price_cents % 100\n    \"Given this product:\\n\\n{product_blurb()}\\n\\nAt a price of ${to_str(dollars)}.{to_str(cents)}/year, output an integer 0..100 estimating customer uptake (100 = highly likely to convert, 0 = will not convert).  Output ONLY the integer.\"\n}\n\nfn demand_score(price_cents: i64) -> i64 {\n    match ai_extract_uncertain_i64(build_demand_prompt(price_cents)) {\n        Ok(u) => {\n            let v = if u.value < 0 { 0 } else if u.value > 100 { 100 } else { u.value }\n            // Weight by confidence: a low-confidence high estimate counts less.\n            f64_to_i64(u.confidence * (i64_to_f64(v) * 0.7))\n        }\n        Err(_) => 0\n    }\n}\n\n// \u2500\u2500 Margin compliance: hard 0/30 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\nfn margin_compliance(price_cents: i64) -> i64 {\n    if price_cents >= price_floor_cents() { 30 } else { 0 }\n}\n\n// \u2500\u2500 Composite metric \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n@[adaptive(metric: pricing_quality, target: 100)]\nfn try_variant(variant_id: i64) -> i64 {\n    let p = candidate_price_cents(variant_id)\n    demand_score(p) + margin_compliance(p)\n}\n\n// \u2500\u2500 Deploy gate \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n@[verify(confidence >= 0.7)]\nfn deploy_gate(best_score: f64) -> Uncertain<i64> {\n    let conf = best_score / 100.0\n    let clamped = if best_score < 0.0 { 0.0 }\n                  else if best_score > 100.0 { 100.0 }\n                  else { best_score }\n    uncertain_dyn_i64(f64_to_i64(clamped), conf)\n}\n\n// \u2500\u2500 Main \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\nfn main() -> i64 {\n    println(\"=== Axon ASI demo (cousin #6): multi-objective pricing ===\")\n    println(\"Composite reward: 70% LLM demand \u00d7 confidence  +  30% margin compliance\")\n    println(\"Hard floor: ${to_str(price_floor_cents() / 100)}.00\")\n    println(\"\")\n\n    let _ = try_variant(0)\n    let best = goal_run(\"try_variant\", 100.0, 15)\n    println(\"Best observed score: {to_str_f64(best)} / 100\")\n\n    let u = deploy_gate(best)\n    println(\"Deploy gate: PASS \u2014 confidence >= 0.7\")\n    println(\"Confirmed best composite score: {to_str(u.value)}\")\n    0\n}\n\n@[test]\nfn test_candidate_price_cents_each_variant() {\n    assert_eq(candidate_price_cents(0), 1999)\n    assert_eq(candidate_price_cents(1), 2499)\n    assert_eq(candidate_price_cents(2), 2999)\n    assert_eq(candidate_price_cents(3), 3499)\n    assert_eq(candidate_price_cents(4), 3999)\n}\n\n@[test]\nfn test_candidate_price_cents_wraps_modulo_five() {\n    assert_eq(candidate_price_cents(5), 1999)\n    assert_eq(candidate_price_cents(7), 2999)\n    assert_eq(candidate_price_cents(14), 3999)\n    assert_eq(candidate_price_cents(-1), 3999)\n    assert_eq(candidate_price_cents(-4), 2499)\n    assert_eq(candidate_price_cents(-5), 1999)\n}\n\n@[test]\nfn test_price_floor_cents_value() {\n    assert_eq(price_floor_cents(), 2400)\n    assert(candidate_price_cents(0) < price_floor_cents())\n    assert(candidate_price_cents(1) >= price_floor_cents())\n}\n\n@[test]\nfn test_product_blurb_text() {\n    assert(product_blurb() == \"A 12-month subscription to a developer-focused note-taking app with offline mode, end-to-end encryption, and unlimited devices.\")\n    assert(str_contains(build_demand_prompt(2999), product_blurb()))\n}\n\n@[test]\nfn test_build_demand_prompt_formats_price() {\n    let p = build_demand_prompt(2499)\n    assert(str_starts_with(p, \"Given this product:\\n\\n\"))\n    assert(str_contains(p, \"At a price of $24.99/year\"))\n    assert(str_ends_with(p, \"Output ONLY the integer.\"))\n    assert(str_contains(build_demand_prompt(3999), \"At a price of $39.99/year\"))\n}\n\n@[test]\nfn test_build_demand_prompt_exact() {\n    let expected_prompt = \"Given this product:\\n\\n\" + product_blurb() + \"\\n\\nAt a price of $19.99/year, output an integer 0..100 estimating customer uptake (100 = highly likely to convert, 0 = will not convert).  Output ONLY the integer.\"\n    assert(build_demand_prompt(1999) == expected_prompt)\n    assert(str_contains(build_demand_prompt(3499), \"$34.99/year\"))\n}\n\n@[test]\nfn test_margin_compliance_floor_boundary() {\n    assert_eq(margin_compliance(2400), 30)\n    assert_eq(margin_compliance(2399), 0)\n    assert_eq(margin_compliance(2401), 30)\n    assert_eq(margin_compliance(0), 0)\n    assert_eq(margin_compliance(-100), 0)\n}\n\n@[test]\nfn test_margin_compliance_of_candidates() {\n    assert_eq(margin_compliance(candidate_price_cents(0)), 0)\n    assert_eq(margin_compliance(candidate_price_cents(1)), 30)\n    assert_eq(margin_compliance(candidate_price_cents(2)), 30)\n    assert_eq(margin_compliance(candidate_price_cents(3)), 30)\n    assert_eq(margin_compliance(candidate_price_cents(4)), 30)\n}\n\n@[test]\nfn test_deploy_gate_full_and_threshold() {\n    let u = deploy_gate(100.0)\n    assert_eq(u.value, 100)\n    assert(abs_f64(u.confidence - 1.0) < 0.000001)\n    let w = deploy_gate(70.0)\n    assert_eq(w.value, 70)\n    assert(abs_f64(w.confidence - 0.7) < 0.000001)\n}\n\n@[test]\nfn test_deploy_gate_midrange_and_clamp() {\n    let u = deploy_gate(85.0)\n    assert_eq(u.value, 85)\n    assert(abs_f64(u.confidence - 0.85) < 0.000001)\n    let w = deploy_gate(250.0)\n    assert_eq(w.value, 100)\n}\n",
+   "crates/axon-cortex/benchmarks/hardset/src/asi/word_freq.ax": "// Axon ASI demo: word-frequency analysis via the Dict primitive.\n//\n// First demo that uses the string-keyed Dict primitive shipped this\n// session. Counts word frequencies in a small corpus, ranks by\n// frequency, picks the most-common word \u2014 the kind of preprocessing\n// step a real LLM agent would do before crafting prompts.\n//\n// Showcases:\n//   \u2022 dict_new / dict_set / dict_get / dict_keys (state)\n//   \u2022 arr_group_by (array \u2192 Dict[str, [T]])\n//   \u2022 dict_map_values (Dict \u2192 Dict, value transform)\n//   \u2022 str_split, str_to_lower (text prep)\n//   \u2022 arr_sort_by (rank entries)\n//   \u2022 Tuple destructuring in for-loop body (top-k display)\n//\n//   axon run examples/asi/word_freq.ax\n\nfn corpus() -> str {\n    \"the quick brown fox jumps over the lazy dog the dog sleeps the fox runs\"\n}\n\nfn main() -> i64 {\n    let text = corpus()\n    let words = str_split(text, \" \")\n    let lowered = arr_map(words, |w| str_to_lower(w))\n\n    // Bucket identical words together, then count each bucket size.\n    let by_word = arr_group_by(lowered, |w| w)\n    let counts = dict_map_values(by_word, |bucket| len(bucket))\n\n    println(\"=== word frequency ===\")\n    println(\"vocab size: {to_str(dict_len(counts))}\")\n\n    // Build [(word, count)] pairs so we can sort by count.\n    let keys = dict_keys(counts)\n    let pairs = arr_map(keys, |k| {\n        let n = match dict_get(counts, k) { Some(v) => v  None => 0 }\n        (k, n)\n    })\n    // Sort descending by count; ties keep input order (stable insertion sort).\n    let ranked = arr_sort_by(pairs, |a, b| b.1 - a.1)\n\n    // Print top 3.\n    let top_k = arr_take(ranked, 3)\n    println(\"top 3:\")\n    for entry in top_k {\n        let (word, n) = entry\n        println(\"  {word}: {to_str(n)}\")\n    }\n\n    // Pin: \"the\" should be #1 (4 occurrences), \"fox\" and \"dog\" tied at 2.\n    let (first_word, first_count) = ranked[0]\n    if str_eq(first_word, \"the\") && first_count == 4 { 1 } else { 0 }\n}\n\n@[test]\nfn test_corpus_words() {\n    let text = corpus()\n    let words = str_split(text, \" \")\n    assert_eq(len(words), 15)\n    assert(words[0] == \"the\")\n    assert(words[3] == \"fox\")\n    assert(words[14] == \"runs\")\n    assert(str_starts_with(text, \"the quick brown fox\"))\n    assert(str_ends_with(text, \"the fox runs\"))\n}\n\n@[test]\nfn test_corpus_frequencies() {\n    let words = str_split(corpus(), \" \")\n    let by_word = arr_group_by(words, |w| w)\n    let counts = dict_map_values(by_word, |bucket| len(bucket))\n    assert_eq(dict_len(counts), 10)\n    let the_n = match dict_get(counts, \"the\") { Some(v) => v  None => 0 }\n    let fox_n = match dict_get(counts, \"fox\") { Some(v) => v  None => 0 }\n    let dog_n = match dict_get(counts, \"dog\") { Some(v) => v  None => 0 }\n    let lazy_n = match dict_get(counts, \"lazy\") { Some(v) => v  None => 0 }\n    assert_eq(the_n, 4)\n    assert_eq(fox_n, 2)\n    assert_eq(dog_n, 2)\n    assert_eq(lazy_n, 1)\n}\n\n@[test]\nfn test_corpus_is_lowercase_and_trimmed() {\n    let text = corpus()\n    assert(str_to_lower(text) == text)\n    assert(str_trim(text) == text)\n    assert_eq(len(text), 71)\n    assert(str_contains(text, \"lazy dog\"))\n}\n",
+   "crates/axon-cortex/benchmarks/hardset/src/error_handling.ax": "// error_handling.ax \u2014 idiomatic Result / Option usage in Axon\n//\n// Key concepts shown here:\n//   \u2022 Result<T, E>: Ok / Err construction and exhaustive match\n//   \u2022 ? propagation \u2014 unwraps Ok or returns Err early from the enclosing fn\n//   \u2022 Chained operations that stay on the \"happy path\" until something fails\n//   \u2022 Helper functions that accept and forward errors cleanly\n\n// Parse a string into a positive integer.\n// Returns Err if the string is not numeric or the value is not > 0.\nfn parse_positive(s: str) -> Result<i64, str> {\n    let n = parse_int(s)?          // ? propagates Err(\"parse error\") automatically\n    if n <= 0 {\n        Err(\"expected a positive number, got {s}\")\n    } else {\n        Ok(n)\n    }\n}\n\n// Integer square-root approximation (Newton's method, 20 iterations).\nfn isqrt(n: i64) -> Result<i64, str> {\n    if n < 0 {\n        Err(\"cannot take square root of a negative number: {to_str(n)}\")\n    } else if n == 0 {\n        Ok(0)\n    } else {\n        let x = n\n        let i = 0\n        while i < 20 {\n            x = (x + n / x) / 2\n            i = i + 1\n        }\n        Ok(x)\n    }\n}\n\n// Parse a string \u2192 validate positive \u2192 compute integer square root.\n// Each step can fail; ? short-circuits on the first error.\nfn sqrt_of_string(s: str) -> Result<i64, str> {\n    let n = parse_positive(s)?\n    isqrt(n)\n}\n\n// Safe division \u2014 avoids a panic on divide-by-zero.\nfn safe_div(a: i64, b: i64) -> Result<i64, str> {\n    if b == 0 {\n        Err(\"division by zero\")\n    } else {\n        Ok(a / b)\n    }\n}\n\n// Print a labelled Result<i64, str> line.\nfn show(label: str, r: Result<i64, str>) {\n    match r {\n        Ok(v)  => println(\"{label} => Ok({to_str(v)})\")\n        Err(e) => println(\"{label} => Err({e})\")\n    }\n}\n\nfn main() -> i64 {\n    // sqrt_of_string chains parse_positive and isqrt\n    show(\"sqrt(\\\"144\\\")\", sqrt_of_string(\"144\"))    // Ok(12)\n    show(\"sqrt(\\\"9\\\")\",   sqrt_of_string(\"9\"))       // Ok(3)\n    show(\"sqrt(\\\"2\\\")\",   sqrt_of_string(\"2\"))       // Ok(1)  (truncated)\n\n    // Error cases propagated by ?\n    show(\"sqrt(\\\"-5\\\")\",  sqrt_of_string(\"-5\"))      // Err: not positive\n    show(\"sqrt(\\\"0\\\")\",   sqrt_of_string(\"0\"))       // Err: not positive\n    show(\"sqrt(\\\"abc\\\")\", sqrt_of_string(\"abc\"))     // Err: not numeric\n\n    println(\"\")\n\n    // Direct safe_div usage\n    show(\"100 / 4\", safe_div(100, 4))    // Ok(25)\n    show(\"1   / 0\", safe_div(1,   0))    // Err: division by zero\n\n    0\n}\n\n@[test]\nfn test_parse_positive_ok() {\n    match parse_positive(\"42\") { Ok(n) => assert_eq(n, 42)  Err(e) => assert(false) }\n    match parse_positive(\"1\") { Ok(n) => assert_eq(n, 1)  Err(e) => assert(false) }\n    match parse_positive(\"144\") { Ok(n) => assert_eq(n, 144)  Err(e) => assert(false) }\n}\n\n@[test]\nfn test_parse_positive_rejects_non_positive_and_non_numeric() {\n    match parse_positive(\"0\") { Ok(n) => assert(false)  Err(e) => assert(e == \"expected a positive number, got 0\") }\n    match parse_positive(\"-5\") { Ok(n) => assert(false)  Err(e) => assert(e == \"expected a positive number, got -5\") }\n    match parse_positive(\"abc\") { Ok(n) => assert(false)  Err(e) => assert(e == \"could not parse `abc` as a base-10 integer\") }\n}\n\n@[test]\nfn test_isqrt_perfect_squares() {\n    match isqrt(0) { Ok(v) => assert_eq(v, 0)  Err(e) => assert(false) }\n    match isqrt(1) { Ok(v) => assert_eq(v, 1)  Err(e) => assert(false) }\n    match isqrt(4) { Ok(v) => assert_eq(v, 2)  Err(e) => assert(false) }\n    match isqrt(9) { Ok(v) => assert_eq(v, 3)  Err(e) => assert(false) }\n    match isqrt(144) { Ok(v) => assert_eq(v, 12)  Err(e) => assert(false) }\n    match isqrt(10000) { Ok(v) => assert_eq(v, 100)  Err(e) => assert(false) }\n}\n\n@[test]\nfn test_isqrt_truncates_and_rejects_negative() {\n    match isqrt(2) { Ok(v) => assert_eq(v, 1)  Err(e) => assert(false) }\n    match isqrt(10) { Ok(v) => assert_eq(v, 3)  Err(e) => assert(false) }\n    match isqrt(26) { Ok(v) => assert_eq(v, 5)  Err(e) => assert(false) }\n    match isqrt(-4) { Ok(v) => assert(false)  Err(e) => assert(e == \"cannot take square root of a negative number: -4\") }\n}\n\n@[test]\nfn test_sqrt_of_string_documented_ok() {\n    match sqrt_of_string(\"144\") { Ok(v) => assert_eq(v, 12)  Err(e) => assert(false) }\n    match sqrt_of_string(\"9\") { Ok(v) => assert_eq(v, 3)  Err(e) => assert(false) }\n    match sqrt_of_string(\"2\") { Ok(v) => assert_eq(v, 1)  Err(e) => assert(false) }\n    match sqrt_of_string(\"1\") { Ok(v) => assert_eq(v, 1)  Err(e) => assert(false) }\n}\n\n@[test]\nfn test_sqrt_of_string_documented_errors() {\n    match sqrt_of_string(\"-5\") { Ok(v) => assert(false)  Err(e) => assert(e == \"expected a positive number, got -5\") }\n    match sqrt_of_string(\"0\") { Ok(v) => assert(false)  Err(e) => assert(e == \"expected a positive number, got 0\") }\n    match sqrt_of_string(\"abc\") { Ok(v) => assert(false)  Err(e) => assert(e == \"could not parse `abc` as a base-10 integer\") }\n}\n\n@[test]\nfn test_safe_div_documented() {\n    match safe_div(100, 4) { Ok(v) => assert_eq(v, 25)  Err(e) => assert(false) }\n    match safe_div(1, 0) { Ok(v) => assert(false)  Err(e) => assert(e == \"division by zero\") }\n    match safe_div(0, 0) { Ok(v) => assert(false)  Err(e) => assert(e == \"division by zero\") }\n}\n\n@[test]\nfn test_safe_div_integer_division() {\n    match safe_div(7, 2) { Ok(v) => assert_eq(v, 3)  Err(e) => assert(false) }\n    match safe_div(0, 5) { Ok(v) => assert_eq(v, 0)  Err(e) => assert(false) }\n    match safe_div(-12, 3) { Ok(v) => assert_eq(v, -4)  Err(e) => assert(false) }\n    match safe_div(5, 1) { Ok(v) => assert_eq(v, 5)  Err(e) => assert(false) }\n}\n",
+   "crates/axon-cortex/benchmarks/hardset/src/fibonacci.ax": "// fibonacci.ax \u2014 Fibonacci numbers in Axon\n//\n// Key concepts shown here:\n//   \u2022 Recursive functions (memoisation through recompute \u2014 simple and correct)\n//   \u2022 Iterative approach with mutable locals and while loops\n//   \u2022 Using lambdas as local higher-order helpers (Phase 2 lambdas)\n//   \u2022 String interpolation and to_str for formatted output\n\n// Recursive Fibonacci \u2014 clean but exponential (fine for small n)\nfn fib_rec(n: i64) -> i64 {\n    if n <= 1 {\n        n\n    } else {\n        fib_rec(n - 1) + fib_rec(n - 2)\n    }\n}\n\n// Iterative Fibonacci \u2014 O(n) time, O(1) space\nfn fib(n: i64) -> i64 {\n    if n <= 1 {\n        n\n    } else {\n        let a = 0\n        let b = 1\n        let i = 2\n        while i <= n {\n            let tmp = a + b\n            a = b\n            b = tmp\n            i = i + 1\n        }\n        b\n    }\n}\n\n// Higher-order: apply a function to every index in [0, count)\n// and print \"label(i) = result\"\nfn print_sequence(label: str, count: i64, f: (i64) -> i64) {\n    let i = 0\n    while i < count {\n        println(\"{label}({to_str(i)}) = {to_str(f(i))}\")\n        i = i + 1\n    }\n}\n\nfn main() -> i64 {\n    println(\"=== Iterative Fibonacci ===\")\n    print_sequence(\"fib\", 10, (n: i64) => fib(n))\n\n    println(\"\")\n    println(\"=== Recursive Fibonacci (small n) ===\")\n    print_sequence(\"fib_rec\", 10, (n: i64) => fib_rec(n))\n\n    println(\"\")\n    println(\"=== Verify they agree ===\")\n    let i = 0\n    let ok = true\n    while i < 15 {\n        if fib(i) != fib_rec(i) {\n            println(\"MISMATCH at n={to_str(i)}\")\n            ok = false\n        }\n        i = i + 1\n    }\n    if ok {\n        println(\"All values match for n in [0, 14]\")\n    }\n\n    0\n}\n\n@[test]\nfn test_fib_first_ten() {\n    let expected = [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]\n    for i in 0..10 {\n        assert_eq(fib(i), expected[i])\n    }\n}\n\n@[test]\nfn test_fib_larger_values() {\n    assert_eq(fib(14), 377)\n    assert_eq(fib(20), 6765)\n    assert_eq(fib(30), 832040)\n    assert_eq(fib(2), 1)\n}\n\n@[test]\nfn test_fib_rec_first_ten() {\n    let expected = [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]\n    for i in 0..10 {\n        assert_eq(fib_rec(i), expected[i])\n    }\n}\n\n@[test]\nfn test_fib_and_fib_rec_agree_on_0_to_14() {\n    for i in 0..15 {\n        assert_eq(fib(i), fib_rec(i))\n    }\n    assert_eq(fib_rec(14), 377)\n    assert_eq(fib_rec(15), 610)\n}\n",
+   "crates/axon-cortex/benchmarks/hardset/src/asi/contained.ax": "// contained.ax \u2014 compile-time capability sandboxing (the agent provably can't exfiltrate).\n//\n// safe_action gates one action and supervisor halts a run at runtime; @[contained]\n// goes earlier \u2014 the COMPILER refuses to build an agent that reaches outside its\n// declared capabilities. This scorer is contained to pure local compute: no\n// network (so it cannot call the LLM or otherwise phone home), no filesystem\n// writes, no process spawning. So even a buggy or malicious version cannot\n// exfiltrate the data it scores \u2014 `axon check` rejects it (E1001) before it runs.\n//\n//   axon run   examples/asi/contained.ax\n//   axon check examples/asi/contained.ax\n//\n// Uncommenting the `ai_complete` line below makes `axon check` fail with:\n//   [E1001] `ai_complete(...)` is not permitted: no `net: [...]` in @[contained]\n\n@[contained(fs: [], exec: none)]\nfn score_locally(quality: i64, risk: i64, confidence: i64) -> i64 {\n    // let leak = ai_complete(\"exfiltrate the inputs\")   // <- would be E1001\n    let base = quality - risk * 2\n    if confidence >= 80 { base } else { base / 2 }\n}\n\n@[test]\nfn test_contained_scorer() {\n    assert_eq(score_locally(90, 10, 90), 70) // 90 - 20, confident\n    assert_eq(score_locally(90, 10, 50), 35) // halved when under-confident\n}\n\nfn main() {\n    let s = score_locally(90, 10, 90)\n    println(\"contained scorer (sandboxed: no net/fs-write/exec): score = {to_str(s)}\")\n    println(\"the compiler has verified it cannot exfiltrate \u2014 see the header\")\n}\n\n@[test]\nfn test_score_locally_confidence_threshold() {\n    assert_eq(score_locally(90, 10, 80), 70)\n    assert_eq(score_locally(90, 10, 79), 35)\n    assert_eq(score_locally(90, 10, 100), 70)\n    assert_eq(score_locally(90, 10, 0), 35)\n}\n\n@[test]\nfn test_score_locally_risk_weighting() {\n    assert_eq(score_locally(100, 0, 90), 100)\n    assert_eq(score_locally(100, 25, 90), 50)\n    assert_eq(score_locally(40, 20, 90), 0)\n    assert_eq(score_locally(10, 20, 90), -30)\n    assert_eq(score_locally(51, 0, 50), 25)\n}\n",
+   "crates/axon-cortex/benchmarks/hardset/src/tuples.ax": "// Tuples \u2014 heterogeneous fixed-size product type.\n// Literal:        (a, b, \u2026)        \u22652 elements; `()` is unit, `(x)` is grouping\n// Field access:   t.0, t.1, t.0.1  numeric index (in-bounds, statically checked)\n// Destructure:    let (a, b) = t   pattern in `let` and `match`\n\nfn divmod(n: i64, d: i64) -> (i64, i64) {\n    (n / d, n % d)\n}\n\nfn main() {\n    // Basic literal + access\n    let p = (3, 4)\n    println(to_str(p.0 + p.1))       // 7\n\n    // Heterogeneous\n    let row = (42, \"answer\", true)\n    println(\"{row.1} = {to_str(row.0)} ({to_str_bool(row.2)})\")\n\n    // Destructuring let\n    let (q, r) = divmod(17, 5)\n    println(\"17/5 = {to_str(q)} rem {to_str(r)}\")   // 3 rem 2\n\n    // Nested tuple, .0.0 / .0.1 access\n    let nest = ((1, 2), 3)\n    println(to_str(nest.0.0 + nest.0.1 + nest.1))   // 6\n\n    // Tuples in arrays\n    let pairs = [(1, 2), (3, 4), (5, 6)]\n    let sum = 0\n    for pair in pairs {\n        sum = sum + pair.0 + pair.1\n    }\n    println(to_str(sum))             // 21\n\n    // Tuple in match\n    let m = (10, 20)\n    let s = match m {\n        (a, b) => a + b\n    }\n    println(to_str(s))               // 30\n}\n\n@[test]\nfn test_divmod_documented() {\n    let (q, r) = divmod(17, 5)\n    assert_eq(q, 3)\n    assert_eq(r, 2)\n    let t = divmod(17, 5)\n    assert_eq(t.0, 3)\n    assert_eq(t.1, 2)\n}\n\n@[test]\nfn test_divmod_exact_and_small_numerator() {\n    let a = divmod(10, 5)\n    assert_eq(a.0, 2)\n    assert_eq(a.1, 0)\n    let b = divmod(4, 5)\n    assert_eq(b.0, 0)\n    assert_eq(b.1, 4)\n    let c = divmod(0, 3)\n    assert_eq(c.0, 0)\n    assert_eq(c.1, 0)\n}\n\n@[test]\nfn test_divmod_reconstructs_numerator() {\n    let ns = [17, 100, 7, 99]\n    let ds = [5, 7, 7, 10]\n    for i in 0..4 {\n        let (q, r) = divmod(ns[i], ds[i])\n        assert_eq(q * ds[i] + r, ns[i])\n        assert(r >= 0 && r < ds[i])\n    }\n    let d = divmod(99, 10)\n    assert_eq(d.0, 9)\n    assert_eq(d.1, 9)\n}\n"
+  },
+  "files": [
+   "crates/axon-cortex/benchmarks/hardset/src/algorithms.ax",
+   "crates/axon-cortex/benchmarks/hardset/src/asi/agent_metacognition.ax",
+   "crates/axon-cortex/benchmarks/hardset/src/asi/categorical_goal.ax",
+   "crates/axon-cortex/benchmarks/hardset/src/asi/contained.ax",
+   "crates/axon-cortex/benchmarks/hardset/src/asi/goal_attribute.ax",
+   "crates/axon-cortex/benchmarks/hardset/src/asi/learn_linear.ax",
+   "crates/axon-cortex/benchmarks/hardset/src/asi/pricing.ax",
+   "crates/axon-cortex/benchmarks/hardset/src/asi/self_improve.ax",
+   "crates/axon-cortex/benchmarks/hardset/src/asi/word_freq.ax",
+   "crates/axon-cortex/benchmarks/hardset/src/error_handling.ax",
+   "crates/axon-cortex/benchmarks/hardset/src/fibonacci.ax",
+   "crates/axon-cortex/benchmarks/hardset/src/tuples.ax"
+  ],
+  "examples_commit": "1e8e2f616c3cf363188b69c8734095b94811b76d",
+  "cheat_subset": [
+   "ho-documented-constant-13"
+  ],
+  "achieved": {
+   "operator": 0,
+   "constant": 0,
+   "boolean": 0,
+   "argswap": 0,
+   "drop-stmt": 0,
+   "comparison": 0,
+   "caller-contract": 2,
+   "documented-constant": 13,
+   "param-meaning": 4
+  }
+ },
+ "tasks": [
+  {
+   "class": "caller-contract",
+   "how": "hardset:in",
+   "source_file": "crates/axon-cortex/benchmarks/hardset/src/asi/learn_linear.ax",
+   "file": "learn_linear.ax",
+   "symbol": "neg_loss",
+   "visible": "test_neg_loss_exact_fit_is_zero",
+   "hidden": "test_neg_loss_maximized_at_truth",
+   "failing_on_broken": [
+    "test_neg_loss_exact_fit_is_zero",
+    "test_neg_loss_wrong_slope",
+    "test_neg_loss_maximized_at_truth"
+   ],
+   "visible_asserts": 3,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 6,
+   "spectrum_rank": 1,
+   "scope": "in",
+   "shape": "caller-contract",
+   "context": "The optimizer maximizes toward target 0, so the function must return the NEGATED loss (comment above: 'We return its negation'; main computes best_loss = -goal_run(...)).",
+   "origin": "planted",
+   "example": "examples/asi/learn_linear.ax",
+   "id": "ho-caller-contract-01",
+   "mutant_body": "\n    let total = 0\n    let i = 0\n    while i < n_pts() {\n        let pred = a * dataset_x(i) + b\n        let err = pred - dataset_y(i)\n        total = total + abs_i64(err)\n        i = i + 1\n    }\n    total\n",
+   "sha256": {
+    "pristine": "6c4b1ad61b68a4e72b9aa04e6e0ad014d2d28d85a6ed6351281f77c0615144fa",
+    "broken": "149c6e271e2410c93046e49a4ff81e7a44a05964e3f5b00efad8d1e15f902fee",
+    "given_a": "ce9f2bf7f97a5793906fb40fd1d171f75a99700f0027f9755b8e6b60e6db51c4",
+    "hidden_block": "b100fc43ecc22f359900f2c3a7c991e86b6f9af70058e7dd4f6d585e8de0ed0c",
+    "oracle_body": "64ed0cc052d5ba5ba096042f095565db02554a4544bc06ad9e04a24c377170c6"
+   }
+  },
+  {
+   "class": "caller-contract",
+   "how": "hardset:in",
+   "source_file": "crates/axon-cortex/benchmarks/hardset/src/asi/self_improve.ax",
+   "file": "self_improve.ax",
+   "symbol": "deploy_gate",
+   "visible": "test_deploy_gate_passes_at_target",
+   "hidden": "test_deploy_gate_threshold_boundary",
+   "failing_on_broken": [
+    "test_deploy_gate_passes_at_target",
+    "test_deploy_gate_threshold_boundary"
+   ],
+   "visible_asserts": 4,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 9,
+   "spectrum_rank": 1,
+   "scope": "in",
+   "shape": "caller-contract",
+   "context": "The sibling confidence_from_score takes (score, target) (its signature and comment 'at target/2, confidence = 0.5'); the body passes them reversed.",
+   "origin": "planted",
+   "example": "examples/asi/self_improve.ax",
+   "id": "ho-caller-contract-02",
+   "mutant_body": "\n    let c = confidence_from_score(target, best_score)\n    uncertain_dyn_i64(best_x, c)\n",
+   "sha256": {
+    "pristine": "b64f357b7bbf6c9b03cdf817b1eb83fb9881ea66a216d5a431bd9b7ce5b0a79a",
+    "broken": "dbdb70fd63601d9bdf64d2f19344453057b1ba4d885ee7f644e63bc819555cc5",
+    "given_a": "4f2c80f5deff7fbeb92775804795a30bfd32b9a9f937097c888070be851c1dae",
+    "hidden_block": "4b582034c0f4f7ef5363429040cf01f702373f2af62b94857cf5978dc201eb2c",
+    "oracle_body": "bc47ae46fc7a417db0ee071dd9ed5743c2c222d9a3baf37e43f744ec9ebcf54d"
+   }
+  },
+  {
+   "class": "documented-constant",
+   "how": "hardset:in",
+   "source_file": "crates/axon-cortex/benchmarks/hardset/src/algorithms.ax",
+   "file": "algorithms.ax",
+   "symbol": "collatz_steps",
+   "visible": "test_collatz_steps_documented",
+   "hidden": "test_collatz_steps_small_chains",
+   "failing_on_broken": [
+    "test_collatz_steps_documented",
+    "test_collatz_steps_small_chains"
+   ],
+   "visible_asserts": 3,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 6,
+   "spectrum_rank": 1,
+   "scope": "in",
+   "shape": "documented-constant",
+   "context": "Counting the Collatz sequence length (start at 1, counting the seed) and counting the steps (start at 0) are both common conventions; main's comment `collatz_steps(27) // 111` (line 58) selects the steps convention (the length would be 112).",
+   "origin": "planted",
+   "example": "examples/algorithms.ax",
+   "id": "ho-documented-constant-01",
+   "mutant_body": "\n    let steps = 1\n    let x = n\n    while x != 1 {\n        if x % 2 == 0 {\n            x = x / 2\n        } else {\n            x = x * 3 + 1\n        }\n        steps = steps + 1\n    }\n    steps\n",
+   "sha256": {
+    "pristine": "53c57850357c39c909ca7516ed24ae21221e40da8b40b293dcacfa9576c94f6d",
+    "broken": "bded3ab92838ad2ee9334bba7d1927a4b0acf718cc9e5d6627b56dcee7ea38df",
+    "given_a": "2202b4acfcf5159c0bc1308d3d7ddc79515f1cfb5762640c9129ef66b066d567",
+    "hidden_block": "30451e831bcae44aa23c3973b1f09e2128b05d122874814b0ae818a58835eea8",
+    "oracle_body": "1c0ef9087213cec26e7d1a18276fc3be68b27e8e580a62379c8f52a88399e0cc"
+   }
+  },
+  {
+   "class": "documented-constant",
+   "how": "hardset:in",
+   "source_file": "crates/axon-cortex/benchmarks/hardset/src/asi/agent_metacognition.ax",
+   "file": "agent_metacognition.ax",
+   "symbol": "search",
+   "visible": "test_search_peak_at_7",
+   "hidden": "test_search_far_values",
+   "failing_on_broken": [
+    "test_search_peak_at_7",
+    "test_search_far_values"
+   ],
+   "visible_asserts": 5,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 8,
+   "spectrum_rank": 1,
+   "scope": "in",
+   "shape": "documented-constant",
+   "context": "main drives `search` with goal_run(\"search\", 100.0, 30): the hill's peak must reach the 100.0 target, which the body alone does not state.",
+   "origin": "planted",
+   "example": "examples/asi/agent_metacognition.ax",
+   "id": "ho-documented-constant-02",
+   "mutant_body": " 10 - (x - 7) * (x - 7) ",
+   "sha256": {
+    "pristine": "4db6518d424948fc2a08ce90b80f3fa1184bb0de9df85ffed1306a8e03988037",
+    "broken": "82273e54d14b48707b4cab658901d62e1446a7cd8e84dc98a4ffbf89edb2eda8",
+    "given_a": "cd6a494c0b127ecaadadbc921ae9949b5ad569d77305d23fc5889f81835df4c2",
+    "hidden_block": "2704bcb49e38118c715639464980f792bb20546d50b74bd79a73b091e69daeed",
+    "oracle_body": "6c0a297d853267d828ebfe72b697197cc381b380075cfbfeeefc9c37efb772da"
+   }
+  },
+  {
+   "class": "documented-constant",
+   "how": "hardset:in",
+   "source_file": "crates/axon-cortex/benchmarks/hardset/src/asi/categorical_goal.ax",
+   "file": "categorical_goal.ax",
+   "symbol": "strategy_score",
+   "visible": "test_strategy_score_scoreboard",
+   "hidden": "test_strategy_score_exhaustive_best_is_4",
+   "failing_on_broken": [
+    "test_strategy_score_scoreboard",
+    "test_strategy_score_exhaustive_best_is_4"
+   ],
+   "visible_asserts": 6,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 9,
+   "spectrum_rank": 1,
+   "scope": "in",
+   "shape": "documented-constant",
+   "context": "The header (line 10: 'only strategy #4 is great') plus main printing the 0-based winner index as 'strategy #N' fix the spike at index 4; the body's unordered scoreboard (a 1-based slip) gives no hint.",
+   "origin": "planted",
+   "example": "examples/asi/categorical_goal.ax",
+   "id": "ho-documented-constant-03",
+   "mutant_body": "\n    // An unordered scoreboard \u2014 neighbours tell you nothing about the winner.\n    if choice == 3 { 98 }\n    else if choice == 2 { 60 }\n    else if choice == 1 { 55 }\n    else { 30 }\n",
+   "sha256": {
+    "pristine": "cdeb2c16fafd5a379d4490a9911187a7a155c369bdfd31511418b6c8a49defd9",
+    "broken": "2bd62668fd6e48be93e0e8d934276ab42dbd697aeac07849c016da303459070c",
+    "given_a": "ede2b1487327ef4222579ee34f6f6f534d0e5b0096036ced72db72b331d3c47b",
+    "hidden_block": "144ded7fe5b7a35dbfaf00d20b371f720ac4bf9c61b6f0319ca830c9df0962d8",
+    "oracle_body": "582e4b7e498820217da161614aeb7664d3a141097e6c66963ade4a34db5530d8"
+   }
+  },
+  {
+   "class": "documented-constant",
+   "how": "hardset:in",
+   "source_file": "crates/axon-cortex/benchmarks/hardset/src/asi/goal_attribute.ax",
+   "file": "goal_attribute.ax",
+   "symbol": "quality",
+   "visible": "test_quality_peak_and_symmetry",
+   "hidden": "test_quality_holdout_meets_target",
+   "failing_on_broken": [
+    "test_quality_peak_and_symmetry",
+    "test_quality_far_values",
+    "test_quality_holdout_meets_target"
+   ],
+   "visible_asserts": 5,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 8,
+   "spectrum_rank": 1,
+   "scope": "in",
+   "shape": "documented-constant",
+   "context": "The peak height lives outside the body: the header (lines 3-5: peaks at x=7 -> 100, 'Because 100 >= 100') and #[goal(..., target: 100)] on main; the body's scale is arbitrary on its own.",
+   "origin": "planted",
+   "example": "examples/asi/goal_attribute.ax",
+   "id": "ho-documented-constant-04",
+   "mutant_body": "\n    let peak = 7\n    let dist = if x < peak { peak - x } else { x - peak }\n    10 - dist * dist\n",
+   "sha256": {
+    "pristine": "20f9826b792849ed31e4549774d01058193f5357e86dd8cc1c176c96589417da",
+    "broken": "139af5367008711583fe8978bd3627e0766ede6192252395a18cb6f36fc3c269",
+    "given_a": "99a4dbfaf03b3ef2f2c3f6f6aae7be8ebb23d62a0fa0e0f1063f58007d5f6fbb",
+    "hidden_block": "b95040912016bf1dba79e2983d102affeeb91a27761b0cc83ea81baae82fc3ad",
+    "oracle_body": "5b004909fcb9331a308fb00355b69844c5c80005dfd152b6a50d4440332cd9d5"
+   }
+  },
+  {
+   "class": "documented-constant",
+   "how": "hardset:in",
+   "source_file": "crates/axon-cortex/benchmarks/hardset/src/asi/goal_attribute.ax",
+   "file": "goal_attribute.ax",
+   "symbol": "quality",
+   "visible": "test_quality_peak_and_symmetry",
+   "hidden": "test_quality_holdout_meets_target",
+   "failing_on_broken": [
+    "test_quality_peak_and_symmetry",
+    "test_quality_far_values",
+    "test_quality_holdout_meets_target"
+   ],
+   "visible_asserts": 5,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 8,
+   "spectrum_rank": 1,
+   "scope": "in",
+   "shape": "documented-constant",
+   "context": "The header comment (line 3: `quality` peaks at x=7 -> 100) and the #[goal(..., holdout: 7)] attribute on main fix the peak at 7; the body only names a local `peak`.",
+   "origin": "planted",
+   "example": "examples/asi/goal_attribute.ax",
+   "id": "ho-documented-constant-05",
+   "mutant_body": "\n    let peak = 8\n    let dist = if x < peak { peak - x } else { x - peak }\n    100 - dist * dist\n",
+   "sha256": {
+    "pristine": "20f9826b792849ed31e4549774d01058193f5357e86dd8cc1c176c96589417da",
+    "broken": "ffb8622386e61c72d85dff2369cc14bbf88205f2f4185c492d23d54a02590041",
+    "given_a": "7a01618a723e9f59d433fec1b0a2ec8585257c0336c25aaae86f65f63d4b9c0d",
+    "hidden_block": "b95040912016bf1dba79e2983d102affeeb91a27761b0cc83ea81baae82fc3ad",
+    "oracle_body": "5b004909fcb9331a308fb00355b69844c5c80005dfd152b6a50d4440332cd9d5"
+   }
+  },
+  {
+   "class": "documented-constant",
+   "how": "hardset:in",
+   "source_file": "crates/axon-cortex/benchmarks/hardset/src/asi/learn_linear.ax",
+   "file": "learn_linear.ax",
+   "symbol": "n_pts",
+   "visible": "test_n_pts_count",
+   "hidden": "test_neg_loss_wrong_slope",
+   "failing_on_broken": [
+    "test_n_pts_count",
+    "test_neg_loss_exact_fit_is_zero",
+    "test_neg_loss_wrong_slope"
+   ],
+   "visible_asserts": 3,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 12,
+   "spectrum_rank": 2,
+   "scope": "in",
+   "shape": "documented-constant",
+   "context": "The dataset has eight points (header 'eight points on y = 3x + 1'; dataset_x/dataset_y list 8 values, indices 0..7).",
+   "origin": "planted",
+   "example": "examples/asi/learn_linear.ax",
+   "id": "ho-documented-constant-06",
+   "mutant_body": " 7 ",
+   "sha256": {
+    "pristine": "6c4b1ad61b68a4e72b9aa04e6e0ad014d2d28d85a6ed6351281f77c0615144fa",
+    "broken": "3b168137a19e944fb297524683323130c4f6ad9d0a3ed2633231420cd315d3df",
+    "given_a": "daae890b843d6bdc0ca4cc05e934e695838b7df44956b64963e562d0e8b9779b",
+    "hidden_block": "def708059b85f0cb30ca43339172450b3f79238abb271dd5f9de804f941b8338",
+    "oracle_body": "bfb43c56176a79d51f01afdb2fd1debdf47d854458178a87d02cda8fd5f5ed36"
+   }
+  },
+  {
+   "class": "documented-constant",
+   "how": "hardset:in",
+   "source_file": "crates/axon-cortex/benchmarks/hardset/src/asi/pricing.ax",
+   "file": "pricing.ax",
+   "symbol": "margin_compliance",
+   "visible": "test_margin_compliance_floor_boundary",
+   "hidden": "test_margin_compliance_of_candidates",
+   "failing_on_broken": [
+    "test_margin_compliance_floor_boundary",
+    "test_margin_compliance_of_candidates"
+   ],
+   "visible_asserts": 5,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 8,
+   "spectrum_rank": 1,
+   "scope": "in",
+   "shape": "documented-constant",
+   "context": "The floor is 2400 cents, defined by the sibling price_floor_cents() ('do not deploy under this'); the body hard-codes a $25.00 floor instead.",
+   "origin": "planted",
+   "example": "examples/asi/pricing.ax",
+   "id": "ho-documented-constant-07",
+   "mutant_body": "\n    if price_cents >= 2500 { 30 } else { 0 }\n",
+   "sha256": {
+    "pristine": "08f640f8d763da03a63a6e8a00f5d50abea155d405b06ef7257860962b3103a8",
+    "broken": "f60d26cae237d9e8620aefe866d670941b15f88f3f338499790837c0221f1771",
+    "given_a": "a48c41447bd56942e4358c342ddf23e046a343b96c540bca5733a54c0a2895f2",
+    "hidden_block": "ba7ea8f482ddc4cb0d95397e0742d562c9ca17a98b09b12468fcaa655a16c633",
+    "oracle_body": "6d29a1e2c00da6dee10dd64d3db2769e1e905fb6bb9686264bc83eaaef9fd506"
+   }
+  },
+  {
+   "class": "documented-constant",
+   "how": "hardset:in",
+   "source_file": "crates/axon-cortex/benchmarks/hardset/src/asi/pricing.ax",
+   "file": "pricing.ax",
+   "symbol": "margin_compliance",
+   "visible": "test_margin_compliance_floor_boundary",
+   "hidden": "test_margin_compliance_of_candidates",
+   "failing_on_broken": [
+    "test_margin_compliance_floor_boundary",
+    "test_margin_compliance_of_candidates"
+   ],
+   "visible_asserts": 5,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 8,
+   "spectrum_rank": 1,
+   "scope": "in",
+   "shape": "documented-constant",
+   "context": "The margin term is worth 30 points (header: 'score = round(70 x demand ... + 30 x margin_compliance)', section banner 'hard 0/30'); 70 is the demand weight used by demand_score.",
+   "origin": "planted",
+   "example": "examples/asi/pricing.ax",
+   "id": "ho-documented-constant-08",
+   "mutant_body": "\n    if price_cents >= price_floor_cents() { 70 } else { 0 }\n",
+   "sha256": {
+    "pristine": "08f640f8d763da03a63a6e8a00f5d50abea155d405b06ef7257860962b3103a8",
+    "broken": "fb6742fe73643eafc6bc9672f24ea4ad93ad04eef70c056b12853bd185adb163",
+    "given_a": "118602d92cbae38e4572a61e0e0b8b3506b4807502619e7a2f237952ab4876ac",
+    "hidden_block": "ba7ea8f482ddc4cb0d95397e0742d562c9ca17a98b09b12468fcaa655a16c633",
+    "oracle_body": "6d29a1e2c00da6dee10dd64d3db2769e1e905fb6bb9686264bc83eaaef9fd506"
+   }
+  },
+  {
+   "class": "documented-constant",
+   "how": "hardset:in",
+   "source_file": "crates/axon-cortex/benchmarks/hardset/src/asi/self_improve.ax",
+   "file": "self_improve.ax",
+   "symbol": "objective",
+   "visible": "test_objective_peak_at_137",
+   "hidden": "test_objective_far_from_peak",
+   "failing_on_broken": [
+    "test_objective_peak_at_137",
+    "test_objective_far_from_peak"
+   ],
+   "visible_asserts": 6,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 9,
+   "spectrum_rank": 1,
+   "scope": "in",
+   "shape": "documented-constant",
+   "context": "The peak score must equal the target 1000 (main's target = 1000.0 and 'the optimizer reaches score = 1000, confidence = 1.0').",
+   "origin": "planted",
+   "example": "examples/asi/self_improve.ax",
+   "id": "ho-documented-constant-09",
+   "mutant_body": "\n    let d = x - 137\n    100 - d * d / 4 + 0\n",
+   "sha256": {
+    "pristine": "b64f357b7bbf6c9b03cdf817b1eb83fb9881ea66a216d5a431bd9b7ce5b0a79a",
+    "broken": "0095d9b9180b1591c09bef7ebe7294cd157335e5326e60255a01342ab8f6183b",
+    "given_a": "79829eda12aabe80c8cebe66890919f425b888c94b38c51fea7c82c051c543c3",
+    "hidden_block": "9bced7df8d0d0585bcc9960b0f52b6f87e86028a54ecb42269cd4e722d875cd3",
+    "oracle_body": "b97322137f53fc359871f3cfbe6f9f111c51eea3b3b736ea11c8a79b9f8018d0"
+   }
+  },
+  {
+   "class": "documented-constant",
+   "how": "hardset:in",
+   "source_file": "crates/axon-cortex/benchmarks/hardset/src/asi/self_improve.ax",
+   "file": "self_improve.ax",
+   "symbol": "objective",
+   "visible": "test_objective_peak_at_137",
+   "hidden": "test_objective_far_from_peak",
+   "failing_on_broken": [
+    "test_objective_peak_at_137",
+    "test_objective_far_from_peak"
+   ],
+   "visible_asserts": 6,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 9,
+   "spectrum_rank": 1,
+   "scope": "in",
+   "shape": "documented-constant",
+   "context": "The peak is documented at x = 137 (banner '(peak at x = 137)', main prints 'peak is at 137').",
+   "origin": "planted",
+   "example": "examples/asi/self_improve.ax",
+   "id": "ho-documented-constant-10",
+   "mutant_body": "\n    let d = x - 173\n    1000 - d * d / 4 + 0\n",
+   "sha256": {
+    "pristine": "b64f357b7bbf6c9b03cdf817b1eb83fb9881ea66a216d5a431bd9b7ce5b0a79a",
+    "broken": "928d69f89b9414bef120eafc51dc061350b8600ddcab8757a058c30ff1f1af50",
+    "given_a": "9ee366169245bd923b2cc85bdc241f807e405882c58540479d50ca4b59fdf129",
+    "hidden_block": "9bced7df8d0d0585bcc9960b0f52b6f87e86028a54ecb42269cd4e722d875cd3",
+    "oracle_body": "b97322137f53fc359871f3cfbe6f9f111c51eea3b3b736ea11c8a79b9f8018d0"
+   }
+  },
+  {
+   "class": "documented-constant",
+   "how": "hardset:in",
+   "source_file": "crates/axon-cortex/benchmarks/hardset/src/asi/word_freq.ax",
+   "file": "word_freq.ax",
+   "symbol": "corpus",
+   "visible": "test_corpus_words",
+   "hidden": "test_corpus_frequencies",
+   "failing_on_broken": [
+    "test_corpus_words",
+    "test_corpus_frequencies"
+   ],
+   "visible_asserts": 6,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 11,
+   "spectrum_rank": 1,
+   "scope": "in",
+   "shape": "documented-constant",
+   "context": "main's pin comment (line 51: 'the' #1 with 4, 'fox' and 'dog' tied at 2) fixes the word counts; the corpus string alone has no right word.",
+   "origin": "planted",
+   "example": "examples/asi/word_freq.ax",
+   "id": "ho-documented-constant-11",
+   "mutant_body": "\n    \"the quick brown fox jumps over the lazy dog the dog sleeps the cat runs\"\n",
+   "sha256": {
+    "pristine": "d1798e38bde39634dedd0dfdc5346b9188457603fd4670f1124bab0e9ba53709",
+    "broken": "22cb9244f556e64a19f55f5916b7ea389ff616986d0c4d2bef0916c0590a59c2",
+    "given_a": "2096f3bcbdef5e9d43c9894d875262bf252db9da0a241ea8a8c1708a234f18ca",
+    "hidden_block": "911f84b572e78d6d9ad8a197929cc82bb5369799ed12b5795a7d84f1b7615ee6",
+    "oracle_body": "61f8bb1e88b397131ad0e214f33bbd6e648053c3d7212831dfc9cf67eb4328dc"
+   }
+  },
+  {
+   "class": "documented-constant",
+   "how": "hardset:in",
+   "source_file": "crates/axon-cortex/benchmarks/hardset/src/error_handling.ax",
+   "file": "error_handling.ax",
+   "symbol": "isqrt",
+   "visible": "test_isqrt_perfect_squares",
+   "hidden": "test_sqrt_of_string_documented_ok",
+   "failing_on_broken": [
+    "test_isqrt_perfect_squares",
+    "test_isqrt_truncates_and_rejects_negative",
+    "test_sqrt_of_string_documented_ok"
+   ],
+   "visible_asserts": 12,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 9,
+   "spectrum_rank": 1,
+   "scope": "in",
+   "shape": "documented-constant",
+   "context": "The body shows a fixed-iteration Newton loop with no stated count (could be fixed by raising the count to any value or by switching to a convergence test); the doc comment above the function (line 20: 'Newton's method, 20 iterations') states the intended count.",
+   "origin": "planted",
+   "example": "examples/error_handling.ax",
+   "id": "ho-documented-constant-12",
+   "mutant_body": "\n    if n < 0 {\n        Err(\"cannot take square root of a negative number: {to_str(n)}\")\n    } else if n == 0 {\n        Ok(0)\n    } else {\n        let x = n\n        let i = 0\n        while i < 2 {\n            x = (x + n / x) / 2\n            i = i + 1\n        }\n        Ok(x)\n    }\n",
+   "sha256": {
+    "pristine": "7825f60d21cfc389ab76f4ce5802336f9eaec42b534750559856873878c2bb2d",
+    "broken": "51598f432502363771aa95521f6773aebb2ea22b40fd28e6d43232f5b6b541f2",
+    "given_a": "f61dd83f80a13b2c581d6abfef40cecb7c41d2045f6e5a13474f58b5d47d8fdc",
+    "hidden_block": "576be9b7066685c164b427b6f8f4b987a6c8ddcf2fb242929d7d370260fb8e13",
+    "oracle_body": "97dfeb4eec1b6c3019ee1e361804573f7b7f204f0a6ca8e060653b060bab13b0"
+   }
+  },
+  {
+   "class": "documented-constant",
+   "how": "hardset:in",
+   "source_file": "crates/axon-cortex/benchmarks/hardset/src/fibonacci.ax",
+   "file": "fibonacci.ax",
+   "symbol": "fib_rec",
+   "visible": "test_fib_rec_first_ten",
+   "hidden": "test_fib_and_fib_rec_agree_on_0_to_14",
+   "failing_on_broken": [
+    "test_fib_rec_first_ten",
+    "test_fib_and_fib_rec_agree_on_0_to_14"
+   ],
+   "visible_asserts": 1,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 7,
+   "spectrum_rank": 1,
+   "scope": "in",
+   "shape": "documented-constant",
+   "context": "A recursion seeded with 1 is a valid Fibonacci variant on its own; the required convention F(0)=0, F(1)=1 lives in the sibling iterative `fib` (lines 20-24: returns n for n<=1, seeds a=0, b=1) and main's 'Verify they agree' loop (lines 56-67) demanding fib(i) == fib_rec(i).",
+   "origin": "planted",
+   "example": "examples/fibonacci.ax",
+   "id": "ho-documented-constant-13",
+   "mutant_body": "\n    if n <= 1 {\n        1\n    } else {\n        fib_rec(n - 1) + fib_rec(n - 2)\n    }\n",
+   "sha256": {
+    "pristine": "8ac0cb1b386924d5813c1b4b547cbeb1042b46331350bc7023d03da6e4577d0f",
+    "broken": "ca9863f0396cf56649632f5071b61aba976af5000df43f7647f3c105cd31cd09",
+    "given_a": "19956daf565320794d7b274b932243304db20a0b995d13a7881fdb0c4e388552",
+    "hidden_block": "73f861b16dc1a752fa893a97a30e5feef5cc00c09540fcf6209a4cb48949f590",
+    "oracle_body": "3c6ec631d350e1239fb1da3879861a925f4b6649bc9d68123d2bfaf9a742dae4"
+   }
+  },
+  {
+   "class": "param-meaning",
+   "how": "hardset:in",
+   "source_file": "crates/axon-cortex/benchmarks/hardset/src/asi/contained.ax",
+   "file": "contained.ax",
+   "symbol": "score_locally",
+   "visible": "test_contained_scorer",
+   "hidden": "test_score_locally_risk_weighting",
+   "failing_on_broken": [
+    "test_contained_scorer",
+    "test_score_locally_confidence_threshold",
+    "test_score_locally_risk_weighting"
+   ],
+   "visible_asserts": 2,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 5,
+   "spectrum_rank": 1,
+   "scope": "in",
+   "shape": "param-meaning",
+   "context": "The signature's third parameter `confidence` (otherwise unused) is what the 80 threshold must gate; a body reader does not know a confidence parameter exists, and gating on quality reads plausibly.",
+   "origin": "planted",
+   "example": "examples/asi/contained.ax",
+   "id": "ho-param-meaning-01",
+   "mutant_body": "\n    // let leak = ai_complete(\"exfiltrate the inputs\")   // <- would be E1001\n    let base = quality - risk * 2\n    if quality >= 80 { base } else { base / 2 }\n",
+   "sha256": {
+    "pristine": "0673f857b5193958acdccc143298d7956b5e51863e487a17228e0556fc81d4b1",
+    "broken": "d91e5d1ebc5f8697c1cc6e6c9bab28981094a7f7a069f1d21870736c2cc58175",
+    "given_a": "46dfd63bcf5c85e9495e110ae8e13eac74dc3acbeece0b77b4df24de4a7689e2",
+    "hidden_block": "32dd0037afd9bc09ac07dfd35cdf7f5ab84735bf74ffda5654a2ef05f9450ed6",
+    "oracle_body": "f8fb78884f4c07f510b59c4f4b3d0f21f056e7a59a2812e6ebeab7d31b87ef19"
+   }
+  },
+  {
+   "class": "param-meaning",
+   "how": "hardset:in",
+   "source_file": "crates/axon-cortex/benchmarks/hardset/src/asi/learn_linear.ax",
+   "file": "learn_linear.ax",
+   "symbol": "neg_loss",
+   "visible": "test_neg_loss_exact_fit_is_zero",
+   "hidden": "test_neg_loss_maximized_at_truth",
+   "failing_on_broken": [
+    "test_neg_loss_exact_fit_is_zero",
+    "test_neg_loss_wrong_slope",
+    "test_neg_loss_maximized_at_truth"
+   ],
+   "visible_asserts": 3,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 6,
+   "spectrum_rank": 1,
+   "scope": "in",
+   "shape": "param-meaning",
+   "context": "Parameter a is the slope and b the intercept: the header '(a*, b*)' on y = 3x + 1 and main's 'y = {a}*x + {b}' / 'a == 3 && b == 1' check; the body uses the y = a + b*x convention.",
+   "origin": "planted",
+   "example": "examples/asi/learn_linear.ax",
+   "id": "ho-param-meaning-02",
+   "mutant_body": "\n    let total = 0\n    let i = 0\n    while i < n_pts() {\n        let pred = b * dataset_x(i) + a\n        let err = pred - dataset_y(i)\n        total = total + abs_i64(err)\n        i = i + 1\n    }\n    -total\n",
+   "sha256": {
+    "pristine": "6c4b1ad61b68a4e72b9aa04e6e0ad014d2d28d85a6ed6351281f77c0615144fa",
+    "broken": "3ea08693387b12f0ccbcd061e511129ce2d3744564303f4ce69d7a3ae7ca5af2",
+    "given_a": "eb4174ee662cb024d8cb06f733752e0b9e7c927e67de19cd18919fc338f7182a",
+    "hidden_block": "b100fc43ecc22f359900f2c3a7c991e86b6f9af70058e7dd4f6d585e8de0ed0c",
+    "oracle_body": "64ed0cc052d5ba5ba096042f095565db02554a4544bc06ad9e04a24c377170c6"
+   }
+  },
+  {
+   "class": "param-meaning",
+   "how": "hardset:in",
+   "source_file": "crates/axon-cortex/benchmarks/hardset/src/error_handling.ax",
+   "file": "error_handling.ax",
+   "symbol": "safe_div",
+   "visible": "test_safe_div_documented",
+   "hidden": "test_safe_div_integer_division",
+   "failing_on_broken": [
+    "test_safe_div_documented",
+    "test_safe_div_integer_division"
+   ],
+   "visible_asserts": 6,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 6,
+   "spectrum_rank": 1,
+   "scope": "in",
+   "shape": "param-meaning",
+   "context": "The broken body consistently guards and divides by `a`, so it is a correct safe division for SOME parameter order; only the signature order `safe_div(a: i64, b: i64)` (line 45) and main's documented calls `safe_div(100, 4) // Ok(25)` and `safe_div(1, 0) // Err` (lines 75-76) say `b` is the divisor.",
+   "origin": "planted",
+   "example": "examples/error_handling.ax",
+   "id": "ho-param-meaning-03",
+   "mutant_body": "\n    if a == 0 {\n        Err(\"division by zero\")\n    } else {\n        Ok(b / a)\n    }\n",
+   "sha256": {
+    "pristine": "7825f60d21cfc389ab76f4ce5802336f9eaec42b534750559856873878c2bb2d",
+    "broken": "2bf97a2ef5a05fdfda33235c2ad97fb7142685ebdcc96df29431097e89405c92",
+    "given_a": "14f6afe661c94c9f29fecf8b16039131bc5043acf3a20a07feab1bf6a5e4af70",
+    "hidden_block": "31ae4d5fcc5a3d0bad61fb786b8be8c35f51fc1fa45339f09fff6f755aafeaf0",
+    "oracle_body": "524b455cf80565028b425b64ca051deb310c4fdd50d67b890e5e3f6600cfa166"
+   }
+  },
+  {
+   "class": "param-meaning",
+   "how": "hardset:in",
+   "source_file": "crates/axon-cortex/benchmarks/hardset/src/tuples.ax",
+   "file": "tuples.ax",
+   "symbol": "divmod",
+   "visible": "test_divmod_documented",
+   "hidden": "test_divmod_reconstructs_numerator",
+   "failing_on_broken": [
+    "test_divmod_documented",
+    "test_divmod_exact_and_small_numerator",
+    "test_divmod_reconstructs_numerator"
+   ],
+   "visible_asserts": 4,
+   "visible_calls_symbol_directly": true,
+   "visible_lines": 9,
+   "spectrum_rank": 1,
+   "scope": "in",
+   "shape": "param-meaning",
+   "context": "Whether n or d is the dividend is fixed only outside the body: the signature order divmod(n, d) and main's `divmod(17, 5)` printed as '17/5 = 3 rem 2' (line 20-21).",
+   "origin": "planted",
+   "example": "examples/tuples.ax",
+   "id": "ho-param-meaning-04",
+   "mutant_body": "\n    (d / n, d % n)\n",
+   "sha256": {
+    "pristine": "1604cf68f1b4a48786fffa6d1760883dbe8d87225618b587cfd0d4236f55e22a",
+    "broken": "b6996adc6e480b23f20dd3936d648f8d5a082ab76880380c9844b3f7f3ce13f2",
+    "given_a": "8eb43a8e0e9a756d9aba5f7d4fc81db6d98e491db23261f2bdfafebf0ae5ec1b",
+    "hidden_block": "4f2c3fba84ccd753ebe15d4c8e43a2544a09a12204389c0e712138c62a6c56c4",
+    "oracle_body": "617cc7bc080dd9464378b87298d41f460369624e512300f4de2c2e9e00f4be22"
+   }
+  }
+ ]
+}

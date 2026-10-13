@@ -1,0 +1,347 @@
+{
+ "note": "Ideas the defect authors considered and dropped, with the reason (author reports, verbatim). Not read by build.py.",
+ "rejected": {
+  "defects/asi.json": [
+   {
+    "source": "asi/risk_monitor.ax",
+    "symbol": "gate_by_risk",
+    "idea": "full-pipeline threshold `risk >= 3` instead of 2 (High=2 from the levels comment)",
+    "why": "only one test calls gate_by_risk, so fewer than 2 tests fail"
+   },
+   {
+    "source": "asi/risk_monitor.ax",
+    "symbol": "run_monitored",
+    "idea": "any defect",
+    "why": "no test exercises it"
+   },
+   {
+    "source": "asi/risk_monitor.ax",
+    "symbol": "agent_risk",
+    "idea": "medium effect set \"Net\"||\"FS\" instead of \"Exec\"",
+    "why": "only test_agent_risk_by_effect_set fails"
+   },
+   {
+    "source": "asi/risk_monitor.ax",
+    "symbol": "check_compliance",
+    "idea": "`>=` budget bound or swapped allowlist argument",
+    "why": "the boundary is fixed only by tests, not by any fact in the file; parameter names in the body give away the swap"
+   },
+   {
+    "source": "asi/risk_monitor.ax",
+    "symbol": "score_work",
+    "idea": "piecewise constant changes",
+    "why": "nothing outside the body documents the values; only the tests do"
+   },
+   {
+    "source": "asi/pricing.ax",
+    "symbol": "margin_compliance",
+    "idea": "`>` instead of `>=` against the floor",
+    "why": "only the boundary test fails, and it is a plain operator swap"
+   },
+   {
+    "source": "asi/pricing.ax",
+    "symbol": "build_demand_prompt",
+    "idea": "dollars/cents unit slip or changed range text in the prompt",
+    "why": "the `% 100` cents line in the body gives the scale away; text changes break only the exact-prompt test"
+   },
+   {
+    "source": "asi/pricing.ax",
+    "symbol": "deploy_gate",
+    "idea": "divide by 70.0 (the verify threshold)",
+    "why": "the 100.0 clamp in the same body shows the right value"
+   },
+   {
+    "source": "asi/pricing.ax",
+    "symbol": "demand_score",
+    "idea": "any defect",
+    "why": "it calls the AI and has no test"
+   },
+   {
+    "source": "asi/ad_optimizer.ax",
+    "symbol": "roas_with_confidence",
+    "idea": "top tier at 320 (3.2x cap) instead of 300",
+    "why": "only one test fails"
+   },
+   {
+    "source": "asi/ad_optimizer.ax",
+    "symbol": "variant_roas",
+    "idea": "swapped pocket peaks or centres",
+    "why": "the comment inside the body ('broad near v=37 ... pays better') shows the fix"
+   },
+   {
+    "source": "asi/summarize.ax",
+    "symbol": "word_count",
+    "idea": "`== 9` (tab) instead of 32, or return `count`",
+    "why": "not a realistic slip, or the body alone suggests the usual spaces+1 fix; word_count is used in the out-of-scope two-functions spec instead"
+   },
+   {
+    "source": "asi/summarize.ax",
+    "symbol": "length_score",
+    "idea": "decay slope /2",
+    "why": "no outside fact fixes the slope; only the tests do"
+   },
+   {
+    "source": "asi/summarize.ax",
+    "symbol": "build_prompt",
+    "idea": "`% 4` wrap",
+    "why": "the 5 branches in the body show the modulus"
+   },
+   {
+    "source": "asi/world_model.ax",
+    "symbol": "learn_slope",
+    "idea": "`World { a: 0, b: a, n: 10 }`",
+    "why": "the body uses the parameter name `a`, which shows the right field"
+   },
+   {
+    "source": "asi/world_model.ax",
+    "symbol": "learn_slope",
+    "idea": "n: 8 instead of 10 observations",
+    "why": "only one test fails, because learn_slope(3) is unchanged"
+   },
+   {
+    "source": "asi/world_model.ax",
+    "symbol": "description_bits",
+    "idea": "drop abs_i64 or start bits at 0",
+    "why": "only one test fails, or nothing outside the body says the start value is 1"
+   },
+   {
+    "source": "asi/world_model.ax",
+    "symbol": "Fitted (type-definition)",
+    "idea": "refinement `< 0` or a different predicate",
+    "why": "only test_learn_slope_peak_at_true_slope uses Fitted, so fewer than 2 tests fail"
+   },
+   {
+    "source": "asi/learn_linear.ax",
+    "symbol": "neg_loss",
+    "idea": "squared instead of absolute error (comment says |error|)",
+    "why": "only test_neg_loss_wrong_slope fails"
+   },
+   {
+    "source": "asi/learn_linear.ax",
+    "symbol": "dataset_y",
+    "idea": "change one list value",
+    "why": "the arithmetic sequence in the body shows the outlier"
+   },
+   {
+    "source": "asi/self_improve.ax",
+    "symbol": "confidence_from_score",
+    "idea": "target/score inversion or zero-target sentinel 1.0",
+    "why": "the parameter names in the body give away the ratio; the zero-target convention is set only by tests"
+   },
+   {
+    "source": "asi/self_improve.ax",
+    "symbol": "confidence_from_score (signature)",
+    "idea": "swap the parameter names in the signature",
+    "why": "an edit to that one body can compensate, so it is not out-of-scope"
+   },
+   {
+    "source": "asi/*",
+    "symbol": "type-definition / narrowed int signature",
+    "idea": "narrow i64 to i8/i16 in a field, parameter or return",
+    "why": "a probe showed Axon is strictly typed (E0102/E0307 mismatches, E1900 literal out of range), so a narrowed type does not type-check; no other type or const change in these files breaks 2 or more tests"
+   }
+  ],
+  "defects/core.json": [
+   {
+    "source": "sum_types.ax",
+    "symbol": "area",
+    "idea": "Circle arm r*r*3 -> r*2*3 (circumference instead of area)",
+    "why": "The same body shows the answer: the Rect arm computes w*h and Point gives 0, so the function is plainly an area. The in-body comment 'π≈3' also blocks any π-precision variant."
+   },
+   {
+    "source": "sum_types.ax",
+    "symbol": "area",
+    "idea": "Rect arm w*h -> 2*(w+h)",
+    "why": "The Circle arm in the same body is an area formula, so the body alone gives the fix."
+   },
+   {
+    "source": "error_handling.ax",
+    "symbol": "parse_positive",
+    "idea": "n <= 0 -> n < 0 (lets 0 through)",
+    "why": "The Err string inside the body says 'expected a positive number', which already points to the fix. This also matches the doc comment 'not > 0'."
+   },
+   {
+    "source": "error_handling.ax",
+    "symbol": "sqrt_of_string",
+    "idea": "parse_positive(s)? -> parse_int(s)?, or isqrt(n) -> Ok(n)",
+    "why": "Only 1 test fails."
+   },
+   {
+    "source": "error_handling.ax",
+    "symbol": "isqrt",
+    "idea": "Newton seed let x = n -> n / 2",
+    "why": "The bug (divide by zero at n=1) can be seen from the body itself, and no fact elsewhere in the file is needed."
+   },
+   {
+    "source": "feature_tour.ax",
+    "symbol": "max_of",
+    "idea": "xs[i] > m -> xs[i] < m (computes min)",
+    "why": "Only the function name decides it. No comment, caller or doc in the file states 'max'."
+   },
+   {
+    "source": "feature_tour.ax",
+    "symbol": "max_of",
+    "idea": "let m = xs[0] -> let m = 0",
+    "why": "Only 1 test fails (test_arrays still passes)."
+   },
+   {
+    "source": "feature_tour.ax",
+    "symbol": "small_prime",
+    "idea": "2|3|5|7 -> 2|3|5|11, or 1|3|5|7",
+    "why": "The bound (whether 11 is excluded) is only fixed by hidden tests, not by anything in the file. The 1|3|5|7 variant fails only 1 test."
+   },
+   {
+    "source": "feature_tour.ax",
+    "symbol": "eval",
+    "idea": "change an operator in the Add or Neg arm",
+    "why": "The variant names Add and Neg in the match patterns inside the body give the fix."
+   },
+   {
+    "source": "comprehensive.ax",
+    "symbol": "magnitude_sq",
+    "idea": "dot(v, v) -> sqrt_f64(dot(v, v)) (magnitude, not magnitude squared)",
+    "why": "Only 1 test fails, because is_unit's bounds accept both."
+   },
+   {
+    "source": "comprehensive.ax",
+    "symbol": "is_unit",
+    "idea": "tolerance or bound changes on msq",
+    "why": "None of them makes 2 tests fail."
+   },
+   {
+    "source": "comprehensive.ax",
+    "symbol": "sum_to / collatz",
+    "idea": "inclusive bound; steps-vs-length count",
+    "why": "Nothing in comprehensive.ax documents the expected values (main prints them without comments). The same ideas are used in ios_compute_parity.ax and algorithms.ax, where comments do document them."
+   },
+   {
+    "source": "fibonacci.ax",
+    "symbol": "fib",
+    "idea": "seed a=1, or loop bound i < n",
+    "why": "The body's own base case `if n <= 1 { n }` fixes the seeds and the bound."
+   },
+   {
+    "source": "algorithms.ax",
+    "symbol": "is_prime / gcd / lcm",
+    "idea": "i*i < n; base case returns b; lcm as a*b",
+    "why": "These are fixed by general math knowledge or by the body alone, or they are not realistic slips. pow_i64 was skipped as instructed."
+   },
+   {
+    "source": "mobile/ios_compute_parity.ax",
+    "symbol": "gcd",
+    "idea": "change the recursion argument order",
+    "why": "Textbook function where the body gives the fix (or it recurses forever). Used in the out-of-scope two-functions spec instead."
+   },
+   {
+    "source": "fintech/ledger.ax + fintech/overdraft.ax",
+    "symbol": "withdraw",
+    "idea": "refinement where _ >= 0d -> where _ > 0d, or add a fee constant",
+    "why": "Only 1 test fails in either file, and a fee constant is not a realistic slip. overdraft.ax supports no valid spec, so it hosts none."
+   },
+   {
+    "source": "mobile/ios_compute_parity.ax",
+    "symbol": "sum_to",
+    "idea": "out/signature: parameter refinement n: i64 where _ > 0",
+    "why": "build.py check FAIL: an i64 refinement on a constant argument is checked at compile time (E1209), so the broken file does not type-check. The Decimal refinement in ledger.ax is only checked at runtime, which is why that one works. Replaced with the closures two-functions spec."
+   },
+   {
+    "source": "sum_types.ax",
+    "symbol": "Shape",
+    "idea": "out/type-definition: narrow a variant field (i8) or refine it (where _ > 0)",
+    "why": "Enum variant fields do not accept integer literals of a narrower type (E0102) and do not parse `where`."
+   },
+   {
+    "source": "math.ax",
+    "symbol": "add / square",
+    "idea": "in-scope operator change",
+    "why": "Only the function name decides it; used in the out-of-scope two-functions spec instead."
+   }
+  ],
+  "defects/misc.json": [
+   {
+    "source": "kernel/hello_kernel_slice3.ax",
+    "symbol": "gdt_code_entry / gdt_null_entry",
+    "idea": "in: data-segment access byte 0x92 pasted with its comment (documented-constant); in: 0xFFFF put in base_lo instead of limit_lo (struct-field); out: GdtEntry.access u8->i8 (type-definition); out: two-functions null.access=154 + code.flags=0x8F",
+    "why": "Dropped after HardSet's heads-up: every non-test fn in the file has a `| {Hal}` effect row, which fn_span mis-spans. All four had been drafted before validation; no effect-free symbol is left for a type-definition spec."
+   },
+   {
+    "source": "goals/redteam-goal.ax",
+    "symbol": "assert_deployable",
+    "idea": "out/signature: @[verify(score >= 90)] -> >= 95",
+    "why": "The checker FAILed it: no test fails, so @[verify] is apparently not enforced under the test runner."
+   },
+   {
+    "source": "goals/redteam-goal.ax",
+    "symbol": "redteam_check / try_variant",
+    "idea": "flip the BANANA verdict; change the hill constants",
+    "why": "Comments inside redteam_check's body state the expected verdict, and nothing outside the body fixes try_variant's 100 or 7 (only the target 90 appears)."
+   },
+   {
+    "source": "flagship/cve/CVE-2024-2771/escalation.ax",
+    "symbol": "caller_is_admin",
+    "idea": "apply the 'intended' check `_caller_role == 1`",
+    "why": "In-body comments ('As shipped: no check at all') give the answer; used instead in the out-of-scope two-functions spec."
+   },
+   {
+    "source": "goals/brief-gate.ax",
+    "symbol": "make_brief",
+    "idea": "q = chr(39) (single quote)",
+    "why": "json_stringify in the same body plus general JSON knowledge reveals the fix without the outside comment."
+   },
+   {
+    "source": "goals/brief-gate.ax",
+    "symbol": "check_field",
+    "idea": "< 5 -> <= 5",
+    "why": "The in-body message '(< 5 chars)' gives the answer and nothing outside documents 5; used only inside the out-of-scope spec."
+   },
+   {
+    "source": "flagship/cve/CVE-2024-34359/model_loader.ax",
+    "symbol": "render_chat_template / load_and_prompt",
+    "idea": "swap template/user_msg; swap the call argument order",
+    "why": "`<user>{user_msg}` in the body gives the answer, and load_and_prompt is untested (read_file)."
+   },
+   {
+    "source": "flagship/cve/CVE-2024-5314/list_records.ax",
+    "symbol": "list_records",
+    "idea": "swap the bound params [status, user_id]",
+    "why": "The SQL template in the same body says which goes first."
+   },
+   {
+    "source": "enums.ax",
+    "symbol": "area",
+    "idea": "Rect w*w; add pi to Circle",
+    "why": "An unused destructured `h` is a body-visible tell, and the circle tests are only relational (adding pi fails nothing)."
+   },
+   {
+    "source": "structs.ax",
+    "symbol": "distance",
+    "idea": "mix up a field (a.y - b.x); type-definition change",
+    "why": "The broken symmetry is visible in the body; tests are relational; any field type change breaks the f64 literals in the tests."
+   },
+   {
+    "source": "browser/demo.ax, mobile/compute.ax, r27/killable_agent.ax",
+    "symbol": "fib",
+    "idea": "fib(0)=1 convention `if n < 2 { 1 }`",
+    "why": "No fact outside the body (comment or printed expectation) fixes the convention; only tests do."
+   },
+   {
+    "source": "hello.ax, should_fail_test.ax, sealed/candidates/honest/sol.ax, asi/kernel_orchestrator.ax",
+    "symbol": "greet / always_passes / square, solve / worker_ok",
+    "idea": "any",
+    "why": "Trivial bodies with nothing outside them that fixes a value (beyond the function name), or only unrealistic slips."
+   },
+   {
+    "source": "asi/experiment_zone.ax",
+    "symbol": "baseline",
+    "idea": "in: change 50",
+    "why": "Only tests fix the value 50; used only in the out-of-scope spec."
+   },
+   {
+    "source": "asi/categorical_goal.ax / asi/contained.ax",
+    "symbol": "strategy_score / score_locally",
+    "idea": "second spec (60/55 codes; risk weight 2; threshold 80)",
+    "why": "Those constants are documented only in tests."
+   }
+  ]
+ }
+}

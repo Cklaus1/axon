@@ -1,0 +1,280 @@
+{
+ "pairs": [
+  {
+   "commit": "76f8b755748b",
+   "path": "examples/algorithms.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "40f0c7b6fd98",
+   "path": "examples/asi/ad_optimizer.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "572d12580e28",
+   "path": "examples/asi/agent_metacognition.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "f941a00137c3",
+   "path": "examples/asi/categorical_goal.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "2f7859b4376e",
+   "path": "examples/asi/contained.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "bd178c31549d",
+   "path": "examples/asi/experiment_zone.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "4f0c3ade1ef1",
+   "path": "examples/asi/goal_attribute.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "3aae9551d893",
+   "path": "examples/asi/kernel_orchestrator.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "f673dd76404a",
+   "path": "examples/asi/learn_linear.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "62bcc6f9c6f9",
+   "path": "examples/asi/pricing.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "0fedaf5645ed",
+   "path": "examples/asi/risk_monitor.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "54490dcc0f46",
+   "path": "examples/asi/self_improve.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "62bcc6f9c6f9",
+   "path": "examples/asi/summarize.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "33695b324ed8",
+   "path": "examples/asi/word_freq.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "5864d47b2c87",
+   "path": "examples/asi/world_model.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "6d200c74eee9",
+   "path": "examples/browser/demo.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "ce309924b9b2",
+   "path": "examples/closures_demo.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "07f0ac16057f",
+   "path": "examples/comprehensive.ax",
+   "subject": "fix(fmt): name the float literals the formatter renormalises",
+   "changed_fns": [
+    "main"
+   ],
+   "reason": "layout or comment change only (no code token changed)",
+   "symbol": "main"
+  },
+  {
+   "commit": "76f8b755748b",
+   "path": "examples/comprehensive.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "07f0ac16057f",
+   "path": "examples/enums.ax",
+   "subject": "fix(fmt): name the float literals the formatter renormalises",
+   "changed_fns": [],
+   "reason": "no function body changed (declarations only)",
+   "symbol": null
+  },
+  {
+   "commit": "76f8b755748b",
+   "path": "examples/enums.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "ce309924b9b2",
+   "path": "examples/error_handling.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "bda2aad178f6",
+   "path": "examples/feature_tour.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "ce309924b9b2",
+   "path": "examples/fibonacci.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "a4f79b13f3b4",
+   "path": "examples/fintech/ledger.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "a4f79b13f3b4",
+   "path": "examples/fintech/overdraft.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "39c95df07cc9",
+   "path": "examples/flagship/cve/CVE-2024-2771/escalation.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "d94a98b50892",
+   "path": "examples/flagship/cve/CVE-2024-34359/model_loader.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "de2d1a2bae79",
+   "path": "examples/flagship/cve/CVE-2024-5314/list_records.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "ed5775db2c16",
+   "path": "examples/goals/brief-gate.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "b17e2bcae643",
+   "path": "examples/goals/redteam-goal.ax",
+   "subject": "fix(exit): a value falling out of `main` is an answer, not a process status",
+   "changed_fns": [
+    "main"
+   ],
+   "reason": "the changed function `main` is `main` or not a snapshot function",
+   "symbol": "main"
+  },
+  {
+   "commit": "73cc2bad059e",
+   "path": "examples/goals/redteam-goal.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "ce309924b9b2",
+   "path": "examples/hello.ax",
+   "subject": "Wave 2: diagnostics, closure capture fix, tuple syntax, phase46-55 fixtures, CI, examples",
+   "changed_fns": [
+    "main",
+    "greet"
+   ],
+   "reason": "change spans more than one function",
+   "symbol": null
+  },
+  {
+   "commit": "76f8b755748b",
+   "path": "examples/hello.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "4ea3ab5f084e",
+   "path": "examples/kernel/hello_kernel_slice3.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "76f8b755748b",
+   "path": "examples/math.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "8060825d4cda",
+   "path": "examples/mobile/compute.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "15b9652338f8",
+   "path": "examples/mobile/ios_compute_parity.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "76f8b755748b",
+   "path": "examples/options.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "60e091c991c8",
+   "path": "examples/r27/killable_agent.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "107eb56fa63a",
+   "path": "examples/sealed/candidates/honest/sol.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "76f8b755748b",
+   "path": "examples/should_fail_test.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "76f8b755748b",
+   "path": "examples/structs.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "223899872a9a",
+   "path": "examples/sum_types.ax",
+   "subject": "fix: sum_types.ax example hit ASI on a leading-'+' continuation line",
+   "changed_fns": [
+    "main"
+   ],
+   "reason": "the changed function `main` is `main` or not a snapshot function",
+   "symbol": "main"
+  },
+  {
+   "commit": "91fe3a6e3d2f",
+   "path": "examples/sum_types.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "d8e05b1dc450",
+   "path": "examples/tuples.ax",
+   "reason": "file added by the commit"
+  },
+  {
+   "commit": "aed18a6bc349",
+   "path": "examples/zephyr/app.ax",
+   "subject": "fix(diag): `let x = 7 // 2` compiled clean and evaluated to 7",
+   "changed_fns": [],
+   "reason": "layout or comment change only (no code token changed)",
+   "symbol": null
+  },
+  {
+   "commit": "2a0399dc5eb1",
+   "path": "examples/zephyr/app.ax",
+   "subject": "chore(integrate): reconcile spec numbers \u2014 TEE\u2192R24, Zephyr\u2192R25 (R21 collision)",
+   "changed_fns": [],
+   "reason": "layout or comment change only (no code token changed)",
+   "symbol": null
+  },
+  {
+   "commit": "f57e9d12a855",
+   "path": "examples/zephyr/app.ax",
+   "reason": "file added by the commit"
+  }
+ ],
+ "qualifying": 0
+}

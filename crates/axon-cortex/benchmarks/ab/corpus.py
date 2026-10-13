@@ -144,7 +144,16 @@ def make_task(f, src0, name, mname, mfn):
     if made is None:
         return None
     mutant_body, how = made
-    broken = src0[:a] + mutant_body + src0[b:]
+    return task_from_broken(f, src0, name, mname, how, src0[:a] + mutant_body + src0[b:])
+
+
+def task_from_broken(f, src0, name, mname, how, broken, visible=None, hidden=None):
+    """make_task's validity checks on a whole broken file. `name` is the
+    function whose pristine body is the oracle; ../hardset/build.py passes
+    broken files that differ outside it too (out-of-scope tasks), and may name
+    the visible and hidden tests (default: the first and last failing test);
+    a named test that does not fail on the broken file rejects the task."""
+    a, b = fn_span(src0, name)
     ws = tempfile.mkdtemp(prefix="abcorpus_")
     try:
         rel = os.path.basename(f)
@@ -158,7 +167,10 @@ def make_task(f, src0, name, mname, mfn):
         failing = [n for n, s in res.items() if s == "failed"]
         if len(failing) < 2:
             return None
-        visible, hidden = failing[0], failing[-1]
+        visible = visible or failing[0]
+        hidden = hidden or failing[-1]
+        if visible == hidden or visible not in failing or hidden not in failing:
+            return None
         given_a, hidden_block = cut_test(broken, hidden)
         open(p, "w").write(given_a)
         if run([AXON, "check", p])[0] != 0:
@@ -250,7 +262,12 @@ def merge(out_path, parts):
         a, b = fn_span(t["pristine"], t["symbol"])
         mutant = t["broken"][a: b + len(t["broken"]) - len(t["pristine"])]
         c = {k: v for k, v in t.items() if k not in DERIVED}
-        c["mutant_body"] = mutant
+        if t["pristine"][:a] + mutant + t["pristine"][b:] == t["broken"]:
+            c["mutant_body"] = mutant
+        else:
+            # The defect is not inside `symbol`'s body alone (an out-of-scope
+            # task, ../hardset/build.py): the whole broken file is stored.
+            c["broken_source"] = t["broken"]
         c["sha256"] = {k: hashlib.sha256(t[k].encode()).hexdigest() for k in DERIVED}
         out.append(c)
     json.dump({"meta": meta, "tasks": out}, open(out_path, "w"), indent=1)
@@ -267,7 +284,8 @@ def load(path):
         a, b = fn_span(src, t["symbol"])
         t["pristine"] = src
         t["oracle_body"] = src[a:b]
-        t["broken"] = src[:a] + t["mutant_body"] + src[b:]
+        t["broken"] = t["broken_source"] if "broken_source" in t \
+            else src[:a] + t["mutant_body"] + src[b:]
         t["given_a"], t["hidden_block"] = cut_test(t["broken"], t["hidden"])
         for k in DERIVED:
             if hashlib.sha256(t[k].encode()).hexdigest() != t["sha256"][k]:

@@ -1,0 +1,40 @@
+type Point = { x: f64, y: f64 }
+
+fn distance(a: Point, b: Point) -> f64 {
+    let dx = a.x - b.x
+    let dy = a.y - b.y
+    dx * dx + dy * dy
+}
+
+fn main() {
+    let a = Point { x: 1.0, y: 2.0 }
+    let b = Point { x: 4.0, y: 6.0 }
+    println(to_str_f64(distance(a, b)))
+}
+
+@[test]
+fn test_distance_same_point_is_zero() {
+    let a = Point { x: 1.0, y: 2.0 }
+    assert(abs_f64(distance(a, a)) < 0.000001)
+    let o = Point { x: 0.0, y: 0.0 }
+    assert(abs_f64(distance(o, o)) < 0.000001)
+    assert(abs_f64(distance(Point { x: -3.5, y: 8.0 }, Point { x: -3.5, y: 8.0 })) < 0.000001)
+}
+
+@[test]
+fn test_distance_symmetric() {
+    let a = Point { x: 1.0, y: 2.0 }
+    let b = Point { x: 4.0, y: 6.0 }
+    assert(abs_f64(distance(a, b) - distance(b, a)) < 0.000001)
+    let c = Point { x: -2.0, y: 7.5 }
+    assert(abs_f64(distance(a, c) - distance(c, a)) < 0.000001)
+    assert(distance(a, b) > 0.0)
+}
+
+@[test]
+fn test_distance_increases_with_separation() {
+    let o = Point { x: 0.0, y: 0.0 }
+    assert(distance(o, Point { x: 2.0, y: 0.0 }) > distance(o, Point { x: 1.0, y: 0.0 }))
+    assert(distance(o, Point { x: 0.0, y: -3.0 }) > distance(o, Point { x: 0.0, y: 2.0 }))
+    assert(abs_f64(distance(o, Point { x: 3.0, y: 0.0 }) - distance(o, Point { x: 0.0, y: 3.0 })) < 0.000001)
+}

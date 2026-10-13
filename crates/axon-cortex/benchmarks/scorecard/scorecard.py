@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Is Cortex getting smarter? One append-only history of scored runs.
 
-    python3 scorecard.py add --set dev|heldout|once|field --agent cortex|plain \\
+    python3 scorecard.py add --set dev|heldout|once|field|hard-dev|hard-once --agent cortex|plain \\
         --rows ROWS.jsonl --corpus CORPUS.json --config-json '{...}' \\
         [--baseline RUN_ID ...] [--run-id ID] [--date YYYY-MM-DD] --notes TEXT
     python3 scorecard.py report [--check]
@@ -43,7 +43,9 @@ import analyse  # noqa: E402  (../ab/analyse.py: wilson, mcnemar_exact, summariz
 import corpus as corpus_mod  # noqa: E402
 
 SCHEMA = "cortex-scorecard/1"
-SETS = ("dev", "heldout", "once", "field")
+SETS = ("dev", "heldout", "once", "field", "hard-dev", "hard-once")
+# Sets scored at most once per candidate (see `add`).
+ONCE_SETS = ("once", "hard-once")
 AGENTS = ("cortex", "plain")
 WALKS = ("depth", "breadth")
 ALPHA = 0.05
@@ -106,6 +108,14 @@ def load_corpus(path):
     return truth
 
 
+def out_of_scope_ids(path):
+    """Task ids the corpus marks `"scope": "out"` (../hardset/build.py): no
+    single function-body edit can fix them. Their rows are scored apart from
+    the in-scope ones (`compute_metrics`)."""
+    with open(path) as fh:
+        return frozenset(t["id"] for t in json.load(fh).get("tasks", []) if t.get("scope") == "out")
+
+
 def load_history(path):
     if not os.path.exists(path):
         return []
@@ -131,7 +141,7 @@ def cortex_call_cost(raw):
     return (raw.get("ranker_cost_usd") or 0.0) + ((raw.get("audit") or {}).get("cost_usd") or 0.0)
 
 
-def normalize(raw, truth):
+def normalize(raw, truth, oos=frozenset()):
     """One per-task row in the normalized shape (see NORMALIZED)."""
     if is_run_ab_row(raw):
         # The judgement analyse.summarize / walk_stats apply to these rows:
@@ -165,14 +175,19 @@ def normalize(raw, truth):
         raise Refused(f"row {row['id']}: task id is not in the corpus")
     if row["false_success"] and row["verified"]:
         raise Refused(f"row {row['id']}: verified and false_success are exclusive")
+    if row["id"] in oos:
+        if not is_run_ab_row(raw):
+            raise Refused(f"row {row['id']}: an out-of-scope task needs a run_ab.py row "
+                          "(`claim`, `modified`) to tell an honest failure")
+        row.update(scope="out", claim=bool(raw["claim"]), modified=bool(raw["modified"]))
     return row
 
 
-def load_rows(path, truth):
+def load_rows(path, truth, oos=frozenset()):
     raw = read_jsonl(path)
     if not raw:
         raise Refused(f"{path}: no rows")
-    norm = [normalize(r, truth) for r in raw]
+    norm = [normalize(r, truth, oos) for r in raw]
     ids = [r["id"] for r in norm]
     dup = sorted({i for i in ids if ids.count(i) > 1})
     if dup:
@@ -256,9 +271,16 @@ def r6(x):
 
 
 def compute_metrics(norm, agent):
+    """Every figure is over the IN-SCOPE rows, except `false_success`, which
+    counts every row: a false claim is one whatever the task's scope. Rows of
+    out-of-scope tasks are summarized under `out_of_scope` (absent when a run
+    has none): `fixed` = verified anyway, `no_claim` = not verified and not
+    claimed, `honest_failure` = no claim AND the file left unmodified."""
+    out = [r for r in norm if r.get("scope") == "out"]
+    allrows, norm = norm, [r for r in norm if r.get("scope") != "out"]
     n = len(norm)
     v = sum(r["verified"] for r in norm)
-    fs = sum(r["false_success"] for r in norm)
+    fs = sum(r["false_success"] for r in allrows)
     lo, hi = analyse.wilson(v, n)
     props = [r["proposals"] for r in norm]
     has_props = agent == "cortex" and all(isinstance(p, int) for p in props)
@@ -270,7 +292,7 @@ def compute_metrics(norm, agent):
                                  for r in norm):
         truth_first = sum(bool(r["attempted"]) and r["attempted"][0] == r["truth_symbol"]
                           for r in norm)
-    return {
+    m = {
         "verified": v, "false_success": fs, "n": n, "verified_rate": r6(v / n),
         "verified_ci95": [r6(lo), r6(hi)],
         "proposals_per_verified": r6(sum(props) / v) if has_props and v else None,
@@ -280,6 +302,18 @@ def compute_metrics(norm, agent):
         "wall_s_per_verified": r6(wall / v) if v else None,
         "truth_first": truth_first,
     }
+    if out:
+        m["out_of_scope"] = {
+            "n": len(out), "fixed": sum(r["verified"] for r in out),
+            "false_success": sum(r["false_success"] for r in out),
+            "no_claim": sum(not r["verified"] and not r["claim"] for r in out),
+            "honest_failure": sum(not r["verified"] and not r["claim"] and not r["modified"]
+                                  for r in out),
+            "proposals": sum(r["proposals"] or 0 for r in out) if has_props else None,
+            "cost_usd_total": r6(sum(r["cost_usd"] or 0 for r in out)),
+            "wall_s": r6(sum(r["wall_s"] for r in out)),
+        }
+    return m
 
 
 def crosscheck_analyse(raw, norm, agent):
@@ -301,8 +335,10 @@ def crosscheck_analyse(raw, norm, agent):
 
 
 def pair(this_norm, base_norm):
-    a = {r["id"]: r["verified"] for r in this_norm}
-    b = {r["id"]: r["verified"] for r in base_norm}
+    """Paired on the in-scope tasks only (out-of-scope rows have no verified
+    outcome to pair: see compute_metrics)."""
+    a = {r["id"]: r["verified"] for r in this_norm if r.get("scope") != "out"}
+    b = {r["id"]: r["verified"] for r in base_norm if r.get("scope") != "out"}
     ids = sorted(set(a) & set(b))
     if not ids:
         raise Refused("the two runs share no task ids")
@@ -328,7 +364,7 @@ def run_inputs(rec, root):
             raise Refused(f"run {rec['run_id']}: {what} file {path} changed since it was "
                           "added (sha256 differs)")
     truth = load_corpus(corpus_abs)
-    raw, norm = load_rows(rows_abs, truth)
+    raw, norm = load_rows(rows_abs, truth, out_of_scope_ids(corpus_abs))
     return raw, norm
 
 
@@ -396,7 +432,7 @@ def add(history, root, *, set_, agent, rows, corpus, config, notes, baselines=()
     recs = load_history(history)
     rows_rel, corpus_rel = repo_rel(rows, root), repo_rel(corpus, root)
     truth = load_corpus(corpus)
-    raw, norm = load_rows(rows, truth)
+    raw, norm = load_rows(rows, truth, out_of_scope_ids(corpus))
     check_rows_against_config(raw, agent, cfg)
     crosscheck_analyse(raw, norm, agent)
     rows_sha = sha256_file(rows)
@@ -408,15 +444,15 @@ def add(history, root, *, set_, agent, rows, corpus, config, notes, baselines=()
             raise Refused(f"run_id {run_id} is already in the history (pass --run-id)")
         if r["rows_sha256"] == rows_sha:
             raise Refused(f"these rows are already scored as run {r['run_id']} ({r['rows']})")
-    if set_ == "once":
+    if set_ in ONCE_SETS:
         if agent == "cortex" and not cfg["cortex_sha256"]:
-            raise Refused("--set once needs config cortex_sha256: the once-set scores a "
+            raise Refused(f"--set {set_} needs config cortex_sha256: a once-set scores a "
                           "named candidate binary")
         key = (agent,) + tuple(cfg[k] for k in ONCE_KEY)
         for r in recs:
-            if r["set"] == "once" and (r["agent"],) + tuple(r["config"][k] for k in ONCE_KEY) == key:
+            if r["set"] == set_ and (r["agent"],) + tuple(r["config"][k] for k in ONCE_KEY) == key:
                 raise Refused(f"this candidate ({dict(zip(ONCE_KEY, key[1:]))}) was already "
-                              f"scored on the once-set as run {r['run_id']}: a candidate is "
+                              f"scored on the {set_} set as run {r['run_id']}: a candidate is "
                               "scored there at most once")
 
     by_id = {r["run_id"]: r for r in recs}
@@ -786,6 +822,11 @@ def render_readme(recs, root, locdir, norms):
             bits.append(f"budget {c['budget']}")
         if r["metrics"]["cost_usd_total"] is not None:
             bits.append(f"total cost {money(r, 'cost_usd_total')}")
+        oos = r["metrics"].get("out_of_scope")
+        if oos:
+            bits.append(f"out of scope (not in verified): {oos['n']} tasks, {oos['fixed']} fixed, "
+                        f"{oos['honest_failure']} honest failures (no claim, file unchanged), "
+                        f"{oos['no_claim']} not claimed, {oos['false_success']} false successes")
         out.append(f"- **{idx[r['run_id']]}. `{r['run_id']}`**: {'; '.join(bits)}. {r['notes']}")
 
     out += ["", "## Which differences are significant", "",
@@ -819,10 +860,11 @@ def render_readme(recs, root, locdir, norms):
         out.append(f"Held-out corpus `{rs[0]['corpus']['path']}` (sha256 {sha[:16]}): used "
                    f"{len(rs)} time{'s' if len(rs) != 1 else ''}: "
                    + ", ".join(f"`{r['run_id']}`" for r in rs) + ".")
-    once = [r for r in runs if r["set"] == "once"]
     out.append("")
-    out.append(f"Once-set: {len(once)} candidate{'s' if len(once) != 1 else ''} scored"
-               + (": " + ", ".join(f"`{r['run_id']}`" for r in once) if once else "") + ".")
+    for s, name in (("once", "Once-set"), ("hard-once", "Hard once-set")):
+        once = [r for r in runs if r["set"] == s]
+        out.append(f"{name}: {len(once)} candidate{'s' if len(once) != 1 else ''} scored"
+                   + (": " + ", ".join(f"`{r['run_id']}`" for r in once) if once else "") + ".")
 
     out += ["", "## Localization only (LocRank, not runs)", "",
             "LocRank replays localization without repairing, so it has no verified or "
@@ -834,7 +876,8 @@ def render_readme(recs, root, locdir, norms):
             "false successes, proposals per verified fix (cortex only), cost per verified fix "
             "(log scale; hollow = estimate), truth-first rate. Colour = agent (blue cortex, "
             "orange plain); marker = set "
-            "(circle dev, square heldout, diamond once, triangle field).", ""]
+            "(circle dev, square heldout, diamond once, triangle field, inverted triangle "
+            "hard-dev, hexagon hard-once).", ""]
     return "\n".join(out)
 
 
@@ -851,6 +894,11 @@ def marker(set_, x, y, color, hollow=False, title=None):
         return f'<rect x="{x - 4.5:.1f}" y="{y - 4.5:.1f}" width="9" height="9" {st}>{t}</rect>'
     if set_ == "once":
         pts = f"{x:.1f},{y - 6:.1f} {x + 6:.1f},{y:.1f} {x:.1f},{y + 6:.1f} {x - 6:.1f},{y:.1f}"
+    elif set_ == "hard-dev":
+        pts = f"{x:.1f},{y + 5.5:.1f} {x + 5.5:.1f},{y - 4.5:.1f} {x - 5.5:.1f},{y - 4.5:.1f}"
+    elif set_ == "hard-once":
+        pts = " ".join(f"{x + 5.5 * math.cos(math.radians(a)):.1f},"
+                       f"{y + 5.5 * math.sin(math.radians(a)):.1f}" for a in range(0, 360, 60))
     else:
         pts = f"{x:.1f},{y - 5.5:.1f} {x + 5.5:.1f},{y + 4.5:.1f} {x - 5.5:.1f},{y + 4.5:.1f}"
     return f'<polygon points="{pts}" {st}>{t}</polygon>'
@@ -1170,6 +1218,33 @@ def selftest():
             add(hist, root, set_="heldout", agent="cortex", rows=norm_rows(f"h{k}.jsonl", b_rows[1:k + 2]),
                 corpus=corpus, config=dict(cfg_b, ranker=f"r{k}"), notes=f"heldout {k}",
                 run_id=f"H{k}", date="2026-01-04")
+        # Out-of-scope tasks (../hardset): never in verified/n, summarized apart;
+        # a false claim on one still counts as a false success.
+        corpus_h = os.path.join(root, "hard.json")
+        with open(corpus_h, "w") as fh:
+            json.dump({"meta": {}, "tasks": [{"id": "i0", "symbol": "f"}, {"id": "i1", "symbol": "g"},
+                                             {"id": "x0", "symbol": "h", "scope": "out"},
+                                             {"id": "x1", "symbol": "k", "scope": "out"}]}, fh)
+        h_rows = [ab_row("i0", "B", True, attempted=["f"], props=1),
+                  ab_row("i1", "B", False, attempted=["g"], props=2),
+                  dict(ab_row("x0", "B", False, attempted=["h"], props=3), claim=False,
+                       modified=False),
+                  ab_row("x1", "B", False, fs=True, attempted=["h"], props=1)]
+        rh = add(hist, root, set_="hard-dev", agent="cortex", rows=write_rows("hd.jsonl", h_rows),
+                 corpus=corpus_h, config=cfg_b, notes="hard-dev", run_id="HD", date="2026-01-05")
+        mh = rh["metrics"]
+        expect((mh["verified"], mh["n"], mh["false_success"], mh["proposals_per_verified"])
+               == (1, 2, 1, 3.0), f"hard-dev in-scope counts {mh}")
+        expect(mh["out_of_scope"] == {"n": 2, "fixed": 0, "false_success": 1, "no_claim": 1,
+                                      "honest_failure": 1, "proposals": 4,
+                                      "cost_usd_total": 1.02, "wall_s": 20.0},
+               f"hard-dev out-of-scope summary {mh.get('out_of_scope')}")
+        x0_norm = {"id": "x0", "verified": False, "false_success": False, "proposals": 1,
+                   "cost_usd": None, "wall_s": 1.0, "truth_symbol": "h", "attempted": ["h"]}
+        expect(refused(lambda: add(hist, root, set_="hard-dev", agent="cortex",
+                                   rows=write_rows("hn.jsonl", [x0_norm]), corpus=corpus_h,
+                                   config=cfg_b, notes="x"), "out-of-scope"),
+               "normalized row for an out-of-scope task not refused")
 
         stale1 = report(hist, root, None)
         texts = [open(os.path.join(root, f)).read() for f in ("README.md", "progress.svg")]
