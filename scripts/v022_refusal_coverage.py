@@ -1570,6 +1570,12 @@ _GCX = (_CTX + "; generator context (generate.rs GenContext, rank.rs RankView::i
         "only by the hidden check on the patched file, and the visible copy runs through the "
         "registered CheckExecutor (tests) or `axon check` (no program execution); no protected "
         "crate names visible_run, visible_feedback, GenContext or RankView (grep crates/*/src)")
+_CHK = (_CTX + "; the checker acceptance gate (runner.rs checker_exit_clean and its use before "
+        "VerifiedDone in run_episode_resumable): every refusal here only WITHHOLDS VerifiedDone "
+        "(the attempt is undone and fed back as CheckerObjected, or the episode is Blocked when "
+        "`axon check` could not be run or was killed); none grants a verdict, a write or exit 0; "
+        "the gate is exercised by conformance cxg_c14b (which fails when it is neutralised); no "
+        "protected crate names checker_exit_clean (grep crates/*/src)")
 _EXE = ("NOT ON THE PROTECTED ROUTE (checkable): a registered EXECUTOR. A protected request's "
         "executable is the qualified guest interpreter (submit.rs: LINUX_GUEST_AXON_ID, pinned by "
         "the qualification's guest_axon_sha256); the registry's executors are read only by "
@@ -2624,8 +2630,23 @@ EXEMPT += [
      '.ok_or_else(|| format!("{rel_path} names no file"))?;',
      _GCX),
     ('crates/axon-cortex/src/runner.rs',
-     'VisibleRun::Compile => std::process::Command::new(&self.axon_bin)',
+     'VisibleRun::Compile | VisibleRun::Diagnostics => {',
      _GCX),
+    ('crates/axon-cortex/src/runner.rs',
+     'fn checker_exit_clean(&self, rel_path: &str) -> Result<bool, String> {',
+     _CHK),
+    ('crates/axon-cortex/src/runner.rs',
+     '.stdout(std::process::Stdio::null())',
+     _CHK),
+    ('crates/axon-cortex/src/runner.rs',
+     '.stderr(std::process::Stdio::null())',
+     _CHK),
+    ('crates/axon-cortex/src/runner.rs',
+     'None => Err("the checker was killed by a signal".into()),',
+     _CHK),
+    ('crates/axon-cortex/src/runner.rs',
+     'acceptance was not established: {e}"',
+     _CHK),
     ('crates/axon-cortex/src/runner.rs',
      '.take(MAX_PRINTED_LINES)',
      _GCX),
@@ -4206,6 +4227,9 @@ VALUE_EXEMPT += [
 VALUE_EXEMPT += [
     ('crates/axon-cortex/src/label.rs', 'append', 1, '0o600', 'NOTROUTE', _LBL),
     ('crates/axon-cortex/src/runner.rs', 'visible_run', 1, '"check"', 'NOTROUTE', _GCX),
+    ('crates/axon-cortex/src/runner.rs', 'checker_exit_clean', 1, '"check"', 'NOTROUTE', _CHK),
+    ('crates/axon-cortex/src/runner.rs', 'checker_exit_clean', 2, 'std::process::Stdio::null()', 'NOTROUTE', _CHK),
+    ('crates/axon-cortex/src/runner.rs', 'checker_exit_clean', 3, 'std::process::Stdio::null()', 'NOTROUTE', _CHK),
 ]
 
 
@@ -5767,6 +5791,7 @@ EXEC_CONSTRUCTORS = {
     ("crates/axon-cortex/src/runner.rs", "observe"): "builder: own .arg sites",
     ("crates/axon-cortex/src/runner.rs", "run_checks"): "builder: own .arg sites",
     ("crates/axon-cortex/src/runner.rs", "visible_run"): "builder: own .arg sites (`axon check <copy>`; not a protected route)",
+    ("crates/axon-cortex/src/runner.rs", "checker_exit_clean"): "builder: own .arg sites (`axon check <file>`, exit status only; not a protected route)",
     ("crates/axon-core/src/host.rs", "exec"): "OUT OF SCOPE: the language host seam",
     ("crates/axon-core/src/main.rs", "try_link_wasm"): "OUT OF SCOPE: the language CLI",
     ("crates/axon-core/src/main.rs", "run_quorum_gate"): "OUT OF SCOPE: the language CLI",

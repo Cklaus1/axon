@@ -1254,6 +1254,10 @@ impl Runner {
             // next iteration's stuck-detection decides whether that is futile.
             if matches!(action, CortexAction::ClaimDone { .. }) {
                 let _ = outcome;
+                // Set when every check passed but `axon check` objected: the
+                // undo below then records the attempt as `CheckerObjected`
+                // with the checker's diagnostics as its feedback.
+                let mut objected = false;
                 if self.verify(true, hidden_check, &target.path) {
                     // The adjudicator accepted. That is a witness, not the
                     // whole truth: it is ONE test, and a patch can satisfy it
@@ -1296,64 +1300,97 @@ impl Runner {
                         }
                     };
                     if still_failing.is_empty() {
-                        return EpisodeOutcome::VerifiedDone { steps: step };
-                    }
-                    let regressed: Vec<String> = still_failing
-                        .iter()
-                        .filter(|n| baseline_passing.contains(n))
-                        .cloned()
-                        .collect();
-                    // NOTHING REGRESSED. The patch satisfied the adjudicator
-                    // and broke nothing; the remaining failures were already
-                    // there when the episode started, and this loop was never
-                    // asked about them.
-                    //
-                    // Undoing it here discarded a repair that had WORKED, then
-                    // recorded the correct body as `CheckRefused` — which the
-                    // prompt renders as "it compiled but did not fix the
-                    // problem" and adds to a do-not-propose list. The loop
-                    // steered a competent generator away from the right answer
-                    // and then reported exit 21, "the generator is not
-                    // helping", about a generator that had already succeeded.
-                    //
-                    // So this is a terminal outcome of its own: the patch is
-                    // KEPT, and the pre-existing failures are named.
-                    if regressed.is_empty() {
+                        // THE CHECKER HAS THE LAST WORD. `axon test` runs a
+                        // file `axon check` refuses: `check` exits 2 on ANY
+                        // diagnostic, a note included, and a test run does
+                        // not. Measured on the dev corpus (drop-stmt-02, 4 of
+                        // 4 reruns): a generator shown the file wrote
+                        // `let mut s = start`, every test passed, this
+                        // returned VerifiedDone, and the file it left failed
+                        // `axon check` with the I0002 note "`mut` is not an
+                        // Axon keyword". A repair the checker objects to is
+                        // not finished, so it is rejected like any other and
+                        // the generator is shown what the checker said.
+                        match self.checker_exit_clean(&target.path) {
+                            Ok(true) => return EpisodeOutcome::VerifiedDone { steps: step },
+                            Ok(false) => {
+                                self.episode.push(EpisodeEvent::Verified {
+                                    passed: false,
+                                    detail: format!(
+                                        "claim_done=true: hidden check `{hidden_check}` passed \
+                                         and no check fails, but `axon check` on {} did not \
+                                         exit 0 (it reported diagnostics)",
+                                        target.path
+                                    ),
+                                });
+                                objected = true;
+                            }
+                            // FAIL CLOSED, as for the re-check above: a
+                            // checker that could not run established nothing.
+                            Err(e) => {
+                                self.episode.push(EpisodeEvent::Verified {
+                                    passed: false,
+                                    detail: format!(
+                                        "claim_done=true: hidden check `{hidden_check}` passed, \
+                                         but `axon check` could not be run on the file, so its \
+                                         acceptance was not established: {e}"
+                                    ),
+                                });
+                                return EpisodeOutcome::Blocked {
+                                    steps: step,
+                                    reason: format!("`axon check` could not be run: {e}"),
+                                };
+                            }
+                        }
+                    } else {
+                        let regressed: Vec<String> = still_failing
+                            .iter()
+                            .filter(|n| baseline_passing.contains(n))
+                            .cloned()
+                            .collect();
+                        // NOTHING REGRESSED. The patch satisfied the adjudicator
+                        // and broke nothing; the remaining failures were already
+                        // there when the episode started, and this loop was never
+                        // asked about them.
+                        //
+                        // Undoing it here discarded a repair that had WORKED, then
+                        // recorded the correct body as `CheckRefused` — which the
+                        // prompt renders as "it compiled but did not fix the
+                        // problem" and adds to a do-not-propose list. The loop
+                        // steered a competent generator away from the right answer
+                        // and then reported exit 21, "the generator is not
+                        // helping", about a generator that had already succeeded.
+                        //
+                        // So this is a terminal outcome of its own: the patch is
+                        // KEPT, and the pre-existing failures are named.
+                        if regressed.is_empty() {
+                            self.episode.push(EpisodeEvent::Verified {
+                                passed: false,
+                                detail: format!(
+                                    "claim_done=true: hidden check `{hidden_check}` passed and \
+                                     nothing regressed, but {} check(s) that were ALREADY \
+                                     failing still fail: {}",
+                                    still_failing.len(),
+                                    still_failing.join(", ")
+                                ),
+                            });
+                            return EpisodeOutcome::AdjudicatedNotClean {
+                                steps: step,
+                                still_failing,
+                            };
+                        }
                         self.episode.push(EpisodeEvent::Verified {
                             passed: false,
                             detail: format!(
-                                "claim_done=true: hidden check `{hidden_check}` passed and \
-                                 nothing regressed, but {} check(s) that were ALREADY failing \
-                                 still fail: {}",
+                                "hidden check `{hidden_check}` passed, but {} check(s) \
+                                 still fail ({}) — and this episode BROKE {} that passed \
+                                 before it",
                                 still_failing.len(),
-                                still_failing.join(", ")
+                                still_failing.join(", "),
+                                regressed.join(", ")
                             ),
                         });
-                        return EpisodeOutcome::AdjudicatedNotClean {
-                            steps: step,
-                            still_failing,
-                        };
                     }
-                    self.episode.push(EpisodeEvent::Verified {
-                        passed: false,
-                        detail: format!(
-                            "hidden check `{hidden_check}` passed, but {} check(s) \
-                             still fail ({}){}",
-                            still_failing.len(),
-                            still_failing.join(", "),
-                            if regressed.is_empty() {
-                                String::new()
-                            } else {
-                                // Worth naming separately: leaving a failure
-                                // alone and CREATING one are different
-                                // mistakes with different remedies.
-                                format!(
-                                    " — and this episode BROKE {} that passed before it",
-                                    regressed.join(", ")
-                                )
-                            }
-                        ),
-                    });
                 }
                 // The claim was refused. That is the signal the code compiles
                 // and is still wrong — the only state in which proposing a
@@ -1367,10 +1404,22 @@ impl Runner {
                 // generator editing back toward the original then re-created
                 // an earlier state and tripped the cycle detector on a cycle
                 // the loop had manufactured.
-                // What the VISIBLE checks say about the attempt, read before
-                // the undo below puts the file back.
+                // What the VISIBLE checks say about the attempt (or, when the
+                // checks all passed and `axon check` objected, what the
+                // checker said), read before the undo below puts the file back.
+                let (reason, what) = if objected {
+                    (
+                        crate::generate::RejectionReason::CheckerObjected,
+                        VisibleRun::Diagnostics,
+                    )
+                } else {
+                    (
+                        crate::generate::RejectionReason::CheckRefused,
+                        VisibleRun::Tests,
+                    )
+                };
                 let feedback = if last_applied.is_some() {
-                    self.visible_feedback(&target.path, hidden_check, VisibleRun::Tests)
+                    self.visible_feedback(&target.path, hidden_check, what)
                 } else {
                     None
                 };
@@ -1398,12 +1447,7 @@ impl Runner {
                 // rejected and what the VISIBLE checks said about it (gathered
                 // above, before the undo), not what the grader wanted.
                 if let Some(body) = last_applied.take() {
-                    push_rejected(
-                        rejected,
-                        body,
-                        crate::generate::RejectionReason::CheckRefused,
-                        feedback,
-                    );
+                    push_rejected(rejected, body, reason, feedback);
                 }
             }
         }
@@ -1549,6 +1593,25 @@ impl Runner {
         self.visible_run(rel_path, &now, hidden, what).ok()
     }
 
+    /// Whether `axon check` on the file under repair, as it is on disk now,
+    /// exits 0. That is the acceptance an operator (and the benchmark grader)
+    /// applies, and it is stricter than "no error diagnostics": `check` exits
+    /// 2 on any diagnostic, a note included. `Err` when the checker could not
+    /// be run or was killed, so a missing answer is never read as a clean one.
+    fn checker_exit_clean(&self, rel_path: &str) -> Result<bool, String> {
+        let st = std::process::Command::new(&self.axon_bin)
+            .arg("check")
+            .arg(self.workspace.join(rel_path))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map_err(|e| format!("the checker could not be run: {e}"))?;
+        match st.code() {
+            Some(c) => Ok(c == 0),
+            None => Err("the checker was killed by a signal".into()),
+        }
+    }
+
     /// Run `text` — the file under repair as it is now, or a patched version
     /// of it — with the hidden check CUT OUT, and say what came back.
     ///
@@ -1604,19 +1667,24 @@ impl Runner {
                 })
                 .map(|r| render_visible_tests(&r))
                 .map_err(|e| format!("the visible tests could not be run: {e}")),
-            VisibleRun::Compile => std::process::Command::new(&self.axon_bin)
-                .current_dir(&self.workspace)
-                .arg("check")
-                .arg(&abs)
-                .output()
-                .map(|o| {
-                    render_diagnostics(&format!(
-                        "{}{}",
-                        String::from_utf8_lossy(&o.stdout),
-                        String::from_utf8_lossy(&o.stderr)
-                    ))
-                })
-                .map_err(|e| format!("the checker could not be run: {e}")),
+            VisibleRun::Compile | VisibleRun::Diagnostics => {
+                std::process::Command::new(&self.axon_bin)
+                    .current_dir(&self.workspace)
+                    .arg("check")
+                    .arg(&abs)
+                    .output()
+                    .map(|o| {
+                        render_diagnostics(
+                            &format!(
+                                "{}{}",
+                                String::from_utf8_lossy(&o.stdout),
+                                String::from_utf8_lossy(&o.stderr)
+                            ),
+                            matches!(what, VisibleRun::Diagnostics),
+                        )
+                    })
+                    .map_err(|e| format!("the checker could not be run: {e}"))
+            }
         };
         let _ = std::fs::remove_file(&abs);
         let out = ran?
@@ -1911,11 +1979,14 @@ enum VisibleRun {
     Tests,
     /// `axon check` on the file: the first error diagnostics.
     Compile,
+    /// `axon check` on the file: the first diagnostics of ANY severity, for an
+    /// attempt rejected because the checker did not exit 0.
+    Diagnostics,
 }
 
 /// Lines a visible-run summary keeps of what tests printed.
 const MAX_PRINTED_LINES: usize = 40;
-/// Error diagnostics a compile summary keeps.
+/// Diagnostics a compile summary keeps.
 const MAX_DIAGNOSTICS: usize = 5;
 
 /// The rendered result of a visible test run, longest-lived facts first so the
@@ -1949,22 +2020,34 @@ fn render_visible_tests(report: &CheckReport) -> String {
     s
 }
 
-/// The first error diagnostics of an `axon check` transcript, one per line as
-/// `line L: CODE message (help)`.
-fn render_diagnostics(text: &str) -> String {
+/// The first diagnostics of an `axon check` transcript, one per line as
+/// `line L: CODE message (help)`: error diagnostics only, or with `all` every
+/// severity, each marked with it (`line L: CODE (note) message`).
+fn render_diagnostics(text: &str, all: bool) -> String {
     let mut s = String::new();
     for l in text
         .lines()
-        .filter(|l| l.contains("\"severity\":\"error\""))
+        .filter(|l| {
+            if all {
+                l.contains("\"severity\":\"")
+            } else {
+                l.contains("\"severity\":\"error\"")
+            }
+        })
         .take(MAX_DIAGNOSTICS)
     {
         match serde_json::from_str::<serde_json::Value>(l.trim()) {
             Ok(v) => {
                 let field = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("");
                 s.push_str(&format!(
-                    "line {}: {} {}",
+                    "line {}: {}{} {}",
                     v.get("line").and_then(|x| x.as_u64()).unwrap_or(0),
                     field("code"),
+                    if all {
+                        format!(" ({})", field("severity"))
+                    } else {
+                        String::new()
+                    },
                     field("message")
                 ));
                 if !field("help").is_empty() {

@@ -107,6 +107,12 @@ pub enum RejectionReason {
     /// the VISIBLE checks report on the attempt, from a run of the file with
     /// the hidden check cut out.
     CheckRefused,
+    /// Every check passed, but `axon check` on the patched file did not exit
+    /// 0: it drew a diagnostic of some severity (a note such as `let mut`
+    /// counts). A file the checker objects to is not a finished repair. The
+    /// feedback carries those diagnostics, from checking the file with the
+    /// hidden check cut out.
+    CheckerObjected,
 }
 
 impl std::fmt::Display for RejectionReason {
@@ -114,6 +120,10 @@ impl std::fmt::Display for RejectionReason {
         match self {
             RejectionReason::DidNotCompile => write!(f, "it did not compile"),
             RejectionReason::CheckRefused => write!(f, "it compiled but did not fix the problem"),
+            RejectionReason::CheckerObjected => write!(
+                f,
+                "it passed the checks, but `axon check` reported diagnostics on the file"
+            ),
         }
     }
 }
@@ -270,6 +280,7 @@ pub fn build_prompt(obs: &Observation, target: &SymbolRef, c: &PatchConstraints)
                 RejectionReason::CheckRefused => {
                     "With that attempt applied, the visible tests reported"
                 }
+                RejectionReason::CheckerObjected => "`axon check` reported",
             };
             history.push_str(&format!("{label}:\n```\n{}\n```\n", f.trim_end()));
         }

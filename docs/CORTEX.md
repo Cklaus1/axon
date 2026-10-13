@@ -568,7 +568,7 @@ Every one of these was produced on `pricing.ax` (or, for 27, on
 
 | code | outcome | file afterwards | what to do |
 |---|---|---|---|
-| 0 | `verified_done` | patched | nothing; the hidden check passed and nothing regressed |
+| 0 | `verified_done` | patched | nothing; the hidden check passed, nothing regressed, and `axon check` exits 0 on the file |
 | 2 | usage error | untouched | fix the command line (bad `--check`, unknown `--generator`, `ai:` without the feature) |
 | 20 | `budget_exhausted` | restored | raise `--budget`/`--candidates`, give `--symbol`, or the defect is not a one-body fix |
 | 21 | `no_progress` | restored | proposals stopped changing anything useful; the generator is not helping |
@@ -578,6 +578,18 @@ Every one of these was produced on `pricing.ax` (or, for 27, on
 | 25 | `no_such_symbol` / no target | untouched | `--symbol` does not exist, or no candidate could be ranked |
 | 26 | check cannot witness | untouched | `--check` already passes; name a check that currently fails |
 | 27 | `adjudicated_not_clean` | patched (KEPT) | the check passed and nothing regressed, but tests that were already failing still fail; look at those separately |
+
+`verified_done` also needs `axon check` on the patched file to exit 0.
+`check` exits 2 on any diagnostic, a note included, while `axon test` runs
+such a file anyway. So a body that passes every test but draws a diagnostic,
+such as the I0002 note on `let mut`, is undone and recorded as a rejected
+attempt (`CheckerObjected`). The checker's diagnostics, from the file with
+the hidden check cut out, go back to the generator as feedback. They are
+capped at the first 5 and 2 KB, like compiler feedback. If the file had a
+diagnostic before the repair started, `verified_done` needs that diagnostic
+gone too. That rule came from a measured false success: dev task
+drop-stmt-02, 4 of 4 reruns. A run where `axon check` cannot be executed is
+blocked (exit 22), not accepted.
 
 Exit 27, on the fixture that has two independent defects:
 
