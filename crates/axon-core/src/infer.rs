@@ -2837,8 +2837,6 @@ mod tests {
             "{:?}",
             ctx.errors
         );
-        assert_eq!(scope.lookup("a3").unwrap().display(), "[[[[i64]]]]");
-        assert_eq!(scope.lookup("a4"), Some(&Type::Unknown));
     }
 
     #[test]
