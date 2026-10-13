@@ -244,6 +244,29 @@ pub enum EpisodeOutcome {
     /// plainly rather than dressed as a failure: the system is not broken, it
     /// is out of scope without a generator.
     NeedsInput { steps: usize, what: String },
+    /// The episode stopped asking its generator because the visible verdict
+    /// was not moving (`crate::earlystop`), or the run stopped before any
+    /// episode because no single function can account for the visible
+    /// failures. A suspicion that the defect is beyond a one-body edit, not a
+    /// proof: more budget MIGHT still have finished it, which is why it is
+    /// not `BudgetExhausted`, and the generator was not at fault, which is why
+    /// it is not `NoProgress`.
+    OutOfScopeSuspected { steps: usize, reason: String },
+}
+
+/// What the visible checks said about ONE rejected proposal, kept for the early
+/// stop (`crate::earlystop`). It is read from the same visible run whose
+/// output the generator is shown, never from the hidden check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttemptSignal {
+    /// Which proposal of this candidate it was, counting from 1.
+    pub proposal: usize,
+    pub rejection: crate::generate::RejectionReason,
+    /// The visible checks that failed with the attempt applied (the hidden
+    /// check is cut out of the file that ran). `None` when no test run was
+    /// made or it could not be gathered: a compile failure, or a visible run
+    /// that was refused.
+    pub visible_failing: Option<Vec<String>>,
 }
 
 /// What one candidate's episode has learned so far, kept so a walk can stop
@@ -267,6 +290,10 @@ pub struct CandidateProgress {
     /// Pause before asking the generator for proposal number `limit + 1`.
     /// `None` runs to the step budget, as an unpaused episode does.
     pub proposal_limit: Option<usize>,
+    /// Stop, instead of asking for the next proposal, once this many compiled
+    /// proposals in a row left the visible verdict unchanged
+    /// ([`crate::earlystop`]). `None` and `Some(0)` never stop.
+    pub inert_limit: Option<usize>,
     seen: Vec<(String, String, usize)>,
     ctx: crate::select::SelectionContext,
     rejected: Vec<crate::generate::RejectedAttempt>,
@@ -281,6 +308,7 @@ pub struct CandidateProgress {
     steps: usize,
     proposals: usize,
     paused: bool,
+    attempts: Vec<AttemptSignal>,
 }
 
 impl CandidateProgress {
@@ -307,6 +335,12 @@ impl CandidateProgress {
     /// its `BudgetExhausted` means "paused", and resuming may still finish it.
     pub fn paused(&self) -> bool {
         self.paused
+    }
+
+    /// What the visible checks said about each of this candidate's rejected
+    /// proposals, in order, across every resumption.
+    pub fn attempts(&self) -> &[AttemptSignal] {
+        &self.attempts
     }
 }
 
@@ -848,10 +882,39 @@ impl Runner {
                 }
             };
 
-            // THE PAUSE, at the one point an episode spends a proposal. The
-            // previous proposal has been adjudicated and, if rejected, undone,
-            // so the file is back at the candidate's base and nothing is left
-            // half-decided. The step is handed back: it has not been taken.
+            // THE EARLY STOP, at the one point an episode spends a proposal and
+            // before the pause: the previous proposal has been adjudicated and
+            // undone and the next step would be a model call. Read only from
+            // what the visible checks said about this candidate's own rejected
+            // proposals.
+            if let CortexAction::PatchSymbolBody { proposed_body, .. } = &action {
+                if proposed_body.is_empty() {
+                    if let (Some(limit), Some(base)) =
+                        (progress.inert_limit, progress.baseline_failing.as_ref())
+                    {
+                        let visible: Vec<String> = base
+                            .iter()
+                            .filter(|n| *n != hidden_check)
+                            .cloned()
+                            .collect();
+                        if crate::earlystop::should_stop(limit, &visible, &progress.attempts) {
+                            progress.steps = step - 1;
+                            return EpisodeOutcome::OutOfScopeSuspected {
+                                steps: step - 1,
+                                reason: crate::earlystop::unmoved_reason(
+                                    &target.symbol,
+                                    limit,
+                                    &visible,
+                                ),
+                            };
+                        }
+                    }
+                }
+            }
+            // THE PAUSE, at the same point. The file is back at the candidate's
+            // base and nothing is left half-decided. The step is handed back: it
+            // has not been taken. The early stop is read first, so a candidate
+            // that must stop is not paused for a resumption that would stop it.
             if let CortexAction::PatchSymbolBody { proposed_body, .. } = &action {
                 if proposed_body.is_empty()
                     && progress
@@ -1099,8 +1162,16 @@ impl Runner {
                 // out.
                 if ctx.last_check == VisibleCheck::Failed {
                     if let Some(body) = last_applied.take() {
-                        let feedback =
-                            self.visible_feedback(&target.path, hidden_check, VisibleRun::Tests);
+                        let (feedback, visible_failing) = self.visible_feedback_full(
+                            &target.path,
+                            hidden_check,
+                            VisibleRun::Tests,
+                        );
+                        progress.attempts.push(AttemptSignal {
+                            proposal: progress.proposals,
+                            rejection: crate::generate::RejectionReason::CheckRefused,
+                            visible_failing,
+                        });
                         push_rejected(
                             rejected,
                             body,
@@ -1198,6 +1269,11 @@ impl Runner {
                         };
                     }
                     if let Some(body) = last_applied.take() {
+                        progress.attempts.push(AttemptSignal {
+                            proposal: progress.proposals,
+                            rejection: crate::generate::RejectionReason::DidNotCompile,
+                            visible_failing: None,
+                        });
                         push_rejected(
                             rejected,
                             body,
@@ -1418,10 +1494,14 @@ impl Runner {
                         VisibleRun::Tests,
                     )
                 };
-                let feedback = if last_applied.is_some() {
-                    self.visible_feedback(&target.path, hidden_check, what)
+                let (feedback, visible_failing) = if last_applied.is_some() {
+                    let (text, failing) =
+                        self.visible_feedback_full(&target.path, hidden_check, what);
+                    // `axon check` objected only after every check passed, so
+                    // no check was failing; a test run was not made for it.
+                    (text, if objected { Some(Vec::new()) } else { failing })
                 } else {
-                    None
+                    (None, None)
                 };
                 {
                     if restore_base(&self.workspace.join(&target.path), &candidate_base).is_err() {
@@ -1447,6 +1527,11 @@ impl Runner {
                 // rejected and what the VISIBLE checks said about it (gathered
                 // above, before the undo), not what the grader wanted.
                 if let Some(body) = last_applied.take() {
+                    progress.attempts.push(AttemptSignal {
+                        proposal: progress.proposals,
+                        rejection: reason.clone(),
+                        visible_failing,
+                    });
                     push_rejected(rejected, body, reason, feedback);
                 }
             }
@@ -1589,8 +1674,26 @@ impl Runner {
     /// still applied. `None` when nothing could be gathered: a rejection
     /// without feedback is still a rejection, and nothing is invented for it.
     fn visible_feedback(&self, rel_path: &str, hidden: &str, what: VisibleRun) -> Option<String> {
-        let now = std::fs::read_to_string(self.workspace.join(rel_path)).ok()?;
-        self.visible_run(rel_path, &now, hidden, what).ok()
+        self.visible_feedback_full(rel_path, hidden, what).0
+    }
+
+    /// [`Runner::visible_feedback`] and, for a test run, the names of the
+    /// visible checks that FAILED in it. The two come from the same run: the
+    /// early stop reads the verdicts the generator is shown, and no extra run
+    /// is made for them.
+    fn visible_feedback_full(
+        &self,
+        rel_path: &str,
+        hidden: &str,
+        what: VisibleRun,
+    ) -> (Option<String>, Option<Vec<String>>) {
+        let Ok(now) = std::fs::read_to_string(self.workspace.join(rel_path)) else {
+            return (None, None);
+        };
+        match self.visible_run(rel_path, &now, hidden, what) {
+            Ok((text, failing)) => (Some(text), failing),
+            Err(_) => (None, None),
+        }
     }
 
     /// Whether `axon check` on the file under repair, as it is on disk now,
@@ -1638,7 +1741,7 @@ impl Runner {
         text: &str,
         hidden: &str,
         what: VisibleRun,
-    ) -> Result<String, String> {
+    ) -> Result<(String, Option<Vec<String>>), String> {
         let cut = crate::rank::without_check(text, hidden);
         if crate::rank::mentions(&cut, hidden) {
             return Err(
@@ -1657,6 +1760,8 @@ impl Runner {
         let rel_copy_str = rel_copy.to_string_lossy().into_owned();
         let abs = self.workspace.join(&rel_copy);
         std::fs::write(&abs, &cut).map_err(|e| format!("cannot write a visible copy: {e}"))?;
+        // The names of the visible checks that failed, for a test run only.
+        let mut failing: Option<Vec<String>> = None;
         let ran = match what {
             VisibleRun::Tests => self
                 .check_executor
@@ -1665,7 +1770,10 @@ impl Runner {
                     rel_path: &rel_copy_str,
                     filter: None,
                 })
-                .map(|r| render_visible_tests(&r))
+                .map(|r| {
+                    failing = Some(r.failed.clone());
+                    render_visible_tests(&r)
+                })
                 .map_err(|e| format!("the visible tests could not be run: {e}")),
             VisibleRun::Compile | VisibleRun::Diagnostics => {
                 std::process::Command::new(&self.axon_bin)
@@ -1698,9 +1806,9 @@ impl Runner {
             .filter(|l| !crate::rank::mentions(l, hidden))
             .map(|l| format!("{l}\n"))
             .collect();
-        Ok(bound_bytes(
-            out.trim_end(),
-            crate::generate::MAX_FEEDBACK_BYTES,
+        Ok((
+            bound_bytes(out.trim_end(), crate::generate::MAX_FEEDBACK_BYTES),
+            failing,
         ))
     }
 
@@ -1742,7 +1850,8 @@ impl Runner {
                 view,
                 visible_now: self
                     .visible_run(rel_path, src, hidden, VisibleRun::Tests)
-                    .ok(),
+                    .ok()
+                    .map(|(text, _)| text),
             },
             Err(reason) => GenContext::BodyOnly { reason },
         }

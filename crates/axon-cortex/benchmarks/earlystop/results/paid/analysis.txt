@@ -1,0 +1,25 @@
+== committed Cortex rows (DECIDES): new 68 rows, baseline 68 rows, paired 68 (in-scope 48, out-of-scope/unsat 20); missing from new: []
+false successes in new rows: 0 []
+in-scope verified: new 47/48 vs baseline 47/48; lost [], gained []; exact two-sided McNemar p = 1.0000
+in-scope tasks the baseline verified that the rule stopped: []
+in-scope tasks that ended out_of_scope_suspected (any baseline verdict): ['hd-caller-contract-05']
+out-of-scope + unsat wall: new 247.0s vs baseline 801.7s over 20 tasks (-69.2%); one-sided exact Wilcoxon signed-rank p = 0.0000
+in-scope wall (reported): new 220.6s vs baseline 252.9s (-12.8%)
+out-of-scope + unsat proposals: new 44 vs baseline 151
+out-of-scope + unsat outcomes (new): {'out_of_scope_suspected': 12, 'budget_exhausted': 6, 'adjudicated_not_clean': 2}
+claims on out-of-scope + unsat tasks: []
+C0 zero false successes: PASS
+C1 in-scope verified not lower (no verified fix stopped, no significant loss): PASS
+C2 out-of-scope + unsat wall time lower (sum and one-sided Wilcoxon p < 0.05): PASS
+VERDICT: PASS
+
+== same-day control, rule absent (REPORTED, never decides): new 68 rows, baseline 68 rows, paired 68 (in-scope 48, out-of-scope/unsat 20); missing from new: []
+false successes in new rows: 0 []
+in-scope verified: new 47/48 vs baseline 48/48; lost ['hd-caller-contract-05'], gained []; exact two-sided McNemar p = 1.0000
+in-scope tasks the baseline verified that the rule stopped: ['hd-caller-contract-05']
+in-scope tasks that ended out_of_scope_suspected (any baseline verdict): ['hd-caller-contract-05']
+out-of-scope + unsat wall: new 247.0s vs baseline 876.0s over 20 tasks (-71.8%); one-sided exact Wilcoxon signed-rank p = 0.0000
+in-scope wall (reported): new 220.6s vs baseline 240.6s (-8.3%)
+out-of-scope + unsat proposals: new 44 vs baseline 149
+out-of-scope + unsat outcomes (new): {'out_of_scope_suspected': 12, 'budget_exhausted': 6, 'adjudicated_not_clean': 2}
+claims on out-of-scope + unsat tasks: []

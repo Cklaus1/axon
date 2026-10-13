@@ -284,3 +284,38 @@ pub fn rank(src: &str, failing: &[String], passing: &[String]) -> Vec<(String, f
 
     ranked
 }
+
+/// The non-test functions that EVERY failing check reaches, in the order the
+/// source defines them.
+///
+/// A check can only change its verdict if the body that was edited runs under
+/// it. So when this set is empty, no single function body is reached by every
+/// failing check, and one body edit cannot make them all pass: that is what
+/// `cortex repair`'s early stop reads. The reach is the same syntactic one
+/// [`rank`] uses (calls found in the source, followed to [`MAX_CALL_DEPTH`]),
+/// so it says what the evidence shows, not what a run would execute: a call
+/// made through a function value is not seen.
+///
+/// Like [`rank`] it takes only visible evidence. The hidden check must not be
+/// in `failing`.
+pub fn reached_by_all(src: &str, failing: &[String], passing: &[String]) -> Vec<String> {
+    if failing.is_empty() {
+        return Vec::new();
+    }
+    let defined = defined_fns(src);
+    let annotated = test_fns(src);
+    let is_check = |n: &String| annotated.contains(n) || failing.contains(n) || passing.contains(n);
+    let mut common: Option<Vec<String>> = None;
+    for check in failing {
+        let reach: Vec<String> = reachable(src, check, &defined)
+            .into_iter()
+            .filter(|n| !is_check(n))
+            .collect();
+        common = Some(match common {
+            None => reach,
+            Some(c) => c.into_iter().filter(|n| reach.contains(n)).collect(),
+        });
+    }
+    let common = common.unwrap_or_default();
+    defined.into_iter().filter(|n| common.contains(n)).collect()
+}

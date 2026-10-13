@@ -139,6 +139,8 @@ fn cli_a_body_that_exits_early_never_exits_zero() {
         &[
             "--write-prefix",
             "broken.ax",
+            "--early-stop",
+            "off",
             "--generator",
             "literal:\n    exit(0)\n    0\n",
         ],
@@ -710,6 +712,11 @@ fn walk_run(
         .arg("--generator")
         .arg(format!("cmd:{}", gen.display()))
         .arg("--json")
+        // These rows pin the walk's order, budgets and history with generators
+        // whose wrong bodies never move the visible verdict, which is exactly
+        // what the early stop (tests/early_stop.rs) ends. They test the walk,
+        // so the walk runs as it did before the rule existed.
+        .args(["--early-stop", "off"])
         .args(extra)
         .output()
         .unwrap();
@@ -1031,7 +1038,13 @@ fn cli_walk_resumes_each_candidate_with_its_remaining_budget_and_history() {
         .arg(&ws2)
         .args(["--file", "three.ax", "--check", "hidden", "--axon"])
         .arg(axon_bin())
-        .args(["--write-prefix", "three.ax", "--generator"])
+        .args([
+            "--write-prefix",
+            "three.ax",
+            "--early-stop",
+            "off",
+            "--generator",
+        ])
         .arg(format!("cmd:{}", gen2.display()))
         .output()
         .unwrap();

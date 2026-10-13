@@ -1582,6 +1582,14 @@ _VIS = (_CTX + "; runner.rs sweep_stale_visible_copies/visible_copy_owner_alive:
         "verdict, exit code or patch reads such a copy (snapshots hash only the target path and "
         "every check names one file), so keeping one changes nothing but disk; no protected "
         "crate names either fn (grep crates/*/src)")
+_ESP = (_CTX + "; earlystop.rs, `cortex repair`'s early stop (--early-stop/--inert-limit): every "
+        "predicate here only decides that a candidate is NOT ASKED AGAIN (or that the walk ends "
+        "before any model call); the outcome it produces (`out_of_scope_suspected`, exit 28) "
+        "grants no verdict, no write and never exit 0, leaves the file as the run found it, and "
+        "reads only the visible checks' verdicts, never the hidden check; acceptance is still "
+        "decided only by the hidden check on a patched file, which is exercised by tests/"
+        "early_stop.rs (the same runs with the rule off keep asking); no protected crate names "
+        "axon_cortex::earlystop (grep `axon_cortex::earlystop` crates/*/src)")
 _EXE = ("NOT ON THE PROTECTED ROUTE (checkable): a registered EXECUTOR. A protected request's "
         "executable is the qualified guest interpreter (submit.rs: LINUX_GUEST_AXON_ID, pinned by "
         "the qualification's guest_axon_sha256); the registry's executors are read only by "
@@ -2665,6 +2673,15 @@ EXEMPT += [
     ('crates/axon-cortex/src/runner.rs',
      'let Ok(pid) = libc::pid_t::try_from(pid) else {',
      _VIS),
+    ('crates/axon-cortex/src/earlystop.rs',
+     'pub fn is_off(&self) -> bool {',
+     _ESP),
+    ('crates/axon-cortex/src/earlystop.rs',
+     'pub fn is_inert(baseline: &[String], attempt: &AttemptSignal) -> bool {',
+     _ESP),
+    ('crates/axon-cortex/src/earlystop.rs',
+     'pub fn should_stop(limit: usize, baseline: &[String], attempts: &[AttemptSignal]) -> bool {',
+     _ESP),
     ('crates/axon-cortex/src/rank.rs',
      'fn mentions(text: &str, name: &str) -> bool {',
      _RNK),

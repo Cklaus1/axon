@@ -68,6 +68,20 @@ cortex locate --file PATH --check NAME [--workspace DIR] [--axon PATH] [--json]
                          figures; they are not quoted here because a number
                          embedded in --help outlives the measurement it came
                          from.
+  --early-stop on|off    give up sooner on a defect one function body cannot
+                         repair (default: on). Two signals, both read from the
+                         visible checks and never from --check: (1) no function
+                         is reached by every failing visible check, so no
+                         one-body edit can make them all pass - the run ends
+                         before any model call, and candidates not reached by
+                         every failing check are never tried; (2) a candidate
+                         stops being asked after --inert-limit consecutive
+                         compiled proposals that left the failing visible
+                         checks exactly as they were. Either ends the run as
+                         `out_of_scope_suspected` (exit 28), a suspicion, with
+                         the file left as found. `off` is the earlier walk.
+  --inert-limit N        the N of signal (2) (default: 2; 0 disables only that
+                         signal). An error with --early-stop off.
   --ranker SPEC          spectrum | openrouter:MODEL | decision:MODEL. Reorders
                          the --candidates names above before the walk; it can
                          never add or drop one. Default: env CORTEX_RANKER,
@@ -338,6 +352,8 @@ fn main() {
     let mut write_prefixes: Vec<String> = Vec::new();
     let mut json = false;
     let mut candidates: usize = 3;
+    let mut early_stop_off = false;
+    let mut inert_flag: Option<usize> = None;
     let mut ranker_flag: Option<String> = None;
     let mut audit_flag: Option<String> = None;
     let mut label_log_flag: Option<String> = None;
@@ -358,6 +374,19 @@ fn main() {
             "--ranker" => ranker_flag = Some(val("--ranker")),
             "--audit" => audit_flag = Some(val("--audit")),
             "--label-log" => label_log_flag = Some(val("--label-log")),
+            "--early-stop" => match val("--early-stop").as_str() {
+                "on" => early_stop_off = false,
+                "off" => early_stop_off = true,
+                other => usage(&format!(
+                    "--early-stop must be `on` or `off`, got `{other}`"
+                )),
+            },
+            "--inert-limit" => {
+                let raw = val("--inert-limit");
+                inert_flag = Some(raw.parse().unwrap_or_else(|_| {
+                    usage(&format!("--inert-limit must be a number, got `{raw}`"))
+                }));
+            }
             "--label-source" => label_source = true,
             "--axon" => axon_bin = std::path::PathBuf::from(val("--axon")),
             "--check-registry" => {
@@ -398,6 +427,17 @@ fn main() {
             usage(&format!("{name} is required"));
         }
     }
+    let early_stop = if early_stop_off {
+        if inert_flag.is_some() {
+            usage("--inert-limit has no effect with --early-stop off");
+        }
+        axon_cortex::earlystop::EarlyStop::off()
+    } else {
+        axon_cortex::earlystop::EarlyStop {
+            inert_limit: inert_flag.unwrap_or(axon_cortex::earlystop::DEFAULT_INERT_LIMIT),
+            ..Default::default()
+        }
+    };
 
     // Resolved here and not inside the loop: an unknown generator spec is a
     // command-line error, and discovering it three steps in would report a typo
@@ -530,95 +570,139 @@ fn main() {
     // here: two earlier versions of this comment outlived the measurement they
     // quoted, and one of them was still advertising a number the benchmark
     // README had explicitly withdrawn.
+    // The visible evidence the early stop reads: which checks fail (the hidden
+    // one excluded) and which functions every one of them reaches. Known only
+    // when the targets are localized; `--symbol` is an instruction, not a
+    // hypothesis, and has no such evidence.
+    let mut visible_failing: Option<Vec<String>> = None;
+    let mut reached_by_all: Option<Vec<String>> = None;
+    // Set when the run stops before any model call because no single function
+    // can account for the visible failures (`axon_cortex::earlystop`), and the
+    // candidates that were left out because not every failing check reaches them.
+    let mut structural_stop: Option<String> = None;
+    let mut pruned: Vec<String> = Vec::new();
     let targets: Vec<String> = if !symbol.is_empty() {
         vec![symbol.clone()]
     } else {
-        let src = std::fs::read_to_string(workspace.join(&file)).unwrap_or_default();
-        let (failing, passing) = match runner.check_outcomes(&file, &check) {
-            Ok(v) => v,
-            // An unrunnable checker is an environment failure with its own
-            // code, never an empty spectrum: no failing check is what a
-            // HEALTHY file looks like.
-            Err(e) => {
-                eprintln!("the checks could not be run: {e}");
-                std::process::exit(22);
-            }
-        };
-        if failing.is_empty() {
-            no_target(
-                "no check fails, so there is nothing to localize; pass --symbol \
+        'localize: {
+            let src = std::fs::read_to_string(workspace.join(&file)).unwrap_or_default();
+            let (failing, passing) = match runner.check_outcomes(&file, &check) {
+                Ok(v) => v,
+                // An unrunnable checker is an environment failure with its own
+                // code, never an empty spectrum: no failing check is what a
+                // HEALTHY file looks like.
+                Err(e) => {
+                    eprintln!("the checks could not be run: {e}");
+                    std::process::exit(22);
+                }
+            };
+            if failing.is_empty() {
+                no_target(
+                    "no check fails, so there is nothing to localize; pass --symbol \
                  to attempt a repair anyway",
-            );
-        }
-        let ranked = axon_cortex::locate::rank(&src, &failing, &passing);
-        if ranked.is_empty() {
-            no_target(&format!(
-                "check(s) {} fail but reach no function defined in {file}; the \
-                 defect may be in a callee, a builtin, or the check itself",
-                failing.join(", ")
+                );
+            }
+            reached_by_all = Some(axon_cortex::locate::reached_by_all(
+                &src, &failing, &passing,
             ));
-        }
-        // Show the working, WITH the scores. A target arrived at silently
-        // cannot be told from a guess, and the spread between first and second
-        // is what says whether the evidence decided anything at all.
-        let shown: Vec<String> = ranked
-            .iter()
-            .take(candidates)
-            .map(|(n, sc)| format!("{n} ({sc:.2})"))
-            .collect();
-        eprintln!(
-            "from failing check(s) {}: trying {}",
-            failing.join(", "),
-            shown.join(" then ")
-        );
-        // THE RANKING STEP. It may only permute these names: the eligible set
-        // is fixed above, by evidence, before any model is consulted. Every
-        // failure keeps the spectrum order and says so on one line.
-        let located = ranked.len();
-        let eligible: Vec<String> = ranked
-            .iter()
-            .take(candidates)
-            .map(|(n, _)| n.clone())
-            .collect();
-        let report = axon_cortex::rank::Ranker::from_env(ranker_spec.clone()).rank(
-            &axon_cortex::rank::RankInput {
-                file: &file,
-                source: &src,
-                hidden_check: &check,
-                failing: &failing,
-                eligible: &eligible,
-            },
-        );
-        if let Some(line) = report.fallback_line() {
-            eprintln!("{line}");
-        } else if report.reason.is_none() && report.used != "spectrum" {
+            visible_failing = Some(failing.clone());
+            let ranked = axon_cortex::locate::rank(&src, &failing, &passing);
+            if ranked.is_empty() {
+                no_target(&format!(
+                    "check(s) {} fail but reach no function defined in {file}; the \
+                 defect may be in a callee, a builtin, or the check itself",
+                    failing.join(", ")
+                ));
+            }
+            // A verified fix needs every failing check to pass, so the function
+            // edited must be one they ALL reach. Candidates that are not never
+            // get a model call, and when none is, the run ends here.
+            let ranked = if early_stop.structural {
+                let names: Vec<String> = ranked.iter().map(|(n, _)| n.clone()).collect();
+                let common = reached_by_all.as_deref().unwrap_or_default();
+                let keep = axon_cortex::earlystop::candidates_in_reach(&names, common);
+                pruned = names.into_iter().filter(|n| !keep.contains(n)).collect();
+                if keep.is_empty() {
+                    let why = axon_cortex::earlystop::no_common_function_reason(&failing);
+                    eprintln!("out of scope suspected: {why}");
+                    structural_stop = Some(why);
+                    break 'localize Vec::new();
+                }
+                if !pruned.is_empty() {
+                    eprintln!(
+                        "not tried, because not every failing check reaches them: {}",
+                        pruned.join(", ")
+                    );
+                }
+                ranked
+                    .into_iter()
+                    .filter(|(n, _)| keep.contains(n))
+                    .collect()
+            } else {
+                ranked
+            };
+            // Show the working, WITH the scores. A target arrived at silently
+            // cannot be told from a guess, and the spread between first and second
+            // is what says whether the evidence decided anything at all.
+            let shown: Vec<String> = ranked
+                .iter()
+                .take(candidates)
+                .map(|(n, sc)| format!("{n} ({sc:.2})"))
+                .collect();
             eprintln!(
-                "ranker {}: trying {} ({} ms, ${})",
-                report.used,
-                report.order.join(" then "),
-                report.latency_ms.unwrap_or(0),
-                report
-                    .cost_usd
-                    .map_or_else(|| "?".to_string(), |c| format!("{c:.6}"))
+                "from failing check(s) {}: trying {}",
+                failing.join(", "),
+                shown.join(" then ")
             );
+            // THE RANKING STEP. It may only permute these names: the eligible set
+            // is fixed above, by evidence, before any model is consulted. Every
+            // failure keeps the spectrum order and says so on one line.
+            let located = ranked.len();
+            let eligible: Vec<String> = ranked
+                .iter()
+                .take(candidates)
+                .map(|(n, _)| n.clone())
+                .collect();
+            let report = axon_cortex::rank::Ranker::from_env(ranker_spec.clone()).rank(
+                &axon_cortex::rank::RankInput {
+                    file: &file,
+                    source: &src,
+                    hidden_check: &check,
+                    failing: &failing,
+                    eligible: &eligible,
+                },
+            );
+            if let Some(line) = report.fallback_line() {
+                eprintln!("{line}");
+            } else if report.reason.is_none() && report.used != "spectrum" {
+                eprintln!(
+                    "ranker {}: trying {} ({} ms, ${})",
+                    report.used,
+                    report.order.join(" then "),
+                    report.latency_ms.unwrap_or(0),
+                    report
+                        .cost_usd
+                        .map_or_else(|| "?".to_string(), |c| format!("{c:.6}"))
+                );
+            }
+            // Advice for the operator's next choice of generator, from the
+            // ranking alone. It changes nothing in this run.
+            let advice = axon_cortex::rank::escalation(&report, located);
+            eprintln!("{}", advice.line());
+            escalation = Some(advice);
+            let order = report.order.clone();
+            ranker_report = Some(report);
+            if label_log.is_some() {
+                localization = Some(axon_cortex::label::Localization {
+                    failing,
+                    passing,
+                    ranked,
+                    candidates,
+                    eligible,
+                });
+            }
+            order
         }
-        // Advice for the operator's next choice of generator, from the
-        // ranking alone. It changes nothing in this run.
-        let advice = axon_cortex::rank::escalation(&report, located);
-        eprintln!("{}", advice.line());
-        escalation = Some(advice);
-        let order = report.order.clone();
-        ranker_report = Some(report);
-        if label_log.is_some() {
-            localization = Some(axon_cortex::label::Localization {
-                failing,
-                passing,
-                ranked,
-                candidates,
-                eligible,
-            });
-        }
-        order
     };
 
     // Each attempt starts from the state this run FOUND, not from whatever the
@@ -652,6 +736,17 @@ fn main() {
         steps: 0,
         what: "no candidate was attempted".to_string(),
     };
+    if let Some(why) = &structural_stop {
+        outcome = EpisodeOutcome::OutOfScopeSuspected {
+            steps: 0,
+            reason: why.clone(),
+        };
+    }
+    // Candidates the early stop ended, and the last outcome that was NOT
+    // that, so a run is reported as out of scope only when every candidate
+    // it asked ended that way.
+    let mut stopped = vec![false; targets.len()];
+    let mut last_other: Option<EpisodeOutcome> = None;
     let mut progress: Vec<axon_cortex::runner::CandidateProgress> =
         targets.iter().map(|_| Default::default()).collect();
     // Every attempt, in the order it ran. A candidate resumed in pass 2
@@ -661,10 +756,11 @@ fn main() {
     let mut context_reported = vec![false; targets.len()];
     'walk: for pass in 1..=2 {
         for (i, target) in targets.iter().enumerate() {
-            if pass == 2 && !progress[i].paused() {
+            if pass == 2 && (!progress[i].paused() || stopped[i]) {
                 continue;
             }
             progress[i].proposal_limit = (pass == 1 && targets.len() > 1).then_some(1);
+            progress[i].inert_limit = Some(early_stop.inert_limit);
             if let Some(p) = prev {
                 if let Err(e) = std::fs::write(workspace.join(&file), &original) {
                     eprintln!("cannot restore {file} between attempts: {e}");
@@ -731,7 +827,22 @@ fn main() {
                 // candidate. Another one would fail identically and burn the
                 // budget proving it.
                 EpisodeOutcome::Refused { .. } | EpisodeOutcome::Blocked { .. } => break 'walk,
-                _ => {}
+                EpisodeOutcome::OutOfScopeSuspected { reason, .. } => {
+                    eprintln!("`{target}` is not asked again: {reason}");
+                    stopped[i] = true;
+                }
+                _ => last_other = Some(outcome.clone()),
+            }
+        }
+    }
+    if matches!(outcome, EpisodeOutcome::OutOfScopeSuspected { .. }) && structural_stop.is_none() {
+        let every_candidate_stopped = targets
+            .iter()
+            .enumerate()
+            .all(|(i, _)| stopped[i] || !attempted.contains(&targets[i]));
+        if !every_candidate_stopped {
+            if let Some(o) = last_other.take() {
+                outcome = o;
             }
         }
     }
@@ -769,6 +880,9 @@ fn main() {
             format!("`{symbol}` is not defined in {path}"),
             *steps,
         ),
+        EpisodeOutcome::OutOfScopeSuspected { steps, reason } => {
+            (28, "out_of_scope_suspected", reason.clone(), *steps)
+        }
     };
     // Nothing worked: the file is left exactly as it was found. A run that
     // reports failure while having rewritten a function is reporting on a
@@ -931,6 +1045,40 @@ fn main() {
                         })
                     })
                     .collect::<Vec<_>>(),
+                // The evidence the early stop reads, whether or not it fired:
+                // the visible failing checks, the functions every one of them
+                // reaches, and what the visible checks said about each
+                // rejected proposal (`null` where no test run was made).
+                // `null` evidence with `--symbol`, which localizes nothing.
+                "early_stop": {
+                    "structural": early_stop.structural,
+                    "inert_limit": early_stop.inert_limit,
+                    // Candidates left out because not every failing check
+                    // reaches them, and the candidates the inert rule ended.
+                    "pruned": pruned,
+                    "stopped_candidates": targets
+                        .iter()
+                        .zip(&stopped)
+                        .filter(|(_, s)| **s)
+                        .map(|(t, _)| t)
+                        .collect::<Vec<_>>(),
+                    "visible_failing": visible_failing,
+                    "reached_by_all": reached_by_all,
+                    "attempts": targets
+                        .iter()
+                        .zip(&progress)
+                        .flat_map(|(t, p)| {
+                            p.attempts().iter().map(move |a| {
+                                serde_json::json!({
+                                    "candidate": t,
+                                    "proposal": a.proposal,
+                                    "rejection": a.rejection.slug(),
+                                    "visible_failing": a.visible_failing,
+                                })
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                },
             })
         );
     } else {
@@ -1047,6 +1195,7 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
         }
     };
     let ranked = axon_cortex::locate::rank(&src, &failing, &passing);
+    let reached_by_all = axon_cortex::locate::reached_by_all(&src, &failing, &passing);
     if json {
         println!(
             "{}",
@@ -1055,6 +1204,7 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
                 "receipts": fabric.as_ref().map(|f| f.receipts()),
                 "failing": failing,
                 "passing": passing,
+                "reached_by_all": reached_by_all,
                 // Every candidate WITH its score, not just the winner. The
                 // spread between first and second is what says whether the
                 // evidence actually decided anything.

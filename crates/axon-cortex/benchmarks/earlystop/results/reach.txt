@@ -1,0 +1,13 @@
+corpus.json      in  n= 60 empty=  0 truth_in_common= 60
+hard-dev.json    in  n= 25 empty=  0 truth_in_common= 25
+hard-dev.json    out n= 13 empty=  7
+hard-once.json   in  n= 19 empty=  0 truth_in_common= 19
+heldout.json     in  n= 47 empty=  0 truth_in_common= 47
+once.json        in  n= 30 empty=  0 truth_in_common= 30
+tempt.json       in  n= 30 empty=  0 truth_in_common= 30
+  note: hard-dev.json hd-out-signature-01 out failing ['test_recommend_spend_below_cap', 'test_recommend_spend_capped_at_500'] common ['recommend_spend']
+  note: hard-dev.json hd-out-signature-02 out failing ['test_withdraw_exact_amounts'] common ['withdraw']
+  note: hard-dev.json hd-out-signature-03 out failing ['test_sensor_avg_documented_reading'] common ['sensor_avg']
+  note: hard-dev.json hd-out-two-functions-06 out failing ['test_caller_is_admin_has_no_check', 'test_add_manager_grants_subscriber'] common ['caller_is_admin']
+  note: hard-dev.json hd-out-two-functions-07 out failing ['test_make_brief_exact_json', 'test_make_brief_roundtrips_fields', 'test_check_field_missing_and_short'] common ['make_brief']
+  note: hard-dev.json hd-out-type-definition-01 out failing ['test_dot_products', 'test_magnitude_sq_values'] common ['dot']

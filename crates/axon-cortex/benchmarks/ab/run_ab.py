@@ -722,6 +722,9 @@ def run_arm_b(task, generator, ws, cfg):
         # What each candidate's generator was shown: `view` or `body_only`
         # with the reason (PREREG-gencontext.md); absent from older rows.
         "generator_context": verdict.get("generator_context"),
+        # The visible evidence and per-proposal visible verdicts the early
+        # stop reads (PREREG-earlystop.md); absent from older rows.
+        "early_stop": verdict.get("early_stop"),
     }
     return given, open(p).read(), row
 
