@@ -244,6 +244,14 @@ pub enum EpisodeOutcome {
     /// plainly rather than dressed as a failure: the system is not broken, it
     /// is out of scope without a generator.
     NeedsInput { steps: usize, what: String },
+    /// The episode stopped asking its generator because the visible verdict
+    /// was not moving (`crate::earlystop`), or the run stopped before any
+    /// episode because no single function can account for the visible
+    /// failures. A suspicion that the defect is beyond a one-body edit, not a
+    /// proof: more budget MIGHT still have finished it, which is why it is
+    /// not `BudgetExhausted`, and the generator was not at fault, which is why
+    /// it is not `NoProgress`.
+    OutOfScopeSuspected { steps: usize, reason: String },
 }
 
 /// What the visible checks said about ONE rejected proposal, kept for the early
@@ -282,6 +290,10 @@ pub struct CandidateProgress {
     /// Pause before asking the generator for proposal number `limit + 1`.
     /// `None` runs to the step budget, as an unpaused episode does.
     pub proposal_limit: Option<usize>,
+    /// Stop, instead of asking for the next proposal, once this many compiled
+    /// proposals in a row left the visible verdict unchanged
+    /// ([`crate::earlystop`]). `None` and `Some(0)` never stop.
+    pub inert_limit: Option<usize>,
     seen: Vec<(String, String, usize)>,
     ctx: crate::select::SelectionContext,
     rejected: Vec<crate::generate::RejectedAttempt>,
@@ -870,10 +882,39 @@ impl Runner {
                 }
             };
 
-            // THE PAUSE, at the one point an episode spends a proposal. The
-            // previous proposal has been adjudicated and, if rejected, undone,
-            // so the file is back at the candidate's base and nothing is left
-            // half-decided. The step is handed back: it has not been taken.
+            // THE EARLY STOP, at the one point an episode spends a proposal and
+            // before the pause: the previous proposal has been adjudicated and
+            // undone and the next step would be a model call. Read only from
+            // what the visible checks said about this candidate's own rejected
+            // proposals.
+            if let CortexAction::PatchSymbolBody { proposed_body, .. } = &action {
+                if proposed_body.is_empty() {
+                    if let (Some(limit), Some(base)) =
+                        (progress.inert_limit, progress.baseline_failing.as_ref())
+                    {
+                        let visible: Vec<String> = base
+                            .iter()
+                            .filter(|n| *n != hidden_check)
+                            .cloned()
+                            .collect();
+                        if crate::earlystop::should_stop(limit, &visible, &progress.attempts) {
+                            progress.steps = step - 1;
+                            return EpisodeOutcome::OutOfScopeSuspected {
+                                steps: step - 1,
+                                reason: crate::earlystop::unmoved_reason(
+                                    &target.symbol,
+                                    limit,
+                                    &visible,
+                                ),
+                            };
+                        }
+                    }
+                }
+            }
+            // THE PAUSE, at the same point. The file is back at the candidate's
+            // base and nothing is left half-decided. The step is handed back: it
+            // has not been taken. The early stop is read first, so a candidate
+            // that must stop is not paused for a resumption that would stop it.
             if let CortexAction::PatchSymbolBody { proposed_body, .. } = &action {
                 if proposed_body.is_empty()
                     && progress

@@ -28,6 +28,7 @@ pub mod action;
 #[cfg(feature = "ai")]
 pub mod ai;
 pub mod audit;
+pub mod earlystop;
 pub mod episode;
 pub mod generate;
 pub mod label;
