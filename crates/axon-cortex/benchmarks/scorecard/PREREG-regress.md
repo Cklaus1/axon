@@ -39,21 +39,60 @@ default budget 8. The binaries are built at HEAD: axon with
 recorded in each row's `meta`. Micode is resolved on PATH, and the ranker key
 comes from `OPENROUTER_API_KEY`.
 
-## Decision rule (fixed now)
+## Decision rule (amended; see "Amendment 1")
 
 The run is added with `scorecard.py add --set dev --agent cortex`. Its
 incumbent is the latest earlier dev cortex run on this configuration and corpus
-that was not itself judged worse. The run gets a RECEIPT iff:
+that was not itself judged worse. Checked in this order, the first that applies
+decides:
 
-1. it has 0 false successes, and
-2. `compare INCUMBENT RUN` names no first separating criterion that favours
-   the incumbent. The criteria come in the scorecard's strict order: false
-   successes, verified (exact McNemar, p < 0.05), proposals per verified fix,
-   cost per verified fix, wall seconds per verified fix, truth first.
+1. The run has any false success: FAIL.
+2. Verified is worse: fewer tasks are verified only by the run than only by
+   the incumbent, with exact McNemar p < 0.05 over the paired tasks: FAIL.
+3. Effort, over the tasks BOTH runs verified, one metric at a time in this
+   order: proposals per task, wall seconds per task, cost per task. For each
+   metric, take the per-task difference (run minus incumbent). Leave out a
+   pair where either value is missing, and drop ties. Then run an exact
+   two-sided sign test (binomial, p = 1/2) on the remaining pairs. The run is
+   worse on that metric iff more pairs are larger for the run than for the
+   incumbent and p < 0.05. The first metric that is significantly worse:
+   FAIL. A metric where the run is significantly better does not stop the
+   check; the later metrics are still tested.
+4. Otherwise: PASS (a RECEIPT). The effort deltas and their p values are
+   reported, and they do not gate.
 
-Otherwise the change is judged WORSE and `receipt --check` fails at that
-digest. Every run stays in the history, including runs judged worse and
-repeats made with `--again`, and the README report lists each of them.
+`scorecard.py` implements this rule in its judge path (`judge` returns it as
+`receipt_rule`, `compare` prints it). Each run in the README's receipt table
+is judged by it against its incumbent. The `compare` strict order (false
+successes, verified, then the untested per-fix ratios and truth first) stays
+as a description of the two runs. It is not the receipt rule.
+
+On FAIL, `receipt --check` fails at that digest. Every run stays in the
+history, including runs judged worse and repeats made with `--again`, and the
+README report lists each of them.
+
+## Amendment 1 (2026-10-12), written after seeing run 3
+
+The first rule was "`compare INCUMBENT RUN` names no first separating criterion
+that favours the incumbent". That let an UNTESTED criterion fail a receipt. It
+was written before any run under this file. This amendment was written after
+three runs:
+
+1. at 1fd4b31b: 59/60 verified, 1 false success (drop-stmt-02). Judged worse.
+2. at 3503e434: 60/60, 0 false successes, 1.08 proposals per fix. Passed and
+   became the incumbent.
+3. at 2c837a12 (run 2's code plus 1c7543dd, whose only code change makes
+   `sweep_stale_visible_copies` skip a copy whose pid is this process or a live
+   one): 60/60, 0 false successes, 1.17 proposals per fix (70 against 65).
+   Judged WORSE on proposals per verified fix alone, with no test.
+
+Run 3 is why the rule changed. Under the first rule, a neutral change fails on
+noise, and the incumbent ratchets to the luckiest run. The operator set the
+priority order (correctness, then speed, then cost), so effort regressions
+stay catchable, now only when a test shows them. All three runs are re-judged
+under the amended rule, and the verdicts are reported. A `regress --again` at
+run 3's code was started under the first rule and cancelled after 1 of 60
+rows ($0.0002, committed in b1de8e7e). It is not in the scorecard.
 
 ## Spend cap
 
