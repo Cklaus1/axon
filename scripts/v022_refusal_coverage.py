@@ -1570,6 +1570,12 @@ _GCX = (_CTX + "; generator context (generate.rs GenContext, rank.rs RankView::i
         "only by the hidden check on the patched file, and the visible copy runs through the "
         "registered CheckExecutor (tests) or `axon check` (no program execution); no protected "
         "crate names visible_run, visible_feedback, GenContext or RankView (grep crates/*/src)")
+_VIS = (_CTX + "; runner.rs sweep_stale_visible_copies/visible_copy_owner_alive: a refusal here only "
+        "KEEPS a `.cortex-visible-<pid>-<name>` file beside the target (its pid is this process or "
+        "a live one, or the name does not parse) instead of deleting it; no snapshot, check, "
+        "verdict, exit code or patch reads such a copy (snapshots hash only the target path and "
+        "every check names one file), so keeping one changes nothing but disk; no protected "
+        "crate names either fn (grep crates/*/src)")
 _EXE = ("NOT ON THE PROTECTED ROUTE (checkable): a registered EXECUTOR. A protected request's "
         "executable is the qualified guest interpreter (submit.rs: LINUX_GUEST_AXON_ID, pinned by "
         "the qualification's guest_axon_sha256); the registry's executors are read only by "
@@ -2632,6 +2638,12 @@ EXEMPT += [
     ('crates/axon-cortex/src/runner.rs',
      '.take(MAX_DIAGNOSTICS)',
      _GCX),
+    ('crates/axon-cortex/src/runner.rs',
+     'fn visible_copy_owner_alive(pid: &str) -> bool {',
+     _VIS),
+    ('crates/axon-cortex/src/runner.rs',
+     'let Ok(pid) = libc::pid_t::try_from(pid) else {',
+     _VIS),
     ('crates/axon-cortex/src/rank.rs',
      'fn mentions(text: &str, name: &str) -> bool {',
      _RNK),
