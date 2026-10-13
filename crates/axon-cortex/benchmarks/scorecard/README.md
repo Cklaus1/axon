@@ -100,8 +100,30 @@ one JSON object per task with `id`, `verified`, `false_success`,
 `truth_symbol` (must equal the corpus's `symbol`), `attempted` (list or
 null), and optionally `cost_estimated`.
 
+`add` also records the run's `repair_digest`: the repair digest (below) at
+the commit the rows were produced at (`cortex_commit`, else the rows' `meta`
+commit), read with `git show COMMIT:PATH`; null when no commit is known.
+
+## A change to the repair path needs a receipt
+
+```sh
+python3 scorecard.py receipt --check     # offline, no key; in scripts/gate.sh
+. /root/.openrouter.env                  # OPENROUTER_API_KEY, for the policy's ranker
+python3 scorecard.py regress             # the paid dev run: build, run_ab.py --arm B, add, report, compare
+python3 scorecard.py waive --reason "comments only in generate.rs"   # no behaviour change
+```
+
+`regress` refuses a dirty tree (the rows record HEAD), a digest already
+measured (unless `--again`), a missing key or transport, and a
+`PREREG-regress.md` not committed at HEAD. Its rows go to
+`../ab/results-regress/DATE-COMMIT/`; it adds the run paired against the
+incumbent and the plain agent on the same model, regenerates this page and
+prints the comparison and the receipt verdict. `waive` refuses an empty
+reason, a digest already waived and a digest a run already measured.
+
 `python3 scorecard.py selftest` checks the statistics, the recomputation, the
-refusals and the report's determinism on fixtures.
+refusals, the report's determinism, the repair digest and the receipt rule on
+fixtures.
 
 ## Runs
 
@@ -166,6 +188,31 @@ Per set, the latest cortex run (B) against the earliest cortex run on the same c
 | dev | 7. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 4. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` (baseline) | 0 → 0 | 56/60 → 56/60 (p = 1) | 3.55 → 2.14 | $0.001091* → $0.001187* | 11.3s → 8.7s | 26/60 → 59/60 | proposals / fix: B (latest), untested |
 | heldout | 14. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext` | 9. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` (earliest cortex) | 0 → 0 | 41/47 → 47/47 (p = 0.0312) | 4.93 → 1.98 | $0.001486* → $0.00132* | 16.1s → 6.4s | 25/47 → 25/47 | verified: B (latest) |
 | once | 13. `once-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5-gencontext` | 12. `once-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext` (earliest cortex) | 0 → 0 | 30/30 → 30/30 (p = 1) | 1.13 → 1.00 | $0.000521* → $0.000735* | 2.5s → 3.0s | 22/30 → 30/30 | proposals / fix: B (latest), untested |
+
+## Repair-path receipts
+
+`python3 scorecard.py receipt --check` (in `scripts/gate.sh`, the gate and `--fast`) passes only when this history holds, for the REPAIR DIGEST of the working tree, a dev run below that is not judged worse than its incumbent, or a waiver. The latest run at a digest decides; a waiver counts only for a digest no run measured. `python3 scorecard.py regress` produces the run, `python3 scorecard.py waive --reason TEXT` the waiver (see docs/CORTEX.md, "Repair-path receipts").
+
+The repair digest is sha256 over (path, content), in path order, of the files matching:
+
+- `crates/axon-cortex/src/*.rs`
+- `crates/axon-cortex/src/bin/*.rs`
+- `crates/axon-cortex/benchmarks/drivers/*.sh`
+
+except:
+
+- `crates/axon-cortex/src/ai.rs`: the in-process generator, reached only through `--generator ai:MODEL`; the policy and every benchmark generate through `cmd:` and a driver script
+- `crates/axon-cortex/src/label.rs`: writes the `--label-log` row (off unless --label-log / CORTEX_LABEL_LOG is set); it decides no candidate, verdict, exit code or `--json` field
+
+Receipt config (the policy in force, audit off): model `claude-haiku-5-5`, transport `micode`, ranker `openrouter:anthropic/claude-haiku-5.5`, audit `off`, walk `breadth`, candidates `6`, budget `8`; corpus `crates/axon-cortex/benchmarks/ab/corpus.json` (sha256 3c7bc7bd4ea106f7). Each run is judged against the incumbent before it, in the strict order; a run becomes the incumbent unless it is worse (a false success, or a first separating criterion that favours the incumbent).
+
+| # | run | repair digest | incumbent (A) | verified | false successes | proposals / fix | first criterion that separates them | receipt |
+|---|---|---|---|---|---|---|---|---|
+| 7 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | not recorded (added before the receipt rule) | - (first) | 56/60 | 0 | 2.14 | - | first of the chain |
+
+Waivers (a digest declared to change no behaviour, with the reason):
+
+None.
 
 ## Held-out and once-set use
 

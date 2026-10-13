@@ -7,6 +7,9 @@
     python3 scorecard.py report [--check]
     python3 scorecard.py compare RUN_A RUN_B [--json]
     python3 scorecard.py selftest
+    python3 scorecard.py receipt [--check]
+    python3 scorecard.py waive --reason TEXT [--date YYYY-MM-DD]
+    python3 scorecard.py regress [--cap-usd 0.50] [--parallel 3] [--again] [--notes TEXT]
 
 Every metric is recomputed here from the per-task rows file, never copied from
 prose. Rows written by `../ab/run_ab.py` are judged by `../ab/analyse.py`'s
@@ -19,15 +22,25 @@ pairings) before it writes README.md and progress.svg, so a rows file edited
 after `add` cannot leave a stale figure in the history. `report --check`
 writes nothing and exits 1 if either file is out of date.
 
+`receipt --check` passes only when the history holds, for the working tree's
+REPAIR DIGEST (sha256 over the files that decide what `cortex repair`
+proposes, accepts or reports: REPAIR_SOURCES minus REPAIR_EXCLUDED), a dev
+run on the receipt config not judged worse than its incumbent, or a waiver.
+`regress` produces that run (paid); `waive` the waiver (no behaviour change).
+
 Standard library only.
 """
 import argparse
 import datetime
+import fnmatch
 import hashlib
 import json
 import math
 import os
+import posixpath
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
@@ -57,6 +70,36 @@ NORMALIZED = ("id", "verified", "false_success", "proposals", "cost_usd", "wall_
               "truth_symbol", "attempted")
 # The fields of a once-set candidate's identity: scored at most once.
 ONCE_KEY = ("cortex_sha256", "model", "transport", "ranker", "walk")
+
+# THE REPAIR PATH: the files whose content decides what `cortex repair`
+# proposes, accepts or reports. Their REPAIR DIGEST (`digest_files`) is
+# recorded on every run `add` scores, and `receipt --check` (in
+# scripts/gate.sh) refuses a digest with no scored dev run and no waiver.
+# Directories with a filename pattern, not a list of names, so a new module
+# is on the repair path until someone excludes it here with a reason.
+# Justification of each inclusion: docs/CORTEX.md, "Repair-path receipts".
+REPAIR_SOURCES = (("crates/axon-cortex/src", "*.rs"),
+                  ("crates/axon-cortex/src/bin", "*.rs"),
+                  ("crates/axon-cortex/benchmarks/drivers", "*.sh"))
+REPAIR_EXCLUDED = {
+    "crates/axon-cortex/src/ai.rs":
+        "the in-process generator, reached only through `--generator ai:MODEL`; the "
+        "policy and every benchmark generate through `cmd:` and a driver script",
+    "crates/axon-cortex/src/label.rs":
+        "writes the `--label-log` row (off unless --label-log / CORTEX_LABEL_LOG is set); "
+        "it decides no candidate, verdict, exit code or `--json` field",
+}
+WAIVER_SCHEMA = "cortex-scorecard-waiver/1"
+WAIVER_KEYS = ("date", "repair_digest", "reason")
+# The receipt run: the policy in force, audit off (review only: it never
+# changes the verdict, exit code or file; every dev cortex run so far ran it
+# off), `run_ab.py`'s --candidates and cortex's default --budget, on the dev
+# corpus.
+POLICY = "crates/axon-cortex/benchmarks/promotion/policy/cortex-policy.json"
+RECEIPT_CORPUS = "crates/axon-cortex/benchmarks/ab/corpus.json"
+RECEIPT_CANDIDATES = 6
+RECEIPT_BUDGET = 8
+PREREG_REGRESS = "crates/axon-cortex/benchmarks/scorecard/PREREG-regress.md"
 
 
 class Refused(Exception):
@@ -106,15 +149,302 @@ def load_corpus(path):
     return truth
 
 
-def load_history(path):
+def load_records(path):
+    """(runs, waivers): the two kinds of line `history.jsonl` holds."""
     if not os.path.exists(path):
-        return []
-    recs = read_jsonl(path)
-    for r in recs:
-        if r.get("schema") != SCHEMA:
+        return [], []
+    runs, waivers = [], []
+    for r in read_jsonl(path):
+        if r.get("schema") == SCHEMA:
+            runs.append(r)
+        elif r.get("schema") == WAIVER_SCHEMA:
+            missing = [k for k in WAIVER_KEYS if not r.get(k)]
+            if missing:
+                raise Refused(f"{path}: a waiver record is missing {missing}")
+            waivers.append(r)
+        else:
             raise Refused(f"{path}: run {r.get('run_id')} has schema {r.get('schema')!r}, "
-                          f"expected {SCHEMA}")
-    return recs
+                          f"expected {SCHEMA} or {WAIVER_SCHEMA}")
+    return runs, waivers
+
+
+def load_history(path):
+    """The scored runs only (waivers are `load_records`' second list)."""
+    return load_records(path)[0]
+
+
+# ---------------------------------------------------------------- repair path
+
+def is_repair_path(rel):
+    d, base = posixpath.split(rel)
+    return rel not in REPAIR_EXCLUDED and any(
+        d == sd and fnmatch.fnmatchcase(base, pat) for sd, pat in REPAIR_SOURCES)
+
+
+def digest_files(files):
+    """sha256 over (path, content) of {repo-relative path: bytes}, in sorted path order."""
+    h = hashlib.sha256()
+    for rel in sorted(files):
+        content = files[rel]
+        h.update(f"{rel}\0{len(content)}\0".encode())
+        h.update(content)
+    return h.hexdigest()
+
+
+def worktree_repair_files(root):
+    """The repair-path files as they are on disk under `root`."""
+    out = {}
+    for sd, _ in REPAIR_SOURCES:
+        d = os.path.join(root, sd)
+        if not os.path.isdir(d):
+            continue
+        for name in os.listdir(d):
+            rel = f"{sd}/{name}"
+            if is_repair_path(rel) and os.path.isfile(os.path.join(d, name)):
+                with open(os.path.join(d, name), "rb") as fh:
+                    out[rel] = fh.read()
+    return out
+
+
+def git(root, *args):
+    p = subprocess.run(["git", "-C", root, *args], capture_output=True)
+    if p.returncode != 0:
+        raise Refused(f"git {' '.join(args)} failed: {p.stderr.decode(errors='replace').strip()}")
+    return p.stdout
+
+
+def commit_repair_files(root, commit):
+    """The repair-path files as they are at `commit` (`git show COMMIT:PATH`)."""
+    git(root, "rev-parse", "--verify", "--quiet", f"{commit}^{{commit}}")
+    names = git(root, "ls-tree", "-r", "--name-only", commit, "--",
+                *sorted({sd for sd, _ in REPAIR_SOURCES})).decode().splitlines()
+    return {rel: git(root, "show", f"{commit}:{rel}") for rel in names if is_repair_path(rel)}
+
+
+def repair_digest(root, commit=None):
+    """The repair digest of the working tree (`commit` None) or of a commit."""
+    files = worktree_repair_files(root) if commit is None else commit_repair_files(root, commit)
+    if not files:
+        raise Refused(f"no repair-path file found {'on disk' if commit is None else 'at ' + commit}"
+                      f" under {root}")
+    return digest_files(files)
+
+
+def receipt_spec(root=ROOT):
+    """The configuration and corpus a receipt run is scored on: the policy in
+    force (`../promotion/policy/cortex-policy.json`) with the audit off, as
+    `run_ab.py --ranker` runs it, on the dev corpus."""
+    with open(os.path.join(root, POLICY)) as fh:
+        pol = json.load(fh)
+    cfg = {"model": pol["model"], "transport": pol["transport"], "ranker": pol["ranker"],
+           "audit": "off", "walk": pol["walk"], "candidates": RECEIPT_CANDIDATES,
+           "budget": RECEIPT_BUDGET}
+    return {"config": cfg, "corpus": os.path.join(root, RECEIPT_CORPUS)}
+
+
+def receipt_chain(runs, norms, spec):
+    """Every dev cortex run on the receipt config and corpus, in date order,
+    each judged (`judge`) against the incumbent before it. A run becomes the
+    incumbent unless it is worse: a false success, or a first separating
+    criterion that favours the incumbent. The first run of the chain has no
+    incumbent."""
+    corpus_sha = sha256_file(spec["corpus"])
+    chain, inc = [], None
+    for r in ordered(runs):
+        if (r["set"], r["agent"], r["corpus"]["sha256"]) != ("dev", "cortex", corpus_sha):
+            continue
+        if any(r["config"][k] != v for k, v in spec["config"].items()):
+            continue
+        c = None if inc is None else judge(runs, norms, inc["run_id"], r["run_id"])
+        first = c and c["first_separating"]
+        worse = r["metrics"]["false_success"] > 0 or bool(first and first["better"] == "A")
+        chain.append({"run": r, "incumbent": inc and inc["run_id"], "compare": c, "worse": worse})
+        if not worse:
+            inc = r
+    return chain
+
+
+def receipt(runs, waivers, norms, digest, spec):
+    """Does the history hold a receipt for repair digest `digest`? The latest
+    chain run at that digest decides; a waiver counts only when no run at that
+    digest exists (`waive` refuses one then)."""
+    at = [e for e in receipt_chain(runs, norms, spec) if e["run"].get("repair_digest") == digest]
+    ws = [w for w in waivers if w["repair_digest"] == digest]
+    if at:
+        return {"digest": digest, "pass": not at[-1]["worse"], "entry": at[-1], "waiver": None}
+    return {"digest": digest, "pass": bool(ws), "entry": None, "waiver": ws[-1] if ws else None}
+
+
+SCRIPT = "crates/axon-cortex/benchmarks/scorecard/scorecard.py"
+
+
+def receipt_message(st):
+    d = st["digest"][:16]
+    e, w = st["entry"], st["waiver"]
+    if e:
+        r = e["run"]
+        f = e["compare"] and e["compare"]["first_separating"]
+        how = ("first run of the receipt config: no incumbent" if not e["incumbent"] else
+               f"against incumbent {e['incumbent']}: first criterion that separates them: "
+               + ("none" if not f else f"{f['criterion']} -> "
+                  + ("candidate" if f["better"] == "B" else "INCUMBENT")))
+        fs = r["metrics"]["false_success"]
+        if st["pass"]:
+            return (f"receipt: PASS. Repair digest {d} has dev run {r['run_id']} "
+                    f"({r['metrics']['verified']}/{r['metrics']['n']} verified, {fs} false "
+                    f"successes), {how}.")
+        return (f"receipt: FAIL. The latest dev run at repair digest {d}, {r['run_id']}, is "
+                f"judged WORSE ({fs} false successes; {how}). Fix or revert the repair-path "
+                f"change and produce a new receipt with `python3 {SCRIPT} regress` (a paid dev "
+                "run); the worse run stays in the history. A waiver cannot override a "
+                "measured run.")
+    if w:
+        return (f"receipt: PASS. Repair digest {d} is waived ({w['date']}): {w['reason']}")
+    return (f"receipt: FAIL. No receipt for repair digest {d}: the history has no dev run "
+            "and no waiver at this digest, so the repair-path files (scorecard README, "
+            "\"Repair-path receipts\") differ from every receipted state. Produce one:\n"
+            f"  python3 {SCRIPT} regress\n"
+            "      a paid dev run (`. /root/.openrouter.env` first; about six cents), scored "
+            "against the incumbent; or, when the change cannot alter what `cortex repair` "
+            "proposes, accepts or reports (comments, docs):\n"
+            f"  python3 {SCRIPT} waive --reason \"WHY there is no behaviour change\"\n"
+            "then commit history.jsonl (with the rows, README.md and progress.svg after "
+            f"`python3 {SCRIPT} report`).")
+
+
+def waive(history, root, *, reason, digest=None, date=None):
+    reason = " ".join((reason or "").split())
+    if not reason:
+        raise Refused("--reason is required: say why this change cannot alter what "
+                      "`cortex repair` proposes, accepts or reports")
+    date = date or datetime.date.today().isoformat()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+        raise Refused("--date must be YYYY-MM-DD")
+    digest = digest or repair_digest(root)
+    runs, waivers = load_records(history)
+    for w in waivers:
+        if w["repair_digest"] == digest:
+            raise Refused(f"repair digest {digest[:16]} is already waived ({w['date']})")
+    for r in runs:
+        if r.get("repair_digest") == digest and r["agent"] == "cortex":
+            raise Refused(f"repair digest {digest[:16]} was measured by run {r['run_id']}: a "
+                          "waiver cannot replace a measurement")
+    rec = {"schema": WAIVER_SCHEMA, "date": date, "repair_digest": digest,
+           "reason": reason.strip()}
+    with open(history, "a") as fh:
+        fh.write(json.dumps(rec) + "\n")
+    return rec
+
+
+def regress(history, root, *, cap_usd=0.50, parallel=3, again=False, date=None, notes=""):
+    """The paid dev run that produces a receipt, end to end: build both
+    binaries at HEAD, `run_ab.py --arm B` on the dev corpus with the receipt
+    config, `add --set dev` paired against the incumbent (and the plain agent
+    on the same model), `report`, then the verdict. Returns the receipt status."""
+    if git(root, "status", "--porcelain", "--untracked-files=no").strip():
+        raise Refused("tracked files have uncommitted changes: commit them first (run_ab.py "
+                      "records HEAD as the commit the rows were produced at)")
+    head = git(root, "rev-parse", "HEAD").decode().strip()
+    try:
+        git(root, "cat-file", "-e", f"HEAD:{PREREG_REGRESS}")
+    except Refused:
+        raise Refused(f"{PREREG_REGRESS} is not committed at HEAD: a paid run is "
+                      "preregistered before its first row")
+    digest = repair_digest(root, head)
+    if repair_digest(root) != digest:
+        raise Refused("the repair-path files on disk differ from HEAD (an untracked file?): "
+                      "commit or remove it first")
+    date = date or datetime.date.today().isoformat()
+    spec = receipt_spec(root)
+    cfg = spec["config"]
+    runs, _ = load_records(history)
+    norms = verify(runs, root)
+    chain = receipt_chain(runs, norms, spec)
+    prior = [e["run"]["run_id"] for e in chain if e["run"].get("repair_digest") == digest]
+    if prior and not again:
+        raise Refused(f"repair digest {digest[:16]} was already measured by {prior}; pass "
+                      "--again to run it once more (every run stays in the history)")
+    import run_ab  # noqa: E402  (lazy: only this command drives the harness)
+    if run_ab.CANDIDATES != str(RECEIPT_CANDIDATES):
+        raise Refused(f"run_ab.py passes --candidates {run_ab.CANDIDATES}, the receipt config "
+                      f"says {RECEIPT_CANDIDATES}: make them agree")
+    if cfg["ranker"].split(":")[0] in ("openrouter", "decision") and \
+            not os.environ.get("OPENROUTER_API_KEY"):
+        raise Refused(f"ranker {cfg['ranker']} needs OPENROUTER_API_KEY: "
+                      "`. /root/.openrouter.env` first")
+    if not shutil.which(cfg["transport"]):
+        raise Refused(f"transport {cfg['transport']} is not on PATH")
+
+    target = os.environ.get("CARGO_TARGET_DIR") or os.path.join(root, "target")
+    for cmd in (["cargo", "build", "-q", "-p", "axon-core", "--no-default-features",
+                 "--bin", "axon"],
+                ["cargo", "build", "-q", "-p", "axon-cortex", "--features", "ai",
+                 "--bin", "cortex"]):
+        print("$ " + " ".join(cmd), file=sys.stderr, flush=True)
+        if subprocess.run(cmd, cwd=root).returncode != 0:
+            raise Refused(f"build failed: {' '.join(cmd)}")
+    axon, cortex = os.path.join(target, "debug", "axon"), os.path.join(target, "debug", "cortex")
+
+    # One directory per (date, commit); --again moves on to -2, -3, ... once a
+    # directory's rows are in the history. Rows not yet added are resumed.
+    scored = {r["rows_sha256"] for r in runs}
+    base = os.path.join(BENCH, "ab", "results-regress", f"{date}-{head[:12]}")
+    k, out_dir = 1, base
+    while os.path.exists(os.path.join(out_dir, "b.jsonl")) and \
+            sha256_file(os.path.join(out_dir, "b.jsonl")) in scored:
+        k += 1
+        out_dir = f"{base}-{k}"
+    rows, log = os.path.join(out_dir, "b.jsonl"), os.path.join(out_dir, "b.log")
+    os.makedirs(out_dir, exist_ok=True)
+    cmd = [sys.executable, "-B", os.path.join(BENCH, "ab", "run_ab.py"), spec["corpus"],
+           "--arm", "B", "--generator", "real", "--transport", cfg["transport"],
+           "--model", cfg["model"], "--ranker", cfg["ranker"], "--out", rows,
+           "--parallel", str(parallel), "--reserve-usd", "0.10", "--spend-root", out_dir,
+           "--cap-usd", str(cap_usd)]
+    print("$ " + " ".join(cmd), file=sys.stderr, flush=True)
+    with open(log, "a") as lf:
+        p = subprocess.Popen(cmd, cwd=root, stderr=subprocess.PIPE, text=True,
+                             env=dict(os.environ, AXON_BIN=axon, CORTEX_BIN=cortex))
+        for line in p.stderr:
+            sys.stderr.write(line)
+            lf.write(line)
+        rc = p.wait()
+    truth = load_corpus(spec["corpus"])
+    got = {json.loads(line)["id"] for line in open(rows) if line.strip()} \
+        if os.path.exists(rows) else set()
+    missing = sorted(set(truth) - got)
+    if rc != 0 or missing:
+        raise Refused(f"run_ab.py exited {rc} with {len(missing)} of {len(truth)} tasks "
+                      f"missing ({', '.join(missing[:5])}{' ...' if len(missing) > 5 else ''}): "
+                      f"nothing added. `regress` again resumes {repo_rel(out_dir, root)}")
+
+    inc = next((e["run"]["run_id"] for e in reversed(chain) if not e["worse"]), None)
+    corpus_sha = sha256_file(spec["corpus"])
+    plain = [r["run_id"] for r in ordered(runs)
+             if (r["set"], r["agent"], r["corpus"]["sha256"]) == ("dev", "plain", corpus_sha)
+             and r["config"]["model"] == cfg["model"]
+             and r["config"]["transport"] == cfg["transport"]]
+    spend = run_ab.spent(out_dir)
+    rec = add(history, root, set_="dev", agent="cortex", rows=rows, corpus=spec["corpus"],
+              config=dict(cfg, cortex_commit=head, cortex_sha256=sha256_file(cortex)),
+              baselines=[b for b in (inc, plain[-1] if plain else None) if b],
+              run_id=default_run_id("dev", date, "cortex", cfg) + f"-regress-{head[:12]}"
+              + (f"-{k}" if k > 1 else ""), date=date,
+              notes=(f"`scorecard.py regress` at {head[:12]}: the receipt run for repair digest "
+                     f"{digest[:16]} (policy config, audit off), --parallel {parallel}, cap "
+                     f"${cap_usd:.2f}, spend {analyse.usd(spend, 4)} (estimated). "
+                     + notes).strip())
+    report(history, root, LOCRANK)
+    runs, waivers = load_records(history)
+    norms = verify(runs, root)
+    if inc:
+        print_compare(judge(runs, norms, inc, rec["run_id"]))
+        print()
+    st = receipt(runs, waivers, norms, digest, spec)
+    print(receipt_message(st))
+    print(f"now commit {repo_rel(out_dir, root)}/ with history.jsonl, README.md and "
+          "progress.svg")
+    return st
 
 
 # ---------------------------------------------------------------- rows
@@ -382,7 +712,9 @@ def default_run_id(set_, date, agent, cfg):
 
 
 def add(history, root, *, set_, agent, rows, corpus, config, notes, baselines=(),
-        run_id=None, date=None):
+        run_id=None, date=None, digest_of=None):
+    """`digest_of(commit)` gives the repair digest at a commit; default
+    `repair_digest(root, commit)` (git)."""
     if set_ not in SETS:
         raise Refused(f"--set must be one of {SETS}")
     if agent not in AGENTS:
@@ -429,8 +761,15 @@ def add(history, root, *, set_, agent, rows, corpus, config, notes, baselines=()
         _, base_norm = run_inputs(by_id[b], root)
         paired.append({"baseline_run_id": b, "paired": pair(norm, base_norm)})
 
+    # The commit the rows were produced at: the config's, else the one
+    # run_ab.py stamped in every row's meta. No commit, no digest (null).
+    commit = cfg["cortex_commit"] or (row_meta(raw).get("commit")
+                                      if all(is_run_ab_row(r) for r in raw) else None)
+    digest = None
+    if commit:
+        digest = digest_of(commit) if digest_of else repair_digest(root, commit)
     rec = {"schema": SCHEMA, "run_id": run_id, "date": date, "set": set_, "agent": agent,
-           "config": cfg,
+           "config": cfg, "repair_digest": digest,
            "corpus": {"path": corpus_rel, "sha256": corpus_sha, "n": len(truth)},
            "rows": rows_rel, "rows_sha256": rows_sha,
            "metrics": compute_metrics(norm, agent),
@@ -677,8 +1016,30 @@ one JSON object per task with `id`, `verified`, `false_success`,
 `truth_symbol` (must equal the corpus's `symbol`), `attempted` (list or
 null), and optionally `cost_estimated`.
 
+`add` also records the run's `repair_digest`: the repair digest (below) at
+the commit the rows were produced at (`cortex_commit`, else the rows' `meta`
+commit), read with `git show COMMIT:PATH`; null when no commit is known.
+
+## A change to the repair path needs a receipt
+
+```sh
+python3 scorecard.py receipt --check     # offline, no key; in scripts/gate.sh
+. /root/.openrouter.env                  # OPENROUTER_API_KEY, for the policy's ranker
+python3 scorecard.py regress             # the paid dev run: build, run_ab.py --arm B, add, report, compare
+python3 scorecard.py waive --reason "comments only in generate.rs"   # no behaviour change
+```
+
+`regress` refuses a dirty tree (the rows record HEAD), a digest already
+measured (unless `--again`), a missing key or transport, and a
+`PREREG-regress.md` not committed at HEAD. Its rows go to
+`../ab/results-regress/DATE-COMMIT/`; it adds the run paired against the
+incumbent and the plain agent on the same model, regenerates this page and
+prints the comparison and the receipt verdict. `waive` refuses an empty
+reason, a digest already waived and a digest a run already measured.
+
 `python3 scorecard.py selftest` checks the statistics, the recomputation, the
-refusals and the report's determinism on fixtures.
+refusals, the report's determinism, the repair digest and the receipt rule on
+fixtures.
 """
 
 
@@ -751,7 +1112,57 @@ def trend_lines(runs, norms, idx):
     return out
 
 
-def render_readme(recs, root, locdir, norms):
+def receipt_lines(runs, norms, idx, waivers, spec, root):
+    cfg = spec["config"]
+    out = ["", "## Repair-path receipts", "",
+           "`python3 scorecard.py receipt --check` (in `scripts/gate.sh`, the gate and "
+           "`--fast`) passes only when this history holds, for the REPAIR DIGEST of the "
+           "working tree, a dev run below that is not judged worse than its incumbent, or a "
+           "waiver. The latest run at a digest decides; a waiver counts only for a digest no "
+           "run measured. `python3 scorecard.py regress` produces the run, "
+           "`python3 scorecard.py waive --reason TEXT` the waiver (see docs/CORTEX.md, "
+           "\"Repair-path receipts\").", "",
+           "The repair digest is sha256 over (path, content), in path order, of the files "
+           "matching:", ""]
+    out += [f"- `{sd}/{pat}`" for sd, pat in REPAIR_SOURCES]
+    out += ["", "except:", ""]
+    out += [f"- `{p}`: {why}" for p, why in sorted(REPAIR_EXCLUDED.items())]
+    corpus_rel = repo_rel(spec["corpus"], root)
+    out += ["", "Receipt config (the policy in force, audit off): "
+            + ", ".join(f"{k} `{v}`" for k, v in cfg.items())
+            + f"; corpus `{corpus_rel}` (sha256 {sha256_file(spec['corpus'])[:16]}). Each run "
+            "is judged against the incumbent before it, in the strict order; a run becomes "
+            "the incumbent unless it is worse (a false success, or a first separating "
+            "criterion that favours the incumbent).", "",
+            "| # | run | repair digest | incumbent (A) | verified | false successes | "
+            "proposals / fix | first criterion that separates them | receipt |",
+            "|---|---|---|---|---|---|---|---|---|"]
+    chain = receipt_chain(runs, norms, spec)
+    for e in chain:
+        r, m, c = e["run"], e["run"]["metrics"], e["compare"]
+        f = c and c["first_separating"]
+        sep = "-" if c is None else "none" if not f else (
+            f"{f['criterion']}: {'B (this run)' if f['better'] == 'B' else 'A (incumbent)'}")
+        ppv = "n/a" if m["proposals_per_verified"] is None else f"{m['proposals_per_verified']:.2f}"
+        dig = f"`{r['repair_digest'][:16]}`" if r.get("repair_digest") else \
+            "not recorded (added before the receipt rule)"
+        inc = f"{idx[e['incumbent']]}. `{e['incumbent']}`" if e["incumbent"] else "- (first)"
+        verdict = "**WORSE**" if e["worse"] else "first of the chain" if c is None else "not worse"
+        out.append(f"| {idx[r['run_id']]} | `{r['run_id']}` | {dig} | {inc} | "
+                   f"{m['verified']}/{m['n']} | {m['false_success']} | {ppv} | {sep} | {verdict} |")
+    if not chain:
+        out.append("| (no dev cortex run on the receipt config yet) | | | | | | | | |")
+    out += ["", "Waivers (a digest declared to change no behaviour, with the reason):", ""]
+    if waivers:
+        out += ["| date | repair digest | reason |", "|---|---|---|"]
+        out += [f"| {w['date']} | `{w['repair_digest'][:16]}` | {w['reason'].replace('|', '/')} |"
+                for w in waivers]
+    else:
+        out.append("None.")
+    return out
+
+
+def render_readme(recs, root, locdir, norms, waivers=(), spec=None):
     runs = ordered(recs)
     idx = {r["run_id"]: i + 1 for i, r in enumerate(runs)}
     out = [README_HEAD, "## Runs", "",
@@ -780,6 +1191,8 @@ def render_readme(recs, root, locdir, norms):
             bits.append(f"cortex commit {c['cortex_commit'][:12]}")
         if c["cortex_sha256"]:
             bits.append(f"cortex sha256 {c['cortex_sha256'][:16]}")
+        if r.get("repair_digest"):
+            bits.append(f"repair digest {r['repair_digest'][:16]}")
         if c["candidates"] is not None:
             bits.append(f"candidates {c['candidates']}")
         if c["budget"] is not None:
@@ -809,6 +1222,7 @@ def render_readme(recs, root, locdir, norms):
         out.append("| (no paired runs yet) | | | | | | | | |")
 
     out += trend_lines(runs, norms, idx)
+    out += receipt_lines(runs, norms, idx, waivers, spec or receipt_spec(root), root)
 
     out += ["", "## Held-out and once-set use", ""]
     held = [r for r in runs if r["set"] == "heldout"]
@@ -998,17 +1412,17 @@ def render_svg(recs):
     return "\n".join(o) + "\n"
 
 
-def render(history, root, locdir):
-    recs = load_history(history)
+def render(history, root, locdir, spec=None):
+    recs, waivers = load_records(history)
     norms = verify(recs, root)
-    readme = render_readme(recs, root, locdir, norms)
+    readme = render_readme(recs, root, locdir, norms, waivers, spec)
     svg = render_svg(recs)
     ET.fromstring(svg)  # must be well-formed XML
     return readme, svg
 
 
-def report(history, root, locdir, check=False):
-    readme, svg = render(history, root, locdir)
+def report(history, root, locdir, check=False, spec=None):
+    readme, svg = render(history, root, locdir, spec)
     d = os.path.dirname(os.path.abspath(history))
     stale = []
     for name, text in (("README.md", readme), ("progress.svg", svg)):
@@ -1057,6 +1471,14 @@ def selftest():
         with open(corpus, "w") as fh:
             json.dump({"meta": {}, "tasks": [{"id": i, "symbol": "f_" + i} for i in ids]}, fh)
         hist = os.path.join(root, "history.jsonl")
+        # Repair digests by commit, so `add` needs no git here (the git
+        # reader is tested on a real repository below).
+        D1, D2, D3, D4 = ("d1" * 32, "d2" * 32, "d3" * 32, "d4" * 32)
+        fake_digest = {"c" * 40: D1, "e" * 40: D3, "f" * 40: D4}.__getitem__
+
+        def add(*a, **k):
+            k.setdefault("digest_of", fake_digest)
+            return globals()["add"](*a, **k)
 
         def ab_row(i, arm, verified, fs=False, attempted=None, props=None, cost=0.5,
                    est=False, model="m1", transport="micode", wall=10.0):
@@ -1095,6 +1517,10 @@ def selftest():
         cfg_a = {"model": "m1", "transport": "micode", "ranker": "none", "audit": "off", "walk": None}
         cfg_b = {"model": "m1", "transport": "micode", "ranker": "openrouter:r/k", "audit": "off",
                  "walk": "breadth", "cortex_sha256": "ab" * 8, "cortex_commit": "c" * 40}
+        fx_spec = {"config": {k: check_config(cfg_b, "cortex")[k] for k in
+                              ("model", "transport", "ranker", "audit", "walk", "candidates",
+                               "budget")},
+                   "corpus": corpus}
         ra = add(hist, root, set_="dev", agent="plain", rows=pa, corpus=corpus, config=cfg_a,
                  notes="fixture A", run_id="A", date="2026-01-01")
         ma = ra["metrics"]
@@ -1108,6 +1534,8 @@ def selftest():
         mb = rb["metrics"]
         expect((mb["verified"], mb["false_success"]) == (5, 0), f"B counts {mb}")
         expect(mb["proposals_per_verified"] == 3.0, f"B proposals/fix {mb}")
+        expect(rb["repair_digest"] == D1 and ra["repair_digest"] == D1,
+               "add did not record the repair digest of the rows' commit")
         expect(mb["truth_first"] == 3, f"B truth_first {mb['truth_first']}")
         expect(mb["cost_is_estimate"] is True and mb["cost_per_verified"] == 0.132,
                f"B cost (generation + ranker) {mb}")
@@ -1171,9 +1599,9 @@ def selftest():
                 corpus=corpus, config=dict(cfg_b, ranker=f"r{k}"), notes=f"heldout {k}",
                 run_id=f"H{k}", date="2026-01-04")
 
-        stale1 = report(hist, root, None)
+        stale1 = report(hist, root, None, spec=fx_spec)
         texts = [open(os.path.join(root, f)).read() for f in ("README.md", "progress.svg")]
-        stale2 = report(hist, root, None)
+        stale2 = report(hist, root, None, spec=fx_spec)
         texts2 = [open(os.path.join(root, f)).read() for f in ("README.md", "progress.svg")]
         expect(stale1 == ["README.md", "progress.svg"] and stale2 == [] and texts == texts2,
                "report is not byte-identical on a second run")
@@ -1201,11 +1629,96 @@ def selftest():
                                          "better": "B", "tested": False},
                f"compare strict order {c['first_separating']}")
 
+        # Repair-path receipts. B (commit c*40 -> D1) is the first run of the
+        # receipt chain (dev, cortex, the fixture config and corpus).
+        def receipt_now(d):
+            runs_, wv_ = load_records(hist)
+            return receipt(runs_, wv_, verify(runs_, root), d, fx_spec)
+
+        st = receipt_now(D1)
+        expect(st["pass"] and st["entry"]["run"]["run_id"] == "B"
+               and "PASS" in receipt_message(st), "a matching receipt does not pass")
+        st = receipt_now(D2)
+        msg = receipt_message(st)
+        expect(not st["pass"] and "scorecard.py regress" in msg and "scorecard.py waive" in msg,
+               "a changed digest with no run passes, or the refusal names no command")
+        expect(refused(lambda: waive(hist, root, reason=" \n ", digest=D2), "--reason is required"),
+               "waiver without a reason not refused")
+        expect(refused(lambda: waive(hist, root, reason="x", digest=D1), "cannot replace"),
+               "waiver over a measured digest not refused")
+        waive(hist, root, reason="comments only |\n in generate.rs", digest=D2, date="2026-01-05")
+        expect(refused(lambda: waive(hist, root, reason="again", digest=D2), "already waived"),
+               "second waiver for one digest not refused")
+        st = receipt_now(D2)
+        expect(st["pass"] and st["waiver"]["reason"] == "comments only | in generate.rs",
+               "a waived digest does not pass")
+        report(hist, root, None, spec=fx_spec)
+        text = open(os.path.join(root, "README.md")).read()
+        expect(f"| 2026-01-05 | `{D2[:16]}` | comments only / in generate.rs |" in text,
+               "waiver missing from the README report")
+        expect("| 2 | `B` | `d1d1d1d1d1d1d1d1` | - (first) |" in text,
+               "receipt chain missing from the README report")
+        # A run worse than the incumbent (same verified, more proposals per
+        # fix: the first separating criterion favours B, the incumbent) fails;
+        # a later better run is judged against B, not against the worse run.
+        worse = [dict(r, proposals=r["proposals"] + 2, meta=dict(r["meta"], commit="e" * 40))
+                 for r in b_rows]
+        add(hist, root, set_="dev", agent="cortex", rows=write_rows("worse.jsonl", worse),
+            corpus=corpus, config=dict(cfg_b, cortex_commit="e" * 40), notes="worse",
+            run_id="W", date="2026-01-06")
+        st = receipt_now(D3)
+        expect(not st["pass"] and st["entry"]["incumbent"] == "B"
+               and "WORSE" in receipt_message(st) and "regress" in receipt_message(st),
+               "a run worse than the incumbent passes")
+        expect(refused(lambda: waive(hist, root, reason="x", digest=D3), "cannot replace"),
+               "waiver over a worse run not refused")
+        better = [dict(r, proposals=2 if r["id"] == "t3" else r["proposals"],
+                       meta=dict(r["meta"], commit="f" * 40)) for r in b_rows]
+        add(hist, root, set_="dev", agent="cortex", rows=write_rows("better.jsonl", better),
+            corpus=corpus, config=dict(cfg_b, cortex_commit="f" * 40), notes="better",
+            run_id="G", date="2026-01-07")
+        st = receipt_now(D4)
+        expect(st["pass"] and st["entry"]["incumbent"] == "B", "a better run does not pass, or "
+               "was judged against the worse run")
+        expect(not receipt_now(D3)["pass"], "the worse run passes once a better one exists")
+
         # A rows file edited after `add` is caught by report.
         with open(pa, "a") as fh:
             fh.write(json.dumps(ab_row("t0", "A", True)) + "\n")
-        expect(refused(lambda: report(hist, root, None), "changed since it was added"),
+        expect(refused(lambda: report(hist, root, None, spec=fx_spec), "changed since it was added"),
                "edited rows file not caught by report")
+
+    # The repair digest: the excluded files and other extensions are not in
+    # it, one changed character is, and the working-tree reader agrees with
+    # the git reader on a committed tree.
+    with tempfile.TemporaryDirectory() as g:
+        def put(rel, text):
+            os.makedirs(os.path.dirname(os.path.join(g, rel)), exist_ok=True)
+            with open(os.path.join(g, rel), "w") as fh:
+                fh.write(text)
+
+        src = "crates/axon-cortex/src"
+        put(f"{src}/runner.rs", "fn a() {}\n")
+        put(f"{src}/ai.rs", "fn ai() {}\n")
+        put(f"{src}/notes.txt", "x\n")
+        put(f"{src}/bin/cortex.rs", "fn main() {}\n")
+        put("crates/axon-cortex/benchmarks/drivers/micode.sh", "#!/bin/sh\n")
+        files = worktree_repair_files(g)
+        expect(sorted(files) == ["crates/axon-cortex/benchmarks/drivers/micode.sh",
+                                 f"{src}/bin/cortex.rs", f"{src}/runner.rs"],
+               f"repair-path files {sorted(files)}")
+        d0 = repair_digest(g)
+        put(f"{src}/ai.rs", "fn ai() { changed }\n")
+        expect(repair_digest(g) == d0, "an excluded file changed the repair digest")
+        cfg_git = ["-c", "user.name=selftest", "-c", "user.email=selftest@invalid",
+                   "-c", "commit.gpgsign=false"]
+        ok = all(subprocess.run(["git", *cfg_git, "-C", g, *a], capture_output=True).returncode == 0
+                 for a in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "fixture"]))
+        expect(ok and repair_digest(g, "HEAD") == d0, "git and working-tree digests disagree")
+        put(f"{src}/runner.rs", "fn b() {}\n")
+        expect(repair_digest(g) != d0 and repair_digest(g, "HEAD") == d0,
+               "a one-character change did not change the working-tree digest")
+        expect(refused(lambda: repair_digest(g, "0" * 40), "failed"), "unknown commit not refused")
 
     # Real data: the primary's rows give the README's 54/60, 0 false successes.
     real = os.path.join(BENCH, "ab", "results", "full", "b.jsonl")
@@ -1222,7 +1735,10 @@ def selftest():
         return 1
     print("scorecard self-test: pass (wilson, exact McNemar, recomputation, analyse cross-check, "
           "refusals: duplicate run_id / rows / config / arm / format / corpus / once-set, "
-          "heldout count, report determinism, SVG well-formed, compare order, stale rows)")
+          "heldout count, report determinism, SVG well-formed, compare order, stale rows, "
+          "repair digest (exclusions, one-character change, git = working tree), receipts: "
+          "matching run passes, changed digest fails, waiver passes and is reported, worse "
+          "run fails)")
     return 0
 
 
@@ -1249,6 +1765,20 @@ def main(argv=None):
     c.add_argument("run_b")
     c.add_argument("--json", action="store_true")
     sub.add_parser("selftest", help="fixtures for the statistics, refusals and report")
+    rc = sub.add_parser("receipt", help="is the working tree's repair digest scored or waived?")
+    rc.add_argument("--check", action="store_true", help="exit 1 when there is no receipt")
+    w = sub.add_parser("waive", help="record that the working tree's repair digest changes no "
+                                     "behaviour")
+    w.add_argument("--reason", required=True)
+    w.add_argument("--date")
+    g = sub.add_parser("regress", help="the paid dev run that produces a receipt (build, "
+                                       "run_ab.py --arm B, add, report, compare)")
+    g.add_argument("--cap-usd", type=float, default=0.50)
+    g.add_argument("--parallel", type=int, default=3)
+    g.add_argument("--again", action="store_true",
+                   help="run again for a digest already measured")
+    g.add_argument("--date")
+    g.add_argument("--notes", default="")
     args = ap.parse_args(argv)
     try:
         if args.cmd == "add":
@@ -1280,6 +1810,22 @@ def main(argv=None):
                 print(json.dumps(cmp, indent=1))
             else:
                 print_compare(cmp)
+        elif args.cmd == "receipt":
+            runs, waivers = load_records(args.history)
+            st = receipt(runs, waivers, verify(runs, ROOT), repair_digest(ROOT),
+                         receipt_spec(ROOT))
+            print(receipt_message(st), file=sys.stdout if st["pass"] else sys.stderr)
+            if args.check and not st["pass"]:
+                return 1
+        elif args.cmd == "waive":
+            w = waive(args.history, ROOT, reason=args.reason, date=args.date)
+            print(f"waived repair digest {w['repair_digest'][:16]}; now run: python3 "
+                  "scorecard.py report, and commit history.jsonl with the change")
+        elif args.cmd == "regress":
+            st = regress(args.history, ROOT, cap_usd=args.cap_usd, parallel=args.parallel,
+                         again=args.again, date=args.date, notes=args.notes)
+            if not st["pass"]:
+                return 1
         else:
             return selftest()
     except Refused as e:
