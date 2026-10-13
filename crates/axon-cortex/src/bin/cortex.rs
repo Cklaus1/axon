@@ -530,6 +530,12 @@ fn main() {
     // here: two earlier versions of this comment outlived the measurement they
     // quoted, and one of them was still advertising a number the benchmark
     // README had explicitly withdrawn.
+    // The visible evidence the early stop reads: which checks fail (the hidden
+    // one excluded) and which functions every one of them reaches. Known only
+    // when the targets are localized; `--symbol` is an instruction, not a
+    // hypothesis, and has no such evidence.
+    let mut visible_failing: Option<Vec<String>> = None;
+    let mut reached_by_all: Option<Vec<String>> = None;
     let targets: Vec<String> = if !symbol.is_empty() {
         vec![symbol.clone()]
     } else {
@@ -550,6 +556,10 @@ fn main() {
                  to attempt a repair anyway",
             );
         }
+        reached_by_all = Some(axon_cortex::locate::reached_by_all(
+            &src, &failing, &passing,
+        ));
+        visible_failing = Some(failing.clone());
         let ranked = axon_cortex::locate::rank(&src, &failing, &passing);
         if ranked.is_empty() {
             no_target(&format!(
@@ -931,6 +941,29 @@ fn main() {
                         })
                     })
                     .collect::<Vec<_>>(),
+                // The evidence the early stop reads, whether or not it fired:
+                // the visible failing checks, the functions every one of them
+                // reaches, and what the visible checks said about each
+                // rejected proposal (`null` where no test run was made).
+                // `null` evidence with `--symbol`, which localizes nothing.
+                "early_stop": {
+                    "visible_failing": visible_failing,
+                    "reached_by_all": reached_by_all,
+                    "attempts": targets
+                        .iter()
+                        .zip(&progress)
+                        .flat_map(|(t, p)| {
+                            p.attempts().iter().map(move |a| {
+                                serde_json::json!({
+                                    "candidate": t,
+                                    "proposal": a.proposal,
+                                    "rejection": a.rejection.slug(),
+                                    "visible_failing": a.visible_failing,
+                                })
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                },
             })
         );
     } else {
@@ -1047,6 +1080,7 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
         }
     };
     let ranked = axon_cortex::locate::rank(&src, &failing, &passing);
+    let reached_by_all = axon_cortex::locate::reached_by_all(&src, &failing, &passing);
     if json {
         println!(
             "{}",
@@ -1055,6 +1089,7 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
                 "receipts": fabric.as_ref().map(|f| f.receipts()),
                 "failing": failing,
                 "passing": passing,
+                "reached_by_all": reached_by_all,
                 // Every candidate WITH its score, not just the winner. The
                 // spread between first and second is what says whether the
                 // evidence actually decided anything.

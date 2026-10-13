@@ -115,6 +115,17 @@ pub enum RejectionReason {
     CheckerObjected,
 }
 
+impl RejectionReason {
+    /// The stable name `--json` reports the reason under.
+    pub fn slug(&self) -> &'static str {
+        match self {
+            RejectionReason::DidNotCompile => "did_not_compile",
+            RejectionReason::CheckRefused => "check_refused",
+            RejectionReason::CheckerObjected => "checker_objected",
+        }
+    }
+}
+
 impl std::fmt::Display for RejectionReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
