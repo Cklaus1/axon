@@ -16,14 +16,15 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: bbc40c58ce641e3389d740e1bcde9a6e7cb422e9
+generated-at: cb8d6508edd1f413949f4215b485714f820ed0e1
 
-`git diff --numstat 31413ca7..bbc40c58 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..cb8d6508 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
 | `crates/axon-core/src/ai_routing.rs` | 3 | 3 |
 | `crates/axon-core/src/ast.rs` | 334 | 81 |
+| `crates/axon-core/src/bin/axon-run.rs` | 19 | 0 |
 | `crates/axon-core/src/borrow.rs` | 18 | 3 |
 | `crates/axon-core/src/builtins.rs` | 45 | 11 |
 | `crates/axon-core/src/cache.rs` | 284 | 40 |
@@ -54,7 +55,7 @@ generated-at: bbc40c58ce641e3389d740e1bcde9a6e7cb422e9
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
 | `crates/axon-core/src/infer.rs` | 396 | 146 |
-| `crates/axon-core/src/interp.rs` | 7875 | 3309 |
+| `crates/axon-core/src/interp.rs` | 7468 | 2798 |
 | `crates/axon-core/src/interp/builtins.rs` | 746 | 594 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1364 | 0 |
@@ -75,13 +76,14 @@ generated-at: bbc40c58ce641e3389d740e1bcde9a6e7cb422e9
 | `crates/axon-core/src/interp/tests_v022_b.rs` | 2083 | 0 |
 | `crates/axon-core/src/interp/tests_v022_c.rs` | 152 | 0 |
 | `crates/axon-core/src/interp/tests_v022_s4.rs` | 600 | 0 |
-| `crates/axon-core/src/interp/value.rs` | 516 | 516 |
+| `crates/axon-core/src/interp/value.rs` | 577 | 530 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1782 | 0 |
 | `crates/axon-core/src/interp/vm/mod.rs` | 3587 | 0 |
 | `crates/axon-core/src/interp/vm/pure.rs` | 1835 | 0 |
 | `crates/axon-core/src/interp/vm/purefn.rs` | 860 | 0 |
 | `crates/axon-core/src/interp/vm/tests.rs` | 2688 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
+| `crates/axon-core/src/lexer.rs` | 163 | 0 |
 | `crates/axon-core/src/lib.rs` | 116 | 21 |
 | `crates/axon-core/src/main.rs` | 842 | 257 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
@@ -90,11 +92,13 @@ generated-at: bbc40c58ce641e3389d740e1bcde9a6e7cb422e9
 | `crates/axon-core/src/replay.rs` | 40 | 17 |
 | `crates/axon-core/src/resolver.rs` | 633 | 98 |
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
+| `crates/axon-core/src/span.rs` | 98 | 3 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
+| `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 89 | 0 |
-| total | 54549 | 7993 |
+| total | 54728 | 7566 |
 
-`git log --reverse 31413ca7..bbc40c58 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..cb8d6508 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -363,9 +367,11 @@ generated-at: bbc40c58ce641e3389d740e1bcde9a6e7cb422e9
 | 731a6862 | PCI completion-token kinds | evidence narrowed, one verdict stricter: a should_fail test is tokened only when the program REJECTED the run (a panic, an Err or a `?` on one, a refinement/verify/policy/budget/sandbox stop), never when an exit(n) or an escaped control transfer stopped it (TestFailure::rejected); such a test still reports ok, untokened. A @[forall] property is tokened only when every case completed, and each case is now judged like a plain test (Interp::test_end): a case ending on Err (or a `?` on Err/None) FAILS the property where it used to pass, and a case that hit an early plain `return` passes untokened. test_completion.rs pins every kind against Python-computed HMAC vectors; M68, M77, M1936, M1937 re-anchored to the moved text with equivalent mutants |
 | 1f0d4c44 | Cheap AI tier model | default changed, no verdict or gate touched: `@[ai(policy(tier: cheap))]` sends claude-haiku-5-5 instead of claude-haiku-4-5 and provenance pins version 5.5; AXON_AI_MODEL_CHEAP still overrides; tier names, cost rates and the cheap<balanced<strong ordering are unchanged (ai_routing tests pin the new default) |
 | 7bef0427 | Structured AI decision model | default changed, no verdict or gate touched: the ai_extract_* structured-output path and `axon improve discover --ai` send claude-haiku-5-5 instead of claude-sonnet-4-6 via axon_ai::decision_model (AXON_AI_MODEL_CHEAP, then AXON_AI_MODEL_BALANCED, then the default); main.rs swaps Tier::Balanced.api_model() for that resolver and builtins.rs/env_registry.rs change doc strings only; the E1407 registry check, mock stubs, native refusal and tier routing are unchanged |
+| 4f170d5d | Runtime depth (AX-62, AX-65, AX-67, AX-68) | INTERPRETER AND FRONT END, no verdict or gate touched: values_equal walks a heap work list instead of recursing per level (same answer, different visit order; Fields::equal becomes equal_by with a caller-supplied pair test, so the wasm32 stack no longer traps on a deep value); the lexer scans strings, block comments and numeric literals with loops (lex_str, lex_block_comment, lex_number) instead of logos regexes, with token and error output identical to the old lexer over exhaustive small-alphabet inputs; the parser charges every `else if` link against MAX_EXPR_DEPTH on every target (was wasm32 only), so a chain over 4,000 links is refused with E0000 on native, which is a refusal the interpreter did not make before; axon-run parses on a 1 GiB thread as axon does; SourceMap::render_caret shows a window around the caret on a line over 240 bytes |
 | 59c67915 | R51 checker depth | outside the interpreter (checker.rs, infer.rs, resolver.rs, borrow.rs, mut_borrow.rs, capabilities.rs, types.rs, new checker_path.rs): checker depth and complexity (compilebench AX-63/AX-64/AX-66): node paths are a shared linked list (no quadratic path strings), operator-chain walks are loops, the call-graph and refinement-chain walks use an explicit stack, the mutual-recursion probe is one SCC pass, a refinement cycle is E0308, and on wasm32 a type nested past 224 levels is refused with E0301; diagnostics of programs that checked before are unchanged; the interpreter is untouched |
 | bbc40c58 | R51 checker depth | outside the interpreter (infer.rs unit test only): fixes the deep-let-chain unit test added by 59c67915; the interpreter is untouched |
-| 267 commits | | |
+| cb8d6508 | fix/runtime-depth merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| 269 commits | | |
 <!-- END MECHANICAL -->
 
 
