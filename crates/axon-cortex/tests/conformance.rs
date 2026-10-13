@@ -2381,6 +2381,74 @@ fn cxg_c28_a_repair_that_leaves_the_file_failing_is_not_verified() {
     );
 }
 
+/// A crash mid-`visible_run` leaves `.cortex-visible-<pid>-<name>` beside the
+/// file. The next episode on that file removes it — only that exact shape,
+/// only there — and its result is the same as on a clean directory.
+#[test]
+fn a_stale_visible_copy_is_swept_and_changes_nothing() {
+    use axon_cortex::action::SymbolRef;
+    use axon_cortex::generate::LiteralGenerator;
+
+    let run = |tag: &str, stale: bool| {
+        let ws = std::env::temp_dir().join(format!("cortex_stale_{tag}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&ws);
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::copy(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("fixtures/pre_existing_failure.ax"),
+            ws.join("pre_existing_failure.ax"),
+        )
+        .unwrap();
+        let keep = [
+            ".cortex-visible-x-pre_existing_failure.ax",
+            ".cortex-visible-12-other.ax",
+            "cortex-visible-12-pre_existing_failure.ax",
+        ];
+        if stale {
+            std::fs::write(
+                ws.join(".cortex-visible-99999-pre_existing_failure.ax"),
+                "fn junk( {",
+            )
+            .unwrap();
+            for k in keep {
+                std::fs::write(ws.join(k), "x").unwrap();
+            }
+        }
+        let mut r = Runner::new(axon_bin(), &ws);
+        let snap = r.snapshot(&["pre_existing_failure.ax"]).unwrap();
+        let grant = EditGrant {
+            grant_id: "g".into(),
+            principal: "agent".into(),
+            snapshot_id: snap.snapshot_id,
+            write_prefixes: vec!["pre_existing_failure.ax".into()],
+        };
+        let out = r.run_episode(
+            &SymbolRef {
+                path: "pre_existing_failure.ax".into(),
+                symbol: "target".into(),
+            },
+            Some(&grant),
+            "agent",
+            "hidden_target",
+            8,
+            Some(&LiteralGenerator::new("\n    n * 2\n")),
+        );
+        if stale {
+            assert!(
+                !ws.join(".cortex-visible-99999-pre_existing_failure.ax")
+                    .exists(),
+                "the stale copy must be removed"
+            );
+            for k in keep {
+                assert!(ws.join(k).exists(), "{k} is not a stale copy and must stay");
+            }
+        }
+        let after = std::fs::read_to_string(ws.join("pre_existing_failure.ax")).unwrap();
+        (format!("{out:?}"), after)
+    };
+    assert_eq!(run("clean", false), run("stale", true));
+}
+
 /// G16-r22-negotiation, Axon side: "existing ACE/Reflex/episode formats and
 /// digest rules remain unchanged" and old episodes stay readable. A Cortex
 /// episode in the pre-v0.22 wire shape — one of every event kind, the bytes
