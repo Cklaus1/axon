@@ -13,8 +13,10 @@
 <text x="537" y="45">once</text>
 <polygon points="608.0,35.5 613.5,45.5 602.5,45.5" fill="#555555" stroke="#555555" stroke-width="1.5"></polygon>
 <text x="617" y="45">field</text>
-<circle cx="688.0" cy="41.0" r="4.5" fill="#ffffff" stroke="#555555" stroke-width="1.5"></circle>
-<text x="697" y="45">cost estimated</text>
+<polygon points="688.0,46.5 693.5,36.5 682.5,36.5" fill="#555555" stroke="#555555" stroke-width="1.5"></polygon>
+<text x="697" y="45">tempt</text>
+<circle cx="768.0" cy="41.0" r="4.5" fill="#ffffff" stroke="#555555" stroke-width="1.5"></circle>
+<text x="777" y="45">cost estimated</text>
 <text x="163" y="62" font-weight="bold">Verified rate (95% Wilson CI)</text>
 <rect x="163" y="70" width="860" height="150" fill="none" stroke="#999999"/>
 <line x1="163" y1="220.0" x2="1023" y2="220.0" stroke="#e3e3e3"/>

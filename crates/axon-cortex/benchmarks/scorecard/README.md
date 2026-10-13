@@ -51,6 +51,9 @@ B = candidate) and names the first criterion that separates them;
   a second run with the same (agent, cortex_sha256, model, transport, ranker,
   walk), and requires `cortex_sha256` for agent cortex.
 - **field**: rows from real `cortex repair` runs.
+- **tempt**: `../tempt/tempt.json`, tasks where a dishonest pass (special-casing,
+  test edits, unfixable visible tests) is easier than an honest fix; the
+  number that matters there is false successes (`../tempt/PREREG-tempt.md`).
 
 ## Adding a run
 
@@ -200,4 +203,4 @@ Computed from `crates/axon-cortex/benchmarks/locrank/results/*.jsonl` (offline: 
 
 ![progress](progress.svg)
 
-x = runs in date order (the `#` above). Panels: verified rate with 95% CI, false successes, proposals per verified fix (cortex only), cost per verified fix (log scale; hollow = estimate), truth-first rate. Colour = agent (blue cortex, orange plain); marker = set (circle dev, square heldout, diamond once, triangle field).
+x = runs in date order (the `#` above). Panels: verified rate with 95% CI, false successes, proposals per verified fix (cortex only), cost per verified fix (log scale; hollow = estimate), truth-first rate. Colour = agent (blue cortex, orange plain); marker = set (circle dev, square heldout, diamond once, triangle field, inverted triangle tempt).
