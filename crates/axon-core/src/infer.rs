@@ -9,7 +9,7 @@
 //! Any remaining `Type::Var` after solving triggers an E0101 "cannot infer
 //! type" error. Type mismatches during unification produce E0102.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
     AxonType, BinOp, Expr, FmtPart, FnDef, Item, Literal as AstLiteral, MatchArm, Pattern, Program,
@@ -22,6 +22,20 @@ use crate::types::{Constraint, Substitution, Type};
 
 const E0101: &str = "E0101";
 const E0102: &str = "E0102";
+const E0301: &str = "E0301";
+
+/// AX-63: how many levels deep a type may nest on wasm32. wasm32 runs the front
+/// end on wasmtime's default 512 KiB native stack, and the checker recurses over
+/// types (clone, drop, `==`, unification, substitution). The source-nesting
+/// limit (`parser::MAX_EXPR_DEPTH`, 224) does not bound that, because a type can
+/// be deep while every source line is shallow: `let a1 = [a0]`, `let a2 = [a1]`,
+/// … gives `a_n` the type `[[…[i64]…]]`, `n` levels deep, and 3,000 such lines
+/// trapped the debug build. The same 224 budget, applied to types. Native keeps
+/// its 1 GiB front-end stack and no limit, as for source nesting.
+#[cfg(target_arch = "wasm32")]
+pub(crate) const MAX_TYPE_DEPTH: Option<usize> = Some(224);
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const MAX_TYPE_DEPTH: Option<usize> = None;
 const E1900: &str = "E1900";
 const E0404: &str = "E0404"; // enum-variant literal names a nonexistent variant/field
 
@@ -355,6 +369,8 @@ pub struct InferCtx {
     pub file: String,
     /// Span of the statement currently being inferred; used to tag errors.
     current_stmt_span: crate::span::Span,
+    /// Deepest type a binding may have (`None`: unbounded). See [`MAX_TYPE_DEPTH`].
+    max_type_depth: Option<usize>,
 }
 
 /// Extract a simple string name from an `AxonType` for impl-method name mangling.
@@ -367,6 +383,32 @@ fn ast_type_simple_name(ty: &AxonType) -> String {
 }
 
 impl InferCtx {
+    /// AX-63: a binding whose type nests past [`MAX_TYPE_DEPTH`] is refused here,
+    /// at the binding, and bound as `Unknown` so the lines after it stay shallow
+    /// and report nothing further.
+    fn refuse_deep_binding(&mut self, name: &str, ty: Type) -> Type {
+        let Some(limit) = self.max_type_depth else {
+            return ty;
+        };
+        if !ty.nests_deeper_than(limit) {
+            return ty;
+        }
+        let span = self.current_stmt_span;
+        let mut err = InferError::new(
+            E0301,
+            format!(
+                "the type of `{name}` is nested more than {limit} levels deep (the wasm32 limit)"
+            ),
+        )
+        .with_span(span);
+        err.help = Some(format!(
+            "on wasm32 a type may nest at most {limit} levels (`[[[…i64…]]]`, `Some(Some(…))`); \
+             build the value in a loop or wrap it in a struct, or run on a native build"
+        ));
+        self.errors.push(err);
+        Type::Unknown
+    }
+
     /// Create a fresh context and pre-register all built-in signatures.
     pub fn new(file: impl Into<String>) -> Self {
         let mut ctx = InferCtx {
@@ -385,6 +427,7 @@ impl InferCtx {
             errors: Vec::new(),
             file: file.into(),
             current_stmt_span: crate::span::Span::dummy(),
+            max_type_depth: MAX_TYPE_DEPTH,
         };
         for (name, sig) in builtin_sigs() {
             ctx.fn_sigs.insert(
@@ -444,15 +487,34 @@ impl InferCtx {
 
     /// Convert an AST `AxonType` to a semantic `Type`.
     pub fn resolve_ast_type(&self, ast_ty: &AxonType) -> Type {
+        // Phase 5: a named refinement is transparent — resolve to its base type.
+        // A chain of refinements (`type A1 = A0 where …`, `type A2 = A1 where …`)
+        // is followed with a loop, not one frame per link (AX-66: `N` links was
+        // `N` nested calls, a wasm32 trap at 5,000 on flat source). A name seen
+        // twice on the chase is a cycle (`type A = B …`, `type B = A …`), which
+        // used to overflow the stack; it resolves like any other name nothing
+        // defines (`Deferred`).
+        let mut ast_ty = ast_ty;
+        let mut chased: Option<HashSet<&str>> = None;
+        while let AxonType::Named(name) = ast_ty {
+            if Type::from_name(name).is_some() {
+                break;
+            }
+            let Some(base) = self.refinement_base.get(name) else {
+                break;
+            };
+            if !chased
+                .get_or_insert_with(HashSet::new)
+                .insert(name.as_str())
+            {
+                return Type::Deferred(name.clone());
+            }
+            ast_ty = base;
+        }
         match ast_ty {
             AxonType::Named(name) => {
                 if let Some(ty) = Type::from_name(name) {
                     ty
-                } else if let Some(base) = self.refinement_base.get(name) {
-                    // Phase 5: a named refinement is transparent — resolve to its
-                    // base type. (Clone to drop the borrow before recursing.)
-                    let base = base.clone();
-                    self.resolve_ast_type(&base)
                 } else if self.struct_fields.contains_key(name) {
                     Type::Struct(name.clone())
                 } else if self.enum_variants.contains_key(name) {
@@ -665,6 +727,167 @@ impl InferCtx {
 
     // ── Expression inference ──────────────────────────────────────────────────
 
+    /// A `BinOp` node and everything below it on the left, inferred without
+    /// recursing down the left spine (AX-64): `1 + 1 + … + 1` is `N` nodes deep
+    /// to the left, and one `infer_expr` frame per level overflows the stack
+    /// at 100,000 terms. The spine is walked down once and inferred innermost
+    /// first, the order the recursion visited it in (left operand, right
+    /// operand, then the node's own constraints).
+    fn infer_binop_chain(&mut self, expr: &Expr, scope: &mut Scope, ret_ty: &Type) -> Type {
+        let mut spine: Vec<(&BinOp, &Expr, &Expr)> = Vec::new();
+        let mut cur = expr;
+        while let Expr::BinOp { op, left, right } = cur {
+            spine.push((op, left, right));
+            cur = left;
+        }
+        // `cur` is the innermost left operand: not a `BinOp`.
+        let mut lt = self.infer_expr(cur, scope, ret_ty);
+        for (op, left, right) in spine.into_iter().rev() {
+            let rt = self.infer_expr(right, scope, ret_ty);
+            lt = self.infer_binop_node(op, left, right, lt, rt);
+        }
+        lt
+    }
+
+    /// One `BinOp` node's own constraints and result type, given its operands'.
+    fn infer_binop_node(
+        &mut self,
+        op: &BinOp,
+        left: &Expr,
+        right: &Expr,
+        lt: Type,
+        rt: Type,
+    ) -> Type {
+        // Layer-2 ASI propagation: if either operand is `Uncertain<T>`,
+        // the result is Uncertain. The bare T is treated as having
+        // confidence 1.0 conceptually; soft unification in `unify`
+        // already accepts Uncertain<T> on either side of T constraints.
+        let is_unc = |t: &Type| matches!(t, Type::Uncertain(_));
+        let unc_inner = |t: &Type| -> Option<Type> {
+            match t {
+                Type::Uncertain(inner) => Some(*inner.clone()),
+                _ => None,
+            }
+        };
+        // R19 Slice B helpers for the BinOp arm.
+        // True when the type is a non-i64 fixed-width integer (signed or unsigned).
+        let is_sized_int = |t: &Type| {
+            matches!(
+                t,
+                Type::I8 | Type::I16 | Type::I32 | Type::U8 | Type::U16 | Type::U32 | Type::U64
+            )
+        };
+        // True when the sub-expression is a plain integer literal (I64 from the
+        // literal arm above). Such a literal coerces to the adjacent operand's
+        // width at runtime, so we allow it without a type-mismatch constraint.
+        let is_int_lit = |e: &Expr| matches!(e, Expr::Literal(AstLiteral::Int(_)));
+        // Choose the "dominant" type for a sized-int binop: the concrete
+        // sized width from whichever side provides one (or lt if both do —
+        // they must agree; the constrain below handles mismatches).
+        let dominant_sized = |l: &Type, r: &Type| -> Option<Type> {
+            if is_sized_int(l) {
+                Some(l.clone())
+            } else if is_sized_int(r) {
+                Some(r.clone())
+            } else {
+                None
+            }
+        };
+        match op {
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
+                // R19 Slice B: if either operand is a sized-int type, allow
+                // the other to be a plain I64 integer literal (it coerces
+                // at runtime). For two sized-int operands that agree, the
+                // constrain below produces no error. Different widths (e.g.
+                // U8 op U32) still emit E0102 — require `as`.
+                let sized = dominant_sized(&lt, &rt);
+                let skip_constrain = sized.is_some()
+                    && ((is_sized_int(&lt) && lt == rt)
+                        || (is_sized_int(&lt) && is_int_lit(right))
+                        || (is_sized_int(&rt) && is_int_lit(left)));
+                if !skip_constrain {
+                    self.constrain(lt.clone(), rt.clone(), "arithmetic operands");
+                }
+                // Fix #4: also constrain both operands to be numeric.
+                // We emit a constraint to I64 which will unify cleanly
+                // with I64/F64/other numeric vars, but produce a
+                // mismatch if a concrete non-numeric type is present.
+                // The checker (Fix #4b) performs the definitive check.
+                if is_unc(&lt) || is_unc(&rt) {
+                    // Pick the inner type from whichever side is Uncertain.
+                    let inner = unc_inner(&lt)
+                        .or_else(|| unc_inner(&rt))
+                        .unwrap_or(Type::I64);
+                    Type::Uncertain(Box::new(inner))
+                } else if let Some(ty) = sized {
+                    ty // result type is the sized-int width
+                } else {
+                    lt
+                }
+            }
+            BinOp::Eq | BinOp::NotEq => {
+                // R19: sized-int == sized-int or sized-int == literal: ok.
+                let sized = dominant_sized(&lt, &rt);
+                let skip_constrain = sized.is_some()
+                    && ((is_sized_int(&lt) && lt == rt)
+                        || (is_sized_int(&lt) && is_int_lit(right))
+                        || (is_sized_int(&rt) && is_int_lit(left)));
+                if !skip_constrain {
+                    self.constrain(lt.clone(), rt.clone(), "equality operands");
+                }
+                if is_unc(&lt) || is_unc(&rt) {
+                    Type::Uncertain(Box::new(Type::Bool))
+                } else {
+                    Type::Bool
+                }
+            }
+            BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq => {
+                // R19: sized-int comparisons allowed.
+                let sized = dominant_sized(&lt, &rt);
+                let skip_constrain = sized.is_some()
+                    && ((is_sized_int(&lt) && lt == rt)
+                        || (is_sized_int(&lt) && is_int_lit(right))
+                        || (is_sized_int(&rt) && is_int_lit(left)));
+                if !skip_constrain {
+                    self.constrain(lt.clone(), rt.clone(), "comparison operands");
+                }
+                if is_unc(&lt) || is_unc(&rt) {
+                    Type::Uncertain(Box::new(Type::Bool))
+                } else {
+                    Type::Bool
+                }
+            }
+            BinOp::And | BinOp::Or => {
+                // For Uncertain<bool> operands, do not constrain to plain
+                // bool — soft unification handles the inner unification.
+                if !is_unc(&lt) {
+                    self.constrain(lt.clone(), Type::Bool, "logical operand");
+                }
+                if !is_unc(&rt) {
+                    self.constrain(rt.clone(), Type::Bool, "logical operand");
+                }
+                if is_unc(&lt) || is_unc(&rt) {
+                    Type::Uncertain(Box::new(Type::Bool))
+                } else {
+                    Type::Bool
+                }
+            }
+            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
+                // R19: allow sized-int bitwise ops; otherwise constrain to I64.
+                let sized = dominant_sized(&lt, &rt);
+                if let Some(ty) = sized {
+                    // Both sides must be same-width sized-int or one side a literal.
+                    // No cross-width constraint needed; runtime handles the masking.
+                    ty
+                } else {
+                    self.constrain(lt.clone(), Type::I64, "bitwise operand");
+                    self.constrain(rt, Type::I64, "bitwise operand");
+                    Type::I64
+                }
+            }
+        }
+    }
+
     /// Infer the type of `expr` in `scope`, with `ret_ty` being the enclosing
     /// function's declared return type (used by `?` and `return`).
     pub fn infer_expr(&mut self, expr: &Expr, scope: &mut Scope, ret_ty: &Type) -> Type {
@@ -707,6 +930,7 @@ impl InferCtx {
             | Expr::Own { name, ty, value }
             | Expr::RefBind { name, ty, value } => {
                 let val_ty = self.infer_expr(value, scope, ret_ty);
+                let val_ty = self.refuse_deep_binding(name, val_ty);
                 // An explicit `: T` annotation constrains the value's type and
                 // becomes the binding's declared type.
                 if let Some(annot) = ty {
@@ -762,144 +986,7 @@ impl InferCtx {
             }
 
             // ── Binary operations ─────────────────────────────────────────────
-            Expr::BinOp { op, left, right } => {
-                let lt = self.infer_expr(left, scope, ret_ty);
-                let rt = self.infer_expr(right, scope, ret_ty);
-                // Layer-2 ASI propagation: if either operand is `Uncertain<T>`,
-                // the result is Uncertain. The bare T is treated as having
-                // confidence 1.0 conceptually; soft unification in `unify`
-                // already accepts Uncertain<T> on either side of T constraints.
-                let is_unc = |t: &Type| matches!(t, Type::Uncertain(_));
-                let unc_inner = |t: &Type| -> Option<Type> {
-                    match t {
-                        Type::Uncertain(inner) => Some(*inner.clone()),
-                        _ => None,
-                    }
-                };
-                // R19 Slice B helpers for the BinOp arm.
-                // True when the type is a non-i64 fixed-width integer (signed or unsigned).
-                let is_sized_int = |t: &Type| {
-                    matches!(
-                        t,
-                        Type::I8
-                            | Type::I16
-                            | Type::I32
-                            | Type::U8
-                            | Type::U16
-                            | Type::U32
-                            | Type::U64
-                    )
-                };
-                // True when the sub-expression is a plain integer literal (I64 from the
-                // literal arm above). Such a literal coerces to the adjacent operand's
-                // width at runtime, so we allow it without a type-mismatch constraint.
-                let is_int_lit = |e: &Expr| matches!(e, Expr::Literal(AstLiteral::Int(_)));
-                // Choose the "dominant" type for a sized-int binop: the concrete
-                // sized width from whichever side provides one (or lt if both do —
-                // they must agree; the constrain below handles mismatches).
-                let dominant_sized = |l: &Type, r: &Type| -> Option<Type> {
-                    if is_sized_int(l) {
-                        Some(l.clone())
-                    } else if is_sized_int(r) {
-                        Some(r.clone())
-                    } else {
-                        None
-                    }
-                };
-                match op {
-                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
-                        // R19 Slice B: if either operand is a sized-int type, allow
-                        // the other to be a plain I64 integer literal (it coerces
-                        // at runtime). For two sized-int operands that agree, the
-                        // constrain below produces no error. Different widths (e.g.
-                        // U8 op U32) still emit E0102 — require `as`.
-                        let sized = dominant_sized(&lt, &rt);
-                        let skip_constrain = sized.is_some()
-                            && ((is_sized_int(&lt) && lt == rt)
-                                || (is_sized_int(&lt) && is_int_lit(right))
-                                || (is_sized_int(&rt) && is_int_lit(left)));
-                        if !skip_constrain {
-                            self.constrain(lt.clone(), rt.clone(), "arithmetic operands");
-                        }
-                        // Fix #4: also constrain both operands to be numeric.
-                        // We emit a constraint to I64 which will unify cleanly
-                        // with I64/F64/other numeric vars, but produce a
-                        // mismatch if a concrete non-numeric type is present.
-                        // The checker (Fix #4b) performs the definitive check.
-                        if is_unc(&lt) || is_unc(&rt) {
-                            // Pick the inner type from whichever side is Uncertain.
-                            let inner = unc_inner(&lt)
-                                .or_else(|| unc_inner(&rt))
-                                .unwrap_or(Type::I64);
-                            Type::Uncertain(Box::new(inner))
-                        } else if let Some(ty) = sized {
-                            ty // result type is the sized-int width
-                        } else {
-                            lt
-                        }
-                    }
-                    BinOp::Eq | BinOp::NotEq => {
-                        // R19: sized-int == sized-int or sized-int == literal: ok.
-                        let sized = dominant_sized(&lt, &rt);
-                        let skip_constrain = sized.is_some()
-                            && ((is_sized_int(&lt) && lt == rt)
-                                || (is_sized_int(&lt) && is_int_lit(right))
-                                || (is_sized_int(&rt) && is_int_lit(left)));
-                        if !skip_constrain {
-                            self.constrain(lt.clone(), rt.clone(), "equality operands");
-                        }
-                        if is_unc(&lt) || is_unc(&rt) {
-                            Type::Uncertain(Box::new(Type::Bool))
-                        } else {
-                            Type::Bool
-                        }
-                    }
-                    BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq => {
-                        // R19: sized-int comparisons allowed.
-                        let sized = dominant_sized(&lt, &rt);
-                        let skip_constrain = sized.is_some()
-                            && ((is_sized_int(&lt) && lt == rt)
-                                || (is_sized_int(&lt) && is_int_lit(right))
-                                || (is_sized_int(&rt) && is_int_lit(left)));
-                        if !skip_constrain {
-                            self.constrain(lt.clone(), rt.clone(), "comparison operands");
-                        }
-                        if is_unc(&lt) || is_unc(&rt) {
-                            Type::Uncertain(Box::new(Type::Bool))
-                        } else {
-                            Type::Bool
-                        }
-                    }
-                    BinOp::And | BinOp::Or => {
-                        // For Uncertain<bool> operands, do not constrain to plain
-                        // bool — soft unification handles the inner unification.
-                        if !is_unc(&lt) {
-                            self.constrain(lt.clone(), Type::Bool, "logical operand");
-                        }
-                        if !is_unc(&rt) {
-                            self.constrain(rt.clone(), Type::Bool, "logical operand");
-                        }
-                        if is_unc(&lt) || is_unc(&rt) {
-                            Type::Uncertain(Box::new(Type::Bool))
-                        } else {
-                            Type::Bool
-                        }
-                    }
-                    BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
-                        // R19: allow sized-int bitwise ops; otherwise constrain to I64.
-                        let sized = dominant_sized(&lt, &rt);
-                        if let Some(ty) = sized {
-                            // Both sides must be same-width sized-int or one side a literal.
-                            // No cross-width constraint needed; runtime handles the masking.
-                            ty
-                        } else {
-                            self.constrain(lt.clone(), Type::I64, "bitwise operand");
-                            self.constrain(rt, Type::I64, "bitwise operand");
-                            Type::I64
-                        }
-                    }
-                }
-            }
+            Expr::BinOp { .. } => self.infer_binop_chain(expr, scope, ret_ty),
 
             // ── Unary operations ──────────────────────────────────────────────
             Expr::UnaryOp { op, operand } => {
@@ -2689,6 +2776,168 @@ mod tests {
         assert!(
             ctx.trait_method_sigs.contains_key("Greet"),
             "Greet trait sigs should be registered"
+        );
+    }
+
+    // ── AX-63 / AX-64 / AX-66 ─────────────────────────────────────────────────
+
+    #[test]
+    fn a_binding_nested_past_the_limit_is_refused_and_bound_unknown_ax63() {
+        let slice = |t: Type| Type::Slice(Box::new(t));
+        let mut ctx = InferCtx::new("test.ax");
+        // The limit is wasm32-only (`MAX_TYPE_DEPTH`); native keeps none.
+        assert_eq!(ctx.max_type_depth, MAX_TYPE_DEPTH);
+        ctx.max_type_depth = Some(3);
+        // `[[i64]]` is three levels: accepted as is.
+        let ok = slice(slice(Type::I64));
+        assert_eq!(ctx.refuse_deep_binding("a", ok.clone()), ok);
+        assert!(ctx.errors.is_empty());
+        // `[[[i64]]]` is four: E0301 at the binding, and the binding is
+        // `Unknown`, so a line after it is shallow again.
+        let ty = ctx.refuse_deep_binding("b", slice(slice(slice(Type::I64))));
+        assert_eq!(ty, Type::Unknown);
+        assert_eq!(ctx.errors.len(), 1);
+        assert_eq!(ctx.errors[0].code, "E0301");
+        assert_eq!(
+            ctx.errors[0].message,
+            "the type of `b` is nested more than 3 levels deep (the wasm32 limit)"
+        );
+        // No limit: nothing is refused, whatever the depth.
+        ctx.max_type_depth = None;
+        let deep = slice(slice(slice(slice(Type::I64))));
+        assert_eq!(ctx.refuse_deep_binding("c", deep.clone()), deep);
+        assert_eq!(ctx.errors.len(), 1);
+    }
+
+    #[test]
+    fn a_let_chain_building_a_deep_type_is_refused_once_ax63() {
+        // `let a0 = [1]`, `let a1 = [a0]`, ... : every line is shallow.
+        let mut stmts = vec![Stmt::simple(Expr::Let {
+            name: "a0".into(),
+            ty: None,
+            value: Box::new(Expr::Array(vec![lit_int(1)])),
+        })];
+        for i in 1..9 {
+            stmts.push(Stmt::simple(Expr::Let {
+                name: format!("a{i}"),
+                ty: None,
+                value: Box::new(Expr::Array(vec![Expr::Ident(format!("a{}", i - 1))])),
+            }));
+        }
+        let block = Expr::Block(stmts);
+        let (mut ctx, mut scope) = ctx();
+        ctx.max_type_depth = Some(5);
+        ctx.infer_expr(&block, &mut scope, &Type::Unit);
+        // a0 = [i64] is 2 levels, a3 is 5, a4 is 6: refused. a4 is bound
+        // `Unknown`, so a5..a8 are 2 to 5 levels, within the limit.
+        let msgs: Vec<&str> = ctx.errors.iter().map(|e| e.message.as_str()).collect();
+        assert_eq!(
+            msgs,
+            vec!["the type of `a4` is nested more than 5 levels deep (the wasm32 limit)"],
+            "{:?}",
+            ctx.errors
+        );
+    }
+
+    #[test]
+    fn a_long_refinement_chain_resolves_without_recursion_ax66() {
+        // `type A0 = i64`, `type A1 = A0`, ... : 20,000 links, each a flat line.
+        // One frame per link overflowed wasm32's stack at 5,000.
+        let mut ctx = InferCtx::new("test.ax");
+        ctx.refinement_base
+            .insert("A0".into(), AxonType::Named("i64".into()));
+        for i in 1..20_000 {
+            ctx.refinement_base
+                .insert(format!("A{i}"), AxonType::Named(format!("A{}", i - 1)));
+        }
+        assert_eq!(
+            ctx.resolve_ast_type(&AxonType::Named("A19999".into())),
+            Type::I64
+        );
+        // Through a container, too.
+        assert_eq!(
+            ctx.resolve_ast_type(&AxonType::Slice(Box::new(AxonType::Named("A9".into())))),
+            Type::Slice(Box::new(Type::I64))
+        );
+    }
+
+    #[test]
+    fn a_refinement_cycle_resolves_to_deferred_instead_of_overflowing_ax66() {
+        let mut ctx = InferCtx::new("test.ax");
+        ctx.refinement_base
+            .insert("A".into(), AxonType::Named("B".into()));
+        ctx.refinement_base
+            .insert("B".into(), AxonType::Named("A".into()));
+        ctx.refinement_base
+            .insert("S".into(), AxonType::Named("S".into()));
+        assert_eq!(
+            ctx.resolve_ast_type(&AxonType::Named("A".into())),
+            Type::Deferred("A".into())
+        );
+        assert_eq!(
+            ctx.resolve_ast_type(&AxonType::Named("S".into())),
+            Type::Deferred("S".into())
+        );
+    }
+
+    #[test]
+    fn a_long_binop_chain_infers_without_recursion_ax64() {
+        // `1 + 1 + ... + 1`, 100,000 terms, inferred on a 4 MiB stack: one
+        // `infer_expr` frame per level cannot fit (debug frames are several
+        // KiB). The tree is torn down by hand: its drop glue recurses too.
+        const TERMS: usize = 100_000;
+        std::thread::Builder::new()
+            .stack_size(4 * 1024 * 1024)
+            .spawn(|| {
+                let mut e = lit_int(1);
+                for _ in 0..TERMS - 1 {
+                    e = Expr::BinOp {
+                        op: AstBinOp::Add,
+                        left: Box::new(e),
+                        right: Box::new(lit_int(1)),
+                    };
+                }
+                let (mut ctx, mut scope) = ctx();
+                let ty = ctx.infer_expr(&e, &mut scope, &Type::Unit);
+                assert_eq!(ty, Type::I64);
+                assert!(ctx.errors.is_empty(), "{:?}", ctx.errors);
+                // One equality constraint per `+`, in order.
+                assert_eq!(ctx.constraints.len(), TERMS - 1);
+                while let Expr::BinOp { left, .. } = &mut e {
+                    let next = std::mem::replace(&mut **left, Expr::None);
+                    e = next;
+                }
+            })
+            .expect("spawn")
+            .join()
+            .expect("a 100,000-term chain must infer on a 4 MiB stack");
+    }
+
+    #[test]
+    fn a_binop_chain_keeps_its_left_to_right_inference_order_ax64() {
+        // `1 + 2 + "s"`: the inner `+` constrains first (1 with 2), then the outer
+        // one (the inner result with the string), as the recursive walk pushed them.
+        let e = Expr::BinOp {
+            op: AstBinOp::Add,
+            left: Box::new(Expr::BinOp {
+                op: AstBinOp::Add,
+                left: Box::new(lit_int(1)),
+                right: Box::new(lit_int(2)),
+            }),
+            right: Box::new(lit_str("s")),
+        };
+        let (mut ctx, mut scope) = ctx();
+        let ty = ctx.infer_expr(&e, &mut scope, &Type::Unit);
+        assert_eq!(ty, Type::I64);
+        let origins: Vec<&str> = ctx.constraints.iter().map(|c| c.origin.as_str()).collect();
+        assert_eq!(origins, vec!["arithmetic operands", "arithmetic operands"]);
+        assert_eq!(
+            (&ctx.constraints[0].lhs, &ctx.constraints[0].rhs),
+            (&Type::I64, &Type::I64)
+        );
+        assert_eq!(
+            (&ctx.constraints[1].lhs, &ctx.constraints[1].rhs),
+            (&Type::I64, &Type::Str)
         );
     }
 }

@@ -16,18 +16,20 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 7bef04273be81437f398ea94dfaaf12eeaa0cf47
+generated-at: bbc40c58ce641e3389d740e1bcde9a6e7cb422e9
 
-`git diff --numstat 31413ca7..7bef0427 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..bbc40c58 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
 | `crates/axon-core/src/ai_routing.rs` | 3 | 3 |
 | `crates/axon-core/src/ast.rs` | 334 | 81 |
+| `crates/axon-core/src/borrow.rs` | 18 | 3 |
 | `crates/axon-core/src/builtins.rs` | 45 | 11 |
 | `crates/axon-core/src/cache.rs` | 284 | 40 |
-| `crates/axon-core/src/capabilities.rs` | 18 | 1 |
-| `crates/axon-core/src/checker.rs` | 610 | 108 |
+| `crates/axon-core/src/capabilities.rs` | 156 | 128 |
+| `crates/axon-core/src/checker.rs` | 1235 | 510 |
+| `crates/axon-core/src/checker_path.rs` | 223 | 0 |
 | `crates/axon-core/src/clock.rs` | 58 | 3 |
 | `crates/axon-core/src/codegen/asi.rs` | 14 | 18 |
 | `crates/axon-core/src/codegen/build_wrappers.rs` | 25 | 1 |
@@ -51,7 +53,7 @@ generated-at: 7bef04273be81437f398ea94dfaaf12eeaa0cf47
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
-| `crates/axon-core/src/infer.rs` | 3 | 2 |
+| `crates/axon-core/src/infer.rs` | 396 | 146 |
 | `crates/axon-core/src/interp.rs` | 7875 | 3309 |
 | `crates/axon-core/src/interp/builtins.rs` | 746 | 594 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
@@ -83,16 +85,16 @@ generated-at: 7bef04273be81437f398ea94dfaaf12eeaa0cf47
 | `crates/axon-core/src/lib.rs` | 116 | 21 |
 | `crates/axon-core/src/main.rs` | 842 | 257 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
-| `crates/axon-core/src/mut_borrow.rs` | 800 | 0 |
+| `crates/axon-core/src/mut_borrow.rs` | 811 | 0 |
 | `crates/axon-core/src/parser.rs` | 457 | 31 |
 | `crates/axon-core/src/replay.rs` | 40 | 17 |
-| `crates/axon-core/src/resolver.rs` | 579 | 86 |
+| `crates/axon-core/src/resolver.rs` | 633 | 98 |
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
-| `crates/axon-core/src/types.rs` | 28 | 0 |
-| total | 53026 | 7305 |
+| `crates/axon-core/src/types.rs` | 89 | 0 |
+| total | 54549 | 7993 |
 
-`git log --reverse 31413ca7..7bef0427 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..bbc40c58 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -361,7 +363,9 @@ generated-at: 7bef04273be81437f398ea94dfaaf12eeaa0cf47
 | 731a6862 | PCI completion-token kinds | evidence narrowed, one verdict stricter: a should_fail test is tokened only when the program REJECTED the run (a panic, an Err or a `?` on one, a refinement/verify/policy/budget/sandbox stop), never when an exit(n) or an escaped control transfer stopped it (TestFailure::rejected); such a test still reports ok, untokened. A @[forall] property is tokened only when every case completed, and each case is now judged like a plain test (Interp::test_end): a case ending on Err (or a `?` on Err/None) FAILS the property where it used to pass, and a case that hit an early plain `return` passes untokened. test_completion.rs pins every kind against Python-computed HMAC vectors; M68, M77, M1936, M1937 re-anchored to the moved text with equivalent mutants |
 | 1f0d4c44 | Cheap AI tier model | default changed, no verdict or gate touched: `@[ai(policy(tier: cheap))]` sends claude-haiku-5-5 instead of claude-haiku-4-5 and provenance pins version 5.5; AXON_AI_MODEL_CHEAP still overrides; tier names, cost rates and the cheap<balanced<strong ordering are unchanged (ai_routing tests pin the new default) |
 | 7bef0427 | Structured AI decision model | default changed, no verdict or gate touched: the ai_extract_* structured-output path and `axon improve discover --ai` send claude-haiku-5-5 instead of claude-sonnet-4-6 via axon_ai::decision_model (AXON_AI_MODEL_CHEAP, then AXON_AI_MODEL_BALANCED, then the default); main.rs swaps Tier::Balanced.api_model() for that resolver and builtins.rs/env_registry.rs change doc strings only; the E1407 registry check, mock stubs, native refusal and tier routing are unchanged |
-| 265 commits | | |
+| 59c67915 | R51 checker depth | outside the interpreter (checker.rs, infer.rs, resolver.rs, borrow.rs, mut_borrow.rs, capabilities.rs, types.rs, new checker_path.rs): checker depth and complexity (compilebench AX-63/AX-64/AX-66): node paths are a shared linked list (no quadratic path strings), operator-chain walks are loops, the call-graph and refinement-chain walks use an explicit stack, the mutual-recursion probe is one SCC pass, a refinement cycle is E0308, and on wasm32 a type nested past 224 levels is refused with E0301; diagnostics of programs that checked before are unchanged; the interpreter is untouched |
+| bbc40c58 | R51 checker depth | outside the interpreter (infer.rs unit test only): fixes the deep-let-chain unit test added by 59c67915; the interpreter is untouched |
+| 267 commits | | |
 <!-- END MECHANICAL -->
 
 

@@ -1,0 +1,4 @@
+{
+  "theme": "R51 checker depth",
+  "text": "outside the interpreter (infer.rs unit test only): fixes the deep-let-chain unit test added by 59c67915; the interpreter is untouched"
+}

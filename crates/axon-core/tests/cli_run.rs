@@ -313,6 +313,55 @@ fn note_harness_skip(what: &str) {
 }
 
 #[test]
+fn wasm_checker_depth_ax63() {
+    // AX-63: a type nested past the wasm32 limit from shallow source
+    // (`let a{i} = [a{i-1}]`, N = 225 .. 20,000) trapped the checker's clone
+    // (exit 134). Now: exit 2 with E0301 at the first binding past the limit,
+    // under both engines on the debug and release modules; below it the
+    // program runs.
+    wasm_checker_depth_parity("ax63");
+}
+
+#[test]
+fn wasm_checker_depth_ax66() {
+    // AX-66: the `@[contained]` helper-follow, the `@[total]` call-graph walk
+    // and the refinement-name chase recursed once per link of a flat chain and
+    // trapped at 600 / 3,000 / 20,000 links. Now 20,000-link chains exit 0 with
+    // native's output, and the refusals behind the walks (E1001, E1208) are
+    // native's, byte for byte.
+    wasm_checker_depth_parity("ax66");
+}
+
+/// Run `scripts/wasm_checker_depth_parity.sh <case>` (compilebench AX-63/66)
+/// and require its PASS. Skips, and records the skip, if the wasm target or
+/// wasmtime is unavailable.
+fn wasm_checker_depth_parity(case: &str) {
+    let script = format!(
+        "{}/../../scripts/wasm_checker_depth_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let out = harness(&script)
+        .arg(case)
+        .output()
+        .expect("run wasm_checker_depth_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if harness_skipped(&out, &stdout, &stderr, &script) {
+        eprintln!(
+            "wasm/wasmtime unavailable — wasm checker depth {case} skipped:\n{stdout}{stderr}"
+        );
+        note_harness_skip(&format!(
+            "wasm/wasmtime unavailable — wasm checker depth {case}"
+        ));
+        return;
+    }
+    assert!(
+        out.status.success() && stdout.contains("wasm_checker_depth_parity: PASS ("),
+        "wasm checker depth {case} must pass:\n{stdout}{stderr}"
+    );
+}
+
+#[test]
 fn host_await_runs_identically_on_wasm_wasip1() {
     // R15 / R7 headless-interactive: host_await runs byte-identically on native
     // (worker-thread substrate) and on wasm32-wasip1 under wasmtime (the wasm

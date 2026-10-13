@@ -494,9 +494,20 @@ impl Walker<'_> {
                 self.visit(operand);
             }
             Expr::UnaryOp { operand, .. } => self.visit(operand),
+            // A left-nested chain (`a + b + c + ...`) is a spine as deep as the
+            // chain is long (AX-64): walk it with a loop, leaf first, then the
+            // right operands innermost-out, the order the recursion visited them.
             Expr::BinOp { left, right, .. } => {
-                self.visit(left);
-                self.visit(right);
+                let mut rights = vec![&**right];
+                let mut cur = &**left;
+                while let Expr::BinOp { left, right, .. } = cur {
+                    rights.push(&**right);
+                    cur = left;
+                }
+                self.visit(cur);
+                for r in rights.into_iter().rev() {
+                    self.visit(r);
+                }
             }
             Expr::Question(b) | Expr::Comptime(b) | Expr::Ok(b) | Expr::Err(b) | Expr::Some(b) => {
                 self.visit(b)

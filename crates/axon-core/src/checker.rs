@@ -25,6 +25,10 @@ use crate::error::{
 };
 use crate::types::Type;
 
+#[path = "checker_path.rs"]
+mod node_path;
+use node_path::NodePath;
+
 // ── Error codes ───────────────────────────────────────────────────────────────
 
 /// Type mismatch (shared with inference pass).
@@ -162,6 +166,20 @@ impl CheckError {
 }
 
 // ── Integer widening (implicit coercion at call sites) ────────────────────────
+
+/// The type a local is bound to in the checker's scope (AX-63). On wasm32 a
+/// type nested past [`crate::infer::MAX_TYPE_DEPTH`] is not stored: the binding
+/// takes `Unknown`, which every structural check skips. Inference refuses that
+/// binding with E0301 first (both `lib.rs` and the CLI run it before the
+/// checker), so the program is rejected; this keeps the checker from cloning,
+/// comparing and dropping a type deeper than the wasm32 stack can hold on its
+/// way to the rest of the report.
+fn bound_type(ty: Type) -> Type {
+    match crate::infer::MAX_TYPE_DEPTH {
+        Some(limit) if ty.nests_deeper_than(limit) => Type::Unknown,
+        _ => ty,
+    }
+}
 
 /// Returns true if `from` can be implicitly widened to `to` at a call site.
 /// Only signed-integer widening is allowed (i8→i16→i32→i64); no float or
@@ -510,6 +528,12 @@ pub struct CheckCtx {
     /// among total fns has no per-fn decreasing measure, so it can't be proven to
     /// terminate → E1208, sound by refusal).
     total_fn_defs: HashMap<String, Expr>,
+    /// `@[total]` fns that sit on a call cycle through at least one OTHER total
+    /// fn, computed once after the pre-pass (AX-66: asking each of `N` fns whether
+    /// it reaches itself was an `O(N)` walk apiece, `O(N²)` for a chain).
+    total_cycle_members: HashSet<String>,
+    /// Named refinements defined in terms of themselves (E0308 at each).
+    refinement_cycle_members: HashSet<String>,
     /// Names of impl methods whose body is IMPURE (calls an impure builtin / a
     /// non-`@[pure]` fn / spawn / …). A `@[pure]` fn calling such a method via
     /// `x.m()` is E1207 — closes the MethodCall hole in the purity gate (a pure
@@ -597,6 +621,8 @@ impl CheckCtx {
             pure_fns: HashSet::new(),
             total_fns: HashSet::new(),
             total_fn_defs: HashMap::new(),
+            total_cycle_members: HashSet::new(),
+            refinement_cycle_members: HashSet::new(),
             impure_method_names: HashSet::new(),
             pure_fn_defs: HashMap::new(),
             refinement_base: HashMap::new(),
@@ -777,6 +803,8 @@ impl CheckCtx {
                 }
             }
         }
+        self.total_cycle_members = self.find_total_cycle_members();
+        self.refinement_cycle_members = self.find_refinement_cycle_members();
         // Phase 5: record each user fn's per-param refinement name (None if the
         // param isn't a refinement) so a call site can find proof obligations.
         // Enter this pass if there's ANY refinement — named, or a whole-struct
@@ -1185,13 +1213,13 @@ impl CheckCtx {
                     if let Some(p) = td.refinement.as_deref() {
                         self.check_sealed_predicate(
                             p,
-                            &format!("#typedef_{}.where", td.name),
+                            &NodePath::root(format!("#typedef_{}.where", td.name)),
                             td.span,
                         );
                     }
                 }
                 for field in &td.fields {
-                    let path = format!("#typedef_{}.field_{}", td.name, field.name);
+                    let path = NodePath::root(format!("#typedef_{}.field_{}", td.name, field.name));
                     // `TypeField` has no span of its own, so the typedef's is
                     // the closest honest location -- the right `type` block,
                     // if not the exact field line.
@@ -1208,15 +1236,35 @@ impl CheckCtx {
             // registers the form; predicate well-formedness + proof obligations
             // (R01-R05, constant-arg comptime / SMT) are later sub-slices.
             Item::RefineDef(r) => {
+                if self.refinement_cycle_members.contains(&r.name) {
+                    let file = self.file.clone();
+                    self.errors.push(
+                        CheckError::new(
+                            E0308,
+                            format!(
+                                "type '{}' is defined in terms of itself: {}",
+                                r.name,
+                                self.describe_refinement_cycle(&r.name)
+                            ),
+                        )
+                        .node(format!("#refine_{}.base", r.name))
+                        .at(&file, 0, 0)
+                        .with_span(r.span)
+                        .fix(
+                            "give one of the types in the cycle a concrete base \
+                             (e.g. `type Name = i64 where ...`)",
+                        ),
+                    );
+                }
                 if self.sealed_at(r.span) {
                     self.check_axon_type(
                         &r.base,
-                        &format!("#refine_{}.base", r.name),
+                        &NodePath::root(format!("#refine_{}.base", r.name)),
                         Some(r.span),
                     );
                     self.check_sealed_predicate(
                         &r.predicate,
-                        &format!("#refine_{}.where", r.name),
+                        &NodePath::root(format!("#refine_{}.where", r.name)),
                         r.span,
                     );
                 }
@@ -1232,7 +1280,8 @@ impl CheckCtx {
                 );
                 for v in &e.variants {
                     for f in &v.fields {
-                        let path = format!("#enum_{}.{}.{}", e.name, v.name, f.name);
+                        let path =
+                            NodePath::root(format!("#enum_{}.{}.{}", e.name, v.name, f.name));
                         self.check_axon_type(&f.ty, &path, Some(e.span));
                     }
                 }
@@ -1250,11 +1299,12 @@ impl CheckCtx {
                 );
                 for m in &t.methods {
                     for p in &m.params {
-                        let path = format!("#trait_{}.{}.{}", t.name, m.name, p.name);
+                        let path =
+                            NodePath::root(format!("#trait_{}.{}.{}", t.name, m.name, p.name));
                         self.check_axon_type(&p.ty, &path, Some(m.span));
                     }
                     if let Some(rt) = &m.return_type {
-                        let path = format!("#trait_{}.{}.ret", t.name, m.name);
+                        let path = NodePath::root(format!("#trait_{}.{}.ret", t.name, m.name));
                         self.check_axon_type(rt, &path, Some(m.span));
                     }
                 }
@@ -1266,7 +1316,7 @@ impl CheckCtx {
             // refused by the merged check's backstop (E0004) while the same shape naming a
             // type nothing defines was accepted: an accept/refuse oracle.
             Item::LetDef { name, value, span } if self.sealed_at(*span) => {
-                self.check_sealed_predicate(value, &format!("#let_{name}"), *span);
+                self.check_sealed_predicate(value, &NodePath::root(format!("#let_{name}")), *span);
             }
             Item::EnumDef(_)
             | Item::ModDecl(_)
@@ -1281,7 +1331,7 @@ impl CheckCtx {
     /// name-checked as one in a body is (amendment 117, loop finding 9): only
     /// fn calls in a predicate were, and a name nothing defines was accepted
     /// where the operator's own was refused. `_` is the implicit binder.
-    fn check_sealed_predicate(&mut self, pred: &Expr, path: &str, span: crate::span::Span) {
+    fn check_sealed_predicate(&mut self, pred: &Expr, path: &NodePath, span: crate::span::Span) {
         let prev = self.current_span;
         self.current_span = span;
         let mut scope: HashMap<String, Type> = HashMap::new();
@@ -1330,7 +1380,7 @@ impl CheckCtx {
                     if !self.trait_defs.contains_key(b) {
                         self.check_axon_type(
                             &AxonType::Named(b.clone()),
-                            &format!("#fn_{}.bound_{b}", f.name),
+                            &NodePath::root(format!("#fn_{}.bound_{b}", f.name)),
                             Some(f.span),
                         );
                     }
@@ -1344,7 +1394,7 @@ impl CheckCtx {
             if let Some(v) = &f.verify {
                 self.check_sealed_predicate(
                     &v.predicate,
-                    &format!("#fn_{}.verify", f.name),
+                    &NodePath::root(format!("#fn_{}.verify", f.name)),
                     f.span,
                 );
             }
@@ -1480,13 +1530,13 @@ impl CheckCtx {
 
         // R08: validate parameter type annotations.
         for param in &f.params {
-            let path = format!("#fn_{}.param_{}", f.name, param.name);
+            let path = NodePath::root(format!("#fn_{}.param_{}", f.name, param.name));
             self.check_axon_type(&param.ty, &path, Some(param.span));
         }
 
         // R08: validate return type annotation.
         if let Option::Some(ret_ty) = &f.return_type {
-            let path = format!("#fn_{}.return_type", f.name);
+            let path = NodePath::root(format!("#fn_{}.return_type", f.name));
             // No span on the return annotation itself; the fn's is the
             // closest honest one.
             self.check_axon_type(&ret_ty.clone(), &path, Some(f.span));
@@ -1514,7 +1564,7 @@ impl CheckCtx {
         };
         let prev_ret_refine = std::mem::replace(&mut self.current_ret_refinement, ret_refinement);
 
-        let fn_path = format!("#fn_{}", f.name);
+        let fn_path = NodePath::root(format!("#fn_{}", f.name));
         let mut scope: HashMap<String, Type> = HashMap::new();
 
         // Seed scope with parameters (same enum-aware resolution as the return
@@ -1536,8 +1586,8 @@ impl CheckCtx {
         let prev_observed = std::mem::take(&mut self.confidence_observed);
         Self::collect_confidence_observed(&f.body, &mut self.confidence_observed);
 
-        let body_path = format!("{fn_path}.body");
-        let prev_body_path = std::mem::replace(&mut self.fn_body_path, body_path.clone());
+        let body_path = fn_path.child("body");
+        let prev_body_path = std::mem::replace(&mut self.fn_body_path, body_path.render());
         self.check_expr(&f.body, &body_path, &mut scope);
         self.fn_body_path = prev_body_path;
 
@@ -1554,7 +1604,7 @@ impl CheckCtx {
     /// result is E1201 (the refinement is provably violated). A non-constant
     /// argument can't be discharged here — that needs the SMT backend (§4) — so
     /// it's silently left for the runtime/solver (no E1202 noise yet). No Z3.
-    fn check_refinement_args(&mut self, fn_name: &str, args: &[Expr], node_path: &str) {
+    fn check_refinement_args(&mut self, fn_name: &str, args: &[Expr], node_path: &NodePath) {
         let Some(slots) = self.fn_param_refinements.get(fn_name).cloned() else {
             return;
         };
@@ -1594,7 +1644,7 @@ impl CheckCtx {
                              `{rname}` — the constant does not satisfy the type's predicate"
                         ),
                     )
-                    .node(format!("{node_path}.arg_{i}"))
+                    .node(node_path.idx("arg", i))
                     .at(&file, 0, 0)
                     .with_span(span)
                     .fix(format!(
@@ -1610,7 +1660,7 @@ impl CheckCtx {
     /// return type is a named refinement and `ret_expr` is a compile-time
     /// constant, the predicate must hold for it (else E1209). Same soundness as
     /// the argument obligation: only a provably-false constant errors.
-    fn check_return_refinement(&mut self, ret_expr: &Expr, node_path: &str) {
+    fn check_return_refinement(&mut self, ret_expr: &Expr, node_path: &NodePath) {
         let Some(rname) = self.current_ret_refinement.clone() else {
             return;
         };
@@ -1661,7 +1711,7 @@ impl CheckCtx {
         annot: &Option<AxonType>,
         name: &str,
         value: &Expr,
-        node_path: &str,
+        node_path: &NodePath,
     ) {
         let Some(AxonType::Named(rname)) = annot else {
             return;
@@ -1711,7 +1761,7 @@ impl CheckCtx {
         fname: &str,
         struct_name: &str,
         fexpr: &Expr,
-        node_path: &str,
+        node_path: &NodePath,
     ) {
         let Some(pred) = self.refinement_pred.get(rname).cloned() else {
             return;
@@ -2849,44 +2899,162 @@ impl CheckCtx {
         }
     }
 
+    /// The refinement a refinement is defined by (`type A = B where ..` -> `B`),
+    /// if that is itself a named refinement.
+    fn refinement_parent(&self, name: &str) -> Option<&str> {
+        match self.refinement_base.get(name) {
+            Option::Some(Type::Struct(n) | Type::Deferred(n))
+                if self.refinement_base.contains_key(n.as_str()) =>
+            {
+                Option::Some(n.as_str())
+            }
+            _ => Option::None,
+        }
+    }
+
+    /// Every refinement on a cycle (`type A = B ..`, `type B = A ..`, or
+    /// `type S = S ..`). Each refinement has one parent, so the walk from each
+    /// unvisited name follows the chain once and every name is visited once:
+    /// `O(refinements)`, with no recursion (AX-66: a chain of `N` was `N` frames).
+    fn find_refinement_cycle_members(&self) -> HashSet<String> {
+        const ON_PATH: u8 = 1;
+        const DONE: u8 = 2;
+        let mut state: HashMap<&str, u8> = HashMap::new();
+        let mut members = HashSet::new();
+        for start in self.refinement_base.keys() {
+            let mut path: Vec<&str> = Vec::new();
+            let mut cur = Option::Some(start.as_str());
+            while let Option::Some(name) = cur {
+                match state.get(name) {
+                    Option::None => {
+                        state.insert(name, ON_PATH);
+                        path.push(name);
+                        cur = self.refinement_parent(name);
+                    }
+                    Option::Some(&ON_PATH) => {
+                        // Back onto this walk's own path: that tail is the cycle.
+                        let at = path.iter().position(|p| *p == name).unwrap_or(0);
+                        members.extend(path[at..].iter().map(|p| p.to_string()));
+                        break;
+                    }
+                    Option::Some(_) => break,
+                }
+            }
+            for name in path {
+                state.insert(name, DONE);
+            }
+        }
+        members
+    }
+
+    /// The names from `start` round its cycle back to `start`, for the message
+    /// (`A -> B -> A`); a long cycle is cut short with `...`.
+    fn describe_refinement_cycle(&self, start: &str) -> String {
+        const SHOWN: usize = 8;
+        let mut parts = vec![start.to_string()];
+        let mut cur = start;
+        while let Option::Some(next) = self.refinement_parent(cur) {
+            if parts.len() == SHOWN {
+                parts.push("...".to_string());
+                break;
+            }
+            parts.push(next.to_string());
+            if next == start {
+                break;
+            }
+            cur = next;
+        }
+        parts.join(" -> ")
+    }
+
     /// Does `start` (a `@[total]` fn) reach ITSELF via a call path that passes
     /// through at least one OTHER total fn? (i.e. is it in a mutual-recursion
     /// cycle of length ≥2.) A direct self-cycle is excluded — that's the measure
     /// check's job.
     fn total_reaches_through_other(&self, start: &str) -> bool {
-        let body = match self.total_fn_defs.get(start) {
-            Some(b) => b,
-            None => return false,
-        };
-        let mut first_hops = Vec::new();
-        Self::collect_total_callees(body, &self.total_fns, &mut first_hops);
-        for g in first_hops.iter().filter(|g| g.as_str() != start) {
-            let mut visited = HashSet::new();
-            if self.total_can_reach(g, start, &mut visited) {
-                return true;
-            }
-        }
-        false
+        self.total_cycle_members.contains(start)
     }
 
-    /// Can `from` reach `target` by following total-fn call edges?
-    fn total_can_reach(&self, from: &str, target: &str, visited: &mut HashSet<String>) -> bool {
-        if from == target {
-            return true;
-        }
-        if !visited.insert(from.to_string()) {
-            return false;
-        }
-        if let Some(body) = self.total_fn_defs.get(from) {
-            let mut callees = Vec::new();
-            Self::collect_total_callees(body, &self.total_fns, &mut callees);
-            for c in &callees {
-                if self.total_can_reach(c, target, visited) {
-                    return true;
+    /// Every total fn on a call cycle of length ≥2: the members of a strongly
+    /// connected component with more than one fn (a fn reaches itself through
+    /// another fn exactly when its component holds another). Tarjan's algorithm
+    /// on an explicit stack, `O(fns + calls)`, so a chain of `N` total fns costs
+    /// `N` steps and no recursion (AX-66: each of `N` walks was `O(N)` deep, a
+    /// wasm32 trap at 3,000 on flat source).
+    fn find_total_cycle_members(&self) -> HashSet<String> {
+        let names: Vec<&String> = self.total_fn_defs.keys().collect();
+        let id: HashMap<&str, usize> = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.as_str(), i))
+            .collect();
+        let edges: Vec<Vec<usize>> = names
+            .iter()
+            .map(|n| {
+                let mut callees = Vec::new();
+                Self::collect_total_callees(&self.total_fn_defs[*n], &self.total_fns, &mut callees);
+                callees
+                    .iter()
+                    .filter_map(|c| id.get(c.as_str()).copied())
+                    .collect()
+            })
+            .collect();
+
+        const UNSEEN: usize = usize::MAX;
+        let n = names.len();
+        let mut index = vec![UNSEEN; n];
+        let mut low = vec![0usize; n];
+        let mut on_stack = vec![false; n];
+        let mut component: Vec<usize> = Vec::new();
+        let mut next_index = 0usize;
+        let mut members = HashSet::new();
+        // (fn, next edge to take)
+        let mut walk: Vec<(usize, usize)> = Vec::new();
+        for root in 0..n {
+            if index[root] != UNSEEN {
+                continue;
+            }
+            index[root] = next_index;
+            low[root] = next_index;
+            next_index += 1;
+            component.push(root);
+            on_stack[root] = true;
+            walk.push((root, 0));
+            while let Some(&mut (v, ref mut next_edge)) = walk.last_mut() {
+                if let Some(&w) = edges[v].get(*next_edge) {
+                    *next_edge += 1;
+                    if index[w] == UNSEEN {
+                        index[w] = next_index;
+                        low[w] = next_index;
+                        next_index += 1;
+                        component.push(w);
+                        on_stack[w] = true;
+                        walk.push((w, 0));
+                    } else if on_stack[w] {
+                        low[v] = low[v].min(index[w]);
+                    }
+                    continue;
+                }
+                walk.pop();
+                if let Some(&(parent, _)) = walk.last() {
+                    low[parent] = low[parent].min(low[v]);
+                }
+                if low[v] == index[v] {
+                    let start = component
+                        .iter()
+                        .rposition(|&m| m == v)
+                        .expect("a component root is on the stack");
+                    let scc: Vec<usize> = component.drain(start..).collect();
+                    for &m in &scc {
+                        on_stack[m] = false;
+                    }
+                    if scc.len() > 1 {
+                        members.extend(scc.iter().map(|&m| names[m].clone()));
+                    }
                 }
             }
         }
-        false
+        members
     }
 
     /// Collect the names of called fns that ARE `@[total]` (the call-graph edges
@@ -3305,7 +3473,7 @@ impl CheckCtx {
     // Statement
     // ─────────────────────────────────────────────────────────────────────────
 
-    fn check_stmt(&mut self, stmt: &Stmt, node_path: &str, scope: &mut HashMap<String, Type>) {
+    fn check_stmt(&mut self, stmt: &Stmt, node_path: &NodePath, scope: &mut HashMap<String, Type>) {
         // Track the statement span so deeply-nested errors can attach a
         // useful source location (rustc-style `file:line:col`).
         if !stmt.span.is_dummy() {
@@ -3318,7 +3486,7 @@ impl CheckCtx {
     // Expression
     // ─────────────────────────────────────────────────────────────────────────
 
-    fn check_expr(&mut self, expr: &Expr, node_path: &str, scope: &mut HashMap<String, Type>) {
+    fn check_expr(&mut self, expr: &Expr, node_path: &NodePath, scope: &mut HashMap<String, Type>) {
         match expr {
             // ── Block ────────────────────────────────────────────────────────
             Expr::Block(stmts) => {
@@ -3338,14 +3506,14 @@ impl CheckCtx {
                                 crate::error::W0005,
                                 "unreachable code: this and the following statements can never run (an earlier `return`/`break`/`continue` always diverts control)".to_string(),
                             )
-                            .node(format!("{node_path}.stmt_{}", term_idx + 1))
+                            .node(node_path.idx("stmt", term_idx + 1))
                             .at(&file, 0, 0)
                             .fix("remove the dead code, or move it before the diverting statement".to_string()),
                         );
                     }
                 }
                 for (i, stmt) in stmts.iter().enumerate() {
-                    let stmt_path = format!("{node_path}.stmt_{i}");
+                    let stmt_path = node_path.idx("stmt", i);
                     let is_last = i + 1 == n;
 
                     if is_last {
@@ -3355,7 +3523,7 @@ impl CheckCtx {
                         // function-body path — `ends_with(".body")` also matches
                         // match-arm bodies (`…arm_N.body`), which would compare an
                         // arm's tail against the fn return type and false-flag.
-                        if node_path == self.fn_body_path {
+                        if node_path.is(&self.fn_body_path) {
                             let expr_ty = self.resolve_expr_type(&stmt.expr, &stmt_path, scope);
                             self.check_return_type_match(&expr_ty, node_path, &stmt_path);
                             // R03: the body-tail (implicit return) into a
@@ -3376,10 +3544,10 @@ impl CheckCtx {
             Expr::WithHandler { handler, body } => {
                 if let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
                     for (i, arm) in arms.iter().chain(return_arm.as_deref()).enumerate() {
-                        self.check_expr(&arm.body, &format!("{node_path}.handler_arm_{i}"), scope);
+                        self.check_expr(&arm.body, &node_path.idx("handler_arm", i), scope);
                     }
                 }
-                self.check_expr(body, &format!("{node_path}.with_body"), scope);
+                self.check_expr(body, &node_path.child("with_body"), scope);
             }
 
             // ── Binding forms ────────────────────────────────────────────────
@@ -3399,7 +3567,7 @@ impl CheckCtx {
                 value,
                 ty: annot,
             } => {
-                let val_path = format!("{node_path}.value");
+                let val_path = node_path.child("value");
                 self.check_expr(value, &val_path, scope);
                 // Phase 5: a `let p: T where P = <const>` annotation carries a
                 // refinement obligation — discharge it for a constant value
@@ -3424,7 +3592,7 @@ impl CheckCtx {
                 // type, which is usually enough to find it. Expression spans would
                 // fix it here and at several other sites at once.
                 if let Some(a) = annot {
-                    self.check_axon_type(a, &format!("{node_path}.ty"), None);
+                    self.check_axon_type(a, &node_path.child("ty"), None);
                 }
                 // R19 Slice B: when the annotation names a non-i64 fixed-width
                 // integer type (u8, u16, u32, u64, i8, i16, i32), use the ANNOTATION
@@ -3448,7 +3616,7 @@ impl CheckCtx {
                 } else {
                     self.resolve_expr_type(value, &val_path, scope)
                 };
-                scope.insert(name.clone(), ty);
+                scope.insert(name.clone(), bound_type(ty));
                 // R6 local taint: if this binds a sensitive value (a sensitive
                 // struct, or a field of one — `let e = u.email`), remember that
                 // the LOCAL is now tainted, so a later `sink(e)` is caught even
@@ -3490,9 +3658,9 @@ impl CheckCtx {
                         return; // skip all further checks for prob predicates
                     }
                 }
-                self.check_expr(callee, &format!("{node_path}.callee"), scope);
+                self.check_expr(callee, &node_path.child("callee"), scope);
                 for (i, arg) in args.iter().enumerate() {
-                    self.check_expr(arg, &format!("{node_path}.arg_{i}"), scope);
+                    self.check_expr(arg, &node_path.idx("arg", i), scope);
                 }
                 // R13 native FFI: `M::fn(...)` argument boundary checks
                 // (E1801 non-representable, E1802 cross-module handle).
@@ -3572,7 +3740,7 @@ impl CheckCtx {
                                 if !is_sink_pos {
                                     continue;
                                 }
-                                let apath = format!("{node_path}.arg_{i}");
+                                let apath = node_path.idx("arg", i);
                                 if let Some((sname, cat)) =
                                     self.sensitive_flow_in(arg, &apath, scope)
                                 {
@@ -3649,10 +3817,10 @@ impl CheckCtx {
                 method,
                 args,
             } => {
-                let rpath = format!("{node_path}.receiver");
+                let rpath = node_path.child("receiver");
                 self.check_expr(receiver, &rpath, scope);
                 for (i, arg) in args.iter().enumerate() {
-                    self.check_expr(arg, &format!("{node_path}.arg_{i}"), scope);
+                    self.check_expr(arg, &node_path.idx("arg", i), scope);
                 }
                 // `recv.method(args)` is only valid when `method` is a method
                 // defined on the receiver's type (via an impl block) or a builtin
@@ -3810,7 +3978,7 @@ impl CheckCtx {
                                     continue; // the receiver (`self`) slot
                                 }
                                 if let Some(arg) = args.get(p - 1) {
-                                    let apath = format!("{node_path}.arg_{}", p - 1);
+                                    let apath = node_path.idx("arg", p - 1);
                                     if let Some((sname, cat)) =
                                         self.sensitive_flow_in(arg, &apath, scope)
                                     {
@@ -3841,246 +4009,14 @@ impl CheckCtx {
             }
 
             // ── BinOp ────────────────────────────────────────────────────────
-            Expr::BinOp { op, left, right } => {
-                let lpath = format!("{node_path}.left");
-                let rpath = format!("{node_path}.right");
-                self.check_expr(left, &lpath, scope);
-                self.check_expr(right, &rpath, scope);
-                // R01: arithmetic operands must not be bare Option<T>.
-                let lty = self.resolve_expr_type(left, &lpath, scope);
-                let rty = self.resolve_expr_type(right, &rpath, scope);
-                self.check_not_option_used_as_value(&lty, &lpath);
-                self.check_not_option_used_as_value(&rty, &rpath);
-                self.check_not_result_used_as_value(&lty, &lpath);
-                self.check_not_result_used_as_value(&rty, &rpath);
-                // `char_at(s, i) == "a"` — comparing a BYTE VALUE with a string.
-                //
-                // `char_at` returns the byte as an `i64`, and the reader who
-                // wrote this is thinking of a character type Axon does not have.
-                // Measured 2026-08-06, this one construct caused ALL THREE
-                // remaining failures in the RLM fluency gate, in every one of six
-                // runs and in both repair arms — the three tasks that iterate a
-                // string are exactly the ones that invite a char comparison.
-                //
-                // The PARSE tier already names it, for `'a'` with single quotes.
-                // Written with double quotes the program parses fine and dies
-                // here instead, where the message was infer's bare "type mismatch
-                // in equality operands (expected str), found i64" — which never
-                // mentions `char_at`, the only thing in the line that could
-                // explain why an `i64` appeared.
-                //
-                // Emitted as E03xx WITH help so `collapse_refined_type_errors`
-                // drops that bare E0102 at the same span, rather than the reader
-                // getting both.
-                if matches!(
-                    op,
-                    BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq
-                ) {
-                    let char_side = [(&lty, left), (&rty, right)]
-                        .iter()
-                        .any(|(t, e)| **t == Type::I64 && is_char_at_call(e));
-                    let str_side = lty == Type::Str || rty == Type::Str;
-                    if char_side && str_side {
-                        let file = self.file.clone();
-                        let span = self.current_span;
-                        self.errors.push(
-                            CheckError::new(
-                                E0301,
-                                "`char_at` returns the BYTE VALUE as an `i64`, so it cannot be \
-                                 compared with a `str` — Axon has no character type"
-                                    .to_string(),
-                            )
-                            .node(node_path)
-                            .at(&file, 0, 0)
-                            .with_span(span)
-                            .expected("i64".to_string())
-                            .found("str".to_string())
-                            .fix(
-                                "compare numerically (`char_at(s, i) == 32` for a space), or take \
-                                 a one-character slice and compare as text: \
-                                 `str_eq(str_slice(s, i, i + 1), \" \")`"
-                                    .to_string(),
-                            ),
-                        );
-                    }
-                }
-                // Ordering (`<` `>` `<=` `>=`) is defined for NUMBERS only. The
-                // interpreter panics at runtime on anything else — "cannot apply
-                // Lt to str / str" — and nothing rejected it first, so `"a" < "b"`,
-                // `true < false`, `[1] < [2]`, `(1,2) < (1,3)` and `P{..} < P{..}`
-                // all passed `axon check` and then died. A program that checks
-                // clean and panics is the worst diagnostic shape available: the
-                // one tool whose job is to answer "is this program OK" said yes.
-                //
-                // Deliberately keyed on CONCRETE unorderable types. `Unknown`,
-                // `Var`, `Deferred`, `TypeParam` and the wrappers are left alone —
-                // a generic `T` may well be instantiated at a numeric type, and
-                // rejecting on an unresolved type would be a false positive.
-                if matches!(
-                    op,
-                    crate::ast::BinOp::Lt
-                        | crate::ast::BinOp::Gt
-                        | crate::ast::BinOp::LtEq
-                        | crate::ast::BinOp::GtEq
-                ) {
-                    for (t, p) in [(&lty, &lpath), (&rty, &rpath)] {
-                        let fix = match t {
-                            Type::Str => Option::Some(
-                                "`str` has no `<` — use `str_cmp(a, b)`, which returns -1, 0 or 1"
-                                    .to_string(),
-                            ),
-                            Type::Bool => Option::Some(
-                                "booleans are not ordered — use `==`, or combine them with `&&` / `||`"
-                                    .to_string(),
-                            ),
-                            Type::Slice(_) | Type::Tuple(_) => Option::Some(
-                                "sequences are not ordered — compare a specific element                                  (`a[0] < b[0]`) or their lengths"
-                                    .to_string(),
-                            ),
-                            // Only for a name this checker KNOWS is a struct or
-                            // enum. An unresolved generic `T` arrives here as
-                            // `Struct("T")`, and rejecting it broke
-                            // `fn smaller<T>(a: T, b: T) -> bool { a < b }` —
-                            // caught by this rule's own companion test, which
-                            // exists because "reject ordering" is trivially
-                            // satisfiable by rejecting too much.
-                            Type::Struct(n) | Type::Enum(n)
-                                if !self.current_generic_params.contains(n)
-                                    && (self.struct_fields.contains_key(n)
-                                        || self.known_enums.contains(n)) =>
-                            {
-                                Option::Some(format!(
-                                    "`{n}` is not ordered — compare a specific field (`a.field < b.field`)"
-                                ))
-                            }
-                            _ => Option::None,
-                        };
-                        if let Option::Some(fix) = fix {
-                            let file = self.file.clone();
-                            let span = self.current_span;
-                            self.errors.push(
-                                CheckError::new(
-                                    E0301,
-                                    format!(
-                                        "`{}` cannot be ordered with `<`/`>`/`<=`/`>=` — \
-                                         this panics at runtime",
-                                        t.display()
-                                    ),
-                                )
-                                .node(p)
-                                .at(&file, 0, 0)
-                                .with_span(span)
-                                .expected("numeric type (i64, f64, …)".to_string())
-                                .found(t.display())
-                                .fix(fix),
-                            );
-                            break; // one diagnostic per comparison, not two
-                        }
-                    }
-                }
-
-                // Fix #4: arithmetic operands must be numeric types.
-                use crate::ast::BinOp;
-                if matches!(
-                    op,
-                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem
-                ) {
-                    // R13 E1803: arithmetic on a native handle is forbidden
-                    // (opaque, unforgeable). Checked BEFORE check_numeric_operand,
-                    // which short-circuits on Deferred (handles are Deferred).
-                    self.check_handle_not_arithmetic(&lty, &lpath, "used in arithmetic");
-                    self.check_handle_not_arithmetic(&rty, &rpath, "used in arithmetic");
-                    // N2a: `str + str` is CONCATENATION, and the interpreter has
-                    // implemented it all along (`interp/value.rs:681`
-                    // `(Add, Str(a), Str(b)) => Ok(Str(a + &b))`). Only this
-                    // check refused it, so the evaluator arm was unreachable —
-                    // the checker being more restrictive than the reference
-                    // oracle, which is the same shape as M4 in the opposite
-                    // direction.
-                    //
-                    // Deliberately narrow: BOTH sides must be `str`, and only
-                    // for `Add`. `"a" - "b"` stays refused here.
-                    //
-                    // The `rty` half is belt-and-braces, and mutation-testing
-                    // showed why that is worth saying rather than assuming:
-                    // loosening this to `lty == Str` alone did NOT fail the
-                    // mixed-operand test, because INFER already refuses
-                    // `"a" + 1` by unification ("type mismatch in arithmetic
-                    // operands"), a different E0102 from this one. So that test
-                    // covers infer, not this clause. The clause stays because it
-                    // makes this check's intent independent of another pass —
-                    // if unification ever loosened, `str + int` must not become
-                    // silently legal here.
-                    // A CHAIN of concatenations must work too. `"a" + "b"` was
-                    // accepted while `"a" + "b" + "c"` was refused, because the
-                    // nested `+`'s type is not in `expr_types` under the path
-                    // this walk builds, and `resolve_expr_type` deliberately has
-                    // no `BinOp` arm (see the note there — resolving binops
-                    // naively breaks `Uncertain`/`Temporal`). So the outer `+`
-                    // saw one `Unknown` operand, concluded "not a concat", and
-                    // ran the numeric check on the other one — producing
-                    // "arithmetic operand has non-numeric type str" whose help
-                    // then advised converting a number the author never wrote.
-                    //
-                    // `concat_chain_ty` closes only that hole: it resolves an
-                    // `Add` whose leaves are all `str` (or all `[T]`) and
-                    // nothing else, so the `Uncertain`/`Temporal` hazard the
-                    // note describes cannot arise — those never resolve to
-                    // `Str`/`Slice`.
-                    //
-                    // A side the checker cannot type (a `match` arm binding
-                    // like `Err(e)`) joins the other side's kind — see
-                    // `concat_operands_kind`.
-                    let cat = if matches!(op, BinOp::Add) {
-                        self.concat_operands_kind(left, right, node_path, scope)
-                    } else {
-                        Option::None
-                    };
-                    let str_concat = cat.as_ref() == Some(&Type::Str);
-                    // N2b: same permission for `[T] + [T]`. Element types must
-                    // already agree — infer unifies them — so this only has to
-                    // stop the numeric check from firing on two arrays.
-                    let arr_concat = matches!(cat, Option::Some(Type::Slice(_)));
-                    if !str_concat && !arr_concat {
-                        self.check_numeric_operand(&lty, &lpath);
-                        self.check_numeric_operand(&rty, &rpath);
-                    }
-                }
-                // Integer division/remainder by a divisor that CONSTANT-FOLDS to
-                // zero always panics at runtime ("integer division by zero").
-                // Catch it statically as E0407 — covers a literal `0` AND a
-                // constant integer expression like `(2 - 2)` / `(0 * 5)`. A float
-                // `/0.0` is `inf` (not a panic) and a non-constant divisor can't
-                // be known here, so both are left alone.
-                if matches!(op, BinOp::Div | BinOp::Rem)
-                    && const_eval_int(right.as_ref()) == Some(0)
-                {
-                    let file = self.file.clone();
-                    let verb = if matches!(op, BinOp::Div) {
-                        "division"
-                    } else {
-                        "remainder"
-                    };
-                    self.errors.push(
-                        CheckError::new(
-                            E0407,
-                            format!("integer {verb} by zero — this always panics at runtime"),
-                        )
-                        .node(node_path)
-                        .at(&file, 0, 0)
-                        .with_span(self.current_span)
-                        .fix(
-                            "guard the divisor (`if d != 0 { … }`) or use a non-zero constant"
-                                .to_string(),
-                        ),
-                    );
-                }
+            Expr::BinOp { .. } => {
+                self.check_binop_chain(expr, node_path, scope);
             }
 
             // ── UnaryOp ──────────────────────────────────────────────────────
             Expr::UnaryOp { op, operand } => {
                 use crate::ast::UnaryOp;
-                let opath = format!("{node_path}.operand");
+                let opath = node_path.child("operand");
                 self.check_expr(operand, &opath, scope);
                 let ty = self.resolve_expr_type(operand, &opath, scope);
                 self.check_not_option_used_as_value(&ty, &opath);
@@ -4132,12 +4068,12 @@ impl CheckCtx {
                         );
                     }
                 }
-                self.check_expr(inner, &format!("{node_path}.inner"), scope);
+                self.check_expr(inner, &node_path.child("inner"), scope);
             }
 
             // ── Match ────────────────────────────────────────────────────────
             Expr::Match { subject, arms } => {
-                let subj_path = format!("{node_path}.subject");
+                let subj_path = node_path.child("subject");
                 self.check_expr(subject, &subj_path, scope);
 
                 // R04: exhaustiveness for Option / Result.
@@ -4146,25 +4082,25 @@ impl CheckCtx {
 
                 for (i, arm) in arms.iter().enumerate() {
                     if let Option::Some(guard) = &arm.guard {
-                        self.check_expr(guard, &format!("{node_path}.arm_{i}.guard"), scope);
+                        self.check_expr(guard, &node_path.idx("arm", i).child("guard"), scope);
                     }
-                    self.check_expr(&arm.body, &format!("{node_path}.arm_{i}.body"), scope);
+                    self.check_expr(&arm.body, &node_path.idx("arm", i).child("body"), scope);
                 }
             }
 
             // ── If ───────────────────────────────────────────────────────────
             Expr::If { cond, then, else_ } => {
-                self.check_expr(cond, &format!("{node_path}.cond"), scope);
-                self.check_expr(then, &format!("{node_path}.then"), scope);
+                self.check_expr(cond, &node_path.child("cond"), scope);
+                self.check_expr(then, &node_path.child("then"), scope);
                 if let Option::Some(e) = else_ {
-                    self.check_expr(e, &format!("{node_path}.else"), scope);
+                    self.check_expr(e, &node_path.child("else"), scope);
                 }
             }
 
             // ── Return ───────────────────────────────────────────────────────
             Expr::Return(val) => {
                 if let Option::Some(v) = val {
-                    let vpath = format!("{node_path}.value");
+                    let vpath = node_path.child("value");
                     self.check_expr(v, &vpath, scope);
                     // R07: returned value must match declared return type.
                     let val_ty = self.resolve_expr_type(v, &vpath, scope);
@@ -4180,7 +4116,7 @@ impl CheckCtx {
 
             // ── FieldAccess ──────────────────────────────────────────────────
             Expr::FieldAccess { receiver, field } => {
-                let recv_path = format!("{node_path}.receiver");
+                let recv_path = node_path.child("receiver");
                 self.check_expr(receiver, &recv_path, scope);
                 // R11
                 let recv_ty = self.resolve_expr_type(receiver, &recv_path, scope);
@@ -4218,13 +4154,13 @@ impl CheckCtx {
                 // predicates — skip all array/I64 constraints for them.
                 if let Expr::Ident(tag) = receiver.as_ref() {
                     if crate::builtins::is_prob_pred_ident(tag) {
-                        self.check_expr(index, &format!("{node_path}.index"), scope);
+                        self.check_expr(index, &node_path.child("index"), scope);
                         return;
                     }
                 }
-                let recv_path = format!("{node_path}.receiver");
+                let recv_path = node_path.child("receiver");
                 self.check_expr(receiver, &recv_path, scope);
-                self.check_expr(index, &format!("{node_path}.index"), scope);
+                self.check_expr(index, &node_path.child("index"), scope);
                 // R11-sibling: indexing is only valid on a slice/array. A
                 // concrete non-slice receiver (`n[0]` where `n: i64`, or a bool,
                 // or a struct) used to be silently accepted at check time and
@@ -4353,7 +4289,7 @@ impl CheckCtx {
 
             // ── Spawn / Comptime ─────────────────────────────────────────────
             Expr::Spawn(inner) | Expr::Comptime(inner) => {
-                self.check_expr(inner, &format!("{node_path}.inner"), scope);
+                self.check_expr(inner, &node_path.child("inner"), scope);
             }
 
             // ── Inline asm (R17 Slice 1) ─────────────────────────────────────
@@ -4365,8 +4301,8 @@ impl CheckCtx {
             // ── Select ───────────────────────────────────────────────────────
             Expr::Select(arms) => {
                 for (i, arm) in arms.iter().enumerate() {
-                    self.check_expr(&arm.recv, &format!("{node_path}.arm_{i}.recv"), scope);
-                    self.check_expr(&arm.body, &format!("{node_path}.arm_{i}.body"), scope);
+                    self.check_expr(&arm.recv, &node_path.idx("arm", i).child("recv"), scope);
+                    self.check_expr(&arm.body, &node_path.idx("arm", i).child("body"), scope);
                 }
             }
 
@@ -4383,31 +4319,31 @@ impl CheckCtx {
                 if self.sealed_at(self.current_span) {
                     for p in params {
                         if let Some(t) = &p.ty {
-                            self.check_axon_type(t, &format!("{node_path}.param_{}", p.name), None);
+                            self.check_axon_type(t, &node_path.named("param", &p.name), None);
                         }
                     }
                 }
                 let prev = self.current_ret_ty.take();
-                self.check_expr(body, &format!("{node_path}.body"), scope);
+                self.check_expr(body, &node_path.child("body"), scope);
                 self.current_ret_ty = prev;
             }
 
             // ── Wrapper constructors ─────────────────────────────────────────
             Expr::Ok(inner) | Expr::Err(inner) | Expr::Some(inner) => {
-                self.check_expr(inner, &format!("{node_path}.inner"), scope);
+                self.check_expr(inner, &node_path.child("inner"), scope);
             }
 
             // ── While ────────────────────────────────────────────────────────
             Expr::While { cond, body } => {
-                self.check_expr(cond, &format!("{node_path}.cond"), scope);
+                self.check_expr(cond, &node_path.child("cond"), scope);
                 for (i, stmt) in body.iter().enumerate() {
-                    self.check_stmt(stmt, &format!("{node_path}.body_stmt_{i}"), scope);
+                    self.check_stmt(stmt, &node_path.idx("body_stmt", i), scope);
                 }
             }
             Expr::WhileLet { expr, body, .. } => {
-                self.check_expr(expr, &format!("{node_path}.while_let_expr"), scope);
+                self.check_expr(expr, &node_path.child("while_let_expr"), scope);
                 for (i, stmt) in body.iter().enumerate() {
-                    self.check_stmt(stmt, &format!("{node_path}.while_let_body_{i}"), scope);
+                    self.check_stmt(stmt, &node_path.idx("while_let_body", i), scope);
                 }
             }
             Expr::For {
@@ -4417,18 +4353,18 @@ impl CheckCtx {
                 body,
                 ..
             } => {
-                self.check_expr(start, &format!("{node_path}.start"), scope);
-                self.check_expr(end, &format!("{node_path}.end"), scope);
+                self.check_expr(start, &node_path.child("start"), scope);
+                self.check_expr(end, &node_path.child("end"), scope);
                 let mut inner = scope.clone();
                 inner.insert(var.clone(), crate::types::Type::I64);
                 for (i, stmt) in body.iter().enumerate() {
-                    self.check_stmt(stmt, &format!("{node_path}.for_body_{i}"), &mut inner);
+                    self.check_stmt(stmt, &node_path.idx("for_body", i), &mut inner);
                 }
             }
 
             // ── Assign (rebind existing local) ────────────────────────────────
             Expr::Assign { name, value } => {
-                let val_path = format!("{node_path}.value");
+                let val_path = node_path.child("value");
                 self.check_expr(value, &val_path, scope);
                 let ty = self.resolve_expr_type(value, &val_path, scope);
                 // A reassignment does NOT change the variable's type (Axon vars are
@@ -4441,19 +4377,19 @@ impl CheckCtx {
                 // reassignment like `x = x + 1`, missing real errors (e.g. `x.foo`
                 // on an i64). Keep the prior type when the new one is Unknown.
                 if !matches!(ty, Type::Unknown) || !scope.contains_key(name) {
-                    scope.insert(name.clone(), ty);
+                    scope.insert(name.clone(), bound_type(ty));
                 }
             }
             Expr::AssignTo { place, value } => {
-                self.check_expr(place, &format!("{node_path}.place"), scope);
-                self.check_expr(value, &format!("{node_path}.value"), scope);
+                self.check_expr(place, &node_path.child("place"), scope);
+                self.check_expr(value, &node_path.child("value"), scope);
             }
 
             // ── FmtStr: check each interpolated sub-expression ──────────────
             Expr::FmtStr { parts } => {
                 for part in parts {
                     if let FmtPart::Expr(e) = part {
-                        self.check_expr(e, &format!("{node_path}.fmt_part"), scope);
+                        self.check_expr(e, &node_path.child("fmt_part"), scope);
                     }
                 }
             }
@@ -4474,7 +4410,7 @@ impl CheckCtx {
                 // Check field VALUE expressions (infer owns field-name validation
                 // for structs via E0101; this walks nested exprs for other rules).
                 for (i, (_fname, fexpr)) in fields.iter().enumerate() {
-                    self.check_expr(fexpr, &format!("{node_path}.field_{i}"), scope);
+                    self.check_expr(fexpr, &node_path.idx("field", i), scope);
                 }
                 // R04: a constant field value whose declared field type is a
                 // refinement must satisfy the predicate.
@@ -4488,7 +4424,7 @@ impl CheckCtx {
                             fname,
                             name,
                             fexpr,
-                            &format!("{node_path}.field_{i}"),
+                            &node_path.idx("field", i),
                         );
                     }
                 }
@@ -4619,11 +4555,336 @@ impl CheckCtx {
             Expr::Array(elems) | Expr::Tuple(elems) => {
                 if self.sealed_at(self.current_span) {
                     for (i, e) in elems.iter().enumerate() {
-                        self.check_expr(e, &format!("{node_path}.elem_{i}"), scope);
+                        self.check_expr(e, &node_path.idx("elem", i), scope);
                     }
                 }
             }
             Expr::Ident(_) | Expr::Literal(_) | Expr::None | Expr::Break | Expr::Continue => {}
+        }
+    }
+
+    /// A `BinOp` node and everything below it on the left, checked without
+    /// recursing down the left spine (AX-64): `1 + 1 + … + 1` is `N` nodes deep
+    /// to the left, and one recursive frame per level is a stack overflow at
+    /// the scale this has been seen at (100,000 terms). The spine is walked
+    /// down once, then checked innermost first, which is the order the
+    /// recursion visited it in: each node's left operand, then its right
+    /// operand, then the node itself. Returns the top node's chain kind
+    /// (`Some(Str | Slice)` for a concatenation chain, see
+    /// [`Self::check_binop_node`]).
+    fn check_binop_chain(
+        &mut self,
+        expr: &Expr,
+        node_path: &NodePath,
+        scope: &mut HashMap<String, Type>,
+    ) -> Option<Type> {
+        struct Link<'e> {
+            expr: &'e Expr,
+            op: &'e crate::ast::BinOp,
+            left: &'e Expr,
+            right: &'e Expr,
+            path: NodePath,
+        }
+        let mut spine: Vec<Link<'_>> = Vec::new();
+        let mut cur = expr;
+        let mut path = node_path.clone();
+        while let Expr::BinOp { op, left, right } = cur {
+            spine.push(Link {
+                expr: cur,
+                op,
+                left,
+                right,
+                path: path.clone(),
+            });
+            path = path.child("left");
+            cur = left;
+        }
+        // `cur` is the innermost left operand: not a `BinOp`.
+        self.check_expr(cur, &path, scope);
+        let mut inner: Option<Type> = Option::None;
+        for (n, link) in spine.iter().rev().enumerate() {
+            let lpath = link.path.child("left");
+            let rpath = link.path.child("right");
+            let right_chain = if matches!(link.right, Expr::BinOp { .. }) {
+                self.check_binop_chain(link.right, &rpath, scope)
+            } else {
+                self.check_expr(link.right, &rpath, scope);
+                Option::None
+            };
+            let (lleaf, rleaf) = if matches!(link.op, crate::ast::BinOp::Add) {
+                let l = if n == 0 {
+                    self.concat_leaf(link.left, &lpath, scope)
+                } else {
+                    inner.take().map(Option::Some)
+                };
+                let r = if matches!(link.right, Expr::BinOp { .. }) {
+                    right_chain.map(Option::Some)
+                } else {
+                    self.concat_leaf(link.right, &rpath, scope)
+                };
+                (l, r)
+            } else {
+                (Option::None, Option::None)
+            };
+            inner = self.check_binop_node(
+                link.expr, &link.path, link.op, link.left, link.right, &lpath, &rpath, lleaf,
+                rleaf, scope,
+            );
+        }
+        inner
+    }
+
+    /// One `BinOp` node's own checks, run after both operands have been checked.
+    /// `lleaf`/`rleaf` are the operands' concatenation kinds (see
+    /// [`Self::concat_leaf`]); the node's own is returned: `Some(Str | Slice)`
+    /// when it is a chain of that kind, else `None`.
+    #[allow(clippy::too_many_arguments)]
+    fn check_binop_node(
+        &mut self,
+        expr: &Expr,
+        node_path: &NodePath,
+        op: &crate::ast::BinOp,
+        left: &Expr,
+        right: &Expr,
+        lpath: &NodePath,
+        rpath: &NodePath,
+        lleaf: Option<Option<Type>>,
+        rleaf: Option<Option<Type>>,
+        scope: &HashMap<String, Type>,
+    ) -> Option<Type> {
+        // The concatenation kind of `left + right`, from the operands' kinds.
+        let cat = if matches!(op, crate::ast::BinOp::Add) {
+            Self::concat_combine(lleaf, rleaf)
+        } else {
+            Option::None
+        };
+        // R01: arithmetic operands must not be bare Option<T>.
+        let lty = self.resolve_expr_type(left, lpath, scope);
+        let rty = self.resolve_expr_type(right, rpath, scope);
+        self.check_not_option_used_as_value(&lty, lpath);
+        self.check_not_option_used_as_value(&rty, rpath);
+        self.check_not_result_used_as_value(&lty, lpath);
+        self.check_not_result_used_as_value(&rty, rpath);
+        // `char_at(s, i) == "a"` — comparing a BYTE VALUE with a string.
+        //
+        // `char_at` returns the byte as an `i64`, and the reader who
+        // wrote this is thinking of a character type Axon does not have.
+        // Measured 2026-08-06, this one construct caused ALL THREE
+        // remaining failures in the RLM fluency gate, in every one of six
+        // runs and in both repair arms — the three tasks that iterate a
+        // string are exactly the ones that invite a char comparison.
+        //
+        // The PARSE tier already names it, for `'a'` with single quotes.
+        // Written with double quotes the program parses fine and dies
+        // here instead, where the message was infer's bare "type mismatch
+        // in equality operands (expected str), found i64" — which never
+        // mentions `char_at`, the only thing in the line that could
+        // explain why an `i64` appeared.
+        //
+        // Emitted as E03xx WITH help so `collapse_refined_type_errors`
+        // drops that bare E0102 at the same span, rather than the reader
+        // getting both.
+        if matches!(
+            op,
+            BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq
+        ) {
+            let char_side = [(&lty, left), (&rty, right)]
+                .iter()
+                .any(|(t, e)| **t == Type::I64 && is_char_at_call(e));
+            let str_side = lty == Type::Str || rty == Type::Str;
+            if char_side && str_side {
+                let file = self.file.clone();
+                let span = self.current_span;
+                self.errors.push(
+                    CheckError::new(
+                        E0301,
+                        "`char_at` returns the BYTE VALUE as an `i64`, so it cannot be \
+                         compared with a `str` — Axon has no character type"
+                            .to_string(),
+                    )
+                    .node(node_path)
+                    .at(&file, 0, 0)
+                    .with_span(span)
+                    .expected("i64".to_string())
+                    .found("str".to_string())
+                    .fix(
+                        "compare numerically (`char_at(s, i) == 32` for a space), or take \
+                         a one-character slice and compare as text: \
+                         `str_eq(str_slice(s, i, i + 1), \" \")`"
+                            .to_string(),
+                    ),
+                );
+            }
+        }
+        // Ordering (`<` `>` `<=` `>=`) is defined for NUMBERS only. The
+        // interpreter panics at runtime on anything else — "cannot apply
+        // Lt to str / str" — and nothing rejected it first, so `"a" < "b"`,
+        // `true < false`, `[1] < [2]`, `(1,2) < (1,3)` and `P{..} < P{..}`
+        // all passed `axon check` and then died. A program that checks
+        // clean and panics is the worst diagnostic shape available: the
+        // one tool whose job is to answer "is this program OK" said yes.
+        //
+        // Deliberately keyed on CONCRETE unorderable types. `Unknown`,
+        // `Var`, `Deferred`, `TypeParam` and the wrappers are left alone —
+        // a generic `T` may well be instantiated at a numeric type, and
+        // rejecting on an unresolved type would be a false positive.
+        if matches!(
+            op,
+            crate::ast::BinOp::Lt
+                | crate::ast::BinOp::Gt
+                | crate::ast::BinOp::LtEq
+                | crate::ast::BinOp::GtEq
+        ) {
+            for (t, p) in [(&lty, &lpath), (&rty, &rpath)] {
+                let fix = match t {
+                    Type::Str => Option::Some(
+                        "`str` has no `<` — use `str_cmp(a, b)`, which returns -1, 0 or 1"
+                            .to_string(),
+                    ),
+                    Type::Bool => Option::Some(
+                        "booleans are not ordered — use `==`, or combine them with `&&` / `||`"
+                            .to_string(),
+                    ),
+                    Type::Slice(_) | Type::Tuple(_) => Option::Some(
+                        "sequences are not ordered — compare a specific element                                  (`a[0] < b[0]`) or their lengths"
+                            .to_string(),
+                    ),
+                    // Only for a name this checker KNOWS is a struct or
+                    // enum. An unresolved generic `T` arrives here as
+                    // `Struct("T")`, and rejecting it broke
+                    // `fn smaller<T>(a: T, b: T) -> bool { a < b }` —
+                    // caught by this rule's own companion test, which
+                    // exists because "reject ordering" is trivially
+                    // satisfiable by rejecting too much.
+                    Type::Struct(n) | Type::Enum(n)
+                        if !self.current_generic_params.contains(n)
+                            && (self.struct_fields.contains_key(n)
+                                || self.known_enums.contains(n)) =>
+                    {
+                        Option::Some(format!(
+                            "`{n}` is not ordered — compare a specific field (`a.field < b.field`)"
+                        ))
+                    }
+                    _ => Option::None,
+                };
+                if let Option::Some(fix) = fix {
+                    let file = self.file.clone();
+                    let span = self.current_span;
+                    self.errors.push(
+                        CheckError::new(
+                            E0301,
+                            format!(
+                                "`{}` cannot be ordered with `<`/`>`/`<=`/`>=` — \
+                                 this panics at runtime",
+                                t.display()
+                            ),
+                        )
+                        .node(*p)
+                        .at(&file, 0, 0)
+                        .with_span(span)
+                        .expected("numeric type (i64, f64, …)".to_string())
+                        .found(t.display())
+                        .fix(fix),
+                    );
+                    break; // one diagnostic per comparison, not two
+                }
+            }
+        }
+
+        // Fix #4: arithmetic operands must be numeric types.
+        use crate::ast::BinOp;
+        if matches!(
+            op,
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem
+        ) {
+            // R13 E1803: arithmetic on a native handle is forbidden
+            // (opaque, unforgeable). Checked BEFORE check_numeric_operand,
+            // which short-circuits on Deferred (handles are Deferred).
+            self.check_handle_not_arithmetic(&lty, lpath, "used in arithmetic");
+            self.check_handle_not_arithmetic(&rty, rpath, "used in arithmetic");
+            // N2a: `str + str` is CONCATENATION, and the interpreter has
+            // implemented it all along (`interp/value.rs:681`
+            // `(Add, Str(a), Str(b)) => Ok(Str(a + &b))`). Only this
+            // check refused it, so the evaluator arm was unreachable —
+            // the checker being more restrictive than the reference
+            // oracle, which is the same shape as M4 in the opposite
+            // direction.
+            //
+            // Deliberately narrow: BOTH sides must be `str`, and only
+            // for `Add`. `"a" - "b"` stays refused here.
+            //
+            // The `rty` half is belt-and-braces, and mutation-testing
+            // showed why that is worth saying rather than assuming:
+            // loosening this to `lty == Str` alone did NOT fail the
+            // mixed-operand test, because INFER already refuses
+            // `"a" + 1` by unification ("type mismatch in arithmetic
+            // operands"), a different E0102 from this one. So that test
+            // covers infer, not this clause. The clause stays because it
+            // makes this check's intent independent of another pass —
+            // if unification ever loosened, `str + int` must not become
+            // silently legal here.
+            // A CHAIN of concatenations must work too. `"a" + "b"` was
+            // accepted while `"a" + "b" + "c"` was refused, because the
+            // nested `+`'s type is not in `expr_types` under the path
+            // this walk builds, and `resolve_expr_type` deliberately has
+            // no `BinOp` arm (see the note there — resolving binops
+            // naively breaks `Uncertain`/`Temporal`). So the outer `+`
+            // saw one `Unknown` operand, concluded "not a concat", and
+            // ran the numeric check on the other one — producing
+            // "arithmetic operand has non-numeric type str" whose help
+            // then advised converting a number the author never wrote.
+            //
+            // `concat_chain_ty` closes only that hole: it resolves an
+            // `Add` whose leaves are all `str` (or all `[T]`) and
+            // nothing else, so the `Uncertain`/`Temporal` hazard the
+            // note describes cannot arise — those never resolve to
+            // `Str`/`Slice`.
+            //
+            // A side the checker cannot type (a `match` arm binding
+            // like `Err(e)`) joins the other side's kind — see
+            // `concat_operands_kind`.
+            let str_concat = cat.as_ref() == Some(&Type::Str);
+            // N2b: same permission for `[T] + [T]`. Element types must
+            // already agree — infer unifies them — so this only has to
+            // stop the numeric check from firing on two arrays.
+            let arr_concat = matches!(cat, Option::Some(Type::Slice(_)));
+            if !str_concat && !arr_concat {
+                self.check_numeric_operand(&lty, lpath);
+                self.check_numeric_operand(&rty, rpath);
+            }
+        }
+        // Integer division/remainder by a divisor that CONSTANT-FOLDS to
+        // zero always panics at runtime ("integer division by zero").
+        // Catch it statically as E0407 — covers a literal `0` AND a
+        // constant integer expression like `(2 - 2)` / `(0 * 5)`. A float
+        // `/0.0` is `inf` (not a panic) and a non-constant divisor can't
+        // be known here, so both are left alone.
+        if matches!(op, BinOp::Div | BinOp::Rem) && const_eval_int(right) == Some(0) {
+            let file = self.file.clone();
+            let verb = if matches!(op, BinOp::Div) {
+                "division"
+            } else {
+                "remainder"
+            };
+            self.errors.push(
+                CheckError::new(
+                    E0407,
+                    format!("integer {verb} by zero — this always panics at runtime"),
+                )
+                .node(node_path)
+                .at(&file, 0, 0)
+                .with_span(self.current_span)
+                .fix(
+                    "guard the divisor (`if d != 0 { … }`) or use a non-zero constant".to_string(),
+                ),
+            );
+        }
+
+        // This node's own chain kind, for the `+` above it.
+        match self.resolve_expr_type(expr, node_path, scope) {
+            Type::Str => Option::Some(Type::Str),
+            t @ Type::Slice(_) => Option::Some(t),
+            _ => cat,
         }
     }
 
@@ -4636,7 +4897,7 @@ impl CheckCtx {
     fn check_stmt_result_ignored(
         &mut self,
         expr: &Expr,
-        node_path: &str,
+        node_path: &NodePath,
         scope: &mut HashMap<String, Type>,
     ) {
         match expr {
@@ -4737,7 +4998,7 @@ impl CheckCtx {
     /// — produced only infer's bare "type mismatch in arithmetic operands
     /// (expected i64)". That says the operands disagree and not WHICH side is
     /// wrapped, and carries no hint at all.
-    fn check_not_result_used_as_value(&mut self, ty: &Type, node_path: &str) {
+    fn check_not_result_used_as_value(&mut self, ty: &Type, node_path: &NodePath) {
         if ty.is_deferred() {
             return; // R12: deferred types are transparent
         }
@@ -4768,7 +5029,7 @@ impl CheckCtx {
         }
     }
 
-    fn check_not_option_used_as_value(&mut self, ty: &Type, node_path: &str) {
+    fn check_not_option_used_as_value(&mut self, ty: &Type, node_path: &NodePath) {
         if ty.is_deferred() {
             return; // R12: deferred types are transparent
         }
@@ -4816,7 +5077,7 @@ impl CheckCtx {
     /// index / negation site resolves to a native handle carrier. This is what
     /// makes a handle UNFORGEABLE at the surface: there is no operation that
     /// turns an i64 into a handle or pulls an index out of one.
-    fn check_handle_not_arithmetic(&mut self, ty: &Type, node_path: &str, verb: &str) {
+    fn check_handle_not_arithmetic(&mut self, ty: &Type, node_path: &NodePath, verb: &str) {
         if crate::native::is_native_handle(ty) {
             let file = self.file.clone();
             self.errors.push(
@@ -4847,7 +5108,7 @@ impl CheckCtx {
         &mut self,
         nf: &crate::native::NativeFn,
         args: &[Expr],
-        node_path: &str,
+        node_path: &NodePath,
         scope: &mut HashMap<String, Type>,
     ) {
         let file = self.file.clone();
@@ -4869,7 +5130,7 @@ impl CheckCtx {
             return;
         }
         for (i, arg) in args.iter().enumerate() {
-            let apath = format!("{node_path}.arg_{i}");
+            let apath = node_path.idx("arg", i);
             let arg_ty = self.resolve_expr_type(arg, &apath, scope);
             // Unknown/Var: inference hasn't resolved it — let other passes own it.
             if matches!(arg_ty, Type::Unknown | Type::Var(_)) {
@@ -4936,7 +5197,7 @@ impl CheckCtx {
         }
     }
 
-    fn check_numeric_operand(&mut self, ty: &Type, node_path: &str) {
+    fn check_numeric_operand(&mut self, ty: &Type, node_path: &NodePath) {
         // Skip unknowns, vars, deferred — only fire on concrete non-numeric types.
         if ty.is_deferred() || matches!(ty, Type::Unknown | Type::Var(_)) {
             return;
@@ -4997,7 +5258,7 @@ impl CheckCtx {
         &mut self,
         name: &str,
         args: &[Expr],
-        node_path: &str,
+        node_path: &NodePath,
         scope: &mut HashMap<String, Type>,
     ) {
         let sig = match self.fn_sigs.get(name).cloned() {
@@ -5050,7 +5311,7 @@ impl CheckCtx {
         // `arr_concat`): tp name → (arg index that bound it, concrete type).
         let mut tp_bindings: HashMap<String, (usize, Type)> = HashMap::new();
         for (i, (arg, param_ty)) in args.iter().zip(sig.params.iter()).enumerate() {
-            let arg_path = format!("{node_path}.arg_{i}");
+            let arg_path = node_path.idx("arg", i);
             let arg_ty = self.resolve_expr_type(arg, &arg_path, scope);
 
             // A generic slot accepts ANY type — but the same `T` in two slots
@@ -5471,7 +5732,7 @@ impl CheckCtx {
         &mut self,
         fn_name: &str,
         args: &[Expr],
-        node_path: &str,
+        node_path: &NodePath,
         scope: &mut HashMap<String, Type>,
         sig: &FnSig,
     ) {
@@ -5490,7 +5751,7 @@ impl CheckCtx {
                     continue;
                 }
                 let Some(arg) = args.get(i) else { continue };
-                let arg_path = format!("{node_path}.arg_{i}");
+                let arg_path = node_path.idx("arg", i);
                 let arg_ty = self.resolve_expr_type(arg, &arg_path, scope);
 
                 // Skip if unresolved.
@@ -5552,7 +5813,7 @@ impl CheckCtx {
         &mut self,
         subject_ty: &Type,
         arms: &[MatchArm],
-        node_path: &str,
+        node_path: &NodePath,
     ) {
         if subject_ty.is_deferred() {
             return;
@@ -5793,7 +6054,12 @@ impl CheckCtx {
     // R07 — return type agreement
     // ─────────────────────────────────────────────────────────────────────────
 
-    fn check_return_type_match(&mut self, val_ty: &Type, node_path: &str, _val_path: &str) {
+    fn check_return_type_match(
+        &mut self,
+        val_ty: &Type,
+        node_path: &NodePath,
+        _val_path: &NodePath,
+    ) {
         // R12: deferred types are always compatible.
         if val_ty.is_deferred() {
             return;
@@ -6040,7 +6306,12 @@ impl CheckCtx {
     /// annotation -- a param, a return type, a struct field. Without it E0308
     /// serialized with no line at all, and in a file with several functions
     /// "unknown type 'Widget'" does not say which annotation is wrong.
-    fn check_axon_type(&mut self, ty: &AxonType, node_path: &str, span: Option<crate::span::Span>) {
+    fn check_axon_type(
+        &mut self,
+        ty: &AxonType,
+        node_path: &NodePath,
+        span: Option<crate::span::Span>,
+    ) {
         match ty {
             AxonType::Named(name) => {
                 // Suppress E0308 for names that are generic type parameters of the
@@ -6090,35 +6361,35 @@ impl CheckCtx {
                 }
             }
             AxonType::Result { ok, err } => {
-                self.check_axon_type(ok, &format!("{node_path}.ok"), span);
-                self.check_axon_type(err, &format!("{node_path}.err"), span);
+                self.check_axon_type(ok, &node_path.child("ok"), span);
+                self.check_axon_type(err, &node_path.child("err"), span);
             }
             AxonType::Option(inner) => {
-                self.check_axon_type(inner, &format!("{node_path}.inner"), span);
+                self.check_axon_type(inner, &node_path.child("inner"), span);
             }
             AxonType::Chan(inner)
             | AxonType::Slice(inner)
             | AxonType::Ref(inner)
             | AxonType::RefMut(inner)
             | AxonType::RawPtr(inner) => {
-                self.check_axon_type(inner, &format!("{node_path}.inner"), span);
+                self.check_axon_type(inner, &node_path.child("inner"), span);
             }
             AxonType::Generic { base, args } => {
                 // Validate the base name (deferred prefixes are always OK).
                 self.check_axon_type(
                     &AxonType::Named(base.clone()),
-                    &format!("{node_path}.base"),
+                    &node_path.child("base"),
                     span,
                 );
                 for (i, arg) in args.iter().enumerate() {
-                    self.check_axon_type(arg, &format!("{node_path}.arg_{i}"), span);
+                    self.check_axon_type(arg, &node_path.idx("arg", i), span);
                 }
             }
             AxonType::Fn { params, ret } => {
                 for (i, p) in params.iter().enumerate() {
-                    self.check_axon_type(p, &format!("{node_path}.param_{i}"), span);
+                    self.check_axon_type(p, &node_path.idx("param", i), span);
                 }
-                self.check_axon_type(ret, &format!("{node_path}.ret"), span);
+                self.check_axon_type(ret, &node_path.child("ret"), span);
             }
             AxonType::TypeParam(_) => {}
             // Sealed only: the trait a `dyn` names is a name like any other
@@ -6133,14 +6404,14 @@ impl CheckCtx {
             }
             AxonType::Tuple(elems) => {
                 for (i, elem) in elems.iter().enumerate() {
-                    self.check_axon_type(elem, &format!("{node_path}.elem_{i}"), span);
+                    self.check_axon_type(elem, &node_path.idx("elem", i), span);
                 }
             }
             AxonType::Union(members) => {
                 // Each branch of a union is independently checked; an unknown
                 // branch still triggers E0308 against that branch alone.
                 for (i, m) in members.iter().enumerate() {
-                    self.check_axon_type(m, &format!("{node_path}.union_{i}"), span);
+                    self.check_axon_type(m, &node_path.idx("union", i), span);
                 }
             }
         }
@@ -6150,7 +6421,7 @@ impl CheckCtx {
     // R11 — field access on non-struct
     // ─────────────────────────────────────────────────────────────────────────
 
-    fn check_field_access(&mut self, recv_ty: &Type, field: &str, node_path: &str) {
+    fn check_field_access(&mut self, recv_ty: &Type, field: &str, node_path: &NodePath) {
         if recv_ty.is_deferred() {
             return; // R12
         }
@@ -6324,7 +6595,7 @@ impl CheckCtx {
     fn sensitive_flow_in(
         &self,
         arg: &Expr,
-        apath: &str,
+        apath: &NodePath,
         scope: &HashMap<String, Type>,
     ) -> Option<(String, String)> {
         // (a0) The arg is a bare local that was bound to a sensitive value earlier
@@ -6349,7 +6620,7 @@ impl CheckCtx {
             }
             if let Expr::Ident(n) = root {
                 let receiver_is_sensitive_struct = matches!(
-                    self.resolve_expr_type(receiver, &format!("{apath}.receiver"), scope),
+                    self.resolve_expr_type(receiver, &apath.child("receiver"), scope),
                     Type::Struct(ref s) if self.sensitive_types.contains_key(s)
                 );
                 if !receiver_is_sensitive_struct {
@@ -6367,7 +6638,7 @@ impl CheckCtx {
                 if let Some(positions) = self.taint_returning_params.get(cn) {
                     for (i, inner) in args.iter().enumerate() {
                         if positions.contains(&i) {
-                            let ipath = format!("{apath}.arg_{i}");
+                            let ipath = apath.idx("arg", i);
                             if let Some(src) = self.sensitive_flow_in(inner, &ipath, scope) {
                                 return Some(src);
                             }
@@ -6384,7 +6655,7 @@ impl CheckCtx {
         }
         // (b) A field access `<receiver>.field`.
         if let Expr::FieldAccess { receiver, field } = arg {
-            let rpath = format!("{apath}.receiver");
+            let rpath = apath.child("receiver");
             if let Type::Struct(rstruct) = self.resolve_expr_type(receiver, &rpath, scope) {
                 // (b1) The receiver itself is a sensitive struct — reading any of
                 // its fields exfiltrates sensitive data (PRD "can't exfiltrate
@@ -6414,27 +6685,21 @@ impl CheckCtx {
         match arg {
             Expr::Array(elems) => {
                 for (i, e) in elems.iter().enumerate() {
-                    if let Some(found) =
-                        self.sensitive_flow_in(e, &format!("{apath}.elem_{i}"), scope)
-                    {
+                    if let Some(found) = self.sensitive_flow_in(e, &apath.idx("elem", i), scope) {
                         return Some(found);
                     }
                 }
             }
             Expr::StructLit { fields, .. } => {
                 for (fname, e) in fields {
-                    if let Some(found) =
-                        self.sensitive_flow_in(e, &format!("{apath}.{fname}"), scope)
-                    {
+                    if let Some(found) = self.sensitive_flow_in(e, &apath.field(fname), scope) {
                         return Some(found);
                     }
                 }
             }
             Expr::Tuple(elems) => {
                 for (i, e) in elems.iter().enumerate() {
-                    if let Some(found) =
-                        self.sensitive_flow_in(e, &format!("{apath}.elem_{i}"), scope)
-                    {
+                    if let Some(found) = self.sensitive_flow_in(e, &apath.idx("elem", i), scope) {
                         return Some(found);
                     }
                 }
@@ -6451,7 +6716,7 @@ impl CheckCtx {
                     if crate::builtins::is_known_builtin(cn) {
                         for (i, e) in args.iter().enumerate() {
                             if let Some(found) =
-                                self.sensitive_flow_in(e, &format!("{apath}.arg_{i}"), scope)
+                                self.sensitive_flow_in(e, &apath.idx("arg", i), scope)
                             {
                                 return Some(found);
                             }
@@ -6466,8 +6731,7 @@ impl CheckCtx {
             Expr::FmtStr { parts } => {
                 for (i, p) in parts.iter().enumerate() {
                     if let crate::ast::FmtPart::Expr(e) = p {
-                        if let Some(found) =
-                            self.sensitive_flow_in(e, &format!("{apath}.part_{i}"), scope)
+                        if let Some(found) = self.sensitive_flow_in(e, &apath.idx("part", i), scope)
                         {
                             return Some(found);
                         }
@@ -6477,17 +6741,15 @@ impl CheckCtx {
             // (f) Arithmetic / comparison / logical ops over a sensitive operand —
             // the result is derived from (and leaks information about) the secret.
             Expr::BinOp { left, right, .. } => {
-                if let Some(found) = self.sensitive_flow_in(left, &format!("{apath}.left"), scope) {
+                if let Some(found) = self.sensitive_flow_in(left, &apath.child("left"), scope) {
                     return Some(found);
                 }
-                if let Some(found) = self.sensitive_flow_in(right, &format!("{apath}.right"), scope)
-                {
+                if let Some(found) = self.sensitive_flow_in(right, &apath.child("right"), scope) {
                     return Some(found);
                 }
             }
             Expr::UnaryOp { operand, .. } => {
-                if let Some(found) =
-                    self.sensitive_flow_in(operand, &format!("{apath}.operand"), scope)
+                if let Some(found) = self.sensitive_flow_in(operand, &apath.child("operand"), scope)
                 {
                     return Some(found);
                 }
@@ -6500,12 +6762,11 @@ impl CheckCtx {
             // and result-depends-on-sensitive-subject leakage is not modelled. Both
             // need pattern-binding / control-dependence taint — documented limits.)
             Expr::If { then, else_, .. } => {
-                if let Some(found) = self.sensitive_flow_in(then, &format!("{apath}.then"), scope) {
+                if let Some(found) = self.sensitive_flow_in(then, &apath.child("then"), scope) {
                     return Some(found);
                 }
                 if let Some(e) = else_ {
-                    if let Some(found) = self.sensitive_flow_in(e, &format!("{apath}.else"), scope)
-                    {
+                    if let Some(found) = self.sensitive_flow_in(e, &apath.child("else"), scope) {
                         return Some(found);
                     }
                 }
@@ -6513,7 +6774,7 @@ impl CheckCtx {
             Expr::Match { arms, .. } => {
                 for (i, arm) in arms.iter().enumerate() {
                     if let Some(found) =
-                        self.sensitive_flow_in(&arm.body, &format!("{apath}.arm_{i}"), scope)
+                        self.sensitive_flow_in(&arm.body, &apath.idx("arm", i), scope)
                     {
                         return Some(found);
                     }
@@ -6523,7 +6784,7 @@ impl CheckCtx {
             Expr::Block(stmts) => {
                 if let Some(tail) = stmts.last() {
                     if let Some(found) =
-                        self.sensitive_flow_in(&tail.expr, &format!("{apath}.tail"), scope)
+                        self.sensitive_flow_in(&tail.expr, &apath.child("tail"), scope)
                     {
                         return Some(found);
                     }
@@ -6534,15 +6795,10 @@ impl CheckCtx {
         None
     }
 
-    /// The type of a concatenation CHAIN, or `None` if this is not one.
-    ///
-    /// Returns `Some(Str)` / `Some(Slice(_))` for an expression that is either
-    /// already a `str`/array, or an `Add` whose both sides are themselves such
-    /// chains of the SAME kind. Everything else is `None` — deliberately, so
-    /// this cannot be mistaken for a general binop type resolver. `Uncertain`
-    /// and `Temporal` operands resolve to neither `Str` nor `Slice`, so the
-    /// hazard documented on `resolve_expr_type`'s missing `BinOp` arm does not
-    /// apply here.
+    /// The kind of one operand of a `+` that is not itself a `BinOp`:
+    /// `Some(Some(kind))` for a `str`/array, `Some(None)` for an operand this
+    /// walk cannot type (it adopts the other side's kind), `None` for anything
+    /// else (not a concatenation).
     ///
     /// A side this walk cannot type (`Unknown`/`Var`/deferred — e.g. a
     /// `match` arm binding such as `Err(e)`, which the checker scope does not
@@ -6550,41 +6806,31 @@ impl CheckCtx {
     /// "arithmetic operand has non-numeric type str". Infer has already
     /// unified both operands of the `+`, so a genuine `str + i64` never gets
     /// here silently (it is infer's E0102).
-    fn concat_chain_ty(
+    ///
+    /// A `BinOp` operand never comes here: its kind is the kind of the chain
+    /// below it, which [`Self::check_binop_chain`] carries up as it checks that
+    /// chain, so a chain of `N` operators costs `N` steps, not `N²`.
+    fn concat_leaf(
         &self,
         expr: &Expr,
-        node_path: &str,
+        node_path: &NodePath,
         scope: &HashMap<String, Type>,
-    ) -> Option<Type> {
+    ) -> Option<Option<Type>> {
         match self.resolve_expr_type(expr, node_path, scope) {
-            Type::Str => return Option::Some(Type::Str),
-            t @ Type::Slice(_) => return Option::Some(t),
-            _ => {}
+            Type::Str => Option::Some(Option::Some(Type::Str)),
+            t @ Type::Slice(_) => Option::Some(Option::Some(t)),
+            t if t.is_deferred() || matches!(t, Type::Unknown | Type::Var(_)) => {
+                Option::Some(Option::None)
+            }
+            _ => Option::None,
         }
-        if let Expr::BinOp {
-            op: crate::ast::BinOp::Add,
-            left,
-            right,
-        } = expr
-        {
-            return self.concat_operands_kind(left, right, node_path, scope);
-        }
-        Option::None
     }
 
     /// The concatenation kind (`Str` / `Slice`) of `left + right`, or `None`
     /// if the two operands do not form one. Both sides must be the same KIND
     /// (`str + [T]` stays an error); an untypable side adopts the other's.
-    fn concat_operands_kind(
-        &self,
-        left: &Expr,
-        right: &Expr,
-        node_path: &str,
-        scope: &HashMap<String, Type>,
-    ) -> Option<Type> {
-        let l = self.concat_chain_leaf(left, &format!("{node_path}.left"), scope)?;
-        let r = self.concat_chain_leaf(right, &format!("{node_path}.right"), scope)?;
-        match (l, r) {
+    fn concat_combine(l: Option<Option<Type>>, r: Option<Option<Type>>) -> Option<Type> {
+        match (l?, r?) {
             (Option::Some(Type::Str), Option::Some(Type::Str))
             | (Option::Some(Type::Str), Option::None)
             | (Option::None, Option::Some(Type::Str)) => Option::Some(Type::Str),
@@ -6595,38 +6841,19 @@ impl CheckCtx {
         }
     }
 
-    /// One operand of a concatenation `+`: `Some(Some(kind))` for a str/array
-    /// chain, `Some(None)` for an operand this walk cannot type (it adopts the
-    /// other side's kind), `None` for anything else (not a concat).
-    fn concat_chain_leaf(
-        &self,
-        expr: &Expr,
-        node_path: &str,
-        scope: &HashMap<String, Type>,
-    ) -> Option<Option<Type>> {
-        if let Option::Some(t) = self.concat_chain_ty(expr, node_path, scope) {
-            return Option::Some(Option::Some(t));
-        }
-        if matches!(expr, Expr::BinOp { .. }) {
-            return Option::None;
-        }
-        let ty = self.resolve_expr_type(expr, node_path, scope);
-        if ty.is_deferred() || matches!(ty, Type::Unknown | Type::Var(_)) {
-            Option::Some(Option::None)
-        } else {
-            Option::None
-        }
-    }
-
     fn resolve_expr_type(
         &self,
         expr: &Expr,
-        node_path: &str,
+        node_path: &NodePath,
         scope: &HashMap<String, Type>,
     ) -> Type {
         // 1. Use inference-provided type when available.
-        if let Option::Some(ty) = self.expr_types.get(node_path) {
-            return ty.clone();
+        // Inference's map is empty in production (only tests inject one); skip
+        // rendering the path text when there is nothing to look up.
+        if !self.expr_types.is_empty() {
+            if let Option::Some(ty) = self.expr_types.get(&node_path.render()) {
+                return ty.clone();
+            }
         }
 
         // 2. Syntactic fallback.
@@ -6640,15 +6867,15 @@ impl CheckCtx {
             },
             Expr::None => Type::Option(Box::new(Type::Unknown)),
             Expr::Some(inner) => {
-                let inner_ty = self.resolve_expr_type(inner, &format!("{node_path}.inner"), scope);
+                let inner_ty = self.resolve_expr_type(inner, &node_path.child("inner"), scope);
                 Type::Option(Box::new(inner_ty))
             }
             Expr::Ok(inner) => {
-                let inner_ty = self.resolve_expr_type(inner, &format!("{node_path}.inner"), scope);
+                let inner_ty = self.resolve_expr_type(inner, &node_path.child("inner"), scope);
                 Type::Result(Box::new(inner_ty), Box::new(Type::Unknown))
             }
             Expr::Err(inner) => {
-                let inner_ty = self.resolve_expr_type(inner, &format!("{node_path}.inner"), scope);
+                let inner_ty = self.resolve_expr_type(inner, &node_path.child("inner"), scope);
                 Type::Result(Box::new(Type::Unknown), Box::new(inner_ty))
             }
             Expr::Ident(name) => scope.get(name.as_str()).cloned().unwrap_or(Type::Unknown),
@@ -6656,7 +6883,7 @@ impl CheckCtx {
                 if let Option::Some(last) = stmts.last() {
                     self.resolve_expr_type(
                         &last.expr,
-                        &format!("{node_path}.stmt_{}", stmts.len() - 1),
+                        &node_path.idx("stmt", stmts.len() - 1),
                         scope,
                     )
                 } else {
@@ -6720,7 +6947,7 @@ impl CheckCtx {
                 // a runtime panic. Empty literal → Unknown element.
                 let elem_ty = elems
                     .first()
-                    .map(|e| self.resolve_expr_type(e, &format!("{node_path}.elem_0"), scope))
+                    .map(|e| self.resolve_expr_type(e, &node_path.child("elem_0"), scope))
                     .unwrap_or(Type::Unknown);
                 Type::Slice(Box::new(elem_ty))
             }
@@ -6730,9 +6957,7 @@ impl CheckCtx {
                 let tys: Vec<Type> = elems
                     .iter()
                     .enumerate()
-                    .map(|(i, e)| {
-                        self.resolve_expr_type(e, &format!("{node_path}.elem_{i}"), scope)
-                    })
+                    .map(|(i, e)| self.resolve_expr_type(e, &node_path.idx("elem", i), scope))
                     .collect();
                 Type::Tuple(tys)
             }
@@ -6744,8 +6969,7 @@ impl CheckCtx {
             // slipped to a runtime "field access on non-struct" panic. Resolving
             // the field type here lets the existing R11 check flag it statically.
             Expr::FieldAccess { receiver, field } => {
-                let recv_ty =
-                    self.resolve_expr_type(receiver, &format!("{node_path}.receiver"), scope);
+                let recv_ty = self.resolve_expr_type(receiver, &node_path.child("receiver"), scope);
                 match recv_ty {
                     Type::Struct(sname) => self
                         .struct_fields
@@ -6775,8 +6999,7 @@ impl CheckCtx {
             // access on non-struct" panic, same class as the FieldAccess arm).
             Expr::Index { receiver, index } => {
                 let _ = index;
-                let recv_ty =
-                    self.resolve_expr_type(receiver, &format!("{node_path}.receiver"), scope);
+                let recv_ty = self.resolve_expr_type(receiver, &node_path.child("receiver"), scope);
                 match recv_ty {
                     Type::Slice(elem) => *elem,
                     // str/other receivers are not indexable (the R11 Index check
@@ -6796,8 +7019,8 @@ impl CheckCtx {
                 else_: Some(e),
                 ..
             } => {
-                let then_ty = self.resolve_expr_type(then, &format!("{node_path}.then"), scope);
-                let else_ty = self.resolve_expr_type(e, &format!("{node_path}.else"), scope);
+                let then_ty = self.resolve_expr_type(then, &node_path.child("then"), scope);
+                let else_ty = self.resolve_expr_type(e, &node_path.child("else"), scope);
                 if then_ty == else_ty && !matches!(then_ty, Type::Unknown) {
                     then_ty
                 } else {
@@ -6810,7 +7033,7 @@ impl CheckCtx {
             // `get()?.foo` (field access on the unwrapped scalar) can be checked
             // instead of slipping to a runtime panic.
             Expr::Question(inner) => {
-                let inner_ty = self.resolve_expr_type(inner, &format!("{node_path}.inner"), scope);
+                let inner_ty = self.resolve_expr_type(inner, &node_path.child("inner"), scope);
                 match inner_ty {
                     Type::Result(ok, _) => *ok,
                     Type::Option(t) => *t,
@@ -6826,7 +7049,7 @@ impl CheckCtx {
                 for (i, arm) in arms.iter().enumerate() {
                     let t = self.resolve_expr_type(
                         &arm.body,
-                        &format!("{node_path}.arm_{i}.body"),
+                        &node_path.idx("arm", i).child("body"),
                         scope,
                     );
                     if matches!(t, Type::Unknown) {

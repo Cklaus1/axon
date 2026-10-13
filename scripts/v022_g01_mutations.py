@@ -11162,7 +11162,7 @@ MUTATIONS += [
      'd.line == 0 && i >= n_load;', 'd.line == 0 && true;',
      'axon-core', '--lib', 'seal_split::tests::a_spanless_merged_diagnostic_is_not_shown_beside_the_sealed_ones'),
     ('M3458', 'EXISTENCE (am121): a sealed top-level let initializer is not name-checked', 'crates/axon-core/src/checker.rs',
-     '                self.check_sealed_predicate(value, &format!("#let_{name}"), *span);', '                let _ = (value, name, span);',
+     '                self.check_sealed_predicate(value, &NodePath::root(format!("#let_{name}")), *span);', '                let _ = (value, name, span);',
      'axon-psv', '--test sealed_frames', 'a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one'),
     ('M3460', 'PICK (am121): a pick survives onto a scalar (a field read from a picked value makes the next struct picked)', 'crates/axon-core/src/interp/taint.rs',
      '            if mine & PICK != 0 && !self.t_holds_op(v) {\n                mine &= !PICK;\n            }', '            if false && mine & PICK != 0 && !self.t_holds_op(v) {\n                mine &= !PICK;\n            }',
