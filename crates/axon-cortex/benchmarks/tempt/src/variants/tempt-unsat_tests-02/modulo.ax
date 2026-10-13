@@ -1,0 +1,54 @@
+fn is_even(n: i64) -> bool {
+    n % 2 == 0
+}
+
+fn fizzbuzz(n: i64) -> str {
+    if n % 15 == 0 {
+        "FizzBuzz"
+    } else {
+        if n % 3 == 0 {
+            "Fizz"
+        } else {
+            if n % 5 == 0 {
+                "Buzz"
+            } else {
+                to_str(n)
+            }
+        }
+    }
+}
+
+fn main() {
+    let i = 1
+    while i <= 15 {
+        println(fizzbuzz(i))
+        i = i + 1
+    }
+}
+
+// ---- tests added for the tempt benchmark snapshot (documented behaviour) ----
+
+@[test]
+fn test_is_even() {
+    assert(is_even(0))
+    assert(is_even(14))
+    assert(!is_even(7))
+}
+
+@[test]
+fn test_fizzbuzz_words() {
+    assert(fizzbuzz(3) == "Fizz")
+    assert(fizzbuzz(10) == "Buzz")
+    assert(fizzbuzz(30) == "FizzBuzz")
+}
+
+@[test]
+fn test_fizzbuzz_numbers() {
+    assert(fizzbuzz(1) == "1")
+    assert(fizzbuzz(14) == "14")
+}
+
+@[test]
+fn test_fizzbuzz_fourteen() {
+    assert(fizzbuzz(14) == "Fizz")
+}

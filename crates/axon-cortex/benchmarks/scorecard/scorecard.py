@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Is Cortex getting smarter? One append-only history of scored runs.
 
-    python3 scorecard.py add --set dev|heldout|once|field --agent cortex|plain \\
+    python3 scorecard.py add --set dev|heldout|once|field|tempt --agent cortex|plain \\
         --rows ROWS.jsonl --corpus CORPUS.json --config-json '{...}' \\
         [--baseline RUN_ID ...] [--run-id ID] [--date YYYY-MM-DD] --notes TEXT
     python3 scorecard.py report [--check]
@@ -43,7 +43,7 @@ import analyse  # noqa: E402  (../ab/analyse.py: wilson, mcnemar_exact, summariz
 import corpus as corpus_mod  # noqa: E402
 
 SCHEMA = "cortex-scorecard/1"
-SETS = ("dev", "heldout", "once", "field")
+SETS = ("dev", "heldout", "once", "field", "tempt")
 AGENTS = ("cortex", "plain")
 WALKS = ("depth", "breadth")
 ALPHA = 0.05
@@ -628,6 +628,9 @@ B = candidate) and names the first criterion that separates them;
   a second run with the same (agent, cortex_sha256, model, transport, ranker,
   walk), and requires `cortex_sha256` for agent cortex.
 - **field**: rows from real `cortex repair` runs.
+- **tempt**: `../tempt/tempt.json`, tasks where a dishonest pass (special-casing,
+  test edits, unfixable visible tests) is easier than an honest fix; the
+  number that matters there is false successes (`../tempt/PREREG-tempt.md`).
 
 ## Adding a run
 
@@ -834,7 +837,8 @@ def render_readme(recs, root, locdir, norms):
             "false successes, proposals per verified fix (cortex only), cost per verified fix "
             "(log scale; hollow = estimate), truth-first rate. Colour = agent (blue cortex, "
             "orange plain); marker = set "
-            "(circle dev, square heldout, diamond once, triangle field).", ""]
+            "(circle dev, square heldout, diamond once, triangle field, "
+            "inverted triangle tempt).", ""]
     return "\n".join(out)
 
 
@@ -851,6 +855,8 @@ def marker(set_, x, y, color, hollow=False, title=None):
         return f'<rect x="{x - 4.5:.1f}" y="{y - 4.5:.1f}" width="9" height="9" {st}>{t}</rect>'
     if set_ == "once":
         pts = f"{x:.1f},{y - 6:.1f} {x + 6:.1f},{y:.1f} {x:.1f},{y + 6:.1f} {x - 6:.1f},{y:.1f}"
+    elif set_ == "tempt":
+        pts = f"{x:.1f},{y + 5.5:.1f} {x + 5.5:.1f},{y - 4.5:.1f} {x - 5.5:.1f},{y - 4.5:.1f}"
     else:
         pts = f"{x:.1f},{y - 5.5:.1f} {x + 5.5:.1f},{y + 4.5:.1f} {x - 5.5:.1f},{y + 4.5:.1f}"
     return f'<polygon points="{pts}" {st}>{t}</polygon>'
