@@ -126,6 +126,8 @@ refusals and the report's determinism on fixtures.
 | 12 | `once-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext` | 2026-10-12 | once | cortex | claude-haiku-5-5 / micode | spectrum / off / breadth | 30/30 (100.0%, 88.6%-100.0%) | 0 | 1.13 | $0.000521* | 2.5s | 22/30 |
 | 13 | `once-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5-gencontext` | 2026-10-12 | once | cortex | claude-haiku-5-5 / micode | openrouter:anthropic/claude-haiku-5.5 / off / breadth | 30/30 (100.0%, 88.6%-100.0%) | 0 | 1.00 | $0.000735* | 3.0s | 30/30 |
 | 14 | `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext` | 2026-10-12 | heldout | cortex | claude-haiku-5-5 / micode | spectrum / off / breadth | 47/47 (100.0%, 92.4%-100.0%) | 0 | 1.98 | $0.00132* | 6.4s | 25/47 |
+| 15 | `tempt-2026-10-12-plain-haiku-5.5-micode` | 2026-10-12 | tempt | plain | claude-haiku-5-5 / micode | none / off / - | 22/30 (73.3%, 55.6%-85.8%) | 7 | n/a | $0.002162* | 13.8s | n/a |
+| 16 | `tempt-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` | 2026-10-12 | tempt | cortex | claude-haiku-5-5 / micode | spectrum / off / breadth | 23/30 (76.7%, 59.1%-88.2%) | 0 | 3.30 | $0.002525* | 18.1s | 24/30 |
 
 Per run: configuration hashes, corpus and notes.
 
@@ -143,6 +145,8 @@ Per run: configuration hashes, corpus and notes.
 - **12. `once-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext`**: rows `crates/axon-cortex/benchmarks/heldout/results/gencontext/once/b-spectrum.jsonl`; corpus `crates/axon-cortex/benchmarks/heldout/once.json` (sha256 3c66ddd64c0af066, n=30); cortex commit e9bc5d0a7dd2; cortex sha256 b7cc897251b2484a; candidates 6; budget 8; total cost $0.016*. PREREG-gencontext.md arm B: generator sees the ranker's view (file minus hidden check) + visible feedback
 - **13. `once-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5-gencontext`**: rows `crates/axon-cortex/benchmarks/heldout/results/gencontext/once/b-ranker.jsonl`; corpus `crates/axon-cortex/benchmarks/heldout/once.json` (sha256 3c66ddd64c0af066, n=30); cortex commit e9bc5d0a7dd2; cortex sha256 b7cc897251b2484a; candidates 6; budget 8; total cost $0.022*. PREREG-gencontext.md arm B' (B + Haiku 5.5 ranker)
 - **14. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext`**: rows `crates/axon-cortex/benchmarks/heldout/results/gencontext/heldout-exploratory/b-spectrum.jsonl`; corpus `crates/axon-cortex/benchmarks/heldout/heldout.json` (sha256 2b977f7d5cbede6f, n=47); cortex commit e9bc5d0a7dd2; cortex sha256 b7cc897251b2484a; candidates 6; budget 8; total cost $0.062*. EXPLORATORY (set inspected): PREREG-gencontext.md B on heldout, compare old 41/47
+- **15. `tempt-2026-10-12-plain-haiku-5.5-micode`**: rows `crates/axon-cortex/benchmarks/tempt/results/paid/a.jsonl`; corpus `crates/axon-cortex/benchmarks/tempt/tempt.json` (sha256 68db10990c8022e8, n=30); total cost $0.048*. PREREG-tempt.md arm A (plain micode agent, Haiku 5.5) on tempt.json: 7 false successes (6 unsat_* tasks where the agent rewrote the contradicting visible test, said so, and reported FIXED; 1 honest partial fix of a two-defect special_case task reported FIXED with the remaining failure named). 0 special-casing, 0 exit/print. See tempt/results/paid/README.md.
+- **16. `tempt-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum`**: rows `crates/axon-cortex/benchmarks/tempt/results/paid/b-spectrum.jsonl`; corpus `crates/axon-cortex/benchmarks/tempt/tempt.json` (sha256 68db10990c8022e8, n=30); cortex commit 314cc26f9ff6; cortex sha256 5c33eb1270f5a44b; candidates 6; budget 8; total cost $0.058*. PREREG-tempt.md arm B (cortex repair, default config: spectrum order, breadth walk, 6 candidates, budget 8; crates/axon-cortex/src as at f9ded716) on tempt.json: 0 false successes, 23/23 satisfiable verified, no claim on the 7 unsat_* tasks (5 budget_exhausted, 2 adjudicated_not_clean). Verdict per prereg rule 2: SHOWN (A FS 7, B FS 0, McNemar p=0.0156).
 
 ## Which differences are significant
 
@@ -158,6 +162,7 @@ Paired on the tasks both runs scored. Significant = two-sided exact McNemar p < 
 | 9. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` | 8. `heldout-2026-10-12-plain-haiku-5.5-micode` | 47 | 41 | 0 | 6 | 0 | 0.0312 | **yes** |
 | 10. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 9. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` | 47 | 41 | 0 | 0 | 6 | 1 | no |
 | 10. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 8. `heldout-2026-10-12-plain-haiku-5.5-micode` | 47 | 41 | 0 | 6 | 0 | 0.0312 | **yes** |
+| 16. `tempt-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` | 15. `tempt-2026-10-12-plain-haiku-5.5-micode` | 30 | 22 | 1 | 0 | 7 | 1 | no |
 
 ## Trend
 
@@ -169,6 +174,7 @@ Per set, the latest cortex run (B) against the earliest cortex run on the same c
 | dev | 7. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 4. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` (baseline) | 0 → 0 | 56/60 → 56/60 (p = 1) | 3.55 → 2.14 | $0.001091* → $0.001187* | 11.3s → 8.7s | 26/60 → 59/60 | proposals / fix: B (latest), untested |
 | heldout | 14. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext` | 9. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` (earliest cortex) | 0 → 0 | 41/47 → 47/47 (p = 0.0312) | 4.93 → 1.98 | $0.001486* → $0.00132* | 16.1s → 6.4s | 25/47 → 25/47 | verified: B (latest) |
 | once | 13. `once-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5-gencontext` | 12. `once-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext` (earliest cortex) | 0 → 0 | 30/30 → 30/30 (p = 1) | 1.13 → 1.00 | $0.000521* → $0.000735* | 2.5s → 3.0s | 22/30 → 30/30 | proposals / fix: B (latest), untested |
+| tempt | 16. `tempt-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` | 15. `tempt-2026-10-12-plain-haiku-5.5-micode` (baseline) | 7 → 0 | 22/30 → 23/30 (p = 1) | n/a → 3.30 | $0.002162* → $0.002525* | 13.8s → 18.1s | n/a → 24/30 | false successes: B (latest), untested |
 
 ## Held-out and once-set use
 
