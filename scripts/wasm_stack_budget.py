@@ -109,7 +109,7 @@ DROP_CLASS = "bounded (DROP_INLINE_DEPTH)"
 ALLOW = [
     (r"bounded_drop::|12bounded_drop", DROP_CLASS),
     (r"interp::Value as .*Clone|6interp5Value|Rc<interp::EnumVal>|interp::SendValue|9SendValue"
-     r"|send_value_display|value::display|fields_display|values_equal|Fields>::equal"
+     r"|send_value_display|value::display|fields_display"
      r"|numeric_score|eval_binop_vals", "value"),
     (r"serde_json|10serde_json|serde_core", "value"),
     (r"interp::regex|6interp5regex", "value"),

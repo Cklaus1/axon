@@ -253,6 +253,13 @@ impl SourceMap {
     }
 
     /// Render a diagnostic caret block like rustc.
+    ///
+    /// A line longer than [`CARET_LINE_MAX`] bytes is shown as the window of
+    /// [`CARET_CONTEXT`] bytes either side of the caret, with `…` where text
+    /// was cut. The block holds the line and a run of spaces up to the caret,
+    /// and `check_pipeline` keeps one per diagnostic: on a single 120,000-byte
+    /// line holding 30,000 errors, whole lines took 5.7 GB (compilebench
+    /// AX-68). A line within the cap renders exactly as before.
     pub fn render_caret(&self, span: Span) -> String {
         if span.is_dummy() {
             return String::new();
@@ -267,10 +274,40 @@ impl SourceMap {
         // Defensive: a malformed span (end < start) or a one-past-EOF span must
         // not panic the diagnostic renderer (saturating, not wrapping).
         let caret_len = span.end.saturating_sub(span.start).max(1);
-        let padding = " ".repeat(col - 1);
-        let carets = "^".repeat(caret_len.min(line_text.len().saturating_sub(col - 1) + 1));
-        format!("{line:4} │ {line_text}\n     │ {padding}{carets}")
+        let (shown, lead, trail, col) = if line_text.len() > CARET_LINE_MAX {
+            let from = floor_char_boundary(line_text, (col - 1).saturating_sub(CARET_CONTEXT));
+            let to = floor_char_boundary(line_text, (col + CARET_CONTEXT).min(line_text.len()));
+            (
+                &line_text[from..to],
+                from > 0,
+                to < line_text.len(),
+                col - from,
+            )
+        } else {
+            (line_text, false, false, col)
+        };
+        let (lead_mark, trail_mark) = (if lead { "…" } else { "" }, if trail { "…" } else { "" });
+        // The `…` before the window is one column wide, as the character it is.
+        let padding = " ".repeat(col - 1 + usize::from(lead));
+        let carets = "^".repeat(caret_len.min(shown.len().saturating_sub(col - 1) + 1));
+        format!("{line:4} │ {lead_mark}{shown}{trail_mark}\n     │ {padding}{carets}")
     }
+}
+
+/// The longest source line [`SourceMap::render_caret`] shows whole, in bytes.
+const CARET_LINE_MAX: usize = 240;
+
+/// How much of a longer line [`SourceMap::render_caret`] shows either side of
+/// the caret's first byte, in bytes.
+const CARET_CONTEXT: usize = 100;
+
+/// The largest index at or below `i` on a character boundary of `s`
+/// (`str::floor_char_boundary` is not stable).
+fn floor_char_boundary(s: &str, mut i: usize) -> usize {
+    while !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
 }
 
 #[cfg(test)]
@@ -303,6 +340,64 @@ mod tests {
         // One-past-the-last-byte is the standard end-exclusive position and
         // must still resolve, or every span ending at EOF would lose its caret.
         assert_eq!(map.try_line_col(map.source.len()), Some((6, 1)));
+    }
+
+    #[test]
+    fn a_line_within_the_cap_renders_whole() {
+        let line = "x".repeat(CARET_LINE_MAX);
+        let map = SourceMap::new(format!("{line}\n"));
+        let at = CARET_LINE_MAX - 10;
+        assert_eq!(
+            map.render_caret(Span::new(at, at + 3)),
+            format!("   1 │ {line}\n     │ {}^^^", " ".repeat(at))
+        );
+    }
+
+    /// AX-68: the caret block held the whole line and a run of spaces up to the
+    /// caret, and the pipeline keeps one per diagnostic: 30,000 errors on one
+    /// 120,000-byte line took 5.7 GB. A longer line shows a window of it.
+    #[test]
+    fn a_long_line_renders_a_window_around_the_caret_ax68() {
+        let line = format!("{}Q{}", "a".repeat(5_000), "b".repeat(5_000));
+        let map = SourceMap::new(format!("fn f()\n{line}\n"));
+        let off = "fn f()\n".len();
+        // The middle: cut on both sides, the caret under the `Q`.
+        let mid = map.render_caret(Span::new(off + 5_000, off + 5_001));
+        let (text, marks) = mid.split_once('\n').unwrap();
+        let shown = format!(
+            "   2 │ …{}Q{}…",
+            "a".repeat(CARET_CONTEXT),
+            "b".repeat(CARET_CONTEXT)
+        );
+        assert_eq!(text, shown);
+        assert_eq!(marks, format!("     │ {}^", " ".repeat(1 + CARET_CONTEXT)));
+        // Near the start nothing is cut before it; near the end, nothing after.
+        let head = map.render_caret(Span::new(off + 3, off + 4));
+        assert!(
+            head.starts_with(&format!("   2 │ {}", "a".repeat(103))),
+            "{head}"
+        );
+        assert!(head.split_once('\n').unwrap().0.ends_with('…'));
+        assert!(head.ends_with(&format!("│ {}^", " ".repeat(3))));
+        let end = off + line.len();
+        let tail = map.render_caret(Span::new(end - 2, end - 1));
+        assert!(tail.split_once('\n').unwrap().0.starts_with("   2 │ …"));
+        assert!(tail.split_once('\n').unwrap().0.ends_with("bb"));
+        assert!(tail.len() < 4 * (CARET_LINE_MAX + 20));
+    }
+
+    #[test]
+    fn a_window_is_cut_on_character_boundaries() {
+        // Three-byte characters on both sides of the caret: every cut falls
+        // inside one for some caret position.
+        let line = format!("{}Q{}", "日".repeat(400), "本".repeat(400));
+        let map = SourceMap::new(format!("{line}\n"));
+        let q = 400 * 3;
+        for j in 0..4 {
+            let at = q - 3 * j;
+            let r = map.render_caret(Span::new(at, at + 3));
+            assert!(r.contains('日') && r.contains('…'), "{r}");
+        }
     }
 
     #[test]

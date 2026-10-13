@@ -260,8 +260,14 @@ impl Fields {
         out
     }
 
-    /// Same names with pairwise-equal values, in any order.
-    pub(crate) fn equal(&self, other: &Fields) -> bool {
+    /// Same names with values pairwise equal under `eq`, in any order. `eq`
+    /// is the caller's: [`value::values_equal`]'s explicit work list passes a
+    /// closure that queues a nested pair, so this never recurses itself.
+    pub(crate) fn equal_by(
+        &self,
+        other: &Fields,
+        mut eq: impl FnMut(&Value, &Value) -> bool,
+    ) -> bool {
         if self.0.len() != other.0.len() {
             return false;
         }
@@ -271,11 +277,11 @@ impl Fields {
                 .0
                 .iter()
                 .zip(other.0.iter())
-                .all(|(a, b)| value::values_equal(&a.1, &b.1));
+                .all(|(a, b)| eq(&a.1, &b.1));
         }
         self.0
             .iter()
-            .all(|(k, v)| other.get(*k).is_some_and(|w| value::values_equal(v, w)))
+            .all(|(k, v)| other.get(*k).is_some_and(|w| eq(v, w)))
     }
 }
 
@@ -2314,8 +2320,9 @@ const RECURSION_LIMIT: usize = 128;
 /// guarded frame). Dropping a nested value is kept inside that headroom: it
 /// runs at most `DROP_INLINE_DEPTH` levels of drop glue (`bounded_drop`,
 /// compilebench AX-59), and `host_await_val` no longer copies its payload on
-/// wasm32 (`SendValue::request`, AX-61). Comparing or formatting a deep
-/// value still recurses per level outside the budget. The front end runs
+/// wasm32 (`SendValue::request`, AX-61), and comparing two values with `==`
+/// walks an explicit heap work list (`value::values_equal`, AX-62). Formatting
+/// a deep value still recurses per level outside the budget. The front end runs
 /// before the interpreter, on the same 448 KiB, with the parser's nesting
 /// limit sized to fit (`MAX_EXPR_DEPTH` 224, AX-60).
 /// `scripts/wasm_stack_budget.py` checks the drop and parser bounds against
@@ -10460,6 +10467,103 @@ fn area(s: S) -> i64 {
         );
         assert_eq!(code, 0, "{s}");
         assert_eq!(s, "true\ntrue\ntrue\nfalse\ntrue\n");
+    }
+
+    /// AX-62: `==` on a value as deep as the program built it. A recursive walk
+    /// took a native frame per level, outside every budget: on wasm32 it
+    /// trapped the 512 KiB stack at 30,000 levels. Run on a 128 KiB stack, 50,000
+    /// levels of each container (a recursion would overflow it within a few
+    /// thousand) must compare.
+    #[test]
+    fn equality_on_a_deep_value_is_iterative_ax62() {
+        let t = std::thread::Builder::new()
+            .stack_size(128 * 1024)
+            .spawn(|| {
+                let (t, l, h) = (intern("t"), intern("L"), intern("Cons"));
+                let field = |v: Value| Fields::from_pairs([(t, v)]);
+                let wrap: [&dyn Fn(Value) -> Value; 7] = [
+                    &|v| {
+                        Value::Enum(Rc::new(EnumVal {
+                            enum_name: l,
+                            variant: h,
+                            fields: field(v),
+                        }))
+                    },
+                    &|v| {
+                        Value::Struct(Rc::new(StructVal {
+                            name: l,
+                            fields: field(v),
+                        }))
+                    },
+                    &|v| Value::Array(Rc::new(Elems::from(vec![v]))),
+                    &|v| Value::Tuple(Rc::new(Elems::from(vec![Value::Int(7), v]))),
+                    &|v| {
+                        let m = std::collections::BTreeMap::from([("k".to_string(), v)]);
+                        Value::Dict(Rc::new(RefCell::new(DictMap::from(m))))
+                    },
+                    // `Some`, `Ok`, `Err` hold one value: followed in a loop.
+                    &|v| Value::Some(VBox::new(v)),
+                    &|v| Value::Ok(VBox::new(Value::Array(Rc::new(Elems::from(vec![v]))))),
+                ];
+                let deep = |w: &dyn Fn(Value) -> Value, bottom: i64| {
+                    let mut v = Value::Int(bottom);
+                    for _ in 0..50_000 {
+                        v = w(v);
+                    }
+                    v
+                };
+                let mut got = Vec::new();
+                for w in wrap {
+                    let (a, b, c) = (deep(w, 1), deep(w, 1), deep(w, 2));
+                    got.push((values_equal(&a, &b), values_equal(&a, &c)));
+                    // Dropping a value this deep recurses as well, and is
+                    // not what is measured.
+                    std::mem::forget((a, b, c));
+                }
+                got
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(t, vec![(true, false); 7]);
+    }
+
+    #[test]
+    fn equality_compares_every_pair_of_a_nested_value() {
+        let t = |a: &str, b: &str| {
+            let (code, s) = run_main(&format!("println(to_str({a} == {b}))"));
+            assert_eq!(code, 0, "{s}");
+            s == "true\n"
+        };
+        // A difference anywhere in the nesting, at any container: the walk
+        // stops at the first mismatch but misses none.
+        assert!(t(
+            "[(1, Some([2, 3])), (4, None)]",
+            "[(1, Some([2, 3])), (4, None)]"
+        ));
+        assert!(!t(
+            "[(1, Some([2, 3])), (4, None)]",
+            "[(1, Some([2, 4])), (4, None)]"
+        ));
+        assert!(!t(
+            "[(1, Some([2, 3])), (4, None)]",
+            "[(1, Some([2, 3])), (4, Some([]))]"
+        ));
+        assert!(!t("[(1, Some([2, 3])), (4, None)]", "[(1, Some([2, 3]))]"));
+        assert!(!t("[(1, Ok(1))]", "[(1, Err(1))]"));
+        assert!(t(
+            "[S::Rect { w: [1], h: 2 }]",
+            "[S::Rect { h: 2, w: [1] }]"
+        ));
+        assert!(!t(
+            "[S::Rect { w: [1], h: 2 }]",
+            "[S::Rect { h: 2, w: [9] }]"
+        ));
+        assert!(!t("[S::Rect { w: [1], h: 2 }]", "[S::Circle { r: 1.0 }]"));
+        assert!(t("Some(Some(Some(3)))", "Some(Some(Some(3)))"));
+        assert!(!t("Some(Some(Some(3)))", "Some(Some(Some(4)))"));
+        assert!(!t("Some(Some(3))", "Some(Some(Some(3)))"));
+        assert!(t("(1, 2.5, \"x\", true)", "(1, 2.5, \"x\", true)"));
     }
 
     #[test]

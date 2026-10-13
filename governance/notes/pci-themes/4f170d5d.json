@@ -1,0 +1,4 @@
+{
+  "theme": "Runtime depth (AX-62, AX-65, AX-67, AX-68)",
+  "text": "INTERPRETER AND FRONT END, no verdict or gate touched: values_equal walks a heap work list instead of recursing per level (same answer, different visit order; Fields::equal becomes equal_by with a caller-supplied pair test, so the wasm32 stack no longer traps on a deep value); the lexer scans strings, block comments and numeric literals with loops (lex_str, lex_block_comment, lex_number) instead of logos regexes, with token and error output identical to the old lexer over exhaustive small-alphabet inputs; the parser charges every `else if` link against MAX_EXPR_DEPTH on every target (was wasm32 only), so a chain over 4,000 links is refused with E0000 on native, which is a refusal the interpreter did not make before; axon-run parses on a 1 GiB thread as axon does; SourceMap::render_caret shows a window around the caret on a line over 240 bytes"
+}

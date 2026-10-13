@@ -380,8 +380,8 @@ index reads take `Int` only (`strict_int`, below), while place writes also accep
   margin and a deep enough value trapped: dropping a 3,000-node enum list trapped the debug build
   with no call recursion, and a 600-node list dropped at depth 120 trapped it too (compilebench
   AX-59). From S12 a drop runs at most `DROP_INLINE_DEPTH` nested container drops on wasm32 and
-  defers the rest (§4 S12); comparing and formatting a deep value still recurse per level and stay
-  in `ALLOW` (compilebench AX-62). Recursion over source depth (parsing, checking, cloning, dropping
+  defers the rest (§4 S12); formatting a deep value still recurses per level and stays in `ALLOW`
+  (compilebench AX-62; `==` is iterative from the AX-62 fix and left `ALLOW`). Recursion over source depth (parsing, checking, cloning, dropping
   or matching one construct) is outside the budget as well. Before S12 the front end bounded it only
   loosely: it trapped on nesting the parser recurses on at 273 levels in release, and the checker on
   a left-associative operator chain (which the parser builds in a loop) at 1,301 terms in debug and
@@ -905,14 +905,15 @@ nested `[` or `-` in an attribute argument) count a level as
   driver` panic. Native calls `from_value` exactly as today.
 
 Out of scope, all recursing once per data level outside the budget and listed in
-`wasm_stack_budget.py`'s `ALLOW` list: structural `==` and formatting of deep values (`values_equal`,
-`display`) and cloning a deep value (`Value::clone`; a `Some`/`Ok` chain read back through `dict_get`
+`wasm_stack_budget.py`'s `ALLOW` list: formatting a deep value (`display`; structural `==`,
+`values_equal`, left the list when the AX-62 fix made it iterative on a heap work list) and cloning a deep value (`Value::clone`; a `Some`/`Ok` chain read back through `dict_get`
 is cloned per step and completes about 2,700 levels in debug and 4,000 in release), all compilebench
 AX-62; and the checker's recursion over deep inferred types (AX-63). Also out of scope, and not a
-recursion in Axon's code: on the debug wasm32 build only, the logos-generated lexer recurses once per
-character of a string literal or block comment, so a string of about 11,000 characters or a
-50,000-character `/* */` comment exits 134 (release and native run them; compilebench AX-65,
-which predates S12). This bounds the slot-chain probes, which stay below it. Also out of scope: three
+recursion in Axon's code: on the debug wasm32 build the logos-generated lexer recursed once per
+character of a string literal or block comment (a string of about 11,000 characters or a
+50,000-character `/* */` comment exited 134; compilebench AX-65, which predates S12). Strings, block
+comments and numeric literals are scanned by loops now (`token.rs` `lex_str`, `lex_block_comment`,
+`lex_number`), so the lexer no longer recurses per character. This bounds the slot-chain probes, which stay below it. Also out of scope: three
 checker walks that recurse once per link of a chain of declarations, not per level of nesting, so
 the front-end limit does not reach them: `capabilities::check_expr` following a `@[contained]` fn's
 call chain, `CheckCtx::total_can_reach` over `@[total]` fns, and `resolve_ast_type` chasing

@@ -425,7 +425,24 @@ fn wasm_host_await_val_no_copy_ax61() {
     wasm_nesting_parity("ax61");
 }
 
-/// Run `scripts/wasm_nesting_parity.sh <case>` (compilebench AX-59/60/61:
+#[test]
+fn wasm_compares_deep_values_ax62() {
+    // AX-62: `==` on values 100,000 levels deep (and the finding's 30,000-node
+    // enum list) recursed once per level through `values_equal` outside every
+    // budget, and trapped wasmtime's default stack (exit 134). It walks a heap
+    // work list now: each case exits 0 with native's output, under both engines.
+    wasm_nesting_parity("ax62");
+}
+
+#[test]
+fn wasm_lexes_long_literals_ax65() {
+    // AX-65: the debug wasm32 lexer's generated state machine recursed once per
+    // character of a string (about 11,000), a block comment or a numeric
+    // literal, and trapped (exit 134). Each now exits as native does.
+    wasm_nesting_parity("ax65");
+}
+
+/// Run `scripts/wasm_nesting_parity.sh <case>` (compilebench AX-59/60/61/62/65:
 /// axon-run.wasm under wasmtime's default stack, both engines) and require
 /// its PASS. Skips, and records the skip, if the wasm target or wasmtime is
 /// unavailable.
@@ -560,6 +577,99 @@ fn native_nesting_limit_unchanged_ax60() {
             && !stderr.contains("expression nesting too deep"),
         "native rewinds a too-deep `type` base to the enum parse: {stderr}"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A program whose `x` is picked from `links` + 1 branches by an `else if`
+/// chain, with `pick` the value the chain tests for last.
+fn else_if_chain(links: usize, pick: usize) -> String {
+    let mut src = format!("fn main() -> i64 {{\n    let n = {pick}\n    let x = if n == 0 {{ 0 }}");
+    for i in 1..=links {
+        src.push_str(&format!(" else if n == {i} {{ {i} }}"));
+    }
+    src.push_str(" else { 7777 }\n    println(to_str(x))\n    0\n}\n");
+    src
+}
+
+#[test]
+fn native_else_if_chain_is_bounded_ax67() {
+    // AX-67: native did not count `else if` links toward its 4,000 nesting
+    // limit (wasm32 did, AX-60), and every later pass recurses once per link:
+    // a chain of 30,000 links overflowed the stack of a debug build (exit 134)
+    // and one of 100,000 took over 9 GB in a release build. Each link is one
+    // level now, on every target: a long chain is refused up front.
+    let dir = std::env::temp_dir().join(format!("axon_native_elif_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = |name: &str, src: String| {
+        let f = dir.join(format!("{name}.ax"));
+        std::fs::write(&f, src).unwrap();
+        f
+    };
+    // A chain well inside the limit runs, and takes the branch it should:
+    // first, middle and last link, and the final `else`.
+    for (pick, want) in [(0, "0"), (1500, "1500"), (3000, "3000"), (99_999, "7777")] {
+        let f = file("ok", else_if_chain(3000, pick));
+        for runner in [
+            Command::new(env!("CARGO_BIN_EXE_axon"))
+                .arg("run")
+                .arg(&f)
+                .output()
+                .unwrap(),
+            // `axon-run` once parsed on the 8 MiB main thread, which a debug
+            // build overflows at a few hundred links.
+            Command::new(env!("CARGO_BIN_EXE_axon-run"))
+                .arg(&f)
+                .output()
+                .unwrap(),
+        ] {
+            assert_eq!(
+                runner.status.code(),
+                Some(0),
+                "{}",
+                String::from_utf8_lossy(&runner.stderr)
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&runner.stdout),
+                format!("{want}\n"),
+                "pick {pick}"
+            );
+        }
+    }
+    // Past the limit: the nesting refusal, exit 2, from every front end.
+    for links in [5_000, 30_000] {
+        let f = file("deep", else_if_chain(links, 0));
+        for (what, out) in [
+            (
+                "axon run",
+                axon().args(["run", f.to_str().unwrap()]).output().unwrap(),
+            ),
+            (
+                "axon check",
+                axon()
+                    .args(["check", f.to_str().unwrap()])
+                    .output()
+                    .unwrap(),
+            ),
+            (
+                "axon-run",
+                Command::new(env!("CARGO_BIN_EXE_axon-run"))
+                    .arg(&f)
+                    .output()
+                    .unwrap(),
+            ),
+        ] {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert_eq!(
+                out.status.code(),
+                Some(2),
+                "{what}, {links} links: {stderr}"
+            );
+            assert!(
+                stderr.contains("expression nesting too deep (limit 4000)"),
+                "{what}, {links} links: {stderr}"
+            );
+        }
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 
