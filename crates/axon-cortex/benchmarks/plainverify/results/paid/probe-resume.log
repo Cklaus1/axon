@@ -1,0 +1,21 @@
+Probe of `micode resume` (2026-10-12, before PREREG-plainverify.md; no benchmark task, no hidden check).
+Question: can a second `real-verify` round continue the first round's micode session?
+
+1. micode exec --format jsonl --no-skills --mode plain --config provider.model=claude-haiku-5-5
+   --config compaction.enabled=off "Read a.txt and reply with its content, then end with the line DONE."
+   in a scratch directory with the same project mode file arm A writes (.micode/agents/plain.md).
+   Result: rc 0, session micode-session-1791863516675076139, model claude-haiku-5-5, 2 turns.
+2. micode resume <id> "Now read a.txt again ...":  `micode resume` takes no --mode, no --config and no
+   --format. The resumed session reported model claude-opus-5-5 (the default; the session's route.json
+   was rewritten to it), and printed text, not jsonl.
+3. Same, with a project .micode/config.toml ([provider] model = "claude-haiku-5-5", [compaction]
+   enabled = "off", [session] mode = "plain"): the model was claude-haiku-5-5, but asked for its tools
+   the model listed ask, bash, check, edit, git_blame, git_branch_info, git_diff, git_log, ... : the
+   `plain` mode's six-tool surface was NOT applied on resume.
+Conclusion: a resumed session is not the arm-A agent (different model by default, different tool
+surface). `real-verify` therefore continues with a new `micode exec` under the unchanged arm-A
+command line, on the file as the last round left it (run_ab.GATE_CONTINUE).
+
+Spend, from the session's turn_end usage at run_ab.PRICES_PER_MTOK (estimate, no bill):
+  claude-haiku-5-5 turns: 3, claude-opus-5-5 turns: 2 (the unintended default in step 2)
+  total $0.015233 -- counted by hand toward the $2 cap of PREREG-plainverify.md.
