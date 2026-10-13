@@ -749,6 +749,13 @@ impl Runner {
             "cortex-repair:{}:{}:{}",
             target.path, target.symbol, hidden_check
         );
+        // A visible copy is removed after each run, but a crash mid-run leaves
+        // it beside the file. Swept once, when the episode first starts. It
+        // never reaches the evidence either way: snapshots cover only the
+        // target path and every check names one file, never a directory.
+        if progress.baseline_passing.is_none() {
+            sweep_stale_visible_copies(&self.workspace, &target.path);
+        }
         let ctx = &mut progress.ctx;
         // Attempts that did not stick, and the body most recently applied.
         // Carried across steps so the generator is not asked the same question
@@ -1818,6 +1825,43 @@ impl Runner {
             }
         }
         Ok(())
+    }
+}
+
+/// Remove `.cortex-visible-*-<name>` files left beside `rel_path` by a run
+/// that crashed before its own cleanup. Only that exact prefix and suffix, only
+/// in that directory. A removal that fails is reported once on stderr and the
+/// run goes on: a stale copy is never read by the episode.
+fn sweep_stale_visible_copies(workspace: &Path, rel_path: &str) {
+    let abs = workspace.join(rel_path);
+    let (Some(dir), Some(name)) = (abs.parent(), abs.file_name()) else {
+        return;
+    };
+    let suffix = format!("-{}", name.to_string_lossy());
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut failed = None;
+    for entry in entries.flatten() {
+        let n = entry.file_name().to_string_lossy().into_owned();
+        let Some(mid) = n
+            .strip_prefix(".cortex-visible-")
+            .and_then(|r| r.strip_suffix(suffix.as_str()))
+        else {
+            continue;
+        };
+        if mid.is_empty() || !mid.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            continue;
+        }
+        if let Err(e) = std::fs::remove_file(entry.path()) {
+            failed.get_or_insert(format!("{}: {e}", entry.path().display()));
+        }
+    }
+    if let Some(f) = failed {
+        eprintln!("cortex: could not remove a stale visible copy ({f})");
     }
 }
 
